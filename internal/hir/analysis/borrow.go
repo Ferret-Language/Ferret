@@ -48,7 +48,7 @@ type borrowPlace struct {
 
 type borrowScope struct {
 	refs    map[*symbols.Symbol]struct{}
-	lastUse map[*symbols.Symbol]int
+	lastUse map[*symbols.Symbol]lastUseInfo
 }
 
 type borrowChecker struct {
@@ -59,6 +59,11 @@ type borrowChecker struct {
 	scopes   []borrowScope
 	temp     []borrowRecord
 	locals   map[*symbols.Symbol]struct{}
+}
+
+type lastUseInfo struct {
+	index int
+	loc   *source.Location
 }
 
 func checkBorrowRules(ctx *context_v2.CompilerContext, mod *context_v2.Module, hirMod *hir.Module) {
@@ -101,7 +106,7 @@ func (b *borrowChecker) checkMethodDecl(decl *hir.MethodDecl) {
 	b.checkBlock(decl.Body)
 }
 
-func (b *borrowChecker) pushScope(lastUse map[*symbols.Symbol]int) {
+func (b *borrowChecker) pushScope(lastUse map[*symbols.Symbol]lastUseInfo) {
 	b.scopes = append(b.scopes, borrowScope{
 		refs:    make(map[*symbols.Symbol]struct{}),
 		lastUse: lastUse,
@@ -158,7 +163,7 @@ func (b *borrowChecker) releaseExpiredRefs(idx int) {
 	var expired []*symbols.Symbol
 	for sym := range scope.refs {
 		last, ok := scope.lastUse[sym]
-		if ok && last <= idx {
+		if ok && last.index <= idx {
 			expired = append(expired, sym)
 		}
 	}
@@ -602,17 +607,20 @@ func (b *borrowChecker) checkAccess(place borrowPlace, kind accessKind, loc *sou
 	case accessRead:
 		wantMutable := true
 		if entry, ok := findBorrow(entries, place.path, &wantMutable); ok {
-			b.reportBorrowError(loc, fmt.Sprintf("cannot access '%s' while it is mutably borrowed", place.base.Name), entry.loc)
+			releaseLoc := b.borrowReleaseLoc(place.base, entry)
+			b.reportBorrowError(loc, fmt.Sprintf("cannot access '%s' while it is mutably borrowed", place.base.Name), entry.loc, releaseLoc)
 		}
 	case accessWrite:
 		wantMutable := true
 		if entry, ok := findBorrow(entries, place.path, &wantMutable); ok {
-			b.reportBorrowError(loc, fmt.Sprintf("cannot modify '%s' while it is mutably borrowed", place.base.Name), entry.loc)
+			releaseLoc := b.borrowReleaseLoc(place.base, entry)
+			b.reportBorrowError(loc, fmt.Sprintf("cannot modify '%s' while it is mutably borrowed", place.base.Name), entry.loc, releaseLoc)
 			return
 		}
 		wantShared := false
 		if entry, ok := findBorrow(entries, place.path, &wantShared); ok {
-			b.reportBorrowError(loc, fmt.Sprintf("cannot modify '%s' while it is immutably borrowed", place.base.Name), entry.loc)
+			releaseLoc := b.borrowReleaseLoc(place.base, entry)
+			b.reportBorrowError(loc, fmt.Sprintf("cannot modify '%s' while it is immutably borrowed", place.base.Name), entry.loc, releaseLoc)
 		}
 	}
 }
@@ -624,17 +632,19 @@ func (b *borrowChecker) addBorrow(place borrowPlace, mutable bool, loc *source.L
 	entries := b.borrows[place.base]
 	if mutable {
 		if entry, ok := findBorrow(entries, place.path, nil); ok {
+			releaseLoc := b.borrowReleaseLoc(place.base, entry)
 			if entry.mutable {
-				b.reportBorrowError(loc, fmt.Sprintf("cannot borrow '%s' as mutable because it is already mutably borrowed", place.base.Name), entry.loc)
+				b.reportBorrowError(loc, fmt.Sprintf("cannot borrow '%s' as mutable because it is already mutably borrowed", place.base.Name), entry.loc, releaseLoc)
 			} else {
-				b.reportBorrowError(loc, fmt.Sprintf("cannot borrow '%s' as mutable because it is also borrowed as immutable", place.base.Name), entry.loc)
+				b.reportBorrowError(loc, fmt.Sprintf("cannot borrow '%s' as mutable because it is also borrowed as immutable", place.base.Name), entry.loc, releaseLoc)
 			}
 			return false
 		}
 	} else {
 		wantMutable := true
 		if entry, ok := findBorrow(entries, place.path, &wantMutable); ok {
-			b.reportBorrowError(loc, fmt.Sprintf("cannot borrow '%s' as immutable because it is already mutably borrowed", place.base.Name), entry.loc)
+			releaseLoc := b.borrowReleaseLoc(place.base, entry)
+			b.reportBorrowError(loc, fmt.Sprintf("cannot borrow '%s' as immutable because it is already mutably borrowed", place.base.Name), entry.loc, releaseLoc)
 			return false
 		}
 	}
@@ -672,6 +682,52 @@ func (b *borrowChecker) releaseBinding(sym *symbols.Symbol) {
 	b.releaseBorrow(binding.place, binding.mutable, binding.loc)
 }
 
+func (b *borrowChecker) borrowReleaseLoc(base *symbols.Symbol, entry borrowEntry) *source.Location {
+	if base == nil {
+		return nil
+	}
+	sym := b.findBindingSymbol(base, entry)
+	if sym == nil {
+		return nil
+	}
+	return b.lastUseLoc(sym)
+}
+
+func (b *borrowChecker) findBindingSymbol(base *symbols.Symbol, entry borrowEntry) *symbols.Symbol {
+	for sym, binding := range b.bindings {
+		if binding.place.base != base {
+			continue
+		}
+		if binding.mutable != entry.mutable {
+			continue
+		}
+		if !pathsEqual(binding.place.path, entry.path) {
+			continue
+		}
+		if entry.loc != nil && binding.loc != nil && binding.loc != entry.loc {
+			continue
+		}
+		return sym
+	}
+	return nil
+}
+
+func (b *borrowChecker) lastUseLoc(sym *symbols.Symbol) *source.Location {
+	if sym == nil {
+		return nil
+	}
+	for i := len(b.scopes) - 1; i >= 0; i-- {
+		scope := &b.scopes[i]
+		if scope.lastUse == nil {
+			continue
+		}
+		if info, ok := scope.lastUse[sym]; ok {
+			return info.loc
+		}
+	}
+	return nil
+}
+
 func (b *borrowChecker) checkReturnLifetime(expr hir.Expr) {
 	if expr == nil {
 		return
@@ -698,17 +754,20 @@ func (b *borrowChecker) checkReturnLifetime(expr hir.Expr) {
 		return
 	}
 	if _, ok := b.locals[base]; ok {
-		b.reportBorrowError(expr.Loc(), fmt.Sprintf("cannot return reference to local '%s'", base.Name), nil)
+		b.reportBorrowError(expr.Loc(), fmt.Sprintf("cannot return reference to local '%s'", base.Name), nil, nil)
 	}
 }
 
-func (b *borrowChecker) reportBorrowError(loc *source.Location, msg string, borrowLoc *source.Location) {
+func (b *borrowChecker) reportBorrowError(loc *source.Location, msg string, borrowLoc *source.Location, releaseLoc *source.Location) {
 	diag := diagnostics.NewError(msg).WithCode(diagnostics.ErrInvalidOperation)
 	if loc != nil {
 		diag = diag.WithPrimaryLabel(loc, "borrow conflict")
 	}
 	if borrowLoc != nil {
 		diag = diag.WithSecondaryLabel(borrowLoc, "borrowed here")
+	}
+	if releaseLoc != nil && releaseLoc != borrowLoc {
+		diag = diag.WithSecondaryLabel(releaseLoc, "borrow ends here")
 	}
 	b.ctx.Diagnostics.Add(diag)
 }
@@ -759,23 +818,23 @@ func addRefDecls(items []hir.DeclItem, refs map[*symbols.Symbol]struct{}) {
 	}
 }
 
-func computeLastUse(block *hir.Block, refs map[*symbols.Symbol]struct{}) map[*symbols.Symbol]int {
-	last := make(map[*symbols.Symbol]int, len(refs))
+func computeLastUse(block *hir.Block, refs map[*symbols.Symbol]struct{}) map[*symbols.Symbol]lastUseInfo {
+	last := make(map[*symbols.Symbol]lastUseInfo, len(refs))
 	if block == nil || len(refs) == 0 {
 		return last
 	}
 	for idx, node := range block.Nodes {
 		markRefDeclIndex(node, refs, last, idx)
-		uses := make(map[*symbols.Symbol]struct{})
+		uses := make(map[*symbols.Symbol]*source.Location)
 		collectRefUsesNode(node, refs, uses)
-		for sym := range uses {
-			last[sym] = idx
+		for sym, loc := range uses {
+			last[sym] = lastUseInfo{index: idx, loc: loc}
 		}
 	}
 	return last
 }
 
-func markRefDeclIndex(node hir.Node, refs map[*symbols.Symbol]struct{}, last map[*symbols.Symbol]int, idx int) {
+func markRefDeclIndex(node hir.Node, refs map[*symbols.Symbol]struct{}, last map[*symbols.Symbol]lastUseInfo, idx int) {
 	switch n := node.(type) {
 	case *hir.VarDecl:
 		markDeclItems(n.Decls, refs, last, idx)
@@ -790,7 +849,7 @@ func markRefDeclIndex(node hir.Node, refs map[*symbols.Symbol]struct{}, last map
 	}
 }
 
-func markDeclItems(items []hir.DeclItem, refs map[*symbols.Symbol]struct{}, last map[*symbols.Symbol]int, idx int) {
+func markDeclItems(items []hir.DeclItem, refs map[*symbols.Symbol]struct{}, last map[*symbols.Symbol]lastUseInfo, idx int) {
 	for _, item := range items {
 		if item.Name == nil || item.Name.Symbol == nil {
 			continue
@@ -799,12 +858,12 @@ func markDeclItems(items []hir.DeclItem, refs map[*symbols.Symbol]struct{}, last
 			continue
 		}
 		if _, seen := last[item.Name.Symbol]; !seen {
-			last[item.Name.Symbol] = idx
+			last[item.Name.Symbol] = lastUseInfo{index: idx, loc: item.Name.Loc()}
 		}
 	}
 }
 
-func collectRefUsesNode(node hir.Node, refs map[*symbols.Symbol]struct{}, uses map[*symbols.Symbol]struct{}) {
+func collectRefUsesNode(node hir.Node, refs map[*symbols.Symbol]struct{}, uses map[*symbols.Symbol]*source.Location) {
 	if node == nil || len(refs) == 0 {
 		return
 	}
@@ -858,7 +917,7 @@ func collectRefUsesNode(node hir.Node, refs map[*symbols.Symbol]struct{}, uses m
 	}
 }
 
-func collectRefUsesExpr(expr hir.Expr, refs map[*symbols.Symbol]struct{}, uses map[*symbols.Symbol]struct{}) {
+func collectRefUsesExpr(expr hir.Expr, refs map[*symbols.Symbol]struct{}, uses map[*symbols.Symbol]*source.Location) {
 	if expr == nil || len(refs) == 0 {
 		return
 	}
@@ -866,7 +925,7 @@ func collectRefUsesExpr(expr hir.Expr, refs map[*symbols.Symbol]struct{}, uses m
 	case *hir.Ident:
 		if e.Symbol != nil {
 			if _, ok := refs[e.Symbol]; ok {
-				uses[e.Symbol] = struct{}{}
+				uses[e.Symbol] = e.Loc()
 			}
 		}
 	case *hir.OptionalSome:
@@ -929,12 +988,12 @@ func collectRefUsesExpr(expr hir.Expr, refs map[*symbols.Symbol]struct{}, uses m
 		collectRefUsesExpr(e.Iter, refs, uses)
 		if e.Key != nil && e.Key.Symbol != nil {
 			if _, ok := refs[e.Key.Symbol]; ok {
-				uses[e.Key.Symbol] = struct{}{}
+				uses[e.Key.Symbol] = e.Key.Loc()
 			}
 		}
 		if e.Value != nil && e.Value.Symbol != nil {
 			if _, ok := refs[e.Value.Symbol]; ok {
-				uses[e.Value.Symbol] = struct{}{}
+				uses[e.Value.Symbol] = e.Value.Loc()
 			}
 		}
 	case *hir.SelectorExpr:
@@ -956,7 +1015,7 @@ func collectRefUsesExpr(expr hir.Expr, refs map[*symbols.Symbol]struct{}, uses m
 		for _, cap := range e.Captures {
 			if cap != nil && cap.Symbol != nil {
 				if _, ok := refs[cap.Symbol]; ok {
-					uses[cap.Symbol] = struct{}{}
+					uses[cap.Symbol] = cap.Loc()
 				}
 			}
 		}
