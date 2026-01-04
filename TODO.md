@@ -65,3 +65,14 @@
   - [x] WASM
   - [x] Decide runtime behavior for dynamic array OOB (panic via ferret_global_panic).
   - [x] Add non-PIE build flags for QBE outputs (Linux/macOS/OpenBSD).
+
+### WASM backend gaps (priority order)
+- [ ] Codegen: struct ops (MakeStruct / ExtractField / InsertField) to match QBE layout.
+- [ ] Codegen: array value construction (MakeArray) for fixed arrays and value-level literals.
+- [ ] Codegen: map ops (MapGet / MapSet + iteration helpers) with required runtime imports.
+- [ ] Codegen: optional/result/union ops (Optional* / Result* / Union*) needed for catch paths.
+- [ ] Codegen: call_indirect for interface/closure dispatch.
+- [x] Runtime: string concat helpers (ferret_io_ConcatStrings + ferret_string_concat_*).
+- [ ] Runtime: large primitive helpers (ferret_{i128,u128,i256,u256,f128,f256}_*).
+- [ ] Runtime: map helpers (ferret_map_* + typed constructors + optional get/iter).
+- [ ] Stdlib externs in WASM: std/fs, time, random.

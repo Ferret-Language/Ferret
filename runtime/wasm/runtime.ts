@@ -15,9 +15,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   const emitEvent = options.onEvent;
   const throwOnInputNeeded = options.throwOnInputNeeded ?? false;
   const rawInput = options.input ?? "";
-  const inputLines = rawInput.length > 0
-    ? rawInput.replace(/\r\n/g, "\n").split("\n")
-    : [];
+  const inputLines =
+    rawInput.length > 0 ? rawInput.replace(/\r\n/g, "\n").split("\n") : [];
   let inputIndex = 0;
 
   function align(value: number, alignment: number): number {
@@ -72,7 +71,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return line;
   }
 
-  function resultStrStr(okValue: string | null, errValue: string | null): number {
+  function resultStrStr(
+    okValue: string | null,
+    errValue: string | null,
+  ): number {
     const ptr = ferret_alloc(8);
     const dv = view();
     const payload = okValue ?? errValue ?? "";
@@ -81,7 +83,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return ptr >>> 0;
   }
 
-  function resultStrI32(okValue: number | null, errValue: string | null): number {
+  function resultStrI32(
+    okValue: number | null,
+    errValue: string | null,
+  ): number {
     const ptr = ferret_alloc(8);
     const dv = view();
     if (okValue === null) {
@@ -94,7 +99,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return ptr >>> 0;
   }
 
-  function resultStrF64(okValue: number | null, errValue: string | null): number {
+  function resultStrF64(
+    okValue: number | null,
+    errValue: string | null,
+  ): number {
     const ptr = ferret_alloc(12);
     const dv = view();
     if (okValue === null) {
@@ -390,6 +398,69 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return len;
   }
 
+  function formatI64(value: number | bigint): string {
+    if (typeof value === "bigint") {
+      return BigInt.asIntN(64, value).toString();
+    }
+    return Math.trunc(value).toString();
+  }
+
+  function formatU64(value: number | bigint): string {
+    const asBig = typeof value === "bigint" ? value : BigInt(Math.trunc(value));
+    return BigInt.asUintN(64, asBig).toString();
+  }
+
+  function formatF64(value: number): string {
+    let text = Number(value).toPrecision(15);
+    const expIndex = text.search(/[eE]/);
+    if (expIndex >= 0) {
+      const head = text.slice(0, expIndex);
+      const tail = text.slice(expIndex);
+      const trimmed = head.includes(".") ? head.replace(/\.?0+$/, "") : head;
+      text =
+        (trimmed === "" || trimmed === "-" ? trimmed + "0" : trimmed) + tail;
+    } else if (text.includes(".")) {
+      const trimmed = text.replace(/\.?0+$/, "");
+      text = trimmed === "" || trimmed === "-" ? trimmed + "0" : trimmed;
+    }
+    if (!text.includes(".") && expIndex < 0) {
+      text += ".0";
+    }
+    return text;
+  }
+
+  function ferret_io_ConcatStrings(leftPtr: number, rightPtr: number) {
+    const left = leftPtr ? readCString(leftPtr) : "";
+    const right = rightPtr ? readCString(rightPtr) : "";
+    return writeCString(left + right);
+  }
+
+  function ferret_string_concat_i64(strPtr: number, value: number | bigint) {
+    const base = strPtr ? readCString(strPtr) : "";
+    return writeCString(base + formatI64(value));
+  }
+
+  function ferret_string_concat_u64(strPtr: number, value: number | bigint) {
+    const base = strPtr ? readCString(strPtr) : "";
+    return writeCString(base + formatU64(value));
+  }
+
+  function ferret_string_concat_f64(strPtr: number, value: number) {
+    const base = strPtr ? readCString(strPtr) : "";
+    return writeCString(base + formatF64(value));
+  }
+
+  function ferret_string_concat_byte(strPtr: number, value: number) {
+    const base = strPtr ? readCString(strPtr) : "";
+    const ch = String.fromCharCode(Number(value) & 0xff);
+    return writeCString(base + ch);
+  }
+
+  function ferret_string_concat_bool(strPtr: number, value: number) {
+    const base = strPtr ? readCString(strPtr) : "";
+    return writeCString(base + (value ? "true" : "false"));
+  }
+
   function ferret_pow(base: number, exp: number) {
     return Math.pow(Number(base), Number(exp));
   }
@@ -415,6 +486,12 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_std_io_ReadFloat,
         ferret_global_panic,
         ferret_string_len,
+        ferret_io_ConcatStrings,
+        ferret_string_concat_i64,
+        ferret_string_concat_u64,
+        ferret_string_concat_f64,
+        ferret_string_concat_byte,
+        ferret_string_concat_bool,
         ferret_pow,
       },
     },
