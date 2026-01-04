@@ -128,6 +128,42 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     mem.copyWithin(dst >>> 0, src >>> 0, (src >>> 0) + bytes);
   }
 
+  function ferret_optional_unwrap_or(
+    optPtr: number,
+    defaultPtr: number,
+    outPtr: number,
+    valSize: number | bigint,
+  ) {
+    if (!outPtr) {
+      return;
+    }
+    const bytes = Number(valSize);
+    if (bytes <= 0) {
+      return;
+    }
+    const mem = new Uint8Array(memory!.buffer);
+    const out = outPtr >>> 0;
+    if (!optPtr) {
+      if (defaultPtr) {
+        const def = defaultPtr >>> 0;
+        mem.copyWithin(out, def, def + bytes);
+      } else {
+        mem.fill(0, out, out + bytes);
+      }
+      return;
+    }
+    const opt = optPtr >>> 0;
+    const flag = mem[opt + bytes];
+    if (flag) {
+      mem.copyWithin(out, opt, opt + bytes);
+    } else if (defaultPtr) {
+      const def = defaultPtr >>> 0;
+      mem.copyWithin(out, def, def + bytes);
+    } else {
+      mem.fill(0, out, out + bytes);
+    }
+  }
+
   function ferret_array_new(elemSize: number, cap: number) {
     const elemBytes = Number(elemSize);
     const capacity = Number(cap);
@@ -471,6 +507,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       ferret: {
         ferret_alloc,
         ferret_memcpy,
+        ferret_optional_unwrap_or,
         ferret_array_new,
         ferret_array_clone,
         ferret_array_append,

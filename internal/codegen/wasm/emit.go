@@ -219,6 +219,13 @@ func (g *Generator) collectImports() error {
 						return err
 					}
 				}
+				if opt, ok := instr.(*mir.OptionalUnwrap); ok && opt.HasDefault {
+					if err := g.ensureImport("ferret_optional_unwrap_or", funcSig{
+						params: []ValType{valTypeI32, valTypeI32, valTypeI32, valTypeI64},
+					}); err != nil {
+						return err
+					}
+				}
 				call, ok := instr.(*mir.Call)
 				if !ok || call == nil {
 					continue
@@ -510,15 +517,26 @@ func (g *Generator) emitInstr(info *funcInfo, instr mir.Instr, locals map[mir.Va
 	case *mir.MapGet, *mir.MapSet:
 		g.reportUnsupported("map op", instr.Loc())
 		return []byte{opcodeUnreachable}, nil
-	case *mir.OptionalNone, *mir.OptionalSome, *mir.OptionalIsSome, *mir.OptionalUnwrap:
-		g.reportUnsupported("optional op", instr.Loc())
-		return []byte{opcodeUnreachable}, nil
-	case *mir.UnionVariantCheck, *mir.UnionExtract:
-		g.reportUnsupported("union op", instr.Loc())
-		return []byte{opcodeUnreachable}, nil
-	case *mir.ResultOk, *mir.ResultErr, *mir.ResultIsOk, *mir.ResultUnwrap:
-		g.reportUnsupported("result op", instr.Loc())
-		return []byte{opcodeUnreachable}, nil
+	case *mir.OptionalNone:
+		return g.emitOptionalNone(v, locals)
+	case *mir.OptionalSome:
+		return g.emitOptionalSome(v, locals)
+	case *mir.OptionalIsSome:
+		return g.emitOptionalIsSome(info, v, locals)
+	case *mir.OptionalUnwrap:
+		return g.emitOptionalUnwrap(info, v, locals, scratchLocal)
+	case *mir.UnionVariantCheck:
+		return g.emitUnionVariantCheck(v, locals)
+	case *mir.UnionExtract:
+		return g.emitUnionExtract(v, locals, scratchLocal)
+	case *mir.ResultOk:
+		return g.emitResultOk(v, locals)
+	case *mir.ResultErr:
+		return g.emitResultErr(v, locals)
+	case *mir.ResultIsOk:
+		return g.emitResultIsOk(info, v, locals)
+	case *mir.ResultUnwrap:
+		return g.emitResultUnwrap(info, v, locals)
 	default:
 		g.reportUnsupported("instruction", instr.Loc())
 		return []byte{opcodeUnreachable}, nil
@@ -1165,6 +1183,552 @@ func (g *Generator) emitArraySet(info *funcInfo, a *mir.ArraySet, locals map[mir
 	return out, nil
 }
 
+func (g *Generator) emitOptionalNone(o *mir.OptionalNone, locals map[mir.ValueID]uint32) ([]byte, error) {
+	if o == nil {
+		return nil, nil
+	}
+	optType, ok := g.optionalType(o.Type)
+	if !ok || optType == nil {
+		g.reportUnsupported("optional_none", o.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	optSize := g.layout.SizeOf(optType)
+	if optSize <= 0 {
+		return nil, fmt.Errorf("wasm: invalid optional size")
+	}
+	valSize := g.layout.SizeOf(optType.Inner)
+	if valSize < 0 {
+		return nil, fmt.Errorf("wasm: invalid optional inner size")
+	}
+	allocID, ok := g.importIDs["ferret_alloc"]
+	if !ok {
+		return nil, fmt.Errorf("wasm: missing import ferret_alloc")
+	}
+
+	var out []byte
+	out = append(out, opcodeI64Const)
+	out = append(out, encodeS64(int64(optSize))...)
+	out = append(out, opcodeCall)
+	out = append(out, encodeU32(allocID)...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[o.Result])...)
+
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[o.Result])...)
+	if valSize != 0 {
+		out = append(out, opcodeI32Const)
+		out = append(out, encodeS32(int32(valSize))...)
+		out = append(out, opcodeI32Add)
+	}
+	out = append(out, opcodeI32Const)
+	out = append(out, encodeS32(0)...)
+	storeOp, err := storeOpcode(types.TypeBool)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, storeOp...)
+	return out, nil
+}
+
+func (g *Generator) emitOptionalSome(o *mir.OptionalSome, locals map[mir.ValueID]uint32) ([]byte, error) {
+	if o == nil {
+		return nil, nil
+	}
+	optType, ok := g.optionalType(o.Type)
+	if !ok || optType == nil {
+		g.reportUnsupported("optional_some", o.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	optSize := g.layout.SizeOf(optType)
+	if optSize <= 0 {
+		return nil, fmt.Errorf("wasm: invalid optional size")
+	}
+	valSize := g.layout.SizeOf(optType.Inner)
+	if valSize < 0 {
+		return nil, fmt.Errorf("wasm: invalid optional inner size")
+	}
+	allocID, ok := g.importIDs["ferret_alloc"]
+	if !ok {
+		return nil, fmt.Errorf("wasm: missing import ferret_alloc")
+	}
+
+	var out []byte
+	out = append(out, opcodeI64Const)
+	out = append(out, encodeS64(int64(optSize))...)
+	out = append(out, opcodeCall)
+	out = append(out, encodeU32(allocID)...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[o.Result])...)
+
+	storeBytes, err := g.emitStoreValueToAddr(nil, o.Value, optType.Inner, locals[o.Result], locals)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, storeBytes...)
+
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[o.Result])...)
+	if valSize != 0 {
+		out = append(out, opcodeI32Const)
+		out = append(out, encodeS32(int32(valSize))...)
+		out = append(out, opcodeI32Add)
+	}
+	out = append(out, opcodeI32Const)
+	out = append(out, encodeS32(1)...)
+	storeOp, err := storeOpcode(types.TypeBool)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, storeOp...)
+	return out, nil
+}
+
+func (g *Generator) emitOptionalIsSome(info *funcInfo, o *mir.OptionalIsSome, locals map[mir.ValueID]uint32) ([]byte, error) {
+	if o == nil || info == nil {
+		return nil, nil
+	}
+	optType, ok := g.optionalType(info.valueType[o.Value])
+	if !ok || optType == nil {
+		g.reportUnsupported("optional_is_some", o.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	valSize := g.layout.SizeOf(optType.Inner)
+	if valSize < 0 {
+		return nil, fmt.Errorf("wasm: invalid optional inner size")
+	}
+
+	var out []byte
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[o.Value])...)
+	if valSize != 0 {
+		out = append(out, opcodeI32Const)
+		out = append(out, encodeS32(int32(valSize))...)
+		out = append(out, opcodeI32Add)
+	}
+	loadOp, err := loadOpcode(types.TypeBool)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, loadOp...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[o.Result])...)
+	return out, nil
+}
+
+func (g *Generator) emitOptionalUnwrap(info *funcInfo, o *mir.OptionalUnwrap, locals map[mir.ValueID]uint32, scratchLocal uint32) ([]byte, error) {
+	if o == nil || info == nil {
+		return nil, nil
+	}
+	optType, ok := g.optionalType(info.valueType[o.Value])
+	if !ok || optType == nil {
+		g.reportUnsupported("optional_unwrap", o.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	inner := optType.Inner
+	valSize := g.layout.SizeOf(inner)
+	if valSize < 0 {
+		return nil, fmt.Errorf("wasm: invalid optional inner size")
+	}
+
+	byRef := g.needsByRefType(inner)
+	if !byRef {
+		if _, ok := g.optionalType(inner); ok {
+			byRef = true
+		} else if _, ok := g.resultType(inner); ok {
+			byRef = true
+		} else if _, ok := types.UnwrapType(inner).(*types.UnionType); ok {
+			byRef = true
+		}
+	}
+
+	if o.HasDefault {
+		unwrapID, ok := g.importIDs["ferret_optional_unwrap_or"]
+		if !ok {
+			return nil, fmt.Errorf("wasm: missing import ferret_optional_unwrap_or")
+		}
+		allocID, ok := g.importIDs["ferret_alloc"]
+		if !ok {
+			return nil, fmt.Errorf("wasm: missing import ferret_alloc")
+		}
+		if valSize <= 0 {
+			return nil, fmt.Errorf("wasm: invalid optional unwrap size")
+		}
+
+		var out []byte
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(locals[o.Value])...)
+		defaultAddr, err := g.emitValueAddr(o.Default, inner, locals, scratchLocal)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, defaultAddr...)
+
+		if byRef {
+			out = append(out, opcodeI64Const)
+			out = append(out, encodeS64(int64(valSize))...)
+			out = append(out, opcodeCall)
+			out = append(out, encodeU32(allocID)...)
+			out = append(out, opcodeLocalSet)
+			out = append(out, encodeU32(locals[o.Result])...)
+			out = append(out, opcodeLocalGet)
+			out = append(out, encodeU32(locals[o.Result])...)
+		} else {
+			out = append(out, opcodeI64Const)
+			out = append(out, encodeS64(int64(valSize))...)
+			out = append(out, opcodeCall)
+			out = append(out, encodeU32(allocID)...)
+			out = append(out, opcodeLocalSet)
+			out = append(out, encodeU32(scratchLocal)...)
+			out = append(out, opcodeLocalGet)
+			out = append(out, encodeU32(scratchLocal)...)
+		}
+
+		out = append(out, opcodeI64Const)
+		out = append(out, encodeS64(int64(valSize))...)
+		out = append(out, opcodeCall)
+		out = append(out, encodeU32(unwrapID)...)
+
+		if !byRef {
+			loadOp, err := loadOpcode(inner)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, opcodeLocalGet)
+			out = append(out, encodeU32(scratchLocal)...)
+			out = append(out, loadOp...)
+			out = append(out, opcodeLocalSet)
+			out = append(out, encodeU32(locals[o.Result])...)
+		}
+		return out, nil
+	}
+
+	if byRef {
+		allocID, ok := g.importIDs["ferret_alloc"]
+		if !ok {
+			return nil, fmt.Errorf("wasm: missing import ferret_alloc")
+		}
+		if valSize <= 0 {
+			return nil, fmt.Errorf("wasm: invalid optional unwrap size")
+		}
+		var out []byte
+		out = append(out, opcodeI64Const)
+		out = append(out, encodeS64(int64(valSize))...)
+		out = append(out, opcodeCall)
+		out = append(out, encodeU32(allocID)...)
+		out = append(out, opcodeLocalSet)
+		out = append(out, encodeU32(locals[o.Result])...)
+		copyBytes, err := g.emitMemcpy(locals[o.Result], locals[o.Value], valSize)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, copyBytes...)
+		return out, nil
+	}
+
+	var out []byte
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[o.Value])...)
+	loadOp, err := loadOpcode(inner)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, loadOp...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[o.Result])...)
+	return out, nil
+}
+
+func (g *Generator) emitUnionVariantCheck(u *mir.UnionVariantCheck, locals map[mir.ValueID]uint32) ([]byte, error) {
+	if u == nil {
+		return nil, nil
+	}
+	var out []byte
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[u.Value])...)
+	loadOp, err := loadOpcode(types.TypeI32)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, loadOp...)
+	out = append(out, opcodeI32Const)
+	out = append(out, encodeS32(int32(u.VariantIndex))...)
+	out = append(out, opcodeI32Eq)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[u.Result])...)
+	return out, nil
+}
+
+func (g *Generator) emitUnionExtract(u *mir.UnionExtract, locals map[mir.ValueID]uint32, scratchLocal uint32) ([]byte, error) {
+	if u == nil {
+		return nil, nil
+	}
+	variantType := u.Type
+	if variantType == nil {
+		g.reportUnsupported("union_extract type", u.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	variantSize := g.layout.SizeOf(variantType)
+	if variantSize < 0 {
+		return nil, fmt.Errorf("wasm: invalid union variant size")
+	}
+
+	byRef := g.needsByRefType(variantType)
+	if !byRef {
+		if _, ok := g.optionalType(variantType); ok {
+			byRef = true
+		} else if _, ok := g.resultType(variantType); ok {
+			byRef = true
+		} else if _, ok := types.UnwrapType(variantType).(*types.UnionType); ok {
+			byRef = true
+		}
+	}
+
+	if byRef {
+		if variantSize <= 0 {
+			return nil, fmt.Errorf("wasm: invalid union extract size")
+		}
+		allocID, ok := g.importIDs["ferret_alloc"]
+		if !ok {
+			return nil, fmt.Errorf("wasm: missing import ferret_alloc")
+		}
+		var out []byte
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(locals[u.Value])...)
+		out = append(out, opcodeI32Const)
+		out = append(out, encodeS32(4)...)
+		out = append(out, opcodeI32Add)
+		out = append(out, opcodeLocalSet)
+		out = append(out, encodeU32(scratchLocal)...)
+
+		out = append(out, opcodeI64Const)
+		out = append(out, encodeS64(int64(variantSize))...)
+		out = append(out, opcodeCall)
+		out = append(out, encodeU32(allocID)...)
+		out = append(out, opcodeLocalSet)
+		out = append(out, encodeU32(locals[u.Result])...)
+
+		copyBytes, err := g.emitMemcpy(locals[u.Result], scratchLocal, variantSize)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, copyBytes...)
+		return out, nil
+	}
+
+	var out []byte
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[u.Value])...)
+	out = append(out, opcodeI32Const)
+	out = append(out, encodeS32(4)...)
+	out = append(out, opcodeI32Add)
+	loadOp, err := loadOpcode(variantType)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, loadOp...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[u.Result])...)
+	return out, nil
+}
+
+func (g *Generator) emitResultOk(r *mir.ResultOk, locals map[mir.ValueID]uint32) ([]byte, error) {
+	if r == nil {
+		return nil, nil
+	}
+	resType, ok := g.resultType(r.Type)
+	if !ok || resType == nil {
+		g.reportUnsupported("result_ok", r.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	resSize := g.layout.SizeOf(resType)
+	if resSize <= 0 {
+		return nil, fmt.Errorf("wasm: invalid result size")
+	}
+	tagOffset, ok := g.resultTagOffset(resType, r.Loc())
+	if !ok {
+		return []byte{opcodeUnreachable}, nil
+	}
+	allocID, ok := g.importIDs["ferret_alloc"]
+	if !ok {
+		return nil, fmt.Errorf("wasm: missing import ferret_alloc")
+	}
+	var out []byte
+	out = append(out, opcodeI64Const)
+	out = append(out, encodeS64(int64(resSize))...)
+	out = append(out, opcodeCall)
+	out = append(out, encodeU32(allocID)...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[r.Result])...)
+
+	storeBytes, err := g.emitStoreValueToAddr(nil, r.Value, resType.Ok, locals[r.Result], locals)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, storeBytes...)
+
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[r.Result])...)
+	if tagOffset != 0 {
+		out = append(out, opcodeI32Const)
+		out = append(out, encodeS32(int32(tagOffset))...)
+		out = append(out, opcodeI32Add)
+	}
+	out = append(out, opcodeI32Const)
+	out = append(out, encodeS32(1)...)
+	storeOp, err := storeOpcode(types.TypeBool)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, storeOp...)
+	return out, nil
+}
+
+func (g *Generator) emitResultErr(r *mir.ResultErr, locals map[mir.ValueID]uint32) ([]byte, error) {
+	if r == nil {
+		return nil, nil
+	}
+	resType, ok := g.resultType(r.Type)
+	if !ok || resType == nil {
+		g.reportUnsupported("result_err", r.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	resSize := g.layout.SizeOf(resType)
+	if resSize <= 0 {
+		return nil, fmt.Errorf("wasm: invalid result size")
+	}
+	tagOffset, ok := g.resultTagOffset(resType, r.Loc())
+	if !ok {
+		return []byte{opcodeUnreachable}, nil
+	}
+	allocID, ok := g.importIDs["ferret_alloc"]
+	if !ok {
+		return nil, fmt.Errorf("wasm: missing import ferret_alloc")
+	}
+	var out []byte
+	out = append(out, opcodeI64Const)
+	out = append(out, encodeS64(int64(resSize))...)
+	out = append(out, opcodeCall)
+	out = append(out, encodeU32(allocID)...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[r.Result])...)
+
+	storeBytes, err := g.emitStoreValueToAddr(nil, r.Value, resType.Err, locals[r.Result], locals)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, storeBytes...)
+
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[r.Result])...)
+	if tagOffset != 0 {
+		out = append(out, opcodeI32Const)
+		out = append(out, encodeS32(int32(tagOffset))...)
+		out = append(out, opcodeI32Add)
+	}
+	out = append(out, opcodeI32Const)
+	out = append(out, encodeS32(0)...)
+	storeOp, err := storeOpcode(types.TypeBool)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, storeOp...)
+	return out, nil
+}
+
+func (g *Generator) emitResultIsOk(info *funcInfo, r *mir.ResultIsOk, locals map[mir.ValueID]uint32) ([]byte, error) {
+	if r == nil || info == nil {
+		return nil, nil
+	}
+	resType, ok := g.resultType(info.valueType[r.Value])
+	if !ok || resType == nil {
+		g.reportUnsupported("result_is_ok", r.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	tagOffset, ok := g.resultTagOffset(resType, r.Loc())
+	if !ok {
+		return []byte{opcodeUnreachable}, nil
+	}
+	var out []byte
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[r.Value])...)
+	if tagOffset != 0 {
+		out = append(out, opcodeI32Const)
+		out = append(out, encodeS32(int32(tagOffset))...)
+		out = append(out, opcodeI32Add)
+	}
+	loadOp, err := loadOpcode(types.TypeBool)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, loadOp...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[r.Result])...)
+	return out, nil
+}
+
+func (g *Generator) emitResultUnwrap(info *funcInfo, r *mir.ResultUnwrap, locals map[mir.ValueID]uint32) ([]byte, error) {
+	if r == nil || info == nil {
+		return nil, nil
+	}
+	if r.HasDefault {
+		g.reportUnsupported("result_unwrap default", r.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	inner := r.Type
+	if inner == nil {
+		g.reportUnsupported("result_unwrap type", r.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	valSize := g.layout.SizeOf(inner)
+	if valSize < 0 {
+		return nil, fmt.Errorf("wasm: invalid result unwrap size")
+	}
+
+	byRef := g.needsByRefType(inner)
+	if !byRef {
+		if _, ok := g.optionalType(inner); ok {
+			byRef = true
+		} else if _, ok := g.resultType(inner); ok {
+			byRef = true
+		}
+	}
+
+	if byRef {
+		allocID, ok := g.importIDs["ferret_alloc"]
+		if !ok {
+			return nil, fmt.Errorf("wasm: missing import ferret_alloc")
+		}
+		if valSize <= 0 {
+			return nil, fmt.Errorf("wasm: invalid result unwrap size")
+		}
+		var out []byte
+		out = append(out, opcodeI64Const)
+		out = append(out, encodeS64(int64(valSize))...)
+		out = append(out, opcodeCall)
+		out = append(out, encodeU32(allocID)...)
+		out = append(out, opcodeLocalSet)
+		out = append(out, encodeU32(locals[r.Result])...)
+		copyBytes, err := g.emitMemcpy(locals[r.Result], locals[r.Value], valSize)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, copyBytes...)
+		return out, nil
+	}
+
+	var out []byte
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[r.Value])...)
+	loadOp, err := loadOpcode(inner)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, loadOp...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[r.Result])...)
+	return out, nil
+}
+
 func (g *Generator) emitPtrAdd(p *mir.PtrAdd, locals map[mir.ValueID]uint32) ([]byte, error) {
 	if p == nil {
 		return nil, nil
@@ -1502,6 +2066,44 @@ func (g *Generator) resultType(typ types.SemType) (*types.ResultType, bool) {
 	}
 	res, ok := typ.(*types.ResultType)
 	return res, ok
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func alignToSize(size, align int) int {
+	if align <= 1 {
+		return size
+	}
+	rem := size % align
+	if rem == 0 {
+		return size
+	}
+	return size + (align - rem)
+}
+
+func (g *Generator) resultTagOffset(res *types.ResultType, loc *source.Location) (int, bool) {
+	if res == nil {
+		return 0, false
+	}
+	okSize := g.layout.SizeOf(res.Ok)
+	errSize := g.layout.SizeOf(res.Err)
+	if okSize < 0 || errSize < 0 {
+		g.reportUnsupported("result size", loc)
+		return 0, false
+	}
+	okAlign := g.layout.AlignOf(res.Ok)
+	errAlign := g.layout.AlignOf(res.Err)
+	unionAlign := maxInt(okAlign, errAlign)
+	if unionAlign < 1 {
+		unionAlign = 1
+	}
+	unionSize := alignToSize(maxInt(okSize, errSize), unionAlign)
+	return unionSize, true
 }
 
 func (g *Generator) arrayTypeOf(typ types.SemType) (*types.ArrayType, bool) {
