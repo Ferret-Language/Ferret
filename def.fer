@@ -1,0 +1,15 @@
+import "std/io";
+import "math";
+
+fn main() {
+    let arr := [1,2,3,4];
+    append(&'arr, 5);
+    for v in arr {
+        io::Println(v);
+    }
+    io::Println("hello", 123, true, math::PI);
+    
+    io::Println("Who are you?");
+    let name := io::ReadUnsafe();
+    io::Println("Hello", name);
+}

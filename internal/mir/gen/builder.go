@@ -3581,7 +3581,54 @@ func (b *functionBuilder) exprType(expr hir.Expr) types.SemType {
 		return e.Type
 	case *hir.ScopeResolutionExpr:
 		return e.Type
+	case *hir.CastExpr:
+		if e.Type != nil {
+			return e.Type
+		}
+		if e.TargetType != nil {
+			return e.TargetType
+		}
+		return b.exprType(e.X)
+	case *hir.CoalescingExpr:
+		return e.Type
+	case *hir.ForkExpr:
+		return e.Type
+	case *hir.RangeExpr:
+		return e.Type
+	case *hir.ArrayLenExpr:
+		return e.Type
+	case *hir.StringLenExpr:
+		return e.Type
+	case *hir.MapIterInitExpr:
+		return e.Type
+	case *hir.MapIterNextExpr:
+		return e.Type
 	case *hir.ParenExpr:
+		if e.Type != nil && !e.Type.Equals(types.TypeUnknown) {
+			return e.Type
+		}
+		return b.exprType(e.X)
+	case *hir.CompositeLit:
+		return e.Type
+	case *hir.OptionalNone:
+		return e.Type
+	case *hir.OptionalSome:
+		return e.Type
+	case *hir.OptionalIsSome:
+		return e.Type
+	case *hir.OptionalIsNone:
+		return e.Type
+	case *hir.OptionalUnwrap:
+		return e.Type
+	case *hir.UnionVariantCheck:
+		return types.TypeBool
+	case *hir.UnionExtract:
+		return e.Type
+	case *hir.ResultOk:
+		return e.Type
+	case *hir.ResultErr:
+		return e.Type
+	case *hir.ResultUnwrap:
 		return e.Type
 	default:
 		return nil
@@ -3990,6 +4037,10 @@ func (b *functionBuilder) emitPtrOffset(base mir.ValueID, offset mir.ValueID, el
 
 func (b *functionBuilder) emitStringConcat(left, right mir.ValueID, rightType types.SemType, loc source.Location) mir.ValueID {
 	result := b.gen.nextValueID()
+	if rightType == nil {
+		b.reportUnsupported("string concat rhs type", &loc)
+		rightType = types.TypeString
+	}
 	rightBase := types.UnwrapType(rightType)
 
 	// Determine which concat function to use based on RHS type

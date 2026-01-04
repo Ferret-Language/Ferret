@@ -851,6 +851,18 @@ func (l *Lowerer) lowerExpr(expr hir.Expr, expected types.SemType) hir.Expr {
 	case *hir.Ident:
 		lowered = e
 	case *hir.Literal:
+		if e.Type != nil && types.IsUntyped(e.Type) {
+			resolved := types.ResolveUntypedType(e.Type, expected)
+			if resolved != nil && !resolved.Equals(e.Type) {
+				lowered = &hir.Literal{
+					Kind:     e.Kind,
+					Value:    e.Value,
+					Type:     resolved,
+					Location: e.Location,
+				}
+				break
+			}
+		}
 		lowered = e
 	case *hir.OptionalNone:
 		lowered = e
@@ -1514,10 +1526,16 @@ func (l *Lowerer) rangeElementType(rangeExpr hir.Expr, rng *hir.RangeExpr) types
 	}
 	if rng != nil {
 		if startType := l.exprType(rng.Start); startType != nil && !startType.Equals(types.TypeUnknown) {
-			return startType
+			startType = types.ResolveUntypedType(startType, types.TypeUnknown)
+			if startType != nil && !startType.Equals(types.TypeUnknown) {
+				return startType
+			}
 		}
 		if endType := l.exprType(rng.End); endType != nil && !endType.Equals(types.TypeUnknown) {
-			return endType
+			endType = types.ResolveUntypedType(endType, types.TypeUnknown)
+			if endType != nil && !endType.Equals(types.TypeUnknown) {
+				return endType
+			}
 		}
 	}
 	return types.TypeUnknown

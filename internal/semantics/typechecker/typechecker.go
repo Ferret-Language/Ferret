@@ -365,14 +365,14 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 						if lit, ok := n.Result.(*ast.BasicLit); ok {
 							returnedType = inferLiteralType(lit, resultType.Err)
 						} else {
-							returnedType = resolveType(returnedType, resultType.Err)
+							returnedType = types.ResolveUntypedType(returnedType, resultType.Err)
 						}
 					}
 
 					if !returnedType.Equals(types.TypeUnknown) && !resultType.Err.Equals(types.TypeUnknown) {
 						compatibility := checkTypeCompatibility(returnedType, resultType.Err)
 						if !isImplicitlyCompatible(compatibility) {
-							returnedDesc := resolveType(returnedType, resultType.Err)
+							returnedDesc := types.ResolveUntypedType(returnedType, resultType.Err)
 							diag := diagnostics.NewError("error return type mismatch").
 								WithCode(diagnostics.ErrTypeMismatch).
 								WithPrimaryLabel(n.Result.Loc(),
@@ -394,7 +394,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 						if lit, ok := n.Result.(*ast.BasicLit); ok {
 							returnedType = inferLiteralType(lit, resultType.Ok)
 						} else {
-							returnedType = resolveType(returnedType, resultType.Ok)
+							returnedType = types.ResolveUntypedType(returnedType, resultType.Ok)
 						}
 					}
 
@@ -775,7 +775,7 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 						reportNumericConstTooLarge(ctx, item.Value)
 					}
 				} else {
-					rhsType = resolveType(rhsType, types.TypeUnknown)
+					rhsType = types.ResolveUntypedType(rhsType, types.TypeUnknown)
 				}
 				if mod != nil {
 					mod.SetExprType(item.Value, rhsType)
@@ -1471,7 +1471,7 @@ func validateArrayLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 				)
 			}
 			if compat := checkTypeCompatibility(elemType, arrayType.Element); !isImplicitlyCompatible(compat) {
-				elemTypeStr := resolveType(elemType, types.TypeUnknown)
+				elemTypeStr := types.ResolveUntypedType(elemType, types.TypeUnknown)
 				diag := diagnostics.NewError(fmt.Sprintf("array elements must all be same type, expected %s but found %s", arrayType.Element.String(), elemTypeStr)).
 					WithCode(diagnostics.ErrTypeMismatch).
 					WithPrimaryLabel(elem.Loc(), fmt.Sprintf("type %s", elemTypeStr)).
@@ -1497,7 +1497,7 @@ func checkMapLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, li
 		// Check key type compatibility - with contextualization
 		keyType := checkExpr(ctx, mod, kv.Key, mapType.Key)
 		if compat := checkTypeCompatibility(keyType, mapType.Key); !isImplicitlyCompatible(compat) {
-			keyTypeStr := resolveType(keyType, types.TypeUnknown)
+			keyTypeStr := types.ResolveUntypedType(keyType, types.TypeUnknown)
 			diag := diagnostics.NewError(fmt.Sprintf("map keys must all be same type, expected %s but found %s", mapType.Key.String(), keyTypeStr)).
 				WithCode(diagnostics.ErrTypeMismatch).
 				WithPrimaryLabel(kv.Key.Loc(), fmt.Sprintf("type %s", keyTypeStr)).
@@ -1517,7 +1517,7 @@ func checkMapLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, li
 			)
 		}
 		if compat := checkTypeCompatibility(valueType, mapType.Value); !isImplicitlyCompatible(compat) {
-			valueTypeStr := resolveType(valueType, types.TypeUnknown)
+			valueTypeStr := types.ResolveUntypedType(valueType, types.TypeUnknown)
 			diag := diagnostics.NewError(fmt.Sprintf("map values must all be same type, expected %s but found %s", mapType.Value.String(), valueTypeStr)).
 				WithCode(diagnostics.ErrTypeMismatch).
 				WithPrimaryLabel(kv.Value.Loc(), fmt.Sprintf("type %s", valueTypeStr)).
@@ -3577,7 +3577,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 
 		if !isImplicitlyCompatible(compatibility) {
 			// Format the argument type in a user-friendly way
-			argTypeDesc := resolveType(argType, param.Type)
+			argTypeDesc := types.ResolveUntypedType(argType, param.Type)
 			diag := diagnostics.ArgumentTypeMismatch(
 				mod.FilePath,
 				arg.Loc(),
@@ -3640,7 +3640,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 
 			if !isImplicitlyCompatible(compatibility) {
 				// Format the argument type in a user-friendly way
-				argTypeDesc := resolveType(argType, variadicElemType)
+				argTypeDesc := types.ResolveUntypedType(argType, variadicElemType)
 				diag := diagnostics.ArgumentTypeMismatch(
 					mod.FilePath,
 					arg.Loc(),

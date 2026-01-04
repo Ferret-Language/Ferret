@@ -677,7 +677,7 @@ func inferCompositeLitType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 				if lit, ok := lit.Elts[0].(*ast.BasicLit); ok {
 					firstElemType = inferLiteralType(lit, types.TypeUnknown)
 				} else {
-					firstElemType = resolveType(firstElemType, types.TypeUnknown)
+					firstElemType = types.ResolveUntypedType(firstElemType, types.TypeUnknown)
 				}
 			}
 
@@ -813,35 +813,6 @@ func isLargeIntType(t types.SemType) bool {
 
 // resolveType resolves an untyped type to a concrete type.
 // For expressions without literals (e.g., binary expr results), uses contextual or default types.
-func resolveType(untypedType types.SemType, expected types.SemType) types.SemType {
-	if !types.IsUntyped(untypedType) {
-		return untypedType
-	}
-
-	// Try to use expected type is valid recognized type
-	if !expected.Equals(types.TypeUnknown) {
-		if types.IsUntypedInt(untypedType) && types.IsNumeric(expected) {
-			return expected
-		}
-		if types.IsUntypedFloat(untypedType) && types.IsFloat(expected) {
-			return expected
-		}
-	}
-
-	// Default to standard default types if no expected type provided
-	if primType, ok := untypedType.(*types.PrimitiveType); ok {
-		if primType.IsUntypedInt() {
-			return types.FromTypeName(types.DEFAULT_INT_TYPE)
-		} else if primType.IsUntypedFloat() {
-			return types.FromTypeName(types.DEFAULT_FLOAT_TYPE)
-		}
-	}
-
-	// todo: check if we need to unwrap the optional type here later
-
-	return untypedType
-}
-
 // inferFuncLitType infers the type of a function literal
 func inferFuncLitType(ctx *context_v2.CompilerContext, mod *context_v2.Module, lit *ast.FuncLit) types.SemType {
 	if lit.Type == nil {
@@ -899,12 +870,12 @@ func inferRangeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	if startLit, ok := expr.Start.(*ast.BasicLit); ok && types.IsUntyped(startType) {
 		startType = inferLiteralType(startLit, types.TypeUnknown)
 	} else {
-		startType = resolveType(startType, types.TypeUnknown)
+		startType = types.ResolveUntypedType(startType, types.TypeUnknown)
 	}
 	if endLit, ok := expr.End.(*ast.BasicLit); ok && types.IsUntyped(endType) {
 		endType = inferLiteralType(endLit, types.TypeUnknown)
 	} else {
-		endType = resolveType(endType, types.TypeUnknown)
+		endType = types.ResolveUntypedType(endType, types.TypeUnknown)
 	}
 
 	// Return array type with element type from range

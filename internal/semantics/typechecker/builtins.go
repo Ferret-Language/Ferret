@@ -160,7 +160,7 @@ func checkBuiltinAppend(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		if elemType != nil && !elemType.Equals(types.TypeUnknown) && valueType != nil {
 			compatibility := checkTypeCompatibilityWithContext(ctx, mod, valueType, elemType)
 			if !isImplicitlyCompatible(compatibility) {
-				argTypeDesc := resolveType(valueType, elemType)
+				argTypeDesc := types.ResolveUntypedType(valueType, elemType)
 				diag := diagnostics.ArgumentTypeMismatch(
 					mod.FilePath,
 					expr.Args[1].Loc(),

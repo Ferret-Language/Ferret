@@ -20,7 +20,7 @@ fn main() {
     
     arr2[0] = 10;
 
-    let arr3 := &arr;
+    //let arr3 := &arr;
     
     arr2[2] = 7;
 

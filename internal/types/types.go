@@ -788,6 +788,32 @@ func IsUntypedFloat(t SemType) bool {
 	return false
 }
 
+// ResolveUntypedType resolves an untyped numeric type using the expected type or defaults.
+func ResolveUntypedType(untypedType SemType, expected SemType) SemType {
+	if !IsUntyped(untypedType) {
+		return untypedType
+	}
+	if expected == nil {
+		expected = TypeUnknown
+	}
+	if !expected.Equals(TypeUnknown) {
+		if IsUntypedInt(untypedType) && IsNumeric(expected) {
+			return expected
+		}
+		if IsUntypedFloat(untypedType) && IsFloat(expected) {
+			return expected
+		}
+	}
+	if primType, ok := untypedType.(*PrimitiveType); ok {
+		if primType.IsUntypedInt() {
+			return FromTypeName(DEFAULT_INT_TYPE)
+		} else if primType.IsUntypedFloat() {
+			return FromTypeName(DEFAULT_FLOAT_TYPE)
+		}
+	}
+	return untypedType
+}
+
 // IsNumericType checks if a type is a numeric type (integer or float)
 func IsNumericType(t SemType) bool {
 	if p, ok := t.(*PrimitiveType); ok {
