@@ -1,0 +1,20 @@
+import "std/io";
+
+fn main() {
+    // Store user ages
+    let user_ages := {
+        "alice" => 25,
+        "bob" => 30,
+        "charlie" => 35
+    };
+
+    let v := 2 ?? 3;
+
+    io::Println(v);
+
+    // Safe access with defaults
+    let alice_age := user_ages["alice"];
+    //let unknown_age := user_ages["nobody"]; // Default to 18
+
+    io::Println("Alice is " + alice_age + " years old");
+}

@@ -1,20 +1,20 @@
 import "std/io";
 
 type Shape interface {
-    area() -> i32,
+    area() -> f64,
 };
 
 type Point struct {
     .X: i32
 };
 
-fn (p: Point) area() -> i32 {
-    return p.X;
+fn (p: Point) area() -> f64 {
+    return p.X ** 2;
 }
 
 fn make() -> Shape {
     let p: Point = { .X = 9 };
-    return p;
+    return p as Shape;
 }
 
 fn main() {

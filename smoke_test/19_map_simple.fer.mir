@@ -1,0 +1,71 @@
+module smoke_test/19_map_simple
+
+fn main() -> void {
+  block b1 entry:
+    %t1 = alloca map[str]i32
+    %t2 = const i64 8
+    %t3 = const i64 4
+    %t4 = alloca [3]str
+    %t5 = alloca [3]i32
+    %t6 = const str alice
+    %t7 = const i32 25
+    %t8 = ptr_add str %t4, 0
+    %t9 = ptr_add i32 %t5, 0
+    store %t8, %t6
+    store %t9, %t7
+    %t10 = const str bob
+    %t11 = const i32 30
+    %t12 = ptr_add str %t4, 8
+    %t13 = ptr_add i32 %t5, 4
+    store %t12, %t10
+    store %t13, %t11
+    %t14 = const str charlie
+    %t15 = const i32 35
+    %t16 = ptr_add str %t4, 16
+    %t17 = ptr_add i32 %t5, 8
+    store %t16, %t14
+    store %t17, %t15
+    %t18 = const i64 3
+    %t19 = call ferret_map_from_pairs_str(%t2, %t3, %t4, %t5, %t18) : map[str]i32
+    store %t1, %t19
+    %t20 = alloca i32
+    %t21 = const i32 2
+    %t22 = const i32 3
+    %t23 = optional_unwrap i32 %t21, default %t22
+    store %t20, %t23
+    %t24 = const i64 36
+    %t25 = const i32 1
+    %t26 = call ferret_array_new(%t24, %t25) : []Printable
+    %t27 = load i32 %t20
+    %t28 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, bool}
+    %t29 = ptr_add i32 %t28, 0
+    %t30 = const i32 2
+    store %t29, %t30
+    %t31 = ptr_add i32 %t28, 4
+    store %t31, %t27
+    call ferret_array_append(%t26, %t28) : bool
+    call io::Println(%t26) : void
+    %t32 = alloca i32
+    %t33 = load map[str]i32 %t1
+    %t34 = const str alice
+    %t35 = map_get i32 %t33, %t34
+    store %t32, %t35
+    %t36 = const i64 36
+    %t37 = const i32 1
+    %t38 = call ferret_array_new(%t36, %t37) : []Printable
+    %t39 = const str Alice is 
+    %t40 = load i32 %t32
+    %t42 = cast i64 %t40
+    %t41 = call ferret_string_concat_i64(%t39, %t42) : str
+    %t43 = const str  years old
+    %t44 = call ferret_io_ConcatStrings(%t41, %t43) : str
+    %t45 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, bool}
+    %t46 = ptr_add i32 %t45, 0
+    %t47 = const i32 16
+    store %t46, %t47
+    %t48 = ptr_add str %t45, 4
+    store %t48, %t44
+    call ferret_array_append(%t38, %t45) : bool
+    call io::Println(%t38) : void
+    ret
+}

@@ -828,3 +828,12 @@ func IsNumericType(t SemType) bool {
 	}
 	return false
 }
+
+// IsOptional checks if a type is an optional type
+func IsOptional(t SemType) bool {
+	if t == nil {
+		return false
+	}
+	_, ok := t.(*OptionalType)
+	return ok
+}

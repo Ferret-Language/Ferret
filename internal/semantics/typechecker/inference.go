@@ -715,8 +715,7 @@ func inferCompositeLitType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 				}
 			} else if hasMapSyntax || len(lit.Elts) > 0 {
 				// Map literal: { "key" => value, "key2" => value2 }
-				// Infer key and value types from first element
-				// All keys must have compatible types, all values must have compatible types
+				// Infer key and value types by finding the widest type needed across all elements
 				var keyType, valueType types.SemType = types.TypeUnknown, types.TypeUnknown
 
 				for _, elem := range lit.Elts {
@@ -724,16 +723,34 @@ func inferCompositeLitType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 					elemKeyType := inferExprType(ctx, mod, kv.Key)
 					elemValueType := inferExprType(ctx, mod, kv.Value)
 
-					// Use first element's types as baseline
-					if keyType.Equals(types.TypeUnknown) {
-						keyType = elemKeyType
+					// Resolve untyped literals to their default/promoted types
+					if types.IsUntyped(elemKeyType) {
+						if lit, ok := kv.Key.(*ast.BasicLit); ok {
+							elemKeyType = inferLiteralType(lit, types.TypeUnknown)
+						} else {
+							elemKeyType = types.ResolveUntypedType(elemKeyType, types.TypeUnknown)
+						}
 					}
-					if valueType.Equals(types.TypeUnknown) {
-						valueType = elemValueType
+					if types.IsUntyped(elemValueType) {
+						if lit, ok := kv.Value.(*ast.BasicLit); ok {
+							elemValueType = inferLiteralType(lit, types.TypeUnknown)
+						} else {
+							elemValueType = types.ResolveUntypedType(elemValueType, types.TypeUnknown)
+						}
 					}
 
-					// TODO: Validate all keys/values have compatible types
-					// For now, just use the first element's types
+					// Find the widest type needed (promote if necessary)
+					if keyType.Equals(types.TypeUnknown) {
+						keyType = elemKeyType
+					} else if !elemKeyType.Equals(types.TypeUnknown) {
+						keyType = widerType(keyType, elemKeyType)
+					}
+
+					if valueType.Equals(types.TypeUnknown) {
+						valueType = elemValueType
+					} else if !elemValueType.Equals(types.TypeUnknown) {
+						valueType = widerType(valueType, elemValueType)
+					}
 				}
 
 				if !keyType.Equals(types.TypeUnknown) && !valueType.Equals(types.TypeUnknown) {
@@ -898,7 +915,25 @@ func inferCoalescingExprType(ctx *context_v2.CompilerContext, mod *context_v2.Mo
 		return optType.Inner
 	}
 
-	// If condition is not optional, coalescing is redundant but still valid
-	// Result type is the condition type itself
-	return condType
+	// Error: coalescing operator requires optional type on left side
+	// Resolve untyped to actual type for better error message
+	displayType := condType
+	if types.IsUntyped(condType) {
+		// Infer the actual type from the literal
+		if lit, ok := expr.Cond.(*ast.BasicLit); ok {
+			displayType = inferLiteralType(lit, types.TypeUnknown)
+		} else {
+			displayType = types.ResolveUntypedType(condType, types.TypeUnknown)
+		}
+	}
+
+	ctx.Diagnostics.Add(
+		diagnostics.NewError(fmt.Sprintf("invalid operation: '??' operator requires optional type, got %s", displayType.String())).
+			WithCode(diagnostics.ErrTypeMismatch).
+			WithPrimaryLabel(expr.Cond.Loc(), fmt.Sprintf("this has type %s, which is not optional", displayType.String())).
+			WithHelp("the '??' operator unwraps optional values; use it with optional types like 'i32?', 'str?', etc."),
+	)
+
+	// Return TypeUnknown to signal an error
+	return types.TypeUnknown
 }
