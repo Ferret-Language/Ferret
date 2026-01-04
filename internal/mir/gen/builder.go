@@ -223,6 +223,20 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 				b.lowerArrayLiteralInto(addr, arrType, lit)
 				return
 			}
+			if arrType, ok := types.UnwrapType(typ).(*types.ArrayType); ok && arrType.Length < 0 {
+				val := b.lowerExpr(item.Value)
+				if val != mir.InvalidValue {
+					val = b.coerceValueForAssign(val, b.exprType(item.Value), typ, item.Name.Location)
+					if val != mir.InvalidValue {
+						b.emitInstr(&mir.Store{
+							Addr:     addr,
+							Value:    val,
+							Location: item.Name.Location,
+						})
+					}
+				}
+				return
+			}
 		}
 
 		val := b.lowerExpr(item.Value)
@@ -280,6 +294,23 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 				return
 			}
 
+			if b.isDynamicArrayLiteralExpr(stmt.Rhs, ref.Inner) {
+				rhs := b.lowerExpr(stmt.Rhs)
+				if rhs == mir.InvalidValue {
+					return
+				}
+				rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
+				if rhs == mir.InvalidValue {
+					return
+				}
+				b.emitInstr(&mir.Store{
+					Addr:     refPtr,
+					Value:    rhs,
+					Location: stmt.Location,
+				})
+				return
+			}
+
 			rhs := b.lowerExpr(stmt.Rhs)
 			if rhs == mir.InvalidValue {
 				return
@@ -310,6 +341,23 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 		}
 		res := b.emitBinary(op, cur, rhs, lhsStorageType, stmt.Location)
 		b.emitStore(addr, res, stmt.Location)
+		return
+	}
+
+	if b.isDynamicArrayLiteralExpr(stmt.Rhs, lhsStorageType) {
+		rhs := b.lowerExpr(stmt.Rhs)
+		if rhs == mir.InvalidValue {
+			return
+		}
+		rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), lhsStorageType, stmt.Location)
+		if rhs == mir.InvalidValue {
+			return
+		}
+		b.emitInstr(&mir.Store{
+			Addr:     addr,
+			Value:    rhs,
+			Location: stmt.Location,
+		})
 		return
 	}
 
@@ -908,6 +956,36 @@ func (b *functionBuilder) derefValueIfNeeded(val mir.ValueID, typ types.SemType,
 	return val, typ
 }
 
+func dynamicArrayValueType(typ types.SemType) (*types.ArrayType, bool) {
+	if typ == nil {
+		return nil, false
+	}
+	typ = types.UnwrapType(typ)
+	if _, ok := typ.(*types.ReferenceType); ok {
+		return nil, false
+	}
+	if arr, ok := typ.(*types.ArrayType); ok && arr.Length < 0 {
+		return arr, true
+	}
+	return nil, false
+}
+
+func (b *functionBuilder) isDynamicArrayLiteralExpr(expr hir.Expr, expected types.SemType) bool {
+	if expr == nil {
+		return false
+	}
+	if _, ok := expr.(*hir.CompositeLit); !ok {
+		return false
+	}
+	if _, ok := dynamicArrayValueType(expected); ok {
+		return true
+	}
+	if _, ok := dynamicArrayValueType(b.exprType(expr)); ok {
+		return true
+	}
+	return false
+}
+
 func (b *functionBuilder) coerceValueForAssign(val mir.ValueID, fromType, toType types.SemType, loc source.Location) mir.ValueID {
 	if val == mir.InvalidValue || fromType == nil || toType == nil {
 		return val
@@ -1283,6 +1361,15 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 			if paramType == nil || !paramIsRef {
 				val = b.emitLoad(val, ref.Inner, loc)
 				argType = ref.Inner
+			}
+		}
+		if paramType != nil {
+			if _, ok := dynamicArrayValueType(paramType); ok {
+				if _, ok := dynamicArrayValueType(argType); ok {
+					if !b.isDynamicArrayLiteralExpr(arg, paramType) {
+						val = b.emitArrayClone(val, paramType, loc)
+					}
+				}
 			}
 		}
 		if !skipInterfaceBoxing && paramType != nil && interfaceTypeOf(paramType) != nil {
@@ -2156,7 +2243,15 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 		keySlot := b.emitPtrAdd(keysAddr, keyOffset, mapType.Key, kv.Location)
 		valSlot := b.emitPtrAdd(valsAddr, valOffset, mapType.Value, kv.Location)
 		b.emitStore(keySlot, keyVal, kv.Location)
-		b.emitStore(valSlot, valueVal, kv.Location)
+		if b.isDynamicArrayLiteralExpr(kv.Value, mapType.Value) {
+			b.emitInstr(&mir.Store{
+				Addr:     valSlot,
+				Value:    valueVal,
+				Location: kv.Location,
+			})
+		} else {
+			b.emitStore(valSlot, valueVal, kv.Location)
+		}
 	}
 
 	countVal := b.emitConst(sizeType, strconv.Itoa(len(lit.Elts)), lit.Location)
@@ -2219,7 +2314,15 @@ func (b *functionBuilder) lowerDynamicArrayLiteral(arrType *types.ArrayType, lit
 		if _, isUnion := types.UnwrapType(arrType.Element).(*types.UnionType); !isUnion {
 			// Allocate storage for the element
 			temp := b.emitAlloca(arrType.Element, lit.Location)
-			b.emitStore(temp, value, lit.Location)
+			if b.isDynamicArrayLiteralExpr(elt, arrType.Element) {
+				b.emitInstr(&mir.Store{
+					Addr:     temp,
+					Value:    value,
+					Location: lit.Location,
+				})
+			} else {
+				b.emitStore(temp, value, lit.Location)
+			}
 			valuePtr = temp
 		}
 
@@ -2267,7 +2370,15 @@ func (b *functionBuilder) lowerStructLiteralInto(addr mir.ValueID, structType *t
 			return
 		}
 		fieldAddr := b.emitPtrAdd(addr, offset, fieldType, lit.Location)
-		b.emitStore(fieldAddr, value, lit.Location)
+		if b.isDynamicArrayLiteralExpr(kv.Value, fieldType) {
+			b.emitInstr(&mir.Store{
+				Addr:     fieldAddr,
+				Value:    value,
+				Location: lit.Location,
+			})
+		} else {
+			b.emitStore(fieldAddr, value, lit.Location)
+		}
 	}
 }
 
@@ -2311,7 +2422,15 @@ func (b *functionBuilder) lowerArrayLiteralInto(addr mir.ValueID, arrType *types
 		value = b.coerceValueForAssign(value, eltType, arrType.Element, lit.Location)
 		offset := i * elemSize
 		elemAddr := b.emitPtrAdd(addr, offset, arrType.Element, lit.Location)
-		b.emitStore(elemAddr, value, lit.Location)
+		if b.isDynamicArrayLiteralExpr(elt, arrType.Element) {
+			b.emitInstr(&mir.Store{
+				Addr:     elemAddr,
+				Value:    value,
+				Location: lit.Location,
+			})
+		} else {
+			b.emitStore(elemAddr, value, lit.Location)
+		}
 	}
 }
 
@@ -3811,10 +3930,30 @@ func (b *functionBuilder) emitLoad(addr mir.ValueID, typ types.SemType, loc sour
 	return id
 }
 
+func (b *functionBuilder) emitArrayClone(value mir.ValueID, arrType types.SemType, loc source.Location) mir.ValueID {
+	if value == mir.InvalidValue {
+		return value
+	}
+	id := b.gen.nextValueID()
+	b.emitInstr(&mir.Call{
+		Result:   id,
+		Target:   "ferret_array_clone",
+		Args:     []mir.ValueID{value},
+		Type:     arrType,
+		Location: loc,
+	})
+	return id
+}
+
 func (b *functionBuilder) emitStore(addr, value mir.ValueID, loc source.Location) {
-	if elem, ok := b.ptrElem[addr]; ok && needsByRefType(elem) {
-		b.emitMemcpy(addr, value, elem, loc)
-		return
+	if elem, ok := b.ptrElem[addr]; ok {
+		if needsByRefType(elem) {
+			b.emitMemcpy(addr, value, elem, loc)
+			return
+		}
+		if _, ok := dynamicArrayValueType(elem); ok {
+			value = b.emitArrayClone(value, elem, loc)
+		}
 	}
 	b.emitInstr(&mir.Store{
 		Addr:     addr,

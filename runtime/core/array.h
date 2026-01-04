@@ -25,6 +25,9 @@ ferret_array_t* ferret_array_new(size_t elem_size, int32_t initial_capacity);
 // Create array from existing data (takes ownership)
 ferret_array_t* ferret_array_from_data(void* data, int32_t length, int32_t capacity, size_t elem_size);
 
+// Clone array (deep copy of elements)
+ferret_array_t* ferret_array_clone(const ferret_array_t* arr);
+
 // Append an element to the array (amortized O(1))
 // Returns false on allocation failure
 bool ferret_array_append(ferret_array_t* arr, const void* elem);

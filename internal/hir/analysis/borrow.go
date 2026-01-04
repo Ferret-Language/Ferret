@@ -761,10 +761,10 @@ func (b *borrowChecker) checkReturnLifetime(expr hir.Expr) {
 func (b *borrowChecker) reportBorrowError(loc *source.Location, msg string, borrowLoc *source.Location, releaseLoc *source.Location) {
 	diag := diagnostics.NewError(msg).WithCode(diagnostics.ErrInvalidOperation)
 	if loc != nil {
-		diag = diag.WithPrimaryLabel(loc, "borrow conflict")
+		diag = diag.WithPrimaryLabel(loc, "again borrow here")
 	}
 	if borrowLoc != nil {
-		diag = diag.WithSecondaryLabel(borrowLoc, "borrowed here")
+		diag = diag.WithSecondaryLabel(borrowLoc, "first borrowed here")
 	}
 	if releaseLoc != nil && releaseLoc != borrowLoc {
 		diag = diag.WithSecondaryLabel(releaseLoc, "borrow ends here")

@@ -2,6 +2,12 @@
 
 This runtime provides the minimal JS imports the browser-only WASM backend expects.
 
+## Runtime source
+
+The canonical source is `runtime/wasm/runtime.ts`.
+The playground consumes a copied TS file at `../website/src/lib/runtime.ts` (updated by the
+`scripts/build-playground-wasm.*` scripts).
+
 ## Build the compiler (WASM)
 
 From the repo root:
@@ -38,8 +44,8 @@ Notes:
 
 Usage (sketch):
 
-```js
-import { createFerretRuntime } from "./runtime.js";
+```ts
+import { createFerretRuntime } from "./runtime.ts";
 
 const rt = createFerretRuntime();
 const { instance } = await WebAssembly.instantiateStreaming(fetch("program.wasm"), rt.imports);

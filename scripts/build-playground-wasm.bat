@@ -14,13 +14,22 @@ if errorlevel 1 (
   exit /b 1
 )
 
-set WEBSITE_PUBLIC=%ROOT%\..\website\public
+set WEBSITE_ROOT=%ROOT%\..\website
+set WEBSITE_PUBLIC=%WEBSITE_ROOT%\public
 if exist "%WEBSITE_PUBLIC%" (
   copy /Y "%ROOT%\bin\ferret.wasm" "%WEBSITE_PUBLIC%\ferret2.wasm" >nul
   echo Copied wasm compiler to %WEBSITE_PUBLIC%\ferret2.wasm
 ) else (
   echo Website public folder not found: %WEBSITE_PUBLIC%
   echo Built wasm compiler at %ROOT%\bin\ferret.wasm
+)
+
+if exist "%WEBSITE_ROOT%" (
+  if not exist "%WEBSITE_ROOT%\src\lib" (
+    mkdir "%WEBSITE_ROOT%\src\lib"
+  )
+  copy /Y "%ROOT%\runtime\wasm\runtime.ts" "%WEBSITE_ROOT%\src\lib\runtime.ts" >nul
+  echo Copied runtime TS to %WEBSITE_ROOT%\src\lib\runtime.ts
 )
 
 endlocal

@@ -174,11 +174,23 @@ func collectNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node a
 		collectVarDecl(ctx, mod, n, symbols.SymbolConstant)
 	case *ast.FuncDecl:
 		if mod.CurrentScope != mod.ModuleScope {
+			var params []string
+			for _, param := range n.Type.Params {
+				params = append(params, fmt.Sprintf("%s: %s", param.Name.Name, param.Type.Loc().GetText(ctx.Diagnostics.GetSourceCache())))
+			}
+			paramsStr := strings.Join(params, ", ")
+			ret := " "
+			if n.Type.Result != nil {
+				ret = fmt.Sprintf(" -> %s ", n.Type.Result.Loc().GetText(ctx.Diagnostics.GetSourceCache()))
+			}
+			sig := fmt.Sprintf("let %s := fn(%s)%s{ ... };", n.Name.Name, paramsStr, ret)
+			sh := diagnostics.NewSyntaxHighlighter(true)
+			sig = sh.HighlightLine(sig)
 			ctx.Diagnostics.Add(
 				diagnostics.NewError("function declarations are only allowed at top level").
 					WithCode(diagnostics.ErrInvalidDeclaration).
 					WithPrimaryLabel(n.Loc(), "move this declaration to module scope").
-					WithHelp("nested scopes only allow anonymous functions, e.g. `let f := fn(...) { ... };`"),
+					WithHelp(fmt.Sprintf("nested scopes only allow anonymous functions, e.g. `%s`", sig)),
 			)
 		}
 		collectFuncDeclSignature(ctx, mod, n)

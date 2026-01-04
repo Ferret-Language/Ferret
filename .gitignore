@@ -1,5 +1,6 @@
 .gocache
 .cache/
+runtime/wasm/runtime.js
 
 # Ignore ferret files from being tracked by git from the root directory
 /*.c
