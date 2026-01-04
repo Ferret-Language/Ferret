@@ -20,6 +20,7 @@ type functionBuilder struct {
 	fn           *mir.Function
 	current      *mir.Block
 	paramsByName map[string]mir.ValueID
+	paramTypes   map[string]types.SemType
 	slots        map[*symbols.Symbol]mir.ValueID
 	tempSlots    map[*hir.Ident]mir.ValueID
 	ptrElem      map[mir.ValueID]types.SemType
@@ -39,6 +40,7 @@ func newFunctionBuilder(gen *Generator, fn *mir.Function) *functionBuilder {
 		gen:          gen,
 		fn:           fn,
 		paramsByName: make(map[string]mir.ValueID),
+		paramTypes:   make(map[string]types.SemType),
 		slots:        make(map[*symbols.Symbol]mir.ValueID),
 		tempSlots:    make(map[*hir.Ident]mir.ValueID),
 		ptrElem:      make(map[mir.ValueID]types.SemType),
@@ -59,6 +61,7 @@ func (b *functionBuilder) buildFuncBody(body *hir.Block) {
 	for _, param := range b.fn.Params {
 		if param.Name != "" {
 			b.paramsByName[param.Name] = param.ID
+			b.paramTypes[param.Name] = param.Type
 		}
 		if param.Name == "__ret" {
 			b.retParam = param.ID
@@ -1351,18 +1354,7 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 		if fnType != nil && i < len(fnType.Params) {
 			paramType = fnType.Params[i].Type
 		}
-		if ref, ok := types.UnwrapType(argType).(*types.ReferenceType); ok {
-			paramIsRef := false
-			if paramType != nil {
-				if _, ok := types.UnwrapType(paramType).(*types.ReferenceType); ok {
-					paramIsRef = true
-				}
-			}
-			if paramType == nil || !paramIsRef {
-				val = b.emitLoad(val, ref.Inner, loc)
-				argType = ref.Inner
-			}
-		}
+		// Keep array cloning logic
 		if paramType != nil {
 			if _, ok := dynamicArrayValueType(paramType); ok {
 				if _, ok := dynamicArrayValueType(argType); ok {
@@ -2079,7 +2071,15 @@ func (b *functionBuilder) addrForIdent(ident *hir.Ident) mir.ValueID {
 		}
 		if ident.Symbol.Kind == symbols.SymbolParameter || ident.Symbol.Kind == symbols.SymbolReceiver {
 			if val, ok := b.paramsByName[ident.Name]; ok {
-				addr := b.emitAllocaInEntry(ident.Type, ident.Location)
+				// Use MIR parameter type for correct allocation size
+				// This is important when HIR has value type but MIR converted to reference
+				paramType := ident.Type
+				if mirType, ok := b.paramTypes[ident.Name]; ok {
+					paramType = mirType
+				}
+				// Always allocate and store parameter value
+				// This works for both QBE (optimization possible later) and WASM (required)
+				addr := b.emitAllocaInEntry(paramType, ident.Location)
 				b.emitStoreInEntry(addr, val, ident.Location)
 				b.slots[ident.Symbol] = addr
 				return addr
@@ -3564,6 +3564,11 @@ func (b *functionBuilder) exprType(expr hir.Expr) types.SemType {
 	case *hir.Literal:
 		return e.Type
 	case *hir.Ident:
+		// Check if this is a parameter with an overridden MIR type
+		// This ensures field access through reference parameters works correctly
+		if mirType, ok := b.paramTypes[e.Name]; ok {
+			return mirType
+		}
 		return e.Type
 	case *hir.BinaryExpr:
 		return e.Type

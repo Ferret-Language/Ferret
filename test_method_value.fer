@@ -1,0 +1,24 @@
+import "std/io";
+
+type Counter struct {
+    .Value: i32
+};
+
+fn (c: &Counter) ref() {
+    io::Println(c.Value);
+}
+
+fn (c: &'Counter) incr() {
+    c.Value++;
+}
+
+fn (c: Counter) getValue() -> i32 {
+    return c.Value;
+}
+
+fn main() {
+    let c := { .Value = 42 } as Counter;
+    io::Println(c.getValue());
+    c.incr();
+    c.ref();
+}

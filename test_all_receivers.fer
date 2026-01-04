@@ -1,0 +1,37 @@
+import "std/io";
+
+type Counter struct {
+    .Value: i32
+};
+
+// Value receiver - gets a copy
+fn (c: Counter) getValue() -> i32 {
+    return c.Value;
+}
+
+// Immutable reference receiver
+fn (c: &Counter) printValue() {
+    io::Println(c.Value);
+}
+
+// Mutable reference receiver  
+fn (c: &'Counter) increment() {
+    c.Value++;
+}
+
+fn main() {
+    let c := { .Value = 10 } as Counter;
+    
+    // Value receiver
+    let v := c.getValue();
+    io::Println(v);
+    
+    // Immutable ref receiver
+    c.printValue();
+    
+    // Mutable ref receiver
+    c.increment();
+    c.printValue();
+    
+    io::Println(c.getValue());
+}

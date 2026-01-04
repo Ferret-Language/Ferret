@@ -187,14 +187,14 @@ func (g *Generator) lowerParams(fnType *types.FunctionType) []mir.Param {
 	params := make([]mir.Param, 0, len(fnType.Params))
 	for _, param := range fnType.Params {
 		paramType := param.Type
-		
+
 		// Convert variadic parameters (...T) to slice type ([]T) for MIR
 		// The FunctionType keeps IsVariadic=true for call sites,
 		// but MIR needs the actual slice type for the function signature
 		if param.IsVariadic {
 			paramType = types.NewArray(paramType, -1) // []T
 		}
-		
+
 		if needsByRefType(paramType) {
 			paramType = types.NewReference(paramType)
 		}
