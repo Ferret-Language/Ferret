@@ -67,8 +67,8 @@
   - [x] Add non-PIE build flags for QBE outputs (Linux/macOS/OpenBSD).
 
 ### WASM backend gaps (priority order)
-- [ ] Codegen: struct ops (MakeStruct / ExtractField / InsertField) to match QBE layout.
-- [ ] Codegen: array value construction (MakeArray) for fixed arrays and value-level literals.
+- [x] Codegen: struct ops (MakeStruct / ExtractField / InsertField) to match QBE layout.
+- [x] Codegen: array value construction (MakeArray) for fixed arrays and value-level literals.
 - [ ] Codegen: map ops (MapGet / MapSet + iteration helpers) with required runtime imports.
 - [ ] Codegen: optional/result/union ops (Optional* / Result* / Union*) needed for catch paths.
 - [ ] Codegen: call_indirect for interface/closure dispatch.
