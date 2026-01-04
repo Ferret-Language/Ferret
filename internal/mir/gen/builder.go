@@ -2536,6 +2536,9 @@ func (b *functionBuilder) lowerIndexAssign(expr *hir.IndexExpr, rhs hir.Expr, op
 		if arrVal == mir.InvalidValue {
 			return
 		}
+		if arrType.Length < 0 {
+			arrVal, _ = b.derefValueIfNeeded(arrVal, b.exprType(expr.X), loc)
+		}
 
 		indexVal := b.lowerExpr(expr.Index)
 		if indexVal == mir.InvalidValue {
@@ -2679,6 +2682,7 @@ func (b *functionBuilder) lowerStringIndexValue(expr *hir.IndexExpr) mir.ValueID
 	if base == mir.InvalidValue {
 		return mir.InvalidValue
 	}
+	base, _ = b.derefValueIfNeeded(base, b.exprType(expr.X), expr.Location)
 	indexVal := b.lowerExpr(expr.Index)
 	if indexVal == mir.InvalidValue {
 		return mir.InvalidValue
@@ -2707,6 +2711,7 @@ func (b *functionBuilder) lowerDynamicIndexValue(expr *hir.IndexExpr, arrType *t
 	if arrVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
+	arrVal, _ = b.derefValueIfNeeded(arrVal, b.exprType(expr.X), expr.Location)
 
 	indexVal := b.lowerExpr(expr.Index)
 	if indexVal == mir.InvalidValue {
@@ -2757,6 +2762,7 @@ func (b *functionBuilder) lowerMapIndexValue(expr *hir.IndexExpr, mapType *types
 	if mapVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
+	mapVal, _ = b.derefValueIfNeeded(mapVal, b.exprType(expr.X), expr.Location)
 
 	keyVal := b.lowerExpr(expr.Index)
 	if keyVal == mir.InvalidValue {
@@ -2787,6 +2793,7 @@ func (b *functionBuilder) lowerMapIndexAssign(expr *hir.IndexExpr, rhs hir.Expr,
 	if mapVal == mir.InvalidValue {
 		return
 	}
+	mapVal, _ = b.derefValueIfNeeded(mapVal, b.exprType(expr.X), loc)
 
 	keyVal := b.lowerExpr(expr.Index)
 	if keyVal == mir.InvalidValue {

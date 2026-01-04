@@ -1281,9 +1281,10 @@ func checkIndexExpr(ctx *context_v2.CompilerContext, expr *ast.IndexExpr, baseTy
 	}
 	baseType = dereferenceType(types.UnwrapType(baseType))
 	indexType = types.UnwrapType(indexType)
+	isIntegerIndex := types.IsInteger(indexType) || types.IsUntypedInt(indexType)
 
 	if arrType, ok := baseType.(*types.ArrayType); ok {
-		if !types.IsInteger(indexType) {
+		if !isIntegerIndex {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError("array index must be an integer").
 					WithCode(diagnostics.ErrInvalidOperation).
@@ -1304,7 +1305,7 @@ func checkIndexExpr(ctx *context_v2.CompilerContext, expr *ast.IndexExpr, baseTy
 		return
 	}
 	if prim, ok := baseType.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
-		if !types.IsInteger(indexType) {
+		if !isIntegerIndex {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError("string index must be an integer").
 					WithCode(diagnostics.ErrInvalidOperation).
@@ -2508,13 +2509,18 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		indexType := checkExpr(ctx, mod, e.Index, types.TypeUnknown)
 		checkIndexExpr(ctx, e, baseType, indexType)
 		// Return element type
-		if arrType, ok := types.UnwrapType(baseType).(*types.ArrayType); ok {
+		resolvedBase := dereferenceType(types.UnwrapType(baseType))
+		if arrType, ok := resolvedBase.(*types.ArrayType); ok {
 			mod.SetExprType(expr, arrType.Element)
 			return arrType.Element
 		}
-		if mapType, ok := types.UnwrapType(baseType).(*types.MapType); ok {
+		if mapType, ok := resolvedBase.(*types.MapType); ok {
 			mod.SetExprType(expr, mapType.Value)
 			return mapType.Value
+		}
+		if prim, ok := resolvedBase.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
+			mod.SetExprType(expr, types.TypeByte)
+			return types.TypeByte
 		}
 		return types.TypeUnknown
 
@@ -2786,6 +2792,7 @@ func formatValueDescription(typ types.SemType, expr ast.Expression) string {
 	if types.IsUntyped(typ) {
 		if basicLit, ok := expr.(*ast.BasicLit); ok {
 			// Resolve to see what type it needs
+			// TODO : change later to min type
 			resolvedType := inferLiteralType(basicLit, types.TypeUnknown)
 			if types.IsUntypedInt(typ) {
 				return fmt.Sprintf("integer literal (needs %s)", resolvedType.String())
@@ -3116,16 +3123,16 @@ func formatIntegerTypeSuggestions(targetName types.TYPE_NAME, minUnsigned, minSi
 	if len(parts) == 0 {
 		return ""
 	}
-	
+
 	if len(parts) == 2 {
 		return fmt.Sprintf("%s or %s", parts[0], parts[1])
 	}
-	
+
 	// join the last part with 'or' and others with ','
 	if len(parts) > 2 {
 		return fmt.Sprintf("%s, or %s", strings.Join(parts[:len(parts)-1], ", "), parts[len(parts)-1])
 	}
-	
+
 	return parts[0]
 }
 

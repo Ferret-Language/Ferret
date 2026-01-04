@@ -4,6 +4,17 @@ import "math";
 fn main() {
     let arr := [1,2,3,4];
     append(&'arr, 5);
+
+    //arr[1] = 99;
+    
+    let arr2 := &'arr;
+    
+    arr2[0] = 10;
+
+    let arr3 := &'arr;
+    
+    arr2[2] = 7;
+
     for v in arr {
         io::Println(v);
     }
