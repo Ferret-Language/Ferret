@@ -71,7 +71,7 @@
 - [x] Codegen: array value construction (MakeArray) for fixed arrays and value-level literals.
 - [ ] Codegen: map ops (MapGet / MapSet + iteration helpers) with required runtime imports.
 - [ ] Codegen: optional/result/union ops (Optional* / Result* / Union*) needed for catch paths.
-- [ ] Codegen: call_indirect for interface/closure dispatch.
+- [x] Codegen: call_indirect for interface/closure dispatch.
 - [x] Runtime: string concat helpers (ferret_io_ConcatStrings + ferret_string_concat_*).
 - [ ] Runtime: large primitive helpers (ferret_{i128,u128,i256,u256,f128,f256}_*).
 - [ ] Runtime: map helpers (ferret_map_* + typed constructors + optional get/iter).

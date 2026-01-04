@@ -44,6 +44,9 @@ type Generator struct {
 	imports   map[string]funcSig
 	importIDs map[string]uint32
 
+	tableIndex  map[string]uint32 // function name -> table index for call_indirect
+	typeIndices map[string]uint32 // signature string -> type index
+
 	dataBase   uint32
 	data       []byte
 	stringPtrs map[string]uint32
@@ -54,14 +57,16 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 		return nil, fmt.Errorf("wasm: missing compiler context")
 	}
 	gen := &Generator{
-		ctx:        ctx,
-		layout:     mir.NewDataLayout(4),
-		units:      units,
-		funcs:      make(map[string]*funcInfo),
-		imports:    make(map[string]funcSig),
-		importIDs:  make(map[string]uint32),
-		dataBase:   1024,
-		stringPtrs: make(map[string]uint32),
+		ctx:         ctx,
+		layout:      mir.NewDataLayout(4),
+		units:       units,
+		funcs:       make(map[string]*funcInfo),
+		imports:     make(map[string]funcSig),
+		importIDs:   make(map[string]uint32),
+		tableIndex:  make(map[string]uint32),
+		typeIndices: make(map[string]uint32),
+		dataBase:    1024,
+		stringPtrs:  make(map[string]uint32),
 	}
 	for _, u := range units {
 		if u.IsEntry {
@@ -92,6 +97,7 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 		typeIndex := mod.addType(sig.params, sig.results)
 		index := mod.addImportFunc("ferret", name, typeIndex)
 		gen.importIDs[name] = index
+		gen.typeIndices[sigToString(sig)] = typeIndex
 	}
 
 	functionIndex := make(map[string]uint32)
@@ -105,6 +111,26 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 		functionIndex[name] = baseIndex + uint32(i)
 	}
 
+	// Populate function table with closures and function wrappers BEFORE emitting functions
+	// These are functions that need to be callable via call_indirect
+	tableNames := make([]string, 0)
+	for _, name := range funcOrder {
+		// Add closures (__func_lit__*) and function wrappers (__func_wrap__*) to table
+		if strings.Contains(name, "__func_lit__") || strings.Contains(name, "__func_wrap__") {
+			tableNames = append(tableNames, name)
+		}
+	}
+	if len(tableNames) > 0 {
+		mod.setTableSize(uint32(len(tableNames)))
+		for _, name := range tableNames {
+			if idx, ok := functionIndex[name]; ok {
+				tableIdx := mod.addTableElement(idx)
+				gen.tableIndex[name] = tableIdx
+			}
+		}
+		mod.addExport("__indirect_function_table", exportKindTable, 0)
+	}
+
 	for _, name := range funcOrder {
 		info := gen.funcs[name]
 		sig, err := gen.funcSignature(info.fn)
@@ -112,6 +138,7 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 			return nil, err
 		}
 		typeIndex := mod.addType(sig.params, sig.results)
+		gen.typeIndices[sigToString(sig)] = typeIndex
 		locals, body, err := gen.emitFunction(info, functionIndex)
 		if err != nil {
 			return nil, err
@@ -352,6 +379,12 @@ func (g *Generator) emitFunction(info *funcInfo, functionIndex map[string]uint32
 						return nil, nil, err
 					}
 				}
+			case *mir.CallIndirect:
+				if v.Result != mir.InvalidValue && !isVoidType(v.Type) {
+					if err := allocLocal(v.Result, v.Type); err != nil {
+						return nil, nil, err
+					}
+				}
 			case *mir.Phi:
 				if err := allocLocal(v.Result, v.Type); err != nil {
 					return nil, nil, err
@@ -514,8 +547,7 @@ func (g *Generator) emitInstr(info *funcInfo, instr mir.Instr, locals map[mir.Va
 	case *mir.Call:
 		return g.emitCall(info, v, locals, fnIndex)
 	case *mir.CallIndirect:
-		g.reportUnsupported("call indirect", v.Loc())
-		return []byte{opcodeUnreachable}, nil
+		return g.emitCallIndirect(info, v, locals, fnIndex)
 	case *mir.MakeStruct:
 		return g.emitMakeStruct(info, v, locals, scratchLocal)
 	case *mir.ExtractField:
@@ -638,13 +670,34 @@ func (g *Generator) emitConst(c *mir.Const, locals map[mir.ValueID]uint32) ([]by
 	if c == nil {
 		return nil, nil
 	}
+
 	valType, err := wasmValueType(c.Type)
 	if err != nil {
 		return nil, err
 	}
+
 	var out []byte
 	switch valType {
 	case valTypeI32:
+		// Try to resolve as function name first (for closures with FunctionType)
+		found := false
+		for fullName, idx := range g.tableIndex {
+			// Match by suffix - the const has the unqualified name, table has qualified
+			// e.g., const: "__func_lit__1", table: "examples_closure_capture___func_lit__1"
+			if fullName == c.Value || strings.HasSuffix(fullName, c.Value) {
+				// WASM table indices are i32
+				out = append(out, opcodeI32Const)
+				out = append(out, encodeS32(int32(idx))...)
+				out = append(out, opcodeLocalSet)
+				out = append(out, encodeU32(locals[c.Result])...)
+				found = true
+				break
+			}
+		}
+		if found {
+			return out, nil
+		}
+		// Fall back to normal i32 const parsing
 		value, err := parseI32Const(c.Type, c.Value, g.stringPtr)
 		if err != nil {
 			return nil, err
@@ -652,8 +705,23 @@ func (g *Generator) emitConst(c *mir.Const, locals map[mir.ValueID]uint32) ([]by
 		out = append(out, opcodeI32Const)
 		out = append(out, encodeS32(value)...)
 	case valTypeI64:
+		// Try to resolve as function name first (for closures)
+		for fullName, idx := range g.tableIndex {
+			if fullName == c.Value || strings.HasSuffix(fullName, "_"+c.Value) {
+				out = append(out, opcodeI64Const)
+				out = append(out, encodeS64(int64(idx))...)
+				out = append(out, opcodeLocalSet)
+				out = append(out, encodeU32(locals[c.Result])...)
+				return out, nil
+			}
+		}
+		// Fall back to numeric parsing
 		value, err := parseI64Const(c.Type, c.Value)
 		if err != nil {
+			// If numeric parsing fails and it looks like a function name, report better error
+			if !strings.ContainsAny(c.Value, "0123456789") || strings.Contains(c.Value, "funclit") {
+				return nil, fmt.Errorf("wasm: unresolved function name in const: %s (not in table)", c.Value)
+			}
 			return nil, err
 		}
 		out = append(out, opcodeI64Const)
@@ -2054,6 +2122,79 @@ func (g *Generator) emitCall(info *funcInfo, c *mir.Call, locals map[mir.ValueID
 	return out, nil
 }
 
+func (g *Generator) emitCallIndirect(info *funcInfo, c *mir.CallIndirect, locals map[mir.ValueID]uint32, fnIndex map[string]uint32) ([]byte, error) {
+	if c == nil || info == nil {
+		return nil, nil
+	}
+
+	// Build function signature for type index lookup
+	sig, err := g.callIndirectSignature(info, c)
+	if err != nil {
+		return nil, err
+	}
+
+	// Look up the type index for this signature
+	sigStr := sigToString(sig)
+	typeIndex, ok := g.typeIndices[sigStr]
+	if !ok {
+		return nil, fmt.Errorf("wasm: missing type index for call_indirect signature %s", sigStr)
+	}
+
+	var out []byte
+
+	// Push arguments onto stack first
+	for _, arg := range c.Args {
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(locals[arg])...)
+	}
+
+	// Load function table index from closure env
+	// The callee is a pointer to the closure env
+	// The first field (__fn) at offset 0 contains the table index (stored as u64)
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[c.Callee])...)
+	// Load the function pointer (stored as i64)
+	out = append(out, opcodeI64Load)
+	out = append(out, 0x00, 0x00) // alignment=0, offset=0
+	// Convert i64 to i32 for table index
+	out = append(out, opcodeI32WrapI64)
+
+	// Emit call_indirect with proper type index and table index 0
+	out = append(out, opcodeCallIndirect)
+	out = append(out, encodeU32(typeIndex)...)
+	out = append(out, 0x00) // table index (always 0 for single table)
+
+	if c.Result != mir.InvalidValue && !isVoidType(c.Type) {
+		out = append(out, opcodeLocalSet)
+		out = append(out, encodeU32(locals[c.Result])...)
+	}
+	return out, nil
+}
+
+func (g *Generator) callIndirectSignature(info *funcInfo, call *mir.CallIndirect) (funcSig, error) {
+	params := make([]ValType, 0, len(call.Args))
+	for _, arg := range call.Args {
+		typ, ok := info.valueType[arg]
+		if !ok {
+			return funcSig{}, fmt.Errorf("wasm: missing arg type for call_indirect")
+		}
+		v, err := wasmValueType(typ)
+		if err != nil {
+			return funcSig{}, err
+		}
+		params = append(params, v)
+	}
+	results := []ValType{}
+	if !isVoidType(call.Type) {
+		ret, err := wasmValueType(call.Type)
+		if err != nil {
+			return funcSig{}, err
+		}
+		results = append(results, ret)
+	}
+	return funcSig{params: params, results: results}, nil
+}
+
 func (g *Generator) callSignature(info *funcInfo, call *mir.Call) (funcSig, error) {
 	params := make([]ValType, 0, len(call.Args))
 	for _, arg := range call.Args {
@@ -2546,6 +2687,26 @@ func sigEqual(a, b funcSig) bool {
 		}
 	}
 	return true
+}
+
+func sigToString(sig funcSig) string {
+	var parts []string
+	parts = append(parts, "(")
+	for i, p := range sig.params {
+		if i > 0 {
+			parts = append(parts, ",")
+		}
+		parts = append(parts, fmt.Sprintf("%d", p))
+	}
+	parts = append(parts, ")->(")
+	for i, r := range sig.results {
+		if i > 0 {
+			parts = append(parts, ",")
+		}
+		parts = append(parts, fmt.Sprintf("%d", r))
+	}
+	parts = append(parts, ")")
+	return strings.Join(parts, "")
 }
 
 func sortStrings(values []string) {

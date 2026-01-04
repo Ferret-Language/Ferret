@@ -1,0 +1,45 @@
+module examples/closure_capture
+
+fn main() -> void {
+  block b1 entry:
+    %t1 = alloca i32
+    %t2 = const i32 5
+    store %t1, %t2
+    %t3 = alloca fn(y: i32) -> i32
+    %t10 = const u64 12
+    %t11 = call ferret_alloc(%t10) : fn(y: i32) -> i32
+    %t12 = const fn(y: i32) -> i32 __func_lit__1
+    %t13 = ptr_add u64 %t11, 0
+    store %t13, %t12
+    %t14 = ptr_add &i32 %t11, 8
+    %t15 = const u64 4
+    %t16 = call ferret_alloc(%t15) : &i32
+    %t17 = load i32 %t1
+    store %t16, %t17
+    store %t14, %t16
+    store %t3, %t11
+    %t18 = const i32 36
+    %t19 = const i32 1
+    %t20 = call ferret_array_new(%t18, %t19) : []Printable
+    %t21 = load fn(y: i32) -> i32 %t3
+    %t22 = const i32 7
+    %t23 = call_indirect i32 %t21(%t21, %t22)
+    %t24 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, bool}
+    %t25 = ptr_add i32 %t24, 0
+    %t26 = const i32 2
+    store %t25, %t26
+    %t27 = ptr_add i32 %t24, 4
+    store %t27, %t23
+    call ferret_array_append(%t20, %t24) : bool
+    call io::Println(%t20) : void
+    ret
+}
+
+fn __func_lit__1(__env: &struct { .__fn: u64, .__cap0: &i32 }, y: i32) -> i32 {
+  block b2 entry:
+    %t6 = ptr_add &i32 %t4, 8
+    %t7 = load &i32 %t6
+    %t8 = load i32 %t7
+    %t9 = + i32 %t8, %t5
+    ret %t9
+}

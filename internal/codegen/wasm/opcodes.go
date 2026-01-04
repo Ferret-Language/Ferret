@@ -18,6 +18,7 @@ const (
 	opcodeBr             = 0x0c
 	opcodeReturn         = 0x0f
 	opcodeCall           = 0x10
+	opcodeCallIndirect   = 0x11
 	opcodeDrop           = 0x1a
 	opcodeLocalGet       = 0x20
 	opcodeLocalSet       = 0x21

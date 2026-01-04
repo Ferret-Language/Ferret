@@ -12,14 +12,16 @@ const (
 )
 
 const (
-	sectionType   = 1
-	sectionImport = 2
-	sectionFunc   = 3
-	sectionMemory = 5
-	sectionGlobal = 6
-	sectionExport = 7
-	sectionCode   = 10
-	sectionData   = 11
+	sectionType    = 1
+	sectionImport  = 2
+	sectionFunc    = 3
+	sectionTable   = 4
+	sectionMemory  = 5
+	sectionGlobal  = 6
+	sectionExport  = 7
+	sectionElement = 9
+	sectionCode    = 10
+	sectionData    = 11
 )
 
 const (
@@ -28,6 +30,7 @@ const (
 	exportKindFunc   = 0x00
 	exportKindMem    = 0x02
 	exportKindGlobal = 0x03
+	exportKindTable  = 0x01
 )
 
 type funcType struct {
@@ -71,6 +74,8 @@ type ModuleBuilder struct {
 	exports     []exportDef
 	data        []dataSegment
 	globals     []globalDef
+	tableMin    uint32
+	elements    []uint32 // function indices in the table
 
 	memoryMin uint32
 }
@@ -119,6 +124,15 @@ func (m *ModuleBuilder) addGlobal(valType ValType, mutable bool, init []byte) ui
 	return uint32(len(m.globals) - 1)
 }
 
+func (m *ModuleBuilder) setTableSize(min uint32) {
+	m.tableMin = min
+}
+
+func (m *ModuleBuilder) addTableElement(funcIndex uint32) uint32 {
+	m.elements = append(m.elements, funcIndex)
+	return uint32(len(m.elements) - 1)
+}
+
 func (m *ModuleBuilder) emit() []byte {
 	var out bytes.Buffer
 	out.Write([]byte{0x00, 0x61, 0x73, 0x6d})
@@ -162,6 +176,14 @@ func (m *ModuleBuilder) emit() []byte {
 		out.Write(emitSection(sectionFunc, section.Bytes()))
 	}
 
+	if m.tableMin > 0 {
+		section := bytes.Buffer{}
+		section.Write(encodeU32(1)) // one table
+		section.WriteByte(0x70)     // funcref type
+		section.Write(encodeLimits(m.tableMin))
+		out.Write(emitSection(sectionTable, section.Bytes()))
+	}
+
 	if m.memoryMin > 0 {
 		section := bytes.Buffer{}
 		section.Write(encodeU32(1))
@@ -194,6 +216,20 @@ func (m *ModuleBuilder) emit() []byte {
 			section.Write(encodeU32(exp.index))
 		}
 		out.Write(emitSection(sectionExport, section.Bytes()))
+	}
+
+	if len(m.elements) > 0 {
+		section := bytes.Buffer{}
+		section.Write(encodeU32(1)) // one element segment
+		section.WriteByte(0x00)     // active with table index 0
+		section.WriteByte(0x41)     // i32.const
+		section.Write(encodeU32(0)) // offset 0
+		section.WriteByte(0x0b)     // end
+		section.Write(encodeU32(uint32(len(m.elements))))
+		for _, funcIndex := range m.elements {
+			section.Write(encodeU32(funcIndex))
+		}
+		out.Write(emitSection(sectionElement, section.Bytes()))
 	}
 
 	if len(m.functions) > 0 {
