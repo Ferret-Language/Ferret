@@ -2,6 +2,15 @@ import "std/io";
 import "math";
 
 fn main() {
+    
+    fn nested() {
+        // this should be disallowed
+    }
+    
+    let another := fn() {
+        // this one is allowed
+    };
+
     let arr := [1,2,3,4];
     append(&'arr, 5);
 
@@ -11,7 +20,7 @@ fn main() {
     
     arr2[0] = 10;
 
-    let arr3 := &'arr;
+    //let arr3 := &'arr;
     
     arr2[2] = 7;
 

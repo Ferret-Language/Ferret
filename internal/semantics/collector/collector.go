@@ -162,7 +162,7 @@ func collectDeclarationOnly(ctx *context_v2.CompilerContext, mod *context_v2.Mod
 
 // collectNode processes a single AST node and declares symbols
 // This is used when collecting function bodies (second pass).
-// Function declarations are only at module level and are handled by collectDeclarationOnly.
+// Function and method declarations must be at module level; anonymous functions are handled in expressions.
 func collectNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast.Node) {
 	// Check if this statement is not allowed at module level
 	checkModuleLevelRestriction(ctx, mod, node)
@@ -172,11 +172,24 @@ func collectNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node a
 		collectVarDecl(ctx, mod, n, symbols.SymbolVariable)
 	case *ast.ConstDecl:
 		collectVarDecl(ctx, mod, n, symbols.SymbolConstant)
-	// Function and method declarations can appear in nested scopes (e.g., function literals, nested functions)
-	// Collect them here if they appear in nested scopes
 	case *ast.FuncDecl:
+		if mod.CurrentScope != mod.ModuleScope {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("function declarations are only allowed at top level").
+					WithCode(diagnostics.ErrInvalidDeclaration).
+					WithPrimaryLabel(n.Loc(), "move this declaration to module scope").
+					WithHelp("nested scopes only allow anonymous functions, e.g. `let f := fn(...) { ... };`"),
+			)
+		}
 		collectFuncDeclSignature(ctx, mod, n)
 	case *ast.MethodDecl:
+		if mod.CurrentScope != mod.ModuleScope {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("method declarations are only allowed at top level").
+					WithCode(diagnostics.ErrInvalidDeclaration).
+					WithPrimaryLabel(n.Loc(), "move this declaration to module scope"),
+			)
+		}
 		collectMethodDeclSignature(ctx, mod, n)
 	case *ast.TypeDecl:
 		collectTypeDecl(ctx, mod, n)

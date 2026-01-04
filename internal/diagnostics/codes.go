@@ -18,7 +18,7 @@ const (
 	ErrExpectedToken      = "P0002"
 	ErrInvalidExpression  = "P0003"
 	ErrInvalidStatement   = "P0004"
-	ErrInvalidDeclaration = "P0005"
+	ErrInvalidDeclaration = "D0005"
 	ErrMissingIdentifier  = "P0006"
 	ErrMissingType        = "P0007"
 	ErrMissingInitializer = "P0008"

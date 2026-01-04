@@ -132,6 +132,32 @@ import "std/io" as m;  // duplicate alias 'm'
 	}
 }
 
+func TestNestedFunctionDeclDisallowed(t *testing.T) {
+	src := `
+fn outer() {
+	fn inner() { }
+}
+`
+
+	_, ctx := parseAndCollect(t, src)
+
+	diags := ctx.Diagnostics.Diagnostics()
+	if len(diags) == 0 {
+		t.Fatalf("expected diagnostic for nested function declaration")
+	}
+
+	found := false
+	for _, d := range diags {
+		if d.Severity == diagnostics.Error && strings.Contains(d.Message, "only allowed at top level") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected nested function declaration error, got %d diagnostics", len(diags))
+	}
+}
+
 // Test default name collision - should error
 func TestImportAliasDefaultNameCollision(t *testing.T) {
 	src := `
