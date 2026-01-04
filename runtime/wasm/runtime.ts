@@ -1,3 +1,5 @@
+console.log("Runtime module loaded.");
+
 export type FerretRuntimeOptions = {
   onPrint?: (text: string) => void;
   onEvent?: (event: { type: "output" | "input"; text: string }) => void;
@@ -501,6 +503,29 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return Math.pow(Number(base), Number(exp));
   }
 
+  // JS-side map storage: mapPtr -> JS Map
+  const ferretMapStore = new Map<number, Map<number, number>>();
+
+  // Helper to get/create JS Map for a given mapPtr
+  function getJsMap(mapPtr: number): Map<number, number> {
+    let jsMap = ferretMapStore.get(mapPtr);
+    if (!jsMap) {
+      jsMap = new Map();
+      ferretMapStore.set(mapPtr, jsMap);
+    }
+    return jsMap;
+  }
+
+  function ferret_map_get(mapPtr: number, keyPtr: number): number {
+    const jsMap = getJsMap(mapPtr);
+    return jsMap.has(keyPtr) ? jsMap.get(keyPtr)! : 0; // 0 = NULL
+  }
+
+  function ferret_map_set(mapPtr: number, keyPtr: number, valuePtr: number): void {
+    const jsMap = getJsMap(mapPtr);
+    jsMap.set(keyPtr, valuePtr);
+  }
+
   return {
     bind,
     imports: {
@@ -530,6 +555,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_string_concat_byte,
         ferret_string_concat_bool,
         ferret_pow,
+        ferret_map_get,
+        ferret_map_set,
       },
     },
   };

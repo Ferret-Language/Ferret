@@ -1,0 +1,599 @@
+data $str1 = { b "index out of bounds", b 0 }
+
+export function w $factorial(w %t1) {
+@b1
+	%t5 =l alloc4 4
+	%t7 =l alloc4 4
+	%t2 =w copy 1
+	%t3 =w cslew %t1, %t2
+	jnz %t3, @b2, @b3
+@b2
+	%t4 =w copy 1
+	ret %t4
+@b3
+	%t6 =w copy 1
+	storew %t6, %t5
+	%t8 =w copy 2
+	storew %t8, %t7
+	jmp @b4
+@b4
+	%t9 =w loadw %t7
+	%t10 =w cslew %t9, %t1
+	jnz %t10, @b5, @b6
+@b5
+	%t11 =w loadw %t5
+	%t12 =w loadw %t7
+	%t13 =w mul %t11, %t12
+	storew %t13, %t5
+	%t14 =w loadw %t7
+	%t15 =w copy 1
+	%t16 =w add %t14, %t15
+	storew %t16, %t7
+	jmp @b4
+@b6
+	%t17 =w loadw %t5
+	ret %t17
+}
+
+export function w $fib(w %t18) {
+@b7
+	%t21 =l alloc4 4
+	%t23 =l alloc4 4
+	%t25 =l alloc4 4
+	%t27 =l alloc4 4
+	%t28 =l alloc4 4
+	%t30 =l alloc4 1
+	%t32 =l alloc4 4
+	%t44 =l alloc4 4
+	%t19 =w copy 1
+	%t20 =w cslew %t18, %t19
+	jnz %t20, @b8, @b9
+@b8
+	ret %t18
+@b9
+	%t22 =w copy 0
+	storew %t22, %t21
+	%t24 =w copy 1
+	storew %t24, %t23
+	%t26 =w copy 2
+	storew %t26, %t25
+	storew %t18, %t27
+	%t29 =w copy 1
+	storew %t29, %t28
+	%t31 =w copy 1
+	storeb %t31, %t30
+	%t33 =w loadw %t25
+	storew %t33, %t32
+	jmp @b10
+@b10
+	%t34 =w copy 1
+	jnz %t34, @b11, @b12
+@b11
+	%t35 =w loadub %t30
+	jnz %t35, @b13, @b15
+@b12
+	%t50 =w loadw %t23
+	ret %t50
+@b13
+	%t36 =w copy 0
+	storeb %t36, %t30
+	jmp @b14
+@b14
+	%t40 =w loadw %t32
+	%t41 =w loadw %t27
+	%t42 =w cslew %t40, %t41
+	%t43 =w ceqw %t42, 0
+	jnz %t43, @b16, @b17
+@b15
+	%t37 =w loadw %t32
+	%t38 =w loadw %t28
+	%t39 =w add %t37, %t38
+	storew %t39, %t32
+	jmp @b14
+@b16
+	jmp @b12
+@b17
+	%t45 =w loadw %t21
+	%t46 =w loadw %t23
+	%t47 =w add %t45, %t46
+	storew %t47, %t44
+	%t48 =w loadw %t23
+	storew %t48, %t21
+	%t49 =w loadw %t44
+	storew %t49, %t23
+	jmp @b10
+}
+
+export function w $gcd(w %t51, w %t52) {
+@b18
+	%t53 =l alloc4 4
+	%t54 =l alloc4 4
+	%t58 =l alloc4 4
+	storew %t51, %t53
+	storew %t52, %t54
+	jmp @b19
+@b19
+	%t55 =w loadw %t54
+	%t56 =w copy 0
+	%t57 =w cnew %t55, %t56
+	jnz %t57, @b20, @b21
+@b20
+	%t59 =w loadw %t54
+	storew %t59, %t58
+	%t60 =w loadw %t53
+	%t61 =w loadw %t54
+	%t62 =w rem %t60, %t61
+	storew %t62, %t54
+	%t63 =w loadw %t58
+	storew %t63, %t53
+	jmp @b19
+@b21
+	%t64 =w loadw %t53
+	ret %t64
+}
+
+export function w $binary_search(l %t65, w %t66) {
+@b22
+	%t67 =l alloc4 4
+	%t69 =l alloc4 4
+	%t76 =l alloc4 4
+	%t82 =l alloc4 4
+	%t68 =w copy 0
+	storew %t68, %t67
+	%t70 =w call $ferret_array_len(l %t65)
+	%t71 =w copy 1
+	%t72 =w sub %t70, %t71
+	storew %t72, %t69
+	jmp @b23
+@b23
+	%t73 =w loadw %t67
+	%t74 =w loadw %t69
+	%t75 =w cslew %t73, %t74
+	jnz %t75, @b24, @b25
+@b24
+	%t77 =w loadw %t67
+	%t78 =w loadw %t69
+	%t79 =w add %t77, %t78
+	%t80 =w copy 2
+	%t81 =w div %t79, %t80
+	storew %t81, %t76
+	%t83 =w loadw %t76
+	%t84 =w call $ferret_array_len(l %t65)
+	%t85 =w copy 0
+	%t86 =w csltw %t83, %t85
+	jnz %t86, @b26, @b27
+@b25
+	%t106 =w copy -1
+	ret %t106
+@b26
+	%t87 =w add %t84, %t83
+	jmp @b28
+@b27
+	jmp @b28
+@b28
+	%t88 =w phi @b26 %t87, @b27 %t83
+	%t89 =w csltw %t88, %t85
+	%t90 =w csgew %t88, %t84
+	%t91 =w or %t89, %t90
+	jnz %t91, @b30, @b29
+@b29
+	%t93 =l call $ferret_array_get(l %t65, w %t88)
+	%t94 =w loadw %t93
+	storew %t94, %t82
+	%t95 =w loadw %t82
+	%t96 =w ceqw %t95, %t66
+	jnz %t96, @b31, @b32
+@b30
+	%t92 =l copy $str1
+	call $ferret_global_panic(l %t92)
+	ret
+@b31
+	%t97 =w loadw %t76
+	ret %t97
+@b32
+	%t98 =w loadw %t82
+	%t99 =w csltw %t98, %t66
+	jnz %t99, @b33, @b35
+@b33
+	%t100 =w loadw %t76
+	%t101 =w copy 1
+	%t102 =w add %t100, %t101
+	storew %t102, %t67
+	jmp @b34
+@b34
+	jmp @b23
+@b35
+	%t103 =w loadw %t76
+	%t104 =w copy 1
+	%t105 =w sub %t103, %t104
+	storew %t105, %t69
+	jmp @b34
+}
+
+export function $bubble_sort(l %t107) {
+@b36
+	%t108 =l alloc4 4
+	%t110 =l alloc4 4
+	%t115 =l alloc4 4
+	%t151 =l alloc4 4
+	%t109 =w call $ferret_array_len(l %t107)
+	storew %t109, %t108
+	%t111 =w copy 0
+	storew %t111, %t110
+	jmp @b37
+@b37
+	%t112 =w loadw %t110
+	%t113 =w loadw %t108
+	%t114 =w csltw %t112, %t113
+	jnz %t114, @b38, @b39
+@b38
+	%t116 =w copy 0
+	storew %t116, %t115
+	jmp @b40
+@b39
+	ret
+@b40
+	%t117 =w loadw %t115
+	%t118 =w copy 1
+	%t119 =w add %t117, %t118
+	%t120 =w loadw %t108
+	%t121 =w loadw %t110
+	%t122 =w sub %t120, %t121
+	%t123 =w csltw %t119, %t122
+	jnz %t123, @b41, @b42
+@b41
+	%t124 =w loadw %t115
+	%t125 =w call $ferret_array_len(l %t107)
+	%t126 =w copy 0
+	%t127 =w csltw %t124, %t126
+	jnz %t127, @b43, @b44
+@b42
+	%t204 =w loadw %t110
+	%t205 =w copy 1
+	%t206 =w add %t204, %t205
+	storew %t206, %t110
+	jmp @b37
+@b43
+	%t128 =w add %t125, %t124
+	jmp @b45
+@b44
+	jmp @b45
+@b45
+	%t129 =w phi @b43 %t128, @b44 %t124
+	%t130 =w csltw %t129, %t126
+	%t131 =w csgew %t129, %t125
+	%t132 =w or %t130, %t131
+	jnz %t132, @b47, @b46
+@b46
+	%t134 =l call $ferret_array_get(l %t107, w %t129)
+	%t135 =w loadw %t134
+	%t136 =w loadw %t115
+	%t137 =w copy 1
+	%t138 =w add %t136, %t137
+	%t139 =w call $ferret_array_len(l %t107)
+	%t140 =w copy 0
+	%t141 =w csltw %t138, %t140
+	jnz %t141, @b48, @b49
+@b47
+	%t133 =l copy $str1
+	call $ferret_global_panic(l %t133)
+	ret
+@b48
+	%t142 =w add %t139, %t138
+	jmp @b50
+@b49
+	jmp @b50
+@b50
+	%t143 =w phi @b48 %t142, @b49 %t138
+	%t144 =w csltw %t143, %t140
+	%t145 =w csgew %t143, %t139
+	%t146 =w or %t144, %t145
+	jnz %t146, @b52, @b51
+@b51
+	%t148 =l call $ferret_array_get(l %t107, w %t143)
+	%t149 =w loadw %t148
+	%t150 =w csgtw %t135, %t149
+	jnz %t150, @b53, @b54
+@b52
+	%t147 =l copy $str1
+	call $ferret_global_panic(l %t147)
+	ret
+@b53
+	%t152 =w loadw %t115
+	%t153 =w call $ferret_array_len(l %t107)
+	%t154 =w copy 0
+	%t155 =w csltw %t152, %t154
+	jnz %t155, @b55, @b56
+@b54
+	%t201 =w loadw %t115
+	%t202 =w copy 1
+	%t203 =w add %t201, %t202
+	storew %t203, %t115
+	jmp @b40
+@b55
+	%t156 =w add %t153, %t152
+	jmp @b57
+@b56
+	jmp @b57
+@b57
+	%t157 =w phi @b55 %t156, @b56 %t152
+	%t158 =w csltw %t157, %t154
+	%t159 =w csgew %t157, %t153
+	%t160 =w or %t158, %t159
+	jnz %t160, @b59, @b58
+@b58
+	%t162 =l call $ferret_array_get(l %t107, w %t157)
+	%t163 =w loadw %t162
+	storew %t163, %t151
+	%t164 =w loadw %t115
+	%t165 =w call $ferret_array_len(l %t107)
+	%t166 =w copy 0
+	%t167 =w csltw %t164, %t166
+	jnz %t167, @b60, @b61
+@b59
+	%t161 =l copy $str1
+	call $ferret_global_panic(l %t161)
+	ret
+@b60
+	%t168 =w add %t165, %t164
+	jmp @b62
+@b61
+	jmp @b62
+@b62
+	%t169 =w phi @b60 %t168, @b61 %t164
+	%t170 =w csltw %t169, %t166
+	%t171 =w csgew %t169, %t165
+	%t172 =w or %t170, %t171
+	jnz %t172, @b64, @b63
+@b63
+	%t174 =w loadw %t115
+	%t175 =w copy 1
+	%t176 =w add %t174, %t175
+	%t177 =w call $ferret_array_len(l %t107)
+	%t178 =w copy 0
+	%t179 =w csltw %t176, %t178
+	jnz %t179, @b65, @b66
+@b64
+	%t173 =l copy $str1
+	call $ferret_global_panic(l %t173)
+	ret
+@b65
+	%t180 =w add %t177, %t176
+	jmp @b67
+@b66
+	jmp @b67
+@b67
+	%t181 =w phi @b65 %t180, @b66 %t176
+	%t182 =w csltw %t181, %t178
+	%t183 =w csgew %t181, %t177
+	%t184 =w or %t182, %t183
+	jnz %t184, @b69, @b68
+@b68
+	%t186 =l call $ferret_array_get(l %t107, w %t181)
+	%t187 =w loadw %t186
+	%q1 =l alloc4 4
+	storew %t187, %q1
+	%q2 =w call $ferret_array_set(l %t107, w %t169, l %q1)
+	%q3 =w ceqw %q2, 0
+	jnz %q3, @array_set_panic_107, @array_set_ok_107
+	@array_set_panic_107
+	call $ferret_global_panic(l $str1)
+	ret
+	@array_set_ok_107
+	%t188 =w loadw %t115
+	%t189 =w copy 1
+	%t190 =w add %t188, %t189
+	%t191 =w call $ferret_array_len(l %t107)
+	%t192 =w copy 0
+	%t193 =w csltw %t190, %t192
+	jnz %t193, @b70, @b71
+@b69
+	%t185 =l copy $str1
+	call $ferret_global_panic(l %t185)
+	ret
+@b70
+	%t194 =w add %t191, %t190
+	jmp @b72
+@b71
+	jmp @b72
+@b72
+	%t195 =w phi @b70 %t194, @b71 %t190
+	%t196 =w csltw %t195, %t192
+	%t197 =w csgew %t195, %t191
+	%t198 =w or %t196, %t197
+	jnz %t198, @b74, @b73
+@b73
+	%t200 =w loadw %t151
+	%q4 =l alloc4 4
+	storew %t200, %q4
+	%q5 =w call $ferret_array_set(l %t107, w %t195, l %q4)
+	%q6 =w ceqw %q5, 0
+	jnz %q6, @array_set_panic_107, @array_set_ok_107
+	@array_set_panic_107
+	call $ferret_global_panic(l $str1)
+	ret
+	@array_set_ok_107
+	jmp @b54
+@b74
+	%t199 =l copy $str1
+	call $ferret_global_panic(l %t199)
+	ret
+}
+
+export function w $main() {
+@b75
+	%t212 =l alloc8 36
+	%t221 =l alloc8 36
+	%t231 =l alloc8 36
+	%t235 =l alloc8 8
+	%t240 =l alloc4 4
+	%t242 =l alloc4 4
+	%t244 =l alloc4 4
+	%t246 =l alloc4 4
+	%t248 =l alloc4 4
+	%t250 =l alloc4 4
+	%t252 =l alloc4 4
+	%t254 =l alloc4 4
+	%t256 =l alloc4 4
+	%t275 =l alloc8 36
+	%t295 =l alloc8 36
+	%t299 =l alloc4 4
+	%t308 =l alloc8 36
+	%t207 =l copy 36
+	%t208 =w copy 1
+	%t209 =l call $ferret_array_new(l %t207, w %t208)
+	%t210 =w copy 6
+	%t211 =w call $factorial(w %t210)
+	%t213 =l add %t212, 0
+	%t214 =w copy 2
+	storew %t214, %t213
+	%t215 =l add %t212, 4
+	storew %t211, %t215
+	call $ferret_array_append(l %t209, l %t212)
+	call $ferret_std_io_Println(l %t209)
+	%t216 =l copy 36
+	%t217 =w copy 1
+	%t218 =l call $ferret_array_new(l %t216, w %t217)
+	%t219 =w copy 10
+	%t220 =w call $fib(w %t219)
+	%t222 =l add %t221, 0
+	%t223 =w copy 2
+	storew %t223, %t222
+	%t224 =l add %t221, 4
+	storew %t220, %t224
+	call $ferret_array_append(l %t218, l %t221)
+	call $ferret_std_io_Println(l %t218)
+	%t225 =l copy 36
+	%t226 =w copy 1
+	%t227 =l call $ferret_array_new(l %t225, w %t226)
+	%t228 =w copy 84
+	%t229 =w copy 30
+	%t230 =w call $gcd(w %t228, w %t229)
+	%t232 =l add %t231, 0
+	%t233 =w copy 2
+	storew %t233, %t232
+	%t234 =l add %t231, 4
+	storew %t230, %t234
+	call $ferret_array_append(l %t227, l %t231)
+	call $ferret_std_io_Println(l %t227)
+	%t236 =l copy 4
+	%t237 =w copy 9
+	%t238 =l call $ferret_array_new(l %t236, w %t237)
+	%t239 =w copy 9
+	storew %t239, %t240
+	call $ferret_array_append(l %t238, l %t240)
+	%t241 =w copy 4
+	storew %t241, %t242
+	call $ferret_array_append(l %t238, l %t242)
+	%t243 =w copy 1
+	storew %t243, %t244
+	call $ferret_array_append(l %t238, l %t244)
+	%t245 =w copy 7
+	storew %t245, %t246
+	call $ferret_array_append(l %t238, l %t246)
+	%t247 =w copy 3
+	storew %t247, %t248
+	call $ferret_array_append(l %t238, l %t248)
+	%t249 =w copy 8
+	storew %t249, %t250
+	call $ferret_array_append(l %t238, l %t250)
+	%t251 =w copy 2
+	storew %t251, %t252
+	call $ferret_array_append(l %t238, l %t252)
+	%t253 =w copy 6
+	storew %t253, %t254
+	call $ferret_array_append(l %t238, l %t254)
+	%t255 =w copy 5
+	storew %t255, %t256
+	call $ferret_array_append(l %t238, l %t256)
+	storel %t238, %t235
+	%t257 =l loadl %t235
+	%t258 =l call $ferret_array_clone(l %t257)
+	call $bubble_sort(l %t258)
+	%t259 =l copy 36
+	%t260 =w copy 1
+	%t261 =l call $ferret_array_new(l %t259, w %t260)
+	%t262 =l loadl %t235
+	%t263 =w copy 0
+	%t264 =w call $ferret_array_len(l %t262)
+	%t265 =w copy 0
+	%t266 =w csltw %t263, %t265
+	jnz %t266, @b76, @b77
+@b76
+	%t267 =w add %t264, %t263
+	jmp @b78
+@b77
+	jmp @b78
+@b78
+	%t268 =w phi @b76 %t267, @b77 %t263
+	%t269 =w csltw %t268, %t265
+	%t270 =w csgew %t268, %t264
+	%t271 =w or %t269, %t270
+	jnz %t271, @b80, @b79
+@b79
+	%t273 =l call $ferret_array_get(l %t262, w %t268)
+	%t274 =w loadw %t273
+	%t276 =l add %t275, 0
+	%t277 =w copy 2
+	storew %t277, %t276
+	%t278 =l add %t275, 4
+	storew %t274, %t278
+	call $ferret_array_append(l %t261, l %t275)
+	call $ferret_std_io_Println(l %t261)
+	%t279 =l copy 36
+	%t280 =w copy 1
+	%t281 =l call $ferret_array_new(l %t279, w %t280)
+	%t282 =l loadl %t235
+	%t283 =w copy 8
+	%t284 =w call $ferret_array_len(l %t282)
+	%t285 =w copy 0
+	%t286 =w csltw %t283, %t285
+	jnz %t286, @b81, @b82
+@b80
+	%t272 =l copy $str1
+	call $ferret_global_panic(l %t272)
+	ret 0
+@b81
+	%t287 =w add %t284, %t283
+	jmp @b83
+@b82
+	jmp @b83
+@b83
+	%t288 =w phi @b81 %t287, @b82 %t283
+	%t289 =w csltw %t288, %t285
+	%t290 =w csgew %t288, %t284
+	%t291 =w or %t289, %t290
+	jnz %t291, @b85, @b84
+@b84
+	%t293 =l call $ferret_array_get(l %t282, w %t288)
+	%t294 =w loadw %t293
+	%t296 =l add %t295, 0
+	%t297 =w copy 2
+	storew %t297, %t296
+	%t298 =l add %t295, 4
+	storew %t294, %t298
+	call $ferret_array_append(l %t281, l %t295)
+	call $ferret_std_io_Println(l %t281)
+	%t300 =l loadl %t235
+	%t301 =l call $ferret_array_clone(l %t300)
+	%t302 =w copy 7
+	%t303 =w call $binary_search(l %t301, w %t302)
+	storew %t303, %t299
+	%t304 =l copy 36
+	%t305 =w copy 1
+	%t306 =l call $ferret_array_new(l %t304, w %t305)
+	%t307 =w loadw %t299
+	%t309 =l add %t308, 0
+	%t310 =w copy 2
+	storew %t310, %t309
+	%t311 =l add %t308, 4
+	storew %t307, %t311
+	call $ferret_array_append(l %t306, l %t308)
+	call $ferret_std_io_Println(l %t306)
+	ret 0
+@b85
+	%t292 =l copy $str1
+	call $ferret_global_panic(l %t292)
+	ret 0
+}
+

@@ -560,9 +560,44 @@ func (g *Generator) emitInstr(info *funcInfo, instr mir.Instr, locals map[mir.Va
 		return g.emitArrayGet(info, v, locals)
 	case *mir.ArraySet:
 		return g.emitArraySet(info, v, locals, scratchLocal)
-	case *mir.MapGet, *mir.MapSet:
-		g.reportUnsupported("map op", instr.Loc())
-		return []byte{opcodeUnreachable}, nil
+	case *mir.MapGet:
+		v = instr.(*mir.MapGet)
+		mapLocal := locals[v.Map]
+		keyLocal := locals[v.Key]
+		var out []byte
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(mapLocal)...)
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(keyLocal)...)
+		// Use g.importIDs to get the import function index
+		importIdx, ok := g.importIDs["ferret_map_get"]
+		if !ok {
+			panic("ferret_map_get not found in WASM imports")
+		}
+		out = append(out, opcodeCall)
+		out = append(out, encodeU32(importIdx)...)
+		out = append(out, opcodeLocalSet)
+		out = append(out, encodeU32(locals[v.Result])...)
+		return out, nil
+	case *mir.MapSet:
+		v = instr.(*mir.MapSet)
+		mapLocal := locals[v.Map]
+		keyLocal := locals[v.Key]
+		valueLocal := locals[v.Value]
+		var out []byte
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(mapLocal)...)
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(keyLocal)...)
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(valueLocal)...)
+		importIdx, ok := g.importIDs["ferret_map_set"]
+		if !ok {
+			panic("ferret_map_set not found in WASM imports")
+		}
+		out = append(out, opcodeCall)
+		out = append(out, encodeU32(importIdx)...)
+		return out, nil
 	case *mir.OptionalNone:
 		return g.emitOptionalNone(v, locals)
 	case *mir.OptionalSome:

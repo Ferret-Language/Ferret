@@ -8,9 +8,9 @@ fn main() {
         "charlie" => 35
     };
 
-    let v := 2 ?? 3;
+    //let v := 2 ?? 3;
 
-    io::Println(v);
+    //io::Println(v);
 
     // Safe access with defaults
     let alice_age := user_ages["alice"];
