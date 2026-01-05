@@ -25,7 +25,9 @@ type Options struct {
 	// For file-based compilation
 	EntryFile string
 	// For in-memory compilation (WASM)
-	Code string
+	Code string // Single file (deprecated - use Files instead)
+	// For multi-file in-memory compilation (WASM)
+	Files map[string]string // map[filename]content - e.g. {"main.fer": "...", "utils.fer": "..."}
 	// Debug output
 	Debug   bool
 	SaveAST bool
@@ -116,15 +118,20 @@ func Compile(opts *Options) Result {
 	}
 
 	ctx := context_v2.New(config, opts.Debug)
-	if opts.CodegenBackend == "wasm" || opts.Code != "" {
+	if opts.CodegenBackend == "wasm" || opts.Code != "" || opts.Files != nil {
 		loadEmbeddedBuiltins(ctx)
 	}
 
 	// Set entry point
 	var err error
-	if opts.Code != "" {
+	if opts.Files != nil {
+		// Multi-file mode (preferred for WASM)
+		err = ctx.SetEntryPointWithFiles(opts.Files, "main")
+	} else if opts.Code != "" {
+		// Single-file mode (backward compatibility)
 		err = ctx.SetEntryPointWithCode(opts.Code, "main")
 	} else {
+		// File-based mode
 		err = ctx.SetEntryPoint(opts.EntryFile)
 	}
 

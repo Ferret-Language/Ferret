@@ -390,6 +390,51 @@ func (ctx *CompilerContext) SetEntryPointWithCode(code, moduleName string) error
 	return nil
 }
 
+// SetEntryPointWithFiles sets up multi-file in-memory compilation (for WASM playground)
+// files is a map of filename -> content (e.g. {"main.fer": "...", "utils.fer": "..."})
+// entryModule is the name without extension (e.g. "main" for main.fer)
+func (ctx *CompilerContext) SetEntryPointWithFiles(files map[string]string, entryModule string) error {
+	if len(files) == 0 {
+		return fmt.Errorf("no files provided")
+	}
+
+	// Validate entry module exists
+	entryFileName := entryModule + ctx.Config.Extension
+	if _, exists := files[entryFileName]; !exists {
+		return fmt.Errorf("entry file %s not found in provided files", entryFileName)
+	}
+
+	// Set entry point
+	virtualEntryPath := filepath.Join(ctx.Config.ProjectRoot, entryFileName)
+	ctx.EntryPoint = filepath.ToSlash(virtualEntryPath)
+	ctx.EntryModule = ctx.FilePathToImportPath(virtualEntryPath)
+
+	// Create modules for all files
+	for filename, content := range files {
+		virtualPath := filepath.Join(ctx.Config.ProjectRoot, filename)
+		virtualPath = filepath.ToSlash(virtualPath)
+		importPath := ctx.FilePathToImportPath(virtualPath)
+
+		// Add source content to diagnostics cache
+		ctx.Diagnostics.AddSourceContent(virtualPath, content)
+
+		modScope := table.NewSymbolTable(ctx.Universe)
+		module := &Module{
+			FilePath:     virtualPath,
+			Type:         ModuleLocal,
+			Phase:        phase.PhaseNotStarted,
+			ModuleScope:  modScope,
+			CurrentScope: modScope,
+			Content:      content,
+			Artifacts:    make(map[string]any),
+		}
+
+		ctx.AddModule(importPath, module)
+	}
+
+	return nil
+}
+
 // FilePathToImportPath converts a file path to a logical import path
 func (ctx *CompilerContext) FilePathToImportPath(filePath string) string {
 	absPath, err := filepath.Abs(filePath)
