@@ -781,8 +781,10 @@ func (g *Generator) emitMapGet(m *mir.MapGet) {
 		// Check for NULL and panic if key not found
 		nullCheck := g.newTemp()
 		g.emitLine(fmt.Sprintf("%s =w ceql %s, 0", nullCheck, valuePtr))
-		panicLabel := fmt.Sprintf("map_get_panic_%d", m.Result)
-		okLabel := fmt.Sprintf("map_get_ok_%d", m.Result)
+		panicLabel := fmt.Sprintf("map_get_panic_%d", g.labelID)
+		g.labelID++
+		okLabel := fmt.Sprintf("map_get_ok_%d", g.labelID)
+		g.labelID++
 		g.emitLine(fmt.Sprintf("jnz %s, @%s, @%s", nullCheck, panicLabel, okLabel))
 		g.emitLine(fmt.Sprintf("@%s", panicLabel))
 		msgSym := g.stringSymbol("key not found in map")
@@ -866,8 +868,10 @@ func (g *Generator) emitArrayGet(a *mir.ArrayGet) {
 		// Check for NULL and panic if out of bounds
 		nullCheck := g.newTemp()
 		g.emitLine(fmt.Sprintf("%s =w ceql %s, 0", nullCheck, valuePtr))
-		panicLabel := fmt.Sprintf("array_get_panic_%d", a.Result)
-		okLabel := fmt.Sprintf("array_get_ok_%d", a.Result)
+		panicLabel := fmt.Sprintf("array_get_panic_%d", g.labelID)
+		g.labelID++
+		okLabel := fmt.Sprintf("array_get_ok_%d", g.labelID)
+		g.labelID++
 		g.emitLine(fmt.Sprintf("jnz %s, @%s, @%s", nullCheck, panicLabel, okLabel))
 		g.emitLine(fmt.Sprintf("@%s", panicLabel))
 		msgSym := g.stringSymbol("index out of bounds")
@@ -949,8 +953,10 @@ func (g *Generator) emitArraySet(a *mir.ArraySet) {
 		// Check return value and panic if false (out of bounds)
 		zeroCheck := g.newTemp()
 		g.emitLine(fmt.Sprintf("%s =w ceqw %s, 0", zeroCheck, result))
-		panicLabel := fmt.Sprintf("array_set_panic_%d", a.Array)
-		okLabel := fmt.Sprintf("array_set_ok_%d", a.Array)
+		panicLabel := fmt.Sprintf("array_set_panic_%d", g.labelID)
+		g.labelID++
+		okLabel := fmt.Sprintf("array_set_ok_%d", g.labelID)
+		g.labelID++
 		g.emitLine(fmt.Sprintf("jnz %s, @%s, @%s", zeroCheck, panicLabel, okLabel))
 		g.emitLine(fmt.Sprintf("@%s", panicLabel))
 		msgSym := g.stringSymbol("index out of bounds")

@@ -24,6 +24,7 @@ type Generator struct {
 	enumCounts  map[string]int
 	tempID      int
 	stringID    int
+	labelID     int
 	enumTableID int
 	retOutParam string
 	retOutType  types.SemType

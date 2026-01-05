@@ -56,7 +56,7 @@ fn binary_search(nums: []i32, target: i32) -> i32 {
     return -1;
 }
 
-fn bubble_sort(nums: []i32) {
+fn bubble_sort(nums: &'[]i32) {
     let n := len(nums);
     let i := 0;
     while i < n {
@@ -79,14 +79,10 @@ fn main() {
     io::Println(gcd(84, 30));  // 6
 
     let nums := [9, 4, 1, 7, 3, 8, 2, 6, 5];
-    bubble_sort(nums);
+    bubble_sort(&'nums);
     io::Println(nums[0]);      // 1
     io::Println(nums[8]);      // 9
 
     let idx := binary_search(nums, 7);
     io::Println(idx);          // 6
-
-    // [fuad@mochipochi Ferret]$ ./bin/ferret -o app ./smoke_test/advanced/00_algorithms.fer
-    // gen/advanced_00_algorithms.ssa:412: multiple definitions of block @array_set_panic_107
-    // [fuad@mochipochi Ferret]$ 
 }

@@ -1,0 +1,161 @@
+data $str1 = { b "index out of bounds", b 0 }
+data $str2 = { b "Done", b 0 }
+
+export function $test_multiple_panics(l %t1) {
+@b1
+	%t2 =l alloc4 4
+	%t15 =l alloc4 4
+	%t3 =w copy 0
+	%t4 =w call $ferret_array_len(l %t1)
+	%t5 =w copy 0
+	%t6 =w csltw %t3, %t5
+	jnz %t6, @b2, @b3
+@b2
+	%t7 =w add %t4, %t3
+	jmp @b4
+@b3
+	jmp @b4
+@b4
+	%t8 =w phi @b2 %t7, @b3 %t3
+	%t9 =w csltw %t8, %t5
+	%t10 =w csgew %t8, %t4
+	%t11 =w or %t9, %t10
+	jnz %t11, @b6, @b5
+@b5
+	%t13 =l call $ferret_array_get(l %t1, w %t8)
+	%t14 =w loadw %t13
+	storew %t14, %t2
+	%t16 =w copy 1
+	%t17 =w call $ferret_array_len(l %t1)
+	%t18 =w copy 0
+	%t19 =w csltw %t16, %t18
+	jnz %t19, @b7, @b8
+@b6
+	%t12 =l copy $str1
+	call $ferret_global_panic(l %t12)
+	ret
+@b7
+	%t20 =w add %t17, %t16
+	jmp @b9
+@b8
+	jmp @b9
+@b9
+	%t21 =w phi @b7 %t20, @b8 %t16
+	%t22 =w csltw %t21, %t18
+	%t23 =w csgew %t21, %t17
+	%t24 =w or %t22, %t23
+	jnz %t24, @b11, @b10
+@b10
+	%t26 =l call $ferret_array_get(l %t1, w %t21)
+	%t27 =w loadw %t26
+	storew %t27, %t15
+	%t28 =w copy 2
+	%t29 =w call $ferret_array_len(l %t1)
+	%t30 =w copy 0
+	%t31 =w csltw %t28, %t30
+	jnz %t31, @b12, @b13
+@b11
+	%t25 =l copy $str1
+	call $ferret_global_panic(l %t25)
+	ret
+@b12
+	%t32 =w add %t29, %t28
+	jmp @b14
+@b13
+	jmp @b14
+@b14
+	%t33 =w phi @b12 %t32, @b13 %t28
+	%t34 =w csltw %t33, %t30
+	%t35 =w csgew %t33, %t29
+	%t36 =w or %t34, %t35
+	jnz %t36, @b16, @b15
+@b15
+	%t38 =w copy 42
+	%q1 =l alloc4 4
+	storew %t38, %q1
+	%q2 =w call $ferret_array_set(l %t1, w %t33, l %q1)
+	%q3 =w ceqw %q2, 0
+	jnz %q3, @array_set_panic_0, @array_set_ok_1
+	@array_set_panic_0
+	call $ferret_global_panic(l $str1)
+	ret
+	@array_set_ok_1
+	%t39 =w copy 3
+	%t40 =w call $ferret_array_len(l %t1)
+	%t41 =w copy 0
+	%t42 =w csltw %t39, %t41
+	jnz %t42, @b17, @b18
+@b16
+	%t37 =l copy $str1
+	call $ferret_global_panic(l %t37)
+	ret
+@b17
+	%t43 =w add %t40, %t39
+	jmp @b19
+@b18
+	jmp @b19
+@b19
+	%t44 =w phi @b17 %t43, @b18 %t39
+	%t45 =w csltw %t44, %t41
+	%t46 =w csgew %t44, %t40
+	%t47 =w or %t45, %t46
+	jnz %t47, @b21, @b20
+@b20
+	%t49 =w copy 43
+	%q4 =l alloc4 4
+	storew %t49, %q4
+	%q5 =w call $ferret_array_set(l %t1, w %t44, l %q4)
+	%q6 =w ceqw %q5, 0
+	jnz %q6, @array_set_panic_2, @array_set_ok_3
+	@array_set_panic_2
+	call $ferret_global_panic(l $str1)
+	ret
+	@array_set_ok_3
+	ret
+@b21
+	%t48 =l copy $str1
+	call $ferret_global_panic(l %t48)
+	ret
+}
+
+export function w $main() {
+@b22
+	%t50 =l alloc8 8
+	%t55 =l alloc4 4
+	%t57 =l alloc4 4
+	%t59 =l alloc4 4
+	%t61 =l alloc4 4
+	%t68 =l alloc8 36
+	%t51 =l copy 4
+	%t52 =w copy 4
+	%t53 =l call $ferret_array_new(l %t51, w %t52)
+	%t54 =w copy 1
+	storew %t54, %t55
+	call $ferret_array_append(l %t53, l %t55)
+	%t56 =w copy 2
+	storew %t56, %t57
+	call $ferret_array_append(l %t53, l %t57)
+	%t58 =w copy 3
+	storew %t58, %t59
+	call $ferret_array_append(l %t53, l %t59)
+	%t60 =w copy 4
+	storew %t60, %t61
+	call $ferret_array_append(l %t53, l %t61)
+	storel %t53, %t50
+	%t62 =l loadl %t50
+	%t63 =l call $ferret_array_clone(l %t62)
+	call $test_multiple_panics(l %t63)
+	%t64 =l copy 36
+	%t65 =w copy 1
+	%t66 =l call $ferret_array_new(l %t64, w %t65)
+	%t67 =l copy $str2
+	%t69 =l add %t68, 0
+	%t70 =w copy 16
+	storew %t70, %t69
+	%t71 =l add %t68, 4
+	storel %t67, %t71
+	call $ferret_array_append(l %t66, l %t68)
+	call $ferret_std_io_Println(l %t66)
+	ret 0
+}
+
