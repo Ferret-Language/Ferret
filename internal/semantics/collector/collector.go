@@ -204,6 +204,13 @@ func collectNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node a
 		}
 		collectMethodDeclSignature(ctx, mod, n)
 	case *ast.TypeDecl:
+		if mod.CurrentScope != mod.ModuleScope {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("type declarations are only allowed at top level").
+					WithCode(diagnostics.ErrInvalidDeclaration).
+					WithPrimaryLabel(n.Loc(), "move this declaration to module scope"),
+			)
+		}
 		collectTypeDecl(ctx, mod, n)
 	case *ast.ImportStmt:
 		collectImport(ctx, mod, n)
