@@ -232,6 +232,17 @@ func (u *UnaryExpr) hirNode()              {}
 func (u *UnaryExpr) hirExpr()              {}
 func (u *UnaryExpr) Loc() *source.Location { return &u.Location }
 
+// DerefExpr represents a dereference operation (*x).
+type DerefExpr struct {
+	X        Expr
+	Type     types.SemType
+	Location source.Location
+}
+
+func (d *DerefExpr) hirNode()              {}
+func (d *DerefExpr) hirExpr()              {}
+func (d *DerefExpr) Loc() *source.Location { return &d.Location }
+
 // PrefixExpr represents a prefix ++/-- expression.
 type PrefixExpr struct {
 	Op       tokens.Token

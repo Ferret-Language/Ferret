@@ -229,23 +229,16 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 			if !srcRef.Inner.Equals(tgtRef.Inner) {
 				return Incompatible
 			}
-			if tgtRef.Mutable && !srcRef.Mutable {
+			// Both mutability levels must match exactly - no implicit coercion
+			if tgtRef.Mutable != srcRef.Mutable {
 				return Incompatible
 			}
-			if srcRef.Mutable == tgtRef.Mutable {
-				return Identical
-			}
-			return ImplicitCastable // &mut -> & (shared)
+			return Identical
 		}
 	}
 	if _, ok := types.UnwrapType(target).(*types.ReferenceType); ok {
 		return Incompatible
 	}
-
-	// Automatic dereferencing: &T is compatible with T
-	// This allows reference types to be used transparently
-	source = dereferenceType(source)
-	target = dereferenceType(target)
 
 	// Identical types
 	if source.Equals(target) {

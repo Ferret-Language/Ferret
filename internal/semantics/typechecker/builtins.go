@@ -115,7 +115,7 @@ func checkBuiltinAppend(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 						diagnostics.NewError("append requires a mutable reference").
 							WithCode(diagnostics.ErrInvalidAssignment).
 							WithPrimaryLabel(expr.Args[0].Loc(), "expected a mutable reference").
-							WithHelp("use \"&'\" to pass a mutable reference"),
+							WithHelp("use \"&mut\" to pass a mutable reference"),
 					)
 					elemType = types.TypeUnknown
 				} else if !refType.Mutable {
@@ -123,7 +123,7 @@ func checkBuiltinAppend(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 						diagnostics.NewError("append requires a mutable reference").
 							WithCode(diagnostics.ErrInvalidAssignment).
 							WithPrimaryLabel(expr.Args[0].Loc(), "expected a mutable reference").
-							WithHelp("use \"&'\" to pass a mutable reference"),
+							WithHelp("use \"&mut\" to pass a mutable reference"),
 					)
 					elemType = types.TypeUnknown
 				} else if targetExpr != nil && !isBorrowableTarget(ctx, mod, targetExpr) {
@@ -205,7 +205,7 @@ func unwrapBorrowTarget(expr ast.Expression) ast.Expression {
 		return nil
 	}
 	if unary, ok := expr.(*ast.UnaryExpr); ok {
-		if unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_REF_TOKEN {
+		if unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN {
 			return unary.X
 		}
 	}

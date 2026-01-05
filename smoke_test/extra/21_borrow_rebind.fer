@@ -4,12 +4,12 @@ fn main() {
     let a := 10;
     let b := 20;
 
-    let r: &'i32 = &'a;
-    r = 12;
+    let r: &mut i32 = &mut a;
+    *r = 12;
     io::Println(a);
 
-    r = &'b;
-    r = 21;
+    r = &mut b;
+    *r = 21;
     io::Println(a);
     io::Println(b);
 }

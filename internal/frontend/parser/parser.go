@@ -693,7 +693,60 @@ func (p *Parser) parseUnaryDepth(depth int) ast.Expression {
 		return p.parsePostfix()
 	}
 
-	if p.match(tokens.NOT_TOKEN, tokens.MINUS_TOKEN, tokens.BIT_AND_TOKEN, tokens.MUT_REF_TOKEN) {
+	// Handle borrow operators: & or &mut
+	if p.match(tokens.BIT_AND_TOKEN) {
+		op := p.advance()
+		isMutable := false
+
+		// Check if followed by 'mut' keyword
+		if p.match(tokens.MUT_TOKEN) {
+			p.advance()
+			isMutable = true
+		}
+
+		expr := p.parseUnaryDepth(depth + 1)
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+
+		// Create a token representing &mut or & for the UnaryExpr
+		borrowToken := op
+		if isMutable {
+			// Create synthetic token for &mut
+			borrowToken = tokens.NewToken(tokens.MUT_TOKEN, "&mut", op.Start, op.End)
+		}
+
+		return &ast.UnaryExpr{
+			Op:       borrowToken,
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
+		}
+	}
+
+	// Handle dereference operator: *expr
+	if p.match(tokens.MUL_TOKEN) {
+		star := p.advance()
+
+		// Check if this is actually a dereference by looking ahead
+		// If next is an operator or delimiter, it's likely multiplication
+		if p.match(tokens.SEMICOLON_TOKEN, tokens.COMMA_TOKEN, tokens.CLOSE_PAREN,
+			tokens.CLOSE_BRACKET, tokens.CLOSE_CURLY, tokens.EOF_TOKEN) {
+			// This looks like it should be parsed as primary (incomplete expression)
+			p.current-- // Back up
+			return p.parsePostfix()
+		}
+
+		expr := p.parseUnaryDepth(depth + 1)
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.DerefExpr{
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &star.Start, p.safeLoc(expr).End),
+		}
+	}
+
+	if p.match(tokens.NOT_TOKEN, tokens.MINUS_TOKEN) {
 		op := p.advance()
 		expr := p.parseUnaryDepth(depth + 1)
 		if expr == nil {

@@ -4,7 +4,7 @@ fn main() {
     let a := 10;
     let r: &i32 = &a;
     io::Println(r);
-    let m: &'i32 = &'a; // expected error: mutable + immutable borrow
-    m = 12;
+    let m: &mut i32 = &mut a; // expected error: mutable + immutable borrow
+    *m = 12;
     io::Println(a);
 }

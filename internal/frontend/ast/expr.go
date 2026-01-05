@@ -28,6 +28,16 @@ func (u *UnaryExpr) INode()                {} // Implements Node interface
 func (u *UnaryExpr) Expr()                 {} // Expr is a marker interface for all expressions
 func (u *UnaryExpr) Loc() *source.Location { return &u.Location }
 
+// DerefExpr represents a dereference expression (*x)
+type DerefExpr struct {
+	X Expression // operand (must be a reference type)
+	source.Location
+}
+
+func (d *DerefExpr) INode()                {} // Implements Node interface
+func (d *DerefExpr) Expr()                 {} // Expr is a marker interface for all expressions
+func (d *DerefExpr) Loc() *source.Location { return &d.Location }
+
 // PrefixExpr represents a prefix increment/decrement expression (++x, --x)
 type PrefixExpr struct {
 	Op tokens.Token // operator (++, --)

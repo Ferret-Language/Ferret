@@ -15,7 +15,7 @@ fn (c: &Counter) printValue() {
 }
 
 // Mutable reference receiver  
-fn (c: &'Counter) increment() {
+fn (c: &mut Counter) increment() {
     c.Value++;
 }
 

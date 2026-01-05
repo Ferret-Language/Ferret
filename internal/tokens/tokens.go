@@ -63,14 +63,15 @@ const (
 	BIT_OR_TOKEN  TOKEN = "|"
 	BIT_XOR_TOKEN TOKEN = "^"
 	//reference operators
-	MUT_REF_TOKEN TOKEN = "&'"
+	MUT_TOKEN  TOKEN = "mut"
+	STAR_TOKEN TOKEN = "*" // dereference operator (also used for multiplication)
 	//unary operators
 	NOT_TOKEN TOKEN = "!"
 	//arithmetic operators
 	EXP_TOKEN   TOKEN = "**"
 	MINUS_TOKEN TOKEN = "-"
 	PLUS_TOKEN  TOKEN = "+"
-	MUL_TOKEN   TOKEN = "*"
+	MUL_TOKEN   TOKEN = "*" // multiplication (same token as STAR_TOKEN for dereference)
 	DIV_TOKEN   TOKEN = "/"
 	MOD_TOKEN   TOKEN = "%"
 	//logical operators
@@ -134,6 +135,7 @@ var keyWordsMap map[TOKEN]bool = map[TOKEN]bool{
 	CONTINUE_TOKEN:  true,
 	IMPORT_TOKEN:    true,
 	AS_TOKEN:        true,
+	MUT_TOKEN:       true,
 }
 
 var builtinTypes map[string]bool = map[string]bool{

@@ -8,8 +8,8 @@ type Pair struct {
 fn main() {
     let p: Pair = { .X = 1, .Y = 2 };
     let rx: &i32 = &p.X;
-    let ry: &'i32 = &'p.Y;
-    io::Println(rx);
-    ry = 3;
+    let ry: &mut i32 = &mut p.Y;
+    io::Println(*rx);
+    *ry = 3;
     io::Println(p.Y);
 }

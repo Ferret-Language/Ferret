@@ -203,6 +203,9 @@ func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	case *ast.UnaryExpr:
 		return inferUnaryExprType(ctx, mod, e)
 
+	case *ast.DerefExpr:
+		return inferDerefExprType(ctx, mod, e)
+
 	case *ast.CallExpr:
 		return inferCallExprType(ctx, mod, e)
 
@@ -338,23 +341,23 @@ func inferBinaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module
 // inferUnaryExprType determines the result type of a unary expression
 func inferUnaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.UnaryExpr) types.SemType {
 	xType := inferExprType(ctx, mod, expr.X)
-	baseType := dereferenceType(types.UnwrapType(xType))
 
 	switch expr.Op.Kind {
 	case tokens.MINUS_TOKEN, tokens.PLUS_TOKEN:
 		// Unary +/- preserves numeric type
-		return baseType
+		return xType
 
 	case tokens.NOT_TOKEN:
 		// Logical not returns bool
 		return types.TypeBool
 	case tokens.BIT_AND_TOKEN:
-		// Address-of returns a reference type
+		// Address-of returns immutable reference type
 		if _, ok := xType.(*types.ReferenceType); ok {
 			return types.TypeUnknown
 		}
 		return types.NewReference(xType)
-	case tokens.MUT_REF_TOKEN:
+	case tokens.MUT_TOKEN:
+		// &mut returns mutable reference type
 		if _, ok := xType.(*types.ReferenceType); ok {
 			return types.TypeUnknown
 		}
@@ -363,6 +366,22 @@ func inferUnaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	default:
 		return xType
 	}
+}
+
+// inferDerefExprType determines the result type of a dereference expression (*x)
+func inferDerefExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.DerefExpr) types.SemType {
+	xType := inferExprType(ctx, mod, expr.X)
+
+	// Unwrap to get the actual type
+	unwrapped := types.UnwrapType(xType)
+
+	// Check if it's a reference type
+	if refType, ok := unwrapped.(*types.ReferenceType); ok {
+		return refType.Inner
+	}
+
+	// Not a reference - type error will be reported in checkExpr
+	return types.TypeUnknown
 }
 
 // inferCallExprType determines the return type of a function call
@@ -453,7 +472,8 @@ func inferSelectorExprType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 		return types.TypeUnknown
 	}
 
-	// Automatic dereferencing: &T -> T
+	// Auto-dereference for selector expressions (method calls and field access)
+	// This allows: ref.field instead of (*ref).field
 	baseType = dereferenceType(baseType)
 
 	fieldName := expr.Field.Name

@@ -372,6 +372,9 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 			return
 		}
 		b.checkExpr(e.X)
+	case *hir.DerefExpr:
+		// Dereference requires read access to the reference
+		b.checkExpr(e.X)
 	case *hir.PrefixExpr:
 		if isIncDecOp(e.Op.Kind) {
 			b.checkWriteTarget(e.X)
@@ -481,7 +484,7 @@ func (b *borrowChecker) checkBorrowInit(name *hir.Ident, expr *hir.UnaryExpr) {
 		return
 	}
 	place := b.borrowPlace(expr.X)
-	mutable := expr.Op.Kind == tokens.MUT_REF_TOKEN
+	mutable := expr.Op.Kind == tokens.MUT_TOKEN
 	if place.base != nil && !isReferenceSymbol(place.base) {
 		if b.addBorrow(place, mutable, expr.Loc()) && name != nil && name.Symbol != nil {
 			b.bindings[name.Symbol] = borrowBinding{place: place, mutable: mutable, loc: expr.Loc()}
@@ -514,7 +517,7 @@ func (b *borrowChecker) checkBorrowExpr(expr *hir.UnaryExpr) {
 		return
 	}
 	place := b.borrowPlace(expr.X)
-	mutable := expr.Op.Kind == tokens.MUT_REF_TOKEN
+	mutable := expr.Op.Kind == tokens.MUT_TOKEN
 	if place.base != nil && !isReferenceSymbol(place.base) {
 		if b.addBorrow(place, mutable, expr.Loc()) {
 			b.temp = append(b.temp, borrowRecord{place: place, mutable: mutable, loc: expr.Loc()})
@@ -1092,7 +1095,7 @@ func pathsEqual(a, b []placeSegment) bool {
 }
 
 func isBorrowOp(kind tokens.TOKEN) bool {
-	return kind == tokens.BIT_AND_TOKEN || kind == tokens.MUT_REF_TOKEN
+	return kind == tokens.BIT_AND_TOKEN || kind == tokens.MUT_TOKEN
 }
 
 func isIncDecOp(kind tokens.TOKEN) bool {

@@ -5,10 +5,10 @@ fn main() {
 
     {
         let r: &i32 = &a;
-        io::Println(r);
+        io::Println(*r);
     }
 
-    let m: &'i32 = &'a;
-    m = 12;
+    let m: &mut i32 = &mut a;
+    *m = 12;
     io::Println(a);
 }

@@ -19,7 +19,7 @@ fn divide(a: i32, b: i32) -> str ! i32 {
 
 fn main() {
     let nums := [1, 2, 3];
-    append(&'nums, 4);
+    append(&mut nums, 4);
     nums[0] = nums[0] + 9;
 
     let nums2 := nums;

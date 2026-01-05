@@ -13,10 +13,17 @@ import (
 func (p *Parser) parseType() ast.TypeNode {
 	tok := p.peek()
 
-	// Check for reference type &T
-	if p.match(tokens.MUT_REF_TOKEN, tokens.BIT_AND_TOKEN) {
+	// Check for reference type &T or &mut T
+	if p.match(tokens.BIT_AND_TOKEN) {
 		ampersand := p.advance()
-		isMutable := ampersand.Kind == tokens.MUT_REF_TOKEN
+		isMutable := false
+
+		// Check if followed by 'mut' keyword
+		if p.match(tokens.MUT_TOKEN) {
+			p.advance()
+			isMutable = true
+		}
+
 		baseType := p.parseType()
 		// Handle case where baseType might be Invalid with potential nil location issues
 		var endPos *source.Position

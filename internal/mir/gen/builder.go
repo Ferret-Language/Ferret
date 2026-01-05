@@ -861,7 +861,7 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		}
 		return b.emitBinary(e.Op.Kind, left, right, e.Type, e.Location)
 	case *hir.UnaryExpr:
-		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_REF_TOKEN {
+		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_TOKEN {
 			return b.lowerLValue(e.X)
 		}
 		operand := b.lowerExpr(e.X)
@@ -870,6 +870,21 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		}
 		operand, _ = b.derefValueIfNeeded(operand, b.exprType(e.X), e.Location)
 		return b.emitUnary(e.Op.Kind, operand, e.Type, e.Location)
+	case *hir.DerefExpr:
+		// Dereference: load the value from the reference
+		refVal := b.lowerExpr(e.X)
+		if refVal == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		// The reference is already a pointer value, just load from it
+		id := b.gen.nextValueID()
+		b.emitInstr(&mir.Load{
+			Result:   id,
+			Addr:     refVal,
+			Type:     e.Type,
+			Location: e.Location,
+		})
+		return id
 	case *hir.PrefixExpr:
 		return b.lowerPrefix(e)
 	case *hir.PostfixExpr:
@@ -1945,6 +1960,9 @@ func (b *functionBuilder) lowerLValue(expr hir.Expr) mir.ValueID {
 	switch e := expr.(type) {
 	case *hir.Ident:
 		return b.addrForIdent(e)
+	case *hir.DerefExpr:
+		// For dereference, the operand IS the address (it's a reference/pointer)
+		return b.lowerExpr(e.X)
 	case *hir.SelectorExpr:
 		return b.lowerFieldAddr(e)
 	case *hir.IndexExpr:
@@ -3634,6 +3652,8 @@ func (b *functionBuilder) exprType(expr hir.Expr) types.SemType {
 	case *hir.ResultErr:
 		return e.Type
 	case *hir.ResultUnwrap:
+		return e.Type
+	case *hir.DerefExpr:
 		return e.Type
 	default:
 		return nil

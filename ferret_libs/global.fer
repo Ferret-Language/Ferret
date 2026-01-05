@@ -5,7 +5,7 @@
 // Note: len borrows read-only (&). The compiler inserts the borrow for literals/values.
 fn len(value: &interface {}) -> i32;
 // @extern
-// Note: append borrows mutably (&') and requires an addressable target.
-fn append(values: &'[]interface {}, value: interface {}) -> bool;
+// Note: append borrows mutably (&mut) and requires an addressable target.
+fn append(values: &mut []interface {}, value: interface {}) -> bool;
 // @extern
 fn panic(msg: str) -> void;

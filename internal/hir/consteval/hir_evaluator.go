@@ -26,6 +26,10 @@ func EvaluateHIRExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 	case *hir.UnaryExpr:
 		return evaluateHIRUnary(ctx, mod, e)
 
+	case *hir.DerefExpr:
+		// Cannot evaluate dereferences at compile time
+		return nil
+
 	case *hir.BinaryExpr:
 		return evaluateHIRBinary(ctx, mod, e)
 

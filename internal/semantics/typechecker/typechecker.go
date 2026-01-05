@@ -675,6 +675,13 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 	}
 
 	for _, item := range declItems {
+		// Safeguard: Skip items with invalid syntax
+		// - nil Name from parser errors
+		// - Name with "<error>" placeholder (parser failed to get identifier)
+		if item.Name == nil || item.Name.Name == "<error>" {
+			continue
+		}
+
 		name := item.Name.Name
 
 		if name == "_" {
@@ -1604,7 +1611,8 @@ func checkSelectorExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 		return
 	}
 
-	// Automatic dereferencing: &T -> T
+	// Auto-dereference for selector expressions (method calls and field access)
+	// This allows: ref.field instead of (*ref).field
 	baseType = dereferenceType(baseType)
 
 	fieldName := expr.Field.Name
@@ -2119,6 +2127,9 @@ func isAssignableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
 		return true
+	case *ast.DerefExpr:
+		// Dereferenced references are assignable (*ref = value)
+		return true
 	case *ast.ParenExpr:
 		return isAssignableTarget(ctx, mod, e.X)
 	case *ast.SelectorExpr:
@@ -2181,7 +2192,7 @@ func isBorrowExpr(expr ast.Expression) bool {
 		return false
 	}
 	if unary, ok := expr.(*ast.UnaryExpr); ok {
-		return unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_REF_TOKEN
+		return unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN
 	}
 	return false
 }
@@ -2190,7 +2201,7 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 	if ctx == nil || mod == nil || expr == nil {
 		return
 	}
-	if expr.Op.Kind != tokens.BIT_AND_TOKEN && expr.Op.Kind != tokens.MUT_REF_TOKEN {
+	if expr.Op.Kind != tokens.BIT_AND_TOKEN && expr.Op.Kind != tokens.MUT_TOKEN {
 		return
 	}
 	if operandType == nil || operandType.Equals(types.TypeUnknown) {
@@ -2204,7 +2215,7 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 		)
 		return
 	}
-	if expr.Op.Kind == tokens.MUT_REF_TOKEN {
+	if expr.Op.Kind == tokens.MUT_TOKEN {
 		if ident, ok := expr.X.(*ast.IdentifierExpr); ok {
 			if sym, found := mod.CurrentScope.Lookup(ident.Name); found {
 				if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
@@ -2447,11 +2458,11 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 	case *ast.UnaryExpr:
 		// Recursively check operand
 		operandType := checkExpr(ctx, mod, e.X, types.TypeUnknown)
-		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_REF_TOKEN {
+		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_TOKEN {
 			checkBorrowExpr(ctx, mod, e, operandType)
 			// Return reference type
 			refType := types.NewReference(operandType)
-			if e.Op.Kind == tokens.MUT_REF_TOKEN {
+			if e.Op.Kind == tokens.MUT_TOKEN {
 				refType.Mutable = true
 			}
 			mod.SetExprType(expr, refType)
@@ -2461,6 +2472,29 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		// For other unary ops like -, return operand type
 		mod.SetExprType(expr, resolveNumericExprTypeForModule(ctx, expr, expected, operandType))
 		return operandType
+
+	case *ast.DerefExpr:
+		// Check operand and verify it's a reference type
+		operandType := checkExpr(ctx, mod, e.X, types.TypeUnknown)
+		unwrapped := types.UnwrapType(operandType)
+
+		if refType, ok := unwrapped.(*types.ReferenceType); ok {
+			// Return the inner type
+			mod.SetExprType(expr, refType.Inner)
+			return refType.Inner
+		}
+
+		// Not a reference type - error
+		if !operandType.Equals(types.TypeUnknown) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot dereference non-reference type '%s'", operandType.String())).
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(e.Loc(), fmt.Sprintf("type '%s' is not a reference", operandType.String())).
+					WithHelp("dereference operator '*' requires a reference type (&T or &mut T)"),
+			)
+		}
+		mod.SetExprType(expr, types.TypeUnknown)
+		return types.TypeUnknown
 
 	case *ast.BasicLit:
 		// Keep numeric literals untyped when there's no expected type,

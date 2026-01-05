@@ -340,7 +340,7 @@ func NewMutableReference(inner SemType) *ReferenceType {
 
 func (r *ReferenceType) String() string {
 	if r.Mutable {
-		return fmt.Sprintf("&'%s", r.Inner.String())
+		return fmt.Sprintf("&mut %s", r.Inner.String())
 	}
 	return fmt.Sprintf("&%s", r.Inner.String())
 }

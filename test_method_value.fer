@@ -8,7 +8,7 @@ fn (c: &Counter) ref() {
     io::Println(c.Value);
 }
 
-fn (c: &'Counter) incr() {
+fn (c: &mut Counter) incr() {
     c.Value++;
 }
 

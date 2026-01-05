@@ -3,7 +3,7 @@ import "math";
 
 fn main() {
     let arr := [1,2,3,4];
-    append(&'arr, 5);
+    append(&mut arr, 5);
     for v in arr {
         io::Println(v);
     }

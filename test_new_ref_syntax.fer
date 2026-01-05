@@ -1,0 +1,16 @@
+// Test new reference syntax: &mut and &, with explicit dereference *
+
+fn main() {
+    // Test 1: Mutable reference with explicit dereference
+    let x := 10;
+    let ref_mut: &mut i32 = &mut x;
+    *ref_mut = 20;  // Explicit deref required
+    
+    // Test 2: Immutable reference
+    let y := 30;
+    let ref_imm: &i32 = &y;
+    let val := *ref_imm;  // Explicit deref required
+    
+    // Test 3: No implicit coercion - this should error
+    // let ref_imm2: &i32 = ref_mut;  // Error: &mut i32 != &i32
+}
