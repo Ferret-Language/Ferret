@@ -54,7 +54,7 @@ type Result struct {
 func Compile(opts *Options) Result {
 	// Setup compiler config
 	projectName := "playground"
-	projectRoot := "/virtual"
+	projectRoot := "/playground"
 
 	if opts.EntryFile != "" {
 		absPath, err := filepath.Abs(opts.EntryFile)
