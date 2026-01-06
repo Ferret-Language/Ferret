@@ -137,7 +137,7 @@ func reportMutabilityError(ctx *context_v2.CompilerContext, info MutabilityInfo,
 		diag := diagnostics.NewError(fmt.Sprintf("cannot modify through immutable %s '%s'", kindLabel, symName)).
 			WithCode(diagnostics.ErrInvalidAssignment).
 			WithPrimaryLabel(target.Loc(), "modification through immutable reference").
-			WithHelp("use a mutable reference '&'' to allow modification")
+			WithHelp("use a mutable reference '&mut' to allow modification")
 		if declLoc != nil {
 			diag = diag.WithSecondaryLabel(declLoc, fmt.Sprintf("%s declared as immutable reference '&' here", kindLabel))
 		}
@@ -152,7 +152,7 @@ func reportMutabilityError(ctx *context_v2.CompilerContext, info MutabilityInfo,
 		diag := diagnostics.NewWarning(fmt.Sprintf("modifying value receiver '%s' does not affect the caller", info.Symbol.Name)).
 			WithCode(diagnostics.WarnValueReceiverMutation).
 			WithPrimaryLabel(target.Loc(), "value receiver is a copy").
-			WithHelp("use a '&'' receiver to mutate the original value")
+			WithHelp("use a '&mut' receiver to mutate the original value")
 		if declLoc != nil {
 			diag = diag.WithSecondaryLabel(declLoc, "receiver declared here")
 		}
