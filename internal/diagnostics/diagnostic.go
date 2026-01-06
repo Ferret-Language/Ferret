@@ -40,7 +40,7 @@ type Label struct {
 type LabelStyle int
 
 const (
-	Primary   LabelStyle = iota // The main error location (uses ^^^)
+	Primary   LabelStyle = iota // The main error location (uses ~~~)
 	Secondary                   // Additional context (uses ---)
 )
 
