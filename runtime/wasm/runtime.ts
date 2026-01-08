@@ -277,8 +277,9 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       case 3:
         return String(dv.getBigInt64(data, true));
       case 4:
+        return readBigIntSigned(data, 16).toString();
       case 5:
-        return "<i128>";
+        return readBigIntSigned(data, 32).toString();
       case 6:
         return String(dv.getUint8(data));
       case 7:
@@ -288,15 +289,17 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       case 9:
         return String(dv.getBigUint64(data, true));
       case 10:
+        return readBigIntUnsigned(data, 16).toString();
       case 11:
-        return "<u128>";
+        return readBigIntUnsigned(data, 32).toString();
       case 12:
         return String(dv.getFloat32(data, true));
       case 13:
         return String(dv.getFloat64(data, true));
       case 14:
+        return formatFloat(readF128(data), 15);
       case 15:
-        return "<f128>";
+        return formatFloat(readF256(data), 20);
       case 16: {
         const strPtr = dv.getUint32(data, true);
         return readCString(strPtr);
@@ -448,8 +451,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return BigInt.asUintN(64, asBig).toString();
   }
 
-  function formatF64(value: number): string {
-    let text = Number(value).toPrecision(15);
+  function formatFloat(value: number, precision: number): string {
+    let text = Number(value).toPrecision(precision);
     const expIndex = text.search(/[eE]/);
     if (expIndex >= 0) {
       const head = text.slice(0, expIndex);
@@ -465,6 +468,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       text += ".0";
     }
     return text;
+  }
+
+  function formatF64(value: number): string {
+    return formatFloat(value, 15);
   }
 
   function ferret_io_ConcatStrings(leftPtr: number, rightPtr: number) {
@@ -501,6 +508,846 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_pow(base: number, exp: number) {
     return Math.pow(Number(base), Number(exp));
+  }
+
+  const BIGINT_BITS_128 = 128;
+  const BIGINT_BITS_256 = 256;
+  const BIGINT_MASK_128 = (1n << 128n) - 1n;
+  const BIGINT_MASK_256 = (1n << 256n) - 1n;
+  const BIGINT_SIGN_128 = 1n << 127n;
+  const BIGINT_SIGN_256 = 1n << 255n;
+
+  function bigintMask(bits: number): bigint {
+    return bits === BIGINT_BITS_128 ? BIGINT_MASK_128 : BIGINT_MASK_256;
+  }
+
+  function bigintSign(bits: number): bigint {
+    return bits === BIGINT_BITS_128 ? BIGINT_SIGN_128 : BIGINT_SIGN_256;
+  }
+
+  function readBigIntUnsigned(ptr: number, byteLen: number): bigint {
+    if (!ptr || byteLen <= 0) {
+      return 0n;
+    }
+    const mem = new Uint8Array(memory!.buffer, ptr >>> 0, byteLen);
+    let value = 0n;
+    for (let i = mem.length - 1; i >= 0; i--) {
+      value = (value << 8n) | BigInt(mem[i]);
+    }
+    return value;
+  }
+
+  function readBigIntSigned(ptr: number, byteLen: number): bigint {
+    const unsigned = readBigIntUnsigned(ptr, byteLen);
+    const bits = BigInt(byteLen * 8);
+    const sign = 1n << (bits - 1n);
+    if (unsigned & sign) {
+      return unsigned - (1n << bits);
+    }
+    return unsigned;
+  }
+
+  function readBigIntUnsignedBits(ptr: number, bits: number): bigint {
+    return readBigIntUnsigned(ptr, bits >> 3);
+  }
+
+  function readBigIntSignedBits(ptr: number, bits: number): bigint {
+    return readBigIntSigned(ptr, bits >> 3);
+  }
+
+  function writeBigIntRaw(ptr: number, byteLen: number, value: bigint): void {
+    if (!ptr || byteLen <= 0) {
+      return;
+    }
+    const mem = new Uint8Array(memory!.buffer);
+    let v = value;
+    const base = ptr >>> 0;
+    for (let i = 0; i < byteLen; i++) {
+      mem[base + i] = Number(v & 0xffn);
+      v >>= 8n;
+    }
+  }
+
+  function wrapUnsigned(value: bigint, bits: number): bigint {
+    return value & bigintMask(bits);
+  }
+
+  function wrapSigned(value: bigint, bits: number): bigint {
+    const mask = bigintMask(bits);
+    let v = value & mask;
+    const sign = bigintSign(bits);
+    if (v & sign) {
+      v -= mask + 1n;
+    }
+    return v;
+  }
+
+  function writeBigIntUnsigned(ptr: number, bits: number, value: bigint): void {
+    writeBigIntRaw(ptr, bits >> 3, wrapUnsigned(value, bits));
+  }
+
+  function writeBigIntSigned(ptr: number, bits: number, value: bigint): void {
+    writeBigIntRaw(ptr, bits >> 3, wrapUnsigned(value, bits));
+  }
+
+  function bytesEqual(ptrA: number, ptrB: number, size: number): boolean {
+    if (ptrA === ptrB) {
+      return true;
+    }
+    if (!ptrA || !ptrB || size <= 0) {
+      return false;
+    }
+    const mem = new Uint8Array(memory!.buffer);
+    const a = ptrA >>> 0;
+    const b = ptrB >>> 0;
+    for (let i = 0; i < size; i++) {
+      if (mem[a + i] !== mem[b + i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function readF128(ptr: number): number {
+    return view().getFloat64(ptr >>> 0, true);
+  }
+
+  function writeF128(ptr: number, value: number): void {
+    if (!ptr) {
+      return;
+    }
+    const dv = view();
+    const base = ptr >>> 0;
+    dv.setFloat64(base, value, true);
+    const mem = new Uint8Array(memory!.buffer);
+    mem.fill(0, base + 8, base + 16);
+  }
+
+  function readF256(ptr: number): number {
+    return view().getFloat64(ptr >>> 0, true);
+  }
+
+  function writeF256(ptr: number, value: number): void {
+    if (!ptr) {
+      return;
+    }
+    const dv = view();
+    const base = ptr >>> 0;
+    dv.setFloat64(base, value, true);
+    const mem = new Uint8Array(memory!.buffer);
+    mem.fill(0, base + 8, base + 32);
+  }
+
+  function parseBigIntLiteral(text: string, allowSign: boolean): bigint | null {
+    if (!text) {
+      return null;
+    }
+    let cleaned = text.trim();
+    if (cleaned === "") {
+      return null;
+    }
+    cleaned = cleaned.replace(/_/g, "");
+    if (cleaned[0] === "+") {
+      cleaned = cleaned.slice(1);
+    }
+    if (cleaned[0] === "-" && !allowSign) {
+      return null;
+    }
+    try {
+      return BigInt(cleaned);
+    } catch {
+      return null;
+    }
+  }
+
+  function normalizeI64(value: number | bigint): bigint {
+    return BigInt.asIntN(64, typeof value === "bigint" ? value : BigInt(value));
+  }
+
+  function normalizeU64(value: number | bigint): bigint {
+    return BigInt.asUintN(
+      64,
+      typeof value === "bigint" ? value : BigInt(value),
+    );
+  }
+
+  function powSigned(value: bigint, exp: bigint, bits: number): bigint {
+    if (exp < 0n) {
+      return 0n;
+    }
+    let result = 1n;
+    let base = wrapSigned(value, bits);
+    let e = exp;
+    while (e > 0n) {
+      if (e & 1n) {
+        result = wrapSigned(result * base, bits);
+      }
+      base = wrapSigned(base * base, bits);
+      e >>= 1n;
+    }
+    return wrapSigned(result, bits);
+  }
+
+  function powUnsigned(value: bigint, exp: bigint, bits: number): bigint {
+    let result = 1n;
+    let base = wrapUnsigned(value, bits);
+    let e = exp;
+    while (e > 0n) {
+      if (e & 1n) {
+        result = wrapUnsigned(result * base, bits);
+      }
+      base = wrapUnsigned(base * base, bits);
+      e >>= 1n;
+    }
+    return wrapUnsigned(result, bits);
+  }
+
+  function ferret_i128_add_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntSignedBits(aPtr, BIGINT_BITS_128) +
+      readBigIntSignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_i128_sub_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntSignedBits(aPtr, BIGINT_BITS_128) -
+      readBigIntSignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_i128_mul_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntSignedBits(aPtr, BIGINT_BITS_128) *
+      readBigIntSignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_i128_div_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntSignedBits(aPtr, BIGINT_BITS_128) /
+      readBigIntSignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_i128_mod_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntSignedBits(aPtr, BIGINT_BITS_128) %
+      readBigIntSignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_i128_eq_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntSignedBits(aPtr, BIGINT_BITS_128) ===
+      readBigIntSignedBits(bPtr, BIGINT_BITS_128)
+      ? 1
+      : 0;
+  }
+
+  function ferret_i128_lt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntSignedBits(aPtr, BIGINT_BITS_128) <
+      readBigIntSignedBits(bPtr, BIGINT_BITS_128)
+      ? 1
+      : 0;
+  }
+
+  function ferret_i128_gt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntSignedBits(aPtr, BIGINT_BITS_128) >
+      readBigIntSignedBits(bPtr, BIGINT_BITS_128)
+      ? 1
+      : 0;
+  }
+
+  function ferret_i128_and_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const a = readBigIntSignedBits(aPtr, BIGINT_BITS_128);
+    const b = readBigIntSignedBits(bPtr, BIGINT_BITS_128);
+    const res = wrapSigned(
+      a & BIGINT_MASK_128 & (b & BIGINT_MASK_128),
+      BIGINT_BITS_128,
+    );
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_i128_or_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const a = readBigIntSignedBits(aPtr, BIGINT_BITS_128);
+    const b = readBigIntSignedBits(bPtr, BIGINT_BITS_128);
+    const res = wrapSigned(
+      (a & BIGINT_MASK_128) | (b & BIGINT_MASK_128),
+      BIGINT_BITS_128,
+    );
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_i128_xor_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const a = readBigIntSignedBits(aPtr, BIGINT_BITS_128);
+    const b = readBigIntSignedBits(bPtr, BIGINT_BITS_128);
+    const res = wrapSigned(
+      (a & BIGINT_MASK_128) ^ (b & BIGINT_MASK_128),
+      BIGINT_BITS_128,
+    );
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_i128_pow_ptr(
+    basePtr: number,
+    expPtr: number,
+    outPtr: number,
+  ) {
+    if (!outPtr || !basePtr || !expPtr) return;
+    const base = readBigIntSignedBits(basePtr, BIGINT_BITS_128);
+    const exp = readBigIntSignedBits(expPtr, BIGINT_BITS_128);
+    const res = powSigned(base, exp, BIGINT_BITS_128);
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_u128_add_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) +
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_u128_sub_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) -
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_u128_mul_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) *
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_u128_div_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) /
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_u128_mod_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) %
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_u128_eq_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) ===
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128)
+      ? 1
+      : 0;
+  }
+
+  function ferret_u128_lt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) <
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128)
+      ? 1
+      : 0;
+  }
+
+  function ferret_u128_gt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) >
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128)
+      ? 1
+      : 0;
+  }
+
+  function ferret_u128_and_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) &
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_u128_or_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) |
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_u128_xor_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_128) ^
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_128);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_u128_pow_ptr(
+    basePtr: number,
+    expPtr: number,
+    outPtr: number,
+  ) {
+    if (!outPtr || !basePtr || !expPtr) return;
+    const base = readBigIntUnsignedBits(basePtr, BIGINT_BITS_128);
+    const exp = readBigIntUnsignedBits(expPtr, BIGINT_BITS_128);
+    const res = powUnsigned(base, exp, BIGINT_BITS_128);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, res);
+  }
+
+  function ferret_i256_add_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntSignedBits(aPtr, BIGINT_BITS_256) +
+      readBigIntSignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_i256_sub_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntSignedBits(aPtr, BIGINT_BITS_256) -
+      readBigIntSignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_i256_mul_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntSignedBits(aPtr, BIGINT_BITS_256) *
+      readBigIntSignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_i256_div_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntSignedBits(aPtr, BIGINT_BITS_256) /
+      readBigIntSignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_i256_mod_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntSignedBits(aPtr, BIGINT_BITS_256) %
+      readBigIntSignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_i256_eq_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntSignedBits(aPtr, BIGINT_BITS_256) ===
+      readBigIntSignedBits(bPtr, BIGINT_BITS_256)
+      ? 1
+      : 0;
+  }
+
+  function ferret_i256_lt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntSignedBits(aPtr, BIGINT_BITS_256) <
+      readBigIntSignedBits(bPtr, BIGINT_BITS_256)
+      ? 1
+      : 0;
+  }
+
+  function ferret_i256_gt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntSignedBits(aPtr, BIGINT_BITS_256) >
+      readBigIntSignedBits(bPtr, BIGINT_BITS_256)
+      ? 1
+      : 0;
+  }
+
+  function ferret_i256_and_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const a = readBigIntSignedBits(aPtr, BIGINT_BITS_256);
+    const b = readBigIntSignedBits(bPtr, BIGINT_BITS_256);
+    const res = wrapSigned(
+      a & BIGINT_MASK_256 & (b & BIGINT_MASK_256),
+      BIGINT_BITS_256,
+    );
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_i256_or_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const a = readBigIntSignedBits(aPtr, BIGINT_BITS_256);
+    const b = readBigIntSignedBits(bPtr, BIGINT_BITS_256);
+    const res = wrapSigned(
+      (a & BIGINT_MASK_256) | (b & BIGINT_MASK_256),
+      BIGINT_BITS_256,
+    );
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_i256_xor_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const a = readBigIntSignedBits(aPtr, BIGINT_BITS_256);
+    const b = readBigIntSignedBits(bPtr, BIGINT_BITS_256);
+    const res = wrapSigned(
+      (a & BIGINT_MASK_256) ^ (b & BIGINT_MASK_256),
+      BIGINT_BITS_256,
+    );
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_i256_pow_ptr(
+    basePtr: number,
+    expPtr: number,
+    outPtr: number,
+  ) {
+    if (!outPtr || !basePtr || !expPtr) return;
+    const base = readBigIntSignedBits(basePtr, BIGINT_BITS_256);
+    const exp = readBigIntSignedBits(expPtr, BIGINT_BITS_256);
+    const res = powSigned(base, exp, BIGINT_BITS_256);
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_u256_add_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) +
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_u256_sub_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) -
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_u256_mul_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) *
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_u256_div_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) /
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_u256_mod_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) %
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_u256_eq_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) ===
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256)
+      ? 1
+      : 0;
+  }
+
+  function ferret_u256_lt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) <
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256)
+      ? 1
+      : 0;
+  }
+
+  function ferret_u256_gt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) >
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256)
+      ? 1
+      : 0;
+  }
+
+  function ferret_u256_and_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) &
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_u256_or_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) |
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_u256_xor_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    const res =
+      readBigIntUnsignedBits(aPtr, BIGINT_BITS_256) ^
+      readBigIntUnsignedBits(bPtr, BIGINT_BITS_256);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_u256_pow_ptr(
+    basePtr: number,
+    expPtr: number,
+    outPtr: number,
+  ) {
+    if (!outPtr || !basePtr || !expPtr) return;
+    const base = readBigIntUnsignedBits(basePtr, BIGINT_BITS_256);
+    const exp = readBigIntUnsignedBits(expPtr, BIGINT_BITS_256);
+    const res = powUnsigned(base, exp, BIGINT_BITS_256);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, res);
+  }
+
+  function ferret_i128_from_i64_ptr(value: number | bigint, outPtr: number) {
+    if (!outPtr) return;
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, normalizeI64(value));
+  }
+
+  function ferret_u128_from_u64_ptr(value: number | bigint, outPtr: number) {
+    if (!outPtr) return;
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, normalizeU64(value));
+  }
+
+  function ferret_i256_from_i64_ptr(value: number | bigint, outPtr: number) {
+    if (!outPtr) return;
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, normalizeI64(value));
+  }
+
+  function ferret_u256_from_u64_ptr(value: number | bigint, outPtr: number) {
+    if (!outPtr) return;
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, normalizeU64(value));
+  }
+
+  function ferret_f128_from_f64_ptr(value: number, outPtr: number) {
+    if (!outPtr) return;
+    writeF128(outPtr, Number(value));
+  }
+
+  function ferret_f256_from_f64_ptr(value: number, outPtr: number) {
+    if (!outPtr) return;
+    writeF256(outPtr, Number(value));
+  }
+
+  function ferret_i128_to_i64_ptr(ptr: number): bigint {
+    if (!ptr) return 0n;
+    const unsigned = readBigIntUnsignedBits(ptr, BIGINT_BITS_128);
+    return BigInt.asIntN(64, unsigned);
+  }
+
+  function ferret_u128_to_u64_ptr(ptr: number): bigint {
+    if (!ptr) return 0n;
+    const unsigned = readBigIntUnsignedBits(ptr, BIGINT_BITS_128);
+    return BigInt.asUintN(64, unsigned);
+  }
+
+  function ferret_i256_to_i64_ptr(ptr: number): bigint {
+    if (!ptr) return 0n;
+    const unsigned = readBigIntUnsignedBits(ptr, BIGINT_BITS_256);
+    return BigInt.asIntN(64, unsigned);
+  }
+
+  function ferret_u256_to_u64_ptr(ptr: number): bigint {
+    if (!ptr) return 0n;
+    const unsigned = readBigIntUnsignedBits(ptr, BIGINT_BITS_256);
+    return BigInt.asUintN(64, unsigned);
+  }
+
+  function ferret_f128_to_f64_ptr(ptr: number): number {
+    if (!ptr) return 0;
+    return readF128(ptr);
+  }
+
+  function ferret_f256_to_f64_ptr(ptr: number): number {
+    if (!ptr) return 0;
+    return readF256(ptr);
+  }
+
+  function ferret_i128_to_string_ptr(ptr: number): number {
+    if (!ptr) return writeCString("0");
+    const value = readBigIntSignedBits(ptr, BIGINT_BITS_128);
+    return writeCString(value.toString());
+  }
+
+  function ferret_u128_to_string_ptr(ptr: number): number {
+    if (!ptr) return writeCString("0");
+    const value = readBigIntUnsignedBits(ptr, BIGINT_BITS_128);
+    return writeCString(value.toString());
+  }
+
+  function ferret_i256_to_string_ptr(ptr: number): number {
+    if (!ptr) return writeCString("0");
+    const value = readBigIntSignedBits(ptr, BIGINT_BITS_256);
+    return writeCString(value.toString());
+  }
+
+  function ferret_u256_to_string_ptr(ptr: number): number {
+    if (!ptr) return writeCString("0");
+    const value = readBigIntUnsignedBits(ptr, BIGINT_BITS_256);
+    return writeCString(value.toString());
+  }
+
+  function ferret_f128_to_string_ptr(ptr: number): number {
+    if (!ptr) return writeCString("0.0");
+    return writeCString(formatFloat(readF128(ptr), 15));
+  }
+
+  function ferret_f256_to_string_ptr(ptr: number): number {
+    if (!ptr) return writeCString("0.0");
+    return writeCString(formatFloat(readF256(ptr), 20));
+  }
+
+  function ferret_i128_from_string_ptr(strPtr: number, outPtr: number): void {
+    if (!outPtr) return;
+    const text = strPtr ? readCString(strPtr) : "";
+    const parsed = parseBigIntLiteral(text, true);
+    writeBigIntSigned(outPtr, BIGINT_BITS_128, parsed ?? 0n);
+  }
+
+  function ferret_u128_from_string_ptr(strPtr: number, outPtr: number): void {
+    if (!outPtr) return;
+    const text = strPtr ? readCString(strPtr) : "";
+    const parsed = parseBigIntLiteral(text, false);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_128, parsed ?? 0n);
+  }
+
+  function ferret_i256_from_string_ptr(strPtr: number, outPtr: number): void {
+    if (!outPtr) return;
+    const text = strPtr ? readCString(strPtr) : "";
+    const parsed = parseBigIntLiteral(text, true);
+    writeBigIntSigned(outPtr, BIGINT_BITS_256, parsed ?? 0n);
+  }
+
+  function ferret_u256_from_string_ptr(strPtr: number, outPtr: number): void {
+    if (!outPtr) return;
+    const text = strPtr ? readCString(strPtr) : "";
+    const parsed = parseBigIntLiteral(text, false);
+    writeBigIntUnsigned(outPtr, BIGINT_BITS_256, parsed ?? 0n);
+  }
+
+  function ferret_f128_from_string_ptr(strPtr: number, outPtr: number): void {
+    if (!outPtr) return;
+    const text = strPtr ? readCString(strPtr) : "";
+    const cleaned = text.trim().replace(/_/g, "");
+    const val = Number(cleaned);
+    writeF128(outPtr, Number.isFinite(val) ? val : 0);
+  }
+
+  function ferret_f256_from_string_ptr(strPtr: number, outPtr: number): void {
+    if (!outPtr) return;
+    const text = strPtr ? readCString(strPtr) : "";
+    const cleaned = text.trim().replace(/_/g, "");
+    const val = Number(cleaned);
+    writeF256(outPtr, Number.isFinite(val) ? val : 0);
+  }
+
+  function ferret_f128_add_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    writeF128(outPtr, readF128(aPtr) + readF128(bPtr));
+  }
+
+  function ferret_f128_sub_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    writeF128(outPtr, readF128(aPtr) - readF128(bPtr));
+  }
+
+  function ferret_f128_mul_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    writeF128(outPtr, readF128(aPtr) * readF128(bPtr));
+  }
+
+  function ferret_f128_div_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    writeF128(outPtr, readF128(aPtr) / readF128(bPtr));
+  }
+
+  function ferret_f128_eq_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return bytesEqual(aPtr, bPtr, 16) ? 1 : 0;
+  }
+
+  function ferret_f128_lt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readF128(aPtr) < readF128(bPtr) ? 1 : 0;
+  }
+
+  function ferret_f128_gt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readF128(aPtr) > readF128(bPtr) ? 1 : 0;
+  }
+
+  function ferret_f128_pow_ptr(
+    basePtr: number,
+    expPtr: number,
+    outPtr: number,
+  ) {
+    if (!outPtr || !basePtr || !expPtr) return;
+    writeF128(outPtr, Math.pow(readF128(basePtr), readF128(expPtr)));
+  }
+
+  function ferret_f256_add_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    writeF256(outPtr, readF256(aPtr) + readF256(bPtr));
+  }
+
+  function ferret_f256_sub_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    writeF256(outPtr, readF256(aPtr) - readF256(bPtr));
+  }
+
+  function ferret_f256_mul_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    writeF256(outPtr, readF256(aPtr) * readF256(bPtr));
+  }
+
+  function ferret_f256_div_ptr(aPtr: number, bPtr: number, outPtr: number) {
+    if (!outPtr || !aPtr || !bPtr) return;
+    writeF256(outPtr, readF256(aPtr) / readF256(bPtr));
+  }
+
+  function ferret_f256_eq_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return bytesEqual(aPtr, bPtr, 32) ? 1 : 0;
+  }
+
+  function ferret_f256_lt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readF256(aPtr) < readF256(bPtr) ? 1 : 0;
+  }
+
+  function ferret_f256_gt_ptr(aPtr: number, bPtr: number): number {
+    if (!aPtr || !bPtr) return 0;
+    return readF256(aPtr) > readF256(bPtr) ? 1 : 0;
+  }
+
+  function ferret_f256_pow_ptr(
+    basePtr: number,
+    expPtr: number,
+    outPtr: number,
+  ) {
+    if (!outPtr || !basePtr || !expPtr) return;
+    writeF256(outPtr, Math.pow(readF256(basePtr), readF256(expPtr)));
   }
 
   const MAP_HASH_SEED = 0x9747b28c;
@@ -994,6 +1841,94 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_string_concat_byte,
         ferret_string_concat_bool,
         ferret_pow,
+        ferret_i128_add_ptr,
+        ferret_i128_sub_ptr,
+        ferret_i128_mul_ptr,
+        ferret_i128_div_ptr,
+        ferret_i128_mod_ptr,
+        ferret_i128_eq_ptr,
+        ferret_i128_lt_ptr,
+        ferret_i128_gt_ptr,
+        ferret_i128_and_ptr,
+        ferret_i128_or_ptr,
+        ferret_i128_xor_ptr,
+        ferret_i128_pow_ptr,
+        ferret_u128_add_ptr,
+        ferret_u128_sub_ptr,
+        ferret_u128_mul_ptr,
+        ferret_u128_div_ptr,
+        ferret_u128_mod_ptr,
+        ferret_u128_eq_ptr,
+        ferret_u128_lt_ptr,
+        ferret_u128_gt_ptr,
+        ferret_u128_and_ptr,
+        ferret_u128_or_ptr,
+        ferret_u128_xor_ptr,
+        ferret_u128_pow_ptr,
+        ferret_i256_add_ptr,
+        ferret_i256_sub_ptr,
+        ferret_i256_mul_ptr,
+        ferret_i256_div_ptr,
+        ferret_i256_mod_ptr,
+        ferret_i256_eq_ptr,
+        ferret_i256_lt_ptr,
+        ferret_i256_gt_ptr,
+        ferret_i256_and_ptr,
+        ferret_i256_or_ptr,
+        ferret_i256_xor_ptr,
+        ferret_i256_pow_ptr,
+        ferret_u256_add_ptr,
+        ferret_u256_sub_ptr,
+        ferret_u256_mul_ptr,
+        ferret_u256_div_ptr,
+        ferret_u256_mod_ptr,
+        ferret_u256_eq_ptr,
+        ferret_u256_lt_ptr,
+        ferret_u256_gt_ptr,
+        ferret_u256_and_ptr,
+        ferret_u256_or_ptr,
+        ferret_u256_xor_ptr,
+        ferret_u256_pow_ptr,
+        ferret_f128_add_ptr,
+        ferret_f128_sub_ptr,
+        ferret_f128_mul_ptr,
+        ferret_f128_div_ptr,
+        ferret_f128_eq_ptr,
+        ferret_f128_lt_ptr,
+        ferret_f128_gt_ptr,
+        ferret_f128_pow_ptr,
+        ferret_f256_add_ptr,
+        ferret_f256_sub_ptr,
+        ferret_f256_mul_ptr,
+        ferret_f256_div_ptr,
+        ferret_f256_eq_ptr,
+        ferret_f256_lt_ptr,
+        ferret_f256_gt_ptr,
+        ferret_f256_pow_ptr,
+        ferret_i128_from_i64_ptr,
+        ferret_u128_from_u64_ptr,
+        ferret_i256_from_i64_ptr,
+        ferret_u256_from_u64_ptr,
+        ferret_f128_from_f64_ptr,
+        ferret_f256_from_f64_ptr,
+        ferret_i128_to_i64_ptr,
+        ferret_u128_to_u64_ptr,
+        ferret_i256_to_i64_ptr,
+        ferret_u256_to_u64_ptr,
+        ferret_f128_to_f64_ptr,
+        ferret_f256_to_f64_ptr,
+        ferret_i128_to_string_ptr,
+        ferret_u128_to_string_ptr,
+        ferret_i256_to_string_ptr,
+        ferret_u256_to_string_ptr,
+        ferret_f128_to_string_ptr,
+        ferret_f256_to_string_ptr,
+        ferret_i128_from_string_ptr,
+        ferret_u128_from_string_ptr,
+        ferret_i256_from_string_ptr,
+        ferret_u256_from_string_ptr,
+        ferret_f128_from_string_ptr,
+        ferret_f256_from_string_ptr,
         ferret_map_new_i32,
         ferret_map_new_i64,
         ferret_map_new_f32,
