@@ -1,32 +1,26 @@
 import "std/io";
-import "std/fs";
-import "math";
+
+type Shape interface {
+    area() -> f64,
+};
+
+type Point struct {
+    .X: i32
+};
+
+fn (p: Point) area() -> f64 {
+    return p.X ** 2;
+}
+
+fn make() -> Shape {
+    let p: Point = { .X = 9 };
+    return p as Shape;
+}
 
 fn main() {
-    // Write to file
-    // fs::WriteFile("test.txt", "Hello from Ferret!") catch e {
-    //     io::Println("Write error: " + e);
-    //     return;
-    // };
-    // io::Println("File written!");
-    
-    // Check if exists
-    if fs::Exists("test.txt") {
-        io::Println("File exists!");
-    }
-    
-    // Read entire file
-    let content := fs::ReadFile("test.txt") catch e {
-        io::Println("Read error: " + e);
-        return;
-    };
-    io::Println("Content: " + content);
-    
-    // Clean up
-    // fs::Remove("test.txt") catch e {
-    //     io::Println("Remove error: " + e);
-    // } false;
     io::Println("Test complete!");
-
-    io::Println("Math test: Floor(3.7) = " + math::Floor(3.7));
+    let s := make();
+    let p: Point = { .X = 9 };
+    //let s: Shape = p;
+    io::Println(s.area()); 
 }

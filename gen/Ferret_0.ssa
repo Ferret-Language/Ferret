@@ -1,0 +1,89 @@
+data $__vtable_1 = { l $__iface_1_0 }
+data $str1 = { b "Test complete!", b 0 }
+
+export function d $Point_area(l %t1) {
+@b1
+	%t2 =l alloc8 8
+	storel %t1, %t2
+	%t3 =l loadl %t2
+	%t4 =l add %t3, 0
+	%t5 =w loadw %t4
+	%t6 =w copy 2
+	%t7 =d swtof %t5
+	%t8 =d swtof %t6
+	%t9 =d call $ferret_pow(d %t7, d %t8)
+	ret %t9
+}
+
+export function $make(l %t10) {
+@b2
+	%t11 =l alloc4 4
+	%t17 =l alloc8 16
+	%t12 =w copy 9
+	%t13 =l add %t11, 0
+	storew %t12, %t13
+	%t14 =l copy 4
+	%t15 =l call $ferret_alloc(l %t14)
+	%t16 =l copy 4
+	call $ferret_memcpy(l %t15, l %t11, l %t16)
+	%t18 =l add %t17, 0
+	storel %t15, %t18
+	%t22 =l copy $__vtable_1
+	%t23 =l add %t17, 8
+	storel %t22, %t23
+	%t24 =l copy 16
+	call $ferret_memcpy(l %t10, l %t17, l %t24)
+	ret
+}
+
+export function w $main() {
+@b4
+	%t29 =l alloc8 36
+	%t33 =l alloc8 16
+	%t34 =l alloc8 16
+	%t36 =l alloc4 4
+	%t48 =l alloc8 36
+	%t25 =l copy 36
+	%t26 =w copy 1
+	%t27 =l call $ferret_array_new(l %t25, w %t26)
+	%t28 =l copy $str1
+	%t30 =l add %t29, 0
+	%t31 =w copy 16
+	storew %t31, %t30
+	%t32 =l add %t29, 4
+	storel %t28, %t32
+	call $ferret_array_append(l %t27, l %t29)
+	call $ferret_std_io_Println(l %t27)
+	call $make(l %t34)
+	%t35 =l copy 16
+	call $ferret_memcpy(l %t33, l %t34, l %t35)
+	%t37 =w copy 9
+	%t38 =l add %t36, 0
+	storew %t37, %t38
+	%t39 =l copy 36
+	%t40 =w copy 1
+	%t41 =l call $ferret_array_new(l %t39, w %t40)
+	%t42 =l add %t33, 0
+	%t43 =l loadl %t42
+	%t44 =l add %t33, 8
+	%t45 =l loadl %t44
+	%t46 =l add %t45, 0
+	%q1 =l loadl %t46
+	%t47 =d call %q1(l %t43)
+	%t49 =l add %t48, 0
+	%t50 =w copy 13
+	storew %t50, %t49
+	%t51 =l add %t48, 4
+	stored %t47, %t51
+	call $ferret_array_append(l %t41, l %t48)
+	call $ferret_std_io_Println(l %t41)
+	ret 0
+}
+
+export function d $__iface_1_0(l %t19) {
+@b3
+	%t20 =l copy %t19
+	%t21 =d call $Point_area(l %t20)
+	ret %t21
+}
+

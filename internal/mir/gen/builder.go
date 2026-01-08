@@ -409,13 +409,16 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 				return
 			}
 		}
-		b.emitStore(b.refOutParam, val, stmt.Location)
+		// Return-by-ref: copy the value into the out param.
+		// This prevents returning pointers to stack-allocated interface boxes.
+		b.emitMemcpy(b.refOutParam, val, retType, stmt.Location)
 		b.current.Term = &mir.Return{HasValue: true, Value: b.refOutParam, Location: stmt.Location}
 		return
 	}
 
 	if b.retParam != mir.InvalidValue {
-		b.emitStore(b.retParam, val, stmt.Location)
+		// Return-by-value via out param: always copy the payload.
+		b.emitMemcpy(b.retParam, val, retType, stmt.Location)
 		b.current.Term = &mir.Return{HasValue: false, Location: stmt.Location}
 		return
 	}

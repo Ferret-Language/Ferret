@@ -567,21 +567,22 @@ amd64_win64_emitfn(Fn *fn, FILE *f)
 		lbl = 1;
 		switch (b->jmp.type) {
 		case Jret0:
-			off = xmm_base + 16 * save_xmm;
+			/* Restore callee-saved regs from the same slots they were saved to. */
+			off = 0;
 			for (r=&amd64_win64_rclob[0]; *r>=0; r++)
 				if (*r >= XMM0 && (fn->reg & BIT(*r))) {
-					off -= 16;
 					fprintf(f, "\tmovdqu -%"PRIu64"(%%rbp), %%%s\n",
-						off + 16,
+						xmm_base + off + 16,
 						regtoa(*r, SLong));
+					off += 16;
 				}
-			off = gpr_base + 8 * save_gpr;
+			off = 0;
 			for (r=&amd64_win64_rclob[0]; *r>=0 && *r < XMM0; r++)
 				if (fn->reg & BIT(*r)) {
-					off -= 8;
 					fprintf(f, "\tmovq -%"PRIu64"(%%rbp), %%%s\n",
-						off + 8,
+						gpr_base + off + 8,
 						regtoa(*r, SLong));
+					off += 8;
 				}
 			if (fn->dynalloc)
 				fprintf(f,
