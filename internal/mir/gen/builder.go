@@ -3081,6 +3081,16 @@ func (b *functionBuilder) mapRuntimeFns(keyType types.SemType) mapRuntimeFns {
 				newFn:       "ferret_map_new_i64",
 				fromPairsFn: "ferret_map_from_pairs_i64",
 			}
+		case types.TYPE_F32:
+			return mapRuntimeFns{
+				newFn:       "ferret_map_new_f32",
+				fromPairsFn: "ferret_map_from_pairs_f32",
+			}
+		case types.TYPE_F64:
+			return mapRuntimeFns{
+				newFn:       "ferret_map_new_f64",
+				fromPairsFn: "ferret_map_from_pairs_f64",
+			}
 		case types.TYPE_STRING:
 			return mapRuntimeFns{
 				newFn:       "ferret_map_new_str",

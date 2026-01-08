@@ -6,26 +6,61 @@
 
 #define FERRET_MAP_INITIAL_BUCKETS 16
 #define FERRET_MAP_LOAD_FACTOR 0.75
+#define FERRET_MAP_HASH_SEED 0x9747b28cU
 
-// FNV-1a hash function for integers
-static uint32_t fnv1a_hash(const void* data, size_t len) {
-    const uint8_t* bytes = (const uint8_t*)data;
-    uint32_t hash = 2166136261u; // FNV offset basis
-    for (size_t i = 0; i < len; i++) {
-        hash ^= bytes[i];
-        hash *= 16777619u; // FNV prime
-    }
-    return hash;
+static uint32_t rotl32(uint32_t value, int shift) {
+    return (value << shift) | (value >> (32 - shift));
 }
 
-// FNV-1a hash for strings (null-terminated)
-static uint32_t fnv1a_hash_str(const char* str) {
-    uint32_t hash = 2166136261u;
-    while (*str) {
-        hash ^= (uint8_t)(*str++);
-        hash *= 16777619u;
+static uint32_t murmur3_32(const uint8_t* data, size_t len, uint32_t seed) {
+    if (data == NULL) {
+        return 0;
     }
-    return hash;
+
+    const uint32_t c1 = 0xcc9e2d51U;
+    const uint32_t c2 = 0x1b873593U;
+    uint32_t h1 = seed;
+
+    size_t i = 0;
+    size_t nblocks = len / 4;
+    for (size_t block = 0; block < nblocks; block++) {
+        size_t offset = i + block * 4;
+        uint32_t k1 = (uint32_t)data[offset] |
+            ((uint32_t)data[offset + 1] << 8) |
+            ((uint32_t)data[offset + 2] << 16) |
+            ((uint32_t)data[offset + 3] << 24);
+
+        k1 *= c1;
+        k1 = rotl32(k1, 15);
+        k1 *= c2;
+
+        h1 ^= k1;
+        h1 = rotl32(h1, 13);
+        h1 = h1 * 5U + 0xe6546b64U;
+    }
+
+    const uint8_t* tail = data + nblocks * 4;
+    uint32_t k1 = 0;
+    switch (len & 3) {
+        case 3:
+            k1 ^= ((uint32_t)tail[2] << 16);
+        case 2:
+            k1 ^= ((uint32_t)tail[1] << 8);
+        case 1:
+            k1 ^= (uint32_t)tail[0];
+            k1 *= c1;
+            k1 = rotl32(k1, 15);
+            k1 *= c2;
+            h1 ^= k1;
+    }
+
+    h1 ^= (uint32_t)len;
+    h1 ^= h1 >> 16;
+    h1 *= 0x85ebca6bU;
+    h1 ^= h1 >> 13;
+    h1 *= 0xc2b2ae35U;
+    h1 ^= h1 >> 16;
+    return h1;
 }
 
 ferret_map_t* ferret_map_new(
@@ -135,6 +170,14 @@ ferret_map_t* ferret_map_new_i64(size_t key_size, size_t value_size) {
     return ferret_map_new(key_size, value_size, ferret_map_hash_i64, ferret_map_equals_i64);
 }
 
+ferret_map_t* ferret_map_new_f32(size_t key_size, size_t value_size) {
+    return ferret_map_new(key_size, value_size, ferret_map_hash_f32, ferret_map_equals_f32);
+}
+
+ferret_map_t* ferret_map_new_f64(size_t key_size, size_t value_size) {
+    return ferret_map_new(key_size, value_size, ferret_map_hash_f64, ferret_map_equals_f64);
+}
+
 ferret_map_t* ferret_map_new_str(size_t key_size, size_t value_size) {
     return ferret_map_new(key_size, value_size, ferret_map_hash_str, ferret_map_equals_str);
 }
@@ -161,6 +204,26 @@ ferret_map_t* ferret_map_from_pairs_i64(
     size_t count
 ) {
     return ferret_map_from_pairs(key_size, value_size, keys, values, count, ferret_map_hash_i64, ferret_map_equals_i64);
+}
+
+ferret_map_t* ferret_map_from_pairs_f32(
+    size_t key_size,
+    size_t value_size,
+    const void* keys,
+    const void* values,
+    size_t count
+) {
+    return ferret_map_from_pairs(key_size, value_size, keys, values, count, ferret_map_hash_f32, ferret_map_equals_f32);
+}
+
+ferret_map_t* ferret_map_from_pairs_f64(
+    size_t key_size,
+    size_t value_size,
+    const void* keys,
+    const void* values,
+    size_t count
+) {
+    return ferret_map_from_pairs(key_size, value_size, keys, values, count, ferret_map_hash_f64, ferret_map_equals_f64);
 }
 
 ferret_map_t* ferret_map_from_pairs_str(
@@ -331,12 +394,38 @@ void ferret_map_destroy(ferret_map_t* map) {
 // Hash functions
 uint32_t ferret_map_hash_i32(const void* key, size_t key_size) {
     (void)key_size; // Unused
-    return fnv1a_hash(key, sizeof(int32_t));
+    return murmur3_32((const uint8_t*)key, sizeof(int32_t), FERRET_MAP_HASH_SEED);
 }
 
 uint32_t ferret_map_hash_i64(const void* key, size_t key_size) {
     (void)key_size; // Unused
-    return fnv1a_hash(key, sizeof(int64_t));
+    return murmur3_32((const uint8_t*)key, sizeof(int64_t), FERRET_MAP_HASH_SEED);
+}
+
+uint32_t ferret_map_hash_f32(const void* key, size_t key_size) {
+    (void)key_size; // Unused
+    if (key == NULL) {
+        return 0;
+    }
+    float value = 0.0f;
+    memcpy(&value, key, sizeof(float));
+    if (value == 0.0f) {
+        value = 0.0f; // normalize -0.0f to +0.0f
+    }
+    return murmur3_32((const uint8_t*)&value, sizeof(float), FERRET_MAP_HASH_SEED);
+}
+
+uint32_t ferret_map_hash_f64(const void* key, size_t key_size) {
+    (void)key_size; // Unused
+    if (key == NULL) {
+        return 0;
+    }
+    double value = 0.0;
+    memcpy(&value, key, sizeof(double));
+    if (value == 0.0) {
+        value = 0.0; // normalize -0.0 to +0.0
+    }
+    return murmur3_32((const uint8_t*)&value, sizeof(double), FERRET_MAP_HASH_SEED);
 }
 
 uint32_t ferret_map_hash_str(const void* key, size_t key_size) {
@@ -346,14 +435,15 @@ uint32_t ferret_map_hash_str(const void* key, size_t key_size) {
     if (str_ptr == NULL || *str_ptr == NULL) {
         return 0;
     }
-    return fnv1a_hash_str(*str_ptr);
+    size_t len = strlen(*str_ptr);
+    return murmur3_32((const uint8_t*)(*str_ptr), len, FERRET_MAP_HASH_SEED);
 }
 
 uint32_t ferret_map_hash_bytes(const void* key, size_t key_size) {
     if (key == NULL) {
         return 0;
     }
-    return fnv1a_hash(key, key_size);
+    return murmur3_32((const uint8_t*)key, key_size, FERRET_MAP_HASH_SEED);
 }
 
 // Equality functions
@@ -365,6 +455,16 @@ bool ferret_map_equals_i32(const void* key1, const void* key2, size_t key_size) 
 bool ferret_map_equals_i64(const void* key1, const void* key2, size_t key_size) {
     (void)key_size; // Unused
     return *(const int64_t*)key1 == *(const int64_t*)key2;
+}
+
+bool ferret_map_equals_f32(const void* key1, const void* key2, size_t key_size) {
+    (void)key_size; // Unused
+    return *(const float*)key1 == *(const float*)key2;
+}
+
+bool ferret_map_equals_f64(const void* key1, const void* key2, size_t key_size) {
+    (void)key_size; // Unused
+    return *(const double*)key1 == *(const double*)key2;
 }
 
 bool ferret_map_equals_str(const void* key1, const void* key2, size_t key_size) {

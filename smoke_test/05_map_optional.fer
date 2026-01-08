@@ -6,9 +6,9 @@ fn main() {
         "beta" => 2
     } as map[str]i32;
 
-    io::Println(scores["alpha"] ?? 0);
-    io::Println(scores["gamma"] ?? 9);
+    io::Println(scores["alpha"]);
+    io::Println(scores["gamma"]); // fail
 
     scores["gamma"] = 3;
-    io::Println(scores["gamma"] ?? 0);
+    io::Println(scores["gamma"]);
 }

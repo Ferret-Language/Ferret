@@ -52,6 +52,8 @@ ferret_map_t* ferret_map_from_pairs(
 // Typed map constructors (avoid function pointer arguments in IR)
 ferret_map_t* ferret_map_new_i32(size_t key_size, size_t value_size);
 ferret_map_t* ferret_map_new_i64(size_t key_size, size_t value_size);
+ferret_map_t* ferret_map_new_f32(size_t key_size, size_t value_size);
+ferret_map_t* ferret_map_new_f64(size_t key_size, size_t value_size);
 ferret_map_t* ferret_map_new_str(size_t key_size, size_t value_size);
 ferret_map_t* ferret_map_new_bytes(size_t key_size, size_t value_size);
 
@@ -63,6 +65,20 @@ ferret_map_t* ferret_map_from_pairs_i32(
     size_t count
 );
 ferret_map_t* ferret_map_from_pairs_i64(
+    size_t key_size,
+    size_t value_size,
+    const void* keys,
+    const void* values,
+    size_t count
+);
+ferret_map_t* ferret_map_from_pairs_f32(
+    size_t key_size,
+    size_t value_size,
+    const void* keys,
+    const void* values,
+    size_t count
+);
+ferret_map_t* ferret_map_from_pairs_f64(
     size_t key_size,
     size_t value_size,
     const void* keys,
@@ -136,12 +152,16 @@ void ferret_map_destroy(ferret_map_t* map);
 // Hash functions for common types
 uint32_t ferret_map_hash_i32(const void* key, size_t key_size);
 uint32_t ferret_map_hash_i64(const void* key, size_t key_size);
+uint32_t ferret_map_hash_f32(const void* key, size_t key_size);
+uint32_t ferret_map_hash_f64(const void* key, size_t key_size);
 uint32_t ferret_map_hash_str(const void* key, size_t key_size);
 uint32_t ferret_map_hash_bytes(const void* key, size_t key_size);
 
 // Equality functions for common types
 bool ferret_map_equals_i32(const void* key1, const void* key2, size_t key_size);
 bool ferret_map_equals_i64(const void* key1, const void* key2, size_t key_size);
+bool ferret_map_equals_f32(const void* key1, const void* key2, size_t key_size);
+bool ferret_map_equals_f64(const void* key1, const void* key2, size_t key_size);
 bool ferret_map_equals_str(const void* key1, const void* key2, size_t key_size);
 bool ferret_map_equals_bytes(const void* key1, const void* key2, size_t key_size);
 

@@ -1,36 +1,14 @@
 import "std/io";
 
-type Shape interface {
-    area() -> f64,
-};
-
-type Point struct {
-    .X: i32
-};
-
-fn (p: Point) area() -> f64 {
-    return p.X ** 2;
-}
-
-fn make() -> Shape {
-    let p: Point = { .X = 9 };
-    return p as Shape;
-}
-
-fn returnRef() -> &Point {
-    let p: Point = { .X = 9 };
-    return &p;
-}
-
 fn main() {
-    io::Println("Test start");
-    let s := make();
-    let p: Point = { .X = 9 };
-    //let s: Shape = p;
-    io::Println(s.area());
-    io::Println("Shape area printed");
-    let r := returnRef();
-    io::Println(r.area());
-    io::Println("Point ref area printed");
-    io::Println("Test complete!");
+    let scores := {
+        "alpha" => 1,
+        "beta" => 2
+    } as map[str]i32;
+
+    io::Println(scores["alpha"]);
+    //io::Println(scores["gamma"]); // fail
+
+    scores["gamma"] = 3;
+    io::Println(scores["gamma"]);
 }
