@@ -503,27 +503,270 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return Math.pow(Number(base), Number(exp));
   }
 
-  // JS-side map storage: mapPtr -> JS Map
-  const ferretMapStore = new Map<number, Map<number, number>>();
+  type FerretMapKey = number | bigint | string;
+  type FerretMapEntry = { keyPtr: number; valuePtr: number };
+  type FerretMapMeta = {
+    keySize: number;
+    valueSize: number;
+    keyKind: "i32" | "i64" | "str" | "bytes";
+    entries: Map<FerretMapKey, FerretMapEntry>;
+  };
 
-  // Helper to get/create JS Map for a given mapPtr
-  function getJsMap(mapPtr: number): Map<number, number> {
-    let jsMap = ferretMapStore.get(mapPtr);
-    if (!jsMap) {
-      jsMap = new Map();
-      ferretMapStore.set(mapPtr, jsMap);
+  // JS-side map storage: mapPtr -> metadata
+  const ferretMapStore = new Map<number, FerretMapMeta>();
+  const ferretMapIterStore = new Map<
+    number,
+    { entries: FerretMapEntry[]; index: number }
+  >();
+
+  function mapKeyRepr(meta: FerretMapMeta, keyPtr: number): FerretMapKey {
+    const dv = view();
+    switch (meta.keyKind) {
+      case "i32":
+        return dv.getInt32(keyPtr, true);
+      case "i64":
+        return dv.getBigInt64(keyPtr, true);
+      case "str": {
+        const strPtr = dv.getUint32(keyPtr, true);
+        return readCString(strPtr);
+      }
+      case "bytes": {
+        const mem = new Uint8Array(memory!.buffer, keyPtr >>> 0, meta.keySize);
+        let out = "";
+        for (let i = 0; i < mem.length; i++) {
+          out += mem[i].toString(16).padStart(2, "0");
+        }
+        return out;
+      }
     }
-    return jsMap;
+  }
+
+  function mapGetMeta(mapPtr: number): FerretMapMeta | null {
+    return ferretMapStore.get(mapPtr) ?? null;
+  }
+
+  function mapSetEntry(meta: FerretMapMeta, keyPtr: number, valuePtr: number) {
+    const key = mapKeyRepr(meta, keyPtr);
+    const existing = meta.entries.get(key);
+    if (existing) {
+      if (meta.valueSize > 0) {
+        ferret_memcpy(existing.valuePtr, valuePtr, meta.valueSize);
+      }
+      return;
+    }
+    const keyStorage = meta.keySize > 0 ? ferret_alloc(meta.keySize) : 0;
+    if (meta.keySize > 0) {
+      ferret_memcpy(keyStorage, keyPtr, meta.keySize);
+    }
+    const valueStorage = meta.valueSize > 0 ? ferret_alloc(meta.valueSize) : 0;
+    if (meta.valueSize > 0) {
+      ferret_memcpy(valueStorage, valuePtr, meta.valueSize);
+    }
+    meta.entries.set(key, { keyPtr: keyStorage, valuePtr: valueStorage });
+  }
+
+  function mapFromPairs(
+    keyKind: FerretMapMeta["keyKind"],
+    keySize: number,
+    valueSize: number,
+    keysPtr: number,
+    valuesPtr: number,
+    count: number,
+  ): number {
+    const mapPtr = ferret_alloc(8);
+    const meta: FerretMapMeta = {
+      keySize: Number(keySize),
+      valueSize: Number(valueSize),
+      keyKind,
+      entries: new Map(),
+    };
+    ferretMapStore.set(mapPtr, meta);
+    const kSize = Number(keySize);
+    const vSize = Number(valueSize);
+    const total = Number(count);
+    for (let i = 0; i < total; i++) {
+      const kPtr = (keysPtr + i * kSize) >>> 0;
+      const vPtr = (valuesPtr + i * vSize) >>> 0;
+      mapSetEntry(meta, kPtr, vPtr);
+    }
+    return mapPtr >>> 0;
+  }
+
+  function ferret_map_new_i32(keySize: number, valueSize: number): number {
+    const mapPtr = ferret_alloc(8);
+    ferretMapStore.set(mapPtr, {
+      keySize: Number(keySize),
+      valueSize: Number(valueSize),
+      keyKind: "i32",
+      entries: new Map(),
+    });
+    return mapPtr >>> 0;
+  }
+
+  function ferret_map_new_i64(keySize: number, valueSize: number): number {
+    const mapPtr = ferret_alloc(8);
+    ferretMapStore.set(mapPtr, {
+      keySize: Number(keySize),
+      valueSize: Number(valueSize),
+      keyKind: "i64",
+      entries: new Map(),
+    });
+    return mapPtr >>> 0;
+  }
+
+  function ferret_map_new_str(keySize: number, valueSize: number): number {
+    const mapPtr = ferret_alloc(8);
+    ferretMapStore.set(mapPtr, {
+      keySize: Number(keySize),
+      valueSize: Number(valueSize),
+      keyKind: "str",
+      entries: new Map(),
+    });
+    return mapPtr >>> 0;
+  }
+
+  function ferret_map_new_bytes(keySize: number, valueSize: number): number {
+    const mapPtr = ferret_alloc(8);
+    ferretMapStore.set(mapPtr, {
+      keySize: Number(keySize),
+      valueSize: Number(valueSize),
+      keyKind: "bytes",
+      entries: new Map(),
+    });
+    return mapPtr >>> 0;
+  }
+
+  function ferret_map_from_pairs_i32(
+    keySize: number,
+    valueSize: number,
+    keysPtr: number,
+    valuesPtr: number,
+    count: number,
+  ): number {
+    return mapFromPairs("i32", keySize, valueSize, keysPtr, valuesPtr, count);
+  }
+
+  function ferret_map_from_pairs_i64(
+    keySize: number,
+    valueSize: number,
+    keysPtr: number,
+    valuesPtr: number,
+    count: number,
+  ): number {
+    return mapFromPairs("i64", keySize, valueSize, keysPtr, valuesPtr, count);
+  }
+
+  function ferret_map_from_pairs_str(
+    keySize: number,
+    valueSize: number,
+    keysPtr: number,
+    valuesPtr: number,
+    count: number,
+  ): number {
+    return mapFromPairs("str", keySize, valueSize, keysPtr, valuesPtr, count);
+  }
+
+  function ferret_map_from_pairs_bytes(
+    keySize: number,
+    valueSize: number,
+    keysPtr: number,
+    valuesPtr: number,
+    count: number,
+  ): number {
+    return mapFromPairs("bytes", keySize, valueSize, keysPtr, valuesPtr, count);
   }
 
   function ferret_map_get(mapPtr: number, keyPtr: number): number {
-    const jsMap = getJsMap(mapPtr);
-    return jsMap.has(keyPtr) ? jsMap.get(keyPtr)! : 0; // 0 = NULL
+    const meta = mapGetMeta(mapPtr);
+    if (!meta) {
+      return 0;
+    }
+    const key = mapKeyRepr(meta, keyPtr);
+    const entry = meta.entries.get(key);
+    return entry ? entry.valuePtr >>> 0 : 0;
   }
 
-  function ferret_map_set(mapPtr: number, keyPtr: number, valuePtr: number): void {
-    const jsMap = getJsMap(mapPtr);
-    jsMap.set(keyPtr, valuePtr);
+  function ferret_map_get_optional_out(
+    mapPtr: number,
+    keyPtr: number,
+    outPtr: number,
+  ): void {
+    if (!outPtr) {
+      return;
+    }
+    const meta = mapGetMeta(mapPtr);
+    const dv = view();
+    const valueSize = meta ? meta.valueSize : 0;
+    const flagPtr = outPtr + valueSize;
+    if (!meta) {
+      dv.setUint8(flagPtr, 0);
+      return;
+    }
+    const key = mapKeyRepr(meta, keyPtr);
+    const entry = meta.entries.get(key);
+    if (entry) {
+      if (valueSize > 0) {
+        ferret_memcpy(outPtr, entry.valuePtr, valueSize);
+      }
+      dv.setUint8(flagPtr, 1);
+    } else {
+      dv.setUint8(flagPtr, 0);
+    }
+  }
+
+  function ferret_map_set(
+    mapPtr: number,
+    keyPtr: number,
+    valuePtr: number,
+  ): void {
+    const meta = mapGetMeta(mapPtr);
+    if (!meta) {
+      return;
+    }
+    mapSetEntry(meta, keyPtr, valuePtr);
+  }
+
+  function ferret_map_size(mapPtr: number): number {
+    const meta = mapGetMeta(mapPtr);
+    return meta ? meta.entries.size : 0;
+  }
+
+  function ferret_map_iter_begin(mapPtr: number, iterPtr: number): number {
+    const meta = mapGetMeta(mapPtr);
+    if (!meta || meta.entries.size === 0 || !iterPtr) {
+      return 0;
+    }
+    const entries = Array.from(meta.entries.values());
+    ferretMapIterStore.set(iterPtr, { entries, index: 0 });
+    const dv = view();
+    dv.setUint32(iterPtr, 0, true);
+    dv.setUint32(iterPtr + 4, 1, true);
+    return 1;
+  }
+
+  function ferret_map_iter_next(
+    mapPtr: number,
+    iterPtr: number,
+    keyOutPtr: number,
+    valueOutPtr: number,
+  ): number {
+    const iter = ferretMapIterStore.get(iterPtr);
+    if (!iter || !iterPtr || !keyOutPtr || !valueOutPtr) {
+      return 0;
+    }
+    if (iter.index >= iter.entries.length) {
+      const dv = view();
+      dv.setUint32(iterPtr + 4, 0, true);
+      return 0;
+    }
+    const entry = iter.entries[iter.index];
+    iter.index += 1;
+    const dv = view();
+    dv.setUint32(keyOutPtr, entry.keyPtr, true);
+    dv.setUint32(valueOutPtr, entry.valuePtr, true);
+    dv.setUint32(iterPtr, iter.index, true);
+    dv.setUint32(iterPtr + 4, iter.index < iter.entries.length ? 1 : 0, true);
+    return 1;
   }
 
   return {
@@ -555,8 +798,20 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_string_concat_byte,
         ferret_string_concat_bool,
         ferret_pow,
+        ferret_map_new_i32,
+        ferret_map_new_i64,
+        ferret_map_new_str,
+        ferret_map_new_bytes,
+        ferret_map_from_pairs_i32,
+        ferret_map_from_pairs_i64,
+        ferret_map_from_pairs_str,
+        ferret_map_from_pairs_bytes,
         ferret_map_get,
+        ferret_map_get_optional_out,
         ferret_map_set,
+        ferret_map_size,
+        ferret_map_iter_begin,
+        ferret_map_iter_next,
       },
     },
   };
