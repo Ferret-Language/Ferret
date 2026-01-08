@@ -17,10 +17,20 @@ fn make() -> Shape {
     return p as Shape;
 }
 
+fn returnRef() -> &Point {
+    let p: Point = { .X = 9 };
+    return &p;
+}
+
 fn main() {
-    io::Println("Test complete!");
+    io::Println("Test start");
     let s := make();
     let p: Point = { .X = 9 };
     //let s: Shape = p;
-    io::Println(s.area()); 
+    io::Println(s.area());
+    io::Println("Shape area printed");
+    let r := returnRef();
+    io::Println(r.area());
+    io::Println("Point ref area printed");
+    io::Println("Test complete!");
 }

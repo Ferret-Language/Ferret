@@ -385,16 +385,35 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		return
 	}
 
-	val := b.lowerExpr(stmt.Result)
-	if val == mir.InvalidValue {
-		b.current.Term = &mir.Unreachable{Location: stmt.Location}
-		return
-	}
-
 	resultType := b.exprType(stmt.Result)
 	retType := b.fn.Return
 	if b.retParam != mir.InvalidValue {
 		retType = b.retType
+	}
+	if b.refOutParam != mir.InvalidValue {
+		if borrow, ok := stmt.Result.(*hir.UnaryExpr); ok {
+			if borrow.Op.Kind == tokens.BIT_AND_TOKEN || borrow.Op.Kind == tokens.MUT_TOKEN {
+				val := b.lowerExpr(borrow.X)
+				if val == mir.InvalidValue {
+					b.current.Term = &mir.Unreachable{Location: stmt.Location}
+					return
+				}
+				val = b.coerceValueForAssign(val, b.exprType(borrow.X), b.refOutType, stmt.Location)
+				if val == mir.InvalidValue {
+					b.current.Term = &mir.Unreachable{Location: stmt.Location}
+					return
+				}
+				b.emitStore(b.refOutParam, val, stmt.Location)
+				b.current.Term = &mir.Return{HasValue: true, Value: b.refOutParam, Location: stmt.Location}
+				return
+			}
+		}
+	}
+
+	val := b.lowerExpr(stmt.Result)
+	if val == mir.InvalidValue {
+		b.current.Term = &mir.Unreachable{Location: stmt.Location}
+		return
 	}
 	val = b.coerceValueForAssign(val, resultType, retType, stmt.Location)
 	if val == mir.InvalidValue {

@@ -1,5 +1,8 @@
 data $__vtable_1 = { l $__iface_1_0 }
-data $str1 = { b "Test complete!", b 0 }
+data $str1 = { b "Test start", b 0 }
+data $str2 = { b "Shape area printed", b 0 }
+data $str3 = { b "Point ref area printed", b 0 }
+data $str4 = { b "Test complete!", b 0 }
 
 export function d $Point_area(l %t1) {
 @b1
@@ -36,47 +39,114 @@ export function $make(l %t10) {
 	ret
 }
 
-export function w $main() {
+export function l $returnRef(l %t25) {
 @b4
-	%t29 =l alloc8 36
-	%t33 =l alloc8 16
-	%t34 =l alloc8 16
-	%t36 =l alloc4 4
-	%t48 =l alloc8 36
-	%t25 =l copy 36
-	%t26 =w copy 1
-	%t27 =l call $ferret_array_new(l %t25, w %t26)
-	%t28 =l copy $str1
-	%t30 =l add %t29, 0
-	%t31 =w copy 16
-	storew %t31, %t30
-	%t32 =l add %t29, 4
-	storel %t28, %t32
-	call $ferret_array_append(l %t27, l %t29)
-	call $ferret_std_io_Println(l %t27)
-	call $make(l %t34)
-	%t35 =l copy 16
-	call $ferret_memcpy(l %t33, l %t34, l %t35)
-	%t37 =w copy 9
-	%t38 =l add %t36, 0
-	storew %t37, %t38
-	%t39 =l copy 36
-	%t40 =w copy 1
-	%t41 =l call $ferret_array_new(l %t39, w %t40)
-	%t42 =l add %t33, 0
-	%t43 =l loadl %t42
-	%t44 =l add %t33, 8
-	%t45 =l loadl %t44
-	%t46 =l add %t45, 0
-	%q1 =l loadl %t46
-	%t47 =d call %q1(l %t43)
-	%t49 =l add %t48, 0
-	%t50 =w copy 13
-	storew %t50, %t49
-	%t51 =l add %t48, 4
-	stored %t47, %t51
-	call $ferret_array_append(l %t41, l %t48)
-	call $ferret_std_io_Println(l %t41)
+	%t26 =l alloc4 4
+	%t27 =w copy 9
+	%t28 =l add %t26, 0
+	storew %t27, %t28
+	%t29 =l copy 4
+	call $ferret_memcpy(l %t25, l %t26, l %t29)
+	ret %t25
+}
+
+export function w $main() {
+@b5
+	%t34 =l alloc8 36
+	%t38 =l alloc8 16
+	%t39 =l alloc8 16
+	%t41 =l alloc4 4
+	%t53 =l alloc8 36
+	%t61 =l alloc8 36
+	%t65 =l alloc8 8
+	%t66 =l alloc4 4
+	%t72 =l alloc4 4
+	%t75 =l alloc8 36
+	%t83 =l alloc8 36
+	%t91 =l alloc8 36
+	%t30 =l copy 36
+	%t31 =w copy 1
+	%t32 =l call $ferret_array_new(l %t30, w %t31)
+	%t33 =l copy $str1
+	%t35 =l add %t34, 0
+	%t36 =w copy 16
+	storew %t36, %t35
+	%t37 =l add %t34, 4
+	storel %t33, %t37
+	call $ferret_array_append(l %t32, l %t34)
+	call $ferret_std_io_Println(l %t32)
+	call $make(l %t39)
+	%t40 =l copy 16
+	call $ferret_memcpy(l %t38, l %t39, l %t40)
+	%t42 =w copy 9
+	%t43 =l add %t41, 0
+	storew %t42, %t43
+	%t44 =l copy 36
+	%t45 =w copy 1
+	%t46 =l call $ferret_array_new(l %t44, w %t45)
+	%t47 =l add %t38, 0
+	%t48 =l loadl %t47
+	%t49 =l add %t38, 8
+	%t50 =l loadl %t49
+	%t51 =l add %t50, 0
+	%q1 =l loadl %t51
+	%t52 =d call %q1(l %t48)
+	%t54 =l add %t53, 0
+	%t55 =w copy 13
+	storew %t55, %t54
+	%t56 =l add %t53, 4
+	stored %t52, %t56
+	call $ferret_array_append(l %t46, l %t53)
+	call $ferret_std_io_Println(l %t46)
+	%t57 =l copy 36
+	%t58 =w copy 1
+	%t59 =l call $ferret_array_new(l %t57, w %t58)
+	%t60 =l copy $str2
+	%t62 =l add %t61, 0
+	%t63 =w copy 16
+	storew %t63, %t62
+	%t64 =l add %t61, 4
+	storel %t60, %t64
+	call $ferret_array_append(l %t59, l %t61)
+	call $ferret_std_io_Println(l %t59)
+	%t67 =l call $returnRef(l %t66)
+	storel %t67, %t65
+	%t68 =l copy 36
+	%t69 =w copy 1
+	%t70 =l call $ferret_array_new(l %t68, w %t69)
+	%t71 =l loadl %t65
+	%t73 =l copy 4
+	call $ferret_memcpy(l %t72, l %t71, l %t73)
+	%t74 =d call $Point_area(l %t72)
+	%t76 =l add %t75, 0
+	%t77 =w copy 13
+	storew %t77, %t76
+	%t78 =l add %t75, 4
+	stored %t74, %t78
+	call $ferret_array_append(l %t70, l %t75)
+	call $ferret_std_io_Println(l %t70)
+	%t79 =l copy 36
+	%t80 =w copy 1
+	%t81 =l call $ferret_array_new(l %t79, w %t80)
+	%t82 =l copy $str3
+	%t84 =l add %t83, 0
+	%t85 =w copy 16
+	storew %t85, %t84
+	%t86 =l add %t83, 4
+	storel %t82, %t86
+	call $ferret_array_append(l %t81, l %t83)
+	call $ferret_std_io_Println(l %t81)
+	%t87 =l copy 36
+	%t88 =w copy 1
+	%t89 =l call $ferret_array_new(l %t87, w %t88)
+	%t90 =l copy $str4
+	%t92 =l add %t91, 0
+	%t93 =w copy 16
+	storew %t93, %t92
+	%t94 =l add %t91, 4
+	storel %t90, %t94
+	call $ferret_array_append(l %t89, l %t91)
+	call $ferret_std_io_Println(l %t89)
 	ret 0
 }
 
