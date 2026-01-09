@@ -886,6 +886,14 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_TOKEN {
 			return b.lowerLValue(e.X)
 		}
+		if e.Op.Kind == tokens.AT_TOKEN {
+			operand := b.lowerExpr(e.X)
+			if operand == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			operand, _ = b.derefValueIfNeeded(operand, b.exprType(e.X), e.Location)
+			return operand
+		}
 		operand := b.lowerExpr(e.X)
 		if operand == mir.InvalidValue {
 			return mir.InvalidValue

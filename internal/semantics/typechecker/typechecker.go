@@ -2269,6 +2269,61 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 	}
 }
 
+func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.UnaryExpr, operandType types.SemType) {
+	if ctx == nil || mod == nil || expr == nil {
+		return
+	}
+	if expr.Op.Kind != tokens.AT_TOKEN {
+		return
+	}
+	ident, ok := expr.X.(*ast.IdentifierExpr)
+	if !ok {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot move non-lvalue").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.X.Loc(), "expected a variable name").
+				WithHelp("use '@name' to move from a binding"),
+		)
+		return
+	}
+	sym, found := mod.CurrentScope.Lookup(ident.Name)
+	if !found || sym == nil {
+		return
+	}
+	if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot move from %s '%s'", sym.Kind.String(), ident.Name)).
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.X.Loc(), "value is read-only"),
+		)
+		return
+	}
+	if sym.Kind != symbols.SymbolVariable && sym.Kind != symbols.SymbolParameter && sym.Kind != symbols.SymbolReceiver {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot move from %s '%s'", sym.Kind.String(), ident.Name)).
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.X.Loc(), "not a movable binding").
+				WithHelp("move only local variables or parameters"),
+		)
+		return
+	}
+	if mod.ModuleScope != nil && sym.DeclaredScope == mod.ModuleScope {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot move from module-level binding '%s'", ident.Name)).
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.X.Loc(), "module scope values cannot be moved"),
+		)
+		return
+	}
+	if operandType != nil && !operandType.Equals(types.TypeUnknown) && isReferenceType(operandType) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot move from reference").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.X.Loc(), "reference values are not movable"),
+		)
+	}
+}
+
 func isReferenceType(typ types.SemType) bool {
 	if typ == nil {
 		return false
@@ -2497,6 +2552,11 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 			}
 			mod.SetExprType(expr, refType)
 			return refType
+		}
+		if e.Op.Kind == tokens.AT_TOKEN {
+			checkMoveExpr(ctx, mod, e, operandType)
+			mod.SetExprType(expr, operandType)
+			return operandType
 		}
 
 		// For other unary ops like -, return operand type
