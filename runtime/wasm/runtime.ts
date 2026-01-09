@@ -297,9 +297,27 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       case 13:
         return String(dv.getFloat64(data, true));
       case 14:
-        return formatFloat(readF128(data), 15);
+        return softToString(
+          readF128Bits(data),
+          F128_FRAC_BITS,
+          F128_EXP_BITS,
+          F128_EXP_BIAS,
+          F128_EXP_MAX,
+          F128_MIN_EXP,
+          F128_MAX_EXP,
+          34,
+        );
       case 15:
-        return formatFloat(readF256(data), 20);
+        return softToString(
+          readF256Bits(data),
+          F256_FRAC_BITS,
+          F256_EXP_BITS,
+          F256_EXP_BIAS,
+          F256_EXP_MAX,
+          F256_MIN_EXP,
+          F256_MAX_EXP,
+          71,
+        );
       case 16: {
         const strPtr = dv.getUint32(data, true);
         return readCString(strPtr);
@@ -608,34 +626,795 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return true;
   }
 
-  function readF128(ptr: number): number {
-    return view().getFloat64(ptr >>> 0, true);
+  const SOFT_EXTRA_BITS = 3n;
+
+  const F128_FRAC_BITS = 112n;
+  const F128_EXP_BITS = 15n;
+  const F128_EXP_BIAS = 16383;
+  const F128_EXP_MAX = (1n << F128_EXP_BITS) - 1n;
+  const F128_SIG_BITS = F128_FRAC_BITS + 1n;
+  const F128_MAX_EXP = 16383;
+  const F128_MIN_EXP = -16382;
+
+  const F256_FRAC_BITS = 236n;
+  const F256_EXP_BITS = 19n;
+  const F256_EXP_BIAS = 262143;
+  const F256_EXP_MAX = (1n << F256_EXP_BITS) - 1n;
+  const F256_SIG_BITS = F256_FRAC_BITS + 1n;
+  const F256_MAX_EXP = 262143;
+  const F256_MIN_EXP = -262142;
+
+  const SOFT_CLASS_ZERO = 0;
+  const SOFT_CLASS_NORMAL = 1;
+  const SOFT_CLASS_INF = 2;
+  const SOFT_CLASS_NAN = 3;
+
+  const f64Buf = new ArrayBuffer(8);
+  const f64View = new DataView(f64Buf);
+
+  function readF128Bits(ptr: number): bigint {
+    return readBigIntUnsigned(ptr, 16);
   }
 
-  function writeF128(ptr: number, value: number): void {
-    if (!ptr) {
-      return;
+  function writeF128Bits(ptr: number, bits: bigint): void {
+    writeBigIntUnsigned(ptr, 128, bits);
+  }
+
+  function readF256Bits(ptr: number): bigint {
+    return readBigIntUnsigned(ptr, 32);
+  }
+
+  function writeF256Bits(ptr: number, bits: bigint): void {
+    writeBigIntUnsigned(ptr, 256, bits);
+  }
+
+  function bitLengthBigInt(value: bigint): number {
+    if (value === 0n) {
+      return 0;
     }
-    const dv = view();
-    const base = ptr >>> 0;
-    dv.setFloat64(base, value, true);
-    const mem = new Uint8Array(memory!.buffer);
-    mem.fill(0, base + 8, base + 16);
+    return value.toString(2).length;
   }
 
-  function readF256(ptr: number): number {
-    return view().getFloat64(ptr >>> 0, true);
-  }
-
-  function writeF256(ptr: number, value: number): void {
-    if (!ptr) {
-      return;
+  function shiftRightSticky(sig: bigint, shift: number): bigint {
+    if (shift <= 0) {
+      return sig;
     }
-    const dv = view();
-    const base = ptr >>> 0;
-    dv.setFloat64(base, value, true);
-    const mem = new Uint8Array(memory!.buffer);
-    mem.fill(0, base + 8, base + 32);
+    const sigBits = bitLengthBigInt(sig);
+    if (shift >= sigBits) {
+      return sig === 0n ? 0n : 1n;
+    }
+    const s = BigInt(shift);
+    const lost = sig & ((1n << s) - 1n);
+    sig >>= s;
+    if (lost !== 0n) {
+      sig |= 1n;
+    }
+    return sig;
+  }
+
+  function softUnpack(
+    bits: bigint,
+    fracBits: bigint,
+    expBits: bigint,
+    expBias: number,
+    expMax: bigint,
+    minExp: number,
+  ) {
+    const totalBits = fracBits + expBits + 1n;
+    const sign = Number(bits >> (totalBits - 1n));
+    const expMask = expMax;
+    const fracMask = (1n << fracBits) - 1n;
+    const expRaw = (bits >> fracBits) & expMask;
+    const frac = bits & fracMask;
+    if (expRaw === expMax) {
+      return {
+        sign,
+        exp: 0,
+        sig: frac,
+        cls: frac === 0n ? SOFT_CLASS_INF : SOFT_CLASS_NAN,
+      };
+    }
+    if (expRaw === 0n) {
+      if (frac === 0n) {
+        return { sign, exp: 0, sig: 0n, cls: SOFT_CLASS_ZERO };
+      }
+      return {
+        sign,
+        exp: minExp,
+        sig: frac << SOFT_EXTRA_BITS,
+        cls: SOFT_CLASS_NORMAL,
+      };
+    }
+    const exp = Number(expRaw) - expBias;
+    const sig = (frac | (1n << fracBits)) << SOFT_EXTRA_BITS;
+    return { sign, exp, sig, cls: SOFT_CLASS_NORMAL };
+  }
+
+  function softPack(
+    sign: number,
+    exp: number,
+    sig: bigint,
+    cls: number,
+    fracBits: bigint,
+    expBits: bigint,
+    expBias: number,
+    expMax: bigint,
+    minExp: number,
+    maxExp: number,
+  ): bigint {
+    const totalBits = fracBits + expBits + 1n;
+    if (cls === SOFT_CLASS_NAN) {
+      return (BigInt(sign) << (totalBits - 1n)) | (expMax << fracBits) | 1n;
+    }
+    if (cls === SOFT_CLASS_INF) {
+      return (BigInt(sign) << (totalBits - 1n)) | (expMax << fracBits);
+    }
+    if (cls === SOFT_CLASS_ZERO || sig === 0n) {
+      return BigInt(sign) << (totalBits - 1n);
+    }
+
+    const sigBits = Number(fracBits + 1n);
+    const target = sigBits - 1 + Number(SOFT_EXTRA_BITS);
+    let lead = bitLengthBigInt(sig) - 1;
+    if (lead > target) {
+      sig = shiftRightSticky(sig, lead - target);
+      exp += lead - target;
+    } else if (lead < target) {
+      sig <<= BigInt(target - lead);
+      exp -= target - lead;
+    }
+
+    if (exp < minExp) {
+      sig = shiftRightSticky(sig, minExp - exp);
+      exp = minExp;
+    }
+
+    const guard = (sig >> 2n) & 1n;
+    const round = (sig >> 1n) & 1n;
+    const sticky = sig & 1n;
+    sig >>= SOFT_EXTRA_BITS;
+    if (guard && (round || sticky || sig & 1n)) {
+      sig += 1n;
+      if (sig >> BigInt(sigBits)) {
+        sig >>= 1n;
+        exp += 1;
+      }
+    }
+
+    if (sig === 0n) {
+      return BigInt(sign) << (totalBits - 1n);
+    }
+    if (exp > maxExp) {
+      return (BigInt(sign) << (totalBits - 1n)) | (expMax << fracBits);
+    }
+
+    const hiddenBit = 1n << BigInt(sigBits - 1);
+    let normal = exp > minExp;
+    if (exp === minExp) {
+      normal = (sig & hiddenBit) !== 0n;
+    }
+    const fracMask = (1n << fracBits) - 1n;
+    const frac = normal ? sig & (hiddenBit - 1n) : sig & fracMask;
+    const expField = normal ? BigInt(exp + expBias) : 0n;
+    return (BigInt(sign) << (totalBits - 1n)) | (expField << fracBits) | frac;
+  }
+
+  function softCompare(
+    aBits: bigint,
+    bBits: bigint,
+    fracBits: bigint,
+    expBits: bigint,
+    expBias: number,
+    expMax: bigint,
+    minExp: number,
+    maxExp: number,
+  ) {
+    const a = softUnpack(aBits, fracBits, expBits, expBias, expMax, minExp);
+    const b = softUnpack(bBits, fracBits, expBits, expBias, expMax, minExp);
+    if (a.cls === SOFT_CLASS_NAN || b.cls === SOFT_CLASS_NAN) {
+      return { unordered: true, cmp: 0 };
+    }
+    if (a.cls === SOFT_CLASS_ZERO && b.cls === SOFT_CLASS_ZERO) {
+      return { unordered: false, cmp: 0 };
+    }
+    if (a.cls === SOFT_CLASS_INF || b.cls === SOFT_CLASS_INF) {
+      if (a.cls === b.cls) {
+        if (a.sign === b.sign) {
+          return { unordered: false, cmp: 0 };
+        }
+        return { unordered: false, cmp: a.sign ? -1 : 1 };
+      }
+      if (a.cls === SOFT_CLASS_INF) {
+        return { unordered: false, cmp: a.sign ? -1 : 1 };
+      }
+      return { unordered: false, cmp: b.sign ? 1 : -1 };
+    }
+    if (a.sign !== b.sign) {
+      return { unordered: false, cmp: a.sign ? -1 : 1 };
+    }
+    const sigA = a.sig >> SOFT_EXTRA_BITS;
+    const sigB = b.sig >> SOFT_EXTRA_BITS;
+    let cmp = 0;
+    if (a.exp < b.exp) {
+      cmp = -1;
+    } else if (a.exp > b.exp) {
+      cmp = 1;
+    } else if (sigA < sigB) {
+      cmp = -1;
+    } else if (sigA > sigB) {
+      cmp = 1;
+    }
+    return { unordered: false, cmp: a.sign ? -cmp : cmp };
+  }
+
+  function softAdd(
+    aBits: bigint,
+    bBits: bigint,
+    sub: boolean,
+    fracBits: bigint,
+    expBits: bigint,
+    expBias: number,
+    expMax: bigint,
+    minExp: number,
+    maxExp: number,
+  ): bigint {
+    let a = softUnpack(aBits, fracBits, expBits, expBias, expMax, minExp);
+    let b = softUnpack(bBits, fracBits, expBits, expBias, expMax, minExp);
+    if (sub) {
+      b = { ...b, sign: b.sign ^ 1 };
+    }
+    if (a.cls === SOFT_CLASS_NAN || b.cls === SOFT_CLASS_NAN) {
+      return softPack(
+        0,
+        0,
+        0n,
+        SOFT_CLASS_NAN,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (a.cls === SOFT_CLASS_INF || b.cls === SOFT_CLASS_INF) {
+      if (
+        a.cls === SOFT_CLASS_INF &&
+        b.cls === SOFT_CLASS_INF &&
+        a.sign !== b.sign
+      ) {
+        return softPack(
+          0,
+          0,
+          0n,
+          SOFT_CLASS_NAN,
+          fracBits,
+          expBits,
+          expBias,
+          expMax,
+          minExp,
+          maxExp,
+        );
+      }
+      if (a.cls === SOFT_CLASS_INF) {
+        return softPack(
+          a.sign,
+          0,
+          0n,
+          SOFT_CLASS_INF,
+          fracBits,
+          expBits,
+          expBias,
+          expMax,
+          minExp,
+          maxExp,
+        );
+      }
+      return softPack(
+        b.sign,
+        0,
+        0n,
+        SOFT_CLASS_INF,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (a.cls === SOFT_CLASS_ZERO) {
+      return softPack(
+        b.sign,
+        b.exp,
+        b.sig,
+        b.cls,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (b.cls === SOFT_CLASS_ZERO) {
+      return softPack(
+        a.sign,
+        a.exp,
+        a.sig,
+        a.cls,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+
+    if (a.exp < b.exp) {
+      const temp = a;
+      a = b;
+      b = temp;
+    }
+    const diff = a.exp - b.exp;
+    if (diff > 0) {
+      b = { ...b, sig: shiftRightSticky(b.sig, diff) };
+    }
+    if (a.sign === b.sign) {
+      const sig = a.sig + b.sig;
+      return softPack(
+        a.sign,
+        a.exp,
+        sig,
+        SOFT_CLASS_NORMAL,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (a.sig === b.sig) {
+      return softPack(
+        0,
+        0,
+        0n,
+        SOFT_CLASS_ZERO,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (a.sig < b.sig) {
+      const sig = b.sig - a.sig;
+      return softPack(
+        b.sign,
+        a.exp,
+        sig,
+        SOFT_CLASS_NORMAL,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    const sig = a.sig - b.sig;
+    return softPack(
+      a.sign,
+      a.exp,
+      sig,
+      SOFT_CLASS_NORMAL,
+      fracBits,
+      expBits,
+      expBias,
+      expMax,
+      minExp,
+      maxExp,
+    );
+  }
+
+  function softMul(
+    aBits: bigint,
+    bBits: bigint,
+    fracBits: bigint,
+    expBits: bigint,
+    expBias: number,
+    expMax: bigint,
+    minExp: number,
+    maxExp: number,
+  ): bigint {
+    const a = softUnpack(aBits, fracBits, expBits, expBias, expMax, minExp);
+    const b = softUnpack(bBits, fracBits, expBits, expBias, expMax, minExp);
+    if (a.cls === SOFT_CLASS_NAN || b.cls === SOFT_CLASS_NAN) {
+      return softPack(
+        0,
+        0,
+        0n,
+        SOFT_CLASS_NAN,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (
+      (a.cls === SOFT_CLASS_INF && b.cls === SOFT_CLASS_ZERO) ||
+      (b.cls === SOFT_CLASS_INF && a.cls === SOFT_CLASS_ZERO)
+    ) {
+      return softPack(
+        0,
+        0,
+        0n,
+        SOFT_CLASS_NAN,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (a.cls === SOFT_CLASS_INF || b.cls === SOFT_CLASS_INF) {
+      return softPack(
+        a.sign ^ b.sign,
+        0,
+        0n,
+        SOFT_CLASS_INF,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (a.cls === SOFT_CLASS_ZERO || b.cls === SOFT_CLASS_ZERO) {
+      return softPack(
+        a.sign ^ b.sign,
+        0,
+        0n,
+        SOFT_CLASS_ZERO,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    const sigA = a.sig >> SOFT_EXTRA_BITS;
+    const sigB = b.sig >> SOFT_EXTRA_BITS;
+    const product = sigA * sigB;
+    const sigBits = Number(fracBits + 1n);
+    const lead = bitLengthBigInt(product) - 1;
+    const shiftRaw = lead - (sigBits - 1);
+    const shift = shiftRaw - Number(SOFT_EXTRA_BITS);
+    let sig = product;
+    if (shift >= 0) {
+      sig = shiftRightSticky(sig, shift);
+    } else {
+      sig <<= BigInt(-shift);
+    }
+    const exp = a.exp + b.exp - (sigBits - 1) + shiftRaw;
+    return softPack(
+      a.sign ^ b.sign,
+      exp,
+      sig,
+      SOFT_CLASS_NORMAL,
+      fracBits,
+      expBits,
+      expBias,
+      expMax,
+      minExp,
+      maxExp,
+    );
+  }
+
+  function softDiv(
+    aBits: bigint,
+    bBits: bigint,
+    fracBits: bigint,
+    expBits: bigint,
+    expBias: number,
+    expMax: bigint,
+    minExp: number,
+    maxExp: number,
+  ): bigint {
+    const a = softUnpack(aBits, fracBits, expBits, expBias, expMax, minExp);
+    const b = softUnpack(bBits, fracBits, expBits, expBias, expMax, minExp);
+    if (a.cls === SOFT_CLASS_NAN || b.cls === SOFT_CLASS_NAN) {
+      return softPack(
+        0,
+        0,
+        0n,
+        SOFT_CLASS_NAN,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (a.cls === SOFT_CLASS_INF && b.cls === SOFT_CLASS_INF) {
+      return softPack(
+        0,
+        0,
+        0n,
+        SOFT_CLASS_NAN,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (a.cls === SOFT_CLASS_INF) {
+      return softPack(
+        a.sign ^ b.sign,
+        0,
+        0n,
+        SOFT_CLASS_INF,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (b.cls === SOFT_CLASS_INF) {
+      return softPack(
+        a.sign ^ b.sign,
+        0,
+        0n,
+        SOFT_CLASS_ZERO,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (b.cls === SOFT_CLASS_ZERO) {
+      if (a.cls === SOFT_CLASS_ZERO) {
+        return softPack(
+          0,
+          0,
+          0n,
+          SOFT_CLASS_NAN,
+          fracBits,
+          expBits,
+          expBias,
+          expMax,
+          minExp,
+          maxExp,
+        );
+      }
+      return softPack(
+        a.sign ^ b.sign,
+        0,
+        0n,
+        SOFT_CLASS_INF,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (a.cls === SOFT_CLASS_ZERO) {
+      return softPack(
+        a.sign ^ b.sign,
+        0,
+        0n,
+        SOFT_CLASS_ZERO,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+
+    const sigBits = Number(fracBits + 1n);
+    const sigA = a.sig >> SOFT_EXTRA_BITS;
+    const sigB = b.sig >> SOFT_EXTRA_BITS;
+    const shift = sigBits - 1 + Number(SOFT_EXTRA_BITS);
+    const numerator = sigA << BigInt(shift);
+    let quotient = numerator / sigB;
+    const remainder = numerator % sigB;
+    if (remainder !== 0n) {
+      quotient |= 1n;
+    }
+    const exp = a.exp - b.exp;
+    return softPack(
+      a.sign ^ b.sign,
+      exp,
+      quotient,
+      SOFT_CLASS_NORMAL,
+      fracBits,
+      expBits,
+      expBias,
+      expMax,
+      minExp,
+      maxExp,
+    );
+  }
+
+  function softToNumber(
+    sign: number,
+    exp: number,
+    sig: bigint,
+    sigBits: bigint,
+  ): number {
+    if (sig === 0n) {
+      return sign ? -0 : 0;
+    }
+    const sigRaw = sig >> SOFT_EXTRA_BITS;
+    const value = Number(sigRaw) * Math.pow(2, exp - (Number(sigBits) - 1));
+    return sign ? -value : value;
+  }
+
+  function f64ToBits(value: number): bigint {
+    f64View.setFloat64(0, value, true);
+    return f64View.getBigUint64(0, true);
+  }
+
+  function f64ToSoftBits(
+    value: number,
+    fracBits: bigint,
+    expBits: bigint,
+    expBias: number,
+    expMax: bigint,
+    minExp: number,
+    maxExp: number,
+  ): bigint {
+    const bits = f64ToBits(value);
+    const sign = Number(bits >> 63n);
+    const expRaw = (bits >> 52n) & 0x7ffn;
+    const frac = bits & 0xfffffffffffffn;
+    if (expRaw === 0x7ffn) {
+      const cls = frac === 0n ? SOFT_CLASS_INF : SOFT_CLASS_NAN;
+      return softPack(
+        sign,
+        0,
+        0n,
+        cls,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (expRaw === 0n) {
+      if (frac === 0n) {
+        return softPack(
+          sign,
+          0,
+          0n,
+          SOFT_CLASS_ZERO,
+          fracBits,
+          expBits,
+          expBias,
+          expMax,
+          minExp,
+          maxExp,
+        );
+      }
+      const lead = bitLengthBigInt(frac) - 1;
+      const shift = 52 - lead;
+      let sig = frac << BigInt(shift);
+      const exp = lead - 1074;
+      sig <<= BigInt(Number(fracBits) - 52);
+      sig <<= SOFT_EXTRA_BITS;
+      return softPack(
+        sign,
+        exp,
+        sig,
+        SOFT_CLASS_NORMAL,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    const exp = Number(expRaw) - 1023;
+    let sig = (1n << 52n) | frac;
+    sig <<= BigInt(Number(fracBits) - 52);
+    sig <<= SOFT_EXTRA_BITS;
+    return softPack(
+      sign,
+      exp,
+      sig,
+      SOFT_CLASS_NORMAL,
+      fracBits,
+      expBits,
+      expBias,
+      expMax,
+      minExp,
+      maxExp,
+    );
+  }
+
+  function softBitsToNumber(
+    bits: bigint,
+    fracBits: bigint,
+    expBits: bigint,
+    expBias: number,
+    expMax: bigint,
+    minExp: number,
+  ): number {
+    const unpacked = softUnpack(
+      bits,
+      fracBits,
+      expBits,
+      expBias,
+      expMax,
+      minExp,
+    );
+    if (unpacked.cls === SOFT_CLASS_NAN) {
+      return NaN;
+    }
+    if (unpacked.cls === SOFT_CLASS_INF) {
+      return unpacked.sign ? -Infinity : Infinity;
+    }
+    return softToNumber(
+      unpacked.sign,
+      unpacked.exp,
+      unpacked.sig,
+      fracBits + 1n,
+    );
+  }
+
+  function softToString(
+    bits: bigint,
+    fracBits: bigint,
+    expBits: bigint,
+    expBias: number,
+    expMax: bigint,
+    minExp: number,
+    maxExp: number,
+    precision: number,
+  ): string {
+    const unpacked = softUnpack(
+      bits,
+      fracBits,
+      expBits,
+      expBias,
+      expMax,
+      minExp,
+    );
+    if (unpacked.cls === SOFT_CLASS_NAN) {
+      return "nan";
+    }
+    if (unpacked.cls === SOFT_CLASS_INF) {
+      return unpacked.sign ? "-inf" : "inf";
+    }
+    const value = softToNumber(
+      unpacked.sign,
+      unpacked.exp,
+      unpacked.sig,
+      fracBits + 1n,
+    );
+    return formatFloat(value, precision);
   }
 
   function parseBigIntLiteral(text: string, allowSign: boolean): bigint | null {
@@ -1142,12 +1921,30 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_f128_from_f64_ptr(value: number, outPtr: number) {
     if (!outPtr) return;
-    writeF128(outPtr, Number(value));
+    const bits = f64ToSoftBits(
+      Number(value),
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+      F128_MAX_EXP,
+    );
+    writeF128Bits(outPtr, bits);
   }
 
   function ferret_f256_from_f64_ptr(value: number, outPtr: number) {
     if (!outPtr) return;
-    writeF256(outPtr, Number(value));
+    const bits = f64ToSoftBits(
+      Number(value),
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+      F256_MAX_EXP,
+    );
+    writeF256Bits(outPtr, bits);
   }
 
   function ferret_i128_to_i64_ptr(ptr: number): bigint {
@@ -1176,12 +1973,26 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_f128_to_f64_ptr(ptr: number): number {
     if (!ptr) return 0;
-    return readF128(ptr);
+    return softBitsToNumber(
+      readF128Bits(ptr),
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+    );
   }
 
   function ferret_f256_to_f64_ptr(ptr: number): number {
     if (!ptr) return 0;
-    return readF256(ptr);
+    return softBitsToNumber(
+      readF256Bits(ptr),
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+    );
   }
 
   function ferret_i128_to_string_ptr(ptr: number): number {
@@ -1210,12 +2021,34 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_f128_to_string_ptr(ptr: number): number {
     if (!ptr) return writeCString("0.0");
-    return writeCString(formatFloat(readF128(ptr), 15));
+    return writeCString(
+      softToString(
+        readF128Bits(ptr),
+        F128_FRAC_BITS,
+        F128_EXP_BITS,
+        F128_EXP_BIAS,
+        F128_EXP_MAX,
+        F128_MIN_EXP,
+        F128_MAX_EXP,
+        34,
+      ),
+    );
   }
 
   function ferret_f256_to_string_ptr(ptr: number): number {
     if (!ptr) return writeCString("0.0");
-    return writeCString(formatFloat(readF256(ptr), 20));
+    return writeCString(
+      softToString(
+        readF256Bits(ptr),
+        F256_FRAC_BITS,
+        F256_EXP_BITS,
+        F256_EXP_BIAS,
+        F256_EXP_MAX,
+        F256_MIN_EXP,
+        F256_MAX_EXP,
+        71,
+      ),
+    );
   }
 
   function ferret_i128_from_string_ptr(strPtr: number, outPtr: number): void {
@@ -1251,7 +2084,16 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const text = strPtr ? readCString(strPtr) : "";
     const cleaned = text.trim().replace(/_/g, "");
     const val = Number(cleaned);
-    writeF128(outPtr, Number.isFinite(val) ? val : 0);
+    const bits = f64ToSoftBits(
+      Number.isFinite(val) ? val : 0,
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+      F128_MAX_EXP,
+    );
+    writeF128Bits(outPtr, bits);
   }
 
   function ferret_f256_from_string_ptr(strPtr: number, outPtr: number): void {
@@ -1259,42 +2101,123 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const text = strPtr ? readCString(strPtr) : "";
     const cleaned = text.trim().replace(/_/g, "");
     const val = Number(cleaned);
-    writeF256(outPtr, Number.isFinite(val) ? val : 0);
+    const bits = f64ToSoftBits(
+      Number.isFinite(val) ? val : 0,
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+      F256_MAX_EXP,
+    );
+    writeF256Bits(outPtr, bits);
   }
 
   function ferret_f128_add_ptr(aPtr: number, bPtr: number, outPtr: number) {
     if (!outPtr || !aPtr || !bPtr) return;
-    writeF128(outPtr, readF128(aPtr) + readF128(bPtr));
+    const bits = softAdd(
+      readF128Bits(aPtr),
+      readF128Bits(bPtr),
+      false,
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+      F128_MAX_EXP,
+    );
+    writeF128Bits(outPtr, bits);
   }
 
   function ferret_f128_sub_ptr(aPtr: number, bPtr: number, outPtr: number) {
     if (!outPtr || !aPtr || !bPtr) return;
-    writeF128(outPtr, readF128(aPtr) - readF128(bPtr));
+    const bits = softAdd(
+      readF128Bits(aPtr),
+      readF128Bits(bPtr),
+      true,
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+      F128_MAX_EXP,
+    );
+    writeF128Bits(outPtr, bits);
   }
 
   function ferret_f128_mul_ptr(aPtr: number, bPtr: number, outPtr: number) {
     if (!outPtr || !aPtr || !bPtr) return;
-    writeF128(outPtr, readF128(aPtr) * readF128(bPtr));
+    const bits = softMul(
+      readF128Bits(aPtr),
+      readF128Bits(bPtr),
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+      F128_MAX_EXP,
+    );
+    writeF128Bits(outPtr, bits);
   }
 
   function ferret_f128_div_ptr(aPtr: number, bPtr: number, outPtr: number) {
     if (!outPtr || !aPtr || !bPtr) return;
-    writeF128(outPtr, readF128(aPtr) / readF128(bPtr));
+    const bits = softDiv(
+      readF128Bits(aPtr),
+      readF128Bits(bPtr),
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+      F128_MAX_EXP,
+    );
+    writeF128Bits(outPtr, bits);
   }
 
   function ferret_f128_eq_ptr(aPtr: number, bPtr: number): number {
     if (!aPtr || !bPtr) return 0;
-    return bytesEqual(aPtr, bPtr, 16) ? 1 : 0;
+    const cmp = softCompare(
+      readF128Bits(aPtr),
+      readF128Bits(bPtr),
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+      F128_MAX_EXP,
+    );
+    return !cmp.unordered && cmp.cmp === 0 ? 1 : 0;
   }
 
   function ferret_f128_lt_ptr(aPtr: number, bPtr: number): number {
     if (!aPtr || !bPtr) return 0;
-    return readF128(aPtr) < readF128(bPtr) ? 1 : 0;
+    const cmp = softCompare(
+      readF128Bits(aPtr),
+      readF128Bits(bPtr),
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+      F128_MAX_EXP,
+    );
+    return !cmp.unordered && cmp.cmp < 0 ? 1 : 0;
   }
 
   function ferret_f128_gt_ptr(aPtr: number, bPtr: number): number {
     if (!aPtr || !bPtr) return 0;
-    return readF128(aPtr) > readF128(bPtr) ? 1 : 0;
+    const cmp = softCompare(
+      readF128Bits(aPtr),
+      readF128Bits(bPtr),
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+      F128_MAX_EXP,
+    );
+    return !cmp.unordered && cmp.cmp > 0 ? 1 : 0;
   }
 
   function ferret_f128_pow_ptr(
@@ -1303,42 +2226,139 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     outPtr: number,
   ) {
     if (!outPtr || !basePtr || !expPtr) return;
-    writeF128(outPtr, Math.pow(readF128(basePtr), readF128(expPtr)));
+    const baseVal = softBitsToNumber(
+      readF128Bits(basePtr),
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+    );
+    const expVal = softBitsToNumber(
+      readF128Bits(expPtr),
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+    );
+    const bits = f64ToSoftBits(
+      Math.pow(baseVal, expVal),
+      F128_FRAC_BITS,
+      F128_EXP_BITS,
+      F128_EXP_BIAS,
+      F128_EXP_MAX,
+      F128_MIN_EXP,
+      F128_MAX_EXP,
+    );
+    writeF128Bits(outPtr, bits);
   }
 
   function ferret_f256_add_ptr(aPtr: number, bPtr: number, outPtr: number) {
     if (!outPtr || !aPtr || !bPtr) return;
-    writeF256(outPtr, readF256(aPtr) + readF256(bPtr));
+    const bits = softAdd(
+      readF256Bits(aPtr),
+      readF256Bits(bPtr),
+      false,
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+      F256_MAX_EXP,
+    );
+    writeF256Bits(outPtr, bits);
   }
 
   function ferret_f256_sub_ptr(aPtr: number, bPtr: number, outPtr: number) {
     if (!outPtr || !aPtr || !bPtr) return;
-    writeF256(outPtr, readF256(aPtr) - readF256(bPtr));
+    const bits = softAdd(
+      readF256Bits(aPtr),
+      readF256Bits(bPtr),
+      true,
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+      F256_MAX_EXP,
+    );
+    writeF256Bits(outPtr, bits);
   }
 
   function ferret_f256_mul_ptr(aPtr: number, bPtr: number, outPtr: number) {
     if (!outPtr || !aPtr || !bPtr) return;
-    writeF256(outPtr, readF256(aPtr) * readF256(bPtr));
+    const bits = softMul(
+      readF256Bits(aPtr),
+      readF256Bits(bPtr),
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+      F256_MAX_EXP,
+    );
+    writeF256Bits(outPtr, bits);
   }
 
   function ferret_f256_div_ptr(aPtr: number, bPtr: number, outPtr: number) {
     if (!outPtr || !aPtr || !bPtr) return;
-    writeF256(outPtr, readF256(aPtr) / readF256(bPtr));
+    const bits = softDiv(
+      readF256Bits(aPtr),
+      readF256Bits(bPtr),
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+      F256_MAX_EXP,
+    );
+    writeF256Bits(outPtr, bits);
   }
 
   function ferret_f256_eq_ptr(aPtr: number, bPtr: number): number {
     if (!aPtr || !bPtr) return 0;
-    return bytesEqual(aPtr, bPtr, 32) ? 1 : 0;
+    const cmp = softCompare(
+      readF256Bits(aPtr),
+      readF256Bits(bPtr),
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+      F256_MAX_EXP,
+    );
+    return !cmp.unordered && cmp.cmp === 0 ? 1 : 0;
   }
 
   function ferret_f256_lt_ptr(aPtr: number, bPtr: number): number {
     if (!aPtr || !bPtr) return 0;
-    return readF256(aPtr) < readF256(bPtr) ? 1 : 0;
+    const cmp = softCompare(
+      readF256Bits(aPtr),
+      readF256Bits(bPtr),
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+      F256_MAX_EXP,
+    );
+    return !cmp.unordered && cmp.cmp < 0 ? 1 : 0;
   }
 
   function ferret_f256_gt_ptr(aPtr: number, bPtr: number): number {
     if (!aPtr || !bPtr) return 0;
-    return readF256(aPtr) > readF256(bPtr) ? 1 : 0;
+    const cmp = softCompare(
+      readF256Bits(aPtr),
+      readF256Bits(bPtr),
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+      F256_MAX_EXP,
+    );
+    return !cmp.unordered && cmp.cmp > 0 ? 1 : 0;
   }
 
   function ferret_f256_pow_ptr(
@@ -1347,7 +2367,32 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     outPtr: number,
   ) {
     if (!outPtr || !basePtr || !expPtr) return;
-    writeF256(outPtr, Math.pow(readF256(basePtr), readF256(expPtr)));
+    const baseVal = softBitsToNumber(
+      readF256Bits(basePtr),
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+    );
+    const expVal = softBitsToNumber(
+      readF256Bits(expPtr),
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+    );
+    const bits = f64ToSoftBits(
+      Math.pow(baseVal, expVal),
+      F256_FRAC_BITS,
+      F256_EXP_BITS,
+      F256_EXP_BIAS,
+      F256_EXP_MAX,
+      F256_MIN_EXP,
+      F256_MAX_EXP,
+    );
+    writeF256Bits(outPtr, bits);
   }
 
   const MAP_HASH_SEED = 0x9747b28c;

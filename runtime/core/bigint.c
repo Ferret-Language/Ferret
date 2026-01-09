@@ -1035,97 +1035,1087 @@ char* ferret_i256_to_string(ferret_i256 val) {
     return out;
 }
 
+// Soft float helpers for f128/f256 fallback implementations.
+typedef enum {
+    SOFT_CLASS_ZERO = 0,
+    SOFT_CLASS_NORMAL = 1,
+    SOFT_CLASS_INF = 2,
+    SOFT_CLASS_NAN = 3
+} soft_class_t;
+
+#define SOFT_WORD_BITS 64
+#define SOFT_EXTRA_BITS 3
+#define SOFT_F128_WORDS 2
+#define SOFT_F256_WORDS 4
+
+#define SOFT_F128_FRAC_BITS 112
+#define SOFT_F128_SIG_BITS 113
+#define SOFT_F128_EXP_BITS 15
+#define SOFT_F128_EXP_BIAS 16383
+#define SOFT_F128_EXP_MAX 0x7FFF
+#define SOFT_F128_MAX_EXP 16383
+#define SOFT_F128_MIN_EXP (-16382)
+
+#define SOFT_F256_FRAC_BITS 236
+#define SOFT_F256_SIG_BITS 237
+#define SOFT_F256_EXP_BITS 19
+#define SOFT_F256_EXP_BIAS 262143
+#define SOFT_F256_EXP_MAX 0x7FFFF
+#define SOFT_F256_MAX_EXP 262143
+#define SOFT_F256_MIN_EXP (-262142)
+
+static int soft_clz64(uint64_t v) {
+#if defined(__GNUC__)
+    if (v == 0) {
+        return 64;
+    }
+    return __builtin_clzll(v);
+#else
+    int count = 0;
+    uint64_t bit = (uint64_t)1 << 63;
+    while (bit && (v & bit) == 0) {
+        count++;
+        bit >>= 1;
+    }
+    return count;
+#endif
+}
+
+static void soft_u64_zero(uint64_t* v, int n) {
+    memset(v, 0, (size_t)n * sizeof(*v));
+}
+
+static void soft_u64_copy(uint64_t* dst, const uint64_t* src, int n) {
+    memcpy(dst, src, (size_t)n * sizeof(*dst));
+}
+
+static bool soft_u64_is_zero(const uint64_t* v, int n) {
+    for (int i = 0; i < n; i++) {
+        if (v[i] != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static int soft_u64_cmp(const uint64_t* a, const uint64_t* b, int n) {
+    for (int i = n - 1; i >= 0; i--) {
+        if (a[i] < b[i]) return -1;
+        if (a[i] > b[i]) return 1;
+    }
+    return 0;
+}
+
+static uint64_t soft_u64_add(const uint64_t* a, const uint64_t* b, uint64_t* out, int n) {
+    uint64_t carry = 0;
+    for (int i = 0; i < n; i++) {
+        __uint128_t sum = (__uint128_t)a[i] + (__uint128_t)b[i] + carry;
+        out[i] = (uint64_t)sum;
+        carry = (uint64_t)(sum >> 64);
+    }
+    return carry;
+}
+
+static uint64_t soft_u64_add_small(uint64_t* v, int n, uint64_t add) {
+    __uint128_t sum = (__uint128_t)v[0] + add;
+    v[0] = (uint64_t)sum;
+    uint64_t carry = (uint64_t)(sum >> 64);
+    for (int i = 1; i < n && carry; i++) {
+        sum = (__uint128_t)v[i] + carry;
+        v[i] = (uint64_t)sum;
+        carry = (uint64_t)(sum >> 64);
+    }
+    return carry;
+}
+
+static uint64_t soft_u64_sub(const uint64_t* a, const uint64_t* b, uint64_t* out, int n) {
+    uint64_t borrow = 0;
+    for (int i = 0; i < n; i++) {
+        __int128_t diff = (__int128_t)a[i] - (__int128_t)b[i] - (int64_t)borrow;
+        out[i] = (uint64_t)diff;
+        borrow = (diff < 0) ? 1 : 0;
+    }
+    return borrow;
+}
+
+static void soft_u64_shift_left(const uint64_t* a, int n, int shift, uint64_t* out) {
+    if (shift <= 0) {
+        soft_u64_copy(out, a, n);
+        return;
+    }
+    int total_bits = n * SOFT_WORD_BITS;
+    if (shift >= total_bits) {
+        soft_u64_zero(out, n);
+        return;
+    }
+    int word_shift = shift / SOFT_WORD_BITS;
+    int bit_shift = shift % SOFT_WORD_BITS;
+    for (int i = n - 1; i >= 0; i--) {
+        int src = i - word_shift;
+        uint64_t val = 0;
+        if (src >= 0) {
+            val = a[src] << bit_shift;
+            if (bit_shift && src > 0) {
+                val |= a[src - 1] >> (SOFT_WORD_BITS - bit_shift);
+            }
+        }
+        out[i] = val;
+    }
+}
+
+static void soft_u64_shift_left_wide(const uint64_t* a, int a_words, int shift, uint64_t* out, int out_words) {
+    soft_u64_zero(out, out_words);
+    if (shift <= 0) {
+        int count = a_words < out_words ? a_words : out_words;
+        soft_u64_copy(out, a, count);
+        return;
+    }
+    int total_bits = out_words * SOFT_WORD_BITS;
+    if (shift >= total_bits) {
+        return;
+    }
+    int word_shift = shift / SOFT_WORD_BITS;
+    int bit_shift = shift % SOFT_WORD_BITS;
+    for (int i = 0; i < a_words; i++) {
+        int dst = i + word_shift;
+        if (dst >= out_words) {
+            continue;
+        }
+        out[dst] |= a[i] << bit_shift;
+        if (bit_shift && dst + 1 < out_words) {
+            out[dst + 1] |= a[i] >> (SOFT_WORD_BITS - bit_shift);
+        }
+    }
+}
+
+static void soft_u64_shift_right(const uint64_t* a, int n, int shift, uint64_t* out) {
+    if (shift <= 0) {
+        soft_u64_copy(out, a, n);
+        return;
+    }
+    int total_bits = n * SOFT_WORD_BITS;
+    if (shift >= total_bits) {
+        soft_u64_zero(out, n);
+        return;
+    }
+    int word_shift = shift / SOFT_WORD_BITS;
+    int bit_shift = shift % SOFT_WORD_BITS;
+    for (int i = 0; i < n; i++) {
+        int src = i + word_shift;
+        uint64_t val = 0;
+        if (src < n) {
+            val = a[src] >> bit_shift;
+            if (bit_shift && src + 1 < n) {
+                val |= a[src + 1] << (SOFT_WORD_BITS - bit_shift);
+            }
+        }
+        out[i] = val;
+    }
+}
+
+static void soft_u64_shift_right_sticky(const uint64_t* a, int n, int shift, uint64_t* out) {
+    if (shift <= 0) {
+        soft_u64_copy(out, a, n);
+        return;
+    }
+    int total_bits = n * SOFT_WORD_BITS;
+    if (shift >= total_bits) {
+        uint64_t sticky = soft_u64_is_zero(a, n) ? 0 : 1;
+        soft_u64_zero(out, n);
+        out[0] = sticky;
+        return;
+    }
+    int word_shift = shift / SOFT_WORD_BITS;
+    int bit_shift = shift % SOFT_WORD_BITS;
+    uint64_t sticky = 0;
+    for (int i = 0; i < word_shift; i++) {
+        if (a[i] != 0) {
+            sticky = 1;
+            break;
+        }
+    }
+    if (!sticky && bit_shift != 0) {
+        uint64_t mask = (uint64_t)1 << bit_shift;
+        mask -= 1;
+        if ((a[word_shift] & mask) != 0) {
+            sticky = 1;
+        }
+    }
+    soft_u64_shift_right(a, n, shift, out);
+    if (sticky) {
+        out[0] |= 1;
+    }
+}
+
+static int soft_u64_msb_index(const uint64_t* v, int n) {
+    for (int i = n - 1; i >= 0; i--) {
+        if (v[i] != 0) {
+            return i * SOFT_WORD_BITS + (SOFT_WORD_BITS - 1 - soft_clz64(v[i]));
+        }
+    }
+    return -1;
+}
+
+static void soft_u64_set_bit(uint64_t* v, int bit) {
+    int word_idx = bit / SOFT_WORD_BITS;
+    int bit_idx = bit % SOFT_WORD_BITS;
+    v[word_idx] |= (uint64_t)1 << bit_idx;
+}
+
+static void soft_u64_mul(const uint64_t* a, const uint64_t* b, uint64_t* out, int n) {
+    soft_u64_zero(out, n * 2);
+    for (int i = 0; i < n; i++) {
+        __uint128_t carry = 0;
+        for (int j = 0; j < n; j++) {
+            int idx = i + j;
+            __uint128_t sum = (__uint128_t)a[i] * b[j] + out[idx] + carry;
+            out[idx] = (uint64_t)sum;
+            carry = sum >> 64;
+        }
+        int idx = i + n;
+        while (carry && idx < n * 2) {
+            __uint128_t sum = (__uint128_t)out[idx] + carry;
+            out[idx] = (uint64_t)sum;
+            carry = sum >> 64;
+            idx++;
+        }
+    }
+}
+
+static void soft_u64_div_mod(const uint64_t* numer, const uint64_t* denom, uint64_t* quot, uint64_t* rem, int n) {
+    soft_u64_zero(quot, n);
+    soft_u64_zero(rem, n);
+    if (soft_u64_is_zero(denom, n)) {
+        return;
+    }
+    int total_bits = n * SOFT_WORD_BITS;
+    for (int bit = total_bits - 1; bit >= 0; bit--) {
+        uint64_t carry = 0;
+        for (int i = 0; i < n; i++) {
+            uint64_t new_carry = rem[i] >> 63;
+            rem[i] = (rem[i] << 1) | carry;
+            carry = new_carry;
+        }
+        if ((numer[bit / SOFT_WORD_BITS] >> (bit % SOFT_WORD_BITS)) & 1) {
+            rem[0] |= 1;
+        }
+        if (soft_u64_cmp(rem, denom, n) >= 0) {
+            soft_u64_sub(rem, denom, rem, n);
+            soft_u64_set_bit(quot, bit);
+        }
+    }
+}
+
+static void soft_round_sig(uint64_t* sig, int words, int* exp) {
+    uint64_t guard = (sig[0] >> 2) & 1;
+    uint64_t round = (sig[0] >> 1) & 1;
+    uint64_t sticky = sig[0] & 1;
+    soft_u64_shift_right(sig, words, SOFT_EXTRA_BITS, sig);
+    if (guard && (round || sticky || (sig[0] & 1))) {
+        uint64_t carry = soft_u64_add_small(sig, words, 1);
+        if (carry) {
+            soft_u64_shift_right(sig, words, 1, sig);
+            (*exp)++;
+        }
+    }
+}
+
+#ifndef FERRET_HAS_FLOAT128
+static soft_class_t soft_f128_unpack(const ferret_f128* v, int* sign, int* exp, uint64_t sig[SOFT_F128_WORDS]) {
+    uint64_t w0 = v->mantissa_lo;
+    uint64_t w1 = v->mantissa_hi;
+    *sign = (int)(w1 >> 63);
+    uint64_t exp_raw = (w1 >> 48) & 0x7FFFu;
+    uint64_t frac_hi = w1 & 0x0000FFFFFFFFFFFFULL;
+    sig[0] = w0;
+    sig[1] = frac_hi;
+
+    if (exp_raw == SOFT_F128_EXP_MAX) {
+        if (soft_u64_is_zero(sig, SOFT_F128_WORDS)) {
+            return SOFT_CLASS_INF;
+        }
+        return SOFT_CLASS_NAN;
+    }
+    if (exp_raw == 0) {
+        if (soft_u64_is_zero(sig, SOFT_F128_WORDS)) {
+            return SOFT_CLASS_ZERO;
+        }
+        *exp = SOFT_F128_MIN_EXP;
+    } else {
+        *exp = (int)exp_raw - SOFT_F128_EXP_BIAS;
+        sig[1] |= (uint64_t)1 << 48;
+    }
+    soft_u64_shift_left(sig, SOFT_F128_WORDS, SOFT_EXTRA_BITS, sig);
+    return SOFT_CLASS_NORMAL;
+}
+
+static ferret_f128 soft_f128_pack(int sign, int exp, uint64_t sig[SOFT_F128_WORDS], soft_class_t cls) {
+    ferret_f128 out;
+    if (cls == SOFT_CLASS_NAN) {
+        out.mantissa_lo = 1;
+        out.mantissa_hi = ((uint64_t)sign << 63) | ((uint64_t)SOFT_F128_EXP_MAX << 48);
+        return out;
+    }
+    if (cls == SOFT_CLASS_INF) {
+        out.mantissa_lo = 0;
+        out.mantissa_hi = ((uint64_t)sign << 63) | ((uint64_t)SOFT_F128_EXP_MAX << 48);
+        return out;
+    }
+    if (cls == SOFT_CLASS_ZERO || soft_u64_is_zero(sig, SOFT_F128_WORDS)) {
+        out.mantissa_lo = 0;
+        out.mantissa_hi = (uint64_t)sign << 63;
+        return out;
+    }
+
+    int target = SOFT_F128_SIG_BITS - 1 + SOFT_EXTRA_BITS;
+    int lead = soft_u64_msb_index(sig, SOFT_F128_WORDS);
+    if (lead < 0) {
+        out.mantissa_lo = 0;
+        out.mantissa_hi = (uint64_t)sign << 63;
+        return out;
+    }
+    if (lead > target) {
+        int shift = lead - target;
+        soft_u64_shift_right_sticky(sig, SOFT_F128_WORDS, shift, sig);
+        exp += shift;
+    } else if (lead < target) {
+        int shift = target - lead;
+        soft_u64_shift_left(sig, SOFT_F128_WORDS, shift, sig);
+        exp -= shift;
+    }
+
+    if (exp < SOFT_F128_MIN_EXP) {
+        int shift = SOFT_F128_MIN_EXP - exp;
+        soft_u64_shift_right_sticky(sig, SOFT_F128_WORDS, shift, sig);
+        exp = SOFT_F128_MIN_EXP;
+    }
+
+    soft_round_sig(sig, SOFT_F128_WORDS, &exp);
+    if (soft_u64_is_zero(sig, SOFT_F128_WORDS)) {
+        out.mantissa_lo = 0;
+        out.mantissa_hi = (uint64_t)sign << 63;
+        return out;
+    }
+    if (exp > SOFT_F128_MAX_EXP) {
+        out.mantissa_lo = 0;
+        out.mantissa_hi = ((uint64_t)sign << 63) | ((uint64_t)SOFT_F128_EXP_MAX << 48);
+        return out;
+    }
+
+    int hidden_word = (SOFT_F128_SIG_BITS - 1) / SOFT_WORD_BITS;
+    int hidden_bit = (SOFT_F128_SIG_BITS - 1) % SOFT_WORD_BITS;
+    bool normal = exp > SOFT_F128_MIN_EXP;
+    if (exp == SOFT_F128_MIN_EXP) {
+        normal = ((sig[hidden_word] >> hidden_bit) & 1) != 0;
+    }
+
+    uint64_t frac_lo = sig[0];
+    uint64_t frac_hi = sig[1] & 0x0000FFFFFFFFFFFFULL;
+    if (normal) {
+        uint64_t exp_raw = (uint64_t)(exp + SOFT_F128_EXP_BIAS);
+        frac_hi &= 0x0000FFFFFFFFFFFFULL;
+        out.mantissa_lo = frac_lo;
+        out.mantissa_hi = ((uint64_t)sign << 63) | (exp_raw << 48) | frac_hi;
+        return out;
+    }
+    out.mantissa_lo = frac_lo;
+    out.mantissa_hi = ((uint64_t)sign << 63) | frac_hi;
+    return out;
+}
+
+static ferret_f128 soft_f128_add(ferret_f128 a, ferret_f128 b, bool sub) {
+    int sign_a = 0;
+    int sign_b = 0;
+    int exp_a = 0;
+    int exp_b = 0;
+    uint64_t sig_a[SOFT_F128_WORDS];
+    uint64_t sig_b[SOFT_F128_WORDS];
+    soft_class_t cls_a = soft_f128_unpack(&a, &sign_a, &exp_a, sig_a);
+    soft_class_t cls_b = soft_f128_unpack(&b, &sign_b, &exp_b, sig_b);
+    if (sub) {
+        sign_b ^= 1;
+    }
+
+    if (cls_a == SOFT_CLASS_NAN || cls_b == SOFT_CLASS_NAN) {
+        return soft_f128_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+    }
+    if (cls_a == SOFT_CLASS_INF || cls_b == SOFT_CLASS_INF) {
+        if (cls_a == SOFT_CLASS_INF && cls_b == SOFT_CLASS_INF && sign_a != sign_b) {
+            return soft_f128_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+        }
+        if (cls_a == SOFT_CLASS_INF) {
+            return soft_f128_pack(sign_a, 0, sig_a, SOFT_CLASS_INF);
+        }
+        return soft_f128_pack(sign_b, 0, sig_b, SOFT_CLASS_INF);
+    }
+    if (cls_a == SOFT_CLASS_ZERO) {
+        return soft_f128_pack(sign_b, exp_b, sig_b, cls_b);
+    }
+    if (cls_b == SOFT_CLASS_ZERO) {
+        return soft_f128_pack(sign_a, exp_a, sig_a, cls_a);
+    }
+
+    if (exp_a < exp_b) {
+        int tmp_sign = sign_a;
+        sign_a = sign_b;
+        sign_b = tmp_sign;
+        int tmp_exp = exp_a;
+        exp_a = exp_b;
+        exp_b = tmp_exp;
+        uint64_t tmp_sig[SOFT_F128_WORDS];
+        soft_u64_copy(tmp_sig, sig_a, SOFT_F128_WORDS);
+        soft_u64_copy(sig_a, sig_b, SOFT_F128_WORDS);
+        soft_u64_copy(sig_b, tmp_sig, SOFT_F128_WORDS);
+    }
+
+    int diff = exp_a - exp_b;
+    if (diff > 0) {
+        soft_u64_shift_right_sticky(sig_b, SOFT_F128_WORDS, diff, sig_b);
+    }
+
+    uint64_t sig_out[SOFT_F128_WORDS];
+    int sign_out = sign_a;
+    int exp_out = exp_a;
+
+    if (sign_a == sign_b) {
+        uint64_t carry = soft_u64_add(sig_a, sig_b, sig_out, SOFT_F128_WORDS);
+        if (carry) {
+            soft_u64_shift_right_sticky(sig_out, SOFT_F128_WORDS, 1, sig_out);
+            exp_out += 1;
+        }
+        return soft_f128_pack(sign_out, exp_out, sig_out, SOFT_CLASS_NORMAL);
+    }
+
+    int cmp = soft_u64_cmp(sig_a, sig_b, SOFT_F128_WORDS);
+    if (cmp == 0) {
+        return soft_f128_pack(0, 0, sig_out, SOFT_CLASS_ZERO);
+    }
+    if (cmp < 0) {
+        soft_u64_sub(sig_b, sig_a, sig_out, SOFT_F128_WORDS);
+        sign_out = sign_b;
+    } else {
+        soft_u64_sub(sig_a, sig_b, sig_out, SOFT_F128_WORDS);
+        sign_out = sign_a;
+    }
+    return soft_f128_pack(sign_out, exp_out, sig_out, SOFT_CLASS_NORMAL);
+}
+
+static ferret_f128 soft_f128_mul(ferret_f128 a, ferret_f128 b) {
+    int sign_a = 0;
+    int sign_b = 0;
+    int exp_a = 0;
+    int exp_b = 0;
+    uint64_t sig_a[SOFT_F128_WORDS];
+    uint64_t sig_b[SOFT_F128_WORDS];
+    soft_class_t cls_a = soft_f128_unpack(&a, &sign_a, &exp_a, sig_a);
+    soft_class_t cls_b = soft_f128_unpack(&b, &sign_b, &exp_b, sig_b);
+
+    if (cls_a == SOFT_CLASS_NAN || cls_b == SOFT_CLASS_NAN) {
+        return soft_f128_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+    }
+    if ((cls_a == SOFT_CLASS_INF && cls_b == SOFT_CLASS_ZERO) ||
+        (cls_b == SOFT_CLASS_INF && cls_a == SOFT_CLASS_ZERO)) {
+        return soft_f128_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+    }
+    if (cls_a == SOFT_CLASS_INF || cls_b == SOFT_CLASS_INF) {
+        return soft_f128_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_INF);
+    }
+    if (cls_a == SOFT_CLASS_ZERO || cls_b == SOFT_CLASS_ZERO) {
+        return soft_f128_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_ZERO);
+    }
+
+    uint64_t sig_a_raw[SOFT_F128_WORDS];
+    uint64_t sig_b_raw[SOFT_F128_WORDS];
+    soft_u64_shift_right(sig_a, SOFT_F128_WORDS, SOFT_EXTRA_BITS, sig_a_raw);
+    soft_u64_shift_right(sig_b, SOFT_F128_WORDS, SOFT_EXTRA_BITS, sig_b_raw);
+
+    uint64_t prod[SOFT_F128_WORDS * 2];
+    soft_u64_mul(sig_a_raw, sig_b_raw, prod, SOFT_F128_WORDS);
+    int lead = soft_u64_msb_index(prod, SOFT_F128_WORDS * 2);
+    if (lead < 0) {
+        return soft_f128_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_ZERO);
+    }
+    int shift_raw = lead - (SOFT_F128_SIG_BITS - 1);
+    int shift = shift_raw - SOFT_EXTRA_BITS;
+    uint64_t sig_out[SOFT_F128_WORDS];
+    if (shift >= 0) {
+        uint64_t tmp[SOFT_F128_WORDS * 2];
+        soft_u64_shift_right_sticky(prod, SOFT_F128_WORDS * 2, shift, tmp);
+        sig_out[0] = tmp[0];
+        sig_out[1] = tmp[1];
+    } else {
+        soft_u64_zero(sig_out, SOFT_F128_WORDS);
+        soft_u64_shift_left(prod, SOFT_F128_WORDS * 2, -shift, prod);
+        sig_out[0] = prod[0];
+        sig_out[1] = prod[1];
+    }
+    int exp_out = exp_a + exp_b - (SOFT_F128_SIG_BITS - 1) + shift_raw;
+    return soft_f128_pack(sign_a ^ sign_b, exp_out, sig_out, SOFT_CLASS_NORMAL);
+}
+
+static ferret_f128 soft_f128_div(ferret_f128 a, ferret_f128 b) {
+    int sign_a = 0;
+    int sign_b = 0;
+    int exp_a = 0;
+    int exp_b = 0;
+    uint64_t sig_a[SOFT_F128_WORDS];
+    uint64_t sig_b[SOFT_F128_WORDS];
+    soft_class_t cls_a = soft_f128_unpack(&a, &sign_a, &exp_a, sig_a);
+    soft_class_t cls_b = soft_f128_unpack(&b, &sign_b, &exp_b, sig_b);
+
+    if (cls_a == SOFT_CLASS_NAN || cls_b == SOFT_CLASS_NAN) {
+        return soft_f128_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+    }
+    if (cls_a == SOFT_CLASS_INF && cls_b == SOFT_CLASS_INF) {
+        return soft_f128_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+    }
+    if (cls_a == SOFT_CLASS_INF) {
+        return soft_f128_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_INF);
+    }
+    if (cls_b == SOFT_CLASS_INF) {
+        return soft_f128_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_ZERO);
+    }
+    if (cls_b == SOFT_CLASS_ZERO) {
+        if (cls_a == SOFT_CLASS_ZERO) {
+            return soft_f128_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+        }
+        return soft_f128_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_INF);
+    }
+    if (cls_a == SOFT_CLASS_ZERO) {
+        return soft_f128_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_ZERO);
+    }
+
+    uint64_t sig_a_raw[SOFT_F128_WORDS];
+    uint64_t sig_b_raw[SOFT_F128_WORDS];
+    soft_u64_shift_right(sig_a, SOFT_F128_WORDS, SOFT_EXTRA_BITS, sig_a_raw);
+    soft_u64_shift_right(sig_b, SOFT_F128_WORDS, SOFT_EXTRA_BITS, sig_b_raw);
+
+    uint64_t numer[SOFT_F128_WORDS * 2];
+    int shift = (SOFT_F128_SIG_BITS - 1) + SOFT_EXTRA_BITS;
+    soft_u64_shift_left_wide(sig_a_raw, SOFT_F128_WORDS, shift, numer, SOFT_F128_WORDS * 2);
+
+    uint64_t denom[SOFT_F128_WORDS * 2];
+    soft_u64_zero(denom, SOFT_F128_WORDS * 2);
+    soft_u64_copy(denom, sig_b_raw, SOFT_F128_WORDS);
+
+    uint64_t quot[SOFT_F128_WORDS * 2];
+    uint64_t rem[SOFT_F128_WORDS * 2];
+    soft_u64_div_mod(numer, denom, quot, rem, SOFT_F128_WORDS * 2);
+
+    uint64_t sig_out[SOFT_F128_WORDS];
+    sig_out[0] = quot[0];
+    sig_out[1] = quot[1];
+    if (!soft_u64_is_zero(rem, SOFT_F128_WORDS * 2)) {
+        sig_out[0] |= 1;
+    }
+    int exp_out = exp_a - exp_b;
+    return soft_f128_pack(sign_a ^ sign_b, exp_out, sig_out, SOFT_CLASS_NORMAL);
+}
+
+static int soft_f128_compare(ferret_f128 a, ferret_f128 b, bool* unordered) {
+    int sign_a = 0;
+    int sign_b = 0;
+    int exp_a = 0;
+    int exp_b = 0;
+    uint64_t sig_a[SOFT_F128_WORDS];
+    uint64_t sig_b[SOFT_F128_WORDS];
+    soft_class_t cls_a = soft_f128_unpack(&a, &sign_a, &exp_a, sig_a);
+    soft_class_t cls_b = soft_f128_unpack(&b, &sign_b, &exp_b, sig_b);
+
+    if (cls_a == SOFT_CLASS_NAN || cls_b == SOFT_CLASS_NAN) {
+        if (unordered) {
+            *unordered = true;
+        }
+        return 0;
+    }
+    if (cls_a == SOFT_CLASS_ZERO && cls_b == SOFT_CLASS_ZERO) {
+        if (unordered) {
+            *unordered = false;
+        }
+        return 0;
+    }
+    if (cls_a == SOFT_CLASS_INF || cls_b == SOFT_CLASS_INF) {
+        if (unordered) {
+            *unordered = false;
+        }
+        if (cls_a == cls_b) {
+            if (sign_a == sign_b) {
+                return 0;
+            }
+            return sign_a ? -1 : 1;
+        }
+        if (cls_a == SOFT_CLASS_INF) {
+            return sign_a ? -1 : 1;
+        }
+        return sign_b ? 1 : -1;
+    }
+    if (sign_a != sign_b) {
+        if (unordered) {
+            *unordered = false;
+        }
+        return sign_a ? -1 : 1;
+    }
+
+    uint64_t sig_a_raw[SOFT_F128_WORDS];
+    uint64_t sig_b_raw[SOFT_F128_WORDS];
+    soft_u64_shift_right(sig_a, SOFT_F128_WORDS, SOFT_EXTRA_BITS, sig_a_raw);
+    soft_u64_shift_right(sig_b, SOFT_F128_WORDS, SOFT_EXTRA_BITS, sig_b_raw);
+
+    int cmp = 0;
+    if (exp_a < exp_b) {
+        cmp = -1;
+    } else if (exp_a > exp_b) {
+        cmp = 1;
+    } else {
+        cmp = soft_u64_cmp(sig_a_raw, sig_b_raw, SOFT_F128_WORDS);
+    }
+    if (unordered) {
+        *unordered = false;
+    }
+    if (sign_a) {
+        return -cmp;
+    }
+    return cmp;
+}
+#endif // !FERRET_HAS_FLOAT128
+
+static soft_class_t soft_f256_unpack(const ferret_f256* v, int* sign, int* exp, uint64_t sig[SOFT_F256_WORDS]) {
+    uint64_t w0 = v->mantissa[0];
+    uint64_t w1 = v->mantissa[1];
+    uint64_t w2 = v->mantissa[2];
+    uint64_t w3 = v->exp_sign;
+    *sign = (int)(w3 >> 63);
+    uint64_t exp_raw = (w3 >> 44) & 0x7FFFFu;
+    uint64_t frac_hi = w3 & 0x00000FFFFFFFFFFFULL;
+    sig[0] = w0;
+    sig[1] = w1;
+    sig[2] = w2;
+    sig[3] = frac_hi;
+
+    if (exp_raw == SOFT_F256_EXP_MAX) {
+        if (soft_u64_is_zero(sig, SOFT_F256_WORDS)) {
+            return SOFT_CLASS_INF;
+        }
+        return SOFT_CLASS_NAN;
+    }
+    if (exp_raw == 0) {
+        if (soft_u64_is_zero(sig, SOFT_F256_WORDS)) {
+            return SOFT_CLASS_ZERO;
+        }
+        *exp = SOFT_F256_MIN_EXP;
+    } else {
+        *exp = (int)exp_raw - SOFT_F256_EXP_BIAS;
+        sig[3] |= (uint64_t)1 << 44;
+    }
+    soft_u64_shift_left(sig, SOFT_F256_WORDS, SOFT_EXTRA_BITS, sig);
+    return SOFT_CLASS_NORMAL;
+}
+
+static ferret_f256 soft_f256_pack(int sign, int exp, uint64_t sig[SOFT_F256_WORDS], soft_class_t cls) {
+    ferret_f256 out = {{0, 0, 0}, 0};
+    if (cls == SOFT_CLASS_NAN) {
+        out.mantissa[0] = 1;
+        out.exp_sign = ((uint64_t)sign << 63) | ((uint64_t)SOFT_F256_EXP_MAX << 44);
+        return out;
+    }
+    if (cls == SOFT_CLASS_INF) {
+        out.mantissa[0] = 0;
+        out.exp_sign = ((uint64_t)sign << 63) | ((uint64_t)SOFT_F256_EXP_MAX << 44);
+        return out;
+    }
+    if (cls == SOFT_CLASS_ZERO || soft_u64_is_zero(sig, SOFT_F256_WORDS)) {
+        out.exp_sign = (uint64_t)sign << 63;
+        return out;
+    }
+
+    int target = SOFT_F256_SIG_BITS - 1 + SOFT_EXTRA_BITS;
+    int lead = soft_u64_msb_index(sig, SOFT_F256_WORDS);
+    if (lead < 0) {
+        out.exp_sign = (uint64_t)sign << 63;
+        return out;
+    }
+    if (lead > target) {
+        int shift = lead - target;
+        soft_u64_shift_right_sticky(sig, SOFT_F256_WORDS, shift, sig);
+        exp += shift;
+    } else if (lead < target) {
+        int shift = target - lead;
+        soft_u64_shift_left(sig, SOFT_F256_WORDS, shift, sig);
+        exp -= shift;
+    }
+
+    if (exp < SOFT_F256_MIN_EXP) {
+        int shift = SOFT_F256_MIN_EXP - exp;
+        soft_u64_shift_right_sticky(sig, SOFT_F256_WORDS, shift, sig);
+        exp = SOFT_F256_MIN_EXP;
+    }
+
+    soft_round_sig(sig, SOFT_F256_WORDS, &exp);
+    if (soft_u64_is_zero(sig, SOFT_F256_WORDS)) {
+        out.exp_sign = (uint64_t)sign << 63;
+        return out;
+    }
+    if (exp > SOFT_F256_MAX_EXP) {
+        out.exp_sign = ((uint64_t)sign << 63) | ((uint64_t)SOFT_F256_EXP_MAX << 44);
+        return out;
+    }
+
+    int hidden_word = (SOFT_F256_SIG_BITS - 1) / SOFT_WORD_BITS;
+    int hidden_bit = (SOFT_F256_SIG_BITS - 1) % SOFT_WORD_BITS;
+    bool normal = exp > SOFT_F256_MIN_EXP;
+    if (exp == SOFT_F256_MIN_EXP) {
+        normal = ((sig[hidden_word] >> hidden_bit) & 1) != 0;
+    }
+
+    out.mantissa[0] = sig[0];
+    out.mantissa[1] = sig[1];
+    out.mantissa[2] = sig[2];
+    uint64_t frac_hi = sig[3] & 0x00000FFFFFFFFFFFULL;
+    if (normal) {
+        uint64_t exp_raw = (uint64_t)(exp + SOFT_F256_EXP_BIAS);
+        out.exp_sign = ((uint64_t)sign << 63) | (exp_raw << 44) | frac_hi;
+        return out;
+    }
+    out.exp_sign = ((uint64_t)sign << 63) | frac_hi;
+    return out;
+}
+
+static ferret_f256 soft_f256_add(ferret_f256 a, ferret_f256 b, bool sub) {
+    int sign_a = 0;
+    int sign_b = 0;
+    int exp_a = 0;
+    int exp_b = 0;
+    uint64_t sig_a[SOFT_F256_WORDS];
+    uint64_t sig_b[SOFT_F256_WORDS];
+    soft_class_t cls_a = soft_f256_unpack(&a, &sign_a, &exp_a, sig_a);
+    soft_class_t cls_b = soft_f256_unpack(&b, &sign_b, &exp_b, sig_b);
+    if (sub) {
+        sign_b ^= 1;
+    }
+
+    if (cls_a == SOFT_CLASS_NAN || cls_b == SOFT_CLASS_NAN) {
+        return soft_f256_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+    }
+    if (cls_a == SOFT_CLASS_INF || cls_b == SOFT_CLASS_INF) {
+        if (cls_a == SOFT_CLASS_INF && cls_b == SOFT_CLASS_INF && sign_a != sign_b) {
+            return soft_f256_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+        }
+        if (cls_a == SOFT_CLASS_INF) {
+            return soft_f256_pack(sign_a, 0, sig_a, SOFT_CLASS_INF);
+        }
+        return soft_f256_pack(sign_b, 0, sig_b, SOFT_CLASS_INF);
+    }
+    if (cls_a == SOFT_CLASS_ZERO) {
+        return soft_f256_pack(sign_b, exp_b, sig_b, cls_b);
+    }
+    if (cls_b == SOFT_CLASS_ZERO) {
+        return soft_f256_pack(sign_a, exp_a, sig_a, cls_a);
+    }
+
+    if (exp_a < exp_b) {
+        int tmp_sign = sign_a;
+        sign_a = sign_b;
+        sign_b = tmp_sign;
+        int tmp_exp = exp_a;
+        exp_a = exp_b;
+        exp_b = tmp_exp;
+        uint64_t tmp_sig[SOFT_F256_WORDS];
+        soft_u64_copy(tmp_sig, sig_a, SOFT_F256_WORDS);
+        soft_u64_copy(sig_a, sig_b, SOFT_F256_WORDS);
+        soft_u64_copy(sig_b, tmp_sig, SOFT_F256_WORDS);
+    }
+
+    int diff = exp_a - exp_b;
+    if (diff > 0) {
+        soft_u64_shift_right_sticky(sig_b, SOFT_F256_WORDS, diff, sig_b);
+    }
+
+    uint64_t sig_out[SOFT_F256_WORDS];
+    int sign_out = sign_a;
+    int exp_out = exp_a;
+
+    if (sign_a == sign_b) {
+        uint64_t carry = soft_u64_add(sig_a, sig_b, sig_out, SOFT_F256_WORDS);
+        if (carry) {
+            soft_u64_shift_right_sticky(sig_out, SOFT_F256_WORDS, 1, sig_out);
+            exp_out += 1;
+        }
+        return soft_f256_pack(sign_out, exp_out, sig_out, SOFT_CLASS_NORMAL);
+    }
+
+    int cmp = soft_u64_cmp(sig_a, sig_b, SOFT_F256_WORDS);
+    if (cmp == 0) {
+        return soft_f256_pack(0, 0, sig_out, SOFT_CLASS_ZERO);
+    }
+    if (cmp < 0) {
+        soft_u64_sub(sig_b, sig_a, sig_out, SOFT_F256_WORDS);
+        sign_out = sign_b;
+    } else {
+        soft_u64_sub(sig_a, sig_b, sig_out, SOFT_F256_WORDS);
+        sign_out = sign_a;
+    }
+    return soft_f256_pack(sign_out, exp_out, sig_out, SOFT_CLASS_NORMAL);
+}
+
+static ferret_f256 soft_f256_mul(ferret_f256 a, ferret_f256 b) {
+    int sign_a = 0;
+    int sign_b = 0;
+    int exp_a = 0;
+    int exp_b = 0;
+    uint64_t sig_a[SOFT_F256_WORDS];
+    uint64_t sig_b[SOFT_F256_WORDS];
+    soft_class_t cls_a = soft_f256_unpack(&a, &sign_a, &exp_a, sig_a);
+    soft_class_t cls_b = soft_f256_unpack(&b, &sign_b, &exp_b, sig_b);
+
+    if (cls_a == SOFT_CLASS_NAN || cls_b == SOFT_CLASS_NAN) {
+        return soft_f256_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+    }
+    if ((cls_a == SOFT_CLASS_INF && cls_b == SOFT_CLASS_ZERO) ||
+        (cls_b == SOFT_CLASS_INF && cls_a == SOFT_CLASS_ZERO)) {
+        return soft_f256_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+    }
+    if (cls_a == SOFT_CLASS_INF || cls_b == SOFT_CLASS_INF) {
+        return soft_f256_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_INF);
+    }
+    if (cls_a == SOFT_CLASS_ZERO || cls_b == SOFT_CLASS_ZERO) {
+        return soft_f256_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_ZERO);
+    }
+
+    uint64_t sig_a_raw[SOFT_F256_WORDS];
+    uint64_t sig_b_raw[SOFT_F256_WORDS];
+    soft_u64_shift_right(sig_a, SOFT_F256_WORDS, SOFT_EXTRA_BITS, sig_a_raw);
+    soft_u64_shift_right(sig_b, SOFT_F256_WORDS, SOFT_EXTRA_BITS, sig_b_raw);
+
+    uint64_t prod[SOFT_F256_WORDS * 2];
+    soft_u64_mul(sig_a_raw, sig_b_raw, prod, SOFT_F256_WORDS);
+    int lead = soft_u64_msb_index(prod, SOFT_F256_WORDS * 2);
+    if (lead < 0) {
+        return soft_f256_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_ZERO);
+    }
+    int shift_raw = lead - (SOFT_F256_SIG_BITS - 1);
+    int shift = shift_raw - SOFT_EXTRA_BITS;
+    uint64_t sig_out[SOFT_F256_WORDS];
+    if (shift >= 0) {
+        uint64_t tmp[SOFT_F256_WORDS * 2];
+        soft_u64_shift_right_sticky(prod, SOFT_F256_WORDS * 2, shift, tmp);
+        sig_out[0] = tmp[0];
+        sig_out[1] = tmp[1];
+        sig_out[2] = tmp[2];
+        sig_out[3] = tmp[3];
+    } else {
+        soft_u64_zero(sig_out, SOFT_F256_WORDS);
+        soft_u64_shift_left(prod, SOFT_F256_WORDS * 2, -shift, prod);
+        sig_out[0] = prod[0];
+        sig_out[1] = prod[1];
+        sig_out[2] = prod[2];
+        sig_out[3] = prod[3];
+    }
+    int exp_out = exp_a + exp_b - (SOFT_F256_SIG_BITS - 1) + shift_raw;
+    return soft_f256_pack(sign_a ^ sign_b, exp_out, sig_out, SOFT_CLASS_NORMAL);
+}
+
+static ferret_f256 soft_f256_div(ferret_f256 a, ferret_f256 b) {
+    int sign_a = 0;
+    int sign_b = 0;
+    int exp_a = 0;
+    int exp_b = 0;
+    uint64_t sig_a[SOFT_F256_WORDS];
+    uint64_t sig_b[SOFT_F256_WORDS];
+    soft_class_t cls_a = soft_f256_unpack(&a, &sign_a, &exp_a, sig_a);
+    soft_class_t cls_b = soft_f256_unpack(&b, &sign_b, &exp_b, sig_b);
+
+    if (cls_a == SOFT_CLASS_NAN || cls_b == SOFT_CLASS_NAN) {
+        return soft_f256_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+    }
+    if (cls_a == SOFT_CLASS_INF && cls_b == SOFT_CLASS_INF) {
+        return soft_f256_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+    }
+    if (cls_a == SOFT_CLASS_INF) {
+        return soft_f256_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_INF);
+    }
+    if (cls_b == SOFT_CLASS_INF) {
+        return soft_f256_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_ZERO);
+    }
+    if (cls_b == SOFT_CLASS_ZERO) {
+        if (cls_a == SOFT_CLASS_ZERO) {
+            return soft_f256_pack(0, 0, sig_a, SOFT_CLASS_NAN);
+        }
+        return soft_f256_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_INF);
+    }
+    if (cls_a == SOFT_CLASS_ZERO) {
+        return soft_f256_pack(sign_a ^ sign_b, 0, sig_a, SOFT_CLASS_ZERO);
+    }
+
+    uint64_t sig_a_raw[SOFT_F256_WORDS];
+    uint64_t sig_b_raw[SOFT_F256_WORDS];
+    soft_u64_shift_right(sig_a, SOFT_F256_WORDS, SOFT_EXTRA_BITS, sig_a_raw);
+    soft_u64_shift_right(sig_b, SOFT_F256_WORDS, SOFT_EXTRA_BITS, sig_b_raw);
+
+    uint64_t numer[SOFT_F256_WORDS * 2];
+    int shift = (SOFT_F256_SIG_BITS - 1) + SOFT_EXTRA_BITS;
+    soft_u64_shift_left_wide(sig_a_raw, SOFT_F256_WORDS, shift, numer, SOFT_F256_WORDS * 2);
+
+    uint64_t denom[SOFT_F256_WORDS * 2];
+    soft_u64_zero(denom, SOFT_F256_WORDS * 2);
+    soft_u64_copy(denom, sig_b_raw, SOFT_F256_WORDS);
+
+    uint64_t quot[SOFT_F256_WORDS * 2];
+    uint64_t rem[SOFT_F256_WORDS * 2];
+    soft_u64_div_mod(numer, denom, quot, rem, SOFT_F256_WORDS * 2);
+
+    uint64_t sig_out[SOFT_F256_WORDS];
+    sig_out[0] = quot[0];
+    sig_out[1] = quot[1];
+    sig_out[2] = quot[2];
+    sig_out[3] = quot[3];
+    if (!soft_u64_is_zero(rem, SOFT_F256_WORDS * 2)) {
+        sig_out[0] |= 1;
+    }
+    int exp_out = exp_a - exp_b;
+    return soft_f256_pack(sign_a ^ sign_b, exp_out, sig_out, SOFT_CLASS_NORMAL);
+}
+
+static int soft_f256_compare(ferret_f256 a, ferret_f256 b, bool* unordered) {
+    int sign_a = 0;
+    int sign_b = 0;
+    int exp_a = 0;
+    int exp_b = 0;
+    uint64_t sig_a[SOFT_F256_WORDS];
+    uint64_t sig_b[SOFT_F256_WORDS];
+    soft_class_t cls_a = soft_f256_unpack(&a, &sign_a, &exp_a, sig_a);
+    soft_class_t cls_b = soft_f256_unpack(&b, &sign_b, &exp_b, sig_b);
+
+    if (cls_a == SOFT_CLASS_NAN || cls_b == SOFT_CLASS_NAN) {
+        if (unordered) {
+            *unordered = true;
+        }
+        return 0;
+    }
+    if (cls_a == SOFT_CLASS_ZERO && cls_b == SOFT_CLASS_ZERO) {
+        if (unordered) {
+            *unordered = false;
+        }
+        return 0;
+    }
+    if (cls_a == SOFT_CLASS_INF || cls_b == SOFT_CLASS_INF) {
+        if (unordered) {
+            *unordered = false;
+        }
+        if (cls_a == cls_b) {
+            if (sign_a == sign_b) {
+                return 0;
+            }
+            return sign_a ? -1 : 1;
+        }
+        if (cls_a == SOFT_CLASS_INF) {
+            return sign_a ? -1 : 1;
+        }
+        return sign_b ? 1 : -1;
+    }
+    if (sign_a != sign_b) {
+        if (unordered) {
+            *unordered = false;
+        }
+        return sign_a ? -1 : 1;
+    }
+
+    uint64_t sig_a_raw[SOFT_F256_WORDS];
+    uint64_t sig_b_raw[SOFT_F256_WORDS];
+    soft_u64_shift_right(sig_a, SOFT_F256_WORDS, SOFT_EXTRA_BITS, sig_a_raw);
+    soft_u64_shift_right(sig_b, SOFT_F256_WORDS, SOFT_EXTRA_BITS, sig_b_raw);
+
+    int cmp = 0;
+    if (exp_a < exp_b) {
+        cmp = -1;
+    } else if (exp_a > exp_b) {
+        cmp = 1;
+    } else {
+        cmp = soft_u64_cmp(sig_a_raw, sig_b_raw, SOFT_F256_WORDS);
+    }
+    if (unordered) {
+        *unordered = false;
+    }
+    if (sign_a) {
+        return -cmp;
+    }
+    return cmp;
+}
+
 // 128-bit floating point operations (fallback implementation)
 #ifndef FERRET_HAS_FLOAT128
 
-// Simplified IEEE 754 binary128 operations
-// Full implementation would properly handle:
-// - Sign bit extraction/manipulation
-// - Exponent extraction/manipulation
-// - Mantissa normalization
-// - Special values (NaN, Inf, -Inf, -0)
-
 ferret_f128 ferret_f128_add(ferret_f128 a, ferret_f128 b) {
-    double a_val = ferret_f128_to_f64(a);
-    double b_val = ferret_f128_to_f64(b);
-    return ferret_f128_from_f64(a_val + b_val);
+    return soft_f128_add(a, b, false);
 }
 
 ferret_f128 ferret_f128_sub(ferret_f128 a, ferret_f128 b) {
-    double a_val = ferret_f128_to_f64(a);
-    double b_val = ferret_f128_to_f64(b);
-    return ferret_f128_from_f64(a_val - b_val);
+    return soft_f128_add(a, b, true);
 }
 
 ferret_f128 ferret_f128_mul(ferret_f128 a, ferret_f128 b) {
-    double a_val = ferret_f128_to_f64(a);
-    double b_val = ferret_f128_to_f64(b);
-    return ferret_f128_from_f64(a_val * b_val);
+    return soft_f128_mul(a, b);
 }
 
 ferret_f128 ferret_f128_div(ferret_f128 a, ferret_f128 b) {
-    double a_val = ferret_f128_to_f64(a);
-    double b_val = ferret_f128_to_f64(b);
-    return ferret_f128_from_f64(a_val / b_val);
+    return soft_f128_div(a, b);
 }
 
 bool ferret_f128_eq(ferret_f128 a, ferret_f128 b) {
-    return memcmp(&a, &b, sizeof(ferret_f128)) == 0;
+    bool unordered = false;
+    int cmp = soft_f128_compare(a, b, &unordered);
+    return !unordered && cmp == 0;
 }
 
 bool ferret_f128_lt(ferret_f128 a, ferret_f128 b) {
-    double a_val = ferret_f128_to_f64(a);
-    double b_val = ferret_f128_to_f64(b);
-    return a_val < b_val;
+    bool unordered = false;
+    int cmp = soft_f128_compare(a, b, &unordered);
+    return !unordered && cmp < 0;
 }
 
 bool ferret_f128_gt(ferret_f128 a, ferret_f128 b) {
-    return ferret_f128_lt(b, a);
+    bool unordered = false;
+    int cmp = soft_f128_compare(a, b, &unordered);
+    return !unordered && cmp > 0;
 }
 
 #endif // !FERRET_HAS_FLOAT128
 
 // 256-bit floating point operations (always struct-based)
 ferret_f256 ferret_f256_add(ferret_f256 a, ferret_f256 b) {
-    double a_val = ferret_f256_to_f64(a);
-    double b_val = ferret_f256_to_f64(b);
-    return ferret_f256_from_f64(a_val + b_val);
+    return soft_f256_add(a, b, false);
 }
 
 ferret_f256 ferret_f256_sub(ferret_f256 a, ferret_f256 b) {
-    double a_val = ferret_f256_to_f64(a);
-    double b_val = ferret_f256_to_f64(b);
-    return ferret_f256_from_f64(a_val - b_val);
+    return soft_f256_add(a, b, true);
 }
 
 ferret_f256 ferret_f256_mul(ferret_f256 a, ferret_f256 b) {
-    double a_val = ferret_f256_to_f64(a);
-    double b_val = ferret_f256_to_f64(b);
-    return ferret_f256_from_f64(a_val * b_val);
+    return soft_f256_mul(a, b);
 }
 
 ferret_f256 ferret_f256_div(ferret_f256 a, ferret_f256 b) {
-    double a_val = ferret_f256_to_f64(a);
-    double b_val = ferret_f256_to_f64(b);
-    return ferret_f256_from_f64(a_val / b_val);
+    return soft_f256_div(a, b);
 }
 
 bool ferret_f256_eq(ferret_f256 a, ferret_f256 b) {
-    return memcmp(a.mantissa, b.mantissa, sizeof(a.mantissa)) == 0 &&
-           a.exp_sign == b.exp_sign;
+    bool unordered = false;
+    int cmp = soft_f256_compare(a, b, &unordered);
+    return !unordered && cmp == 0;
 }
 
 bool ferret_f256_lt(ferret_f256 a, ferret_f256 b) {
-    double a_val = ferret_f256_to_f64(a);
-    double b_val = ferret_f256_to_f64(b);
-    return a_val < b_val;
+    bool unordered = false;
+    int cmp = soft_f256_compare(a, b, &unordered);
+    return !unordered && cmp < 0;
 }
 
 bool ferret_f256_gt(ferret_f256 a, ferret_f256 b) {
-    return ferret_f256_lt(b, a);
+    bool unordered = false;
+    int cmp = soft_f256_compare(a, b, &unordered);
+    return !unordered && cmp > 0;
 }
 
-// Floating point power functions - use C's pow()
+// Floating point power functions - use C's pow() on f64 for now.
 ferret_f128 ferret_f128_pow(ferret_f128 base, ferret_f128 exp) {
     double base_val = ferret_f128_to_f64(base);
     double exp_val = ferret_f128_to_f64(exp);
@@ -1139,37 +2129,161 @@ ferret_f256 ferret_f256_pow(ferret_f256 base, ferret_f256 exp) {
 }
 
 // Conversion functions for floating point
+#ifndef FERRET_HAS_FLOAT128
+static ferret_f128 soft_f128_from_f64(double val) {
+    union {
+        double d;
+        uint64_t u;
+    } bits;
+    bits.d = val;
+
+    uint64_t sign = bits.u >> 63;
+    uint64_t exp_raw = (bits.u >> 52) & 0x7FFu;
+    uint64_t frac = bits.u & 0xFFFFFFFFFFFFFULL;
+
+    uint64_t sig[SOFT_F128_WORDS];
+    soft_u64_zero(sig, SOFT_F128_WORDS);
+    int exp = 0;
+    soft_class_t cls = SOFT_CLASS_NORMAL;
+
+    if (exp_raw == 0x7FFu) {
+        cls = (frac == 0) ? SOFT_CLASS_INF : SOFT_CLASS_NAN;
+        return soft_f128_pack((int)sign, 0, sig, cls);
+    }
+    if (exp_raw == 0) {
+        if (frac == 0) {
+            return soft_f128_pack((int)sign, 0, sig, SOFT_CLASS_ZERO);
+        }
+        int lead = SOFT_WORD_BITS - 1 - soft_clz64(frac);
+        int shift = 52 - lead;
+        uint64_t sig64 = frac << shift;
+        exp = lead - 1074;
+        sig[0] = sig64;
+        sig[1] = 0;
+        soft_u64_shift_left(sig, SOFT_F128_WORDS, SOFT_F128_FRAC_BITS - 52, sig);
+    } else {
+        exp = (int)exp_raw - 1023;
+        uint64_t sig64 = (uint64_t)1 << 52;
+        sig64 |= frac;
+        sig[0] = sig64;
+        sig[1] = 0;
+        soft_u64_shift_left(sig, SOFT_F128_WORDS, SOFT_F128_FRAC_BITS - 52, sig);
+    }
+    soft_u64_shift_left(sig, SOFT_F128_WORDS, SOFT_EXTRA_BITS, sig);
+    return soft_f128_pack((int)sign, exp, sig, cls);
+}
+#endif // !FERRET_HAS_FLOAT128
+
+static ferret_f256 soft_f256_from_f64(double val) {
+    union {
+        double d;
+        uint64_t u;
+    } bits;
+    bits.d = val;
+
+    uint64_t sign = bits.u >> 63;
+    uint64_t exp_raw = (bits.u >> 52) & 0x7FFu;
+    uint64_t frac = bits.u & 0xFFFFFFFFFFFFFULL;
+
+    uint64_t sig[SOFT_F256_WORDS];
+    soft_u64_zero(sig, SOFT_F256_WORDS);
+    int exp = 0;
+    soft_class_t cls = SOFT_CLASS_NORMAL;
+
+    if (exp_raw == 0x7FFu) {
+        cls = (frac == 0) ? SOFT_CLASS_INF : SOFT_CLASS_NAN;
+        return soft_f256_pack((int)sign, 0, sig, cls);
+    }
+    if (exp_raw == 0) {
+        if (frac == 0) {
+            return soft_f256_pack((int)sign, 0, sig, SOFT_CLASS_ZERO);
+        }
+        int lead = SOFT_WORD_BITS - 1 - soft_clz64(frac);
+        int shift = 52 - lead;
+        uint64_t sig64 = frac << shift;
+        exp = lead - 1074;
+        sig[0] = sig64;
+        sig[1] = 0;
+        sig[2] = 0;
+        sig[3] = 0;
+        soft_u64_shift_left(sig, SOFT_F256_WORDS, SOFT_F256_FRAC_BITS - 52, sig);
+    } else {
+        exp = (int)exp_raw - 1023;
+        uint64_t sig64 = (uint64_t)1 << 52;
+        sig64 |= frac;
+        sig[0] = sig64;
+        sig[1] = 0;
+        sig[2] = 0;
+        sig[3] = 0;
+        soft_u64_shift_left(sig, SOFT_F256_WORDS, SOFT_F256_FRAC_BITS - 52, sig);
+    }
+    soft_u64_shift_left(sig, SOFT_F256_WORDS, SOFT_EXTRA_BITS, sig);
+    return soft_f256_pack((int)sign, exp, sig, cls);
+}
+
 ferret_f128 ferret_f128_from_f64(double val) {
 #ifdef FERRET_HAS_FLOAT128
     return (ferret_f128)val;
 #else
-    ferret_f128 result;
-    memcpy(&result, &val, sizeof(double));
-    memset((char*)&result + sizeof(double), 0, sizeof(ferret_f128) - sizeof(double));
-    return result;
+    return soft_f128_from_f64(val);
 #endif
 }
 
 ferret_f256 ferret_f256_from_f64(double val) {
-    ferret_f256 result = {{0, 0, 0}, 0};
-    memcpy(&result.mantissa[0], &val, sizeof(double));
-    return result;
+    return soft_f256_from_f64(val);
+}
+
+static double soft_to_double(int sign, int exp, const uint64_t* sig, int sig_words, int sig_bits) {
+    if (soft_u64_is_zero(sig, sig_words)) {
+        return sign ? -0.0 : 0.0;
+    }
+    uint64_t sig_raw[SOFT_F256_WORDS];
+    soft_u64_zero(sig_raw, sig_words);
+    soft_u64_shift_right(sig, sig_words, SOFT_EXTRA_BITS, sig_raw);
+
+    long double value = 0.0L;
+    for (int i = sig_words - 1; i >= 0; i--) {
+        value = ldexp(value, SOFT_WORD_BITS);
+        value += (long double)sig_raw[i];
+    }
+    int shift = exp - (sig_bits - 1);
+    value = ldexp(value, shift);
+    if (sign) {
+        value = -value;
+    }
+    return (double)value;
 }
 
 double ferret_f128_to_f64(ferret_f128 val) {
 #ifdef FERRET_HAS_FLOAT128
     return (double)val;
 #else
-    double result;
-    memcpy(&result, &val, sizeof(double));
-    return result;
+    int sign = 0;
+    int exp = 0;
+    uint64_t sig[SOFT_F128_WORDS];
+    soft_class_t cls = soft_f128_unpack(&val, &sign, &exp, sig);
+    if (cls == SOFT_CLASS_NAN) {
+        return NAN;
+    }
+    if (cls == SOFT_CLASS_INF) {
+        return sign ? -INFINITY : INFINITY;
+    }
+    return soft_to_double(sign, exp, sig, SOFT_F128_WORDS, SOFT_F128_SIG_BITS);
 #endif
 }
 
 double ferret_f256_to_f64(ferret_f256 val) {
-    double result;
-    memcpy(&result, &val.mantissa[0], sizeof(double));
-    return result;
+    int sign = 0;
+    int exp = 0;
+    uint64_t sig[SOFT_F256_WORDS];
+    soft_class_t cls = soft_f256_unpack(&val, &sign, &exp, sig);
+    if (cls == SOFT_CLASS_NAN) {
+        return NAN;
+    }
+    if (cls == SOFT_CLASS_INF) {
+        return sign ? -INFINITY : INFINITY;
+    }
+    return soft_to_double(sign, exp, sig, SOFT_F256_WORDS, SOFT_F256_SIG_BITS);
 }
 
 static void ferret_ensure_float_decimal(char* buf, size_t size) {
@@ -1204,24 +2318,20 @@ static void ferret_ensure_float_decimal(char* buf, size_t size) {
 }
 
 char* ferret_f128_to_string(ferret_f128 val) {
-    char* buf = (char*)malloc(50);
+    char* buf = (char*)malloc(128);
     if (!buf) return NULL;
-#ifdef FERRET_HAS_FLOAT128
-    snprintf(buf, 50, "%.15g", (double)val);
-#else
     double d = ferret_f128_to_f64(val);
-    snprintf(buf, 50, "%.15g", d);
-#endif
-    ferret_ensure_float_decimal(buf, 50);
+    snprintf(buf, 128, "%.34g", d);
+    ferret_ensure_float_decimal(buf, 128);
     return buf;
 }
 
 char* ferret_f256_to_string(ferret_f256 val) {
-    char* buf = (char*)malloc(50);
+    char* buf = (char*)malloc(256);
     if (!buf) return NULL;
     double d = ferret_f256_to_f64(val);
-    snprintf(buf, 50, "%.20g", d);
-    ferret_ensure_float_decimal(buf, 50);
+    snprintf(buf, 256, "%.71g", d);
+    ferret_ensure_float_decimal(buf, 256);
     return buf;
 }
 
@@ -1275,13 +2385,12 @@ ferret_u256 ferret_u256_from_string(const char* str) {
 ferret_f128 ferret_f128_from_string(const char* str) {
     if (!str) {
 #ifdef FERRET_HAS_FLOAT128
-        return 0.0;
+        return (ferret_f128)0.0;
 #else
         ferret_f128 zero = {0, 0};
         return zero;
 #endif
     }
-    
     double val = strtod(str, NULL);
     return ferret_f128_from_f64(val);
 }
@@ -1289,7 +2398,6 @@ ferret_f128 ferret_f128_from_string(const char* str) {
 ferret_f256 ferret_f256_from_string(const char* str) {
     ferret_f256 result = {{0, 0, 0}, 0};
     if (!str) return result;
-    
     double val = strtod(str, NULL);
     return ferret_f256_from_f64(val);
 }
