@@ -325,41 +325,30 @@ void ferret_map_destroy(ferret_map_t* map) {
 }
 
 // Hash functions
-uint32_t ferret_map_hash_i32(const void* key, size_t key_size) {
-    (void)key_size; // Unused
-    return murmur3_32((const uint8_t*)key, sizeof(int32_t), FERRET_MAP_HASH_SEED);
-}
+#define FERRET_MAP_HASH_INT(suffix, type) \
+    uint32_t ferret_map_hash_##suffix(const void* key, size_t key_size) { \
+        (void)key_size; \
+        return murmur3_32((const uint8_t*)key, sizeof(type), FERRET_MAP_HASH_SEED); \
+    }
 
-uint32_t ferret_map_hash_i64(const void* key, size_t key_size) {
-    (void)key_size; // Unused
-    return murmur3_32((const uint8_t*)key, sizeof(int64_t), FERRET_MAP_HASH_SEED);
-}
+#define FERRET_MAP_HASH_FLOAT(suffix, type) \
+    uint32_t ferret_map_hash_##suffix(const void* key, size_t key_size) { \
+        (void)key_size; \
+        if (key == NULL) { \
+            return 0; \
+        } \
+        type value = (type)0; \
+        memcpy(&value, key, sizeof(type)); \
+        if (value == (type)0) { \
+            value = (type)0; \
+        } \
+        return murmur3_32((const uint8_t*)&value, sizeof(type), FERRET_MAP_HASH_SEED); \
+    }
 
-uint32_t ferret_map_hash_f32(const void* key, size_t key_size) {
-    (void)key_size; // Unused
-    if (key == NULL) {
-        return 0;
-    }
-    float value = 0.0f;
-    memcpy(&value, key, sizeof(float));
-    if (value == 0.0f) {
-        value = 0.0f; // normalize -0.0f to +0.0f
-    }
-    return murmur3_32((const uint8_t*)&value, sizeof(float), FERRET_MAP_HASH_SEED);
-}
-
-uint32_t ferret_map_hash_f64(const void* key, size_t key_size) {
-    (void)key_size; // Unused
-    if (key == NULL) {
-        return 0;
-    }
-    double value = 0.0;
-    memcpy(&value, key, sizeof(double));
-    if (value == 0.0) {
-        value = 0.0; // normalize -0.0 to +0.0
-    }
-    return murmur3_32((const uint8_t*)&value, sizeof(double), FERRET_MAP_HASH_SEED);
-}
+FERRET_MAP_HASH_INT(i32, int32_t)
+FERRET_MAP_HASH_INT(i64, int64_t)
+FERRET_MAP_HASH_FLOAT(f32, float)
+FERRET_MAP_HASH_FLOAT(f64, double)
 
 uint32_t ferret_map_hash_str(const void* key, size_t key_size) {
     (void)key_size; // Unused
@@ -380,25 +369,16 @@ uint32_t ferret_map_hash_bytes(const void* key, size_t key_size) {
 }
 
 // Equality functions
-bool ferret_map_equals_i32(const void* key1, const void* key2, size_t key_size) {
-    (void)key_size; // Unused
-    return *(const int32_t*)key1 == *(const int32_t*)key2;
-}
+#define FERRET_MAP_EQUALS_SCALAR(suffix, type) \
+    bool ferret_map_equals_##suffix(const void* key1, const void* key2, size_t key_size) { \
+        (void)key_size; \
+        return *(const type*)key1 == *(const type*)key2; \
+    }
 
-bool ferret_map_equals_i64(const void* key1, const void* key2, size_t key_size) {
-    (void)key_size; // Unused
-    return *(const int64_t*)key1 == *(const int64_t*)key2;
-}
-
-bool ferret_map_equals_f32(const void* key1, const void* key2, size_t key_size) {
-    (void)key_size; // Unused
-    return *(const float*)key1 == *(const float*)key2;
-}
-
-bool ferret_map_equals_f64(const void* key1, const void* key2, size_t key_size) {
-    (void)key_size; // Unused
-    return *(const double*)key1 == *(const double*)key2;
-}
+FERRET_MAP_EQUALS_SCALAR(i32, int32_t)
+FERRET_MAP_EQUALS_SCALAR(i64, int64_t)
+FERRET_MAP_EQUALS_SCALAR(f32, float)
+FERRET_MAP_EQUALS_SCALAR(f64, double)
 
 bool ferret_map_equals_str(const void* key1, const void* key2, size_t key_size) {
     (void)key_size; // Unused

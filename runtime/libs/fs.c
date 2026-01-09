@@ -49,6 +49,94 @@ static char* str_dup(const char* s) {
     return copy;
 }
 
+#define FERRET_FS_DEFINE_OPEN(name, mode_str, open_error) \
+    void ferret_std_fs_##name(void* out, const char* path) { \
+        if (!out) return; \
+        int64_t* handle_ptr = (int64_t*)out; \
+        char** path_out = (char**)((char*)out + 8); \
+        char** mode_out = (char**)((char*)out + 16); \
+        int8_t* tag_ptr = (int8_t*)((char*)out + 24); \
+        if (!path) { \
+            *(char**)out = "path is null"; \
+            *tag_ptr = 0; \
+            return; \
+        } \
+        FILE* f = fopen(path, mode_str); \
+        if (!f) { \
+            *(char**)out = open_error; \
+            *tag_ptr = 0; \
+            return; \
+        } \
+        *handle_ptr = (int64_t)(intptr_t)f; \
+        *path_out = str_dup(path); \
+        *mode_out = mode_str; \
+        *tag_ptr = 1; \
+    }
+
+#define FERRET_FS_DEFINE_WRITE_FILE(name, mode_str, open_error) \
+    void ferret_std_fs_##name(void* out, const char* path, const char* content) { \
+        if (!out) return; \
+        bool* val_ptr = (bool*)out; \
+        int8_t* tag_ptr = (int8_t*)((char*)out + 8); \
+        if (!path) { \
+            *(char**)out = "path is null"; \
+            *tag_ptr = 0; \
+            return; \
+        } \
+        FILE* f = fopen(path, mode_str); \
+        if (!f) { \
+            *(char**)out = open_error; \
+            *tag_ptr = 0; \
+            return; \
+        } \
+        if (content) { \
+            size_t len = strlen(content); \
+            size_t written = fwrite(content, 1, len, f); \
+            if (written != len) { \
+                fclose(f); \
+                *(char**)out = "failed to write all data"; \
+                *tag_ptr = 0; \
+                return; \
+            } \
+        } \
+        fclose(f); \
+        *val_ptr = true; \
+        *tag_ptr = 1; \
+    }
+
+#define FERRET_FS_DEFINE_WRITE_HANDLE(name, add_newline) \
+    void ferret_std_fs_##name(void* out, int64_t handle, const char* path, const char* mode, const char* content) { \
+        (void)path; \
+        (void)mode; \
+        if (!out) return; \
+        bool* val_ptr = (bool*)out; \
+        int8_t* tag_ptr = (int8_t*)((char*)out + 8); \
+        if (handle == 0) { \
+            *(char**)out = "invalid file handle"; \
+            *tag_ptr = 0; \
+            return; \
+        } \
+        FILE* f = (FILE*)(intptr_t)handle; \
+        if (content) { \
+            size_t len = strlen(content); \
+            size_t written = fwrite(content, 1, len, f); \
+            if (written != len) { \
+                *(char**)out = "failed to write all data"; \
+                *tag_ptr = 0; \
+                return; \
+            } \
+        } \
+        if (add_newline) { \
+            if (fputc('\n', f) == EOF) { \
+                *(char**)out = "failed to write newline"; \
+                *tag_ptr = 0; \
+                return; \
+            } \
+        } \
+        *val_ptr = true; \
+        *tag_ptr = 1; \
+    }
+
 // ============================================
 // Quick one-liner functions
 // ============================================
@@ -104,77 +192,11 @@ void ferret_std_fs_ReadFile(void* out, const char* path) {
 
 // Write string to file (overwrite)
 // OUT PARAM FIRST: compiler generates call $func(l %out, l %path, l %content)
-void ferret_std_fs_WriteFile(void* out, const char* path, const char* content) {
-    if (!out) return;
-    
-    bool* val_ptr = (bool*)out;
-    int8_t* tag_ptr = (int8_t*)((char*)out + 8);
-    
-    if (!path) {
-        *(char**)out = "path is null";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    FILE* f = fopen(path, "w");
-    if (!f) {
-        *(char**)out = "failed to open file for writing";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    if (content) {
-        size_t len = strlen(content);
-        size_t written = fwrite(content, 1, len, f);
-        if (written != len) {
-            fclose(f);
-            *(char**)out = "failed to write all data";
-            *tag_ptr = 0;
-            return;
-        }
-    }
-    
-    fclose(f);
-    *val_ptr = true;
-    *tag_ptr = 1;
-}
+FERRET_FS_DEFINE_WRITE_FILE(WriteFile, "w", "failed to open file for writing")
 
 // Append string to file
 // OUT PARAM FIRST
-void ferret_std_fs_AppendFile(void* out, const char* path, const char* content) {
-    if (!out) return;
-    
-    bool* val_ptr = (bool*)out;
-    int8_t* tag_ptr = (int8_t*)((char*)out + 8);
-    
-    if (!path) {
-        *(char**)out = "path is null";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    FILE* f = fopen(path, "a");
-    if (!f) {
-        *(char**)out = "failed to open file for append";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    if (content) {
-        size_t len = strlen(content);
-        size_t written = fwrite(content, 1, len, f);
-        if (written != len) {
-            fclose(f);
-            *(char**)out = "failed to write all data";
-            *tag_ptr = 0;
-            return;
-        }
-    }
-    
-    fclose(f);
-    *val_ptr = true;
-    *tag_ptr = 1;
-}
+FERRET_FS_DEFINE_WRITE_FILE(AppendFile, "a", "failed to open file for append")
 
 // ============================================
 // File info functions
@@ -260,90 +282,15 @@ void ferret_std_fs_Size(void* out, const char* path) {
 // Open file for reading - returns File struct
 // File layout: { i64 handle (8), str path (8), str mode (8) } = 24 bytes
 // OUT PARAM FIRST
-void ferret_std_fs_Open(void* out, const char* path) {
-    if (!out) return;
-    
-    int64_t* handle_ptr = (int64_t*)out;
-    char** path_out = (char**)((char*)out + 8);
-    char** mode_out = (char**)((char*)out + 16);
-    int8_t* tag_ptr = (int8_t*)((char*)out + 24);
-    
-    if (!path) {
-        *(char**)out = "path is null";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    FILE* f = fopen(path, "r");
-    if (!f) {
-        *(char**)out = "failed to open file";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    *handle_ptr = (int64_t)(intptr_t)f;
-    *path_out = str_dup(path);
-    *mode_out = "r";
-    *tag_ptr = 1;
-}
+FERRET_FS_DEFINE_OPEN(Open, "r", "failed to open file")
 
 // Create/truncate file for writing
 // OUT PARAM FIRST
-void ferret_std_fs_Create(void* out, const char* path) {
-    if (!out) return;
-    
-    int64_t* handle_ptr = (int64_t*)out;
-    char** path_out = (char**)((char*)out + 8);
-    char** mode_out = (char**)((char*)out + 16);
-    int8_t* tag_ptr = (int8_t*)((char*)out + 24);
-    
-    if (!path) {
-        *(char**)out = "path is null";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    FILE* f = fopen(path, "w");
-    if (!f) {
-        *(char**)out = "failed to create file";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    *handle_ptr = (int64_t)(intptr_t)f;
-    *path_out = str_dup(path);
-    *mode_out = "w";
-    *tag_ptr = 1;
-}
+FERRET_FS_DEFINE_OPEN(Create, "w", "failed to create file")
 
 // Open file for appending
 // OUT PARAM FIRST
-void ferret_std_fs_OpenAppend(void* out, const char* path) {
-    if (!out) return;
-    
-    int64_t* handle_ptr = (int64_t*)out;
-    char** path_out = (char**)((char*)out + 8);
-    char** mode_out = (char**)((char*)out + 16);
-    int8_t* tag_ptr = (int8_t*)((char*)out + 24);
-    
-    if (!path) {
-        *(char**)out = "path is null";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    FILE* f = fopen(path, "a");
-    if (!f) {
-        *(char**)out = "failed to open file for append";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    *handle_ptr = (int64_t)(intptr_t)f;
-    *path_out = str_dup(path);
-    *mode_out = "a";
-    *tag_ptr = 1;
-}
+FERRET_FS_DEFINE_OPEN(OpenAppend, "a", "failed to open file for append")
 
 // Close file handle
 // File struct passed by value: { i64 handle, str path, str mode }
@@ -432,74 +379,11 @@ void ferret_std_fs_ReadLine(void* out, int64_t handle, const char* path, const c
 
 // Write to file handle
 // OUT PARAM FIRST
-void ferret_std_fs_Write(void* out, int64_t handle, const char* path, const char* mode, const char* content) {
-    (void)path;
-    (void)mode;
-    if (!out) return;
-    
-    bool* val_ptr = (bool*)out;
-    int8_t* tag_ptr = (int8_t*)((char*)out + 8);
-    
-    if (handle == 0) {
-        *(char**)out = "invalid file handle";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    FILE* f = (FILE*)(intptr_t)handle;
-    
-    if (content) {
-        size_t len = strlen(content);
-        size_t written = fwrite(content, 1, len, f);
-        if (written != len) {
-            *(char**)out = "failed to write all data";
-            *tag_ptr = 0;
-            return;
-        }
-    }
-    
-    *val_ptr = true;
-    *tag_ptr = 1;
-}
+FERRET_FS_DEFINE_WRITE_HANDLE(Write, 0)
 
 // Write line to file handle (with newline)
 // OUT PARAM FIRST
-void ferret_std_fs_WriteLine(void* out, int64_t handle, const char* path, const char* mode, const char* content) {
-    (void)path;
-    (void)mode;
-    if (!out) return;
-    
-    bool* val_ptr = (bool*)out;
-    int8_t* tag_ptr = (int8_t*)((char*)out + 8);
-    
-    if (handle == 0) {
-        *(char**)out = "invalid file handle";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    FILE* f = (FILE*)(intptr_t)handle;
-    
-    if (content) {
-        size_t len = strlen(content);
-        size_t written = fwrite(content, 1, len, f);
-        if (written != len) {
-            *(char**)out = "failed to write all data";
-            *tag_ptr = 0;
-            return;
-        }
-    }
-    
-    // Write newline
-    if (fputc('\n', f) == EOF) {
-        *(char**)out = "failed to write newline";
-        *tag_ptr = 0;
-        return;
-    }
-    
-    *val_ptr = true;
-    *tag_ptr = 1;
-}
+FERRET_FS_DEFINE_WRITE_HANDLE(WriteLine, 1)
 
 // ============================================
 // Directory operations

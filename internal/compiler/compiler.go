@@ -20,6 +20,8 @@ const (
 	HTML
 )
 
+const Version = "0.0.4"
+
 // Options for compilation
 type Options struct {
 	// For file-based compilation

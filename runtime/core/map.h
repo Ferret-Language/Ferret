@@ -50,55 +50,22 @@ ferret_map_t* ferret_map_from_pairs(
 );
 
 // Typed map constructors (avoid function pointer arguments in IR)
-ferret_map_t* ferret_map_new_i32(size_t key_size, size_t value_size);
-ferret_map_t* ferret_map_new_i64(size_t key_size, size_t value_size);
-ferret_map_t* ferret_map_new_f32(size_t key_size, size_t value_size);
-ferret_map_t* ferret_map_new_f64(size_t key_size, size_t value_size);
-ferret_map_t* ferret_map_new_str(size_t key_size, size_t value_size);
-ferret_map_t* ferret_map_new_bytes(size_t key_size, size_t value_size);
+#define FERRET_MAP_TYPED_DECL(suffix) \
+    ferret_map_t* ferret_map_new_##suffix(size_t key_size, size_t value_size); \
+    ferret_map_t* ferret_map_from_pairs_##suffix( \
+        size_t key_size, \
+        size_t value_size, \
+        const void* keys, \
+        const void* values, \
+        size_t count \
+    );
 
-ferret_map_t* ferret_map_from_pairs_i32(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-);
-ferret_map_t* ferret_map_from_pairs_i64(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-);
-ferret_map_t* ferret_map_from_pairs_f32(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-);
-ferret_map_t* ferret_map_from_pairs_f64(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-);
-ferret_map_t* ferret_map_from_pairs_str(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-);
-ferret_map_t* ferret_map_from_pairs_bytes(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-);
+FERRET_MAP_TYPED_DECL(i32)
+FERRET_MAP_TYPED_DECL(i64)
+FERRET_MAP_TYPED_DECL(f32)
+FERRET_MAP_TYPED_DECL(f64)
+FERRET_MAP_TYPED_DECL(str)
+FERRET_MAP_TYPED_DECL(bytes)
 
 // Get value for a key (returns pointer to value, or NULL if not found)
 // The returned pointer is valid until the map is modified

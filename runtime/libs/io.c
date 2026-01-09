@@ -220,74 +220,56 @@ void ferret_std_io_Read(void* out) {
     }
 }
 
-// Read an integer from stdin, returns str!i32
-void ferret_std_io_ReadInt(void* out) {
-    if (!out) return;
-    
-    char* line = NULL;
-    size_t len = 0;
-    ssize_t read = getline(&line, &len, stdin);
-    
-    // Result layout for str!i32: [8-byte union][1-byte tag] (+ padding)
-    // For i32, the union is max(sizeof(str), sizeof(i32)) = 8 bytes
-    int32_t* val_ptr = (int32_t*)out;
-    uint8_t* tag_ptr = (uint8_t*)((char*)out + 8);
-    
-    if (read == -1) {
-        // Store error string at the union location (as pointer)
-        *(char**)out = "failed to read input";
-        *tag_ptr = 0;  // Err
-    } else {
-        char* endptr;
-        long val = strtol(line, &endptr, 10);
-        
-        // Check for conversion errors
-        if (endptr == line || (*endptr != '\0' && *endptr != '\n')) {
-            *(char**)out = "invalid integer format";
-            *tag_ptr = 0;  // Err
-        } else if (val < INT32_MIN || val > INT32_MAX) {
-            *(char**)out = "integer out of range";
-            *tag_ptr = 0;  // Err
-        } else {
-            *val_ptr = (int32_t)val;
-            *tag_ptr = 1;  // Ok
-        }
+// Result layout for str!T: [8-byte union][1-byte tag] (+ padding)
+#define FERRET_STD_IO_READ_NUMERIC(name, out_type, parse_type, parse_expr, invalid_msg, range_check, range_msg) \
+    void ferret_std_io_##name(void* out) { \
+        if (!out) return; \
+        char* line = NULL; \
+        size_t len = 0; \
+        ssize_t read = getline(&line, &len, stdin); \
+        out_type* val_ptr = (out_type*)out; \
+        uint8_t* tag_ptr = (uint8_t*)((char*)out + 8); \
+        if (read == -1) { \
+            *(char**)out = "failed to read input"; \
+            *tag_ptr = 0; \
+        } else { \
+            char* endptr; \
+            parse_type parsed = (parse_expr); \
+            if (endptr == line || (*endptr != '\0' && *endptr != '\n')) { \
+                *(char**)out = (invalid_msg); \
+                *tag_ptr = 0; \
+            } else if (range_check) { \
+                *(char**)out = (range_msg); \
+                *tag_ptr = 0; \
+            } else { \
+                *val_ptr = (out_type)parsed; \
+                *tag_ptr = 1; \
+            } \
+        } \
+        if (line) free(line); \
     }
-    
-    if (line) free(line);
-}
+
+// Read an integer from stdin, returns str!i32
+FERRET_STD_IO_READ_NUMERIC(
+    ReadInt,
+    int32_t,
+    long,
+    strtol(line, &endptr, 10),
+    "invalid integer format",
+    (parsed < INT32_MIN || parsed > INT32_MAX),
+    "integer out of range"
+)
 
 // Read a float from stdin, returns str!f64
-void ferret_std_io_ReadFloat(void* out) {
-    if (!out) return;
-    
-    char* line = NULL;
-    size_t len = 0;
-    ssize_t read = getline(&line, &len, stdin);
-    
-    // Result layout for str!f64: [8-byte union][1-byte tag] (+ padding)
-    double* val_ptr = (double*)out;
-    uint8_t* tag_ptr = (uint8_t*)((char*)out + 8);
-    
-    if (read == -1) {
-        *(char**)out = "failed to read input";
-        *tag_ptr = 0;  // Err
-    } else {
-        char* endptr;
-        double val = strtod(line, &endptr);
-        
-        // Check for conversion errors
-        if (endptr == line || (*endptr != '\0' && *endptr != '\n')) {
-            *(char**)out = "invalid float format";
-            *tag_ptr = 0;  // Err
-        } else {
-            *val_ptr = val;
-            *tag_ptr = 1;  // Ok
-        }
-    }
-    
-    if (line) free(line);
-}
+FERRET_STD_IO_READ_NUMERIC(
+    ReadFloat,
+    double,
+    double,
+    strtod(line, &endptr),
+    "invalid float format",
+    0,
+    ""
+)
 
 // Enum to string conversion helper
 // Used by codegen to convert enum tags to variant names

@@ -7,27 +7,15 @@
 #include "../core/string_runtime.h"
 #include "../core/map.h"
 
+#define FERRET_LEN_WRAPPER(name, arg_type, expr) \
+    int32_t name(arg_type value) { \
+        if (value == NULL) { \
+            return 0; \
+        } \
+        return (int32_t)(expr); \
+    }
+
 // Get length of array (dynamic arrays)
-int32_t ferret_len_array(void* arr) {
-    if (arr == NULL) {
-        return 0;
-    }
-    ferret_array_t* array = (ferret_array_t*)arr;
-    return ferret_array_len(array);
-}
-
-int32_t ferret_len_string(const char* str) {
-    if (str == NULL) {
-        return 0;
-    }
-    return ferret_string_len(str);
-}
-
-int32_t ferret_len_map(void* map) {
-    if (map == NULL) {
-        return 0;
-    }
-    ferret_map_t* m = (ferret_map_t*)map;
-    return (int32_t)ferret_map_size(m);
-}
-
+FERRET_LEN_WRAPPER(ferret_len_array, void*, ferret_array_len((ferret_array_t*)value))
+FERRET_LEN_WRAPPER(ferret_len_string, const char*, ferret_string_len(value))
+FERRET_LEN_WRAPPER(ferret_len_map, void*, ferret_map_size((ferret_map_t*)value))

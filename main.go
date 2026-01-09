@@ -12,8 +12,6 @@ import (
 	"compiler/internal/compiler"
 )
 
-const version = "0.0.2"
-
 func main() {
 	// Define flags
 	debug := flag.Bool("d", false, "Enable debug output")
@@ -34,7 +32,7 @@ func main() {
 
 	// Handle version
 	if *showVersion {
-		fmt.Printf("Ferret compiler version %s\n", version)
+		fmt.Printf("Ferret compiler version %s\n", compiler.Version)
 		os.Exit(0)
 	}
 

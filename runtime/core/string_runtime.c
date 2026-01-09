@@ -42,18 +42,15 @@ char* ferret_io_ConcatStrings(const char* s1, const char* s2) {
 }
 
 // String + integer concatenation
-char* ferret_string_concat_i64(const char* s, int64_t n) {
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%ld", (long)n);
-    return ferret_io_ConcatStrings(s, buf);
-}
+#define FERRET_STRING_CONCAT_INT(name_suffix, arg_type, fmt, cast_type) \
+    char* ferret_string_concat_##name_suffix(const char* s, arg_type n) { \
+        char buf[32]; \
+        snprintf(buf, sizeof(buf), fmt, (cast_type)n); \
+        return ferret_io_ConcatStrings(s, buf); \
+    }
 
-// String + unsigned integer concatenation
-char* ferret_string_concat_u64(const char* s, uint64_t n) {
-    char buf[32];
-    snprintf(buf, sizeof(buf), "%lu", (unsigned long)n);
-    return ferret_io_ConcatStrings(s, buf);
-}
+FERRET_STRING_CONCAT_INT(i64, int64_t, "%ld", long)
+FERRET_STRING_CONCAT_INT(u64, uint64_t, "%lu", unsigned long)
 
 // String + float concatenation
 char* ferret_string_concat_f64(const char* s, double n) {
