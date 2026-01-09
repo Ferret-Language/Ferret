@@ -48,7 +48,7 @@
   - [x] QBE support for map indexing/assignment (MapGet/MapSet + optionals).
 - [x] Interfaces (depends on structs/enums + methods)
   - [x] Interface representation (vtable layout + method dispatch).
-- [x] References + borrowing (design + implementation)
+- [x] References (design + implementation)
   - [x] Add unary `&` expression parsing and HIR/MIR lowering (address-of).
   - [x] Enforce borrowable lvalues only; disallow `&&T` and `&` on temporaries.
   - [x] Reference binding rules: `&T` must be initialized with a reference; no rebinding after init.

@@ -1,0 +1,11 @@
+import "std/io";
+
+fn Id(x: &i32) -> &i32 {
+    return x;
+}
+
+fn main() {
+    let a := 7;
+    let r: &i32 = Id(&a);
+    io::Println(*r); // expected output: 7
+}

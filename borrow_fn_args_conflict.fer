@@ -1,0 +1,15 @@
+fn Read(x: &i32) {
+    let r := *x;
+    let r2 := r;
+}
+
+fn Write(x: &mut i32) {
+    *x = 2;
+}
+
+fn main() {
+    let a := 1;
+    let m: &mut i32 = &mut a;
+    Read(&a); // expected error: cannot borrow immutable while mutable borrow active
+    Write(m);
+}

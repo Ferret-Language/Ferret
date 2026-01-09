@@ -1,0 +1,6 @@
+fn main() {
+    let a := 1;
+    let m: &mut i32 = &mut a;
+    let r: &i32 = &a; // expected error: mutable + immutable borrow
+    *m = 2;
+}

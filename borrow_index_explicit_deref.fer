@@ -1,0 +1,6 @@
+fn main() {
+    let arr: [2]i32 = [1, 2];
+    let r: &mut [2]i32 = &mut arr;
+    r[0] = 3; // expected error: explicit deref required for indexed reference
+    (*r)[1] = 4; // ok
+}

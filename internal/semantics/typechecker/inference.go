@@ -439,7 +439,8 @@ func inferIndexExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	baseType := inferExprType(ctx, mod, expr.X)
 
 	// Unwrap any named types to get to the underlying structure
-	baseType = dereferenceType(types.UnwrapType(baseType))
+	// NOTE: Re-enable implicit deref for index expressions by using dereferenceType(...) here.
+	baseType = types.UnwrapType(baseType)
 
 	switch bt := baseType.(type) {
 	case *types.ArrayType:

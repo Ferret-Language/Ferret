@@ -1,0 +1,15 @@
+import "std/io";
+
+fn Inc(x: &mut i32) {
+    *x = *x + 1;
+}
+
+fn main() {
+    let a := 1;
+    let m: &mut i32 = &mut a;
+    Inc(m);
+    io::Println(a);
+    let n: &mut i32 = &mut a; // ok: m released after last use
+    *n = 5;
+    io::Println(a); // expected output: 2 then 5
+}

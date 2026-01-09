@@ -1,0 +1,17 @@
+import "std/io";
+
+type Pair struct {
+    .X: i32,
+    .Y: i32
+};
+
+fn main() {
+    let p: Pair = { .X = 1, .Y = 2 };
+    let r: &mut Pair = &mut p;
+    let x: &mut i32 = &mut r.X;
+    let y: &mut i32 = &mut r.Y; // ok: disjoint fields
+    *x = 3;
+    *y = 4;
+    io::Println(p.X);
+    io::Println(p.Y); // expected output: 3 then 4
+}

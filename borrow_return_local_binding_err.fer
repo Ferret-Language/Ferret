@@ -1,0 +1,5 @@
+fn Bad() -> &i32 {
+    let a := 10;
+    let r: &i32 = &a;
+    return r; // expected error: cannot return reference to local 'a'
+}

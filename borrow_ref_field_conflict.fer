@@ -1,0 +1,12 @@
+type Pair struct {
+    .X: i32,
+    .Y: i32
+};
+
+fn main() {
+    let p: Pair = { .X = 1, .Y = 2 };
+    let r: &mut Pair = &mut p;
+    let x: &mut i32 = &mut r.X;
+    let y: &mut i32 = &mut r.X; // expected error: already mutably borrowed (same field)
+    *x = 3;
+}

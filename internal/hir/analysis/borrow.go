@@ -340,6 +340,10 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 
 	switch e := expr.(type) {
 	case *hir.Ident:
+		if e.Symbol != nil && isReferenceSymbol(e.Symbol) {
+			b.checkRefValueUse(e)
+			return
+		}
 		b.checkRead(e)
 	case *hir.Literal:
 		return
@@ -373,8 +377,16 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 		}
 		b.checkExpr(e.X)
 	case *hir.DerefExpr:
-		// Dereference requires read access to the reference
-		b.checkExpr(e.X)
+		// Dereference requires read access to the referenced place.
+		if ident, ok := e.X.(*hir.Ident); ok && isReferenceSymbol(ident.Symbol) {
+			// Avoid treating the reference value itself as a write access when dereferencing.
+		} else {
+			b.checkExpr(e.X)
+		}
+		place, via := b.borrowAccessPlace(e)
+		if place.base != nil {
+			b.checkAccess(place, accessRead, e.Loc(), via)
+		}
 	case *hir.PrefixExpr:
 		if isIncDecOp(e.Op.Kind) {
 			b.checkWriteTarget(e.X)
@@ -394,9 +406,9 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 		}
 		b.checkCatchClause(e.Catch)
 	case *hir.IndexExpr:
-		place := b.borrowPlace(e)
-		if place.base != nil && !isReferenceSymbol(place.base) {
-			b.checkAccess(place, accessRead, e.Loc())
+		place, via := b.borrowAccessPlace(e)
+		if place.base != nil {
+			b.checkAccess(place, accessRead, e.Loc(), via)
 		}
 		b.checkAddressableExpr(e.X, place.base)
 		b.checkExpr(e.Index)
@@ -419,9 +431,9 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 		b.checkExpr(e.Map)
 		b.checkExpr(e.Iter)
 	case *hir.SelectorExpr:
-		place := b.borrowPlace(e)
-		if place.base != nil && !isReferenceSymbol(place.base) {
-			b.checkAccess(place, accessRead, e.Loc())
+		place, via := b.borrowAccessPlace(e)
+		if place.base != nil {
+			b.checkAccess(place, accessRead, e.Loc(), via)
 		}
 		b.checkAddressableExpr(e.X, place.base)
 	case *hir.RangeExpr:
@@ -466,16 +478,32 @@ func (b *borrowChecker) checkRead(ident *hir.Ident) {
 	if isReferenceSymbol(ident.Symbol) {
 		return
 	}
-	b.checkAccess(borrowPlace{base: ident.Symbol}, accessRead, ident.Loc())
+	b.checkAccess(borrowPlace{base: ident.Symbol}, accessRead, ident.Loc(), nil)
+}
+
+func (b *borrowChecker) checkRefValueUse(ident *hir.Ident) {
+	if ident == nil || ident.Symbol == nil {
+		return
+	}
+	binding, ok := b.bindings[ident.Symbol]
+	place := borrowPlace{base: ident.Symbol}
+	if ok && binding.place.base != nil {
+		place = binding.place
+	}
+	kind := accessRead
+	if refType, ok := types.UnwrapType(ident.Symbol.Type).(*types.ReferenceType); ok && refType.Mutable {
+		kind = accessWrite
+	}
+	b.checkAccess(place, kind, ident.Loc(), ident.Symbol)
 }
 
 func (b *borrowChecker) checkWriteTarget(expr hir.Expr) {
-	place := b.borrowPlace(expr)
-	if place.base == nil || isReferenceSymbol(place.base) {
+	place, via := b.borrowAccessPlace(expr)
+	if place.base == nil || (isReferenceSymbol(place.base) && via == nil) {
 		b.checkAddressableExpr(expr, place.base)
 		return
 	}
-	b.checkAccess(place, accessWrite, expr.Loc())
+	b.checkAccess(place, accessWrite, expr.Loc(), via)
 	b.checkAddressableExpr(expr, place.base)
 }
 
@@ -483,10 +511,10 @@ func (b *borrowChecker) checkBorrowInit(name *hir.Ident, expr *hir.UnaryExpr) {
 	if expr == nil {
 		return
 	}
-	place := b.borrowPlace(expr.X)
+	place, via := b.borrowAccessPlace(expr.X)
 	mutable := expr.Op.Kind == tokens.MUT_TOKEN
-	if place.base != nil && !isReferenceSymbol(place.base) {
-		if b.addBorrow(place, mutable, expr.Loc()) && name != nil && name.Symbol != nil {
+	if place.base != nil {
+		if b.addBorrow(place, mutable, expr.Loc(), via) && name != nil && name.Symbol != nil {
 			b.bindings[name.Symbol] = borrowBinding{place: place, mutable: mutable, loc: expr.Loc()}
 			if len(b.scopes) > 0 {
 				b.scopes[len(b.scopes)-1].refs[name.Symbol] = struct{}{}
@@ -504,7 +532,7 @@ func (b *borrowChecker) bindRefFromIdent(name *hir.Ident, value *hir.Ident) {
 	if !ok || binding.place.base == nil {
 		return
 	}
-	if b.addBorrow(binding.place, binding.mutable, value.Loc()) {
+	if b.addBorrow(binding.place, binding.mutable, value.Loc(), nil) {
 		b.bindings[name.Symbol] = borrowBinding{place: binding.place, mutable: binding.mutable, loc: value.Loc()}
 		if len(b.scopes) > 0 {
 			b.scopes[len(b.scopes)-1].refs[name.Symbol] = struct{}{}
@@ -516,14 +544,68 @@ func (b *borrowChecker) checkBorrowExpr(expr *hir.UnaryExpr) {
 	if expr == nil {
 		return
 	}
-	place := b.borrowPlace(expr.X)
+	place, via := b.borrowAccessPlace(expr.X)
 	mutable := expr.Op.Kind == tokens.MUT_TOKEN
-	if place.base != nil && !isReferenceSymbol(place.base) {
-		if b.addBorrow(place, mutable, expr.Loc()) {
+	if place.base != nil {
+		if b.addBorrow(place, mutable, expr.Loc(), via) {
 			b.temp = append(b.temp, borrowRecord{place: place, mutable: mutable, loc: expr.Loc()})
 		}
 	}
 	b.checkAddressableExpr(expr.X, place.base)
+}
+
+func (b *borrowChecker) borrowAccessPlace(expr hir.Expr) (borrowPlace, *symbols.Symbol) {
+	switch e := expr.(type) {
+	case *hir.Ident:
+		return borrowPlace{base: e.Symbol}, nil
+	case *hir.DerefExpr:
+		place, via := b.borrowAccessPlace(e.X)
+		return b.liftRefPlace(place, via)
+	case *hir.SelectorExpr:
+		place, via := b.borrowAccessPlace(e.X)
+		place, via = b.liftRefPlace(place, via)
+		if place.base == nil {
+			return place, via
+		}
+		if e.Field == nil {
+			return place, via
+		}
+		return place.withField(e.Field.Name), via
+	case *hir.IndexExpr:
+		place, via := b.borrowAccessPlace(e.X)
+		place, via = b.liftRefPlace(place, via)
+		if place.base == nil {
+			return place, via
+		}
+		return place.withIndex(), via
+	case *hir.ParenExpr:
+		return b.borrowAccessPlace(e.X)
+	default:
+		return borrowPlace{}, nil
+	}
+}
+
+func (b *borrowChecker) liftRefPlace(place borrowPlace, via *symbols.Symbol) (borrowPlace, *symbols.Symbol) {
+	if place.base == nil || !isReferenceSymbol(place.base) {
+		return place, via
+	}
+	refSym := place.base
+	if via == nil {
+		via = refSym
+	}
+	binding, ok := b.bindings[refSym]
+	if !ok || binding.place.base == nil {
+		return place, via
+	}
+	lifted := binding.place
+	for _, seg := range place.path {
+		if seg.kind == segmentField {
+			lifted = lifted.withField(seg.name)
+		} else {
+			lifted = lifted.withIndex()
+		}
+	}
+	return lifted, via
 }
 
 func (b *borrowChecker) borrowPlace(expr hir.Expr) borrowPlace {
@@ -598,7 +680,7 @@ const (
 	accessWrite
 )
 
-func (b *borrowChecker) checkAccess(place borrowPlace, kind accessKind, loc *source.Location) {
+func (b *borrowChecker) checkAccess(place borrowPlace, kind accessKind, loc *source.Location, via *symbols.Symbol) {
 	if place.base == nil {
 		return
 	}
@@ -609,32 +691,32 @@ func (b *borrowChecker) checkAccess(place borrowPlace, kind accessKind, loc *sou
 	switch kind {
 	case accessRead:
 		wantMutable := true
-		if entry, ok := findBorrow(entries, place.path, &wantMutable); ok {
+		if entry, ok := b.findBorrow(entries, place.base, place.path, &wantMutable, via); ok {
 			releaseLoc := b.borrowReleaseLoc(place.base, entry)
 			b.reportBorrowError(loc, fmt.Sprintf("cannot access '%s' while it is mutably borrowed", place.base.Name), entry.loc, releaseLoc)
 		}
 	case accessWrite:
 		wantMutable := true
-		if entry, ok := findBorrow(entries, place.path, &wantMutable); ok {
+		if entry, ok := b.findBorrow(entries, place.base, place.path, &wantMutable, via); ok {
 			releaseLoc := b.borrowReleaseLoc(place.base, entry)
 			b.reportBorrowError(loc, fmt.Sprintf("cannot modify '%s' while it is mutably borrowed", place.base.Name), entry.loc, releaseLoc)
 			return
 		}
 		wantShared := false
-		if entry, ok := findBorrow(entries, place.path, &wantShared); ok {
+		if entry, ok := b.findBorrow(entries, place.base, place.path, &wantShared, via); ok {
 			releaseLoc := b.borrowReleaseLoc(place.base, entry)
 			b.reportBorrowError(loc, fmt.Sprintf("cannot modify '%s' while it is immutably borrowed", place.base.Name), entry.loc, releaseLoc)
 		}
 	}
 }
 
-func (b *borrowChecker) addBorrow(place borrowPlace, mutable bool, loc *source.Location) bool {
+func (b *borrowChecker) addBorrow(place borrowPlace, mutable bool, loc *source.Location, via *symbols.Symbol) bool {
 	if place.base == nil {
 		return true
 	}
 	entries := b.borrows[place.base]
 	if mutable {
-		if entry, ok := findBorrow(entries, place.path, nil); ok {
+		if entry, ok := b.findBorrow(entries, place.base, place.path, nil, via); ok {
 			releaseLoc := b.borrowReleaseLoc(place.base, entry)
 			if entry.mutable {
 				b.reportBorrowError(loc, fmt.Sprintf("cannot borrow '%s' as mutable because it is already mutably borrowed", place.base.Name), entry.loc, releaseLoc)
@@ -645,7 +727,7 @@ func (b *borrowChecker) addBorrow(place borrowPlace, mutable bool, loc *source.L
 		}
 	} else {
 		wantMutable := true
-		if entry, ok := findBorrow(entries, place.path, &wantMutable); ok {
+		if entry, ok := b.findBorrow(entries, place.base, place.path, &wantMutable, via); ok {
 			releaseLoc := b.borrowReleaseLoc(place.base, entry)
 			b.reportBorrowError(loc, fmt.Sprintf("cannot borrow '%s' as immutable because it is already mutably borrowed", place.base.Name), entry.loc, releaseLoc)
 			return false
@@ -745,7 +827,8 @@ func (b *borrowChecker) checkReturnLifetime(expr hir.Expr) {
 	switch e := expr.(type) {
 	case *hir.UnaryExpr:
 		if isBorrowOp(e.Op.Kind) {
-			base = b.borrowPlace(e.X).base
+			place, _ := b.borrowAccessPlace(e.X)
+			base = place.base
 			directBorrow = true
 		}
 	case *hir.Ident:
@@ -961,6 +1044,8 @@ func collectRefUsesExpr(expr hir.Expr, refs map[*symbols.Symbol]struct{}, uses m
 		collectRefUsesExpr(e.Y, refs, uses)
 	case *hir.UnaryExpr:
 		collectRefUsesExpr(e.X, refs, uses)
+	case *hir.DerefExpr:
+		collectRefUsesExpr(e.X, refs, uses)
 	case *hir.PrefixExpr:
 		collectRefUsesExpr(e.X, refs, uses)
 	case *hir.PostfixExpr:
@@ -1032,7 +1117,7 @@ func collectRefUsesExpr(expr hir.Expr, refs map[*symbols.Symbol]struct{}, uses m
 	}
 }
 
-func findBorrow(entries []borrowEntry, path []placeSegment, wantMutable *bool) (borrowEntry, bool) {
+func (b *borrowChecker) findBorrow(entries []borrowEntry, base *symbols.Symbol, path []placeSegment, wantMutable *bool, ignore *symbols.Symbol) (borrowEntry, bool) {
 	for i := len(entries) - 1; i >= 0; i-- {
 		entry := entries[i]
 		if !pathsOverlap(path, entry.path) {
@@ -1040,6 +1125,11 @@ func findBorrow(entries []borrowEntry, path []placeSegment, wantMutable *bool) (
 		}
 		if wantMutable != nil && entry.mutable != *wantMutable {
 			continue
+		}
+		if ignore != nil && base != nil {
+			if sym := b.findBindingSymbol(base, entry); sym == ignore {
+				continue
+			}
 		}
 		return entry, true
 	}

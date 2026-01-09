@@ -1922,6 +1922,36 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 		}
 		return
 	}
+
+	if ident, ok := stmt.Lhs.(*ast.IdentifierExpr); ok && lhsIsRef {
+		// NOTE: Remove this check to allow implicit deref assignment on reference identifiers.
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot assign to reference '%s'", ident.Name)).
+				WithCode(diagnostics.ErrInvalidAssignment).
+				WithPrimaryLabel(stmt.Lhs.Loc(), "explicit deref required").
+				WithHelp(fmt.Sprintf("use '*%s' to update the referenced data", ident.Name)),
+		)
+		if stmt.Rhs != nil {
+			checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
+		}
+		return
+	}
+	if idx, ok := stmt.Lhs.(*ast.IndexExpr); ok {
+		baseType := inferExprType(ctx, mod, idx.X)
+		if isReferenceType(baseType) {
+			// NOTE: Remove this check to allow implicit deref for index assignments on references.
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot assign through indexed reference").
+					WithCode(diagnostics.ErrInvalidAssignment).
+					WithPrimaryLabel(stmt.Lhs.Loc(), "explicit deref required").
+					WithHelp("use '(*ref)[index]' to update the referenced data"),
+			)
+			if stmt.Rhs != nil {
+				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
+			}
+			return
+		}
+	}
 	assignType := lhsType
 	isMapIndex := false
 	if idx, ok := stmt.Lhs.(*ast.IndexExpr); ok {

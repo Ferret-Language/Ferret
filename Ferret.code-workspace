@@ -1,0 +1,25 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../website"
+		},
+		{
+			"path": "../vscode-extension"
+		},
+		{
+			"path": "../tree-sitter-ferret"
+		},
+		{
+			"path": "../ferret-language-support"
+		},
+		{
+			"path": "../../OSS/extensions"
+		}
+	],
+	"settings": {
+		"deepscan.enable": true
+	}
+}
