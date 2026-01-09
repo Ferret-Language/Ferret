@@ -161,6 +161,9 @@ func evaluateHIRUnary(ctx *context_v2.CompilerContext, mod *context_v2.Module, u
 		if val, ok := operand.AsBool(); ok {
 			return NewBoolValue(!val)
 		}
+	case tokens.AT_TOKEN:
+		// Move is a compile-time no-op for constant evaluation.
+		return operand
 	}
 
 	return nil

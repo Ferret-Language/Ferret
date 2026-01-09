@@ -1,0 +1,5 @@
+fn main() {
+    let a := 1;
+    let b := @a;
+    let c := a; // expected error: use of moved value 'a'
+}

@@ -362,6 +362,9 @@ func inferUnaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 			return types.TypeUnknown
 		}
 		return types.NewMutableReference(xType)
+	case tokens.AT_TOKEN:
+		// Move operator keeps the operand type.
+		return xType
 
 	default:
 		return xType

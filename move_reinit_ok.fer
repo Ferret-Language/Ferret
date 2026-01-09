@@ -1,0 +1,9 @@
+import "std/io";
+
+fn main() {
+    let a := 10;
+    let b := @a;
+    a = 20; // expected output: 20 then 10
+    io::Println(a);
+    io::Println(b);
+}

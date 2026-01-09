@@ -56,6 +56,7 @@ type borrowChecker struct {
 	mod      *context_v2.Module
 	borrows  map[*symbols.Symbol][]borrowEntry
 	bindings map[*symbols.Symbol]borrowBinding
+	moved    map[*symbols.Symbol]*source.Location
 	scopes   []borrowScope
 	temp     []borrowRecord
 	locals   map[*symbols.Symbol]struct{}
@@ -88,6 +89,7 @@ func newBorrowChecker(ctx *context_v2.CompilerContext, mod *context_v2.Module) *
 		mod:      mod,
 		borrows:  make(map[*symbols.Symbol][]borrowEntry),
 		bindings: make(map[*symbols.Symbol]borrowBinding),
+		moved:    make(map[*symbols.Symbol]*source.Location),
 		locals:   make(map[*symbols.Symbol]struct{}),
 	}
 }
@@ -251,7 +253,11 @@ func (b *borrowChecker) checkAssignStmt(stmt *hir.AssignStmt) {
 
 	start := len(b.temp)
 	b.checkExpr(stmt.Rhs)
-	b.checkWriteTarget(stmt.Lhs)
+	if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
+		b.checkWriteTargetWithMode(stmt.Lhs, false)
+	} else {
+		b.checkWriteTargetWithMode(stmt.Lhs, true)
+	}
 	b.releaseTemps(start)
 }
 
@@ -375,6 +381,10 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 			b.checkBorrowExpr(e)
 			return
 		}
+		if isMoveOp(e.Op.Kind) {
+			b.checkMoveExpr(e)
+			return
+		}
 		b.checkExpr(e.X)
 	case *hir.DerefExpr:
 		// Dereference requires read access to the referenced place.
@@ -389,13 +399,13 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 		}
 	case *hir.PrefixExpr:
 		if isIncDecOp(e.Op.Kind) {
-			b.checkWriteTarget(e.X)
+			b.checkWriteTargetWithMode(e.X, false)
 			return
 		}
 		b.checkExpr(e.X)
 	case *hir.PostfixExpr:
 		if isIncDecOp(e.Op.Kind) {
-			b.checkWriteTarget(e.X)
+			b.checkWriteTargetWithMode(e.X, false)
 			return
 		}
 		b.checkExpr(e.X)
@@ -497,11 +507,101 @@ func (b *borrowChecker) checkRefValueUse(ident *hir.Ident) {
 	b.checkAccess(place, kind, ident.Loc(), ident.Symbol)
 }
 
+func directIdent(expr hir.Expr) *hir.Ident {
+	switch e := expr.(type) {
+	case *hir.Ident:
+		return e
+	case *hir.ParenExpr:
+		return directIdent(e.X)
+	default:
+		return nil
+	}
+}
+
+func (b *borrowChecker) checkMoveExpr(expr *hir.UnaryExpr) {
+	if expr == nil {
+		return
+	}
+	ident, ok := expr.X.(*hir.Ident)
+	if !ok || ident.Symbol == nil {
+		b.checkExpr(expr.X)
+		return
+	}
+	if isReferenceSymbol(ident.Symbol) {
+		b.checkRefValueUse(ident)
+		return
+	}
+	if !b.checkNotMoved(ident.Symbol, expr.Loc()) {
+		return
+	}
+	entries := b.borrows[ident.Symbol]
+	if entry, ok := b.findBorrow(entries, ident.Symbol, nil, nil, nil); ok {
+		releaseLoc := b.borrowReleaseLoc(ident.Symbol, entry)
+		diag := diagnostics.NewError(fmt.Sprintf("cannot move '%s' because it is borrowed", ident.Symbol.Name)).
+			WithCode(diagnostics.ErrInvalidOperation)
+		if expr.Loc() != nil {
+			diag = diag.WithPrimaryLabel(expr.Loc(), "move here")
+		}
+		if entry.loc != nil {
+			diag = diag.WithSecondaryLabel(entry.loc, "borrowed here")
+		}
+		if releaseLoc != nil && releaseLoc != entry.loc {
+			diag = diag.WithSecondaryLabel(releaseLoc, "borrow ends here")
+		}
+		b.ctx.Diagnostics.Add(diag)
+		return
+	}
+	b.markMoved(ident.Symbol, expr.Loc())
+}
+
+func (b *borrowChecker) markMoved(sym *symbols.Symbol, loc *source.Location) {
+	if sym == nil {
+		return
+	}
+	b.moved[sym] = loc
+}
+
+func (b *borrowChecker) clearMoved(sym *symbols.Symbol) {
+	if sym == nil {
+		return
+	}
+	delete(b.moved, sym)
+}
+
+func (b *borrowChecker) checkNotMoved(sym *symbols.Symbol, loc *source.Location) bool {
+	if sym == nil {
+		return true
+	}
+	movedLoc, ok := b.moved[sym]
+	if !ok {
+		return true
+	}
+	diag := diagnostics.NewError(fmt.Sprintf("use of moved value '%s'", sym.Name)).
+		WithCode(diagnostics.ErrInvalidOperation)
+	if loc != nil {
+		diag = diag.WithPrimaryLabel(loc, "moved value used here")
+	}
+	if movedLoc != nil {
+		diag = diag.WithSecondaryLabel(movedLoc, "value moved here")
+	}
+	b.ctx.Diagnostics.Add(diag)
+	return false
+}
+
 func (b *borrowChecker) checkWriteTarget(expr hir.Expr) {
+	b.checkWriteTargetWithMode(expr, true)
+}
+
+func (b *borrowChecker) checkWriteTargetWithMode(expr hir.Expr, allowReinit bool) {
 	place, via := b.borrowAccessPlace(expr)
 	if place.base == nil || (isReferenceSymbol(place.base) && via == nil) {
 		b.checkAddressableExpr(expr, place.base)
 		return
+	}
+	if allowReinit {
+		if ident := directIdent(expr); ident != nil && ident.Symbol != nil && place.base == ident.Symbol && len(place.path) == 0 && via == nil {
+			b.clearMoved(ident.Symbol)
+		}
 	}
 	b.checkAccess(place, accessWrite, expr.Loc(), via)
 	b.checkAddressableExpr(expr, place.base)
@@ -513,6 +613,10 @@ func (b *borrowChecker) checkBorrowInit(name *hir.Ident, expr *hir.UnaryExpr) {
 	}
 	place, via := b.borrowAccessPlace(expr.X)
 	mutable := expr.Op.Kind == tokens.MUT_TOKEN
+	if place.base != nil && !b.checkNotMoved(place.base, expr.Loc()) {
+		b.checkAddressableExpr(expr.X, place.base)
+		return
+	}
 	if place.base != nil {
 		if b.addBorrow(place, mutable, expr.Loc(), via) && name != nil && name.Symbol != nil {
 			b.bindings[name.Symbol] = borrowBinding{place: place, mutable: mutable, loc: expr.Loc()}
@@ -546,6 +650,10 @@ func (b *borrowChecker) checkBorrowExpr(expr *hir.UnaryExpr) {
 	}
 	place, via := b.borrowAccessPlace(expr.X)
 	mutable := expr.Op.Kind == tokens.MUT_TOKEN
+	if place.base != nil && !b.checkNotMoved(place.base, expr.Loc()) {
+		b.checkAddressableExpr(expr.X, place.base)
+		return
+	}
 	if place.base != nil {
 		if b.addBorrow(place, mutable, expr.Loc(), via) {
 			b.temp = append(b.temp, borrowRecord{place: place, mutable: mutable, loc: expr.Loc()})
@@ -682,6 +790,9 @@ const (
 
 func (b *borrowChecker) checkAccess(place borrowPlace, kind accessKind, loc *source.Location, via *symbols.Symbol) {
 	if place.base == nil {
+		return
+	}
+	if !b.checkNotMoved(place.base, loc) {
 		return
 	}
 	entries := b.borrows[place.base]
@@ -1192,6 +1303,10 @@ func pathsEqual(a, b []placeSegment) bool {
 
 func isBorrowOp(kind tokens.TOKEN) bool {
 	return kind == tokens.BIT_AND_TOKEN || kind == tokens.MUT_TOKEN
+}
+
+func isMoveOp(kind tokens.TOKEN) bool {
+	return kind == tokens.AT_TOKEN
 }
 
 func isIncDecOp(kind tokens.TOKEN) bool {
