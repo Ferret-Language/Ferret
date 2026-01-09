@@ -162,89 +162,22 @@ ferret_map_t* ferret_map_from_pairs(
     return map;
 }
 
-ferret_map_t* ferret_map_new_i32(size_t key_size, size_t value_size) {
-    return ferret_map_new(key_size, value_size, ferret_map_hash_i32, ferret_map_equals_i32);
-}
 
-ferret_map_t* ferret_map_new_i64(size_t key_size, size_t value_size) {
-    return ferret_map_new(key_size, value_size, ferret_map_hash_i64, ferret_map_equals_i64);
-}
+// Macro to generate typed map constructors and from_pairs functions
+#define FERRET_MAP_TYPED_CONSTRUCTOR(suffix, hash_fn, equals_fn) \
+    ferret_map_t* ferret_map_new_##suffix(size_t key_size, size_t value_size) { \
+        return ferret_map_new(key_size, value_size, hash_fn, equals_fn); \
+    } \
+    ferret_map_t* ferret_map_from_pairs_##suffix(size_t key_size, size_t value_size, const void* keys, const void* values, size_t count) { \
+        return ferret_map_from_pairs(key_size, value_size, keys, values, count, hash_fn, equals_fn); \
+    }
 
-ferret_map_t* ferret_map_new_f32(size_t key_size, size_t value_size) {
-    return ferret_map_new(key_size, value_size, ferret_map_hash_f32, ferret_map_equals_f32);
-}
-
-ferret_map_t* ferret_map_new_f64(size_t key_size, size_t value_size) {
-    return ferret_map_new(key_size, value_size, ferret_map_hash_f64, ferret_map_equals_f64);
-}
-
-ferret_map_t* ferret_map_new_str(size_t key_size, size_t value_size) {
-    return ferret_map_new(key_size, value_size, ferret_map_hash_str, ferret_map_equals_str);
-}
-
-ferret_map_t* ferret_map_new_bytes(size_t key_size, size_t value_size) {
-    return ferret_map_new(key_size, value_size, ferret_map_hash_bytes, ferret_map_equals_bytes);
-}
-
-ferret_map_t* ferret_map_from_pairs_i32(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-) {
-    return ferret_map_from_pairs(key_size, value_size, keys, values, count, ferret_map_hash_i32, ferret_map_equals_i32);
-}
-
-ferret_map_t* ferret_map_from_pairs_i64(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-) {
-    return ferret_map_from_pairs(key_size, value_size, keys, values, count, ferret_map_hash_i64, ferret_map_equals_i64);
-}
-
-ferret_map_t* ferret_map_from_pairs_f32(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-) {
-    return ferret_map_from_pairs(key_size, value_size, keys, values, count, ferret_map_hash_f32, ferret_map_equals_f32);
-}
-
-ferret_map_t* ferret_map_from_pairs_f64(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-) {
-    return ferret_map_from_pairs(key_size, value_size, keys, values, count, ferret_map_hash_f64, ferret_map_equals_f64);
-}
-
-ferret_map_t* ferret_map_from_pairs_str(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-) {
-    return ferret_map_from_pairs(key_size, value_size, keys, values, count, ferret_map_hash_str, ferret_map_equals_str);
-}
-
-ferret_map_t* ferret_map_from_pairs_bytes(
-    size_t key_size,
-    size_t value_size,
-    const void* keys,
-    const void* values,
-    size_t count
-) {
-    return ferret_map_from_pairs(key_size, value_size, keys, values, count, ferret_map_hash_bytes, ferret_map_equals_bytes);
-}
+FERRET_MAP_TYPED_CONSTRUCTOR(i32, ferret_map_hash_i32, ferret_map_equals_i32)
+FERRET_MAP_TYPED_CONSTRUCTOR(i64, ferret_map_hash_i64, ferret_map_equals_i64)
+FERRET_MAP_TYPED_CONSTRUCTOR(f32, ferret_map_hash_f32, ferret_map_equals_f32)
+FERRET_MAP_TYPED_CONSTRUCTOR(f64, ferret_map_hash_f64, ferret_map_equals_f64)
+FERRET_MAP_TYPED_CONSTRUCTOR(str, ferret_map_hash_str, ferret_map_equals_str)
+FERRET_MAP_TYPED_CONSTRUCTOR(bytes, ferret_map_hash_bytes, ferret_map_equals_bytes)
 
 void* ferret_map_get(const ferret_map_t* map, const void* key) {
     if (map == NULL || key == NULL) {

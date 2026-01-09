@@ -2651,7 +2651,7 @@ void ferret_memcpy(void* dst, const void* src, uint64_t size) {
     FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_xor) \
     FERRET_PTR_UNARY_OP(ferret_u##BITS, ferret_u##BITS##_not) \
     FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_pow)
-
+    
 FERRET_INT_WIDTHS(FERRET_DEFINE_INT_PTR_OPS)
 #undef FERRET_DEFINE_INT_PTR_OPS
 

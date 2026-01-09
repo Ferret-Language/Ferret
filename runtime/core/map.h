@@ -149,21 +149,22 @@ void ferret_map_free(ferret_map_t* map);
 // Free map and the struct itself
 void ferret_map_destroy(ferret_map_t* map);
 
-// Hash functions for common types
-uint32_t ferret_map_hash_i32(const void* key, size_t key_size);
-uint32_t ferret_map_hash_i64(const void* key, size_t key_size);
-uint32_t ferret_map_hash_f32(const void* key, size_t key_size);
-uint32_t ferret_map_hash_f64(const void* key, size_t key_size);
-uint32_t ferret_map_hash_str(const void* key, size_t key_size);
-uint32_t ferret_map_hash_bytes(const void* key, size_t key_size);
+#define FERRET_MAP_HASH_DECL(suffix) uint32_t ferret_map_hash_##suffix(const void* key, size_t key_size);
+#define FERRET_MAP_EQUALS_DECL(suffix) bool ferret_map_equals_##suffix(const void* key1, const void* key2, size_t key_size);
 
-// Equality functions for common types
-bool ferret_map_equals_i32(const void* key1, const void* key2, size_t key_size);
-bool ferret_map_equals_i64(const void* key1, const void* key2, size_t key_size);
-bool ferret_map_equals_f32(const void* key1, const void* key2, size_t key_size);
-bool ferret_map_equals_f64(const void* key1, const void* key2, size_t key_size);
-bool ferret_map_equals_str(const void* key1, const void* key2, size_t key_size);
-bool ferret_map_equals_bytes(const void* key1, const void* key2, size_t key_size);
+FERRET_MAP_HASH_DECL(i32)
+FERRET_MAP_HASH_DECL(i64)
+FERRET_MAP_HASH_DECL(f32)
+FERRET_MAP_HASH_DECL(f64)
+FERRET_MAP_HASH_DECL(str)
+FERRET_MAP_HASH_DECL(bytes)
+
+FERRET_MAP_EQUALS_DECL(i32)
+FERRET_MAP_EQUALS_DECL(i64)
+FERRET_MAP_EQUALS_DECL(f32)
+FERRET_MAP_EQUALS_DECL(f64)
+FERRET_MAP_EQUALS_DECL(str)
+FERRET_MAP_EQUALS_DECL(bytes)
 
 // Iterator for map traversal
 typedef struct {
