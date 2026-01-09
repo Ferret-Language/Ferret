@@ -305,7 +305,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
           F128_EXP_MAX,
           F128_MIN_EXP,
           F128_MAX_EXP,
-          34,
+          F128_DECIMAL_DIG,
         );
       case 15:
         return softToString(
@@ -316,7 +316,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
           F256_EXP_MAX,
           F256_MIN_EXP,
           F256_MAX_EXP,
-          71,
+          F256_DECIMAL_DIG,
         );
       case 16: {
         const strPtr = dv.getUint32(data, true);
@@ -635,6 +635,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   const F128_SIG_BITS = F128_FRAC_BITS + 1n;
   const F128_MAX_EXP = 16383;
   const F128_MIN_EXP = -16382;
+  const F128_DECIMAL_DIG = 36;
 
   const F256_FRAC_BITS = 236n;
   const F256_EXP_BITS = 19n;
@@ -643,6 +644,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   const F256_SIG_BITS = F256_FRAC_BITS + 1n;
   const F256_MAX_EXP = 262143;
   const F256_MIN_EXP = -262142;
+  const F256_DECIMAL_DIG = 73;
 
   const SOFT_CLASS_ZERO = 0;
   const SOFT_CLASS_NORMAL = 1;
@@ -673,6 +675,35 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       return 0;
     }
     return value.toString(2).length;
+  }
+
+  function log2FromBigInt(value: bigint): number {
+    if (value === 0n) {
+      return -Infinity;
+    }
+    const msb = bitLengthBigInt(value) - 1;
+    let top: bigint;
+    if (msb >= 63) {
+      top = value >> BigInt(msb - 63);
+    } else {
+      top = value << BigInt(63 - msb);
+    }
+    const frac = Number(top) / Math.pow(2, 63);
+    return msb + Math.log2(frac);
+  }
+
+  function pow5BigInt(exp: number): bigint {
+    let result = 1n;
+    let base = 5n;
+    let e = exp;
+    while (e > 0) {
+      if (e % 2 === 1) {
+        result *= base;
+      }
+      base *= base;
+      e = Math.floor(e / 2);
+    }
+    return result;
   }
 
   function shiftRightSticky(sig: bigint, shift: number): bigint {
@@ -1384,6 +1415,322 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     );
   }
 
+  type SoftParsedFloat = {
+    sign: number;
+    digits: string | null;
+    exp10: number;
+    cls: number;
+  };
+
+  function parseSoftFloatString(text: string): SoftParsedFloat | null {
+    if (!text) {
+      return null;
+    }
+    let s = text.trim();
+    if (!s) {
+      return null;
+    }
+    s = s.replace(/_/g, "");
+    let sign = 0;
+    if (s[0] === "+" || s[0] === "-") {
+      sign = s[0] === "-" ? 1 : 0;
+      s = s.slice(1);
+    }
+    if (!s) {
+      return null;
+    }
+    const lower = s.toLowerCase();
+    if (lower.startsWith("inf")) {
+      return { sign, digits: null, exp10: 0, cls: SOFT_CLASS_INF };
+    }
+    if (lower.startsWith("nan")) {
+      return { sign, digits: null, exp10: 0, cls: SOFT_CLASS_NAN };
+    }
+    let digits = "";
+    let digitsBefore = 0;
+    let seenDot = false;
+    let i = 0;
+    for (; i < s.length; i++) {
+      const c = s[i];
+      if (c >= "0" && c <= "9") {
+        digits += c;
+        if (!seenDot) {
+          digitsBefore += 1;
+        }
+      } else if (c === "." && !seenDot) {
+        seenDot = true;
+      } else {
+        break;
+      }
+    }
+    if (digits.length === 0) {
+      return null;
+    }
+    let exp10 = 0;
+    if (i < s.length && (s[i] === "e" || s[i] === "E")) {
+      i++;
+      let expSign = 1;
+      if (s[i] === "+" || s[i] === "-") {
+        expSign = s[i] === "-" ? -1 : 1;
+        i++;
+      }
+      let expVal = 0;
+      let hasDigits = false;
+      for (; i < s.length; i++) {
+        const c = s[i];
+        if (c >= "0" && c <= "9") {
+          expVal = expVal * 10 + (c.charCodeAt(0) - 48);
+          hasDigits = true;
+        } else {
+          break;
+        }
+      }
+      if (hasDigits) {
+        exp10 = expSign * expVal;
+      }
+    }
+    const digitsAfter = digits.length - digitsBefore;
+    exp10 -= digitsAfter;
+    digits = digits.replace(/^0+/, "");
+    if (!digits) {
+      return { sign, digits: null, exp10: 0, cls: SOFT_CLASS_ZERO };
+    }
+    return { sign, digits, exp10, cls: SOFT_CLASS_NORMAL };
+  }
+
+  function softFormatDecimal(
+    sign: number,
+    exp: number,
+    sigRaw: bigint,
+    sigBits: number,
+    precision: number,
+  ): string {
+    if (sigRaw === 0n) {
+      return sign ? "-0.0" : "0.0";
+    }
+    const exp2 = exp - (sigBits - 1);
+    const log10Val = (log2FromBigInt(sigRaw) + exp2) * Math.log10(2);
+    let exp10 = Math.floor(log10Val);
+    const k = precision - 1 - exp10;
+    let num = sigRaw;
+    let den = 1n;
+    if (k >= 0) {
+      num *= pow5BigInt(k);
+    } else {
+      den *= pow5BigInt(-k);
+    }
+    const shift2 = exp2 + k;
+    if (shift2 >= 0) {
+      num <<= BigInt(shift2);
+    } else {
+      den <<= BigInt(-shift2);
+    }
+    let q = num / den;
+    const r = num % den;
+    if (r !== 0n) {
+      const twice = r * 2n;
+      if (twice > den || (twice === den && (q & 1n) === 1n)) {
+        q += 1n;
+      }
+    }
+    let digits = q.toString();
+    if (digits.length > precision) {
+      q /= 10n;
+      exp10 += 1;
+      digits = q.toString();
+    }
+    if (digits.length < precision) {
+      const diff = precision - digits.length;
+      digits = "0".repeat(diff) + digits;
+      exp10 -= diff;
+    }
+    const useFixed = exp10 >= -4 && exp10 < precision;
+    let out = sign ? "-" : "";
+    if (useFixed) {
+      const point = exp10 + 1;
+      if (point <= 0) {
+        out += "0." + "0".repeat(-point) + digits;
+      } else if (point >= digits.length) {
+        out += digits + "0".repeat(point - digits.length) + ".0";
+      } else {
+        out += digits.slice(0, point) + "." + digits.slice(point);
+      }
+    } else {
+      out += digits[0] + ".";
+      if (digits.length > 1) {
+        out += digits.slice(1);
+      } else {
+        out += "0";
+      }
+      out += "e";
+      out += exp10 >= 0 ? "+" : "-";
+      out += Math.abs(exp10).toString();
+    }
+    return out;
+  }
+
+  function softFromDecimalString(
+    text: string,
+    fracBits: bigint,
+    expBits: bigint,
+    expBias: number,
+    expMax: bigint,
+    minExp: number,
+    maxExp: number,
+  ): bigint {
+    const parsed = parseSoftFloatString(text);
+    if (!parsed) {
+      return softPack(
+        0,
+        0,
+        0n,
+        SOFT_CLASS_ZERO,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (parsed.cls === SOFT_CLASS_NAN) {
+      return softPack(
+        parsed.sign,
+        0,
+        0n,
+        SOFT_CLASS_NAN,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (parsed.cls === SOFT_CLASS_INF) {
+      return softPack(
+        parsed.sign,
+        0,
+        0n,
+        SOFT_CLASS_INF,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (!parsed.digits) {
+      return softPack(
+        parsed.sign,
+        0,
+        0n,
+        SOFT_CLASS_ZERO,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+
+    const dec = BigInt(parsed.digits);
+    const sigBits = Number(fracBits + 1n);
+    const minSub = minExp - (sigBits - 1);
+    const log2Val = log2FromBigInt(dec) + parsed.exp10 * Math.log2(10);
+    const exp2 = Math.floor(log2Val);
+    if (exp2 > maxExp) {
+      return softPack(
+        parsed.sign,
+        0,
+        0n,
+        SOFT_CLASS_INF,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+    if (exp2 < minSub) {
+      return softPack(
+        parsed.sign,
+        0,
+        0n,
+        SOFT_CLASS_ZERO,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+
+    let targetExp = exp2 < minExp ? minExp : exp2;
+    const shift = sigBits - 1 - targetExp;
+    const shift2 = parsed.exp10 + shift;
+
+    let num = dec;
+    let den = 1n;
+    if (parsed.exp10 >= 0) {
+      num *= pow5BigInt(parsed.exp10);
+    } else {
+      den *= pow5BigInt(-parsed.exp10);
+    }
+    if (shift2 >= 0) {
+      num <<= BigInt(shift2);
+    } else {
+      den <<= BigInt(-shift2);
+    }
+
+    let q = num / den;
+    const r = num % den;
+    if (r !== 0n) {
+      const twice = r * 2n;
+      if (twice > den || (twice === den && (q & 1n) === 1n)) {
+        q += 1n;
+      }
+    }
+
+    const qBits = bitLengthBigInt(q);
+    if (qBits > sigBits) {
+      q >>= 1n;
+      targetExp += 1;
+    }
+    if (targetExp > maxExp) {
+      return softPack(
+        parsed.sign,
+        0,
+        0n,
+        SOFT_CLASS_INF,
+        fracBits,
+        expBits,
+        expBias,
+        expMax,
+        minExp,
+        maxExp,
+      );
+    }
+
+    const sig = q << SOFT_EXTRA_BITS;
+    return softPack(
+      parsed.sign,
+      targetExp,
+      sig,
+      SOFT_CLASS_NORMAL,
+      fracBits,
+      expBits,
+      expBias,
+      expMax,
+      minExp,
+      maxExp,
+    );
+  }
+
   function softToString(
     bits: bigint,
     fracBits: bigint,
@@ -1408,13 +1755,17 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     if (unpacked.cls === SOFT_CLASS_INF) {
       return unpacked.sign ? "-inf" : "inf";
     }
-    const value = softToNumber(
+    if (unpacked.cls === SOFT_CLASS_ZERO) {
+      return unpacked.sign ? "-0.0" : "0.0";
+    }
+    const sigRaw = unpacked.sig >> SOFT_EXTRA_BITS;
+    return softFormatDecimal(
       unpacked.sign,
       unpacked.exp,
-      unpacked.sig,
-      fracBits + 1n,
+      sigRaw,
+      Number(fracBits + 1n),
+      precision,
     );
-    return formatFloat(value, precision);
   }
 
   function parseBigIntLiteral(text: string, allowSign: boolean): bigint | null {
@@ -2030,7 +2381,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         F128_EXP_MAX,
         F128_MIN_EXP,
         F128_MAX_EXP,
-        34,
+        F128_DECIMAL_DIG,
       ),
     );
   }
@@ -2046,7 +2397,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         F256_EXP_MAX,
         F256_MIN_EXP,
         F256_MAX_EXP,
-        71,
+        F256_DECIMAL_DIG,
       ),
     );
   }
@@ -2082,10 +2433,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   function ferret_f128_from_string_ptr(strPtr: number, outPtr: number): void {
     if (!outPtr) return;
     const text = strPtr ? readCString(strPtr) : "";
-    const cleaned = text.trim().replace(/_/g, "");
-    const val = Number(cleaned);
-    const bits = f64ToSoftBits(
-      Number.isFinite(val) ? val : 0,
+    const bits = softFromDecimalString(
+      text,
       F128_FRAC_BITS,
       F128_EXP_BITS,
       F128_EXP_BIAS,
@@ -2099,10 +2448,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   function ferret_f256_from_string_ptr(strPtr: number, outPtr: number): void {
     if (!outPtr) return;
     const text = strPtr ? readCString(strPtr) : "";
-    const cleaned = text.trim().replace(/_/g, "");
-    const val = Number(cleaned);
-    const bits = f64ToSoftBits(
-      Number.isFinite(val) ? val : 0,
+    const bits = softFromDecimalString(
+      text,
       F256_FRAC_BITS,
       F256_EXP_BITS,
       F256_EXP_BIAS,
