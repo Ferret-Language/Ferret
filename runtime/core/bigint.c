@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <ctype.h>
 
+static void ferret_f128_get_bits(ferret_f128 val, uint64_t* lo, uint64_t* hi);
+static ferret_f128 ferret_f128_from_bits(uint64_t lo, uint64_t hi);
+
 #if FERRET_LIMB_BITS == 64
 #if defined(FERRET_HAS_WIDE128)
 typedef __uint128_t ferret_wide_t;
@@ -1815,13 +1818,59 @@ bool ferret_f256_gt(ferret_f256 a, ferret_f256 b) {
 ferret_f128 ferret_f128_pow(ferret_f128 base, ferret_f128 exp) {
     double base_val = ferret_f128_to_f64(base);
     double exp_val = ferret_f128_to_f64(exp);
-    return ferret_f128_from_f64(pow(base_val, exp_val));
+    double result = pow(base_val, exp_val);
+    if (isfinite(base_val) && isfinite(exp_val) && isfinite(result)) {
+        return ferret_f128_from_f64(result);
+    }
+    char* base_str = ferret_f128_to_string(base);
+    char* exp_str = ferret_f128_to_string(exp);
+    if (!base_str || !exp_str) {
+        free(base_str);
+        free(exp_str);
+        return ferret_f128_from_f64(result);
+    }
+    long double base_ld = strtold(base_str, NULL);
+    long double exp_ld = strtold(exp_str, NULL);
+    free(base_str);
+    free(exp_str);
+    long double result_ld =
+#if defined(_MSC_VER)
+        (long double)pow((double)base_ld, (double)exp_ld);
+#else
+        powl(base_ld, exp_ld);
+#endif
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%.*Lg", SOFT_F128_DECIMAL_DIG, result_ld);
+    return ferret_f128_from_string(buf);
 }
 
 ferret_f256 ferret_f256_pow(ferret_f256 base, ferret_f256 exp) {
     double base_val = ferret_f256_to_f64(base);
     double exp_val = ferret_f256_to_f64(exp);
-    return ferret_f256_from_f64(pow(base_val, exp_val));
+    double result = pow(base_val, exp_val);
+    if (isfinite(base_val) && isfinite(exp_val) && isfinite(result)) {
+        return ferret_f256_from_f64(result);
+    }
+    char* base_str = ferret_f256_to_string(base);
+    char* exp_str = ferret_f256_to_string(exp);
+    if (!base_str || !exp_str) {
+        free(base_str);
+        free(exp_str);
+        return ferret_f256_from_f64(result);
+    }
+    long double base_ld = strtold(base_str, NULL);
+    long double exp_ld = strtold(exp_str, NULL);
+    free(base_str);
+    free(exp_str);
+    long double result_ld =
+#if defined(_MSC_VER)
+        (long double)pow((double)base_ld, (double)exp_ld);
+#else
+        powl(base_ld, exp_ld);
+#endif
+    char buf[160];
+    snprintf(buf, sizeof(buf), "%.*Lg", SOFT_F256_DECIMAL_DIG, result_ld);
+    return ferret_f256_from_string(buf);
 }
 
 // Conversion functions for floating point
@@ -2019,6 +2068,8 @@ typedef struct {
     size_t cap;
 } ferret_big_uint;
 
+static int big_bit_length(const ferret_big_uint* b);
+
 static int ferret_clz32(uint32_t v) {
 #if defined(__GNUC__)
     if (v == 0) {
@@ -2120,11 +2171,12 @@ static void big_shift_left_bits(ferret_big_uint* b, int bits) {
     if (b->len == 0 || bits <= 0) {
         return;
     }
+    size_t orig_len = b->len;
     int word_shift = bits / 32;
     int bit_shift = bits % 32;
-    size_t new_len = b->len + (size_t)word_shift + (bit_shift ? 1 : 0);
+    size_t new_len = orig_len + (size_t)word_shift + (bit_shift ? 1 : 0);
     big_reserve(b, new_len);
-    for (size_t i = b->len; i-- > 0;) {
+    for (size_t i = orig_len; i-- > 0;) {
         b->limbs[i + word_shift] = b->limbs[i];
     }
     for (int i = 0; i < word_shift; i++) {
@@ -2132,18 +2184,22 @@ static void big_shift_left_bits(ferret_big_uint* b, int bits) {
     }
     if (bit_shift) {
         uint32_t carry = 0;
-        for (size_t i = (size_t)word_shift; i < b->len + (size_t)word_shift; i++) {
+        for (size_t i = (size_t)word_shift; i < orig_len + (size_t)word_shift; i++) {
             uint64_t val = ((uint64_t)b->limbs[i] << bit_shift) | carry;
             b->limbs[i] = (uint32_t)val;
             carry = (uint32_t)(val >> 32);
         }
         if (carry) {
-            b->limbs[b->len + (size_t)word_shift] = carry;
-            b->len = b->len + (size_t)word_shift + 1;
-            return;
+            b->limbs[orig_len + (size_t)word_shift] = carry;
+            b->len = orig_len + (size_t)word_shift + 1;
+        } else {
+            b->limbs[orig_len + (size_t)word_shift] = 0;
+            b->len = orig_len + (size_t)word_shift;
         }
+        big_normalize(b);
+        return;
     }
-    b->len = b->len + (size_t)word_shift + (bit_shift ? 1 : 0);
+    b->len = orig_len + (size_t)word_shift;
     big_normalize(b);
 }
 
@@ -2262,6 +2318,22 @@ static uint32_t big_div_small(ferret_big_uint* a, uint32_t divisor) {
     return (uint32_t)rem;
 }
 
+static void big_set_bit(ferret_big_uint* b, int bit) {
+    if (bit < 0) {
+        return;
+    }
+    size_t idx = (size_t)bit / 32;
+    int shift = bit % 32;
+    big_reserve(b, idx + 1);
+    if (b->len <= idx) {
+        for (size_t i = b->len; i <= idx; i++) {
+            b->limbs[i] = 0;
+        }
+        b->len = idx + 1;
+    }
+    b->limbs[idx] |= (uint32_t)(1u << shift);
+}
+
 static void big_div_mod(const ferret_big_uint* u, const ferret_big_uint* v, ferret_big_uint* q, ferret_big_uint* r) {
     if (v->len == 0) {
         q->len = 0;
@@ -2285,89 +2357,35 @@ static void big_div_mod(const ferret_big_uint* u, const ferret_big_uint* v, ferr
         return;
     }
 
-    const uint32_t base = 0x100000000u;
-    int shift = ferret_clz32(v->limbs[v->len - 1]);
+    int u_bits = big_bit_length(u);
+    int v_bits = big_bit_length(v);
+    int shift = u_bits - v_bits;
 
-    ferret_big_uint vn;
-    ferret_big_uint un;
-    big_init(&vn);
-    big_init(&un);
-    big_copy(&vn, v);
-    big_copy(&un, u);
-    if (shift) {
-        big_shift_left_bits(&vn, shift);
-        big_shift_left_bits(&un, shift);
-    }
-    if (un.len == u->len) {
-        big_reserve(&un, un.len + 1);
-        un.limbs[un.len++] = 0;
+    ferret_big_uint denom;
+    big_init(&denom);
+    big_copy(&denom, v);
+    if (shift > 0) {
+        big_shift_left_bits(&denom, shift);
     }
 
-    size_t n = vn.len;
-    size_t m = un.len - n;
-    big_reserve(q, m + 1);
-    memset(q->limbs, 0, (m + 1) * sizeof(uint32_t));
-    q->len = m + 1;
+    big_reserve(q, (size_t)(shift / 32 + 2));
+    q->len = 0;
+    big_reserve(r, u->len);
+    big_copy(r, u);
 
-    for (size_t j = m + 1; j-- > 0;) {
-        uint64_t ujn = (j + n < un.len) ? un.limbs[j + n] : 0;
-        uint64_t ujn1 = un.limbs[j + n - 1];
-        uint64_t ujn2 = un.limbs[j + n - 2];
-        uint64_t vnn1 = vn.limbs[n - 1];
-        uint64_t vnn2 = vn.limbs[n - 2];
-
-        uint64_t numerator = (ujn << 32) | ujn1;
-        uint64_t qhat = numerator / vnn1;
-        uint64_t rhat = numerator % vnn1;
-        if (qhat >= base) {
-            qhat = base - 1;
+    for (int i = shift; i >= 0; i--) {
+        if (big_cmp(r, &denom) >= 0) {
+            big_sub(r, &denom);
+            big_set_bit(q, i);
         }
-        while (qhat * vnn2 > (rhat << 32) + ujn2) {
-            qhat--;
-            rhat += vnn1;
-            if (rhat >= base) {
-                break;
-            }
+        if (i > 0) {
+            big_shift_right_bits(&denom, 1);
         }
-
-        uint64_t carry = 0;
-        for (size_t i = 0; i < n; i++) {
-            uint64_t p = qhat * vn.limbs[i];
-            uint64_t p_low = p & 0xffffffffu;
-            uint64_t p_high = p >> 32;
-            uint64_t uval = un.limbs[i + j];
-            uint64_t sub = uval - p_low - carry;
-            un.limbs[i + j] = (uint32_t)sub;
-            carry = p_high + ((sub >> 63) & 1u);
-        }
-        uint64_t uval = un.limbs[j + n];
-        uint64_t sub = uval - carry;
-        un.limbs[j + n] = (uint32_t)sub;
-        if (sub >> 63) {
-            qhat--;
-            uint64_t carry2 = 0;
-            for (size_t i = 0; i < n; i++) {
-                uint64_t sum = (uint64_t)un.limbs[i + j] + vn.limbs[i] + carry2;
-                un.limbs[i + j] = (uint32_t)sum;
-                carry2 = sum >> 32;
-            }
-            un.limbs[j + n] = (uint32_t)((uint64_t)un.limbs[j + n] + carry2);
-        }
-        q->limbs[j] = (uint32_t)qhat;
     }
+
     big_normalize(q);
-
-    big_reserve(r, n);
-    r->len = n;
-    for (size_t i = 0; i < n; i++) {
-        r->limbs[i] = un.limbs[i];
-    }
-    if (shift) {
-        big_shift_right_bits(r, shift);
-    }
     big_normalize(r);
-    big_free(&vn);
-    big_free(&un);
+    big_free(&denom);
 }
 
 static int big_bit_length(const ferret_big_uint* b) {
@@ -3434,4 +3452,3 @@ void ferret_f256_from_string_ptr(const char* str, ferret_f256* out) {
 #undef FERRET_PTR_BIN_OP
 #undef FERRET_PTR_CMP_OP
 #undef FERRET_PTR_UNARY_OP
-

@@ -33,10 +33,16 @@
 
 // Feature detection for 128-bit floating point support
 // Note: __float128 is NOT supported on macOS (Apple Clang), only on Linux with GCC/Clang
+#define FERRET_FORCE_SOFT_FLOAT 1
+#if !defined(FERRET_FORCE_SOFT_FLOAT)
 #if defined(__GNUC__) && !defined(__APPLE__) && (defined(__x86_64__) || defined(__i386__) || defined(__powerpc__) || defined(__powerpc64__))
     #ifndef FERRET_HAS_FLOAT128
         #define FERRET_HAS_FLOAT128 1
     #endif
+#endif
+#endif
+#ifdef FERRET_FORCE_SOFT_FLOAT
+#undef FERRET_HAS_FLOAT128
 #endif
 
 // Fixed-width integer types (limb-based)
