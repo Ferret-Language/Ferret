@@ -3427,6 +3427,14 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 		// Map type: map[K]V
 		keyType := TypeFromTypeNodeWithContext(ctx, mod, t.Key)
 		valueType := TypeFromTypeNodeWithContext(ctx, mod, t.Value)
+		if ctx != nil && mod != nil && !keyType.Equals(types.TypeUnknown) && !types.IsMapKeyComparable(keyType) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("map key type '%s' is not comparable", keyType.String())).
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(t.Key.Loc(), "map keys must be comparable").
+					WithHelp("use a key type like integers, bool, byte, f32, f64, str, enums, or references"),
+			)
+		}
 		return types.NewMap(keyType, valueType)
 
 	case *ast.InterfaceType:

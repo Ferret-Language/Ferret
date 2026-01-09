@@ -1,6 +1,6 @@
 fn make() -> &i32 {
     let a := 5;
-    return &a; // expected error: return reference to local
+    return &a;
 }
 
 fn main() {

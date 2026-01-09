@@ -1,32 +1,14 @@
 import "std/io";
-import "std/fs";
-import "math";
 
 fn main() {
-    // Write to file
-    // fs::WriteFile("test.txt", "Hello from Ferret!") catch e {
-    //     io::Println("Write error: " + e);
-    //     return;
-    // };
-    // io::Println("File written!");
-    
-    // Check if exists
-    if fs::Exists("test.txt") {
-        io::Println("File exists!");
-    }
-    
-    // Read entire file
-    let content := fs::ReadFile("test.txt") catch e {
-        io::Println("Read error: " + e);
-        return;
-    };
-    io::Println("Content: " + content);
-    
-    // Clean up
-    // fs::Remove("test.txt") catch e {
-    //     io::Println("Remove error: " + e);
-    // } false;
-    io::Println("Test complete!");
+    let scores := {
+        "alpha" => 1,
+        "beta" => 2
+    } as map[str]i32;
 
-    io::Println("Math test: Floor(3.7) = " + math::Floor(3.7));
+    io::Println(scores["alpha"]);
+    //io::Println(scores["gamma"]); // fail
+
+    scores["gamma"] = 3;
+    io::Println(scores["gamma"]);
 }

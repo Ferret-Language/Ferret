@@ -385,16 +385,35 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		return
 	}
 
-	val := b.lowerExpr(stmt.Result)
-	if val == mir.InvalidValue {
-		b.current.Term = &mir.Unreachable{Location: stmt.Location}
-		return
-	}
-
 	resultType := b.exprType(stmt.Result)
 	retType := b.fn.Return
 	if b.retParam != mir.InvalidValue {
 		retType = b.retType
+	}
+	if b.refOutParam != mir.InvalidValue {
+		if borrow, ok := stmt.Result.(*hir.UnaryExpr); ok {
+			if borrow.Op.Kind == tokens.BIT_AND_TOKEN || borrow.Op.Kind == tokens.MUT_TOKEN {
+				val := b.lowerExpr(borrow.X)
+				if val == mir.InvalidValue {
+					b.current.Term = &mir.Unreachable{Location: stmt.Location}
+					return
+				}
+				val = b.coerceValueForAssign(val, b.exprType(borrow.X), b.refOutType, stmt.Location)
+				if val == mir.InvalidValue {
+					b.current.Term = &mir.Unreachable{Location: stmt.Location}
+					return
+				}
+				b.emitStore(b.refOutParam, val, stmt.Location)
+				b.current.Term = &mir.Return{HasValue: true, Value: b.refOutParam, Location: stmt.Location}
+				return
+			}
+		}
+	}
+
+	val := b.lowerExpr(stmt.Result)
+	if val == mir.InvalidValue {
+		b.current.Term = &mir.Unreachable{Location: stmt.Location}
+		return
 	}
 	val = b.coerceValueForAssign(val, resultType, retType, stmt.Location)
 	if val == mir.InvalidValue {
@@ -409,13 +428,16 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 				return
 			}
 		}
-		b.emitStore(b.refOutParam, val, stmt.Location)
+		// Return-by-ref: copy the value into the out param.
+		// This prevents returning pointers to stack-allocated interface boxes.
+		b.emitMemcpy(b.refOutParam, val, retType, stmt.Location)
 		b.current.Term = &mir.Return{HasValue: true, Value: b.refOutParam, Location: stmt.Location}
 		return
 	}
 
 	if b.retParam != mir.InvalidValue {
-		b.emitStore(b.retParam, val, stmt.Location)
+		// Return-by-value via out param: always copy the payload.
+		b.emitMemcpy(b.retParam, val, retType, stmt.Location)
 		b.current.Term = &mir.Return{HasValue: false, Location: stmt.Location}
 		return
 	}
@@ -3058,6 +3080,16 @@ func (b *functionBuilder) mapRuntimeFns(keyType types.SemType) mapRuntimeFns {
 			return mapRuntimeFns{
 				newFn:       "ferret_map_new_i64",
 				fromPairsFn: "ferret_map_from_pairs_i64",
+			}
+		case types.TYPE_F32:
+			return mapRuntimeFns{
+				newFn:       "ferret_map_new_f32",
+				fromPairsFn: "ferret_map_from_pairs_f32",
+			}
+		case types.TYPE_F64:
+			return mapRuntimeFns{
+				newFn:       "ferret_map_new_f64",
+				fromPairsFn: "ferret_map_from_pairs_f64",
 			}
 		case types.TYPE_STRING:
 			return mapRuntimeFns{

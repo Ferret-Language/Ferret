@@ -1,6 +1,7 @@
 package wasm
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strconv"
 	"strings"
@@ -47,9 +48,10 @@ type Generator struct {
 	tableIndex  map[string]uint32 // function name -> table index for call_indirect
 	typeIndices map[string]uint32 // signature string -> type index
 
-	dataBase   uint32
-	data       []byte
-	stringPtrs map[string]uint32
+	dataBase    uint32
+	data        []byte
+	stringPtrs  map[string]uint32
+	dataSymbols map[string]uint32
 }
 
 func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) {
@@ -67,6 +69,7 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 		typeIndices: make(map[string]uint32),
 		dataBase:    1024,
 		stringPtrs:  make(map[string]uint32),
+		dataSymbols: make(map[string]uint32),
 	}
 	for _, u := range units {
 		if u.IsEntry {
@@ -116,7 +119,7 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 	tableNames := make([]string, 0)
 	for _, name := range funcOrder {
 		// Add closures (__func_lit__*) and function wrappers (__func_wrap__*) to table
-		if strings.Contains(name, "__func_lit__") || strings.Contains(name, "__func_wrap__") {
+		if strings.Contains(name, "__func_lit__") || strings.Contains(name, "__func_wrap__") || strings.Contains(name, "__iface_") {
 			tableNames = append(tableNames, name)
 		}
 	}
@@ -129,6 +132,13 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 			}
 		}
 		mod.addExport("__indirect_function_table", exportKindTable, 0)
+	}
+
+	if err := gen.emitVTables(); err != nil {
+		return nil, err
+	}
+	if err := gen.emitTypeIDs(); err != nil {
+		return nil, err
 	}
 
 	for _, name := range funcOrder {
@@ -246,6 +256,31 @@ func (g *Generator) collectImports() error {
 					if err := g.ensureImport("ferret_alloc", funcSig{
 						params:  []ValType{valTypeI64},
 						results: []ValType{valTypeI32},
+					}); err != nil {
+						return err
+					}
+				}
+				if _, ok := instr.(*mir.MapGet); ok {
+					if err := g.ensureImport("ferret_map_get", funcSig{
+						params:  []ValType{valTypeI32, valTypeI32},
+						results: []ValType{valTypeI32},
+					}); err != nil {
+						return err
+					}
+					if err := g.ensureImport("ferret_map_get_optional_out", funcSig{
+						params: []ValType{valTypeI32, valTypeI32, valTypeI32},
+					}); err != nil {
+						return err
+					}
+					if err := g.ensureImport("ferret_global_panic", funcSig{
+						params: []ValType{valTypeI32},
+					}); err != nil {
+						return err
+					}
+				}
+				if _, ok := instr.(*mir.MapSet); ok {
+					if err := g.ensureImport("ferret_map_set", funcSig{
+						params: []ValType{valTypeI32, valTypeI32, valTypeI32},
 					}); err != nil {
 						return err
 					}
@@ -561,43 +596,9 @@ func (g *Generator) emitInstr(info *funcInfo, instr mir.Instr, locals map[mir.Va
 	case *mir.ArraySet:
 		return g.emitArraySet(info, v, locals, scratchLocal)
 	case *mir.MapGet:
-		v = instr.(*mir.MapGet)
-		mapLocal := locals[v.Map]
-		keyLocal := locals[v.Key]
-		var out []byte
-		out = append(out, opcodeLocalGet)
-		out = append(out, encodeU32(mapLocal)...)
-		out = append(out, opcodeLocalGet)
-		out = append(out, encodeU32(keyLocal)...)
-		// Use g.importIDs to get the import function index
-		importIdx, ok := g.importIDs["ferret_map_get"]
-		if !ok {
-			panic("ferret_map_get not found in WASM imports")
-		}
-		out = append(out, opcodeCall)
-		out = append(out, encodeU32(importIdx)...)
-		out = append(out, opcodeLocalSet)
-		out = append(out, encodeU32(locals[v.Result])...)
-		return out, nil
+		return g.emitMapGet(info, instr.(*mir.MapGet), locals, scratchLocal)
 	case *mir.MapSet:
-		v = instr.(*mir.MapSet)
-		mapLocal := locals[v.Map]
-		keyLocal := locals[v.Key]
-		valueLocal := locals[v.Value]
-		var out []byte
-		out = append(out, opcodeLocalGet)
-		out = append(out, encodeU32(mapLocal)...)
-		out = append(out, opcodeLocalGet)
-		out = append(out, encodeU32(keyLocal)...)
-		out = append(out, opcodeLocalGet)
-		out = append(out, encodeU32(valueLocal)...)
-		importIdx, ok := g.importIDs["ferret_map_set"]
-		if !ok {
-			panic("ferret_map_set not found in WASM imports")
-		}
-		out = append(out, opcodeCall)
-		out = append(out, encodeU32(importIdx)...)
-		return out, nil
+		return g.emitMapSet(info, instr.(*mir.MapSet), locals, scratchLocal)
 	case *mir.OptionalNone:
 		return g.emitOptionalNone(v, locals)
 	case *mir.OptionalSome:
@@ -714,6 +715,17 @@ func (g *Generator) emitConst(c *mir.Const, locals map[mir.ValueID]uint32) ([]by
 	var out []byte
 	switch valType {
 	case valTypeI32:
+		if strings.HasPrefix(c.Value, "$") {
+			symbol := strings.TrimPrefix(c.Value, "$")
+			if ptr, ok := g.dataSymbols[symbol]; ok {
+				out = append(out, opcodeI32Const)
+				out = append(out, encodeS32(int32(ptr))...)
+				out = append(out, opcodeLocalSet)
+				out = append(out, encodeU32(locals[c.Result])...)
+				return out, nil
+			}
+			return nil, fmt.Errorf("wasm: unknown data symbol %s", c.Value)
+		}
 		// Try to resolve as function name first (for closures with FunctionType)
 		found := false
 		for fullName, idx := range g.tableIndex {
@@ -1347,6 +1359,133 @@ func (g *Generator) emitMakeStruct(info *funcInfo, m *mir.MakeStruct, locals map
 		}
 		out = append(out, storeBytes...)
 	}
+	return out, nil
+}
+
+func (g *Generator) emitMapGet(info *funcInfo, m *mir.MapGet, locals map[mir.ValueID]uint32, scratchLocal uint32) ([]byte, error) {
+	if m == nil || info == nil {
+		return nil, nil
+	}
+	mapType, ok := g.mapTypeOf(info.valueType[m.Map])
+	if !ok || mapType == nil {
+		g.reportUnsupported("map_get map", m.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	keyAddr, err := g.emitValueAddr(m.Key, mapType.Key, locals, scratchLocal)
+	if err != nil {
+		return nil, err
+	}
+
+	if optType, ok := g.optionalType(m.Type); ok && optType != nil {
+		optSize := g.layout.SizeOf(optType)
+		if optSize <= 0 {
+			return nil, fmt.Errorf("wasm: invalid map_get optional size")
+		}
+		allocID, ok := g.importIDs["ferret_alloc"]
+		if !ok {
+			return nil, fmt.Errorf("wasm: missing import ferret_alloc")
+		}
+		getOptID, ok := g.importIDs["ferret_map_get_optional_out"]
+		if !ok {
+			return nil, fmt.Errorf("wasm: missing import ferret_map_get_optional_out")
+		}
+
+		var out []byte
+		out = append(out, opcodeI64Const)
+		out = append(out, encodeS64(int64(optSize))...)
+		out = append(out, opcodeCall)
+		out = append(out, encodeU32(allocID)...)
+		out = append(out, opcodeLocalSet)
+		out = append(out, encodeU32(locals[m.Result])...)
+
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(locals[m.Map])...)
+		out = append(out, keyAddr...)
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(locals[m.Result])...)
+		out = append(out, opcodeCall)
+		out = append(out, encodeU32(getOptID)...)
+		return out, nil
+	}
+
+	getID, ok := g.importIDs["ferret_map_get"]
+	if !ok {
+		return nil, fmt.Errorf("wasm: missing import ferret_map_get")
+	}
+	panicID, ok := g.importIDs["ferret_global_panic"]
+	if !ok {
+		return nil, fmt.Errorf("wasm: missing import ferret_global_panic")
+	}
+
+	var out []byte
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[m.Map])...)
+	out = append(out, keyAddr...)
+	out = append(out, opcodeCall)
+	out = append(out, encodeU32(getID)...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(scratchLocal)...)
+
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(scratchLocal)...)
+	out = append(out, opcodeI32Eqz)
+	out = append(out, opcodeIf, blockTypeVoid)
+	msgPtr := g.stringPtr("key not found in map")
+	out = append(out, opcodeI32Const)
+	out = append(out, encodeS32(msgPtr)...)
+	out = append(out, opcodeCall)
+	out = append(out, encodeU32(panicID)...)
+	out = append(out, opcodeUnreachable)
+	out = append(out, opcodeEnd)
+
+	if g.isAddressValueType(m.Type) {
+		out = append(out, opcodeLocalGet)
+		out = append(out, encodeU32(scratchLocal)...)
+		out = append(out, opcodeLocalSet)
+		out = append(out, encodeU32(locals[m.Result])...)
+		return out, nil
+	}
+
+	loadOp, err := loadOpcode(m.Type)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(scratchLocal)...)
+	out = append(out, loadOp...)
+	out = append(out, opcodeLocalSet)
+	out = append(out, encodeU32(locals[m.Result])...)
+	return out, nil
+}
+
+func (g *Generator) emitMapSet(info *funcInfo, m *mir.MapSet, locals map[mir.ValueID]uint32, scratchLocal uint32) ([]byte, error) {
+	if m == nil || info == nil {
+		return nil, nil
+	}
+	mapType, ok := g.mapTypeOf(info.valueType[m.Map])
+	if !ok || mapType == nil {
+		g.reportUnsupported("map_set map", m.Loc())
+		return []byte{opcodeUnreachable}, nil
+	}
+	keyAddr, err := g.emitValueAddr(m.Key, mapType.Key, locals, scratchLocal)
+	if err != nil {
+		return nil, err
+	}
+	valueAddr, err := g.emitValueAddr(m.Value, mapType.Value, locals, scratchLocal)
+	if err != nil {
+		return nil, err
+	}
+	setID, ok := g.importIDs["ferret_map_set"]
+	if !ok {
+		return nil, fmt.Errorf("wasm: missing import ferret_map_set")
+	}
+	var out []byte
+	out = append(out, opcodeLocalGet)
+	out = append(out, encodeU32(locals[m.Map])...)
+	out = append(out, keyAddr...)
+	out = append(out, valueAddr...)
+	out = append(out, opcodeCall)
+	out = append(out, encodeU32(setID)...)
 	return out, nil
 }
 
@@ -2372,6 +2511,74 @@ func (g *Generator) stringPtr(value string) int32 {
 	return int32(offset)
 }
 
+func (g *Generator) addDataSymbol(name string, data []byte, align uint32) uint32 {
+	if ptr, ok := g.dataSymbols[name]; ok {
+		return ptr
+	}
+	if align > 0 {
+		offset := g.dataBase + uint32(len(g.data))
+		if rem := offset % align; rem != 0 {
+			pad := align - rem
+			g.data = append(g.data, make([]byte, pad)...)
+		}
+	}
+	offset := g.dataBase + uint32(len(g.data))
+	g.dataSymbols[name] = offset
+	g.data = append(g.data, data...)
+	return offset
+}
+
+func (g *Generator) emitTypeIDs() error {
+	for _, unit := range g.units {
+		if unit.MIR == nil || len(unit.MIR.TypeIDs) == 0 {
+			continue
+		}
+		for globalName, typeID := range unit.MIR.TypeIDs {
+			ptr := uint32(g.stringPtr(typeID))
+			if existing, ok := g.dataSymbols[globalName]; ok && existing != ptr {
+				return fmt.Errorf("wasm: conflicting type ID symbol %s", globalName)
+			}
+			g.dataSymbols[globalName] = ptr
+		}
+	}
+	return nil
+}
+
+func (g *Generator) emitVTables() error {
+	for _, unit := range g.units {
+		if unit.Module == nil || unit.MIR == nil || len(unit.MIR.VTables) == 0 {
+			continue
+		}
+		for _, table := range unit.MIR.VTables {
+			if table.Name == "" || len(table.Methods) == 0 {
+				continue
+			}
+			entries := make([]byte, 0, len(table.Methods)*4)
+			for _, method := range table.Methods {
+				fullName := g.funcName(method, unit.Module.ImportPath)
+				tableIdx, ok := g.tableIndex[fullName]
+				if !ok {
+					for name, idx := range g.tableIndex {
+						if name == method || strings.HasSuffix(name, "_"+method) {
+							tableIdx = idx
+							ok = true
+							break
+						}
+					}
+				}
+				if !ok {
+					return fmt.Errorf("wasm: missing table index for vtable method %s", method)
+				}
+				buf := make([]byte, 4)
+				binary.LittleEndian.PutUint32(buf, tableIdx)
+				entries = append(entries, buf...)
+			}
+			g.addDataSymbol(table.Name, entries, 4)
+		}
+	}
+	return nil
+}
+
 func analyzeFunctionTypes(fn *mir.Function) map[mir.ValueID]types.SemType {
 	typesMap := make(map[mir.ValueID]types.SemType)
 	if fn == nil {
@@ -2506,6 +2713,21 @@ func (g *Generator) resultType(typ types.SemType) (*types.ResultType, bool) {
 	}
 	res, ok := typ.(*types.ResultType)
 	return res, ok
+}
+
+func (g *Generator) mapTypeOf(typ types.SemType) (*types.MapType, bool) {
+	if typ == nil {
+		return nil, false
+	}
+	typ = types.UnwrapType(typ)
+	if ref, ok := typ.(*types.ReferenceType); ok {
+		typ = types.UnwrapType(ref.Inner)
+	}
+	if named, ok := typ.(*types.NamedType); ok {
+		typ = named.Underlying
+	}
+	mt, ok := typ.(*types.MapType)
+	return mt, ok
 }
 
 func maxInt(a, b int) int {

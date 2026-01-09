@@ -741,10 +741,12 @@ func (b *borrowChecker) checkReturnLifetime(expr hir.Expr) {
 	}
 
 	var base *symbols.Symbol
+	directBorrow := false
 	switch e := expr.(type) {
 	case *hir.UnaryExpr:
 		if isBorrowOp(e.Op.Kind) {
 			base = b.borrowPlace(e.X).base
+			directBorrow = true
 		}
 	case *hir.Ident:
 		if e.Symbol != nil {
@@ -757,6 +759,10 @@ func (b *borrowChecker) checkReturnLifetime(expr hir.Expr) {
 		return
 	}
 	if _, ok := b.locals[base]; ok {
+		if directBorrow {
+			// Returning a direct borrow of a local is lowered to an out-parameter move.
+			return
+		}
 		b.reportBorrowError(expr.Loc(), fmt.Sprintf("cannot return reference to local '%s'", base.Name), nil, nil)
 	}
 }
@@ -764,7 +770,7 @@ func (b *borrowChecker) checkReturnLifetime(expr hir.Expr) {
 func (b *borrowChecker) reportBorrowError(loc *source.Location, msg string, borrowLoc *source.Location, releaseLoc *source.Location) {
 	diag := diagnostics.NewError(msg).WithCode(diagnostics.ErrInvalidOperation)
 	if loc != nil {
-		diag = diag.WithPrimaryLabel(loc, "again borrow here")
+		diag = diag.WithPrimaryLabel(loc, "borrow here")
 	}
 	if borrowLoc != nil {
 		diag = diag.WithSecondaryLabel(borrowLoc, "first borrowed here")
