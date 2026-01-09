@@ -28,22 +28,12 @@
     X(128) \
     X(256)
 
+#define FERRET_FLOAT_SPECS(X) \
+    X(128, 2, 112, 15, 16383, 36) \
+    X(256, 4, 236, 19, 262143, 73)
+
 #define FERRET_LIMBS_FOR_BITS(BITS) (((BITS) + FERRET_LIMB_BITS - 1) / FERRET_LIMB_BITS)
 #define FERRET_LIMB_MAX ((ferret_limb_t)~(ferret_limb_t)0)
-
-// Feature detection for 128-bit floating point support
-// Note: __float128 is NOT supported on macOS (Apple Clang), only on Linux with GCC/Clang
-#define FERRET_FORCE_SOFT_FLOAT 1
-#if !defined(FERRET_FORCE_SOFT_FLOAT)
-#if defined(__GNUC__) && !defined(__APPLE__) && (defined(__x86_64__) || defined(__i386__) || defined(__powerpc__) || defined(__powerpc64__))
-    #ifndef FERRET_HAS_FLOAT128
-        #define FERRET_HAS_FLOAT128 1
-    #endif
-#endif
-#endif
-#ifdef FERRET_FORCE_SOFT_FLOAT
-#undef FERRET_HAS_FLOAT128
-#endif
 
 // Fixed-width integer types (limb-based)
 #define FERRET_DECLARE_INT_TYPES(BITS) \
@@ -95,61 +85,38 @@ FERRET_INT_WIDTHS(FERRET_DECL_INT_CONVERSIONS)
 #undef FERRET_DECL_UNSIGNED_INT_OPS
 #undef FERRET_DECL_INT_CONVERSIONS
 
-// 128-bit floating point types
-#ifdef FERRET_HAS_FLOAT128
-    typedef __float128 ferret_f128;
-#else
-    // Fallback: struct-based 128-bit float (IEEE 754 binary128 format)
-    // 1 sign bit + 15 exponent bits + 112 mantissa bits = 128 bits
-    typedef struct {
-        uint64_t mantissa_lo;  // Lower 64 bits of mantissa
-        uint64_t mantissa_hi;  // Upper 48 bits of mantissa + 15 exponent bits + 1 sign bit
-    } ferret_f128;
-#endif
+// Fixed-width floating point types (word-based)
+#define FERRET_DECLARE_FLOAT_TYPES(BITS, WORDS, FRAC_BITS, EXP_BITS, EXP_BIAS, DEC_DIG) \
+    enum { FERRET_F##BITS##_WORDS = WORDS }; \
+    typedef struct { \
+        uint64_t words[FERRET_F##BITS##_WORDS]; \
+    } ferret_f##BITS;
 
-// 256-bit floating point type (always struct-based)
-// IEEE 754 extended format: 1 sign + 19 exponent + 236 mantissa = 256 bits
-typedef struct {
-    uint64_t mantissa[3];  // 192 bits of mantissa (3 × 64)
-    uint64_t exp_sign;      // 19 exponent bits + 1 sign bit + remaining mantissa bits
-} ferret_f256;
+FERRET_FLOAT_SPECS(FERRET_DECLARE_FLOAT_TYPES)
+#undef FERRET_DECLARE_FLOAT_TYPES
 
-// 128-bit floating point operations
-#ifdef FERRET_HAS_FLOAT128
-    // Native operations - compiler handles these
-    #define ferret_f128_add(a, b) ((a) + (b))
-    #define ferret_f128_sub(a, b) ((a) - (b))
-    #define ferret_f128_mul(a, b) ((a) * (b))
-    #define ferret_f128_div(a, b) ((a) / (b))
-    #define ferret_f128_eq(a, b) ((a) == (b))
-    #define ferret_f128_lt(a, b) ((a) < (b))
-    #define ferret_f128_gt(a, b) ((a) > (b))
-#else
-    // Struct-based operations - implemented in bigint.c
-    ferret_f128 ferret_f128_add(ferret_f128 a, ferret_f128 b);
-    ferret_f128 ferret_f128_sub(ferret_f128 a, ferret_f128 b);
-    ferret_f128 ferret_f128_mul(ferret_f128 a, ferret_f128 b);
-    ferret_f128 ferret_f128_div(ferret_f128 a, ferret_f128 b);
-    bool ferret_f128_eq(ferret_f128 a, ferret_f128 b);
-    bool ferret_f128_lt(ferret_f128 a, ferret_f128 b);
-    bool ferret_f128_gt(ferret_f128 a, ferret_f128 b);
-#endif
-
-// 256-bit floating point operations (always implemented in bigint.c)
-ferret_f256 ferret_f256_add(ferret_f256 a, ferret_f256 b);
-ferret_f256 ferret_f256_sub(ferret_f256 a, ferret_f256 b);
-ferret_f256 ferret_f256_mul(ferret_f256 a, ferret_f256 b);
-ferret_f256 ferret_f256_div(ferret_f256 a, ferret_f256 b);
-bool ferret_f256_eq(ferret_f256 a, ferret_f256 b);
-bool ferret_f256_lt(ferret_f256 a, ferret_f256 b);
-bool ferret_f256_gt(ferret_f256 a, ferret_f256 b);
+// Floating point operations
+#define FERRET_DECL_FLOAT_OPS(BITS, WORDS, FRAC_BITS, EXP_BITS, EXP_BIAS, DEC_DIG) \
+    ferret_f##BITS ferret_f##BITS##_add(ferret_f##BITS a, ferret_f##BITS b); \
+    ferret_f##BITS ferret_f##BITS##_sub(ferret_f##BITS a, ferret_f##BITS b); \
+    ferret_f##BITS ferret_f##BITS##_mul(ferret_f##BITS a, ferret_f##BITS b); \
+    ferret_f##BITS ferret_f##BITS##_div(ferret_f##BITS a, ferret_f##BITS b); \
+    bool ferret_f##BITS##_eq(ferret_f##BITS a, ferret_f##BITS b); \
+    bool ferret_f##BITS##_lt(ferret_f##BITS a, ferret_f##BITS b); \
+    bool ferret_f##BITS##_gt(ferret_f##BITS a, ferret_f##BITS b);
 
 // Conversion functions for floating point
-ferret_f128 ferret_f128_from_f64(double val);
-ferret_f256 ferret_f256_from_f64(double val);
-double ferret_f128_to_f64(ferret_f128 val);
-double ferret_f256_to_f64(ferret_f256 val);
+#define FERRET_DECL_FLOAT_CONV(BITS, WORDS, FRAC_BITS, EXP_BITS, EXP_BIAS, DEC_DIG) \
+    ferret_f##BITS ferret_f##BITS##_from_f64(double val); \
+    double ferret_f##BITS##_to_f64(ferret_f##BITS val); \
+    char* ferret_f##BITS##_to_string(ferret_f##BITS val); \
+    ferret_f##BITS ferret_f##BITS##_from_string(const char* str);
 
+FERRET_FLOAT_SPECS(FERRET_DECL_FLOAT_OPS)
+FERRET_FLOAT_SPECS(FERRET_DECL_FLOAT_CONV)
+
+#undef FERRET_DECL_FLOAT_OPS
+#undef FERRET_DECL_FLOAT_CONV
 // Bitwise operations for integers
 #define FERRET_DECL_SIGNED_INT_BITS(BITS) \
     ferret_i##BITS ferret_i##BITS##_and(ferret_i##BITS a, ferret_i##BITS b); \
@@ -182,12 +149,6 @@ FERRET_INT_WIDTHS(FERRET_DECL_UNSIGNED_INT_BITS)
 
 FERRET_INT_WIDTHS(FERRET_DECL_INT_STRINGS)
 #undef FERRET_DECL_INT_STRINGS
-
-char* ferret_f128_to_string(ferret_f128 val);
-char* ferret_f256_to_string(ferret_f256 val);
-
-ferret_f128 ferret_f128_from_string(const char* str);
-ferret_f256 ferret_f256_from_string(const char* str);
 
 // Pointer-based helpers (for MIR/QBE lowering)
 void ferret_memcpy(void* dst, const void* src, uint64_t size);
@@ -222,25 +183,18 @@ void ferret_memcpy(void* dst, const void* src, uint64_t size);
 
 FERRET_INT_WIDTHS(FERRET_DECL_INT_PTR_OPS)
 #undef FERRET_DECL_INT_PTR_OPS
+#define FERRET_DECL_FLOAT_PTR_OPS(BITS, WORDS, FRAC_BITS, EXP_BITS, EXP_BIAS, DEC_DIG) \
+    void ferret_f##BITS##_add_ptr(const ferret_f##BITS* a, const ferret_f##BITS* b, ferret_f##BITS* out); \
+    void ferret_f##BITS##_sub_ptr(const ferret_f##BITS* a, const ferret_f##BITS* b, ferret_f##BITS* out); \
+    void ferret_f##BITS##_mul_ptr(const ferret_f##BITS* a, const ferret_f##BITS* b, ferret_f##BITS* out); \
+    void ferret_f##BITS##_div_ptr(const ferret_f##BITS* a, const ferret_f##BITS* b, ferret_f##BITS* out); \
+    bool ferret_f##BITS##_eq_ptr(const ferret_f##BITS* a, const ferret_f##BITS* b); \
+    bool ferret_f##BITS##_lt_ptr(const ferret_f##BITS* a, const ferret_f##BITS* b); \
+    bool ferret_f##BITS##_gt_ptr(const ferret_f##BITS* a, const ferret_f##BITS* b); \
+    void ferret_f##BITS##_pow_ptr(const ferret_f##BITS* base, const ferret_f##BITS* exp, ferret_f##BITS* out);
 
-void ferret_f128_add_ptr(const ferret_f128* a, const ferret_f128* b, ferret_f128* out);
-void ferret_f128_sub_ptr(const ferret_f128* a, const ferret_f128* b, ferret_f128* out);
-void ferret_f128_mul_ptr(const ferret_f128* a, const ferret_f128* b, ferret_f128* out);
-void ferret_f128_div_ptr(const ferret_f128* a, const ferret_f128* b, ferret_f128* out);
-bool ferret_f128_eq_ptr(const ferret_f128* a, const ferret_f128* b);
-bool ferret_f128_lt_ptr(const ferret_f128* a, const ferret_f128* b);
-bool ferret_f128_gt_ptr(const ferret_f128* a, const ferret_f128* b);
-void ferret_f128_pow_ptr(const ferret_f128* base, const ferret_f128* exp, ferret_f128* out);
-
-void ferret_f256_add_ptr(const ferret_f256* a, const ferret_f256* b, ferret_f256* out);
-void ferret_f256_sub_ptr(const ferret_f256* a, const ferret_f256* b, ferret_f256* out);
-void ferret_f256_mul_ptr(const ferret_f256* a, const ferret_f256* b, ferret_f256* out);
-void ferret_f256_div_ptr(const ferret_f256* a, const ferret_f256* b, ferret_f256* out);
-bool ferret_f256_eq_ptr(const ferret_f256* a, const ferret_f256* b);
-bool ferret_f256_lt_ptr(const ferret_f256* a, const ferret_f256* b);
-bool ferret_f256_gt_ptr(const ferret_f256* a, const ferret_f256* b);
-void ferret_f256_pow_ptr(const ferret_f256* base, const ferret_f256* exp, ferret_f256* out);
-
+FERRET_FLOAT_SPECS(FERRET_DECL_FLOAT_PTR_OPS)
+#undef FERRET_DECL_FLOAT_PTR_OPS
 #define FERRET_DECL_INT_PTR_CONV(BITS) \
     void ferret_i##BITS##_from_i64_ptr(int64_t val, ferret_i##BITS* out); \
     void ferret_u##BITS##_from_u64_ptr(uint64_t val, ferret_u##BITS* out); \
@@ -253,17 +207,12 @@ void ferret_f256_pow_ptr(const ferret_f256* base, const ferret_f256* exp, ferret
 
 FERRET_INT_WIDTHS(FERRET_DECL_INT_PTR_CONV)
 #undef FERRET_DECL_INT_PTR_CONV
+#define FERRET_DECL_FLOAT_PTR_CONV(BITS, WORDS, FRAC_BITS, EXP_BITS, EXP_BIAS, DEC_DIG) \
+    void ferret_f##BITS##_from_f64_ptr(double val, ferret_f##BITS* out); \
+    double ferret_f##BITS##_to_f64_ptr(const ferret_f##BITS* val); \
+    char* ferret_f##BITS##_to_string_ptr(const ferret_f##BITS* val); \
+    void ferret_f##BITS##_from_string_ptr(const char* str, ferret_f##BITS* out);
 
-void ferret_f128_from_f64_ptr(double val, ferret_f128* out);
-void ferret_f256_from_f64_ptr(double val, ferret_f256* out);
-
-double ferret_f128_to_f64_ptr(const ferret_f128* val);
-double ferret_f256_to_f64_ptr(const ferret_f256* val);
-
-char* ferret_f128_to_string_ptr(const ferret_f128* val);
-char* ferret_f256_to_string_ptr(const ferret_f256* val);
-
-void ferret_f128_from_string_ptr(const char* str, ferret_f128* out);
-void ferret_f256_from_string_ptr(const char* str, ferret_f256* out);
-
+FERRET_FLOAT_SPECS(FERRET_DECL_FLOAT_PTR_CONV)
+#undef FERRET_DECL_FLOAT_PTR_CONV
 #endif // FERRET_BIGINT_H
