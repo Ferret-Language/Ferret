@@ -361,13 +361,21 @@ static char* ferret_limbs_to_decimal(const ferret_limb_t* val, int n) {
         return out;
     }
 
-    char digits[80];
-    int len = 0;
-    ferret_limb_t work[FERRET_U256_LIMBS];
-    ferret_limb_t quot[FERRET_U256_LIMBS];
+    int bits = n * FERRET_LIMB_BITS;
+    int max_digits = (int)ceil(bits * 0.30102999566) + 1;
+    char* digits = (char*)malloc((size_t)max_digits);
+    ferret_limb_t* work = (ferret_limb_t*)malloc((size_t)n * sizeof(*work));
+    ferret_limb_t* quot = (ferret_limb_t*)malloc((size_t)n * sizeof(*quot));
+    if (!digits || !work || !quot) {
+        free(digits);
+        free(work);
+        free(quot);
+        return NULL;
+    }
 
-    ferret_zero_limbs(work, FERRET_U256_LIMBS);
-    ferret_zero_limbs(quot, FERRET_U256_LIMBS);
+    int len = 0;
+    ferret_zero_limbs(work, n);
+    ferret_zero_limbs(quot, n);
     ferret_copy_limbs(work, val, n);
 
     while (!ferret_is_zero_limbs(work, n)) {
@@ -377,288 +385,21 @@ static char* ferret_limbs_to_decimal(const ferret_limb_t* val, int n) {
     }
 
     char* out = (char*)malloc((size_t)len + 1);
-    if (!out) return NULL;
+    if (!out) {
+        free(digits);
+        free(work);
+        free(quot);
+        return NULL;
+    }
     for (int i = 0; i < len; i++) {
         out[i] = digits[len - 1 - i];
     }
     out[len] = '\0';
+    free(digits);
+    free(work);
+    free(quot);
     return out;
 }
-
-ferret_i128 ferret_i128_add(ferret_i128 a, ferret_i128 b) {
-    ferret_i128 result;
-    ferret_add_limbs(a.words, b.words, result.words, FERRET_U128_LIMBS);
-    return result;
-}
-
-ferret_i128 ferret_i128_sub(ferret_i128 a, ferret_i128 b) {
-    ferret_i128 result;
-    ferret_sub_limbs(a.words, b.words, result.words, FERRET_U128_LIMBS);
-    return result;
-}
-
-ferret_i128 ferret_i128_mul(ferret_i128 a, ferret_i128 b) {
-    bool neg_a = false;
-    bool neg_b = false;
-    ferret_u128 a_mag;
-    ferret_u128 b_mag;
-    ferret_abs_limbs(a.words, a_mag.words, FERRET_U128_LIMBS, &neg_a);
-    ferret_abs_limbs(b.words, b_mag.words, FERRET_U128_LIMBS, &neg_b);
-
-    ferret_u128 mag;
-    ferret_mul_limbs(a_mag.words, b_mag.words, mag.words, FERRET_U128_LIMBS);
-
-    ferret_i128 result;
-    ferret_copy_limbs(result.words, mag.words, FERRET_U128_LIMBS);
-    if (neg_a != neg_b) {
-        ferret_negate_limbs(result.words, FERRET_U128_LIMBS);
-    }
-    return result;
-}
-
-ferret_i128 ferret_i128_div(ferret_i128 a, ferret_i128 b) {
-    bool neg_a = false;
-    bool neg_b = false;
-    ferret_u128 a_mag;
-    ferret_u128 b_mag;
-    ferret_abs_limbs(a.words, a_mag.words, FERRET_U128_LIMBS, &neg_a);
-    ferret_abs_limbs(b.words, b_mag.words, FERRET_U128_LIMBS, &neg_b);
-
-    ferret_u128 quot;
-    ferret_u128 rem;
-    if (!ferret_div_mod_u_limbs(a_mag.words, b_mag.words, quot.words, rem.words, FERRET_U128_LIMBS)) {
-        ferret_zero_limbs(quot.words, FERRET_U128_LIMBS);
-    }
-
-    ferret_i128 result;
-    ferret_copy_limbs(result.words, quot.words, FERRET_U128_LIMBS);
-    if (neg_a != neg_b) {
-        ferret_negate_limbs(result.words, FERRET_U128_LIMBS);
-    }
-    return result;
-}
-
-ferret_i128 ferret_i128_mod(ferret_i128 a, ferret_i128 b) {
-    bool neg_a = false;
-    bool neg_b = false;
-    ferret_u128 a_mag;
-    ferret_u128 b_mag;
-    ferret_abs_limbs(a.words, a_mag.words, FERRET_U128_LIMBS, &neg_a);
-    ferret_abs_limbs(b.words, b_mag.words, FERRET_U128_LIMBS, &neg_b);
-
-    ferret_u128 quot;
-    ferret_u128 rem;
-    if (!ferret_div_mod_u_limbs(a_mag.words, b_mag.words, quot.words, rem.words, FERRET_U128_LIMBS)) {
-        ferret_zero_limbs(rem.words, FERRET_U128_LIMBS);
-    }
-
-    ferret_i128 result;
-    ferret_copy_limbs(result.words, rem.words, FERRET_U128_LIMBS);
-    if (neg_a) {
-        ferret_negate_limbs(result.words, FERRET_U128_LIMBS);
-    }
-    (void)neg_b;
-    return result;
-}
-
-bool ferret_i128_eq(ferret_i128 a, ferret_i128 b) {
-    return memcmp(a.words, b.words, sizeof(a.words)) == 0;
-}
-
-bool ferret_i128_lt(ferret_i128 a, ferret_i128 b) {
-    return ferret_cmp_s_limbs(a.words, b.words, FERRET_U128_LIMBS) < 0;
-}
-
-bool ferret_i128_gt(ferret_i128 a, ferret_i128 b) {
-    return ferret_cmp_s_limbs(a.words, b.words, FERRET_U128_LIMBS) > 0;
-}
-
-ferret_u128 ferret_u128_add(ferret_u128 a, ferret_u128 b) {
-    ferret_u128 result;
-    ferret_add_limbs(a.words, b.words, result.words, FERRET_U128_LIMBS);
-    return result;
-}
-
-ferret_u128 ferret_u128_sub(ferret_u128 a, ferret_u128 b) {
-    ferret_u128 result;
-    ferret_sub_limbs(a.words, b.words, result.words, FERRET_U128_LIMBS);
-    return result;
-}
-
-ferret_u128 ferret_u128_mul(ferret_u128 a, ferret_u128 b) {
-    ferret_u128 result;
-    ferret_mul_limbs(a.words, b.words, result.words, FERRET_U128_LIMBS);
-    return result;
-}
-
-ferret_u128 ferret_u128_div(ferret_u128 a, ferret_u128 b) {
-    ferret_u128 result;
-    ferret_u128 rem;
-    if (!ferret_div_mod_u_limbs(a.words, b.words, result.words, rem.words, FERRET_U128_LIMBS)) {
-        ferret_zero_limbs(result.words, FERRET_U128_LIMBS);
-    }
-    return result;
-}
-
-ferret_u128 ferret_u128_mod(ferret_u128 a, ferret_u128 b) {
-    ferret_u128 quot;
-    ferret_u128 rem;
-    if (!ferret_div_mod_u_limbs(a.words, b.words, quot.words, rem.words, FERRET_U128_LIMBS)) {
-        ferret_zero_limbs(rem.words, FERRET_U128_LIMBS);
-    }
-    return rem;
-}
-
-bool ferret_u128_eq(ferret_u128 a, ferret_u128 b) {
-    return memcmp(a.words, b.words, sizeof(a.words)) == 0;
-}
-
-bool ferret_u128_lt(ferret_u128 a, ferret_u128 b) {
-    return ferret_cmp_u_limbs(a.words, b.words, FERRET_U128_LIMBS) < 0;
-}
-
-bool ferret_u128_gt(ferret_u128 a, ferret_u128 b) {
-    return ferret_cmp_u_limbs(a.words, b.words, FERRET_U128_LIMBS) > 0;
-}
-
-ferret_i256 ferret_i256_add(ferret_i256 a, ferret_i256 b) {
-    ferret_i256 result;
-    ferret_add_limbs(a.words, b.words, result.words, FERRET_U256_LIMBS);
-    return result;
-}
-
-ferret_i256 ferret_i256_sub(ferret_i256 a, ferret_i256 b) {
-    ferret_i256 result;
-    ferret_sub_limbs(a.words, b.words, result.words, FERRET_U256_LIMBS);
-    return result;
-}
-
-ferret_i256 ferret_i256_mul(ferret_i256 a, ferret_i256 b) {
-    bool neg_a = false;
-    bool neg_b = false;
-    ferret_u256 a_mag;
-    ferret_u256 b_mag;
-    ferret_abs_limbs(a.words, a_mag.words, FERRET_U256_LIMBS, &neg_a);
-    ferret_abs_limbs(b.words, b_mag.words, FERRET_U256_LIMBS, &neg_b);
-
-    ferret_u256 mag;
-    ferret_mul_limbs(a_mag.words, b_mag.words, mag.words, FERRET_U256_LIMBS);
-
-    ferret_i256 result;
-    ferret_copy_limbs(result.words, mag.words, FERRET_U256_LIMBS);
-    if (neg_a != neg_b) {
-        ferret_negate_limbs(result.words, FERRET_U256_LIMBS);
-    }
-    return result;
-}
-
-ferret_i256 ferret_i256_div(ferret_i256 a, ferret_i256 b) {
-    bool neg_a = false;
-    bool neg_b = false;
-    ferret_u256 a_mag;
-    ferret_u256 b_mag;
-    ferret_abs_limbs(a.words, a_mag.words, FERRET_U256_LIMBS, &neg_a);
-    ferret_abs_limbs(b.words, b_mag.words, FERRET_U256_LIMBS, &neg_b);
-
-    ferret_u256 quot;
-    ferret_u256 rem;
-    if (!ferret_div_mod_u_limbs(a_mag.words, b_mag.words, quot.words, rem.words, FERRET_U256_LIMBS)) {
-        ferret_zero_limbs(quot.words, FERRET_U256_LIMBS);
-    }
-
-    ferret_i256 result;
-    ferret_copy_limbs(result.words, quot.words, FERRET_U256_LIMBS);
-    if (neg_a != neg_b) {
-        ferret_negate_limbs(result.words, FERRET_U256_LIMBS);
-    }
-    return result;
-}
-
-ferret_i256 ferret_i256_mod(ferret_i256 a, ferret_i256 b) {
-    bool neg_a = false;
-    bool neg_b = false;
-    ferret_u256 a_mag;
-    ferret_u256 b_mag;
-    ferret_abs_limbs(a.words, a_mag.words, FERRET_U256_LIMBS, &neg_a);
-    ferret_abs_limbs(b.words, b_mag.words, FERRET_U256_LIMBS, &neg_b);
-
-    ferret_u256 quot;
-    ferret_u256 rem;
-    if (!ferret_div_mod_u_limbs(a_mag.words, b_mag.words, quot.words, rem.words, FERRET_U256_LIMBS)) {
-        ferret_zero_limbs(rem.words, FERRET_U256_LIMBS);
-    }
-
-    ferret_i256 result;
-    ferret_copy_limbs(result.words, rem.words, FERRET_U256_LIMBS);
-    if (neg_a) {
-        ferret_negate_limbs(result.words, FERRET_U256_LIMBS);
-    }
-    (void)neg_b;
-    return result;
-}
-
-bool ferret_i256_eq(ferret_i256 a, ferret_i256 b) {
-    return memcmp(a.words, b.words, sizeof(a.words)) == 0;
-}
-
-bool ferret_i256_lt(ferret_i256 a, ferret_i256 b) {
-    return ferret_cmp_s_limbs(a.words, b.words, FERRET_U256_LIMBS) < 0;
-}
-
-bool ferret_i256_gt(ferret_i256 a, ferret_i256 b) {
-    return ferret_cmp_s_limbs(a.words, b.words, FERRET_U256_LIMBS) > 0;
-}
-
-ferret_u256 ferret_u256_add(ferret_u256 a, ferret_u256 b) {
-    ferret_u256 result;
-    ferret_add_limbs(a.words, b.words, result.words, FERRET_U256_LIMBS);
-    return result;
-}
-
-ferret_u256 ferret_u256_sub(ferret_u256 a, ferret_u256 b) {
-    ferret_u256 result;
-    ferret_sub_limbs(a.words, b.words, result.words, FERRET_U256_LIMBS);
-    return result;
-}
-
-ferret_u256 ferret_u256_mul(ferret_u256 a, ferret_u256 b) {
-    ferret_u256 result;
-    ferret_mul_limbs(a.words, b.words, result.words, FERRET_U256_LIMBS);
-    return result;
-}
-
-ferret_u256 ferret_u256_div(ferret_u256 a, ferret_u256 b) {
-    ferret_u256 result;
-    ferret_u256 rem;
-    if (!ferret_div_mod_u_limbs(a.words, b.words, result.words, rem.words, FERRET_U256_LIMBS)) {
-        ferret_zero_limbs(result.words, FERRET_U256_LIMBS);
-    }
-    return result;
-}
-
-ferret_u256 ferret_u256_mod(ferret_u256 a, ferret_u256 b) {
-    ferret_u256 quot;
-    ferret_u256 rem;
-    if (!ferret_div_mod_u_limbs(a.words, b.words, quot.words, rem.words, FERRET_U256_LIMBS)) {
-        ferret_zero_limbs(rem.words, FERRET_U256_LIMBS);
-    }
-    return rem;
-}
-
-bool ferret_u256_eq(ferret_u256 a, ferret_u256 b) {
-    return memcmp(a.words, b.words, sizeof(a.words)) == 0;
-}
-
-bool ferret_u256_lt(ferret_u256 a, ferret_u256 b) {
-    return ferret_cmp_u_limbs(a.words, b.words, FERRET_U256_LIMBS) < 0;
-}
-
-bool ferret_u256_gt(ferret_u256 a, ferret_u256 b) {
-    return ferret_cmp_u_limbs(a.words, b.words, FERRET_U256_LIMBS) > 0;
-}
-
-// Power functions using binary exponentiation (exponentiation by squaring)
-// For integer bases: base^exp where exp is treated as unsigned
 
 // Helper: check if lowest bit is set
 static bool ferret_is_odd_limbs(const ferret_limb_t* v) {
@@ -673,367 +414,320 @@ static void ferret_shr1_limbs(ferret_limb_t* v, int n) {
     v[n - 1] >>= 1;
 }
 
-ferret_i128 ferret_i128_pow(ferret_i128 base, ferret_i128 exp) {
-    // Handle negative exponent: return 0 (integer division truncates toward zero)
-    ferret_i128 zero;
-    ferret_zero_limbs(zero.words, FERRET_U128_LIMBS);
-    if (ferret_cmp_s_limbs(exp.words, zero.words, FERRET_U128_LIMBS) < 0) {
-        return zero;
+#define FERRET_DEFINE_SIGNED_INT_ARITH(BITS) \
+    ferret_i##BITS ferret_i##BITS##_add(ferret_i##BITS a, ferret_i##BITS b) { \
+        ferret_i##BITS result; \
+        ferret_add_limbs(a.words, b.words, result.words, FERRET_U##BITS##_LIMBS); \
+        return result; \
+    } \
+    ferret_i##BITS ferret_i##BITS##_sub(ferret_i##BITS a, ferret_i##BITS b) { \
+        ferret_i##BITS result; \
+        ferret_sub_limbs(a.words, b.words, result.words, FERRET_U##BITS##_LIMBS); \
+        return result; \
+    } \
+    ferret_i##BITS ferret_i##BITS##_mul(ferret_i##BITS a, ferret_i##BITS b) { \
+        bool neg_a = false; \
+        bool neg_b = false; \
+        ferret_u##BITS a_mag; \
+        ferret_u##BITS b_mag; \
+        ferret_abs_limbs(a.words, a_mag.words, FERRET_U##BITS##_LIMBS, &neg_a); \
+        ferret_abs_limbs(b.words, b_mag.words, FERRET_U##BITS##_LIMBS, &neg_b); \
+        ferret_u##BITS mag; \
+        ferret_mul_limbs(a_mag.words, b_mag.words, mag.words, FERRET_U##BITS##_LIMBS); \
+        ferret_i##BITS result; \
+        ferret_copy_limbs(result.words, mag.words, FERRET_U##BITS##_LIMBS); \
+        if (neg_a != neg_b) { \
+            ferret_negate_limbs(result.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        return result; \
+    } \
+    ferret_i##BITS ferret_i##BITS##_div(ferret_i##BITS a, ferret_i##BITS b) { \
+        bool neg_a = false; \
+        bool neg_b = false; \
+        ferret_u##BITS a_mag; \
+        ferret_u##BITS b_mag; \
+        ferret_abs_limbs(a.words, a_mag.words, FERRET_U##BITS##_LIMBS, &neg_a); \
+        ferret_abs_limbs(b.words, b_mag.words, FERRET_U##BITS##_LIMBS, &neg_b); \
+        ferret_u##BITS quot; \
+        ferret_u##BITS rem; \
+        if (!ferret_div_mod_u_limbs(a_mag.words, b_mag.words, quot.words, rem.words, FERRET_U##BITS##_LIMBS)) { \
+            ferret_zero_limbs(quot.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        ferret_i##BITS result; \
+        ferret_copy_limbs(result.words, quot.words, FERRET_U##BITS##_LIMBS); \
+        if (neg_a != neg_b) { \
+            ferret_negate_limbs(result.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        return result; \
+    } \
+    ferret_i##BITS ferret_i##BITS##_mod(ferret_i##BITS a, ferret_i##BITS b) { \
+        bool neg_a = false; \
+        bool neg_b = false; \
+        ferret_u##BITS a_mag; \
+        ferret_u##BITS b_mag; \
+        ferret_abs_limbs(a.words, a_mag.words, FERRET_U##BITS##_LIMBS, &neg_a); \
+        ferret_abs_limbs(b.words, b_mag.words, FERRET_U##BITS##_LIMBS, &neg_b); \
+        ferret_u##BITS quot; \
+        ferret_u##BITS rem; \
+        if (!ferret_div_mod_u_limbs(a_mag.words, b_mag.words, quot.words, rem.words, FERRET_U##BITS##_LIMBS)) { \
+            ferret_zero_limbs(rem.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        ferret_i##BITS result; \
+        ferret_copy_limbs(result.words, rem.words, FERRET_U##BITS##_LIMBS); \
+        if (neg_a) { \
+            ferret_negate_limbs(result.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        (void)neg_b; \
+        return result; \
+    } \
+    bool ferret_i##BITS##_eq(ferret_i##BITS a, ferret_i##BITS b) { \
+        return memcmp(a.words, b.words, sizeof(a.words)) == 0; \
+    } \
+    bool ferret_i##BITS##_lt(ferret_i##BITS a, ferret_i##BITS b) { \
+        return ferret_cmp_s_limbs(a.words, b.words, FERRET_U##BITS##_LIMBS) < 0; \
+    } \
+    bool ferret_i##BITS##_gt(ferret_i##BITS a, ferret_i##BITS b) { \
+        return ferret_cmp_s_limbs(a.words, b.words, FERRET_U##BITS##_LIMBS) > 0; \
     }
-    
-    // result = 1
-    ferret_i128 result;
-    ferret_limbs_from_i64(result.words, FERRET_U128_LIMBS, 1);
-    
-    // exp_copy for iteration
-    ferret_i128 exp_copy = exp;
-    
-    // Binary exponentiation
-    while (!ferret_is_zero_limbs(exp_copy.words, FERRET_U128_LIMBS)) {
-        if (ferret_is_odd_limbs(exp_copy.words)) {
-            result = ferret_i128_mul(result, base);
-        }
-        base = ferret_i128_mul(base, base);
-        ferret_shr1_limbs(exp_copy.words, FERRET_U128_LIMBS);
+
+#define FERRET_DEFINE_UNSIGNED_INT_ARITH(BITS) \
+    ferret_u##BITS ferret_u##BITS##_add(ferret_u##BITS a, ferret_u##BITS b) { \
+        ferret_u##BITS result; \
+        ferret_add_limbs(a.words, b.words, result.words, FERRET_U##BITS##_LIMBS); \
+        return result; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_sub(ferret_u##BITS a, ferret_u##BITS b) { \
+        ferret_u##BITS result; \
+        ferret_sub_limbs(a.words, b.words, result.words, FERRET_U##BITS##_LIMBS); \
+        return result; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_mul(ferret_u##BITS a, ferret_u##BITS b) { \
+        ferret_u##BITS result; \
+        ferret_mul_limbs(a.words, b.words, result.words, FERRET_U##BITS##_LIMBS); \
+        return result; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_div(ferret_u##BITS a, ferret_u##BITS b) { \
+        ferret_u##BITS result; \
+        ferret_u##BITS rem; \
+        if (!ferret_div_mod_u_limbs(a.words, b.words, result.words, rem.words, FERRET_U##BITS##_LIMBS)) { \
+            ferret_zero_limbs(result.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        return result; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_mod(ferret_u##BITS a, ferret_u##BITS b) { \
+        ferret_u##BITS quot; \
+        ferret_u##BITS rem; \
+        if (!ferret_div_mod_u_limbs(a.words, b.words, quot.words, rem.words, FERRET_U##BITS##_LIMBS)) { \
+            ferret_zero_limbs(rem.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        return rem; \
+    } \
+    bool ferret_u##BITS##_eq(ferret_u##BITS a, ferret_u##BITS b) { \
+        return memcmp(a.words, b.words, sizeof(a.words)) == 0; \
+    } \
+    bool ferret_u##BITS##_lt(ferret_u##BITS a, ferret_u##BITS b) { \
+        return ferret_cmp_u_limbs(a.words, b.words, FERRET_U##BITS##_LIMBS) < 0; \
+    } \
+    bool ferret_u##BITS##_gt(ferret_u##BITS a, ferret_u##BITS b) { \
+        return ferret_cmp_u_limbs(a.words, b.words, FERRET_U##BITS##_LIMBS) > 0; \
     }
-    
-    return result;
-}
 
-ferret_u128 ferret_u128_pow(ferret_u128 base, ferret_u128 exp) {
-    // result = 1
-    ferret_u128 result;
-    ferret_limbs_from_u64(result.words, FERRET_U128_LIMBS, 1);
-    
-    // exp_copy for iteration
-    ferret_u128 exp_copy = exp;
-    
-    // Binary exponentiation
-    while (!ferret_is_zero_limbs(exp_copy.words, FERRET_U128_LIMBS)) {
-        if (ferret_is_odd_limbs(exp_copy.words)) {
-            result = ferret_u128_mul(result, base);
-        }
-        base = ferret_u128_mul(base, base);
-        ferret_shr1_limbs(exp_copy.words, FERRET_U128_LIMBS);
+#define FERRET_DEFINE_SIGNED_INT_POW(BITS) \
+    ferret_i##BITS ferret_i##BITS##_pow(ferret_i##BITS base, ferret_i##BITS exp) { \
+        ferret_i##BITS zero; \
+        ferret_zero_limbs(zero.words, FERRET_U##BITS##_LIMBS); \
+        if (ferret_cmp_s_limbs(exp.words, zero.words, FERRET_U##BITS##_LIMBS) < 0) { \
+            return zero; \
+        } \
+        ferret_i##BITS result; \
+        ferret_limbs_from_i64(result.words, FERRET_U##BITS##_LIMBS, 1); \
+        ferret_i##BITS exp_copy = exp; \
+        while (!ferret_is_zero_limbs(exp_copy.words, FERRET_U##BITS##_LIMBS)) { \
+            if (ferret_is_odd_limbs(exp_copy.words)) { \
+                result = ferret_i##BITS##_mul(result, base); \
+            } \
+            base = ferret_i##BITS##_mul(base, base); \
+            ferret_shr1_limbs(exp_copy.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        return result; \
     }
-    
-    return result;
-}
 
-ferret_i256 ferret_i256_pow(ferret_i256 base, ferret_i256 exp) {
-    // Handle negative exponent: return 0
-    ferret_i256 zero;
-    ferret_zero_limbs(zero.words, FERRET_U256_LIMBS);
-    if (ferret_cmp_s_limbs(exp.words, zero.words, FERRET_U256_LIMBS) < 0) {
-        return zero;
+#define FERRET_DEFINE_UNSIGNED_INT_POW(BITS) \
+    ferret_u##BITS ferret_u##BITS##_pow(ferret_u##BITS base, ferret_u##BITS exp) { \
+        ferret_u##BITS result; \
+        ferret_limbs_from_u64(result.words, FERRET_U##BITS##_LIMBS, 1); \
+        ferret_u##BITS exp_copy = exp; \
+        while (!ferret_is_zero_limbs(exp_copy.words, FERRET_U##BITS##_LIMBS)) { \
+            if (ferret_is_odd_limbs(exp_copy.words)) { \
+                result = ferret_u##BITS##_mul(result, base); \
+            } \
+            base = ferret_u##BITS##_mul(base, base); \
+            ferret_shr1_limbs(exp_copy.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        return result; \
     }
-    
-    // result = 1
-    ferret_i256 result;
-    ferret_limbs_from_i64(result.words, FERRET_U256_LIMBS, 1);
-    
-    // exp_copy for iteration
-    ferret_i256 exp_copy = exp;
-    
-    // Binary exponentiation
-    while (!ferret_is_zero_limbs(exp_copy.words, FERRET_U256_LIMBS)) {
-        if (ferret_is_odd_limbs(exp_copy.words)) {
-            result = ferret_i256_mul(result, base);
-        }
-        base = ferret_i256_mul(base, base);
-        ferret_shr1_limbs(exp_copy.words, FERRET_U256_LIMBS);
+
+#define FERRET_DEFINE_SIGNED_INT_BITS(BITS) \
+    ferret_i##BITS ferret_i##BITS##_and(ferret_i##BITS a, ferret_i##BITS b) { \
+        ferret_i##BITS result; \
+        for (int i = 0; i < FERRET_U##BITS##_LIMBS; i++) { \
+            result.words[i] = (ferret_limb_t)(a.words[i] & b.words[i]); \
+        } \
+        return result; \
+    } \
+    ferret_i##BITS ferret_i##BITS##_or(ferret_i##BITS a, ferret_i##BITS b) { \
+        ferret_i##BITS result; \
+        for (int i = 0; i < FERRET_U##BITS##_LIMBS; i++) { \
+            result.words[i] = (ferret_limb_t)(a.words[i] | b.words[i]); \
+        } \
+        return result; \
+    } \
+    ferret_i##BITS ferret_i##BITS##_xor(ferret_i##BITS a, ferret_i##BITS b) { \
+        ferret_i##BITS result; \
+        for (int i = 0; i < FERRET_U##BITS##_LIMBS; i++) { \
+            result.words[i] = (ferret_limb_t)(a.words[i] ^ b.words[i]); \
+        } \
+        return result; \
+    } \
+    ferret_i##BITS ferret_i##BITS##_not(ferret_i##BITS a) { \
+        ferret_i##BITS result; \
+        for (int i = 0; i < FERRET_U##BITS##_LIMBS; i++) { \
+            result.words[i] = (ferret_limb_t)~a.words[i]; \
+        } \
+        return result; \
+    } \
+    ferret_i##BITS ferret_i##BITS##_shl(ferret_i##BITS a, int n) { \
+        ferret_i##BITS result; \
+        ferret_shift_left_limbs(a.words, FERRET_U##BITS##_LIMBS, n, result.words); \
+        return result; \
+    } \
+    ferret_i##BITS ferret_i##BITS##_shr(ferret_i##BITS a, int n) { \
+        ferret_i##BITS result; \
+        ferret_shift_right_signed_limbs(a.words, FERRET_U##BITS##_LIMBS, n, result.words); \
+        return result; \
     }
-    
-    return result;
-}
 
-ferret_u256 ferret_u256_pow(ferret_u256 base, ferret_u256 exp) {
-    // result = 1
-    ferret_u256 result;
-    ferret_limbs_from_u64(result.words, FERRET_U256_LIMBS, 1);
-    
-    // exp_copy for iteration
-    ferret_u256 exp_copy = exp;
-    
-    // Binary exponentiation
-    while (!ferret_is_zero_limbs(exp_copy.words, FERRET_U256_LIMBS)) {
-        if (ferret_is_odd_limbs(exp_copy.words)) {
-            result = ferret_u256_mul(result, base);
-        }
-        base = ferret_u256_mul(base, base);
-        ferret_shr1_limbs(exp_copy.words, FERRET_U256_LIMBS);
+#define FERRET_DEFINE_UNSIGNED_INT_BITS(BITS) \
+    ferret_u##BITS ferret_u##BITS##_and(ferret_u##BITS a, ferret_u##BITS b) { \
+        ferret_u##BITS result; \
+        for (int i = 0; i < FERRET_U##BITS##_LIMBS; i++) { \
+            result.words[i] = (ferret_limb_t)(a.words[i] & b.words[i]); \
+        } \
+        return result; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_or(ferret_u##BITS a, ferret_u##BITS b) { \
+        ferret_u##BITS result; \
+        for (int i = 0; i < FERRET_U##BITS##_LIMBS; i++) { \
+            result.words[i] = (ferret_limb_t)(a.words[i] | b.words[i]); \
+        } \
+        return result; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_xor(ferret_u##BITS a, ferret_u##BITS b) { \
+        ferret_u##BITS result; \
+        for (int i = 0; i < FERRET_U##BITS##_LIMBS; i++) { \
+            result.words[i] = (ferret_limb_t)(a.words[i] ^ b.words[i]); \
+        } \
+        return result; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_not(ferret_u##BITS a) { \
+        ferret_u##BITS result; \
+        for (int i = 0; i < FERRET_U##BITS##_LIMBS; i++) { \
+            result.words[i] = (ferret_limb_t)~a.words[i]; \
+        } \
+        return result; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_shl(ferret_u##BITS a, int n) { \
+        ferret_u##BITS result; \
+        ferret_shift_left_limbs(a.words, FERRET_U##BITS##_LIMBS, n, result.words); \
+        return result; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_shr(ferret_u##BITS a, int n) { \
+        ferret_u##BITS result; \
+        ferret_shift_right_limbs(a.words, FERRET_U##BITS##_LIMBS, n, result.words); \
+        return result; \
     }
-    
-    return result;
-}
 
-ferret_i128 ferret_i128_and(ferret_i128 a, ferret_i128 b) {
-    ferret_i128 result;
-    for (int i = 0; i < FERRET_U128_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] & b.words[i]);
+#define FERRET_DEFINE_INT_CONVERSIONS(BITS) \
+    ferret_i##BITS ferret_i##BITS##_from_i64(int64_t val) { \
+        ferret_i##BITS result; \
+        ferret_limbs_from_i64(result.words, FERRET_U##BITS##_LIMBS, val); \
+        return result; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_from_u64(uint64_t val) { \
+        ferret_u##BITS result; \
+        ferret_limbs_from_u64(result.words, FERRET_U##BITS##_LIMBS, val); \
+        return result; \
+    } \
+    int64_t ferret_i##BITS##_to_i64(ferret_i##BITS val) { \
+        return (int64_t)ferret_limbs_to_u64(val.words, FERRET_U##BITS##_LIMBS); \
+    } \
+    uint64_t ferret_u##BITS##_to_u64(ferret_u##BITS val) { \
+        return ferret_limbs_to_u64(val.words, FERRET_U##BITS##_LIMBS); \
     }
-    return result;
-}
 
-ferret_i128 ferret_i128_or(ferret_i128 a, ferret_i128 b) {
-    ferret_i128 result;
-    for (int i = 0; i < FERRET_U128_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] | b.words[i]);
+#define FERRET_DEFINE_INT_STRINGS(BITS) \
+    char* ferret_u##BITS##_to_string(ferret_u##BITS val) { \
+        return ferret_limbs_to_decimal(val.words, FERRET_U##BITS##_LIMBS); \
+    } \
+    char* ferret_i##BITS##_to_string(ferret_i##BITS val) { \
+        bool neg = ferret_is_negative_limbs(val.words, FERRET_U##BITS##_LIMBS); \
+        if (!neg) { \
+            return ferret_limbs_to_decimal(val.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        ferret_u##BITS mag; \
+        ferret_abs_limbs(val.words, mag.words, FERRET_U##BITS##_LIMBS, NULL); \
+        char* digits = ferret_limbs_to_decimal(mag.words, FERRET_U##BITS##_LIMBS); \
+        if (!digits) return NULL; \
+        size_t len = strlen(digits); \
+        char* out = (char*)malloc(len + 2); \
+        if (!out) { \
+            free(digits); \
+            return NULL; \
+        } \
+        out[0] = '-'; \
+        memcpy(out + 1, digits, len + 1); \
+        free(digits); \
+        return out; \
+    } \
+    ferret_i##BITS ferret_i##BITS##_from_string(const char* str) { \
+        ferret_i##BITS out; \
+        bool neg = false; \
+        if (!ferret_parse_uint(str, true, out.words, FERRET_U##BITS##_LIMBS, &neg)) { \
+            ferret_zero_limbs(out.words, FERRET_U##BITS##_LIMBS); \
+            return out; \
+        } \
+        if (neg) { \
+            ferret_negate_limbs(out.words, FERRET_U##BITS##_LIMBS); \
+        } \
+        return out; \
+    } \
+    ferret_u##BITS ferret_u##BITS##_from_string(const char* str) { \
+        ferret_u##BITS out; \
+        bool neg = false; \
+        if (!ferret_parse_uint(str, false, out.words, FERRET_U##BITS##_LIMBS, &neg)) { \
+            ferret_zero_limbs(out.words, FERRET_U##BITS##_LIMBS); \
+            return out; \
+        } \
+        return out; \
     }
-    return result;
-}
 
-ferret_i128 ferret_i128_xor(ferret_i128 a, ferret_i128 b) {
-    ferret_i128 result;
-    for (int i = 0; i < FERRET_U128_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] ^ b.words[i]);
-    }
-    return result;
-}
+FERRET_INT_WIDTHS(FERRET_DEFINE_SIGNED_INT_ARITH)
+FERRET_INT_WIDTHS(FERRET_DEFINE_UNSIGNED_INT_ARITH)
+FERRET_INT_WIDTHS(FERRET_DEFINE_SIGNED_INT_POW)
+FERRET_INT_WIDTHS(FERRET_DEFINE_UNSIGNED_INT_POW)
+FERRET_INT_WIDTHS(FERRET_DEFINE_SIGNED_INT_BITS)
+FERRET_INT_WIDTHS(FERRET_DEFINE_UNSIGNED_INT_BITS)
+FERRET_INT_WIDTHS(FERRET_DEFINE_INT_CONVERSIONS)
+FERRET_INT_WIDTHS(FERRET_DEFINE_INT_STRINGS)
 
-ferret_i128 ferret_i128_not(ferret_i128 a) {
-    ferret_i128 result;
-    for (int i = 0; i < FERRET_U128_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)~a.words[i];
-    }
-    return result;
-}
-
-ferret_i128 ferret_i128_shl(ferret_i128 a, int n) {
-    ferret_i128 result;
-    ferret_shift_left_limbs(a.words, FERRET_U128_LIMBS, n, result.words);
-    return result;
-}
-
-ferret_i128 ferret_i128_shr(ferret_i128 a, int n) {
-    ferret_i128 result;
-    ferret_shift_right_signed_limbs(a.words, FERRET_U128_LIMBS, n, result.words);
-    return result;
-}
-
-ferret_u128 ferret_u128_and(ferret_u128 a, ferret_u128 b) {
-    ferret_u128 result;
-    for (int i = 0; i < FERRET_U128_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] & b.words[i]);
-    }
-    return result;
-}
-
-ferret_u128 ferret_u128_or(ferret_u128 a, ferret_u128 b) {
-    ferret_u128 result;
-    for (int i = 0; i < FERRET_U128_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] | b.words[i]);
-    }
-    return result;
-}
-
-ferret_u128 ferret_u128_xor(ferret_u128 a, ferret_u128 b) {
-    ferret_u128 result;
-    for (int i = 0; i < FERRET_U128_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] ^ b.words[i]);
-    }
-    return result;
-}
-
-ferret_u128 ferret_u128_not(ferret_u128 a) {
-    ferret_u128 result;
-    for (int i = 0; i < FERRET_U128_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)~a.words[i];
-    }
-    return result;
-}
-
-ferret_u128 ferret_u128_shl(ferret_u128 a, int n) {
-    ferret_u128 result;
-    ferret_shift_left_limbs(a.words, FERRET_U128_LIMBS, n, result.words);
-    return result;
-}
-
-ferret_u128 ferret_u128_shr(ferret_u128 a, int n) {
-    ferret_u128 result;
-    ferret_shift_right_limbs(a.words, FERRET_U128_LIMBS, n, result.words);
-    return result;
-}
-
-ferret_i256 ferret_i256_and(ferret_i256 a, ferret_i256 b) {
-    ferret_i256 result;
-    for (int i = 0; i < FERRET_U256_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] & b.words[i]);
-    }
-    return result;
-}
-
-ferret_i256 ferret_i256_or(ferret_i256 a, ferret_i256 b) {
-    ferret_i256 result;
-    for (int i = 0; i < FERRET_U256_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] | b.words[i]);
-    }
-    return result;
-}
-
-ferret_i256 ferret_i256_xor(ferret_i256 a, ferret_i256 b) {
-    ferret_i256 result;
-    for (int i = 0; i < FERRET_U256_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] ^ b.words[i]);
-    }
-    return result;
-}
-
-ferret_i256 ferret_i256_not(ferret_i256 a) {
-    ferret_i256 result;
-    for (int i = 0; i < FERRET_U256_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)~a.words[i];
-    }
-    return result;
-}
-
-ferret_i256 ferret_i256_shl(ferret_i256 a, int n) {
-    ferret_i256 result;
-    ferret_shift_left_limbs(a.words, FERRET_U256_LIMBS, n, result.words);
-    return result;
-}
-
-ferret_i256 ferret_i256_shr(ferret_i256 a, int n) {
-    ferret_i256 result;
-    ferret_shift_right_signed_limbs(a.words, FERRET_U256_LIMBS, n, result.words);
-    return result;
-}
-
-ferret_u256 ferret_u256_and(ferret_u256 a, ferret_u256 b) {
-    ferret_u256 result;
-    for (int i = 0; i < FERRET_U256_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] & b.words[i]);
-    }
-    return result;
-}
-
-ferret_u256 ferret_u256_or(ferret_u256 a, ferret_u256 b) {
-    ferret_u256 result;
-    for (int i = 0; i < FERRET_U256_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] | b.words[i]);
-    }
-    return result;
-}
-
-ferret_u256 ferret_u256_xor(ferret_u256 a, ferret_u256 b) {
-    ferret_u256 result;
-    for (int i = 0; i < FERRET_U256_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)(a.words[i] ^ b.words[i]);
-    }
-    return result;
-}
-
-ferret_u256 ferret_u256_not(ferret_u256 a) {
-    ferret_u256 result;
-    for (int i = 0; i < FERRET_U256_LIMBS; i++) {
-        result.words[i] = (ferret_limb_t)~a.words[i];
-    }
-    return result;
-}
-
-ferret_u256 ferret_u256_shl(ferret_u256 a, int n) {
-    ferret_u256 result;
-    ferret_shift_left_limbs(a.words, FERRET_U256_LIMBS, n, result.words);
-    return result;
-}
-
-ferret_u256 ferret_u256_shr(ferret_u256 a, int n) {
-    ferret_u256 result;
-    ferret_shift_right_limbs(a.words, FERRET_U256_LIMBS, n, result.words);
-    return result;
-}
-
-// Conversion functions
-ferret_i128 ferret_i128_from_i64(int64_t val) {
-    ferret_i128 result;
-    ferret_limbs_from_i64(result.words, FERRET_U128_LIMBS, val);
-    return result;
-}
-
-ferret_u128 ferret_u128_from_u64(uint64_t val) {
-    ferret_u128 result;
-    ferret_limbs_from_u64(result.words, FERRET_U128_LIMBS, val);
-    return result;
-}
-
-ferret_i256 ferret_i256_from_i64(int64_t val) {
-    ferret_i256 result;
-    ferret_limbs_from_i64(result.words, FERRET_U256_LIMBS, val);
-    return result;
-}
-
-ferret_u256 ferret_u256_from_u64(uint64_t val) {
-    ferret_u256 result;
-    ferret_limbs_from_u64(result.words, FERRET_U256_LIMBS, val);
-    return result;
-}
-
-int64_t ferret_i128_to_i64(ferret_i128 val) {
-    return (int64_t)ferret_limbs_to_u64(val.words, FERRET_U128_LIMBS);
-}
-
-uint64_t ferret_u128_to_u64(ferret_u128 val) {
-    return ferret_limbs_to_u64(val.words, FERRET_U128_LIMBS);
-}
-
-int64_t ferret_i256_to_i64(ferret_i256 val) {
-    return (int64_t)ferret_limbs_to_u64(val.words, FERRET_U256_LIMBS);
-}
-
-uint64_t ferret_u256_to_u64(ferret_u256 val) {
-    return ferret_limbs_to_u64(val.words, FERRET_U256_LIMBS);
-}
-
-// String conversion functions
-char* ferret_u128_to_string(ferret_u128 val) {
-    return ferret_limbs_to_decimal(val.words, FERRET_U128_LIMBS);
-}
-
-char* ferret_u256_to_string(ferret_u256 val) {
-    return ferret_limbs_to_decimal(val.words, FERRET_U256_LIMBS);
-}
-
-char* ferret_i128_to_string(ferret_i128 val) {
-    bool neg = ferret_is_negative_limbs(val.words, FERRET_U128_LIMBS);
-    if (!neg) {
-        return ferret_limbs_to_decimal(val.words, FERRET_U128_LIMBS);
-    }
-    ferret_u128 mag;
-    ferret_abs_limbs(val.words, mag.words, FERRET_U128_LIMBS, NULL);
-    char* digits = ferret_limbs_to_decimal(mag.words, FERRET_U128_LIMBS);
-    if (!digits) return NULL;
-    size_t len = strlen(digits);
-    char* out = (char*)malloc(len + 2);
-    if (!out) {
-        free(digits);
-        return NULL;
-    }
-    out[0] = '-';
-    memcpy(out + 1, digits, len + 1);
-    free(digits);
-    return out;
-}
-
-char* ferret_i256_to_string(ferret_i256 val) {
-    bool neg = ferret_is_negative_limbs(val.words, FERRET_U256_LIMBS);
-    if (!neg) {
-        return ferret_limbs_to_decimal(val.words, FERRET_U256_LIMBS);
-    }
-    ferret_u256 mag;
-    ferret_abs_limbs(val.words, mag.words, FERRET_U256_LIMBS, NULL);
-    char* digits = ferret_limbs_to_decimal(mag.words, FERRET_U256_LIMBS);
-    if (!digits) return NULL;
-    size_t len = strlen(digits);
-    char* out = (char*)malloc(len + 2);
-    if (!out) {
-        free(digits);
-        return NULL;
-    }
-    out[0] = '-';
-    memcpy(out + 1, digits, len + 1);
-    free(digits);
-    return out;
-}
+#undef FERRET_DEFINE_SIGNED_INT_ARITH
+#undef FERRET_DEFINE_UNSIGNED_INT_ARITH
+#undef FERRET_DEFINE_SIGNED_INT_POW
+#undef FERRET_DEFINE_UNSIGNED_INT_POW
+#undef FERRET_DEFINE_SIGNED_INT_BITS
+#undef FERRET_DEFINE_UNSIGNED_INT_BITS
+#undef FERRET_DEFINE_INT_CONVERSIONS
+#undef FERRET_DEFINE_INT_STRINGS
 
 // Soft float helpers for f128/f256 fallback implementations.
 typedef enum {
@@ -3542,53 +3236,6 @@ char* ferret_f256_to_string(ferret_f256 val) {
     return soft_format_decimal(sign, exp, sig_raw, SOFT_F256_WORDS, SOFT_F256_SIG_BITS, cls, SOFT_F256_DECIMAL_DIG);
 }
 
-// String to number conversion (supports decimal/hex/oct/bin and underscores)
-ferret_i128 ferret_i128_from_string(const char* str) {
-    ferret_i128 out;
-    bool neg = false;
-    if (!ferret_parse_uint(str, true, out.words, FERRET_U128_LIMBS, &neg)) {
-        ferret_zero_limbs(out.words, FERRET_U128_LIMBS);
-        return out;
-    }
-    if (neg) {
-        ferret_negate_limbs(out.words, FERRET_U128_LIMBS);
-    }
-    return out;
-}
-
-ferret_u128 ferret_u128_from_string(const char* str) {
-    ferret_u128 out;
-    bool neg = false;
-    if (!ferret_parse_uint(str, false, out.words, FERRET_U128_LIMBS, &neg)) {
-        ferret_zero_limbs(out.words, FERRET_U128_LIMBS);
-        return out;
-    }
-    return out;
-}
-
-ferret_i256 ferret_i256_from_string(const char* str) {
-    ferret_i256 out;
-    bool neg = false;
-    if (!ferret_parse_uint(str, true, out.words, FERRET_U256_LIMBS, &neg)) {
-        ferret_zero_limbs(out.words, FERRET_U256_LIMBS);
-        return out;
-    }
-    if (neg) {
-        ferret_negate_limbs(out.words, FERRET_U256_LIMBS);
-    }
-    return out;
-}
-
-ferret_u256 ferret_u256_from_string(const char* str) {
-    ferret_u256 out;
-    bool neg = false;
-    if (!ferret_parse_uint(str, false, out.words, FERRET_U256_LIMBS, &neg)) {
-        ferret_zero_limbs(out.words, FERRET_U256_LIMBS);
-        return out;
-    }
-    return out;
-}
-
 ferret_f128 ferret_f128_from_string(const char* str) {
     if (!str) {
 #ifdef FERRET_HAS_FLOAT128
@@ -3658,59 +3305,36 @@ void ferret_memcpy(void* dst, const void* src, uint64_t size) {
         *out = func(*a); \
     }
 
-FERRET_PTR_BIN_OP(ferret_i128, ferret_i128_add)
-FERRET_PTR_BIN_OP(ferret_i128, ferret_i128_sub)
-FERRET_PTR_BIN_OP(ferret_i128, ferret_i128_mul)
-FERRET_PTR_BIN_OP(ferret_i128, ferret_i128_div)
-FERRET_PTR_BIN_OP(ferret_i128, ferret_i128_mod)
-FERRET_PTR_CMP_OP(ferret_i128, ferret_i128_eq)
-FERRET_PTR_CMP_OP(ferret_i128, ferret_i128_lt)
-FERRET_PTR_CMP_OP(ferret_i128, ferret_i128_gt)
-FERRET_PTR_BIN_OP(ferret_i128, ferret_i128_and)
-FERRET_PTR_BIN_OP(ferret_i128, ferret_i128_or)
-FERRET_PTR_BIN_OP(ferret_i128, ferret_i128_xor)
-FERRET_PTR_BIN_OP(ferret_i128, ferret_i128_pow)
+#define FERRET_DEFINE_INT_PTR_OPS(BITS) \
+    FERRET_PTR_BIN_OP(ferret_i##BITS, ferret_i##BITS##_add) \
+    FERRET_PTR_BIN_OP(ferret_i##BITS, ferret_i##BITS##_sub) \
+    FERRET_PTR_BIN_OP(ferret_i##BITS, ferret_i##BITS##_mul) \
+    FERRET_PTR_BIN_OP(ferret_i##BITS, ferret_i##BITS##_div) \
+    FERRET_PTR_BIN_OP(ferret_i##BITS, ferret_i##BITS##_mod) \
+    FERRET_PTR_CMP_OP(ferret_i##BITS, ferret_i##BITS##_eq) \
+    FERRET_PTR_CMP_OP(ferret_i##BITS, ferret_i##BITS##_lt) \
+    FERRET_PTR_CMP_OP(ferret_i##BITS, ferret_i##BITS##_gt) \
+    FERRET_PTR_BIN_OP(ferret_i##BITS, ferret_i##BITS##_and) \
+    FERRET_PTR_BIN_OP(ferret_i##BITS, ferret_i##BITS##_or) \
+    FERRET_PTR_BIN_OP(ferret_i##BITS, ferret_i##BITS##_xor) \
+    FERRET_PTR_UNARY_OP(ferret_i##BITS, ferret_i##BITS##_not) \
+    FERRET_PTR_BIN_OP(ferret_i##BITS, ferret_i##BITS##_pow) \
+    FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_add) \
+    FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_sub) \
+    FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_mul) \
+    FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_div) \
+    FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_mod) \
+    FERRET_PTR_CMP_OP(ferret_u##BITS, ferret_u##BITS##_eq) \
+    FERRET_PTR_CMP_OP(ferret_u##BITS, ferret_u##BITS##_lt) \
+    FERRET_PTR_CMP_OP(ferret_u##BITS, ferret_u##BITS##_gt) \
+    FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_and) \
+    FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_or) \
+    FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_xor) \
+    FERRET_PTR_UNARY_OP(ferret_u##BITS, ferret_u##BITS##_not) \
+    FERRET_PTR_BIN_OP(ferret_u##BITS, ferret_u##BITS##_pow)
 
-FERRET_PTR_BIN_OP(ferret_u128, ferret_u128_add)
-FERRET_PTR_BIN_OP(ferret_u128, ferret_u128_sub)
-FERRET_PTR_BIN_OP(ferret_u128, ferret_u128_mul)
-FERRET_PTR_BIN_OP(ferret_u128, ferret_u128_div)
-FERRET_PTR_BIN_OP(ferret_u128, ferret_u128_mod)
-FERRET_PTR_CMP_OP(ferret_u128, ferret_u128_eq)
-FERRET_PTR_CMP_OP(ferret_u128, ferret_u128_lt)
-FERRET_PTR_CMP_OP(ferret_u128, ferret_u128_gt)
-FERRET_PTR_BIN_OP(ferret_u128, ferret_u128_and)
-FERRET_PTR_BIN_OP(ferret_u128, ferret_u128_or)
-FERRET_PTR_BIN_OP(ferret_u128, ferret_u128_xor)
-FERRET_PTR_BIN_OP(ferret_u128, ferret_u128_pow)
-
-FERRET_PTR_BIN_OP(ferret_i256, ferret_i256_add)
-FERRET_PTR_BIN_OP(ferret_i256, ferret_i256_sub)
-FERRET_PTR_BIN_OP(ferret_i256, ferret_i256_mul)
-FERRET_PTR_BIN_OP(ferret_i256, ferret_i256_div)
-FERRET_PTR_BIN_OP(ferret_i256, ferret_i256_mod)
-FERRET_PTR_CMP_OP(ferret_i256, ferret_i256_eq)
-FERRET_PTR_CMP_OP(ferret_i256, ferret_i256_lt)
-FERRET_PTR_CMP_OP(ferret_i256, ferret_i256_gt)
-FERRET_PTR_BIN_OP(ferret_i256, ferret_i256_and)
-FERRET_PTR_BIN_OP(ferret_i256, ferret_i256_or)
-FERRET_PTR_BIN_OP(ferret_i256, ferret_i256_xor)
-FERRET_PTR_UNARY_OP(ferret_i256, ferret_i256_not)
-FERRET_PTR_BIN_OP(ferret_i256, ferret_i256_pow)
-
-FERRET_PTR_BIN_OP(ferret_u256, ferret_u256_add)
-FERRET_PTR_BIN_OP(ferret_u256, ferret_u256_sub)
-FERRET_PTR_BIN_OP(ferret_u256, ferret_u256_mul)
-FERRET_PTR_BIN_OP(ferret_u256, ferret_u256_div)
-FERRET_PTR_BIN_OP(ferret_u256, ferret_u256_mod)
-FERRET_PTR_CMP_OP(ferret_u256, ferret_u256_eq)
-FERRET_PTR_CMP_OP(ferret_u256, ferret_u256_lt)
-FERRET_PTR_CMP_OP(ferret_u256, ferret_u256_gt)
-FERRET_PTR_BIN_OP(ferret_u256, ferret_u256_and)
-FERRET_PTR_BIN_OP(ferret_u256, ferret_u256_or)
-FERRET_PTR_BIN_OP(ferret_u256, ferret_u256_xor)
-FERRET_PTR_UNARY_OP(ferret_u256, ferret_u256_not)
-FERRET_PTR_BIN_OP(ferret_u256, ferret_u256_pow)
+FERRET_INT_WIDTHS(FERRET_DEFINE_INT_PTR_OPS)
+#undef FERRET_DEFINE_INT_PTR_OPS
 
 FERRET_PTR_BIN_OP(ferret_f128, ferret_f128_add)
 FERRET_PTR_BIN_OP(ferret_f128, ferret_f128_sub)
@@ -3730,25 +3354,42 @@ FERRET_PTR_CMP_OP(ferret_f256, ferret_f256_lt)
 FERRET_PTR_CMP_OP(ferret_f256, ferret_f256_gt)
 FERRET_PTR_BIN_OP(ferret_f256, ferret_f256_pow)
 
-void ferret_i128_from_i64_ptr(int64_t val, ferret_i128* out) {
-    if (!out) return;
-    *out = ferret_i128_from_i64(val);
-}
+#define FERRET_DEFINE_INT_PTR_CONV(BITS) \
+    void ferret_i##BITS##_from_i64_ptr(int64_t val, ferret_i##BITS* out) { \
+        if (!out) return; \
+        *out = ferret_i##BITS##_from_i64(val); \
+    } \
+    void ferret_u##BITS##_from_u64_ptr(uint64_t val, ferret_u##BITS* out) { \
+        if (!out) return; \
+        *out = ferret_u##BITS##_from_u64(val); \
+    } \
+    int64_t ferret_i##BITS##_to_i64_ptr(const ferret_i##BITS* val) { \
+        if (!val) return 0; \
+        return ferret_i##BITS##_to_i64(*val); \
+    } \
+    uint64_t ferret_u##BITS##_to_u64_ptr(const ferret_u##BITS* val) { \
+        if (!val) return 0; \
+        return ferret_u##BITS##_to_u64(*val); \
+    } \
+    char* ferret_i##BITS##_to_string_ptr(const ferret_i##BITS* val) { \
+        if (!val) return NULL; \
+        return ferret_i##BITS##_to_string(*val); \
+    } \
+    char* ferret_u##BITS##_to_string_ptr(const ferret_u##BITS* val) { \
+        if (!val) return NULL; \
+        return ferret_u##BITS##_to_string(*val); \
+    } \
+    void ferret_i##BITS##_from_string_ptr(const char* str, ferret_i##BITS* out) { \
+        if (!out) return; \
+        *out = ferret_i##BITS##_from_string(str); \
+    } \
+    void ferret_u##BITS##_from_string_ptr(const char* str, ferret_u##BITS* out) { \
+        if (!out) return; \
+        *out = ferret_u##BITS##_from_string(str); \
+    }
 
-void ferret_u128_from_u64_ptr(uint64_t val, ferret_u128* out) {
-    if (!out) return;
-    *out = ferret_u128_from_u64(val);
-}
-
-void ferret_i256_from_i64_ptr(int64_t val, ferret_i256* out) {
-    if (!out) return;
-    *out = ferret_i256_from_i64(val);
-}
-
-void ferret_u256_from_u64_ptr(uint64_t val, ferret_u256* out) {
-    if (!out) return;
-    *out = ferret_u256_from_u64(val);
-}
+FERRET_INT_WIDTHS(FERRET_DEFINE_INT_PTR_CONV)
+#undef FERRET_DEFINE_INT_PTR_CONV
 
 void ferret_f128_from_f64_ptr(double val, ferret_f128* out) {
     if (!out) return;
@@ -3758,26 +3399,6 @@ void ferret_f128_from_f64_ptr(double val, ferret_f128* out) {
 void ferret_f256_from_f64_ptr(double val, ferret_f256* out) {
     if (!out) return;
     *out = ferret_f256_from_f64(val);
-}
-
-int64_t ferret_i128_to_i64_ptr(const ferret_i128* val) {
-    if (!val) return 0;
-    return ferret_i128_to_i64(*val);
-}
-
-uint64_t ferret_u128_to_u64_ptr(const ferret_u128* val) {
-    if (!val) return 0;
-    return ferret_u128_to_u64(*val);
-}
-
-int64_t ferret_i256_to_i64_ptr(const ferret_i256* val) {
-    if (!val) return 0;
-    return ferret_i256_to_i64(*val);
-}
-
-uint64_t ferret_u256_to_u64_ptr(const ferret_u256* val) {
-    if (!val) return 0;
-    return ferret_u256_to_u64(*val);
 }
 
 double ferret_f128_to_f64_ptr(const ferret_f128* val) {
@@ -3790,26 +3411,6 @@ double ferret_f256_to_f64_ptr(const ferret_f256* val) {
     return ferret_f256_to_f64(*val);
 }
 
-char* ferret_i128_to_string_ptr(const ferret_i128* val) {
-    if (!val) return NULL;
-    return ferret_i128_to_string(*val);
-}
-
-char* ferret_u128_to_string_ptr(const ferret_u128* val) {
-    if (!val) return NULL;
-    return ferret_u128_to_string(*val);
-}
-
-char* ferret_i256_to_string_ptr(const ferret_i256* val) {
-    if (!val) return NULL;
-    return ferret_i256_to_string(*val);
-}
-
-char* ferret_u256_to_string_ptr(const ferret_u256* val) {
-    if (!val) return NULL;
-    return ferret_u256_to_string(*val);
-}
-
 char* ferret_f128_to_string_ptr(const ferret_f128* val) {
     if (!val) return NULL;
     return ferret_f128_to_string(*val);
@@ -3818,26 +3419,6 @@ char* ferret_f128_to_string_ptr(const ferret_f128* val) {
 char* ferret_f256_to_string_ptr(const ferret_f256* val) {
     if (!val) return NULL;
     return ferret_f256_to_string(*val);
-}
-
-void ferret_i128_from_string_ptr(const char* str, ferret_i128* out) {
-    if (!out) return;
-    *out = ferret_i128_from_string(str);
-}
-
-void ferret_u128_from_string_ptr(const char* str, ferret_u128* out) {
-    if (!out) return;
-    *out = ferret_u128_from_string(str);
-}
-
-void ferret_i256_from_string_ptr(const char* str, ferret_i256* out) {
-    if (!out) return;
-    *out = ferret_i256_from_string(str);
-}
-
-void ferret_u256_from_string_ptr(const char* str, ferret_u256* out) {
-    if (!out) return;
-    *out = ferret_u256_from_string(str);
 }
 
 void ferret_f128_from_string_ptr(const char* str, ferret_f128* out) {
@@ -3853,3 +3434,4 @@ void ferret_f256_from_string_ptr(const char* str, ferret_f256* out) {
 #undef FERRET_PTR_BIN_OP
 #undef FERRET_PTR_CMP_OP
 #undef FERRET_PTR_UNARY_OP
+
