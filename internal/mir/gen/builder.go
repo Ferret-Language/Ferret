@@ -1415,6 +1415,14 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 				return nil
 			}
 		}
+		if paramType != nil {
+			paramBase := types.UnwrapType(paramType)
+			if _, ok := paramBase.(*types.ReferenceType); !ok && needsByRefType(paramType) {
+				tmp := b.emitAlloca(paramType, loc)
+				b.emitStore(tmp, val, loc)
+				val = tmp
+			}
+		}
 		out = append(out, val)
 	}
 	return out
