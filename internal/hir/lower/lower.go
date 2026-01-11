@@ -843,6 +843,7 @@ func (l *Lowerer) lowerDeferStmt(stmt *hir.DeferStmt) *hir.DeferStmt {
 
 	return &hir.DeferStmt{
 		Call:     call,
+		Catch:    l.lowerCatchClause(stmt.Catch, types.TypeUnknown),
 		Location: stmt.Location,
 	}
 }

@@ -454,6 +454,7 @@ func (g *Generator) lowerDeferStmt(stmt *ast.DeferStmt) *hir.DeferStmt {
 	}
 	return &hir.DeferStmt{
 		Call:     call,
+		Catch:    g.lowerCatchClause(stmt.Catch),
 		Location: locFromNode(stmt),
 	}
 }

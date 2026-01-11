@@ -498,6 +498,14 @@ func (g *Generator) inferFuncLitCaptures(lit *hir.FuncLit) []*hir.Ident {
 			}
 		case *hir.DeferStmt:
 			visitExpr(n.Call)
+			if n.Catch != nil {
+				if n.Catch.Handler != nil {
+					for _, node := range n.Catch.Handler.Nodes {
+						visitNode(node)
+					}
+				}
+				visitExpr(n.Catch.Fallback)
+			}
 		}
 	}
 

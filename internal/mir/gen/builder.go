@@ -37,7 +37,7 @@ type functionBuilder struct {
 }
 
 type deferScope struct {
-	calls []*hir.CallExpr
+	defers []*hir.DeferStmt
 }
 
 func newFunctionBuilder(gen *Generator, fn *mir.Function) *functionBuilder {
@@ -549,13 +549,13 @@ func (b *functionBuilder) lowerDefer(stmt *hir.DeferStmt) {
 	// Add to current defer scope
 	if len(b.deferStack) > 0 {
 		currentScope := &b.deferStack[len(b.deferStack)-1]
-		currentScope.calls = append(currentScope.calls, stmt.Call)
+		currentScope.defers = append(currentScope.defers, stmt)
 	}
 }
 
 // pushDeferScope creates a new defer scope for a block/loop iteration
 func (b *functionBuilder) pushDeferScope() {
-	b.deferStack = append(b.deferStack, deferScope{calls: nil})
+	b.deferStack = append(b.deferStack, deferScope{defers: nil})
 }
 
 // popDeferScope emits deferred calls from the current scope in LIFO order and pops the scope
@@ -568,9 +568,9 @@ func (b *functionBuilder) popDeferScope(loc source.Location) {
 	currentScope := b.deferStack[len(b.deferStack)-1]
 
 	// Emit deferred calls in reverse order (LIFO)
-	for i := len(currentScope.calls) - 1; i >= 0; i-- {
-		call := currentScope.calls[i]
-		b.lowerExpr(call)
+	for i := len(currentScope.defers) - 1; i >= 0; i-- {
+		deferStmt := currentScope.defers[i]
+		b.emitDeferredCall(deferStmt)
 	}
 
 	// Pop the scope
@@ -583,11 +583,88 @@ func (b *functionBuilder) emitDeferredCalls(loc source.Location) {
 	for i := len(b.deferStack) - 1; i >= 0; i-- {
 		scope := b.deferStack[i]
 		// Emit calls in reverse order within each scope
-		for j := len(scope.calls) - 1; j >= 0; j-- {
-			call := scope.calls[j]
-			b.lowerExpr(call)
+		for j := len(scope.defers) - 1; j >= 0; j-- {
+			deferStmt := scope.defers[j]
+			b.emitDeferredCall(deferStmt)
 		}
 	}
+}
+
+// emitDeferredCall emits a single deferred call, handling catch blocks if present
+func (b *functionBuilder) emitDeferredCall(deferStmt *hir.DeferStmt) {
+	if deferStmt == nil || deferStmt.Call == nil {
+		return
+	}
+
+	// If there's no catch clause, just emit the call
+	if deferStmt.Catch == nil {
+		b.lowerExpr(deferStmt.Call)
+		return
+	}
+
+	// Handle deferred call with catch block
+	// Check if the call returns a result type
+	callType := b.exprType(deferStmt.Call)
+	resultType, isResult := types.UnwrapType(callType).(*types.ResultType)
+	if !isResult || resultType == nil {
+		// Not a result type, just emit the call
+		b.lowerExpr(deferStmt.Call)
+		return
+	}
+
+	// Execute the call
+	callValue := b.lowerExpr(deferStmt.Call)
+	if callValue == mir.InvalidValue {
+		return
+	}
+
+	// Check if result is ok or error
+	isOk := b.gen.nextValueID()
+	b.emitInstr(&mir.ResultIsOk{
+		Result:   isOk,
+		Value:    callValue,
+		Location: deferStmt.Location,
+	})
+
+	okBlock := b.newBlock("defer.ok", deferStmt.Location)
+	errBlock := b.newBlock("defer.err", deferStmt.Location)
+	mergeBlock := b.newBlock("defer.merge", deferStmt.Location)
+
+	b.current.Term = &mir.CondBr{
+		Cond:     isOk,
+		Then:     okBlock.ID,
+		Else:     errBlock.ID,
+		Location: deferStmt.Location,
+	}
+
+	// Ok branch - do nothing, just continue
+	b.setBlock(okBlock)
+	b.branchIfNoTerm(mergeBlock.ID, deferStmt.Location)
+
+	// Error branch - execute catch handler
+	b.setBlock(errBlock)
+	if deferStmt.Catch.ErrIdent != nil {
+		errType := resultType.Err
+		if errType != nil {
+			errVal := b.gen.nextValueID()
+			b.emitInstr(&mir.ResultUnwrap{
+				Result:     errVal,
+				Value:      callValue,
+				Default:    mir.InvalidValue,
+				HasDefault: false,
+				Type:       errType,
+				Location:   deferStmt.Location,
+			})
+			b.bindCatchIdent(deferStmt.Catch.ErrIdent, errVal, errType)
+		}
+	}
+	if deferStmt.Catch.Handler != nil {
+		b.lowerBlock(deferStmt.Catch.Handler)
+	}
+	b.branchIfNoTerm(mergeBlock.ID, deferStmt.Location)
+
+	// Continue after defer
+	b.setBlock(mergeBlock)
 }
 
 func (b *functionBuilder) lowerWhile(stmt *hir.WhileStmt) {

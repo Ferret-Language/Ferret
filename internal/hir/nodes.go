@@ -586,6 +586,7 @@ func (c *ContinueStmt) Loc() *source.Location { return &c.Location }
 // DeferStmt represents a defer statement.
 type DeferStmt struct {
 	Call     *CallExpr
+	Catch    *CatchClause // optional catch block for diagnostic-only error handling
 	Location source.Location
 }
 
