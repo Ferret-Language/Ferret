@@ -77,6 +77,7 @@ type Module struct {
 	// Type checking context
 	CurrentFunctionReturnType types.SemType    // Expected return type for current function being checked
 	CurrentDeferredStmts      []*ast.DeferStmt // Deferred statements in current function (LIFO order)
+	InDeferContext            bool             // True when type-checking a defer statement (skip Result validation)
 
 	Imports        map[string]*Import               // Resolved imports
 	ImportAliasMap map[string]string                // alias/name -> import path mapping for module access

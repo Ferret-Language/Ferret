@@ -1,7 +1,8 @@
-// Test defer functionality
+import "std/io";
 
-fn cleanup() {
+fn cleanup(val: str) {
     // Simple cleanup
+    io::Println("cleanup executed by ", val);
 }
 
 fn mayFail() -> str ! i32 {
@@ -9,7 +10,7 @@ fn mayFail() -> str ! i32 {
 }
 
 fn testBasicDefer() {
-    defer cleanup();
+    defer cleanup("testBasicDefer");
     let x := 42;
 }
 
@@ -21,16 +22,16 @@ fn testDeferWithCatch() {
 }
 
 fn testMultipleDefers() {
-    defer cleanup();
-    defer cleanup();
-    defer cleanup();
+    defer cleanup("testMultipleDefers - 1");
+    defer cleanup("testMultipleDefers - 2");
+    defer cleanup("testMultipleDefers - 3");
     // Should execute in LIFO: 3rd, 2nd, 1st
 }
 
 fn testDeferInLoop() {
     let i := 0;
     while i < 3 {
-        defer cleanup();
+        defer cleanup("testDeferInLoop - iteration " + i);
         i = i + 1;
     }
 }

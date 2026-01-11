@@ -364,11 +364,10 @@ func (p *Parser) parseDeferStmt() *ast.DeferStmt {
 		}
 	}
 
-	// Check if there's a catch clause
-	var catchClause *ast.CatchClause
-	if p.match(tokens.CATCH_TOKEN) {
-		catchClause = p.parseCatchClause()
-	}
+	// Extract catch clause from CallExpr if present (parseCallExpr already parsed it)
+	// We move it to DeferStmt.Catch and clear it from CallExpr.Catch
+	catchClause := call.Catch
+	call.Catch = nil // Clear from CallExpr to prevent normal catch validation
 
 	endToken := p.expect(tokens.SEMICOLON_TOKEN)
 
