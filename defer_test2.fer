@@ -1,0 +1,75 @@
+import "std/io";
+
+fn cleanup(val: str) {
+    // Simple cleanup
+    io::Println("cleanup executed by ", val);
+}
+
+fn mayFail() -> str ! i32 {
+    return "error"!;
+}
+
+fn testBasicDefer() {
+    defer cleanup("testBasicDefer");
+    let x := 42;
+}
+
+fn testDeferWithCatch() {
+
+    mayFail() catch err {
+        io::Println("Caught error in non defer: ", err);
+    } 0 ;
+
+    io::Println("Starting testDeferWithCatch");
+
+    defer mayFail() catch err {
+        // Diagnostic only - log the error
+        io::Println("Caught error in defer: ", err);
+        //return;
+    };
+
+
+    let x := 42;
+    io::Println("testDeferWithCatch end");
+}
+
+fn testMultipleDefers() {
+    defer cleanup("testMultipleDefers - 1");
+    defer cleanup("testMultipleDefers - 2");
+    defer cleanup("testMultipleDefers - 3");
+    // Should execute in LIFO: 3rd, 2nd, 1st
+}
+
+fn testDeferInLoop() {
+    let i := 0;
+    while i < 3 {
+        defer cleanup("testDeferInLoop - iteration " + i);
+        i = i + 1;
+    }
+}
+
+fn testControlFlowDefer(val: i32) {
+    defer cleanup("testControlFlowDefer - end fn");
+    if val == 0 {
+        defer cleanup("testControlFlowDefer if 0");
+        defer cleanup("testControlFlowDefer if 1");
+    } else if val == 1 {
+        defer cleanup("testControlFlowDefer else if 0");
+        defer cleanup("testControlFlowDefer else if 1");
+    } else {
+        defer cleanup("testControlFlowDefer else 0");
+        defer cleanup("testControlFlowDefer else 1");
+    }
+    io::Println("Inside testControlFlowDefer with val = ", val);
+}
+
+fn main() -> i32 {
+    testBasicDefer();
+    testDeferWithCatch();
+    testMultipleDefers();
+    testDeferInLoop();
+    testControlFlowDefer(0);
+    testControlFlowDefer(1);
+    testControlFlowDefer(2);
+    return 0;
+}

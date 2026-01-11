@@ -25,7 +25,7 @@ func checkModuleLevelRestriction(ctx *context_v2.CompilerContext, mod *context_v
 	// Check if this node type is not allowed at module level
 	switch node.(type) {
 	case *ast.IfStmt, *ast.ForStmt, *ast.WhileStmt, *ast.MatchStmt,
-		*ast.ReturnStmt, *ast.BreakStmt, *ast.ContinueStmt:
+		*ast.ReturnStmt, *ast.BreakStmt, *ast.ContinueStmt, *ast.DeferStmt:
 		ctx.Diagnostics.Add(
 			diagnostics.NewError("this statement is not allowed at module level").
 				WithPrimaryLabel(node.Loc(), "remove this statement"),
@@ -235,6 +235,39 @@ func collectNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node a
 		// Break statements don't declare anything
 	case *ast.ContinueStmt:
 		// Continue statements don't declare anything
+	case *ast.DeferStmt:
+		// Defer statements: collect call expression and optional catch block
+		collectExpr(ctx, mod, n.Call)
+		// Handle catch clause inline (same as CallExpr does)
+		if n.Catch != nil {
+			if n.Catch.Handler != nil {
+				// Create handler block scope
+				handlerScope := table.NewSymbolTable(mod.CurrentScope)
+				n.Catch.Handler.Scope = handlerScope
+				defer mod.EnterScope(handlerScope)()
+
+				// Declare error identifier if provided
+				if n.Catch.ErrIdent != nil {
+					mod.CurrentScope.Declare(n.Catch.ErrIdent.Name, &symbols.Symbol{
+						Name:       n.Catch.ErrIdent.Name,
+						Kind:       symbols.SymbolVariable,
+						Type:       types.TypeUnknown,
+						Decl:       n.Catch.ErrIdent,
+						Exported:   false,
+						IsReadonly: true,
+					})
+				}
+
+				// Collect handler block nodes
+				for _, node := range n.Catch.Handler.Nodes {
+					collectNode(ctx, mod, node)
+				}
+			}
+			// Collect fallback expression if present
+			if n.Catch.Fallback != nil {
+				collectExpr(ctx, mod, n.Catch.Fallback)
+			}
+		}
 	case *ast.AssignStmt:
 		// Collect function literals in assignment expressions
 		collectExpr(ctx, mod, n.Lhs)

@@ -25,6 +25,7 @@ type functionBuilder struct {
 	tempSlots    map[*hir.Ident]mir.ValueID
 	ptrElem      map[mir.ValueID]types.SemType
 	loopStack    []loopTargets
+	deferStack   []deferScope
 	retParam     mir.ValueID
 	retType      types.SemType
 	refOutParam  mir.ValueID
@@ -33,6 +34,10 @@ type functionBuilder struct {
 	captures     map[*symbols.Symbol]captureInfo
 	boxed        map[*symbols.Symbol]mir.ValueID
 	entry        *mir.Block
+}
+
+type deferScope struct {
+	defers []*hir.DeferStmt
 }
 
 func newFunctionBuilder(gen *Generator, fn *mir.Function) *functionBuilder {
@@ -57,6 +62,9 @@ func (b *functionBuilder) buildFuncBody(body *hir.Block) {
 	entry := b.newBlock("entry", b.fn.Location)
 	b.entry = entry
 	b.setBlock(entry)
+
+	// Push function-level defer scope
+	b.pushDeferScope()
 
 	for _, param := range b.fn.Params {
 		if param.Name != "" {
@@ -111,6 +119,10 @@ func (b *functionBuilder) finalizeCurrent() {
 	if b.current == nil || b.current.Term != nil {
 		return
 	}
+
+	// Emit deferred calls before implicit return
+	b.emitDeferredCalls(b.current.Location)
+
 	if b.fn.Return != nil && b.fn.Return.Equals(types.TypeVoid) {
 		b.current.Term = &mir.Return{HasValue: false, Location: b.current.Location}
 		return
@@ -151,10 +163,15 @@ func (b *functionBuilder) lowerNode(node hir.Node) {
 		b.lowerBreak(n)
 	case *hir.ContinueStmt:
 		b.lowerContinue(n)
+	case *hir.DeferStmt:
+		b.lowerDefer(n)
 	case *hir.ExprStmt:
 		b.lowerExpr(n.X)
 	case *hir.Block:
+		// Standalone block - push/pop defer scope
+		b.pushDeferScope()
 		b.lowerBlock(n)
+		b.popDeferScope(n.Location)
 	case *hir.IfStmt:
 		b.lowerIf(n)
 	case *hir.WhileStmt:
@@ -380,6 +397,9 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		return
 	}
 
+	// Emit deferred calls in LIFO order before returning
+	b.emitDeferredCalls(stmt.Location)
+
 	if stmt.Result == nil {
 		b.current.Term = &mir.Return{HasValue: false, Location: stmt.Location}
 		return
@@ -521,6 +541,132 @@ func (b *functionBuilder) lowerContinue(stmt *hir.ContinueStmt) {
 	b.current.Term = &mir.Br{Target: loop.continueTarget, Location: stmt.Location}
 }
 
+func (b *functionBuilder) lowerDefer(stmt *hir.DeferStmt) {
+	if stmt == nil {
+		return
+	}
+
+	// Add to current defer scope
+	if len(b.deferStack) > 0 {
+		currentScope := &b.deferStack[len(b.deferStack)-1]
+		currentScope.defers = append(currentScope.defers, stmt)
+	}
+}
+
+// pushDeferScope creates a new defer scope for a block/loop iteration
+func (b *functionBuilder) pushDeferScope() {
+	b.deferStack = append(b.deferStack, deferScope{defers: nil})
+}
+
+// popDeferScope emits deferred calls from the current scope in LIFO order and pops the scope
+func (b *functionBuilder) popDeferScope(loc source.Location) {
+	if len(b.deferStack) == 0 {
+		return
+	}
+
+	// Get current scope
+	currentScope := b.deferStack[len(b.deferStack)-1]
+
+	// Emit deferred calls in reverse order (LIFO)
+	for i := len(currentScope.defers) - 1; i >= 0; i-- {
+		deferStmt := currentScope.defers[i]
+		b.emitDeferredCall(deferStmt)
+	}
+
+	// Pop the scope
+	b.deferStack = b.deferStack[:len(b.deferStack)-1]
+}
+
+// emitDeferredCalls emits all deferred calls from all scopes in LIFO order
+func (b *functionBuilder) emitDeferredCalls(loc source.Location) {
+	// Emit from innermost to outermost scope
+	for i := len(b.deferStack) - 1; i >= 0; i-- {
+		scope := b.deferStack[i]
+		// Emit calls in reverse order within each scope
+		for j := len(scope.defers) - 1; j >= 0; j-- {
+			deferStmt := scope.defers[j]
+			b.emitDeferredCall(deferStmt)
+		}
+	}
+}
+
+// emitDeferredCall emits a single deferred call, handling catch blocks if present
+func (b *functionBuilder) emitDeferredCall(deferStmt *hir.DeferStmt) {
+	if deferStmt == nil || deferStmt.Call == nil {
+		return
+	}
+
+	// If there's no catch clause, just emit the call
+	if deferStmt.Catch == nil {
+		b.lowerExpr(deferStmt.Call)
+		return
+	}
+
+	// Handle deferred call with catch block
+	// Check if the call returns a result type
+	callType := b.exprType(deferStmt.Call)
+	resultType, isResult := types.UnwrapType(callType).(*types.ResultType)
+	if !isResult || resultType == nil {
+		// Not a result type, just emit the call
+		b.lowerExpr(deferStmt.Call)
+		return
+	}
+
+	// Execute the call
+	callValue := b.lowerExpr(deferStmt.Call)
+	if callValue == mir.InvalidValue {
+		return
+	}
+
+	// Check if result is ok or error
+	isOk := b.gen.nextValueID()
+	b.emitInstr(&mir.ResultIsOk{
+		Result:   isOk,
+		Value:    callValue,
+		Location: deferStmt.Location,
+	})
+
+	okBlock := b.newBlock("defer.ok", deferStmt.Location)
+	errBlock := b.newBlock("defer.err", deferStmt.Location)
+	mergeBlock := b.newBlock("defer.merge", deferStmt.Location)
+
+	b.current.Term = &mir.CondBr{
+		Cond:     isOk,
+		Then:     okBlock.ID,
+		Else:     errBlock.ID,
+		Location: deferStmt.Location,
+	}
+
+	// Ok branch - do nothing, just continue
+	b.setBlock(okBlock)
+	b.branchIfNoTerm(mergeBlock.ID, deferStmt.Location)
+
+	// Error branch - execute catch handler
+	b.setBlock(errBlock)
+	if deferStmt.Catch.ErrIdent != nil {
+		errType := resultType.Err
+		if errType != nil {
+			errVal := b.gen.nextValueID()
+			b.emitInstr(&mir.ResultUnwrap{
+				Result:     errVal,
+				Value:      callValue,
+				Default:    mir.InvalidValue,
+				HasDefault: false,
+				Type:       errType,
+				Location:   deferStmt.Location,
+			})
+			b.bindCatchIdent(deferStmt.Catch.ErrIdent, errVal, errType)
+		}
+	}
+	if deferStmt.Catch.Handler != nil {
+		b.lowerBlock(deferStmt.Catch.Handler)
+	}
+	b.branchIfNoTerm(mergeBlock.ID, deferStmt.Location)
+
+	// Continue after defer
+	b.setBlock(mergeBlock)
+}
+
 func (b *functionBuilder) lowerWhile(stmt *hir.WhileStmt) {
 	if stmt == nil {
 		return
@@ -548,7 +694,11 @@ func (b *functionBuilder) lowerWhile(stmt *hir.WhileStmt) {
 	b.pushLoop(exitBlock.ID, condBlock.ID)
 	b.setBlock(bodyBlock)
 	if stmt.Body != nil {
+		// Push defer scope for loop iteration
+		b.pushDeferScope()
 		b.lowerBlock(stmt.Body)
+		// Pop defer scope at end of iteration
+		b.popDeferScope(stmt.Location)
 	}
 	b.branchIfNoTerm(condBlock.ID, stmt.Location)
 	b.popLoop()

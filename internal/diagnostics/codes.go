@@ -55,6 +55,7 @@ const (
 	ErrArrayIndexNotConst      = "T0028"
 	ErrMissingField            = "T0029"
 	ErrUnknownField            = "T0030"
+	ErrInvalidDefer            = "T0031"
 
 	// Module/Import errors (M prefix)
 	ErrModuleNotFound    = "M0001"

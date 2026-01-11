@@ -91,6 +91,27 @@ func resolveNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node a
 		// Continue statements don't need resolution (no identifiers to resolve)
 		// Validation (checking if inside loop) is done in control flow analysis
 
+	case *ast.DeferStmt:
+		// Resolve the deferred call expression
+		resolveExpr(ctx, mod, n.Call)
+		// Resolve the catch clause if present (inline same as CallExpr)
+		if n.Catch != nil {
+			if n.Catch.Handler != nil {
+				// Get the scope of the catch block
+				scope := n.Catch.Handler.Scope.(*table.SymbolTable)
+				defer mod.EnterScope(scope)()
+
+				// Resolve the catch block
+				resolveBlock(ctx, mod, n.Catch.Handler)
+				// Resolve the fallback expression in catch handler scope
+				if n.Catch.Fallback != nil {
+					resolveExpr(ctx, mod, n.Catch.Fallback)
+				}
+			} else if n.Catch.Fallback != nil {
+				resolveExpr(ctx, mod, n.Catch.Fallback)
+			}
+		}
+
 	case *ast.IfStmt:
 		// Enter if scope if it exists
 		if n.Scope != nil {

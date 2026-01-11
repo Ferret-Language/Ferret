@@ -266,6 +266,8 @@ func (p *Parser) parseStmt() ast.Node {
 		return decl
 	case tokens.RETURN_TOKEN:
 		return p.parseReturnStmt()
+	case tokens.DEFER_TOKEN:
+		return p.parseDeferStmt()
 	case tokens.BREAK_TOKEN:
 		return p.parseBreakStmt()
 	case tokens.CONTINUE_TOKEN:
@@ -336,6 +338,42 @@ func (p *Parser) parseContinueStmt() *ast.ContinueStmt {
 	start := p.expect(tokens.CONTINUE_TOKEN).Start
 	endToken := p.expect(tokens.SEMICOLON_TOKEN)
 	return &ast.ContinueStmt{
+		Location: *source.NewLocation(&p.filepath, &start, &endToken.End),
+	}
+}
+
+// parseDeferStmt: defer funcCall() [catch err { ... }];
+func (p *Parser) parseDeferStmt() *ast.DeferStmt {
+	start := p.expect(tokens.DEFER_TOKEN).Start
+
+	// Parse the function call expression
+	callExpr := p.parseExpr()
+
+	// Ensure it's actually a call expression
+	call, ok := callExpr.(*ast.CallExpr)
+	if !ok {
+		p.diagnostics.Add(
+			diagnostics.NewError("defer requires a function call").
+				WithPrimaryLabel(p.safeLoc(callExpr), "expected function call here"),
+		)
+		// Create a dummy call expression for error recovery
+		call = &ast.CallExpr{
+			Fun:      callExpr,
+			Args:     []ast.Expression{},
+			Location: *p.safeLoc(callExpr),
+		}
+	}
+
+	// Extract catch clause from CallExpr if present (parseCallExpr already parsed it)
+	// We move it to DeferStmt.Catch and clear it from CallExpr.Catch
+	catchClause := call.Catch
+	call.Catch = nil // Clear from CallExpr to prevent normal catch validation
+
+	endToken := p.expect(tokens.SEMICOLON_TOKEN)
+
+	return &ast.DeferStmt{
+		Call:     call,
+		Catch:    catchClause,
 		Location: *source.NewLocation(&p.filepath, &start, &endToken.End),
 	}
 }

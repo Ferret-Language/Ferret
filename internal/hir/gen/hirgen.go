@@ -447,8 +447,14 @@ func (g *Generator) lowerDeferStmt(stmt *ast.DeferStmt) *hir.DeferStmt {
 	if stmt == nil {
 		return nil
 	}
+	call, ok := g.lowerExpr(stmt.Call).(*hir.CallExpr)
+	if !ok {
+		// Should not happen if parser validated correctly
+		return nil
+	}
 	return &hir.DeferStmt{
-		Call:     g.lowerExpr(stmt.Call),
+		Call:     call,
+		Catch:    g.lowerCatchClause(stmt.Catch),
 		Location: locFromNode(stmt),
 	}
 }

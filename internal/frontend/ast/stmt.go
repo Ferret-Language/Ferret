@@ -145,6 +145,19 @@ func (c *ContinueStmt) INode()                {} // Implements Node interface
 func (c *ContinueStmt) Stmt()                 {} // Stmt is a marker interface for all statements
 func (c *ContinueStmt) Loc() *source.Location { return &c.Location }
 
+// DeferStmt represents a defer statement: defer funcCall() [catch err { ... }];
+// Defer statements execute in LIFO order when the function exits.
+// Catch blocks in defer are diagnostic-only and cannot alter control flow.
+type DeferStmt struct {
+	Call  *CallExpr    // deferred function call (required)
+	Catch *CatchClause // optional catch block (diagnostic-only)
+	source.Location
+}
+
+func (d *DeferStmt) INode()                {} // Implements Node interface
+func (d *DeferStmt) Stmt()                 {} // Stmt is a marker interface for all statements
+func (d *DeferStmt) Loc() *source.Location { return &d.Location }
+
 // ExprStmt represents an expression used as a statement
 type ExprStmt struct {
 	X Expression
