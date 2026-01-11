@@ -1,0 +1,44 @@
+// Test defer functionality
+
+fn cleanup() {
+    // Simple cleanup
+}
+
+fn mayFail() -> str ! i32 {
+    return 0;
+}
+
+fn testBasicDefer() {
+    defer cleanup();
+    let x := 42;
+}
+
+fn testDeferWithCatch() {
+    defer mayFail() catch err {
+        // Diagnostic only - log the error
+    };
+    let x := 42;
+}
+
+fn testMultipleDefers() {
+    defer cleanup();
+    defer cleanup();
+    defer cleanup();
+    // Should execute in LIFO: 3rd, 2nd, 1st
+}
+
+fn testDeferInLoop() {
+    let i := 0;
+    while i < 3 {
+        defer cleanup();
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    testBasicDefer();
+    testDeferWithCatch();
+    testMultipleDefers();
+    testDeferInLoop();
+    return 0;
+}

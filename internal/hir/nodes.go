@@ -583,6 +583,16 @@ func (c *ContinueStmt) hirNode()              {}
 func (c *ContinueStmt) hirStmt()              {}
 func (c *ContinueStmt) Loc() *source.Location { return &c.Location }
 
+// DeferStmt represents a defer statement.
+type DeferStmt struct {
+	Call     *CallExpr
+	Location source.Location
+}
+
+func (d *DeferStmt) hirNode()              {}
+func (d *DeferStmt) hirStmt()              {}
+func (d *DeferStmt) Loc() *source.Location { return &d.Location }
+
 // ExprStmt represents an expression statement.
 type ExprStmt struct {
 	X        Expr
@@ -678,13 +688,3 @@ type CaseClause struct {
 	Body     *Block
 	Location source.Location
 }
-
-// DeferStmt represents a defer statement.
-type DeferStmt struct {
-	Call     Expr
-	Location source.Location
-}
-
-func (d *DeferStmt) hirNode()              {}
-func (d *DeferStmt) hirStmt()              {}
-func (d *DeferStmt) Loc() *source.Location { return &d.Location }

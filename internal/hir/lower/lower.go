@@ -835,8 +835,14 @@ func (l *Lowerer) lowerDeferStmt(stmt *hir.DeferStmt) *hir.DeferStmt {
 		return nil
 	}
 
+	call, ok := l.lowerExpr(stmt.Call, types.TypeUnknown).(*hir.CallExpr)
+	if !ok {
+		// Should not happen if parser validated correctly
+		return nil
+	}
+
 	return &hir.DeferStmt{
-		Call:     l.lowerExpr(stmt.Call, types.TypeUnknown),
+		Call:     call,
 		Location: stmt.Location,
 	}
 }

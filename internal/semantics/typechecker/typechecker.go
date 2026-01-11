@@ -80,10 +80,15 @@ func setupFunctionContext(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 	oldReturnType := mod.CurrentFunctionReturnType
 	mod.CurrentFunctionReturnType = expectedReturnType
 
-	// Return cleanup function that restores both scope and return type
+	// Reset deferred statements list for this function
+	oldDeferredStmts := mod.CurrentDeferredStmts
+	mod.CurrentDeferredStmts = nil
+
+	// Return cleanup function that restores scope, return type, and deferred statements
 	return func() {
 		restoreScope()
 		mod.CurrentFunctionReturnType = oldReturnType
+		mod.CurrentDeferredStmts = oldDeferredStmts
 	}
 }
 
@@ -342,6 +347,8 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 	case *ast.ContinueStmt:
 		// Continue statements don't need type checking
 		// Validation (checking if inside loop) is done in control flow analysis phase
+	case *ast.DeferStmt:
+		checkDeferStmt(ctx, mod, n)
 	case *ast.ReturnStmt:
 		// Check return value type against function's declared return type
 		if n.Result != nil {
@@ -2147,6 +2154,110 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 	// 2. Clear all potentially aliased variables on reference assignment
 	// 3. Consider inter-procedural effects (function calls with &params)
 	// For now, method calls with reference receivers handle invalidation separately
+}
+
+// checkDeferStmt type checks a defer statement
+// Defer must be a function call, and catch blocks are diagnostic-only
+func checkDeferStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, stmt *ast.DeferStmt) {
+	// Track this defer statement for code generation (LIFO execution)
+	mod.CurrentDeferredStmts = append(mod.CurrentDeferredStmts, stmt)
+
+	// Temporarily remove the catch clause from the call to avoid normal validation
+	// We'll handle it specially for defer
+	originalCatch := stmt.Call.Catch
+	stmt.Call.Catch = nil
+
+	// Type check the deferred call (without catch)
+	callType := checkExpr(ctx, mod, stmt.Call, types.TypeUnknown)
+
+	// Restore the catch clause
+	stmt.Call.Catch = originalCatch
+
+	// Now handle the catch clause specially for defer
+	if originalCatch != nil {
+		// Get the function's return type to determine error type
+		funType := inferExprType(ctx, mod, stmt.Call.Fun)
+		funcType, ok := funType.(*types.FunctionType)
+		if !ok {
+			// Error already reported
+			return
+		}
+
+		resultType, isResult := funcType.Return.(*types.ResultType)
+		if !isResult {
+			// Function doesn't return an error type, but catch was provided
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("catch clause requires a function that may fail").
+					WithCode(diagnostics.ErrInvalidCatch).
+					WithPrimaryLabel(originalCatch.Loc(), fmt.Sprintf("function returns %s, not an error type", callType.String())).
+					WithHelp("remove the catch clause or call a function that returns a Result type"),
+			)
+			return
+		}
+
+		// Validate catch clause
+		if originalCatch.Handler != nil {
+			// Get the scope of the catch block
+			scope := originalCatch.Handler.Scope.(*table.SymbolTable)
+			defer mod.EnterScope(scope)()
+
+			// Set the catch error identifier type to the error type
+			if originalCatch.ErrIdent != nil {
+				if sym, ok := mod.CurrentScope.Lookup(originalCatch.ErrIdent.Name); ok {
+					sym.Type = resultType.Err
+				}
+			}
+
+			// Check that the handler block doesn't contain return statements
+			validateDeferCatchHandler(ctx, mod, originalCatch.Handler)
+
+			// Check the catch block
+			checkBlock(ctx, mod, originalCatch.Handler)
+		}
+
+		// Enforce diagnostic-only catch: no fallback allowed in defer
+		if originalCatch.Fallback != nil {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("defer catch cannot have a fallback value").
+					WithCode(diagnostics.ErrInvalidDefer).
+					WithPrimaryLabel(originalCatch.Fallback.Loc(), "fallback not allowed in defer catch").
+					WithHelp("defer catch is diagnostic-only; use it only for logging or cleanup"),
+			)
+		}
+	}
+
+	// Defer itself has type void (doesn't produce a value)
+	// This is already enforced by the statement-level context
+}
+
+// validateDeferCatchHandler ensures the catch handler block in defer doesn't contain return statements
+func validateDeferCatchHandler(ctx *context_v2.CompilerContext, mod *context_v2.Module, block *ast.Block) {
+	for _, node := range block.Nodes {
+		switch n := node.(type) {
+		case *ast.ReturnStmt:
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("return statement not allowed in defer catch").
+					WithCode(diagnostics.ErrInvalidDefer).
+					WithPrimaryLabel(n.Loc(), "cannot return from defer catch").
+					WithHelp("defer catch is diagnostic-only; it cannot alter control flow"),
+			)
+		case *ast.Block:
+			validateDeferCatchHandler(ctx, mod, n)
+		case *ast.IfStmt:
+			validateDeferCatchHandler(ctx, mod, n.Body)
+			if n.Else != nil {
+				if elseBlock, ok := n.Else.(*ast.Block); ok {
+					validateDeferCatchHandler(ctx, mod, elseBlock)
+				} else if elseIf, ok := n.Else.(*ast.IfStmt); ok {
+					validateDeferCatchHandler(ctx, mod, elseIf.Body)
+				}
+			}
+		case *ast.ForStmt:
+			validateDeferCatchHandler(ctx, mod, n.Body)
+		case *ast.WhileStmt:
+			validateDeferCatchHandler(ctx, mod, n.Body)
+		}
+	}
 }
 
 func isAssignableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression) bool {

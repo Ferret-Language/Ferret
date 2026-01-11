@@ -28,6 +28,7 @@ const (
 	IDENTIFIER_TOKEN TOKEN = "identifier"
 	PRIVATE_TOKEN    TOKEN = "priv"
 	RETURN_TOKEN     TOKEN = "return"
+	DEFER_TOKEN      TOKEN = "defer"
 	BREAK_TOKEN      TOKEN = "break"
 	CONTINUE_TOKEN   TOKEN = "continue"
 	IMPORT_TOKEN     TOKEN = "import"
@@ -132,6 +133,7 @@ var keyWordsMap map[TOKEN]bool = map[TOKEN]bool{
 	CATCH_TOKEN:     true,
 	FUNCTION_TOKEN:  true,
 	RETURN_TOKEN:    true,
+	DEFER_TOKEN:     true,
 	BREAK_TOKEN:     true,
 	CONTINUE_TOKEN:  true,
 	IMPORT_TOKEN:    true,

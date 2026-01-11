@@ -104,13 +104,3 @@ type CaseClause struct {
 	Body    *Block     // case body
 	source.Location
 }
-
-// DeferStmt represents a defer statement
-type DeferStmt struct {
-	Call Expression // the call to defer (typically a CallExpr)
-	source.Location
-}
-
-func (d *DeferStmt) INode()                {} // Implements Node interface
-func (d *DeferStmt) Stmt()                 {} // Stmt is a marker interface for all statements
-func (d *DeferStmt) Loc() *source.Location { return &d.Location }
