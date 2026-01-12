@@ -1,0 +1,21 @@
+import "std/io";
+
+fn mayFail() -> str ! i32 {
+    return "error"!;
+}
+
+fn main() {
+    defer mayFail() catch err {
+        io::Println("Caught error in main defer: ", err);
+        //return;
+        for i in 0..10 {
+            io::Println("Inside main defer loop iteration ", i);
+            if i == 5 {
+                io::Println("Exiting main defer loop early");
+                break;
+            }
+        }
+    };
+
+    io::Println("function end");
+}

@@ -2226,35 +2226,35 @@ func checkDeferStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, stm
 	// This is already enforced by the statement-level context
 }
 
-// validateDeferCatchHandler ensures the catch handler block in defer doesn't contain return statements
-func validateDeferCatchHandler(ctx *context_v2.CompilerContext, mod *context_v2.Module, block *ast.Block) {
-	for _, node := range block.Nodes {
-		switch n := node.(type) {
-		case *ast.ReturnStmt:
-			ctx.Diagnostics.Add(
-				diagnostics.NewError("return statement not allowed in defer catch").
-					WithCode(diagnostics.ErrInvalidDefer).
-					WithPrimaryLabel(n.Loc(), "cannot return from defer catch").
-					WithHelp("defer catch is diagnostic-only; it cannot alter control flow"),
-			)
-		case *ast.Block:
-			validateDeferCatchHandler(ctx, mod, n)
-		case *ast.IfStmt:
-			validateDeferCatchHandler(ctx, mod, n.Body)
-			if n.Else != nil {
-				if elseBlock, ok := n.Else.(*ast.Block); ok {
-					validateDeferCatchHandler(ctx, mod, elseBlock)
-				} else if elseIf, ok := n.Else.(*ast.IfStmt); ok {
-					validateDeferCatchHandler(ctx, mod, elseIf.Body)
-				}
-			}
-		case *ast.ForStmt:
-			validateDeferCatchHandler(ctx, mod, n.Body)
-		case *ast.WhileStmt:
-			validateDeferCatchHandler(ctx, mod, n.Body)
+func validateDeferCatchHandler(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast.Node) {
+	switch n := node.(type) {
+	case *ast.ReturnStmt:
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("return statement not allowed in defer catch").
+				WithCode(diagnostics.ErrInvalidDefer).
+				WithPrimaryLabel(n.Loc(), "cannot return from defer catch").
+				WithHelp("defer catch is diagnostic-only; it cannot alter control flow"),
+		)
+
+	case *ast.Block:
+		for _, child := range n.Nodes {
+			validateDeferCatchHandler(ctx, mod, child)
 		}
+
+	case *ast.IfStmt:
+		validateDeferCatchHandler(ctx, mod, n.Body)
+		if n.Else != nil {
+			validateDeferCatchHandler(ctx, mod, n.Else)
+		}
+
+	case *ast.ForStmt:
+		validateDeferCatchHandler(ctx, mod, n.Body)
+
+	case *ast.WhileStmt:
+		validateDeferCatchHandler(ctx, mod, n.Body)
 	}
 }
+
 
 func isAssignableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression) bool {
 	if expr == nil {

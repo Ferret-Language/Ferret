@@ -1,0 +1,29 @@
+import "std/io";
+
+fn mayFail() -> str ! i32 {
+    return "boom"!;
+}
+
+fn main() {
+    defer mayFail() catch err {
+        if err == "x" {
+            io::Println("branch 1");
+        } else if err == "y" {
+            for i in 0..3 {
+                io::Println("loop in else-if", i);
+            }
+        } else if err == "boom" {
+            if true {
+                io::Println("deep nested if");
+            } else {
+                io::Println("deep nested else");
+                // This must be rejected
+                return;
+            }
+        } else {
+            io::Println("final else");
+        }
+    };
+
+    io::Println("end");
+}
