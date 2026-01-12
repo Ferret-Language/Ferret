@@ -24,10 +24,10 @@ func TestPipelineBasic(t *testing.T) {
 
 	// Create config
 	config := &context_v2.Config{
-		ProjectName: "test",
-		ProjectRoot: tmpDir,
-		Extension:   ".fer",
-		SkipCodegen: true,
+		ProjectName:   "test",
+		ProjectRoot:   tmpDir,
+		Extension:     ".fer",
+		TypeCheckOnly: true,
 	}
 
 	// Create context
@@ -107,10 +107,10 @@ fn square(x: f64) -> f64 {
 	for run := 0; run < runs; run++ {
 		// Create fresh context for each run
 		config := &context_v2.Config{
-			ProjectName: "test_project",
-			ProjectRoot: tmpDir,
-			Extension:   ".fer",
-			SkipCodegen: true,
+			ProjectName:   "test_project",
+			ProjectRoot:   tmpDir,
+			Extension:     ".fer",
+			TypeCheckOnly: true,
 		}
 
 		ctx := context_v2.New(config, false)
@@ -255,10 +255,10 @@ const B := 2;`
 
 	for run := 0; run < runs; run++ {
 		config := &context_v2.Config{
-			ProjectName: "test_project",
-			ProjectRoot: tmpDir,
-			Extension:   ".fer",
-			SkipCodegen: true,
+			ProjectName:   "test_project",
+			ProjectRoot:   tmpDir,
+			Extension:     ".fer",
+			TypeCheckOnly: true,
 		}
 
 		ctx := context_v2.New(config, false)
@@ -374,10 +374,10 @@ let result := 42;`
 	}
 
 	config := &context_v2.Config{
-		ProjectName: "test_project",
-		ProjectRoot: tmpDir,
-		Extension:   ".fer",
-		SkipCodegen: true,
+		ProjectName:   "test_project",
+		ProjectRoot:   tmpDir,
+		Extension:     ".fer",
+		TypeCheckOnly: true,
 	}
 
 	ctx := context_v2.New(config, false)
@@ -480,10 +480,10 @@ func TestImportPathNormalization(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create config with virtual root
 			config := &context_v2.Config{
-				ProjectName: "test",
-				ProjectRoot: virtualRoot,
-				Extension:   ".fer",
-				SkipCodegen: true,
+				ProjectName:   "test",
+				ProjectRoot:   virtualRoot,
+				Extension:     ".fer",
+				TypeCheckOnly: true,
 			}
 
 			// Create context

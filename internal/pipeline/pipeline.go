@@ -57,6 +57,13 @@ func (p *Pipeline) Run() error {
 		return err
 	}
 
+	if p.ctx.Config.TypeCheckOnly {
+		if p.ctx.Config.Debug {
+			colors.YELLOW.Println("Skipping codegen")
+		}
+		return nil
+	}
+
 	if p.ctx.Config.Debug {
 		colors.CYAN.Printf("\n[Phase 5] HIR Generation\n")
 	}
@@ -104,13 +111,6 @@ func (p *Pipeline) Run() error {
 	}
 
 	backend := strings.ToLower(strings.TrimSpace(p.ctx.Config.CodegenBackend))
-	if p.ctx.Config.SkipCodegen || backend == "" || backend == "none" {
-		if p.ctx.Config.Debug {
-			colors.YELLOW.Printf("\n[Skipping Code Generation] Codegen disabled (backend=%q)\n", backend)
-			colors.GREEN.Printf("\n✓ Compilation successful! (%d modules)\n", p.ctx.ModuleCount())
-		}
-		return nil
-	}
 
 	switch backend {
 	case "qbe":

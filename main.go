@@ -88,7 +88,7 @@ func main() {
 		LogFormat:        compiler.ANSI,
 		OutputExecutable: *outputPath,
 		KeepGenFiles:     *keepGenFiles,
-		SkipCodegen:      *typecheckOnly,
+		TypecheckOnly:    *typecheckOnly,
 		CodegenBackend:   codegenBackend,
 	})
 

@@ -41,7 +41,7 @@ type Options struct {
 	KeepGenFiles bool
 
 	// Skip codegen (stop after type checking)
-	SkipCodegen bool
+	TypecheckOnly bool
 
 	// Codegen backend ("none", "qbe")
 	CodegenBackend string
@@ -111,7 +111,7 @@ func Compile(opts *Options) Result {
 		OutputPath:         outputPath,
 		SaveAST:            opts.SaveAST,
 		KeepGenFiles:       opts.KeepGenFiles,
-		SkipCodegen:        opts.SkipCodegen,
+		TypeCheckOnly:      opts.TypecheckOnly,
 		CodegenBackend:     opts.CodegenBackend,
 		PointerSize:        0,
 	}

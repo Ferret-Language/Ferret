@@ -1,0 +1,18 @@
+import "std/io";
+
+fn main() {
+
+    // let f1 := fn() {
+    //     io::Println("inside f1");
+    // };
+
+    // f1();
+
+    2;
+
+    fn() {
+        io::Println("inside unnamed fn");
+    }
+
+    // io::Println("function end");
+}
