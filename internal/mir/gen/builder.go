@@ -34,6 +34,8 @@ type functionBuilder struct {
 	captures     map[*symbols.Symbol]captureInfo
 	boxed        map[*symbols.Symbol]mir.ValueID
 	entry        *mir.Block
+	inDeferCatch bool
+	catchEndLabel mir.BlockID
 }
 
 type deferScope struct {
@@ -397,6 +399,18 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		return
 	}
 
+	if b.inDeferCatch {
+		// Void returns in defer catch are diagnostic-only and should not return from the function
+		if stmt.Result == nil {
+			// Code after return is unreachable
+			b.current.Term = &mir.Br{Target: b.catchEndLabel, Location: stmt.Location}
+			return
+		}
+		// If somehow there's a result, treat as error (should be caught by typechecker)
+		b.current.Term = &mir.Unreachable{Location: stmt.Location}
+		return
+	}
+
 	// Emit deferred calls in LIFO order before returning
 	b.emitDeferredCalls(stmt.Location)
 
@@ -659,7 +673,10 @@ func (b *functionBuilder) emitDeferredCall(deferStmt *hir.DeferStmt) {
 		}
 	}
 	if deferStmt.Catch.Handler != nil {
+		b.inDeferCatch = true
+		b.catchEndLabel = mergeBlock.ID
 		b.lowerBlock(deferStmt.Catch.Handler)
+		b.inDeferCatch = false
 	}
 	b.branchIfNoTerm(mergeBlock.ID, deferStmt.Location)
 

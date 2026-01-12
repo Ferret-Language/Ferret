@@ -2229,12 +2229,15 @@ func checkDeferStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, stm
 func validateDeferCatchHandler(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast.Node) {
 	switch n := node.(type) {
 	case *ast.ReturnStmt:
-		ctx.Diagnostics.Add(
-			diagnostics.NewError("return statement not allowed in defer catch").
-				WithCode(diagnostics.ErrInvalidDefer).
-				WithPrimaryLabel(n.Loc(), "cannot return from defer catch").
-				WithHelp("defer catch is diagnostic-only; it cannot alter control flow"),
-		)
+		// Allow void return to exit catch block early
+		if n.Result != nil {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("return with value not allowed in defer catch").
+					WithCode(diagnostics.ErrInvalidDefer).
+					WithPrimaryLabel(n.Loc(), "cannot return value from defer catch").
+					WithHelp("defer catch is diagnostic-only; use void return to exit early"),
+			)
+		}
 
 	case *ast.Block:
 		for _, child := range n.Nodes {
@@ -2254,7 +2257,6 @@ func validateDeferCatchHandler(ctx *context_v2.CompilerContext, mod *context_v2.
 		validateDeferCatchHandler(ctx, mod, n.Body)
 	}
 }
-
 
 func isAssignableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression) bool {
 	if expr == nil {
