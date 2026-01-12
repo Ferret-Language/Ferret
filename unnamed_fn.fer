@@ -1,5 +1,9 @@
 import "std/io";
 
+fn() {
+    io::Println("inside unnamed fn");
+};
+
 fn main() {
 
     // let f1 := fn() {
@@ -10,9 +14,13 @@ fn main() {
 
     2;
 
+    let a := 10;
+
+    a++;
+
     fn() {
         io::Println("inside unnamed fn");
-    }
+    }();
 
     // io::Println("function end");
 }

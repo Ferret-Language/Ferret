@@ -103,6 +103,17 @@ func (p *Parser) parseTopLevel() ast.Node {
 		p.seenNonImport = true
 		node := p.parseFuncDecl()
 		p.attachDoc(node, doc)
+
+		// if it's a function literal, it is an expression, so we should handle it as such
+		if lit, ok := node.(*ast.FuncLit); ok {
+			expr := p.parsePostfixAfter(lit)
+			p.expect(tokens.SEMICOLON_TOKEN)
+			return &ast.ExprStmt{
+				X:        expr,
+				Location: *p.safeLoc(expr),
+			}
+		}
+
 		return node
 	case tokens.IDENTIFIER_TOKEN:
 		p.seenNonImport = true
@@ -285,6 +296,15 @@ func (p *Parser) parseStmt() ast.Node {
 	case tokens.FUNCTION_TOKEN:
 		node := p.parseFuncDecl()
 		p.attachDoc(node, doc)
+		// if it's a function literal, it is an expression, so we should handle it as such
+		if lit, ok := node.(*ast.FuncLit); ok {
+			expr := p.parsePostfixAfter(lit)
+			p.expect(tokens.SEMICOLON_TOKEN)
+			return &ast.ExprStmt{
+				X:        expr,
+				Location: *p.safeLoc(expr),
+			}
+		}
 		return node
 	default:
 		return p.parseExprOrAssign()
@@ -412,19 +432,6 @@ func (p *Parser) parseExprOrAssign() ast.Node {
 	// Handle nil expression (parsing error occurred)
 	if lhs == nil {
 		lhs = p.invalidExpr()
-	}
-
-	// Check for increment/decrement operators (x++, x--)
-	if p.match(tokens.PLUS_PLUS_TOKEN, tokens.MINUS_MINUS_TOKEN) {
-		op := p.advance()
-		p.expect(tokens.SEMICOLON_TOKEN)
-
-		return &ast.AssignStmt{
-			Lhs:      lhs,
-			Rhs:      nil, // No RHS for ++/--
-			Op:       &op,
-			Location: *source.NewLocation(&p.filepath, p.safeLoc(lhs).Start, &op.End),
-		}
 	}
 
 	// Check for compound assignment operators (x += y, x -= y, etc.)
@@ -831,7 +838,10 @@ func (p *Parser) parseUnaryDepth(depth int) ast.Expression {
 
 func (p *Parser) parsePostfix() ast.Expression {
 	expr := p.parsePrimary()
+	return p.parsePostfixAfter(expr)
+}
 
+func (p *Parser) parsePostfixAfter(expr ast.Expression) ast.Expression {
 	// If parsePrimary returned nil due to error, return nil to prevent nil pointer issues
 	if expr == nil {
 		return nil

@@ -14,7 +14,13 @@ func TestParserEdgeCases(t *testing.T) {
 		source        string
 		expectError   bool
 		errorContains string
-	}{
+	}{	
+		{
+			name:		   "Anonymous function",
+			source:		   "fn(){}",
+			expectError:   true,
+			errorContains: "expected ';'",
+		},
 		{
 			name:          "Missing semicolon after variable declaration",
 			source:        "let x := 42",

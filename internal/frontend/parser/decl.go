@@ -136,10 +136,12 @@ func (p *Parser) parseFuncDecl() ast.Node {
 
 		// If next token is identifier, it's a method
 		if p.match(tokens.IDENTIFIER_TOKEN) {
+			// fn (rec) name()
 			return p.parseMethodDecl(start, params)
 		}
 
 		// Otherwise, it's an anonymous function (function literal)
+		// fn () {}
 		return p.parseFuncLit(start, params)
 	}
 
