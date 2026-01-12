@@ -4,6 +4,10 @@ fn() {
     io::Println("inside unnamed fn");
 };
 
+fn callFn(callback: fn()) {
+    callback();
+}
+
 fn main() {
 
     // let f1 := fn() {
@@ -18,9 +22,9 @@ fn main() {
 
     a++;
 
-    fn() {
+    callFn(fn() {
         io::Println("inside unnamed fn");
-    }();
+    });
 
     // io::Println("function end");
 }

@@ -16,25 +16,25 @@ import (
 )
 
 type functionBuilder struct {
-	gen          *Generator
-	fn           *mir.Function
-	current      *mir.Block
-	paramsByName map[string]mir.ValueID
-	paramTypes   map[string]types.SemType
-	slots        map[*symbols.Symbol]mir.ValueID
-	tempSlots    map[*hir.Ident]mir.ValueID
-	ptrElem      map[mir.ValueID]types.SemType
-	loopStack    []loopTargets
-	deferStack   []deferScope
-	retParam     mir.ValueID
-	retType      types.SemType
-	refOutParam  mir.ValueID
-	refOutType   types.SemType
-	closureEnv   mir.ValueID
-	captures     map[*symbols.Symbol]captureInfo
-	boxed        map[*symbols.Symbol]mir.ValueID
-	entry        *mir.Block
-	inDeferCatch bool
+	gen           *Generator
+	fn            *mir.Function
+	current       *mir.Block
+	paramsByName  map[string]mir.ValueID
+	paramTypes    map[string]types.SemType
+	slots         map[*symbols.Symbol]mir.ValueID
+	tempSlots     map[*hir.Ident]mir.ValueID
+	ptrElem       map[mir.ValueID]types.SemType
+	loopStack     []loopTargets
+	deferStack    []deferScope
+	retParam      mir.ValueID
+	retType       types.SemType
+	refOutParam   mir.ValueID
+	refOutType    types.SemType
+	closureEnv    mir.ValueID
+	captures      map[*symbols.Symbol]captureInfo
+	boxed         map[*symbols.Symbol]mir.ValueID
+	entry         *mir.Block
+	inDeferCatch  bool
 	catchEndLabel mir.BlockID
 }
 
@@ -3795,6 +3795,8 @@ func (b *functionBuilder) matchCaseConstValue(pattern hir.Expr, matchType types.
 func (b *functionBuilder) exprType(expr hir.Expr) types.SemType {
 	switch e := expr.(type) {
 	case *hir.Literal:
+		return e.Type
+	case *hir.FuncLit:
 		return e.Type
 	case *hir.Ident:
 		// Check if this is a parameter with an overridden MIR type
