@@ -10,6 +10,7 @@ export type FerretRuntimeOptions = {
 export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   let memory: WebAssembly.Memory | null = null;
   let heapPtr = 0;
+  let initialHeapPtr = 0;
   const decoder = new TextDecoder("utf-8");
   const encoder = new TextEncoder();
 
@@ -34,6 +35,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ? Number(dataEndExport.value)
         : Number(dataEndExport || 0);
     heapPtr = align(dataEnd, 8);
+    initialHeapPtr = heapPtr;
   }
 
   function view(): DataView {
@@ -3204,8 +3206,17 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return 1;
   }
 
+  function reset() {
+    heapPtr = initialHeapPtr;
+    ferretMapStore.clear();
+    ferretMapIterStore.clear();
+    inputLines.length = 0;
+    inputIndex = 0;
+  }
+
   return {
     bind,
+    reset,
     imports: {
       ferret: {
         ferret_alloc,

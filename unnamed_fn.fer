@@ -23,7 +23,7 @@ fn main() {
     a++;
 
     callFn(fn() {
-        io::Println("inside unnamed fn");
+        io::Println("inside unnamed fn", a);
     });
 
     // io::Println("function end");

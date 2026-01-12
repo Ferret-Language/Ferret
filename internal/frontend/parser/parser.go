@@ -463,8 +463,6 @@ func (p *Parser) parseExprOrAssign() ast.Node {
 		}
 	}
 
-	fmt.Printf("Found expr: %s\n", lhs.Loc().GetText(p.diagnostics.GetSourceCache()))
-
 	// Expression statements need semicolons
 	p.expect(tokens.SEMICOLON_TOKEN)
 
