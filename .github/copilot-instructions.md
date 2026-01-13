@@ -162,7 +162,8 @@ Entry point resolution order:
 ### Naming Conventions
 
 - Exported fields in structs use PascalCase
-- Ferret struct fields use dot prefix: `.x`, `.y` (parsed as struct literals)
+- Ferret visibility is capitalization-based: Uppercase identifiers are exported/public; lowercase identifiers are private
+- Ferret struct fields use dot prefix in declarations (`.x: i32`), and struct literals use `=` (`{ .x = 1 } as Point`)
 - Test files follow Go convention: `*_test.go`
 - Import paths use forward slashes (converted to OS paths internally)
 
@@ -198,16 +199,20 @@ internal/
 
 ## Language Features (for test cases)
 
-- **Type inference:** `let x := 42` infers `i32`
+- **Type inference:** `let x := 42` infers `DEFAULT_INT_TYPE` (typically `i32`)
+- **Default float literal type:** untyped floats infer `DEFAULT_FLOAT_TYPE` (typically `f64`)
 - **Fixed-size arrays:** `[5]i32` with compile-time bounds checking for constant indices
 - **Dynamic arrays:** `[]i32` with auto-growth (no bounds checking) - `arr[5] = x` grows array to size 6
+- **Array literals:** `[1, 2, 3]`; empty arrays need a type: `[] as []i32`
 - **Negative indexing:** Both array types support `arr[-1]` for reverse access
+- **Range expressions:** `start..end[:step]` or `start..=end[:step]`; float steps require float endpoints (`0.0..8.0:1.5`)
 - **Optional types:** `i32?` with coalescing operator `value ?? default`
 - **Result types:** `Error ! Result` with `catch` blocks
-- **Structs:** `type Point struct { .x: f64, .y: f64 };`
+- **Structs:** `type Point struct { .x: f64, .y: f64 };` and literals `{ .x = 1.0, .y = 2.0 } as Point`
 - **Enums:** `type Color enum { Red, Green, Blue };`
 - **Methods:** `fn (p: Point) distance() -> f64 { ... }`
 - **Import restrictions:** Import aliases reserve their names (cannot declare symbols with same name)
+- **Printing:** `import "std/io"; io::Println("msg");`
 
 ## Common Pitfalls
 
@@ -377,10 +382,10 @@ if condition {          // Detected as always true
 
 ### Reference Semantics & Aliasing
 
-Ferret uses `&T` for reference types (C++ reference semantics):
-- `&` is used **only in type signatures**: `fn (p: &Point) scale(factor: i32)`
-- No `&` operator in expressions (no explicit address-taking)
-- Method calls with `&Receiver` modify the original value
+Ferret uses `&T` and `&mut T` for reference types (C++-style reference semantics):
+- `&` and `&mut` appear in type signatures and expressions: `let r := &value`, `let m := &mut value`
+- There is no pointer arithmetic or raw address manipulation
+- Method calls with `&Receiver` or `&mut Receiver` modify the original value
 
 **Conservative approach for soundness:**
 - Struct fields are **not tracked** as constants
