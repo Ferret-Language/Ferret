@@ -3145,16 +3145,20 @@ func computeRangeConstLength(expr *ast.RangeExpr) (int, bool) {
 	}
 
 	if step.intVal.Sign() == 0 {
-		return 0, true
+		return 0, false
 	}
 
 	startVal := new(big.Int).Set(start.intVal)
 	endVal := new(big.Int).Set(end.intVal)
 	stepVal := new(big.Int).Set(step.intVal)
+	stepSign := stepVal.Sign()
+	cmp := startVal.Cmp(endVal)
+	if (cmp < 0 && stepSign < 0) || (cmp > 0 && stepSign > 0) {
+		return 0, false
+	}
 
 	var length *big.Int
-	if stepVal.Sign() > 0 {
-		cmp := startVal.Cmp(endVal)
+	if stepSign > 0 {
 		if expr.Inclusive {
 			if cmp > 0 {
 				return 0, true
@@ -3172,7 +3176,6 @@ func computeRangeConstLength(expr *ast.RangeExpr) (int, bool) {
 		}
 	} else {
 		stepAbs := new(big.Int).Abs(stepVal)
-		cmp := startVal.Cmp(endVal)
 		if expr.Inclusive {
 			if cmp < 0 {
 				return 0, true

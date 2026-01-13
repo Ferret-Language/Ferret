@@ -9,10 +9,12 @@ import (
 	"compiler/internal/tokens"
 	"compiler/internal/types"
 	"fmt"
+	"math/big"
 )
 
 // Track array literal lengths for variables assigned from array literals
 var arrayLiteralLengths = make(map[*symbols.Symbol]int)
+var rangeExprLengths = make(map[*symbols.Symbol]int)
 
 func propagateConstants(ctx *context_v2.CompilerContext, mod *context_v2.Module, hirMod *hir.Module) {
 	if hirMod == nil {
@@ -95,6 +97,13 @@ func walkDeclItemsConstEval(ctx *context_v2.CompilerContext, mod *context_v2.Mod
 					arrayLiteralLengths[item.Name.Symbol] = len(lit.Elts)
 				}
 			}
+			if rng, ok := item.Value.(*hir.RangeExpr); ok {
+				if arrType := arrayTypeOf(item.Value); arrType != nil && arrType.Length < 0 {
+					if length, ok := rangeConstLength(ctx, mod, rng); ok {
+						rangeExprLengths[item.Name.Symbol] = length
+					}
+				}
+			}
 		}
 	}
 }
@@ -129,9 +138,22 @@ func walkAssignConstEval(ctx *context_v2.CompilerContext, mod *context_v2.Module
 			// Not a dynamic array literal, clear any previous length
 			delete(arrayLiteralLengths, ident.Symbol)
 		}
+		delete(rangeExprLengths, ident.Symbol)
+	} else if rng, ok := stmt.Rhs.(*hir.RangeExpr); ok {
+		if arrType := arrayTypeOf(stmt.Rhs); arrType != nil && arrType.Length < 0 {
+			if length, ok := rangeConstLength(ctx, mod, rng); ok {
+				rangeExprLengths[ident.Symbol] = length
+			} else {
+				delete(rangeExprLengths, ident.Symbol)
+			}
+		} else {
+			delete(rangeExprLengths, ident.Symbol)
+		}
+		delete(arrayLiteralLengths, ident.Symbol)
 	} else {
 		// Not a literal, clear any previous length
 		delete(arrayLiteralLengths, ident.Symbol)
+		delete(rangeExprLengths, ident.Symbol)
 	}
 }
 
@@ -208,6 +230,7 @@ func walkExprConstEval(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 		walkExprConstEval(ctx, mod, e.Start)
 		walkExprConstEval(ctx, mod, e.End)
 		walkExprConstEval(ctx, mod, e.Incr)
+		checkRangeExpr(ctx, mod, e)
 	case *hir.ArrayLenExpr:
 		walkExprConstEval(ctx, mod, e.X)
 	case *hir.StringLenExpr:
@@ -278,9 +301,17 @@ func checkArrayBounds(ctx *context_v2.CompilerContext, mod *context_v2.Module, i
 			// It's an array literal, we can get the length at compile time
 			arrayLength = len(lit.Elts)
 			lengthKnown = true
+		} else if rng, ok := indexExpr.X.(*hir.RangeExpr); ok {
+			if length, ok := rangeConstLength(ctx, mod, rng); ok {
+				arrayLength = length
+				lengthKnown = true
+			}
 		} else if ident, ok := indexExpr.X.(*hir.Ident); ok && ident.Symbol != nil {
 			// It's a variable - check if it was assigned from an array literal
 			if len, found := arrayLiteralLengths[ident.Symbol]; found {
+				arrayLength = len
+				lengthKnown = true
+			} else if len, found := rangeExprLengths[ident.Symbol]; found {
 				arrayLength = len
 				lengthKnown = true
 			}
@@ -329,6 +360,159 @@ func evaluateIndexAsInt(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		return 0, false
 	}
 	return val.AsInt64()
+}
+
+func rangeConstValues(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *hir.RangeExpr) (*consteval.ConstValue, *consteval.ConstValue, *consteval.ConstValue, bool) {
+	if expr == nil {
+		return nil, nil, nil, false
+	}
+
+	startConst := consteval.EvaluateHIRExpr(ctx, mod, expr.Start)
+	endConst := consteval.EvaluateHIRExpr(ctx, mod, expr.End)
+	if startConst == nil || !startConst.IsConstant() {
+		return nil, nil, nil, false
+	}
+	if endConst == nil || !endConst.IsConstant() {
+		return nil, nil, nil, false
+	}
+
+	if expr.Incr != nil {
+		incrConst := consteval.EvaluateHIRExpr(ctx, mod, expr.Incr)
+		if incrConst == nil || !incrConst.IsConstant() {
+			return nil, nil, nil, false
+		}
+		return startConst, endConst, incrConst, true
+	}
+
+	if consteval.NumericIsFloat(startConst) || consteval.NumericIsFloat(endConst) {
+		stepType := types.TypeF64
+		if startConst.Type != nil && consteval.NumericIsFloat(startConst) {
+			stepType = startConst.Type
+		} else if endConst.Type != nil && consteval.NumericIsFloat(endConst) {
+			stepType = endConst.Type
+		}
+		return startConst, endConst, consteval.NewBigFloatValue(big.NewFloat(1), stepType), true
+	}
+	stepType := types.TypeUnknown
+	if startConst.Type != nil && !consteval.NumericIsFloat(startConst) {
+		stepType = startConst.Type
+	} else if endConst.Type != nil && !consteval.NumericIsFloat(endConst) {
+		stepType = endConst.Type
+	}
+	return startConst, endConst, consteval.NewBigIntValue(big.NewInt(1), stepType), true
+}
+
+func rangeConstLength(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *hir.RangeExpr) (int, bool) {
+	startVal, endVal, stepVal, ok := rangeConstValues(ctx, mod, expr)
+	if !ok || consteval.NumericIsFloat(startVal) || consteval.NumericIsFloat(endVal) || consteval.NumericIsFloat(stepVal) {
+		return 0, false
+	}
+	stepInt, ok := consteval.NumericToBigInt(stepVal)
+	if !ok || stepInt == nil || stepInt.Sign() == 0 {
+		return 0, false
+	}
+
+	startInt, ok := consteval.NumericToBigInt(startVal)
+	if !ok || startInt == nil {
+		return 0, false
+	}
+	endInt, ok := consteval.NumericToBigInt(endVal)
+	if !ok || endInt == nil {
+		return 0, false
+	}
+
+	start := new(big.Int).Set(startInt)
+	end := new(big.Int).Set(endInt)
+	step := new(big.Int).Set(stepInt)
+	stepSign := step.Sign()
+	cmp := start.Cmp(end)
+	if (cmp < 0 && stepSign < 0) || (cmp > 0 && stepSign > 0) {
+		return 0, false
+	}
+
+	var length *big.Int
+	if stepSign > 0 {
+		if expr.Inclusive {
+			if cmp > 0 {
+				return 0, true
+			}
+			diff := new(big.Int).Sub(end, start)
+			diff.Div(diff, step)
+			length = diff.Add(diff, big.NewInt(1))
+		} else {
+			if cmp >= 0 {
+				return 0, true
+			}
+			diff := new(big.Int).Sub(end, start)
+			diff.Add(diff, new(big.Int).Sub(step, big.NewInt(1)))
+			length = diff.Div(diff, step)
+		}
+	} else {
+		stepAbs := new(big.Int).Abs(step)
+		if expr.Inclusive {
+			if cmp < 0 {
+				return 0, true
+			}
+			diff := new(big.Int).Sub(start, end)
+			diff.Div(diff, stepAbs)
+			length = diff.Add(diff, big.NewInt(1))
+		} else {
+			if cmp <= 0 {
+				return 0, true
+			}
+			diff := new(big.Int).Sub(start, end)
+			diff.Add(diff, new(big.Int).Sub(stepAbs, big.NewInt(1)))
+			length = diff.Div(diff, stepAbs)
+		}
+	}
+
+	if length == nil || length.Sign() < 0 {
+		return 0, false
+	}
+
+	maxInt := big.NewInt(int64(^uint(0) >> 1))
+	if length.Cmp(maxInt) > 0 {
+		return 0, false
+	}
+	return int(length.Int64()), true
+}
+
+func checkRangeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *hir.RangeExpr) {
+	if ctx == nil || expr == nil {
+		return
+	}
+
+	startVal, endVal, stepVal, ok := rangeConstValues(ctx, mod, expr)
+	if !ok {
+		return
+	}
+
+	stepSign, ok := consteval.NumericSign(stepVal)
+	if !ok {
+		return
+	}
+	if stepSign == 0 {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("invalid range: step cannot be zero").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "step is zero").
+				WithHelp("use a non-zero step value"),
+		)
+		return
+	}
+
+	cmp, ok := consteval.NumericCompare(startVal, endVal)
+	if !ok {
+		return
+	}
+	if (cmp < 0 && stepSign < 0) || (cmp > 0 && stepSign > 0) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("invalid range: step must move toward the end value").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "step moves away from the end").
+				WithHelp("use a positive step when start < end, or a negative step when start > end"),
+		)
+	}
 }
 
 func arrayTypeOf(expr hir.Expr) *types.ArrayType {

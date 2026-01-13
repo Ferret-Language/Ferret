@@ -2475,6 +2475,8 @@ func (b *functionBuilder) lowerRangeExpr(expr *hir.RangeExpr) mir.ValueID {
 	currentAddr := b.emitAlloca(elemType, loc)
 	b.emitStore(currentAddr, startVal, loc)
 
+	b.emitRangeValidation(startVal, endVal, incrVal, elemType, loc)
+
 	if arrType.Length >= 0 {
 		arrAddr := b.emitAlloca(arrType, loc)
 		idxAddr := b.emitAlloca(types.TypeI32, loc)
@@ -2618,6 +2620,53 @@ func (b *functionBuilder) rangeCurrentValue(addr mir.ValueID, elemType types.Sem
 		return addr
 	}
 	return b.emitLoad(addr, elemType, loc)
+}
+
+func (b *functionBuilder) emitRangeValidation(startVal, endVal, incrVal mir.ValueID, elemType types.SemType, loc source.Location) {
+	if b.current == nil || b.current.Term != nil {
+		return
+	}
+	if elemType == nil || elemType.Equals(types.TypeUnknown) {
+		return
+	}
+
+	zero := b.rangeConst(elemType, "0", loc)
+	if zero == mir.InvalidValue {
+		return
+	}
+
+	isZero := b.rangeCompare(tokens.DOUBLE_EQUAL_TOKEN, incrVal, zero, elemType, loc)
+	posCheck := b.rangeCompare(tokens.GREATER_TOKEN, incrVal, zero, elemType, loc)
+	negCheck := b.rangeCompare(tokens.LESS_TOKEN, incrVal, zero, elemType, loc)
+	startGtEnd := b.rangeCompare(tokens.GREATER_TOKEN, startVal, endVal, elemType, loc)
+	startLtEnd := b.rangeCompare(tokens.LESS_TOKEN, startVal, endVal, elemType, loc)
+
+	posInvalid := b.emitBinary(tokens.AND_TOKEN, posCheck, startGtEnd, types.TypeBool, loc)
+	negInvalid := b.emitBinary(tokens.AND_TOKEN, negCheck, startLtEnd, types.TypeBool, loc)
+	dirInvalid := b.emitBinary(tokens.OR_TOKEN, posInvalid, negInvalid, types.TypeBool, loc)
+	invalid := b.emitBinary(tokens.OR_TOKEN, isZero, dirInvalid, types.TypeBool, loc)
+
+	panicBlock := b.newBlock("range.invalid", loc)
+	okBlock := b.newBlock("range.ok", loc)
+	b.current.Term = &mir.CondBr{
+		Cond:     invalid,
+		Then:     panicBlock.ID,
+		Else:     okBlock.ID,
+		Location: loc,
+	}
+
+	b.setBlock(panicBlock)
+	msg := b.emitConst(types.TypeString, "invalid range", loc)
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   "ferret_global_panic",
+		Args:     []mir.ValueID{msg},
+		Type:     types.TypeVoid,
+		Location: loc,
+	})
+	panicBlock.Term = &mir.Unreachable{Location: loc}
+
+	b.setBlock(okBlock)
 }
 
 func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.CompositeLit) mir.ValueID {

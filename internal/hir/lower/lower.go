@@ -8,6 +8,7 @@ import (
 	"compiler/internal/tokens"
 	"compiler/internal/types"
 	"fmt"
+	"strconv"
 )
 
 // Lowerer rewrites source-shaped HIR into a lowered, canonical form.
@@ -361,6 +362,7 @@ func (l *Lowerer) lowerRangeFor(stmt *hir.ForStmt, rng *hir.RangeExpr) hir.Node 
 		newVarDecl(endIdent, elemType, endExpr, loc),
 		newVarDecl(incrIdent, elemType, incrExpr, loc),
 	}
+	prelude = append(prelude, l.rangeInvalidCheck(startIdent, endIdent, incrIdent, elemType, loc))
 
 	items, iterLoc, isDecl := iteratorItems(stmt.Iterator)
 	if len(items) == 0 {
@@ -1651,6 +1653,41 @@ func zeroLiteral(typ types.SemType, loc source.Location) *hir.Literal {
 	return intLiteral(0, typ, loc)
 }
 
+func (l *Lowerer) builtinIdent(name string, loc source.Location) *hir.Ident {
+	if l.ctx != nil && l.ctx.Universe != nil {
+		if sym, ok := l.ctx.Universe.GetSymbol(name); ok && sym != nil {
+			return &hir.Ident{
+				Name:     name,
+				Symbol:   sym,
+				Type:     sym.Type,
+				Location: loc,
+			}
+		}
+	}
+	return &hir.Ident{
+		Name:     name,
+		Type:     types.TypeUnknown,
+		Location: loc,
+	}
+}
+
+func (l *Lowerer) panicStmt(msg string, loc source.Location) hir.Node {
+	panicIdent := l.builtinIdent("panic", loc)
+	msgLit := &hir.Literal{
+		Kind:     hir.LiteralString,
+		Value:    strconv.Quote(msg),
+		Type:     types.TypeString,
+		Location: loc,
+	}
+	call := &hir.CallExpr{
+		Fun:      panicIdent,
+		Args:     []hir.Expr{msgLit},
+		Type:     types.TypeVoid,
+		Location: loc,
+	}
+	return &hir.ExprStmt{X: call, Location: loc}
+}
+
 func isSimpleValue(expr hir.Expr) bool {
 	switch e := expr.(type) {
 	case *hir.Ident, *hir.SelectorExpr, *hir.ScopeResolutionExpr:
@@ -1770,6 +1807,35 @@ func rangeCondExpr(value hir.Expr, end hir.Expr, incr *hir.Ident, elemType types
 	negAnd := newBinary(negCheck, negCondExpr, tokens.AND_TOKEN, types.TypeBool, loc)
 
 	return newBinary(posAnd, negAnd, tokens.OR_TOKEN, types.TypeBool, loc)
+}
+
+func rangeInvalidCond(start, end, incr hir.Expr, elemType types.SemType, loc source.Location) hir.Expr {
+	zero := zeroLiteral(elemType, loc)
+
+	isZero := newBinary(incr, zero, tokens.DOUBLE_EQUAL_TOKEN, types.TypeBool, loc)
+	posCheck := newBinary(incr, zero, tokens.GREATER_TOKEN, types.TypeBool, loc)
+	negCheck := newBinary(incr, zero, tokens.LESS_TOKEN, types.TypeBool, loc)
+
+	startGtEnd := newBinary(start, end, tokens.GREATER_TOKEN, types.TypeBool, loc)
+	startLtEnd := newBinary(start, end, tokens.LESS_TOKEN, types.TypeBool, loc)
+
+	posInvalid := newBinary(posCheck, startGtEnd, tokens.AND_TOKEN, types.TypeBool, loc)
+	negInvalid := newBinary(negCheck, startLtEnd, tokens.AND_TOKEN, types.TypeBool, loc)
+	dirInvalid := newBinary(posInvalid, negInvalid, tokens.OR_TOKEN, types.TypeBool, loc)
+
+	return newBinary(isZero, dirInvalid, tokens.OR_TOKEN, types.TypeBool, loc)
+}
+
+func (l *Lowerer) rangeInvalidCheck(start, end, incr *hir.Ident, elemType types.SemType, loc source.Location) hir.Node {
+	cond := rangeInvalidCond(start, end, incr, elemType, loc)
+	return &hir.IfStmt{
+		Cond: cond,
+		Body: &hir.Block{
+			Nodes:    []hir.Node{l.panicStmt("invalid range", loc)},
+			Location: loc,
+		},
+		Location: loc,
+	}
 }
 
 func isNoneExpr(expr hir.Expr) bool {
