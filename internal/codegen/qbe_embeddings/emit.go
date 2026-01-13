@@ -913,11 +913,6 @@ func (g *Generator) emitArraySet(a *mir.ArraySet) {
 		return
 	}
 
-	valuePtr := g.valueAddr(a.Value, elemType, &a.Location)
-	if valuePtr == "" {
-		return
-	}
-
 	if arrType.Length >= 0 {
 		// Fixed-size array: calculate offset and store directly
 		// Bounds checking was done in MIR lowering
@@ -935,15 +930,13 @@ func (g *Generator) emitArraySet(a *mir.ArraySet) {
 		elemPtr := g.newTemp()
 		g.emitLine(fmt.Sprintf("%s =l add %s, %s", elemPtr, arrPtr, offset))
 
-		// Store the element
-		storeOp, err := g.storeOp(elemType)
-		if err != nil {
-			g.reportError(err.Error(), &a.Location)
-			return
-		}
-		g.emitLine(fmt.Sprintf("%s %s, %s", storeOp, valuePtr, elemPtr))
+		g.storeValueToAddr(a.Value, elemType, elemPtr, &a.Location)
 	} else {
 		// Dynamic array: call ferret_array_set and check return value
+		valuePtr := g.valueAddr(a.Value, elemType, &a.Location)
+		if valuePtr == "" {
+			return
+		}
 		arrVal := g.valueName(a.Array)
 		indexVal := g.valueName(a.Index)
 

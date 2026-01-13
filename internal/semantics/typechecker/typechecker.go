@@ -3122,6 +3122,85 @@ func evaluateNumericConst(expr ast.Expression) (numericConst, bool) {
 	return numericConst{}, false
 }
 
+func computeRangeConstLength(expr *ast.RangeExpr) (int, bool) {
+	if expr == nil {
+		return 0, false
+	}
+
+	start, ok := evaluateNumericConst(expr.Start)
+	if !ok || start.kind != ast.INT || start.intVal == nil {
+		return 0, false
+	}
+	end, ok := evaluateNumericConst(expr.End)
+	if !ok || end.kind != ast.INT || end.intVal == nil {
+		return 0, false
+	}
+
+	step := numericConst{kind: ast.INT, intVal: big.NewInt(1)}
+	if expr.Incr != nil {
+		step, ok = evaluateNumericConst(expr.Incr)
+		if !ok || step.kind != ast.INT || step.intVal == nil {
+			return 0, false
+		}
+	}
+
+	if step.intVal.Sign() == 0 {
+		return 0, true
+	}
+
+	startVal := new(big.Int).Set(start.intVal)
+	endVal := new(big.Int).Set(end.intVal)
+	stepVal := new(big.Int).Set(step.intVal)
+
+	var length *big.Int
+	if stepVal.Sign() > 0 {
+		cmp := startVal.Cmp(endVal)
+		if expr.Inclusive {
+			if cmp > 0 {
+				return 0, true
+			}
+			diff := new(big.Int).Sub(endVal, startVal)
+			diff.Div(diff, stepVal)
+			length = diff.Add(diff, big.NewInt(1))
+		} else {
+			if cmp >= 0 {
+				return 0, true
+			}
+			diff := new(big.Int).Sub(endVal, startVal)
+			diff.Add(diff, new(big.Int).Sub(stepVal, big.NewInt(1)))
+			length = diff.Div(diff, stepVal)
+		}
+	} else {
+		stepAbs := new(big.Int).Abs(stepVal)
+		cmp := startVal.Cmp(endVal)
+		if expr.Inclusive {
+			if cmp < 0 {
+				return 0, true
+			}
+			diff := new(big.Int).Sub(startVal, endVal)
+			diff.Div(diff, stepAbs)
+			length = diff.Add(diff, big.NewInt(1))
+		} else {
+			if cmp <= 0 {
+				return 0, true
+			}
+			diff := new(big.Int).Sub(startVal, endVal)
+			diff.Add(diff, new(big.Int).Sub(stepAbs, big.NewInt(1)))
+			length = diff.Div(diff, stepAbs)
+		}
+	}
+
+	if length == nil || length.Sign() < 0 {
+		return 0, true
+	}
+
+	maxInt := big.NewInt(int64(^uint(0) >> 1))
+	if length.Cmp(maxInt) > 0 {
+		return 0, false
+	}
+	return int(length.Int64()), true
+}
+
 func isNumericConstOp(op tokens.TOKEN) bool {
 	switch op {
 	case tokens.PLUS_TOKEN, tokens.MINUS_TOKEN, tokens.MUL_TOKEN, tokens.DIV_TOKEN, tokens.MOD_TOKEN,

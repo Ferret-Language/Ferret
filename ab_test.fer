@@ -25,5 +25,11 @@ fn main() {
         }
     };
 
+    let arr := 0..8:-2;
+
+    for v in arr {
+        io::Println(v);
+    }
+
     io::Println("end");
 }

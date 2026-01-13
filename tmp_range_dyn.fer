@@ -1,0 +1,8 @@
+import "std/io";
+
+fn main() {
+    let arr: []i32 = 0..3;
+    for v in arr {
+        io::Println(v);
+    }
+}

@@ -922,7 +922,11 @@ func inferRangeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	// Return array type with element type from range
 	// Use the wider type to accommodate both start and end values
 	elementType := widerType(startType, endType)
-	return &types.ArrayType{Element: elementType}
+	length := -1
+	if constLength, ok := computeRangeConstLength(expr); ok {
+		length = constLength
+	}
+	return &types.ArrayType{Element: elementType, Length: length}
 }
 
 // inferCoalescingExprType determines the result type of an coalescing expression (a ?? b)

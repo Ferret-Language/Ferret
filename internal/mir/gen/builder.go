@@ -260,6 +260,22 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 				return
 			}
 		}
+		if _, ok := item.Value.(*hir.RangeExpr); ok {
+			if arrType, ok := types.UnwrapType(typ).(*types.ArrayType); ok && arrType.Length < 0 {
+				val := b.lowerExpr(item.Value)
+				if val != mir.InvalidValue {
+					val = b.coerceValueForAssign(val, b.exprType(item.Value), typ, item.Name.Location)
+					if val != mir.InvalidValue {
+						b.emitInstr(&mir.Store{
+							Addr:     addr,
+							Value:    val,
+							Location: item.Name.Location,
+						})
+					}
+				}
+				return
+			}
+		}
 
 		val := b.lowerExpr(item.Value)
 		if val != mir.InvalidValue {
@@ -1117,6 +1133,8 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 			Location:   e.Location,
 		})
 		return id
+	case *hir.RangeExpr:
+		return b.lowerRangeExpr(e)
 	case *hir.CompositeLit:
 		return b.lowerCompositeLit(e)
 	case *hir.ArrayLenExpr:
@@ -1171,6 +1189,16 @@ func (b *functionBuilder) derefValueIfNeeded(val mir.ValueID, typ types.SemType,
 	return val, typ
 }
 
+func (b *functionBuilder) useAddrValue(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	if _, ok := types.UnwrapType(typ).(*types.ReferenceType); ok {
+		return false
+	}
+	return needsByRefType(typ)
+}
+
 func dynamicArrayValueType(typ types.SemType) (*types.ArrayType, bool) {
 	if typ == nil {
 		return nil, false
@@ -1189,7 +1217,9 @@ func (b *functionBuilder) isDynamicArrayLiteralExpr(expr hir.Expr, expected type
 	if expr == nil {
 		return false
 	}
-	if _, ok := expr.(*hir.CompositeLit); !ok {
+	switch expr.(type) {
+	case *hir.CompositeLit, *hir.RangeExpr:
+	default:
 		return false
 	}
 	if _, ok := dynamicArrayValueType(expected); ok {
@@ -2244,6 +2274,9 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 	if ident.Symbol != nil && b.captures != nil {
 		if _, ok := b.captures[ident.Symbol]; ok {
 			if addr := b.addrForIdent(ident); addr != mir.InvalidValue {
+				if b.useAddrValue(ident.Type) {
+					return addr
+				}
 				return b.emitLoad(addr, ident.Type, ident.Location)
 			}
 		}
@@ -2251,11 +2284,17 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 
 	if ident.Symbol != nil {
 		if addr, ok := b.slots[ident.Symbol]; ok {
+			if b.useAddrValue(ident.Type) {
+				return addr
+			}
 			return b.emitLoad(addr, ident.Type, ident.Location)
 		}
 	}
 
 	if addr, ok := b.tempSlots[ident]; ok {
+		if b.useAddrValue(ident.Type) {
+			return addr
+		}
 		return b.emitLoad(addr, ident.Type, ident.Location)
 	}
 
@@ -2395,6 +2434,190 @@ func (b *functionBuilder) lowerCompositeLit(expr *hir.CompositeLit) mir.ValueID 
 		b.reportUnsupported("composite literal", expr.Loc())
 		return mir.InvalidValue
 	}
+}
+
+func (b *functionBuilder) lowerRangeExpr(expr *hir.RangeExpr) mir.ValueID {
+	if expr == nil {
+		return mir.InvalidValue
+	}
+
+	arrType, ok := types.UnwrapType(expr.Type).(*types.ArrayType)
+	if !ok || arrType == nil {
+		b.reportUnsupported("range expression type", expr.Loc())
+		return mir.InvalidValue
+	}
+
+	elemType := arrType.Element
+	if elemType == nil {
+		elemType = types.TypeUnknown
+	}
+
+	loc := expr.Location
+	startVal := b.lowerRangeValue(expr.Start, elemType, loc)
+	if startVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	endVal := b.lowerRangeValue(expr.End, elemType, loc)
+	if endVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+
+	var incrVal mir.ValueID
+	if expr.Incr != nil {
+		incrVal = b.lowerRangeValue(expr.Incr, elemType, loc)
+	} else {
+		incrVal = b.rangeConst(elemType, "1", loc)
+	}
+	if incrVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+
+	currentAddr := b.emitAlloca(elemType, loc)
+	b.emitStore(currentAddr, startVal, loc)
+
+	if arrType.Length >= 0 {
+		arrAddr := b.emitAlloca(arrType, loc)
+		idxAddr := b.emitAlloca(types.TypeI32, loc)
+		b.emitStore(idxAddr, b.emitConst(types.TypeI32, "0", loc), loc)
+
+		condBlock := b.newBlock("range.cond", loc)
+		bodyBlock := b.newBlock("range.body", loc)
+		exitBlock := b.newBlock("range.end", loc)
+
+		lenVal := b.emitConst(types.TypeI32, strconv.Itoa(arrType.Length), loc)
+		b.branchIfNoTerm(condBlock.ID, loc)
+
+		b.setBlock(condBlock)
+		idxVal := b.emitLoad(idxAddr, types.TypeI32, loc)
+		cond := b.emitBinary(tokens.LESS_TOKEN, idxVal, lenVal, types.TypeBool, loc)
+		b.current.Term = &mir.CondBr{
+			Cond:     cond,
+			Then:     bodyBlock.ID,
+			Else:     exitBlock.ID,
+			Location: loc,
+		}
+
+		b.setBlock(bodyBlock)
+		currentVal := b.rangeCurrentValue(currentAddr, elemType, loc)
+		b.emitInstr(&mir.ArraySet{
+			Array:    arrAddr,
+			Index:    idxVal,
+			Value:    currentVal,
+			Location: loc,
+		})
+		nextVal := b.emitBinary(tokens.PLUS_TOKEN, currentVal, incrVal, elemType, loc)
+		b.emitStore(currentAddr, nextVal, loc)
+
+		nextIdx := b.emitBinary(tokens.PLUS_TOKEN, idxVal, b.emitConst(types.TypeI32, "1", loc), types.TypeI32, loc)
+		b.emitStore(idxAddr, nextIdx, loc)
+		b.branchIfNoTerm(condBlock.ID, loc)
+
+		b.setBlock(exitBlock)
+		return arrAddr
+	}
+
+	elemSize := b.gen.layout.SizeOf(elemType)
+	if elemSize <= 0 {
+		b.reportUnsupported("range expression element size", expr.Loc())
+		return mir.InvalidValue
+	}
+	sizeType := types.TypeI64
+	if b.gen.layout.PointerSize <= 4 {
+		sizeType = types.TypeI32
+	}
+	sizeVal := b.emitConst(sizeType, strconv.Itoa(elemSize), loc)
+	capVal := b.emitConst(types.TypeI32, "0", loc)
+
+	arrVal := b.gen.nextValueID()
+	b.emitInstr(&mir.Call{
+		Result:   arrVal,
+		Target:   "ferret_array_new",
+		Args:     []mir.ValueID{sizeVal, capVal},
+		Type:     expr.Type,
+		Location: loc,
+	})
+
+	valueTemp := b.emitAlloca(elemType, loc)
+	condBlock := b.newBlock("range.cond", loc)
+	bodyBlock := b.newBlock("range.body", loc)
+	exitBlock := b.newBlock("range.end", loc)
+
+	condToken := tokens.LESS_TOKEN
+	negCondToken := tokens.GREATER_TOKEN
+	if expr.Inclusive {
+		condToken = tokens.LESS_EQUAL_TOKEN
+		negCondToken = tokens.GREATER_EQUAL_TOKEN
+	}
+
+	b.branchIfNoTerm(condBlock.ID, loc)
+
+	b.setBlock(condBlock)
+	currentVal := b.rangeCurrentValue(currentAddr, elemType, loc)
+	zeroVal := b.rangeConst(elemType, "0", loc)
+	posCheck := b.rangeCompare(tokens.GREATER_TOKEN, incrVal, zeroVal, elemType, loc)
+	negCheck := b.rangeCompare(tokens.LESS_TOKEN, incrVal, zeroVal, elemType, loc)
+	posCond := b.rangeCompare(condToken, currentVal, endVal, elemType, loc)
+	negCond := b.rangeCompare(negCondToken, currentVal, endVal, elemType, loc)
+	posAnd := b.emitBinary(tokens.AND_TOKEN, posCheck, posCond, types.TypeBool, loc)
+	negAnd := b.emitBinary(tokens.AND_TOKEN, negCheck, negCond, types.TypeBool, loc)
+	cond := b.emitBinary(tokens.OR_TOKEN, posAnd, negAnd, types.TypeBool, loc)
+	b.current.Term = &mir.CondBr{
+		Cond:     cond,
+		Then:     bodyBlock.ID,
+		Else:     exitBlock.ID,
+		Location: loc,
+	}
+
+	b.setBlock(bodyBlock)
+	currentVal = b.rangeCurrentValue(currentAddr, elemType, loc)
+	b.emitStore(valueTemp, currentVal, loc)
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   "ferret_array_append",
+		Args:     []mir.ValueID{arrVal, valueTemp},
+		Type:     types.TypeBool,
+		Location: loc,
+	})
+	nextVal := b.emitBinary(tokens.PLUS_TOKEN, currentVal, incrVal, elemType, loc)
+	b.emitStore(currentAddr, nextVal, loc)
+	b.branchIfNoTerm(condBlock.ID, loc)
+
+	b.setBlock(exitBlock)
+	return arrVal
+}
+
+func (b *functionBuilder) lowerRangeValue(expr hir.Expr, elemType types.SemType, loc source.Location) mir.ValueID {
+	if expr == nil {
+		return mir.InvalidValue
+	}
+	val := b.lowerExpr(expr)
+	if val == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	valType := b.exprType(expr)
+	val, valType = b.derefValueIfNeeded(val, valType, loc)
+	return b.castValue(val, valType, elemType, loc)
+}
+
+func (b *functionBuilder) rangeConst(elemType types.SemType, value string, loc source.Location) mir.ValueID {
+	if isLargePrimitiveType(elemType) {
+		return b.emitLargeConst(elemType, value, loc)
+	}
+	return b.emitConst(elemType, value, loc)
+}
+
+func (b *functionBuilder) rangeCompare(op tokens.TOKEN, left, right mir.ValueID, elemType types.SemType, loc source.Location) mir.ValueID {
+	if isLargePrimitiveType(elemType) {
+		return b.emitLargeCompare(op, left, right, elemType, loc)
+	}
+	return b.emitBinary(op, left, right, types.TypeBool, loc)
+}
+
+func (b *functionBuilder) rangeCurrentValue(addr mir.ValueID, elemType types.SemType, loc source.Location) mir.ValueID {
+	if isLargePrimitiveType(elemType) {
+		return addr
+	}
+	return b.emitLoad(addr, elemType, loc)
 }
 
 func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.CompositeLit) mir.ValueID {
@@ -2776,6 +2999,39 @@ func (b *functionBuilder) lowerIndexValue(expr *hir.IndexExpr) mir.ValueID {
 		if arrType.Length < 0 {
 			return b.lowerDynamicIndexValue(expr, arrType)
 		}
+		if _, ok := b.constArrayIndex(expr, arrType); ok {
+			addr := b.lowerIndexAddr(expr)
+			if addr == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			return b.emitLoad(addr, expr.Type, expr.Location)
+		}
+
+		arrVal := b.lowerExpr(expr.X)
+		if arrVal == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+
+		indexVal := b.lowerExpr(expr.Index)
+		if indexVal == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		indexVal = b.castValue(indexVal, b.exprType(expr.Index), types.TypeI32, expr.Location)
+		lenVal := b.emitConst(types.TypeI32, strconv.Itoa(arrType.Length), expr.Location)
+		indexVal = b.emitBoundsCheckedIndex(indexVal, lenVal, types.TypeI32, expr.Location)
+		if indexVal == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+
+		result := b.gen.nextValueID()
+		b.emitInstr(&mir.ArrayGet{
+			Result:   result,
+			Array:    arrVal,
+			Index:    indexVal,
+			Type:     expr.Type,
+			Location: expr.Location,
+		})
+		return result
 	}
 
 	addr := b.lowerIndexAddr(expr)

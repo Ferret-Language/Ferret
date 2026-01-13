@@ -1,0 +1,1522 @@
+{
+  "FullPath": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer",
+  "ImportPath": "",
+  "Alias": "",
+  "Nodes": [
+    {
+      "Path": {
+        "Kind": 2,
+        "Value": "std/io",
+        "Start": {
+          "Line": 1,
+          "Column": 8,
+          "Index": 7
+        },
+        "End": {
+          "Line": 1,
+          "Column": 16,
+          "Index": 15
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+      },
+      "Alias": {
+        "Name": "",
+        "Start": null,
+        "End": null,
+        "Filename": null
+      },
+      "LocationOnDisk": "",
+      "Start": {
+        "Line": 1,
+        "Column": 1,
+        "Index": 0
+      },
+      "End": {
+        "Line": 1,
+        "Column": 17,
+        "Index": 16
+      },
+      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+    },
+    {
+      "Name": {
+        "Name": "mayFail",
+        "Start": {
+          "Line": 3,
+          "Column": 4,
+          "Index": 21
+        },
+        "End": {
+          "Line": 3,
+          "Column": 11,
+          "Index": 28
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+      },
+      "Type": {
+        "Params": null,
+        "Result": {
+          "Value": {
+            "Name": "i32",
+            "Start": {
+              "Line": 3,
+              "Column": 23,
+              "Index": 40
+            },
+            "End": {
+              "Line": 3,
+              "Column": 26,
+              "Index": 43
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+          },
+          "Error": {
+            "Name": "str",
+            "Start": {
+              "Line": 3,
+              "Column": 17,
+              "Index": 34
+            },
+            "End": {
+              "Line": 3,
+              "Column": 20,
+              "Index": 37
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+          },
+          "Start": {
+            "Line": 3,
+            "Column": 17,
+            "Index": 34
+          },
+          "End": {
+            "Line": 3,
+            "Column": 26,
+            "Index": 43
+          },
+          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+        },
+        "Start": {
+          "Line": 3,
+          "Column": 1,
+          "Index": 18
+        },
+        "End": {
+          "Line": 3,
+          "Column": 26,
+          "Index": 43
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+      },
+      "Body": {
+        "Nodes": [
+          {
+            "Result": {
+              "Kind": 2,
+              "Value": "boom",
+              "Start": {
+                "Line": 4,
+                "Column": 12,
+                "Index": 57
+              },
+              "End": {
+                "Line": 4,
+                "Column": 18,
+                "Index": 63
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+            },
+            "IsError": true,
+            "Start": {
+              "Line": 4,
+              "Column": 5,
+              "Index": 50
+            },
+            "End": {
+              "Line": 4,
+              "Column": 18,
+              "Index": 63
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+          }
+        ],
+        "Scope": null,
+        "Start": {
+          "Line": 3,
+          "Column": 27,
+          "Index": 44
+        },
+        "End": {
+          "Line": 5,
+          "Column": 2,
+          "Index": 67
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+      },
+      "Scope": null,
+      "Doc": null,
+      "Start": {
+        "Line": 3,
+        "Column": 1,
+        "Index": 18
+      },
+      "End": {
+        "Line": 5,
+        "Column": 2,
+        "Index": 67
+      },
+      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+    },
+    {
+      "Name": {
+        "Name": "main",
+        "Start": {
+          "Line": 7,
+          "Column": 4,
+          "Index": 72
+        },
+        "End": {
+          "Line": 7,
+          "Column": 8,
+          "Index": 76
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+      },
+      "Type": {
+        "Params": null,
+        "Result": null,
+        "Start": {
+          "Line": 7,
+          "Column": 1,
+          "Index": 69
+        },
+        "End": {
+          "Line": 7,
+          "Column": 10,
+          "Index": 78
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+      },
+      "Body": {
+        "Nodes": [
+          {
+            "Call": {
+              "Fun": {
+                "Name": "mayFail",
+                "Start": {
+                  "Line": 8,
+                  "Column": 11,
+                  "Index": 91
+                },
+                "End": {
+                  "Line": 8,
+                  "Column": 18,
+                  "Index": 98
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+              },
+              "Args": [],
+              "Catch": null,
+              "Start": {
+                "Line": 8,
+                "Column": 11,
+                "Index": 91
+              },
+              "End": {
+                "Line": 26,
+                "Column": 6,
+                "Index": 621
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+            },
+            "Catch": {
+              "ErrIdent": {
+                "Name": "err",
+                "Start": {
+                  "Line": 8,
+                  "Column": 27,
+                  "Index": 107
+                },
+                "End": {
+                  "Line": 8,
+                  "Column": 30,
+                  "Index": 110
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+              },
+              "Handler": {
+                "Nodes": [
+                  {
+                    "Cond": {
+                      "X": {
+                        "Name": "err",
+                        "Start": {
+                          "Line": 9,
+                          "Column": 12,
+                          "Index": 124
+                        },
+                        "End": {
+                          "Line": 9,
+                          "Column": 15,
+                          "Index": 127
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                      },
+                      "Op": {
+                        "Kind": "==",
+                        "Value": "==",
+                        "Start": {
+                          "Line": 9,
+                          "Column": 16,
+                          "Index": 128
+                        },
+                        "End": {
+                          "Line": 9,
+                          "Column": 18,
+                          "Index": 130
+                        }
+                      },
+                      "Y": {
+                        "Kind": 2,
+                        "Value": "x",
+                        "Start": {
+                          "Line": 9,
+                          "Column": 19,
+                          "Index": 131
+                        },
+                        "End": {
+                          "Line": 9,
+                          "Column": 22,
+                          "Index": 134
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                      },
+                      "Start": {
+                        "Line": 9,
+                        "Column": 12,
+                        "Index": 124
+                      },
+                      "End": {
+                        "Line": 9,
+                        "Column": 22,
+                        "Index": 134
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                    },
+                    "Body": {
+                      "Nodes": [
+                        {
+                          "X": {
+                            "Fun": {
+                              "X": {
+                                "Name": "io",
+                                "Start": {
+                                  "Line": 10,
+                                  "Column": 13,
+                                  "Index": 149
+                                },
+                                "End": {
+                                  "Line": 10,
+                                  "Column": 15,
+                                  "Index": 151
+                                },
+                                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                              },
+                              "Selector": {
+                                "Name": "Println",
+                                "Start": {
+                                  "Line": 10,
+                                  "Column": 17,
+                                  "Index": 153
+                                },
+                                "End": {
+                                  "Line": 10,
+                                  "Column": 24,
+                                  "Index": 160
+                                },
+                                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                              },
+                              "Start": {
+                                "Line": 10,
+                                "Column": 13,
+                                "Index": 149
+                              },
+                              "End": {
+                                "Line": 10,
+                                "Column": 24,
+                                "Index": 160
+                              },
+                              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                            },
+                            "Args": [
+                              {
+                                "Kind": 2,
+                                "Value": "branch 1",
+                                "Start": {
+                                  "Line": 10,
+                                  "Column": 25,
+                                  "Index": 161
+                                },
+                                "End": {
+                                  "Line": 10,
+                                  "Column": 35,
+                                  "Index": 171
+                                },
+                                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                              }
+                            ],
+                            "Catch": null,
+                            "Start": {
+                              "Line": 10,
+                              "Column": 13,
+                              "Index": 149
+                            },
+                            "End": {
+                              "Line": 10,
+                              "Column": 36,
+                              "Index": 172
+                            },
+                            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                          },
+                          "Start": {
+                            "Line": 10,
+                            "Column": 13,
+                            "Index": 149
+                          },
+                          "End": {
+                            "Line": 10,
+                            "Column": 37,
+                            "Index": 173
+                          },
+                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                        }
+                      ],
+                      "Scope": null,
+                      "Start": {
+                        "Line": 9,
+                        "Column": 23,
+                        "Index": 135
+                      },
+                      "End": {
+                        "Line": 11,
+                        "Column": 10,
+                        "Index": 183
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                    },
+                    "Else": {
+                      "Cond": {
+                        "X": {
+                          "Name": "err",
+                          "Start": {
+                            "Line": 11,
+                            "Column": 19,
+                            "Index": 192
+                          },
+                          "End": {
+                            "Line": 11,
+                            "Column": 22,
+                            "Index": 195
+                          },
+                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                        },
+                        "Op": {
+                          "Kind": "==",
+                          "Value": "==",
+                          "Start": {
+                            "Line": 11,
+                            "Column": 23,
+                            "Index": 196
+                          },
+                          "End": {
+                            "Line": 11,
+                            "Column": 25,
+                            "Index": 198
+                          }
+                        },
+                        "Y": {
+                          "Kind": 2,
+                          "Value": "y",
+                          "Start": {
+                            "Line": 11,
+                            "Column": 26,
+                            "Index": 199
+                          },
+                          "End": {
+                            "Line": 11,
+                            "Column": 29,
+                            "Index": 202
+                          },
+                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                        },
+                        "Start": {
+                          "Line": 11,
+                          "Column": 19,
+                          "Index": 192
+                        },
+                        "End": {
+                          "Line": 11,
+                          "Column": 29,
+                          "Index": 202
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                      },
+                      "Body": {
+                        "Nodes": [
+                          {
+                            "Iterator": {
+                              "Decls": [
+                                {
+                                  "Name": {
+                                    "Name": "i",
+                                    "Start": {
+                                      "Line": 12,
+                                      "Column": 17,
+                                      "Index": 221
+                                    },
+                                    "End": {
+                                      "Line": 12,
+                                      "Column": 18,
+                                      "Index": 222
+                                    },
+                                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                  },
+                                  "Type": null,
+                                  "Value": null
+                                }
+                              ],
+                              "Doc": null,
+                              "Start": {
+                                "Line": 12,
+                                "Column": 17,
+                                "Index": 221
+                              },
+                              "End": {
+                                "Line": 12,
+                                "Column": 18,
+                                "Index": 222
+                              },
+                              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                            },
+                            "Range": {
+                              "Start": {
+                                "Kind": 0,
+                                "Value": "0",
+                                "Start": {
+                                  "Line": 12,
+                                  "Column": 22,
+                                  "Index": 226
+                                },
+                                "End": {
+                                  "Line": 12,
+                                  "Column": 23,
+                                  "Index": 227
+                                },
+                                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                              },
+                              "End": {
+                                "Kind": 0,
+                                "Value": "3",
+                                "Start": {
+                                  "Line": 12,
+                                  "Column": 25,
+                                  "Index": 229
+                                },
+                                "End": {
+                                  "Line": 12,
+                                  "Column": 26,
+                                  "Index": 230
+                                },
+                                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                              },
+                              "Incr": null,
+                              "Inclusive": false,
+                              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                            },
+                            "Body": {
+                              "Nodes": [
+                                {
+                                  "X": {
+                                    "Fun": {
+                                      "X": {
+                                        "Name": "io",
+                                        "Start": {
+                                          "Line": 13,
+                                          "Column": 17,
+                                          "Index": 249
+                                        },
+                                        "End": {
+                                          "Line": 13,
+                                          "Column": 19,
+                                          "Index": 251
+                                        },
+                                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                      },
+                                      "Selector": {
+                                        "Name": "Println",
+                                        "Start": {
+                                          "Line": 13,
+                                          "Column": 21,
+                                          "Index": 253
+                                        },
+                                        "End": {
+                                          "Line": 13,
+                                          "Column": 28,
+                                          "Index": 260
+                                        },
+                                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                      },
+                                      "Start": {
+                                        "Line": 13,
+                                        "Column": 17,
+                                        "Index": 249
+                                      },
+                                      "End": {
+                                        "Line": 13,
+                                        "Column": 28,
+                                        "Index": 260
+                                      },
+                                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                    },
+                                    "Args": [
+                                      {
+                                        "Kind": 2,
+                                        "Value": "loop in else-if",
+                                        "Start": {
+                                          "Line": 13,
+                                          "Column": 29,
+                                          "Index": 261
+                                        },
+                                        "End": {
+                                          "Line": 13,
+                                          "Column": 46,
+                                          "Index": 278
+                                        },
+                                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                      },
+                                      {
+                                        "Name": "i",
+                                        "Start": {
+                                          "Line": 13,
+                                          "Column": 48,
+                                          "Index": 280
+                                        },
+                                        "End": {
+                                          "Line": 13,
+                                          "Column": 49,
+                                          "Index": 281
+                                        },
+                                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                      }
+                                    ],
+                                    "Catch": null,
+                                    "Start": {
+                                      "Line": 13,
+                                      "Column": 17,
+                                      "Index": 249
+                                    },
+                                    "End": {
+                                      "Line": 13,
+                                      "Column": 50,
+                                      "Index": 282
+                                    },
+                                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                  },
+                                  "Start": {
+                                    "Line": 13,
+                                    "Column": 17,
+                                    "Index": 249
+                                  },
+                                  "End": {
+                                    "Line": 13,
+                                    "Column": 51,
+                                    "Index": 283
+                                  },
+                                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                }
+                              ],
+                              "Scope": null,
+                              "Start": {
+                                "Line": 12,
+                                "Column": 27,
+                                "Index": 231
+                              },
+                              "End": {
+                                "Line": 14,
+                                "Column": 14,
+                                "Index": 297
+                              },
+                              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                            },
+                            "Scope": null,
+                            "Start": {
+                              "Line": 12,
+                              "Column": 13,
+                              "Index": 217
+                            },
+                            "End": {
+                              "Line": 14,
+                              "Column": 14,
+                              "Index": 297
+                            },
+                            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                          }
+                        ],
+                        "Scope": null,
+                        "Start": {
+                          "Line": 11,
+                          "Column": 30,
+                          "Index": 203
+                        },
+                        "End": {
+                          "Line": 15,
+                          "Column": 10,
+                          "Index": 307
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                      },
+                      "Else": {
+                        "Cond": {
+                          "X": {
+                            "Name": "err",
+                            "Start": {
+                              "Line": 15,
+                              "Column": 19,
+                              "Index": 316
+                            },
+                            "End": {
+                              "Line": 15,
+                              "Column": 22,
+                              "Index": 319
+                            },
+                            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                          },
+                          "Op": {
+                            "Kind": "==",
+                            "Value": "==",
+                            "Start": {
+                              "Line": 15,
+                              "Column": 23,
+                              "Index": 320
+                            },
+                            "End": {
+                              "Line": 15,
+                              "Column": 25,
+                              "Index": 322
+                            }
+                          },
+                          "Y": {
+                            "Kind": 2,
+                            "Value": "boom",
+                            "Start": {
+                              "Line": 15,
+                              "Column": 26,
+                              "Index": 323
+                            },
+                            "End": {
+                              "Line": 15,
+                              "Column": 32,
+                              "Index": 329
+                            },
+                            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                          },
+                          "Start": {
+                            "Line": 15,
+                            "Column": 19,
+                            "Index": 316
+                          },
+                          "End": {
+                            "Line": 15,
+                            "Column": 32,
+                            "Index": 329
+                          },
+                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                        },
+                        "Body": {
+                          "Nodes": [
+                            {
+                              "Cond": {
+                                "Name": "true",
+                                "Start": {
+                                  "Line": 16,
+                                  "Column": 16,
+                                  "Index": 347
+                                },
+                                "End": {
+                                  "Line": 16,
+                                  "Column": 20,
+                                  "Index": 351
+                                },
+                                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                              },
+                              "Body": {
+                                "Nodes": [
+                                  {
+                                    "X": {
+                                      "Fun": {
+                                        "X": {
+                                          "Name": "io",
+                                          "Start": {
+                                            "Line": 17,
+                                            "Column": 17,
+                                            "Index": 370
+                                          },
+                                          "End": {
+                                            "Line": 17,
+                                            "Column": 19,
+                                            "Index": 372
+                                          },
+                                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                        },
+                                        "Selector": {
+                                          "Name": "Println",
+                                          "Start": {
+                                            "Line": 17,
+                                            "Column": 21,
+                                            "Index": 374
+                                          },
+                                          "End": {
+                                            "Line": 17,
+                                            "Column": 28,
+                                            "Index": 381
+                                          },
+                                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                        },
+                                        "Start": {
+                                          "Line": 17,
+                                          "Column": 17,
+                                          "Index": 370
+                                        },
+                                        "End": {
+                                          "Line": 17,
+                                          "Column": 28,
+                                          "Index": 381
+                                        },
+                                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                      },
+                                      "Args": [
+                                        {
+                                          "Kind": 2,
+                                          "Value": "deep nested if",
+                                          "Start": {
+                                            "Line": 17,
+                                            "Column": 29,
+                                            "Index": 382
+                                          },
+                                          "End": {
+                                            "Line": 17,
+                                            "Column": 45,
+                                            "Index": 398
+                                          },
+                                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                        }
+                                      ],
+                                      "Catch": null,
+                                      "Start": {
+                                        "Line": 17,
+                                        "Column": 17,
+                                        "Index": 370
+                                      },
+                                      "End": {
+                                        "Line": 17,
+                                        "Column": 46,
+                                        "Index": 399
+                                      },
+                                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                    },
+                                    "Start": {
+                                      "Line": 17,
+                                      "Column": 17,
+                                      "Index": 370
+                                    },
+                                    "End": {
+                                      "Line": 17,
+                                      "Column": 47,
+                                      "Index": 400
+                                    },
+                                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                  }
+                                ],
+                                "Scope": null,
+                                "Start": {
+                                  "Line": 16,
+                                  "Column": 21,
+                                  "Index": 352
+                                },
+                                "End": {
+                                  "Line": 18,
+                                  "Column": 14,
+                                  "Index": 414
+                                },
+                                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                              },
+                              "Else": {
+                                "Nodes": [
+                                  {
+                                    "X": {
+                                      "Fun": {
+                                        "X": {
+                                          "Name": "io",
+                                          "Start": {
+                                            "Line": 19,
+                                            "Column": 17,
+                                            "Index": 438
+                                          },
+                                          "End": {
+                                            "Line": 19,
+                                            "Column": 19,
+                                            "Index": 440
+                                          },
+                                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                        },
+                                        "Selector": {
+                                          "Name": "Println",
+                                          "Start": {
+                                            "Line": 19,
+                                            "Column": 21,
+                                            "Index": 442
+                                          },
+                                          "End": {
+                                            "Line": 19,
+                                            "Column": 28,
+                                            "Index": 449
+                                          },
+                                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                        },
+                                        "Start": {
+                                          "Line": 19,
+                                          "Column": 17,
+                                          "Index": 438
+                                        },
+                                        "End": {
+                                          "Line": 19,
+                                          "Column": 28,
+                                          "Index": 449
+                                        },
+                                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                      },
+                                      "Args": [
+                                        {
+                                          "Kind": 2,
+                                          "Value": "deep nested else",
+                                          "Start": {
+                                            "Line": 19,
+                                            "Column": 29,
+                                            "Index": 450
+                                          },
+                                          "End": {
+                                            "Line": 19,
+                                            "Column": 47,
+                                            "Index": 468
+                                          },
+                                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                        }
+                                      ],
+                                      "Catch": null,
+                                      "Start": {
+                                        "Line": 19,
+                                        "Column": 17,
+                                        "Index": 438
+                                      },
+                                      "End": {
+                                        "Line": 19,
+                                        "Column": 48,
+                                        "Index": 469
+                                      },
+                                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                    },
+                                    "Start": {
+                                      "Line": 19,
+                                      "Column": 17,
+                                      "Index": 438
+                                    },
+                                    "End": {
+                                      "Line": 19,
+                                      "Column": 49,
+                                      "Index": 470
+                                    },
+                                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                  },
+                                  {
+                                    "Result": null,
+                                    "IsError": false,
+                                    "Start": {
+                                      "Line": 21,
+                                      "Column": 17,
+                                      "Index": 528
+                                    },
+                                    "End": {
+                                      "Line": 21,
+                                      "Column": 24,
+                                      "Index": 535
+                                    },
+                                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                  }
+                                ],
+                                "Scope": null,
+                                "Start": {
+                                  "Line": 18,
+                                  "Column": 20,
+                                  "Index": 420
+                                },
+                                "End": {
+                                  "Line": 22,
+                                  "Column": 14,
+                                  "Index": 549
+                                },
+                                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                              },
+                              "Scope": null,
+                              "Start": {
+                                "Line": 16,
+                                "Column": 13,
+                                "Index": 344
+                              },
+                              "End": {
+                                "Line": 22,
+                                "Column": 14,
+                                "Index": 549
+                              },
+                              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                            }
+                          ],
+                          "Scope": null,
+                          "Start": {
+                            "Line": 15,
+                            "Column": 33,
+                            "Index": 330
+                          },
+                          "End": {
+                            "Line": 23,
+                            "Column": 10,
+                            "Index": 559
+                          },
+                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                        },
+                        "Else": {
+                          "Nodes": [
+                            {
+                              "X": {
+                                "Fun": {
+                                  "X": {
+                                    "Name": "io",
+                                    "Start": {
+                                      "Line": 24,
+                                      "Column": 13,
+                                      "Index": 579
+                                    },
+                                    "End": {
+                                      "Line": 24,
+                                      "Column": 15,
+                                      "Index": 581
+                                    },
+                                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                  },
+                                  "Selector": {
+                                    "Name": "Println",
+                                    "Start": {
+                                      "Line": 24,
+                                      "Column": 17,
+                                      "Index": 583
+                                    },
+                                    "End": {
+                                      "Line": 24,
+                                      "Column": 24,
+                                      "Index": 590
+                                    },
+                                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                  },
+                                  "Start": {
+                                    "Line": 24,
+                                    "Column": 13,
+                                    "Index": 579
+                                  },
+                                  "End": {
+                                    "Line": 24,
+                                    "Column": 24,
+                                    "Index": 590
+                                  },
+                                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                },
+                                "Args": [
+                                  {
+                                    "Kind": 2,
+                                    "Value": "final else",
+                                    "Start": {
+                                      "Line": 24,
+                                      "Column": 25,
+                                      "Index": 591
+                                    },
+                                    "End": {
+                                      "Line": 24,
+                                      "Column": 37,
+                                      "Index": 603
+                                    },
+                                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                                  }
+                                ],
+                                "Catch": null,
+                                "Start": {
+                                  "Line": 24,
+                                  "Column": 13,
+                                  "Index": 579
+                                },
+                                "End": {
+                                  "Line": 24,
+                                  "Column": 38,
+                                  "Index": 604
+                                },
+                                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                              },
+                              "Start": {
+                                "Line": 24,
+                                "Column": 13,
+                                "Index": 579
+                              },
+                              "End": {
+                                "Line": 24,
+                                "Column": 39,
+                                "Index": 605
+                              },
+                              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                            }
+                          ],
+                          "Scope": null,
+                          "Start": {
+                            "Line": 23,
+                            "Column": 16,
+                            "Index": 565
+                          },
+                          "End": {
+                            "Line": 25,
+                            "Column": 10,
+                            "Index": 615
+                          },
+                          "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                        },
+                        "Scope": null,
+                        "Start": {
+                          "Line": 15,
+                          "Column": 16,
+                          "Index": 313
+                        },
+                        "End": {
+                          "Line": 25,
+                          "Column": 10,
+                          "Index": 615
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                      },
+                      "Scope": null,
+                      "Start": {
+                        "Line": 11,
+                        "Column": 16,
+                        "Index": 189
+                      },
+                      "End": {
+                        "Line": 25,
+                        "Column": 10,
+                        "Index": 615
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                    },
+                    "Scope": null,
+                    "Start": {
+                      "Line": 9,
+                      "Column": 9,
+                      "Index": 121
+                    },
+                    "End": {
+                      "Line": 25,
+                      "Column": 10,
+                      "Index": 615
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                  }
+                ],
+                "Scope": null,
+                "Start": {
+                  "Line": 8,
+                  "Column": 31,
+                  "Index": 111
+                },
+                "End": {
+                  "Line": 26,
+                  "Column": 6,
+                  "Index": 621
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+              },
+              "Fallback": null,
+              "Start": {
+                "Line": 8,
+                "Column": 21,
+                "Index": 101
+              },
+              "End": {
+                "Line": 26,
+                "Column": 6,
+                "Index": 621
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+            },
+            "Start": {
+              "Line": 8,
+              "Column": 5,
+              "Index": 85
+            },
+            "End": {
+              "Line": 26,
+              "Column": 7,
+              "Index": 622
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+          },
+          {
+            "Decls": [
+              {
+                "Name": {
+                  "Name": "arr",
+                  "Start": {
+                    "Line": 28,
+                    "Column": 9,
+                    "Index": 632
+                  },
+                  "End": {
+                    "Line": 28,
+                    "Column": 12,
+                    "Index": 635
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                },
+                "Type": null,
+                "Value": {
+                  "Start": {
+                    "Kind": 0,
+                    "Value": "0",
+                    "Start": {
+                      "Line": 28,
+                      "Column": 16,
+                      "Index": 639
+                    },
+                    "End": {
+                      "Line": 28,
+                      "Column": 17,
+                      "Index": 640
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                  },
+                  "End": {
+                    "Kind": 0,
+                    "Value": "10",
+                    "Start": {
+                      "Line": 28,
+                      "Column": 19,
+                      "Index": 642
+                    },
+                    "End": {
+                      "Line": 28,
+                      "Column": 21,
+                      "Index": 644
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                  },
+                  "Incr": null,
+                  "Inclusive": false,
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                }
+              }
+            ],
+            "Doc": null,
+            "Start": {
+              "Line": 28,
+              "Column": 5,
+              "Index": 628
+            },
+            "End": {
+              "Line": 28,
+              "Column": 22,
+              "Index": 645
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+          },
+          {
+            "Iterator": {
+              "Decls": [
+                {
+                  "Name": {
+                    "Name": "v",
+                    "Start": {
+                      "Line": 30,
+                      "Column": 9,
+                      "Index": 655
+                    },
+                    "End": {
+                      "Line": 30,
+                      "Column": 10,
+                      "Index": 656
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                  },
+                  "Type": null,
+                  "Value": null
+                }
+              ],
+              "Doc": null,
+              "Start": {
+                "Line": 30,
+                "Column": 9,
+                "Index": 655
+              },
+              "End": {
+                "Line": 30,
+                "Column": 10,
+                "Index": 656
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+            },
+            "Range": {
+              "Name": "arr",
+              "Start": {
+                "Line": 30,
+                "Column": 14,
+                "Index": 660
+              },
+              "End": {
+                "Line": 30,
+                "Column": 17,
+                "Index": 663
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+            },
+            "Body": {
+              "Nodes": [
+                {
+                  "X": {
+                    "Fun": {
+                      "X": {
+                        "Name": "io",
+                        "Start": {
+                          "Line": 31,
+                          "Column": 9,
+                          "Index": 674
+                        },
+                        "End": {
+                          "Line": 31,
+                          "Column": 11,
+                          "Index": 676
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                      },
+                      "Selector": {
+                        "Name": "Println",
+                        "Start": {
+                          "Line": 31,
+                          "Column": 13,
+                          "Index": 678
+                        },
+                        "End": {
+                          "Line": 31,
+                          "Column": 20,
+                          "Index": 685
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                      },
+                      "Start": {
+                        "Line": 31,
+                        "Column": 9,
+                        "Index": 674
+                      },
+                      "End": {
+                        "Line": 31,
+                        "Column": 20,
+                        "Index": 685
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                    },
+                    "Args": [
+                      {
+                        "Name": "v",
+                        "Start": {
+                          "Line": 31,
+                          "Column": 21,
+                          "Index": 686
+                        },
+                        "End": {
+                          "Line": 31,
+                          "Column": 22,
+                          "Index": 687
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                      }
+                    ],
+                    "Catch": null,
+                    "Start": {
+                      "Line": 31,
+                      "Column": 9,
+                      "Index": 674
+                    },
+                    "End": {
+                      "Line": 31,
+                      "Column": 23,
+                      "Index": 688
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                  },
+                  "Start": {
+                    "Line": 31,
+                    "Column": 9,
+                    "Index": 674
+                  },
+                  "End": {
+                    "Line": 31,
+                    "Column": 24,
+                    "Index": 689
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                }
+              ],
+              "Scope": null,
+              "Start": {
+                "Line": 30,
+                "Column": 18,
+                "Index": 664
+              },
+              "End": {
+                "Line": 32,
+                "Column": 6,
+                "Index": 695
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+            },
+            "Scope": null,
+            "Start": {
+              "Line": 30,
+              "Column": 5,
+              "Index": 651
+            },
+            "End": {
+              "Line": 32,
+              "Column": 6,
+              "Index": 695
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+          },
+          {
+            "X": {
+              "Fun": {
+                "X": {
+                  "Name": "io",
+                  "Start": {
+                    "Line": 34,
+                    "Column": 5,
+                    "Index": 701
+                  },
+                  "End": {
+                    "Line": 34,
+                    "Column": 7,
+                    "Index": 703
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                },
+                "Selector": {
+                  "Name": "Println",
+                  "Start": {
+                    "Line": 34,
+                    "Column": 9,
+                    "Index": 705
+                  },
+                  "End": {
+                    "Line": 34,
+                    "Column": 16,
+                    "Index": 712
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                },
+                "Start": {
+                  "Line": 34,
+                  "Column": 5,
+                  "Index": 701
+                },
+                "End": {
+                  "Line": 34,
+                  "Column": 16,
+                  "Index": 712
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+              },
+              "Args": [
+                {
+                  "Kind": 2,
+                  "Value": "end",
+                  "Start": {
+                    "Line": 34,
+                    "Column": 17,
+                    "Index": 713
+                  },
+                  "End": {
+                    "Line": 34,
+                    "Column": 22,
+                    "Index": 718
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+                }
+              ],
+              "Catch": null,
+              "Start": {
+                "Line": 34,
+                "Column": 5,
+                "Index": 701
+              },
+              "End": {
+                "Line": 34,
+                "Column": 23,
+                "Index": 719
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+            },
+            "Start": {
+              "Line": 34,
+              "Column": 5,
+              "Index": 701
+            },
+            "End": {
+              "Line": 34,
+              "Column": 24,
+              "Index": 720
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+          }
+        ],
+        "Scope": null,
+        "Start": {
+          "Line": 7,
+          "Column": 11,
+          "Index": 79
+        },
+        "End": {
+          "Line": 35,
+          "Column": 2,
+          "Index": 722
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+      },
+      "Scope": null,
+      "Doc": null,
+      "Start": {
+        "Line": 7,
+        "Column": 1,
+        "Index": 69
+      },
+      "End": {
+        "Line": 35,
+        "Column": 2,
+        "Index": 722
+      },
+      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/ab_test.fer"
+    }
+  ],
+  "Start": null,
+  "End": null,
+  "Filename": null
+}
