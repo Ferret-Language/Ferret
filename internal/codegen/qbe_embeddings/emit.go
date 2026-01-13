@@ -1892,7 +1892,7 @@ func (g *Generator) resolveCallTarget(target string, args []callArg) (string, []
 	}
 
 	if g.mod != nil && g.mod.ModuleScope != nil {
-		if sym, ok := g.mod.ModuleScope.GetSymbol(target); ok && sym.IsNative && sym.NativeName != "" {
+		if sym, ok := g.mod.ModuleScope.Lookup(target); ok && sym.IsNative && sym.NativeName != "" {
 			return sym.NativeName, args, nil
 		}
 	}

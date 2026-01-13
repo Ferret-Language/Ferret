@@ -2459,7 +2459,7 @@ func (g *Generator) resolveCallTarget(mod *context_v2.Module, target string) (st
 		return g.funcName(funcName, importPath), nil
 	}
 	if mod != nil && mod.ModuleScope != nil {
-		if sym, ok := mod.ModuleScope.GetSymbol(target); ok && sym.IsNative && sym.NativeName != "" {
+		if sym, ok := mod.ModuleScope.Lookup(target); ok && sym.IsNative && sym.NativeName != "" {
 			return sym.NativeName, nil
 		}
 	}

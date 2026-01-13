@@ -444,8 +444,9 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   }
 
   function ferret_global_panic(msgPtr: number) {
-    const msg = msgPtr ? readCString(msgPtr) : "panic";
-    throw new Error(msg);
+    const msg = msgPtr ? readCString(msgPtr) : "";
+    const text = msg ? `panic: ${msg}` : "panic";
+    throw new Error(text);
   }
 
   function ferret_string_len(ptr: number) {
