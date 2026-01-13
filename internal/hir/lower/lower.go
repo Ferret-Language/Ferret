@@ -362,6 +362,9 @@ func (l *Lowerer) lowerRangeFor(stmt *hir.ForStmt, rng *hir.RangeExpr) hir.Node 
 		newVarDecl(endIdent, elemType, endExpr, loc),
 		newVarDecl(incrIdent, elemType, incrExpr, loc),
 	}
+	if rangeStepFloatMismatch(l.exprType(rng.Start), l.exprType(rng.End), l.exprType(rng.Incr)) {
+		prelude = append(prelude, l.panicStmt("invalid range", loc))
+	}
 	prelude = append(prelude, l.rangeInvalidCheck(startIdent, endIdent, incrIdent, elemType, loc))
 
 	items, iterLoc, isDecl := iteratorItems(stmt.Iterator)
@@ -1807,6 +1810,32 @@ func rangeCondExpr(value hir.Expr, end hir.Expr, incr *hir.Ident, elemType types
 	negAnd := newBinary(negCheck, negCondExpr, tokens.AND_TOKEN, types.TypeBool, loc)
 
 	return newBinary(posAnd, negAnd, tokens.OR_TOKEN, types.TypeBool, loc)
+}
+
+func rangeStepFloatMismatch(startType, endType, incrType types.SemType) bool {
+	if incrType == nil || incrType.Equals(types.TypeUnknown) {
+		return false
+	}
+	if !isFloatLikeType(incrType) {
+		return false
+	}
+	return isIntLikeType(startType) || isIntLikeType(endType)
+}
+
+func isFloatLikeType(t types.SemType) bool {
+	if t == nil || t.Equals(types.TypeUnknown) {
+		return false
+	}
+	t = types.UnwrapType(t)
+	return types.IsFloat(t) || types.IsUntypedFloat(t)
+}
+
+func isIntLikeType(t types.SemType) bool {
+	if t == nil || t.Equals(types.TypeUnknown) {
+		return false
+	}
+	t = types.UnwrapType(t)
+	return types.IsInteger(t) || types.IsUntypedInt(t)
 }
 
 func rangeInvalidCond(start, end, incr hir.Expr, elemType types.SemType, loc source.Location) hir.Expr {

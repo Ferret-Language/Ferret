@@ -2,28 +2,30 @@ package consteval
 
 import (
 	"compiler/internal/types"
+	"compiler/internal/utils/numeric"
 	"math/big"
 )
 
 // inferIntType determines the appropriate integer type based on value size.
 func inferIntType(val *big.Int) types.SemType {
-	// For untyped integer literals, default to i32 unless too large.
-	if val.IsInt64() {
-		i64Val := val.Int64()
-		if i64Val >= -128 && i64Val <= 127 {
-			return types.TypeI8
-		}
-		if i64Val >= -32768 && i64Val <= 32767 {
-			return types.TypeI16
-		}
-		if i64Val >= -2147483648 && i64Val <= 2147483647 {
-			return types.TypeI32
-		}
-		return types.TypeI64
+	defaultName := types.DEFAULT_INT_TYPE
+	promotionSequence := types.SignedIntPromotionSequence(defaultName)
+	if types.IsUnsigned(defaultName) {
+		promotionSequence = types.UnsignedIntPromotionSequence(defaultName)
 	}
 
-	// Too large for i64, try i128 or i256.
-	return types.TypeI64 // Default fallback.
+	for _, typeName := range promotionSequence {
+		bitSize := int(types.GetNumberBitSize(typeName))
+		if bitSize == 0 {
+			continue
+		}
+		signed := types.IsSigned(typeName)
+		if numeric.FitsInBitSize(val, bitSize, signed) {
+			return types.FromTypeName(typeName)
+		}
+	}
+
+	return types.TypeUnknown
 }
 
 // Arithmetic helpers.

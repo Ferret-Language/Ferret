@@ -1,0 +1,15 @@
+import "std/io";
+
+fn start() -> i32 {
+    return 0;
+}
+
+fn main() {
+    let s := start();
+    let e := 8;
+    let arr := s..e:1.5;
+
+    for v in arr {
+        io::Println(v);
+    }
+}

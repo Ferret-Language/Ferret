@@ -3,56 +3,57 @@ package typechecker
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/types"
+	"math/big"
 	"testing"
 )
 
 func TestResolveUntypedInt(t *testing.T) {
+	defaultName := types.DEFAULT_INT_TYPE
+	promotionSequence := types.SignedIntPromotionSequence(defaultName)
+	if types.IsUnsigned(defaultName) {
+		promotionSequence = types.UnsignedIntPromotionSequence(defaultName)
+	}
+	if len(promotionSequence) == 0 {
+		t.Fatalf("No promotion sequence for DEFAULT_INT_TYPE=%s", defaultName)
+	}
+
+	maxDefault := maxValueForType(defaultName)
+	minDefault := minValueForType(defaultName)
+
 	tests := []struct {
-		name      string
-		value     string
-		wantType  types.TYPE_NAME
-		wantError bool
+		name     string
+		value    string
+		wantType types.TYPE_NAME
 	}{
 		{
-			name:     "small value uses default i32",
+			name:     "small value uses default",
 			value:    "100",
-			wantType: types.TYPE_I32, // Uses DEFAULT_INT_TYPE (i32)
+			wantType: defaultName,
 		},
 		{
-			name:     "i32 max fits in i32",
-			value:    "2147483647",
-			wantType: types.TYPE_I32, // Fits in default i32
+			name:     "default max fits in default",
+			value:    maxDefault.String(),
+			wantType: defaultName,
 		},
 		{
-			name:     "i32 min fits in i32",
-			value:    "-2147483648",
-			wantType: types.TYPE_I32, // Fits in default i32
+			name:     "default min fits in default",
+			value:    minDefault.String(),
+			wantType: defaultName,
 		},
-		{
-			name:     "exceeds i32 max - promotes to i64",
-			value:    "2147483648",
-			wantType: types.TYPE_I64, // Doesn't fit in i32, promote to i64
-		},
-		{
-			name:     "large value promotes to i64",
-			value:    "3000000000",
-			wantType: types.TYPE_I64, // Exceeds i32, uses i64
-		},
-		{
-			name:     "i64 max fits in i64",
-			value:    "9223372036854775807",
-			wantType: types.TYPE_I64, // Fits in i64
-		},
-		{
-			name:     "exceeds i64 - promotes to i128",
-			value:    "9223372036854775808",
-			wantType: types.TYPE_I128, // Doesn't fit in i64, promote to i128
-		},
-		{
-			name:     "very large value promotes to i128",
-			value:    "20000000000000000000",
-			wantType: types.TYPE_I128, // Exceeds i64, uses i128
-		},
+	}
+
+	if len(promotionSequence) > 1 {
+		next := promotionSequence[1]
+		overMax := new(big.Int).Add(maxDefault, big.NewInt(1))
+		tests = append(tests, struct {
+			name     string
+			value    string
+			wantType types.TYPE_NAME
+		}{
+			name:     "exceeds default max promotes",
+			value:    overMax.String(),
+			wantType: next,
+		})
 	}
 
 	for _, tt := range tests {
@@ -63,7 +64,6 @@ func TestResolveUntypedInt(t *testing.T) {
 			}
 			result := inferLiteralType(lit, types.TypeUnknown)
 
-			// Extract primitive type name
 			name, ok := types.GetPrimitiveName(result)
 			if !ok {
 				t.Fatalf("inferLiteralType(%q) did not return a primitive type", tt.value)
@@ -76,24 +76,26 @@ func TestResolveUntypedInt(t *testing.T) {
 	}
 }
 
-func TestResolveUntypedIntDefaultsToI32(t *testing.T) {
-	// Verify that DEFAULT_INT_TYPE is i32
-	if types.DEFAULT_INT_TYPE != types.TYPE_I32 {
-		t.Fatalf("Expected DEFAULT_INT_TYPE to be TYPE_I32, got %s", types.DEFAULT_INT_TYPE)
+func maxValueForType(name types.TYPE_NAME) *big.Int {
+	bitSize := types.GetNumberBitSize(name)
+	if bitSize == 0 {
+		return big.NewInt(0)
 	}
+	if types.IsUnsigned(name) {
+		max := new(big.Int).Lsh(big.NewInt(1), uint(bitSize))
+		return max.Sub(max, big.NewInt(1))
+	}
+	max := new(big.Int).Lsh(big.NewInt(1), uint(bitSize-1))
+	return max.Sub(max, big.NewInt(1))
+}
 
-	// Small values should use DEFAULT_INT_TYPE (i32)
-	lit := &ast.BasicLit{
-		Kind:  ast.INT,
-		Value: "42",
+func minValueForType(name types.TYPE_NAME) *big.Int {
+	if types.IsUnsigned(name) {
+		return big.NewInt(0)
 	}
-	result := inferLiteralType(lit, types.TypeUnknown)
-	name, ok := types.GetPrimitiveName(result)
-	if !ok {
-		t.Fatal("resolveUntyped did not return a primitive type")
+	bitSize := types.GetNumberBitSize(name)
+	if bitSize == 0 {
+		return big.NewInt(0)
 	}
-
-	if name != types.TYPE_I32 {
-		t.Errorf("Small value should use default type i32, got %s", name)
-	}
+	return new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), uint(bitSize-1)))
 }

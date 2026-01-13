@@ -64,10 +64,10 @@ func evaluateHIRLiteral(lit *hir.Literal) *ConstValue {
 		if err != nil {
 			return nil
 		}
-		// Default to f64 for untyped floats, unless HIR has a concrete type.
+		// Default to DEFAULT_FLOAT_TYPE for untyped floats, unless HIR has a concrete type.
 		typ := lit.Type
 		if typ == nil || typ.Equals(types.TypeUnknown) {
-			typ = types.TypeF64
+			typ = types.FromTypeName(types.DEFAULT_FLOAT_TYPE)
 		}
 		return NewBigFloatValue(val, typ)
 

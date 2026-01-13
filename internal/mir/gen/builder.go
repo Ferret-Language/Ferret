@@ -2475,7 +2475,11 @@ func (b *functionBuilder) lowerRangeExpr(expr *hir.RangeExpr) mir.ValueID {
 	currentAddr := b.emitAlloca(elemType, loc)
 	b.emitStore(currentAddr, startVal, loc)
 
-	b.emitRangeValidation(startVal, endVal, incrVal, elemType, loc)
+	startType := b.exprType(expr.Start)
+	endType := b.exprType(expr.End)
+	incrType := b.exprType(expr.Incr)
+	mismatch := b.rangeStepFloatMismatch(startType, endType, incrType)
+	b.emitRangeValidation(startVal, endVal, incrVal, elemType, loc, mismatch)
 
 	if arrType.Length >= 0 {
 		arrAddr := b.emitAlloca(arrType, loc)
@@ -2622,29 +2626,37 @@ func (b *functionBuilder) rangeCurrentValue(addr mir.ValueID, elemType types.Sem
 	return b.emitLoad(addr, elemType, loc)
 }
 
-func (b *functionBuilder) emitRangeValidation(startVal, endVal, incrVal mir.ValueID, elemType types.SemType, loc source.Location) {
+func (b *functionBuilder) emitRangeValidation(startVal, endVal, incrVal mir.ValueID, elemType types.SemType, loc source.Location, mismatch bool) {
 	if b.current == nil || b.current.Term != nil {
 		return
 	}
-	if elemType == nil || elemType.Equals(types.TypeUnknown) {
+	var invalid mir.ValueID
+	if mismatch {
+		invalid = b.emitConst(types.TypeBool, "1", loc)
+	} else {
+		if elemType == nil || elemType.Equals(types.TypeUnknown) {
+			return
+		}
+
+		zero := b.rangeConst(elemType, "0", loc)
+		if zero == mir.InvalidValue {
+			return
+		}
+
+		isZero := b.rangeCompare(tokens.DOUBLE_EQUAL_TOKEN, incrVal, zero, elemType, loc)
+		posCheck := b.rangeCompare(tokens.GREATER_TOKEN, incrVal, zero, elemType, loc)
+		negCheck := b.rangeCompare(tokens.LESS_TOKEN, incrVal, zero, elemType, loc)
+		startGtEnd := b.rangeCompare(tokens.GREATER_TOKEN, startVal, endVal, elemType, loc)
+		startLtEnd := b.rangeCompare(tokens.LESS_TOKEN, startVal, endVal, elemType, loc)
+
+		posInvalid := b.emitBinary(tokens.AND_TOKEN, posCheck, startGtEnd, types.TypeBool, loc)
+		negInvalid := b.emitBinary(tokens.AND_TOKEN, negCheck, startLtEnd, types.TypeBool, loc)
+		dirInvalid := b.emitBinary(tokens.OR_TOKEN, posInvalid, negInvalid, types.TypeBool, loc)
+		invalid = b.emitBinary(tokens.OR_TOKEN, isZero, dirInvalid, types.TypeBool, loc)
+	}
+	if invalid == mir.InvalidValue {
 		return
 	}
-
-	zero := b.rangeConst(elemType, "0", loc)
-	if zero == mir.InvalidValue {
-		return
-	}
-
-	isZero := b.rangeCompare(tokens.DOUBLE_EQUAL_TOKEN, incrVal, zero, elemType, loc)
-	posCheck := b.rangeCompare(tokens.GREATER_TOKEN, incrVal, zero, elemType, loc)
-	negCheck := b.rangeCompare(tokens.LESS_TOKEN, incrVal, zero, elemType, loc)
-	startGtEnd := b.rangeCompare(tokens.GREATER_TOKEN, startVal, endVal, elemType, loc)
-	startLtEnd := b.rangeCompare(tokens.LESS_TOKEN, startVal, endVal, elemType, loc)
-
-	posInvalid := b.emitBinary(tokens.AND_TOKEN, posCheck, startGtEnd, types.TypeBool, loc)
-	negInvalid := b.emitBinary(tokens.AND_TOKEN, negCheck, startLtEnd, types.TypeBool, loc)
-	dirInvalid := b.emitBinary(tokens.OR_TOKEN, posInvalid, negInvalid, types.TypeBool, loc)
-	invalid := b.emitBinary(tokens.OR_TOKEN, isZero, dirInvalid, types.TypeBool, loc)
 
 	panicBlock := b.newBlock("range.invalid", loc)
 	okBlock := b.newBlock("range.ok", loc)
@@ -2667,6 +2679,32 @@ func (b *functionBuilder) emitRangeValidation(startVal, endVal, incrVal mir.Valu
 	panicBlock.Term = &mir.Unreachable{Location: loc}
 
 	b.setBlock(okBlock)
+}
+
+func (b *functionBuilder) rangeStepFloatMismatch(startType, endType, incrType types.SemType) bool {
+	if incrType == nil {
+		return false
+	}
+	if !b.isFloatLikeType(incrType) {
+		return false
+	}
+	return b.isIntLikeType(startType) || b.isIntLikeType(endType)
+}
+
+func (b *functionBuilder) isFloatLikeType(t types.SemType) bool {
+	if t == nil || t.Equals(types.TypeUnknown) {
+		return false
+	}
+	t = types.UnwrapType(t)
+	return types.IsFloat(t) || types.IsUntypedFloat(t)
+}
+
+func (b *functionBuilder) isIntLikeType(t types.SemType) bool {
+	if t == nil || t.Equals(types.TypeUnknown) {
+		return false
+	}
+	t = types.UnwrapType(t)
+	return types.IsInteger(t) || types.IsUntypedInt(t)
 }
 
 func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.CompositeLit) mir.ValueID {

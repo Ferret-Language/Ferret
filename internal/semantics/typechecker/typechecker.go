@@ -2567,6 +2567,16 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 	case *ast.ScopeResolutionExpr:
 		checkExpr(ctx, mod, e.X, types.TypeUnknown)
 
+	case *ast.RangeExpr:
+		checkExpr(ctx, mod, e.Start, types.TypeUnknown)
+		checkExpr(ctx, mod, e.End, types.TypeUnknown)
+		if e.Incr != nil {
+			checkExpr(ctx, mod, e.Incr, types.TypeUnknown)
+		}
+		rangeType := inferRangeExprType(ctx, mod, e)
+		mod.SetExprType(expr, rangeType)
+		return rangeType
+
 	case *ast.BinaryExpr:
 		// Recursively check operands
 		lhsType := checkExpr(ctx, mod, e.X, types.TypeUnknown)
@@ -3144,64 +3154,7 @@ func computeRangeConstLength(expr *ast.RangeExpr) (int, bool) {
 		}
 	}
 
-	if step.intVal.Sign() == 0 {
-		return 0, false
-	}
-
-	startVal := new(big.Int).Set(start.intVal)
-	endVal := new(big.Int).Set(end.intVal)
-	stepVal := new(big.Int).Set(step.intVal)
-	stepSign := stepVal.Sign()
-	cmp := startVal.Cmp(endVal)
-	if (cmp < 0 && stepSign < 0) || (cmp > 0 && stepSign > 0) {
-		return 0, false
-	}
-
-	var length *big.Int
-	if stepSign > 0 {
-		if expr.Inclusive {
-			if cmp > 0 {
-				return 0, true
-			}
-			diff := new(big.Int).Sub(endVal, startVal)
-			diff.Div(diff, stepVal)
-			length = diff.Add(diff, big.NewInt(1))
-		} else {
-			if cmp >= 0 {
-				return 0, true
-			}
-			diff := new(big.Int).Sub(endVal, startVal)
-			diff.Add(diff, new(big.Int).Sub(stepVal, big.NewInt(1)))
-			length = diff.Div(diff, stepVal)
-		}
-	} else {
-		stepAbs := new(big.Int).Abs(stepVal)
-		if expr.Inclusive {
-			if cmp < 0 {
-				return 0, true
-			}
-			diff := new(big.Int).Sub(startVal, endVal)
-			diff.Div(diff, stepAbs)
-			length = diff.Add(diff, big.NewInt(1))
-		} else {
-			if cmp <= 0 {
-				return 0, true
-			}
-			diff := new(big.Int).Sub(startVal, endVal)
-			diff.Add(diff, new(big.Int).Sub(stepAbs, big.NewInt(1)))
-			length = diff.Div(diff, stepAbs)
-		}
-	}
-
-	if length == nil || length.Sign() < 0 {
-		return 0, true
-	}
-
-	maxInt := big.NewInt(int64(^uint(0) >> 1))
-	if length.Cmp(maxInt) > 0 {
-		return 0, false
-	}
-	return int(length.Int64()), true
+	return consteval.RangeLengthFromInts(start.intVal, end.intVal, step.intVal, expr.Inclusive)
 }
 
 func isNumericConstOp(op tokens.TOKEN) bool {

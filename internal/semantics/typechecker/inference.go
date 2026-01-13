@@ -37,17 +37,10 @@ func inferLiteralType(lit *ast.BasicLit, expected types.SemType) types.SemType {
 		}
 
 		// No expected type or incompatible: use default and promote if needed
-		// 1. Try DEFAULT_INT_TYPE (i32) as baseline
-		defaultType := types.FromTypeName(types.DEFAULT_INT_TYPE)
-		if fitsInType(lit.Value, defaultType) {
-			return defaultType
-		}
-
-		// 2. Gradually promote: i32 -> i64 -> i128 -> i256
-		promotionSequence := []types.TYPE_NAME{
-			types.TYPE_I64,
-			types.TYPE_I128,
-			types.TYPE_I256,
+		defaultName := types.DEFAULT_INT_TYPE
+		promotionSequence := types.SignedIntPromotionSequence(defaultName)
+		if types.IsUnsigned(defaultName) {
+			promotionSequence = types.UnsignedIntPromotionSequence(defaultName)
 		}
 
 		for _, typeName := range promotionSequence {
@@ -75,18 +68,7 @@ func inferLiteralType(lit *ast.BasicLit, expected types.SemType) types.SemType {
 		}
 
 		// No expected type or incompatible: use default and promote if needed
-		// 1. Try DEFAULT_FLOAT_TYPE (f64) as baseline
-		defaultType := types.FromTypeName(types.DEFAULT_FLOAT_TYPE)
-		if fitsInType(lit.Value, defaultType) {
-			return defaultType
-		}
-
-		// 2. Gradually promote: f64 -> f128 -> f256
-		promotionSequence := []types.TYPE_NAME{
-			types.TYPE_F128,
-			types.TYPE_F256,
-		}
-
+		promotionSequence := types.FloatPromotionSequence(types.DEFAULT_FLOAT_TYPE)
 		for _, typeName := range promotionSequence {
 			promotedType := types.FromTypeName(typeName)
 			if fitsInType(lit.Value, promotedType) {
@@ -906,6 +888,10 @@ func inferRangeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	// Infer types from start and end expressions
 	startType := inferExprType(ctx, mod, expr.Start)
 	endType := inferExprType(ctx, mod, expr.End)
+	var stepType types.SemType = types.TypeUnknown
+	if expr.Incr != nil {
+		stepType = inferExprType(ctx, mod, expr.Incr)
+	}
 
 	// Contextualize untyped types
 	if startLit, ok := expr.Start.(*ast.BasicLit); ok && types.IsUntyped(startType) {
@@ -918,10 +904,20 @@ func inferRangeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	} else {
 		endType = types.ResolveUntypedType(endType, types.TypeUnknown)
 	}
+	if expr.Incr != nil {
+		if stepLit, ok := expr.Incr.(*ast.BasicLit); ok && types.IsUntyped(stepType) {
+			stepType = inferLiteralType(stepLit, types.TypeUnknown)
+		} else {
+			stepType = types.ResolveUntypedType(stepType, types.TypeUnknown)
+		}
+	}
 
 	// Return array type with element type from range
 	// Use the wider type to accommodate both start and end values
 	elementType := widerType(startType, endType)
+	if expr.Incr != nil {
+		elementType = widerType(elementType, stepType)
+	}
 	length := -1
 	if constLength, ok := computeRangeConstLength(expr); ok {
 		length = constLength

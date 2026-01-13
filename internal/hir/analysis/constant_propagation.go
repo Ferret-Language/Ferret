@@ -385,7 +385,7 @@ func rangeConstValues(ctx *context_v2.CompilerContext, mod *context_v2.Module, e
 	}
 
 	if consteval.NumericIsFloat(startConst) || consteval.NumericIsFloat(endConst) {
-		stepType := types.TypeF64
+		stepType := types.FromTypeName(types.DEFAULT_FLOAT_TYPE)
 		if startConst.Type != nil && consteval.NumericIsFloat(startConst) {
 			stepType = startConst.Type
 		} else if endConst.Type != nil && consteval.NumericIsFloat(endConst) {
@@ -421,60 +421,11 @@ func rangeConstLength(ctx *context_v2.CompilerContext, mod *context_v2.Module, e
 		return 0, false
 	}
 
-	start := new(big.Int).Set(startInt)
-	end := new(big.Int).Set(endInt)
-	step := new(big.Int).Set(stepInt)
-	stepSign := step.Sign()
-	cmp := start.Cmp(end)
-	if (cmp < 0 && stepSign < 0) || (cmp > 0 && stepSign > 0) {
+	length, ok := consteval.RangeLengthFromInts(startInt, endInt, stepInt, expr.Inclusive)
+	if !ok {
 		return 0, false
 	}
-
-	var length *big.Int
-	if stepSign > 0 {
-		if expr.Inclusive {
-			if cmp > 0 {
-				return 0, true
-			}
-			diff := new(big.Int).Sub(end, start)
-			diff.Div(diff, step)
-			length = diff.Add(diff, big.NewInt(1))
-		} else {
-			if cmp >= 0 {
-				return 0, true
-			}
-			diff := new(big.Int).Sub(end, start)
-			diff.Add(diff, new(big.Int).Sub(step, big.NewInt(1)))
-			length = diff.Div(diff, step)
-		}
-	} else {
-		stepAbs := new(big.Int).Abs(step)
-		if expr.Inclusive {
-			if cmp < 0 {
-				return 0, true
-			}
-			diff := new(big.Int).Sub(start, end)
-			diff.Div(diff, stepAbs)
-			length = diff.Add(diff, big.NewInt(1))
-		} else {
-			if cmp <= 0 {
-				return 0, true
-			}
-			diff := new(big.Int).Sub(start, end)
-			diff.Add(diff, new(big.Int).Sub(stepAbs, big.NewInt(1)))
-			length = diff.Div(diff, stepAbs)
-		}
-	}
-
-	if length == nil || length.Sign() < 0 {
-		return 0, false
-	}
-
-	maxInt := big.NewInt(int64(^uint(0) >> 1))
-	if length.Cmp(maxInt) > 0 {
-		return 0, false
-	}
-	return int(length.Int64()), true
+	return length, true
 }
 
 func checkRangeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *hir.RangeExpr) {
@@ -485,6 +436,18 @@ func checkRangeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, exp
 	startVal, endVal, stepVal, ok := rangeConstValues(ctx, mod, expr)
 	if !ok {
 		return
+	}
+
+	if consteval.NumericIsFloat(stepVal) {
+		if !consteval.NumericIsFloat(startVal) || !consteval.NumericIsFloat(endVal) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("invalid range: float step requires float start and end").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(expr.Loc(), "float step with integer range").
+					WithHelp("use float endpoints like 0.0..8.0:1.5 or an integer step like 0..8:1"),
+			)
+			return
+		}
 	}
 
 	stepSign, ok := consteval.NumericSign(stepVal)

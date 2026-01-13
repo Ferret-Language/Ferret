@@ -124,3 +124,32 @@ func GetPowerResultType(left, right SemType) SemType {
 	// For regular integers, return f64 (since power can produce non-integer results)
 	return TypeF64
 }
+
+// SignedIntPromotionSequence returns signed integer types ordered from the default upward.
+func SignedIntPromotionSequence(defaultType TYPE_NAME) []TYPE_NAME {
+	order := []TYPE_NAME{TYPE_I8, TYPE_I16, TYPE_I32, TYPE_I64, TYPE_I128, TYPE_I256}
+	return promotionSequenceFrom(defaultType, order)
+}
+
+// UnsignedIntPromotionSequence returns unsigned integer types ordered from the default upward.
+func UnsignedIntPromotionSequence(defaultType TYPE_NAME) []TYPE_NAME {
+	order := []TYPE_NAME{TYPE_U8, TYPE_U16, TYPE_U32, TYPE_U64, TYPE_U128, TYPE_U256}
+	return promotionSequenceFrom(defaultType, order)
+}
+
+// FloatPromotionSequence returns float types ordered from the default upward.
+func FloatPromotionSequence(defaultType TYPE_NAME) []TYPE_NAME {
+	order := []TYPE_NAME{TYPE_F32, TYPE_F64, TYPE_F128, TYPE_F256}
+	return promotionSequenceFrom(defaultType, order)
+}
+
+func promotionSequenceFrom(defaultType TYPE_NAME, order []TYPE_NAME) []TYPE_NAME {
+	start := 0
+	for i, t := range order {
+		if t == defaultType {
+			start = i
+			break
+		}
+	}
+	return order[start:]
+}
