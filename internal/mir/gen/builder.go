@@ -2347,6 +2347,41 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 		}
 	}
 
+	// Check for narrowed optional access: if the access type is the optional inner type,
+	// unwrap the optional value before use.
+	if ident.Symbol != nil && ident.Symbol.Type != nil {
+		storageType := types.UnwrapType(ident.Symbol.Type)
+		accessType := b.exprType(ident)
+		if optType, ok := storageType.(*types.OptionalType); ok {
+			if optType.Inner != nil && accessType != nil {
+				accessMatches := accessType.Equals(optType.Inner)
+				if !accessMatches {
+					accessMatches = types.UnwrapType(accessType).Equals(types.UnwrapType(optType.Inner))
+				}
+				if accessMatches {
+					optVal := mir.InvalidValue
+					if addr := b.addrForIdent(ident); addr != mir.InvalidValue {
+						optVal = b.emitLoad(addr, ident.Symbol.Type, ident.Location)
+					} else if val, ok := b.paramsByName[ident.Name]; ok {
+						optVal = val
+					}
+					if optVal != mir.InvalidValue {
+						result := b.gen.nextValueID()
+						b.emitInstr(&mir.OptionalUnwrap{
+							Result:     result,
+							Value:      optVal,
+							Default:    mir.InvalidValue,
+							HasDefault: false,
+							Type:       accessType,
+							Location:   ident.Location,
+						})
+						return result
+					}
+				}
+			}
+		}
+	}
+
 	if ident.Symbol != nil && b.captures != nil {
 		if _, ok := b.captures[ident.Symbol]; ok {
 			if addr := b.addrForIdent(ident); addr != mir.InvalidValue {
@@ -2390,6 +2425,26 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 		b.reportUnsupported("identifier", &ident.Location)
 	}
 	return mir.InvalidValue
+}
+
+func (b *functionBuilder) isNarrowedOptionalIdent(expr hir.Expr) bool {
+	ident, ok := expr.(*hir.Ident)
+	if !ok || ident == nil || ident.Symbol == nil || ident.Symbol.Type == nil {
+		return false
+	}
+	storageType := types.UnwrapType(ident.Symbol.Type)
+	optType, ok := storageType.(*types.OptionalType)
+	if !ok || optType.Inner == nil {
+		return false
+	}
+	accessType := b.exprType(ident)
+	if accessType == nil {
+		return false
+	}
+	if accessType.Equals(optType.Inner) {
+		return true
+	}
+	return types.UnwrapType(accessType).Equals(types.UnwrapType(optType.Inner))
 }
 
 func (b *functionBuilder) addrForIdent(ident *hir.Ident) mir.ValueID {
@@ -2445,7 +2500,11 @@ func (b *functionBuilder) lowerFieldAddr(expr *hir.SelectorExpr) mir.ValueID {
 
 	baseType = types.UnwrapType(baseType)
 	basePtr := mir.InvalidValue
-	if isAddressableExpr(expr.X) {
+	addressable := isAddressableExpr(expr.X)
+	if addressable && b.isNarrowedOptionalIdent(expr.X) {
+		addressable = false
+	}
+	if addressable {
 		baseAddr := b.lowerLValue(expr.X)
 		if baseAddr == mir.InvalidValue {
 			return mir.InvalidValue
@@ -3283,7 +3342,11 @@ func (b *functionBuilder) lowerIndexAddr(expr *hir.IndexExpr) mir.ValueID {
 
 	baseType = types.UnwrapType(baseType)
 	basePtr := mir.InvalidValue
-	if isAddressableExpr(expr.X) {
+	addressable := isAddressableExpr(expr.X)
+	if addressable && b.isNarrowedOptionalIdent(expr.X) {
+		addressable = false
+	}
+	if addressable {
 		baseAddr := b.lowerLValue(expr.X)
 		if baseAddr == mir.InvalidValue {
 			return mir.InvalidValue

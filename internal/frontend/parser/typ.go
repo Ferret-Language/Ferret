@@ -11,7 +11,13 @@ import (
 
 // parseType parses a type expression
 func (p *Parser) parseType() ast.TypeNode {
+	return p.parseTypeWithOptional(true)
+}
+
+func (p *Parser) parseTypeWithOptional(allowOptional bool) ast.TypeNode {
 	tok := p.peek()
+
+	var t ast.TypeNode
 
 	// Check for reference type &T or &mut T
 	if p.match(tokens.BIT_AND_TOKEN) {
@@ -24,7 +30,7 @@ func (p *Parser) parseType() ast.TypeNode {
 			isMutable = true
 		}
 
-		baseType := p.parseType()
+		baseType := p.parseTypeWithOptional(false)
 		// Handle case where baseType might be Invalid with potential nil location issues
 		var endPos *source.Position
 		if baseType != nil && baseType.Loc() != nil && baseType.Loc().End != nil {
@@ -32,64 +38,62 @@ func (p *Parser) parseType() ast.TypeNode {
 		} else {
 			endPos = &ampersand.End
 		}
-		return &ast.ReferenceType{
+		t = &ast.ReferenceType{
 			Base:     baseType,
 			Mutable:  isMutable,
 			Location: *source.NewLocation(&p.filepath, &ampersand.Start, endPos),
 		}
-	}
+	} else {
+		switch tok.Kind {
+		case tokens.IDENTIFIER_TOKEN:
+			// Type identifier - convert IdentifierExpr to support both Expr() and TypeExpr()
+			ident := p.parseIdentifier()
+			t = ident
+			// Check for scope resolution (module::Type)
+			if p.match(tokens.SCOPE_TOKEN) {
+				// IdentifierExpr implements both Expression and TypeNode
+				t = p.parseScopeResolutionExpr(ident)
+			}
 
-	var t ast.TypeNode
+		case tokens.OPEN_BRACKET:
+			t = p.parseArrayType()
 
-	switch tok.Kind {
-	case tokens.IDENTIFIER_TOKEN:
-		// Type identifier - convert IdentifierExpr to support both Expr() and TypeExpr()
-		ident := p.parseIdentifier()
-		t = ident
-		// Check for scope resolution (module::Type)
-		if p.match(tokens.SCOPE_TOKEN) {
-			// IdentifierExpr implements both Expression and TypeNode
-			t = p.parseScopeResolutionExpr(ident)
-		}
+		case tokens.STRUCT_TOKEN:
+			t = p.parseStructType()
 
-	case tokens.OPEN_BRACKET:
-		t = p.parseArrayType()
+		case tokens.INTERFACE_TOKEN:
+			t = p.parseInterfaceType()
 
-	case tokens.STRUCT_TOKEN:
-		t = p.parseStructType()
+		case tokens.ENUM_TOKEN:
+			t = p.parseEnumType()
 
-	case tokens.INTERFACE_TOKEN:
-		t = p.parseInterfaceType()
+		case tokens.MAP_TOKEN:
+			t = p.parseMapType()
 
-	case tokens.ENUM_TOKEN:
-		t = p.parseEnumType()
+		case tokens.UNION_TOKEN:
+			t = p.parseUnionType()
 
-	case tokens.MAP_TOKEN:
-		t = p.parseMapType()
+		case tokens.FUNCTION_TOKEN:
+			start := p.advance().Start
+			t = p.parseFuncType(start)
 
-	case tokens.UNION_TOKEN:
-		t = p.parseUnionType()
-
-	case tokens.FUNCTION_TOKEN:
-		start := p.advance().Start
-		t = p.parseFuncType(start)
-
-	default:
-		//p.error(fmt.Sprintf("expected type, got %s", tok.Value))
-		p.diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("expected type, got %s", tok.Value)).
-				WithCode(diagnostics.ErrMissingType).
-				WithPrimaryLabel(source.NewLocation(&p.filepath, &tok.Start, &tok.End), fmt.Sprintf("expected type here, got `%s`", tok.Value)),
-		)
-		// Return a placeholder identifier type instead of recursing
-		// This prevents stack overflow on invalid syntax
-		return &ast.Invalid{
-			Location: p.makeLocation(tok.Start),
+		default:
+			//p.error(fmt.Sprintf("expected type, got %s", tok.Value))
+			p.diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("expected type, got %s", tok.Value)).
+					WithCode(diagnostics.ErrMissingType).
+					WithPrimaryLabel(source.NewLocation(&p.filepath, &tok.Start, &tok.End), fmt.Sprintf("expected type here, got `%s`", tok.Value)),
+			)
+			// Return a placeholder identifier type instead of recursing
+			// This prevents stack overflow on invalid syntax
+			return &ast.Invalid{
+				Location: p.makeLocation(tok.Start),
+			}
 		}
 	}
 
 	// Check for optional type T?
-	if p.match(tokens.QUESTION_TOKEN) {
+	if allowOptional && p.match(tokens.QUESTION_TOKEN) {
 		p.advance()
 		t = &ast.OptionalType{
 			Base:     t,

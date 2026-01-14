@@ -70,13 +70,7 @@ func (d *DataLayout) SizeOf(t types.SemType) int {
 		}
 		return d.PointerSize * 2
 	case *types.OptionalType:
-		valSize := d.SizeOf(tt.Inner)
-		if valSize < 0 {
-			return -1
-		}
-		valAlign := d.AlignOf(tt.Inner)
-		size := alignTo(valSize+1, max(valAlign, 1))
-		return size
+		return d.PointerSize
 	case *types.ResultType:
 		okSize := d.SizeOf(tt.Ok)
 		errSize := d.SizeOf(tt.Err)
@@ -125,7 +119,7 @@ func (d *DataLayout) AlignOf(t types.SemType) int {
 	case *types.InterfaceType:
 		return d.PointerAlign
 	case *types.OptionalType:
-		return max(d.AlignOf(tt.Inner), 1)
+		return d.PointerAlign
 	case *types.ResultType:
 		return max(d.AlignOf(tt.Ok), d.AlignOf(tt.Err))
 	case *types.StructType:
@@ -134,6 +128,27 @@ func (d *DataLayout) AlignOf(t types.SemType) int {
 	default:
 		return clampAlign(tt.Size(), d.PointerAlign)
 	}
+}
+
+// OptionalPayloadSize returns the size in bytes of an optional payload (value + flag).
+func (d *DataLayout) OptionalPayloadSize(t *types.OptionalType) int {
+	if t == nil {
+		return 0
+	}
+	valSize := d.SizeOf(t.Inner)
+	if valSize < 0 {
+		return -1
+	}
+	valAlign := d.AlignOf(t.Inner)
+	return alignTo(valSize+1, max(valAlign, 1))
+}
+
+// OptionalPayloadAlign returns the alignment in bytes for an optional payload.
+func (d *DataLayout) OptionalPayloadAlign(t *types.OptionalType) int {
+	if t == nil {
+		return 1
+	}
+	return max(d.AlignOf(t.Inner), 1)
 }
 
 // StructLayout computes layout for a struct type.

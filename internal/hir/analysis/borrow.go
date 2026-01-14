@@ -235,7 +235,7 @@ func (b *borrowChecker) checkVarDecl(stmt *hir.VarDecl) {
 			}
 			if ident, ok := item.Value.(*hir.Ident); ok {
 				b.checkExpr(ident)
-				b.bindRefFromIdent(item.Name, ident)
+				b.bindRefFromIdent(item.Name, ident, true)
 				continue
 			}
 		}
@@ -249,6 +249,13 @@ func (b *borrowChecker) checkVarDecl(stmt *hir.VarDecl) {
 func (b *borrowChecker) checkAssignStmt(stmt *hir.AssignStmt) {
 	if stmt == nil {
 		return
+	}
+
+	if stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN {
+		if ident := directIdent(stmt.Lhs); ident != nil && isReferenceSymbol(ident.Symbol) {
+			b.checkRefRebind(ident, stmt.Rhs)
+			return
+		}
 	}
 
 	start := len(b.temp)
@@ -608,6 +615,10 @@ func (b *borrowChecker) checkWriteTargetWithMode(expr hir.Expr, allowReinit bool
 }
 
 func (b *borrowChecker) checkBorrowInit(name *hir.Ident, expr *hir.UnaryExpr) {
+	b.bindRefBorrow(name, expr, true)
+}
+
+func (b *borrowChecker) bindRefBorrow(name *hir.Ident, expr *hir.UnaryExpr, registerScope bool) {
 	if expr == nil {
 		return
 	}
@@ -620,7 +631,7 @@ func (b *borrowChecker) checkBorrowInit(name *hir.Ident, expr *hir.UnaryExpr) {
 	if place.base != nil {
 		if b.addBorrow(place, mutable, expr.Loc(), via) && name != nil && name.Symbol != nil {
 			b.bindings[name.Symbol] = borrowBinding{place: place, mutable: mutable, loc: expr.Loc()}
-			if len(b.scopes) > 0 {
+			if registerScope && len(b.scopes) > 0 {
 				b.scopes[len(b.scopes)-1].refs[name.Symbol] = struct{}{}
 			}
 		}
@@ -628,7 +639,7 @@ func (b *borrowChecker) checkBorrowInit(name *hir.Ident, expr *hir.UnaryExpr) {
 	b.checkAddressableExpr(expr.X, place.base)
 }
 
-func (b *borrowChecker) bindRefFromIdent(name *hir.Ident, value *hir.Ident) {
+func (b *borrowChecker) bindRefFromIdent(name *hir.Ident, value *hir.Ident, registerScope bool) {
 	if name == nil || name.Symbol == nil || value == nil || value.Symbol == nil {
 		return
 	}
@@ -638,10 +649,48 @@ func (b *borrowChecker) bindRefFromIdent(name *hir.Ident, value *hir.Ident) {
 	}
 	if b.addBorrow(binding.place, binding.mutable, value.Loc(), nil) {
 		b.bindings[name.Symbol] = borrowBinding{place: binding.place, mutable: binding.mutable, loc: value.Loc()}
-		if len(b.scopes) > 0 {
+		if registerScope && len(b.scopes) > 0 {
 			b.scopes[len(b.scopes)-1].refs[name.Symbol] = struct{}{}
 		}
 	}
+}
+
+func (b *borrowChecker) checkRefRebind(target *hir.Ident, rhs hir.Expr) {
+	if target == nil || target.Symbol == nil {
+		return
+	}
+	if borrowExpr, ok := rhs.(*hir.UnaryExpr); ok && isBorrowOp(borrowExpr.Op.Kind) {
+		place, via := b.borrowAccessPlace(borrowExpr.X)
+		mutable := borrowExpr.Op.Kind == tokens.MUT_TOKEN
+		if place.base != nil && !b.checkNotMoved(place.base, borrowExpr.Loc()) {
+			b.checkAddressableExpr(borrowExpr.X, place.base)
+			return
+		}
+		b.releaseBinding(target.Symbol)
+		if place.base != nil {
+			if b.addBorrow(place, mutable, borrowExpr.Loc(), via) {
+				b.bindings[target.Symbol] = borrowBinding{place: place, mutable: mutable, loc: borrowExpr.Loc()}
+			}
+		}
+		b.checkAddressableExpr(borrowExpr.X, place.base)
+		return
+	}
+	if rhsIdent := directIdent(rhs); rhsIdent != nil {
+		start := len(b.temp)
+		b.checkExpr(rhsIdent)
+		b.releaseTemps(start)
+		if rhsIdent.Symbol == target.Symbol {
+			return
+		}
+		b.releaseBinding(target.Symbol)
+		b.bindRefFromIdent(target, rhsIdent, false)
+		return
+	}
+
+	start := len(b.temp)
+	b.checkExpr(rhs)
+	b.releaseTemps(start)
+	b.releaseBinding(target.Symbol)
 }
 
 func (b *borrowChecker) checkBorrowExpr(expr *hir.UnaryExpr) {

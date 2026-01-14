@@ -449,19 +449,6 @@ func (g *Generator) emitLoad(l *mir.Load) {
 	if l == nil {
 		return
 	}
-	if optType, ok := g.optionalType(l.Type); ok {
-		size := g.layout.SizeOf(optType)
-		if size <= 0 {
-			g.reportUnsupported("optional load", &l.Location)
-			return
-		}
-		align := g.layout.AlignOf(optType)
-		op := g.allocOp(align)
-		g.emitLine(fmt.Sprintf("%s =l %s %d", g.valueName(l.Result), op, size))
-		g.emitMemcpy(g.valueName(l.Result), g.valueName(l.Addr), size, &l.Location)
-		g.valueTypes[l.Result] = l.Type
-		return
-	}
 	if resType, ok := g.resultType(l.Type); ok {
 		size := g.layout.SizeOf(resType)
 		if size <= 0 {
@@ -582,20 +569,27 @@ func (g *Generator) emitCall(c *mir.Call) {
 			return
 		}
 		align := g.layout.AlignOf(optType)
-		outName := ""
-		if c.Result != mir.InvalidValue {
-			outName = g.valueName(c.Result)
-			g.emitLine(fmt.Sprintf("%s =l %s %d", outName, g.allocOp(align), size))
-			g.valueTypes[c.Result] = c.Type
-		} else {
-			outName = g.stackAlloc(size, align)
-		}
+		outName := g.stackAlloc(size, align)
 		args = append([]callArg{{name: outName, typ: "l", sem: types.NewReference(c.Type)}}, args...)
 		var argParts []string
 		for _, arg := range args {
 			argParts = append(argParts, fmt.Sprintf("%s %s", arg.typ, arg.name))
 		}
 		g.emitLine(fmt.Sprintf("call $%s(%s)", target, strings.Join(argParts, ", ")))
+		if c.Result != mir.InvalidValue {
+			op, err := g.loadOp(c.Type)
+			if err != nil {
+				g.reportError(err.Error(), &c.Location)
+				return
+			}
+			qbeType, err := g.qbeType(c.Type)
+			if err != nil {
+				g.reportError(err.Error(), &c.Location)
+				return
+			}
+			g.emitLine(fmt.Sprintf("%s =%s %s %s", g.valueName(c.Result), qbeType, op, outName))
+			g.valueTypes[c.Result] = c.Type
+		}
 		return
 	}
 	if resType, ok := g.resultType(c.Type); ok {
@@ -685,20 +679,27 @@ func (g *Generator) emitCallIndirect(c *mir.CallIndirect) {
 			return
 		}
 		align := g.layout.AlignOf(optType)
-		outName := ""
-		if c.Result != mir.InvalidValue {
-			outName = g.valueName(c.Result)
-			g.emitLine(fmt.Sprintf("%s =l %s %d", outName, g.allocOp(align), size))
-			g.valueTypes[c.Result] = c.Type
-		} else {
-			outName = g.stackAlloc(size, align)
-		}
+		outName := g.stackAlloc(size, align)
 		args = append([]callArg{{name: outName, typ: "l", sem: types.NewReference(c.Type)}}, args...)
 		argParts := []string{}
 		for _, arg := range args {
 			argParts = append(argParts, fmt.Sprintf("%s %s", arg.typ, arg.name))
 		}
 		g.emitLine(fmt.Sprintf("call %s(%s)", fnPtr, strings.Join(argParts, ", ")))
+		if c.Result != mir.InvalidValue {
+			op, err := g.loadOp(c.Type)
+			if err != nil {
+				g.reportError(err.Error(), &c.Location)
+				return
+			}
+			qbeType, err := g.qbeType(c.Type)
+			if err != nil {
+				g.reportError(err.Error(), &c.Location)
+				return
+			}
+			g.emitLine(fmt.Sprintf("%s =%s %s %s", g.valueName(c.Result), qbeType, op, outName))
+			g.valueTypes[c.Result] = c.Type
+		}
 		return
 	}
 	if resType, ok := g.resultType(c.Type); ok {
@@ -763,13 +764,14 @@ func (g *Generator) emitMapGet(m *mir.MapGet) {
 	optType, isOptional := g.optionalType(m.Type)
 	if isOptional && optType != nil {
 		// Optional return type: use ferret_map_get_optional_out
-		optSize := g.layout.SizeOf(optType)
-		if optSize <= 0 {
-			g.reportUnsupported("map_get optional size", &m.Location)
+		payloadSize := g.layout.OptionalPayloadSize(optType)
+		if payloadSize <= 0 {
+			g.reportUnsupported("map_get optional payload size", &m.Location)
 			return
 		}
-		align := g.layout.AlignOf(optType)
-		g.emitLine(fmt.Sprintf("%s =l %s %d", g.valueName(m.Result), g.allocOp(align), optSize))
+		sizeTemp := g.newTemp()
+		g.emitLine(fmt.Sprintf("%s =l copy %d", sizeTemp, payloadSize))
+		g.emitLine(fmt.Sprintf("%s =l call $ferret_alloc(l %s)", g.valueName(m.Result), sizeTemp))
 		g.emitLine(fmt.Sprintf("call $ferret_map_get_optional_out(l %s, l %s, l %s)",
 			g.valueName(m.Map), keyPtr, g.valueName(m.Result)))
 		g.valueTypes[m.Result] = m.Type
@@ -1007,9 +1009,9 @@ func (g *Generator) emitOptionalNone(o *mir.OptionalNone) {
 		g.reportUnsupported("optional_none", &o.Location)
 		return
 	}
-	optSize := g.layout.SizeOf(optType)
-	if optSize <= 0 {
-		g.reportUnsupported("optional_none size", &o.Location)
+	payloadSize := g.layout.OptionalPayloadSize(optType)
+	if payloadSize <= 0 {
+		g.reportUnsupported("optional_none payload size", &o.Location)
 		return
 	}
 	valSize := g.layout.SizeOf(optType.Inner)
@@ -1018,8 +1020,9 @@ func (g *Generator) emitOptionalNone(o *mir.OptionalNone) {
 		return
 	}
 
-	align := g.layout.AlignOf(optType)
-	g.emitLine(fmt.Sprintf("%s =l %s %d", g.valueName(o.Result), g.allocOp(align), optSize))
+	sizeTemp := g.newTemp()
+	g.emitLine(fmt.Sprintf("%s =l copy %d", sizeTemp, payloadSize))
+	g.emitLine(fmt.Sprintf("%s =l call $ferret_alloc(l %s)", g.valueName(o.Result), sizeTemp))
 
 	flagPtr := g.newTemp()
 	g.emitLine(fmt.Sprintf("%s =l add %s, %d", flagPtr, g.valueName(o.Result), valSize))
@@ -1036,9 +1039,9 @@ func (g *Generator) emitOptionalSome(o *mir.OptionalSome) {
 		g.reportUnsupported("optional_some", &o.Location)
 		return
 	}
-	optSize := g.layout.SizeOf(optType)
-	if optSize <= 0 {
-		g.reportUnsupported("optional_some size", &o.Location)
+	payloadSize := g.layout.OptionalPayloadSize(optType)
+	if payloadSize <= 0 {
+		g.reportUnsupported("optional_some payload size", &o.Location)
 		return
 	}
 	valSize := g.layout.SizeOf(optType.Inner)
@@ -1047,8 +1050,9 @@ func (g *Generator) emitOptionalSome(o *mir.OptionalSome) {
 		return
 	}
 
-	align := g.layout.AlignOf(optType)
-	g.emitLine(fmt.Sprintf("%s =l %s %d", g.valueName(o.Result), g.allocOp(align), optSize))
+	sizeTemp := g.newTemp()
+	g.emitLine(fmt.Sprintf("%s =l copy %d", sizeTemp, payloadSize))
+	g.emitLine(fmt.Sprintf("%s =l call $ferret_alloc(l %s)", g.valueName(o.Result), sizeTemp))
 
 	g.storeValueToAddr(o.Value, optType.Inner, g.valueName(o.Result), &o.Location)
 
@@ -1748,6 +1752,9 @@ func (g *Generator) loadOp(typ types.SemType) (string, error) {
 	if _, ok := typ.(*types.ReferenceType); ok {
 		return "loadl", nil
 	}
+	if _, ok := typ.(*types.OptionalType); ok {
+		return "loadl", nil
+	}
 	return "", fmt.Errorf("qbe: unsupported load type %s", typ.String())
 }
 
@@ -1794,6 +1801,9 @@ func (g *Generator) storeOp(typ types.SemType) (string, error) {
 		}
 	}
 	if _, ok := typ.(*types.ReferenceType); ok {
+		return "storel", nil
+	}
+	if _, ok := typ.(*types.OptionalType); ok {
 		return "storel", nil
 	}
 	return "", fmt.Errorf("qbe: unsupported store type %s", typ.String())
@@ -2219,15 +2229,6 @@ func (g *Generator) storeValueToAddr(val mir.ValueID, typ types.SemType, addr st
 		g.reportUnsupported("store value type", loc)
 		return
 	}
-	if optType, ok := g.optionalType(typ); ok {
-		size := g.layout.SizeOf(optType)
-		if size <= 0 {
-			g.reportUnsupported("store optional size", loc)
-			return
-		}
-		g.emitMemcpy(addr, g.valueName(val), size, loc)
-		return
-	}
 	if resType, ok := g.resultType(typ); ok {
 		size := g.layout.SizeOf(resType)
 		if size <= 0 {
@@ -2262,9 +2263,6 @@ func (g *Generator) valueAddr(val mir.ValueID, typ types.SemType, loc *source.Lo
 	if g.needsByRefType(typ) {
 		return g.valueName(val)
 	}
-	if _, ok := g.optionalType(typ); ok {
-		return g.valueName(val)
-	}
 	if _, ok := g.resultType(typ); ok {
 		return g.valueName(val)
 	}
@@ -2280,12 +2278,12 @@ func (g *Generator) valueAddr(val mir.ValueID, typ types.SemType, loc *source.Lo
 }
 
 func (g *Generator) emitOptionalCopy(dst, src string, optType types.SemType, loc *source.Location) {
-	size := g.layout.SizeOf(optType)
-	if size <= 0 {
-		g.reportUnsupported("optional copy size", loc)
+	op, err := g.storeOp(optType)
+	if err != nil {
+		g.reportError(err.Error(), loc)
 		return
 	}
-	g.emitMemcpy(dst, src, size, loc)
+	g.emitLine(fmt.Sprintf("%s %s, %s", op, src, dst))
 }
 
 func (g *Generator) emitResultCopy(dst, src string, resType types.SemType, loc *source.Location) {

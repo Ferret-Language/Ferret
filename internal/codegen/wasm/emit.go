@@ -999,29 +999,6 @@ func (g *Generator) emitLoad(l *mir.Load, locals map[mir.ValueID]uint32) ([]byte
 	if l == nil {
 		return nil, nil
 	}
-	if optType, ok := g.optionalType(l.Type); ok {
-		size := g.layout.SizeOf(optType)
-		if size <= 0 {
-			return nil, fmt.Errorf("wasm: invalid optional load size")
-		}
-		allocID, ok := g.importIDs["ferret_alloc"]
-		if !ok {
-			return nil, fmt.Errorf("wasm: missing import ferret_alloc")
-		}
-		var out []byte
-		out = append(out, opcodeI64Const)
-		out = append(out, encodeS64(int64(size))...)
-		out = append(out, opcodeCall)
-		out = append(out, encodeU32(allocID)...)
-		out = append(out, opcodeLocalSet)
-		out = append(out, encodeU32(locals[l.Result])...)
-		copyBytes, err := g.emitMemcpy(locals[l.Result], locals[l.Addr], size)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, copyBytes...)
-		return out, nil
-	}
 	if resType, ok := g.resultType(l.Type); ok {
 		size := g.layout.SizeOf(resType)
 		if size <= 0 {
@@ -1075,13 +1052,6 @@ func (g *Generator) emitStore(info *funcInfo, s *mir.Store, locals map[mir.Value
 func (g *Generator) emitStoreValueToAddr(_ *funcInfo, valID mir.ValueID, valType types.SemType, addrLocal uint32, locals map[mir.ValueID]uint32) ([]byte, error) {
 	if valType == nil {
 		return nil, fmt.Errorf("wasm: missing value type")
-	}
-	if optType, ok := g.optionalType(valType); ok {
-		size := g.layout.SizeOf(optType)
-		if size <= 0 {
-			return nil, fmt.Errorf("wasm: invalid optional store size")
-		}
-		return g.emitMemcpy(addrLocal, locals[valID], size)
 	}
 	if resType, ok := g.resultType(valType); ok {
 		size := g.layout.SizeOf(resType)
@@ -1303,9 +1273,9 @@ func (g *Generator) emitMapGet(info *funcInfo, m *mir.MapGet, locals map[mir.Val
 	}
 
 	if optType, ok := g.optionalType(m.Type); ok && optType != nil {
-		optSize := g.layout.SizeOf(optType)
-		if optSize <= 0 {
-			return nil, fmt.Errorf("wasm: invalid map_get optional size")
+		payloadSize := g.layout.OptionalPayloadSize(optType)
+		if payloadSize <= 0 {
+			return nil, fmt.Errorf("wasm: invalid map_get optional payload size")
 		}
 		allocID, ok := g.importIDs["ferret_alloc"]
 		if !ok {
@@ -1318,7 +1288,7 @@ func (g *Generator) emitMapGet(info *funcInfo, m *mir.MapGet, locals map[mir.Val
 
 		var out []byte
 		out = append(out, opcodeI64Const)
-		out = append(out, encodeS64(int64(optSize))...)
+		out = append(out, encodeS64(int64(payloadSize))...)
 		out = append(out, opcodeCall)
 		out = append(out, encodeU32(allocID)...)
 		out = append(out, opcodeLocalSet)
@@ -1424,9 +1394,9 @@ func (g *Generator) emitOptionalNone(o *mir.OptionalNone, locals map[mir.ValueID
 		g.reportUnsupported("optional_none", o.Loc())
 		return []byte{opcodeUnreachable}, nil
 	}
-	optSize := g.layout.SizeOf(optType)
-	if optSize <= 0 {
-		return nil, fmt.Errorf("wasm: invalid optional size")
+	payloadSize := g.layout.OptionalPayloadSize(optType)
+	if payloadSize <= 0 {
+		return nil, fmt.Errorf("wasm: invalid optional payload size")
 	}
 	valSize := g.layout.SizeOf(optType.Inner)
 	if valSize < 0 {
@@ -1439,7 +1409,7 @@ func (g *Generator) emitOptionalNone(o *mir.OptionalNone, locals map[mir.ValueID
 
 	var out []byte
 	out = append(out, opcodeI64Const)
-	out = append(out, encodeS64(int64(optSize))...)
+	out = append(out, encodeS64(int64(payloadSize))...)
 	out = append(out, opcodeCall)
 	out = append(out, encodeU32(allocID)...)
 	out = append(out, opcodeLocalSet)
@@ -1471,9 +1441,9 @@ func (g *Generator) emitOptionalSome(o *mir.OptionalSome, locals map[mir.ValueID
 		g.reportUnsupported("optional_some", o.Loc())
 		return []byte{opcodeUnreachable}, nil
 	}
-	optSize := g.layout.SizeOf(optType)
-	if optSize <= 0 {
-		return nil, fmt.Errorf("wasm: invalid optional size")
+	payloadSize := g.layout.OptionalPayloadSize(optType)
+	if payloadSize <= 0 {
+		return nil, fmt.Errorf("wasm: invalid optional payload size")
 	}
 	valSize := g.layout.SizeOf(optType.Inner)
 	if valSize < 0 {
@@ -1486,7 +1456,7 @@ func (g *Generator) emitOptionalSome(o *mir.OptionalSome, locals map[mir.ValueID
 
 	var out []byte
 	out = append(out, opcodeI64Const)
-	out = append(out, encodeS64(int64(optSize))...)
+	out = append(out, encodeS64(int64(payloadSize))...)
 	out = append(out, opcodeCall)
 	out = append(out, encodeU32(allocID)...)
 	out = append(out, opcodeLocalSet)
@@ -2503,9 +2473,6 @@ func (g *Generator) isAddressValueType(typ types.SemType) bool {
 		return true
 	}
 	if _, ok := types.UnwrapType(typ).(*types.ReferenceType); ok {
-		return true
-	}
-	if _, ok := g.optionalType(typ); ok {
 		return true
 	}
 	if _, ok := g.resultType(typ); ok {

@@ -1872,14 +1872,30 @@ func checkTypeDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 	}
 
 	// Convert the AST type node to a semantic type
-	semType := TypeFromTypeNodeWithContext(ctx, mod, decl.Type)
-
-	// Wrap the type with a NamedType to preserve the name
-	// This enables nominal typing and method attachment
-	namedType := types.NewNamed(typeName, semType)
+	// Predeclare a NamedType so recursive references can resolve.
+	// The underlying type is filled in after validation below.
+	namedType := types.NewNamed(typeName, types.TypeUnknown)
 
 	// Update the symbol's type
 	sym.Type = namedType
+
+	// Convert the AST type node to a semantic type
+	semType := TypeFromTypeNodeWithContext(ctx, mod, decl.Type)
+
+	if hasInvalidRecursiveType(namedType, semType, make(map[types.SemType]bool)) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("recursive type '%s' must be optional", typeName)).
+				WithCode(diagnostics.ErrInvalidType).
+				WithPrimaryLabel(decl.Name.Loc(), "recursive type definition").
+				WithHelp(fmt.Sprintf("use '%s?' to break the cycle", typeName)),
+		)
+		// Keep the placeholder to avoid infinite recursion in later phases.
+		namedType.Underlying = types.TypeUnknown
+		return
+	}
+
+	// Fill in the underlying type after validation.
+	namedType.Underlying = semType
 
 	// Special handling for enums: compute variant values and update variant symbols
 	if enumNode, ok := decl.Type.(*ast.EnumType); ok {
@@ -1911,6 +1927,60 @@ func checkTypeDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 	}
 }
 
+func hasInvalidRecursiveType(root *types.NamedType, t types.SemType, seen map[types.SemType]bool) bool {
+	if root == nil || t == nil {
+		return false
+	}
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+
+	switch tt := t.(type) {
+	case *types.NamedType:
+		if tt == root {
+			return true
+		}
+		return hasInvalidRecursiveType(root, tt.Underlying, seen)
+	case *types.ReferenceType:
+		return hasInvalidRecursiveType(root, tt.Inner, seen)
+	case *types.MapType, *types.FunctionType, *types.InterfaceType:
+		return false
+	case *types.ArrayType:
+		if tt.Length < 0 {
+			return false
+		}
+		return hasInvalidRecursiveType(root, tt.Element, seen)
+	case *types.OptionalType:
+		return false
+	case *types.ResultType:
+		return hasInvalidRecursiveType(root, tt.Ok, seen) || hasInvalidRecursiveType(root, tt.Err, seen)
+	case *types.StructType:
+		for _, field := range tt.Fields {
+			if hasInvalidRecursiveType(root, field.Type, seen) {
+				return true
+			}
+		}
+		return false
+	case *types.UnionType:
+		for _, variant := range tt.Variants {
+			if hasInvalidRecursiveType(root, variant, seen) {
+				return true
+			}
+		}
+		return false
+	case *types.EnumType:
+		for _, variant := range tt.Variants {
+			if variant.Type != nil && hasInvalidRecursiveType(root, variant.Type, seen) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 // checkAssignStmt type checks an assignment statement
 func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, stmt *ast.AssignStmt) {
 	// Handle blank identifier
@@ -1923,7 +1993,17 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 
 	// Use unified mutability checking system
 	mutInfo := checkMutability(ctx, mod, stmt.Lhs)
-	if reportMutabilityError(ctx, mutInfo, stmt.Lhs) {
+	ignoreImmutableRef := false
+	if mutInfo.Result == MutabilityImmutableRef && (stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN) {
+		if ident, ok := stmt.Lhs.(*ast.IdentifierExpr); ok && mod != nil && mod.CurrentScope != nil {
+			if sym, ok := mod.CurrentScope.Lookup(ident.Name); ok {
+				if _, ok := types.UnwrapType(sym.Type).(*types.ReferenceType); ok {
+					ignoreImmutableRef = true
+				}
+			}
+		}
+	}
+	if !ignoreImmutableRef && reportMutabilityError(ctx, mutInfo, stmt.Lhs) {
 		// Error reported, but continue checking RHS for additional errors
 		if stmt.Rhs != nil {
 			checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
@@ -1948,19 +2028,6 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 		return
 	}
 
-	if ident, ok := stmt.Lhs.(*ast.IdentifierExpr); ok && lhsIsRef {
-		// NOTE: Remove this check to allow implicit deref assignment on reference identifiers.
-		ctx.Diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("cannot assign to reference '%s'", ident.Name)).
-				WithCode(diagnostics.ErrInvalidAssignment).
-				WithPrimaryLabel(stmt.Lhs.Loc(), "explicit deref required").
-				WithHelp(fmt.Sprintf("use '*%s' to update the referenced data", ident.Name)),
-		)
-		if stmt.Rhs != nil {
-			checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
-		}
-		return
-	}
 	if idx, ok := stmt.Lhs.(*ast.IndexExpr); ok {
 		baseType := inferExprType(ctx, mod, idx.X)
 		if isReferenceType(baseType) {
@@ -1991,20 +2058,9 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 		}
 	}
 	if ref, ok := types.UnwrapType(lhsType).(*types.ReferenceType); ok && !isMapIndex {
-		if !ref.Mutable {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError("cannot assign through immutable reference").
-					WithCode(diagnostics.ErrInvalidAssignment).
-					WithPrimaryLabel(stmt.Lhs.Loc(), "immutable reference"),
-			)
-			if stmt.Rhs != nil {
-				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
-			}
-			return
+		if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
+			assignType = ref.Inner
 		}
-	}
-	if ref, ok := types.UnwrapType(lhsType).(*types.ReferenceType); ok && !isMapIndex {
-		assignType = ref.Inner
 	}
 
 	// Handle increment/decrement operators (x++, x--)
@@ -2055,15 +2111,6 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 					diagnostics.NewError("map value is a reference and must be assigned with '&'").
 						WithCode(diagnostics.ErrInvalidAssignment).
 						WithPrimaryLabel(stmt.Rhs.Loc(), "expected a reference value"),
-				)
-				return
-			}
-			if !rhsType.Equals(types.TypeUnknown) && !isMapIndex && isReferenceType(rhsType) {
-				ctx.Diagnostics.Add(
-					diagnostics.NewError("reference is already bound and cannot be reassigned").
-						WithCode(diagnostics.ErrInvalidAssignment).
-						WithPrimaryLabel(stmt.Rhs.Loc(), "cannot rebind reference").
-						WithHelp("assign a value to update the referenced data"),
 				)
 				return
 			}
@@ -2148,16 +2195,6 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 					diagnostics.NewError("map value is a reference and must be assigned with '&'").
 						WithCode(diagnostics.ErrInvalidAssignment).
 						WithPrimaryLabel(stmt.Rhs.Loc(), "expected a reference value"),
-				)
-				checkExpr(ctx, mod, stmt.Rhs, assignType)
-				return
-			}
-			if (isBorrowExpr(stmt.Rhs) || (!rhsType.Equals(types.TypeUnknown) && isReferenceType(rhsType))) && !isMapIndex {
-				ctx.Diagnostics.Add(
-					diagnostics.NewError("reference is already bound and cannot be reassigned").
-						WithCode(diagnostics.ErrInvalidAssignment).
-						WithPrimaryLabel(stmt.Rhs.Loc(), "cannot rebind reference").
-						WithHelp("assign a value to update the referenced data"),
 				)
 				checkExpr(ctx, mod, stmt.Rhs, assignType)
 				return
