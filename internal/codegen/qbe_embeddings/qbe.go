@@ -268,14 +268,6 @@ func (g *Generator) emitInstr(instr mir.Instr) {
 		g.emitCallIndirect(i)
 	case *mir.Phi:
 		g.emitPhi(i)
-	case *mir.MakeStruct:
-		g.reportUnsupported("make_struct", i.Loc())
-	case *mir.ExtractField:
-		g.reportUnsupported("extract_field", i.Loc())
-	case *mir.InsertField:
-		g.reportUnsupported("insert_field", i.Loc())
-	case *mir.MakeArray:
-		g.reportUnsupported("make_array", i.Loc())
 	case *mir.ArrayGet:
 		g.emitArrayGet(i)
 	case *mir.ArraySet:

@@ -1,19 +1,8 @@
 **Fixed recently**
 - Map and array element borrows are now allowed; map/dynamic array index lvalues lower to references (`MapGet`/`ferret_array_get`) so `&mut m["k"]` and `&mut arr[i]` work (including nested `[]T`). `internal/semantics/typechecker/typechecker.go:2298`, `internal/mir/gen/builder.go:3132`, `internal/mir/gen/builder.go:3171`, `internal/codegen/qbe_embeddings/emit.go:747`, `internal/codegen/wasm/emit.go:1441`
+- Removed MIR `MakeStruct`/`ExtractField`/`InsertField`/`MakeArray`; lowering is pointer-based for all targets. `internal/mir/instructions.go`
 
 **Native: amd64 (Linux/macOS SysV, Windows win64)**
-- QBE codegen hard‑fails if MIR ever emits `MakeStruct`, `ExtractField`, `InsertField`, or `MakeArray`. `internal/codegen/qbe_embeddings/qbe.go:271`
-Example (conceptual; these MIR ops are not emitted by current lowering):
-```ferret
-type Point struct { .X: i32, .Y: i32 };
-
-fn main() {
-    let p := { .X = 1, .Y = 2 };
-    let x := p.X;
-    p.Y = 3;
-}
-```
-If those MIR ops were produced, QBE would error; current lowering uses stores/ptr offsets instead.
 - Fixed‑size array values are not representable by value (must be byref/pointer); QBE type lowering errors if used as a value. `internal/codegen/qbe_embeddings/emit.go:1840`
 Example (compiled via hidden out‑param; by‑value representation is not supported):
 ```ferret
@@ -43,8 +32,8 @@ fn sum(a: i128, b: i128) -> i128 {
 - Target selection is build‑time; macOS forces amd64 and Windows forces amd64 win64, so no Windows arm64 native output. `internal/codegen/qbe_embeddings/config.h:4`
 
 **WASM**
-- `pow` only works for operands convertible to f64 (i32/i64/f32/f64); anything else errors. `internal/codegen/wasm/emit.go:854`
-- Unary `-` only supports i32/i64/f32/f64. `internal/codegen/wasm/emit.go:931`
-- Casts only supported between wasm value types (i32/i64/f32/f64). `internal/codegen/wasm/emit.go:968`, `internal/codegen/wasm/opcodes.go:265`
-- Const/default emission only for wasm value types; other consts error. `internal/codegen/wasm/emit.go:705`, `internal/codegen/wasm/emit.go:798`
+- `pow` only works for operands convertible to f64 (i32/i64/f32/f64); anything else errors. `internal/codegen/wasm/emit.go:905`
+- Unary `-` only supports i32/i64/f32/f64. `internal/codegen/wasm/emit.go:942`
+- Casts only supported between wasm value types (i32/i64/f32/f64). `internal/codegen/wasm/emit.go:980`, `internal/codegen/wasm/opcodes.go:265`
+- Const/default emission only for wasm value types; other consts error. `internal/codegen/wasm/emit.go:779`, `internal/codegen/wasm/emit.go:805`
 - WASM runtime only wires std/io; std/fs, time, random externs aren’t present. `runtime/wasm/runtime.ts:3221`

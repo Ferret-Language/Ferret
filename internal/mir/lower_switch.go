@@ -145,14 +145,6 @@ func collectValueTypes(fn *Function) map[ValueID]types.SemType {
 				valueTypes[i.Result] = i.Type
 			case *Phi:
 				valueTypes[i.Result] = i.Type
-			case *MakeStruct:
-				valueTypes[i.Result] = i.Type
-			case *ExtractField:
-				valueTypes[i.Result] = i.Type
-			case *InsertField:
-				valueTypes[i.Result] = i.Type
-			case *MakeArray:
-				valueTypes[i.Result] = i.Type
 			case *ArrayGet:
 				valueTypes[i.Result] = i.Type
 			case *MapGet:
@@ -251,14 +243,6 @@ func instrResultID(instr Instr) ValueID {
 	case *CallIndirect:
 		return i.Result
 	case *Phi:
-		return i.Result
-	case *MakeStruct:
-		return i.Result
-	case *ExtractField:
-		return i.Result
-	case *InsertField:
-		return i.Result
-	case *MakeArray:
 		return i.Result
 	case *ArrayGet:
 		return i.Result

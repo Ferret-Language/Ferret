@@ -424,22 +424,6 @@ func (g *Generator) emitFunction(info *funcInfo, functionIndex map[string]uint32
 				if err := allocLocal(v.Result, v.Type); err != nil {
 					return nil, nil, err
 				}
-			case *mir.MakeStruct:
-				if err := allocLocal(v.Result, types.NewReference(v.Type)); err != nil {
-					return nil, nil, err
-				}
-			case *mir.ExtractField:
-				if err := allocLocal(v.Result, v.Type); err != nil {
-					return nil, nil, err
-				}
-			case *mir.InsertField:
-				if err := allocLocal(v.Result, types.NewReference(v.Type)); err != nil {
-					return nil, nil, err
-				}
-			case *mir.MakeArray:
-				if err := allocLocal(v.Result, types.NewReference(v.Type)); err != nil {
-					return nil, nil, err
-				}
 			case *mir.ArrayGet:
 				if err := allocLocal(v.Result, v.Type); err != nil {
 					return nil, nil, err
@@ -583,14 +567,6 @@ func (g *Generator) emitInstr(info *funcInfo, instr mir.Instr, locals map[mir.Va
 		return g.emitCall(info, v, locals, fnIndex)
 	case *mir.CallIndirect:
 		return g.emitCallIndirect(info, v, locals, fnIndex)
-	case *mir.MakeStruct:
-		return g.emitMakeStruct(info, v, locals, scratchLocal)
-	case *mir.ExtractField:
-		return g.emitExtractField(info, v, locals)
-	case *mir.InsertField:
-		return g.emitInsertField(info, v, locals, scratchLocal)
-	case *mir.MakeArray:
-		return g.emitMakeArray(info, v, locals, scratchLocal)
 	case *mir.ArrayGet:
 		return g.emitArrayGet(info, v, locals)
 	case *mir.ArraySet:
@@ -1312,56 +1288,6 @@ func (g *Generator) emitArraySet(info *funcInfo, a *mir.ArraySet, locals map[mir
 	return out, nil
 }
 
-func (g *Generator) emitMakeStruct(info *funcInfo, m *mir.MakeStruct, locals map[mir.ValueID]uint32, scratchLocal uint32) ([]byte, error) {
-	if m == nil || info == nil {
-		return nil, nil
-	}
-	structType, ok := types.UnwrapType(m.Type).(*types.StructType)
-	if !ok || structType == nil {
-		g.reportUnsupported("make_struct", m.Loc())
-		return []byte{opcodeUnreachable}, nil
-	}
-	layout := g.layout.StructLayout(structType)
-	if layout.Size <= 0 {
-		return nil, fmt.Errorf("wasm: invalid struct size")
-	}
-	allocID, ok := g.importIDs["ferret_alloc"]
-	if !ok {
-		return nil, fmt.Errorf("wasm: missing import ferret_alloc")
-	}
-
-	var out []byte
-	out = append(out, opcodeI64Const)
-	out = append(out, encodeS64(int64(layout.Size))...)
-	out = append(out, opcodeCall)
-	out = append(out, encodeU32(allocID)...)
-	out = append(out, opcodeLocalSet)
-	out = append(out, encodeU32(locals[m.Result])...)
-
-	fieldCount := len(layout.Fields)
-	if len(m.Fields) < fieldCount {
-		fieldCount = len(m.Fields)
-	}
-	for i := 0; i < fieldCount; i++ {
-		field := layout.Fields[i]
-		out = append(out, opcodeLocalGet)
-		out = append(out, encodeU32(locals[m.Result])...)
-		if field.Offset != 0 {
-			out = append(out, opcodeI32Const)
-			out = append(out, encodeS32(int32(field.Offset))...)
-			out = append(out, opcodeI32Add)
-		}
-		out = append(out, opcodeLocalSet)
-		out = append(out, encodeU32(scratchLocal)...)
-		storeBytes, err := g.emitStoreValueToAddr(info, m.Fields[i], field.Type, scratchLocal, locals)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, storeBytes...)
-	}
-	return out, nil
-}
-
 func (g *Generator) emitMapGet(info *funcInfo, m *mir.MapGet, locals map[mir.ValueID]uint32, scratchLocal uint32) ([]byte, error) {
 	if m == nil || info == nil {
 		return nil, nil
@@ -1486,206 +1412,6 @@ func (g *Generator) emitMapSet(info *funcInfo, m *mir.MapSet, locals map[mir.Val
 	out = append(out, valueAddr...)
 	out = append(out, opcodeCall)
 	out = append(out, encodeU32(setID)...)
-	return out, nil
-}
-
-func (g *Generator) emitExtractField(info *funcInfo, e *mir.ExtractField, locals map[mir.ValueID]uint32) ([]byte, error) {
-	if e == nil || info == nil {
-		return nil, nil
-	}
-	baseType, ok := info.valueType[e.Base]
-	if !ok || baseType == nil {
-		g.reportUnsupported("extract_field base", e.Loc())
-		return []byte{opcodeUnreachable}, nil
-	}
-	baseType = types.UnwrapType(baseType)
-	if ref, ok := baseType.(*types.ReferenceType); ok {
-		baseType = types.UnwrapType(ref.Inner)
-	}
-	structType, ok := baseType.(*types.StructType)
-	if !ok || structType == nil {
-		g.reportUnsupported("extract_field struct", e.Loc())
-		return []byte{opcodeUnreachable}, nil
-	}
-	layout := g.layout.StructLayout(structType)
-	if e.Index < 0 || e.Index >= len(layout.Fields) {
-		g.reportUnsupported("extract_field index", e.Loc())
-		return []byte{opcodeUnreachable}, nil
-	}
-	field := layout.Fields[e.Index]
-
-	var out []byte
-	out = append(out, opcodeLocalGet)
-	out = append(out, encodeU32(locals[e.Base])...)
-	if field.Offset != 0 {
-		out = append(out, opcodeI32Const)
-		out = append(out, encodeS32(int32(field.Offset))...)
-		out = append(out, opcodeI32Add)
-	}
-	if g.isAddressValueType(field.Type) {
-		out = append(out, opcodeLocalSet)
-		out = append(out, encodeU32(locals[e.Result])...)
-		return out, nil
-	}
-	loadOp, err := loadOpcode(field.Type)
-	if err != nil {
-		return nil, err
-	}
-	out = append(out, loadOp...)
-	out = append(out, opcodeLocalSet)
-	out = append(out, encodeU32(locals[e.Result])...)
-	return out, nil
-}
-
-func (g *Generator) emitInsertField(info *funcInfo, i *mir.InsertField, locals map[mir.ValueID]uint32, scratchLocal uint32) ([]byte, error) {
-	if i == nil || info == nil {
-		return nil, nil
-	}
-	baseType, ok := info.valueType[i.Base]
-	if !ok || baseType == nil {
-		g.reportUnsupported("insert_field base", i.Loc())
-		return []byte{opcodeUnreachable}, nil
-	}
-	baseType = types.UnwrapType(baseType)
-	if ref, ok := baseType.(*types.ReferenceType); ok {
-		baseType = types.UnwrapType(ref.Inner)
-	}
-	structType, ok := baseType.(*types.StructType)
-	if !ok || structType == nil {
-		g.reportUnsupported("insert_field struct", i.Loc())
-		return []byte{opcodeUnreachable}, nil
-	}
-	layout := g.layout.StructLayout(structType)
-	if i.Index < 0 || i.Index >= len(layout.Fields) {
-		g.reportUnsupported("insert_field index", i.Loc())
-		return []byte{opcodeUnreachable}, nil
-	}
-	if layout.Size <= 0 {
-		return nil, fmt.Errorf("wasm: invalid struct size")
-	}
-	allocID, ok := g.importIDs["ferret_alloc"]
-	if !ok {
-		return nil, fmt.Errorf("wasm: missing import ferret_alloc")
-	}
-
-	var out []byte
-	out = append(out, opcodeI64Const)
-	out = append(out, encodeS64(int64(layout.Size))...)
-	out = append(out, opcodeCall)
-	out = append(out, encodeU32(allocID)...)
-	out = append(out, opcodeLocalSet)
-	out = append(out, encodeU32(locals[i.Result])...)
-
-	copyBytes, err := g.emitMemcpy(locals[i.Result], locals[i.Base], layout.Size)
-	if err != nil {
-		return nil, err
-	}
-	out = append(out, copyBytes...)
-
-	field := layout.Fields[i.Index]
-	out = append(out, opcodeLocalGet)
-	out = append(out, encodeU32(locals[i.Result])...)
-	if field.Offset != 0 {
-		out = append(out, opcodeI32Const)
-		out = append(out, encodeS32(int32(field.Offset))...)
-		out = append(out, opcodeI32Add)
-	}
-	out = append(out, opcodeLocalSet)
-	out = append(out, encodeU32(scratchLocal)...)
-	storeBytes, err := g.emitStoreValueToAddr(info, i.Value, field.Type, scratchLocal, locals)
-	if err != nil {
-		return nil, err
-	}
-	out = append(out, storeBytes...)
-	return out, nil
-}
-
-func (g *Generator) emitMakeArray(info *funcInfo, m *mir.MakeArray, locals map[mir.ValueID]uint32, scratchLocal uint32) ([]byte, error) {
-	if m == nil || info == nil {
-		return nil, nil
-	}
-	arrType, ok := g.arrayTypeOf(m.Type)
-	if !ok || arrType == nil {
-		g.reportUnsupported("make_array type", m.Loc())
-		return []byte{opcodeUnreachable}, nil
-	}
-	elemType := arrType.Element
-	elemSize := g.layout.SizeOf(elemType)
-	if elemSize <= 0 {
-		return nil, fmt.Errorf("wasm: invalid array element size")
-	}
-
-	if arrType.Length >= 0 {
-		size := g.layout.SizeOf(arrType)
-		if size <= 0 {
-			return nil, fmt.Errorf("wasm: invalid array size")
-		}
-		allocID, ok := g.importIDs["ferret_alloc"]
-		if !ok {
-			return nil, fmt.Errorf("wasm: missing import ferret_alloc")
-		}
-		var out []byte
-		out = append(out, opcodeI64Const)
-		out = append(out, encodeS64(int64(size))...)
-		out = append(out, opcodeCall)
-		out = append(out, encodeU32(allocID)...)
-		out = append(out, opcodeLocalSet)
-		out = append(out, encodeU32(locals[m.Result])...)
-
-		elemCount := len(m.Elems)
-		if arrType.Length < elemCount {
-			elemCount = arrType.Length
-		}
-		for idx := 0; idx < elemCount; idx++ {
-			offset := idx * elemSize
-			out = append(out, opcodeLocalGet)
-			out = append(out, encodeU32(locals[m.Result])...)
-			if offset != 0 {
-				out = append(out, opcodeI32Const)
-				out = append(out, encodeS32(int32(offset))...)
-				out = append(out, opcodeI32Add)
-			}
-			out = append(out, opcodeLocalSet)
-			out = append(out, encodeU32(scratchLocal)...)
-			storeBytes, err := g.emitStoreValueToAddr(info, m.Elems[idx], elemType, scratchLocal, locals)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, storeBytes...)
-		}
-		return out, nil
-	}
-
-	newID, ok := g.importIDs["ferret_array_new"]
-	if !ok {
-		return nil, fmt.Errorf("wasm: missing import ferret_array_new")
-	}
-	appendID, ok := g.importIDs["ferret_array_append"]
-	if !ok {
-		return nil, fmt.Errorf("wasm: missing import ferret_array_append")
-	}
-	var out []byte
-	out = append(out, opcodeI32Const)
-	out = append(out, encodeS32(int32(elemSize))...)
-	out = append(out, opcodeI32Const)
-	out = append(out, encodeS32(int32(len(m.Elems)))...)
-	out = append(out, opcodeCall)
-	out = append(out, encodeU32(newID)...)
-	out = append(out, opcodeLocalSet)
-	out = append(out, encodeU32(locals[m.Result])...)
-
-	for _, elem := range m.Elems {
-		out = append(out, opcodeLocalGet)
-		out = append(out, encodeU32(locals[m.Result])...)
-		valueAddr, err := g.emitValueAddr(elem, elemType, locals, scratchLocal)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, valueAddr...)
-		out = append(out, opcodeCall)
-		out = append(out, encodeU32(appendID)...)
-		out = append(out, opcodeDrop)
-	}
 	return out, nil
 }
 
@@ -2623,14 +2349,6 @@ func analyzeFunctionTypes(fn *mir.Function) map[mir.ValueID]types.SemType {
 				typesMap[v.Result] = v.Type
 			case *mir.Phi:
 				typesMap[v.Result] = v.Type
-			case *mir.MakeStruct:
-				typesMap[v.Result] = types.NewReference(v.Type)
-			case *mir.ExtractField:
-				typesMap[v.Result] = v.Type
-			case *mir.InsertField:
-				typesMap[v.Result] = types.NewReference(v.Type)
-			case *mir.MakeArray:
-				typesMap[v.Result] = types.NewReference(v.Type)
 			case *mir.ArrayGet:
 				typesMap[v.Result] = v.Type
 			case *mir.MapGet:

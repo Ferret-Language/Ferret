@@ -155,53 +155,6 @@ type PhiIncoming struct {
 func (p *Phi) mirInstr()             {}
 func (p *Phi) Loc() *source.Location { return &p.Location }
 
-// MakeStruct constructs a struct value.
-type MakeStruct struct {
-	Result   ValueID
-	Type     types.SemType
-	Fields   []ValueID
-	Location source.Location
-}
-
-func (m *MakeStruct) mirInstr()             {}
-func (m *MakeStruct) Loc() *source.Location { return &m.Location }
-
-// ExtractField reads a field from a struct.
-type ExtractField struct {
-	Result   ValueID
-	Base     ValueID
-	Index    int
-	Type     types.SemType
-	Location source.Location
-}
-
-func (e *ExtractField) mirInstr()             {}
-func (e *ExtractField) Loc() *source.Location { return &e.Location }
-
-// InsertField produces a new struct with a replaced field.
-type InsertField struct {
-	Result   ValueID
-	Base     ValueID
-	Index    int
-	Value    ValueID
-	Type     types.SemType
-	Location source.Location
-}
-
-func (i *InsertField) mirInstr()             {}
-func (i *InsertField) Loc() *source.Location { return &i.Location }
-
-// MakeArray constructs an array or slice value.
-type MakeArray struct {
-	Result   ValueID
-	Type     types.SemType
-	Elems    []ValueID
-	Location source.Location
-}
-
-func (m *MakeArray) mirInstr()             {}
-func (m *MakeArray) Loc() *source.Location { return &m.Location }
-
 // ArrayGet reads an element from an array or slice.
 type ArrayGet struct {
 	Result   ValueID

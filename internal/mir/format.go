@@ -110,14 +110,6 @@ func formatInstr(instr Instr) string {
 		return formatAssign(i.Result, fmt.Sprintf("call_indirect %s %s(%s)", formatType(i.Type), formatValue(i.Callee), formatValues(i.Args)))
 	case *Phi:
 		return formatAssign(i.Result, fmt.Sprintf("phi %s %s", formatType(i.Type), formatPhiIncoming(i.Incoming)))
-	case *MakeStruct:
-		return formatAssign(i.Result, fmt.Sprintf("make_struct %s (%s)", formatType(i.Type), formatValues(i.Fields)))
-	case *ExtractField:
-		return formatAssign(i.Result, fmt.Sprintf("extract_field %s %s, %d", formatType(i.Type), formatValue(i.Base), i.Index))
-	case *InsertField:
-		return formatAssign(i.Result, fmt.Sprintf("insert_field %s %s, %d, %s", formatType(i.Type), formatValue(i.Base), i.Index, formatValue(i.Value)))
-	case *MakeArray:
-		return formatAssign(i.Result, fmt.Sprintf("make_array %s (%s)", formatType(i.Type), formatValues(i.Elems)))
 	case *ArrayGet:
 		return formatAssign(i.Result, fmt.Sprintf("array_get %s %s, %s", formatType(i.Type), formatValue(i.Array), formatValue(i.Index)))
 	case *ArraySet:
