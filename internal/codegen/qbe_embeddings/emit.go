@@ -547,6 +547,9 @@ func (g *Generator) emitCall(c *mir.Call) {
 			return
 		}
 		qbeSem := normalizeLargeValueType(semType)
+		if g.needsByRefType(qbeSem) {
+			qbeSem = types.NewReference(qbeSem)
+		}
 		qbeType, err := g.qbeType(qbeSem)
 		if err != nil {
 			g.reportError(err.Error(), &c.Location)
@@ -661,6 +664,9 @@ func (g *Generator) emitCallIndirect(c *mir.CallIndirect) {
 			return
 		}
 		qbeSem := normalizeLargeValueType(semType)
+		if g.needsByRefType(qbeSem) {
+			qbeSem = types.NewReference(qbeSem)
+		}
 		qbeType, err := g.qbeType(qbeSem)
 		if err != nil {
 			g.reportError(err.Error(), &c.Location)
@@ -775,7 +781,11 @@ func (g *Generator) emitMapGet(m *mir.MapGet) {
 			g.reportUnsupported("map_get value size", &m.Location)
 			return
 		}
+		byRef := g.needsByRefType(valueType)
 		valuePtr := g.newTemp()
+		if byRef {
+			valuePtr = g.valueName(m.Result)
+		}
 		g.emitLine(fmt.Sprintf("%s =l call $ferret_map_get(l %s, l %s)", valuePtr, g.valueName(m.Map), keyPtr))
 
 		// Check for NULL and panic if key not found
@@ -791,6 +801,11 @@ func (g *Generator) emitMapGet(m *mir.MapGet) {
 		g.emitLine(fmt.Sprintf("call $ferret_global_panic(l %s)", msgSym))
 		g.emitLine("ret") // Unreachable after panic, but QBE needs it
 		g.emitLine(fmt.Sprintf("@%s", okLabel))
+
+		if byRef {
+			g.valueTypes[m.Result] = valueType
+			return
+		}
 
 		// Load the value from the pointer
 		loadOp, err := g.loadOp(valueType)

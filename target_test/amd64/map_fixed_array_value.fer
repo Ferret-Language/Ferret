@@ -1,9 +1,12 @@
 import "std/io";
 
 fn main() {
-    let m: map[str][3]i32 = {
+    let m: map[str][]i32 = {
         "a" => [1, 2, 3],
     };
+    
+    append(&mut m["a"], 4);
+    
     let v := m["a"];
-    io::Println(v[0]);
+    io::Println(v[2]);
 }
