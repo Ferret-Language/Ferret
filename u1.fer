@@ -1,0 +1,14 @@
+import "std/io";
+
+
+fn main() {
+    
+    let pair := { .X = 2194862213232 };
+
+    let a := 10;
+    let b : i8 = a;
+    
+    let big : i32 = pair.X;
+    let small: i32 = big;
+    io::Println(big);
+}

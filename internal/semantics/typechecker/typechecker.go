@@ -1399,6 +1399,8 @@ func validateStructLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 				}
 				// Check the value expression with context
 				valueType := checkExpr(ctx, mod, kv.Value, expectedType)
+				// Ensure numeric literals fit the expected field type.
+				_ = checkFitness(ctx, expectedType, kv.Value, nil)
 				inferredFields = append(inferredFields, types.StructField{
 					Name: ident.Name,
 					Type: valueType,
@@ -2706,18 +2708,41 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		return types.TypeUnknown
 
 	case *ast.BasicLit:
-		// Keep numeric literals untyped when there's no expected type,
-		// but still record a concrete type for codegen.
-		if expected.Equals(types.TypeUnknown) && (e.Kind == ast.INT || e.Kind == ast.FLOAT) {
-			var litType types.SemType
+		// Default numeric literals to the configured default types when there is
+		// no concrete expected type (or expected is itself untyped).
+		if (expected.Equals(types.TypeUnknown) || types.IsUntyped(expected)) && (e.Kind == ast.INT || e.Kind == ast.FLOAT) {
 			if e.Kind == ast.INT {
-				litType = types.TypeUntypedInt
-			} else {
-				litType = types.TypeUntypedFloat
+				defaultType := types.FromTypeName(types.DEFAULT_INT_TYPE)
+				if !fitsInType(e.Value, defaultType) {
+					minUnsigned, minSigned := getMinimumTypeOptionsForValue(e.Value)
+					suggestions := formatIntegerTypeSuggestions(types.DEFAULT_INT_TYPE, minUnsigned, minSigned)
+					diag := diagnostics.NewError(fmt.Sprintf("integer literal %s does not fit in default type %s", e.Value, defaultType.String())).
+						WithPrimaryLabel(e.Loc(), fmt.Sprintf("does not fit in %s", defaultType.String()))
+					if suggestions != "" {
+						diag = diag.WithHelp(fmt.Sprintf("add a type annotation: %s", suggestions))
+					} else {
+						diag = diag.WithHelp("value exceeds maximum supported integer size (256-bit)")
+					}
+					ctx.Diagnostics.Add(diag)
+				}
+				mod.SetExprType(expr, defaultType)
+				return defaultType
 			}
-			if mod != nil {
-				mod.SetExprType(expr, inferLiteralType(e, types.TypeUnknown))
+			defaultType := types.FromTypeName(types.DEFAULT_FLOAT_TYPE)
+			if !fitsInType(e.Value, defaultType) {
+				digits := countSignificantDigits(e.Value)
+				minType := getMinimumFloatTypeForDigits(digits)
+				diag := diagnostics.NewError(fmt.Sprintf("float literal has too many significant digits for default type %s", defaultType.String())).
+					WithPrimaryLabel(e.Loc(), fmt.Sprintf("%d significant digits", digits))
+				if minType != "exceeds f256 precision" {
+					diag = diag.WithHelp(fmt.Sprintf("add a type annotation: %s", minType))
+				} else {
+					diag = diag.WithHelp("add a type annotation to select a wider float type")
+				}
+				ctx.Diagnostics.Add(diag)
 			}
+			litType := inferLiteralType(e, types.TypeUnknown)
+			mod.SetExprType(expr, litType)
 			return litType
 		}
 
@@ -3427,6 +3452,19 @@ func checkFitness(ctx *context_v2.CompilerContext, targetType types.SemType, val
 				hasSuggestion := len(suggestions) > 0
 				hasSigned := minSigned != types.TYPE_UNKNOWN
 
+				defaultType := types.FromTypeName(types.DEFAULT_INT_TYPE)
+				if typeNode == nil && targetBase.Equals(defaultType) {
+					diag := diagnostics.NewError(fmt.Sprintf("integer literal %s does not fit in default type %s", valueStr, defaultType.String())).
+						WithPrimaryLabel(valueExpr.Loc(), fmt.Sprintf("does not fit in %s", defaultType.String()))
+					if hasSuggestion {
+						diag = diag.WithHelp(fmt.Sprintf("add a type annotation: %s", suggestions))
+					} else {
+						diag = diag.WithHelp("add a type annotation to select a larger integer type")
+					}
+					ctx.Diagnostics.Add(diag)
+					return false
+				}
+
 				// Build error message
 				diag := diagnostics.NewError(fmt.Sprintf("integer literal %s overflows %s", valueStr, targetType.String()))
 
@@ -3468,6 +3506,19 @@ func checkFitness(ctx *context_v2.CompilerContext, targetType types.SemType, val
 				// Get minimum type that can hold this precision
 				digits := countSignificantDigits(valueStr)
 				minType := getMinimumFloatTypeForDigits(digits)
+
+				defaultType := types.FromTypeName(types.DEFAULT_FLOAT_TYPE)
+				if typeNode == nil && targetBase.Equals(defaultType) {
+					diag := diagnostics.NewError(fmt.Sprintf("float literal has too many significant digits for default type %s", defaultType.String())).
+						WithPrimaryLabel(valueExpr.Loc(), fmt.Sprintf("%d significant digits", digits))
+					if minType != "exceeds f256 precision" {
+						diag = diag.WithHelp(fmt.Sprintf("add a type annotation: %s", minType))
+					} else {
+						diag = diag.WithHelp("add a type annotation to select a wider float type")
+					}
+					ctx.Diagnostics.Add(diag)
+					return false
+				}
 
 				// Build error message
 				diag := diagnostics.NewError(fmt.Sprintf("float literal has too many significant digits for %s", targetType.String()))

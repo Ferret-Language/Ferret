@@ -9,14 +9,6 @@ import (
 
 func TestResolveUntypedInt(t *testing.T) {
 	defaultName := types.DEFAULT_INT_TYPE
-	promotionSequence := types.SignedIntPromotionSequence(defaultName)
-	if types.IsUnsigned(defaultName) {
-		promotionSequence = types.UnsignedIntPromotionSequence(defaultName)
-	}
-	if len(promotionSequence) == 0 {
-		t.Fatalf("No promotion sequence for DEFAULT_INT_TYPE=%s", defaultName)
-	}
-
 	maxDefault := maxValueForType(defaultName)
 	minDefault := minValueForType(defaultName)
 
@@ -40,20 +32,6 @@ func TestResolveUntypedInt(t *testing.T) {
 			value:    minDefault.String(),
 			wantType: defaultName,
 		},
-	}
-
-	if len(promotionSequence) > 1 {
-		next := promotionSequence[1]
-		overMax := new(big.Int).Add(maxDefault, big.NewInt(1))
-		tests = append(tests, struct {
-			name     string
-			value    string
-			wantType types.TYPE_NAME
-		}{
-			name:     "exceeds default max promotes",
-			value:    overMax.String(),
-			wantType: next,
-		})
 	}
 
 	for _, tt := range tests {

@@ -14,12 +14,12 @@ import (
 )
 
 // inferLiteralType is the SINGLE source of truth for all literal type inference.
-// It handles all rules: default size, promotion, contextualization, and fitness checking.
+// It handles all rules: default size, contextualization, and fitness checking.
 //
 // Rules:
 //   - If expected type is provided and value fits: use expected type
 //   - If expected type is provided and value doesn't fit: return expected type (error reported separately)
-//   - If no expected type: use DEFAULT_INT_TYPE/DEFAULT_FLOAT_TYPE, promote if needed
+//   - If no expected type: use DEFAULT_INT_TYPE or DEFAULT_FLOAT_TYPE (no promotion)
 //   - Non-numeric literals (string, bool, byte) return concrete types immediately
 func inferLiteralType(lit *ast.BasicLit, expected types.SemType) types.SemType {
 	switch lit.Kind {
@@ -36,23 +36,9 @@ func inferLiteralType(lit *ast.BasicLit, expected types.SemType) types.SemType {
 			}
 		}
 
-		// No expected type or incompatible: use default and promote if needed
+		// No expected type or incompatible: use default without promotion.
 		defaultName := types.DEFAULT_INT_TYPE
-		promotionSequence := types.SignedIntPromotionSequence(defaultName)
-		if types.IsUnsigned(defaultName) {
-			promotionSequence = types.UnsignedIntPromotionSequence(defaultName)
-		}
-
-		for _, typeName := range promotionSequence {
-			promotedType := types.FromTypeName(typeName)
-			if fitsInType(lit.Value, promotedType) {
-				return promotedType
-			}
-		}
-
-		// 3. Doesn't fit even in maximum - return TypeUnknown to signal error
-		// Error will be reported in checkExpr when this is detected
-		return types.TypeUnknown
+		return types.FromTypeName(defaultName)
 
 	case ast.FLOAT:
 		// If expected type is provided, try to use it (contextualization)
@@ -67,18 +53,8 @@ func inferLiteralType(lit *ast.BasicLit, expected types.SemType) types.SemType {
 			}
 		}
 
-		// No expected type or incompatible: use default and promote if needed
-		promotionSequence := types.FloatPromotionSequence(types.DEFAULT_FLOAT_TYPE)
-		for _, typeName := range promotionSequence {
-			promotedType := types.FromTypeName(typeName)
-			if fitsInType(lit.Value, promotedType) {
-				return promotedType
-			}
-		}
-
-		// 3. Doesn't fit even in maximum - return TypeUnknown to signal error
-		// Error will be reported in checkExpr when this is detected
-		return types.TypeUnknown
+		// No expected type or incompatible: use default without promotion.
+		return types.FromTypeName(types.DEFAULT_FLOAT_TYPE)
 
 	case ast.STRING:
 		return types.TypeString
@@ -165,16 +141,8 @@ func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 
 	switch e := expr.(type) {
 	case *ast.BasicLit:
-		// For pure inference (no context), return untyped types
-		// This allows contextualization in checkExpr when expected type is provided
-		switch e.Kind {
-		case ast.INT:
-			return types.TypeUntypedInt
-		case ast.FLOAT:
-			return types.TypeUntypedFloat
-		default:
-			return inferLiteralType(e, types.TypeUnknown)
-		}
+		// For pure inference (no context), default numeric literals immediately.
+		return inferLiteralType(e, types.TypeUnknown)
 
 	case *ast.IdentifierExpr:
 		return inferIdentifierType(ctx, mod, e)
@@ -729,7 +697,7 @@ func inferCompositeLitType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 					elemKeyType := inferExprType(ctx, mod, kv.Key)
 					elemValueType := inferExprType(ctx, mod, kv.Value)
 
-					// Resolve untyped literals to their default/promoted types
+					// Resolve untyped literals to their default types
 					if types.IsUntyped(elemKeyType) {
 						if lit, ok := kv.Key.(*ast.BasicLit); ok {
 							elemKeyType = inferLiteralType(lit, types.TypeUnknown)

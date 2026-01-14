@@ -1,0 +1,7 @@
+import "std/io";
+import "random";
+
+fn main() {
+    let r := random::Random();
+    io::Println(r);
+}

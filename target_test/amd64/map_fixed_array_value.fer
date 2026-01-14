@@ -1,0 +1,9 @@
+import "std/io";
+
+fn main() {
+    let m: map[str][3]i32 = {
+        "a" => [1, 2, 3],
+    };
+    let v := m["a"];
+    io::Println(v[0]);
+}
