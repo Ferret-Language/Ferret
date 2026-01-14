@@ -68,6 +68,16 @@ func checkBuiltinLen(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 	}
 
 	argType := checkExpr(ctx, mod, expr.Args[0], types.TypeUnknown)
+	if argType != nil && !argType.Equals(types.TypeUnknown) {
+		if _, ok := types.UnwrapType(argType).(*types.ReferenceType); !ok {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("len requires a reference").
+					WithCode(diagnostics.ErrInvalidAssignment).
+					WithPrimaryLabel(expr.Args[0].Loc(), "expected a reference value").
+					WithHelp("use '&' to pass a reference"),
+			)
+		}
+	}
 	baseType := builtinArgBaseType(argType)
 	if baseType != nil && !baseType.Equals(types.TypeUnknown) {
 		if _, ok := baseType.(*types.ArrayType); ok {

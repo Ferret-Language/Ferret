@@ -5,7 +5,7 @@ fn main() {
     let b: byte = s[0];
     let u: u8 = s[1] as u8;
     let last: byte = s[-1]; // last byte
-    let n := len(s);
+    let n := len(&s);
     io::Println(b);
     io::Println(u);
     io::Println(last);

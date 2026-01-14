@@ -2,7 +2,7 @@
 // These are declarations only; implementations are compiler intrinsics.
 
 // @extern
-// Note: len borrows read-only (&). The compiler inserts the borrow for literals/values.
+// Note: len borrows read-only (&) and requires an explicit reference.
 fn len(value: &interface {}) -> i32;
 // @extern
 // Note: append borrows mutably (&mut) and requires an addressable target.

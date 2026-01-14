@@ -386,6 +386,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 								WithPrimaryLabel(n.Result.Loc(),
 									fmt.Sprintf("expected error type %s, found %s", resultType.Err.String(), returnedDesc))
 							diag = addExplicitCastHint(ctx, diag, resultType.Err, compatibility, n.Result)
+							diag = addDerefHintIfNeeded(ctx, mod, diag, resultType.Err, returnedType, n.Result)
 							ctx.Diagnostics.Add(diag)
 						}
 					}
@@ -414,6 +415,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 								WithPrimaryLabel(n.Result.Loc(),
 									fmt.Sprintf("expected %s, found %s", resultType.Ok.String(), returnedType.String()))
 							diag = addExplicitCastHint(ctx, diag, resultType.Ok, compatibility, n.Result)
+							diag = addDerefHintIfNeeded(ctx, mod, diag, resultType.Ok, returnedType, n.Result)
 							ctx.Diagnostics.Add(diag)
 						}
 					}
@@ -439,6 +441,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 								WithPrimaryLabel(n.Result.Loc(),
 									fmt.Sprintf("expected %s, found %s", expectedReturnType.String(), returnedType.String()))
 							diag = addExplicitCastHint(ctx, diag, expectedReturnType, compatibility, n.Result)
+							diag = addDerefHintIfNeeded(ctx, mod, diag, expectedReturnType, returnedType, n.Result)
 							ctx.Diagnostics.Add(diag)
 						}
 					}
@@ -477,15 +480,23 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 		// Check range expression first to infer element type
 		var rangeElemType types.SemType = types.TypeUnknown
 		var rangeType types.SemType = types.TypeUnknown
+		var rangeBaseType types.SemType = types.TypeUnknown
 		isIterable := true
 		if n.Range != nil {
 			// Skip empty array checks for RangeExpr (e.g., 10..=15) - they're not arrays
 			_, isRangeExpr := n.Range.(*ast.RangeExpr)
 
 			rangeType = checkExpr(ctx, mod, n.Range, types.TypeUnknown)
-			unwrappedRange := types.UnwrapType(rangeType)
+			rangeBaseType = types.UnwrapType(rangeType)
 			// Extract element type from array/map - for integer ranges this will be i32
-			if arrayType, ok := unwrappedRange.(*types.ArrayType); ok {
+			if _, ok := rangeBaseType.(*types.ReferenceType); ok {
+				isIterable = false
+				ctx.Diagnostics.Add(diagnostics.NewError(fmt.Sprintf("type '%s' is not iterable", rangeBaseType.String())).
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(n.Range.Loc(), "for loop expects an iterable value").
+					WithNote("for loops do not auto-dereference references").
+					WithHelp(fmt.Sprintf("dereference the expression first: for %s in *%s { ... }", n.Iterator.Loc().GetText(ctx.Diagnostics.GetSourceCache()), n.Range.Loc().GetText(ctx.Diagnostics.GetSourceCache()))))
+			} else if arrayType, ok := rangeBaseType.(*types.ArrayType); ok {
 				rangeElemType = arrayType.Element
 
 				// Check for empty arrays - error: loop will never execute
@@ -495,13 +506,13 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 						WithPrimaryLabel(n.Range.Loc(), "this array is empty").
 						WithNote("Remove this loop or use a non-empty array"))
 				}
-			} else if prim, ok := unwrappedRange.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
+			} else if prim, ok := rangeBaseType.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
 				// Strings are iterable - element type is byte
 				rangeElemType = types.TypeByte
-			} else if _, ok := unwrappedRange.(*types.MapType); !ok {
+			} else if _, ok := rangeBaseType.(*types.MapType); !ok {
 				isIterable = false
 				ctx.Diagnostics.Add(
-					diagnostics.NewError(fmt.Sprintf("type '%s' is not iterable", unwrappedRange.String())).
+					diagnostics.NewError(fmt.Sprintf("type '%s' is not iterable", rangeBaseType.String())).
 						WithCode(diagnostics.ErrInvalidType).
 						WithPrimaryLabel(n.Range.Loc(), "for loop expects an iterable value"),
 				)
@@ -557,7 +568,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 						// Infer type based on position and range type
 						var inferredType types.SemType
 						// Check if range is a map
-						if mapType, ok := types.UnwrapType(rangeType).(*types.MapType); ok {
+						if mapType, ok := rangeBaseType.(*types.MapType); ok {
 							// Map iteration: key first, value second
 							if len(varDecl.Decls) == 1 {
 								inferredType = mapType.Key
@@ -566,7 +577,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 							} else {
 								inferredType = mapType.Value
 							}
-						} else if _, ok := types.UnwrapType(rangeType).(*types.ArrayType); ok {
+						} else if _, ok := rangeBaseType.(*types.ArrayType); ok {
 							// Check if range is an array (not a numeric range)
 							// Array iteration
 							if len(varDecl.Decls) == 2 && idx == 0 {
@@ -576,7 +587,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 								// Second variable or single variable: gets array element type (value)
 								inferredType = rangeElemType
 							}
-						} else if prim, ok := types.UnwrapType(rangeType).(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
+						} else if prim, ok := rangeBaseType.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
 							// String iteration: index (i32) and character (byte)
 							if len(varDecl.Decls) == 2 && idx == 0 {
 								// First variable in dual-iterator: index is always i32
@@ -1456,6 +1467,7 @@ func validateStructLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 				WithCode(diagnostics.ErrTypeMismatch).
 				WithPrimaryLabel(expr.Loc(), fmt.Sprintf("type '%s'", valueType.String()))
 			diag = addExplicitCastHint(ctx, diag, expectedType, compat, expr)
+			diag = addDerefHintIfNeeded(ctx, mod, diag, expectedType, valueType, expr)
 			ctx.Diagnostics.Add(diag)
 		}
 	}
@@ -1494,6 +1506,7 @@ func validateArrayLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 					WithPrimaryLabel(elem.Loc(), fmt.Sprintf("type %s", elemTypeStr)).
 					WithHelp(fmt.Sprintf("all array elements must be %s", arrayType.Element.String()))
 				diag = addExplicitCastHint(ctx, diag, arrayType.Element, compat, elem)
+				diag = addDerefHintIfNeeded(ctx, mod, diag, arrayType.Element, elemType, elem)
 				ctx.Diagnostics.Add(diag)
 			}
 		}
@@ -1520,6 +1533,7 @@ func checkMapLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, li
 				WithPrimaryLabel(kv.Key.Loc(), fmt.Sprintf("type %s", keyTypeStr)).
 				WithHelp(fmt.Sprintf("all map keys must be %s", mapType.Key.String()))
 			diag = addExplicitCastHint(ctx, diag, mapType.Key, compat, kv.Key)
+			diag = addDerefHintIfNeeded(ctx, mod, diag, mapType.Key, keyType, kv.Key)
 			ctx.Diagnostics.Add(diag)
 		}
 
@@ -1540,6 +1554,7 @@ func checkMapLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, li
 				WithPrimaryLabel(kv.Value.Loc(), fmt.Sprintf("type %s", valueTypeStr)).
 				WithHelp(fmt.Sprintf("all map values must be %s", mapType.Value.String()))
 			diag = addExplicitCastHint(ctx, diag, mapType.Value, compat, kv.Value)
+			diag = addDerefHintIfNeeded(ctx, mod, diag, mapType.Value, valueType, kv.Value)
 			ctx.Diagnostics.Add(diag)
 		}
 	}
@@ -2821,7 +2836,13 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 			targetType = TypeFromTypeNodeWithContext(ctx, mod, e.Type)
 		} else if !expected.Equals(types.TypeUnknown) {
 			// Expected type provided: use it as target
-			targetType = expected
+			if refType, ok := types.UnwrapType(expected).(*types.ReferenceType); ok {
+				targetType = refType.Inner
+			} else if _, ok := types.UnwrapType(expected).(*types.UnionType); ok {
+				targetType = inferCompositeLitType(ctx, mod, e)
+			} else {
+				targetType = expected
+			}
 		} else {
 			// No explicit type and no expected type: infer type
 			targetType = inferExprType(ctx, mod, e)
@@ -2983,6 +3004,7 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 			WithPrimaryLabel(rightNode.Loc(), fmt.Sprintf("type '%s'", rhsType.String())).
 			WithSecondaryLabel(leftNode.Loc(), fmt.Sprintf("type '%s'", leftType.String()))
 		diag = addExplicitCastHint(ctx, diag, leftType, compatibility, rightNode)
+		diag = addDerefHintIfNeeded(ctx, mod, diag, leftType, rhsType, rightNode)
 		ctx.Diagnostics.Add(diag)
 
 	case Incompatible:
@@ -3035,6 +3057,7 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 			}
 		}
 
+		diag = addDerefHintIfNeeded(ctx, mod, diag, leftType, rhsType, rightNode)
 		ctx.Diagnostics.Add(diag)
 	}
 }
@@ -3050,6 +3073,41 @@ func addExplicitCastHint(ctx *context_v2.CompilerContext, diag *diagnostics.Diag
 	hint := getConversionHint(target, compatibility, exprText)
 	if hint == "" {
 		return diag
+	}
+	if diag.Help != "" {
+		hint = fmt.Sprintf("%s; %s", diag.Help, hint)
+	}
+	return diag.WithHelp(hint)
+}
+
+func addDerefHintIfNeeded(ctx *context_v2.CompilerContext, mod *context_v2.Module, diag *diagnostics.Diagnostic, expected, actual types.SemType, expr ast.Expression) *diagnostics.Diagnostic {
+	if diag == nil || expected == nil || actual == nil {
+		return diag
+	}
+	if _, ok := types.UnwrapType(expected).(*types.ReferenceType); ok {
+		return diag
+	}
+	refType, ok := types.UnwrapType(actual).(*types.ReferenceType)
+	if !ok {
+		return diag
+	}
+
+	expectedBase := unwrapOptionalType(expected)
+	compatibility := checkTypeCompatibility(refType.Inner, expectedBase)
+	if ctx != nil && mod != nil {
+		compatibility = checkTypeCompatibilityWithContext(ctx, mod, refType.Inner, expectedBase)
+	}
+	if !isImplicitlyCompatible(compatibility) {
+		return diag
+	}
+
+	exprText := ""
+	if expr != nil && expr.Loc() != nil && ctx != nil {
+		exprText = expr.Loc().GetText(ctx.Diagnostics.GetSourceCache())
+	}
+	hint := "dereference: *value"
+	if exprText != "" {
+		hint = fmt.Sprintf("dereference: *%s", exprText)
 	}
 	if diag.Help != "" {
 		hint = fmt.Sprintf("%s; %s", diag.Help, hint)
@@ -3919,6 +3977,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 				argTypeDesc.String(),
 			)
 			diag = addExplicitCastHint(ctx, diag, param.Type, compatibility, arg)
+			diag = addDerefHintIfNeeded(ctx, mod, diag, param.Type, argType, arg)
 			ctx.Diagnostics.Add(diag)
 		}
 	}
@@ -3982,6 +4041,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 					argTypeDesc.String(),
 				)
 				diag = addExplicitCastHint(ctx, diag, variadicElemType, compatibility, arg)
+				diag = addDerefHintIfNeeded(ctx, mod, diag, variadicElemType, argType, arg)
 				ctx.Diagnostics.Add(diag)
 			}
 		}

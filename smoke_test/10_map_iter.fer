@@ -7,7 +7,7 @@ fn main() {
         "charlie" => 35
     } as map[str]i32;
 
-    io::Println(len(persons));
+    io::Println(len(&persons));
 
     for name, age in persons {
         io::Println(name);

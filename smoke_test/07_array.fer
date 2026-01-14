@@ -1,8 +1,25 @@
 import "std/io";
 
+fn test(values: union{&[]i32, []i32}) {
+    if values is &[]i32 {    
+        for value in *values {
+            io::Print(value, " ");
+        }
+    } else {
+        for value in values {
+            io::Print(value, " ");
+        }
+    }
+    io::Println();
+}
+
 fn main() {
     let nums := [1, 2, 3];
     append(&mut nums, 4);
     io::Println(len(&nums));
     io::Println(nums[2]);
+    
+    let arr := [1,2,3];
+
+    test([1,2,4]);
 }
