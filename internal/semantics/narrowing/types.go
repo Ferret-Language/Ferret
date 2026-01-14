@@ -52,6 +52,14 @@ func getTypeFromTypeNode(mod *context_v2.Module, typeNode ast.TypeNode) types.Se
 		if innerType != nil {
 			return types.NewOptional(innerType)
 		}
+	case *ast.ReferenceType:
+		innerType := getTypeFromTypeNode(mod, t.Base)
+		if innerType != nil {
+			if t.Mutable {
+				return types.NewMutableReference(innerType)
+			}
+			return types.NewReference(innerType)
+		}
 	}
 
 	return nil

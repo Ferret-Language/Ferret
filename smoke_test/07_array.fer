@@ -1,11 +1,18 @@
 import "std/io";
 
-fn test(values: union{&[]i32, []i32}) {
-    if values is &[]i32 {    
+type Array union {
+    &[]i32,
+    []i32
+};
+
+fn test(values: Array) {
+    if values is &[]i32 {
+        io::Print("Printing array ref: ");
         for value in *values {
             io::Print(value, " ");
         }
     } else {
+        io::Print("Printing array value: ");
         for value in values {
             io::Print(value, " ");
         }
@@ -20,6 +27,7 @@ fn main() {
     io::Println(nums[2]);
     
     let arr := [1,2,3];
-
+    
+    test(&arr);
     test([1,2,4]);
 }

@@ -8,6 +8,7 @@ import (
 	"compiler/internal/hir"
 	"compiler/internal/hir/consteval"
 	"compiler/internal/mir"
+	"compiler/internal/semantics/narrowing"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 	"compiler/internal/tokens"
@@ -26,6 +27,7 @@ type functionBuilder struct {
 	ptrElem       map[mir.ValueID]types.SemType
 	loopStack     []loopTargets
 	deferStack    []deferScope
+	narrowedTypes map[string]types.SemType
 	retParam      mir.ValueID
 	retType       types.SemType
 	refOutParam   mir.ValueID
@@ -44,19 +46,20 @@ type deferScope struct {
 
 func newFunctionBuilder(gen *Generator, fn *mir.Function) *functionBuilder {
 	return &functionBuilder{
-		gen:          gen,
-		fn:           fn,
-		paramsByName: make(map[string]mir.ValueID),
-		paramTypes:   make(map[string]types.SemType),
-		slots:        make(map[*symbols.Symbol]mir.ValueID),
-		tempSlots:    make(map[*hir.Ident]mir.ValueID),
-		ptrElem:      make(map[mir.ValueID]types.SemType),
-		loopStack:    nil,
-		retParam:     mir.InvalidValue,
-		refOutParam:  mir.InvalidValue,
-		closureEnv:   mir.InvalidValue,
-		captures:     nil,
-		boxed:        make(map[*symbols.Symbol]mir.ValueID),
+		gen:           gen,
+		fn:            fn,
+		paramsByName:  make(map[string]mir.ValueID),
+		paramTypes:    make(map[string]types.SemType),
+		slots:         make(map[*symbols.Symbol]mir.ValueID),
+		tempSlots:     make(map[*hir.Ident]mir.ValueID),
+		ptrElem:       make(map[mir.ValueID]types.SemType),
+		loopStack:     nil,
+		narrowedTypes: nil,
+		retParam:      mir.InvalidValue,
+		refOutParam:   mir.InvalidValue,
+		closureEnv:    mir.InvalidValue,
+		captures:      nil,
+		boxed:         make(map[*symbols.Symbol]mir.ValueID),
 	}
 }
 
@@ -132,17 +135,128 @@ func (b *functionBuilder) finalizeCurrent() {
 	b.current.Term = &mir.Unreachable{Location: b.current.Location}
 }
 
+func (b *functionBuilder) withNarrowing(block *hir.Block, fn func()) {
+	if fn == nil {
+		return
+	}
+	if b == nil || b.gen == nil || b.gen.mod == nil || block == nil {
+		fn()
+		return
+	}
+	if block.Location.Start == nil {
+		fn()
+		return
+	}
+	info := narrowing.GetNarrowingInfo(b.gen.mod)
+	if info == nil {
+		fn()
+		return
+	}
+
+	line := block.Location.Start.Line
+	col := block.Location.Start.Column
+	filePath := b.gen.mod.FilePath
+	if block.Location.Filename != nil && *block.Location.Filename != "" {
+		filePath = *block.Location.Filename
+	}
+	scopeKey := narrowing.ScopeKeyFromLocation(filePath, line, col)
+	scope := info.GetScope(scopeKey)
+	if scope == nil && filePath != b.gen.mod.FilePath && b.gen.mod.FilePath != "" {
+		scopeKey = narrowing.ScopeKeyFromLocation(b.gen.mod.FilePath, line, col)
+		scope = info.GetScope(scopeKey)
+	}
+	if scope == nil {
+		scope = findNarrowingScope(info, filePath, line, col)
+		if scope == nil && filePath != b.gen.mod.FilePath && b.gen.mod.FilePath != "" {
+			scope = findNarrowingScope(info, b.gen.mod.FilePath, line, col)
+		}
+	}
+	if scope == nil || len(scope.Entries) == 0 {
+		fn()
+		return
+	}
+
+	prevNarrowed := b.narrowedTypes
+	nextNarrowed := make(map[string]types.SemType, len(scope.Entries))
+	for name, typ := range prevNarrowed {
+		nextNarrowed[name] = typ
+	}
+	for name, entry := range scope.Entries {
+		if entry == nil || entry.NarrowedType == nil {
+			continue
+		}
+		nextNarrowed[name] = entry.NarrowedType
+	}
+	b.narrowedTypes = nextNarrowed
+	defer func() {
+		b.narrowedTypes = prevNarrowed
+	}()
+
+	fn()
+}
+
+func findNarrowingScope(info *narrowing.NarrowingInfo, filePath string, line, col int) *narrowing.ScopeNarrowing {
+	if info == nil {
+		return nil
+	}
+	var lineMatch *narrowing.ScopeNarrowing
+	lineMatchCount := 0
+	for key, scope := range info.Scopes {
+		scopeFile, scopeLine, scopeCol, ok := parseNarrowingScopeKey(key)
+		if !ok {
+			continue
+		}
+		if filePath != "" && scopeFile != filePath {
+			continue
+		}
+		if scopeLine != line {
+			continue
+		}
+		if scopeCol == col {
+			return scope
+		}
+		lineMatch = scope
+		lineMatchCount++
+	}
+	if lineMatchCount == 1 {
+		return lineMatch
+	}
+	return nil
+}
+
+func parseNarrowingScopeKey(key string) (string, int, int, bool) {
+	last := strings.LastIndex(key, ":")
+	if last < 0 {
+		return "", 0, 0, false
+	}
+	prev := strings.LastIndex(key[:last], ":")
+	if prev < 0 {
+		return "", 0, 0, false
+	}
+	line, err := strconv.Atoi(key[prev+1 : last])
+	if err != nil {
+		return "", 0, 0, false
+	}
+	col, err := strconv.Atoi(key[last+1:])
+	if err != nil {
+		return "", 0, 0, false
+	}
+	return key[:prev], line, col, true
+}
+
 func (b *functionBuilder) lowerBlock(block *hir.Block) {
 	if block == nil || b.current == nil {
 		return
 	}
 
-	for _, node := range block.Nodes {
-		b.lowerNode(node)
-		if b.current.Term != nil {
-			return
+	b.withNarrowing(block, func() {
+		for _, node := range block.Nodes {
+			b.lowerNode(node)
+			if b.current.Term != nil {
+				return
+			}
 		}
-	}
+	})
 }
 
 func (b *functionBuilder) lowerNode(node hir.Node) {
@@ -526,19 +640,232 @@ func (b *functionBuilder) lowerIf(stmt *hir.IfStmt) {
 		Location: stmt.Location,
 	}
 
+	thenNarrow, elseNarrow := b.analyzeCondNarrowing(stmt.Cond)
+
 	b.setBlock(thenBlock)
 	if stmt.Body != nil {
-		b.lowerBlock(stmt.Body)
+		b.withLocalNarrowing(thenNarrow, func() {
+			b.lowerBlock(stmt.Body)
+		})
 	}
 	b.branchIfNoTerm(mergeBlock.ID, stmt.Location)
 
 	if elseBlock != nil {
 		b.setBlock(elseBlock)
-		b.lowerNode(stmt.Else)
+		b.withLocalNarrowing(elseNarrow, func() {
+			b.lowerNode(stmt.Else)
+		})
 		b.branchIfNoTerm(mergeBlock.ID, stmt.Location)
 	}
 
 	b.setBlock(mergeBlock)
+}
+
+func (b *functionBuilder) withLocalNarrowing(narrowed map[string]types.SemType, fn func()) {
+	if fn == nil {
+		return
+	}
+	if len(narrowed) == 0 {
+		fn()
+		return
+	}
+	prev := b.narrowedTypes
+	next := make(map[string]types.SemType, len(narrowed))
+	for name, typ := range prev {
+		next[name] = typ
+	}
+	for name, typ := range narrowed {
+		if typ != nil {
+			next[name] = typ
+		}
+	}
+	b.narrowedTypes = next
+	defer func() {
+		b.narrowedTypes = prev
+	}()
+	fn()
+}
+
+func (b *functionBuilder) analyzeCondNarrowing(expr hir.Expr) (map[string]types.SemType, map[string]types.SemType) {
+	switch e := expr.(type) {
+	case *hir.ParenExpr:
+		return b.analyzeCondNarrowing(e.X)
+	case *hir.BinaryExpr:
+		switch e.Op.Kind {
+		case tokens.IS_TOKEN:
+			return b.analyzeUnionIsNarrowing(e)
+		case tokens.AND_TOKEN:
+			thenLeft, elseLeft := b.analyzeCondNarrowing(e.X)
+			thenRight, elseRight := b.analyzeCondNarrowing(e.Y)
+			return intersectNarrowings(thenLeft, thenRight), mergeNarrowings(elseLeft, elseRight)
+		case tokens.OR_TOKEN:
+			thenLeft, elseLeft := b.analyzeCondNarrowing(e.X)
+			thenRight, elseRight := b.analyzeCondNarrowing(e.Y)
+			return mergeNarrowings(thenLeft, thenRight), intersectNarrowings(elseLeft, elseRight)
+		}
+	case *hir.UnaryExpr:
+		if e.Op.Kind == tokens.NOT_TOKEN {
+			thenNarrow, elseNarrow := b.analyzeCondNarrowing(e.X)
+			return elseNarrow, thenNarrow
+		}
+	case *hir.PrefixExpr:
+		if e.Op.Kind == tokens.NOT_TOKEN {
+			thenNarrow, elseNarrow := b.analyzeCondNarrowing(e.X)
+			return elseNarrow, thenNarrow
+		}
+	}
+	return nil, nil
+}
+
+func (b *functionBuilder) analyzeUnionIsNarrowing(expr *hir.BinaryExpr) (map[string]types.SemType, map[string]types.SemType) {
+	if expr == nil || expr.X == nil {
+		return nil, nil
+	}
+	ident, ok := expr.X.(*hir.Ident)
+	if !ok {
+		return nil, nil
+	}
+	unionType, ok := types.UnwrapType(b.exprType(expr.X)).(*types.UnionType)
+	if !ok || unionType == nil {
+		return nil, nil
+	}
+	targetType := expr.TargetType
+	if targetType == nil {
+		targetType = b.exprType(expr.Y)
+	}
+	if targetType == nil {
+		return nil, nil
+	}
+
+	matchIndex := -1
+	for i, variant := range unionType.Variants {
+		if targetType.Equals(variant) {
+			matchIndex = i
+			break
+		}
+	}
+	if matchIndex < 0 {
+		return nil, nil
+	}
+
+	thenNarrow := map[string]types.SemType{
+		ident.Name: unionType.Variants[matchIndex],
+	}
+
+	otherVariants := make([]types.SemType, 0, len(unionType.Variants)-1)
+	for i, variant := range unionType.Variants {
+		if i == matchIndex {
+			continue
+		}
+		otherVariants = append(otherVariants, variant)
+	}
+	var elseType types.SemType
+	switch len(otherVariants) {
+	case 0:
+		elseType = nil
+	case 1:
+		elseType = otherVariants[0]
+	default:
+		elseType = types.NewUnion(otherVariants)
+	}
+	if elseType == nil {
+		return thenNarrow, nil
+	}
+	elseNarrow := map[string]types.SemType{
+		ident.Name: elseType,
+	}
+	return thenNarrow, elseNarrow
+}
+
+func mergeNarrowings(a, b map[string]types.SemType) map[string]types.SemType {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	merged := make(map[string]types.SemType, len(a)+len(b))
+	for name, typ := range a {
+		if typ != nil {
+			merged[name] = typ
+		}
+	}
+	for name, typ := range b {
+		if typ == nil {
+			continue
+		}
+		if existing, ok := merged[name]; ok {
+			merged[name] = unionTypes(existing, typ)
+			continue
+		}
+		merged[name] = typ
+	}
+	return merged
+}
+
+func intersectNarrowings(a, b map[string]types.SemType) map[string]types.SemType {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	out := make(map[string]types.SemType)
+	for name, typ := range a {
+		if other, ok := b[name]; ok {
+			if merged := intersectTypes(typ, other); merged != nil {
+				out[name] = merged
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func unionTypes(a, b types.SemType) types.SemType {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if a.Equals(b) {
+		return a
+	}
+	var variants []types.SemType
+	if ua, ok := types.UnwrapType(a).(*types.UnionType); ok {
+		variants = append(variants, ua.Variants...)
+	} else {
+		variants = append(variants, a)
+	}
+	if ub, ok := types.UnwrapType(b).(*types.UnionType); ok {
+		variants = append(variants, ub.Variants...)
+	} else {
+		variants = append(variants, b)
+	}
+	dedup := make([]types.SemType, 0, len(variants))
+	for _, v := range variants {
+		duplicate := false
+		for _, existing := range dedup {
+			if v.Equals(existing) {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			dedup = append(dedup, v)
+		}
+	}
+	if len(dedup) == 1 {
+		return dedup[0]
+	}
+	return types.NewUnion(dedup)
+}
+
+func intersectTypes(a, b types.SemType) types.SemType {
+	if a == nil || b == nil {
+		return nil
+	}
+	if a.Equals(b) {
+		return a
+	}
+	return nil
 }
 
 func (b *functionBuilder) lowerBreak(stmt *hir.BreakStmt) {
@@ -1238,15 +1565,20 @@ func (b *functionBuilder) coerceValueForAssign(val mir.ValueID, fromType, toType
 	if _, ok := types.UnwrapType(toType).(*types.ReferenceType); ok {
 		return val
 	}
+	if unionType, ok := types.UnwrapType(toType).(*types.UnionType); ok {
+		if fromUnion, ok := types.UnwrapType(fromType).(*types.UnionType); ok {
+			if fromUnion.Equals(unionType) {
+				return val
+			}
+		}
+		return b.boxUnionValue(val, fromType, unionType, loc)
+	} else if interfaceTypeOf(toType) != nil {
+		val = b.boxInterfaceValue(val, fromType, toType, loc)
+		return val
+	}
 	if ref, ok := types.UnwrapType(fromType).(*types.ReferenceType); ok {
 		val = b.emitLoad(val, ref.Inner, loc)
 		fromType = ref.Inner
-	}
-	// Handle union type assignment
-	if unionType, ok := types.UnwrapType(toType).(*types.UnionType); ok {
-		val = b.boxUnionValue(val, fromType, unionType, loc)
-	} else if interfaceTypeOf(toType) != nil {
-		val = b.boxInterfaceValue(val, fromType, toType, loc)
 	}
 	return val
 }
@@ -1587,6 +1919,7 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionType, loc source.Location, skipInterfaceBoxing bool) []mir.ValueID {
 	out := make([]mir.ValueID, 0, len(args))
 	for i, arg := range args {
+		boxedUnion := false
 		val := b.lowerExpr(arg)
 		if val == mir.InvalidValue {
 			return nil
@@ -1612,9 +1945,18 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 				return nil
 			}
 		}
+		if !skipInterfaceBoxing && paramType != nil {
+			if _, ok := types.UnwrapType(paramType).(*types.UnionType); ok {
+				val = b.coerceValueForAssign(val, argType, paramType, loc)
+				if val == mir.InvalidValue {
+					return nil
+				}
+				boxedUnion = true
+			}
+		}
 		if paramType != nil {
 			paramBase := types.UnwrapType(paramType)
-			if _, ok := paramBase.(*types.ReferenceType); !ok && needsByRefType(paramType) {
+			if _, ok := paramBase.(*types.ReferenceType); !ok && needsByRefType(paramType) && !boxedUnion {
 				tmp := b.emitAlloca(paramType, loc)
 				b.emitStore(tmp, val, loc)
 				val = tmp
@@ -2231,15 +2573,15 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 		return b.makeFuncValue(ident.Name, ident.Type, ident.Location)
 	}
 
-	// Check for narrowed union access: if ident.Type differs from the storage type (Symbol.Type)
-	// and the storage type is a union, we need to extract the variant
-	if ident.Symbol != nil && ident.Type != nil && ident.Symbol.Type != nil {
+	// Check for narrowed union access: if the access type differs from the storage type
+	// and the storage type is a union, we need to extract the variant.
+	if ident.Symbol != nil && ident.Symbol.Type != nil {
 		storageType := types.UnwrapType(ident.Symbol.Type)
-		accessType := types.UnwrapType(ident.Type)
+		accessType := types.UnwrapType(b.exprType(ident))
 
 		if unionType, ok := storageType.(*types.UnionType); ok {
 			// Storage is a union but we're accessing a narrowed variant type
-			if !accessType.Equals(storageType) {
+			if accessType != nil && !accessType.Equals(storageType) {
 				// Find the variant index
 				variantIndex := -1
 				for i, variant := range unionType.Variants {
@@ -2250,11 +2592,17 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 				}
 
 				if variantIndex >= 0 {
-					// Load the union pointer, then extract the variant
+					// Load the union value, then extract the variant.
+					unionVal := mir.InvalidValue
 					if addr, ok := b.slots[ident.Symbol]; ok {
-						unionVal := b.emitLoad(addr, ident.Symbol.Type, ident.Location)
+						unionVal = b.emitLoad(addr, ident.Symbol.Type, ident.Location)
+					} else if val, ok := b.paramsByName[ident.Name]; ok {
+						unionVal = val
+					} else if addr, ok := b.tempSlots[ident]; ok {
+						unionVal = b.emitLoad(addr, ident.Symbol.Type, ident.Location)
+					}
 
-						// Emit union extract - get data at offset 4 with the narrowed type
+					if unionVal != mir.InvalidValue {
 						result := b.gen.nextValueID()
 						b.emitInstr(&mir.UnionExtract{
 							Result:       result,
@@ -4196,6 +4544,11 @@ func (b *functionBuilder) exprType(expr hir.Expr) types.SemType {
 	case *hir.FuncLit:
 		return e.Type
 	case *hir.Ident:
+		if b.narrowedTypes != nil {
+			if narrowed, ok := b.narrowedTypes[e.Name]; ok && narrowed != nil {
+				return narrowed
+			}
+		}
 		// Check if this is a parameter with an overridden MIR type
 		// This ensures field access through reference parameters works correctly
 		if mirType, ok := b.paramTypes[e.Name]; ok {
