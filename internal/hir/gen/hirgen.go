@@ -4,6 +4,7 @@ import (
 	"compiler/internal/context_v2"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/hir"
+	"compiler/internal/semantics/narrowing"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/semantics/typechecker"
@@ -463,7 +464,18 @@ func (g *Generator) lowerBlock(block *ast.Block) *hir.Block {
 	if block == nil {
 		return nil
 	}
-	hirBlock := &hir.Block{Location: locFromNode(block)}
+	key := ""
+	if block.Location.Start != nil {
+		filePath := g.mod.FilePath
+		if block.Location.Filename != nil && *block.Location.Filename != "" {
+			filePath = *block.Location.Filename
+		}
+		key = narrowing.ScopeKeyFromLocation(filePath, block.Location.Start.Line, block.Location.Start.Column)
+	}
+	hirBlock := &hir.Block{
+		Location:     locFromNode(block),
+		NarrowingKey: key,
+	}
 	g.withScope(block.Scope, func() {
 		nodes := make([]hir.Node, 0, len(block.Nodes))
 		for _, node := range block.Nodes {

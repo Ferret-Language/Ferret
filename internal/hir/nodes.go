@@ -471,8 +471,9 @@ func (f *FuncLit) Loc() *source.Location { return &f.Location }
 
 // Block represents a block of statements.
 type Block struct {
-	Nodes    []Node
-	Location source.Location
+	Nodes        []Node
+	NarrowingKey string
+	Location     source.Location
 }
 
 func (b *Block) hirNode()              {}

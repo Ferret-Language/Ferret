@@ -103,6 +103,32 @@ func (n *NarrowingInfo) GetScope(scopeKey string) *ScopeNarrowing {
 	return n.Scopes[scopeKey]
 }
 
+// NarrowedTypesForScope returns a map of narrowed variable types for a scope key.
+func NarrowedTypesForScope(info *NarrowingInfo, scopeKey string) map[string]types.SemType {
+	if info == nil || scopeKey == "" {
+		return nil
+	}
+	return NarrowedTypes(info.GetScope(scopeKey))
+}
+
+// NarrowedTypes returns a map of narrowed variable types for a scope.
+func NarrowedTypes(scope *ScopeNarrowing) map[string]types.SemType {
+	if scope == nil || len(scope.Entries) == 0 {
+		return nil
+	}
+	out := make(map[string]types.SemType, len(scope.Entries))
+	for name, entry := range scope.Entries {
+		if entry == nil || entry.NarrowedType == nil {
+			continue
+		}
+		out[name] = entry.NarrowedType
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // StoreNarrowingInfo saves narrowing info to module artifacts.
 func StoreNarrowingInfo(mod *context_v2.Module, info *NarrowingInfo) {
 	if mod == nil || info == nil {

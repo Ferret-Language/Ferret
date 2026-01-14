@@ -114,7 +114,10 @@ func (l *Lowerer) lowerBlock(block *hir.Block) *hir.Block {
 		return nil
 	}
 
-	lowered := &hir.Block{Location: block.Location}
+	lowered := &hir.Block{
+		Location:     block.Location,
+		NarrowingKey: block.NarrowingKey,
+	}
 	if len(block.Nodes) > 0 {
 		lowered.Nodes = make([]hir.Node, 0, len(block.Nodes))
 		for _, node := range block.Nodes {
