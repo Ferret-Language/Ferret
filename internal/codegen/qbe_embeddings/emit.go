@@ -782,6 +782,9 @@ func (g *Generator) emitMapGet(m *mir.MapGet) {
 			return
 		}
 		byRef := g.needsByRefType(valueType)
+		if _, ok := types.UnwrapType(valueType).(*types.ReferenceType); ok {
+			byRef = true
+		}
 		valuePtr := g.newTemp()
 		if byRef {
 			valuePtr = g.valueName(m.Result)

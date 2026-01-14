@@ -2784,6 +2784,9 @@ func (g *Generator) isAddressValueType(typ types.SemType) bool {
 	if g.needsByRefType(typ) {
 		return true
 	}
+	if _, ok := types.UnwrapType(typ).(*types.ReferenceType); ok {
+		return true
+	}
 	if _, ok := g.optionalType(typ); ok {
 		return true
 	}

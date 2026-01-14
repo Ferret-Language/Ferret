@@ -8,5 +8,11 @@ fn main() {
     append(&mut m["a"], 4);
     
     let v := m["a"];
-    io::Println(v[2]);
+    io::Println(v[3]);
+
+    let twoD : [][]i32 = [[1], [1,2]];
+        
+    append(&mut twoD[0], 3);
+    
+    io::Println(twoD[0][1]);
 }

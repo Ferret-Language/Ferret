@@ -1,11 +1,11 @@
 package typechecker
 
 import (
-	"slices"
 	"compiler/internal/utils/numeric"
 	str "compiler/internal/utils/strings"
 	"fmt"
 	"math/big"
+	"slices"
 	"strings"
 
 	"compiler/internal/context_v2"
@@ -2320,8 +2320,11 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 			return false
 		}
 		baseType = dereferenceType(types.UnwrapType(baseType))
-		if arrType, ok := baseType.(*types.ArrayType); ok {
-			return arrType.Length >= 0 && isBorrowableTarget(ctx, mod, e.X)
+		if _, ok := baseType.(*types.MapType); ok {
+			return isBorrowableTarget(ctx, mod, e.X)
+		}
+		if _, ok := baseType.(*types.ArrayType); ok {
+			return isBorrowableTarget(ctx, mod, e.X)
 		}
 		return false
 	default:
@@ -2376,7 +2379,7 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 			diagnostics.NewError("cannot take reference of this expression").
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(expr.X.Loc(), "not an addressable value").
-				WithHelp("borrow a variable, field, or fixed array element"),
+				WithHelp("borrow a variable, field, array element, or map element"),
 		)
 	}
 }

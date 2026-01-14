@@ -3134,6 +3134,34 @@ func (b *functionBuilder) lowerIndexAddr(expr *hir.IndexExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
+	if mapType := b.mapTypeOf(expr.X); mapType != nil {
+		mapVal := b.lowerExpr(expr.X)
+		if mapVal == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		mapVal, _ = b.derefValueIfNeeded(mapVal, b.exprType(expr.X), expr.Location)
+
+		keyVal := b.lowerExpr(expr.Index)
+		if keyVal == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		if mapType.Key != nil {
+			keyVal = b.castValue(keyVal, b.exprType(expr.Index), mapType.Key, expr.Location)
+		}
+
+		result := b.gen.nextValueID()
+		refType := types.NewReference(mapType.Value)
+		b.emitInstr(&mir.MapGet{
+			Result:   result,
+			Map:      mapVal,
+			Key:      keyVal,
+			Type:     refType,
+			Location: expr.Location,
+		})
+		b.ptrElem[result] = mapType.Value
+		return result
+	}
+
 	arrType := b.arrayTypeOf(expr.X)
 	if arrType == nil {
 		b.reportUnsupported("index base", expr.Loc())
@@ -3141,8 +3169,34 @@ func (b *functionBuilder) lowerIndexAddr(expr *hir.IndexExpr) mir.ValueID {
 	}
 
 	if arrType.Length < 0 {
-		b.reportUnsupported("dynamic array address", expr.Loc())
-		return mir.InvalidValue
+		arrVal := b.lowerExpr(expr.X)
+		if arrVal == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		arrVal, _ = b.derefValueIfNeeded(arrVal, b.exprType(expr.X), expr.Location)
+
+		indexVal := b.lowerExpr(expr.Index)
+		if indexVal == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		indexVal = b.castValue(indexVal, b.exprType(expr.Index), types.TypeI32, expr.Location)
+		lenVal := b.emitArrayLen(arrVal, expr.Location)
+		indexVal = b.emitBoundsCheckedIndex(indexVal, lenVal, types.TypeI32, expr.Location)
+		if indexVal == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+
+		ptrType := types.NewReference(arrType.Element)
+		ptrVal := b.gen.nextValueID()
+		b.emitInstr(&mir.Call{
+			Result:   ptrVal,
+			Target:   "ferret_array_get",
+			Args:     []mir.ValueID{arrVal, indexVal},
+			Type:     ptrType,
+			Location: expr.Location,
+		})
+		b.ptrElem[ptrVal] = arrType.Element
+		return ptrVal
 	}
 
 	baseType := b.exprType(expr.X)
