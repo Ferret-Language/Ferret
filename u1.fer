@@ -3,7 +3,7 @@ import "std/io";
 
 fn main() {
     
-    let pair := { .X = 2194862213232 };
+    let pair := { .X = 2194821.4 };
 
     let a := 10;
     let b : i8 = a;
