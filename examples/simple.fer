@@ -1,7 +1,7 @@
 import "std/io";
 
 fn f() -> i32 {
-    while {        // infinite loop, no break/return
+    while true {        // infinite loop, no break/return
         let x := 1;
     }
     return 42;     // should be unreachable

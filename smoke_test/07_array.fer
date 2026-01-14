@@ -2,7 +2,7 @@ import "std/io";
 
 fn main() {
     let nums := [1, 2, 3];
-    append(nums, 4);
-    io::Println(len(nums));
-    io::Println(nums[3]);
+    append(&mut nums, 4);
+    io::Println(len(&nums));
+    io::Println(nums[2]);
 }
