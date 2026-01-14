@@ -43,5 +43,5 @@ const (
 	DEFAULT_INT_TYPE TYPE_NAME = TYPE_I32
 
 	// DEFAULT_FLOAT_TYPE is the default type for untyped float literals
-	DEFAULT_FLOAT_TYPE TYPE_NAME = TYPE_F64
+	DEFAULT_FLOAT_TYPE TYPE_NAME = TYPE_F32
 )
