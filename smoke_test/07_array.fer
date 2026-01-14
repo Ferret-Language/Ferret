@@ -20,7 +20,7 @@ fn test(values: Array) {
     io::Println();
 }
 
-fn main() {
+fn main() -> void {
     let nums := [1, 2, 3];
     append(&mut nums, 4);
     io::Println(len(&nums));

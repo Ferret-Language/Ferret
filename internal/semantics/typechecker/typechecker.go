@@ -21,7 +21,7 @@ import (
 	"compiler/internal/utils"
 )
 
-var narrowingAnalyzer = narrowing.NewAnalyzer()
+var narrowingAnalyzer = narrowing.NewConditionAnalyzer()
 
 // unwrapOptionalType unwraps optional types: T? -> T
 // Returns the inner type if it's optional, otherwise returns the original type.

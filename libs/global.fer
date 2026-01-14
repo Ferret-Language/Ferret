@@ -3,7 +3,7 @@
 
 // @extern
 // Note: len borrows read-only (&) and requires an explicit reference.
-fn len(value: &interface {}) -> i32;
+fn len(value: union{ &interface{}, interface{} }) -> i32;
 // @extern
 // Note: append borrows mutably (&mut) and requires an addressable target.
 fn append(values: &mut []interface {}, value: interface {}) -> bool;

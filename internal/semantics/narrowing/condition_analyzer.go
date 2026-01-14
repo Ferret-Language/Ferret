@@ -7,17 +7,17 @@ import (
 	"compiler/internal/types"
 )
 
-// Analyzer provides unified type narrowing analysis for optionals, unions, and interfaces.
-type Analyzer struct{}
+// ConditionAnalyzer provides unified type narrowing analysis for optionals, unions, and interfaces.
+type ConditionAnalyzer struct{}
 
-// NewAnalyzer creates a new narrowing analyzer.
-func NewAnalyzer() *Analyzer {
-	return &Analyzer{}
+// NewConditionAnalyzer creates a new narrowing analyzer.
+func NewConditionAnalyzer() *ConditionAnalyzer {
+	return &ConditionAnalyzer{}
 }
 
 // AnalyzeCondition recursively analyzes a condition to determine type narrowings.
 // Returns separate narrowing contexts for the then-branch and else-branch.
-func (a *Analyzer) AnalyzeCondition(ctx *context_v2.CompilerContext, mod *context_v2.Module, condition ast.Expression, parent *NarrowingContext) (*NarrowingContext, *NarrowingContext) {
+func (a *ConditionAnalyzer) AnalyzeCondition(ctx *context_v2.CompilerContext, mod *context_v2.Module, condition ast.Expression, parent *NarrowingContext) (*NarrowingContext, *NarrowingContext) {
 	return analyzeConditionRecursive(ctx, mod, condition, parent)
 }
 
