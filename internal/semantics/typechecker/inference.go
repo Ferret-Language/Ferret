@@ -4,6 +4,7 @@ import (
 	"compiler/internal/context_v2"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/semantics/narrowing"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
 	"compiler/internal/tokens"
@@ -137,6 +138,14 @@ func ResolvedExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, e
 func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression) types.SemType {
 	if expr == nil {
 		return types.TypeUnknown
+	}
+
+	if mod != nil && mod.NarrowedExprTypes != nil {
+		if key, ok := narrowing.ExprKey(expr); ok {
+			if narrowed, ok := mod.NarrowedExprTypes[key]; ok && narrowed != nil {
+				return narrowed
+			}
+		}
 	}
 
 	switch e := expr.(type) {

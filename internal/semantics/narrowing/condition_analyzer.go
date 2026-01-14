@@ -36,19 +36,17 @@ func analyzeConditionRecursive(ctx *context_v2.CompilerContext, mod *context_v2.
 			// Optional narrowing: x != none
 			return analyzeEqualityCondition(mod, cond, parent, false)
 		case tokens.OR_TOKEN:
-			// For OR: then = merge(left, right), else = intersect(left, right)
+			// For OR: right is evaluated only if left is false.
 			leftThen, leftElse := analyzeConditionRecursive(ctx, mod, cond.X, parent)
-			rightThen, rightElse := analyzeConditionRecursive(ctx, mod, cond.Y, parent)
+			rightThen, rightElse := analyzeConditionRecursive(ctx, mod, cond.Y, leftElse)
 			thenNarrowing := mergeNarrowings(leftThen, rightThen)
-			elseNarrowing := intersectNarrowings(leftElse, rightElse)
-			return thenNarrowing, elseNarrowing
+			return thenNarrowing, rightElse
 		case tokens.AND_TOKEN:
-			// For AND: then = intersect(left, right), else = merge(left, right)
+			// For AND: right is evaluated only if left is true.
 			leftThen, leftElse := analyzeConditionRecursive(ctx, mod, cond.X, parent)
-			rightThen, rightElse := analyzeConditionRecursive(ctx, mod, cond.Y, parent)
-			thenNarrowing := intersectNarrowings(leftThen, rightThen)
+			rightThen, rightElse := analyzeConditionRecursive(ctx, mod, cond.Y, leftThen)
 			elseNarrowing := mergeNarrowings(leftElse, rightElse)
-			return thenNarrowing, elseNarrowing
+			return rightThen, elseNarrowing
 		default:
 			return parent, parent
 		}
@@ -79,20 +77,28 @@ func mergeNarrowings(a, b *NarrowingContext) *NarrowingContext {
 	}
 
 	merged := NewNarrowingContext(nil)
-	for varName := range a.NarrowedTypes {
-		if aType, ok := a.GetNarrowedType(varName); ok {
-			if bType, ok := b.GetNarrowedType(varName); ok {
-				merged.Narrow(varName, unionTypes(aType, bType))
-			} else {
-				merged.Narrow(varName, aType)
+	entriesA := make(map[string]*NarrowingEntry)
+	entriesB := make(map[string]*NarrowingEntry)
+	collectEntries(a, entriesA)
+	collectEntries(b, entriesB)
+
+	for key, entryA := range entriesA {
+		if entryB, ok := entriesB[key]; ok {
+			if mergedEntry := mergeEntry(entryA, entryB); mergedEntry != nil {
+				merged.Narrow(key, mergedEntry)
 			}
+			continue
+		}
+		if entryA != nil {
+			merged.Narrow(key, entryA)
 		}
 	}
-	for varName := range b.NarrowedTypes {
-		if _, ok := a.GetNarrowedType(varName); !ok {
-			if bType, ok := b.GetNarrowedType(varName); ok {
-				merged.Narrow(varName, bType)
-			}
+	for key, entryB := range entriesB {
+		if _, ok := entriesA[key]; ok {
+			continue
+		}
+		if entryB != nil {
+			merged.Narrow(key, entryB)
 		}
 	}
 	return merged
@@ -113,13 +119,18 @@ func intersectNarrowings(a, b *NarrowingContext) *NarrowingContext {
 	}
 
 	intersected := NewNarrowingContext(nil)
-	for varName := range a.NarrowedTypes {
-		if aType, ok := a.GetNarrowedType(varName); ok {
-			if bType, ok := b.GetNarrowedType(varName); ok {
-				if intersectedType := intersectTypes(aType, bType); intersectedType != nil {
-					intersected.Narrow(varName, intersectedType)
-				}
-			}
+	entriesA := make(map[string]*NarrowingEntry)
+	entriesB := make(map[string]*NarrowingEntry)
+	collectEntries(a, entriesA)
+	collectEntries(b, entriesB)
+
+	for key, entryA := range entriesA {
+		entryB, ok := entriesB[key]
+		if !ok {
+			continue
+		}
+		if mergedEntry := intersectEntry(entryA, entryB); mergedEntry != nil {
+			intersected.Narrow(key, mergedEntry)
 		}
 	}
 	return intersected
@@ -157,4 +168,87 @@ func containsType(typeList []types.SemType, t types.SemType) bool {
 		}
 	}
 	return false
+}
+
+func collectEntries(nc *NarrowingContext, out map[string]*NarrowingEntry) {
+	if nc == nil || out == nil {
+		return
+	}
+	if nc.Parent != nil {
+		collectEntries(nc.Parent, out)
+	}
+	for key, entry := range nc.Entries {
+		out[key] = entry
+	}
+}
+
+func mergeEntry(a, b *NarrowingEntry) *NarrowingEntry {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	if a.NarrowedType == nil || b.NarrowedType == nil {
+		return nil
+	}
+	if a.NarrowedType.Equals(b.NarrowedType) {
+		return a
+	}
+	if a.Kind != b.Kind {
+		return nil
+	}
+	if a.Kind == NarrowingUnion {
+		mergedType := unionTypes(a.NarrowedType, b.NarrowedType)
+		if mergedType == nil {
+			return nil
+		}
+		return &NarrowingEntry{
+			Kind:         NarrowingUnion,
+			VarName:      a.VarName,
+			OriginalType: preferOriginalType(a, b),
+			NarrowedType: mergedType,
+			VariantIndex: -1,
+		}
+	}
+	return nil
+}
+
+func intersectEntry(a, b *NarrowingEntry) *NarrowingEntry {
+	if a == nil || b == nil {
+		return nil
+	}
+	if a.NarrowedType == nil || b.NarrowedType == nil {
+		return nil
+	}
+	if a.NarrowedType.Equals(b.NarrowedType) {
+		return a
+	}
+	if a.Kind != b.Kind {
+		return nil
+	}
+	if a.Kind == NarrowingUnion {
+		intersected := intersectTypes(a.NarrowedType, b.NarrowedType)
+		if intersected == nil {
+			return nil
+		}
+		return &NarrowingEntry{
+			Kind:         NarrowingUnion,
+			VarName:      a.VarName,
+			OriginalType: preferOriginalType(a, b),
+			NarrowedType: intersected,
+			VariantIndex: -1,
+		}
+	}
+	return nil
+}
+
+func preferOriginalType(a, b *NarrowingEntry) types.SemType {
+	if a != nil && a.OriginalType != nil {
+		return a.OriginalType
+	}
+	if b != nil {
+		return b.OriginalType
+	}
+	return nil
 }

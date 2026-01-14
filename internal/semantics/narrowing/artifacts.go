@@ -20,12 +20,12 @@ const (
 	NarrowingInterface
 )
 
-// NarrowingEntry represents a single narrowing of a variable at a specific scope.
+// NarrowingEntry represents a single narrowing of a value at a specific scope.
 type NarrowingEntry struct {
 	// Kind indicates the type of narrowing (union, optional, interface).
 	Kind NarrowingKind
 
-	// VarName is the name of the narrowed variable.
+	// VarName is the expression key for the narrowed value.
 	VarName string
 
 	// OriginalType is the type before narrowing (e.g., union { i32, str }).
@@ -40,7 +40,7 @@ type NarrowingEntry struct {
 
 // ScopeNarrowing holds all narrowing entries for a specific scope (block).
 type ScopeNarrowing struct {
-	// Entries maps variable names to their narrowing info.
+	// Entries maps expression keys to their narrowing info.
 	Entries map[string]*NarrowingEntry
 }
 
@@ -111,6 +111,14 @@ func NarrowedTypesForScope(info *NarrowingInfo, scopeKey string) map[string]type
 	return NarrowedTypes(info.GetScope(scopeKey))
 }
 
+// NarrowedEntriesForScope returns a map of narrowed entries for a scope key.
+func NarrowedEntriesForScope(info *NarrowingInfo, scopeKey string) map[string]*NarrowingEntry {
+	if info == nil || scopeKey == "" {
+		return nil
+	}
+	return NarrowedEntries(info.GetScope(scopeKey))
+}
+
 // NarrowedTypes returns a map of narrowed variable types for a scope.
 func NarrowedTypes(scope *ScopeNarrowing) map[string]types.SemType {
 	if scope == nil || len(scope.Entries) == 0 {
@@ -122,6 +130,24 @@ func NarrowedTypes(scope *ScopeNarrowing) map[string]types.SemType {
 			continue
 		}
 		out[name] = entry.NarrowedType
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// NarrowedEntries returns a map of narrowed entries for a scope.
+func NarrowedEntries(scope *ScopeNarrowing) map[string]*NarrowingEntry {
+	if scope == nil || len(scope.Entries) == 0 {
+		return nil
+	}
+	out := make(map[string]*NarrowingEntry, len(scope.Entries))
+	for name, entry := range scope.Entries {
+		if entry == nil {
+			continue
+		}
+		out[name] = entry
 	}
 	if len(out) == 0 {
 		return nil

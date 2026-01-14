@@ -1,0 +1,86 @@
+import "std/io";
+
+type Node struct {
+    .Data: i32,
+    .Next: i32?
+};
+
+type List struct {
+    .Nodes: []Node,
+    .Head: i32?
+};
+
+fn new_list() -> List {
+    return { .Nodes = [], .Head = none };
+}
+
+fn push_front(list: &mut List, value: i32) {
+    let idx := len(&list.Nodes);
+    append(&mut list.Nodes, { .Data = value, .Next = list.Head });
+    list.Head = idx;
+}
+
+fn print_list(list: &List) {
+    let current := list.Head;
+    while current != none {
+        let idx := current;
+        let node := list.Nodes[idx];
+        io::Print(node.Data, " ");
+        current = node.Next;
+    }
+    io::Println();
+}
+
+fn length(list: &List) -> i32 {
+    let current := list.Head;
+    let count := 0;
+    while current != none {
+        let idx := current;
+        let node := list.Nodes[idx];
+        count = count + 1;
+        current = node.Next;
+    }
+    return count;
+}
+
+type A struct {
+    .Data: i32,
+    .Next: A?,
+};
+
+fn main() {
+    let list := new_list();
+    push_front(&mut list, 30);
+    push_front(&mut list, 20);
+    push_front(&mut list, 10);
+    print_list(&list);
+
+
+    io::Println("--------");
+
+    io::Println(length(&list));
+
+    io::Println("--------");
+
+    let a1: A = { .Data = 11, .Next = none };
+    let a2: A = { .Data = 12, .Next = a1};
+    let a3: A = { .Data = 13, .Next = a2};
+    let a4: A = { .Data = 14, .Next = a3};
+
+    if a4.Next != none {
+        io::Println("Updated data");
+        a4.Next.Data = 100;
+    }
+    
+    io::Println("--------");
+
+    let curr : A? = a4;
+    while curr != none {
+        io::Println(curr.Data);
+        curr = curr.Next;
+    }
+    
+    io::Println("--------");
+    
+    io::Println(a3.Data);
+}

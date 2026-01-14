@@ -17,27 +17,27 @@ import (
 )
 
 type functionBuilder struct {
-	gen           *Generator
-	fn            *mir.Function
-	current       *mir.Block
-	paramsByName  map[string]mir.ValueID
-	paramTypes    map[string]types.SemType
-	slots         map[*symbols.Symbol]mir.ValueID
-	tempSlots     map[*hir.Ident]mir.ValueID
-	ptrElem       map[mir.ValueID]types.SemType
-	loopStack     []loopTargets
-	deferStack    []deferScope
-	narrowedTypes map[string]types.SemType
-	retParam      mir.ValueID
-	retType       types.SemType
-	refOutParam   mir.ValueID
-	refOutType    types.SemType
-	closureEnv    mir.ValueID
-	captures      map[*symbols.Symbol]captureInfo
-	boxed         map[*symbols.Symbol]mir.ValueID
-	entry         *mir.Block
-	inDeferCatch  bool
-	catchEndLabel mir.BlockID
+	gen             *Generator
+	fn              *mir.Function
+	current         *mir.Block
+	paramsByName    map[string]mir.ValueID
+	paramTypes      map[string]types.SemType
+	slots           map[*symbols.Symbol]mir.ValueID
+	tempSlots       map[*hir.Ident]mir.ValueID
+	ptrElem         map[mir.ValueID]types.SemType
+	loopStack       []loopTargets
+	deferStack      []deferScope
+	narrowedEntries map[string]*narrowing.NarrowingEntry
+	retParam        mir.ValueID
+	retType         types.SemType
+	refOutParam     mir.ValueID
+	refOutType      types.SemType
+	closureEnv      mir.ValueID
+	captures        map[*symbols.Symbol]captureInfo
+	boxed           map[*symbols.Symbol]mir.ValueID
+	entry           *mir.Block
+	inDeferCatch    bool
+	catchEndLabel   mir.BlockID
 }
 
 type deferScope struct {
@@ -46,20 +46,20 @@ type deferScope struct {
 
 func newFunctionBuilder(gen *Generator, fn *mir.Function) *functionBuilder {
 	return &functionBuilder{
-		gen:           gen,
-		fn:            fn,
-		paramsByName:  make(map[string]mir.ValueID),
-		paramTypes:    make(map[string]types.SemType),
-		slots:         make(map[*symbols.Symbol]mir.ValueID),
-		tempSlots:     make(map[*hir.Ident]mir.ValueID),
-		ptrElem:       make(map[mir.ValueID]types.SemType),
-		loopStack:     nil,
-		narrowedTypes: nil,
-		retParam:      mir.InvalidValue,
-		refOutParam:   mir.InvalidValue,
-		closureEnv:    mir.InvalidValue,
-		captures:      nil,
-		boxed:         make(map[*symbols.Symbol]mir.ValueID),
+		gen:             gen,
+		fn:              fn,
+		paramsByName:    make(map[string]mir.ValueID),
+		paramTypes:      make(map[string]types.SemType),
+		slots:           make(map[*symbols.Symbol]mir.ValueID),
+		tempSlots:       make(map[*hir.Ident]mir.ValueID),
+		ptrElem:         make(map[mir.ValueID]types.SemType),
+		loopStack:       nil,
+		narrowedEntries: nil,
+		retParam:        mir.InvalidValue,
+		refOutParam:     mir.InvalidValue,
+		closureEnv:      mir.InvalidValue,
+		captures:        nil,
+		boxed:           make(map[*symbols.Symbol]mir.ValueID),
 	}
 }
 
@@ -163,23 +163,23 @@ func (b *functionBuilder) withNarrowing(block *hir.Block, fn func()) {
 		return
 	}
 
-	narrowed := narrowing.NarrowedTypesForScope(info, scopeKey)
+	narrowed := narrowing.NarrowedEntriesForScope(info, scopeKey)
 	if len(narrowed) == 0 {
 		fn()
 		return
 	}
 
-	prevNarrowed := b.narrowedTypes
-	nextNarrowed := make(map[string]types.SemType, len(prevNarrowed)+len(narrowed))
-	for name, typ := range prevNarrowed {
-		nextNarrowed[name] = typ
+	prevNarrowed := b.narrowedEntries
+	nextNarrowed := make(map[string]*narrowing.NarrowingEntry, len(prevNarrowed)+len(narrowed))
+	for name, entry := range prevNarrowed {
+		nextNarrowed[name] = entry
 	}
-	for name, typ := range narrowed {
-		nextNarrowed[name] = typ
+	for name, entry := range narrowed {
+		nextNarrowed[name] = entry
 	}
-	b.narrowedTypes = nextNarrowed
+	b.narrowedEntries = nextNarrowed
 	defer func() {
-		b.narrowedTypes = prevNarrowed
+		b.narrowedEntries = prevNarrowed
 	}()
 
 	fn()
@@ -2253,6 +2253,24 @@ func (b *functionBuilder) lowerSelector(expr *hir.SelectorExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
+	if entry := b.narrowedOptionalEntry(expr); entry != nil && entry.OriginalType != nil {
+		addr := b.lowerFieldAddr(expr)
+		if addr == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		optVal := b.emitLoad(addr, entry.OriginalType, expr.Location)
+		result := b.gen.nextValueID()
+		b.emitInstr(&mir.OptionalUnwrap{
+			Result:     result,
+			Value:      optVal,
+			Default:    mir.InvalidValue,
+			HasDefault: false,
+			Type:       entry.NarrowedType,
+			Location:   expr.Location,
+		})
+		return result
+	}
+
 	addr := b.lowerFieldAddr(expr)
 	if addr == mir.InvalidValue {
 		return mir.InvalidValue
@@ -2427,7 +2445,10 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 	return mir.InvalidValue
 }
 
-func (b *functionBuilder) isNarrowedOptionalIdent(expr hir.Expr) bool {
+func (b *functionBuilder) isNarrowedOptionalExpr(expr hir.Expr) bool {
+	if entry := b.narrowedOptionalEntry(expr); entry != nil {
+		return true
+	}
 	ident, ok := expr.(*hir.Ident)
 	if !ok || ident == nil || ident.Symbol == nil || ident.Symbol.Type == nil {
 		return false
@@ -2492,38 +2513,48 @@ func (b *functionBuilder) lowerFieldAddr(expr *hir.SelectorExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
+	basePtr := mir.InvalidValue
 	baseType := b.exprType(expr.X)
 	if baseType == nil {
 		b.reportUnsupported("selector base", expr.Loc())
 		return mir.InvalidValue
 	}
 
-	baseType = types.UnwrapType(baseType)
-	basePtr := mir.InvalidValue
-	addressable := isAddressableExpr(expr.X)
-	if addressable && b.isNarrowedOptionalIdent(expr.X) {
-		addressable = false
-	}
-	if addressable {
-		baseAddr := b.lowerLValue(expr.X)
-		if baseAddr == mir.InvalidValue {
-			return mir.InvalidValue
-		}
-		if ref, ok := baseType.(*types.ReferenceType); ok {
-			basePtr = b.emitLoad(baseAddr, baseType, expr.Location)
-			baseType = types.UnwrapType(ref.Inner)
-			b.ptrElem[basePtr] = ref.Inner
-		} else {
-			basePtr = baseAddr
-		}
-	} else {
-		basePtr = b.lowerExpr(expr.X)
+	if entry := b.narrowedOptionalEntry(expr.X); entry != nil {
+		basePtr = b.optionalPayloadPtr(expr.X, entry)
 		if basePtr == mir.InvalidValue {
 			return mir.InvalidValue
 		}
+		baseType = types.UnwrapType(entry.NarrowedType)
 		if ref, ok := baseType.(*types.ReferenceType); ok {
+			basePtr = b.emitLoad(basePtr, baseType, expr.Location)
 			baseType = types.UnwrapType(ref.Inner)
 			b.ptrElem[basePtr] = ref.Inner
+		}
+	} else {
+		baseType = types.UnwrapType(baseType)
+		addressable := isAddressableExpr(expr.X)
+		if addressable {
+			baseAddr := b.lowerLValue(expr.X)
+			if baseAddr == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			if ref, ok := baseType.(*types.ReferenceType); ok {
+				basePtr = b.emitLoad(baseAddr, baseType, expr.Location)
+				baseType = types.UnwrapType(ref.Inner)
+				b.ptrElem[basePtr] = ref.Inner
+			} else {
+				basePtr = baseAddr
+			}
+		} else {
+			basePtr = b.lowerExpr(expr.X)
+			if basePtr == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			if ref, ok := baseType.(*types.ReferenceType); ok {
+				baseType = types.UnwrapType(ref.Inner)
+				b.ptrElem[basePtr] = ref.Inner
+			}
 		}
 	}
 
@@ -2540,7 +2571,15 @@ func (b *functionBuilder) lowerFieldAddr(expr *hir.SelectorExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
-	return b.emitPtrAdd(basePtr, offset, expr.Type, expr.Location)
+	fieldType := expr.Type
+	for _, field := range structType.Fields {
+		if field.Name == expr.Field.Name {
+			fieldType = field.Type
+			break
+		}
+	}
+
+	return b.emitPtrAdd(basePtr, offset, fieldType, expr.Location)
 }
 
 func (b *functionBuilder) lowerCompositeLit(expr *hir.CompositeLit) mir.ValueID {
@@ -3107,12 +3146,37 @@ func (b *functionBuilder) lowerIndexValue(expr *hir.IndexExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
+	entry := b.narrowedOptionalEntry(expr)
+	rawType := expr.Type
+	if entry != nil && entry.OriginalType != nil {
+		rawType = entry.OriginalType
+	}
+	unwrapValue := func(val mir.ValueID) mir.ValueID {
+		if entry == nil || entry.NarrowedType == nil {
+			return val
+		}
+		result := b.gen.nextValueID()
+		b.emitInstr(&mir.OptionalUnwrap{
+			Result:     result,
+			Value:      val,
+			Default:    mir.InvalidValue,
+			HasDefault: false,
+			Type:       entry.NarrowedType,
+			Location:   expr.Location,
+		})
+		return result
+	}
+
 	if b.isStringType(expr.X) {
 		return b.lowerStringIndexValue(expr)
 	}
 
 	if mapType := b.mapTypeOf(expr.X); mapType != nil {
-		return b.lowerMapIndexValue(expr, mapType)
+		val := b.lowerMapIndexValue(expr, mapType)
+		if entry != nil && val != mir.InvalidValue {
+			return unwrapValue(val)
+		}
+		return val
 	}
 
 	// Check if it's an array literal first (before arrayTypeOf, which might fail for untyped literals)
@@ -3207,10 +3271,10 @@ func (b *functionBuilder) lowerIndexValue(expr *hir.IndexExpr) mir.ValueID {
 				Result:   result,
 				Array:    arrVal,
 				Index:    indexVal,
-				Type:     expr.Type,
+				Type:     rawType,
 				Location: expr.Location,
 			})
-			return result
+			return unwrapValue(result)
 		}
 	}
 
@@ -3219,7 +3283,11 @@ func (b *functionBuilder) lowerIndexValue(expr *hir.IndexExpr) mir.ValueID {
 	if arrType != nil {
 		// Not a literal - handle normally
 		if arrType.Length < 0 {
-			return b.lowerDynamicIndexValue(expr, arrType)
+			val := b.lowerDynamicIndexValue(expr, arrType)
+			if entry != nil && val != mir.InvalidValue {
+				return unwrapValue(val)
+			}
+			return val
 		}
 		if _, ok := b.constArrayIndex(expr, arrType); ok {
 			addr := b.lowerIndexAddr(expr)
@@ -3250,10 +3318,10 @@ func (b *functionBuilder) lowerIndexValue(expr *hir.IndexExpr) mir.ValueID {
 			Result:   result,
 			Array:    arrVal,
 			Index:    indexVal,
-			Type:     expr.Type,
+			Type:     rawType,
 			Location: expr.Location,
 		})
-		return result
+		return unwrapValue(result)
 	}
 
 	addr := b.lowerIndexAddr(expr)
@@ -3261,7 +3329,8 @@ func (b *functionBuilder) lowerIndexValue(expr *hir.IndexExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
-	return b.emitLoad(addr, expr.Type, expr.Location)
+	val := b.emitLoad(addr, rawType, expr.Location)
+	return unwrapValue(val)
 }
 
 func (b *functionBuilder) lowerIndexAddr(expr *hir.IndexExpr) mir.ValueID {
@@ -3340,36 +3409,46 @@ func (b *functionBuilder) lowerIndexAddr(expr *hir.IndexExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
-	baseType = types.UnwrapType(baseType)
 	basePtr := mir.InvalidValue
-	addressable := isAddressableExpr(expr.X)
-	if addressable && b.isNarrowedOptionalIdent(expr.X) {
-		addressable = false
-	}
-	if addressable {
-		baseAddr := b.lowerLValue(expr.X)
-		if baseAddr == mir.InvalidValue {
-			return mir.InvalidValue
-		}
-		if ref, ok := baseType.(*types.ReferenceType); ok {
-			basePtr = b.emitLoad(baseAddr, baseType, expr.Location)
-			baseType = types.UnwrapType(ref.Inner)
-			b.ptrElem[basePtr] = ref.Inner
-		} else {
-			basePtr = baseAddr
-		}
-	} else {
-		if _, ok := baseType.(*types.ReferenceType); !ok && !needsByRefType(baseType) {
-			b.reportUnsupported("index base", expr.Loc())
-			return mir.InvalidValue
-		}
-		basePtr = b.lowerExpr(expr.X)
+	if entry := b.narrowedOptionalEntry(expr.X); entry != nil {
+		basePtr = b.optionalPayloadPtr(expr.X, entry)
 		if basePtr == mir.InvalidValue {
 			return mir.InvalidValue
 		}
+		baseType = types.UnwrapType(entry.NarrowedType)
 		if ref, ok := baseType.(*types.ReferenceType); ok {
+			basePtr = b.emitLoad(basePtr, baseType, expr.Location)
 			baseType = types.UnwrapType(ref.Inner)
 			b.ptrElem[basePtr] = ref.Inner
+		}
+	} else {
+		baseType = types.UnwrapType(baseType)
+		addressable := isAddressableExpr(expr.X)
+		if addressable {
+			baseAddr := b.lowerLValue(expr.X)
+			if baseAddr == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			if ref, ok := baseType.(*types.ReferenceType); ok {
+				basePtr = b.emitLoad(baseAddr, baseType, expr.Location)
+				baseType = types.UnwrapType(ref.Inner)
+				b.ptrElem[basePtr] = ref.Inner
+			} else {
+				basePtr = baseAddr
+			}
+		} else {
+			if _, ok := baseType.(*types.ReferenceType); !ok && !needsByRefType(baseType) {
+				b.reportUnsupported("index base", expr.Loc())
+				return mir.InvalidValue
+			}
+			basePtr = b.lowerExpr(expr.X)
+			if basePtr == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			if ref, ok := baseType.(*types.ReferenceType); ok {
+				baseType = types.UnwrapType(ref.Inner)
+				b.ptrElem[basePtr] = ref.Inner
+			}
 		}
 	}
 
@@ -4328,18 +4407,92 @@ func (b *functionBuilder) matchCaseConstValue(pattern hir.Expr, matchType types.
 	return b.emitConst(matchType, value, *loc), true
 }
 
+func exprKeyHIR(expr hir.Expr) (string, bool) {
+	if expr == nil {
+		return "", false
+	}
+
+	switch e := expr.(type) {
+	case *hir.Ident:
+		return e.Name, true
+	case *hir.Literal:
+		return e.Value, true
+	case *hir.SelectorExpr:
+		base, ok := exprKeyHIR(e.X)
+		if !ok || e.Field == nil {
+			return "", false
+		}
+		return base + "." + e.Field.Name, true
+	case *hir.IndexExpr:
+		base, ok := exprKeyHIR(e.X)
+		if !ok {
+			return "", false
+		}
+		indexKey, ok := exprKeyHIR(e.Index)
+		if !ok {
+			return "", false
+		}
+		return base + "[" + indexKey + "]", true
+	case *hir.ParenExpr:
+		return exprKeyHIR(e.X)
+	case *hir.DerefExpr:
+		base, ok := exprKeyHIR(e.X)
+		if !ok {
+			return "", false
+		}
+		return "*" + base, true
+	default:
+		return "", false
+	}
+}
+
+func (b *functionBuilder) narrowedEntry(expr hir.Expr) *narrowing.NarrowingEntry {
+	if b == nil || b.narrowedEntries == nil {
+		return nil
+	}
+	key, ok := exprKeyHIR(expr)
+	if !ok {
+		return nil
+	}
+	return b.narrowedEntries[key]
+}
+
+func (b *functionBuilder) narrowedOptionalEntry(expr hir.Expr) *narrowing.NarrowingEntry {
+	entry := b.narrowedEntry(expr)
+	if entry == nil || entry.Kind != narrowing.NarrowingOptional {
+		return nil
+	}
+	if entry.NarrowedType == nil || entry.NarrowedType.Equals(types.TypeNone) {
+		return nil
+	}
+	return entry
+}
+
+func (b *functionBuilder) optionalPayloadPtr(expr hir.Expr, entry *narrowing.NarrowingEntry) mir.ValueID {
+	if entry == nil || entry.OriginalType == nil {
+		return mir.InvalidValue
+	}
+	addr := b.lowerLValue(expr)
+	if addr == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	loc := source.Location{}
+	if expr != nil && expr.Loc() != nil {
+		loc = *expr.Loc()
+	}
+	return b.emitLoad(addr, entry.OriginalType, loc)
+}
+
 func (b *functionBuilder) exprType(expr hir.Expr) types.SemType {
+	if entry := b.narrowedEntry(expr); entry != nil && entry.NarrowedType != nil {
+		return entry.NarrowedType
+	}
 	switch e := expr.(type) {
 	case *hir.Literal:
 		return e.Type
 	case *hir.FuncLit:
 		return e.Type
 	case *hir.Ident:
-		if b.narrowedTypes != nil {
-			if narrowed, ok := b.narrowedTypes[e.Name]; ok && narrowed != nil {
-				return narrowed
-			}
-		}
 		// Check if this is a parameter with an overridden MIR type
 		// This ensures field access through reference parameters works correctly
 		if mirType, ok := b.paramTypes[e.Name]; ok {

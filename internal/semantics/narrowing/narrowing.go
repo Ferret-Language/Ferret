@@ -9,8 +9,8 @@ import (
 // NarrowingContext tracks type narrowing information for variables within a scope.
 // Used for type narrowing based on conditions.
 type NarrowingContext struct {
-	// NarrowedTypes maps variable names to their narrowed types
-	NarrowedTypes map[string]types.SemType
+	// Entries maps expression keys to their narrowing entries.
+	Entries map[string]*NarrowingEntry
 
 	// Parent allows nested scopes (for nested if statements, loops, etc.)
 	Parent *NarrowingContext
@@ -19,36 +19,48 @@ type NarrowingContext struct {
 // NewNarrowingContext creates a new narrowing context
 func NewNarrowingContext(parent *NarrowingContext) *NarrowingContext {
 	return &NarrowingContext{
-		NarrowedTypes: make(map[string]types.SemType),
-		Parent:        parent,
+		Entries: make(map[string]*NarrowingEntry),
+		Parent:  parent,
 	}
 }
 
-// Narrow records that a variable has been narrowed to a specific type
-func (nc *NarrowingContext) Narrow(varName string, narrowedType types.SemType) {
+// Narrow records that an expression key has been narrowed to a specific type.
+func (nc *NarrowingContext) Narrow(key string, entry *NarrowingEntry) {
 	if nc == nil {
 		return
 	}
-	nc.NarrowedTypes[varName] = narrowedType
+	if key == "" || entry == nil {
+		return
+	}
+	nc.Entries[key] = entry
 }
 
-// GetNarrowedType returns the narrowed type for a variable, if any
-func (nc *NarrowingContext) GetNarrowedType(varName string) (types.SemType, bool) {
+// GetEntry returns the narrowing entry for an expression key, if any.
+func (nc *NarrowingContext) GetEntry(key string) (*NarrowingEntry, bool) {
 	if nc == nil {
 		return nil, false
 	}
 
 	// Check current scope
-	if typ, ok := nc.NarrowedTypes[varName]; ok {
-		return typ, true
+	if entry, ok := nc.Entries[key]; ok {
+		return entry, true
 	}
 
 	// Check parent scopes
 	if nc.Parent != nil {
-		return nc.Parent.GetNarrowedType(varName)
+		return nc.Parent.GetEntry(key)
 	}
 
 	return nil, false
+}
+
+// GetNarrowedType returns the narrowed type for an expression key, if any.
+func (nc *NarrowingContext) GetNarrowedType(key string) (types.SemType, bool) {
+	entry, ok := nc.GetEntry(key)
+	if !ok || entry == nil || entry.NarrowedType == nil {
+		return nil, false
+	}
+	return entry.NarrowedType, true
 }
 
 // NarrowingAnalyzer defines the interface for type-specific narrowing analysis

@@ -2680,7 +2680,21 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		}
 
 		// For non-'is' operators, check RHS normally, then bind untyped literals to typed operands.
-		rhsType := checkExpr(ctx, mod, e.Y, types.TypeUnknown)
+		var rhsType types.SemType
+		if e.Op.Kind == tokens.AND_TOKEN || e.Op.Kind == tokens.OR_TOKEN {
+			thenNarrowing, elseNarrowing := narrowingAnalyzer.AnalyzeCondition(ctx, mod, e.X, nil)
+			var rhsNarrowing *narrowing.NarrowingContext
+			if e.Op.Kind == tokens.AND_TOKEN {
+				rhsNarrowing = thenNarrowing
+			} else {
+				rhsNarrowing = elseNarrowing
+			}
+			withNarrowedExprTypes(mod, rhsNarrowing, func() {
+				rhsType = checkExpr(ctx, mod, e.Y, types.TypeUnknown)
+			})
+		} else {
+			rhsType = checkExpr(ctx, mod, e.Y, types.TypeUnknown)
+		}
 
 		lhsType = bindUntypedNumericLiteral(ctx, mod, e.X, lhsType, rhsType, e.Y)
 		rhsType = bindUntypedNumericLiteral(ctx, mod, e.Y, rhsType, lhsType, e.X)
@@ -4181,26 +4195,38 @@ func applyNarrowingToBlock(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 		return
 	}
 
-	// Collect all narrowed variables from this context and parent chain
-	narrowedVars := make(map[string]types.SemType)
-	collectNarrowedTypes(nc, narrowedVars)
+	// Collect all narrowed entries from this context and parent chain
+	narrowedEntries := make(map[string]*narrowing.NarrowingEntry)
+	collectNarrowedEntries(nc, narrowedEntries)
 
-	if len(narrowedVars) == 0 {
+	if len(narrowedEntries) == 0 {
 		checkBlock(ctx, mod, block)
 		return
 	}
 
 	// Store narrowing info in artifacts for code generation
-	storeNarrowingArtifacts(mod, block, narrowedVars)
+	storeNarrowingArtifacts(mod, block, narrowedEntries)
 
-	// Apply narrowing using defer for automatic restoration
-	defer restoreSymbolTypes(mod, narrowedVars)()
+	// Apply narrowed expression types during this block.
+	prevExprTypes := mod.NarrowedExprTypes
+	mod.NarrowedExprTypes = mergeNarrowedExprTypes(prevExprTypes, narrowedEntries)
+	defer func() {
+		mod.NarrowedExprTypes = prevExprTypes
+	}()
+
+	// Apply narrowing using defer for automatic restoration.
+	narrowedSymbols := narrowedSymbolTypes(mod, narrowedEntries)
+	defer restoreSymbolTypes(mod, narrowedSymbols)()
 
 	// Apply narrowed types
-	for varName, narrowedType := range narrowedVars {
+	for varName, narrowedType := range narrowedSymbols {
 		if sym, ok := mod.CurrentScope.Lookup(varName); ok {
 			if sym.OriginalType == nil {
-				sym.OriginalType = sym.Type
+				if entry, ok := narrowedEntries[varName]; ok && entry != nil && entry.OriginalType != nil {
+					sym.OriginalType = entry.OriginalType
+				} else {
+					sym.OriginalType = sym.Type
+				}
 			}
 			sym.Type = narrowedType
 		}
@@ -4212,8 +4238,8 @@ func applyNarrowingToBlock(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 
 // storeNarrowingArtifacts stores narrowing information in module artifacts
 // so it can be used during HIR/MIR code generation.
-func storeNarrowingArtifacts(mod *context_v2.Module, block *ast.Block, narrowedVars map[string]types.SemType) {
-	if mod == nil || block == nil || len(narrowedVars) == 0 {
+func storeNarrowingArtifacts(mod *context_v2.Module, block *ast.Block, narrowedEntries map[string]*narrowing.NarrowingEntry) {
+	if mod == nil || block == nil || len(narrowedEntries) == 0 {
 		return
 	}
 
@@ -4221,68 +4247,115 @@ func storeNarrowingArtifacts(mod *context_v2.Module, block *ast.Block, narrowedV
 	scopeKey := narrowing.ScopeKeyFromLocation(mod.FilePath, block.Location.Start.Line, block.Location.Start.Column)
 	scope := info.GetOrCreateScope(scopeKey)
 
-	for varName, narrowedType := range narrowedVars {
-		// Look up the symbol to get original type and determine narrowing kind
-		sym, ok := mod.CurrentScope.Lookup(varName)
-		if !ok {
+	for key, entry := range narrowedEntries {
+		if entry == nil || entry.NarrowedType == nil {
 			continue
 		}
 
-		originalType := sym.Type
-		if sym.OriginalType != nil {
-			originalType = sym.OriginalType
-		}
+		stored := *entry
+		stored.VarName = key
 
-		entry := &narrowing.NarrowingEntry{
-			VarName:      varName,
-			OriginalType: originalType,
-			NarrowedType: narrowedType,
-			VariantIndex: -1,
-		}
-
-		// Determine narrowing kind and variant index
-		unwrapped := types.UnwrapType(originalType)
-		switch t := unwrapped.(type) {
-		case *types.UnionType:
-			entry.Kind = narrowing.NarrowingUnion
-			// Find the variant index
-			for i, variant := range t.Variants {
-				if narrowedType.Equals(variant) {
-					entry.VariantIndex = i
-					break
+		if stored.OriginalType == nil {
+			if sym, ok := mod.CurrentScope.Lookup(key); ok && sym != nil {
+				if sym.OriginalType != nil {
+					stored.OriginalType = sym.OriginalType
+				} else {
+					stored.OriginalType = sym.Type
 				}
 			}
-		case *types.OptionalType:
-			entry.Kind = narrowing.NarrowingOptional
-		case *types.InterfaceType:
-			entry.Kind = narrowing.NarrowingInterface
 		}
 
-		scope.Add(entry)
+		if stored.OriginalType != nil && stored.Kind == narrowing.NarrowingUnion {
+			if unionType, ok := types.UnwrapType(stored.OriginalType).(*types.UnionType); ok && stored.VariantIndex < 0 {
+				for i, variant := range unionType.Variants {
+					if stored.NarrowedType.Equals(variant) {
+						stored.VariantIndex = i
+						break
+					}
+				}
+			}
+		} else if stored.OriginalType != nil && stored.Kind == narrowing.NarrowingOptional {
+			// No additional metadata required.
+		} else if stored.OriginalType != nil && stored.Kind == narrowing.NarrowingInterface {
+			// No additional metadata required.
+		}
+
+		scope.Add(&stored)
 	}
 }
 
-// collectNarrowedTypes walks the narrowing context chain and collects all narrowed types
-// Child contexts override parent contexts for the same variable
-func collectNarrowedTypes(nc *narrowing.NarrowingContext, result map[string]types.SemType) {
-	if nc == nil {
+// collectNarrowedEntries walks the narrowing context chain and collects all narrowed entries.
+// Child contexts override parent contexts for the same expression key.
+func collectNarrowedEntries(nc *narrowing.NarrowingContext, result map[string]*narrowing.NarrowingEntry) {
+	if nc == nil || result == nil {
 		return
 	}
 
-	// First collect from parent (so child can override)
 	if nc.Parent != nil {
-		collectNarrowedTypes(nc.Parent, result)
+		collectNarrowedEntries(nc.Parent, result)
 	}
 
-	// Then add/override with current level
-	for varName, narrowedType := range nc.NarrowedTypes {
-		result[varName] = narrowedType
+	for key, entry := range nc.Entries {
+		result[key] = entry
+	}
+}
+
+func mergeNarrowedExprTypes(prev map[string]types.SemType, entries map[string]*narrowing.NarrowingEntry) map[string]types.SemType {
+	if len(entries) == 0 {
+		return prev
+	}
+	next := make(map[string]types.SemType, len(prev)+len(entries))
+	for key, typ := range prev {
+		next[key] = typ
+	}
+	for key, entry := range entries {
+		if entry == nil || entry.NarrowedType == nil {
+			continue
+		}
+		next[key] = entry.NarrowedType
+	}
+	return next
+}
+
+func narrowedSymbolTypes(mod *context_v2.Module, entries map[string]*narrowing.NarrowingEntry) map[string]types.SemType {
+	if mod == nil || len(entries) == 0 {
+		return nil
+	}
+	out := make(map[string]types.SemType)
+	for key, entry := range entries {
+		if entry == nil || entry.NarrowedType == nil {
+			continue
+		}
+		if _, ok := mod.CurrentScope.Lookup(key); ok {
+			out[key] = entry.NarrowedType
+		}
+	}
+	return out
+}
+
+func withNarrowedExprTypes(mod *context_v2.Module, nc *narrowing.NarrowingContext, fn func()) {
+	if fn == nil {
+		return
+	}
+	if mod == nil || nc == nil {
+		fn()
+		return
 	}
 
-	// Then add/override with current level
-	for varName, narrowedType := range nc.NarrowedTypes {
-		result[varName] = narrowedType
+	entries := make(map[string]*narrowing.NarrowingEntry)
+	collectNarrowedEntries(nc, entries)
+	if len(entries) == 0 {
+		fn()
+		return
 	}
+
+	prev := mod.NarrowedExprTypes
+	mod.NarrowedExprTypes = mergeNarrowedExprTypes(prev, entries)
+	defer func() {
+		mod.NarrowedExprTypes = prev
+	}()
+
+	fn()
 }
 
 // restoreSymbolTypes returns a function that restores original types
@@ -4317,16 +4390,18 @@ func applyNarrowingToElse(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 	// Check if it's an else-if (IfStmt) or plain else (Block)
 	switch e := elseNode.(type) {
 	case *ast.IfStmt:
-		// For else-if, re-analyze the condition with parent narrowing from else branch
-		elseIfThenNarrowing, elseIfElseNarrowing := narrowingAnalyzer.AnalyzeCondition(ctx, mod, e.Cond, elseNarrowing)
-
 		// Enter scope if exists
 		if e.Scope != nil {
 			defer mod.EnterScope(e.Scope.(*table.SymbolTable))()
 		}
 
-		// Check condition
-		checkExpr(ctx, mod, e.Cond, types.TypeBool)
+		// Check condition under else-branch narrowing
+		withNarrowedExprTypes(mod, elseNarrowing, func() {
+			checkExpr(ctx, mod, e.Cond, types.TypeBool)
+		})
+
+		// For else-if, re-analyze the condition with parent narrowing from else branch
+		elseIfThenNarrowing, elseIfElseNarrowing := narrowingAnalyzer.AnalyzeCondition(ctx, mod, e.Cond, elseNarrowing)
 
 		// Check then branch with combined narrowing
 		if e.Body != nil {

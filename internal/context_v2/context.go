@@ -79,9 +79,10 @@ type Module struct {
 	CurrentDeferredStmts      []*ast.DeferStmt // Deferred statements in current function (LIFO order)
 	InDeferContext            bool             // True when type-checking a defer statement (skip Result validation)
 
-	Imports        map[string]*Import               // Resolved imports
-	ImportAliasMap map[string]string                // alias/name -> import path mapping for module access
-	ExprTypes      map[ast.Expression]types.SemType // Type of each expression (filled during type checking)
+	Imports           map[string]*Import               // Resolved imports
+	ImportAliasMap    map[string]string                // alias/name -> import path mapping for module access
+	ExprTypes         map[ast.Expression]types.SemType // Type of each expression (filled during type checking)
+	NarrowedExprTypes map[string]types.SemType         // Narrowed type for expression keys during type checking
 
 	// Source metadata
 	Content string // Raw source code (for diagnostics)

@@ -17,21 +17,29 @@ func analyzeIsCondition(mod *context_v2.Module, binExpr *ast.BinaryExpr, parent 
 	}
 	varName := ident.Name
 
+	sym, ok := mod.CurrentScope.Lookup(varName)
+	if !ok || sym == nil || sym.Type == nil {
+		return thenNarrowing, elseNarrowing
+	}
+
+	originalType := sym.Type
+	unwrapped := types.UnwrapType(originalType)
+
 	// Try union narrowing first
-	if unionType := getUnionVarType(mod, varName); unionType != nil {
-		return analyzeUnionIsCondition(varName, unionType, binExpr, thenNarrowing, elseNarrowing, mod)
+	if unionType, ok := unwrapped.(*types.UnionType); ok {
+		return analyzeUnionIsCondition(varName, originalType, unionType, binExpr, thenNarrowing, elseNarrowing, mod)
 	}
 
 	// Try interface narrowing
-	if interfaceType := getInterfaceVarType(mod, varName); interfaceType != nil && isEmptyInterface(interfaceType) {
-		return analyzeInterfaceIsCondition(varName, binExpr, thenNarrowing, elseNarrowing, mod)
+	if interfaceType, ok := unwrapped.(*types.InterfaceType); ok && isEmptyInterface(interfaceType) {
+		return analyzeInterfaceIsCondition(varName, originalType, binExpr, thenNarrowing, elseNarrowing, mod)
 	}
 
 	return thenNarrowing, elseNarrowing
 }
 
 // analyzeUnionIsCondition handles 'x is Type' for union types.
-func analyzeUnionIsCondition(varName string, unionType *types.UnionType, binExpr *ast.BinaryExpr, thenNarrowing, elseNarrowing *NarrowingContext, mod *context_v2.Module) (*NarrowingContext, *NarrowingContext) {
+func analyzeUnionIsCondition(varName string, originalType types.SemType, unionType *types.UnionType, binExpr *ast.BinaryExpr, thenNarrowing, elseNarrowing *NarrowingContext, mod *context_v2.Module) (*NarrowingContext, *NarrowingContext) {
 	targetType := getTargetTypeFromRHS(mod, binExpr.Y)
 	if targetType == nil {
 		return thenNarrowing, elseNarrowing
@@ -41,14 +49,32 @@ func analyzeUnionIsCondition(varName string, unionType *types.UnionType, binExpr
 	for i, variant := range unionType.Variants {
 		if targetType.Equals(variant) {
 			// Then branch: narrow to the matched variant
-			thenNarrowing.Narrow(varName, variant)
+			thenNarrowing.Narrow(varName, &NarrowingEntry{
+				Kind:         NarrowingUnion,
+				VarName:      varName,
+				OriginalType: originalType,
+				NarrowedType: variant,
+				VariantIndex: i,
+			})
 
 			// Else branch: narrow to remaining variants
 			otherVariants := excludeVariant(unionType.Variants, i)
 			if len(otherVariants) == 1 {
-				elseNarrowing.Narrow(varName, otherVariants[0])
+				elseNarrowing.Narrow(varName, &NarrowingEntry{
+					Kind:         NarrowingUnion,
+					VarName:      varName,
+					OriginalType: originalType,
+					NarrowedType: otherVariants[0],
+					VariantIndex: -1,
+				})
 			} else if len(otherVariants) > 1 {
-				elseNarrowing.Narrow(varName, types.NewUnion(otherVariants))
+				elseNarrowing.Narrow(varName, &NarrowingEntry{
+					Kind:         NarrowingUnion,
+					VarName:      varName,
+					OriginalType: originalType,
+					NarrowedType: types.NewUnion(otherVariants),
+					VariantIndex: -1,
+				})
 			}
 			break
 		}
@@ -58,14 +84,20 @@ func analyzeUnionIsCondition(varName string, unionType *types.UnionType, binExpr
 }
 
 // analyzeInterfaceIsCondition handles 'x is Type' for interface{} types.
-func analyzeInterfaceIsCondition(varName string, binExpr *ast.BinaryExpr, thenNarrowing, elseNarrowing *NarrowingContext, mod *context_v2.Module) (*NarrowingContext, *NarrowingContext) {
+func analyzeInterfaceIsCondition(varName string, originalType types.SemType, binExpr *ast.BinaryExpr, thenNarrowing, elseNarrowing *NarrowingContext, mod *context_v2.Module) (*NarrowingContext, *NarrowingContext) {
 	targetType := getTargetTypeFromRHS(mod, binExpr.Y)
 	if targetType == nil {
 		return thenNarrowing, elseNarrowing
 	}
 
 	// Then branch: narrow to the target type
-	thenNarrowing.Narrow(varName, targetType)
+	thenNarrowing.Narrow(varName, &NarrowingEntry{
+		Kind:         NarrowingInterface,
+		VarName:      varName,
+		OriginalType: originalType,
+		NarrowedType: targetType,
+		VariantIndex: -1,
+	})
 	// Else branch: can't narrow (still interface{})
 
 	return thenNarrowing, elseNarrowing
@@ -95,36 +127,6 @@ func excludeVariant(variants []types.SemType, i int) []types.SemType {
 		}
 	}
 	return result
-}
-
-// getUnionVarType gets the union type of a variable if it exists.
-func getUnionVarType(mod *context_v2.Module, varName string) *types.UnionType {
-	sym, ok := mod.CurrentScope.Lookup(varName)
-	if !ok {
-		return nil
-	}
-
-	unwrapped := types.UnwrapType(sym.Type)
-	if unionType, ok := unwrapped.(*types.UnionType); ok {
-		return unionType
-	}
-
-	return nil
-}
-
-// getInterfaceVarType gets the interface type of a variable if it exists.
-func getInterfaceVarType(mod *context_v2.Module, varName string) *types.InterfaceType {
-	sym, ok := mod.CurrentScope.Lookup(varName)
-	if !ok {
-		return nil
-	}
-
-	unwrapped := types.UnwrapType(sym.Type)
-	if interfaceType, ok := unwrapped.(*types.InterfaceType); ok {
-		return interfaceType
-	}
-
-	return nil
 }
 
 // isEmptyInterface checks if an interface type has no methods (is interface{}).
