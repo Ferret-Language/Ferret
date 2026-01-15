@@ -35,6 +35,7 @@ type functionBuilder struct {
 	closureEnv      mir.ValueID
 	captures        map[*symbols.Symbol]captureInfo
 	boxed           map[*symbols.Symbol]mir.ValueID
+	bindings        map[*symbols.Symbol]mir.ValueID
 	entry           *mir.Block
 	inDeferCatch    bool
 	catchEndLabel   mir.BlockID
@@ -60,6 +61,7 @@ func newFunctionBuilder(gen *Generator, fn *mir.Function) *functionBuilder {
 		closureEnv:      mir.InvalidValue,
 		captures:        nil,
 		boxed:           make(map[*symbols.Symbol]mir.ValueID),
+		bindings:        make(map[*symbols.Symbol]mir.ValueID),
 	}
 }
 
@@ -294,6 +296,11 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 				if item.Name.Symbol != nil {
 					b.slots[item.Name.Symbol] = heapAddr
 					b.boxed[item.Name.Symbol] = heapAddr
+					if _, ok := b.bindings[item.Name.Symbol]; !ok {
+						bind := b.emitAlloca(types.NewReference(typ), item.Name.Location)
+						b.emitStore(bind, heapAddr, item.Name.Location)
+						b.bindings[item.Name.Symbol] = bind
+					}
 				} else {
 					b.tempSlots[item.Name] = heapAddr
 				}
@@ -311,9 +318,15 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 						if item.Name.Symbol != nil {
 							b.slots[item.Name.Symbol] = addr
 							b.boxed[item.Name.Symbol] = addr
+							if _, ok := b.bindings[item.Name.Symbol]; !ok {
+								bind := b.emitAlloca(types.NewReference(typ), item.Name.Location)
+								b.emitStore(bind, addr, item.Name.Location)
+								b.bindings[item.Name.Symbol] = bind
+							}
 						} else {
 							b.tempSlots[item.Name] = addr
 						}
+						b.resetHeapBinding(ident, moveExpr.Location)
 						return
 					}
 				}
@@ -324,6 +337,7 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 	addr := b.emitAlloca(typ, item.Name.Location)
 	if item.Name.Symbol != nil {
 		b.slots[item.Name.Symbol] = addr
+		b.bindings[item.Name.Symbol] = addr
 	} else {
 		b.tempSlots[item.Name] = addr
 	}
@@ -404,6 +418,37 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 	}
 
 	rhsIsMove := stmt.Rhs != nil && isMoveExpr(stmt.Rhs)
+
+	if (stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN) && rhsIsMove {
+		if moveExpr, ok := stmt.Rhs.(*hir.UnaryExpr); ok && moveExpr.Op.Kind == tokens.AT_TOKEN {
+			if srcIdent, ok := moveExpr.X.(*hir.Ident); ok && b.isHeapLValue(srcIdent) {
+				if dstIdent, ok := stmt.Lhs.(*hir.Ident); ok && dstIdent.Symbol != nil {
+					heapAddr := b.addrForIdent(srcIdent)
+					if heapAddr != mir.InvalidValue {
+						b.slots[dstIdent.Symbol] = heapAddr
+						b.boxed[dstIdent.Symbol] = heapAddr
+						if bind, ok := b.bindings[dstIdent.Symbol]; ok {
+							if elem, ok := b.ptrElem[bind]; ok {
+								if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
+									b.emitStore(bind, heapAddr, stmt.Location)
+								}
+							}
+						} else {
+							lhsType := b.exprType(stmt.Lhs)
+							if lhsType == nil {
+								lhsType = types.TypeUnknown
+							}
+							bind := b.emitAlloca(types.NewReference(lhsType), stmt.Location)
+							b.emitStore(bind, heapAddr, stmt.Location)
+							b.bindings[dstIdent.Symbol] = bind
+						}
+						b.resetHeapBinding(srcIdent, stmt.Location)
+						return
+					}
+				}
+			}
+		}
+	}
 
 	if idx, ok := stmt.Lhs.(*hir.IndexExpr); ok {
 		b.lowerIndexAssign(idx, stmt.Rhs, stmt.Op, stmt.Location)
@@ -1234,6 +1279,9 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 				return mir.InvalidValue
 			}
 			operand, _ = b.derefValueIfNeeded(operand, b.exprType(e.X), e.Location)
+			if ident, ok := e.X.(*hir.Ident); ok && b.isHeapLValue(ident) {
+				b.resetHeapBinding(ident, e.Location)
+			}
 			return operand
 		}
 		if e.Op.Kind == tokens.HASH_TOKEN {
@@ -2251,7 +2299,17 @@ func (b *functionBuilder) lowerBuiltinAddrCall(expr *hir.CallExpr) mir.ValueID {
 	}
 
 	arg := expr.Args[0]
-	addr := b.lowerExpr(arg)
+	addr := mir.InvalidValue
+	if unary, ok := arg.(*hir.UnaryExpr); ok && (unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN) {
+		if ident, ok := unary.X.(*hir.Ident); ok && ident.Symbol != nil {
+			if bind, ok := b.bindings[ident.Symbol]; ok {
+				addr = bind
+			}
+		}
+	}
+	if addr == mir.InvalidValue {
+		addr = b.lowerExpr(arg)
+	}
 	if addr == mir.InvalidValue {
 		return mir.InvalidValue
 	}
@@ -2356,6 +2414,35 @@ func (b *functionBuilder) isHeapLValue(expr hir.Expr) bool {
 	default:
 		return false
 	}
+}
+
+func (b *functionBuilder) resetHeapBinding(ident *hir.Ident, loc source.Location) {
+	if ident == nil || ident.Symbol == nil {
+		return
+	}
+	typ := b.getStorageType(ident)
+	if typ == nil {
+		return
+	}
+	heapAddr := b.emitHeapAlloc(mir.InvalidValue, typ, loc)
+	if heapAddr == mir.InvalidValue {
+		return
+	}
+	b.slots[ident.Symbol] = heapAddr
+	b.boxed[ident.Symbol] = heapAddr
+
+	bind, ok := b.bindings[ident.Symbol]
+	if ok {
+		if elem, ok := b.ptrElem[bind]; ok {
+			if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
+				b.emitStore(bind, heapAddr, loc)
+				return
+			}
+		}
+	}
+	bind = b.emitAlloca(types.NewReference(typ), loc)
+	b.emitStore(bind, heapAddr, loc)
+	b.bindings[ident.Symbol] = bind
 }
 
 func (b *functionBuilder) lowerBuiltinPanicCall(expr *hir.CallExpr) mir.ValueID {
@@ -2761,6 +2848,9 @@ func (b *functionBuilder) addrForIdent(ident *hir.Ident) mir.ValueID {
 				addr := b.emitAllocaInEntry(paramType, ident.Location)
 				b.emitStoreInEntry(addr, val, ident.Location)
 				b.slots[ident.Symbol] = addr
+				if _, ok := b.bindings[ident.Symbol]; !ok {
+					b.bindings[ident.Symbol] = addr
+				}
 				return addr
 			}
 		}

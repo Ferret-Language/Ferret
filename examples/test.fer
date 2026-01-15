@@ -14,6 +14,10 @@ fn test_heap_box() {
 
     io::Println("box stack_changed", stack_before != stack_after);
     io::Println("box heap_same", heap_before != 0 && heap_before == heap_after);
+
+    let moved_val := moved;
+    h = 55;
+    io::Println("box reassign_isolated", moved == moved_val && h == 55);
 }
 
 fn test_array() {

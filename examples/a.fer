@@ -1,0 +1,27 @@
+import "std/io";
+
+
+fn main() {
+    let a := #10;
+    let addr_a := addr(&a);
+    let haddr_a := addr_heap(&a);
+    
+    let b := @a;
+    io::Println(a);  
+    let addr_b := addr(&b);
+    let haddr_b := addr_heap(&b);
+
+    a = 100;
+    
+    let naddr_a := addr(&a);
+    let nhaddr_a := addr_heap(&a);
+
+    io::Println("Address of a:", addr_a);
+    io::Println("Address of b:", addr_b);
+    io::Println("H Address of a:", haddr_a);
+    io::Println("H Address of a:", haddr_b);
+    io::Println("New Address of a:", naddr_a);
+    io::Println("New H Address of a:", nhaddr_a);
+
+    io::Println(a, b);
+}

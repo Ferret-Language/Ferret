@@ -1,0 +1,124 @@
+import "std/io";
+
+// ------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------
+fn print_addrs(tag: str, x: &i32) {
+    io::Println(tag, " stack=", addr(x), " heap=", addr_heap(x));
+}
+
+fn main() {
+    // ============================================================
+    // 0) Baseline: move + reinit should NOT alias
+    // ============================================================
+    let a := #10;
+
+    let addr_a0 := addr(&a);
+    let haddr_a0 := addr_heap(&a);
+
+    let b := @a;
+
+    let addr_b0 := addr(&b);
+    let haddr_b0 := addr_heap(&b);
+
+    // Reinitialize a
+    a = 100;
+
+    let addr_a1 := addr(&a);
+    let haddr_a1 := addr_heap(&a);
+
+    io::Println("---- baseline ----");
+    io::Println("a stack:", addr_a0, "->", addr_a1);
+    io::Println("b stack:", addr_b0);
+    io::Println("a heap :", haddr_a0, "->", haddr_a1);
+    io::Println("b heap :", haddr_b0);
+    io::Println("values :", a, b);
+
+    // Expected:
+    // - addr(&a) same before/after reinit
+    // - addr_heap(&b) == old addr_heap(&a)
+    // - addr_heap(&a) after reinit != old
+    // - values "100 10"
+
+
+    // ============================================================
+    // 1) MUST FAIL: use-after-move (value use)
+    // ============================================================
+
+    // let x := #10;
+    // let y := @x;
+    // io::Println(x); // should be error[T0004] use of moved value
+
+    // ============================================================
+    // 2) MUST FAIL: use-after-move (take reference)
+    // ============================================================
+    
+    // let x := #10;
+    // let y := @x;
+    // let r := &x; // should error: taking ref of moved value
+    // io::Println(addr(r));
+    
+
+    // ============================================================
+    // 3) MUST FAIL: use-after-move (peek heap backing)
+    // ============================================================
+    
+    // let x := #10;
+    // let y := @x;
+    // io::Println(addr_heap(&x)); // should error, not print 0 or stale ptr
+    
+
+    // ============================================================
+    // 4) Reinit clears moved-state: after move, assignment should
+    //    allow normal use again
+    // ============================================================
+    {
+        let x := #77;
+        let y := @x;
+
+        // x is moved here, so ONLY assignment should be allowed next.
+        x = 88;
+
+        // After reinit, these should compile:
+        io::Println("---- reinit clears moved ----");
+        io::Println(x, y);
+        io::Println("x heap:", addr_heap(&x), " y heap:", addr_heap(&y));
+
+        // Expected:
+        // - prints "88 77"
+        // - heap ptrs differ (x got fresh heap)
+    }
+
+    // ============================================================
+    // 5) Copy rules: this depends on your design
+    //    If heap numbers are owning + move-only, this should FAIL.
+    //    If you have RC/GC or deep copy, it may PASS but then
+    //    you MUST ensure no aliasing bugs.
+    // ============================================================
+    
+    // let x := #5;
+    // let y := x; // should FAIL if owning move-only; or deep-copy if allowed
+
+    // io::Println("---- copy semantics ----");
+    // io::Println("x heap:", addr_heap(&x));
+    // io::Println("y heap:", addr_heap(&y));
+    // io::Println(x, y);
+
+    // // If this compiles and y is a shallow copy, then modifying x should not modify y.
+    // x = 99;
+    // io::Println(x, y);
+    
+
+    // ============================================================
+    // 6) Alias test: ensure there is NO way to end up with two live
+    //    owners of same heap backing (unless you explicitly support shared)
+    // ============================================================
+    
+    let x := # { .X = 11, .Y = 89 };
+    let y := #x;         // if this is allowed as shallow copy, you're in trouble
+    x.X = 24;
+    io::Println(addr_heap(&x), addr_heap(&y)); // should NOT be equal for owning types
+    
+    io::Println(x.X, y.X);
+    
+}
