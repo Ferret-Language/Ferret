@@ -324,6 +324,9 @@ func inferUnaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	case tokens.AT_TOKEN:
 		// Move operator keeps the operand type.
 		return xType
+	case tokens.HASH_TOKEN:
+		// Heap operator keeps the operand type.
+		return xType
 
 	default:
 		return xType

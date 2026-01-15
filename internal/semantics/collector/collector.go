@@ -488,7 +488,7 @@ func hasExternTag(doc *ast.CommentGroup) bool {
 
 func isIntrinsicBuiltin(name string) bool {
 	switch name {
-	case "len", "append":
+	case "len", "append", "addr", "addr_heap":
 		return true
 	default:
 		return false

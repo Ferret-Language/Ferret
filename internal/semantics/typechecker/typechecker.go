@@ -727,6 +727,21 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 			continue
 		}
 
+		if item.Value != nil {
+			if heapUnaryExpr(item.Value) != nil {
+				if isConst {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("constant '%s' cannot use heap allocation", name)).
+							WithCode(diagnostics.ErrInvalidOperation).
+							WithPrimaryLabel(item.Value.Loc(), "heap allocation is not allowed in constants").
+							WithHelp("use a runtime variable instead of const"),
+					)
+				} else {
+					sym.IsHeap = true
+				}
+			}
+		}
+
 		if item.Value != nil && referencesIdentOutsideFuncLit(item.Value, name) {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("'%s' references itself in its initializer", name)).
@@ -2028,6 +2043,33 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 		return
 	}
 
+	if stmt.Rhs != nil {
+		if heapUnaryExpr(stmt.Rhs) != nil {
+			if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("heap allocation cannot be used with compound assignment").
+						WithCode(diagnostics.ErrInvalidAssignment).
+						WithPrimaryLabel(stmt.Lhs.Loc(), "use '=' to bind heap storage"),
+				)
+				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
+				return
+			}
+			ident, ok := stmt.Lhs.(*ast.IdentifierExpr)
+			if !ok {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("heap allocation must bind to a variable").
+						WithCode(diagnostics.ErrInvalidAssignment).
+						WithPrimaryLabel(stmt.Lhs.Loc(), "expected a variable name"),
+				)
+				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
+				return
+			}
+			if sym, ok := mod.CurrentScope.Lookup(ident.Name); ok && sym != nil {
+				sym.IsHeap = true
+			}
+		}
+	}
+
 	if idx, ok := stmt.Lhs.(*ast.IndexExpr); ok {
 		baseType := inferExprType(ctx, mod, idx.X)
 		if isReferenceType(baseType) {
@@ -2384,6 +2426,45 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	}
 }
 
+func isAddrTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression) bool {
+	if expr == nil {
+		return false
+	}
+
+	switch e := expr.(type) {
+	case *ast.IdentifierExpr:
+		if mod != nil && mod.CurrentScope != nil {
+			if sym, found := mod.CurrentScope.Lookup(e.Name); found {
+				if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
+					return false
+				}
+			}
+		}
+		return true
+	case *ast.DerefExpr:
+		return true
+	case *ast.ParenExpr:
+		return isAddrTarget(ctx, mod, e.X)
+	case *ast.SelectorExpr:
+		return isAddrTarget(ctx, mod, e.X)
+	case *ast.IndexExpr:
+		baseType := inferExprType(ctx, mod, e.X)
+		if baseType == nil || baseType.Equals(types.TypeUnknown) {
+			return false
+		}
+		baseType = dereferenceType(types.UnwrapType(baseType))
+		if _, ok := baseType.(*types.MapType); ok {
+			return isAddrTarget(ctx, mod, e.X)
+		}
+		if _, ok := baseType.(*types.ArrayType); ok {
+			return isAddrTarget(ctx, mod, e.X)
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 func isBorrowExpr(expr ast.Expression) bool {
 	if expr == nil {
 		return false
@@ -2489,6 +2570,74 @@ func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 				WithPrimaryLabel(expr.X.Loc(), "reference values are not movable"),
 		)
 	}
+}
+
+func checkHeapExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.UnaryExpr, operandType types.SemType) {
+	if ctx == nil || mod == nil || expr == nil {
+		return
+	}
+	if expr.Op.Kind != tokens.HASH_TOKEN {
+		return
+	}
+	if operandType == nil || operandType.Equals(types.TypeUnknown) {
+		return
+	}
+	if heapLiteralExpr(expr.X) == nil {
+		return
+	}
+	operandType = types.UnwrapType(operandType)
+	if arr, ok := operandType.(*types.ArrayType); ok && arr.Length < 0 {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot heap allocate dynamic array literal").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "dynamic arrays are already heap-allocated").
+				WithHelp("remove '#' from the literal"),
+		)
+		return
+	}
+	if _, ok := operandType.(*types.MapType); ok {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot heap allocate map literal").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "maps are already heap-allocated").
+				WithHelp("remove '#' from the literal"),
+		)
+	}
+}
+
+func heapLiteralExpr(expr ast.Expression) *ast.CompositeLit {
+	for expr != nil {
+		switch e := expr.(type) {
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.CastExpr:
+			expr = e.X
+		case *ast.CompositeLit:
+			return e
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
+func heapUnaryExpr(expr ast.Expression) *ast.UnaryExpr {
+	for expr != nil {
+		switch e := expr.(type) {
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.CastExpr:
+			expr = e.X
+		case *ast.UnaryExpr:
+			if e.Op.Kind == tokens.HASH_TOKEN {
+				return e
+			}
+			return nil
+		default:
+			return nil
+		}
+	}
+	return nil
 }
 
 func isReferenceType(typ types.SemType) bool {
@@ -2744,6 +2893,11 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		}
 		if e.Op.Kind == tokens.AT_TOKEN {
 			checkMoveExpr(ctx, mod, e, operandType)
+			mod.SetExprType(expr, operandType)
+			return operandType
+		}
+		if e.Op.Kind == tokens.HASH_TOKEN {
+			checkHeapExpr(ctx, mod, e, operandType)
 			mod.SetExprType(expr, operandType)
 			return operandType
 		}

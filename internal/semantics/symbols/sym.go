@@ -32,6 +32,7 @@ type Symbol struct {
 	Methods       map[string]*MethodInfo // Methods attached to this named type (only for SymbolType)
 	ConstValue    ConstValue             // Compile-time known value (for constants and const variables)
 	IsReadonly    bool                   // True for read-only variables (loop index, catch error, etc.)
+	IsHeap        bool                   // True if storage is heap-allocated via '#'
 
 	// Native function support (for builtin functions implemented in Go/C)
 	IsNative   bool   // true if this function is implemented in native code (Go/C)

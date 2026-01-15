@@ -817,6 +817,19 @@ func (p *Parser) parseUnaryDepth(depth int) ast.Expression {
 		}
 	}
 
+	if p.match(tokens.HASH_TOKEN) {
+		op := p.advance()
+		expr := p.parseUnaryDepth(depth + 1)
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.UnaryExpr{
+			Op:       op,
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
+		}
+	}
+
 	// Prefix increment/decrement: ++a or --a
 	if p.match(tokens.PLUS_PLUS_TOKEN, tokens.MINUS_MINUS_TOKEN) {
 		op := p.advance()

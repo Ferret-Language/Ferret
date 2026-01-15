@@ -3111,6 +3111,44 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return mapFromPairs("bytes", keySize, valueSize, keysPtr, valuesPtr, count);
   }
 
+  function ferret_map_clone(mapPtr: number): number {
+    const meta = mapGetMeta(mapPtr);
+    if (!meta) {
+      return 0;
+    }
+    let outPtr = 0;
+    switch (meta.keyKind) {
+      case "i32":
+        outPtr = ferret_map_new_i32(meta.keySize, meta.valueSize);
+        break;
+      case "i64":
+        outPtr = ferret_map_new_i64(meta.keySize, meta.valueSize);
+        break;
+      case "f32":
+        outPtr = ferret_map_new_f32(meta.keySize, meta.valueSize);
+        break;
+      case "f64":
+        outPtr = ferret_map_new_f64(meta.keySize, meta.valueSize);
+        break;
+      case "str":
+        outPtr = ferret_map_new_str(meta.keySize, meta.valueSize);
+        break;
+      case "bytes":
+        outPtr = ferret_map_new_bytes(meta.keySize, meta.valueSize);
+        break;
+    }
+    const outMeta = mapGetMeta(outPtr);
+    if (!outMeta) {
+      return outPtr >>> 0;
+    }
+    for (const bucket of meta.buckets.values()) {
+      for (const entry of bucket) {
+        mapSetEntry(outMeta, entry.keyPtr, entry.valuePtr);
+      }
+    }
+    return outPtr >>> 0;
+  }
+
   function ferret_map_get(mapPtr: number, keyPtr: number): number {
     const meta = mapGetMeta(mapPtr);
     if (!meta) {
@@ -3345,6 +3383,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_map_from_pairs_f64,
         ferret_map_from_pairs_str,
         ferret_map_from_pairs_bytes,
+        ferret_map_clone,
         ferret_map_get,
         ferret_map_get_optional_out,
         ferret_map_set,

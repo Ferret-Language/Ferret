@@ -67,8 +67,9 @@ const (
 	MUT_TOKEN  TOKEN = "mut"
 	STAR_TOKEN TOKEN = "*" // dereference operator (also used for multiplication)
 	//unary operators
-	NOT_TOKEN TOKEN = "!"
-	AT_TOKEN  TOKEN = "@"
+	NOT_TOKEN  TOKEN = "!"
+	AT_TOKEN   TOKEN = "@"
+	HASH_TOKEN TOKEN = "#"
 	//arithmetic operators
 	EXP_TOKEN   TOKEN = "**"
 	MINUS_TOKEN TOKEN = "-"

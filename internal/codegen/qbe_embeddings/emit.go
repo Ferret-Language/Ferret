@@ -228,6 +228,20 @@ func (g *Generator) emitCast(c *mir.Cast) {
 	resultName := g.valueName(c.Result)
 	operand := g.valueName(c.X)
 
+	if _, ok := types.UnwrapType(fromType).(*types.ReferenceType); ok && g.isInteger(toType) {
+		switch toQ {
+		case "l":
+			g.emitLine(fmt.Sprintf("%s =l copy %s", resultName, operand))
+		case "w":
+			g.emitLine(fmt.Sprintf("%s =w copy %s", resultName, operand))
+		default:
+			g.reportUnsupported("cast", &c.Location)
+			return
+		}
+		g.valueTypes[c.Result] = toType
+		return
+	}
+
 	if fromQ == toQ {
 		if g.isInteger(fromType) && g.isInteger(toType) {
 			if g.handleIntegerCast(resultName, operand, fromQ, fromType, toQ, toType) {

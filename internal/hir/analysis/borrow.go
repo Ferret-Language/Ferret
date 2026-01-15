@@ -52,19 +52,25 @@ type borrowScope struct {
 }
 
 type borrowChecker struct {
-	ctx      *context_v2.CompilerContext
-	mod      *context_v2.Module
-	borrows  map[*symbols.Symbol][]borrowEntry
-	bindings map[*symbols.Symbol]borrowBinding
-	moved    map[*symbols.Symbol]*source.Location
-	scopes   []borrowScope
-	temp     []borrowRecord
-	locals   map[*symbols.Symbol]struct{}
+	ctx       *context_v2.CompilerContext
+	mod       *context_v2.Module
+	borrows   map[*symbols.Symbol][]borrowEntry
+	bindings  map[*symbols.Symbol]borrowBinding
+	moved     map[*symbols.Symbol]*source.Location
+	scopes    []borrowScope
+	temp      []borrowRecord
+	locals    map[*symbols.Symbol]struct{}
+	localRefs map[*symbols.Symbol]localRefUse
 }
 
 type lastUseInfo struct {
 	index int
 	loc   *source.Location
+}
+
+type localRefUse struct {
+	base *symbols.Symbol
+	loc  *source.Location
 }
 
 func checkBorrowRules(ctx *context_v2.CompilerContext, mod *context_v2.Module, hirMod *hir.Module) {
@@ -85,12 +91,13 @@ func checkBorrowRules(ctx *context_v2.CompilerContext, mod *context_v2.Module, h
 
 func newBorrowChecker(ctx *context_v2.CompilerContext, mod *context_v2.Module) *borrowChecker {
 	return &borrowChecker{
-		ctx:      ctx,
-		mod:      mod,
-		borrows:  make(map[*symbols.Symbol][]borrowEntry),
-		bindings: make(map[*symbols.Symbol]borrowBinding),
-		moved:    make(map[*symbols.Symbol]*source.Location),
-		locals:   make(map[*symbols.Symbol]struct{}),
+		ctx:       ctx,
+		mod:       mod,
+		borrows:   make(map[*symbols.Symbol][]borrowEntry),
+		bindings:  make(map[*symbols.Symbol]borrowBinding),
+		moved:     make(map[*symbols.Symbol]*source.Location),
+		locals:    make(map[*symbols.Symbol]struct{}),
+		localRefs: make(map[*symbols.Symbol]localRefUse),
 	}
 }
 
@@ -231,11 +238,13 @@ func (b *borrowChecker) checkVarDecl(stmt *hir.VarDecl) {
 		if isRefDecl {
 			if borrowExpr, ok := item.Value.(*hir.UnaryExpr); ok && isBorrowOp(borrowExpr.Op.Kind) {
 				b.checkBorrowInit(item.Name, borrowExpr)
+				b.updateLocalRefSymbol(item.Name, borrowExpr, true)
 				continue
 			}
 			if ident, ok := item.Value.(*hir.Ident); ok {
 				b.checkExpr(ident)
 				b.bindRefFromIdent(item.Name, ident, true)
+				b.updateLocalRefSymbol(item.Name, ident, true)
 				continue
 			}
 		}
@@ -243,6 +252,7 @@ func (b *borrowChecker) checkVarDecl(stmt *hir.VarDecl) {
 		b.withTempScope(func() {
 			b.checkExpr(item.Value)
 		})
+		b.updateLocalRefSymbol(item.Name, item.Value, true)
 	}
 }
 
@@ -266,6 +276,8 @@ func (b *borrowChecker) checkAssignStmt(stmt *hir.AssignStmt) {
 		b.checkWriteTargetWithMode(stmt.Lhs, true)
 	}
 	b.releaseTemps(start)
+	allowClear := stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN
+	b.updateLocalRefForAssign(stmt.Lhs, stmt.Rhs, allowClear)
 }
 
 func (b *borrowChecker) checkReturnStmt(stmt *hir.ReturnStmt) {
@@ -276,7 +288,8 @@ func (b *borrowChecker) checkReturnStmt(stmt *hir.ReturnStmt) {
 	b.withTempScope(func() {
 		b.checkExpr(stmt.Result)
 	})
-	b.checkReturnLifetime(stmt.Result)
+	b.checkReturnLifetime(stmt)
+	b.checkReturnMove(stmt.Result)
 }
 
 func (b *borrowChecker) checkIfStmt(stmt *hir.IfStmt) {
@@ -673,6 +686,7 @@ func (b *borrowChecker) checkRefRebind(target *hir.Ident, rhs hir.Expr) {
 			}
 		}
 		b.checkAddressableExpr(borrowExpr.X, place.base)
+		b.updateLocalRefSymbol(target, borrowExpr, true)
 		return
 	}
 	if rhsIdent := directIdent(rhs); rhsIdent != nil {
@@ -684,6 +698,7 @@ func (b *borrowChecker) checkRefRebind(target *hir.Ident, rhs hir.Expr) {
 		}
 		b.releaseBinding(target.Symbol)
 		b.bindRefFromIdent(target, rhsIdent, false)
+		b.updateLocalRefSymbol(target, rhsIdent, true)
 		return
 	}
 
@@ -691,6 +706,7 @@ func (b *borrowChecker) checkRefRebind(target *hir.Ident, rhs hir.Expr) {
 	b.checkExpr(rhs)
 	b.releaseTemps(start)
 	b.releaseBinding(target.Symbol)
+	b.updateLocalRefSymbol(target, rhs, true)
 }
 
 func (b *borrowChecker) checkBorrowExpr(expr *hir.UnaryExpr) {
@@ -973,40 +989,63 @@ func (b *borrowChecker) lastUseLoc(sym *symbols.Symbol) *source.Location {
 	return nil
 }
 
-func (b *borrowChecker) checkReturnLifetime(expr hir.Expr) {
+func (b *borrowChecker) checkReturnLifetime(retStmt *hir.ReturnStmt) {
+	if retStmt == nil {
+		return
+	}
+	if !typeContainsReference(exprType(retStmt.Result)) {
+		return
+	}
+	use, ok := b.localRefInExpr(retStmt.Result)
+	if !ok || use.base == nil {
+		return
+	}
+	diag := diagnostics.NewError(fmt.Sprintf("cannot return value containing reference to local '%s'", use.base.Name)).
+		WithCode(diagnostics.ErrInvalidOperation)
+	if retStmt.Loc() != nil {
+		diag = diag.WithPrimaryLabel(&source.Location{Start: retStmt.Loc().Start, End: retStmt.Loc().Start, Filename: retStmt.Loc().Filename}, "reference escapes here")
+	}
+	if use.loc != nil {
+		diag = diag.WithSecondaryLabel(use.loc, "borrowed here")
+	}
+	b.ctx.Diagnostics.Add(diag)
+}
+
+func (b *borrowChecker) checkReturnMove(expr hir.Expr) {
 	if expr == nil {
 		return
 	}
-	exprType := exprType(expr)
-	if !isReferenceType(exprType) {
+	expr = unwrapParenExpr(expr)
+	unary, ok := expr.(*hir.UnaryExpr)
+	if !ok || !isMoveOp(unary.Op.Kind) {
 		return
 	}
+	ident, ok := unary.X.(*hir.Ident)
+	if !ok || ident.Symbol == nil {
+		return
+	}
+	if _, ok := b.locals[ident.Symbol]; !ok {
+		return
+	}
+	if ident.Symbol.IsHeap {
+		return
+	}
+	diag := diagnostics.NewError(fmt.Sprintf("cannot return moved local '%s'", ident.Symbol.Name)).
+		WithCode(diagnostics.ErrInvalidOperation)
+	if expr.Loc() != nil {
+		diag = diag.WithPrimaryLabel(expr.Loc(), "move returned here")
+	}
+	diag = diag.WithHelp("allocate the value on the heap with '#' before moving it")
+	b.ctx.Diagnostics.Add(diag)
+}
 
-	var base *symbols.Symbol
-	directBorrow := false
-	switch e := expr.(type) {
-	case *hir.UnaryExpr:
-		if isBorrowOp(e.Op.Kind) {
-			place, _ := b.borrowAccessPlace(e.X)
-			base = place.base
-			directBorrow = true
+func unwrapParenExpr(expr hir.Expr) hir.Expr {
+	for {
+		if p, ok := expr.(*hir.ParenExpr); ok {
+			expr = p.X
+			continue
 		}
-	case *hir.Ident:
-		if e.Symbol != nil {
-			if binding, ok := b.bindings[e.Symbol]; ok {
-				base = binding.place.base
-			}
-		}
-	}
-	if base == nil {
-		return
-	}
-	if _, ok := b.locals[base]; ok {
-		if directBorrow {
-			// Returning a direct borrow of a local is lowered to an out-parameter move.
-			return
-		}
-		b.reportBorrowError(expr.Loc(), fmt.Sprintf("cannot return reference to local '%s'", base.Name), nil, nil)
+		return expr
 	}
 }
 
@@ -1375,4 +1414,241 @@ func isReferenceSymbol(sym *symbols.Symbol) bool {
 		return false
 	}
 	return isReferenceType(sym.Type)
+}
+
+func (b *borrowChecker) updateLocalRefSymbol(name *hir.Ident, expr hir.Expr, allowClear bool) {
+	if name == nil || name.Symbol == nil || expr == nil {
+		return
+	}
+	use, ok := b.localRefInExpr(expr)
+	if ok {
+		b.localRefs[name.Symbol] = use
+		return
+	}
+	if allowClear {
+		delete(b.localRefs, name.Symbol)
+	}
+}
+
+func (b *borrowChecker) updateLocalRefForAssign(lhs hir.Expr, rhs hir.Expr, allowClear bool) {
+	if lhs == nil || rhs == nil {
+		return
+	}
+	use, ok := b.localRefInExpr(rhs)
+	if ident := directIdent(lhs); ident != nil && ident.Symbol != nil {
+		if ok {
+			b.localRefs[ident.Symbol] = use
+			return
+		}
+		if allowClear {
+			delete(b.localRefs, ident.Symbol)
+		}
+		return
+	}
+	if !ok {
+		return
+	}
+	place, _ := b.borrowAccessPlace(lhs)
+	if place.base == nil {
+		return
+	}
+	b.localRefs[place.base] = use
+}
+
+func (b *borrowChecker) localRefInExpr(expr hir.Expr) (localRefUse, bool) {
+	if expr == nil {
+		return localRefUse{}, false
+	}
+	if kv, ok := expr.(*hir.KeyValueExpr); ok {
+		if use, ok := b.localRefInExpr(kv.Key); ok {
+			return use, true
+		}
+		return b.localRefInExpr(kv.Value)
+	}
+	if !typeContainsReference(exprType(expr)) {
+		return localRefUse{}, false
+	}
+
+	switch e := expr.(type) {
+	case *hir.Ident:
+		return b.localRefFromIdent(e)
+	case *hir.UnaryExpr:
+		if isBorrowOp(e.Op.Kind) {
+			return b.localRefFromBorrow(e)
+		}
+		if isMoveOp(e.Op.Kind) {
+			return b.localRefInExpr(e.X)
+		}
+		return b.localRefInExpr(e.X)
+	case *hir.DerefExpr:
+		return b.localRefInExpr(e.X)
+	case *hir.OptionalNone:
+		return localRefUse{}, false
+	case *hir.OptionalSome:
+		return b.localRefInExpr(e.Value)
+	case *hir.OptionalUnwrap:
+		if use, ok := b.localRefInExpr(e.Value); ok {
+			return use, true
+		}
+		return b.localRefInExpr(e.Default)
+	case *hir.ResultOk:
+		return b.localRefInExpr(e.Value)
+	case *hir.ResultErr:
+		return b.localRefInExpr(e.Value)
+	case *hir.ResultUnwrap:
+		if use, ok := b.localRefInExpr(e.Value); ok {
+			return use, true
+		}
+		if e.Catch != nil {
+			if use, ok := b.localRefInExpr(e.Catch.Fallback); ok {
+				return use, true
+			}
+		}
+		return localRefUse{}, false
+	case *hir.BinaryExpr:
+		if use, ok := b.localRefInExpr(e.X); ok {
+			return use, true
+		}
+		return b.localRefInExpr(e.Y)
+	case *hir.CoalescingExpr:
+		if use, ok := b.localRefInExpr(e.Cond); ok {
+			return use, true
+		}
+		return b.localRefInExpr(e.Default)
+	case *hir.CastExpr:
+		return b.localRefInExpr(e.X)
+	case *hir.CallExpr:
+		for _, arg := range e.Args {
+			if use, ok := b.localRefInExpr(arg); ok {
+				return use, true
+			}
+		}
+		return localRefUse{}, false
+	case *hir.IndexExpr:
+		return b.localRefInExpr(e.X)
+	case *hir.SelectorExpr:
+		return b.localRefInExpr(e.X)
+	case *hir.CompositeLit:
+		for _, elt := range e.Elts {
+			if use, ok := b.localRefInExpr(elt); ok {
+				return use, true
+			}
+		}
+		return localRefUse{}, false
+	case *hir.ArrayLenExpr:
+		return b.localRefInExpr(e.X)
+	case *hir.StringLenExpr:
+		return b.localRefInExpr(e.X)
+	case *hir.MapIterInitExpr:
+		return b.localRefInExpr(e.Map)
+	case *hir.MapIterNextExpr:
+		if use, ok := b.localRefInExpr(e.Map); ok {
+			return use, true
+		}
+		return b.localRefInExpr(e.Iter)
+	case *hir.ScopeResolutionExpr:
+		return b.localRefInExpr(e.X)
+	case *hir.RangeExpr:
+		if use, ok := b.localRefInExpr(e.Start); ok {
+			return use, true
+		}
+		if use, ok := b.localRefInExpr(e.End); ok {
+			return use, true
+		}
+		return b.localRefInExpr(e.Incr)
+	case *hir.ParenExpr:
+		return b.localRefInExpr(e.X)
+	}
+
+	return localRefUse{}, false
+}
+
+func (b *borrowChecker) localRefFromIdent(ident *hir.Ident) (localRefUse, bool) {
+	if ident == nil || ident.Symbol == nil {
+		return localRefUse{}, false
+	}
+	if use, ok := b.localRefs[ident.Symbol]; ok {
+		return use, true
+	}
+	if isReferenceSymbol(ident.Symbol) {
+		if binding, ok := b.bindings[ident.Symbol]; ok && binding.place.base != nil {
+			if b.isLocalBorrowBase(binding.place.base) {
+				return localRefUse{base: binding.place.base, loc: binding.loc}, true
+			}
+		}
+	}
+	return localRefUse{}, false
+}
+
+func (b *borrowChecker) localRefFromBorrow(expr *hir.UnaryExpr) (localRefUse, bool) {
+	if expr == nil {
+		return localRefUse{}, false
+	}
+	place, _ := b.borrowAccessPlace(expr.X)
+	if place.base == nil {
+		return localRefUse{}, false
+	}
+	if b.isLocalBorrowBase(place.base) {
+		return localRefUse{base: place.base, loc: expr.Loc()}, true
+	}
+	return localRefUse{}, false
+}
+
+func (b *borrowChecker) isLocalBorrowBase(sym *symbols.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	if _, ok := b.locals[sym]; ok {
+		return true
+	}
+	switch sym.Kind {
+	case symbols.SymbolParameter, symbols.SymbolReceiver:
+		return !isReferenceType(sym.Type)
+	default:
+		return false
+	}
+}
+
+func typeContainsReference(t types.SemType) bool {
+	if t == nil {
+		return false
+	}
+	t = types.UnwrapType(t)
+	switch tt := t.(type) {
+	case *types.ReferenceType:
+		return true
+	case *types.OptionalType:
+		return typeContainsReference(tt.Inner)
+	case *types.ResultType:
+		return typeContainsReference(tt.Ok) || typeContainsReference(tt.Err)
+	case *types.ArrayType:
+		return typeContainsReference(tt.Element)
+	case *types.MapType:
+		return typeContainsReference(tt.Key) || typeContainsReference(tt.Value)
+	case *types.StructType:
+		for _, field := range tt.Fields {
+			if typeContainsReference(field.Type) {
+				return true
+			}
+		}
+		return false
+	case *types.UnionType:
+		for _, variant := range tt.Variants {
+			if typeContainsReference(variant) {
+				return true
+			}
+		}
+		return false
+	case *types.EnumType:
+		for _, variant := range tt.Variants {
+			if variant.Type != nil && typeContainsReference(variant.Type) {
+				return true
+			}
+		}
+		return false
+	case *types.InterfaceType:
+		return true
+	default:
+		return false
+	}
 }

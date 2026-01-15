@@ -162,6 +162,37 @@ ferret_map_t* ferret_map_from_pairs(
     return map;
 }
 
+ferret_map_t* ferret_map_clone(const ferret_map_t* src) {
+    if (src == NULL) {
+        return NULL;
+    }
+
+    ferret_map_t* map = ferret_map_new(src->key_size, src->value_size, src->hash_fn, src->equals_fn);
+    if (map == NULL) {
+        return NULL;
+    }
+
+    if (src->bucket_count > map->bucket_count) {
+        if (!ferret_map_resize(map, src->bucket_count)) {
+            ferret_map_destroy(map);
+            return NULL;
+        }
+    }
+
+    for (size_t i = 0; i < src->bucket_count; i++) {
+        ferret_map_entry_t* entry = src->buckets[i];
+        while (entry != NULL) {
+            if (!ferret_map_set(map, entry->key, entry->value)) {
+                ferret_map_destroy(map);
+                return NULL;
+            }
+            entry = entry->next;
+        }
+    }
+
+    return map;
+}
+
 
 // Macro to generate typed map constructors and from_pairs functions
 #define FERRET_MAP_TYPED_CONSTRUCTOR(suffix, hash_fn, equals_fn) \

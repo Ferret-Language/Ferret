@@ -1,11 +1,4 @@
-import "std/io";
-
 fn MakeRef() -> &i32 {
     let a := 10;
-    return &a; // allowed: direct borrow of local is lowered to out-param move
-}
-
-fn main() {
-    let r: &i32 = MakeRef();
-    io::Println(*r); // expected output: 10
+    return &a; // expected error: cannot return reference to local 'a'
 }
