@@ -2582,25 +2582,31 @@ func checkHeapExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	if operandType == nil || operandType.Equals(types.TypeUnknown) {
 		return
 	}
-	if heapLiteralExpr(expr.X) == nil {
-		return
-	}
 	operandType = types.UnwrapType(operandType)
 	if arr, ok := operandType.(*types.ArrayType); ok && arr.Length < 0 {
 		ctx.Diagnostics.Add(
-			diagnostics.NewError("cannot heap allocate dynamic array literal").
+			diagnostics.NewError("cannot heap allocate dynamic array").
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(expr.Loc(), "dynamic arrays are already heap-allocated").
-				WithHelp("remove '#' from the literal"),
+				WithHelp("remove '#' from the value"),
 		)
 		return
 	}
 	if _, ok := operandType.(*types.MapType); ok {
 		ctx.Diagnostics.Add(
-			diagnostics.NewError("cannot heap allocate map literal").
+			diagnostics.NewError("cannot heap allocate map").
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(expr.Loc(), "maps are already heap-allocated").
-				WithHelp("remove '#' from the literal"),
+				WithHelp("remove '#' from the value"),
+		)
+		return
+	}
+	if prim, ok := operandType.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot heap allocate string").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "strings are already heap-allocated").
+				WithHelp("remove '#' from the value"),
 		)
 	}
 }

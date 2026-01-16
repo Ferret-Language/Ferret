@@ -36,9 +36,7 @@ func inferBuiltinCallType(name string) types.SemType {
 		return types.TypeI32
 	case "append":
 		return types.TypeBool
-	case "addr":
-		return types.TypeU64
-	case "addr_heap":
+	case "self_addr", "addr", "heap_addr":
 		return types.TypeU64
 	default:
 		return types.TypeUnknown
@@ -54,10 +52,12 @@ func checkBuiltinCallExpr(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 		checkBuiltinLen(ctx, mod, expr)
 	case "append":
 		checkBuiltinAppend(ctx, mod, expr)
+	case "self_addr":
+		checkBuiltinSelfAddr(ctx, mod, expr)
 	case "addr":
 		checkBuiltinAddr(ctx, mod, expr)
-	case "addr_heap":
-		checkBuiltinAddrHeap(ctx, mod, expr)
+	case "heap_addr":
+		checkBuiltinHeapAddr(ctx, mod, expr)
 	default:
 		return
 	}
@@ -229,7 +229,7 @@ func checkBuiltinAddr(ctx *context_v2.CompilerContext, mod *context_v2.Module, e
 	reportBuiltinInvalidCatch(ctx, mod, expr, types.TypeU64)
 }
 
-func checkBuiltinAddrHeap(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr) {
+func checkBuiltinSelfAddr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr) {
 	argCount := len(expr.Args)
 	if argCount != 1 {
 		ctx.Diagnostics.Add(
@@ -245,7 +245,37 @@ func checkBuiltinAddrHeap(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 	argType := checkExpr(ctx, mod, arg, types.TypeUnknown)
 	if argType != nil && !argType.Equals(types.TypeUnknown) && !isReferenceType(argType) {
 		ctx.Diagnostics.Add(
-			diagnostics.NewError("addr_heap expects a reference").
+			diagnostics.NewError("self_addr expects a reference").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(arg.Loc(), "expected a reference value").
+				WithHelp("use '&' to pass a reference"),
+		)
+	}
+
+	for i := 1; i < argCount; i++ {
+		checkExpr(ctx, mod, expr.Args[i], types.TypeUnknown)
+	}
+
+	reportBuiltinInvalidCatch(ctx, mod, expr, types.TypeU64)
+}
+
+func checkBuiltinHeapAddr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr) {
+	argCount := len(expr.Args)
+	if argCount != 1 {
+		ctx.Diagnostics.Add(
+			diagnostics.WrongArgumentCount(mod.FilePath, expr.Loc(), 1, argCount),
+		)
+	}
+	if argCount == 0 {
+		reportBuiltinInvalidCatch(ctx, mod, expr, types.TypeU64)
+		return
+	}
+
+	arg := expr.Args[0]
+	argType := checkExpr(ctx, mod, arg, types.TypeUnknown)
+	if argType != nil && !argType.Equals(types.TypeUnknown) && !isReferenceType(argType) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("heap_addr expects a reference").
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(arg.Loc(), "expected a reference value").
 				WithHelp("use '&' to pass a reference"),

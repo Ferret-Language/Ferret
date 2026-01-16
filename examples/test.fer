@@ -4,13 +4,13 @@ fn test_heap_box() {
     let h := #123;
 
     let stack_before := addr(&h);
-    let heap_before := addr_heap(&h);
+    let heap_before := heap_addr(&h);
 
     let moved: i32;
     moved = @h;
 
     let stack_after := addr(&moved);
-    let heap_after := addr_heap(&moved);
+    let heap_after := heap_addr(&moved);
 
     io::Println("box stack_changed", stack_before != stack_after);
     io::Println("box heap_same", heap_before != 0 && heap_before == heap_after);
@@ -24,21 +24,21 @@ fn test_array() {
     let arr: []i32 = [1, 2, 3];
 
     let stack_before := addr(&arr);
-    let heap_before := addr_heap(&arr);
+    let heap_before := heap_addr(&arr);
 
     let moved := @arr;
 
     let stack_after := addr(&moved);
-    let heap_after := addr_heap(&moved);
+    let heap_after := heap_addr(&moved);
 
     io::Println("arr stack_changed", stack_before != stack_after);
     io::Println("arr heap_same", heap_before != 0 && heap_before == heap_after);
 
     // copy test (deep copy should change heap backing)
     let a2: []i32 = [4, 5, 6];
-    let heap_a2 := addr_heap(&a2);
+    let heap_a2 := heap_addr(&a2);
     let copy := a2;
-    let heap_copy := addr_heap(&copy);
+    let heap_copy := heap_addr(&copy);
     io::Println("arr copy_heap_diff", heap_a2 != 0 && heap_copy != 0 && heap_a2 != heap_copy);
 }
 
@@ -46,26 +46,26 @@ fn test_map() {
     let m := { "a" => 1, "b" => 2 } as map[str]i32;
 
     let stack_before := addr(&m);
-    let heap_before := addr_heap(&m);
+    let heap_before := heap_addr(&m);
 
     let moved := @m;
 
     let stack_after := addr(&moved);
-    let heap_after := addr_heap(&moved);
+    let heap_after := heap_addr(&moved);
 
     io::Println("map stack_changed", stack_before != stack_after);
     io::Println("map heap_same", heap_before != 0 && heap_before == heap_after);
 
     // copy test (deep copy should change heap backing)
     let m2 := { "x" => 9 } as map[str]i32;
-    let heap_m2 := addr_heap(&m2);
+    let heap_m2 := heap_addr(&m2);
     let copy := m2;
-    let heap_copy := addr_heap(&copy);
+    let heap_copy := heap_addr(&copy);
     io::Println("map copy_heap_diff", heap_m2 != 0 && heap_copy != 0 && heap_m2 != heap_copy);
 }
 
 fn main() {
-    io::Println("=== addr/addr_heap move verification ===");
+    io::Println("=== addr/heap_addr move verification ===");
     test_heap_box();
     test_array();
     test_map();

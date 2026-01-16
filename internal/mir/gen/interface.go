@@ -206,20 +206,17 @@ func (g *Generator) buildInterfaceWrapper(wrapperName, target string, ifaceMetho
 	}
 
 	selfParam := g.newParam("__self", types.NewReference(types.TypeU8), loc)
-	fn.Params = append(fn.Params, selfParam)
-	for _, param := range ifaceMethod.FuncType.Params {
-		paramType := param.Type
-		if needsByRefType(paramType) {
-			paramType = types.NewReference(paramType)
-		}
-		fn.Params = append(fn.Params, g.newParam(param.Name, paramType, loc))
-	}
+	selfHeapParam := g.newParam(selfHeapParamName, types.TypeU64, loc)
+	fn.Params = append(fn.Params, selfParam, selfHeapParam)
+	origParams := g.lowerParams(ifaceMethod.FuncType)
+	fn.Params = append(fn.Params, origParams...)
 
 	g.applyRefReturnABI(fn, retType, loc, false)
 	g.applyLargeReturnABI(fn, retType, loc)
 
 	retParam := mir.InvalidValue
 	outParam := mir.InvalidValue
+	outHeapParam := mir.InvalidValue
 	for _, p := range fn.Params {
 		if p.Name == "__ret" {
 			retParam = p.ID
@@ -227,6 +224,9 @@ func (g *Generator) buildInterfaceWrapper(wrapperName, target string, ifaceMetho
 		}
 		if p.Name == "__out" {
 			outParam = p.ID
+		}
+		if p.Name == outHeapParamName {
+			outHeapParam = p.ID
 		}
 	}
 
@@ -238,6 +238,10 @@ func (g *Generator) buildInterfaceWrapper(wrapperName, target string, ifaceMetho
 
 	recvType := methodInfo.Receiver
 	recvParamType := recvType
+	recvIsRef := false
+	if _, ok := types.UnwrapType(recvType).(*types.ReferenceType); ok {
+		recvIsRef = true
+	}
 	if needsByRefType(recvParamType) {
 		recvParamType = types.NewReference(recvParamType)
 	}
@@ -271,14 +275,21 @@ func (g *Generator) buildInterfaceWrapper(wrapperName, target string, ifaceMetho
 	}
 
 	callArgs := []mir.ValueID{recvVal}
+	if recvIsRef {
+		callArgs = append(callArgs, selfHeapParam.ID)
+	}
 	for _, p := range fn.Params {
-		if p.Name == "__self" || p.Name == "__ret" || p.Name == "__out" {
+		if p.Name == "__self" || p.Name == selfHeapParamName || p.Name == "__ret" || p.Name == "__out" || p.Name == outHeapParamName {
 			continue
 		}
 		callArgs = append(callArgs, p.ID)
 	}
 	if outParam != mir.InvalidValue {
-		callArgs = append([]mir.ValueID{outParam}, callArgs...)
+		if outHeapParam != mir.InvalidValue {
+			callArgs = append([]mir.ValueID{outParam, outHeapParam}, callArgs...)
+		} else {
+			callArgs = append([]mir.ValueID{outParam}, callArgs...)
+		}
 	}
 
 	call := &mir.Call{

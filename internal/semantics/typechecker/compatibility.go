@@ -250,6 +250,11 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 			return Incompatible
 		}
 	}
+	if _, ok := types.UnwrapType(source).(*types.ReferenceType); ok {
+		if _, ok := types.UnwrapType(target).(*types.ReferenceType); !ok {
+			return Incompatible
+		}
+	}
 	if _, ok := types.UnwrapType(target).(*types.ReferenceType); ok {
 		return Incompatible
 	}

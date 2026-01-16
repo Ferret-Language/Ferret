@@ -4,17 +4,17 @@ import "std/io";
 fn main() {
     let a := #10;
     let addr_a := addr(&a);
-    let haddr_a := addr_heap(&a);
+    let haddr_a := heap_addr(&a);
     
     let b := @a;
     io::Println(a);  
     let addr_b := addr(&b);
-    let haddr_b := addr_heap(&b);
+    let haddr_b := heap_addr(&b);
 
     a = 100;
     
     let naddr_a := addr(&a);
-    let nhaddr_a := addr_heap(&a);
+    let nhaddr_a := heap_addr(&a);
 
     io::Println("Address of a:", addr_a);
     io::Println("Address of b:", addr_b);

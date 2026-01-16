@@ -4,7 +4,7 @@ import "std/io";
 // Helpers
 // ------------------------------------------------------------
 fn print_addrs(tag: str, x: &i32) {
-    io::Println(tag, " stack=", addr(x), " heap=", addr_heap(x));
+    io::Println(tag, " stack=", addr(x), " heap=", heap_addr(x));
 }
 
 fn main() {
@@ -14,18 +14,18 @@ fn main() {
     let a := #10;
 
     let addr_a0 := addr(&a);
-    let haddr_a0 := addr_heap(&a);
+    let haddr_a0 := heap_addr(&a);
 
     let b := @a;
 
     let addr_b0 := addr(&b);
-    let haddr_b0 := addr_heap(&b);
+    let haddr_b0 := heap_addr(&b);
 
     // Reinitialize a
     a = 100;
 
     let addr_a1 := addr(&a);
-    let haddr_a1 := addr_heap(&a);
+    let haddr_a1 := heap_addr(&a);
 
     io::Println("---- baseline ----");
     io::Println("a stack:", addr_a0, "->", addr_a1);
@@ -36,8 +36,8 @@ fn main() {
 
     // Expected:
     // - addr(&a) same before/after reinit
-    // - addr_heap(&b) == old addr_heap(&a)
-    // - addr_heap(&a) after reinit != old
+    // - heap_addr(&b) == old heap_addr(&a)
+    // - heap_addr(&a) after reinit != old
     // - values "100 10"
 
 
@@ -65,7 +65,7 @@ fn main() {
     
     // let x := #10;
     // let y := @x;
-    // io::Println(addr_heap(&x)); // should error, not print 0 or stale ptr
+    // io::Println(heap_addr(&x)); // should error, not print 0 or stale ptr
     
 
     // ============================================================
@@ -82,7 +82,7 @@ fn main() {
         // After reinit, these should compile:
         io::Println("---- reinit clears moved ----");
         io::Println(x, y);
-        io::Println("x heap:", addr_heap(&x), " y heap:", addr_heap(&y));
+        io::Println("x heap:", heap_addr(&x), " y heap:", heap_addr(&y));
 
         // Expected:
         // - prints "88 77"
@@ -100,8 +100,8 @@ fn main() {
     // let y := x; // should FAIL if owning move-only; or deep-copy if allowed
 
     // io::Println("---- copy semantics ----");
-    // io::Println("x heap:", addr_heap(&x));
-    // io::Println("y heap:", addr_heap(&y));
+    // io::Println("x heap:", heap_addr(&x));
+    // io::Println("y heap:", heap_addr(&y));
     // io::Println(x, y);
 
     // // If this compiles and y is a shallow copy, then modifying x should not modify y.
@@ -117,7 +117,7 @@ fn main() {
     let x := # { .X = 11, .Y = 89 };
     let y := #x;         // if this is allowed as shallow copy, you're in trouble
     x.X = 24;
-    io::Println(addr_heap(&x), addr_heap(&y)); // should NOT be equal for owning types
+    io::Println(heap_addr(&x), heap_addr(&y)); // should NOT be equal for owning types
     
     io::Println(x.X, y.X);
     

@@ -10,6 +10,8 @@ fn append(values: &mut []interface {}, value: interface {}) -> bool;
 // @extern
 fn addr(value: &interface {}) -> u64;
 // @extern
-fn addr_heap(value: &interface {}) -> u64;
+fn self_addr(value: &interface {}) -> u64;
+// @extern
+fn heap_addr(value: &interface {}) -> u64;
 // @extern
 fn panic(msg: str) -> void;

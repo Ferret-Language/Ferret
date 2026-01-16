@@ -32,25 +32,25 @@ fn move_map_param(m: map[str]i32) -> i32 {
 
 fn move_heap_addr() -> bool {
     let h := #123;
-    let before := addr_heap(&h);
+    let before := heap_addr(&h);
     let moved := @h;
-    let after := addr_heap(&moved);
+    let after := heap_addr(&moved);
     return before != 0 && before == after;
 }
 
 fn move_array_addr() -> bool {
     let arr: []i32 = [1, 2, 3];
-    let before := addr_heap(&arr);
+    let before := heap_addr(&arr);
     let moved := @arr;
-    let after := addr_heap(&moved);
+    let after := heap_addr(&moved);
     return before != 0 && before == after;
 }
 
 fn move_map_addr() -> bool {
     let m := { "a" => 1 } as map[str]i32;
-    let before := addr_heap(&m);
+    let before := heap_addr(&m);
     let moved := @m;
-    let after := addr_heap(&moved);
+    let after := heap_addr(&moved);
     return before != 0 && before == after;
 }
 
@@ -70,8 +70,8 @@ fn main() {
 
     let h := #99;
     io::Println("heap_ne_stack", addr(&h) != addr(&x));
-    io::Println("heap_zero_stack", addr_heap(&x) == 0);
-    io::Println("heap_nonzero_heap", addr_heap(&h) != 0);
+    io::Println("heap_zero_stack", heap_addr(&x) == 0);
+    io::Println("heap_nonzero_heap", heap_addr(&h) != 0);
 
     let a := [1, 2, 3];
     let b := a;
@@ -79,7 +79,7 @@ fn main() {
 
     let m := { "a" => 1, "b" => 2 } as map[str]i32;
     let n := m;
-    io::Println("map_copy", addr_heap(&m) != addr_heap(&n));
+    io::Println("map_copy", heap_addr(&m) != heap_addr(&n));
 
     let p := 41;
     io::Println("move_param", move_param(@p) == 42);
