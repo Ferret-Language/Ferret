@@ -37,7 +37,6 @@ type functionBuilder struct {
 	captures        map[*symbols.Symbol]captureInfo
 	boxed           map[*symbols.Symbol]mir.ValueID
 	bindings        map[*symbols.Symbol]mir.ValueID
-	refHeap         map[mir.ValueID]mir.ValueID
 	refHeapSlots    map[*symbols.Symbol]mir.ValueID
 	tempRefHeap     map[*hir.Ident]mir.ValueID
 	entry           *mir.Block
@@ -67,7 +66,6 @@ func newFunctionBuilder(gen *Generator, fn *mir.Function) *functionBuilder {
 		captures:        nil,
 		boxed:           make(map[*symbols.Symbol]mir.ValueID),
 		bindings:        make(map[*symbols.Symbol]mir.ValueID),
-		refHeap:         make(map[mir.ValueID]mir.ValueID),
 		refHeapSlots:    make(map[*symbols.Symbol]mir.ValueID),
 		tempRefHeap:     make(map[*hir.Ident]mir.ValueID),
 	}
@@ -81,30 +79,20 @@ func (b *functionBuilder) buildFuncBody(body *hir.Block) {
 	// Push function-level defer scope
 	b.pushDeferScope()
 
-	lastRefParam := mir.InvalidValue
 	for _, param := range b.fn.Params {
 		if param.Name == outHeapParamName {
 			b.refOutHeapParam = param.ID
 			b.ptrElem[b.refOutHeapParam] = types.TypeU64
-			lastRefParam = mir.InvalidValue
 			continue
 		}
 		if isRefHeapParamName(param.Name) {
-			if lastRefParam != mir.InvalidValue {
-				b.refHeap[lastRefParam] = param.ID
-			}
-			lastRefParam = mir.InvalidValue
+			// The refHeap cache is removed.
 			continue
 		}
 
 		if param.Name != "" {
 			b.paramsByName[param.Name] = param.ID
 			b.paramTypes[param.Name] = param.Type
-		}
-		if _, ok := types.UnwrapType(param.Type).(*types.ReferenceType); ok && param.Name != "__ret" {
-			lastRefParam = param.ID
-		} else {
-			lastRefParam = mir.InvalidValue
 		}
 		if param.Name == "__ret" {
 			b.retParam = param.ID
@@ -2287,10 +2275,7 @@ func (b *functionBuilder) lowerInterfaceMethodCall(selector *hir.SelectorExpr, c
 	ptrType := types.NewReference(types.TypeU8)
 	dataSlot := b.emitPtrAdd(ifaceVal, 0, ptrType, call.Location)
 	dataPtr := b.emitLoad(dataSlot, ptrType, call.Location)
-	selfHeap := b.refHeapValue(ifaceVal)
-	if selfHeap == mir.InvalidValue {
-		selfHeap = b.emitConst(types.TypeU64, "0", call.Location)
-	}
+	selfHeap := b.heapFromValue(ifaceVal, b.exprType(selector.X), call.Location)
 	vtSlot := b.emitPtrAdd(ifaceVal, b.gen.layout.PointerSize, ptrType, call.Location)
 	vtPtr := b.emitLoad(vtSlot, ptrType, call.Location)
 
@@ -2377,7 +2362,6 @@ func (b *functionBuilder) boxInterfaceValue(value mir.ValueID, valueType, ifaceT
 	if heapPtr == mir.InvalidValue {
 		heapPtr = b.zeroU64(loc)
 	}
-	b.setRefHeapValue(ifaceAddr, heapPtr)
 
 	return ifaceAddr
 }
@@ -2817,23 +2801,6 @@ func (b *functionBuilder) bindingAddr(ident *hir.Ident) mir.ValueID {
 	return b.addrForIdent(ident)
 }
 
-func (b *functionBuilder) setRefHeapValue(val, heap mir.ValueID) {
-	if val == mir.InvalidValue || heap == mir.InvalidValue {
-		return
-	}
-	b.refHeap[val] = heap
-}
-
-func (b *functionBuilder) refHeapValue(val mir.ValueID) mir.ValueID {
-	if val == mir.InvalidValue || b.refHeap == nil {
-		return mir.InvalidValue
-	}
-	if heap, ok := b.refHeap[val]; ok {
-		return heap
-	}
-	return mir.InvalidValue
-}
-
 func (b *functionBuilder) zeroU64(loc source.Location) mir.ValueID {
 	return b.emitConst(types.TypeU64, "0", loc)
 }
@@ -2870,17 +2837,7 @@ func (b *functionBuilder) storeRefHeapForIdent(ident *hir.Ident, heap mir.ValueI
 }
 
 func (b *functionBuilder) storeRefHeapForValue(ident *hir.Ident, val mir.ValueID, loc source.Location) {
-	if ident == nil || val == mir.InvalidValue {
-		return
-	}
-	if _, ok := types.UnwrapType(ident.Type).(*types.ReferenceType); !ok {
-		return
-	}
-	heap := b.refHeapValue(val)
-	if heap == mir.InvalidValue {
-		heap = b.zeroU64(loc)
-	}
-	b.storeRefHeapForIdent(ident, heap, loc)
+	// This function is a no-op after the removal of the refHeap cache.
 }
 
 func (b *functionBuilder) loadRefHeapForIdent(ident *hir.Ident, loc source.Location) mir.ValueID {
@@ -2899,34 +2856,13 @@ func (b *functionBuilder) loadRefHeapForIdent(ident *hir.Ident, loc source.Locat
 }
 
 func (b *functionBuilder) maybeAttachRefHeap(val mir.ValueID, ident *hir.Ident, loc source.Location) mir.ValueID {
-	if val == mir.InvalidValue || ident == nil {
-		return val
-	}
-	if _, ok := types.UnwrapType(ident.Type).(*types.ReferenceType); !ok {
-		return val
-	}
-	heap := b.refHeapValue(val)
-	if heap == mir.InvalidValue {
-		heap = b.loadRefHeapForIdent(ident, loc)
-	}
-	if heap != mir.InvalidValue {
-		b.setRefHeapValue(val, heap)
-	}
+	// This function is a no-op after the removal of the refHeap cache.
 	return val
 }
 
 func (b *functionBuilder) attachRefHeapForBorrow(val mir.ValueID, expr hir.Expr, inner types.SemType, loc source.Location) mir.ValueID {
-	if val == mir.InvalidValue {
-		return val
-	}
-	if b.refHeapValue(val) != mir.InvalidValue && isDerefExpr(expr) {
-		return val
-	}
-	heap := b.computeBorrowHeap(expr, val, inner, loc)
-	if heap == mir.InvalidValue {
-		heap = b.zeroU64(loc)
-	}
-	b.setRefHeapValue(val, heap)
+	// Caching of heap pointers for references has been removed to prevent stale data.
+	// Heap addresses are now computed on-demand by computeBorrowHeap.
 	return val
 }
 
@@ -2945,9 +2881,6 @@ func isDerefExpr(expr hir.Expr) bool {
 func (b *functionBuilder) computeBorrowHeap(expr hir.Expr, val mir.ValueID, inner types.SemType, loc source.Location) mir.ValueID {
 	if val == mir.InvalidValue {
 		return mir.InvalidValue
-	}
-	if heap := b.refHeapValue(val); heap != mir.InvalidValue {
-		return heap
 	}
 	if inner == nil {
 		return b.zeroU64(loc)
@@ -2968,15 +2901,18 @@ func (b *functionBuilder) computeBorrowHeap(expr hir.Expr, val mir.ValueID, inne
 		loaded := b.emitLoad(val, inner, loc)
 		return b.emitCast(loaded, types.TypeU64, loc)
 	}
-	if b.isHeapLValue(expr) {
+	lval := expr
+	if unary, ok := expr.(*hir.UnaryExpr); ok && (unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN) {
+		lval = unary.X
+	}
+	if b.isHeapLValue(lval) {
 		return b.emitCast(val, types.TypeU64, loc)
 	}
 	if interfaceTypeOf(inner) != nil {
 		ifaceVal := b.emitLoad(val, inner, loc)
-		if heap := b.refHeapValue(ifaceVal); heap != mir.InvalidValue {
-			return heap
-		}
-		return b.zeroU64(loc)
+		// Get heap address from the interface data pointer
+		dataPtr := b.emitInterfaceDataPtr(ifaceVal, loc)
+		return b.emitCast(dataPtr, types.TypeU64, loc)
 	}
 	return b.zeroU64(loc)
 }
@@ -2996,10 +2932,9 @@ func (b *functionBuilder) heapFromValue(val mir.ValueID, typ types.SemType, loc 
 		return b.emitCast(val, types.TypeU64, loc)
 	}
 	if interfaceTypeOf(base) != nil {
-		if heap := b.refHeapValue(val); heap != mir.InvalidValue {
-			return heap
-		}
-		return b.zeroU64(loc)
+		// For interfaces, the heap address is the data pointer stored in the interface struct.
+		dataPtr := b.emitInterfaceDataPtr(val, loc)
+		return b.emitCast(dataPtr, types.TypeU64, loc)
 	}
 	return b.zeroU64(loc)
 }
@@ -3041,8 +2976,6 @@ func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.
 			Type:     retType,
 			Location: expr.Location,
 		})
-		heapVal := b.emitLoad(outHeap, types.TypeU64, expr.Location)
-		b.setRefHeapValue(result, heapVal)
 		if expr.Catch != nil {
 			b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
 		}
@@ -3115,8 +3048,6 @@ func (b *functionBuilder) emitCallIndirect(callee mir.ValueID, args []mir.ValueI
 			Type:     retType,
 			Location: expr.Location,
 		})
-		heapVal := b.emitLoad(outHeap, types.TypeU64, expr.Location)
-		b.setRefHeapValue(result, heapVal)
 		if expr.Catch != nil {
 			b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
 		}
@@ -3438,14 +3369,7 @@ func (b *functionBuilder) addrForIdent(ident *hir.Ident) mir.ValueID {
 					b.bindings[ident.Symbol] = addr
 				}
 				if _, ok := types.UnwrapType(paramType).(*types.ReferenceType); ok {
-					if heapVal := b.refHeapValue(val); heapVal != mir.InvalidValue {
-						heapSlot, ok := b.refHeapSlots[ident.Symbol]
-						if !ok {
-							heapSlot = b.emitAllocaInEntry(types.TypeU64, ident.Location)
-							b.refHeapSlots[ident.Symbol] = heapSlot
-						}
-						b.emitStoreInEntry(heapSlot, heapVal, ident.Location)
-					}
+					// Heap value for parameters is now handled by the ABI and call sites.
 				}
 				return addr
 			}
