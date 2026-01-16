@@ -65,7 +65,7 @@ func (g *Generator) GenerateModule(hirMod *hir.Module) *mir.Module {
 		return nil
 	}
 
-	g.collectHeapReturns(hirMod)
+	g.loadHeapReturns()
 
 	mirMod := &mir.Module{
 		ImportPath: g.mod.ImportPath,

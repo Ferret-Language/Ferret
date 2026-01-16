@@ -1894,6 +1894,13 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 			if args == nil {
 				return mir.InvalidValue
 			}
+			if heapRet, ok := b.heapReturnType(target); ok {
+				ptr := b.emitHeapReturnCall(target, append([]mir.ValueID{recv}, args...), heapRet, expr.Location)
+				if ptr == mir.InvalidValue {
+					return mir.InvalidValue
+				}
+				return b.emitLoad(ptr, heapRet, expr.Location)
+			}
 			return b.emitCall(target, append([]mir.ValueID{recv}, args...), expr)
 		}
 	}
