@@ -38,6 +38,7 @@ type Generator struct {
 	vtables       map[string]*mir.VTable
 	typeIDGlobals map[string]string // Maps type ID string to global name
 	typeIDSeq     int               // Counter for generating unique type ID global names
+	heapReturns   map[string]types.SemType
 }
 
 // New creates a new MIR generator for a module.
@@ -54,6 +55,7 @@ func New(ctx *context_v2.CompilerContext, mod *context_v2.Module) *Generator {
 		funcWraps:     make(map[string]string),
 		vtables:       make(map[string]*mir.VTable),
 		typeIDGlobals: make(map[string]string),
+		heapReturns:   make(map[string]types.SemType),
 	}
 }
 
@@ -62,6 +64,8 @@ func (g *Generator) GenerateModule(hirMod *hir.Module) *mir.Module {
 	if g == nil || g.mod == nil || hirMod == nil {
 		return nil
 	}
+
+	g.collectHeapReturns(hirMod)
 
 	mirMod := &mir.Module{
 		ImportPath: g.mod.ImportPath,
@@ -108,6 +112,9 @@ func (g *Generator) lowerFuncDecl(decl *hir.FuncDecl) *mir.Function {
 	}
 
 	retType := g.returnType(decl.Type)
+	if heapRet, ok := g.heapReturnType(decl.Name.Name); ok {
+		retType = types.NewReference(heapRet)
+	}
 	fn := &mir.Function{
 		Name:     decl.Name.Name,
 		Return:   retType,
@@ -115,7 +122,7 @@ func (g *Generator) lowerFuncDecl(decl *hir.FuncDecl) *mir.Function {
 	}
 
 	fn.Params = g.lowerParams(decl.Type)
-	g.applyRefReturnABI(fn, retType, decl.Location)
+	g.applyRefReturnABI(fn, retType, decl.Location, g.isHeapReturnFunc(fn.Name))
 	g.applyLargeReturnABI(fn, retType, decl.Location)
 	builder := newFunctionBuilder(g, fn)
 	builder.buildFuncBody(decl.Body)
@@ -129,8 +136,12 @@ func (g *Generator) lowerMethodDecl(decl *hir.MethodDecl) *mir.Function {
 	}
 
 	retType := g.returnType(decl.Type)
+	fnName := g.methodName(decl)
+	if heapRet, ok := g.heapReturnType(fnName); ok {
+		retType = types.NewReference(heapRet)
+	}
 	fn := &mir.Function{
-		Name:     g.methodName(decl),
+		Name:     fnName,
 		Return:   retType,
 		Location: decl.Location,
 	}
@@ -146,7 +157,7 @@ func (g *Generator) lowerMethodDecl(decl *hir.MethodDecl) *mir.Function {
 	}
 
 	fn.Params = append(fn.Params, g.lowerParams(decl.Type)...)
-	g.applyRefReturnABI(fn, retType, decl.Location)
+	g.applyRefReturnABI(fn, retType, decl.Location, g.isHeapReturnFunc(fn.Name))
 	g.applyLargeReturnABI(fn, retType, decl.Location)
 	builder := newFunctionBuilder(g, fn)
 	builder.buildFuncBody(decl.Body)
@@ -280,7 +291,7 @@ func (g *Generator) closureForFuncLit(lit *hir.FuncLit) *closureInfo {
 	envParam := g.newParam("__env", types.NewReference(envType), lit.Location)
 	fn.Params = append(fn.Params, envParam)
 	fn.Params = append(fn.Params, g.lowerParams(fnType)...)
-	g.applyRefReturnABI(fn, retType, lit.Location)
+	g.applyRefReturnABI(fn, retType, lit.Location, false)
 	g.applyLargeReturnABI(fn, retType, lit.Location)
 
 	builder := newFunctionBuilder(g, fn)
@@ -537,7 +548,7 @@ func (g *Generator) funcValueWrapper(name string, fnType *types.FunctionType, en
 	fn.Params = append(fn.Params, envParam)
 	origParams := g.lowerParams(fnType)
 	fn.Params = append(fn.Params, origParams...)
-	g.applyRefReturnABI(fn, retType, loc)
+	g.applyRefReturnABI(fn, retType, loc, false)
 	g.applyLargeReturnABI(fn, retType, loc)
 
 	entry := &mir.Block{
@@ -612,8 +623,11 @@ func (g *Generator) applyLargeReturnABI(fn *mir.Function, retType types.SemType,
 	fn.Return = types.TypeVoid
 }
 
-func (g *Generator) applyRefReturnABI(fn *mir.Function, retType types.SemType, loc source.Location) {
+func (g *Generator) applyRefReturnABI(fn *mir.Function, retType types.SemType, loc source.Location, skip bool) {
 	if fn == nil {
+		return
+	}
+	if skip {
 		return
 	}
 	ref, ok := types.UnwrapType(retType).(*types.ReferenceType)

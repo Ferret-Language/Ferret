@@ -334,6 +334,28 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 		}
 	}
 
+	if item.Value != nil {
+		if call, ok := item.Value.(*hir.CallExpr); ok {
+			if heapRet, ok := b.isHeapReturnCall(call); ok {
+				heapAddr := b.lowerHeapReturnCall(call, heapRet, item.Name.Location)
+				if heapAddr != mir.InvalidValue {
+					if item.Name.Symbol != nil {
+						b.slots[item.Name.Symbol] = heapAddr
+						b.boxed[item.Name.Symbol] = heapAddr
+						if _, ok := b.bindings[item.Name.Symbol]; !ok {
+							bind := b.emitAlloca(types.NewReference(typ), item.Name.Location)
+							b.emitStore(bind, heapAddr, item.Name.Location)
+							b.bindings[item.Name.Symbol] = bind
+						}
+					} else {
+						b.tempSlots[item.Name] = heapAddr
+					}
+				}
+				return
+			}
+		}
+	}
+
 	addr := b.emitAlloca(typ, item.Name.Location)
 	if item.Name.Symbol != nil {
 		b.slots[item.Name.Symbol] = addr
@@ -445,6 +467,36 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 						b.resetHeapBinding(srcIdent, stmt.Location)
 						return
 					}
+				}
+			}
+		}
+	}
+
+	if stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN {
+		if call, ok := stmt.Rhs.(*hir.CallExpr); ok {
+			if heapRet, ok := b.isHeapReturnCall(call); ok {
+				if dstIdent, ok := stmt.Lhs.(*hir.Ident); ok && dstIdent.Symbol != nil {
+					heapAddr := b.lowerHeapReturnCall(call, heapRet, stmt.Location)
+					if heapAddr != mir.InvalidValue {
+						b.slots[dstIdent.Symbol] = heapAddr
+						b.boxed[dstIdent.Symbol] = heapAddr
+						if bind, ok := b.bindings[dstIdent.Symbol]; ok {
+							if elem, ok := b.ptrElem[bind]; ok {
+								if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
+									b.emitStore(bind, heapAddr, stmt.Location)
+								}
+							}
+						} else {
+							lhsType := b.exprType(stmt.Lhs)
+							if lhsType == nil {
+								lhsType = types.TypeUnknown
+							}
+							bind := b.emitAlloca(types.NewReference(lhsType), stmt.Location)
+							b.emitStore(bind, heapAddr, stmt.Location)
+							b.bindings[dstIdent.Symbol] = bind
+						}
+					}
+					return
 				}
 			}
 		}
@@ -622,6 +674,16 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		return
 	}
 
+	if heapRet, ok := b.heapReturnType(b.fn.Name); ok {
+		heapPtr := b.lowerHeapReturnValue(stmt.Result, heapRet, stmt.Location)
+		if heapPtr == mir.InvalidValue {
+			b.current.Term = &mir.Unreachable{Location: stmt.Location}
+			return
+		}
+		b.current.Term = &mir.Return{HasValue: true, Value: heapPtr, Location: stmt.Location}
+		return
+	}
+
 	resultType := b.exprType(stmt.Result)
 	retType := b.fn.Return
 	if b.retParam != mir.InvalidValue {
@@ -697,6 +759,36 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 	}
 
 	b.current.Term = &mir.Return{HasValue: true, Value: val, Location: stmt.Location}
+}
+
+func (b *functionBuilder) heapReturnType(name string) (types.SemType, bool) {
+	if b == nil || b.gen == nil {
+		return nil, false
+	}
+	return b.gen.heapReturnType(name)
+}
+
+func (b *functionBuilder) lowerHeapReturnValue(expr hir.Expr, inner types.SemType, loc source.Location) mir.ValueID {
+	expr = unwrapParenExpr(expr)
+	if expr == nil {
+		return mir.InvalidValue
+	}
+
+	if unary, ok := expr.(*hir.UnaryExpr); ok && unary.Op.Kind == tokens.AT_TOKEN {
+		if ident, ok := unary.X.(*hir.Ident); ok && b.isHeapLValue(ident) {
+			return b.addrForIdent(ident)
+		}
+	}
+
+	val := b.lowerExpr(expr)
+	if val == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	val = b.coerceValueForAssign(val, b.exprType(expr), inner, loc)
+	if val == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	return b.emitHeapAlloc(val, inner, loc)
 }
 
 func (b *functionBuilder) lowerIf(stmt *hir.IfStmt) {
@@ -1813,6 +1905,13 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 		if args == nil {
 			return mir.InvalidValue
 		}
+		if heapRet, ok := b.heapReturnType(target); ok {
+			ptr := b.emitHeapReturnCall(target, args, heapRet, expr.Location)
+			if ptr == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			return b.emitLoad(ptr, heapRet, expr.Location)
+		}
 		return b.emitCall(target, args, expr)
 	}
 
@@ -1892,6 +1991,65 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 		out = append(out, val)
 	}
 	return out
+}
+
+func (b *functionBuilder) isHeapReturnCall(call *hir.CallExpr) (types.SemType, bool) {
+	if call == nil {
+		return nil, false
+	}
+	if selector, ok := call.Fun.(*hir.SelectorExpr); ok {
+		if target, _, ok := b.methodCallTarget(selector); ok {
+			return b.heapReturnType(target)
+		}
+	}
+	if target, ok := b.callTarget(call.Fun); ok {
+		return b.heapReturnType(target)
+	}
+	return nil, false
+}
+
+func (b *functionBuilder) lowerHeapReturnCall(call *hir.CallExpr, inner types.SemType, loc source.Location) mir.ValueID {
+	if call == nil || inner == nil {
+		return mir.InvalidValue
+	}
+
+	fnType, _ := types.UnwrapType(b.exprType(call.Fun)).(*types.FunctionType)
+
+	if selector, ok := call.Fun.(*hir.SelectorExpr); ok {
+		if iface := interfaceTypeOf(b.exprType(selector.X)); iface != nil && len(iface.Methods) > 0 {
+			return mir.InvalidValue
+		}
+		if target, method, ok := b.methodCallTarget(selector); ok {
+			recv := b.methodReceiverArg(selector, method)
+			if recv == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			args := b.lowerCallArgs(call.Args, fnType, call.Location, false)
+			if args == nil {
+				return mir.InvalidValue
+			}
+			ptr := b.emitHeapReturnCall(target, append([]mir.ValueID{recv}, args...), inner, loc)
+			if ptr != mir.InvalidValue {
+				b.ptrElem[ptr] = inner
+			}
+			return ptr
+		}
+	}
+
+	if target, ok := b.callTarget(call.Fun); ok {
+		skipInterfaceBoxing := b.isStdIoPrintTarget(target)
+		args := b.lowerCallArgs(call.Args, fnType, call.Location, skipInterfaceBoxing)
+		if args == nil {
+			return mir.InvalidValue
+		}
+		ptr := b.emitHeapReturnCall(target, args, inner, loc)
+		if ptr != mir.InvalidValue {
+			b.ptrElem[ptr] = inner
+		}
+		return ptr
+	}
+
+	return mir.InvalidValue
 }
 
 func (b *functionBuilder) isStdIoPrintTarget(target string) bool {
@@ -2529,6 +2687,23 @@ func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.
 		b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
 	}
 
+	return result
+}
+
+func (b *functionBuilder) emitHeapReturnCall(target string, args []mir.ValueID, inner types.SemType, loc source.Location) mir.ValueID {
+	if target == "" || inner == nil {
+		return mir.InvalidValue
+	}
+	retType := types.NewReference(inner)
+	result := b.gen.nextValueID()
+	b.emitInstr(&mir.Call{
+		Result:   result,
+		Target:   target,
+		Args:     args,
+		Type:     retType,
+		Location: loc,
+	})
+	b.ptrElem[result] = inner
 	return result
 }
 

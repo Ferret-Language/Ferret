@@ -4,6 +4,12 @@ fn print_addrs(tag: str, x: &i32) {
     io::Println(tag, " stack =", addr(x), " heap =", addr_heap(x));
 }
 
+fn make() -> i32 {
+    let a := #10;
+    print_addrs("make: a", &a);
+    return @a;
+}
+
 fn main() {
     let a := #10;
     let b := #20;
@@ -24,4 +30,7 @@ fn main() {
     io::Println("a", " stack =", addr(&a), " heap =", addr_heap(&a));
     io::Println("b", " stack =", addr(&b), " heap =", addr_heap(&b));
     io::Println("c", " stack =", addr(&c), " heap =", addr_heap(&c));
+
+    let x := make();
+    print_addrs("x", &x);
 }

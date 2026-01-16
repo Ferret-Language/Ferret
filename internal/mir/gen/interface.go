@@ -215,7 +215,7 @@ func (g *Generator) buildInterfaceWrapper(wrapperName, target string, ifaceMetho
 		fn.Params = append(fn.Params, g.newParam(param.Name, paramType, loc))
 	}
 
-	g.applyRefReturnABI(fn, retType, loc)
+	g.applyRefReturnABI(fn, retType, loc, false)
 	g.applyLargeReturnABI(fn, retType, loc)
 
 	retParam := mir.InvalidValue
