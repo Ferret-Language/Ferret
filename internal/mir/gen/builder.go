@@ -2308,6 +2308,13 @@ func (b *functionBuilder) lowerBuiltinAddrCall(expr *hir.CallExpr) mir.ValueID {
 		}
 	}
 	if addr == mir.InvalidValue {
+		if ident, ok := arg.(*hir.Ident); ok && ident.Symbol != nil {
+			if _, ok := types.UnwrapType(ident.Symbol.Type).(*types.ReferenceType); ok {
+				addr = b.addrForIdent(ident)
+			}
+		}
+	}
+	if addr == mir.InvalidValue {
 		addr = b.lowerExpr(arg)
 	}
 	if addr == mir.InvalidValue {
@@ -2343,6 +2350,9 @@ func (b *functionBuilder) lowerBuiltinAddrHeapCall(expr *hir.CallExpr) mir.Value
 	if _, ok := mapValueType(inner); ok {
 		heapPtr := b.emitLoad(refVal, inner, expr.Location)
 		return b.emitCast(heapPtr, types.TypeU64, expr.Location)
+	}
+	if _, ok := arg.(*hir.Ident); ok {
+		return b.emitCast(refVal, types.TypeU64, expr.Location)
 	}
 	if b.isHeapBorrowArg(arg) {
 		return b.emitCast(refVal, types.TypeU64, expr.Location)
