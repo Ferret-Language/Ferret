@@ -3,6 +3,7 @@ package lexer
 import (
 	"fmt"
 	"regexp"
+	"strings"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/source"
@@ -150,8 +151,12 @@ func numberHandler(lex *Lexer, regex *regexp.Regexp) {
 	start := lex.Position
 	lex.advance(match)
 	end := lex.Position
-	//find the number is a float or an integer
-	lex.push(tokens.NewToken(tokens.NUMBER_TOKEN, match, start, end))
+
+	// Remove underscores for the parser, but preserve the base prefix (0x, 0b, 0o)
+	// and scientific notation. The parser and type checker will handle the full string.
+	tokenValue := strings.ReplaceAll(match, "_", "")
+
+	lex.push(tokens.NewToken(tokens.NUMBER_TOKEN, tokenValue, start, end))
 }
 
 func stringHandler(lex *Lexer, regex *regexp.Regexp) {

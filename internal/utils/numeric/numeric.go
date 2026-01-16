@@ -26,8 +26,8 @@ const (
 	FloatExp    = `[eE][+-]?` + DecDigits + `(?:` + DecDigits + `|_` + DecDigits + `)*`
 	FloatNumber = DecNumber + `(?:` + FloatFrac + `)?(?:` + FloatExp + `)?`
 
-	// Complete number pattern for tokenizing (includes optional minus sign)
-	NumberPattern = `-?(?:` + HexNumber + `|` + OctNumber + `|` + BinNumber + `|` + FloatNumber + `)`
+	// Complete number pattern for tokenizing (does not include sign)
+	NumberPattern = `(?:` + HexNumber + `|` + OctNumber + `|` + BinNumber + `|` + FloatNumber + `)`
 )
 
 var (

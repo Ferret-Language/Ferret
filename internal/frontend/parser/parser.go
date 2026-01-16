@@ -1085,13 +1085,10 @@ func (p *Parser) parsePrimary() ast.Expression {
 	switch tok.Kind {
 	case tokens.NUMBER_TOKEN:
 		p.advance()
-		// Determine if int or float
+		// Determine if int or float by checking for '.' or 'e'/'E'
 		kind := ast.INT
-		for _, ch := range tok.Value {
-			if ch == '.' {
-				kind = ast.FLOAT
-				break
-			}
+		if strings.ContainsRune(tok.Value, '.') || strings.ContainsRune(tok.Value, 'e') || strings.ContainsRune(tok.Value, 'E') {
+			kind = ast.FLOAT
 		}
 		return &ast.BasicLit{
 			Kind:     kind,
