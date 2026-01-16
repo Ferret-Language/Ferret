@@ -28,6 +28,9 @@ ferret_array_t* ferret_array_from_data(void* data, int32_t length, int32_t capac
 // Clone array (deep copy of elements)
 ferret_array_t* ferret_array_clone(const ferret_array_t* arr);
 
+// Assign array contents into a destination slot, reusing capacity when possible.
+void ferret_array_assign(ferret_array_t** dst, const ferret_array_t* src);
+
 // Append an element to the array (amortized O(1))
 // Returns false on allocation failure
 bool ferret_array_append(ferret_array_t* arr, const void* elem);

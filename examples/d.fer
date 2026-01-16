@@ -1,0 +1,26 @@
+import "std/io";
+
+fn main() {
+    let s := "x";
+    let guard := "g";
+
+    let before := heap_addr(&s);
+    io::Println("start", before, len(&s));
+
+    let i: i32 = 0;
+    while i < 250 && len(&s) < 10000 {
+        // Grow both strings to pressure realloc.
+        guard = guard + guard;
+        s = s + s;
+
+        let now := heap_addr(&s);
+        if now != before {
+            io::Println("moved", before, "->", now, "len", len(&s));
+            break;
+        }
+        i += 1;
+    }
+
+    io::Println("final", heap_addr(&s), "len", len(&s));
+    io::Println("guard len", len(&guard));
+}

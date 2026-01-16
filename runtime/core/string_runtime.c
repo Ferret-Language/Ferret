@@ -3,7 +3,54 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include "string_runtime.h"
+
+typedef struct ferret_string_node {
+    char* ptr;
+    struct ferret_string_node* next;
+} ferret_string_node_t;
+
+static ferret_string_node_t* ferret_string_head = NULL;
+
+static bool ferret_string_tracked(const char* ptr) {
+    const ferret_string_node_t* node = ferret_string_head;
+    while (node != NULL) {
+        if (node->ptr == ptr) {
+            return true;
+        }
+        node = node->next;
+    }
+    return false;
+}
+
+static void ferret_string_track(char* ptr) {
+    if (ptr == NULL || ferret_string_tracked(ptr)) {
+        return;
+    }
+    ferret_string_node_t* node = (ferret_string_node_t*)malloc(sizeof(ferret_string_node_t));
+    if (node == NULL) {
+        return;
+    }
+    node->ptr = ptr;
+    node->next = ferret_string_head;
+    ferret_string_head = node;
+}
+
+static void ferret_string_update(char* old_ptr, char* new_ptr) {
+    if (old_ptr == new_ptr) {
+        return;
+    }
+    ferret_string_node_t* node = ferret_string_head;
+    while (node != NULL) {
+        if (node->ptr == old_ptr) {
+            node->ptr = new_ptr;
+            return;
+        }
+        node = node->next;
+    }
+    ferret_string_track(new_ptr);
+}
 
 int32_t ferret_string_len(const char* str) {
     if (!str) {
@@ -27,6 +74,50 @@ int32_t ferret_strcmp(const char* s1, const char* s2) {
         return 1;
     }
     return strcmp(s1, s2);
+}
+
+void ferret_string_assign(char** dst, const char* src) {
+    if (dst == NULL) {
+        return;
+    }
+    if (src == NULL) {
+        if (*dst != NULL && ferret_string_tracked(*dst)) {
+            (*dst)[0] = '\0';
+        } else {
+            *dst = NULL;
+        }
+        return;
+    }
+
+    size_t src_len = strlen(src);
+    char* cur = *dst;
+
+    if (cur != NULL && ferret_string_tracked(cur)) {
+        size_t cur_len = strlen(cur);
+        if (src_len <= cur_len) {
+            memcpy(cur, src, src_len);
+            cur[src_len] = '\0';
+            return;
+        }
+        char* next = (char*)realloc(cur, src_len + 1);
+        if (next == NULL) {
+            return;
+        }
+        memcpy(next, src, src_len);
+        next[src_len] = '\0';
+        *dst = next;
+        ferret_string_update(cur, next);
+        return;
+    }
+
+    char* next = (char*)malloc(src_len + 1);
+    if (next == NULL) {
+        return;
+    }
+    memcpy(next, src, src_len);
+    next[src_len] = '\0';
+    *dst = next;
+    ferret_string_track(next);
 }
 
 // String concatenation: str + str

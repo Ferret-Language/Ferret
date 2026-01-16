@@ -77,6 +77,45 @@ ferret_array_t* ferret_array_clone(const ferret_array_t* src) {
     return arr;
 }
 
+void ferret_array_assign(ferret_array_t** dst, const ferret_array_t* src) {
+    if (dst == NULL) {
+        return;
+    }
+    if (src == NULL) {
+        if (*dst != NULL) {
+            (*dst)->length = 0;
+        }
+        return;
+    }
+    if (*dst == NULL) {
+        *dst = ferret_array_clone(src);
+        return;
+    }
+    if (*dst == src) {
+        return;
+    }
+
+    ferret_array_t* out = *dst;
+    if (out->elem_size != src->elem_size) {
+        out->elem_size = src->elem_size;
+    }
+
+    if (src->length > out->capacity) {
+        int32_t new_capacity = src->length;
+        void* new_data = realloc(out->data, out->elem_size * new_capacity);
+        if (new_data == NULL) {
+            return;
+        }
+        out->data = new_data;
+        out->capacity = new_capacity;
+    }
+
+    if (src->length > 0 && src->data != NULL) {
+        memcpy(out->data, src->data, (size_t)out->elem_size * (size_t)src->length);
+    }
+    out->length = src->length;
+}
+
 bool ferret_array_append(ferret_array_t* arr, const void* elem) {
     if (arr == NULL || elem == NULL) {
         return false;

@@ -393,6 +393,27 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 	}
 
 	if item.Value != nil {
+		if helper, ok := assignHelperForType(typ); ok {
+			zero := b.nullPointerValue(typ, item.Name.Location)
+			b.emitStore(addr, zero, item.Name.Location)
+			val := b.lowerExpr(item.Value)
+			if val != mir.InvalidValue {
+				val = b.coerceValueForAssign(val, b.exprType(item.Value), typ, item.Name.Location)
+				if val != mir.InvalidValue {
+					b.emitInstr(&mir.Call{
+						Result:   mir.InvalidValue,
+						Target:   helper,
+						Args:     []mir.ValueID{addr, val},
+						Type:     types.TypeVoid,
+						Location: item.Name.Location,
+					})
+				}
+			}
+			return
+		}
+	}
+
+	if item.Value != nil {
 		if lit, ok := item.Value.(*hir.CompositeLit); ok {
 			if structType, ok := types.UnwrapType(typ).(*types.StructType); ok {
 				b.lowerStructLiteralInto(addr, structType, lit)
@@ -592,6 +613,25 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 				return
 			}
 
+			if helper, ok := assignHelperForType(ref.Inner); ok && !rhsIsMove {
+				rhs := b.lowerExpr(stmt.Rhs)
+				if rhs == mir.InvalidValue {
+					return
+				}
+				rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
+				if rhs == mir.InvalidValue {
+					return
+				}
+				b.emitInstr(&mir.Call{
+					Result:   mir.InvalidValue,
+					Target:   helper,
+					Args:     []mir.ValueID{refPtr, rhs},
+					Type:     types.TypeVoid,
+					Location: stmt.Location,
+				})
+				return
+			}
+
 			if b.isDynamicArrayLiteralExpr(stmt.Rhs, ref.Inner) {
 				rhs := b.lowerExpr(stmt.Rhs)
 				if rhs == mir.InvalidValue {
@@ -643,6 +683,25 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 		}
 		res := b.emitBinary(op, cur, rhs, lhsStorageType, stmt.Location)
 		b.emitStore(addr, res, stmt.Location)
+		return
+	}
+
+	if helper, ok := assignHelperForType(lhsStorageType); ok && !rhsIsMove {
+		rhs := b.lowerExpr(stmt.Rhs)
+		if rhs == mir.InvalidValue {
+			return
+		}
+		rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), lhsStorageType, stmt.Location)
+		if rhs == mir.InvalidValue {
+			return
+		}
+		b.emitInstr(&mir.Call{
+			Result:   mir.InvalidValue,
+			Target:   helper,
+			Args:     []mir.ValueID{addr, rhs},
+			Type:     types.TypeVoid,
+			Location: stmt.Location,
+		})
 		return
 	}
 
@@ -771,9 +830,9 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 
 	if b.refOutParam != mir.InvalidValue {
 		if resultType != nil {
-			if _, ok := types.UnwrapType(resultType).(*types.ReferenceType); ok {
+			if refType, ok := types.UnwrapType(resultType).(*types.ReferenceType); ok {
 				if b.refOutHeapParam != mir.InvalidValue {
-					heapVal := b.refHeapValue(val)
+					heapVal := b.computeBorrowHeap(stmt.Result, val, refType.Inner, stmt.Location)
 					if heapVal == mir.InvalidValue {
 						heapVal = b.zeroU64(stmt.Location)
 					}
@@ -1576,6 +1635,34 @@ func mapValueType(typ types.SemType) (*types.MapType, bool) {
 	return nil, false
 }
 
+func isStringSemType(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	if prim, ok := types.UnwrapType(typ).(*types.PrimitiveType); ok {
+		return prim.GetName() == types.TYPE_STRING
+	}
+	return false
+}
+
+func assignHelperForType(typ types.SemType) (string, bool) {
+	if isStringSemType(typ) {
+		return "ferret_string_assign", true
+	}
+	if _, ok := dynamicArrayValueType(typ); ok {
+		return "ferret_array_assign", true
+	}
+	if _, ok := mapValueType(typ); ok {
+		return "ferret_map_assign", true
+	}
+	return "", false
+}
+
+func (b *functionBuilder) nullPointerValue(typ types.SemType, loc source.Location) mir.ValueID {
+	zero := b.emitConst(types.TypeU64, "0", loc)
+	return b.emitCast(zero, typ, loc)
+}
+
 func (b *functionBuilder) isDynamicArrayLiteralExpr(expr hir.Expr, expected types.SemType) bool {
 	if expr == nil {
 		return false
@@ -1944,8 +2031,8 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 			}
 			recvArgs := []mir.ValueID{recv}
 			if method.Receiver != nil {
-				if _, ok := types.UnwrapType(method.Receiver).(*types.ReferenceType); ok {
-					recvHeap := b.refHeapValue(recv)
+				if refType, ok := types.UnwrapType(method.Receiver).(*types.ReferenceType); ok {
+					recvHeap := b.computeBorrowHeap(selector.X, recv, refType.Inner, expr.Location)
 					if recvHeap == mir.InvalidValue {
 						recvHeap = b.emitConst(types.TypeU64, "0", expr.Location)
 					}
@@ -2059,8 +2146,8 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 		}
 		out = append(out, val)
 		if paramType != nil {
-			if _, ok := types.UnwrapType(paramType).(*types.ReferenceType); ok {
-				heapArg := b.refHeapValue(val)
+			if refType, ok := types.UnwrapType(paramType).(*types.ReferenceType); ok {
+				heapArg := b.computeBorrowHeap(arg, val, refType.Inner, loc)
 				if heapArg == mir.InvalidValue {
 					heapArg = b.emitConst(types.TypeU64, "0", loc)
 				}
@@ -2104,8 +2191,8 @@ func (b *functionBuilder) lowerHeapReturnCall(call *hir.CallExpr, inner types.Se
 			}
 			recvArgs := []mir.ValueID{recv}
 			if method.Receiver != nil {
-				if _, ok := types.UnwrapType(method.Receiver).(*types.ReferenceType); ok {
-					recvHeap := b.refHeapValue(recv)
+				if refType, ok := types.UnwrapType(method.Receiver).(*types.ReferenceType); ok {
+					recvHeap := b.computeBorrowHeap(selector.X, recv, refType.Inner, call.Location)
 					if recvHeap == mir.InvalidValue {
 						recvHeap = b.emitConst(types.TypeU64, "0", call.Location)
 					}
@@ -2282,8 +2369,8 @@ func (b *functionBuilder) boxInterfaceValue(value mir.ValueID, valueType, ifaceT
 	}
 
 	heapPtr := mir.InvalidValue
-	if _, ok := types.UnwrapType(valueType).(*types.ReferenceType); ok {
-		heapPtr = b.refHeapValue(value)
+	if ref, ok := types.UnwrapType(valueType).(*types.ReferenceType); ok {
+		heapPtr = b.computeBorrowHeap(nil, value, ref.Inner, loc)
 	} else {
 		heapPtr = b.emitCast(dataPtr, types.TypeU64, loc)
 	}
@@ -2619,9 +2706,9 @@ func (b *functionBuilder) lowerBuiltinHeapAddrCall(expr *hir.CallExpr) mir.Value
 	if refVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
-	heapVal := b.refHeapValue(refVal)
+	heapVal := b.computeBorrowHeap(arg, refVal, refType.Inner, expr.Location)
 	if heapVal == mir.InvalidValue {
-		heapVal = b.computeBorrowHeap(arg, refVal, refType.Inner, expr.Location)
+		heapVal = b.zeroU64(expr.Location)
 	}
 	return heapVal
 }
@@ -2858,6 +2945,9 @@ func isDerefExpr(expr hir.Expr) bool {
 func (b *functionBuilder) computeBorrowHeap(expr hir.Expr, val mir.ValueID, inner types.SemType, loc source.Location) mir.ValueID {
 	if val == mir.InvalidValue {
 		return mir.InvalidValue
+	}
+	if heap := b.refHeapValue(val); heap != mir.InvalidValue {
+		return heap
 	}
 	if inner == nil {
 		return b.zeroU64(loc)

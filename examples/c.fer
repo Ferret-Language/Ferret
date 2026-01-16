@@ -37,10 +37,16 @@ fn main() {
     io::Println(x.X);
 
     let name := "small";
+    
+    let anothername := "small2";
 
     io::Println(name, self_addr(&name), addr(&name), heap_addr(&name));
 
     name = "hmm";
 
+    io::Println(name, self_addr(&name), addr(&name), heap_addr(&name));
+
+    name = "a very long text which should overflow the initial capacity";
+    
     io::Println(name, self_addr(&name), addr(&name), heap_addr(&name));
 }

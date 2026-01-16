@@ -21,6 +21,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   const inputLines =
     rawInput.length > 0 ? rawInput.replace(/\r\n/g, "\n").split("\n") : [];
   let inputIndex = 0;
+  const ferretStringAllocs = new Set<number>();
 
   function align(value: number, alignment: number): number {
     const mask = alignment - 1;
@@ -63,6 +64,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const mem = new Uint8Array(memory!.buffer);
     mem.set(bytes, addr);
     mem[addr + bytes.length] = 0;
+    ferretStringAllocs.add(addr >>> 0);
     return addr >>> 0;
   }
 
@@ -205,6 +207,61 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     dv.setInt32(newArrPtr + 8, capacity, true);
     dv.setUint32(newArrPtr + 12, elemSize, true);
     return newArrPtr >>> 0;
+  }
+
+  function ferret_array_assign(dstSlot: number, srcPtr: number) {
+    if (!dstSlot) {
+      return 0;
+    }
+    const dv = view();
+    const src = srcPtr >>> 0;
+    if (!src) {
+      const dst = dv.getUint32(dstSlot, true);
+      if (dst) {
+        dv.setInt32(dst + 4, 0, true);
+      }
+      return 1;
+    }
+    let dst = dv.getUint32(dstSlot, true);
+    if (!dst) {
+      dst = ferret_array_clone(src);
+      dv.setUint32(dstSlot, dst >>> 0, true);
+      return 1;
+    }
+    if (dst === src) {
+      return 1;
+    }
+
+    const srcData = dv.getUint32(src + 0, true);
+    const srcLen = dv.getInt32(src + 4, true);
+    const srcCap = dv.getInt32(src + 8, true);
+    const elemSize = dv.getUint32(src + 12, true);
+
+    let dstData = dv.getUint32(dst + 0, true);
+    let dstCap = dv.getInt32(dst + 8, true);
+    if (srcLen > dstCap) {
+      const newSize = elemSize * srcLen;
+      const newData = newSize > 0 ? ferret_alloc(newSize) : 0;
+      if (srcData && srcLen > 0) {
+        const mem = new Uint8Array(memory!.buffer);
+        mem.copyWithin(newData, srcData, srcData + srcLen * elemSize);
+      }
+      dstData = newData;
+      dstCap = srcLen;
+      dv.setUint32(dst + 0, dstData, true);
+      dv.setInt32(dst + 8, dstCap, true);
+      dv.setUint32(dst + 12, elemSize, true);
+      dv.setInt32(dst + 4, srcLen, true);
+      return 1;
+    }
+
+    if (srcData && srcLen > 0) {
+      const mem = new Uint8Array(memory!.buffer);
+      mem.copyWithin(dstData, srcData, srcData + srcLen * elemSize);
+    }
+    dv.setInt32(dst + 4, srcLen, true);
+    dv.setUint32(dst + 12, elemSize, true);
+    return 1;
   }
 
   function ferret_array_append(arrPtr: number, elemPtr: number) {
@@ -458,6 +515,35 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       i++;
     }
     return len;
+  }
+
+  function ferret_string_assign(dstSlot: number, srcPtr: number) {
+    if (!dstSlot) {
+      return;
+    }
+    const dv = view();
+    const src = srcPtr >>> 0;
+    const srcLen = src ? ferret_string_len(src) : 0;
+    let dst = dv.getUint32(dstSlot, true);
+    if (dst && ferretStringAllocs.has(dst >>> 0)) {
+      const dstLen = ferret_string_len(dst);
+      if (srcLen <= dstLen) {
+        if (srcLen > 0) {
+          ferret_memcpy(dst, src, srcLen);
+        }
+        const mem = new Uint8Array(memory!.buffer);
+        mem[dst + srcLen] = 0;
+        return;
+      }
+    }
+    const next = ferret_alloc(srcLen + 1);
+    if (srcLen > 0) {
+      ferret_memcpy(next, src, srcLen);
+    }
+    const mem = new Uint8Array(memory!.buffer);
+    mem[next + srcLen] = 0;
+    dv.setUint32(dstSlot, next >>> 0, true);
+    ferretStringAllocs.add(next >>> 0);
   }
 
   function formatI64(value: number | bigint): string {
@@ -3149,6 +3235,53 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return outPtr >>> 0;
   }
 
+  function ferret_map_assign(dstSlot: number, srcPtr: number): number {
+    if (!dstSlot) {
+      return 0;
+    }
+    const dv = view();
+    const src = srcPtr >>> 0;
+    if (!src) {
+      const dstPtr = dv.getUint32(dstSlot, true);
+      const dstMeta = mapGetMeta(dstPtr);
+      if (dstMeta) {
+        dstMeta.buckets = new Map();
+        dstMeta.size = 0;
+      }
+      return 1;
+    }
+    let dstPtr = dv.getUint32(dstSlot, true);
+    if (!dstPtr) {
+      dstPtr = ferret_map_clone(src);
+      dv.setUint32(dstSlot, dstPtr >>> 0, true);
+      return 1;
+    }
+    if (dstPtr === src) {
+      return 1;
+    }
+    const srcMeta = mapGetMeta(src);
+    if (!srcMeta) {
+      return 0;
+    }
+    let dstMeta = mapGetMeta(dstPtr);
+    if (!dstMeta) {
+      dstPtr = ferret_map_clone(src);
+      dv.setUint32(dstSlot, dstPtr >>> 0, true);
+      return 1;
+    }
+    dstMeta.buckets = new Map();
+    dstMeta.size = 0;
+    dstMeta.keySize = srcMeta.keySize;
+    dstMeta.valueSize = srcMeta.valueSize;
+    dstMeta.keyKind = srcMeta.keyKind;
+    for (const bucket of srcMeta.buckets.values()) {
+      for (const entry of bucket) {
+        mapSetEntry(dstMeta, entry.keyPtr, entry.valuePtr);
+      }
+    }
+    return 1;
+  }
+
   function ferret_map_get(mapPtr: number, keyPtr: number): number {
     const meta = mapGetMeta(mapPtr);
     if (!meta) {
@@ -3249,6 +3382,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     heapPtr = initialHeapPtr;
     ferretMapStore.clear();
     ferretMapIterStore.clear();
+    ferretStringAllocs.clear();
     inputLines.length = 0;
     inputIndex = 0;
   }
@@ -3263,11 +3397,13 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_optional_unwrap_or,
         ferret_array_new,
         ferret_array_clone,
+        ferret_array_assign,
         ferret_array_append,
         ferret_array_get,
         ferret_array_set,
         ferret_array_len,
         ferret_array_cap,
+        ferret_string_assign,
         ferret_std_io_Print,
         ferret_std_io_Println,
         ferret_std_io_Read,
@@ -3384,6 +3520,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_map_from_pairs_str,
         ferret_map_from_pairs_bytes,
         ferret_map_clone,
+        ferret_map_assign,
         ferret_map_get,
         ferret_map_get_optional_out,
         ferret_map_set,

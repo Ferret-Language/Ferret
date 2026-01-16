@@ -52,6 +52,9 @@ ferret_map_t* ferret_map_from_pairs(
 // Clone map (deep copy of entries)
 ferret_map_t* ferret_map_clone(const ferret_map_t* map);
 
+// Assign map contents into a destination slot, reusing buckets when possible.
+void ferret_map_assign(ferret_map_t** dst, const ferret_map_t* src);
+
 // Typed map constructors (avoid function pointer arguments in IR)
 #define FERRET_MAP_TYPED_DECL(suffix) \
     ferret_map_t* ferret_map_new_##suffix(size_t key_size, size_t value_size); \
