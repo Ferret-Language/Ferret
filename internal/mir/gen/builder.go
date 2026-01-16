@@ -1391,15 +1391,7 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		if refVal == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		// The reference is already a pointer value, just load from it
-		id := b.gen.nextValueID()
-		b.emitInstr(&mir.Load{
-			Result:   id,
-			Addr:     refVal,
-			Type:     e.Type,
-			Location: e.Location,
-		})
-		return id
+		return b.emitLoad(refVal, e.Type, e.Location)
 	case *hir.PrefixExpr:
 		return b.lowerPrefix(e)
 	case *hir.PostfixExpr:
@@ -1566,7 +1558,10 @@ func (b *functionBuilder) coerceValueForAssign(val mir.ValueID, fromType, toType
 	if val == mir.InvalidValue || fromType == nil || toType == nil {
 		return val
 	}
-	if _, ok := types.UnwrapType(toType).(*types.ReferenceType); ok {
+	if ref, ok := types.UnwrapType(toType).(*types.ReferenceType); ok {
+		if isEmptyInterface(ref.Inner) {
+			val = b.boxInterfaceValue(val, fromType, ref.Inner, loc)
+		}
 		return val
 	}
 	if unionType, ok := types.UnwrapType(toType).(*types.UnionType); ok {
@@ -2140,6 +2135,9 @@ func (b *functionBuilder) boxInterfaceValue(value mir.ValueID, valueType, ifaceT
 	if valueType == nil || ifaceType == nil {
 		return value
 	}
+	if ref, ok := types.UnwrapType(ifaceType).(*types.ReferenceType); ok {
+		ifaceType = ref.Inner
+	}
 	if interfaceTypeOf(valueType) != nil {
 		return value
 	}
@@ -2194,6 +2192,27 @@ func (b *functionBuilder) boxInterfaceValue(value mir.ValueID, valueType, ifaceT
 	}
 
 	return ifaceAddr
+}
+
+func (b *functionBuilder) emitInterfaceDataPtr(ifaceAddr mir.ValueID, loc source.Location) mir.ValueID {
+	ptrType := types.NewReference(types.TypeU8)
+	dataSlot := b.emitPtrAdd(ifaceAddr, 0, ptrType, loc)
+	return b.emitLoad(dataSlot, ptrType, loc)
+}
+
+func (b *functionBuilder) emitHeapAddrOrZero(ptr mir.ValueID, loc source.Location) mir.ValueID {
+	if ptr == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	result := b.gen.nextValueID()
+	b.emitInstr(&mir.Call{
+		Result:   result,
+		Target:   "ferret_addr_heap",
+		Args:     []mir.ValueID{ptr},
+		Type:     types.TypeU64,
+		Location: loc,
+	})
+	return result
 }
 
 // boxUnionValue creates a tagged union value from a variant value.
@@ -2467,19 +2486,13 @@ func (b *functionBuilder) lowerBuiltinAddrCall(expr *hir.CallExpr) mir.ValueID {
 	addr := mir.InvalidValue
 	if unary, ok := arg.(*hir.UnaryExpr); ok && (unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN) {
 		if ident, ok := unary.X.(*hir.Ident); ok && ident.Symbol != nil {
-			if bind, ok := b.bindings[ident.Symbol]; ok {
-				addr = bind
-			}
+			addr = b.bindingAddr(ident)
+		} else {
+			addr = b.lowerLValue(unary.X)
 		}
-	}
-	if addr == mir.InvalidValue {
-		if ident, ok := arg.(*hir.Ident); ok && ident.Symbol != nil {
-			if _, ok := types.UnwrapType(ident.Symbol.Type).(*types.ReferenceType); ok {
-				addr = b.addrForIdent(ident)
-			}
-		}
-	}
-	if addr == mir.InvalidValue {
+	} else if ident, ok := arg.(*hir.Ident); ok && ident.Symbol != nil {
+		addr = b.bindingAddr(ident)
+	} else {
 		addr = b.lowerExpr(arg)
 	}
 	if addr == mir.InvalidValue {
@@ -2508,22 +2521,16 @@ func (b *functionBuilder) lowerBuiltinAddrHeapCall(expr *hir.CallExpr) mir.Value
 	}
 
 	inner := refType.Inner
+	if interfaceTypeOf(inner) != nil {
+		refVal = b.emitInterfaceDataPtr(refVal, expr.Location)
+	}
 	if _, ok := dynamicArrayValueType(inner); ok {
-		heapPtr := b.emitLoad(refVal, inner, expr.Location)
-		return b.emitCast(heapPtr, types.TypeU64, expr.Location)
+		refVal = b.emitLoad(refVal, inner, expr.Location)
 	}
 	if _, ok := mapValueType(inner); ok {
-		heapPtr := b.emitLoad(refVal, inner, expr.Location)
-		return b.emitCast(heapPtr, types.TypeU64, expr.Location)
+		refVal = b.emitLoad(refVal, inner, expr.Location)
 	}
-	if _, ok := arg.(*hir.Ident); ok {
-		return b.emitCast(refVal, types.TypeU64, expr.Location)
-	}
-	if b.isHeapBorrowArg(arg) {
-		return b.emitCast(refVal, types.TypeU64, expr.Location)
-	}
-
-	return b.emitConst(types.TypeU64, "0", expr.Location)
+	return b.emitHeapAddrOrZero(refVal, expr.Location)
 }
 
 func (b *functionBuilder) isHeapBorrowArg(expr hir.Expr) bool {
@@ -2618,6 +2625,16 @@ func (b *functionBuilder) resetHeapBinding(ident *hir.Ident, loc source.Location
 	bind = b.emitAlloca(types.NewReference(typ), loc)
 	b.emitStore(bind, heapAddr, loc)
 	b.bindings[ident.Symbol] = bind
+}
+
+func (b *functionBuilder) bindingAddr(ident *hir.Ident) mir.ValueID {
+	if ident == nil || ident.Symbol == nil {
+		return mir.InvalidValue
+	}
+	if bind, ok := b.bindings[ident.Symbol]; ok {
+		return bind
+	}
+	return b.addrForIdent(ident)
 }
 
 func (b *functionBuilder) lowerBuiltinPanicCall(expr *hir.CallExpr) mir.ValueID {

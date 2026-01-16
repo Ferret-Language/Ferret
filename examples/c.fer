@@ -1,11 +1,11 @@
 import "std/io";
 
-fn print_addrs(tag: str, x: &i32) {
+fn print_addrs(tag: str, x: &interface{}) {
     io::Println(tag, " stack =", addr(x), " heap =", addr_heap(x));
 }
 
-fn make() -> i32 {
-    let a := #10;
+fn make() -> struct{ .X: i32, .Y: i32 } {
+    let a := #{ .X = 10, .Y = 20 };
     print_addrs("make: a", &a);
     return @a;
 }
@@ -33,4 +33,6 @@ fn main() {
 
     let x := make();
     print_addrs("x", &x);
+
+    io::Println(x.X);
 }

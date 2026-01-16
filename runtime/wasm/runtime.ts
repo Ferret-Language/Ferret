@@ -119,11 +119,24 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return ptr >>> 0;
   }
 
+  const heapAllocs: Array<{ start: number; end: number }> = [];
+
   function ferret_alloc(size: number) {
     const bytes = Number(size);
     const addr = heapPtr;
     heapPtr = align(heapPtr + bytes, 8);
+    heapAllocs.push({ start: addr >>> 0, end: (addr + bytes) >>> 0 });
     return addr >>> 0;
+  }
+
+  function ferret_addr_heap(ptr: number): bigint {
+    const addr = ptr >>> 0;
+    for (const alloc of heapAllocs) {
+      if (addr >= alloc.start && addr < alloc.end) {
+        return BigInt(addr);
+      }
+    }
+    return 0n;
   }
 
   function ferret_memcpy(dst: number, src: number, size: number) {
@@ -3247,6 +3260,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function reset() {
     heapPtr = initialHeapPtr;
+    heapAllocs.length = 0;
     ferretMapStore.clear();
     ferretMapIterStore.clear();
     inputLines.length = 0;
@@ -3259,6 +3273,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     imports: {
       ferret: {
         ferret_alloc,
+        ferret_addr_heap,
         ferret_memcpy,
         ferret_optional_unwrap_or,
         ferret_array_new,

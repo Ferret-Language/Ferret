@@ -2486,6 +2486,9 @@ func (g *Generator) needsByRefType(typ types.SemType) bool {
 		return false
 	}
 	typ = types.UnwrapType(typ)
+	if _, ok := typ.(*types.ReferenceType); ok {
+		return false
+	}
 	if isLargePrimitiveType(typ) {
 		return true
 	}
@@ -2495,11 +2498,11 @@ func (g *Generator) needsByRefType(typ types.SemType) bool {
 	if arr, ok := typ.(*types.ArrayType); ok && arr.Length >= 0 {
 		return true
 	}
-	if iface, ok := typ.(*types.InterfaceType); ok && len(iface.Methods) > 0 {
+	if _, ok := typ.(*types.InterfaceType); ok {
 		return true
 	}
 	if named, ok := typ.(*types.NamedType); ok {
-		if iface, ok := named.Underlying.(*types.InterfaceType); ok && len(iface.Methods) > 0 {
+		if _, ok := named.Underlying.(*types.InterfaceType); ok {
 			return true
 		}
 	}
