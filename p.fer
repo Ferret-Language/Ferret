@@ -44,4 +44,8 @@ fn main() {
     
     let val2 := b'P' as char as byte as i32;
     io::Println(val2); // Should be 80 (ASCII 'P')
+
+    for i, v in "hello"{
+        io::Println(i, v);
+    }
 }
