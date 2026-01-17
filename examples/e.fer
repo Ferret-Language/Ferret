@@ -36,11 +36,7 @@ fn Printf(fmt: str, vals: ...Printable) {
     while i < len(&fmt) {
         if i+1 < len(&fmt) && fmt[i] == 123 as byte && fmt[i+1] == 125 as byte { // '{' == 123, '}' == 125
             let v : Printable = vals[val_index];
-            if v is i32 {
-                io::Print(v);
-            } else {
-                io::Print("*");
-            }
+            io::Print(v);
             i += 2;
             val_index += 1;
             continue;
@@ -54,5 +50,5 @@ fn main() {
     //let b := 'a';
     myfn2(1);
     myfn(1);
-    Printf("hello {}", 1, 2, 3);
+    Printf("hello {} {} {}\n", "world", 2, 3);
 }

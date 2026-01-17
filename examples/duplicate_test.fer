@@ -1,0 +1,13 @@
+import "std/io";
+
+fn test() {
+    io::Println("First");
+}
+
+fn test() {
+    io::Println("Second");
+}
+
+fn main() {
+    test();
+}
