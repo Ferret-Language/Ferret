@@ -624,6 +624,172 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return Math.pow(Number(base), Number(exp));
   }
 
+  // UTF-8 decoding helper: decode one UTF-8 character from bytes
+  function utf8Decode(bytes: Uint8Array, index: number): { codepoint: number; bytesRead: number } {
+    const b1 = bytes[index];
+    if ((b1 & 0x80) === 0) {
+      // 1-byte sequence
+      return { codepoint: b1, bytesRead: 1 };
+    } else if ((b1 & 0xE0) === 0xC0) {
+      // 2-byte sequence
+      const b2 = bytes[index + 1];
+      const codepoint = ((b1 & 0x1F) << 6) | (b2 & 0x3F);
+      return { codepoint, bytesRead: 2 };
+    } else if ((b1 & 0xF0) === 0xE0) {
+      // 3-byte sequence
+      const b2 = bytes[index + 1];
+      const b3 = bytes[index + 2];
+      const codepoint = ((b1 & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
+      return { codepoint, bytesRead: 3 };
+    } else if ((b1 & 0xF8) === 0xF0) {
+      // 4-byte sequence
+      const b2 = bytes[index + 1];
+      const b3 = bytes[index + 2];
+      const b4 = bytes[index + 3];
+      const codepoint = ((b1 & 0x07) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F);
+      return { codepoint, bytesRead: 4 };
+    } else {
+      // Invalid, skip 1 byte
+      return { codepoint: 0xFFFD, bytesRead: 1 }; // Replacement character
+    }
+  }
+
+  // UTF-8 encoding helper: encode codepoint to UTF-8 bytes
+  function utf8Encode(codepoint: number): Uint8Array {
+    if (codepoint <= 0x7F) {
+      // 1-byte sequence
+      return new Uint8Array([codepoint]);
+    } else if (codepoint <= 0x7FF) {
+      // 2-byte sequence
+      return new Uint8Array([
+        0xC0 | (codepoint >> 6),
+        0x80 | (codepoint & 0x3F)
+      ]);
+    } else if (codepoint <= 0xFFFF) {
+      // 3-byte sequence
+      return new Uint8Array([
+        0xE0 | (codepoint >> 12),
+        0x80 | ((codepoint >> 6) & 0x3F),
+        0x80 | (codepoint & 0x3F)
+      ]);
+    } else if (codepoint <= 0x10FFFF) {
+      // 4-byte sequence
+      return new Uint8Array([
+        0xF0 | (codepoint >> 18),
+        0x80 | ((codepoint >> 12) & 0x3F),
+        0x80 | ((codepoint >> 6) & 0x3F),
+        0x80 | (codepoint & 0x3F)
+      ]);
+    } else {
+      // Invalid codepoint, use replacement character
+      return new Uint8Array([0xEF, 0xBF, 0xBD]); // U+FFFD
+    }
+  }
+
+  // Convert string to []char (array of Unicode codepoints)
+  function ferret_string_to_char_array(strPtr: number): number {
+    const str = strPtr ? readCString(strPtr) : "";
+    const bytes = encoder.encode(str);
+    
+    // First pass: count UTF-8 characters
+    let charCount = 0;
+    let i = 0;
+    while (i < bytes.length) {
+      const { bytesRead } = utf8Decode(bytes, i);
+      i += bytesRead;
+      charCount++;
+    }
+    
+    // Create array with exact capacity (char is 4 bytes = uint32)
+    const arrPtr = ferret_array_new(4, charCount);
+    
+    // Second pass: decode UTF-8 and populate array
+    i = 0;
+    while (i < bytes.length) {
+      const { codepoint, bytesRead } = utf8Decode(bytes, i);
+      i += bytesRead;
+      
+      // Allocate space for the codepoint and append to array
+      const elemPtr = ferret_alloc(4);
+      view().setUint32(elemPtr, codepoint, true);
+      ferret_array_append(arrPtr, elemPtr);
+    }
+    
+    return arrPtr;
+  }
+
+  // Convert string to []byte (raw UTF-8 bytes)
+  function ferret_string_to_byte_array(strPtr: number): number {
+    const str = strPtr ? readCString(strPtr) : "";
+    const bytes = encoder.encode(str);
+    
+    // Create array with exact capacity (byte is 1 byte = uint8)
+    const arrPtr = ferret_array_new(1, bytes.length);
+    
+    // Copy bytes directly
+    for (let i = 0; i < bytes.length; i++) {
+      const elemPtr = ferret_alloc(1);
+      view().setUint8(elemPtr, bytes[i]);
+      ferret_array_append(arrPtr, elemPtr);
+    }
+    
+    return arrPtr;
+  }
+
+  // Convert []char to string (UTF-8 encode from Unicode codepoints)
+  function ferret_char_array_to_string(arrPtr: number): number {
+    if (!arrPtr) {
+      return writeCString("");
+    }
+    
+    const length = ferret_array_len(arrPtr);
+    if (length === 0) {
+      return writeCString("");
+    }
+    
+    // Collect all UTF-8 encoded bytes
+    const allBytes: number[] = [];
+    for (let i = 0; i < length; i++) {
+      const elemPtr = ferret_array_get(arrPtr, i);
+      if (!elemPtr) continue;
+      
+      const codepoint = view().getUint32(elemPtr, true);
+      const encoded = utf8Encode(codepoint);
+      allBytes.push(...Array.from(encoded));
+    }
+    
+    // Create string from bytes
+    const str = decoder.decode(new Uint8Array(allBytes));
+    return writeCString(str);
+  }
+
+  // Convert []byte to string (interpret as UTF-8)
+  function ferret_byte_array_to_string(arrPtr: number): number {
+    if (!arrPtr) {
+      return writeCString("");
+    }
+    
+    const length = ferret_array_len(arrPtr);
+    if (length === 0) {
+      return writeCString("");
+    }
+    
+    // Collect bytes
+    const bytes = new Uint8Array(length);
+    for (let i = 0; i < length; i++) {
+      const elemPtr = ferret_array_get(arrPtr, i);
+      if (!elemPtr) {
+        bytes[i] = 0;
+      } else {
+        bytes[i] = view().getUint8(elemPtr);
+      }
+    }
+    
+    // Create string from bytes (interpret as UTF-8)
+    const str = decoder.decode(bytes);
+    return writeCString(str);
+  }
+
   const BIGINT_BITS_128 = 128;
   const BIGINT_BITS_256 = 256;
   const BIGINT_MASK_128 = (1n << 128n) - 1n;
@@ -3425,6 +3591,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_string_concat_f64,
         ferret_string_concat_byte,
         ferret_string_concat_bool,
+        ferret_string_to_char_array,
+        ferret_string_to_byte_array,
+        ferret_char_array_to_string,
+        ferret_byte_array_to_string,
         ferret_pow,
         ferret_i128_add_ptr,
         ferret_i128_sub_ptr,
