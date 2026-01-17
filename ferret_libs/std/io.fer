@@ -37,7 +37,17 @@ fn Read() -> str ! str;
 // @extern
 fn ReadUnsafe() -> str;
 
-fn Printf(values: ...Printable) {
-    let valLen := len(&values);
-    Println("total values:", valLen);
+fn Printf(fmt: str, vals: ...Printable) {
+    let i := 0;
+    let val_index := 0;
+    while i < len(&fmt) {
+        if i+1 < len(&fmt) && fmt[i] == 123 as byte && fmt[i+1] == 125 as byte { // '{' == 123, '}' == 125
+            Print(vals[val_index]);
+            i += 2;
+            val_index += 1;
+            continue;
+        }
+        Print(fmt[i]);
+        i++;
+    }
 }

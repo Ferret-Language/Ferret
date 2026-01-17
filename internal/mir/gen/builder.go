@@ -1497,6 +1497,11 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 			return b.emitTypeCheck(e)
 		}
 
+		// Short-circuit evaluation for && and ||
+		if e.Op.Kind == tokens.AND_TOKEN || e.Op.Kind == tokens.OR_TOKEN {
+			return b.emitShortCircuitBinary(e)
+		}
+
 		left := b.lowerExpr(e.X)
 		if left == mir.InvalidValue {
 			return mir.InvalidValue
@@ -2503,6 +2508,84 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 	b.emitStore(dataSlot, value, loc)
 
 	return unionAddr
+}
+
+// emitShortCircuitBinary implements short-circuit evaluation for && and || operators.
+// For &&: if left is false, return false without evaluating right.
+// For ||: if left is true, return true without evaluating right.
+func (b *functionBuilder) emitShortCircuitBinary(e *hir.BinaryExpr) mir.ValueID {
+	// Allocate a stack slot to store the result
+	resultSlot := b.emitAlloca(types.TypeBool, e.Location)
+
+	// Evaluate the left operand
+	left := b.lowerExpr(e.X)
+	if left == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	leftType := b.exprType(e.X)
+	left, _ = b.derefValueIfNeeded(left, leftType, e.Location)
+
+	// Create blocks for the control flow
+	rightBlock := b.newBlock("and_or.right", e.Location)
+	mergeBlock := b.newBlock("and_or.merge", e.Location)
+
+	if e.Op.Kind == tokens.AND_TOKEN {
+		// For &&: if left is false, skip to merge with false result
+		// Store false as the default result
+		falseVal := b.emitConst(types.TypeBool, "0", e.Location)
+		b.emitStore(resultSlot, falseVal, e.Location)
+
+		// Branch: if left is true, evaluate right; otherwise go to merge
+		b.current.Term = &mir.CondBr{
+			Cond:     left,
+			Then:     rightBlock.ID,
+			Else:     mergeBlock.ID,
+			Location: e.Location,
+		}
+
+		// Right block: evaluate right operand
+		b.setBlock(rightBlock)
+		right := b.lowerExpr(e.Y)
+		if right == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		rightType := b.exprType(e.Y)
+		right, _ = b.derefValueIfNeeded(right, rightType, e.Location)
+
+		// Store right result and branch to merge
+		b.emitStore(resultSlot, right, e.Location)
+		b.branchIfNoTerm(mergeBlock.ID, e.Location)
+	} else {
+		// For ||: if left is true, skip to merge with true result
+		// Store true as the default result
+		trueVal := b.emitConst(types.TypeBool, "1", e.Location)
+		b.emitStore(resultSlot, trueVal, e.Location)
+
+		// Branch: if left is false, evaluate right; otherwise go to merge
+		b.current.Term = &mir.CondBr{
+			Cond:     left,
+			Then:     mergeBlock.ID,
+			Else:     rightBlock.ID,
+			Location: e.Location,
+		}
+
+		// Right block: evaluate right operand
+		b.setBlock(rightBlock)
+		right := b.lowerExpr(e.Y)
+		if right == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		rightType := b.exprType(e.Y)
+		right, _ = b.derefValueIfNeeded(right, rightType, e.Location)
+
+		// Store right result and branch to merge
+		b.emitStore(resultSlot, right, e.Location)
+		b.branchIfNoTerm(mergeBlock.ID, e.Location)
+	}
+
+	// Merge block: load and return the result
+	b.setBlock(mergeBlock)
+	return b.emitLoad(resultSlot, types.TypeBool, e.Location)
 }
 
 // emitTypeCheck generates code for the 'is' operator to check type at runtime.
