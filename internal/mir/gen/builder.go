@@ -577,80 +577,94 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 
 	if lhsStorageType != nil {
 		if ref, ok := types.UnwrapType(lhsStorageType).(*types.ReferenceType); ok {
-			refPtr := b.emitLoad(addr, lhsStorageType, stmt.Location)
-			if refPtr == mir.InvalidValue {
-				return
+			// Check if RHS is a borrow expression (&x or &mut x)
+			// If so, we're rebinding the reference variable to point to a new location
+			// Otherwise, we're assigning through the reference to modify the pointed-to value
+			isBorrowRhs := false
+			if unary, ok := stmt.Rhs.(*hir.UnaryExpr); ok {
+				if unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN {
+					isBorrowRhs = true
+				}
 			}
-			if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
-				cur := b.emitLoad(refPtr, ref.Inner, stmt.Location)
+
+			if !isBorrowRhs {
+				// Assigning through reference: *v = value
+				refPtr := b.emitLoad(addr, lhsStorageType, stmt.Location)
+				if refPtr == mir.InvalidValue {
+					return
+				}
+				if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
+					cur := b.emitLoad(refPtr, ref.Inner, stmt.Location)
+					rhs := b.lowerExpr(stmt.Rhs)
+					if cur == mir.InvalidValue || rhs == mir.InvalidValue {
+						return
+					}
+					rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
+					if rhs == mir.InvalidValue {
+						return
+					}
+					op := assignTokenToBinary(stmt.Op.Kind)
+					if op == "" {
+						b.reportUnsupported("assignment operator", stmt.Loc())
+						return
+					}
+					res := b.emitBinary(op, cur, rhs, ref.Inner, stmt.Location)
+					b.emitStore(refPtr, res, stmt.Location)
+					return
+				}
+
+				if helper, ok := assignHelperForType(ref.Inner); ok && !rhsIsMove {
+					rhs := b.lowerExpr(stmt.Rhs)
+					if rhs == mir.InvalidValue {
+						return
+					}
+					rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
+					if rhs == mir.InvalidValue {
+						return
+					}
+					b.emitInstr(&mir.Call{
+						Result:   mir.InvalidValue,
+						Target:   helper,
+						Args:     []mir.ValueID{refPtr, rhs},
+						Type:     types.TypeVoid,
+						Location: stmt.Location,
+					})
+					return
+				}
+
+				if b.isDynamicArrayLiteralExpr(stmt.Rhs, ref.Inner) {
+					rhs := b.lowerExpr(stmt.Rhs)
+					if rhs == mir.InvalidValue {
+						return
+					}
+					rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
+					if rhs == mir.InvalidValue {
+						return
+					}
+					b.emitInstr(&mir.Store{
+						Addr:     refPtr,
+						Value:    rhs,
+						Location: stmt.Location,
+					})
+					return
+				}
+
 				rhs := b.lowerExpr(stmt.Rhs)
-				if cur == mir.InvalidValue || rhs == mir.InvalidValue {
+				if rhs == mir.InvalidValue {
 					return
 				}
 				rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
 				if rhs == mir.InvalidValue {
 					return
 				}
-				op := assignTokenToBinary(stmt.Op.Kind)
-				if op == "" {
-					b.reportUnsupported("assignment operator", stmt.Loc())
-					return
+				if rhsIsMove {
+					b.emitStoreMove(refPtr, rhs, stmt.Location)
+				} else {
+					b.emitStore(refPtr, rhs, stmt.Location)
 				}
-				res := b.emitBinary(op, cur, rhs, ref.Inner, stmt.Location)
-				b.emitStore(refPtr, res, stmt.Location)
 				return
 			}
-
-			if helper, ok := assignHelperForType(ref.Inner); ok && !rhsIsMove {
-				rhs := b.lowerExpr(stmt.Rhs)
-				if rhs == mir.InvalidValue {
-					return
-				}
-				rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
-				if rhs == mir.InvalidValue {
-					return
-				}
-				b.emitInstr(&mir.Call{
-					Result:   mir.InvalidValue,
-					Target:   helper,
-					Args:     []mir.ValueID{refPtr, rhs},
-					Type:     types.TypeVoid,
-					Location: stmt.Location,
-				})
-				return
-			}
-
-			if b.isDynamicArrayLiteralExpr(stmt.Rhs, ref.Inner) {
-				rhs := b.lowerExpr(stmt.Rhs)
-				if rhs == mir.InvalidValue {
-					return
-				}
-				rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
-				if rhs == mir.InvalidValue {
-					return
-				}
-				b.emitInstr(&mir.Store{
-					Addr:     refPtr,
-					Value:    rhs,
-					Location: stmt.Location,
-				})
-				return
-			}
-
-			rhs := b.lowerExpr(stmt.Rhs)
-			if rhs == mir.InvalidValue {
-				return
-			}
-			rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
-			if rhs == mir.InvalidValue {
-				return
-			}
-			if rhsIsMove {
-				b.emitStoreMove(refPtr, rhs, stmt.Location)
-			} else {
-				b.emitStore(refPtr, rhs, stmt.Location)
-			}
-			return
+			// Fall through to handle reference rebinding (v = &mut arr[i])
 		}
 	}
 
@@ -6427,11 +6441,11 @@ func (b *functionBuilder) castValue(value mir.ValueID, from, to types.SemType, l
 	if from.Equals(to) {
 		return value
 	}
-	
+
 	// Handle string <-> array conversions with runtime functions
 	fromUnwrapped := types.UnwrapType(from)
 	toUnwrapped := types.UnwrapType(to)
-	
+
 	// str -> []char
 	if fromPrim, ok := fromUnwrapped.(*types.PrimitiveType); ok && fromPrim.GetName() == types.TYPE_STRING {
 		if toArr, ok := toUnwrapped.(*types.ArrayType); ok && toArr.Length < 0 {
@@ -6449,7 +6463,7 @@ func (b *functionBuilder) castValue(value mir.ValueID, from, to types.SemType, l
 			}
 		}
 	}
-	
+
 	// str -> []byte
 	if fromPrim, ok := fromUnwrapped.(*types.PrimitiveType); ok && fromPrim.GetName() == types.TYPE_STRING {
 		if toArr, ok := toUnwrapped.(*types.ArrayType); ok && toArr.Length < 0 {
@@ -6467,7 +6481,7 @@ func (b *functionBuilder) castValue(value mir.ValueID, from, to types.SemType, l
 			}
 		}
 	}
-	
+
 	// []char -> str
 	if fromArr, ok := fromUnwrapped.(*types.ArrayType); ok && fromArr.Length < 0 {
 		if elemPrim, ok := fromArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
@@ -6485,7 +6499,7 @@ func (b *functionBuilder) castValue(value mir.ValueID, from, to types.SemType, l
 			}
 		}
 	}
-	
+
 	// []byte -> str
 	if fromArr, ok := fromUnwrapped.(*types.ArrayType); ok && fromArr.Length < 0 {
 		if elemPrim, ok := fromArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
@@ -6503,7 +6517,7 @@ func (b *functionBuilder) castValue(value mir.ValueID, from, to types.SemType, l
 			}
 		}
 	}
-	
+
 	if interfaceTypeOf(to) != nil {
 		return b.boxInterfaceValue(value, from, to, loc)
 	}

@@ -47,6 +47,16 @@ fn main() {
 
     io::Println("=== String Iteration Tests ===");
 
+    // Test mutable ref with i32 array first
+    let nums: []i32 = [1, 2, 3];
+    io::Println("Before nums:", nums[0], nums[1], nums[2]);
+    for i, &mut v in nums {
+        io::Println("Modifying index", i, "old value", *v);
+        *v = *v + 10;
+        io::Println("New value", *v);
+    }
+    io::Println("After nums:", nums[0], nums[1], nums[2]);
+
     // Test string to char array with copy
     for i, v in ("hello" as []char) {
         io::Println(i, v);
@@ -59,11 +69,19 @@ fn main() {
 
     // Test immutable ref
     for i, &v in ("world" as []char) {
-        io::Println(i, v);
+        io::Println(i, *v);
     }
 
     // Test byte array
     for i, v in ("test" as []byte) {
         io::Println(i, v);
     }
+
+    // Test mutable ref - should modify original array
+    let chars := "ABC" as []char;
+    io::Println("Before:", chars[0], chars[1], chars[2]);
+    for i, &mut v in chars {
+        *v = ((*v) as i32 + 1) as char; // Increment each character (A->B, B->C, C->D)
+    }
+    io::Println("After:", chars[0], chars[1], chars[2]);
 }

@@ -607,6 +607,15 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 							inferredType = rangeElemType
 						}
 
+						// Wrap in reference type if & or &mut is used
+						if item.IsRef {
+							if item.IsMutable {
+								inferredType = types.NewMutableReference(inferredType)
+							} else {
+								inferredType = types.NewReference(inferredType)
+							}
+						}
+
 						if sym, ok := mod.CurrentScope.GetSymbol(item.Name.Name); ok {
 							sym.Type = inferredType
 						}

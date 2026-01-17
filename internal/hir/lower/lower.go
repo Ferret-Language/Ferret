@@ -568,7 +568,28 @@ func (l *Lowerer) lowerArrayFor(stmt *hir.ForStmt, arrayType *types.ArrayType) h
 			Type:     elemType,
 			Location: loc,
 		}
-		valueAssign = newAssign(valueIdent, indexExpr, tokens.EQUALS_TOKEN, loc)
+
+		// Check if iterator is a reference type
+		valueType := valueIdent.Type
+		if refType, isRef := types.UnwrapType(valueType).(*types.ReferenceType); isRef {
+			// For reference iterators, create a borrow expression (&arr[i] or &mut arr[i])
+			borrowOp := tokens.BIT_AND_TOKEN
+			borrowValue := "&"
+			if refType.Mutable {
+				borrowOp = tokens.MUT_TOKEN
+				borrowValue = "&mut"
+			}
+			borrowExpr := &hir.UnaryExpr{
+				Op:       tokens.NewToken(borrowOp, borrowValue, *loc.Start, *loc.End),
+				X:        indexExpr,
+				Type:     valueType,
+				Location: loc,
+			}
+			valueAssign = newAssign(valueIdent, borrowExpr, tokens.EQUALS_TOKEN, loc)
+		} else {
+			// Regular value copy
+			valueAssign = newAssign(valueIdent, indexExpr, tokens.EQUALS_TOKEN, loc)
+		}
 	}
 
 	loopNodes := l.buildLoopBody(firstIdent, incrAssign, condExpr, valueAssign, l.lowerBlock(stmt.Body), loc)

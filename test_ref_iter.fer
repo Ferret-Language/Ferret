@@ -1,0 +1,19 @@
+import "std/io";
+
+fn main() {
+    let arr: []i32 = [1, 2, 3];
+    io::Println("Before:", arr[0], arr[1], arr[2]);
+    
+    // Try manual reference assignment first
+    let ref: &mut i32 = &mut arr[0];
+    *ref = 100;
+    
+    io::Println("After manual:", arr[0], arr[1], arr[2]);
+    
+    // Now try for loop
+    for i, &mut v in arr {
+        *v = *v + 10;
+    }
+    
+    io::Println("After loop:", arr[0], arr[1], arr[2]);
+}
