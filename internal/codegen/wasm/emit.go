@@ -2571,7 +2571,7 @@ func isUnsignedType(typ types.SemType) bool {
 		switch prim.GetName() {
 		case types.TYPE_U8, types.TYPE_U16, types.TYPE_U32, types.TYPE_U64, types.TYPE_U128, types.TYPE_U256:
 			return true
-		case types.TYPE_BOOL, types.TYPE_BYTE:
+		case types.TYPE_BOOL, types.TYPE_BYTE, types.TYPE_CHAR:
 			return true
 		}
 	}

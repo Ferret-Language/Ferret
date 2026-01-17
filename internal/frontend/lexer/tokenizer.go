@@ -61,14 +61,14 @@ func New(filepath, content string, diag *diagnostics.DiagnosticBag) *Lexer {
 
 		patterns: []regexPattern{
 			//{regexp.MustCompile(`\n`), skipHandler}, // newlines
-			{regexp.MustCompile(`\s+`), skipHandler},                                               // whitespace
-			{regexp.MustCompile(`//[^\n\r]*`), commentHandler},                                     // single line comments (Unicode support)
-			{regexp.MustCompile(`(?s)/\*.*?\*/`), commentHandler},                                  // multi line comments (Unicode support)
-			{regexp.MustCompile(`"[^"]*"`), stringHandler},                                         // string literals (Unicode support)
-			{regexp.MustCompile(`b'(?:\\x[0-9a-fA-F]{2}|\\.|[\x00-\x7F])'`), byteHandler},          // byte literals (ASCII + escapes, 8-bit)
-			{regexp.MustCompile(`'(?:\\x[0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]+\}|\\.|.)'`), charHandler}, // char literals (Unicode support)
-			{regexp.MustCompile(numeric.NumberPattern), numberHandler},                             // numbers (hex, octal, binary, float, integer)
-			{regexp.MustCompile(`[a-zA-Z_][a-zA-Z0-9_]*`), identifierHandler},                      // identifiers
+			{regexp.MustCompile(`\s+`), skipHandler},                                                   // whitespace
+			{regexp.MustCompile(`//[^\n\r]*`), commentHandler},                                         // single line comments (Unicode support)
+			{regexp.MustCompile(`(?s)/\*.*?\*/`), commentHandler},                                      // multi line comments (Unicode support)
+			{regexp.MustCompile(`"[^"]*"`), stringHandler},                                             // string literals (Unicode support)
+			{regexp.MustCompile(`b'(?:\\.|[^'])*'`), byteHandler},                                      // byte literals (validation deferred to semantic analysis)
+			{regexp.MustCompile(`'(?:\\x[0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]+\}|\\.|[^'])*'`), charHandler}, // char literals (Unicode support, validation in handler)
+			{regexp.MustCompile(numeric.NumberPattern), numberHandler},                                 // numbers (hex, octal, binary, float, integer)
+			{regexp.MustCompile(`[a-zA-Z_][a-zA-Z0-9_]*`), identifierHandler},                          // identifiers
 			{regexp.MustCompile(`\+\+`), defaultHandler(tokens.PLUS_PLUS_TOKEN)},
 			{regexp.MustCompile(`\-\-`), defaultHandler(tokens.MINUS_MINUS_TOKEN)},
 			{regexp.MustCompile(`\->`), defaultHandler(tokens.ARROW_TOKEN)},
@@ -242,8 +242,8 @@ func processStringEscapes(s string) string {
 
 func byteHandler(lex *Lexer, regex *regexp.Regexp) {
 	match := regex.FindString(lex.remainder())
-	//exclude the quotes
-	byteLiteral := match[1 : len(match)-1]
+	//exclude the b prefix and quotes: b'X' -> X
+	byteLiteral := match[2 : len(match)-1]
 	start := lex.Position
 	lex.advance(match)
 	end := lex.Position

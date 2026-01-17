@@ -382,10 +382,17 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         return readCString(strPtr);
       }
       case 17: {
+        // byte
         const ch = dv.getUint8(data);
         return String.fromCharCode(ch);
       }
-      case 18:
+      case 18: {
+        // char (32-bit Unicode scalar)
+        const codepoint = dv.getUint32(data, true);
+        return String.fromCodePoint(codepoint);
+      }
+      case 19:
+        // bool
         return dv.getUint8(data) ? "true" : "false";
       default:
         return "<unknown>";

@@ -39,18 +39,18 @@ fn Read() -> str ! str;
 fn ReadUnsafe() -> str;
 
 
-fn Printf(fmt: str, vals: ...Printable) {
-    let fmt_bytes := fmt as []byte;
-    let i := 0;
-    let val_index := 0;
-    while i < len(&fmt_bytes) {
-        if i+1 < len(&fmt_bytes) && fmt_bytes[i] == 123 as byte && fmt_bytes[i+1] == 125 as byte { // '{' == 123, '}' == 125
-            Print(vals[val_index]);
-            i += 2;
-            val_index += 1;
-            continue;
-        }
-        Print(fmt_bytes[i]);
-        i++;
-    }
-}
+// fn Printf(fmt: str, vals: ...Printable) {
+//     let fmt_bytes := fmt as []byte;
+//     let i := 0;
+//     let val_index := 0;
+//     while i < len(&fmt_bytes) {
+//         if i+1 < len(&fmt_bytes) && fmt_bytes[i] == 123 as byte && fmt_bytes[i+1] == 125 as byte { // '{' == 123, '}' == 125
+//             Print(vals[val_index]);
+//             i += 2;
+//             val_index += 1;
+//             continue;
+//         }
+//         Print(fmt_bytes[i]);
+//         i++;
+//     }
+// }

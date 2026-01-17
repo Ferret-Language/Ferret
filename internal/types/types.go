@@ -100,7 +100,7 @@ func getPrimitiveSize(name TYPE_NAME) int {
 		return 1
 	case TYPE_I16, TYPE_U16:
 		return 2
-	case TYPE_I32, TYPE_U32, TYPE_F32:
+	case TYPE_I32, TYPE_U32, TYPE_F32, TYPE_CHAR:
 		return 4
 	case TYPE_I64, TYPE_U64, TYPE_F64:
 		return 8

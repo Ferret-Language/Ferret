@@ -1,22 +1,47 @@
 import "std/io";
 
 fn main() {
-    io::Println('A');
-    io::Println("Hi");
-    io::Printf("Hello {}\nMan\n", "world");
-
-    let name := "Dave";
-    let other := 65 as char;
+    io::Println("=== Char Type Tests ===");
     
-    // String operations now require explicit cast
-    let name_chars := name as []char;
-    io::Println(name_chars[0]);
-    io::Println(other);
-
-    // Iterate over characters (read-only for now)
-    for i, v in (name as []char) {
-        io::Printf("char[{}] = {}\n", i, v);
-    }
+    // Test char literals
+    let ch1 := '💡';
+    let ch2 := 'Z';
+    let ch3 := '5';
     
-    io::Println(name);
+    io::Println(ch1);
+    io::Println(ch2);
+    io::Println(ch3);
+    
+    // Test numeric to char conversion
+    let from_num := 66 as char; // 'B'
+    io::Println(from_num);
+    
+    // Test char to numeric conversion
+    let to_num := 'C' as i32;
+    io::Println(to_num); // Should print 67
+    
+    io::Println("=== Byte Type Tests ===");
+    
+    // Test byte literal with b'' prefix
+    let b1 := b'X';
+    let b2 := b'Y';
+    io::Println(b1);
+    io::Println(b2);
+    
+    // Test byte to char conversion
+    let ch_from_byte := b'M' as char;
+    io::Println(ch_from_byte);
+    
+    // Test char to byte conversion (truncate)
+    let byte_from_char := 'N' as byte;
+    io::Println(byte_from_char);
+    
+    io::Println("=== Conversion Tests ===");
+    
+    // Multiple conversions
+    let val1 := 72 as char as i32;
+    io::Println(val1); // Should be 72
+    
+    let val2 := b'P' as char as byte as i32;
+    io::Println(val2); // Should be 80 (ASCII 'P')
 }
