@@ -7,18 +7,33 @@ import (
 )
 
 // parseForStmt parses: for i in range { } or for i, v in range { }
+// Also supports: for i, &v in range { } and for i, &mut v in range { }
 // Iterator variables are always bound as new variables (like Rust), similar to function parameters
 func (p *Parser) parseForStmt() *ast.ForStmt {
 	start := p.expect(tokens.FOR_TOKEN).Start
 
-	// Parse first iterator variable name (index or value)
+	// Parse first iterator variable (index)
 	firstTok := p.expect(tokens.IDENTIFIER_TOKEN)
+	firstIsRef := false
+	firstIsMutable := false
 
 	// Check for comma (indicates index, value pair)
 	var secondTok tokens.Token
+	secondIsRef := false
+	secondIsMutable := false
 	hasSecond := false
 	if p.match(tokens.COMMA_TOKEN) {
 		p.advance()
+		// Check for & or &mut before second variable
+		if p.match(tokens.BIT_AND_TOKEN) {
+			p.advance()
+			secondIsRef = true
+			// Check for mut keyword
+			if p.match(tokens.MUT_TOKEN) {
+				p.advance()
+				secondIsMutable = true
+			}
+		}
 		secondTok = p.expect(tokens.IDENTIFIER_TOKEN)
 		hasSecond = true
 	}
@@ -35,16 +50,20 @@ func (p *Parser) parseForStmt() *ast.ForStmt {
 	// Always create VarDecl for iterator variables (always binds new variables, like function parameters)
 	declItems := []ast.DeclItem{
 		{
-			Name:  &ast.IdentifierExpr{Name: firstTok.Value, Location: *source.NewLocation(&p.filepath, &firstTok.Start, &firstTok.End)},
-			Type:  nil, // Type inferred from range
-			Value: nil, // Value comes from range iteration
+			Name:      &ast.IdentifierExpr{Name: firstTok.Value, Location: *source.NewLocation(&p.filepath, &firstTok.Start, &firstTok.End)},
+			Type:      nil, // Type inferred from range
+			Value:     nil, // Value comes from range iteration
+			IsRef:     firstIsRef,
+			IsMutable: firstIsMutable,
 		},
 	}
 	if hasSecond {
 		declItems = append(declItems, ast.DeclItem{
-			Name:  &ast.IdentifierExpr{Name: secondTok.Value, Location: *source.NewLocation(&p.filepath, &secondTok.Start, &secondTok.End)},
-			Type:  nil, // Type inferred from range element type
-			Value: nil, // Value comes from range iteration
+			Name:      &ast.IdentifierExpr{Name: secondTok.Value, Location: *source.NewLocation(&p.filepath, &secondTok.Start, &secondTok.End)},
+			Type:      nil, // Type inferred from range element type
+			Value:     nil, // Value comes from range iteration
+			IsRef:     secondIsRef,
+			IsMutable: secondIsMutable,
 		})
 	}
 	iterator := &ast.VarDecl{

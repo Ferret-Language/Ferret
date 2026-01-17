@@ -45,7 +45,25 @@ fn main() {
     let val2 := b'P' as char as byte as i32;
     io::Println(val2); // Should be 80 (ASCII 'P')
 
-    for i, v in "hello"{
+    io::Println("=== String Iteration Tests ===");
+
+    // Test string to char array with copy
+    for i, v in ("hello" as []char) {
+        io::Println(i, v);
+    }
+
+    // Test with emoji
+    for i, v in ("💡🚀" as []char) {
+        io::Println(i, v);
+    }
+
+    // Test immutable ref
+    for i, &v in ("world" as []char) {
+        io::Println(i, v);
+    }
+
+    // Test byte array
+    for i, v in ("test" as []byte) {
         io::Println(i, v);
     }
 }

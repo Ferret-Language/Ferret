@@ -50,9 +50,11 @@ func (d *DeclStmt) Stmt()                 {} // Stmt is a marker interface for a
 func (d *DeclStmt) Loc() *source.Location { return &d.Location }
 
 type DeclItem struct {
-	Name  *IdentifierExpr // variable name
-	Type  TypeNode        // explicit type (can be nil for type inference)
-	Value Expression      // initial value (can be nil)
+	Name      *IdentifierExpr // variable name
+	Type      TypeNode        // explicit type (can be nil for type inference)
+	Value     Expression      // initial value (can be nil)
+	IsRef     bool            // true if this is a reference (&v in for loops)
+	IsMutable bool            // true if this is a mutable reference (&mut v in for loops)
 }
 
 // VarDecl represents a variable declaration (let keyword)

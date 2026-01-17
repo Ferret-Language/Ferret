@@ -6427,6 +6427,83 @@ func (b *functionBuilder) castValue(value mir.ValueID, from, to types.SemType, l
 	if from.Equals(to) {
 		return value
 	}
+	
+	// Handle string <-> array conversions with runtime functions
+	fromUnwrapped := types.UnwrapType(from)
+	toUnwrapped := types.UnwrapType(to)
+	
+	// str -> []char
+	if fromPrim, ok := fromUnwrapped.(*types.PrimitiveType); ok && fromPrim.GetName() == types.TYPE_STRING {
+		if toArr, ok := toUnwrapped.(*types.ArrayType); ok && toArr.Length < 0 {
+			if elemPrim, ok := toArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
+				// Call ferret_string_to_char_array
+				result := b.gen.nextValueID()
+				b.emitInstr(&mir.Call{
+					Result:   result,
+					Target:   "ferret_string_to_char_array",
+					Args:     []mir.ValueID{value},
+					Type:     to,
+					Location: loc,
+				})
+				return result
+			}
+		}
+	}
+	
+	// str -> []byte
+	if fromPrim, ok := fromUnwrapped.(*types.PrimitiveType); ok && fromPrim.GetName() == types.TYPE_STRING {
+		if toArr, ok := toUnwrapped.(*types.ArrayType); ok && toArr.Length < 0 {
+			if elemPrim, ok := toArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
+				// Call ferret_string_to_byte_array
+				result := b.gen.nextValueID()
+				b.emitInstr(&mir.Call{
+					Result:   result,
+					Target:   "ferret_string_to_byte_array",
+					Args:     []mir.ValueID{value},
+					Type:     to,
+					Location: loc,
+				})
+				return result
+			}
+		}
+	}
+	
+	// []char -> str
+	if fromArr, ok := fromUnwrapped.(*types.ArrayType); ok && fromArr.Length < 0 {
+		if elemPrim, ok := fromArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
+			if toPrim, ok := toUnwrapped.(*types.PrimitiveType); ok && toPrim.GetName() == types.TYPE_STRING {
+				// Call ferret_char_array_to_string
+				result := b.gen.nextValueID()
+				b.emitInstr(&mir.Call{
+					Result:   result,
+					Target:   "ferret_char_array_to_string",
+					Args:     []mir.ValueID{value},
+					Type:     to,
+					Location: loc,
+				})
+				return result
+			}
+		}
+	}
+	
+	// []byte -> str
+	if fromArr, ok := fromUnwrapped.(*types.ArrayType); ok && fromArr.Length < 0 {
+		if elemPrim, ok := fromArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
+			if toPrim, ok := toUnwrapped.(*types.PrimitiveType); ok && toPrim.GetName() == types.TYPE_STRING {
+				// Call ferret_byte_array_to_string
+				result := b.gen.nextValueID()
+				b.emitInstr(&mir.Call{
+					Result:   result,
+					Target:   "ferret_byte_array_to_string",
+					Args:     []mir.ValueID{value},
+					Type:     to,
+					Location: loc,
+				})
+				return result
+			}
+		}
+	}
+	
 	if interfaceTypeOf(to) != nil {
 		return b.boxInterfaceValue(value, from, to, loc)
 	}
