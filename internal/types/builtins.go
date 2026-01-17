@@ -24,6 +24,7 @@ const (
 	TYPE_NONE      TYPE_NAME = "none"
 	TYPE_VOID      TYPE_NAME = "void"
 	TYPE_BYTE      TYPE_NAME = "byte"
+	TYPE_CHAR      TYPE_NAME = "char"
 	TYPE_FUNC      TYPE_NAME = "fn"
 	TYPE_ARRAY     TYPE_NAME = "array"
 	TYPE_INTERFACE TYPE_NAME = "interface"

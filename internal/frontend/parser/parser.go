@@ -1112,6 +1112,14 @@ func (p *Parser) parsePrimary() ast.Expression {
 			Location: *source.NewLocation(&p.filepath, &tok.Start, &tok.End),
 		}
 
+	case tokens.CHAR_TOKEN:
+		p.advance()
+		return &ast.BasicLit{
+			Kind:     ast.CHAR,
+			Value:    tok.Value,
+			Location: *source.NewLocation(&p.filepath, &tok.Start, &tok.End),
+		}
+
 	case tokens.IDENTIFIER_TOKEN:
 		return p.parseIdentifier()
 

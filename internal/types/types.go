@@ -669,6 +669,7 @@ var (
 	TypeNone    SemType
 	TypeVoid    SemType
 	TypeByte    SemType
+	TypeChar    SemType
 	TypeUnknown SemType
 
 	// Untyped literal types
@@ -698,6 +699,7 @@ func init() {
 	TypeNone = NewPrimitive(TYPE_NONE)
 	TypeVoid = NewPrimitive(TYPE_VOID)
 	TypeByte = NewPrimitive(TYPE_BYTE)
+	TypeChar = NewPrimitive(TYPE_CHAR)
 	TypeUnknown = NewPrimitive(TYPE_UNKNOWN)
 
 	TypeUntypedInt = NewUntypedInt()

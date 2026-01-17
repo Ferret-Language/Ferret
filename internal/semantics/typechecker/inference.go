@@ -61,6 +61,8 @@ func inferLiteralType(lit *ast.BasicLit, expected types.SemType) types.SemType {
 		return types.TypeString
 	case ast.BYTE:
 		return types.TypeByte
+	case ast.CHAR:
+		return types.TypeChar
 	case ast.BOOL:
 		return types.TypeBool
 	default:

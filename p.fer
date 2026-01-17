@@ -1,0 +1,22 @@
+import "std/io";
+
+fn main() {
+    io::Println('A');
+    io::Println("Hi");
+    io::Printf("Hello {}\nMan\n", "world");
+
+    let name := "Dave";
+    let other := 65 as char;
+    
+    // String operations now require explicit cast
+    let name_chars := name as []char;
+    io::Println(name_chars[0]);
+    io::Println(other);
+
+    // Iterate over characters (read-only for now)
+    for i, v in (name as []char) {
+        io::Printf("char[{}] = {}\n", i, v);
+    }
+    
+    io::Println(name);
+}

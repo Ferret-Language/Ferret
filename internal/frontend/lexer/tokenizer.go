@@ -61,13 +61,14 @@ func New(filepath, content string, diag *diagnostics.DiagnosticBag) *Lexer {
 
 		patterns: []regexPattern{
 			//{regexp.MustCompile(`\n`), skipHandler}, // newlines
-			{regexp.MustCompile(`\s+`), skipHandler},                                     // whitespace
-			{regexp.MustCompile(`//[^\n\r]*`), commentHandler},                           // single line comments (Unicode support)
-			{regexp.MustCompile(`(?s)/\*.*?\*/`), commentHandler},                        // multi line comments (Unicode support)
-			{regexp.MustCompile(`"[^"]*"`), stringHandler},                               // string literals (Unicode support)
-			{regexp.MustCompile(`'(?:\\x[0-9a-fA-F]{2}|\\.|[\x00-\x7F])'`), byteHandler}, // byte literals (ASCII + escapes, 8-bit)
-			{regexp.MustCompile(numeric.NumberPattern), numberHandler},                   // numbers (hex, octal, binary, float, integer)
-			{regexp.MustCompile(`[a-zA-Z_][a-zA-Z0-9_]*`), identifierHandler},            // identifiers
+			{regexp.MustCompile(`\s+`), skipHandler},                                               // whitespace
+			{regexp.MustCompile(`//[^\n\r]*`), commentHandler},                                     // single line comments (Unicode support)
+			{regexp.MustCompile(`(?s)/\*.*?\*/`), commentHandler},                                  // multi line comments (Unicode support)
+			{regexp.MustCompile(`"[^"]*"`), stringHandler},                                         // string literals (Unicode support)
+			{regexp.MustCompile(`b'(?:\\x[0-9a-fA-F]{2}|\\.|[\x00-\x7F])'`), byteHandler},          // byte literals (ASCII + escapes, 8-bit)
+			{regexp.MustCompile(`'(?:\\x[0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]+\}|\\.|.)'`), charHandler}, // char literals (Unicode support)
+			{regexp.MustCompile(numeric.NumberPattern), numberHandler},                             // numbers (hex, octal, binary, float, integer)
+			{regexp.MustCompile(`[a-zA-Z_][a-zA-Z0-9_]*`), identifierHandler},                      // identifiers
 			{regexp.MustCompile(`\+\+`), defaultHandler(tokens.PLUS_PLUS_TOKEN)},
 			{regexp.MustCompile(`\-\-`), defaultHandler(tokens.MINUS_MINUS_TOKEN)},
 			{regexp.MustCompile(`\->`), defaultHandler(tokens.ARROW_TOKEN)},
@@ -271,6 +272,38 @@ func byteHandler(lex *Lexer, regex *regexp.Regexp) {
 	lex.push(tokens.NewToken(tokens.BYTE_TOKEN, parsedValue, start, end))
 }
 
+func charHandler(lex *Lexer, regex *regexp.Regexp) {
+	match := regex.FindString(lex.remainder())
+	//exclude the quotes
+	charLiteral := match[1 : len(match)-1]
+	start := lex.Position
+	lex.advance(match)
+	end := lex.Position
+
+	// Parse escape sequences and validate Unicode scalar
+	parsedValue, runeValue, err := parseCharEscape(charLiteral)
+	if err != nil {
+		lex.diagnostics.Add(
+			diagnostics.NewError(err.Error()).
+				WithPrimaryLabel(source.NewLocation(&lex.FilePath, &start, &end),
+					fmt.Sprintf("invalid char literal '%s'", charLiteral)),
+		)
+		lex.push(tokens.NewToken(tokens.CHAR_TOKEN, charLiteral, start, end))
+		return
+	}
+
+	// Validate that char value is a valid Unicode scalar (0x0 to 0x10FFFF, excluding surrogates 0xD800-0xDFFF)
+	if runeValue > 0x10FFFF || (runeValue >= 0xD800 && runeValue <= 0xDFFF) {
+		lex.diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("char literal value U+%04X is not a valid Unicode scalar", runeValue)).
+				WithPrimaryLabel(source.NewLocation(&lex.FilePath, &start, &end),
+					"Unicode surrogates (U+D800..U+DFFF) are not valid char values"),
+		)
+	}
+
+	lex.push(tokens.NewToken(tokens.CHAR_TOKEN, parsedValue, start, end))
+}
+
 func commentHandler(lex *Lexer, regex *regexp.Regexp) {
 	match := regex.FindString(lex.remainder())
 	start := lex.Position
@@ -357,6 +390,96 @@ func parseByteEscape(literal string) (string, int, error) {
 
 	// Multi-byte UTF-8 character not allowed
 	return "", 0, fmt.Errorf("byte literal must be a single ASCII character")
+}
+
+// parseCharEscape parses escape sequences in char literals and returns the parsed string and Unicode code point value
+func parseCharEscape(literal string) (string, int, error) {
+	if len(literal) == 0 {
+		return "", 0, fmt.Errorf("empty char literal")
+	}
+
+	// Handle escape sequences
+	if literal[0] == '\\' && len(literal) > 1 {
+		switch literal[1] {
+		case 'n':
+			return "\n", 10, nil
+		case 'r':
+			return "\r", 13, nil
+		case 't':
+			return "\t", 9, nil
+		case '0':
+			return "\x00", 0, nil
+		case '\\':
+			return "\\", 92, nil
+		case '\'':
+			return "'", 39, nil
+		case '"':
+			return "\"", 34, nil
+		case 'x':
+			// Hex escape: \xHH (for char, same as byte)
+			if len(literal) < 4 {
+				return "", 0, fmt.Errorf("incomplete hex escape sequence")
+			}
+			hexStr := literal[2:4]
+			value := 0
+			for _, ch := range hexStr {
+				value *= 16
+				if ch >= '0' && ch <= '9' {
+					value += int(ch - '0')
+				} else if ch >= 'a' && ch <= 'f' {
+					value += int(ch - 'a' + 10)
+				} else if ch >= 'A' && ch <= 'F' {
+					value += int(ch - 'A' + 10)
+				} else {
+					return "", 0, fmt.Errorf("invalid hex digit in escape sequence")
+				}
+			}
+			return string(rune(value)), value, nil
+		case 'u':
+			// Unicode escape: \u{HHHHHH} (1-6 hex digits)
+			if len(literal) < 4 || literal[2] != '{' {
+				return "", 0, fmt.Errorf("invalid Unicode escape sequence, expected \\u{...}")
+			}
+			// Find closing brace
+			closeIdx := -1
+			for i := 3; i < len(literal); i++ {
+				if literal[i] == '}' {
+					closeIdx = i
+					break
+				}
+			}
+			if closeIdx == -1 {
+				return "", 0, fmt.Errorf("unclosed Unicode escape sequence")
+			}
+			hexStr := literal[3:closeIdx]
+			if len(hexStr) == 0 || len(hexStr) > 6 {
+				return "", 0, fmt.Errorf("Unicode escape must have 1-6 hex digits")
+			}
+			value := 0
+			for _, ch := range hexStr {
+				value *= 16
+				if ch >= '0' && ch <= '9' {
+					value += int(ch - '0')
+				} else if ch >= 'a' && ch <= 'f' {
+					value += int(ch - 'a' + 10)
+				} else if ch >= 'A' && ch <= 'F' {
+					value += int(ch - 'A' + 10)
+				} else {
+					return "", 0, fmt.Errorf("invalid hex digit in Unicode escape sequence")
+				}
+			}
+			return string(rune(value)), value, nil
+		default:
+			return "", 0, fmt.Errorf("unknown escape sequence '\\%c'", literal[1])
+		}
+	}
+
+	// Regular Unicode character
+	runes := []rune(literal)
+	if len(runes) != 1 {
+		return "", 0, fmt.Errorf("char literal must contain exactly one character")
+	}
+	return literal, int(runes[0]), nil
 }
 
 // skipHandler processes a token that should be skipped by the lexer.

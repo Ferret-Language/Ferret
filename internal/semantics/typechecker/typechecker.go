@@ -507,8 +507,14 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 						WithNote("Remove this loop or use a non-empty array"))
 				}
 			} else if prim, ok := rangeBaseType.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
-				// Strings are iterable - element type is byte
-				rangeElemType = types.TypeByte
+				// Forbid direct string iteration - require explicit cast to []char or []byte
+				isIterable = false
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("cannot iterate over strings directly").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(n.Range.Loc(), "string iteration is not allowed").
+						WithHelp("use explicit cast: for x in (str as []char) for character iteration or for x in (str as []byte) for byte iteration"),
+				)
 			} else if _, ok := rangeBaseType.(*types.MapType); !ok {
 				isIterable = false
 				ctx.Diagnostics.Add(
@@ -1224,12 +1230,76 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		return
 	}
 
-	// Check if cast is valid
-	compatibility := checkTypeCompatibility(sourceType, targetType)
-
 	// For struct types, check structural compatibility (unwrap NamedType on both sides)
 	srcUnwrapped := types.UnwrapType(sourceType)
 	dstUnwrapped := types.UnwrapType(targetType)
+
+	// Handle string <-> array conversions
+	srcPrim, srcIsPrim := sourceType.(*types.PrimitiveType)
+	dstPrim, dstIsPrim := targetType.(*types.PrimitiveType)
+	srcArr, srcIsArr := srcUnwrapped.(*types.ArrayType)
+	dstArr, dstIsArr := dstUnwrapped.(*types.ArrayType)
+
+	// str -> []char (UTF-8 decode to Unicode scalars)
+	if srcIsPrim && srcPrim.GetName() == types.TYPE_STRING && dstIsArr && dstArr.Length < 0 {
+		if elemPrim, ok := dstArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
+			// Valid: str as []char
+			// TODO: Runtime implementation needed for UTF-8 decoding
+			return
+		}
+	}
+
+	// str -> []byte (view/copy of UTF-8 bytes)
+	if srcIsPrim && srcPrim.GetName() == types.TYPE_STRING && dstIsArr && dstArr.Length < 0 {
+		if elemPrim, ok := dstArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
+			// Valid: str as []byte or str as []u8
+			// TODO: Runtime implementation needed for byte view/copy
+			return
+		}
+	}
+
+	// []char -> str (UTF-8 encode)
+	if srcIsArr && srcArr.Length < 0 && dstIsPrim && dstPrim.GetName() == types.TYPE_STRING {
+		if elemPrim, ok := srcArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
+			// Valid: []char as str
+			// TODO: Runtime implementation needed for UTF-8 encoding
+			return
+		}
+	}
+
+	// []byte -> str (interpret as UTF-8)
+	if srcIsArr && srcArr.Length < 0 && dstIsPrim && dstPrim.GetName() == types.TYPE_STRING {
+		if elemPrim, ok := srcArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
+			// Valid: []byte as str or []u8 as str
+			// TODO: Runtime implementation needed for UTF-8 validation/conversion
+			return
+		}
+	}
+
+	// char <-> byte conversions
+	if srcIsPrim && dstIsPrim {
+		if (srcPrim.GetName() == types.TYPE_CHAR && (dstPrim.GetName() == types.TYPE_BYTE || dstPrim.GetName() == types.TYPE_U8)) ||
+			((srcPrim.GetName() == types.TYPE_BYTE || srcPrim.GetName() == types.TYPE_U8) && dstPrim.GetName() == types.TYPE_CHAR) {
+			// Valid: char as byte, byte as char
+			// char -> byte: truncate to lower 8 bits
+			// byte -> char: zero-extend to 32-bit Unicode scalar
+			return
+		}
+		// Allow integer -> char conversions (interpret as Unicode code point)
+		if types.IsIntegerTypeName(srcPrim.GetName()) && dstPrim.GetName() == types.TYPE_CHAR {
+			// Valid: i32 as char, etc.
+			// Runtime should validate Unicode scalar range
+			return
+		}
+		// Allow char -> integer conversions (get Unicode code point)
+		if srcPrim.GetName() == types.TYPE_CHAR && types.IsIntegerTypeName(dstPrim.GetName()) {
+			// Valid: char as i32, etc.
+			return
+		}
+	}
+
+	// Check if cast is valid
+	compatibility := checkTypeCompatibility(sourceType, targetType)
 
 	// Handle map type casts
 	if srcMap, ok := srcUnwrapped.(*types.MapType); ok {
@@ -1390,13 +1460,13 @@ func checkIndexExpr(ctx *context_v2.CompilerContext, expr *ast.IndexExpr, baseTy
 		return
 	}
 	if prim, ok := baseType.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
-		if !isIntegerIndex {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError("string index must be an integer").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(expr.Index.Loc(), "expected integer index"),
-			)
-		}
+		// Forbid direct string indexing - require explicit cast to []char or []byte
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot index strings directly").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "string indexing is not allowed").
+				WithHelp("use explicit cast: (str as []char)[i] for character access or (str as []byte)[i] for byte access"),
+		)
 		return
 	}
 
