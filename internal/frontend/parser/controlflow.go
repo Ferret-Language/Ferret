@@ -14,8 +14,6 @@ func (p *Parser) parseForStmt() *ast.ForStmt {
 
 	// Parse first iterator variable (index)
 	firstTok := p.expect(tokens.IDENTIFIER_TOKEN)
-	firstIsRef := false
-	firstIsMutable := false
 
 	// Check for comma (indicates index, value pair)
 	var secondTok tokens.Token
@@ -50,20 +48,16 @@ func (p *Parser) parseForStmt() *ast.ForStmt {
 	// Always create VarDecl for iterator variables (always binds new variables, like function parameters)
 	declItems := []ast.DeclItem{
 		{
-			Name:      &ast.IdentifierExpr{Name: firstTok.Value, Location: *source.NewLocation(&p.filepath, &firstTok.Start, &firstTok.End)},
-			Type:      nil, // Type inferred from range
-			Value:     nil, // Value comes from range iteration
-			IsRef:     firstIsRef,
-			IsMutable: firstIsMutable,
+			Name:  &ast.IdentifierExpr{Name: firstTok.Value, Location: *source.NewLocation(&p.filepath, &firstTok.Start, &firstTok.End)},
+			Type:  nil, // Type inferred from range
+			Value: nil, // Value comes from range iteration
 		},
 	}
 	if hasSecond {
 		declItems = append(declItems, ast.DeclItem{
-			Name:      &ast.IdentifierExpr{Name: secondTok.Value, Location: *source.NewLocation(&p.filepath, &secondTok.Start, &secondTok.End)},
-			Type:      nil, // Type inferred from range element type
-			Value:     nil, // Value comes from range iteration
-			IsRef:     secondIsRef,
-			IsMutable: secondIsMutable,
+			Name:  &ast.IdentifierExpr{Name: secondTok.Value, Location: *source.NewLocation(&p.filepath, &secondTok.Start, &secondTok.End)},
+			Type:  nil, // Type inferred from range element type
+			Value: nil, // Value comes from range iteration
 		})
 	}
 	iterator := &ast.VarDecl{
@@ -72,10 +66,12 @@ func (p *Parser) parseForStmt() *ast.ForStmt {
 	}
 
 	return &ast.ForStmt{
-		Iterator: iterator,
-		Range:    rangeExpr,
-		Body:     body,
-		Location: *source.NewLocation(&p.filepath, &start, body.Location.End),
+		Iterator:        iterator,
+		Range:           rangeExpr,
+		Body:            body,
+		SecondIsRef:     secondIsRef,
+		SecondIsMutable: secondIsMutable,
+		Location:        *source.NewLocation(&p.filepath, &start, body.Location.End),
 	}
 }
 

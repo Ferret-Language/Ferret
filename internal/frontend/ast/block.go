@@ -64,10 +64,12 @@ func (i *IfStmt) Loc() *source.Location { return &i.Location }
 // Range can be start..end or start..end:incr
 // Iterator is a VarDecl that binds new loop variables scoped to the loop body.
 type ForStmt struct {
-	Iterator Node        // loop variable declaration
-	Range    Expression  // range expression (e.g., 0..10 or 0..10:2)
-	Body     *Block      // loop body
-	Scope    SymbolTable // Symbol table for for loop scope (filled during collection)
+	Iterator        Node        // loop variable declaration
+	Range           Expression  // range expression (e.g., 0..10 or 0..10:2)
+	Body            *Block      // loop body
+	Scope           SymbolTable // Symbol table for for loop scope (filled during collection)
+	SecondIsRef     bool        // true if second iterator variable is &v
+	SecondIsMutable bool        // true if second iterator variable is &mut v
 	source.Location
 }
 

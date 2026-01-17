@@ -607,12 +607,14 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 							inferredType = rangeElemType
 						}
 
-						// Wrap in reference type if & or &mut is used
-						if item.IsRef {
-							if item.IsMutable {
-								inferredType = types.NewMutableReference(inferredType)
-							} else {
-								inferredType = types.NewReference(inferredType)
+						// Wrap in reference type if & or &mut is used (only for second variable)
+						if len(varDecl.Decls) == 2 && idx == 1 {
+							if n.SecondIsRef {
+								if n.SecondIsMutable {
+									inferredType = types.NewMutableReference(inferredType)
+								} else {
+									inferredType = types.NewReference(inferredType)
+								}
 							}
 						}
 
