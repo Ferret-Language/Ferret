@@ -79,6 +79,10 @@ func needsByRefType(typ types.SemType) bool {
 	if iface := interfaceTypeOf(typ); iface != nil {
 		return true
 	}
+	// Unions are aggregate types that must be handled by-ref (memcpy)
+	if _, ok := types.UnwrapType(typ).(*types.UnionType); ok {
+		return true
+	}
 	return false
 }
 

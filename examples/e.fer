@@ -35,7 +35,12 @@ fn Printf(fmt: str, vals: ...Printable) {
     let val_index := 0;
     while i < len(&fmt) {
         if i+1 < len(&fmt) && fmt[i] == 123 as byte && fmt[i+1] == 125 as byte { // '{' == 123, '}' == 125
-            io::Println(vals[0]);
+            let v : Printable = vals[val_index];
+            if v is i32 {
+                io::Print(v);
+            } else {
+                io::Print("*");
+            }
             i += 2;
             val_index += 1;
             continue;
