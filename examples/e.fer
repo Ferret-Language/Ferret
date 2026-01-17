@@ -1,0 +1,53 @@
+import "std/io";
+
+type Printable union {
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    i256,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    u256,
+    f32,
+    f64,
+    f128,
+    f256,
+    str,
+    byte,
+    bool
+};
+
+fn myfn(vals: ...Printable) {
+
+}
+
+fn myfn2(vals: ...i32) {
+
+}
+
+fn Printf(fmt: str, vals: ...Printable) {
+    let i := 0;
+    let val_index := 0;
+    while i < len(&fmt) {
+        if i+1 < len(&fmt) && fmt[i] == 123 as byte && fmt[i+1] == 125 as byte { // '{' == 123, '}' == 125
+            io::Println(vals[0]);
+            i += 2;
+            val_index += 1;
+            continue;
+        }
+        io::Print(fmt[i]);
+        i++;
+    }
+}
+
+fn main() {
+    //let b := 'a';
+    myfn2(1);
+    myfn(1);
+    Printf("hello {}", 1, 2, 3);
+}

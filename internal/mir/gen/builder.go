@@ -2088,6 +2088,11 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 		var paramType types.SemType
 		if fnType != nil && i < len(fnType.Params) {
 			paramType = fnType.Params[i].Type
+			// For variadic parameters, convert ...T to []T for comparison
+			// (HIR lowering already converted args to array literals)
+			if fnType.Params[i].IsVariadic {
+				paramType = types.NewArray(paramType, -1) // []T
+			}
 		}
 		// Keep array cloning logic
 		if paramType != nil && !argIsMove {
@@ -2379,17 +2384,33 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 		return mir.InvalidValue
 	}
 
+	// Unwrap reference types for comparison
+	unwrappedValueType := types.UnwrapType(valueType)
+
 	// Find which variant this value matches
 	variantIndex := -1
 	for i, variant := range unionType.Variants {
-		if valueType.Equals(variant) {
+		unwrappedVariant := types.UnwrapType(variant)
+		if unwrappedValueType.Equals(unwrappedVariant) {
 			variantIndex = i
 			break
 		}
 	}
 
 	if variantIndex < 0 {
-		// Type checker should have caught this
+		// Type checker should have caught this, but provide helpful debug info
+		if b.gen != nil && b.gen.ctx != nil {
+			valueTypeStr := valueType.String()
+			if unwrappedValueType != valueType {
+				valueTypeStr = fmt.Sprintf("%s (unwrapped: %s)", valueType.String(), unwrappedValueType.String())
+			}
+			variantStrs := make([]string, len(unionType.Variants))
+			for i, v := range unionType.Variants {
+				variantStrs[i] = types.UnwrapType(v).String()
+			}
+			b.gen.ctx.ReportError(fmt.Sprintf("MIR: union variant mismatch: type '%s' not in union variants [%s]",
+				valueTypeStr, strings.Join(variantStrs, ", ")), &loc)
+		}
 		b.reportUnsupported("union variant mismatch", &loc)
 		return mir.InvalidValue
 	}

@@ -10,6 +10,32 @@ fn make() -> struct{ .X: i32, .Y: i32 } {
     return @a;
 }
 
+type Printable union {
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    i256,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    u256,
+    f32,
+    f64,
+    f128,
+    f256,
+    str,
+    byte,
+    bool
+};
+
+fn myfn(vals: ...Printable) {
+
+}
+
 fn main() {
     let a := #10;
     let b := #20;
@@ -49,4 +75,8 @@ fn main() {
     name = "a very long text which should overflow the initial capacity";
     
     io::Println(name, self_addr(&name), addr(&name), heap_addr(&name));
+
+    let z: i32 = 1;
+    myfn(z);
+
 }

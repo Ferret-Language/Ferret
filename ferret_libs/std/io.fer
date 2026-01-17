@@ -36,3 +36,8 @@ fn ReadFloat() -> str ! f64;
 fn Read() -> str ! str;
 // @extern
 fn ReadUnsafe() -> str;
+
+fn Printf(values: ...Printable) {
+    let valLen := len(&values);
+    Println("total values:", valLen);
+}

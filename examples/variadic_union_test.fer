@@ -1,0 +1,47 @@
+import "std/io";
+
+type Printable union {
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    i256,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    u256,
+    f32,
+    f64,
+    f128,
+    f256,
+    str,
+    byte,
+    bool
+};
+
+fn print_values(vals: ...Printable) {
+    io::Println("Received values");
+}
+
+fn main() {
+    // Test 1: Single value
+    print_values(42);
+    
+    // Test 2: Multiple values of same type
+    print_values(1, 2, 3);
+    
+    // Test 3: Multiple values of different types
+    print_values(42, 3.14, "hello", true);
+    
+    // Test 4: Explicit typed value
+    let x: Printable = 100;
+    print_values(x);
+    
+    // Test 5: Mixed explicit and literals
+    print_values(x, 200, "world");
+    
+    io::Println("All tests passed!");
+}
