@@ -222,6 +222,22 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 		// For HIR, we convert the type to an identifier expression
 		// The type information is preserved through the module's type system
 		return g.lowerTypeExprToIdent(e)
+	case *ast.TypeCheckPattern:
+		// Type check pattern: is Type
+		// Lower to a BinaryExpr with 'is' operator
+		// Get the match expression from context (we'll need to pass this differently)
+		// For now, create a special HIR node for this
+		return &hir.TypeCheckPattern{
+			Type:     typechecker.TypeFromTypeNodeWithContext(g.ctx, g.mod, e.Type),
+			Location: locFromNode(e),
+		}
+	case *ast.RangeCheckPattern:
+		// Range check pattern: in Range
+		// Lower to a range check expression
+		return &hir.RangeCheckPattern{
+			Range:    g.lowerExpr(e.Range),
+			Location: locFromNode(e),
+		}
 	case *ast.Invalid:
 		return &hir.Invalid{Location: locFromNode(e)}
 	default:

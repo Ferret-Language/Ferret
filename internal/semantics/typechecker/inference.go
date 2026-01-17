@@ -203,6 +203,14 @@ func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		// Postfix operators (++, --) return the type of the operand
 		return inferExprType(ctx, mod, e.X)
 
+	case *ast.TypeCheckPattern:
+		// Type check patterns always return bool (true if type matches)
+		return types.TypeBool
+
+	case *ast.RangeCheckPattern:
+		// Range check patterns always return bool (true if value in range)
+		return types.TypeBool
+
 	default:
 		return types.TypeUnknown
 	}

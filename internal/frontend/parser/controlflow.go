@@ -102,14 +102,32 @@ func (p *Parser) parseMatchStmt() *ast.MatchStmt {
 	for !p.match(tokens.CLOSE_CURLY) && !p.isAtEnd() {
 		caseStart := p.peek().Start
 
-		// Parse pattern (can be expression or underscore for default)
+		// Parse pattern (can be expression, type check, range check, or underscore for default)
 		var pattern ast.Expression
 		if p.match(tokens.IDENTIFIER_TOKEN) && p.peek().Value == "_" {
 			// Default case: _
 			p.advance()
 			pattern = nil // nil pattern indicates default case
+		} else if p.match(tokens.IS_TOKEN) {
+			// Type check pattern: is Type
+			p.advance() // consume 'is'
+			typeExpr := p.parseType()
+			// Create a special marker expression for type checks
+			pattern = &ast.TypeCheckPattern{
+				Type:     typeExpr,
+				Location: *source.NewLocation(&p.filepath, &caseStart, p.safeLoc(typeExpr).End),
+			}
+		} else if p.match(tokens.IN_TOKEN) {
+			// Range check pattern: in range
+			p.advance() // consume 'in'
+			rangeExpr := p.parseExpr()
+			// Create a special marker expression for range checks
+			pattern = &ast.RangeCheckPattern{
+				Range:    rangeExpr,
+				Location: *source.NewLocation(&p.filepath, &caseStart, p.safeLoc(rangeExpr).End),
+			}
 		} else {
-			// Regular pattern expression
+			// Regular pattern expression (value match)
 			pattern = p.parseExpr()
 		}
 

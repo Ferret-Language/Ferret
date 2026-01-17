@@ -1206,56 +1206,131 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 			Location: stmt.Location,
 		}
 	} else {
-		patternCases := make([]matchCase, 0, len(stmt.Cases))
-		for _, entry := range entries {
+		// For non-switch cases, generate if-else chain
+		// We need to handle different pattern types differently
+		current := b.current
+
+		for idx, entry := range entries {
 			clause := entry.clause
 			if clause.Pattern == nil {
+				// Default case - handle at the end
 				continue
 			}
-			value, ok := b.matchCaseConstValue(clause.Pattern, matchType)
-			if !ok {
-				b.reportUnsupported("match pattern", clause.Pattern.Loc())
-				continue
+
+			var elseTarget mir.BlockID
+			var elseBlock *mir.Block
+			if idx < len(entries)-1 {
+				elseBlock = b.newBlock("match.check", entry.clause.Location)
+				elseTarget = elseBlock.ID
+			} else {
+				elseTarget = defaultBlock.ID
 			}
-			patternCases = append(patternCases, matchCase{
-				block: entry.block,
-				value: value,
-				loc:   clause.Location,
-			})
+
+			var cmp mir.ValueID
+
+			// Handle different pattern types
+			switch pat := clause.Pattern.(type) {
+			case *hir.TypeCheckPattern:
+				// Type check pattern: is Type
+				if unionType, ok := types.UnwrapType(matchType).(*types.UnionType); ok {
+					// Find variant index
+					variantIndex := -1
+					for i, variant := range unionType.Variants {
+						if types.UnwrapType(variant).Equals(types.UnwrapType(pat.Type)) {
+							variantIndex = i
+							break
+						}
+					}
+					if variantIndex >= 0 {
+						// cond is a pointer to the union, load discriminant from offset 0
+						var unionPtr mir.ValueID
+						// Check if cond is already a pointer type
+						if _, isPtr := b.ptrElem[cond]; isPtr {
+							unionPtr = cond
+						} else {
+							// cond is a value, we need its address (shouldn't happen for unions)
+							// Unions should always be passed by reference
+							unionPtr = cond
+						}
+
+						tagSlot := b.emitPtrAdd(unionPtr, 0, types.TypeI32, clause.Location)
+						tagValue := b.emitLoad(tagSlot, types.TypeI32, clause.Location)
+
+						// Compare with expected variant index
+						expectedTag := b.emitConst(types.TypeI32, strconv.Itoa(variantIndex), clause.Location)
+						cmp = b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, tagValue, expectedTag, types.TypeI32, clause.Location)
+					} else {
+						// Type not found in union - always false
+						cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+					}
+				} else {
+					// Not a union type - cannot do type check
+					b.reportUnsupported("type check pattern on non-union type", clause.Pattern.Loc())
+					cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+				}
+
+			case *hir.RangeCheckPattern:
+				// Range check pattern: in Range
+				if rangeExpr, ok := pat.Range.(*hir.RangeExpr); ok {
+					// Generate: cond >= start && cond < end (or <= for inclusive)
+					startVal := b.lowerExpr(rangeExpr.Start)
+					endVal := b.lowerExpr(rangeExpr.End)
+
+					// Check lower bound: cond >= start
+					lowerCmp := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, cond, startVal, matchType, clause.Location)
+
+					// Check upper bound: cond < end or cond <= end
+					var upperCmp mir.ValueID
+					if rangeExpr.Inclusive {
+						upperCmp = b.emitBinary(tokens.LESS_EQUAL_TOKEN, cond, endVal, matchType, clause.Location)
+					} else {
+						upperCmp = b.emitBinary(tokens.LESS_TOKEN, cond, endVal, matchType, clause.Location)
+					}
+
+					// Combine: lower && upper
+					cmp = b.emitBinary(tokens.AND_TOKEN, lowerCmp, upperCmp, types.TypeBool, clause.Location)
+				} else {
+					b.reportUnsupported("invalid range in range check pattern", clause.Pattern.Loc())
+					cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+				}
+
+			default:
+				// Regular value match pattern
+				value, ok := b.matchCaseConstValue(clause.Pattern, matchType)
+				if !ok {
+					b.reportUnsupported("match pattern", clause.Pattern.Loc())
+					// Skip this case
+					if elseBlock != nil {
+						current = elseBlock
+					}
+					continue
+				}
+
+				if isLargePrimitiveType(matchType) {
+					cmp = b.emitLargeCompare(tokens.DOUBLE_EQUAL_TOKEN, cond, value, matchType, clause.Location)
+				} else {
+					cmp = b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, cond, value, matchType, clause.Location)
+				}
+			}
+
+			current.Term = &mir.CondBr{
+				Cond:     cmp,
+				Then:     entry.block.ID,
+				Else:     elseTarget,
+				Location: clause.Location,
+			}
+
+			if elseBlock != nil {
+				b.setBlock(elseBlock)
+				current = elseBlock
+			}
 		}
 
-		if len(patternCases) == 0 {
-			b.branchIfNoTerm(defaultBlock.ID, stmt.Location)
-		} else {
-			current := b.current
-			for idx, entry := range patternCases {
-				var elseTarget mir.BlockID
-				var elseBlock *mir.Block
-				if idx < len(patternCases)-1 {
-					elseBlock = b.newBlock("match.check", entry.loc)
-					elseTarget = elseBlock.ID
-				} else {
-					elseTarget = defaultBlock.ID
-				}
-
-				var cmp mir.ValueID
-				if isLargePrimitiveType(matchType) {
-					cmp = b.emitLargeCompare(tokens.DOUBLE_EQUAL_TOKEN, cond, entry.value, matchType, entry.loc)
-				} else {
-					cmp = b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, cond, entry.value, matchType, entry.loc)
-				}
-
-				current.Term = &mir.CondBr{
-					Cond:     cmp,
-					Then:     entry.block.ID,
-					Else:     elseTarget,
-					Location: stmt.Location,
-				}
-
-				if elseBlock != nil {
-					b.setBlock(elseBlock)
-					current = elseBlock
-				}
+		// Ensure the last check block branches to default if no match
+		if current != nil && current.Term == nil {
+			current.Term = &mir.Br{
+				Target:   defaultBlock.ID,
+				Location: stmt.Location,
 			}
 		}
 	}

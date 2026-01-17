@@ -200,3 +200,23 @@ type TypeExpr struct {
 func (t *TypeExpr) INode()                {} // Implements Node interface
 func (t *TypeExpr) Expr()                 {} // Expr is a marker interface for all expressions
 func (t *TypeExpr) Loc() *source.Location { return &t.Location }
+
+// TypeCheckPattern represents a type check pattern in match statements (is Type)
+type TypeCheckPattern struct {
+	Type TypeNode // the type to check against
+	source.Location
+}
+
+func (t *TypeCheckPattern) INode()                {} // Implements Node interface
+func (t *TypeCheckPattern) Expr()                 {} // Expr is a marker interface for all expressions
+func (t *TypeCheckPattern) Loc() *source.Location { return &t.Location }
+
+// RangeCheckPattern represents a range check pattern in match statements (in Range)
+type RangeCheckPattern struct {
+	Range Expression // the range expression to check against
+	source.Location
+}
+
+func (r *RangeCheckPattern) INode()                {} // Implements Node interface
+func (r *RangeCheckPattern) Expr()                 {} // Expr is a marker interface for all expressions
+func (r *RangeCheckPattern) Loc() *source.Location { return &r.Location }

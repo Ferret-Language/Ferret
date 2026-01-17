@@ -641,20 +641,64 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 		// Check each case clause
 		for _, caseClause := range n.Cases {
 			if caseClause.Pattern != nil {
-				// Check pattern type compatibility with match expression
-				patternType := checkExpr(ctx, mod, caseClause.Pattern, types.TypeUnknown)
+				// Handle different pattern types
+				switch pattern := caseClause.Pattern.(type) {
+				case *ast.TypeCheckPattern:
+					// Type check pattern: is Type
+					// Resolve the type
+					targetType := TypeFromTypeNodeWithContext(ctx, mod, pattern.Type)
+					if targetType == nil || targetType.Equals(types.TypeUnknown) {
+						ctx.Diagnostics.Add(
+							diagnostics.NewError("invalid type in type check pattern").
+								WithPrimaryLabel(pattern.Loc(), "cannot resolve type").
+								WithCode(diagnostics.ErrTypeMismatch),
+						)
+					}
+					// Type check patterns are always valid for union/interface types
+					// No further validation needed here
 
-				// Check if pattern type is compatible with match expression type
-				if !matchType.Equals(types.TypeUnknown) && !patternType.Equals(types.TypeUnknown) {
-					// Check if types are compatible (exact match or compatible types)
-					compat := checkTypeCompatibility(patternType, matchType)
-					if !isImplicitlyCompatible(compat) {
-						diag := diagnostics.NewError(fmt.Sprintf("pattern type '%s' does not match match expression type '%s'", patternType.String(), matchType.String())).
-							WithPrimaryLabel(caseClause.Pattern.Loc(), "incompatible pattern type").
-							WithCode(diagnostics.ErrTypeMismatch).
-							WithNote(fmt.Sprintf("match expression has type '%s'", matchType.String()))
-						diag = addExplicitCastHint(ctx, diag, matchType, compat, caseClause.Pattern)
-						ctx.Diagnostics.Add(diag)
+				case *ast.RangeCheckPattern:
+					// Range check pattern: in Range
+					// Check that the range expression is valid
+					rangeType := checkExpr(ctx, mod, pattern.Range, types.TypeUnknown)
+
+					// Check if it's a RangeExpr
+					if _, ok := pattern.Range.(*ast.RangeExpr); !ok {
+						ctx.Diagnostics.Add(
+							diagnostics.NewError("range check pattern requires a range expression").
+								WithPrimaryLabel(pattern.Range.Loc(), "not a range expression").
+								WithCode(diagnostics.ErrTypeMismatch).
+								WithHelp("use a range expression like '0..10' or '0..=10'"),
+						)
+					}
+
+					// Check that match expression type is compatible with ranges (numeric types)
+					if !matchType.Equals(types.TypeUnknown) && !rangeType.Equals(types.TypeUnknown) {
+						if !types.IsNumericType(matchType) {
+							ctx.Diagnostics.Add(
+								diagnostics.NewError(fmt.Sprintf("range check requires numeric match expression, got '%s'", matchType.String())).
+									WithPrimaryLabel(n.Expr.Loc(), "not a numeric type").
+									WithCode(diagnostics.ErrTypeMismatch),
+							)
+						}
+					}
+
+				default:
+					// Regular value match pattern
+					patternType := checkExpr(ctx, mod, caseClause.Pattern, types.TypeUnknown)
+
+					// Check if pattern type is compatible with match expression type
+					if !matchType.Equals(types.TypeUnknown) && !patternType.Equals(types.TypeUnknown) {
+						// Check if types are compatible (exact match or compatible types)
+						compat := checkTypeCompatibility(patternType, matchType)
+						if !isImplicitlyCompatible(compat) {
+							diag := diagnostics.NewError(fmt.Sprintf("pattern type '%s' does not match match expression type '%s'", patternType.String(), matchType.String())).
+								WithPrimaryLabel(caseClause.Pattern.Loc(), "incompatible pattern type").
+								WithCode(diagnostics.ErrTypeMismatch).
+								WithNote(fmt.Sprintf("match expression has type '%s'", matchType.String()))
+							diag = addExplicitCastHint(ctx, diag, matchType, compat, caseClause.Pattern)
+							ctx.Diagnostics.Add(diag)
+						}
 					}
 				}
 			}

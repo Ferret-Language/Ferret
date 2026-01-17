@@ -690,3 +690,23 @@ type CaseClause struct {
 	Body     *Block
 	Location source.Location
 }
+
+// TypeCheckPattern represents a type check pattern in match (is Type)
+type TypeCheckPattern struct {
+	Type     types.SemType
+	Location source.Location
+}
+
+func (t *TypeCheckPattern) hirNode()              {}
+func (t *TypeCheckPattern) hirExpr()              {}
+func (t *TypeCheckPattern) Loc() *source.Location { return &t.Location }
+
+// RangeCheckPattern represents a range check pattern in match (in Range)
+type RangeCheckPattern struct {
+	Range    Expr // RangeExpr
+	Location source.Location
+}
+
+func (r *RangeCheckPattern) hirNode()              {}
+func (r *RangeCheckPattern) hirExpr()              {}
+func (r *RangeCheckPattern) Loc() *source.Location { return &r.Location }
