@@ -1157,7 +1157,7 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 		endType := inferExprType(ctx, mod, rangeExpr.End)
 		startBase := types.UnwrapType(startType)
 		endBase := types.UnwrapType(endType)
-		
+
 		if !types.IsNumericType(startBase) && !types.IsUntyped(startBase) {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("range start must be numeric, got '%s'", startType.String())).
@@ -1165,7 +1165,7 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 					WithPrimaryLabel(rangeExpr.Start.Loc(), "not a numeric type"),
 			)
 		}
-		
+
 		if !types.IsNumericType(endBase) && !types.IsUntyped(endBase) {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("range end must be numeric, got '%s'", endType.String())).

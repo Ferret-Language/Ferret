@@ -129,14 +129,14 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 					Type:     types.TypeBool,
 					Location: locFromNode(e),
 				}
-				
+
 				upperBoundOp := tokens.LESS_TOKEN
 				upperBoundValue := "<"
 				if rangeExpr.Inclusive {
 					upperBoundOp = tokens.LESS_EQUAL_TOKEN
 					upperBoundValue = "<="
 				}
-				
+
 				upperBound := &hir.BinaryExpr{
 					X:        g.lowerExpr(e.X),
 					Op:       tokens.Token{Kind: upperBoundOp, Value: upperBoundValue},
@@ -144,7 +144,7 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 					Type:     types.TypeBool,
 					Location: locFromNode(e),
 				}
-				
+
 				return &hir.BinaryExpr{
 					X:        lowerBound,
 					Op:       tokens.Token{Kind: tokens.AND_TOKEN, Value: "&&"},
@@ -154,7 +154,7 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 				}
 			}
 		}
-		
+
 		binExpr := &hir.BinaryExpr{
 			X:        g.lowerExpr(e.X),
 			Op:       e.Op,
