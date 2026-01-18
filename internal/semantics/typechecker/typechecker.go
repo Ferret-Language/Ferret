@@ -2593,13 +2593,9 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
-		if mod != nil && mod.CurrentScope != nil {
-			if sym, found := mod.CurrentScope.Lookup(e.Name); found {
-				if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
-					return false
-				}
-			}
-		}
+		// Const variables CAN be borrowed with shared references (&)
+		// Mutable reference (&mut) is checked separately in checkUnaryExpr
+		// So const variables are borrowable here
 		return true
 	case *ast.ParenExpr:
 		return isBorrowableTarget(ctx, mod, e.X)
@@ -2630,13 +2626,9 @@ func isAddrTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr 
 
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
-		if mod != nil && mod.CurrentScope != nil {
-			if sym, found := mod.CurrentScope.Lookup(e.Name); found {
-				if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
-					return false
-				}
-			}
-		}
+		// Const and readonly variables CAN be borrowed with shared references (&)
+		// Mutable reference (&mut) is checked separately in checkUnaryExpr
+		// So const/readonly variables are addressable here
 		return true
 	case *ast.DerefExpr:
 		return true

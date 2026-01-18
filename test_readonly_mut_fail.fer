@@ -1,0 +1,6 @@
+fn main() {
+    // Should fail - mutable reference to loop index (readonly)
+    for i, _ in 0..5 {
+        let m := &mut i;
+    }
+}

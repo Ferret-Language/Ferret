@@ -3,7 +3,7 @@ import "std/io";
 fn Printf(fmt: str, args: ...io::Printable) {
     //io::Println(fmt, len(&args));
     let index := 0, args_index := 0;
-    let chars := fmt as []char;
+    const chars := fmt as []char;
     while index < len(&chars) {
         if index+1 < len(&chars) && chars[index] == '{' && chars[index+1] == '}' {
             io::Print(args[args_index]);

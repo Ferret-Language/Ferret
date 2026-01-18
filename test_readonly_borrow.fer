@@ -1,0 +1,19 @@
+fn main() {
+    const x := [1, 2, 3];
+    
+    // Test const with shared reference - should work
+    let r1 := &x;
+    
+    // Test for loop index (readonly) with shared reference - should work
+    for i in 0..5 {
+        let r2 := &i;  // i is readonly (loop index)
+    }
+    
+    // Test const with mutable reference - should fail
+    // let m1 := &mut x;
+    
+    // Test for loop index with mutable reference - should fail
+    // for j in 0..5 {
+    //     let m2 := &mut j;
+    // }
+}
