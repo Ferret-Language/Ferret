@@ -3003,7 +3003,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 				// Power operator: use the larger type for large primitives, f64 otherwise
 				resultType = types.GetPowerResultType(lhsType, rhsType)
 			case tokens.DOUBLE_EQUAL_TOKEN, tokens.NOT_EQUAL_TOKEN, tokens.LESS_TOKEN, tokens.LESS_EQUAL_TOKEN,
-				tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN, tokens.AND_TOKEN, tokens.OR_TOKEN:
+				tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN, tokens.AND_TOKEN, tokens.OR_TOKEN, tokens.IN_TOKEN:
 				resultType = types.TypeBool
 			default:
 				resultType = types.TypeUnknown

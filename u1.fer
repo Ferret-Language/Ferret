@@ -3,7 +3,7 @@ import "std/io";
 fn main() {
     let a := 10;
 
-    if a in 3..15 {
+    if a in 3..15:2 {
         io::Println("a is within 0 to 15");
     }
 }

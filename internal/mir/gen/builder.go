@@ -1510,6 +1510,11 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 			return b.emitTypeCheck(e)
 		}
 
+		// Special handling for 'in' operator: x in a..b => x >= a && x < b
+		if e.Op.Kind == tokens.IN_TOKEN {
+			return b.emitRangeCheck(e)
+		}
+
 		// Short-circuit evaluation for && and ||
 		if e.Op.Kind == tokens.AND_TOKEN || e.Op.Kind == tokens.OR_TOKEN {
 			return b.emitShortCircuitBinary(e)
@@ -2720,6 +2725,133 @@ func (b *functionBuilder) emitInterfaceTypeCheck(ifaceVal mir.ValueID, targetTyp
 	})
 
 	return isEqual
+}
+
+// emitRangeCheck generates code for the 'in' operator: x in a..b => x >= a && x < b
+// Returns a boolean indicating if the value is within the range.
+func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
+	if expr == nil {
+		return mir.InvalidValue
+	}
+
+	// The RHS must be a RangeExpr
+	rangeExpr, ok := expr.Y.(*hir.RangeExpr)
+	if !ok {
+		b.reportUnsupported("'in' operator without range expression", expr.Loc())
+		return mir.InvalidValue
+	}
+
+	// Lower the value being checked (LHS)
+	val := b.lowerExpr(expr.X)
+	if val == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	valType := b.exprType(expr.X)
+	val, valType = b.derefValueIfNeeded(val, valType, expr.Location)
+
+	// Lower the range bounds
+	startVal := b.lowerExpr(rangeExpr.Start)
+	if startVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	startType := b.exprType(rangeExpr.Start)
+	startVal, _ = b.derefValueIfNeeded(startVal, startType, expr.Location)
+
+	endVal := b.lowerExpr(rangeExpr.End)
+	if endVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	endType := b.exprType(rangeExpr.End)
+	endVal, _ = b.derefValueIfNeeded(endVal, endType, expr.Location)
+
+	// Generate: val >= start
+	lowerCheck := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, val, startVal, types.TypeBool, expr.Location)
+	if lowerCheck == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+
+	// Generate: val < end (or val <= end for inclusive)
+	upperOp := tokens.LESS_TOKEN
+	if rangeExpr.Inclusive {
+		upperOp = tokens.LESS_EQUAL_TOKEN
+	}
+	upperCheck := b.emitBinary(upperOp, val, endVal, types.TypeBool, expr.Location)
+	if upperCheck == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+
+	// Combine: lowerCheck && upperCheck
+	boundsCheck := lowerCheck
+	if lowerCheck != upperCheck {
+		id := b.gen.nextValueID()
+		b.emitInstr(&mir.Binary{
+			Result:   id,
+			Op:       tokens.AND_TOKEN,
+			Left:     lowerCheck,
+			Right:    upperCheck,
+			Type:     types.TypeBool,
+			Location: expr.Location,
+		})
+		boundsCheck = id
+	}
+
+	// If there's a step, we need to check alignment: (val - start) % step == 0
+	if rangeExpr.Incr != nil {
+		stepVal := b.lowerExpr(rangeExpr.Incr)
+		if stepVal == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		stepType := b.exprType(rangeExpr.Incr)
+		stepVal, _ = b.derefValueIfNeeded(stepVal, stepType, expr.Location)
+
+		// Calculate: val - start
+		diffID := b.gen.nextValueID()
+		b.emitInstr(&mir.Binary{
+			Result:   diffID,
+			Op:       tokens.MINUS_TOKEN,
+			Left:     val,
+			Right:    startVal,
+			Type:     valType,
+			Location: expr.Location,
+		})
+
+		// Calculate: (val - start) % step
+		modID := b.gen.nextValueID()
+		b.emitInstr(&mir.Binary{
+			Result:   modID,
+			Op:       tokens.MOD_TOKEN,
+			Left:     diffID,
+			Right:    stepVal,
+			Type:     valType,
+			Location: expr.Location,
+		})
+
+		// Create zero constant for comparison
+		zeroID := b.emitConst(valType, "0", expr.Location)
+		if zeroID == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+
+		// Check: mod == 0
+		alignCheck := b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, modID, zeroID, types.TypeBool, expr.Location)
+		if alignCheck == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+
+		// Final result: boundsCheck && alignCheck
+		finalID := b.gen.nextValueID()
+		b.emitInstr(&mir.Binary{
+			Result:   finalID,
+			Op:       tokens.AND_TOKEN,
+			Left:     boundsCheck,
+			Right:    alignCheck,
+			Type:     types.TypeBool,
+			Location: expr.Location,
+		})
+		return finalID
+	}
+
+	return boundsCheck
 }
 
 func builtinNameFromIdent(ident *hir.Ident) (string, bool) {

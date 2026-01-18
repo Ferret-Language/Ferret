@@ -171,6 +171,11 @@ func evaluateHIRUnary(ctx *context_v2.CompilerContext, mod *context_v2.Module, u
 
 // evaluateHIRBinary evaluates binary operations.
 func evaluateHIRBinary(ctx *context_v2.CompilerContext, mod *context_v2.Module, binary *hir.BinaryExpr) *ConstValue {
+	// Special case: 'in' operator for range checks.
+	if binary.Op.Kind == tokens.IN_TOKEN {
+		return evaluateHIRInOperator(ctx, mod, binary)
+	}
+
 	left := EvaluateHIRExpr(ctx, mod, binary.X)
 	right := EvaluateHIRExpr(ctx, mod, binary.Y)
 
@@ -218,4 +223,192 @@ func evaluateHIRBinary(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 	}
 
 	return nil
+}
+
+// evaluateHIRInOperator evaluates the 'in' operator for range checks.
+// Returns true if the left value is within the range specified on the right.
+func evaluateHIRInOperator(ctx *context_v2.CompilerContext, mod *context_v2.Module, binary *hir.BinaryExpr) *ConstValue {
+	// Evaluate the value being checked.
+	value := EvaluateHIRExpr(ctx, mod, binary.X)
+	if value == nil {
+		return nil
+	}
+
+	// The right side should be a RangeExpr.
+	rangeExpr, ok := binary.Y.(*hir.RangeExpr)
+	if !ok {
+		return nil
+	}
+
+	// Evaluate range bounds.
+	startVal := EvaluateHIRExpr(ctx, mod, rangeExpr.Start)
+	endVal := EvaluateHIRExpr(ctx, mod, rangeExpr.End)
+	if startVal == nil || endVal == nil {
+		return nil
+	}
+
+	// Evaluate step if present (default to 1 if not specified).
+	var stepVal *ConstValue
+	if rangeExpr.Incr != nil {
+		stepVal = EvaluateHIRExpr(ctx, mod, rangeExpr.Incr)
+		if stepVal == nil {
+			return nil
+		}
+	}
+
+	// Check if value is within range.
+	// Only support integer and float ranges for now.
+	switch value.Kind {
+	case ConstInt:
+		return evaluateIntInRange(value, startVal, endVal, stepVal, rangeExpr.Inclusive)
+	case ConstFloat:
+		return evaluateFloatInRange(value, startVal, endVal, stepVal, rangeExpr.Inclusive)
+	default:
+		return nil
+	}
+}
+
+// evaluateIntInRange checks if an integer value is within an integer range.
+func evaluateIntInRange(value, start, end, step *ConstValue, inclusive bool) *ConstValue {
+	v, ok := value.AsInt()
+	if !ok {
+		return nil
+	}
+	s, ok := start.AsInt()
+	if !ok {
+		return nil
+	}
+	e, ok := end.AsInt()
+	if !ok {
+		return nil
+	}
+
+	// Default step is 1.
+	stepInt := big.NewInt(1)
+	if step != nil {
+		if stepVal, ok := step.AsInt(); ok {
+			stepInt = stepVal
+		} else {
+			return nil
+		}
+	}
+
+	// Check if step is zero (invalid range).
+	if stepInt.Sign() == 0 {
+		return nil
+	}
+
+	// Determine if v is in the range [s, e) or [s, e] with the given step.
+	// First check basic bounds.
+	if stepInt.Sign() > 0 {
+		// Ascending range.
+		if v.Cmp(s) < 0 {
+			return NewBoolValue(false) // v < start
+		}
+		if inclusive {
+			if v.Cmp(e) > 0 {
+				return NewBoolValue(false) // v > end
+			}
+		} else {
+			if v.Cmp(e) >= 0 {
+				return NewBoolValue(false) // v >= end
+			}
+		}
+	} else {
+		// Descending range.
+		if v.Cmp(s) > 0 {
+			return NewBoolValue(false) // v > start
+		}
+		if inclusive {
+			if v.Cmp(e) < 0 {
+				return NewBoolValue(false) // v < end
+			}
+		} else {
+			if v.Cmp(e) <= 0 {
+				return NewBoolValue(false) // v <= end
+			}
+		}
+	}
+
+	// Check if v is aligned with the step.
+	// (v - s) % step == 0
+	diff := new(big.Int).Sub(v, s)
+	mod := new(big.Int).Mod(diff, new(big.Int).Abs(stepInt))
+	if mod.Sign() != 0 {
+		return NewBoolValue(false) // Not aligned with step
+	}
+
+	return NewBoolValue(true)
+}
+
+// evaluateFloatInRange checks if a float value is within a float range.
+func evaluateFloatInRange(value, start, end, step *ConstValue, inclusive bool) *ConstValue {
+	v, ok := value.AsFloat()
+	if !ok {
+		return nil
+	}
+	s, ok := start.AsFloat()
+	if !ok {
+		return nil
+	}
+	e, ok := end.AsFloat()
+	if !ok {
+		return nil
+	}
+
+	// Validate step if present.
+	if step != nil {
+		stepFloat, ok := step.AsFloat()
+		if !ok {
+			return nil
+		}
+		// Check if step is zero (invalid range).
+		if stepFloat.Sign() == 0 {
+			return nil
+		}
+		// Check if step direction makes sense for the range.
+		rangeCmp := s.Cmp(e)
+		if rangeCmp < 0 && stepFloat.Sign() < 0 {
+			// Ascending range with negative step - will never reach end.
+			return nil
+		}
+		if rangeCmp > 0 && stepFloat.Sign() > 0 {
+			// Descending range with positive step - will never reach end.
+			return nil
+		}
+	}
+
+	// For floats, we do a simple bounds check without step alignment.
+	// Checking step alignment for floats is complex due to floating-point precision.
+	if s.Cmp(e) <= 0 {
+		// Ascending range.
+		if v.Cmp(s) < 0 {
+			return NewBoolValue(false)
+		}
+		if inclusive {
+			if v.Cmp(e) > 0 {
+				return NewBoolValue(false)
+			}
+		} else {
+			if v.Cmp(e) >= 0 {
+				return NewBoolValue(false)
+			}
+		}
+	} else {
+		// Descending range.
+		if v.Cmp(s) > 0 {
+			return NewBoolValue(false)
+		}
+		if inclusive {
+			if v.Cmp(e) < 0 {
+				return NewBoolValue(false)
+			}
+		} else {
+			if v.Cmp(e) <= 0 {
+				return NewBoolValue(false)
+			}
+		}
+	}
+
+	return NewBoolValue(true)
 }

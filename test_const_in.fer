@@ -1,0 +1,9 @@
+import "std/io";
+
+fn main() {
+    if 10 in 3..15 {
+        io::Println("10 is in range");
+    } else {
+        io::Println("10 is not in range");
+    }
+}

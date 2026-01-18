@@ -1,9 +1,0 @@
-fn main() {
-    const x := [1, 2, 3];
-    
-    // Should work - shared reference to const
-    let r := &x;
-    
-    // Should fail - mutable reference to const
-    let m := &mut x;
-}

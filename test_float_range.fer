@@ -1,0 +1,27 @@
+import "std/io";
+
+fn main() {
+    let a := 5.0;
+    let b := 6.5;
+    let c := 7.0;
+
+    // Should be true: 5.0 in 3.0..8.0:1.0
+    if a in 3.0..8.0:1.0 {
+        io::Println("a=5.0 is in 3.0..8.0:1.0");
+    }
+
+    // Should be false: 6.5 in 3.0..8.0:1.0 (not aligned)
+    if b in 3.0..8.0:1.0 {
+        io::Println("b=6.5 is in 3.0..8.0:1.0");
+    }
+
+    // Should be true: 7.0 in 3.0..8.0:2.0 (aligned)
+    if c in 3.0..8.0:2.0 {
+        io::Println("c=7.0 is in 3.0..8.0:2.0");
+    }
+
+    // Should be false: 7.1 in 3.0..8.0:2.0 (not aligned)
+    if 7.1 in 3.0..8.0:2.0 {
+        io::Println("7.1 is in 3.0..8.0:2.0");
+    }
+}

@@ -1,0 +1,24 @@
+import "std/io";
+
+fn main() {
+    let a := 100;
+
+    // Should warn: always false
+    if a in 3..15 {
+        io::Println("a is within 3 to 15");
+    } else {
+        io::Println("a is not within 3 to 15");
+    }
+
+    // Should warn: always true (inclusive range)
+    if 15 in 3..=15 {
+        io::Println("15 is in inclusive range");
+    }
+
+    // Should NOT warn: variable condition
+    let x := 10;
+    let y := 20;
+    if x in 5..y {
+        io::Println("x is in range");
+    }
+}
