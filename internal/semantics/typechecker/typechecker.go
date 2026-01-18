@@ -507,8 +507,14 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 						WithNote("Remove this loop or use a non-empty array"))
 				}
 			} else if prim, ok := rangeBaseType.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
-				// Strings are iterable - element type is byte
-				rangeElemType = types.TypeByte
+				// Forbid direct string iteration - require explicit cast to []char or []byte
+				isIterable = false
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("cannot iterate over strings directly").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(n.Range.Loc(), "string iteration is not allowed").
+						WithHelp("use explicit cast: for x in (str as []char) for character iteration or for x in (str as []byte) for byte iteration"),
+				)
 			} else if _, ok := rangeBaseType.(*types.MapType); !ok {
 				isIterable = false
 				ctx.Diagnostics.Add(
@@ -601,6 +607,17 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 							inferredType = rangeElemType
 						}
 
+						// Wrap in reference type if & or &mut is used (only for second variable)
+						if len(varDecl.Decls) == 2 && idx == 1 {
+							if n.SecondIsRef {
+								if n.SecondIsMutable {
+									inferredType = types.NewMutableReference(inferredType)
+								} else {
+									inferredType = types.NewReference(inferredType)
+								}
+							}
+						}
+
 						if sym, ok := mod.CurrentScope.GetSymbol(item.Name.Name); ok {
 							sym.Type = inferredType
 						}
@@ -640,21 +657,76 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 
 		// Check each case clause
 		for _, caseClause := range n.Cases {
-			if caseClause.Pattern != nil {
-				// Check pattern type compatibility with match expression
-				patternType := checkExpr(ctx, mod, caseClause.Pattern, types.TypeUnknown)
+			var caseNarrowing *narrowing.NarrowingContext
 
-				// Check if pattern type is compatible with match expression type
-				if !matchType.Equals(types.TypeUnknown) && !patternType.Equals(types.TypeUnknown) {
-					// Check if types are compatible (exact match or compatible types)
-					compat := checkTypeCompatibility(patternType, matchType)
-					if !isImplicitlyCompatible(compat) {
-						diag := diagnostics.NewError(fmt.Sprintf("pattern type '%s' does not match match expression type '%s'", patternType.String(), matchType.String())).
-							WithPrimaryLabel(caseClause.Pattern.Loc(), "incompatible pattern type").
-							WithCode(diagnostics.ErrTypeMismatch).
-							WithNote(fmt.Sprintf("match expression has type '%s'", matchType.String()))
-						diag = addExplicitCastHint(ctx, diag, matchType, compat, caseClause.Pattern)
-						ctx.Diagnostics.Add(diag)
+			if caseClause.Pattern != nil {
+				// Handle different pattern types
+				switch pattern := caseClause.Pattern.(type) {
+				case *ast.TypeCheckPattern:
+					// Type check pattern: is Type
+					// Resolve the type
+					targetType := TypeFromTypeNodeWithContext(ctx, mod, pattern.Type)
+					if targetType == nil || targetType.Equals(types.TypeUnknown) {
+						ctx.Diagnostics.Add(
+							diagnostics.NewError("invalid type in type check pattern").
+								WithPrimaryLabel(pattern.Loc(), "cannot resolve type").
+								WithCode(diagnostics.ErrTypeMismatch),
+						)
+					}
+					// Type check patterns are always valid for union/interface types
+					// No further validation needed here
+
+					// Apply narrowing for 'is Type' patterns
+					// Create a synthetic BinaryExpr for narrowing analysis: matchExpr is Type
+					syntheticIsExpr := &ast.BinaryExpr{
+						X:  n.Expr,
+						Op: tokens.Token{Kind: tokens.IS_TOKEN},
+						Y:  &ast.TypeExpr{Type: pattern.Type},
+					}
+					caseNarrowing, _ = narrowingAnalyzer.AnalyzeCondition(ctx, mod, syntheticIsExpr, nil)
+
+				case *ast.RangeCheckPattern:
+					// Range check pattern: in Range
+					// Check that the range expression is valid
+					rangeType := checkExpr(ctx, mod, pattern.Range, types.TypeUnknown)
+
+					// Check if it's a RangeExpr
+					if _, ok := pattern.Range.(*ast.RangeExpr); !ok {
+						ctx.Diagnostics.Add(
+							diagnostics.NewError("range check pattern requires a range expression").
+								WithPrimaryLabel(pattern.Range.Loc(), "not a range expression").
+								WithCode(diagnostics.ErrTypeMismatch).
+								WithHelp("use a range expression like '0..10' or '0..=10'"),
+						)
+					}
+
+					// Check that match expression type is compatible with ranges (numeric types)
+					if !matchType.Equals(types.TypeUnknown) && !rangeType.Equals(types.TypeUnknown) {
+						if !types.IsNumericType(matchType) {
+							ctx.Diagnostics.Add(
+								diagnostics.NewError(fmt.Sprintf("range check requires numeric match expression, got '%s'", matchType.String())).
+									WithPrimaryLabel(n.Expr.Loc(), "not a numeric type").
+									WithCode(diagnostics.ErrTypeMismatch),
+							)
+						}
+					}
+
+				default:
+					// Regular value match pattern
+					patternType := checkExpr(ctx, mod, caseClause.Pattern, types.TypeUnknown)
+
+					// Check if pattern type is compatible with match expression type
+					if !matchType.Equals(types.TypeUnknown) && !patternType.Equals(types.TypeUnknown) {
+						// Check if types are compatible (exact match or compatible types)
+						compat := checkTypeCompatibility(patternType, matchType)
+						if !isImplicitlyCompatible(compat) {
+							diag := diagnostics.NewError(fmt.Sprintf("pattern type '%s' does not match match expression type '%s'", patternType.String(), matchType.String())).
+								WithPrimaryLabel(caseClause.Pattern.Loc(), "incompatible pattern type").
+								WithCode(diagnostics.ErrTypeMismatch).
+								WithNote(fmt.Sprintf("match expression has type '%s'", matchType.String()))
+							diag = addExplicitCastHint(ctx, diag, matchType, compat, caseClause.Pattern)
+							ctx.Diagnostics.Add(diag)
+						}
 					}
 				}
 			}
@@ -664,8 +736,14 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 			if caseClause.Body != nil && caseClause.Body.Scope != nil {
 				restoreScope = mod.EnterScope(caseClause.Body.Scope.(*table.SymbolTable))
 			}
-			// Check case body
-			checkBlock(ctx, mod, caseClause.Body)
+
+			// Check case body with narrowing if available
+			if caseNarrowing != nil {
+				applyNarrowingToBlock(ctx, mod, caseClause.Body, caseNarrowing)
+			} else {
+				checkBlock(ctx, mod, caseClause.Body)
+			}
+
 			// Restore scope if we entered one
 			if restoreScope != nil {
 				restoreScope()
@@ -725,6 +803,21 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 		sym, ok := mod.CurrentScope.GetSymbol(name)
 		if !ok {
 			continue
+		}
+
+		if item.Value != nil {
+			if heapUnaryExpr(item.Value) != nil {
+				if isConst {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("constant '%s' cannot use heap allocation", name)).
+							WithCode(diagnostics.ErrInvalidOperation).
+							WithPrimaryLabel(item.Value.Loc(), "heap allocation is not allowed in constants").
+							WithHelp("use a runtime variable instead of const"),
+					)
+				} else {
+					sym.IsHeap = true
+				}
+			}
 		}
 
 		if item.Value != nil && referencesIdentOutsideFuncLit(item.Value, name) {
@@ -885,7 +978,7 @@ func checkFuncDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 
 // checkSelectorExpr validates that a field or method exists on a struct
 // checkBinaryExpr validates that operands of a binary expression have compatible types
-func checkBinaryExpr(ctx *context_v2.CompilerContext, _ *context_v2.Module, expr *ast.BinaryExpr, lhsType, rhsType types.SemType) {
+func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.BinaryExpr, lhsType, rhsType types.SemType) {
 	// Skip if either type is unknown (error already reported)
 	if lhsType.Equals(types.TypeUnknown) || rhsType.Equals(types.TypeUnknown) {
 		return
@@ -1035,6 +1128,52 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, _ *context_v2.Module, expr
 			)
 		}
 
+	case tokens.IN_TOKEN:
+		// 'in' operator: value in range
+		// RHS must be a RangeExpr
+		rangeExpr, ok := expr.Y.(*ast.RangeExpr)
+		if !ok {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("'in' operator requires a range expression on the right side").
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(expr.Y.Loc(), "not a range expression").
+					WithHelp("use a range like '0..10' or 'a..=b'"),
+			)
+			return
+		}
+
+		// LHS must be numeric (to compare with range bounds)
+		if !types.IsNumericType(lhsBase) && !types.IsUntyped(lhsBase) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("'in' operator requires numeric value, got '%s'", lhsType.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(expr.X.Loc(), "not a numeric type"),
+			)
+			return
+		}
+
+		// Check that range bounds are numeric
+		startType := inferExprType(ctx, mod, rangeExpr.Start)
+		endType := inferExprType(ctx, mod, rangeExpr.End)
+		startBase := types.UnwrapType(startType)
+		endBase := types.UnwrapType(endType)
+
+		if !types.IsNumericType(startBase) && !types.IsUntyped(startBase) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("range start must be numeric, got '%s'", startType.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(rangeExpr.Start.Loc(), "not a numeric type"),
+			)
+		}
+
+		if !types.IsNumericType(endBase) && !types.IsUntyped(endBase) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("range end must be numeric, got '%s'", endType.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(rangeExpr.End.Loc(), "not a numeric type"),
+			)
+		}
+
 	case tokens.AND_TOKEN, tokens.OR_TOKEN:
 		// Logical operators require bool types
 		if !lhsType.Equals(types.TypeBool) || !rhsType.Equals(types.TypeBool) {
@@ -1165,12 +1304,76 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		return
 	}
 
-	// Check if cast is valid
-	compatibility := checkTypeCompatibility(sourceType, targetType)
-
 	// For struct types, check structural compatibility (unwrap NamedType on both sides)
 	srcUnwrapped := types.UnwrapType(sourceType)
 	dstUnwrapped := types.UnwrapType(targetType)
+
+	// Handle string <-> array conversions
+	srcPrim, srcIsPrim := sourceType.(*types.PrimitiveType)
+	dstPrim, dstIsPrim := targetType.(*types.PrimitiveType)
+	srcArr, srcIsArr := srcUnwrapped.(*types.ArrayType)
+	dstArr, dstIsArr := dstUnwrapped.(*types.ArrayType)
+
+	// str -> []char (UTF-8 decode to Unicode scalars)
+	if srcIsPrim && srcPrim.GetName() == types.TYPE_STRING && dstIsArr && dstArr.Length < 0 {
+		if elemPrim, ok := dstArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
+			// Valid: str as []char
+			// TODO: Runtime implementation needed for UTF-8 decoding
+			return
+		}
+	}
+
+	// str -> []byte (view/copy of UTF-8 bytes)
+	if srcIsPrim && srcPrim.GetName() == types.TYPE_STRING && dstIsArr && dstArr.Length < 0 {
+		if elemPrim, ok := dstArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
+			// Valid: str as []byte or str as []u8
+			// TODO: Runtime implementation needed for byte view/copy
+			return
+		}
+	}
+
+	// []char -> str (UTF-8 encode)
+	if srcIsArr && srcArr.Length < 0 && dstIsPrim && dstPrim.GetName() == types.TYPE_STRING {
+		if elemPrim, ok := srcArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
+			// Valid: []char as str
+			// TODO: Runtime implementation needed for UTF-8 encoding
+			return
+		}
+	}
+
+	// []byte -> str (interpret as UTF-8)
+	if srcIsArr && srcArr.Length < 0 && dstIsPrim && dstPrim.GetName() == types.TYPE_STRING {
+		if elemPrim, ok := srcArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
+			// Valid: []byte as str or []u8 as str
+			// TODO: Runtime implementation needed for UTF-8 validation/conversion
+			return
+		}
+	}
+
+	// char <-> byte conversions
+	if srcIsPrim && dstIsPrim {
+		if (srcPrim.GetName() == types.TYPE_CHAR && (dstPrim.GetName() == types.TYPE_BYTE || dstPrim.GetName() == types.TYPE_U8)) ||
+			((srcPrim.GetName() == types.TYPE_BYTE || srcPrim.GetName() == types.TYPE_U8) && dstPrim.GetName() == types.TYPE_CHAR) {
+			// Valid: char as byte, byte as char
+			// char -> byte: truncate to lower 8 bits
+			// byte -> char: zero-extend to 32-bit Unicode scalar
+			return
+		}
+		// Allow integer -> char conversions (interpret as Unicode code point)
+		if types.IsIntegerTypeName(srcPrim.GetName()) && dstPrim.GetName() == types.TYPE_CHAR {
+			// Valid: i32 as char, etc.
+			// Runtime should validate Unicode scalar range
+			return
+		}
+		// Allow char -> integer conversions (get Unicode code point)
+		if srcPrim.GetName() == types.TYPE_CHAR && types.IsIntegerTypeName(dstPrim.GetName()) {
+			// Valid: char as i32, etc.
+			return
+		}
+	}
+
+	// Check if cast is valid
+	compatibility := checkTypeCompatibility(sourceType, targetType)
 
 	// Handle map type casts
 	if srcMap, ok := srcUnwrapped.(*types.MapType); ok {
@@ -1331,13 +1534,13 @@ func checkIndexExpr(ctx *context_v2.CompilerContext, expr *ast.IndexExpr, baseTy
 		return
 	}
 	if prim, ok := baseType.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
-		if !isIntegerIndex {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError("string index must be an integer").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(expr.Index.Loc(), "expected integer index"),
-			)
-		}
+		// Forbid direct string indexing - require explicit cast to []char or []byte
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot index strings directly").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "string indexing is not allowed").
+				WithHelp("use explicit cast: (str as []char)[i] for character access or (str as []byte)[i] for byte access"),
+		)
 		return
 	}
 
@@ -1963,10 +2166,19 @@ func hasInvalidRecursiveType(root *types.NamedType, t types.SemType, seen map[ty
 		}
 		return false
 	case *types.UnionType:
+		// Unions CAN contain recursive references through safe indirections
+		// (arrays, maps, optionals), but NOT direct self-reference
+		// Example: union { T1, T2, []A } is OK
+		// Example: union { T1, T2, A } is NOT OK (direct recursion)
 		for _, variant := range tt.Variants {
-			if hasInvalidRecursiveType(root, variant, seen) {
+			// Check if this variant is the root type itself (direct recursion)
+			unwrapped := types.UnwrapType(variant)
+			if namedVariant, ok := unwrapped.(*types.NamedType); ok && namedVariant == root {
+				// Direct recursion: union contains itself directly
 				return true
 			}
+			// Otherwise, allow recursive references through safe types (arrays, maps, etc.)
+			// Don't recurse further - we only check direct containment
 		}
 		return false
 	case *types.EnumType:
@@ -2026,6 +2238,33 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 			checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
 		}
 		return
+	}
+
+	if stmt.Rhs != nil {
+		if heapUnaryExpr(stmt.Rhs) != nil {
+			if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("heap allocation cannot be used with compound assignment").
+						WithCode(diagnostics.ErrInvalidAssignment).
+						WithPrimaryLabel(stmt.Lhs.Loc(), "use '=' to bind heap storage"),
+				)
+				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
+				return
+			}
+			ident, ok := stmt.Lhs.(*ast.IdentifierExpr)
+			if !ok {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("heap allocation must bind to a variable").
+						WithCode(diagnostics.ErrInvalidAssignment).
+						WithPrimaryLabel(stmt.Lhs.Loc(), "expected a variable name"),
+				)
+				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
+				return
+			}
+			if sym, ok := mod.CurrentScope.Lookup(ident.Name); ok && sym != nil {
+				sym.IsHeap = true
+			}
+		}
 	}
 
 	if idx, ok := stmt.Lhs.(*ast.IndexExpr); ok {
@@ -2384,6 +2623,45 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	}
 }
 
+func isAddrTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression) bool {
+	if expr == nil {
+		return false
+	}
+
+	switch e := expr.(type) {
+	case *ast.IdentifierExpr:
+		if mod != nil && mod.CurrentScope != nil {
+			if sym, found := mod.CurrentScope.Lookup(e.Name); found {
+				if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
+					return false
+				}
+			}
+		}
+		return true
+	case *ast.DerefExpr:
+		return true
+	case *ast.ParenExpr:
+		return isAddrTarget(ctx, mod, e.X)
+	case *ast.SelectorExpr:
+		return isAddrTarget(ctx, mod, e.X)
+	case *ast.IndexExpr:
+		baseType := inferExprType(ctx, mod, e.X)
+		if baseType == nil || baseType.Equals(types.TypeUnknown) {
+			return false
+		}
+		baseType = dereferenceType(types.UnwrapType(baseType))
+		if _, ok := baseType.(*types.MapType); ok {
+			return isAddrTarget(ctx, mod, e.X)
+		}
+		if _, ok := baseType.(*types.ArrayType); ok {
+			return isAddrTarget(ctx, mod, e.X)
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 func isBorrowExpr(expr ast.Expression) bool {
 	if expr == nil {
 		return false
@@ -2489,6 +2767,80 @@ func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 				WithPrimaryLabel(expr.X.Loc(), "reference values are not movable"),
 		)
 	}
+}
+
+func checkHeapExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.UnaryExpr, operandType types.SemType) {
+	if ctx == nil || mod == nil || expr == nil {
+		return
+	}
+	if expr.Op.Kind != tokens.HASH_TOKEN {
+		return
+	}
+	if operandType == nil || operandType.Equals(types.TypeUnknown) {
+		return
+	}
+	operandType = types.UnwrapType(operandType)
+	if arr, ok := operandType.(*types.ArrayType); ok && arr.Length < 0 {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot heap allocate dynamic array").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "dynamic arrays are already heap-allocated").
+				WithHelp("remove '#' from the value"),
+		)
+		return
+	}
+	if _, ok := operandType.(*types.MapType); ok {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot heap allocate map").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "maps are already heap-allocated").
+				WithHelp("remove '#' from the value"),
+		)
+		return
+	}
+	if prim, ok := operandType.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot heap allocate string").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "strings are already heap-allocated").
+				WithHelp("remove '#' from the value"),
+		)
+	}
+}
+
+func heapLiteralExpr(expr ast.Expression) *ast.CompositeLit {
+	for expr != nil {
+		switch e := expr.(type) {
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.CastExpr:
+			expr = e.X
+		case *ast.CompositeLit:
+			return e
+		default:
+			return nil
+		}
+	}
+	return nil
+}
+
+func heapUnaryExpr(expr ast.Expression) *ast.UnaryExpr {
+	for expr != nil {
+		switch e := expr.(type) {
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.CastExpr:
+			expr = e.X
+		case *ast.UnaryExpr:
+			if e.Op.Kind == tokens.HASH_TOKEN {
+				return e
+			}
+			return nil
+		default:
+			return nil
+		}
+	}
+	return nil
 }
 
 func isReferenceType(typ types.SemType) bool {
@@ -2744,6 +3096,11 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		}
 		if e.Op.Kind == tokens.AT_TOKEN {
 			checkMoveExpr(ctx, mod, e, operandType)
+			mod.SetExprType(expr, operandType)
+			return operandType
+		}
+		if e.Op.Kind == tokens.HASH_TOKEN {
+			checkHeapExpr(ctx, mod, e, operandType)
 			mod.SetExprType(expr, operandType)
 			return operandType
 		}

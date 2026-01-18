@@ -6,7 +6,7 @@ func GetNumberBitSize(kind TYPE_NAME) uint16 {
 		return 8
 	case TYPE_I16, TYPE_U16:
 		return 16
-	case TYPE_I32, TYPE_U32, TYPE_F32:
+	case TYPE_I32, TYPE_U32, TYPE_F32, TYPE_CHAR:
 		return 32
 	case TYPE_I64, TYPE_U64, TYPE_F64:
 		return 64

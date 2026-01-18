@@ -228,6 +228,20 @@ func (g *Generator) emitCast(c *mir.Cast) {
 	resultName := g.valueName(c.Result)
 	operand := g.valueName(c.X)
 
+	if _, ok := types.UnwrapType(fromType).(*types.ReferenceType); ok && g.isInteger(toType) {
+		switch toQ {
+		case "l":
+			g.emitLine(fmt.Sprintf("%s =l copy %s", resultName, operand))
+		case "w":
+			g.emitLine(fmt.Sprintf("%s =w copy %s", resultName, operand))
+		default:
+			g.reportUnsupported("cast", &c.Location)
+			return
+		}
+		g.valueTypes[c.Result] = toType
+		return
+	}
+
 	if fromQ == toQ {
 		if g.isInteger(fromType) && g.isInteger(toType) {
 			if g.handleIntegerCast(resultName, operand, fromQ, fromType, toQ, toType) {
@@ -1443,6 +1457,19 @@ func (g *Generator) constValue(typ types.SemType, value string) (string, error) 
 		switch prim.GetName() {
 		case types.TYPE_STRING:
 			return g.stringSymbol(value), nil
+		case types.TYPE_CHAR:
+			// Char literals are stored as the character itself, convert to Unicode code point
+			runes := []rune(value)
+			if len(runes) != 1 {
+				return "", fmt.Errorf("qbe: invalid char literal %q", value)
+			}
+			return fmt.Sprintf("%d", int32(runes[0])), nil
+		case types.TYPE_BYTE:
+			// Byte literals are stored as the character itself, convert to byte value
+			if len(value) != 1 {
+				return "", fmt.Errorf("qbe: invalid byte literal %q", value)
+			}
+			return fmt.Sprintf("%d", byte(value[0])), nil
 		case types.TYPE_BOOL:
 			if value == "true" {
 				return "1", nil
@@ -1715,7 +1742,7 @@ func (g *Generator) loadOp(typ types.SemType) (string, error) {
 			return "loaduh", nil
 		case types.TYPE_I32:
 			return "loadw", nil
-		case types.TYPE_U32:
+		case types.TYPE_U32, types.TYPE_CHAR:
 			return "loaduw", nil
 		case types.TYPE_I64, types.TYPE_U64:
 			return "loadl", nil
@@ -1766,7 +1793,7 @@ func (g *Generator) storeOp(typ types.SemType) (string, error) {
 			return "storeb", nil
 		case types.TYPE_I16, types.TYPE_U16:
 			return "storeh", nil
-		case types.TYPE_I32, types.TYPE_U32:
+		case types.TYPE_I32, types.TYPE_U32, types.TYPE_CHAR:
 			return "storew", nil
 		case types.TYPE_I64, types.TYPE_U64:
 			return "storel", nil
@@ -1823,7 +1850,7 @@ func (g *Generator) qbeType(typ types.SemType) (string, error) {
 		switch prim.GetName() {
 		case types.TYPE_I8, types.TYPE_I16, types.TYPE_I32,
 			types.TYPE_U8, types.TYPE_U16, types.TYPE_U32,
-			types.TYPE_BYTE, types.TYPE_BOOL:
+			types.TYPE_BYTE, types.TYPE_CHAR, types.TYPE_BOOL:
 			return "w", nil
 		case types.TYPE_I64, types.TYPE_U64:
 			return "l", nil
@@ -2204,6 +2231,9 @@ func (g *Generator) needsByRefType(typ types.SemType) bool {
 		return false
 	}
 	typ = types.UnwrapType(typ)
+	if _, ok := typ.(*types.ReferenceType); ok {
+		return false
+	}
 	if isLargePrimitiveType(typ) {
 		return true
 	}
@@ -2213,11 +2243,11 @@ func (g *Generator) needsByRefType(typ types.SemType) bool {
 	if arr, ok := typ.(*types.ArrayType); ok && arr.Length >= 0 {
 		return true
 	}
-	if iface, ok := typ.(*types.InterfaceType); ok && len(iface.Methods) > 0 {
+	if _, ok := typ.(*types.InterfaceType); ok {
 		return true
 	}
 	if named, ok := typ.(*types.NamedType); ok {
-		if iface, ok := named.Underlying.(*types.InterfaceType); ok && len(iface.Methods) > 0 {
+		if _, ok := named.Underlying.(*types.InterfaceType); ok {
 			return true
 		}
 	}

@@ -589,7 +589,7 @@ func (p *Parser) parseComparison() ast.Expression {
 		return nil
 	}
 
-	for p.match(tokens.LESS_TOKEN, tokens.LESS_EQUAL_TOKEN, tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN) {
+	for p.match(tokens.LESS_TOKEN, tokens.LESS_EQUAL_TOKEN, tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN, tokens.IN_TOKEN) {
 		op := p.advance()
 		right := p.parseRange()
 		if right == nil {
@@ -805,6 +805,19 @@ func (p *Parser) parseUnaryDepth(depth int) ast.Expression {
 	}
 
 	if p.match(tokens.AT_TOKEN) {
+		op := p.advance()
+		expr := p.parseUnaryDepth(depth + 1)
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.UnaryExpr{
+			Op:       op,
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
+		}
+	}
+
+	if p.match(tokens.HASH_TOKEN) {
 		op := p.advance()
 		expr := p.parseUnaryDepth(depth + 1)
 		if expr == nil {
@@ -1072,13 +1085,10 @@ func (p *Parser) parsePrimary() ast.Expression {
 	switch tok.Kind {
 	case tokens.NUMBER_TOKEN:
 		p.advance()
-		// Determine if int or float
+		// Determine if int or float by checking for '.' or 'e'/'E'
 		kind := ast.INT
-		for _, ch := range tok.Value {
-			if ch == '.' {
-				kind = ast.FLOAT
-				break
-			}
+		if strings.ContainsRune(tok.Value, '.') || strings.ContainsRune(tok.Value, 'e') || strings.ContainsRune(tok.Value, 'E') {
+			kind = ast.FLOAT
 		}
 		return &ast.BasicLit{
 			Kind:     kind,
@@ -1098,6 +1108,14 @@ func (p *Parser) parsePrimary() ast.Expression {
 		p.advance()
 		return &ast.BasicLit{
 			Kind:     ast.BYTE,
+			Value:    tok.Value,
+			Location: *source.NewLocation(&p.filepath, &tok.Start, &tok.End),
+		}
+
+	case tokens.CHAR_TOKEN:
+		p.advance()
+		return &ast.BasicLit{
+			Kind:     ast.CHAR,
 			Value:    tok.Value,
 			Location: *source.NewLocation(&p.filepath, &tok.Start, &tok.End),
 		}

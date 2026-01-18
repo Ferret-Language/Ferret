@@ -9,6 +9,7 @@ const (
 	FLOAT
 	STRING
 	BYTE
+	CHAR
 	BOOL
 	NONE // represents the 'none' keyword
 )

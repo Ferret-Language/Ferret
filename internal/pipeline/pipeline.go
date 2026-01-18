@@ -43,6 +43,13 @@ func (p *Pipeline) Run() error {
 	}
 	p.runRuntimeAudit()
 
+	if p.ctx.HasErrors() {
+		if p.ctx.Config.Debug {
+			colors.YELLOW.Printf("\n[Stopping] Errors detected in Symbol Collection phase\n")
+		}
+		return fmt.Errorf("compilation failed with errors")
+	}
+
 	if p.ctx.Config.Debug {
 		colors.CYAN.Printf("\n[Phase 3] Resolution\n")
 	}
@@ -50,11 +57,25 @@ func (p *Pipeline) Run() error {
 		return err
 	}
 
+	if p.ctx.HasErrors() {
+		if p.ctx.Config.Debug {
+			colors.YELLOW.Printf("\n[Stopping] Errors detected in Resolution phase\n")
+		}
+		return fmt.Errorf("compilation failed with errors")
+	}
+
 	if p.ctx.Config.Debug {
 		colors.CYAN.Printf("\n[Phase 4] Type Check\n")
 	}
 	if err := p.runTypeCheckerPhase(); err != nil {
 		return err
+	}
+
+	if p.ctx.HasErrors() {
+		if p.ctx.Config.Debug {
+			colors.YELLOW.Printf("\n[Stopping] Errors detected in Type Checking phase\n")
+		}
+		return fmt.Errorf("compilation failed with errors")
 	}
 
 	if p.ctx.Config.TypeCheckOnly {

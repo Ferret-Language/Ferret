@@ -1,0 +1,100 @@
+import "std/io";
+
+type Pair struct {
+    .A: i32,
+    .B: i32
+};
+
+fn move_param(x: i32) -> i32 {
+    let m := @x;
+    return m + 1;
+}
+
+fn move_heap_return(v: i32) -> i32 {
+    let h := #v;
+    return @h;
+}
+
+fn move_struct_param(p: Pair) -> i32 {
+    let m := @p;
+    return m.A + m.B;
+}
+
+fn move_array_param(arr: []i32) -> i32 {
+    let m := @arr;
+    return len(&m);
+}
+
+fn move_map_param(m: map[str]i32) -> i32 {
+    let mm := @m;
+    return mm["a"];
+}
+
+fn move_heap_addr() -> bool {
+    let h := #123;
+    let before := heap_addr(&h);
+    let moved := @h;
+    let after := heap_addr(&moved);
+    return before != 0 && before == after;
+}
+
+fn move_array_addr() -> bool {
+    let arr: []i32 = [1, 2, 3];
+    let before := heap_addr(&arr);
+    let moved := @arr;
+    let after := heap_addr(&moved);
+    return before != 0 && before == after;
+}
+
+fn move_map_addr() -> bool {
+    let m := { "a" => 1 } as map[str]i32;
+    let before := heap_addr(&m);
+    let moved := @m;
+    let after := heap_addr(&moved);
+    return before != 0 && before == after;
+}
+
+fn main() {
+    let x: i32 = 10;
+    let y: i32 = 10;
+
+    let z := @y;
+    y = 12;
+
+    let rx := &x;
+
+    io::Println("same_x", addr(&x) == addr(&x));
+    io::Println("x_ne_y", addr(&x) != addr(&y));
+    io::Println("x_eq_ref_x", addr(rx) == addr(&x));
+    io::Println("y_ne_z", addr(&y) != addr(&z));
+
+    let h := #99;
+    io::Println("heap_ne_stack", addr(&h) != addr(&x));
+    io::Println("heap_zero_stack", heap_addr(&x) == 0);
+    io::Println("heap_nonzero_heap", heap_addr(&h) != 0);
+
+    let a := [1, 2, 3];
+    let b := a;
+    io::Println("array_copy", addr(&a[0]) != addr(&b[0]));
+
+    let m := { "a" => 1, "b" => 2 } as map[str]i32;
+    let n := m;
+    io::Println("map_copy", heap_addr(&m) != heap_addr(&n));
+
+    let p := 41;
+    io::Println("move_param", move_param(@p) == 42);
+    io::Println("move_heap_return", move_heap_return(7) == 7);
+
+    let pair: Pair = { .A = 1, .B = 2 };
+    io::Println("move_struct", move_struct_param(@pair) == 3);
+
+    let arr := [4, 5, 6];
+    io::Println("move_array", move_array_param(@arr) == 3);
+
+    let mp := { "a" => 7 } as map[str]i32;
+    io::Println("move_map", move_map_param(@mp) == 7);
+
+    io::Println("move_heap_addr", move_heap_addr());
+    io::Println("move_array_addr", move_array_addr());
+    io::Println("move_map_addr", move_map_addr());
+}

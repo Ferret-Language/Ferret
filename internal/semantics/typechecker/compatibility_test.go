@@ -167,6 +167,7 @@ func TestGetMinimumFloatTypeForDigits(t *testing.T) {
 }
 
 func TestCheckTypeCompatibility(t *testing.T) {
+	anyIface := types.NewInterface(nil)
 	tests := []struct {
 		source   types.SemType
 		target   types.SemType
@@ -222,6 +223,12 @@ func TestCheckTypeCompatibility(t *testing.T) {
 		// Lossy conversions - float to int (always lossy)
 		{types.TypeF32, types.TypeI32, ExplicitCastable},
 		{types.TypeF64, types.TypeI64, ExplicitCastable},
+
+		// Empty interface reference compatibility
+		{types.NewReference(types.TypeI32), types.NewReference(anyIface), ImplicitCastable},
+		{types.NewMutableReference(types.TypeI32), types.NewMutableReference(anyIface), ImplicitCastable},
+		{types.NewReference(types.TypeI32), types.NewMutableReference(anyIface), Incompatible},
+		{types.NewMutableReference(types.TypeI32), types.NewReference(anyIface), Incompatible},
 
 		// Incompatible
 		{types.TypeI32, types.TypeString, Incompatible},

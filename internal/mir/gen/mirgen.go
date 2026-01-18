@@ -38,6 +38,7 @@ type Generator struct {
 	vtables       map[string]*mir.VTable
 	typeIDGlobals map[string]string // Maps type ID string to global name
 	typeIDSeq     int               // Counter for generating unique type ID global names
+	heapReturns   map[string]types.SemType
 }
 
 // New creates a new MIR generator for a module.
@@ -54,6 +55,7 @@ func New(ctx *context_v2.CompilerContext, mod *context_v2.Module) *Generator {
 		funcWraps:     make(map[string]string),
 		vtables:       make(map[string]*mir.VTable),
 		typeIDGlobals: make(map[string]string),
+		heapReturns:   make(map[string]types.SemType),
 	}
 }
 
@@ -62,6 +64,8 @@ func (g *Generator) GenerateModule(hirMod *hir.Module) *mir.Module {
 	if g == nil || g.mod == nil || hirMod == nil {
 		return nil
 	}
+
+	g.loadHeapReturns()
 
 	mirMod := &mir.Module{
 		ImportPath: g.mod.ImportPath,
@@ -108,6 +112,9 @@ func (g *Generator) lowerFuncDecl(decl *hir.FuncDecl) *mir.Function {
 	}
 
 	retType := g.returnType(decl.Type)
+	if heapRet, ok := g.heapReturnType(decl.Name.Name); ok {
+		retType = types.NewReference(heapRet)
+	}
 	fn := &mir.Function{
 		Name:     decl.Name.Name,
 		Return:   retType,
@@ -115,7 +122,7 @@ func (g *Generator) lowerFuncDecl(decl *hir.FuncDecl) *mir.Function {
 	}
 
 	fn.Params = g.lowerParams(decl.Type)
-	g.applyRefReturnABI(fn, retType, decl.Location)
+	g.applyRefReturnABI(fn, retType, decl.Location, g.isHeapReturnFunc(fn.Name))
 	g.applyLargeReturnABI(fn, retType, decl.Location)
 	builder := newFunctionBuilder(g, fn)
 	builder.buildFuncBody(decl.Body)
@@ -129,24 +136,32 @@ func (g *Generator) lowerMethodDecl(decl *hir.MethodDecl) *mir.Function {
 	}
 
 	retType := g.returnType(decl.Type)
+	fnName := g.methodName(decl)
+	if heapRet, ok := g.heapReturnType(fnName); ok {
+		retType = types.NewReference(heapRet)
+	}
 	fn := &mir.Function{
-		Name:     g.methodName(decl),
+		Name:     fnName,
 		Return:   retType,
 		Location: decl.Location,
 	}
 
 	if decl.Receiver != nil {
 		recvType := decl.Receiver.Type
+		_, recvIsRef := types.UnwrapType(recvType).(*types.ReferenceType)
 		if needsByRefType(recvType) {
 			recvType = types.NewReference(recvType)
 		}
 		recv := g.newParam(decl.Receiver.Name, recvType, decl.Receiver.Location)
 		fn.Receiver = &recv
 		fn.Params = append(fn.Params, recv)
+		if recvIsRef {
+			fn.Params = append(fn.Params, g.newParam(refHeapParamName(-1), types.TypeU64, decl.Receiver.Location))
+		}
 	}
 
 	fn.Params = append(fn.Params, g.lowerParams(decl.Type)...)
-	g.applyRefReturnABI(fn, retType, decl.Location)
+	g.applyRefReturnABI(fn, retType, decl.Location, g.isHeapReturnFunc(fn.Name))
 	g.applyLargeReturnABI(fn, retType, decl.Location)
 	builder := newFunctionBuilder(g, fn)
 	builder.buildFuncBody(decl.Body)
@@ -185,8 +200,9 @@ func (g *Generator) lowerParams(fnType *types.FunctionType) []mir.Param {
 	}
 
 	params := make([]mir.Param, 0, len(fnType.Params))
-	for _, param := range fnType.Params {
+	for i, param := range fnType.Params {
 		paramType := param.Type
+		_, isUserRef := types.UnwrapType(paramType).(*types.ReferenceType)
 
 		// Convert variadic parameters (...T) to slice type ([]T) for MIR
 		// The FunctionType keeps IsVariadic=true for call sites,
@@ -199,6 +215,9 @@ func (g *Generator) lowerParams(fnType *types.FunctionType) []mir.Param {
 			paramType = types.NewReference(paramType)
 		}
 		params = append(params, g.newParam(param.Name, paramType, source.Location{}))
+		if isUserRef {
+			params = append(params, g.newParam(refHeapParamName(i), types.TypeU64, source.Location{}))
+		}
 	}
 	return params
 }
@@ -280,7 +299,7 @@ func (g *Generator) closureForFuncLit(lit *hir.FuncLit) *closureInfo {
 	envParam := g.newParam("__env", types.NewReference(envType), lit.Location)
 	fn.Params = append(fn.Params, envParam)
 	fn.Params = append(fn.Params, g.lowerParams(fnType)...)
-	g.applyRefReturnABI(fn, retType, lit.Location)
+	g.applyRefReturnABI(fn, retType, lit.Location, false)
 	g.applyLargeReturnABI(fn, retType, lit.Location)
 
 	builder := newFunctionBuilder(g, fn)
@@ -537,7 +556,7 @@ func (g *Generator) funcValueWrapper(name string, fnType *types.FunctionType, en
 	fn.Params = append(fn.Params, envParam)
 	origParams := g.lowerParams(fnType)
 	fn.Params = append(fn.Params, origParams...)
-	g.applyRefReturnABI(fn, retType, loc)
+	g.applyRefReturnABI(fn, retType, loc, false)
 	g.applyLargeReturnABI(fn, retType, loc)
 
 	entry := &mir.Block{
@@ -546,13 +565,22 @@ func (g *Generator) funcValueWrapper(name string, fnType *types.FunctionType, en
 		Location: loc,
 	}
 
-	callArgs := make([]mir.ValueID, 0, len(origParams)+2)
+	callArgs := make([]mir.ValueID, 0, len(origParams)+3)
 	if _, ok := types.UnwrapType(retType).(*types.ReferenceType); ok {
+		outParam := mir.InvalidValue
+		outHeapParam := mir.InvalidValue
 		for _, param := range fn.Params {
 			if param.Name == "__out" {
-				callArgs = append(callArgs, param.ID)
-				break
+				outParam = param.ID
+			} else if param.Name == outHeapParamName {
+				outHeapParam = param.ID
 			}
+		}
+		if outParam != mir.InvalidValue {
+			callArgs = append(callArgs, outParam)
+		}
+		if outHeapParam != mir.InvalidValue {
+			callArgs = append(callArgs, outHeapParam)
 		}
 	}
 	if needsByRefType(retType) {
@@ -612,8 +640,11 @@ func (g *Generator) applyLargeReturnABI(fn *mir.Function, retType types.SemType,
 	fn.Return = types.TypeVoid
 }
 
-func (g *Generator) applyRefReturnABI(fn *mir.Function, retType types.SemType, loc source.Location) {
+func (g *Generator) applyRefReturnABI(fn *mir.Function, retType types.SemType, loc source.Location, skip bool) {
 	if fn == nil {
+		return
+	}
+	if skip {
 		return
 	}
 	ref, ok := types.UnwrapType(retType).(*types.ReferenceType)
@@ -621,13 +652,14 @@ func (g *Generator) applyRefReturnABI(fn *mir.Function, retType types.SemType, l
 		return
 	}
 	outParam := g.newParam("__out", types.NewReference(ref.Inner), loc)
+	outHeapParam := g.newParam(outHeapParamName, types.NewReference(types.TypeU64), loc)
 	insertAt := 0
 	if len(fn.Params) > 0 && fn.Params[0].IsEnv {
 		insertAt = 1
 	}
 	params := make([]mir.Param, 0, len(fn.Params)+1)
 	params = append(params, fn.Params[:insertAt]...)
-	params = append(params, outParam)
+	params = append(params, outParam, outHeapParam)
 	params = append(params, fn.Params[insertAt:]...)
 	fn.Params = params
 }

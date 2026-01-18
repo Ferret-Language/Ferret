@@ -65,9 +65,6 @@ func (d *DataLayout) SizeOf(t types.SemType) int {
 	case *types.MapType:
 		return d.PointerSize
 	case *types.InterfaceType:
-		if len(tt.Methods) == 0 {
-			return d.PointerSize
-		}
 		return d.PointerSize * 2
 	case *types.OptionalType:
 		return d.PointerSize

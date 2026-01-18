@@ -32,9 +32,13 @@ type functionBuilder struct {
 	retType         types.SemType
 	refOutParam     mir.ValueID
 	refOutType      types.SemType
+	refOutHeapParam mir.ValueID
 	closureEnv      mir.ValueID
 	captures        map[*symbols.Symbol]captureInfo
 	boxed           map[*symbols.Symbol]mir.ValueID
+	bindings        map[*symbols.Symbol]mir.ValueID
+	refHeapSlots    map[*symbols.Symbol]mir.ValueID
+	tempRefHeap     map[*hir.Ident]mir.ValueID
 	entry           *mir.Block
 	inDeferCatch    bool
 	catchEndLabel   mir.BlockID
@@ -57,9 +61,13 @@ func newFunctionBuilder(gen *Generator, fn *mir.Function) *functionBuilder {
 		narrowedEntries: nil,
 		retParam:        mir.InvalidValue,
 		refOutParam:     mir.InvalidValue,
+		refOutHeapParam: mir.InvalidValue,
 		closureEnv:      mir.InvalidValue,
 		captures:        nil,
 		boxed:           make(map[*symbols.Symbol]mir.ValueID),
+		bindings:        make(map[*symbols.Symbol]mir.ValueID),
+		refHeapSlots:    make(map[*symbols.Symbol]mir.ValueID),
+		tempRefHeap:     make(map[*hir.Ident]mir.ValueID),
 	}
 }
 
@@ -72,6 +80,16 @@ func (b *functionBuilder) buildFuncBody(body *hir.Block) {
 	b.pushDeferScope()
 
 	for _, param := range b.fn.Params {
+		if param.Name == outHeapParamName {
+			b.refOutHeapParam = param.ID
+			b.ptrElem[b.refOutHeapParam] = types.TypeU64
+			continue
+		}
+		if isRefHeapParamName(param.Name) {
+			// The refHeap cache is removed.
+			continue
+		}
+
 		if param.Name != "" {
 			b.paramsByName[param.Name] = param.ID
 			b.paramTypes[param.Name] = param.Type
@@ -283,11 +301,104 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 		}
 	}
 
+	if item.Value != nil {
+		if heapExpr, ok := item.Value.(*hir.UnaryExpr); ok && heapExpr.Op.Kind == tokens.HASH_TOKEN {
+			val := b.lowerExpr(heapExpr.X)
+			if val != mir.InvalidValue {
+				val = b.coerceValueForAssign(val, b.exprType(heapExpr.X), typ, item.Name.Location)
+			}
+			heapAddr := b.emitHeapAlloc(val, typ, item.Name.Location)
+			if heapAddr != mir.InvalidValue {
+				if item.Name.Symbol != nil {
+					b.slots[item.Name.Symbol] = heapAddr
+					b.boxed[item.Name.Symbol] = heapAddr
+					if _, ok := b.bindings[item.Name.Symbol]; !ok {
+						bind := b.emitAlloca(types.NewReference(typ), item.Name.Location)
+						b.emitStore(bind, heapAddr, item.Name.Location)
+						b.bindings[item.Name.Symbol] = bind
+					}
+				} else {
+					b.tempSlots[item.Name] = heapAddr
+				}
+			}
+			return
+		}
+	}
+
+	if item.Value != nil {
+		if moveExpr, ok := item.Value.(*hir.UnaryExpr); ok && moveExpr.Op.Kind == tokens.AT_TOKEN {
+			if ident, ok := moveExpr.X.(*hir.Ident); ok && ident.Symbol != nil {
+				if b.isHeapLValue(ident) {
+					addr := b.addrForIdent(ident)
+					if addr != mir.InvalidValue {
+						if item.Name.Symbol != nil {
+							b.slots[item.Name.Symbol] = addr
+							b.boxed[item.Name.Symbol] = addr
+							if _, ok := b.bindings[item.Name.Symbol]; !ok {
+								bind := b.emitAlloca(types.NewReference(typ), item.Name.Location)
+								b.emitStore(bind, addr, item.Name.Location)
+								b.bindings[item.Name.Symbol] = bind
+							}
+						} else {
+							b.tempSlots[item.Name] = addr
+						}
+						b.resetHeapBinding(ident, moveExpr.Location)
+						return
+					}
+				}
+			}
+		}
+	}
+
+	if item.Value != nil {
+		if call, ok := item.Value.(*hir.CallExpr); ok {
+			if heapRet, ok := b.isHeapReturnCall(call); ok {
+				heapAddr := b.lowerHeapReturnCall(call, heapRet, item.Name.Location)
+				if heapAddr != mir.InvalidValue {
+					if item.Name.Symbol != nil {
+						b.slots[item.Name.Symbol] = heapAddr
+						b.boxed[item.Name.Symbol] = heapAddr
+						if _, ok := b.bindings[item.Name.Symbol]; !ok {
+							bind := b.emitAlloca(types.NewReference(typ), item.Name.Location)
+							b.emitStore(bind, heapAddr, item.Name.Location)
+							b.bindings[item.Name.Symbol] = bind
+						}
+					} else {
+						b.tempSlots[item.Name] = heapAddr
+					}
+				}
+				return
+			}
+		}
+	}
+
 	addr := b.emitAlloca(typ, item.Name.Location)
 	if item.Name.Symbol != nil {
 		b.slots[item.Name.Symbol] = addr
+		b.bindings[item.Name.Symbol] = addr
 	} else {
 		b.tempSlots[item.Name] = addr
+	}
+
+	if item.Value != nil {
+		if helper, ok := assignHelperForType(typ); ok {
+			zero := b.nullPointerValue(typ, item.Name.Location)
+			b.emitStore(addr, zero, item.Name.Location)
+			val := b.lowerExpr(item.Value)
+			if val != mir.InvalidValue {
+				val = b.coerceValueForAssign(val, b.exprType(item.Value), typ, item.Name.Location)
+				if val != mir.InvalidValue {
+					b.emitInstr(&mir.Call{
+						Result:   mir.InvalidValue,
+						Target:   helper,
+						Args:     []mir.ValueID{addr, val},
+						Type:     types.TypeVoid,
+						Location: item.Name.Location,
+					})
+				}
+			}
+			return
+		}
 	}
 
 	if item.Value != nil {
@@ -301,6 +412,20 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 				return
 			}
 			if arrType, ok := types.UnwrapType(typ).(*types.ArrayType); ok && arrType.Length < 0 {
+				val := b.lowerExpr(item.Value)
+				if val != mir.InvalidValue {
+					val = b.coerceValueForAssign(val, b.exprType(item.Value), typ, item.Name.Location)
+					if val != mir.InvalidValue {
+						b.emitInstr(&mir.Store{
+							Addr:     addr,
+							Value:    val,
+							Location: item.Name.Location,
+						})
+					}
+				}
+				return
+			}
+			if _, ok := types.UnwrapType(typ).(*types.MapType); ok {
 				val := b.lowerExpr(item.Value)
 				if val != mir.InvalidValue {
 					val = b.coerceValueForAssign(val, b.exprType(item.Value), typ, item.Name.Location)
@@ -336,7 +461,12 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 		if val != mir.InvalidValue {
 			val = b.coerceValueForAssign(val, b.exprType(item.Value), typ, item.Name.Location)
 			if val != mir.InvalidValue {
-				b.emitStore(addr, val, item.Name.Location)
+				if isMoveExpr(item.Value) {
+					b.emitStoreMove(addr, val, item.Name.Location)
+				} else {
+					b.emitStore(addr, val, item.Name.Location)
+				}
+				b.storeRefHeapForValue(item.Name, val, item.Name.Location)
 			}
 		}
 	}
@@ -347,9 +477,93 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 		return
 	}
 
+	rhsIsMove := stmt.Rhs != nil && isMoveExpr(stmt.Rhs)
+
+	if (stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN) && rhsIsMove {
+		if moveExpr, ok := stmt.Rhs.(*hir.UnaryExpr); ok && moveExpr.Op.Kind == tokens.AT_TOKEN {
+			if srcIdent, ok := moveExpr.X.(*hir.Ident); ok && b.isHeapLValue(srcIdent) {
+				if dstIdent, ok := stmt.Lhs.(*hir.Ident); ok && dstIdent.Symbol != nil {
+					heapAddr := b.addrForIdent(srcIdent)
+					if heapAddr != mir.InvalidValue {
+						b.slots[dstIdent.Symbol] = heapAddr
+						b.boxed[dstIdent.Symbol] = heapAddr
+						if bind, ok := b.bindings[dstIdent.Symbol]; ok {
+							if elem, ok := b.ptrElem[bind]; ok {
+								if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
+									b.emitStore(bind, heapAddr, stmt.Location)
+								}
+							}
+						} else {
+							lhsType := b.exprType(stmt.Lhs)
+							if lhsType == nil {
+								lhsType = types.TypeUnknown
+							}
+							bind := b.emitAlloca(types.NewReference(lhsType), stmt.Location)
+							b.emitStore(bind, heapAddr, stmt.Location)
+							b.bindings[dstIdent.Symbol] = bind
+						}
+						b.resetHeapBinding(srcIdent, stmt.Location)
+						return
+					}
+				}
+			}
+		}
+	}
+
+	if stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN {
+		if call, ok := stmt.Rhs.(*hir.CallExpr); ok {
+			if heapRet, ok := b.isHeapReturnCall(call); ok {
+				if dstIdent, ok := stmt.Lhs.(*hir.Ident); ok && dstIdent.Symbol != nil {
+					heapAddr := b.lowerHeapReturnCall(call, heapRet, stmt.Location)
+					if heapAddr != mir.InvalidValue {
+						b.slots[dstIdent.Symbol] = heapAddr
+						b.boxed[dstIdent.Symbol] = heapAddr
+						if bind, ok := b.bindings[dstIdent.Symbol]; ok {
+							if elem, ok := b.ptrElem[bind]; ok {
+								if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
+									b.emitStore(bind, heapAddr, stmt.Location)
+								}
+							}
+						} else {
+							lhsType := b.exprType(stmt.Lhs)
+							if lhsType == nil {
+								lhsType = types.TypeUnknown
+							}
+							bind := b.emitAlloca(types.NewReference(lhsType), stmt.Location)
+							b.emitStore(bind, heapAddr, stmt.Location)
+							b.bindings[dstIdent.Symbol] = bind
+						}
+					}
+					return
+				}
+			}
+		}
+	}
+
 	if idx, ok := stmt.Lhs.(*hir.IndexExpr); ok {
 		b.lowerIndexAssign(idx, stmt.Rhs, stmt.Op, stmt.Location)
 		return
+	}
+
+	if stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN {
+		if heapExpr, ok := stmt.Rhs.(*hir.UnaryExpr); ok && heapExpr.Op.Kind == tokens.HASH_TOKEN {
+			if ident, ok := stmt.Lhs.(*hir.Ident); ok {
+				val := b.lowerExpr(heapExpr.X)
+				if val != mir.InvalidValue {
+					val = b.coerceValueForAssign(val, b.exprType(heapExpr.X), b.exprType(stmt.Lhs), stmt.Location)
+				}
+				heapAddr := b.emitHeapAlloc(val, b.exprType(stmt.Lhs), stmt.Location)
+				if heapAddr != mir.InvalidValue {
+					if ident.Symbol != nil {
+						b.slots[ident.Symbol] = heapAddr
+						b.boxed[ident.Symbol] = heapAddr
+					} else {
+						b.tempSlots[ident] = heapAddr
+					}
+				}
+				return
+			}
+		}
 	}
 
 	addr := b.lowerLValue(stmt.Lhs)
@@ -363,57 +577,94 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 
 	if lhsStorageType != nil {
 		if ref, ok := types.UnwrapType(lhsStorageType).(*types.ReferenceType); ok {
-			refPtr := b.emitLoad(addr, lhsStorageType, stmt.Location)
-			if refPtr == mir.InvalidValue {
-				return
+			// Check if RHS is a borrow expression (&x or &mut x)
+			// If so, we're rebinding the reference variable to point to a new location
+			// Otherwise, we're assigning through the reference to modify the pointed-to value
+			isBorrowRhs := false
+			if unary, ok := stmt.Rhs.(*hir.UnaryExpr); ok {
+				if unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN {
+					isBorrowRhs = true
+				}
 			}
-			if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
-				cur := b.emitLoad(refPtr, ref.Inner, stmt.Location)
+
+			if !isBorrowRhs {
+				// Assigning through reference: *v = value
+				refPtr := b.emitLoad(addr, lhsStorageType, stmt.Location)
+				if refPtr == mir.InvalidValue {
+					return
+				}
+				if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
+					cur := b.emitLoad(refPtr, ref.Inner, stmt.Location)
+					rhs := b.lowerExpr(stmt.Rhs)
+					if cur == mir.InvalidValue || rhs == mir.InvalidValue {
+						return
+					}
+					rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
+					if rhs == mir.InvalidValue {
+						return
+					}
+					op := assignTokenToBinary(stmt.Op.Kind)
+					if op == "" {
+						b.reportUnsupported("assignment operator", stmt.Loc())
+						return
+					}
+					res := b.emitBinary(op, cur, rhs, ref.Inner, stmt.Location)
+					b.emitStore(refPtr, res, stmt.Location)
+					return
+				}
+
+				if helper, ok := assignHelperForType(ref.Inner); ok && !rhsIsMove {
+					rhs := b.lowerExpr(stmt.Rhs)
+					if rhs == mir.InvalidValue {
+						return
+					}
+					rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
+					if rhs == mir.InvalidValue {
+						return
+					}
+					b.emitInstr(&mir.Call{
+						Result:   mir.InvalidValue,
+						Target:   helper,
+						Args:     []mir.ValueID{refPtr, rhs},
+						Type:     types.TypeVoid,
+						Location: stmt.Location,
+					})
+					return
+				}
+
+				if b.isDynamicArrayLiteralExpr(stmt.Rhs, ref.Inner) {
+					rhs := b.lowerExpr(stmt.Rhs)
+					if rhs == mir.InvalidValue {
+						return
+					}
+					rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
+					if rhs == mir.InvalidValue {
+						return
+					}
+					b.emitInstr(&mir.Store{
+						Addr:     refPtr,
+						Value:    rhs,
+						Location: stmt.Location,
+					})
+					return
+				}
+
 				rhs := b.lowerExpr(stmt.Rhs)
-				if cur == mir.InvalidValue || rhs == mir.InvalidValue {
+				if rhs == mir.InvalidValue {
 					return
 				}
 				rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
 				if rhs == mir.InvalidValue {
 					return
 				}
-				op := assignTokenToBinary(stmt.Op.Kind)
-				if op == "" {
-					b.reportUnsupported("assignment operator", stmt.Loc())
-					return
+				if rhsIsMove {
+					b.emitStoreMove(refPtr, rhs, stmt.Location)
+				} else {
+					b.emitStore(refPtr, rhs, stmt.Location)
 				}
-				res := b.emitBinary(op, cur, rhs, ref.Inner, stmt.Location)
-				b.emitStore(refPtr, res, stmt.Location)
 				return
 			}
-
-			if b.isDynamicArrayLiteralExpr(stmt.Rhs, ref.Inner) {
-				rhs := b.lowerExpr(stmt.Rhs)
-				if rhs == mir.InvalidValue {
-					return
-				}
-				rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
-				if rhs == mir.InvalidValue {
-					return
-				}
-				b.emitInstr(&mir.Store{
-					Addr:     refPtr,
-					Value:    rhs,
-					Location: stmt.Location,
-				})
-				return
-			}
-
-			rhs := b.lowerExpr(stmt.Rhs)
-			if rhs == mir.InvalidValue {
-				return
-			}
-			rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), ref.Inner, stmt.Location)
-			if rhs == mir.InvalidValue {
-				return
-			}
-			b.emitStore(refPtr, rhs, stmt.Location)
-			return
+			// Fall through to handle reference rebinding (v = &mut arr[i])
 		}
 	}
 
@@ -437,7 +688,26 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 		return
 	}
 
-	if b.isDynamicArrayLiteralExpr(stmt.Rhs, lhsStorageType) {
+	if helper, ok := assignHelperForType(lhsStorageType); ok && !rhsIsMove {
+		rhs := b.lowerExpr(stmt.Rhs)
+		if rhs == mir.InvalidValue {
+			return
+		}
+		rhs = b.coerceValueForAssign(rhs, b.exprType(stmt.Rhs), lhsStorageType, stmt.Location)
+		if rhs == mir.InvalidValue {
+			return
+		}
+		b.emitInstr(&mir.Call{
+			Result:   mir.InvalidValue,
+			Target:   helper,
+			Args:     []mir.ValueID{addr, rhs},
+			Type:     types.TypeVoid,
+			Location: stmt.Location,
+		})
+		return
+	}
+
+	if b.isDynamicArrayLiteralExpr(stmt.Rhs, lhsStorageType) || b.isMapLiteralExpr(stmt.Rhs, lhsStorageType) {
 		rhs := b.lowerExpr(stmt.Rhs)
 		if rhs == mir.InvalidValue {
 			return
@@ -462,7 +732,11 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 	if rhs == mir.InvalidValue {
 		return
 	}
-	b.emitStore(addr, rhs, stmt.Location)
+	if rhsIsMove {
+		b.emitStoreMove(addr, rhs, stmt.Location)
+	} else {
+		b.emitStore(addr, rhs, stmt.Location)
+	}
 }
 
 func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
@@ -490,6 +764,16 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		return
 	}
 
+	if heapRet, ok := b.heapReturnType(b.fn.Name); ok {
+		heapPtr := b.lowerHeapReturnValue(stmt.Result, heapRet, stmt.Location)
+		if heapPtr == mir.InvalidValue {
+			b.current.Term = &mir.Unreachable{Location: stmt.Location}
+			return
+		}
+		b.current.Term = &mir.Return{HasValue: true, Value: heapPtr, Location: stmt.Location}
+		return
+	}
+
 	resultType := b.exprType(stmt.Result)
 	retType := b.fn.Return
 	if b.retParam != mir.InvalidValue {
@@ -509,6 +793,13 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 					return
 				}
 				b.emitStore(b.refOutParam, val, stmt.Location)
+				if b.refOutHeapParam != mir.InvalidValue {
+					heapVal := b.heapFromValue(val, b.refOutType, stmt.Location)
+					if heapVal == mir.InvalidValue {
+						heapVal = b.zeroU64(stmt.Location)
+					}
+					b.emitStore(b.refOutHeapParam, heapVal, stmt.Location)
+				}
 				b.current.Term = &mir.Return{HasValue: true, Value: b.refOutParam, Location: stmt.Location}
 				return
 			}
@@ -526,9 +817,29 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		return
 	}
 
+	resultIsMove := isMoveExpr(stmt.Result)
+	if !resultIsMove {
+		if _, ok := dynamicArrayValueType(retType); ok {
+			if !b.isDynamicArrayLiteralExpr(stmt.Result, retType) {
+				val = b.emitArrayClone(val, retType, stmt.Location)
+			}
+		} else if _, ok := mapValueType(retType); ok {
+			if !b.isMapLiteralExpr(stmt.Result, retType) {
+				val = b.emitMapClone(val, retType, stmt.Location)
+			}
+		}
+	}
+
 	if b.refOutParam != mir.InvalidValue {
 		if resultType != nil {
-			if _, ok := types.UnwrapType(resultType).(*types.ReferenceType); ok {
+			if refType, ok := types.UnwrapType(resultType).(*types.ReferenceType); ok {
+				if b.refOutHeapParam != mir.InvalidValue {
+					heapVal := b.computeBorrowHeap(stmt.Result, val, refType.Inner, stmt.Location)
+					if heapVal == mir.InvalidValue {
+						heapVal = b.zeroU64(stmt.Location)
+					}
+					b.emitStore(b.refOutHeapParam, heapVal, stmt.Location)
+				}
 				b.current.Term = &mir.Return{HasValue: true, Value: val, Location: stmt.Location}
 				return
 			}
@@ -536,18 +847,59 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		// Return-by-ref: copy the value into the out param.
 		// This prevents returning pointers to stack-allocated interface boxes.
 		b.emitMemcpy(b.refOutParam, val, retType, stmt.Location)
+		if b.refOutHeapParam != mir.InvalidValue {
+			heapVal := b.heapFromValue(val, retType, stmt.Location)
+			if heapVal == mir.InvalidValue {
+				heapVal = b.zeroU64(stmt.Location)
+			}
+			b.emitStore(b.refOutHeapParam, heapVal, stmt.Location)
+		}
 		b.current.Term = &mir.Return{HasValue: true, Value: b.refOutParam, Location: stmt.Location}
 		return
 	}
 
 	if b.retParam != mir.InvalidValue {
 		// Return-by-value via out param: always copy the payload.
-		b.emitMemcpy(b.retParam, val, retType, stmt.Location)
+		if !resultIsMove && typeNeedsDeepCopy(retType) {
+			b.emitDeepCopy(b.retParam, val, retType, stmt.Location)
+		} else {
+			b.emitMemcpy(b.retParam, val, retType, stmt.Location)
+		}
 		b.current.Term = &mir.Return{HasValue: false, Location: stmt.Location}
 		return
 	}
 
 	b.current.Term = &mir.Return{HasValue: true, Value: val, Location: stmt.Location}
+}
+
+func (b *functionBuilder) heapReturnType(name string) (types.SemType, bool) {
+	if b == nil || b.gen == nil {
+		return nil, false
+	}
+	return b.gen.heapReturnType(name)
+}
+
+func (b *functionBuilder) lowerHeapReturnValue(expr hir.Expr, inner types.SemType, loc source.Location) mir.ValueID {
+	expr = unwrapParenExpr(expr)
+	if expr == nil {
+		return mir.InvalidValue
+	}
+
+	if unary, ok := expr.(*hir.UnaryExpr); ok && unary.Op.Kind == tokens.AT_TOKEN {
+		if ident, ok := unary.X.(*hir.Ident); ok && b.isHeapLValue(ident) {
+			return b.addrForIdent(ident)
+		}
+	}
+
+	val := b.lowerExpr(expr)
+	if val == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	val = b.coerceValueForAssign(val, b.exprType(expr), inner, loc)
+	if val == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	return b.emitHeapAlloc(val, inner, loc)
 }
 
 func (b *functionBuilder) lowerIf(stmt *hir.IfStmt) {
@@ -868,56 +1220,131 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 			Location: stmt.Location,
 		}
 	} else {
-		patternCases := make([]matchCase, 0, len(stmt.Cases))
-		for _, entry := range entries {
+		// For non-switch cases, generate if-else chain
+		// We need to handle different pattern types differently
+		current := b.current
+
+		for idx, entry := range entries {
 			clause := entry.clause
 			if clause.Pattern == nil {
+				// Default case - handle at the end
 				continue
 			}
-			value, ok := b.matchCaseConstValue(clause.Pattern, matchType)
-			if !ok {
-				b.reportUnsupported("match pattern", clause.Pattern.Loc())
-				continue
+
+			var elseTarget mir.BlockID
+			var elseBlock *mir.Block
+			if idx < len(entries)-1 {
+				elseBlock = b.newBlock("match.check", entry.clause.Location)
+				elseTarget = elseBlock.ID
+			} else {
+				elseTarget = defaultBlock.ID
 			}
-			patternCases = append(patternCases, matchCase{
-				block: entry.block,
-				value: value,
-				loc:   clause.Location,
-			})
+
+			var cmp mir.ValueID
+
+			// Handle different pattern types
+			switch pat := clause.Pattern.(type) {
+			case *hir.TypeCheckPattern:
+				// Type check pattern: is Type
+				if unionType, ok := types.UnwrapType(matchType).(*types.UnionType); ok {
+					// Find variant index
+					variantIndex := -1
+					for i, variant := range unionType.Variants {
+						if types.UnwrapType(variant).Equals(types.UnwrapType(pat.Type)) {
+							variantIndex = i
+							break
+						}
+					}
+					if variantIndex >= 0 {
+						// cond is a pointer to the union, load discriminant from offset 0
+						var unionPtr mir.ValueID
+						// Check if cond is already a pointer type
+						if _, isPtr := b.ptrElem[cond]; isPtr {
+							unionPtr = cond
+						} else {
+							// cond is a value, we need its address (shouldn't happen for unions)
+							// Unions should always be passed by reference
+							unionPtr = cond
+						}
+
+						tagSlot := b.emitPtrAdd(unionPtr, 0, types.TypeI32, clause.Location)
+						tagValue := b.emitLoad(tagSlot, types.TypeI32, clause.Location)
+
+						// Compare with expected variant index
+						expectedTag := b.emitConst(types.TypeI32, strconv.Itoa(variantIndex), clause.Location)
+						cmp = b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, tagValue, expectedTag, types.TypeI32, clause.Location)
+					} else {
+						// Type not found in union - always false
+						cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+					}
+				} else {
+					// Not a union type - cannot do type check
+					b.reportUnsupported("type check pattern on non-union type", clause.Pattern.Loc())
+					cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+				}
+
+			case *hir.RangeCheckPattern:
+				// Range check pattern: in Range
+				if rangeExpr, ok := pat.Range.(*hir.RangeExpr); ok {
+					// Generate: cond >= start && cond < end (or <= for inclusive)
+					startVal := b.lowerExpr(rangeExpr.Start)
+					endVal := b.lowerExpr(rangeExpr.End)
+
+					// Check lower bound: cond >= start
+					lowerCmp := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, cond, startVal, matchType, clause.Location)
+
+					// Check upper bound: cond < end or cond <= end
+					var upperCmp mir.ValueID
+					if rangeExpr.Inclusive {
+						upperCmp = b.emitBinary(tokens.LESS_EQUAL_TOKEN, cond, endVal, matchType, clause.Location)
+					} else {
+						upperCmp = b.emitBinary(tokens.LESS_TOKEN, cond, endVal, matchType, clause.Location)
+					}
+
+					// Combine: lower && upper
+					cmp = b.emitBinary(tokens.AND_TOKEN, lowerCmp, upperCmp, types.TypeBool, clause.Location)
+				} else {
+					b.reportUnsupported("invalid range in range check pattern", clause.Pattern.Loc())
+					cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+				}
+
+			default:
+				// Regular value match pattern
+				value, ok := b.matchCaseConstValue(clause.Pattern, matchType)
+				if !ok {
+					b.reportUnsupported("match pattern", clause.Pattern.Loc())
+					// Skip this case
+					if elseBlock != nil {
+						current = elseBlock
+					}
+					continue
+				}
+
+				if isLargePrimitiveType(matchType) {
+					cmp = b.emitLargeCompare(tokens.DOUBLE_EQUAL_TOKEN, cond, value, matchType, clause.Location)
+				} else {
+					cmp = b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, cond, value, matchType, clause.Location)
+				}
+			}
+
+			current.Term = &mir.CondBr{
+				Cond:     cmp,
+				Then:     entry.block.ID,
+				Else:     elseTarget,
+				Location: clause.Location,
+			}
+
+			if elseBlock != nil {
+				b.setBlock(elseBlock)
+				current = elseBlock
+			}
 		}
 
-		if len(patternCases) == 0 {
-			b.branchIfNoTerm(defaultBlock.ID, stmt.Location)
-		} else {
-			current := b.current
-			for idx, entry := range patternCases {
-				var elseTarget mir.BlockID
-				var elseBlock *mir.Block
-				if idx < len(patternCases)-1 {
-					elseBlock = b.newBlock("match.check", entry.loc)
-					elseTarget = elseBlock.ID
-				} else {
-					elseTarget = defaultBlock.ID
-				}
-
-				var cmp mir.ValueID
-				if isLargePrimitiveType(matchType) {
-					cmp = b.emitLargeCompare(tokens.DOUBLE_EQUAL_TOKEN, cond, entry.value, matchType, entry.loc)
-				} else {
-					cmp = b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, cond, entry.value, matchType, entry.loc)
-				}
-
-				current.Term = &mir.CondBr{
-					Cond:     cmp,
-					Then:     entry.block.ID,
-					Else:     elseTarget,
-					Location: stmt.Location,
-				}
-
-				if elseBlock != nil {
-					b.setBlock(elseBlock)
-					current = elseBlock
-				}
+		// Ensure the last check block branches to default if no match
+		if current != nil && current.Term == nil {
+			current.Term = &mir.Br{
+				Target:   defaultBlock.ID,
+				Location: stmt.Location,
 			}
 		}
 	}
@@ -1084,6 +1511,11 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 			return b.emitTypeCheck(e)
 		}
 
+		// Short-circuit evaluation for && and ||
+		if e.Op.Kind == tokens.AND_TOKEN || e.Op.Kind == tokens.OR_TOKEN {
+			return b.emitShortCircuitBinary(e)
+		}
+
 		left := b.lowerExpr(e.X)
 		if left == mir.InvalidValue {
 			return mir.InvalidValue
@@ -1122,7 +1554,12 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		return b.emitBinary(e.Op.Kind, left, right, e.Type, e.Location)
 	case *hir.UnaryExpr:
 		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_TOKEN {
-			return b.lowerLValue(e.X)
+			refVal := b.lowerLValue(e.X)
+			if refVal == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			inner := b.exprType(e.X)
+			return b.attachRefHeapForBorrow(refVal, e.X, inner, e.Location)
 		}
 		if e.Op.Kind == tokens.AT_TOKEN {
 			operand := b.lowerExpr(e.X)
@@ -1130,7 +1567,13 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 				return mir.InvalidValue
 			}
 			operand, _ = b.derefValueIfNeeded(operand, b.exprType(e.X), e.Location)
+			if ident, ok := e.X.(*hir.Ident); ok && b.isHeapLValue(ident) {
+				b.resetHeapBinding(ident, e.Location)
+			}
 			return operand
+		}
+		if e.Op.Kind == tokens.HASH_TOKEN {
+			return b.lowerExpr(e.X)
 		}
 		operand := b.lowerExpr(e.X)
 		if operand == mir.InvalidValue {
@@ -1144,15 +1587,7 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		if refVal == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		// The reference is already a pointer value, just load from it
-		id := b.gen.nextValueID()
-		b.emitInstr(&mir.Load{
-			Result:   id,
-			Addr:     refVal,
-			Type:     e.Type,
-			Location: e.Location,
-		})
-		return id
+		return b.emitLoad(refVal, e.Type, e.Location)
 	case *hir.PrefixExpr:
 		return b.lowerPrefix(e)
 	case *hir.PostfixExpr:
@@ -1268,6 +1703,48 @@ func dynamicArrayValueType(typ types.SemType) (*types.ArrayType, bool) {
 	return nil, false
 }
 
+func mapValueType(typ types.SemType) (*types.MapType, bool) {
+	if typ == nil {
+		return nil, false
+	}
+	typ = types.UnwrapType(typ)
+	if _, ok := typ.(*types.ReferenceType); ok {
+		return nil, false
+	}
+	if mapType, ok := typ.(*types.MapType); ok {
+		return mapType, true
+	}
+	return nil, false
+}
+
+func isStringSemType(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	if prim, ok := types.UnwrapType(typ).(*types.PrimitiveType); ok {
+		return prim.GetName() == types.TYPE_STRING
+	}
+	return false
+}
+
+func assignHelperForType(typ types.SemType) (string, bool) {
+	if isStringSemType(typ) {
+		return "ferret_string_assign", true
+	}
+	if _, ok := dynamicArrayValueType(typ); ok {
+		return "ferret_array_assign", true
+	}
+	if _, ok := mapValueType(typ); ok {
+		return "ferret_map_assign", true
+	}
+	return "", false
+}
+
+func (b *functionBuilder) nullPointerValue(typ types.SemType, loc source.Location) mir.ValueID {
+	zero := b.emitConst(types.TypeU64, "0", loc)
+	return b.emitCast(zero, typ, loc)
+}
+
 func (b *functionBuilder) isDynamicArrayLiteralExpr(expr hir.Expr, expected types.SemType) bool {
 	if expr == nil {
 		return false
@@ -1286,11 +1763,29 @@ func (b *functionBuilder) isDynamicArrayLiteralExpr(expr hir.Expr, expected type
 	return false
 }
 
+func (b *functionBuilder) isMapLiteralExpr(expr hir.Expr, expected types.SemType) bool {
+	if expr == nil {
+		return false
+	}
+	if _, ok := expr.(*hir.CompositeLit); !ok {
+		return false
+	}
+	if expected != nil {
+		if _, ok := types.UnwrapType(expected).(*types.MapType); ok {
+			return true
+		}
+	}
+	return b.mapTypeOf(expr) != nil
+}
+
 func (b *functionBuilder) coerceValueForAssign(val mir.ValueID, fromType, toType types.SemType, loc source.Location) mir.ValueID {
 	if val == mir.InvalidValue || fromType == nil || toType == nil {
 		return val
 	}
-	if _, ok := types.UnwrapType(toType).(*types.ReferenceType); ok {
+	if ref, ok := types.UnwrapType(toType).(*types.ReferenceType); ok {
+		if isEmptyInterface(ref.Inner) {
+			val = b.boxInterfaceValue(val, fromType, ref.Inner, loc)
+		}
 		return val
 	}
 	if unionType, ok := types.UnwrapType(toType).(*types.UnionType); ok {
@@ -1593,6 +2088,12 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 				return b.lowerBuiltinLenCall(expr)
 			case "append":
 				return b.lowerBuiltinAppendCall(expr)
+			case "self_addr":
+				return b.lowerBuiltinSelfAddrCall(expr)
+			case "addr":
+				return b.lowerBuiltinAddrCall(expr)
+			case "heap_addr":
+				return b.lowerBuiltinHeapAddrCall(expr)
 			case "panic":
 				return b.lowerBuiltinPanicCall(expr)
 			}
@@ -1610,11 +2111,28 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 			if recv == mir.InvalidValue {
 				return mir.InvalidValue
 			}
+			recvArgs := []mir.ValueID{recv}
+			if method.Receiver != nil {
+				if refType, ok := types.UnwrapType(method.Receiver).(*types.ReferenceType); ok {
+					recvHeap := b.computeBorrowHeap(selector.X, recv, refType.Inner, expr.Location)
+					if recvHeap == mir.InvalidValue {
+						recvHeap = b.emitConst(types.TypeU64, "0", expr.Location)
+					}
+					recvArgs = append(recvArgs, recvHeap)
+				}
+			}
 			args := b.lowerCallArgs(expr.Args, fnType, expr.Location, false)
 			if args == nil {
 				return mir.InvalidValue
 			}
-			return b.emitCall(target, append([]mir.ValueID{recv}, args...), expr)
+			if heapRet, ok := b.heapReturnType(target); ok {
+				ptr := b.emitHeapReturnCall(target, append(recvArgs, args...), heapRet, expr.Location)
+				if ptr == mir.InvalidValue {
+					return mir.InvalidValue
+				}
+				return b.emitLoad(ptr, heapRet, expr.Location)
+			}
+			return b.emitCall(target, append(recvArgs, args...), expr)
 		}
 	}
 
@@ -1624,6 +2142,13 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 		args := b.lowerCallArgs(expr.Args, fnType, expr.Location, skipInterfaceBoxing)
 		if args == nil {
 			return mir.InvalidValue
+		}
+		if heapRet, ok := b.heapReturnType(target); ok {
+			ptr := b.emitHeapReturnCall(target, args, heapRet, expr.Location)
+			if ptr == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			return b.emitLoad(ptr, heapRet, expr.Location)
 		}
 		return b.emitCall(target, args, expr)
 	}
@@ -1648,6 +2173,7 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 	out := make([]mir.ValueID, 0, len(args))
 	for i, arg := range args {
 		boxedUnion := false
+		argIsMove := isMoveExpr(arg)
 		val := b.lowerExpr(arg)
 		if val == mir.InvalidValue {
 			return nil
@@ -1656,13 +2182,24 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 		var paramType types.SemType
 		if fnType != nil && i < len(fnType.Params) {
 			paramType = fnType.Params[i].Type
+			// For variadic parameters, convert ...T to []T for comparison
+			// (HIR lowering already converted args to array literals)
+			if fnType.Params[i].IsVariadic {
+				paramType = types.NewArray(paramType, -1) // []T
+			}
 		}
 		// Keep array cloning logic
-		if paramType != nil {
+		if paramType != nil && !argIsMove {
 			if _, ok := dynamicArrayValueType(paramType); ok {
 				if _, ok := dynamicArrayValueType(argType); ok {
 					if !b.isDynamicArrayLiteralExpr(arg, paramType) {
 						val = b.emitArrayClone(val, paramType, loc)
+					}
+				}
+			} else if _, ok := mapValueType(paramType); ok {
+				if _, ok := mapValueType(argType); ok {
+					if !b.isMapLiteralExpr(arg, paramType) {
+						val = b.emitMapClone(val, paramType, loc)
 					}
 				}
 			}
@@ -1686,13 +2223,95 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 			paramBase := types.UnwrapType(paramType)
 			if _, ok := paramBase.(*types.ReferenceType); !ok && needsByRefType(paramType) && !boxedUnion {
 				tmp := b.emitAlloca(paramType, loc)
-				b.emitStore(tmp, val, loc)
+				if argIsMove {
+					b.emitStoreMove(tmp, val, loc)
+				} else {
+					b.emitStore(tmp, val, loc)
+				}
 				val = tmp
 			}
 		}
 		out = append(out, val)
+		if paramType != nil {
+			if refType, ok := types.UnwrapType(paramType).(*types.ReferenceType); ok {
+				heapArg := b.computeBorrowHeap(arg, val, refType.Inner, loc)
+				if heapArg == mir.InvalidValue {
+					heapArg = b.emitConst(types.TypeU64, "0", loc)
+				}
+				out = append(out, heapArg)
+			}
+		}
 	}
 	return out
+}
+
+func (b *functionBuilder) isHeapReturnCall(call *hir.CallExpr) (types.SemType, bool) {
+	if call == nil {
+		return nil, false
+	}
+	if selector, ok := call.Fun.(*hir.SelectorExpr); ok {
+		if target, _, ok := b.methodCallTarget(selector); ok {
+			return b.heapReturnType(target)
+		}
+	}
+	if target, ok := b.callTarget(call.Fun); ok {
+		return b.heapReturnType(target)
+	}
+	return nil, false
+}
+
+func (b *functionBuilder) lowerHeapReturnCall(call *hir.CallExpr, inner types.SemType, loc source.Location) mir.ValueID {
+	if call == nil || inner == nil {
+		return mir.InvalidValue
+	}
+
+	fnType, _ := types.UnwrapType(b.exprType(call.Fun)).(*types.FunctionType)
+
+	if selector, ok := call.Fun.(*hir.SelectorExpr); ok {
+		if iface := interfaceTypeOf(b.exprType(selector.X)); iface != nil && len(iface.Methods) > 0 {
+			return mir.InvalidValue
+		}
+		if target, method, ok := b.methodCallTarget(selector); ok {
+			recv := b.methodReceiverArg(selector, method)
+			if recv == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			recvArgs := []mir.ValueID{recv}
+			if method.Receiver != nil {
+				if refType, ok := types.UnwrapType(method.Receiver).(*types.ReferenceType); ok {
+					recvHeap := b.computeBorrowHeap(selector.X, recv, refType.Inner, call.Location)
+					if recvHeap == mir.InvalidValue {
+						recvHeap = b.emitConst(types.TypeU64, "0", call.Location)
+					}
+					recvArgs = append(recvArgs, recvHeap)
+				}
+			}
+			args := b.lowerCallArgs(call.Args, fnType, call.Location, false)
+			if args == nil {
+				return mir.InvalidValue
+			}
+			ptr := b.emitHeapReturnCall(target, append(recvArgs, args...), inner, loc)
+			if ptr != mir.InvalidValue {
+				b.ptrElem[ptr] = inner
+			}
+			return ptr
+		}
+	}
+
+	if target, ok := b.callTarget(call.Fun); ok {
+		skipInterfaceBoxing := b.isStdIoPrintTarget(target)
+		args := b.lowerCallArgs(call.Args, fnType, call.Location, skipInterfaceBoxing)
+		if args == nil {
+			return mir.InvalidValue
+		}
+		ptr := b.emitHeapReturnCall(target, args, inner, loc)
+		if ptr != mir.InvalidValue {
+			b.ptrElem[ptr] = inner
+		}
+		return ptr
+	}
+
+	return mir.InvalidValue
 }
 
 func (b *functionBuilder) isStdIoPrintTarget(target string) bool {
@@ -1755,6 +2374,7 @@ func (b *functionBuilder) lowerInterfaceMethodCall(selector *hir.SelectorExpr, c
 	ptrType := types.NewReference(types.TypeU8)
 	dataSlot := b.emitPtrAdd(ifaceVal, 0, ptrType, call.Location)
 	dataPtr := b.emitLoad(dataSlot, ptrType, call.Location)
+	selfHeap := b.heapFromValue(ifaceVal, b.exprType(selector.X), call.Location)
 	vtSlot := b.emitPtrAdd(ifaceVal, b.gen.layout.PointerSize, ptrType, call.Location)
 	vtPtr := b.emitLoad(vtSlot, ptrType, call.Location)
 
@@ -1765,7 +2385,7 @@ func (b *functionBuilder) lowerInterfaceMethodCall(selector *hir.SelectorExpr, c
 	if args == nil {
 		return mir.InvalidValue
 	}
-	allArgs := append([]mir.ValueID{dataPtr}, args...)
+	allArgs := append([]mir.ValueID{dataPtr, selfHeap}, args...)
 	return b.emitCallIndirect(methodSlot, allArgs, call)
 }
 
@@ -1775,6 +2395,9 @@ func (b *functionBuilder) boxInterfaceValue(value mir.ValueID, valueType, ifaceT
 	}
 	if valueType == nil || ifaceType == nil {
 		return value
+	}
+	if ref, ok := types.UnwrapType(ifaceType).(*types.ReferenceType); ok {
+		ifaceType = ref.Inner
 	}
 	if interfaceTypeOf(valueType) != nil {
 		return value
@@ -1829,7 +2452,23 @@ func (b *functionBuilder) boxInterfaceValue(value mir.ValueID, valueType, ifaceT
 		b.emitStore(vtSlot, vtablePtr, loc)
 	}
 
+	heapPtr := mir.InvalidValue
+	if ref, ok := types.UnwrapType(valueType).(*types.ReferenceType); ok {
+		heapPtr = b.computeBorrowHeap(nil, value, ref.Inner, loc)
+	} else {
+		heapPtr = b.emitCast(dataPtr, types.TypeU64, loc)
+	}
+	if heapPtr == mir.InvalidValue {
+		heapPtr = b.zeroU64(loc)
+	}
+
 	return ifaceAddr
+}
+
+func (b *functionBuilder) emitInterfaceDataPtr(ifaceAddr mir.ValueID, loc source.Location) mir.ValueID {
+	ptrType := types.NewReference(types.TypeU8)
+	dataSlot := b.emitPtrAdd(ifaceAddr, 0, ptrType, loc)
+	return b.emitLoad(dataSlot, ptrType, loc)
 }
 
 // boxUnionValue creates a tagged union value from a variant value.
@@ -1839,17 +2478,33 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 		return mir.InvalidValue
 	}
 
+	// Unwrap reference types for comparison
+	unwrappedValueType := types.UnwrapType(valueType)
+
 	// Find which variant this value matches
 	variantIndex := -1
 	for i, variant := range unionType.Variants {
-		if valueType.Equals(variant) {
+		unwrappedVariant := types.UnwrapType(variant)
+		if unwrappedValueType.Equals(unwrappedVariant) {
 			variantIndex = i
 			break
 		}
 	}
 
 	if variantIndex < 0 {
-		// Type checker should have caught this
+		// Type checker should have caught this, but provide helpful debug info
+		if b.gen != nil && b.gen.ctx != nil {
+			valueTypeStr := valueType.String()
+			if unwrappedValueType != valueType {
+				valueTypeStr = fmt.Sprintf("%s (unwrapped: %s)", valueType.String(), unwrappedValueType.String())
+			}
+			variantStrs := make([]string, len(unionType.Variants))
+			for i, v := range unionType.Variants {
+				variantStrs[i] = types.UnwrapType(v).String()
+			}
+			b.gen.ctx.ReportError(fmt.Sprintf("MIR: union variant mismatch: type '%s' not in union variants [%s]",
+				valueTypeStr, strings.Join(variantStrs, ", ")), &loc)
+		}
 		b.reportUnsupported("union variant mismatch", &loc)
 		return mir.InvalidValue
 	}
@@ -1867,6 +2522,84 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 	b.emitStore(dataSlot, value, loc)
 
 	return unionAddr
+}
+
+// emitShortCircuitBinary implements short-circuit evaluation for && and || operators.
+// For &&: if left is false, return false without evaluating right.
+// For ||: if left is true, return true without evaluating right.
+func (b *functionBuilder) emitShortCircuitBinary(e *hir.BinaryExpr) mir.ValueID {
+	// Allocate a stack slot to store the result
+	resultSlot := b.emitAlloca(types.TypeBool, e.Location)
+
+	// Evaluate the left operand
+	left := b.lowerExpr(e.X)
+	if left == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	leftType := b.exprType(e.X)
+	left, _ = b.derefValueIfNeeded(left, leftType, e.Location)
+
+	// Create blocks for the control flow
+	rightBlock := b.newBlock("and_or.right", e.Location)
+	mergeBlock := b.newBlock("and_or.merge", e.Location)
+
+	if e.Op.Kind == tokens.AND_TOKEN {
+		// For &&: if left is false, skip to merge with false result
+		// Store false as the default result
+		falseVal := b.emitConst(types.TypeBool, "0", e.Location)
+		b.emitStore(resultSlot, falseVal, e.Location)
+
+		// Branch: if left is true, evaluate right; otherwise go to merge
+		b.current.Term = &mir.CondBr{
+			Cond:     left,
+			Then:     rightBlock.ID,
+			Else:     mergeBlock.ID,
+			Location: e.Location,
+		}
+
+		// Right block: evaluate right operand
+		b.setBlock(rightBlock)
+		right := b.lowerExpr(e.Y)
+		if right == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		rightType := b.exprType(e.Y)
+		right, _ = b.derefValueIfNeeded(right, rightType, e.Location)
+
+		// Store right result and branch to merge
+		b.emitStore(resultSlot, right, e.Location)
+		b.branchIfNoTerm(mergeBlock.ID, e.Location)
+	} else {
+		// For ||: if left is true, skip to merge with true result
+		// Store true as the default result
+		trueVal := b.emitConst(types.TypeBool, "1", e.Location)
+		b.emitStore(resultSlot, trueVal, e.Location)
+
+		// Branch: if left is false, evaluate right; otherwise go to merge
+		b.current.Term = &mir.CondBr{
+			Cond:     left,
+			Then:     mergeBlock.ID,
+			Else:     rightBlock.ID,
+			Location: e.Location,
+		}
+
+		// Right block: evaluate right operand
+		b.setBlock(rightBlock)
+		right := b.lowerExpr(e.Y)
+		if right == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		rightType := b.exprType(e.Y)
+		right, _ = b.derefValueIfNeeded(right, rightType, e.Location)
+
+		// Store right result and branch to merge
+		b.emitStore(resultSlot, right, e.Location)
+		b.branchIfNoTerm(mergeBlock.ID, e.Location)
+	}
+
+	// Merge block: load and return the result
+	b.setBlock(mergeBlock)
+	return b.emitLoad(resultSlot, types.TypeBool, e.Location)
 }
 
 // emitTypeCheck generates code for the 'is' operator to check type at runtime.
@@ -2093,6 +2826,312 @@ func (b *functionBuilder) lowerBuiltinAppendCall(expr *hir.CallExpr) mir.ValueID
 	return result
 }
 
+func (b *functionBuilder) lowerBuiltinSelfAddrCall(expr *hir.CallExpr) mir.ValueID {
+	if expr == nil || len(expr.Args) != 1 {
+		b.reportUnsupported("self_addr argument count", expr.Loc())
+		return mir.InvalidValue
+	}
+
+	arg := expr.Args[0]
+	addr := mir.InvalidValue
+	if unary, ok := arg.(*hir.UnaryExpr); ok && (unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN) {
+		if ident, ok := unary.X.(*hir.Ident); ok && ident.Symbol != nil {
+			addr = b.bindingAddr(ident)
+		} else {
+			addr = b.lowerLValue(unary.X)
+		}
+	} else if ident, ok := arg.(*hir.Ident); ok && ident.Symbol != nil {
+		addr = b.bindingAddr(ident)
+	} else {
+		addr = b.lowerExpr(arg)
+	}
+	if addr == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	return b.emitCast(addr, types.TypeU64, expr.Location)
+}
+
+func (b *functionBuilder) lowerBuiltinAddrCall(expr *hir.CallExpr) mir.ValueID {
+	if expr == nil || len(expr.Args) != 1 {
+		b.reportUnsupported("addr argument count", expr.Loc())
+		return mir.InvalidValue
+	}
+
+	arg := expr.Args[0]
+	refVal := b.lowerExpr(arg)
+	if refVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	return b.emitCast(refVal, types.TypeU64, expr.Location)
+}
+
+func (b *functionBuilder) lowerBuiltinHeapAddrCall(expr *hir.CallExpr) mir.ValueID {
+	if expr == nil || len(expr.Args) != 1 {
+		b.reportUnsupported("heap_addr argument count", expr.Loc())
+		return mir.InvalidValue
+	}
+
+	arg := expr.Args[0]
+	argType := b.exprType(arg)
+	refType, ok := types.UnwrapType(argType).(*types.ReferenceType)
+	if !ok || refType.Inner == nil {
+		b.reportUnsupported("heap_addr argument type", expr.Loc())
+		return mir.InvalidValue
+	}
+
+	refVal := b.lowerExpr(arg)
+	if refVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	heapVal := b.computeBorrowHeap(arg, refVal, refType.Inner, expr.Location)
+	if heapVal == mir.InvalidValue {
+		heapVal = b.zeroU64(expr.Location)
+	}
+	return heapVal
+}
+
+func (b *functionBuilder) isHeapBorrowArg(expr hir.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	for {
+		if p, ok := expr.(*hir.ParenExpr); ok {
+			expr = p.X
+			continue
+		}
+		break
+	}
+	unary, ok := expr.(*hir.UnaryExpr)
+	if !ok {
+		return false
+	}
+	if unary.Op.Kind != tokens.BIT_AND_TOKEN && unary.Op.Kind != tokens.MUT_TOKEN {
+		return false
+	}
+	return b.isHeapLValue(unary.X)
+}
+
+func isMoveExpr(expr hir.Expr) bool {
+	for {
+		if p, ok := expr.(*hir.ParenExpr); ok {
+			expr = p.X
+			continue
+		}
+		break
+	}
+	unary, ok := expr.(*hir.UnaryExpr)
+	if !ok {
+		return false
+	}
+	return unary.Op.Kind == tokens.AT_TOKEN
+}
+
+func (b *functionBuilder) isHeapLValue(expr hir.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *hir.Ident:
+		if e.Symbol == nil {
+			return false
+		}
+		if e.Symbol.IsHeap {
+			return true
+		}
+		if b.boxed != nil {
+			if _, ok := b.boxed[e.Symbol]; ok {
+				return true
+			}
+		}
+		return false
+	case *hir.SelectorExpr:
+		return b.isHeapLValue(e.X)
+	case *hir.IndexExpr:
+		return b.isHeapLValue(e.X)
+	case *hir.ParenExpr:
+		return b.isHeapLValue(e.X)
+	default:
+		return false
+	}
+}
+
+func (b *functionBuilder) resetHeapBinding(ident *hir.Ident, loc source.Location) {
+	if ident == nil || ident.Symbol == nil {
+		return
+	}
+	typ := b.getStorageType(ident)
+	if typ == nil {
+		return
+	}
+	heapAddr := b.emitHeapAlloc(mir.InvalidValue, typ, loc)
+	if heapAddr == mir.InvalidValue {
+		return
+	}
+	b.slots[ident.Symbol] = heapAddr
+	b.boxed[ident.Symbol] = heapAddr
+
+	bind, ok := b.bindings[ident.Symbol]
+	if ok {
+		if elem, ok := b.ptrElem[bind]; ok {
+			if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
+				b.emitStore(bind, heapAddr, loc)
+				return
+			}
+		}
+	}
+	bind = b.emitAlloca(types.NewReference(typ), loc)
+	b.emitStore(bind, heapAddr, loc)
+	b.bindings[ident.Symbol] = bind
+}
+
+func (b *functionBuilder) bindingAddr(ident *hir.Ident) mir.ValueID {
+	if ident == nil || ident.Symbol == nil {
+		return mir.InvalidValue
+	}
+	if bind, ok := b.bindings[ident.Symbol]; ok {
+		return bind
+	}
+	return b.addrForIdent(ident)
+}
+
+func (b *functionBuilder) zeroU64(loc source.Location) mir.ValueID {
+	return b.emitConst(types.TypeU64, "0", loc)
+}
+
+func (b *functionBuilder) refHeapSlotForIdent(ident *hir.Ident, loc source.Location) mir.ValueID {
+	if ident == nil {
+		return mir.InvalidValue
+	}
+	if ident.Symbol != nil {
+		if slot, ok := b.refHeapSlots[ident.Symbol]; ok {
+			return slot
+		}
+		slot := b.emitAlloca(types.TypeU64, loc)
+		b.refHeapSlots[ident.Symbol] = slot
+		return slot
+	}
+	if slot, ok := b.tempRefHeap[ident]; ok {
+		return slot
+	}
+	slot := b.emitAlloca(types.TypeU64, loc)
+	b.tempRefHeap[ident] = slot
+	return slot
+}
+
+func (b *functionBuilder) storeRefHeapForIdent(ident *hir.Ident, heap mir.ValueID, loc source.Location) {
+	if ident == nil || heap == mir.InvalidValue {
+		return
+	}
+	slot := b.refHeapSlotForIdent(ident, loc)
+	if slot == mir.InvalidValue {
+		return
+	}
+	b.emitStore(slot, heap, loc)
+}
+
+func (b *functionBuilder) storeRefHeapForValue(ident *hir.Ident, val mir.ValueID, loc source.Location) {
+	// This function is a no-op after the removal of the refHeap cache.
+}
+
+func (b *functionBuilder) loadRefHeapForIdent(ident *hir.Ident, loc source.Location) mir.ValueID {
+	if ident == nil {
+		return mir.InvalidValue
+	}
+	if ident.Symbol != nil {
+		if slot, ok := b.refHeapSlots[ident.Symbol]; ok {
+			return b.emitLoad(slot, types.TypeU64, loc)
+		}
+	}
+	if slot, ok := b.tempRefHeap[ident]; ok {
+		return b.emitLoad(slot, types.TypeU64, loc)
+	}
+	return mir.InvalidValue
+}
+
+func (b *functionBuilder) maybeAttachRefHeap(val mir.ValueID, ident *hir.Ident, loc source.Location) mir.ValueID {
+	// This function is a no-op after the removal of the refHeap cache.
+	return val
+}
+
+func (b *functionBuilder) attachRefHeapForBorrow(val mir.ValueID, expr hir.Expr, inner types.SemType, loc source.Location) mir.ValueID {
+	// Caching of heap pointers for references has been removed to prevent stale data.
+	// Heap addresses are now computed on-demand by computeBorrowHeap.
+	return val
+}
+
+func isDerefExpr(expr hir.Expr) bool {
+	for expr != nil {
+		if p, ok := expr.(*hir.ParenExpr); ok {
+			expr = p.X
+			continue
+		}
+		break
+	}
+	_, ok := expr.(*hir.DerefExpr)
+	return ok
+}
+
+func (b *functionBuilder) computeBorrowHeap(expr hir.Expr, val mir.ValueID, inner types.SemType, loc source.Location) mir.ValueID {
+	if val == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	if inner == nil {
+		return b.zeroU64(loc)
+	}
+	inner = types.UnwrapType(inner)
+	if ref, ok := inner.(*types.ReferenceType); ok {
+		inner = types.UnwrapType(ref.Inner)
+	}
+	if prim, ok := inner.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
+		loaded := b.emitLoad(val, types.TypeString, loc)
+		return b.emitCast(loaded, types.TypeU64, loc)
+	}
+	if _, ok := dynamicArrayValueType(inner); ok {
+		loaded := b.emitLoad(val, inner, loc)
+		return b.emitCast(loaded, types.TypeU64, loc)
+	}
+	if _, ok := mapValueType(inner); ok {
+		loaded := b.emitLoad(val, inner, loc)
+		return b.emitCast(loaded, types.TypeU64, loc)
+	}
+	lval := expr
+	if unary, ok := expr.(*hir.UnaryExpr); ok && (unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN) {
+		lval = unary.X
+	}
+	if b.isHeapLValue(lval) {
+		return b.emitCast(val, types.TypeU64, loc)
+	}
+	if interfaceTypeOf(inner) != nil {
+		ifaceVal := b.emitLoad(val, inner, loc)
+		// Get heap address from the interface data pointer
+		dataPtr := b.emitInterfaceDataPtr(ifaceVal, loc)
+		return b.emitCast(dataPtr, types.TypeU64, loc)
+	}
+	return b.zeroU64(loc)
+}
+
+func (b *functionBuilder) heapFromValue(val mir.ValueID, typ types.SemType, loc source.Location) mir.ValueID {
+	if val == mir.InvalidValue || typ == nil {
+		return mir.InvalidValue
+	}
+	base := types.UnwrapType(typ)
+	if prim, ok := base.(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
+		return b.emitCast(val, types.TypeU64, loc)
+	}
+	if _, ok := dynamicArrayValueType(base); ok {
+		return b.emitCast(val, types.TypeU64, loc)
+	}
+	if _, ok := mapValueType(base); ok {
+		return b.emitCast(val, types.TypeU64, loc)
+	}
+	if interfaceTypeOf(base) != nil {
+		// For interfaces, the heap address is the data pointer stored in the interface struct.
+		dataPtr := b.emitInterfaceDataPtr(val, loc)
+		return b.emitCast(dataPtr, types.TypeU64, loc)
+	}
+	return b.zeroU64(loc)
+}
+
 func (b *functionBuilder) lowerBuiltinPanicCall(expr *hir.CallExpr) mir.ValueID {
 	if expr == nil || len(expr.Args) != 1 {
 		b.reportUnsupported("panic argument count", expr.Loc())
@@ -2120,7 +3159,8 @@ func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.
 	retType := expr.Type
 	if ref, ok := types.UnwrapType(retType).(*types.ReferenceType); ok {
 		out := b.emitAlloca(ref.Inner, expr.Location)
-		callArgs := append([]mir.ValueID{out}, args...)
+		outHeap := b.emitAlloca(types.TypeU64, expr.Location)
+		callArgs := append([]mir.ValueID{out, outHeap}, args...)
 		result := b.gen.nextValueID()
 		b.emitInstr(&mir.Call{
 			Result:   result,
@@ -2170,11 +3210,29 @@ func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.
 	return result
 }
 
+func (b *functionBuilder) emitHeapReturnCall(target string, args []mir.ValueID, inner types.SemType, loc source.Location) mir.ValueID {
+	if target == "" || inner == nil {
+		return mir.InvalidValue
+	}
+	retType := types.NewReference(inner)
+	result := b.gen.nextValueID()
+	b.emitInstr(&mir.Call{
+		Result:   result,
+		Target:   target,
+		Args:     args,
+		Type:     retType,
+		Location: loc,
+	})
+	b.ptrElem[result] = inner
+	return result
+}
+
 func (b *functionBuilder) emitCallIndirect(callee mir.ValueID, args []mir.ValueID, expr *hir.CallExpr) mir.ValueID {
 	retType := expr.Type
 	if ref, ok := types.UnwrapType(retType).(*types.ReferenceType); ok {
 		out := b.emitAlloca(ref.Inner, expr.Location)
-		callArgs := append([]mir.ValueID{out}, args...)
+		outHeap := b.emitAlloca(types.TypeU64, expr.Location)
+		callArgs := append([]mir.ValueID{out, outHeap}, args...)
 		result := b.gen.nextValueID()
 		b.emitInstr(&mir.CallIndirect{
 			Result:   result,
@@ -2319,6 +3377,10 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 		return b.makeFuncValue(ident.Name, ident.Type, ident.Location)
 	}
 
+	wrap := func(val mir.ValueID) mir.ValueID {
+		return b.maybeAttachRefHeap(val, ident, ident.Location)
+	}
+
 	// Check for narrowed union access: if the access type differs from the storage type
 	// and the storage type is a union, we need to extract the variant.
 	if ident.Symbol != nil && ident.Symbol.Type != nil {
@@ -2358,7 +3420,7 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 							Type:         accessType,
 							Location:     ident.Location,
 						})
-						return result
+						return wrap(result)
 					}
 				}
 			}
@@ -2393,7 +3455,7 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 							Type:       accessType,
 							Location:   ident.Location,
 						})
-						return result
+						return wrap(result)
 					}
 				}
 			}
@@ -2404,9 +3466,9 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 		if _, ok := b.captures[ident.Symbol]; ok {
 			if addr := b.addrForIdent(ident); addr != mir.InvalidValue {
 				if b.useAddrValue(ident.Type) {
-					return addr
+					return wrap(addr)
 				}
-				return b.emitLoad(addr, ident.Type, ident.Location)
+				return wrap(b.emitLoad(addr, ident.Type, ident.Location))
 			}
 		}
 	}
@@ -2414,27 +3476,27 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 	if ident.Symbol != nil {
 		if addr, ok := b.slots[ident.Symbol]; ok {
 			if b.useAddrValue(ident.Type) {
-				return addr
+				return wrap(addr)
 			}
-			return b.emitLoad(addr, ident.Type, ident.Location)
+			return wrap(b.emitLoad(addr, ident.Type, ident.Location))
 		}
 	}
 
 	if addr, ok := b.tempSlots[ident]; ok {
 		if b.useAddrValue(ident.Type) {
-			return addr
+			return wrap(addr)
 		}
-		return b.emitLoad(addr, ident.Type, ident.Location)
+		return wrap(b.emitLoad(addr, ident.Type, ident.Location))
 	}
 
 	if ident.Symbol != nil && (ident.Symbol.Kind == symbols.SymbolParameter || ident.Symbol.Kind == symbols.SymbolReceiver) {
 		if val, ok := b.paramsByName[ident.Name]; ok {
-			return val
+			return wrap(val)
 		}
 	}
 
 	if val, ok := b.paramsByName[ident.Name]; ok {
-		return val
+		return wrap(val)
 	}
 
 	if ident.Name != "" {
@@ -2496,6 +3558,12 @@ func (b *functionBuilder) addrForIdent(ident *hir.Ident) mir.ValueID {
 				addr := b.emitAllocaInEntry(paramType, ident.Location)
 				b.emitStoreInEntry(addr, val, ident.Location)
 				b.slots[ident.Symbol] = addr
+				if _, ok := b.bindings[ident.Symbol]; !ok {
+					b.bindings[ident.Symbol] = addr
+				}
+				if _, ok := types.UnwrapType(paramType).(*types.ReferenceType); ok {
+					// Heap value for parameters is now handled by the ABI and call sites.
+				}
 				return addr
 			}
 		}
@@ -2950,7 +4018,7 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 		keySlot := b.emitPtrAdd(keysAddr, keyOffset, mapType.Key, kv.Location)
 		valSlot := b.emitPtrAdd(valsAddr, valOffset, mapType.Value, kv.Location)
 		b.emitStore(keySlot, keyVal, kv.Location)
-		if b.isDynamicArrayLiteralExpr(kv.Value, mapType.Value) {
+		if b.isDynamicArrayLiteralExpr(kv.Value, mapType.Value) || b.isMapLiteralExpr(kv.Value, mapType.Value) {
 			b.emitInstr(&mir.Store{
 				Addr:     valSlot,
 				Value:    valueVal,
@@ -3077,7 +4145,7 @@ func (b *functionBuilder) lowerStructLiteralInto(addr mir.ValueID, structType *t
 			return
 		}
 		fieldAddr := b.emitPtrAdd(addr, offset, fieldType, lit.Location)
-		if b.isDynamicArrayLiteralExpr(kv.Value, fieldType) {
+		if b.isDynamicArrayLiteralExpr(kv.Value, fieldType) || b.isMapLiteralExpr(kv.Value, fieldType) {
 			b.emitInstr(&mir.Store{
 				Addr:     fieldAddr,
 				Value:    value,
@@ -3129,7 +4197,7 @@ func (b *functionBuilder) lowerArrayLiteralInto(addr mir.ValueID, arrType *types
 		value = b.coerceValueForAssign(value, eltType, arrType.Element, lit.Location)
 		offset := i * elemSize
 		elemAddr := b.emitPtrAdd(addr, offset, arrType.Element, lit.Location)
-		if b.isDynamicArrayLiteralExpr(elt, arrType.Element) {
+		if b.isDynamicArrayLiteralExpr(elt, arrType.Element) || b.isMapLiteralExpr(elt, arrType.Element) {
 			b.emitInstr(&mir.Store{
 				Addr:     elemAddr,
 				Value:    value,
@@ -3547,6 +4615,17 @@ func (b *functionBuilder) lowerIndexAssign(expr *hir.IndexExpr, rhs hir.Expr, op
 			value = b.emitBinary(opKind, cur, value, arrType.Element, loc)
 		}
 
+		rhsIsMove := rhs != nil && isMoveExpr(rhs)
+		if _, ok := dynamicArrayValueType(arrType.Element); ok {
+			if !rhsIsMove && !b.isDynamicArrayLiteralExpr(rhs, arrType.Element) {
+				value = b.emitArrayClone(value, arrType.Element, loc)
+			}
+		} else if _, ok := mapValueType(arrType.Element); ok {
+			if !rhsIsMove && !b.isMapLiteralExpr(rhs, arrType.Element) {
+				value = b.emitMapClone(value, arrType.Element, loc)
+			}
+		}
+
 		// Emit ArraySet instruction
 		b.emitInstr(&mir.ArraySet{
 			Array:    arrVal,
@@ -3795,6 +4874,19 @@ func (b *functionBuilder) lowerMapIndexAssign(expr *hir.IndexExpr, rhs hir.Expr,
 		})
 
 		valueVal = b.emitBinary(opKind, curVal, valueVal, mapType.Value, loc)
+	}
+
+	if mapType.Value != nil {
+		rhsIsMove := rhs != nil && isMoveExpr(rhs)
+		if _, ok := dynamicArrayValueType(mapType.Value); ok {
+			if !rhsIsMove && !b.isDynamicArrayLiteralExpr(rhs, mapType.Value) {
+				valueVal = b.emitArrayClone(valueVal, mapType.Value, loc)
+			}
+		} else if _, ok := mapValueType(mapType.Value); ok {
+			if !rhsIsMove && !b.isMapLiteralExpr(rhs, mapType.Value) {
+				valueVal = b.emitMapClone(valueVal, mapType.Value, loc)
+			}
+		}
 	}
 
 	b.emitInstr(&mir.MapSet{
@@ -4122,23 +5214,6 @@ func (b *functionBuilder) boxCapturedIdent(ident *hir.Ident) mir.ValueID {
 		return mir.InvalidValue
 	}
 
-	size := b.gen.layout.SizeOf(typ)
-	if size <= 0 {
-		b.reportUnsupported("capture box size", &ident.Location)
-		return mir.InvalidValue
-	}
-
-	sizeVal := b.emitConst(types.TypeU64, strconv.Itoa(size), ident.Location)
-	box := b.gen.nextValueID()
-	b.emitInstr(&mir.Call{
-		Result:   box,
-		Target:   "ferret_alloc",
-		Args:     []mir.ValueID{sizeVal},
-		Type:     types.NewReference(typ),
-		Location: ident.Location,
-	})
-	b.ptrElem[box] = typ
-
 	var val mir.ValueID
 	if addr, ok := b.slots[ident.Symbol]; ok {
 		val = b.emitLoad(addr, typ, ident.Location)
@@ -4147,8 +5222,9 @@ func (b *functionBuilder) boxCapturedIdent(ident *hir.Ident) mir.ValueID {
 			val = param
 		}
 	}
-	if val != mir.InvalidValue {
-		b.emitStore(box, val, ident.Location)
+	box := b.emitHeapAlloc(val, typ, ident.Location)
+	if box == mir.InvalidValue {
+		return mir.InvalidValue
 	}
 
 	b.boxed[ident.Symbol] = box
@@ -4229,12 +5305,14 @@ func (b *functionBuilder) methodReceiverRef(expr *hir.SelectorExpr, recvInner ty
 	exprType := b.exprType(expr.X)
 	if exprType != nil {
 		if _, ok := types.UnwrapType(exprType).(*types.ReferenceType); ok || needsByRefType(exprType) {
-			return b.lowerExpr(expr.X)
+			recv := b.lowerExpr(expr.X)
+			return b.attachRefHeapForBorrow(recv, expr.X, recvInner, expr.Location)
 		}
 	}
 
 	if isAddressableExpr(expr.X) {
-		return b.lowerLValue(expr.X)
+		recv := b.lowerLValue(expr.X)
+		return b.attachRefHeapForBorrow(recv, expr.X, recvInner, expr.Location)
 	}
 
 	val := b.lowerExpr(expr.X)
@@ -4243,7 +5321,7 @@ func (b *functionBuilder) methodReceiverRef(expr *hir.SelectorExpr, recvInner ty
 	}
 	tmp := b.emitAlloca(recvInner, expr.Location)
 	b.emitStore(tmp, val, expr.Location)
-	return tmp
+	return b.attachRefHeapForBorrow(tmp, expr.X, recvInner, expr.Location)
 }
 
 func (b *functionBuilder) methodReceiverCopy(expr *hir.SelectorExpr, recvInner types.SemType) mir.ValueID {
@@ -4628,6 +5706,85 @@ func (b *functionBuilder) emitMemcpy(dst, src mir.ValueID, typ types.SemType, lo
 	})
 }
 
+func typeNeedsDeepCopy(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	typ = types.UnwrapType(typ)
+	switch t := typ.(type) {
+	case *types.ReferenceType:
+		return false
+	case *types.MapType:
+		return true
+	case *types.ArrayType:
+		if t.Length < 0 {
+			return true
+		}
+		return typeNeedsDeepCopy(t.Element)
+	case *types.StructType:
+		for _, field := range t.Fields {
+			if typeNeedsDeepCopy(field.Type) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+func (b *functionBuilder) emitDeepCopy(dst, src mir.ValueID, typ types.SemType, loc source.Location) {
+	if typ == nil {
+		b.reportUnsupported("deep copy type", &loc)
+		return
+	}
+	if b.gen == nil || b.gen.layout == nil {
+		b.emitMemcpy(dst, src, typ, loc)
+		return
+	}
+	typ = types.UnwrapType(typ)
+	switch t := typ.(type) {
+	case *types.StructType:
+		layout := b.gen.layout.StructLayout(t)
+		for _, field := range layout.Fields {
+			fieldDst := b.emitPtrAdd(dst, field.Offset, field.Type, loc)
+			fieldSrc := b.emitPtrAdd(src, field.Offset, field.Type, loc)
+			val := fieldSrc
+			if !needsByRefType(field.Type) {
+				val = b.emitLoad(fieldSrc, field.Type, loc)
+			}
+			b.emitStore(fieldDst, val, loc)
+		}
+	case *types.ArrayType:
+		if t.Length < 0 {
+			val := b.emitArrayClone(src, typ, loc)
+			b.emitInstr(&mir.Store{
+				Addr:     dst,
+				Value:    val,
+				Location: loc,
+			})
+			return
+		}
+		elemSize := b.gen.layout.SizeOf(t.Element)
+		if elemSize <= 0 {
+			b.emitMemcpy(dst, src, typ, loc)
+			return
+		}
+		for i := 0; i < t.Length; i++ {
+			offset := i * elemSize
+			elemDst := b.emitPtrAdd(dst, offset, t.Element, loc)
+			elemSrc := b.emitPtrAdd(src, offset, t.Element, loc)
+			val := elemSrc
+			if !needsByRefType(t.Element) {
+				val = b.emitLoad(elemSrc, t.Element, loc)
+			}
+			b.emitStore(elemDst, val, loc)
+		}
+	default:
+		b.emitMemcpy(dst, src, typ, loc)
+	}
+}
+
 func (b *functionBuilder) emitLargeConst(typ types.SemType, value string, loc source.Location) mir.ValueID {
 	typeName, ok := largePrimitiveName(typ)
 	if !ok {
@@ -4928,14 +6085,75 @@ func (b *functionBuilder) emitArrayClone(value mir.ValueID, arrType types.SemTyp
 	return id
 }
 
+func (b *functionBuilder) emitMapClone(value mir.ValueID, mapType types.SemType, loc source.Location) mir.ValueID {
+	if value == mir.InvalidValue {
+		return value
+	}
+	id := b.gen.nextValueID()
+	b.emitInstr(&mir.Call{
+		Result:   id,
+		Target:   "ferret_map_clone",
+		Args:     []mir.ValueID{value},
+		Type:     mapType,
+		Location: loc,
+	})
+	return id
+}
+
+func (b *functionBuilder) emitHeapAlloc(value mir.ValueID, typ types.SemType, loc source.Location) mir.ValueID {
+	if typ == nil {
+		b.reportUnsupported("heap alloc type", &loc)
+		return mir.InvalidValue
+	}
+	size := b.gen.layout.SizeOf(typ)
+	if size <= 0 {
+		b.reportUnsupported("heap alloc size", &loc)
+		return mir.InvalidValue
+	}
+	sizeVal := b.emitConst(types.TypeU64, strconv.Itoa(size), loc)
+	box := b.gen.nextValueID()
+	b.emitInstr(&mir.Call{
+		Result:   box,
+		Target:   "ferret_alloc",
+		Args:     []mir.ValueID{sizeVal},
+		Type:     types.NewReference(typ),
+		Location: loc,
+	})
+	b.ptrElem[box] = typ
+	if value != mir.InvalidValue {
+		b.emitStore(box, value, loc)
+	}
+	return box
+}
+
 func (b *functionBuilder) emitStore(addr, value mir.ValueID, loc source.Location) {
+	if elem, ok := b.ptrElem[addr]; ok {
+		if _, ok := dynamicArrayValueType(elem); ok {
+			value = b.emitArrayClone(value, elem, loc)
+		} else if _, ok := mapValueType(elem); ok {
+			value = b.emitMapClone(value, elem, loc)
+		}
+		if needsByRefType(elem) {
+			if typeNeedsDeepCopy(elem) {
+				b.emitDeepCopy(addr, value, elem, loc)
+			} else {
+				b.emitMemcpy(addr, value, elem, loc)
+			}
+			return
+		}
+	}
+	b.emitInstr(&mir.Store{
+		Addr:     addr,
+		Value:    value,
+		Location: loc,
+	})
+}
+
+func (b *functionBuilder) emitStoreMove(addr, value mir.ValueID, loc source.Location) {
 	if elem, ok := b.ptrElem[addr]; ok {
 		if needsByRefType(elem) {
 			b.emitMemcpy(addr, value, elem, loc)
 			return
-		}
-		if _, ok := dynamicArrayValueType(elem); ok {
-			value = b.emitArrayClone(value, elem, loc)
 		}
 	}
 	b.emitInstr(&mir.Store{
@@ -5223,6 +6441,83 @@ func (b *functionBuilder) castValue(value mir.ValueID, from, to types.SemType, l
 	if from.Equals(to) {
 		return value
 	}
+
+	// Handle string <-> array conversions with runtime functions
+	fromUnwrapped := types.UnwrapType(from)
+	toUnwrapped := types.UnwrapType(to)
+
+	// str -> []char
+	if fromPrim, ok := fromUnwrapped.(*types.PrimitiveType); ok && fromPrim.GetName() == types.TYPE_STRING {
+		if toArr, ok := toUnwrapped.(*types.ArrayType); ok && toArr.Length < 0 {
+			if elemPrim, ok := toArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
+				// Call ferret_string_to_char_array
+				result := b.gen.nextValueID()
+				b.emitInstr(&mir.Call{
+					Result:   result,
+					Target:   "ferret_string_to_char_array",
+					Args:     []mir.ValueID{value},
+					Type:     to,
+					Location: loc,
+				})
+				return result
+			}
+		}
+	}
+
+	// str -> []byte
+	if fromPrim, ok := fromUnwrapped.(*types.PrimitiveType); ok && fromPrim.GetName() == types.TYPE_STRING {
+		if toArr, ok := toUnwrapped.(*types.ArrayType); ok && toArr.Length < 0 {
+			if elemPrim, ok := toArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
+				// Call ferret_string_to_byte_array
+				result := b.gen.nextValueID()
+				b.emitInstr(&mir.Call{
+					Result:   result,
+					Target:   "ferret_string_to_byte_array",
+					Args:     []mir.ValueID{value},
+					Type:     to,
+					Location: loc,
+				})
+				return result
+			}
+		}
+	}
+
+	// []char -> str
+	if fromArr, ok := fromUnwrapped.(*types.ArrayType); ok && fromArr.Length < 0 {
+		if elemPrim, ok := fromArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
+			if toPrim, ok := toUnwrapped.(*types.PrimitiveType); ok && toPrim.GetName() == types.TYPE_STRING {
+				// Call ferret_char_array_to_string
+				result := b.gen.nextValueID()
+				b.emitInstr(&mir.Call{
+					Result:   result,
+					Target:   "ferret_char_array_to_string",
+					Args:     []mir.ValueID{value},
+					Type:     to,
+					Location: loc,
+				})
+				return result
+			}
+		}
+	}
+
+	// []byte -> str
+	if fromArr, ok := fromUnwrapped.(*types.ArrayType); ok && fromArr.Length < 0 {
+		if elemPrim, ok := fromArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
+			if toPrim, ok := toUnwrapped.(*types.PrimitiveType); ok && toPrim.GetName() == types.TYPE_STRING {
+				// Call ferret_byte_array_to_string
+				result := b.gen.nextValueID()
+				b.emitInstr(&mir.Call{
+					Result:   result,
+					Target:   "ferret_byte_array_to_string",
+					Args:     []mir.ValueID{value},
+					Type:     to,
+					Location: loc,
+				})
+				return result
+			}
+		}
+	}
+
 	if interfaceTypeOf(to) != nil {
 		return b.boxInterfaceValue(value, from, to, loc)
 	}

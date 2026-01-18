@@ -44,6 +44,17 @@ func isImplicitlyCompatible(compatibility TypeCompatibility) bool {
 	return compatibility == Identical || compatibility == ImplicitCastable
 }
 
+func isEmptyInterfaceType(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	typ = types.UnwrapType(typ)
+	if iface, ok := typ.(*types.InterfaceType); ok {
+		return len(iface.Methods) == 0
+	}
+	return false
+}
+
 // methodSignaturesMatch checks if two function types match
 // This is used to compare method signatures with interface method signatures
 // Note: Methods don't include the receiver in their FuncType - the receiver is separate
@@ -226,14 +237,22 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 
 	if srcRef, ok := types.UnwrapType(source).(*types.ReferenceType); ok {
 		if tgtRef, ok := types.UnwrapType(target).(*types.ReferenceType); ok {
-			if !srcRef.Inner.Equals(tgtRef.Inner) {
-				return Incompatible
-			}
 			// Both mutability levels must match exactly - no implicit coercion
 			if tgtRef.Mutable != srcRef.Mutable {
 				return Incompatible
 			}
-			return Identical
+			if srcRef.Inner.Equals(tgtRef.Inner) {
+				return Identical
+			}
+			if isEmptyInterfaceType(tgtRef.Inner) {
+				return ImplicitCastable
+			}
+			return Incompatible
+		}
+	}
+	if _, ok := types.UnwrapType(source).(*types.ReferenceType); ok {
+		if _, ok := types.UnwrapType(target).(*types.ReferenceType); !ok {
+			return Incompatible
 		}
 	}
 	if _, ok := types.UnwrapType(target).(*types.ReferenceType); ok {
@@ -246,7 +265,7 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 	}
 
 	// Any type can be assigned to empty interface (any)
-	if iface, ok := types.UnwrapType(target).(*types.InterfaceType); ok && len(iface.Methods) == 0 {
+	if isEmptyInterfaceType(target) {
 		return ImplicitCastable
 	}
 

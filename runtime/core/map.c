@@ -162,6 +162,101 @@ ferret_map_t* ferret_map_from_pairs(
     return map;
 }
 
+ferret_map_t* ferret_map_clone(const ferret_map_t* src) {
+    if (src == NULL) {
+        return NULL;
+    }
+
+    ferret_map_t* map = ferret_map_new(src->key_size, src->value_size, src->hash_fn, src->equals_fn);
+    if (map == NULL) {
+        return NULL;
+    }
+
+    if (src->bucket_count > map->bucket_count) {
+        if (!ferret_map_resize(map, src->bucket_count)) {
+            ferret_map_destroy(map);
+            return NULL;
+        }
+    }
+
+    for (size_t i = 0; i < src->bucket_count; i++) {
+        ferret_map_entry_t* entry = src->buckets[i];
+        while (entry != NULL) {
+            if (!ferret_map_set(map, entry->key, entry->value)) {
+                ferret_map_destroy(map);
+                return NULL;
+            }
+            entry = entry->next;
+        }
+    }
+
+    return map;
+}
+
+static void ferret_map_clear_entries(ferret_map_t* map) {
+    if (map == NULL || map->buckets == NULL) {
+        return;
+    }
+    for (size_t i = 0; i < map->bucket_count; i++) {
+        ferret_map_entry_t* entry = map->buckets[i];
+        while (entry != NULL) {
+            ferret_map_entry_t* next = entry->next;
+            free(entry->key);
+            free(entry->value);
+            free(entry);
+            entry = next;
+        }
+        map->buckets[i] = NULL;
+    }
+    map->size = 0;
+}
+
+void ferret_map_assign(ferret_map_t** dst, const ferret_map_t* src) {
+    if (dst == NULL) {
+        return;
+    }
+    if (src == NULL) {
+        if (*dst != NULL) {
+            ferret_map_clear_entries(*dst);
+        }
+        return;
+    }
+    if (*dst == NULL) {
+        *dst = ferret_map_clone(src);
+        return;
+    }
+    if (*dst == src) {
+        return;
+    }
+
+    ferret_map_t* out = *dst;
+    ferret_map_clear_entries(out);
+
+    size_t needed_buckets = (size_t)(src->size / FERRET_MAP_LOAD_FACTOR) + 1;
+    if (needed_buckets < FERRET_MAP_INITIAL_BUCKETS) {
+        needed_buckets = FERRET_MAP_INITIAL_BUCKETS;
+    }
+    if (out->bucket_count < needed_buckets) {
+        size_t new_buckets = out->bucket_count > 0 ? out->bucket_count : FERRET_MAP_INITIAL_BUCKETS;
+        while (new_buckets < needed_buckets) {
+            new_buckets *= 2;
+        }
+        if (!ferret_map_resize(out, new_buckets)) {
+            return;
+        }
+    }
+
+    for (size_t i = 0; i < src->bucket_count; i++) {
+        ferret_map_entry_t* entry = src->buckets[i];
+        while (entry != NULL) {
+            if (!ferret_map_set(out, entry->key, entry->value)) {
+                return;
+            }
+            entry = entry->next;
+        }
+    }
+}
+
 
 // Macro to generate typed map constructors and from_pairs functions
 #define FERRET_MAP_TYPED_CONSTRUCTOR(suffix, hash_fn, equals_fn) \

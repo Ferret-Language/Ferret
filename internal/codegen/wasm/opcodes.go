@@ -345,7 +345,7 @@ func loadOpcode(typ types.SemType) ([]byte, error) {
 			return memOpcode(opcodeI32Load16S), nil
 		case types.TYPE_U16:
 			return memOpcode(opcodeI32Load16U), nil
-		case types.TYPE_I32, types.TYPE_U32, types.TYPE_STRING:
+		case types.TYPE_I32, types.TYPE_U32, types.TYPE_STRING, types.TYPE_CHAR:
 			return memOpcode(opcodeI32Load), nil
 		case types.TYPE_I64, types.TYPE_U64:
 			return memOpcode(opcodeI64Load), nil
@@ -365,7 +365,7 @@ func storeOpcode(typ types.SemType) ([]byte, error) {
 			return memOpcode(opcodeI32Store8), nil
 		case types.TYPE_I16, types.TYPE_U16:
 			return memOpcode(opcodeI32Store16), nil
-		case types.TYPE_I32, types.TYPE_U32, types.TYPE_STRING:
+		case types.TYPE_I32, types.TYPE_U32, types.TYPE_STRING, types.TYPE_CHAR:
 			return memOpcode(opcodeI32Store), nil
 		case types.TYPE_I64, types.TYPE_U64:
 			return memOpcode(opcodeI64Store), nil

@@ -1,0 +1,15 @@
+type Box struct { .P: &i32? };
+
+fn make_box() -> Box {
+    let x := 4;
+    let b: Box = { .P = &x };
+    b = { .P = none };
+    return b;
+}
+
+fn main() {
+    let b := make_box();
+    if b.P != none {
+        let y := *b.P;
+    }
+}

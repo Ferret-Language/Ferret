@@ -61,6 +61,8 @@ func inferLiteralType(lit *ast.BasicLit, expected types.SemType) types.SemType {
 		return types.TypeString
 	case ast.BYTE:
 		return types.TypeByte
+	case ast.CHAR:
+		return types.TypeChar
 	case ast.BOOL:
 		return types.TypeBool
 	default:
@@ -203,6 +205,14 @@ func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		// Postfix operators (++, --) return the type of the operand
 		return inferExprType(ctx, mod, e.X)
 
+	case *ast.TypeCheckPattern:
+		// Type check patterns always return bool (true if type matches)
+		return types.TypeBool
+
+	case *ast.RangeCheckPattern:
+		// Range check patterns always return bool (true if value in range)
+		return types.TypeBool
+
 	default:
 		return types.TypeUnknown
 	}
@@ -227,8 +237,9 @@ func inferBinaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module
 	switch expr.Op.Kind {
 	case tokens.DOUBLE_EQUAL_TOKEN, tokens.NOT_EQUAL_TOKEN,
 		tokens.LESS_TOKEN, tokens.LESS_EQUAL_TOKEN,
-		tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN:
-		// Comparison: result is always bool
+		tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN,
+		tokens.IN_TOKEN:
+		// Comparison and range check: result is always bool
 		return types.TypeBool
 
 	case tokens.AND_TOKEN, tokens.OR_TOKEN:
@@ -323,6 +334,9 @@ func inferUnaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		return types.NewMutableReference(xType)
 	case tokens.AT_TOKEN:
 		// Move operator keeps the operand type.
+		return xType
+	case tokens.HASH_TOKEN:
+		// Heap operator keeps the operand type.
 		return xType
 
 	default:

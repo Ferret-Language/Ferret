@@ -141,7 +141,35 @@ static void print_union(const void* union_ptr) {
             break;
         }
         case 17: printf("%c", *(uint8_t*)data); break;    // byte
-        case 18: printf("%s", *(bool*)data ? "true" : "false"); break; // bool
+        case 18: {  // char (32-bit Unicode scalar)
+            uint32_t codepoint = *(uint32_t*)data;
+            if (codepoint <= 0x7F) {
+                // ASCII
+                printf("%c", (char)codepoint);
+            } else if (codepoint <= 0x7FF) {
+                // 2-byte UTF-8
+                printf("%c%c",
+                    (char)(0xC0 | (codepoint >> 6)),
+                    (char)(0x80 | (codepoint & 0x3F)));
+            } else if (codepoint <= 0xFFFF) {
+                // 3-byte UTF-8
+                printf("%c%c%c",
+                    (char)(0xE0 | (codepoint >> 12)),
+                    (char)(0x80 | ((codepoint >> 6) & 0x3F)),
+                    (char)(0x80 | (codepoint & 0x3F)));
+            } else if (codepoint <= 0x10FFFF) {
+                // 4-byte UTF-8
+                printf("%c%c%c%c",
+                    (char)(0xF0 | (codepoint >> 18)),
+                    (char)(0x80 | ((codepoint >> 12) & 0x3F)),
+                    (char)(0x80 | ((codepoint >> 6) & 0x3F)),
+                    (char)(0x80 | (codepoint & 0x3F)));
+            } else {
+                printf("\\u{%X}", codepoint);
+            }
+            break;
+        }
+        case 19: printf("%s", *(bool*)data ? "true" : "false"); break; // bool
         default: printf("<invalid union tag %d>", tag); break;
     }
 }

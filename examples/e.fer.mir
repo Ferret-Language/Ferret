@@ -1,0 +1,35 @@
+module examples/e
+
+fn myfn(vals: []Printable) -> void {
+  block b1 entry:
+    ret
+}
+
+fn myfn2(vals: []i32) -> void {
+  block b2 entry:
+    ret
+}
+
+fn main() -> void {
+  block b3 entry:
+    %t3 = const i64 4
+    %t4 = const i32 1
+    %t5 = call ferret_array_new(%t3, %t4) : []i32
+    %t6 = const i32 1
+    %t7 = alloca i32
+    store %t7, %t6
+    call ferret_array_append(%t5, %t7) : bool
+    call myfn2(%t5) : void
+    %t8 = const i64 36
+    %t9 = const i32 1
+    %t10 = call ferret_array_new(%t8, %t9) : []Printable
+    %t11 = const i32 1
+    %t12 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, bool}
+    %t13 = ptr_add i32 %t12, 0
+    %t14 = const i32 2
+    store %t13, %t14
+    %t15 = ptr_add i32 %t12, 4
+    store %t15, %t11
+    call ferret_array_append(%t10, %t12) : bool
+    ret
+}

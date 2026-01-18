@@ -2486,6 +2486,9 @@ func (g *Generator) needsByRefType(typ types.SemType) bool {
 		return false
 	}
 	typ = types.UnwrapType(typ)
+	if _, ok := typ.(*types.ReferenceType); ok {
+		return false
+	}
 	if isLargePrimitiveType(typ) {
 		return true
 	}
@@ -2495,11 +2498,11 @@ func (g *Generator) needsByRefType(typ types.SemType) bool {
 	if arr, ok := typ.(*types.ArrayType); ok && arr.Length >= 0 {
 		return true
 	}
-	if iface, ok := typ.(*types.InterfaceType); ok && len(iface.Methods) > 0 {
+	if _, ok := typ.(*types.InterfaceType); ok {
 		return true
 	}
 	if named, ok := typ.(*types.NamedType); ok {
-		if iface, ok := named.Underlying.(*types.InterfaceType); ok && len(iface.Methods) > 0 {
+		if _, ok := named.Underlying.(*types.InterfaceType); ok {
 			return true
 		}
 	}
@@ -2568,7 +2571,7 @@ func isUnsignedType(typ types.SemType) bool {
 		switch prim.GetName() {
 		case types.TYPE_U8, types.TYPE_U16, types.TYPE_U32, types.TYPE_U64, types.TYPE_U128, types.TYPE_U256:
 			return true
-		case types.TYPE_BOOL, types.TYPE_BYTE:
+		case types.TYPE_BOOL, types.TYPE_BYTE, types.TYPE_CHAR:
 			return true
 		}
 	}
@@ -2576,8 +2579,24 @@ func isUnsignedType(typ types.SemType) bool {
 }
 
 func parseI32Const(typ types.SemType, value string, stringPtr func(string) int32) (int32, error) {
-	if prim, ok := types.UnwrapType(typ).(*types.PrimitiveType); ok && prim.GetName() == types.TYPE_STRING {
-		return stringPtr(value), nil
+	if prim, ok := types.UnwrapType(typ).(*types.PrimitiveType); ok {
+		switch prim.GetName() {
+		case types.TYPE_STRING:
+			return stringPtr(value), nil
+		case types.TYPE_CHAR:
+			// Char literals are stored as the character itself, convert to Unicode code point
+			runes := []rune(value)
+			if len(runes) != 1 {
+				return 0, fmt.Errorf("invalid char literal %q", value)
+			}
+			return int32(runes[0]), nil
+		case types.TYPE_BYTE:
+			// Byte literals are stored as the character itself, convert to byte value
+			if len(value) != 1 {
+				return 0, fmt.Errorf("invalid byte literal %q", value)
+			}
+			return int32(byte(value[0])), nil
+		}
 	}
 	switch strings.ToLower(value) {
 	case "true":

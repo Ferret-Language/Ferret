@@ -1,0 +1,45 @@
+import "std/io";
+
+type Value union {
+    i32,
+    str,
+    bool
+};
+
+fn test_match(v: Value) {
+    match v {
+        is i32 => io::Println("It's an integer"),
+        is str => io::Println("It's a string"),
+        is bool => io::Println("It's a boolean"),
+        _ => io::Println("Unknown type")
+    }
+}
+
+fn test_range_match(n: i32) {
+    match n {
+        10 => io::Println("Exactly 10"),
+        in 0..5 => io::Println("Between 0 and 4"),
+        in 5..=10 => io::Println("Between 5 and 10 (inclusive)"),
+        _ => io::Println("Out of range")
+    }
+}
+
+
+
+fn main() {
+    io::Println("=== Type Pattern Matching ===");
+    let v1 : Value = 42;
+    test_match(v1);
+    
+    let v2 : Value = "hello";
+    test_match(v2);
+    
+    let v3 : Value = true;
+    test_match(v3);
+    
+    io::Println("\n=== Range Pattern Matching ===");
+    test_range_match(10);
+    test_range_match(3);
+    test_range_match(7);
+    test_range_match(100);
+}

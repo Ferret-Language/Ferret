@@ -1,0 +1,25 @@
+import "std/io";
+
+// Test: Dynamic-sized types in unions
+type Value union {
+    i32,
+    str,
+    []i32,           // Dynamic array
+    map[str]i32      // Map
+};
+
+fn process_values(vals: ...Value) {
+    io::Println("Processing values");
+}
+
+fn main() {
+    // Test with dynamic arrays
+    let arr: []i32 = [1, 2, 3];
+    let arr_val: Value = arr;
+    process_values(arr_val);
+    
+    // Test with primitives and arrays in variadic
+    process_values(42, "hello", arr);
+    
+    io::Println("Dynamic-sized types in unions work!");
+}

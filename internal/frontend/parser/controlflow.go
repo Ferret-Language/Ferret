@@ -7,18 +7,31 @@ import (
 )
 
 // parseForStmt parses: for i in range { } or for i, v in range { }
+// Also supports: for i, &v in range { } and for i, &mut v in range { }
 // Iterator variables are always bound as new variables (like Rust), similar to function parameters
 func (p *Parser) parseForStmt() *ast.ForStmt {
 	start := p.expect(tokens.FOR_TOKEN).Start
 
-	// Parse first iterator variable name (index or value)
+	// Parse first iterator variable (index)
 	firstTok := p.expect(tokens.IDENTIFIER_TOKEN)
 
 	// Check for comma (indicates index, value pair)
 	var secondTok tokens.Token
+	secondIsRef := false
+	secondIsMutable := false
 	hasSecond := false
 	if p.match(tokens.COMMA_TOKEN) {
 		p.advance()
+		// Check for & or &mut before second variable
+		if p.match(tokens.BIT_AND_TOKEN) {
+			p.advance()
+			secondIsRef = true
+			// Check for mut keyword
+			if p.match(tokens.MUT_TOKEN) {
+				p.advance()
+				secondIsMutable = true
+			}
+		}
 		secondTok = p.expect(tokens.IDENTIFIER_TOKEN)
 		hasSecond = true
 	}
@@ -53,10 +66,12 @@ func (p *Parser) parseForStmt() *ast.ForStmt {
 	}
 
 	return &ast.ForStmt{
-		Iterator: iterator,
-		Range:    rangeExpr,
-		Body:     body,
-		Location: *source.NewLocation(&p.filepath, &start, body.Location.End),
+		Iterator:        iterator,
+		Range:           rangeExpr,
+		Body:            body,
+		SecondIsRef:     secondIsRef,
+		SecondIsMutable: secondIsMutable,
+		Location:        *source.NewLocation(&p.filepath, &start, body.Location.End),
 	}
 }
 
@@ -102,14 +117,32 @@ func (p *Parser) parseMatchStmt() *ast.MatchStmt {
 	for !p.match(tokens.CLOSE_CURLY) && !p.isAtEnd() {
 		caseStart := p.peek().Start
 
-		// Parse pattern (can be expression or underscore for default)
+		// Parse pattern (can be expression, type check, range check, or underscore for default)
 		var pattern ast.Expression
 		if p.match(tokens.IDENTIFIER_TOKEN) && p.peek().Value == "_" {
 			// Default case: _
 			p.advance()
 			pattern = nil // nil pattern indicates default case
+		} else if p.match(tokens.IS_TOKEN) {
+			// Type check pattern: is Type
+			p.advance() // consume 'is'
+			typeExpr := p.parseType()
+			// Create a special marker expression for type checks
+			pattern = &ast.TypeCheckPattern{
+				Type:     typeExpr,
+				Location: *source.NewLocation(&p.filepath, &caseStart, p.safeLoc(typeExpr).End),
+			}
+		} else if p.match(tokens.IN_TOKEN) {
+			// Range check pattern: in range
+			p.advance() // consume 'in'
+			rangeExpr := p.parseExpr()
+			// Create a special marker expression for range checks
+			pattern = &ast.RangeCheckPattern{
+				Range:    rangeExpr,
+				Location: *source.NewLocation(&p.filepath, &caseStart, p.safeLoc(rangeExpr).End),
+			}
 		} else {
-			// Regular pattern expression
+			// Regular pattern expression (value match)
 			pattern = p.parseExpr()
 		}
 

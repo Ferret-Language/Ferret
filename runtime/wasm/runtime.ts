@@ -21,6 +21,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   const inputLines =
     rawInput.length > 0 ? rawInput.replace(/\r\n/g, "\n").split("\n") : [];
   let inputIndex = 0;
+  const ferretStringAllocs = new Set<number>();
 
   function align(value: number, alignment: number): number {
     const mask = alignment - 1;
@@ -63,6 +64,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const mem = new Uint8Array(memory!.buffer);
     mem.set(bytes, addr);
     mem[addr + bytes.length] = 0;
+    ferretStringAllocs.add(addr >>> 0);
     return addr >>> 0;
   }
 
@@ -207,6 +209,61 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return newArrPtr >>> 0;
   }
 
+  function ferret_array_assign(dstSlot: number, srcPtr: number) {
+    if (!dstSlot) {
+      return 0;
+    }
+    const dv = view();
+    const src = srcPtr >>> 0;
+    if (!src) {
+      const dst = dv.getUint32(dstSlot, true);
+      if (dst) {
+        dv.setInt32(dst + 4, 0, true);
+      }
+      return 1;
+    }
+    let dst = dv.getUint32(dstSlot, true);
+    if (!dst) {
+      dst = ferret_array_clone(src);
+      dv.setUint32(dstSlot, dst >>> 0, true);
+      return 1;
+    }
+    if (dst === src) {
+      return 1;
+    }
+
+    const srcData = dv.getUint32(src + 0, true);
+    const srcLen = dv.getInt32(src + 4, true);
+    const srcCap = dv.getInt32(src + 8, true);
+    const elemSize = dv.getUint32(src + 12, true);
+
+    let dstData = dv.getUint32(dst + 0, true);
+    let dstCap = dv.getInt32(dst + 8, true);
+    if (srcLen > dstCap) {
+      const newSize = elemSize * srcLen;
+      const newData = newSize > 0 ? ferret_alloc(newSize) : 0;
+      if (srcData && srcLen > 0) {
+        const mem = new Uint8Array(memory!.buffer);
+        mem.copyWithin(newData, srcData, srcData + srcLen * elemSize);
+      }
+      dstData = newData;
+      dstCap = srcLen;
+      dv.setUint32(dst + 0, dstData, true);
+      dv.setInt32(dst + 8, dstCap, true);
+      dv.setUint32(dst + 12, elemSize, true);
+      dv.setInt32(dst + 4, srcLen, true);
+      return 1;
+    }
+
+    if (srcData && srcLen > 0) {
+      const mem = new Uint8Array(memory!.buffer);
+      mem.copyWithin(dstData, srcData, srcData + srcLen * elemSize);
+    }
+    dv.setInt32(dst + 4, srcLen, true);
+    dv.setUint32(dst + 12, elemSize, true);
+    return 1;
+  }
+
   function ferret_array_append(arrPtr: number, elemPtr: number) {
     const dv = view();
     let dataPtr = dv.getUint32(arrPtr + 0, true);
@@ -325,10 +382,17 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         return readCString(strPtr);
       }
       case 17: {
+        // byte
         const ch = dv.getUint8(data);
         return String.fromCharCode(ch);
       }
-      case 18:
+      case 18: {
+        // char (32-bit Unicode scalar)
+        const codepoint = dv.getUint32(data, true);
+        return String.fromCodePoint(codepoint);
+      }
+      case 19:
+        // bool
         return dv.getUint8(data) ? "true" : "false";
       default:
         return "<unknown>";
@@ -460,6 +524,35 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return len;
   }
 
+  function ferret_string_assign(dstSlot: number, srcPtr: number) {
+    if (!dstSlot) {
+      return;
+    }
+    const dv = view();
+    const src = srcPtr >>> 0;
+    const srcLen = src ? ferret_string_len(src) : 0;
+    let dst = dv.getUint32(dstSlot, true);
+    if (dst && ferretStringAllocs.has(dst >>> 0)) {
+      const dstLen = ferret_string_len(dst);
+      if (srcLen <= dstLen) {
+        if (srcLen > 0) {
+          ferret_memcpy(dst, src, srcLen);
+        }
+        const mem = new Uint8Array(memory!.buffer);
+        mem[dst + srcLen] = 0;
+        return;
+      }
+    }
+    const next = ferret_alloc(srcLen + 1);
+    if (srcLen > 0) {
+      ferret_memcpy(next, src, srcLen);
+    }
+    const mem = new Uint8Array(memory!.buffer);
+    mem[next + srcLen] = 0;
+    dv.setUint32(dstSlot, next >>> 0, true);
+    ferretStringAllocs.add(next >>> 0);
+  }
+
   function formatI64(value: number | bigint): string {
     if (typeof value === "bigint") {
       return BigInt.asIntN(64, value).toString();
@@ -529,6 +622,172 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_pow(base: number, exp: number) {
     return Math.pow(Number(base), Number(exp));
+  }
+
+  // UTF-8 decoding helper: decode one UTF-8 character from bytes
+  function utf8Decode(bytes: Uint8Array, index: number): { codepoint: number; bytesRead: number } {
+    const b1 = bytes[index];
+    if ((b1 & 0x80) === 0) {
+      // 1-byte sequence
+      return { codepoint: b1, bytesRead: 1 };
+    } else if ((b1 & 0xE0) === 0xC0) {
+      // 2-byte sequence
+      const b2 = bytes[index + 1];
+      const codepoint = ((b1 & 0x1F) << 6) | (b2 & 0x3F);
+      return { codepoint, bytesRead: 2 };
+    } else if ((b1 & 0xF0) === 0xE0) {
+      // 3-byte sequence
+      const b2 = bytes[index + 1];
+      const b3 = bytes[index + 2];
+      const codepoint = ((b1 & 0x0F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
+      return { codepoint, bytesRead: 3 };
+    } else if ((b1 & 0xF8) === 0xF0) {
+      // 4-byte sequence
+      const b2 = bytes[index + 1];
+      const b3 = bytes[index + 2];
+      const b4 = bytes[index + 3];
+      const codepoint = ((b1 & 0x07) << 18) | ((b2 & 0x3F) << 12) | ((b3 & 0x3F) << 6) | (b4 & 0x3F);
+      return { codepoint, bytesRead: 4 };
+    } else {
+      // Invalid, skip 1 byte
+      return { codepoint: 0xFFFD, bytesRead: 1 }; // Replacement character
+    }
+  }
+
+  // UTF-8 encoding helper: encode codepoint to UTF-8 bytes
+  function utf8Encode(codepoint: number): Uint8Array {
+    if (codepoint <= 0x7F) {
+      // 1-byte sequence
+      return new Uint8Array([codepoint]);
+    } else if (codepoint <= 0x7FF) {
+      // 2-byte sequence
+      return new Uint8Array([
+        0xC0 | (codepoint >> 6),
+        0x80 | (codepoint & 0x3F)
+      ]);
+    } else if (codepoint <= 0xFFFF) {
+      // 3-byte sequence
+      return new Uint8Array([
+        0xE0 | (codepoint >> 12),
+        0x80 | ((codepoint >> 6) & 0x3F),
+        0x80 | (codepoint & 0x3F)
+      ]);
+    } else if (codepoint <= 0x10FFFF) {
+      // 4-byte sequence
+      return new Uint8Array([
+        0xF0 | (codepoint >> 18),
+        0x80 | ((codepoint >> 12) & 0x3F),
+        0x80 | ((codepoint >> 6) & 0x3F),
+        0x80 | (codepoint & 0x3F)
+      ]);
+    } else {
+      // Invalid codepoint, use replacement character
+      return new Uint8Array([0xEF, 0xBF, 0xBD]); // U+FFFD
+    }
+  }
+
+  // Convert string to []char (array of Unicode codepoints)
+  function ferret_string_to_char_array(strPtr: number): number {
+    const str = strPtr ? readCString(strPtr) : "";
+    const bytes = encoder.encode(str);
+    
+    // First pass: count UTF-8 characters
+    let charCount = 0;
+    let i = 0;
+    while (i < bytes.length) {
+      const { bytesRead } = utf8Decode(bytes, i);
+      i += bytesRead;
+      charCount++;
+    }
+    
+    // Create array with exact capacity (char is 4 bytes = uint32)
+    const arrPtr = ferret_array_new(4, charCount);
+    
+    // Second pass: decode UTF-8 and populate array
+    i = 0;
+    while (i < bytes.length) {
+      const { codepoint, bytesRead } = utf8Decode(bytes, i);
+      i += bytesRead;
+      
+      // Allocate space for the codepoint and append to array
+      const elemPtr = ferret_alloc(4);
+      view().setUint32(elemPtr, codepoint, true);
+      ferret_array_append(arrPtr, elemPtr);
+    }
+    
+    return arrPtr;
+  }
+
+  // Convert string to []byte (raw UTF-8 bytes)
+  function ferret_string_to_byte_array(strPtr: number): number {
+    const str = strPtr ? readCString(strPtr) : "";
+    const bytes = encoder.encode(str);
+    
+    // Create array with exact capacity (byte is 1 byte = uint8)
+    const arrPtr = ferret_array_new(1, bytes.length);
+    
+    // Copy bytes directly
+    for (let i = 0; i < bytes.length; i++) {
+      const elemPtr = ferret_alloc(1);
+      view().setUint8(elemPtr, bytes[i]);
+      ferret_array_append(arrPtr, elemPtr);
+    }
+    
+    return arrPtr;
+  }
+
+  // Convert []char to string (UTF-8 encode from Unicode codepoints)
+  function ferret_char_array_to_string(arrPtr: number): number {
+    if (!arrPtr) {
+      return writeCString("");
+    }
+    
+    const length = ferret_array_len(arrPtr);
+    if (length === 0) {
+      return writeCString("");
+    }
+    
+    // Collect all UTF-8 encoded bytes
+    const allBytes: number[] = [];
+    for (let i = 0; i < length; i++) {
+      const elemPtr = ferret_array_get(arrPtr, i);
+      if (!elemPtr) continue;
+      
+      const codepoint = view().getUint32(elemPtr, true);
+      const encoded = utf8Encode(codepoint);
+      allBytes.push(...Array.from(encoded));
+    }
+    
+    // Create string from bytes
+    const str = decoder.decode(new Uint8Array(allBytes));
+    return writeCString(str);
+  }
+
+  // Convert []byte to string (interpret as UTF-8)
+  function ferret_byte_array_to_string(arrPtr: number): number {
+    if (!arrPtr) {
+      return writeCString("");
+    }
+    
+    const length = ferret_array_len(arrPtr);
+    if (length === 0) {
+      return writeCString("");
+    }
+    
+    // Collect bytes
+    const bytes = new Uint8Array(length);
+    for (let i = 0; i < length; i++) {
+      const elemPtr = ferret_array_get(arrPtr, i);
+      if (!elemPtr) {
+        bytes[i] = 0;
+      } else {
+        bytes[i] = view().getUint8(elemPtr);
+      }
+    }
+    
+    // Create string from bytes (interpret as UTF-8)
+    const str = decoder.decode(bytes);
+    return writeCString(str);
   }
 
   const BIGINT_BITS_128 = 128;
@@ -3111,6 +3370,91 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return mapFromPairs("bytes", keySize, valueSize, keysPtr, valuesPtr, count);
   }
 
+  function ferret_map_clone(mapPtr: number): number {
+    const meta = mapGetMeta(mapPtr);
+    if (!meta) {
+      return 0;
+    }
+    let outPtr = 0;
+    switch (meta.keyKind) {
+      case "i32":
+        outPtr = ferret_map_new_i32(meta.keySize, meta.valueSize);
+        break;
+      case "i64":
+        outPtr = ferret_map_new_i64(meta.keySize, meta.valueSize);
+        break;
+      case "f32":
+        outPtr = ferret_map_new_f32(meta.keySize, meta.valueSize);
+        break;
+      case "f64":
+        outPtr = ferret_map_new_f64(meta.keySize, meta.valueSize);
+        break;
+      case "str":
+        outPtr = ferret_map_new_str(meta.keySize, meta.valueSize);
+        break;
+      case "bytes":
+        outPtr = ferret_map_new_bytes(meta.keySize, meta.valueSize);
+        break;
+    }
+    const outMeta = mapGetMeta(outPtr);
+    if (!outMeta) {
+      return outPtr >>> 0;
+    }
+    for (const bucket of meta.buckets.values()) {
+      for (const entry of bucket) {
+        mapSetEntry(outMeta, entry.keyPtr, entry.valuePtr);
+      }
+    }
+    return outPtr >>> 0;
+  }
+
+  function ferret_map_assign(dstSlot: number, srcPtr: number): number {
+    if (!dstSlot) {
+      return 0;
+    }
+    const dv = view();
+    const src = srcPtr >>> 0;
+    if (!src) {
+      const dstPtr = dv.getUint32(dstSlot, true);
+      const dstMeta = mapGetMeta(dstPtr);
+      if (dstMeta) {
+        dstMeta.buckets = new Map();
+        dstMeta.size = 0;
+      }
+      return 1;
+    }
+    let dstPtr = dv.getUint32(dstSlot, true);
+    if (!dstPtr) {
+      dstPtr = ferret_map_clone(src);
+      dv.setUint32(dstSlot, dstPtr >>> 0, true);
+      return 1;
+    }
+    if (dstPtr === src) {
+      return 1;
+    }
+    const srcMeta = mapGetMeta(src);
+    if (!srcMeta) {
+      return 0;
+    }
+    let dstMeta = mapGetMeta(dstPtr);
+    if (!dstMeta) {
+      dstPtr = ferret_map_clone(src);
+      dv.setUint32(dstSlot, dstPtr >>> 0, true);
+      return 1;
+    }
+    dstMeta.buckets = new Map();
+    dstMeta.size = 0;
+    dstMeta.keySize = srcMeta.keySize;
+    dstMeta.valueSize = srcMeta.valueSize;
+    dstMeta.keyKind = srcMeta.keyKind;
+    for (const bucket of srcMeta.buckets.values()) {
+      for (const entry of bucket) {
+        mapSetEntry(dstMeta, entry.keyPtr, entry.valuePtr);
+      }
+    }
+    return 1;
+  }
+
   function ferret_map_get(mapPtr: number, keyPtr: number): number {
     const meta = mapGetMeta(mapPtr);
     if (!meta) {
@@ -3211,6 +3555,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     heapPtr = initialHeapPtr;
     ferretMapStore.clear();
     ferretMapIterStore.clear();
+    ferretStringAllocs.clear();
     inputLines.length = 0;
     inputIndex = 0;
   }
@@ -3225,11 +3570,13 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_optional_unwrap_or,
         ferret_array_new,
         ferret_array_clone,
+        ferret_array_assign,
         ferret_array_append,
         ferret_array_get,
         ferret_array_set,
         ferret_array_len,
         ferret_array_cap,
+        ferret_string_assign,
         ferret_std_io_Print,
         ferret_std_io_Println,
         ferret_std_io_Read,
@@ -3244,6 +3591,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_string_concat_f64,
         ferret_string_concat_byte,
         ferret_string_concat_bool,
+        ferret_string_to_char_array,
+        ferret_string_to_byte_array,
+        ferret_char_array_to_string,
+        ferret_byte_array_to_string,
         ferret_pow,
         ferret_i128_add_ptr,
         ferret_i128_sub_ptr,
@@ -3345,6 +3696,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_map_from_pairs_f64,
         ferret_map_from_pairs_str,
         ferret_map_from_pairs_bytes,
+        ferret_map_clone,
+        ferret_map_assign,
         ferret_map_get,
         ferret_map_get_optional_out,
         ferret_map_set,

@@ -39,6 +39,7 @@ const (
 	NUMBER_TOKEN    TOKEN = "numeric literal"
 	STRING_TOKEN    TOKEN = "string literal"
 	BYTE_TOKEN      TOKEN = "byte literal"
+	CHAR_TOKEN      TOKEN = "char literal"
 	COMMENT_TOKEN   TOKEN = "comment"
 	STRUCT_TOKEN    TOKEN = TOKEN(types.TYPE_STRUCT)
 	FUNCTION_TOKEN  TOKEN = TOKEN(types.TYPE_FUNC)
@@ -67,8 +68,9 @@ const (
 	MUT_TOKEN  TOKEN = "mut"
 	STAR_TOKEN TOKEN = "*" // dereference operator (also used for multiplication)
 	//unary operators
-	NOT_TOKEN TOKEN = "!"
-	AT_TOKEN  TOKEN = "@"
+	NOT_TOKEN  TOKEN = "!"
+	AT_TOKEN   TOKEN = "@"
+	HASH_TOKEN TOKEN = "#"
 	//arithmetic operators
 	EXP_TOKEN   TOKEN = "**"
 	MINUS_TOKEN TOKEN = "-"
@@ -166,6 +168,8 @@ var builtinTypes map[string]bool = map[string]bool{
 	string(types.TYPE_STRING): true,
 
 	string(types.TYPE_BYTE): true,
+
+	string(types.TYPE_CHAR): true,
 
 	string(types.TYPE_VOID): true,
 }

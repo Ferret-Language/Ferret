@@ -8,4 +8,10 @@ fn len(value: union{ &interface{}, interface{} }) -> i32;
 // Note: append borrows mutably (&mut) and requires an addressable target.
 fn append(values: &mut []interface {}, value: interface {}) -> bool;
 // @extern
+fn addr(value: &interface {}) -> u64;
+// @extern
+fn self_addr(value: &interface {}) -> u64;
+// @extern
+fn heap_addr(value: &interface {}) -> u64;
+// @extern
 fn panic(msg: str) -> void;

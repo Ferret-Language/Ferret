@@ -41,6 +41,9 @@ func AnalyzeModule(ctx *context_v2.CompilerContext, mod *context_v2.Module, hirM
 
 	// Enforce borrow rules for references.
 	checkBorrowRules(ctx, mod, hirMod)
+
+	// Mark heap-escaping returns for codegen.
+	markHeapReturnFunctions(ctx, mod, hirMod)
 }
 
 // checkConstantConditions checks for constant conditions in if statements and while loops.
