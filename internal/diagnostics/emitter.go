@@ -470,7 +470,14 @@ func (e *Emitter) printSingleLineLabel(ctx labelContext) {
 
 	sourceLine, err := e.cache.GetLine(ctx.filepath, ctx.line)
 	if err != nil {
-		// If we can't get the source line, show the label message anyway
+		// If we can't get the source line, still show code hint if present
+		if ctx.codeHint != nil && ctx.codeHint.Code != "" {
+			e.printCodeHint(ctx)
+			e.printPipeOnly()
+			return
+		}
+		
+		// Otherwise show the label message
 		if ctx.label.Message != "" {
 			e.printBlankGutter()
 			var color colors.COLOR
