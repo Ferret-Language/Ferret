@@ -43,11 +43,11 @@ fn Printf(fmt: str, args: ...Printable) {
     let chars := fmt as []char;
     while count < len(&chars) {
         if count+1 < len(&chars) && chars[count] == '{' && chars[count+1] == '}' {
-            io::Print(args[aCount]);
+            Print(args[aCount]);
             count += 2;
             aCount++;
         }
-        io::Print(chars[count]);
+        Print(chars[count]);
         count++;
     }
 }
