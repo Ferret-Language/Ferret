@@ -903,6 +903,32 @@ func inferRangeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		}
 	}
 
+	// Validate that ranges only use integer types
+	if !types.IsInteger(startType) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("invalid start value in range").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Start.Loc(), "range must start with integer value").
+				WithHelp("ranges only support integer types (i8, i16, i32, i64..., u8, u16, u32, u64...)"),
+		)
+	}
+	if !types.IsInteger(endType) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("invalid end value in range").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.End.Loc(), "range must end with integer value").
+				WithHelp("ranges only support integer types (i8, i16, i32, i64..., u8, u16, u32, u64...)"),
+		)
+	}
+	if expr.Incr != nil && !types.IsInteger(stepType) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("invalid step value in range").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Incr.Loc(), "range step must be an integer value").
+				WithHelp("ranges only support integer types (i8, i16, i32, i64..., u8, u16, u32, u64...)"),
+		)
+	}
+
 	// Return array type with element type from range
 	// Use the wider type to accommodate both start and end values
 	elementType := widerType(startType, endType)

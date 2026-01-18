@@ -438,17 +438,7 @@ func checkRangeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, exp
 		return
 	}
 
-	if consteval.NumericIsFloat(stepVal) {
-		if !consteval.NumericIsFloat(startVal) || !consteval.NumericIsFloat(endVal) {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError("invalid range: float step requires float start and end").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(expr.Loc(), "float step with integer range").
-					WithHelp("use float endpoints like 0.0..8.0:1.5 or an integer step like 0..8:1"),
-			)
-			return
-		}
-	}
+	// Note: Float ranges are now rejected at type-checking phase, so we only handle integers here.
 
 	stepSign, ok := consteval.NumericSign(stepVal)
 	if !ok {

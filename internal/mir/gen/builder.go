@@ -2796,6 +2796,7 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 	}
 
 	// If there's a step, we need to check alignment: (val - start) % step == 0
+	// Note: Float ranges are rejected at type-checking phase, so we only handle integers here.
 	if rangeExpr.Incr != nil {
 		stepVal := b.lowerExpr(rangeExpr.Incr)
 		if stepVal == mir.InvalidValue {

@@ -257,12 +257,10 @@ func evaluateHIRInOperator(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 	}
 
 	// Check if value is within range.
-	// Only support integer and float ranges for now.
+	// Note: Only integer ranges are supported (floats are rejected at type-checking phase).
 	switch value.Kind {
 	case ConstInt:
 		return evaluateIntInRange(value, startVal, endVal, stepVal, rangeExpr.Inclusive)
-	case ConstFloat:
-		return evaluateFloatInRange(value, startVal, endVal, stepVal, rangeExpr.Inclusive)
 	default:
 		return nil
 	}
@@ -336,78 +334,6 @@ func evaluateIntInRange(value, start, end, step *ConstValue, inclusive bool) *Co
 	mod := new(big.Int).Mod(diff, new(big.Int).Abs(stepInt))
 	if mod.Sign() != 0 {
 		return NewBoolValue(false) // Not aligned with step
-	}
-
-	return NewBoolValue(true)
-}
-
-// evaluateFloatInRange checks if a float value is within a float range.
-func evaluateFloatInRange(value, start, end, step *ConstValue, inclusive bool) *ConstValue {
-	v, ok := value.AsFloat()
-	if !ok {
-		return nil
-	}
-	s, ok := start.AsFloat()
-	if !ok {
-		return nil
-	}
-	e, ok := end.AsFloat()
-	if !ok {
-		return nil
-	}
-
-	// Validate step if present.
-	if step != nil {
-		stepFloat, ok := step.AsFloat()
-		if !ok {
-			return nil
-		}
-		// Check if step is zero (invalid range).
-		if stepFloat.Sign() == 0 {
-			return nil
-		}
-		// Check if step direction makes sense for the range.
-		rangeCmp := s.Cmp(e)
-		if rangeCmp < 0 && stepFloat.Sign() < 0 {
-			// Ascending range with negative step - will never reach end.
-			return nil
-		}
-		if rangeCmp > 0 && stepFloat.Sign() > 0 {
-			// Descending range with positive step - will never reach end.
-			return nil
-		}
-	}
-
-	// For floats, we do a simple bounds check without step alignment.
-	// Checking step alignment for floats is complex due to floating-point precision.
-	if s.Cmp(e) <= 0 {
-		// Ascending range.
-		if v.Cmp(s) < 0 {
-			return NewBoolValue(false)
-		}
-		if inclusive {
-			if v.Cmp(e) > 0 {
-				return NewBoolValue(false)
-			}
-		} else {
-			if v.Cmp(e) >= 0 {
-				return NewBoolValue(false)
-			}
-		}
-	} else {
-		// Descending range.
-		if v.Cmp(s) > 0 {
-			return NewBoolValue(false)
-		}
-		if inclusive {
-			if v.Cmp(e) < 0 {
-				return NewBoolValue(false)
-			}
-		} else {
-			if v.Cmp(e) <= 0 {
-				return NewBoolValue(false)
-			}
-		}
 	}
 
 	return NewBoolValue(true)
