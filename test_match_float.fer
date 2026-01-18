@@ -1,11 +1,15 @@
 import "std/io";
 
 fn main() {
-    let x := 5.5;
+    let x := 5;
+
+    if x in 3..10 {
+        io::Println("in range");
+    }
     
     // This should error: float in match range pattern
     match x {
-        in 3.0..10.0 => io::Println("in range"),
+        5 => io::Println("in range"),
         _ => io::Println("out of range"),
     }
 }

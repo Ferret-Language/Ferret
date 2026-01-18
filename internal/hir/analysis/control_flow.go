@@ -6,6 +6,8 @@ import (
 	"compiler/internal/hir"
 	"compiler/internal/hir/consteval"
 	"compiler/internal/source"
+	"compiler/internal/tokens"
+	"compiler/internal/types"
 	"fmt"
 )
 
@@ -113,7 +115,7 @@ func checkBlockForConstantConditions(ctx *context_v2.CompilerContext, mod *conte
 				checkBlockForConstantConditions(ctx, mod, n.Body)
 			}
 		case *hir.MatchStmt:
-			checkMatchStmtCases(ctx, n)
+			checkMatchStmtCases(ctx, mod, n)
 			for _, clause := range n.Cases {
 				checkBlockForConstantConditions(ctx, mod, clause.Body)
 			}
@@ -123,13 +125,20 @@ func checkBlockForConstantConditions(ctx *context_v2.CompilerContext, mod *conte
 	}
 }
 
-func checkMatchStmtCases(ctx *context_v2.CompilerContext, stmt *hir.MatchStmt) {
+func checkMatchStmtCases(ctx *context_v2.CompilerContext, mod *context_v2.Module, stmt *hir.MatchStmt) {
 	if ctx == nil || stmt == nil {
 		return
 	}
 
+	// Try to evaluate the match expression as a constant
+	matchValue := consteval.EvaluateHIRExpr(ctx, mod, stmt.Expr)
+
 	hasDefault := false
+	firstMatchFound := false
+	firstMatchIndex := -1
+
 	for i, clause := range stmt.Cases {
+		// Check for duplicate default cases
 		if clause.Pattern == nil {
 			if hasDefault {
 				ctx.Diagnostics.Add(
@@ -139,8 +148,20 @@ func checkMatchStmtCases(ctx *context_v2.CompilerContext, stmt *hir.MatchStmt) {
 				)
 			}
 			hasDefault = true
+
+			// If we already found a matching case, this default is unreachable
+			if firstMatchFound {
+				ctx.Diagnostics.Add(
+					diagnostics.NewWarning("unreachable default case").
+						WithCode(diagnostics.WarnDeadCode).
+						WithPrimaryLabel(&clause.Location, "this case will never be reached").
+						WithSecondaryLabel(&stmt.Cases[firstMatchIndex].Location, "this case always matches").
+						WithNote("previous case handles all values"),
+				)
+			}
 		}
 
+		// Warn if default case is not last
 		if hasDefault && i < len(stmt.Cases)-1 {
 			next := stmt.Cases[i+1]
 			ctx.Diagnostics.Add(
@@ -149,6 +170,109 @@ func checkMatchStmtCases(ctx *context_v2.CompilerContext, stmt *hir.MatchStmt) {
 					WithNote("default case matches all remaining values"),
 			)
 		}
+
+		// If we have a constant match value, check if patterns match
+		if matchValue != nil && clause.Pattern != nil {
+			matches := evaluatePatternMatch(ctx, mod, clause.Pattern, matchValue)
+
+			switch matches {
+			case MatchAlways:
+				if !firstMatchFound {
+					firstMatchFound = true
+					firstMatchIndex = i
+				} else {
+					// This pattern is unreachable because a previous pattern always matches
+					ctx.Diagnostics.Add(
+						diagnostics.NewWarning("unreachable case: previous case always matches").
+							WithCode(diagnostics.WarnDeadCode).
+							WithPrimaryLabel(&clause.Location, "this case will never be reached").
+							WithSecondaryLabel(&stmt.Cases[firstMatchIndex].Location, "this case always matches"),
+					)
+				}
+			case MatchNever:
+				// This pattern never matches
+				ctx.Diagnostics.Add(
+					diagnostics.NewWarning("case pattern never matches").
+						WithCode(diagnostics.WarnDeadCode).
+						WithPrimaryLabel(&clause.Location, "this case will never be reached").
+						WithHelp("the pattern does not match the constant value"),
+				)
+			}
+		}
+	}
+}
+
+// PatternMatchResult represents whether a pattern matches a value
+type PatternMatchResult int
+
+const (
+	MatchUnknown PatternMatchResult = iota // Cannot determine at compile time
+	MatchAlways                            // Pattern always matches
+	MatchNever                             // Pattern never matches
+)
+
+// evaluatePatternMatch checks if a pattern matches a constant value
+func evaluatePatternMatch(ctx *context_v2.CompilerContext, mod *context_v2.Module, pattern hir.Expr, value *consteval.ConstValue) PatternMatchResult {
+	if pattern == nil || value == nil {
+		return MatchUnknown
+	}
+
+	switch p := pattern.(type) {
+	case *hir.Literal:
+		// Literal pattern: exact value comparison
+		patternValue := consteval.EvaluateHIRExpr(ctx, mod, p)
+		if patternValue == nil {
+			return MatchUnknown
+		}
+		if value.Equals(patternValue) {
+			return MatchAlways
+		}
+		return MatchNever
+
+	case *hir.RangeCheckPattern:
+		// Range pattern: in x..y
+		if rangeExpr, ok := p.Range.(*hir.RangeExpr); ok {
+			inRange := consteval.EvaluateHIRExpr(ctx, mod, &hir.BinaryExpr{
+				Op:       tokens.Token{Kind: tokens.IN_TOKEN},
+				X:        &hir.Literal{Kind: hir.LiteralInt, Value: value.String(), Type: value.Type},
+				Y:        rangeExpr,
+				Type:     types.TypeBool,
+				Location: p.Location,
+			})
+			if inRange != nil {
+				if boolVal, ok := inRange.AsBool(); ok {
+					if boolVal {
+						return MatchAlways
+					}
+					return MatchNever
+				}
+			}
+		}
+		return MatchUnknown
+
+	case *hir.Ident:
+		// Variable binding pattern: always matches
+		return MatchAlways
+
+	case *hir.BinaryExpr:
+		// Binary expression patterns (comparisons, range checks)
+		if p.Op.Kind == tokens.IN_TOKEN {
+			// Range check: value in range
+			result := consteval.EvaluateHIRExpr(ctx, mod, p)
+			if result != nil {
+				if boolVal, ok := result.AsBool(); ok {
+					if boolVal {
+						return MatchAlways
+					}
+					return MatchNever
+				}
+			}
+		}
+		return MatchUnknown
+
+	default:
+		// Unknown pattern type
+		return MatchUnknown
 	}
 }
 
