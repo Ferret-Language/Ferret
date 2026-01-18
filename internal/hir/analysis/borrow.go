@@ -1610,38 +1610,50 @@ func (b *borrowChecker) isLocalBorrowBase(sym *symbols.Symbol) bool {
 }
 
 func typeContainsReference(t types.SemType) bool {
+	seen := make(map[types.SemType]bool)
+	return typeContainsReferenceHelper(t, seen)
+}
+
+func typeContainsReferenceHelper(t types.SemType, seen map[types.SemType]bool) bool {
 	if t == nil {
 		return false
 	}
 	t = types.UnwrapType(t)
+
+	// Check if we've already visited this type (cycle detection)
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+
 	switch tt := t.(type) {
 	case *types.ReferenceType:
 		return true
 	case *types.OptionalType:
-		return typeContainsReference(tt.Inner)
+		return typeContainsReferenceHelper(tt.Inner, seen)
 	case *types.ResultType:
-		return typeContainsReference(tt.Ok) || typeContainsReference(tt.Err)
+		return typeContainsReferenceHelper(tt.Ok, seen) || typeContainsReferenceHelper(tt.Err, seen)
 	case *types.ArrayType:
-		return typeContainsReference(tt.Element)
+		return typeContainsReferenceHelper(tt.Element, seen)
 	case *types.MapType:
-		return typeContainsReference(tt.Key) || typeContainsReference(tt.Value)
+		return typeContainsReferenceHelper(tt.Key, seen) || typeContainsReferenceHelper(tt.Value, seen)
 	case *types.StructType:
 		for _, field := range tt.Fields {
-			if typeContainsReference(field.Type) {
+			if typeContainsReferenceHelper(field.Type, seen) {
 				return true
 			}
 		}
 		return false
 	case *types.UnionType:
 		for _, variant := range tt.Variants {
-			if typeContainsReference(variant) {
+			if typeContainsReferenceHelper(variant, seen) {
 				return true
 			}
 		}
 		return false
 	case *types.EnumType:
 		for _, variant := range tt.Variants {
-			if variant.Type != nil && typeContainsReference(variant.Type) {
+			if variant.Type != nil && typeContainsReferenceHelper(variant.Type, seen) {
 				return true
 			}
 		}

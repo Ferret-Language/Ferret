@@ -29,11 +29,12 @@ type Printable union {
     f256,
     str,
     byte,
+    char,
     bool
 };
 
 fn myfn(vals: ...Printable) {
-
+    io::Println("First item:", vals[0]);
 }
 
 fn main() {

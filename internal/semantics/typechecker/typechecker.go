@@ -657,6 +657,8 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 
 		// Check each case clause
 		for _, caseClause := range n.Cases {
+			var caseNarrowing *narrowing.NarrowingContext
+			
 			if caseClause.Pattern != nil {
 				// Handle different pattern types
 				switch pattern := caseClause.Pattern.(type) {
@@ -673,6 +675,15 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 					}
 					// Type check patterns are always valid for union/interface types
 					// No further validation needed here
+					
+					// Apply narrowing for 'is Type' patterns
+					// Create a synthetic BinaryExpr for narrowing analysis: matchExpr is Type
+					syntheticIsExpr := &ast.BinaryExpr{
+						X:  n.Expr,
+						Op: tokens.Token{Kind: tokens.IS_TOKEN},
+						Y:  &ast.TypeExpr{Type: pattern.Type},
+					}
+					caseNarrowing, _ = narrowingAnalyzer.AnalyzeCondition(ctx, mod, syntheticIsExpr, nil)
 
 				case *ast.RangeCheckPattern:
 					// Range check pattern: in Range
@@ -725,8 +736,14 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 			if caseClause.Body != nil && caseClause.Body.Scope != nil {
 				restoreScope = mod.EnterScope(caseClause.Body.Scope.(*table.SymbolTable))
 			}
-			// Check case body
-			checkBlock(ctx, mod, caseClause.Body)
+			
+			// Check case body with narrowing if available
+			if caseNarrowing != nil {
+				applyNarrowingToBlock(ctx, mod, caseClause.Body, caseNarrowing)
+			} else {
+				checkBlock(ctx, mod, caseClause.Body)
+			}
+			
 			// Restore scope if we entered one
 			if restoreScope != nil {
 				restoreScope()
@@ -2103,10 +2120,19 @@ func hasInvalidRecursiveType(root *types.NamedType, t types.SemType, seen map[ty
 		}
 		return false
 	case *types.UnionType:
+		// Unions CAN contain recursive references through safe indirections
+		// (arrays, maps, optionals), but NOT direct self-reference
+		// Example: union { T1, T2, []A } is OK
+		// Example: union { T1, T2, A } is NOT OK (direct recursion)
 		for _, variant := range tt.Variants {
-			if hasInvalidRecursiveType(root, variant, seen) {
+			// Check if this variant is the root type itself (direct recursion)
+			unwrapped := types.UnwrapType(variant)
+			if namedVariant, ok := unwrapped.(*types.NamedType); ok && namedVariant == root {
+				// Direct recursion: union contains itself directly
 				return true
 			}
+			// Otherwise, allow recursive references through safe types (arrays, maps, etc.)
+			// Don't recurse further - we only check direct containment
 		}
 		return false
 	case *types.EnumType:

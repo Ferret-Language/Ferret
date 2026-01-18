@@ -1,0 +1,62 @@
+import "std/io";
+
+// Test 1: Valid recursive union with array indirection
+type JsonValue union {
+    i32,
+    str,
+    bool,
+    []JsonValue  // OK: recursive through array
+};
+
+// Test 2: Valid recursive union with map indirection
+type TreeNode union {
+    i32,
+    map[str]TreeNode  // OK: recursive through map
+};
+
+// Test 3: Valid recursive union with struct indirection
+type Node union {
+    i32,
+    struct { .value: i32, .next: Node }  // OK: recursive through struct field
+};
+
+// Test 4: Invalid - direct recursion (this should fail)
+// Uncomment to test error:
+// type BadUnion union {
+//     i32,
+//     BadUnion  // ERROR: direct recursion not allowed
+// };
+
+fn main() {
+    io::Println("Recursive union types compile successfully!");
+    
+    // Test JsonValue usage
+    let num: JsonValue = 42;
+    io::Println("Created JsonValue with i32");
+    
+    // Test with array
+    let arr: []JsonValue = [1,2,3];
+    let arr_value: JsonValue = arr;
+    io::Println("Created recursive JsonValue with array");
+    
+    // Test narrowing with 'is' operator
+    if arr_value is []JsonValue {
+        io::Println("arr_value is indeed an array of JsonValue");
+        // After narrowing, arr_value should be []JsonValue here
+        let narrow: []JsonValue = arr_value;
+        io::Println("Narrowing successful!");
+    }
+    
+    // Test match narrowing
+    match arr_value {
+        is []JsonValue => {
+            io::Println("Match: It's an array of JsonValue");
+            // After narrowing in match, arr_value should be []JsonValue
+            let narrow2: []JsonValue = arr_value;
+        },
+        is i32 => io::Println("Match: It's an i32"),
+        is str => io::Println("Match: It's a str"),
+        is bool => io::Println("Match: It's a bool"),
+        _ => io::Println("Match: It's something else"),
+    }
+}
