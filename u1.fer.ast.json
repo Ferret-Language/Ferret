@@ -1,0 +1,345 @@
+{
+  "FullPath": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer",
+  "ImportPath": "",
+  "Alias": "",
+  "Nodes": [
+    {
+      "Path": {
+        "Kind": 2,
+        "Value": "std/io",
+        "Start": {
+          "Line": 1,
+          "Column": 8,
+          "Index": 7
+        },
+        "End": {
+          "Line": 1,
+          "Column": 16,
+          "Index": 15
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+      },
+      "Alias": {
+        "Name": "",
+        "Start": null,
+        "End": null,
+        "Filename": null
+      },
+      "LocationOnDisk": "",
+      "Start": {
+        "Line": 1,
+        "Column": 1,
+        "Index": 0
+      },
+      "End": {
+        "Line": 1,
+        "Column": 17,
+        "Index": 16
+      },
+      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+    },
+    {
+      "Name": {
+        "Name": "main",
+        "Start": {
+          "Line": 3,
+          "Column": 4,
+          "Index": 21
+        },
+        "End": {
+          "Line": 3,
+          "Column": 8,
+          "Index": 25
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+      },
+      "Type": {
+        "Params": null,
+        "Result": null,
+        "Start": {
+          "Line": 3,
+          "Column": 1,
+          "Index": 18
+        },
+        "End": {
+          "Line": 3,
+          "Column": 10,
+          "Index": 27
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+      },
+      "Body": {
+        "Nodes": [
+          {
+            "Decls": [
+              {
+                "Name": {
+                  "Name": "a",
+                  "Start": {
+                    "Line": 4,
+                    "Column": 9,
+                    "Index": 38
+                  },
+                  "End": {
+                    "Line": 4,
+                    "Column": 10,
+                    "Index": 39
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+                },
+                "Type": null,
+                "Value": {
+                  "Kind": 0,
+                  "Value": "10",
+                  "Start": {
+                    "Line": 4,
+                    "Column": 14,
+                    "Index": 43
+                  },
+                  "End": {
+                    "Line": 4,
+                    "Column": 16,
+                    "Index": 45
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+                }
+              }
+            ],
+            "Doc": null,
+            "Start": {
+              "Line": 4,
+              "Column": 5,
+              "Index": 34
+            },
+            "End": {
+              "Line": 4,
+              "Column": 17,
+              "Index": 46
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+          },
+          {
+            "Cond": {
+              "X": {
+                "Name": "a",
+                "Start": {
+                  "Line": 6,
+                  "Column": 8,
+                  "Index": 55
+                },
+                "End": {
+                  "Line": 6,
+                  "Column": 9,
+                  "Index": 56
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+              },
+              "Op": {
+                "Kind": "in",
+                "Value": "in",
+                "Start": {
+                  "Line": 6,
+                  "Column": 10,
+                  "Index": 57
+                },
+                "End": {
+                  "Line": 6,
+                  "Column": 12,
+                  "Index": 59
+                }
+              },
+              "Y": {
+                "Start": {
+                  "Kind": 0,
+                  "Value": "3",
+                  "Start": {
+                    "Line": 6,
+                    "Column": 13,
+                    "Index": 60
+                  },
+                  "End": {
+                    "Line": 6,
+                    "Column": 14,
+                    "Index": 61
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+                },
+                "End": {
+                  "Kind": 0,
+                  "Value": "15",
+                  "Start": {
+                    "Line": 6,
+                    "Column": 16,
+                    "Index": 63
+                  },
+                  "End": {
+                    "Line": 6,
+                    "Column": 18,
+                    "Index": 65
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+                },
+                "Incr": null,
+                "Inclusive": false,
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+              },
+              "Start": {
+                "Line": 6,
+                "Column": 8,
+                "Index": 55
+              },
+              "End": {
+                "Line": 6,
+                "Column": 18,
+                "Index": 65
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+            },
+            "Body": {
+              "Nodes": [
+                {
+                  "X": {
+                    "Fun": {
+                      "X": {
+                        "Name": "io",
+                        "Start": {
+                          "Line": 7,
+                          "Column": 9,
+                          "Index": 76
+                        },
+                        "End": {
+                          "Line": 7,
+                          "Column": 11,
+                          "Index": 78
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+                      },
+                      "Selector": {
+                        "Name": "Println",
+                        "Start": {
+                          "Line": 7,
+                          "Column": 13,
+                          "Index": 80
+                        },
+                        "End": {
+                          "Line": 7,
+                          "Column": 20,
+                          "Index": 87
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+                      },
+                      "Start": {
+                        "Line": 7,
+                        "Column": 9,
+                        "Index": 76
+                      },
+                      "End": {
+                        "Line": 7,
+                        "Column": 20,
+                        "Index": 87
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+                    },
+                    "Args": [
+                      {
+                        "Kind": 2,
+                        "Value": "a is within 0 to 15",
+                        "Start": {
+                          "Line": 7,
+                          "Column": 21,
+                          "Index": 88
+                        },
+                        "End": {
+                          "Line": 7,
+                          "Column": 42,
+                          "Index": 109
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+                      }
+                    ],
+                    "Catch": null,
+                    "Start": {
+                      "Line": 7,
+                      "Column": 9,
+                      "Index": 76
+                    },
+                    "End": {
+                      "Line": 7,
+                      "Column": 43,
+                      "Index": 110
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+                  },
+                  "Start": {
+                    "Line": 7,
+                    "Column": 9,
+                    "Index": 76
+                  },
+                  "End": {
+                    "Line": 7,
+                    "Column": 44,
+                    "Index": 111
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+                }
+              ],
+              "Scope": null,
+              "Start": {
+                "Line": 6,
+                "Column": 19,
+                "Index": 66
+              },
+              "End": {
+                "Line": 8,
+                "Column": 6,
+                "Index": 117
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+            },
+            "Else": null,
+            "Scope": null,
+            "Start": {
+              "Line": 6,
+              "Column": 5,
+              "Index": 52
+            },
+            "End": {
+              "Line": 8,
+              "Column": 6,
+              "Index": 117
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+          }
+        ],
+        "Scope": null,
+        "Start": {
+          "Line": 3,
+          "Column": 11,
+          "Index": 28
+        },
+        "End": {
+          "Line": 9,
+          "Column": 2,
+          "Index": 119
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+      },
+      "Scope": null,
+      "Doc": null,
+      "Start": {
+        "Line": 3,
+        "Column": 1,
+        "Index": 18
+      },
+      "End": {
+        "Line": 9,
+        "Column": 2,
+        "Index": 119
+      },
+      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/u1.fer"
+    }
+  ],
+  "Start": null,
+  "End": null,
+  "Filename": null
+}

@@ -162,7 +162,7 @@ func checkIfStmtConstantCondition(ctx *context_v2.CompilerContext, mod *context_
 	if constVal := consteval.EvaluateHIRExpr(ctx, mod, stmt.Cond); constVal != nil {
 		if boolVal, ok := constVal.AsBool(); ok {
 			if boolVal {
-				// Condition is always true - else branch is dead code.
+				// Condition is always true.
 				if stmt.Else != nil {
 					ctx.Diagnostics.Add(
 						diagnostics.NewWarning("condition is always true").
@@ -170,6 +170,13 @@ func checkIfStmtConstantCondition(ctx *context_v2.CompilerContext, mod *context_
 							WithPrimaryLabel(stmt.Cond.Loc(), "this condition is always true").
 							WithSecondaryLabel(stmt.Else.Loc(), "this branch will never execute").
 							WithHelp("remove the if statement or the unreachable else branch"),
+					)
+				} else {
+					ctx.Diagnostics.Add(
+						diagnostics.NewWarning("condition is always true").
+							WithCode(diagnostics.WarnConstantConditionTrue).
+							WithPrimaryLabel(stmt.Cond.Loc(), "this condition is always true").
+							WithHelp("remove the unnecessary if statement"),
 					)
 				}
 			} else {
