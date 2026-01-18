@@ -1,20 +1,19 @@
 import "std/io";
 
-fn Printf(fmt: str, args: ...io::Printable) {
-    //io::Println(fmt, len(&args));
-    let index := 0, args_index := 0;
-    const chars := fmt as []char;
-    while index < len(&chars) {
-        if index+1 < len(&chars) && chars[index] == '{' && chars[index+1] == '}' {
-            io::Print(args[args_index]);
-            index += 2;
-            args_index++;
-        } 
-        io::Print(chars[index]);
-        index++;
+fn Printf(fmt: str, args: ...Printable) {
+    let count := 0, aCount := 0;
+    let chars := fmt as []char;
+    while count < len(&chars) {
+        if count+1 < len(&chars) && chars[count] == '{' && chars[count+1] == '}' {
+            io::Print(args[aCount]);
+            count += 2;
+            aCount++;
+        }
+        io::Print(chars[count]);
+        count++;
     }
 }
 
 fn main() {
-    Printf("Hello {} {} {}!\n", "world", 2, 3);
+    Printf("Hello {} {}\n", "World");
 }

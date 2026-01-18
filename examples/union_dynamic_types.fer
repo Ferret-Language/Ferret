@@ -17,7 +17,6 @@ fn main() {
     let arr: []i32 = [1, 2, 3];
     let arr_val: Value = arr;
     process_values(arr_val);
-    
     // Test with primitives and arrays in variadic
     process_values(42, "hello", arr);
     
