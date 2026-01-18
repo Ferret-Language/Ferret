@@ -118,6 +118,43 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 	case *ast.IdentifierExpr:
 		return g.lowerIdentExpr(e)
 	case *ast.BinaryExpr:
+		// Special lowering for 'in' operator: x in a..b => x >= a && x < b
+		if e.Op.Kind == tokens.IN_TOKEN {
+			if rangeExpr, ok := e.Y.(*ast.RangeExpr); ok {
+				// Lower x in a..b to: x >= a && x < b (or x <= b for inclusive)
+				lowerBound := &hir.BinaryExpr{
+					X:        g.lowerExpr(e.X),
+					Op:       tokens.Token{Kind: tokens.GREATER_EQUAL_TOKEN, Value: ">="},
+					Y:        g.lowerExpr(rangeExpr.Start),
+					Type:     types.TypeBool,
+					Location: locFromNode(e),
+				}
+				
+				upperBoundOp := tokens.LESS_TOKEN
+				upperBoundValue := "<"
+				if rangeExpr.Inclusive {
+					upperBoundOp = tokens.LESS_EQUAL_TOKEN
+					upperBoundValue = "<="
+				}
+				
+				upperBound := &hir.BinaryExpr{
+					X:        g.lowerExpr(e.X),
+					Op:       tokens.Token{Kind: upperBoundOp, Value: upperBoundValue},
+					Y:        g.lowerExpr(rangeExpr.End),
+					Type:     types.TypeBool,
+					Location: locFromNode(e),
+				}
+				
+				return &hir.BinaryExpr{
+					X:        lowerBound,
+					Op:       tokens.Token{Kind: tokens.AND_TOKEN, Value: "&&"},
+					Y:        upperBound,
+					Type:     types.TypeBool,
+					Location: locFromNode(e),
+				}
+			}
+		}
+		
 		binExpr := &hir.BinaryExpr{
 			X:        g.lowerExpr(e.X),
 			Op:       e.Op,

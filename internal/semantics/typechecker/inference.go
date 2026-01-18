@@ -237,8 +237,9 @@ func inferBinaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module
 	switch expr.Op.Kind {
 	case tokens.DOUBLE_EQUAL_TOKEN, tokens.NOT_EQUAL_TOKEN,
 		tokens.LESS_TOKEN, tokens.LESS_EQUAL_TOKEN,
-		tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN:
-		// Comparison: result is always bool
+		tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN,
+		tokens.IN_TOKEN:
+		// Comparison and range check: result is always bool
 		return types.TypeBool
 
 	case tokens.AND_TOKEN, tokens.OR_TOKEN:

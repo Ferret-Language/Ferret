@@ -589,7 +589,7 @@ func (p *Parser) parseComparison() ast.Expression {
 		return nil
 	}
 
-	for p.match(tokens.LESS_TOKEN, tokens.LESS_EQUAL_TOKEN, tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN) {
+	for p.match(tokens.LESS_TOKEN, tokens.LESS_EQUAL_TOKEN, tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN, tokens.IN_TOKEN) {
 		op := p.advance()
 		right := p.parseRange()
 		if right == nil {

@@ -658,7 +658,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 		// Check each case clause
 		for _, caseClause := range n.Cases {
 			var caseNarrowing *narrowing.NarrowingContext
-			
+
 			if caseClause.Pattern != nil {
 				// Handle different pattern types
 				switch pattern := caseClause.Pattern.(type) {
@@ -675,7 +675,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 					}
 					// Type check patterns are always valid for union/interface types
 					// No further validation needed here
-					
+
 					// Apply narrowing for 'is Type' patterns
 					// Create a synthetic BinaryExpr for narrowing analysis: matchExpr is Type
 					syntheticIsExpr := &ast.BinaryExpr{
@@ -736,14 +736,14 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 			if caseClause.Body != nil && caseClause.Body.Scope != nil {
 				restoreScope = mod.EnterScope(caseClause.Body.Scope.(*table.SymbolTable))
 			}
-			
+
 			// Check case body with narrowing if available
 			if caseNarrowing != nil {
 				applyNarrowingToBlock(ctx, mod, caseClause.Body, caseNarrowing)
 			} else {
 				checkBlock(ctx, mod, caseClause.Body)
 			}
-			
+
 			// Restore scope if we entered one
 			if restoreScope != nil {
 				restoreScope()
@@ -978,7 +978,7 @@ func checkFuncDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 
 // checkSelectorExpr validates that a field or method exists on a struct
 // checkBinaryExpr validates that operands of a binary expression have compatible types
-func checkBinaryExpr(ctx *context_v2.CompilerContext, _ *context_v2.Module, expr *ast.BinaryExpr, lhsType, rhsType types.SemType) {
+func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.BinaryExpr, lhsType, rhsType types.SemType) {
 	// Skip if either type is unknown (error already reported)
 	if lhsType.Equals(types.TypeUnknown) || rhsType.Equals(types.TypeUnknown) {
 		return
@@ -1125,6 +1125,52 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, _ *context_v2.Module, expr
 				diagnostics.NewError(fmt.Sprintf("invalid operation: cannot compare %s and %s", lhsType.String(), rhsType.String())).
 					WithCode(diagnostics.ErrTypeMismatch).
 					WithPrimaryLabel(expr.Loc(), "ordering comparison requires numeric types"),
+			)
+		}
+
+	case tokens.IN_TOKEN:
+		// 'in' operator: value in range
+		// RHS must be a RangeExpr
+		rangeExpr, ok := expr.Y.(*ast.RangeExpr)
+		if !ok {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("'in' operator requires a range expression on the right side").
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(expr.Y.Loc(), "not a range expression").
+					WithHelp("use a range like '0..10' or 'a..=b'"),
+			)
+			return
+		}
+
+		// LHS must be numeric (to compare with range bounds)
+		if !types.IsNumericType(lhsBase) && !types.IsUntyped(lhsBase) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("'in' operator requires numeric value, got '%s'", lhsType.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(expr.X.Loc(), "not a numeric type"),
+			)
+			return
+		}
+
+		// Check that range bounds are numeric
+		startType := inferExprType(ctx, mod, rangeExpr.Start)
+		endType := inferExprType(ctx, mod, rangeExpr.End)
+		startBase := types.UnwrapType(startType)
+		endBase := types.UnwrapType(endType)
+		
+		if !types.IsNumericType(startBase) && !types.IsUntyped(startBase) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("range start must be numeric, got '%s'", startType.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(rangeExpr.Start.Loc(), "not a numeric type"),
+			)
+		}
+		
+		if !types.IsNumericType(endBase) && !types.IsUntyped(endBase) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("range end must be numeric, got '%s'", endType.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(rangeExpr.End.Loc(), "not a numeric type"),
 			)
 		}
 
