@@ -116,7 +116,10 @@ func (d *Diagnostic) WithCode(code string) *Diagnostic {
 
 // WithLabel adds a labeled location to the diagnostic
 func (d *Diagnostic) WithLabel(loc *source.Location, message string, style LabelStyle) *Diagnostic {
-	if d.FilePath == "" {
+	if loc == nil {
+		return d
+	}
+	if d.FilePath == "" && loc.Filename != nil {
 		d.FilePath = *loc.Filename
 	}
 	d.Labels = append(d.Labels, Label{
@@ -130,6 +133,9 @@ func (d *Diagnostic) WithLabel(loc *source.Location, message string, style Label
 // WithPrimaryLabel adds a primary labeled location
 // Must be called before any WithSecondaryLabel calls
 func (d *Diagnostic) WithPrimaryLabel(loc *source.Location, message string) *Diagnostic {
+	if loc == nil {
+		return d
+	}
 	// Ensure primary label is always first
 	if len(d.Labels) > 0 {
 		// Check if we already have a primary
@@ -145,7 +151,7 @@ func (d *Diagnostic) WithPrimaryLabel(loc *source.Location, message string) *Dia
 			Message:  message,
 			Style:    Primary,
 		}}, d.Labels...)
-		if d.FilePath == "" {
+		if d.FilePath == "" && loc.Filename != nil {
 			d.FilePath = *loc.Filename
 		}
 		return d
@@ -189,6 +195,7 @@ func (d *Diagnostic) WithCodeHint(loc *source.Location, code string, labels ...C
 	}
 	return d
 }
+
 // WithNote adds a note to the diagnostic
 func (d *Diagnostic) WithNote(message string) *Diagnostic {
 	d.Notes = append(d.Notes, Note{Message: message})

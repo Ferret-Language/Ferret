@@ -1,9 +1,9 @@
 package diagnostics
 
 import (
-	"slices"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 
@@ -476,7 +476,7 @@ func (e *Emitter) printSingleLineLabel(ctx labelContext) {
 			e.printPipeOnly()
 			return
 		}
-		
+
 		// Otherwise show the label message
 		if ctx.label.Message != "" {
 			e.printBlankGutter()

@@ -59,7 +59,9 @@ func (p *Pipeline) parseModule(importPath string, requestedLocation *source.Loca
 	var content string
 	var filePath string
 
-	if module.Content != "" {
+	// For in-memory modules (WASM/playground), use the Content field even if empty
+	// Check if FilePath suggests this is an in-memory module
+	if module.FilePath != "" && (strings.HasPrefix(module.FilePath, "/playground") || module.Content != "") {
 		content = module.Content
 		filePath = module.FilePath
 	} else {

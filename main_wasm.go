@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/base64"
+	"fmt"
 	"syscall/js"
 
 	"compiler/internal/compiler"
@@ -16,7 +17,20 @@ func main() {
 	<-make(chan struct{})
 }
 
-func compile(this js.Value, args []js.Value) any {
+func compile(this js.Value, args []js.Value) (result any) {
+	// Recover from panics to prevent undefined returns
+	defer func() {
+		if r := recover(); r != nil {
+			// This shouldn't happen, but if it does, return a valid error response
+			println("PANIC in compile:", r)
+			result = map[string]any{
+				"success": false,
+				"output":  fmt.Sprintf("Internal compiler error: %v", r),
+				"wasm":    "",
+			}
+		}
+	}()
+
 	if len(args) < 2 {
 		return map[string]any{
 			"success": false,
@@ -63,16 +77,16 @@ func compile(this js.Value, args []js.Value) any {
 		}
 	}
 
-	result := compiler.Compile(opts)
+	compileResult := compiler.Compile(opts)
 
 	wasm := ""
-	if len(result.Artifact) > 0 {
-		wasm = base64.StdEncoding.EncodeToString(result.Artifact)
+	if len(compileResult.Artifact) > 0 {
+		wasm = base64.StdEncoding.EncodeToString(compileResult.Artifact)
 	}
 
 	return map[string]any{
-		"success": result.Success,
-		"output":  result.Output,
+		"success": compileResult.Success,
+		"output":  compileResult.Output,
 		"wasm":    wasm,
 	}
 }
