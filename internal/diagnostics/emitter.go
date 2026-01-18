@@ -1,6 +1,7 @@
 package diagnostics
 
 import (
+	"slices"
 	"fmt"
 	"io"
 	"strings"
@@ -852,13 +853,7 @@ func (e *Emitter) printRoutedLabels(filepath string, primary Label, secondaries 
 	for _, sec := range secondaries {
 		if sec.Location != nil && sec.Location.Start != nil {
 			secLine := sec.Location.Start.Line
-			found := false
-			for _, ln := range lineNumbers {
-				if ln == secLine {
-					found = true
-					break
-				}
-			}
+			found := slices.Contains(lineNumbers, secLine)
 			if !found {
 				lineNumbers = append(lineNumbers, secLine)
 			}

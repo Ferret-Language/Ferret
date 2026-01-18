@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"errors"
+	//"fmt"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -27,21 +28,29 @@ func (p *Pipeline) ensureEntryMain() error {
 		return nil
 	}
 
-	diag := diagnostics.NewError("missing entry point: function 'main' not found")
+	diag := diagnostics.NewError("missing entry point: function 'main' not found in code")
 	var loc *source.Location
 	if len(mod.AST.Nodes) > 0 {
 		lastNode := mod.AST.Nodes[len(mod.AST.Nodes)-1]
 		if lastNode != nil {
 			loc = lastNode.Loc()
 		}
+	} else {
+		pos := &source.Position{Line: 1, Column: 1, Index: 0}
+		loc = &source.Location{
+			Filename: &entryModule,
+			Start:    pos,
+			End:      pos,
+		}
 	}
+
 	if loc != nil {
 		diag = diag.WithCodeHint(loc, "fn main() {\n    // your code\n}", diagnostics.CodeHintLabel{
-			Line: 3,
-			Column: 1,
-			Length: 1,
+			Line:    3,
+			Column:  1,
+			Length:  1,
 			Message: "Add your main function here",
-			Style: diagnostics.Secondary,
+			Style:   diagnostics.Secondary,
 		})
 	}
 	p.ctx.Diagnostics.Add(diag)
