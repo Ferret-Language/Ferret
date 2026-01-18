@@ -4078,7 +4078,15 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 			return primitiveType
 		}
 
-		// Type not found
+		// Type not found - report error
+		if ctx != nil {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("undefined type '%s'", t.Name)).
+					WithCode(diagnostics.ErrUndefinedSymbol).
+					WithPrimaryLabel(t.Loc(), "type not found").
+					WithHelp("check the spelling or import the module that defines this type"),
+			)
+		}
 		return types.TypeUnknown
 
 	case *ast.ArrayType:

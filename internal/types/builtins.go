@@ -30,6 +30,7 @@ const (
 	TYPE_INTERFACE TYPE_NAME = "interface"
 	TYPE_STRUCT    TYPE_NAME = "struct"
 	TYPE_ENUM      TYPE_NAME = "enum"
+	TYPE_UNION     TYPE_NAME = "union"
 	TYPE_MAP       TYPE_NAME = "map"
 
 	TYPE_UNTYPED TYPE_NAME = "untyped" // For untyped numeric literals before contextual instantiation

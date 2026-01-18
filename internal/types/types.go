@@ -725,7 +725,21 @@ func GetTypeName(t SemType) string {
 
 // FromTypeName converts TYPE_NAME to Type (for backward compatibility during migration)
 func FromTypeName(name TYPE_NAME) SemType {
-	return NewPrimitive(name)
+	// Only create primitives for known type names
+	// Note: TYPE_STRUCT, TYPE_ENUM, TYPE_MAP, TYPE_ARRAY, TYPE_FUNC, TYPE_INTERFACE
+	// are keyword tokens used by parser, NOT valid primitive type names.
+	// Complex types (struct{}, enum{}, map[], []T, fn()) are created from AST nodes.
+	switch name {
+	case TYPE_I8, TYPE_I16, TYPE_I32, TYPE_I64, TYPE_I128, TYPE_I256,
+		TYPE_U8, TYPE_U16, TYPE_U32, TYPE_U64, TYPE_U128, TYPE_U256,
+		TYPE_F32, TYPE_F64, TYPE_F128, TYPE_F256,
+		TYPE_STRING, TYPE_BOOL, TYPE_NONE, TYPE_VOID, TYPE_BYTE, TYPE_CHAR,
+		TYPE_UNTYPED, TYPE_UNKNOWN:
+		return NewPrimitive(name)
+	default:
+		// Unknown type name - not a primitive
+		return TypeUnknown
+	}
 }
 
 // IsPrimitive checks if a type is a primitive type

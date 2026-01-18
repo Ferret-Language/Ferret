@@ -1,0 +1,7 @@
+fn test(x: UndefinedType) {
+    // Should error: UndefinedType not found
+}
+
+fn main() {
+    test(5);
+}
