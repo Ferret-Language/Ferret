@@ -84,11 +84,12 @@ func (g *Generator) emitBinary(b *mir.Binary) {
 			// Call ferret_strcmp(left, right) and check if result == 0
 			cmpResult := g.newTemp()
 			g.emitLine(fmt.Sprintf("%s =w call $ferret_strcmp(l %s, l %s)", cmpResult, left, right))
-			if b.Op == tokens.DOUBLE_EQUAL_TOKEN {
+			switch b.Op {
+			case tokens.DOUBLE_EQUAL_TOKEN:
 				g.emitLine(fmt.Sprintf("%s =w ceqw %s, 0", resultName, cmpResult))
-			} else if b.Op == tokens.NOT_EQUAL_TOKEN {
+			case tokens.NOT_EQUAL_TOKEN:
 				g.emitLine(fmt.Sprintf("%s =w cnew %s, 0", resultName, cmpResult))
-			} else {
+			default:
 				g.reportError("string comparison only supports == and !=", &b.Location)
 			}
 			g.valueTypes[b.Result] = types.TypeBool

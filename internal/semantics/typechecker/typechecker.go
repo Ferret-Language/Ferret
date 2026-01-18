@@ -2619,51 +2619,6 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	}
 }
 
-func isAddrTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression) bool {
-	if expr == nil {
-		return false
-	}
-
-	switch e := expr.(type) {
-	case *ast.IdentifierExpr:
-		// Const and readonly variables CAN be borrowed with shared references (&)
-		// Mutable reference (&mut) is checked separately in checkUnaryExpr
-		// So const/readonly variables are addressable here
-		return true
-	case *ast.DerefExpr:
-		return true
-	case *ast.ParenExpr:
-		return isAddrTarget(ctx, mod, e.X)
-	case *ast.SelectorExpr:
-		return isAddrTarget(ctx, mod, e.X)
-	case *ast.IndexExpr:
-		baseType := inferExprType(ctx, mod, e.X)
-		if baseType == nil || baseType.Equals(types.TypeUnknown) {
-			return false
-		}
-		baseType = dereferenceType(types.UnwrapType(baseType))
-		if _, ok := baseType.(*types.MapType); ok {
-			return isAddrTarget(ctx, mod, e.X)
-		}
-		if _, ok := baseType.(*types.ArrayType); ok {
-			return isAddrTarget(ctx, mod, e.X)
-		}
-		return false
-	default:
-		return false
-	}
-}
-
-func isBorrowExpr(expr ast.Expression) bool {
-	if expr == nil {
-		return false
-	}
-	if unary, ok := expr.(*ast.UnaryExpr); ok {
-		return unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN
-	}
-	return false
-}
-
 func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.UnaryExpr, operandType types.SemType) {
 	if ctx == nil || mod == nil || expr == nil {
 		return
@@ -2798,22 +2753,6 @@ func checkHeapExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 				WithHelp("remove '#' from the value"),
 		)
 	}
-}
-
-func heapLiteralExpr(expr ast.Expression) *ast.CompositeLit {
-	for expr != nil {
-		switch e := expr.(type) {
-		case *ast.ParenExpr:
-			expr = e.X
-		case *ast.CastExpr:
-			expr = e.X
-		case *ast.CompositeLit:
-			return e
-		default:
-			return nil
-		}
-	}
-	return nil
 }
 
 func heapUnaryExpr(expr ast.Expression) *ast.UnaryExpr {
@@ -3825,7 +3764,7 @@ func reportNumericConstTooLarge(ctx *context_v2.CompilerContext, expr ast.Expres
 	}
 }
 
-func resolveNumericExprTypeForModule(ctx *context_v2.CompilerContext, expr ast.Expression, expected, resultType types.SemType) types.SemType {
+func resolveNumericExprTypeForModule(_ *context_v2.CompilerContext, expr ast.Expression, expected, resultType types.SemType) types.SemType {
 	if !types.IsUntyped(resultType) {
 		return resultType
 	}

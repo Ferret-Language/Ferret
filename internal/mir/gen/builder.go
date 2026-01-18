@@ -144,7 +144,7 @@ func (b *functionBuilder) finalizeCurrent() {
 	}
 
 	// Emit deferred calls before implicit return
-	b.emitDeferredCalls(b.current.Location)
+	b.emitDeferredCalls()
 
 	if b.fn.Return != nil && b.fn.Return.Equals(types.TypeVoid) {
 		b.current.Term = &mir.Return{HasValue: false, Location: b.current.Location}
@@ -246,7 +246,7 @@ func (b *functionBuilder) lowerNode(node hir.Node) {
 		// Standalone block - push/pop defer scope
 		b.pushDeferScope()
 		b.lowerBlock(n)
-		b.popDeferScope(n.Location)
+		b.popDeferScope()
 	case *hir.IfStmt:
 		b.lowerIf(n)
 	case *hir.WhileStmt:
@@ -466,7 +466,6 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 				} else {
 					b.emitStore(addr, val, item.Name.Location)
 				}
-				b.storeRefHeapForValue(item.Name, val, item.Name.Location)
 			}
 		}
 	}
@@ -757,7 +756,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 	}
 
 	// Emit deferred calls in LIFO order before returning
-	b.emitDeferredCalls(stmt.Location)
+	b.emitDeferredCalls()
 
 	if stmt.Result == nil {
 		b.current.Term = &mir.Return{HasValue: false, Location: stmt.Location}
@@ -996,7 +995,7 @@ func (b *functionBuilder) pushDeferScope() {
 }
 
 // popDeferScope emits deferred calls from the current scope in LIFO order and pops the scope
-func (b *functionBuilder) popDeferScope(loc source.Location) {
+func (b *functionBuilder) popDeferScope() {
 	if len(b.deferStack) == 0 {
 		return
 	}
@@ -1015,7 +1014,7 @@ func (b *functionBuilder) popDeferScope(loc source.Location) {
 }
 
 // emitDeferredCalls emits all deferred calls from all scopes in LIFO order
-func (b *functionBuilder) emitDeferredCalls(loc source.Location) {
+func (b *functionBuilder) emitDeferredCalls() {
 	// Emit from innermost to outermost scope
 	for i := len(b.deferStack) - 1; i >= 0; i-- {
 		scope := b.deferStack[i]
@@ -1138,7 +1137,7 @@ func (b *functionBuilder) lowerWhile(stmt *hir.WhileStmt) {
 		b.pushDeferScope()
 		b.lowerBlock(stmt.Body)
 		// Pop defer scope at end of iteration
-		b.popDeferScope(stmt.Location)
+		b.popDeferScope()
 	}
 	b.branchIfNoTerm(condBlock.ID, stmt.Location)
 	b.popLoop()
@@ -1558,8 +1557,7 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 			if refVal == mir.InvalidValue {
 				return mir.InvalidValue
 			}
-			inner := b.exprType(e.X)
-			return b.attachRefHeapForBorrow(refVal, e.X, inner, e.Location)
+			return refVal
 		}
 		if e.Op.Kind == tokens.AT_TOKEN {
 			operand := b.lowerExpr(e.X)
@@ -2890,27 +2888,6 @@ func (b *functionBuilder) lowerBuiltinHeapAddrCall(expr *hir.CallExpr) mir.Value
 	return heapVal
 }
 
-func (b *functionBuilder) isHeapBorrowArg(expr hir.Expr) bool {
-	if expr == nil {
-		return false
-	}
-	for {
-		if p, ok := expr.(*hir.ParenExpr); ok {
-			expr = p.X
-			continue
-		}
-		break
-	}
-	unary, ok := expr.(*hir.UnaryExpr)
-	if !ok {
-		return false
-	}
-	if unary.Op.Kind != tokens.BIT_AND_TOKEN && unary.Op.Kind != tokens.MUT_TOKEN {
-		return false
-	}
-	return b.isHeapLValue(unary.X)
-}
-
 func isMoveExpr(expr hir.Expr) bool {
 	for {
 		if p, ok := expr.(*hir.ParenExpr); ok {
@@ -2998,78 +2975,20 @@ func (b *functionBuilder) zeroU64(loc source.Location) mir.ValueID {
 	return b.emitConst(types.TypeU64, "0", loc)
 }
 
-func (b *functionBuilder) refHeapSlotForIdent(ident *hir.Ident, loc source.Location) mir.ValueID {
-	if ident == nil {
-		return mir.InvalidValue
-	}
-	if ident.Symbol != nil {
-		if slot, ok := b.refHeapSlots[ident.Symbol]; ok {
-			return slot
-		}
-		slot := b.emitAlloca(types.TypeU64, loc)
-		b.refHeapSlots[ident.Symbol] = slot
-		return slot
-	}
-	if slot, ok := b.tempRefHeap[ident]; ok {
-		return slot
-	}
-	slot := b.emitAlloca(types.TypeU64, loc)
-	b.tempRefHeap[ident] = slot
-	return slot
-}
+// func (b *functionBuilder) storeRefHeapForValue(ident *hir.Ident, val mir.ValueID, loc source.Location) {
+// 	// This function is a no-op after the removal of the refHeap cache.
+// }
 
-func (b *functionBuilder) storeRefHeapForIdent(ident *hir.Ident, heap mir.ValueID, loc source.Location) {
-	if ident == nil || heap == mir.InvalidValue {
-		return
-	}
-	slot := b.refHeapSlotForIdent(ident, loc)
-	if slot == mir.InvalidValue {
-		return
-	}
-	b.emitStore(slot, heap, loc)
-}
+// func (b *functionBuilder) maybeAttachRefHeap(val mir.ValueID, ident *hir.Ident, loc source.Location) mir.ValueID {
+// 	// This function is a no-op after the removal of the refHeap cache.
+// 	return val
+// }
 
-func (b *functionBuilder) storeRefHeapForValue(ident *hir.Ident, val mir.ValueID, loc source.Location) {
-	// This function is a no-op after the removal of the refHeap cache.
-}
-
-func (b *functionBuilder) loadRefHeapForIdent(ident *hir.Ident, loc source.Location) mir.ValueID {
-	if ident == nil {
-		return mir.InvalidValue
-	}
-	if ident.Symbol != nil {
-		if slot, ok := b.refHeapSlots[ident.Symbol]; ok {
-			return b.emitLoad(slot, types.TypeU64, loc)
-		}
-	}
-	if slot, ok := b.tempRefHeap[ident]; ok {
-		return b.emitLoad(slot, types.TypeU64, loc)
-	}
-	return mir.InvalidValue
-}
-
-func (b *functionBuilder) maybeAttachRefHeap(val mir.ValueID, ident *hir.Ident, loc source.Location) mir.ValueID {
-	// This function is a no-op after the removal of the refHeap cache.
-	return val
-}
-
-func (b *functionBuilder) attachRefHeapForBorrow(val mir.ValueID, expr hir.Expr, inner types.SemType, loc source.Location) mir.ValueID {
-	// Caching of heap pointers for references has been removed to prevent stale data.
-	// Heap addresses are now computed on-demand by computeBorrowHeap.
-	return val
-}
-
-func isDerefExpr(expr hir.Expr) bool {
-	for expr != nil {
-		if p, ok := expr.(*hir.ParenExpr); ok {
-			expr = p.X
-			continue
-		}
-		break
-	}
-	_, ok := expr.(*hir.DerefExpr)
-	return ok
-}
+// func (b *functionBuilder) attachRefHeapForBorrow(val mir.ValueID, expr hir.Expr, inner types.SemType, loc source.Location) mir.ValueID {
+// 	// Caching of heap pointers for references has been removed to prevent stale data.
+// 	// Heap addresses are now computed on-demand by computeBorrowHeap.
+// 	return val
+// }
 
 func (b *functionBuilder) computeBorrowHeap(expr hir.Expr, val mir.ValueID, inner types.SemType, loc source.Location) mir.ValueID {
 	if val == mir.InvalidValue {
@@ -3378,7 +3297,7 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 	}
 
 	wrap := func(val mir.ValueID) mir.ValueID {
-		return b.maybeAttachRefHeap(val, ident, ident.Location)
+		return val
 	}
 
 	// Check for narrowed union access: if the access type differs from the storage type
@@ -3505,29 +3424,6 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 		b.reportUnsupported("identifier", &ident.Location)
 	}
 	return mir.InvalidValue
-}
-
-func (b *functionBuilder) isNarrowedOptionalExpr(expr hir.Expr) bool {
-	if entry := b.narrowedOptionalEntry(expr); entry != nil {
-		return true
-	}
-	ident, ok := expr.(*hir.Ident)
-	if !ok || ident == nil || ident.Symbol == nil || ident.Symbol.Type == nil {
-		return false
-	}
-	storageType := types.UnwrapType(ident.Symbol.Type)
-	optType, ok := storageType.(*types.OptionalType)
-	if !ok || optType.Inner == nil {
-		return false
-	}
-	accessType := b.exprType(ident)
-	if accessType == nil {
-		return false
-	}
-	if accessType.Equals(optType.Inner) {
-		return true
-	}
-	return types.UnwrapType(accessType).Equals(types.UnwrapType(optType.Inner))
 }
 
 func (b *functionBuilder) addrForIdent(ident *hir.Ident) mir.ValueID {
@@ -5306,13 +5202,13 @@ func (b *functionBuilder) methodReceiverRef(expr *hir.SelectorExpr, recvInner ty
 	if exprType != nil {
 		if _, ok := types.UnwrapType(exprType).(*types.ReferenceType); ok || needsByRefType(exprType) {
 			recv := b.lowerExpr(expr.X)
-			return b.attachRefHeapForBorrow(recv, expr.X, recvInner, expr.Location)
+			return recv
 		}
 	}
 
 	if isAddressableExpr(expr.X) {
 		recv := b.lowerLValue(expr.X)
-		return b.attachRefHeapForBorrow(recv, expr.X, recvInner, expr.Location)
+		return recv
 	}
 
 	val := b.lowerExpr(expr.X)
@@ -5321,7 +5217,7 @@ func (b *functionBuilder) methodReceiverRef(expr *hir.SelectorExpr, recvInner ty
 	}
 	tmp := b.emitAlloca(recvInner, expr.Location)
 	b.emitStore(tmp, val, expr.Location)
-	return b.attachRefHeapForBorrow(tmp, expr.X, recvInner, expr.Location)
+	return tmp
 }
 
 func (b *functionBuilder) methodReceiverCopy(expr *hir.SelectorExpr, recvInner types.SemType) mir.ValueID {

@@ -570,9 +570,10 @@ func (g *Generator) funcValueWrapper(name string, fnType *types.FunctionType, en
 		outParam := mir.InvalidValue
 		outHeapParam := mir.InvalidValue
 		for _, param := range fn.Params {
-			if param.Name == "__out" {
+			switch param.Name {
+			case "__out":
 				outParam = param.ID
-			} else if param.Name == outHeapParamName {
+			case outHeapParamName:
 				outHeapParam = param.ID
 			}
 		}

@@ -22,7 +22,7 @@ const (
 	opcodeDrop           = 0x1a
 	opcodeLocalGet       = 0x20
 	opcodeLocalSet       = 0x21
-	opcodeLocalTee       = 0x22
+	// opcodeLocalTee       = 0x22 // Future use
 	opcodeI32Const       = 0x41
 	opcodeI64Const       = 0x42
 	opcodeF32Const       = 0x43
@@ -70,9 +70,9 @@ const (
 	opcodeI32And         = 0x71
 	opcodeI32Or          = 0x72
 	opcodeI32Xor         = 0x73
-	opcodeI32Shl         = 0x74
-	opcodeI32ShrS        = 0x75
-	opcodeI32ShrU        = 0x76
+	// opcodeI32Shl         = 0x74 // Future use
+	// opcodeI32ShrS        = 0x75 // Future use
+	// opcodeI32ShrU        = 0x76 // Future use
 	opcodeI64Add         = 0x7c
 	opcodeI64Sub         = 0x7d
 	opcodeI64Mul         = 0x7e
@@ -83,9 +83,9 @@ const (
 	opcodeI64And         = 0x83
 	opcodeI64Or          = 0x84
 	opcodeI64Xor         = 0x85
-	opcodeI64Shl         = 0x86
-	opcodeI64ShrS        = 0x87
-	opcodeI64ShrU        = 0x88
+	// opcodeI64Shl         = 0x86 // Future use
+	// opcodeI64ShrS        = 0x87 // Future use
+	// opcodeI64ShrU        = 0x88 // Future use
 	opcodeF32Neg         = 0x8c
 	opcodeF32Add         = 0x92
 	opcodeF32Sub         = 0x93

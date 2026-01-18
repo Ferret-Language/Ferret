@@ -26,7 +26,7 @@ const (
 
 const (
 	importKindFunc   = 0x00
-	importKindMemory = 0x02
+	//importKindMemory = 0x02
 	exportKindFunc   = 0x00
 	exportKindMem    = 0x02
 	exportKindGlobal = 0x03

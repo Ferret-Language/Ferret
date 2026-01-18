@@ -608,10 +608,6 @@ func (b *borrowChecker) checkNotMoved(sym *symbols.Symbol, loc *source.Location)
 	return false
 }
 
-func (b *borrowChecker) checkWriteTarget(expr hir.Expr) {
-	b.checkWriteTargetWithMode(expr, true)
-}
-
 func (b *borrowChecker) checkWriteTargetWithMode(expr hir.Expr, allowReinit bool) {
 	place, via := b.borrowAccessPlace(expr)
 	if place.base == nil || (isReferenceSymbol(place.base) && via == nil) {
@@ -779,32 +775,6 @@ func (b *borrowChecker) liftRefPlace(place borrowPlace, via *symbols.Symbol) (bo
 		}
 	}
 	return lifted, via
-}
-
-func (b *borrowChecker) borrowPlace(expr hir.Expr) borrowPlace {
-	switch e := expr.(type) {
-	case *hir.Ident:
-		return borrowPlace{base: e.Symbol}
-	case *hir.SelectorExpr:
-		place := b.borrowPlace(e.X)
-		if place.base == nil {
-			return place
-		}
-		if e.Field == nil {
-			return place
-		}
-		return place.withField(e.Field.Name)
-	case *hir.IndexExpr:
-		place := b.borrowPlace(e.X)
-		if place.base == nil {
-			return place
-		}
-		return place.withIndex()
-	case *hir.ParenExpr:
-		return b.borrowPlace(e.X)
-	default:
-		return borrowPlace{}
-	}
 }
 
 func (p borrowPlace) withField(name string) borrowPlace {

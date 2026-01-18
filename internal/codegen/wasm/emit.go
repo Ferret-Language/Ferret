@@ -519,7 +519,7 @@ func (g *Generator) emitFunction(info *funcInfo, functionIndex map[string]uint32
 			}
 			code = append(code, insn...)
 		}
-		term, err := g.emitTerm(info, block, localIndex, functionIndex, blockIndex, blockLocal, phiMoves)
+		term, err := g.emitTerm(block, localIndex, blockIndex, blockLocal, phiMoves)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -566,7 +566,7 @@ func (g *Generator) emitInstr(info *funcInfo, instr mir.Instr, locals map[mir.Va
 	case *mir.Call:
 		return g.emitCall(info, v, locals, fnIndex)
 	case *mir.CallIndirect:
-		return g.emitCallIndirect(info, v, locals, fnIndex)
+		return g.emitCallIndirect(info, v, locals)
 	case *mir.ArrayGet:
 		return g.emitArrayGet(info, v, locals)
 	case *mir.ArraySet:
@@ -601,7 +601,7 @@ func (g *Generator) emitInstr(info *funcInfo, instr mir.Instr, locals map[mir.Va
 	}
 }
 
-func (g *Generator) emitTerm(info *funcInfo, block *mir.Block, locals map[mir.ValueID]uint32, fnIndex map[string]uint32, blockIndex map[mir.BlockID]uint32, blockLocal uint32, phiMoves map[mir.BlockID]map[mir.BlockID][]phiMove) ([]byte, error) {
+func (g *Generator) emitTerm(block *mir.Block, locals map[mir.ValueID]uint32, blockIndex map[mir.BlockID]uint32, blockLocal uint32, phiMoves map[mir.BlockID]map[mir.BlockID][]phiMove) ([]byte, error) {
 	if block == nil || block.Term == nil {
 		return nil, nil
 	}
@@ -1992,7 +1992,7 @@ func (g *Generator) emitCall(info *funcInfo, c *mir.Call, locals map[mir.ValueID
 	return out, nil
 }
 
-func (g *Generator) emitCallIndirect(info *funcInfo, c *mir.CallIndirect, locals map[mir.ValueID]uint32, fnIndex map[string]uint32) ([]byte, error) {
+func (g *Generator) emitCallIndirect(info *funcInfo, c *mir.CallIndirect, locals map[mir.ValueID]uint32) ([]byte, error) {
 	if c == nil || info == nil {
 		return nil, nil
 	}
