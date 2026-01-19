@@ -1,4 +1,0 @@
-fn main() {
-    let a := 1;
-    let b := @(a + 1); // expected error: cannot move non-lvalue
-}

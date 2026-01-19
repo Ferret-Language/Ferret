@@ -1,9 +1,0 @@
-import "std/io";
-
-fn main() {
-    let arr := 0.0..8.0:1.5;
-
-    for v in arr {
-        io::Println(v);
-    }
-}

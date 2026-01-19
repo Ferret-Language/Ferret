@@ -1,9 +1,0 @@
-fn make_map() -> map[str]&i32 {
-    let x := 3;
-    return { "a" => &x } as map[str]&i32;
-}
-
-fn main() {
-    let m := make_map();
-    let y := *m["a"];
-}

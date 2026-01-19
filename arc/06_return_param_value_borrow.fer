@@ -1,9 +1,0 @@
-fn borrow_param(p: i32) -> &i32 {
-    return &p;
-}
-
-fn main() {
-    let x := 6;
-    let r := borrow_param(x);
-    let y := *r;
-}

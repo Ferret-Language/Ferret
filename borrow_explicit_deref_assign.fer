@@ -1,7 +1,0 @@
-fn main() {
-    let a := 10;
-    let b: &mut i32 = &mut a;
-    b = 11; // expected error: explicit deref required (cannot assign to reference 'b')
-    *b = 12; // ok
-    let a2 := a;
-}

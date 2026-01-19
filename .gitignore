@@ -30,3 +30,4 @@ libs
 xcode
 *.d2
 *.d2.*
+.ferret

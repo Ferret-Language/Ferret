@@ -1,8 +1,0 @@
-import "std/io";
-
-fn main() {
-    let a := 10;
-    let b := @a;
-    io::Println(b); // expected output: 10
-    //io::Println(a); // will error on use
-}

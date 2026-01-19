@@ -1,4 +1,0 @@
-fn MakeRef() -> &i32 {
-    let a := 10;
-    return &a; // expected error: cannot return reference to local 'a'
-}

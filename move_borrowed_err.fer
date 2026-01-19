@@ -1,8 +1,0 @@
-import "std/io";
-
-fn main() {
-    let a := 1;
-    let r: &i32 = &a;
-    let b := @a; // expected error: cannot move 'a' because it is borrowed
-    io::Println(*r);
-}

@@ -1,8 +1,0 @@
-import "std/io";
-
-fn main() {
-    // This should error: float in for loop range
-    for i in 0.0..10.0 {
-        io::Println("loop");
-    }
-}

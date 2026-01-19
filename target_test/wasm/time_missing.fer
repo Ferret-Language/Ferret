@@ -1,7 +1,0 @@
-import "std/io";
-import "time";
-
-fn main() {
-    let now := time::NowUnix();
-    io::Println(now);
-}

@@ -1,7 +1,0 @@
-import "std/io";
-import "std/fs";
-
-fn main() {
-    let ok := fs::Exists("missing.txt");
-    io::Println(ok);
-}
