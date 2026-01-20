@@ -1296,7 +1296,6 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	if srcIsPrim && srcPrim.GetName() == types.TYPE_STRING && dstIsArr && dstArr.Length < 0 {
 		if elemPrim, ok := dstArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
 			// Valid: str as []char
-			// TODO: Runtime implementation needed for UTF-8 decoding
 			return
 		}
 	}
@@ -1305,7 +1304,6 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	if srcIsPrim && srcPrim.GetName() == types.TYPE_STRING && dstIsArr && dstArr.Length < 0 {
 		if elemPrim, ok := dstArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
 			// Valid: str as []byte or str as []u8
-			// TODO: Runtime implementation needed for byte view/copy
 			return
 		}
 	}
@@ -1314,7 +1312,6 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	if srcIsArr && srcArr.Length < 0 && dstIsPrim && dstPrim.GetName() == types.TYPE_STRING {
 		if elemPrim, ok := srcArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
 			// Valid: []char as str
-			// TODO: Runtime implementation needed for UTF-8 encoding
 			return
 		}
 	}
@@ -1323,7 +1320,6 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	if srcIsArr && srcArr.Length < 0 && dstIsPrim && dstPrim.GetName() == types.TYPE_STRING {
 		if elemPrim, ok := srcArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
 			// Valid: []byte as str or []u8 as str
-			// TODO: Runtime implementation needed for UTF-8 validation/conversion
 			return
 		}
 	}
@@ -3340,7 +3336,7 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 				errorMsg := getConversionError(rhsType, leftType, compatibility)
 				diag := diagnostics.NewError(errorMsg).
 					WithHelp(fmt.Sprintf("missing methods: %s", strings.Join(missingMethods, ", ")))
-				
+
 				if leftNode != nil {
 					valueDesc := formatValueDescription(rhsType, rightNode)
 					diag = diag.WithPrimaryLabel(rightNode.Loc(), valueDesc).
@@ -3348,7 +3344,7 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 				} else {
 					diag = diag.WithPrimaryLabel(rightNode.Loc(), fmt.Sprintf("expected '%s', got '%s'", leftType.String(), rhsType.String()))
 				}
-				
+
 				diag = addDerefHintIfNeeded(ctx, mod, diag, leftType, rhsType, rightNode)
 				ctx.Diagnostics.Add(diag)
 				return

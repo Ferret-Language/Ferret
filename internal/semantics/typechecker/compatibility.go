@@ -130,13 +130,13 @@ func analyzeInterfaceCompatibility(ctx *context_v2.CompilerContext, mod *context
 
 	// Type doesn't implement interface - build detailed missing method list
 	missingMethods = []string{}
-	
+
 	// Get the type symbol to check its methods
 	var typeName string
 	if namedType, isNamed := sourceType.(*types.NamedType); isNamed {
 		typeName = namedType.Name
 	}
-	
+
 	typeSym, _ := lookupTypeSymbol(ctx, mod, typeName)
 
 	// Check each required method
