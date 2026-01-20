@@ -2412,9 +2412,10 @@ func (b *functionBuilder) boxInterfaceValue(value mir.ValueID, valueType, ifaceT
 		if b.gen != nil && b.gen.layout != nil {
 			size = b.gen.layout.SizeOf(valueType)
 		}
+		// For zero-size types (empty structs), allocate a minimum of 1 byte
+		// This ensures we have a valid pointer to store in the interface
 		if size <= 0 {
-			b.reportUnsupported("interface box size", &loc)
-			return mir.InvalidValue
+			size = 1
 		}
 		sizeVal := b.emitConst(types.TypeU64, strconv.Itoa(size), loc)
 		box := b.gen.nextValueID()
@@ -5720,8 +5721,8 @@ func (b *functionBuilder) emitMemcpy(dst, src mir.ValueID, typ types.SemType, lo
 	if b.gen != nil && b.gen.layout != nil {
 		size = b.gen.layout.SizeOf(typ)
 	}
+	// For zero-size types (empty structs), memcpy is a no-op
 	if size <= 0 {
-		b.reportUnsupported("memcpy size", &loc)
 		return
 	}
 	sizeStr := strconv.FormatInt(int64(size), 10)

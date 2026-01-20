@@ -1,0 +1,28 @@
+import "std/io";
+
+type D struct { .X: i32 };
+
+fn (d: D) dummy() {
+    io::Println("D.dummy()");
+}
+
+type any interface{
+    dummy()
+};
+
+type any2 interface{
+    dummy()
+};
+
+fn main() {
+    io::Println("Testing nominal interface types:");
+    
+    let d : D = { .X = 42 };
+    let a: any = d;   // OK: D implements any
+    let b: any2 = d;  // OK: D implements any2
+    
+    // This should fail: any and any2 are different types
+    let c: any2 = a;  // Error: cannot convert any to any2
+    
+    io::Println("Test passed - interfaces use nominal typing!");
+}

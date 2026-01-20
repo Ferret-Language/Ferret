@@ -1,0 +1,59 @@
+import "std/io";
+
+// Test 1: Empty struct can be boxed into interface
+type EmptyStruct struct {};
+
+fn (e: EmptyStruct) greet() {
+    io::Println("Hello from EmptyStruct");
+}
+
+type Greeter interface {
+    greet()
+};
+
+// Test 2: Named interface types are distinct
+type InterfaceA interface {
+    method()
+};
+
+type InterfaceB interface {
+    method()
+};
+
+type TypeX struct { .value: i32 };
+
+fn (t: TypeX) method() {
+    io::Println("TypeX method");
+}
+
+// Test 3: Named primitive types are distinct
+type UserId i32;
+type ProductId i32;
+
+fn main() {
+    // Test 1: Empty struct boxing works
+    io::Println("Test 1: Empty struct boxing");
+    let empty : EmptyStruct = {};
+    let greeter: Greeter = empty;
+    greeter.greet();
+    
+    // Test 2: Named interfaces are distinct (this should compile)
+    io::Println("\nTest 2: Named interface compatibility");
+    let x : TypeX = { .value = 42 };
+    let a: InterfaceA = x;  // OK: TypeX implements InterfaceA
+    let b: InterfaceB = x;  // OK: TypeX implements InterfaceB
+    // let c: InterfaceB = a;  // Would fail: InterfaceA != InterfaceB
+    
+    // Test 3: Named primitives are distinct
+    io::Println("\nTest 3: Named primitive types");
+    let user: UserId = 100;
+    let product: ProductId = 200;
+    // let mixed: ProductId = user;  // Would fail: UserId != ProductId
+    let mixed: ProductId = user as ProductId;  // OK: explicit cast
+    
+    io::Println("User ID:", user as i32);
+    io::Println("Product ID:", product as i32);
+    io::Println("Mixed (cast):", mixed as i32);
+    
+    io::Println("\nAll tests passed!");
+}

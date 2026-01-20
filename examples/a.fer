@@ -1,13 +1,40 @@
 import "std/io";
 
+type D struct { .X: i32 };
+type D2 struct{ .Y: i32 };
+
+fn (d: D) dummy() {
+    
+}
+
+fn (d: D2) dummy() {
+    
+}
+
+type any interface{
+    dummy()
+};
+type any2 interface{
+    dummy()
+};
+
+type Int i32;
+type Int2 i32;
 
 fn main() {
+
+    let ii: Int = 10;
+    //let jj: Int2 = ii;
+    
+    let anyval : any = { .X = 20 };
+    let another : any2 = anyval;
+
     let a := #10;
     let addr_a := addr(&a);
     let haddr_a := heap_addr(&a);
     
     let b := @a;
-    io::Println(a);  
+    //io::Println(a);  
     let addr_b := addr(&b);
     let haddr_b := heap_addr(&b);
 
@@ -19,7 +46,7 @@ fn main() {
     io::Println("Address of a:", addr_a);
     io::Println("Address of b:", addr_b);
     io::Println("H Address of a:", haddr_a);
-    io::Println("H Address of a:", haddr_b);
+    io::Println("H Address of b:", haddr_b);
     io::Println("New Address of a:", naddr_a);
     io::Println("New H Address of a:", nhaddr_a);
 

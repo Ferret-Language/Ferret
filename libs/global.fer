@@ -1,17 +1,29 @@
 // Global builtins (implicitly available in every module).
 // These are declarations only; implementations are compiler intrinsics.
 
+// Type is for internal use only. It helps the compiler to identify and group types
+type Type interface{};
+type Type1 interface{};
+type Type2 interface{};
+
+type Sequence union{
+  Type,
+  &Type
+};
+
 // @extern
 // Note: len borrows read-only (&) and requires an explicit reference.
-fn len(value: union{ &interface{}, interface{} }) -> i32;
+fn len(value: Sequence) -> i32;
 // @extern
 // Note: append borrows mutably (&mut) and requires an addressable target.
-fn append(values: &mut []interface {}, value: interface {}) -> bool;
+fn append(values: &mut []Type, value: Type) -> bool;
 // @extern
-fn addr(value: &interface {}) -> u64;
+fn addr(value: &Type) -> u64;
 // @extern
-fn self_addr(value: &interface {}) -> u64;
+fn self_addr(value: &Type) -> u64;
 // @extern
-fn heap_addr(value: &interface {}) -> u64;
+fn heap_addr(value: &Type) -> u64;
 // @extern
 fn panic(msg: str) -> void;
+// @extern
+fn Get();

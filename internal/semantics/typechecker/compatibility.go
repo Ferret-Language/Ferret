@@ -213,12 +213,34 @@ func checkTypeCompatibilityWithContext(ctx *context_v2.CompilerContext, mod *con
 	}
 
 	// Handle interface compatibility
+	// For unnamed interfaces, check structural compatibility (does source implement the interface?)
 	if targetIface, ok := target.(*types.InterfaceType); ok {
 		if implementsInterface(ctx, mod, source, targetIface) {
 			return ImplicitCastable
 		}
 	} else if named, ok := target.(*types.NamedType); ok {
+		// For named interface types, use nominal equality
+		// Only allow assignment if source is also the same named type
+		// This ensures type Int != type Int2 even if both are i32
+		// and type any != type any2 even if both are interface{dummy()}
 		if iface, ok := named.Underlying.(*types.InterfaceType); ok {
+			// Check if source is exactly this named type
+			if sourceNamed, ok := source.(*types.NamedType); ok {
+				if sourceNamed.Name == named.Name {
+					return Identical
+				}
+				// If source is also a named interface type, they're incompatible (nominal typing)
+				if _, sourceIsIface := sourceNamed.Underlying.(*types.InterfaceType); sourceIsIface {
+					return Incompatible
+				}
+				// Source is a named concrete type, check if it implements the interface
+				if implementsInterface(ctx, mod, source, iface) {
+					return ImplicitCastable
+				}
+				return Incompatible
+			}
+			// If source is not a named type but implements the interface,
+			// allow implicit cast (e.g., concrete type to named interface)
 			if implementsInterface(ctx, mod, source, iface) {
 				return ImplicitCastable
 			}
