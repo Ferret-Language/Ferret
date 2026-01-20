@@ -117,6 +117,50 @@ func implementsInterface(ctx *context_v2.CompilerContext, mod *context_v2.Module
 	return true
 }
 
+// analyzeInterfaceCompatibility checks if sourceType implements targetIface and returns
+// detailed information about missing methods if it doesn't.
+// Returns:
+//   - compatible: true if type implements interface
+//   - missingMethods: list of missing/mismatched method names with details
+func analyzeInterfaceCompatibility(ctx *context_v2.CompilerContext, mod *context_v2.Module, sourceType types.SemType, targetIface *types.InterfaceType) (compatible bool, missingMethods []string) {
+	// Use existing implementsInterface check
+	if implementsInterface(ctx, mod, sourceType, targetIface) {
+		return true, nil
+	}
+
+	// Type doesn't implement interface - build detailed missing method list
+	missingMethods = []string{}
+	
+	// Get the type symbol to check its methods
+	var typeName string
+	if namedType, isNamed := sourceType.(*types.NamedType); isNamed {
+		typeName = namedType.Name
+	}
+	
+	typeSym, _ := lookupTypeSymbol(ctx, mod, typeName)
+
+	// Check each required method
+	for _, requiredMethod := range targetIface.Methods {
+		if typeSym == nil || typeSym.Methods == nil {
+			missingMethods = append(missingMethods, requiredMethod.Name)
+			continue
+		}
+		methodInfo, hasMethod := typeSym.Methods[requiredMethod.Name]
+		if !hasMethod {
+			missingMethods = append(missingMethods, requiredMethod.Name)
+		} else if !methodSignaturesMatch(methodInfo.FuncType, requiredMethod.FuncType) {
+			if ctx.Config.Debug {
+				fmt.Printf("      [Interface compatibility: method %s signature mismatch]\n", requiredMethod.Name)
+				fmt.Printf("        Method: %s\n", methodInfo.FuncType.String())
+				fmt.Printf("        Interface: %s\n", requiredMethod.FuncType.String())
+			}
+			missingMethods = append(missingMethods, fmt.Sprintf("%s (signature mismatch)", requiredMethod.Name))
+		}
+	}
+
+	return false, missingMethods
+}
+
 // checkCompositeTypeCompatibility handles composite type compatibility (arrays, maps, optionals)
 // Returns the compatibility level between source and target composite types
 func checkCompositeTypeCompatibility(source, target types.SemType) TypeCompatibility {

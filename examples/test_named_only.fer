@@ -1,0 +1,17 @@
+import "std/io";
+
+type D struct { .X: i32 };
+
+fn (d: D) dummy() {}
+
+type ann interface{
+    dummy()
+};
+
+fn main() {
+    // Named type
+    let d: D = { .X = 42 };
+    let a1: ann = d;  // Should work
+    
+    io::Println("Test 1 passed");
+}

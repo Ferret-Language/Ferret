@@ -1,0 +1,17 @@
+// Test that both cast and assignment show detailed missing method errors
+
+type any interface {
+    dummy()
+};
+
+type EmptyStruct struct {};
+
+fn main() {
+    let empty : EmptyStruct = {};
+    
+    // Test 1: Assignment - should show "missing methods: dummy"
+    let x: any = empty;
+    
+    // Test 2: Cast - should show "missing methods: dummy"
+    let y := empty as any;
+}

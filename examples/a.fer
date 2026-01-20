@@ -1,17 +1,13 @@
 import "std/io";
 
 type D struct { .X: i32 };
-type D2 struct{ .Y: i32 };
+type D2 struct{ .X: i32 };
 
 fn (d: D) dummy() {
     
 }
 
-fn (d: D2) dummy() {
-    
-}
-
-type any interface{
+type ann interface{
     dummy()
 };
 type any2 interface{
@@ -26,7 +22,7 @@ fn main() {
     let ii: Int = 10;
     //let jj: Int2 = ii;
     
-    let anyval : any = { .X = 20 };
+    let anyval : D2 = { .X = 20 };
     let another : any2 = anyval;
 
     let a := #10;
@@ -51,4 +47,6 @@ fn main() {
     io::Println("New H Address of a:", nhaddr_a);
 
     io::Println(a, b);
+
+    //io::Println(len(a));
 }

@@ -1,0 +1,61 @@
+module examples/test_anon_struct
+
+fn D_dummy(receiver d: &D) -> void {
+  block b1 entry:
+    %t2 = const i64 36
+    %t3 = const i32 1
+    %t4 = call ferret_array_new(%t2, %t3) : []Printable
+    %t5 = const str D.dummy()
+    %t6 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t7 = ptr_add i32 %t6, 0
+    %t8 = const i32 16
+    store %t7, %t8
+    %t9 = ptr_add str %t6, 4
+    store %t9, %t5
+    call ferret_array_append(%t4, %t6) : bool
+    call io::Println(%t4) : void
+    ret
+}
+
+fn main() -> void {
+  block b2 entry:
+    %t10 = alloca D
+    %t11 = const i32 42
+    %t12 = ptr_add i32 %t10, 0
+    store %t12, %t11
+    %t13 = alloca ann
+    %t14 = const u64 4
+    %t15 = call ferret_alloc(%t14) : &D
+    %t16 = const u64 4
+    call ferret_memcpy(%t15, %t10, %t16) : void
+    %t17 = alloca ann
+    %t18 = ptr_add &u8 %t17, 0
+    store %t18, %t15
+    %t22 = const &u8 $__vtable_1
+    %t23 = ptr_add &u8 %t17, 8
+    store %t23, %t22
+    %t24 = cast u64 %t15
+    %t25 = const u64 16
+    call ferret_memcpy(%t13, %t17, %t25) : void
+    %t26 = alloca ann
+    %t27 = const i64 36
+    %t28 = const i32 1
+    %t29 = call ferret_array_new(%t27, %t28) : []Printable
+    %t30 = const str Done
+    %t31 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t32 = ptr_add i32 %t31, 0
+    %t33 = const i32 16
+    store %t32, %t33
+    %t34 = ptr_add str %t31, 4
+    store %t34, %t30
+    call ferret_array_append(%t29, %t31) : bool
+    call io::Println(%t29) : void
+    ret
+}
+
+fn __iface_1_0(__self: &u8, __self_heap: u64) -> void {
+  block b3 entry:
+    %t21 = cast &D %t19
+    call D_dummy(%t21) : void
+    ret
+}

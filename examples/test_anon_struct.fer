@@ -1,0 +1,22 @@
+import "std/io";
+
+type D struct { .X: i32 };
+
+fn (d: D) dummy() {
+    io::Println("D.dummy()");
+}
+
+type ann interface{
+    dummy()
+};
+
+fn main() {
+    // This should work - D implements ann
+    let d: D = { .X = 42 };
+    let a1: ann = d;
+    
+    // This should FAIL - anonymous struct doesn't implement ann
+    let a2: ann = { .X = 42 };
+    
+    io::Println("Done");
+}

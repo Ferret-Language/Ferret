@@ -1,0 +1,36 @@
+import "std/io";
+
+type D struct { .X: i32 };
+type D2 struct{ .Y: i32 };
+
+fn (d: D) dummy() {
+    io::Println("D.dummy()");
+}
+
+fn (d: D2) dummy() {
+    io::Println("D2.dummy()");
+}
+
+type ann interface{
+    dummy()
+};
+type any2 interface{
+    dummy()
+};
+
+fn main() {
+    // This should work - D implements ann
+    let d : D = { .X = 20 };
+    let anyval : ann = d as ann;
+    
+    // This should fail - ann and any2 are different named types
+    // let another : any2 = anyval;
+    
+    // Casting between interface types doesn't work - they're nominal types
+    // let another : any2 = anyval as any2;
+    
+    // But we can directly assign the concrete type to both interfaces
+    let another2 : any2 = d;
+    
+    io::Println("All tests passed!");
+}

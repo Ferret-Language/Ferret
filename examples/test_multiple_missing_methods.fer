@@ -1,0 +1,32 @@
+// Test file demonstrating improved error messages for interface compatibility
+
+import "std/io";
+
+type Printer interface {
+    Print()
+};
+
+type Speaker interface {
+    Speak(),
+    Listen()
+};
+
+type Document struct {
+    .Content: str
+};
+
+fn (d: Document) Print() {
+    io::Println(d.Content);
+}
+
+fn main() {
+    let doc : Document = { .Content = "Hello" };
+    
+    // This works - Document implements Printer
+    let printer: Printer = doc;
+    
+    // This should fail with detailed error showing TWO missing methods
+    let speaker: Speaker = doc;
+    
+    io::Println("Test complete");
+}

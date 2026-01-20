@@ -1,0 +1,11 @@
+import "std/io";
+
+type D struct { .X: i32 };
+
+fn (d: D) dummy() {}
+
+fn main() {
+    // What's the inferred type?
+    let anon := { .X = 42 };
+    io::Println("Anon struct created");
+}

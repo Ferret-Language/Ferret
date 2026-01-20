@@ -1268,33 +1268,11 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		}
 	}
 	if targetIface != nil {
-		if implementsInterface(ctx, mod, sourceType, targetIface) {
+		compatible, missingMethods := analyzeInterfaceCompatibility(ctx, mod, sourceType, targetIface)
+		if compatible {
 			return // Valid interface cast
 		}
-		// Build error message with missing methods
-		var missingMethods []string
-		var typeName string
-		if named, ok := sourceType.(*types.NamedType); ok {
-			typeName = named.Name
-		}
-		typeSym, _ := lookupTypeSymbol(ctx, mod, typeName)
-		for _, requiredMethod := range targetIface.Methods {
-			if typeSym == nil || typeSym.Methods == nil {
-				missingMethods = append(missingMethods, requiredMethod.Name)
-				continue
-			}
-			methodInfo, hasMethod := typeSym.Methods[requiredMethod.Name]
-			if !hasMethod {
-				missingMethods = append(missingMethods, requiredMethod.Name)
-			} else if !methodSignaturesMatch(methodInfo.FuncType, requiredMethod.FuncType) {
-				if ctx.Config.Debug {
-					fmt.Printf("      [Cast check: method %s signature mismatch]\n", requiredMethod.Name)
-					fmt.Printf("        Method: %s\n", methodInfo.FuncType.String())
-					fmt.Printf("        Interface: %s\n", requiredMethod.FuncType.String())
-				}
-				missingMethods = append(missingMethods, fmt.Sprintf("%s (signature mismatch)", requiredMethod.Name))
-			}
-		}
+		// Report error with detailed missing methods
 		ctx.Diagnostics.Add(
 			diagnostics.NewError(fmt.Sprintf("cannot cast %s to %s", sourceType.String(), targetType.String())).
 				WithCode(diagnostics.ErrInvalidCast).
@@ -3179,6 +3157,10 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 				targetType = refType.Inner
 			} else if _, ok := types.UnwrapType(expected).(*types.UnionType); ok {
 				targetType = inferCompositeLitType(ctx, mod, e)
+			} else if _, ok := types.UnwrapType(expected).(*types.InterfaceType); ok {
+				// If expected type is an interface, infer the actual struct/array/map type
+				// The compatibility will be checked later in checkAssignLike
+				targetType = inferCompositeLitType(ctx, mod, e)
 			} else {
 				targetType = expected
 			}
@@ -3350,6 +3332,28 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 		// Cannot convert - create user-friendly error message (no hint, not castable)
 		rhsUnwrapped := types.UnwrapType(rhsType)
 		leftUnwrapped := types.UnwrapType(leftType)
+
+		// Check if target is an interface - provide detailed missing methods
+		if leftIface, isIface := leftUnwrapped.(*types.InterfaceType); isIface {
+			_, missingMethods := analyzeInterfaceCompatibility(ctx, mod, rhsType, leftIface)
+			if len(missingMethods) > 0 {
+				errorMsg := getConversionError(rhsType, leftType, compatibility)
+				diag := diagnostics.NewError(errorMsg).
+					WithHelp(fmt.Sprintf("missing methods: %s", strings.Join(missingMethods, ", ")))
+				
+				if leftNode != nil {
+					valueDesc := formatValueDescription(rhsType, rightNode)
+					diag = diag.WithPrimaryLabel(rightNode.Loc(), valueDesc).
+						WithSecondaryLabel(leftNode.Loc(), fmt.Sprintf("type '%s'", leftType.String()))
+				} else {
+					diag = diag.WithPrimaryLabel(rightNode.Loc(), fmt.Sprintf("expected '%s', got '%s'", leftType.String(), rhsType.String()))
+				}
+				
+				diag = addDerefHintIfNeeded(ctx, mod, diag, leftType, rhsType, rightNode)
+				ctx.Diagnostics.Add(diag)
+				return
+			}
+		}
 
 		var missingFields []string
 		var mismatchedFields []string
