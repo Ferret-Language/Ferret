@@ -2415,13 +2415,6 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 		}
 		checkAssignLike(ctx, mod, assignType, stmt.Lhs, stmt.Rhs)
 	}
-
-	// TODO: Invalidate constant values for aliasing
-	// When reference expressions (&x) are implemented, we should:
-	// 1. Clear constant value when address is taken (addressOf expression)
-	// 2. Clear all potentially aliased variables on reference assignment
-	// 3. Consider inter-procedural effects (function calls with &params)
-	// For now, method calls with reference receivers handle invalidation separately
 }
 
 // checkDeferStmt type checks a defer statement

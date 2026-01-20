@@ -1,0 +1,23 @@
+// Test constant value invalidation when references are taken
+
+import "std/io";
+
+fn modify(x: &mut i32) {
+    *x = 100;
+}
+
+fn main() {
+    // Test: Passing reference to function should invalidate constant
+    let y := 10;
+    io::Println("Before:", y);  // Should print 10
+    
+    modify(&mut y);  // y's address is taken - should invalidate constant
+    
+    io::Println("After:", y);  // Should print 100, not 10
+    // If constant value is still cached incorrectly, optimizer might think y == 10
+    if y == 10 {
+        io::Println("Error: y should not be 10 after modification!");
+    } else {
+        io::Println("Test passed: y correctly modified to", y);
+    }
+}
