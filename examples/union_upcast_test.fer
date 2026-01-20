@@ -1,0 +1,23 @@
+import "std/io";
+
+type MyInt i32;
+
+type IntOrStr union {
+    MyInt,
+    str
+};
+
+fn process(v: IntOrStr) {
+    io::Println("Processing");
+}
+
+fn main() {
+    // Test implicit upcast: i32 -> MyInt (where union has MyInt)
+    let raw: i32 = 100;
+    process(raw);  // Should work: i32 implicitly converts to MyInt
+    
+    let named: MyInt = 200;
+    process(named);  // Should work: exact match
+    
+    io::Println("Implicit upcast test passed!");
+}

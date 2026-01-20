@@ -301,21 +301,63 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 		return Incompatible
 	}
 
+	// Identical types (check early for performance)
+	if source.Equals(target) {
+		return Identical
+	}
+
+	// Check if target is union (direct or unwrapped) and source matches one of the variants
+	// Do this BEFORE other type-specific checks to allow unions to contain any variant type
+	// This allows: &Int1 -> union{&Int1, Int1} (exact match)
+	// And: i32 -> union{Int, str} where type Int i32 (implicit upcast)
+	if unionType, ok := target.(*types.UnionType); ok {
+		for _, variant := range unionType.Variants {
+			variantCompat := checkTypeCompatibility(source, variant)
+			if variantCompat == Identical || variantCompat == ImplicitCastable {
+				return ImplicitCastable
+			}
+		}
+		// Source doesn't match any variant
+		return Incompatible
+	}
+	
+	// Check if target unwrapped is union (handles named types wrapping unions)
+	tgtUnwrapped := types.UnwrapType(target)
+	if unionType, ok := tgtUnwrapped.(*types.UnionType); ok {
+		for _, variant := range unionType.Variants {
+			variantCompat := checkTypeCompatibility(source, variant)
+			if variantCompat == Identical || variantCompat == ImplicitCastable {
+				return ImplicitCastable
+			}
+		}
+		return Incompatible
+	}
+
+	// Reference type compatibility (both source and target are references)
 	if srcRef, ok := types.UnwrapType(source).(*types.ReferenceType); ok {
 		if tgtRef, ok := types.UnwrapType(target).(*types.ReferenceType); ok {
 			// Both mutability levels must match exactly - no implicit coercion
 			if tgtRef.Mutable != srcRef.Mutable {
 				return Incompatible
 			}
+			// Check if inner types are identical
 			if srcRef.Inner.Equals(tgtRef.Inner) {
 				return Identical
 			}
+			// Check if inner types are compatible (e.g., i32 -> Int1, so &i32 -> &Int1)
+			innerCompat := checkTypeCompatibility(srcRef.Inner, tgtRef.Inner)
+			if innerCompat == Identical || innerCompat == ImplicitCastable {
+				return innerCompat
+			}
+			// Check if target inner is empty interface
 			if isEmptyInterfaceType(tgtRef.Inner) {
 				return ImplicitCastable
 			}
 			return Incompatible
 		}
 	}
+	
+	// Reference type mismatch checks (source is reference, target is not, or vice versa)
 	if _, ok := types.UnwrapType(source).(*types.ReferenceType); ok {
 		if _, ok := types.UnwrapType(target).(*types.ReferenceType); !ok {
 			return Incompatible
@@ -323,11 +365,6 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 	}
 	if _, ok := types.UnwrapType(target).(*types.ReferenceType); ok {
 		return Incompatible
-	}
-
-	// Identical types
-	if source.Equals(target) {
-		return Identical
 	}
 
 	// Any type can be assigned to empty interface (any)
@@ -411,15 +448,6 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 		return ExplicitCastable
 	}
 
-	// Check if target is union and source matches one of the variants
-	if unionType, ok := target.(*types.UnionType); ok {
-		for _, variant := range unionType.Variants {
-			if source.Equals(variant) {
-				return ImplicitCastable
-			}
-		}
-	}
-
 	// Check if target is a NamedType and source matches its underlying type
 	// This allows: i32 -> Integer where type Integer i32; (implicit)
 	// But NOT: Integer -> i32 (reverse) or Integer1 -> Integer2 (named to named) - these require explicit cast
@@ -438,16 +466,6 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 	// Check for explicit castable cases (named -> base, named -> named with same underlying)
 	// These require explicit casting to preserve type safety
 	srcUnwrapped := types.UnwrapType(source)
-	tgtUnwrapped := types.UnwrapType(target)
-
-	// Check if target unwrapped is union and source matches one of the variants
-	if unionType, ok := tgtUnwrapped.(*types.UnionType); ok {
-		for _, variant := range unionType.Variants {
-			if source.Equals(variant) {
-				return ImplicitCastable
-			}
-		}
-	}
 
 	// If underlying types are compatible, it's explicitly castable (not implicitly)
 	if types.IsNumeric(srcUnwrapped) && types.IsNumeric(tgtUnwrapped) {

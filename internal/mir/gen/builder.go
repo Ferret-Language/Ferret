@@ -1781,6 +1781,41 @@ func (b *functionBuilder) isMapLiteralExpr(expr hir.Expr, expected types.SemType
 	return b.mapTypeOf(expr) != nil
 }
 
+// isImplicitlyCompatible checks if source type can be implicitly converted to target type
+// Used for MIR generation to determine if a cast is needed
+func (b *functionBuilder) isImplicitlyCompatible(source, target types.SemType) bool {
+	if source == nil || target == nil {
+		return false
+	}
+	
+	// Exact match
+	if source.Equals(target) {
+		return true
+	}
+	
+	// Check if target is a named type and source matches its underlying type
+	// This allows: i32 -> Int1 where type Int1 i32
+	if targetNamed, ok := target.(*types.NamedType); ok {
+		if _, sourceIsNamed := source.(*types.NamedType); !sourceIsNamed {
+			// Source is base type, target is named type wrapping it
+			if source.Equals(types.UnwrapType(targetNamed)) {
+				return true
+			}
+		}
+	}
+	
+	// Check reference compatibility: &i32 -> &Int1 if i32 -> Int1
+	if srcRef, ok := source.(*types.ReferenceType); ok {
+		if tgtRef, ok := target.(*types.ReferenceType); ok {
+			if srcRef.Mutable == tgtRef.Mutable {
+				return b.isImplicitlyCompatible(srcRef.Inner, tgtRef.Inner)
+			}
+		}
+	}
+	
+	return false
+}
+
 func (b *functionBuilder) coerceValueForAssign(val mir.ValueID, fromType, toType types.SemType, loc source.Location) mir.ValueID {
 	if val == mir.InvalidValue || fromType == nil || toType == nil {
 		return val
@@ -2482,16 +2517,29 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 		return mir.InvalidValue
 	}
 
-	// Unwrap reference types for comparison
-	unwrappedValueType := types.UnwrapType(valueType)
-
 	// Find which variant this value matches
+	// First try exact match, then try compatibility (for implicit upcasts)
 	variantIndex := -1
+	var targetVariant types.SemType
+	
+	// Try exact match first (for performance)
 	for i, variant := range unionType.Variants {
-		unwrappedVariant := types.UnwrapType(variant)
-		if unwrappedValueType.Equals(unwrappedVariant) {
+		if valueType.Equals(variant) {
 			variantIndex = i
+			targetVariant = variant
 			break
+		}
+	}
+	
+	// If no exact match, check for implicit compatibility
+	// This handles cases like: i32 -> Int1 (named type upcast), &i32 -> &Int1, etc.
+	if variantIndex < 0 {
+		for i, variant := range unionType.Variants {
+			if b.isImplicitlyCompatible(valueType, variant) {
+				variantIndex = i
+				targetVariant = variant
+				break
+			}
 		}
 	}
 
@@ -2499,18 +2547,21 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 		// Type checker should have caught this, but provide helpful debug info
 		if b.gen != nil && b.gen.ctx != nil {
 			valueTypeStr := valueType.String()
-			if unwrappedValueType != valueType {
-				valueTypeStr = fmt.Sprintf("%s (unwrapped: %s)", valueType.String(), unwrappedValueType.String())
-			}
 			variantStrs := make([]string, len(unionType.Variants))
 			for i, v := range unionType.Variants {
-				variantStrs[i] = types.UnwrapType(v).String()
+				variantStrs[i] = v.String()
 			}
 			b.gen.ctx.ReportError(fmt.Sprintf("MIR: union variant mismatch: type '%s' not in union variants [%s]",
 				valueTypeStr, strings.Join(variantStrs, ", ")), &loc)
 		}
 		b.reportUnsupported("union variant mismatch", &loc)
 		return mir.InvalidValue
+	}
+	
+	// If value type doesn't exactly match target variant, insert implicit cast
+	if !valueType.Equals(targetVariant) {
+		value = b.emitCast(value, targetVariant, loc)
+		valueType = targetVariant
 	}
 
 	// Allocate space for the union (tag + max variant size)
