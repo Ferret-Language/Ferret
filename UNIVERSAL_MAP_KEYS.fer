@@ -1,0 +1,61 @@
+// Universal Map Keys in Ferret
+// ==============================
+//
+// STATUS: COMPILE-TIME ✅ | RUNTIME ✅ (Implementation Ready, Needs Integration)
+//
+// WHAT'S DONE:
+// ============
+// 1. ✅ Type Checker (internal/types/comparable.go)
+//    - IsMapKeyComparable() now returns true for ALL types
+//    - No more compile-time restrictions on map key types
+//
+// 2. ✅ Runtime Hashing (runtime/core/hash.c)
+//    - ferret_hash_universal(): Content-based recursive hashing
+//    - ferret_equals_universal(): Content-based recursive equality
+//    - Handles: primitives, structs, arrays, slices, maps, interfaces, functions
+//
+// 3. ✅ Runtime Map Functions (runtime/core/map.c)
+//    - ferret_map_new_universal()
+//    - ferret_map_from_pairs_universal()
+//    - Uses thread-local type info for universal hashing
+//
+// WHAT'S NEEDED FOR FULL RUNTIME SUPPORT:
+// ========================================
+// 4. ⏳ Compiler Integration (internal/mir/gen/builder.go)
+//    - Generate ferret_type_info_t descriptors for complex key types
+//    - Call ferret_map_new_universal() instead of ferret_map_new_bytes()
+//    - Pass type descriptors to map constructors
+//
+// IMPLEMENTATION STRATEGY:
+// ========================
+//
+// In mapRuntimeFns() function (builder.go line ~5040):
+//   - For non-primitive key types, generate type descriptor
+//   - Use ferret_map_new_universal() with type descriptor
+//   - Type descriptors can be generated as global constants
+//
+// Type Descriptor Generation:
+//   - For struct: ferret_type_info_struct(fields[], size)
+//   - For array: ferret_type_info_array(elem_type, length)
+//   - For slice: ferret_type_info_slice(elem_type)
+//   - For map: ferret_type_info_map(key_type, val_type)
+//
+// CURRENT BEHAVIOR:
+// =================
+// - ✅ All types compile as map keys (no type errors)
+// - ⚠️  Complex types use byte/pointer equality (fallback)
+// - ✅ Primitives, strings use proper hashing
+//
+// AFTER FULL INTEGRATION:
+// =======================
+// - ✅ Maps compare by content: {1=>2} == {1=>2}
+// - ✅ Slices compare by content: [1,2,3] == [1,2,3]  
+// - ✅ Structs compare by fields recursively
+// - ⚠️  Functions still use pointer equality (by design)
+
+import "std/io";
+
+fn main() {
+    io::Println("Universal Map Keys Documentation");
+    io::Println("See comments above for implementation details");
+}

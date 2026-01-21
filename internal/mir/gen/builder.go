@@ -1781,18 +1781,28 @@ func (b *functionBuilder) isMapLiteralExpr(expr hir.Expr, expected types.SemType
 	return b.mapTypeOf(expr) != nil
 }
 
+func (b *functionBuilder) isSliceType(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	if arr, ok := types.UnwrapType(typ).(*types.ArrayType); ok {
+		return arr.Length < 0 // Negative length = slice
+	}
+	return false
+}
+
 // isImplicitlyCompatible checks if source type can be implicitly converted to target type
 // Used for MIR generation to determine if a cast is needed
 func (b *functionBuilder) isImplicitlyCompatible(source, target types.SemType) bool {
 	if source == nil || target == nil {
 		return false
 	}
-	
+
 	// Exact match
 	if source.Equals(target) {
 		return true
 	}
-	
+
 	// Check if target is a named type and source matches its underlying type
 	// This allows: i32 -> Int1 where type Int1 i32
 	if targetNamed, ok := target.(*types.NamedType); ok {
@@ -1803,7 +1813,7 @@ func (b *functionBuilder) isImplicitlyCompatible(source, target types.SemType) b
 			}
 		}
 	}
-	
+
 	// Check reference compatibility: &i32 -> &Int1 if i32 -> Int1
 	if srcRef, ok := source.(*types.ReferenceType); ok {
 		if tgtRef, ok := target.(*types.ReferenceType); ok {
@@ -1812,7 +1822,7 @@ func (b *functionBuilder) isImplicitlyCompatible(source, target types.SemType) b
 			}
 		}
 	}
-	
+
 	return false
 }
 
@@ -2521,7 +2531,7 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 	// First try exact match, then try compatibility (for implicit upcasts)
 	variantIndex := -1
 	var targetVariant types.SemType
-	
+
 	// Try exact match first (for performance)
 	for i, variant := range unionType.Variants {
 		if valueType.Equals(variant) {
@@ -2530,7 +2540,7 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 			break
 		}
 	}
-	
+
 	// If no exact match, check for implicit compatibility
 	// This handles cases like: i32 -> Int1 (named type upcast), &i32 -> &Int1, etc.
 	if variantIndex < 0 {
@@ -2557,7 +2567,7 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 		b.reportUnsupported("union variant mismatch", &loc)
 		return mir.InvalidValue
 	}
-	
+
 	// If value type doesn't exactly match target variant, insert implicit cast
 	if !valueType.Equals(targetVariant) {
 		value = b.emitCast(value, targetVariant, loc)
@@ -4055,12 +4065,22 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 	valSizeVal := b.emitConst(sizeType, strconv.Itoa(valSize), lit.Location)
 
 	fns := b.mapRuntimeFns(mapType.Key)
+
+	var args []mir.ValueID
+	if fns.needsTypeInfo {
+		// Generate type descriptor for universal hashing
+		typeDesc := b.getOrCreateTypeDescriptor(mapType.Key)
+		args = []mir.ValueID{keySizeVal, valSizeVal, typeDesc}
+	} else {
+		args = []mir.ValueID{keySizeVal, valSizeVal}
+	}
+
 	if len(lit.Elts) == 0 {
 		result := b.gen.nextValueID()
 		b.emitInstr(&mir.Call{
 			Result:   result,
 			Target:   fns.newFn,
-			Args:     []mir.ValueID{keySizeVal, valSizeVal},
+			Args:     args,
 			Type:     lit.Type,
 			Location: lit.Location,
 		})
@@ -4098,7 +4118,20 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 		valOffset := i * valSize
 		keySlot := b.emitPtrAdd(keysAddr, keyOffset, mapType.Key, kv.Location)
 		valSlot := b.emitPtrAdd(valsAddr, valOffset, mapType.Value, kv.Location)
-		b.emitStore(keySlot, keyVal, kv.Location)
+
+		// For keys: use direct Store for slices/maps to avoid cloning the underlying data
+		// We want to copy the slice/map struct itself, not clone its contents
+		if b.isDynamicArrayLiteralExpr(kv.Key, mapType.Key) || b.isMapLiteralExpr(kv.Key, mapType.Key) || b.isSliceType(mapType.Key) {
+			b.emitInstr(&mir.Store{
+				Addr:     keySlot,
+				Value:    keyVal,
+				Location: kv.Location,
+			})
+		} else {
+			b.emitStore(keySlot, keyVal, kv.Location)
+		}
+
+		// For values: use direct Store for array/map literals to avoid cloning
 		if b.isDynamicArrayLiteralExpr(kv.Value, mapType.Value) || b.isMapLiteralExpr(kv.Value, mapType.Value) {
 			b.emitInstr(&mir.Store{
 				Addr:     valSlot,
@@ -4112,10 +4145,20 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 
 	countVal := b.emitConst(sizeType, strconv.Itoa(len(lit.Elts)), lit.Location)
 	result := b.gen.nextValueID()
+
+	var pairsArgs []mir.ValueID
+	if fns.needsTypeInfo {
+		// Generate type descriptor for universal hashing
+		typeDesc := b.getOrCreateTypeDescriptor(mapType.Key)
+		pairsArgs = []mir.ValueID{keySizeVal, valSizeVal, keysAddr, valsAddr, countVal, typeDesc}
+	} else {
+		pairsArgs = []mir.ValueID{keySizeVal, valSizeVal, keysAddr, valsAddr, countVal}
+	}
+
 	b.emitInstr(&mir.Call{
 		Result:   result,
 		Target:   fns.fromPairsFn,
-		Args:     []mir.ValueID{keySizeVal, valSizeVal, keysAddr, valsAddr, countVal},
+		Args:     pairsArgs,
 		Type:     lit.Type,
 		Location: lit.Location,
 	})
@@ -5033,47 +5076,117 @@ func (b *functionBuilder) mapTypeOf(expr hir.Expr) *types.MapType {
 }
 
 type mapRuntimeFns struct {
-	newFn       string
-	fromPairsFn string
+	newFn         string
+	fromPairsFn   string
+	needsTypeInfo bool
+}
+
+// needsUniversalHashing returns true if the key type requires content-based hashing
+func (b *functionBuilder) needsUniversalHashing(keyType types.SemType) bool {
+	keyType = types.UnwrapType(keyType)
+	switch kt := keyType.(type) {
+	case *types.PrimitiveType:
+		// Primitives have specialized hash functions
+		switch kt.GetName() {
+		case types.TYPE_I32, types.TYPE_I64, types.TYPE_F32, types.TYPE_F64, types.TYPE_STRING:
+			return false
+		}
+		// Other primitives (bool, byte, etc.) could use universal or bytes
+		return false
+	case *types.NamedType:
+		return b.needsUniversalHashing(kt.Underlying)
+	case *types.MapType, *types.ArrayType, *types.StructType, *types.InterfaceType:
+		// Complex types need universal hashing for content comparison
+		return true
+	}
+	return false
 }
 
 func (b *functionBuilder) mapRuntimeFns(keyType types.SemType) mapRuntimeFns {
 	keyType = types.UnwrapType(keyType)
 	switch kt := keyType.(type) {
 	case *types.PrimitiveType:
-		switch kt.GetName() {
-		case types.TYPE_I32:
-			return mapRuntimeFns{
-				newFn:       "ferret_map_new_i32",
-				fromPairsFn: "ferret_map_from_pairs_i32",
-			}
-		case types.TYPE_I64:
-			return mapRuntimeFns{
-				newFn:       "ferret_map_new_i64",
-				fromPairsFn: "ferret_map_from_pairs_i64",
-			}
-		case types.TYPE_F32:
-			return mapRuntimeFns{
-				newFn:       "ferret_map_new_f32",
-				fromPairsFn: "ferret_map_from_pairs_f32",
-			}
-		case types.TYPE_F64:
-			return mapRuntimeFns{
-				newFn:       "ferret_map_new_f64",
-				fromPairsFn: "ferret_map_from_pairs_f64",
-			}
-		case types.TYPE_STRING:
+		// String needs special handling (pointer dereference)
+		if kt.GetName() == types.TYPE_STRING {
 			return mapRuntimeFns{
 				newFn:       "ferret_map_new_str",
 				fromPairsFn: "ferret_map_from_pairs_str",
 			}
 		}
+		// All numeric types (integers and floats) use generic numeric functions
+		if types.IsNumericTypeName(kt.GetName()) {
+			return mapRuntimeFns{
+				newFn:       "ferret_map_new_numeric",
+				fromPairsFn: "ferret_map_from_pairs_numeric",
+			}
+		}
 	case *types.NamedType:
 		return b.mapRuntimeFns(kt.Underlying)
 	}
+	// For complex types, use universal hashing if needed
+	if b.needsUniversalHashing(keyType) {
+		return mapRuntimeFns{
+			newFn:         "ferret_map_new_universal",
+			fromPairsFn:   "ferret_map_from_pairs_universal",
+			needsTypeInfo: true,
+		}
+	}
+	// Default to bytes for simple composite types
 	return mapRuntimeFns{
 		newFn:       "ferret_map_new_bytes",
 		fromPairsFn: "ferret_map_from_pairs_bytes",
+	}
+}
+
+// getOrCreateTypeDescriptor returns a ValueID for the type descriptor global address
+// The actual type descriptor structure will be created during C codegen based on the registered type
+func (b *functionBuilder) getOrCreateTypeDescriptor(typ types.SemType) mir.ValueID {
+	if b.gen == nil {
+		return mir.InvalidValue
+	}
+
+	// Generate unique key for this type
+	key := b.typeDescriptorKey(typ)
+
+	// Check if we already have a global name for this type
+	globalName, exists := b.gen.typeDescriptors[key]
+	if !exists {
+		// Register new type descriptor
+		b.gen.typeDescSeq++
+		globalName = fmt.Sprintf("$typedesc%d", b.gen.typeDescSeq)
+		b.gen.typeDescriptors[key] = globalName
+		// Store the type for QBE codegen to emit the actual structure
+		b.gen.typeDescTypes[globalName] = typ
+	}
+
+	// Emit a constant that references the global type descriptor
+	// QBE will see this as the address of the global
+	return b.emitConst(types.NewReference(types.TypeVoid), globalName, source.Location{})
+}
+
+// typeDescriptorKey generates a unique key for a type
+func (b *functionBuilder) typeDescriptorKey(typ types.SemType) string {
+	typ = types.UnwrapType(typ)
+	switch t := typ.(type) {
+	case *types.PrimitiveType:
+		return "prim_" + string(t.GetName())
+	case *types.MapType:
+		return "map_" + b.typeDescriptorKey(t.Key) + "_" + b.typeDescriptorKey(t.Value)
+	case *types.ArrayType:
+		if t.Length < 0 {
+			return fmt.Sprintf("slice_%s", b.typeDescriptorKey(t.Element))
+		}
+		return fmt.Sprintf("array_%d_%s", t.Length, b.typeDescriptorKey(t.Element))
+	case *types.StructType:
+		return fmt.Sprintf("struct_%p", t) // Use pointer for uniqueness
+	case *types.InterfaceType:
+		return "interface"
+	case *types.ReferenceType:
+		return "ref_" + b.typeDescriptorKey(t.Inner)
+	case *types.NamedType:
+		return "named_" + t.Name + "_" + b.typeDescriptorKey(t.Underlying)
+	default:
+		return fmt.Sprintf("unknown_%T", typ)
 	}
 }
 

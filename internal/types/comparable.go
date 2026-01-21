@@ -1,10 +1,15 @@
 package types
 
 // IsMapKeyComparable reports whether a type can be used as a map key.
-// Like Go, any comparable type can be used as a map key.
-// This includes primitives, structs, arrays, named types, references, and interfaces.
-// Note: Interface comparison can panic at runtime if the dynamic type is not comparable (like Go).
-// Only non-comparable types are: functions, maps, slices, optionals, unions, and results.
+// Like Go, only comparable types can be map keys.
+// This includes: primitives, enums, strings, pointers, fixed-size arrays of comparable types,
+// structs with all comparable fields, interfaces, and named types wrapping comparable types.
+//
+// NOT comparable (cannot be map keys):
+// - Functions (no meaningful equality)
+// - Maps (mutable, no meaningful equality)
+// - Slices (mutable, no meaningful equality)
+// - Unions, Optionals, Results (complex equality semantics)
 func IsMapKeyComparable(t SemType) bool {
 	if t == nil {
 		return false
@@ -12,20 +17,16 @@ func IsMapKeyComparable(t SemType) bool {
 	t = UnwrapType(t)
 	switch v := t.(type) {
 	case *PrimitiveType:
-		// All primitives are comparable
+		// All primitives are comparable (i32, f64, bool, byte, char, string, etc.)
 		return true
 	case *EnumType:
 		// Enums are comparable
 		return true
 	case *ReferenceType:
-		// References (pointers) are comparable
-		return true
-	case *InterfaceType:
-		// Interfaces are comparable (like Go)
-		// Note: Comparison may panic at runtime if dynamic type is not comparable
+		// Pointers are comparable (by address)
 		return true
 	case *StructType:
-		// Structs are comparable if all fields are comparable
+		// Structs are comparable if ALL fields are comparable
 		for _, field := range v.Fields {
 			if !IsMapKeyComparable(field.Type) {
 				return false
@@ -33,8 +34,8 @@ func IsMapKeyComparable(t SemType) bool {
 		}
 		return true
 	case *ArrayType:
-		// Fixed-size arrays are comparable if their elements are comparable
-		// Dynamic slices are NOT comparable (like Go)
+		// Fixed-size arrays [N]T are comparable if T is comparable
+		// Slices []T are NOT comparable (like Go)
 		if v.Length < 0 {
 			return false // slices not comparable
 		}
@@ -42,12 +43,15 @@ func IsMapKeyComparable(t SemType) bool {
 	case *NamedType:
 		// Named types are comparable if their underlying type is comparable
 		return IsMapKeyComparable(v.Underlying)
+	case *InterfaceType:
+		// Interfaces are comparable (16-byte struct: data pointer + type ID string)
+		// Two interface values are equal if they have identical dynamic types and equal dynamic values
+		return true
 	case *FunctionType, *MapType:
 		// Functions and maps are not comparable
 		return false
 	case *OptionalType, *UnionType, *ResultType:
 		// Optional, union, and result types are not comparable
-		// (would require complex equality semantics)
 		return false
 	default:
 		return false

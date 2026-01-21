@@ -1,0 +1,22 @@
+import "std/io";
+
+fn main() {
+    io::Println("=== Testing Slice Keys ===");
+    
+    // Simple test: slice of primitives
+    let slice1: []i32 = [1, 2, 3];
+    let slice2: []i32 = [1, 2, 3];
+    
+    io::Println("Creating map with slice key...");
+    let slice_map := { slice1 => "First" } as map[[]i32]str;
+    
+    io::Println("Looking up with same slice...");
+    let result1 := slice_map[slice1];
+    io::Println(result1);
+    
+    io::Println("Looking up with equivalent slice...");
+    let result2 := slice_map[slice2];
+    io::Println(result2);
+    
+    io::Println("✅ Done");
+}

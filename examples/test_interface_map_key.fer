@@ -1,0 +1,28 @@
+// Test interface{} as map key
+import "std/io";
+
+type Dog struct {
+    .name: str
+};
+
+type Cat struct {
+    .name: str
+};
+
+fn main() {
+    // Create a map with interface{} as key
+    let animal_map: map[interface{}]str = {} as map[interface{}]str;
+    
+    let dog: Dog = { .name = "Rex" };
+    let cat: Cat = { .name = "Whiskers" };
+    
+    // Box Dog and Cat into interface{}
+    let dog_iface: interface{} = dog as interface{};
+    let cat_iface: interface{} = cat as interface{};
+    
+    // Use interfaces as map keys
+    animal_map[dog_iface] = "Barks";
+    animal_map[cat_iface] = "Meows";
+    
+    io::Println("Interface map keys added successfully!");
+}

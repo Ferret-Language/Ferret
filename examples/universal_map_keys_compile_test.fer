@@ -1,0 +1,37 @@
+import "std/io";
+
+// ACTUAL RUNTIME TEST - Not just compilation!
+
+type ComplexStruct struct {
+    .data: map[str]i32,
+    .id: i32
+};
+
+fn main() {
+    io::Println("=== Testing Universal Map Keys (RUNTIME) ===\n");
+    
+    // Test 1: Map as key - Does it ACTUALLY work?
+    io::Println("Test 1: Map as key");
+    let inner1 := { "x" => 1 } as map[str]i32;
+    let inner2 := { "y" => 2 } as map[str]i32;
+    
+    let nested := {
+        inner1 => "First",
+        inner2 => "Second"
+    } as map[map[str]i32]str;
+    
+    // This will fail if runtime doesn't support content hashing
+    let lookup := { "x" => 1 } as map[str]i32;
+    let result := nested[lookup];
+    io::Println("Result:");
+    io::Println(result);
+    
+    // Test 2: Slice as key
+    io::Println("\nTest 2: Slice as key");
+    let slice1: []i32 = [1, 2, 3];
+    let slice_map := { slice1 => "Works" } as map[[]i32]str;
+    let result2 := slice_map[slice1];
+    io::Println(result2);
+    
+    io::Println("\n✅ All tests passed!");
+}

@@ -1,0 +1,59 @@
+import "std/io";
+
+type Point struct {
+    .x: i32,
+    .y: i32
+};
+
+fn main() {
+    io::Println("=== Testing Comparable Map Keys ===\n");
+    
+    // ✅ Primitives work
+    io::Println("1. Primitives as keys:");
+    let nums := {
+        1 => "one",
+        2 => "two"
+    } as map[i32]str;
+    io::Println(nums[1]);
+    
+    // ✅ Strings work
+    io::Println("\n2. Strings as keys:");
+    let strs := {
+        "hello" => 1,
+        "world" => 2
+    } as map[str]i32;
+    io::Println(strs["hello"]);
+    
+    // ✅ Structs work (if all fields comparable)
+    io::Println("\n3. Structs as keys:");
+    let origin: Point = { .x = 0, .y = 0 };
+    let points := {
+        origin => "Origin"
+    } as map[Point]str;
+    io::Println(points[origin]);
+    
+    // ✅ Fixed arrays work (if element comparable)
+    io::Println("\n4. Fixed arrays as keys:");
+    let coord: [2]i32 = [0, 0];
+    let grid := {
+        coord => "Home"
+    } as map[[2]i32]str;
+    io::Println(grid[coord]);
+    
+    // ❌ Slices should NOT compile
+    // let slice_map := {
+    //     [1, 2] => "value"
+    // } as map[[]i32]str;  // ERROR: []i32 is not comparable
+    
+    // ❌ Maps should NOT compile
+    // let map_map := {
+    //     {"x" => 1} => "value"
+    // } as map[map[str]i32]str;  // ERROR: map[str]i32 is not comparable
+    
+    // ❌ Functions should NOT compile
+    // let fn_map := {
+    //     main => "value"
+    // } as map[fn() -> ()]str;  // ERROR: function types are not comparable
+    
+    io::Println("\n✅ All comparable types work as map keys!");
+}

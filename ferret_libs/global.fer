@@ -25,5 +25,16 @@ fn self_addr(value: &Type) -> u64;
 fn heap_addr(value: &Type) -> u64;
 // @extern
 fn panic(msg: str) -> void;
+
+
+// New API
 // @extern
-fn Get();
+// Len is only used for Array
+// fn len(value: Sequence) -> i32;
+// // @extern
+// // Only for Array
+// fn append(values: &mut []Type, value: Type) -> bool;
+// @extern
+// Only for map
+// fn size<K, V>(value: &map[K]V) -> i32;
+// size(myMap);

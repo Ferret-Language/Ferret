@@ -1,0 +1,24 @@
+import "std/io";
+
+type Point struct {
+    .x: i32,
+    .y: i32
+};
+
+fn main() {
+    io::Println("=== Testing Struct Keys (should work with byte comparison) ===\n");
+    
+    let p1: Point = { .x = 1, .y = 2 };
+    let p2: Point = { .x = 3, .y = 4 };
+    
+    let points := {
+        p1 => "First",
+        p2 => "Second"
+    } as map[Point]str;
+    
+    let lookup: Point = { .x = 1, .y = 2 };
+    let result := points[lookup];
+    
+    io::Println("Point (1,2) maps to:", result);
+    io::Println("\n✅ Struct keys with primitives work!");
+}

@@ -320,7 +320,7 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 		// Source doesn't match any variant
 		return Incompatible
 	}
-	
+
 	// Check if target unwrapped is union (handles named types wrapping unions)
 	tgtUnwrapped := types.UnwrapType(target)
 	if unionType, ok := tgtUnwrapped.(*types.UnionType); ok {
@@ -356,7 +356,7 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 			return Incompatible
 		}
 	}
-	
+
 	// Reference type mismatch checks (source is reference, target is not, or vice versa)
 	if _, ok := types.UnwrapType(source).(*types.ReferenceType); ok {
 		if _, ok := types.UnwrapType(target).(*types.ReferenceType); !ok {

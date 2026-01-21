@@ -1498,7 +1498,9 @@ func checkIndexExpr(ctx *context_v2.CompilerContext, expr *ast.IndexExpr, baseTy
 		return
 	}
 	if mapType, ok := baseType.(*types.MapType); ok {
-		if checkTypeCompatibility(mapType.Key, indexType) == Incompatible {
+		// Check if index type can be assigned to map key type (source, target order)
+		// This allows implicit boxing: i32 -> interface{}, etc.
+		if checkTypeCompatibility(indexType, mapType.Key) == Incompatible {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("map index must be %s", mapType.Key.String())).
 					WithCode(diagnostics.ErrInvalidOperation).
@@ -1692,6 +1694,16 @@ func validateArrayLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 
 // checkMapLiteral validates map literal key/value types
 func checkMapLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, lit *ast.CompositeLit, mapType *types.MapType) {
+	// Validate that the key type is comparable
+	if !types.IsMapKeyComparable(mapType.Key) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("map key type '%s' is not comparable", mapType.Key.String())).
+				WithCode(diagnostics.ErrInvalidType).
+				WithPrimaryLabel(lit.Loc(), "map keys must be comparable").
+				WithHelp("Comparable types: primitives (i32, f64, str, bool, etc.), structs with comparable fields, fixed arrays [N]T where T is comparable, pointers, and enums.\nNon-comparable: slices []T, maps, functions, interfaces, unions, optionals, results."),
+		)
+	}
+
 	// Validate that all keys have compatible types with the map's key type
 	// Validate that all values have compatible types with the map's value type
 	for _, elem := range lit.Elts {
@@ -4121,7 +4133,7 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 				diagnostics.NewError(fmt.Sprintf("map key type '%s' is not comparable", keyType.String())).
 					WithCode(diagnostics.ErrInvalidType).
 					WithPrimaryLabel(t.Key.Loc(), "map keys must be comparable").
-					WithHelp("use a key type like integers, bool, byte, f32, f64, str, enums, or references"),
+					WithHelp("Comparable types: primitives (i32, f64, str, bool, byte, char), structs with comparable fields, fixed arrays [N]T (not slices), pointers, and enums.\nNon-comparable: slices []T, maps, functions, interfaces, unions, optionals, results."),
 			)
 		}
 		return types.NewMap(keyType, valueType)

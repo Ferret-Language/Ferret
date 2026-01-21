@@ -1,0 +1,19 @@
+import "std/io";
+
+fn main() {
+    io::Println("Creating slice...");
+    let slice1: []i32 = [1, 2, 3];
+    io::Println("Slice created");
+    
+    io::Println("Creating empty map with i32 key...");
+    let test_map := {} as map[i32]str;
+    io::Println("Map created");
+    
+    test_map[42] = "Works";
+    io::Println("Inserted into map");
+    
+    let result := test_map[42];
+    io::Println(result);
+    
+    io::Println("✅ Done");
+}

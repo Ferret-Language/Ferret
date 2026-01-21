@@ -1,0 +1,14 @@
+import "std/io";
+
+fn main() {
+    // This should FAIL: maps are not comparable
+    let inner1 := { "x" => 1 } as map[str]i32;
+    let inner2 := { "y" => 2 } as map[str]i32;
+    
+    let map_map: map[map[str]i32]str = {
+        inner1 => "first",
+        inner2 => "second"
+    };
+    
+    io::Println("Should not compile!");
+}

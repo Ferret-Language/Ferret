@@ -25,20 +25,23 @@ type closureInfo struct {
 
 // Generator lowers lowered HIR into MIR.
 type Generator struct {
-	ctx           *context_v2.CompilerContext
-	mod           *context_v2.Module
-	layout        *mir.DataLayout
-	nextValue     mir.ValueID
-	nextBlock     mir.BlockID
-	funcLits      map[string]*closureInfo
-	extraFns      []*mir.Function
-	funcWraps     map[string]string
-	wrapID        int
-	vtableSeq     int
-	vtables       map[string]*mir.VTable
-	typeIDGlobals map[string]string // Maps type ID string to global name
-	typeIDSeq     int               // Counter for generating unique type ID global names
-	heapReturns   map[string]types.SemType
+	ctx             *context_v2.CompilerContext
+	mod             *context_v2.Module
+	layout          *mir.DataLayout
+	nextValue       mir.ValueID
+	nextBlock       mir.BlockID
+	funcLits        map[string]*closureInfo
+	extraFns        []*mir.Function
+	funcWraps       map[string]string
+	wrapID          int
+	vtableSeq       int
+	vtables         map[string]*mir.VTable
+	typeIDGlobals   map[string]string // Maps type ID string to global name
+	typeIDSeq       int               // Counter for generating unique type ID global names
+	heapReturns     map[string]types.SemType
+	typeDescriptors map[string]string        // Maps type key to type descriptor global name
+	typeDescTypes   map[string]types.SemType // Maps global name to type for codegen
+	typeDescSeq     int                      // Counter for type descriptor names
 }
 
 // New creates a new MIR generator for a module.
@@ -48,14 +51,16 @@ func New(ctx *context_v2.CompilerContext, mod *context_v2.Module) *Generator {
 		pointerSize = ctx.Config.PointerSize
 	}
 	return &Generator{
-		ctx:           ctx,
-		mod:           mod,
-		layout:        mir.NewDataLayout(pointerSize),
-		funcLits:      make(map[string]*closureInfo),
-		funcWraps:     make(map[string]string),
-		vtables:       make(map[string]*mir.VTable),
-		typeIDGlobals: make(map[string]string),
-		heapReturns:   make(map[string]types.SemType),
+		ctx:             ctx,
+		mod:             mod,
+		layout:          mir.NewDataLayout(pointerSize),
+		funcLits:        make(map[string]*closureInfo),
+		funcWraps:       make(map[string]string),
+		vtables:         make(map[string]*mir.VTable),
+		typeIDGlobals:   make(map[string]string),
+		heapReturns:     make(map[string]types.SemType),
+		typeDescriptors: make(map[string]string),
+		typeDescTypes:   make(map[string]types.SemType),
 	}
 }
 
@@ -100,6 +105,12 @@ func (g *Generator) GenerateModule(hirMod *hir.Module) *mir.Module {
 		mirMod.TypeIDs = make(map[string]string, len(g.typeIDGlobals))
 		for typeID, globalName := range g.typeIDGlobals {
 			mirMod.TypeIDs[globalName] = typeID
+		}
+	}
+	if len(g.typeDescTypes) > 0 {
+		mirMod.TypeDescriptors = make(map[string]types.SemType, len(g.typeDescTypes))
+		for globalName, typ := range g.typeDescTypes {
+			mirMod.TypeDescriptors[globalName] = typ
 		}
 	}
 
