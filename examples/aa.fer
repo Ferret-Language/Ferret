@@ -1,0 +1,23 @@
+import "std/io";
+import "math";
+
+fn main() {
+    let arr := [1,2,3,4];
+    append(&mut arr, 5);
+    for v in arr {
+        io::Println(v);
+    }
+    io::Println("hello", 123, true, math::PI);
+    
+    io::Println("Who are you?");
+    let name := io::ReadUnsafe();
+    io::Println("Hello", name);
+
+    let a := #10;
+    
+    io::Println(heap_addr(&a));
+
+    let b := @a;
+
+    io::Println(heap_addr(&b));
+}

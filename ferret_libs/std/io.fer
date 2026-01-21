@@ -51,3 +51,5 @@ fn Printf(fmt: str, args: ...Printable) {
         count++;
     }
 }
+
+Printf("Hello {} {}", 3, 34);

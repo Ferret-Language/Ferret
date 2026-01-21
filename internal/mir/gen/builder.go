@@ -1550,6 +1550,25 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 				}
 			}
 		}
+		if isCompareOp(e.Op.Kind) {
+			leftBase := types.UnwrapType(leftType)
+			rightBase := types.UnwrapType(rightType)
+			leftIsFloat := types.IsFloat(leftBase) || types.IsUntypedFloat(leftType)
+			rightIsFloat := types.IsFloat(rightBase) || types.IsUntypedFloat(rightType)
+			if (leftIsFloat || rightIsFloat) && !isLargePrimitiveType(leftType) && !isLargePrimitiveType(rightType) {
+				target := compareFloatType(leftType, rightType)
+				if target != nil && !target.Equals(types.TypeUnknown) {
+					if leftType != nil && types.IsNumeric(types.UnwrapType(leftType)) && !leftType.Equals(target) {
+						left = b.castValue(left, leftType, target, e.Location)
+						leftType = target
+					}
+					if rightType != nil && types.IsNumeric(types.UnwrapType(rightType)) && !rightType.Equals(target) {
+						right = b.castValue(right, rightType, target, e.Location)
+						rightType = target
+					}
+				}
+			}
+		}
 		if isLargePrimitiveType(leftType) {
 			if isCompareOp(e.Op.Kind) {
 				return b.emitLargeCompare(e.Op.Kind, left, right, leftType, e.Location)
@@ -2920,6 +2939,29 @@ func isMoveExpr(expr hir.Expr) bool {
 		return false
 	}
 	return unary.Op.Kind == tokens.AT_TOKEN
+}
+
+func compareFloatType(leftType, rightType types.SemType) types.SemType {
+	if leftType == nil || rightType == nil {
+		return types.TypeUnknown
+	}
+	left := types.ResolveUntypedType(leftType, rightType)
+	right := types.ResolveUntypedType(rightType, leftType)
+	if types.IsUntyped(left) {
+		left = types.ResolveUntypedType(left, types.TypeUnknown)
+	}
+	if types.IsUntyped(right) {
+		right = types.ResolveUntypedType(right, types.TypeUnknown)
+	}
+	leftBase := types.UnwrapType(left)
+	rightBase := types.UnwrapType(right)
+	if types.IsFloat(leftBase) || types.IsFloat(rightBase) {
+		if leftBase.Equals(types.TypeF64) || rightBase.Equals(types.TypeF64) {
+			return types.TypeF64
+		}
+		return types.TypeF32
+	}
+	return types.TypeUnknown
 }
 
 func (b *functionBuilder) isHeapLValue(expr hir.Expr) bool {
