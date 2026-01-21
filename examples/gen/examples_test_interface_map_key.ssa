@@ -1,0 +1,82 @@
+data $__typeid_2 = { b 67, b 97, b 116, b 0 }
+data $__typeid_1 = { b 68, b 111, b 103, b 0 }
+data $typedesc1 = { w 13, w 0, l 8, l 0, l 0 }
+data $str1 = { b "Rex", b 0 }
+data $str2 = { b "Whiskers", b 0 }
+data $str3 = { b "Barks", b 0 }
+data $str4 = { b "Meows", b 0 }
+data $str5 = { b "Interface map keys added successfully!", b 0 }
+
+export function w $main() {
+@b1
+	%t1 =l alloc8 8
+	%t9 =l alloc8 8
+	%t12 =l alloc8 8
+	%t15 =l alloc8 16
+	%t19 =l alloc8 16
+	%t25 =l alloc8 16
+	%t29 =l alloc8 16
+	%t43 =l alloc8 36
+	%t2 =l copy 0
+	%t3 =l copy %t2
+	%t4 =l call $ferret_map_clone(l %t3)
+	storel %t4, %t1
+	%t5 =l copy 16
+	%t6 =l copy 8
+	%t7 =l copy $typedesc1
+	%t8 =l call $ferret_map_new_universal(l %t5, l %t6, l %t7)
+	call $ferret_map_assign(l %t1, l %t8)
+	%t10 =l copy $str1
+	%t11 =l add %t9, 0
+	storel %t10, %t11
+	%t13 =l copy $str2
+	%t14 =l add %t12, 0
+	storel %t13, %t14
+	%t16 =l copy 8
+	%t17 =l call $ferret_alloc(l %t16)
+	%t18 =l copy 8
+	call $ferret_memcpy(l %t17, l %t9, l %t18)
+	%t20 =l add %t19, 0
+	storel %t17, %t20
+	%t21 =l copy $__typeid_1
+	%t22 =l add %t19, 8
+	storel %t21, %t22
+	%t23 =l copy %t17
+	%t24 =l copy 16
+	call $ferret_memcpy(l %t15, l %t19, l %t24)
+	%t26 =l copy 8
+	%t27 =l call $ferret_alloc(l %t26)
+	%t28 =l copy 8
+	call $ferret_memcpy(l %t27, l %t12, l %t28)
+	%t30 =l add %t29, 0
+	storel %t27, %t30
+	%t31 =l copy $__typeid_2
+	%t32 =l add %t29, 8
+	storel %t31, %t32
+	%t33 =l copy %t27
+	%t34 =l copy 16
+	call $ferret_memcpy(l %t25, l %t29, l %t34)
+	%t35 =l loadl %t1
+	%t36 =l copy $str3
+	%q1 =l alloc8 8
+	storel %t36, %q1
+	call $ferret_map_set(l %t35, l %t15, l %q1)
+	%t37 =l loadl %t1
+	%t38 =l copy $str4
+	%q2 =l alloc8 8
+	storel %t38, %q2
+	call $ferret_map_set(l %t37, l %t25, l %q2)
+	%t39 =l copy 36
+	%t40 =w copy 1
+	%t41 =l call $ferret_array_new(l %t39, w %t40)
+	%t42 =l copy $str5
+	%t44 =l add %t43, 0
+	%t45 =w copy 16
+	storew %t45, %t44
+	%t46 =l add %t43, 4
+	storel %t42, %t46
+	call $ferret_array_append(l %t41, l %t43)
+	call $ferret_std_io_Println(l %t41)
+	ret 0
+}
+

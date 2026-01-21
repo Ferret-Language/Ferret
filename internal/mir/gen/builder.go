@@ -10,6 +10,7 @@ import (
 	"compiler/internal/mir"
 	"compiler/internal/semantics/narrowing"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typechecker"
 	"compiler/internal/source"
 	"compiler/internal/tokens"
 	"compiler/internal/types"
@@ -1781,6 +1782,55 @@ func (b *functionBuilder) isMapLiteralExpr(expr hir.Expr, expected types.SemType
 	return b.mapTypeOf(expr) != nil
 }
 
+func (b *functionBuilder) isSliceType(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	if arr, ok := types.UnwrapType(typ).(*types.ArrayType); ok {
+		return arr.Length < 0 // Negative length = slice
+	}
+	return false
+}
+
+// isImplicitlyCompatible checks if source type can be implicitly converted to target type
+// Used for MIR generation to determine if a cast is needed
+func (b *functionBuilder) isImplicitlyCompatible(source, target types.SemType) bool {
+	if source == nil || target == nil {
+		return false
+	}
+
+	if b != nil && b.gen != nil && b.gen.ctx != nil && b.gen.mod != nil {
+		return typechecker.IsImplicitlyCompatibleTypes(b.gen.ctx, b.gen.mod, source, target)
+	}
+
+	// Exact match
+	if source.Equals(target) {
+		return true
+	}
+
+	// Check if target is a named type and source matches its underlying type
+	// This allows: i32 -> Int1 where type Int1 i32
+	if targetNamed, ok := target.(*types.NamedType); ok {
+		if _, sourceIsNamed := source.(*types.NamedType); !sourceIsNamed {
+			// Source is base type, target is named type wrapping it
+			if source.Equals(types.UnwrapType(targetNamed)) {
+				return true
+			}
+		}
+	}
+
+	// Check reference compatibility: &i32 -> &Int1 if i32 -> Int1
+	if srcRef, ok := source.(*types.ReferenceType); ok {
+		if tgtRef, ok := target.(*types.ReferenceType); ok {
+			if srcRef.Mutable == tgtRef.Mutable {
+				return b.isImplicitlyCompatible(srcRef.Inner, tgtRef.Inner)
+			}
+		}
+	}
+
+	return false
+}
+
 func (b *functionBuilder) coerceValueForAssign(val mir.ValueID, fromType, toType types.SemType, loc source.Location) mir.ValueID {
 	if val == mir.InvalidValue || fromType == nil || toType == nil {
 		return val
@@ -2082,25 +2132,6 @@ func (b *functionBuilder) lowerPostfix(expr *hir.PostfixExpr) mir.ValueID {
 func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 	if expr == nil {
 		return mir.InvalidValue
-	}
-
-	if ident, ok := expr.Fun.(*hir.Ident); ok {
-		if name, ok := builtinNameFromIdent(ident); ok {
-			switch name {
-			case "len":
-				return b.lowerBuiltinLenCall(expr)
-			case "append":
-				return b.lowerBuiltinAppendCall(expr)
-			case "self_addr":
-				return b.lowerBuiltinSelfAddrCall(expr)
-			case "addr":
-				return b.lowerBuiltinAddrCall(expr)
-			case "heap_addr":
-				return b.lowerBuiltinHeapAddrCall(expr)
-			case "panic":
-				return b.lowerBuiltinPanicCall(expr)
-			}
-		}
 	}
 
 	fnType, _ := types.UnwrapType(b.exprType(expr.Fun)).(*types.FunctionType)
@@ -2482,16 +2513,29 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 		return mir.InvalidValue
 	}
 
-	// Unwrap reference types for comparison
-	unwrappedValueType := types.UnwrapType(valueType)
-
 	// Find which variant this value matches
+	// First try exact match, then try compatibility (for implicit upcasts)
 	variantIndex := -1
+	var targetVariant types.SemType
+
+	// Try exact match first (for performance)
 	for i, variant := range unionType.Variants {
-		unwrappedVariant := types.UnwrapType(variant)
-		if unwrappedValueType.Equals(unwrappedVariant) {
+		if valueType.Equals(variant) {
 			variantIndex = i
+			targetVariant = variant
 			break
+		}
+	}
+
+	// If no exact match, check for implicit compatibility
+	// This handles cases like: i32 -> Int1 (named type upcast), &i32 -> &Int1, etc.
+	if variantIndex < 0 {
+		for i, variant := range unionType.Variants {
+			if b.isImplicitlyCompatible(valueType, variant) {
+				variantIndex = i
+				targetVariant = variant
+				break
+			}
 		}
 	}
 
@@ -2499,18 +2543,25 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 		// Type checker should have caught this, but provide helpful debug info
 		if b.gen != nil && b.gen.ctx != nil {
 			valueTypeStr := valueType.String()
-			if unwrappedValueType != valueType {
-				valueTypeStr = fmt.Sprintf("%s (unwrapped: %s)", valueType.String(), unwrappedValueType.String())
-			}
 			variantStrs := make([]string, len(unionType.Variants))
 			for i, v := range unionType.Variants {
-				variantStrs[i] = types.UnwrapType(v).String()
+				variantStrs[i] = v.String()
 			}
 			b.gen.ctx.ReportError(fmt.Sprintf("MIR: union variant mismatch: type '%s' not in union variants [%s]",
 				valueTypeStr, strings.Join(variantStrs, ", ")), &loc)
 		}
 		b.reportUnsupported("union variant mismatch", &loc)
 		return mir.InvalidValue
+	}
+
+	// If value type doesn't exactly match target variant, insert implicit cast
+	if !valueType.Equals(targetVariant) {
+		if interfaceTypeOf(targetVariant) != nil {
+			value = b.boxInterfaceValue(value, valueType, targetVariant, loc)
+		} else {
+			value = b.emitCast(value, targetVariant, loc)
+		}
+		valueType = targetVariant
 	}
 
 	// Allocate space for the union (tag + max variant size)
@@ -2856,172 +2907,6 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 	return boundsCheck
 }
 
-func builtinNameFromIdent(ident *hir.Ident) (string, bool) {
-	if ident == nil || ident.Symbol == nil || !ident.Symbol.IsBuiltin {
-		return "", false
-	}
-	if ident.Symbol.BuiltinName != "" {
-		return ident.Symbol.BuiltinName, true
-	}
-	return ident.Name, true
-}
-
-func (b *functionBuilder) lowerBuiltinLenCall(expr *hir.CallExpr) mir.ValueID {
-	if expr == nil || len(expr.Args) != 1 {
-		b.reportUnsupported("len argument count", expr.Loc())
-		return mir.InvalidValue
-	}
-
-	argExpr := expr.Args[0]
-	argVal := b.lowerExpr(argExpr)
-	if argVal == mir.InvalidValue {
-		return mir.InvalidValue
-	}
-	argVal, _ = b.derefValueIfNeeded(argVal, b.exprType(argExpr), expr.Location)
-
-	if arrType := b.arrayTypeOf(argExpr); arrType != nil {
-		if arrType.Length >= 0 {
-			return b.emitConst(types.TypeI32, strconv.Itoa(arrType.Length), expr.Location)
-		}
-		return b.emitArrayLen(argVal, expr.Location)
-	}
-
-	if b.mapTypeOf(argExpr) != nil {
-		result := mir.InvalidValue
-		if expr.Type != nil && !expr.Type.Equals(types.TypeVoid) {
-			result = b.gen.nextValueID()
-		}
-		b.emitInstr(&mir.Call{
-			Result:   result,
-			Target:   "ferret_map_size",
-			Args:     []mir.ValueID{argVal},
-			Type:     types.TypeI32,
-			Location: expr.Location,
-		})
-		return result
-	}
-
-	if b.isStringType(argExpr) {
-		result := b.gen.nextValueID()
-		b.emitInstr(&mir.Call{
-			Result:   result,
-			Target:   "ferret_string_len",
-			Args:     []mir.ValueID{argVal},
-			Type:     types.TypeI32,
-			Location: expr.Location,
-		})
-		return result
-	}
-
-	b.reportUnsupported("len target", expr.Loc())
-	return mir.InvalidValue
-}
-
-func (b *functionBuilder) lowerBuiltinAppendCall(expr *hir.CallExpr) mir.ValueID {
-	if expr == nil || len(expr.Args) != 2 {
-		b.reportUnsupported("append argument count", expr.Loc())
-		return mir.InvalidValue
-	}
-
-	arrExpr := expr.Args[0]
-	valExpr := expr.Args[1]
-	arrVal := b.lowerExpr(arrExpr)
-	if arrVal == mir.InvalidValue {
-		return mir.InvalidValue
-	}
-	arrVal, _ = b.derefValueIfNeeded(arrVal, b.exprType(arrExpr), expr.Location)
-	value := b.lowerExpr(valExpr)
-	if value == mir.InvalidValue {
-		return mir.InvalidValue
-	}
-
-	arrType := b.arrayTypeOf(arrExpr)
-	if arrType == nil || arrType.Length >= 0 {
-		b.reportUnsupported("append target", expr.Loc())
-		return mir.InvalidValue
-	}
-
-	temp := b.emitAlloca(arrType.Element, expr.Location)
-	b.emitStore(temp, value, expr.Location)
-
-	result := mir.InvalidValue
-	if expr.Type != nil && !expr.Type.Equals(types.TypeVoid) {
-		result = b.gen.nextValueID()
-	}
-	b.emitInstr(&mir.Call{
-		Result:   result,
-		Target:   "ferret_array_append",
-		Args:     []mir.ValueID{arrVal, temp},
-		Type:     types.TypeBool,
-		Location: expr.Location,
-	})
-	return result
-}
-
-func (b *functionBuilder) lowerBuiltinSelfAddrCall(expr *hir.CallExpr) mir.ValueID {
-	if expr == nil || len(expr.Args) != 1 {
-		b.reportUnsupported("self_addr argument count", expr.Loc())
-		return mir.InvalidValue
-	}
-
-	arg := expr.Args[0]
-	addr := mir.InvalidValue
-	if unary, ok := arg.(*hir.UnaryExpr); ok && (unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN) {
-		if ident, ok := unary.X.(*hir.Ident); ok && ident.Symbol != nil {
-			addr = b.bindingAddr(ident)
-		} else {
-			addr = b.lowerLValue(unary.X)
-		}
-	} else if ident, ok := arg.(*hir.Ident); ok && ident.Symbol != nil {
-		addr = b.bindingAddr(ident)
-	} else {
-		addr = b.lowerExpr(arg)
-	}
-	if addr == mir.InvalidValue {
-		return mir.InvalidValue
-	}
-	return b.emitCast(addr, types.TypeU64, expr.Location)
-}
-
-func (b *functionBuilder) lowerBuiltinAddrCall(expr *hir.CallExpr) mir.ValueID {
-	if expr == nil || len(expr.Args) != 1 {
-		b.reportUnsupported("addr argument count", expr.Loc())
-		return mir.InvalidValue
-	}
-
-	arg := expr.Args[0]
-	refVal := b.lowerExpr(arg)
-	if refVal == mir.InvalidValue {
-		return mir.InvalidValue
-	}
-	return b.emitCast(refVal, types.TypeU64, expr.Location)
-}
-
-func (b *functionBuilder) lowerBuiltinHeapAddrCall(expr *hir.CallExpr) mir.ValueID {
-	if expr == nil || len(expr.Args) != 1 {
-		b.reportUnsupported("heap_addr argument count", expr.Loc())
-		return mir.InvalidValue
-	}
-
-	arg := expr.Args[0]
-	argType := b.exprType(arg)
-	refType, ok := types.UnwrapType(argType).(*types.ReferenceType)
-	if !ok || refType.Inner == nil {
-		b.reportUnsupported("heap_addr argument type", expr.Loc())
-		return mir.InvalidValue
-	}
-
-	refVal := b.lowerExpr(arg)
-	if refVal == mir.InvalidValue {
-		return mir.InvalidValue
-	}
-	heapVal := b.computeBorrowHeap(arg, refVal, refType.Inner, expr.Location)
-	if heapVal == mir.InvalidValue {
-		heapVal = b.zeroU64(expr.Location)
-	}
-	return heapVal
-}
-
 func isMoveExpr(expr hir.Expr) bool {
 	for {
 		if p, ok := expr.(*hir.ParenExpr); ok {
@@ -3183,29 +3068,6 @@ func (b *functionBuilder) heapFromValue(val mir.ValueID, typ types.SemType, loc 
 		return b.emitCast(dataPtr, types.TypeU64, loc)
 	}
 	return b.zeroU64(loc)
-}
-
-func (b *functionBuilder) lowerBuiltinPanicCall(expr *hir.CallExpr) mir.ValueID {
-	if expr == nil || len(expr.Args) != 1 {
-		b.reportUnsupported("panic argument count", expr.Loc())
-		return mir.InvalidValue
-	}
-
-	msgExpr := expr.Args[0]
-	msgVal := b.lowerExpr(msgExpr)
-	if msgVal == mir.InvalidValue {
-		return mir.InvalidValue
-	}
-
-	// Call ferret_global_panic with the message string
-	b.emitInstr(&mir.Call{
-		Result:   mir.InvalidValue,
-		Target:   "ferret_global_panic",
-		Args:     []mir.ValueID{msgVal},
-		Type:     types.TypeVoid,
-		Location: expr.Location,
-	})
-	return mir.InvalidValue // panic never returns
 }
 
 func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.CallExpr) mir.ValueID {
@@ -4004,12 +3866,22 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 	valSizeVal := b.emitConst(sizeType, strconv.Itoa(valSize), lit.Location)
 
 	fns := b.mapRuntimeFns(mapType.Key)
+
+	var args []mir.ValueID
+	if fns.needsTypeInfo {
+		// Generate type descriptor for universal hashing
+		typeDesc := b.getOrCreateTypeDescriptor(mapType.Key)
+		args = []mir.ValueID{keySizeVal, valSizeVal, typeDesc}
+	} else {
+		args = []mir.ValueID{keySizeVal, valSizeVal}
+	}
+
 	if len(lit.Elts) == 0 {
 		result := b.gen.nextValueID()
 		b.emitInstr(&mir.Call{
 			Result:   result,
 			Target:   fns.newFn,
-			Args:     []mir.ValueID{keySizeVal, valSizeVal},
+			Args:     args,
 			Type:     lit.Type,
 			Location: lit.Location,
 		})
@@ -4047,7 +3919,20 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 		valOffset := i * valSize
 		keySlot := b.emitPtrAdd(keysAddr, keyOffset, mapType.Key, kv.Location)
 		valSlot := b.emitPtrAdd(valsAddr, valOffset, mapType.Value, kv.Location)
-		b.emitStore(keySlot, keyVal, kv.Location)
+
+		// For keys: use direct Store for slices/maps to avoid cloning the underlying data
+		// We want to copy the slice/map struct itself, not clone its contents
+		if b.isDynamicArrayLiteralExpr(kv.Key, mapType.Key) || b.isMapLiteralExpr(kv.Key, mapType.Key) || b.isSliceType(mapType.Key) {
+			b.emitInstr(&mir.Store{
+				Addr:     keySlot,
+				Value:    keyVal,
+				Location: kv.Location,
+			})
+		} else {
+			b.emitStore(keySlot, keyVal, kv.Location)
+		}
+
+		// For values: use direct Store for array/map literals to avoid cloning
 		if b.isDynamicArrayLiteralExpr(kv.Value, mapType.Value) || b.isMapLiteralExpr(kv.Value, mapType.Value) {
 			b.emitInstr(&mir.Store{
 				Addr:     valSlot,
@@ -4061,10 +3946,20 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 
 	countVal := b.emitConst(sizeType, strconv.Itoa(len(lit.Elts)), lit.Location)
 	result := b.gen.nextValueID()
+
+	var pairsArgs []mir.ValueID
+	if fns.needsTypeInfo {
+		// Generate type descriptor for universal hashing
+		typeDesc := b.getOrCreateTypeDescriptor(mapType.Key)
+		pairsArgs = []mir.ValueID{keySizeVal, valSizeVal, keysAddr, valsAddr, countVal, typeDesc}
+	} else {
+		pairsArgs = []mir.ValueID{keySizeVal, valSizeVal, keysAddr, valsAddr, countVal}
+	}
+
 	b.emitInstr(&mir.Call{
 		Result:   result,
 		Target:   fns.fromPairsFn,
-		Args:     []mir.ValueID{keySizeVal, valSizeVal, keysAddr, valsAddr, countVal},
+		Args:     pairsArgs,
 		Type:     lit.Type,
 		Location: lit.Location,
 	})
@@ -4982,47 +4877,117 @@ func (b *functionBuilder) mapTypeOf(expr hir.Expr) *types.MapType {
 }
 
 type mapRuntimeFns struct {
-	newFn       string
-	fromPairsFn string
+	newFn         string
+	fromPairsFn   string
+	needsTypeInfo bool
+}
+
+// needsUniversalHashing returns true if the key type requires content-based hashing
+func (b *functionBuilder) needsUniversalHashing(keyType types.SemType) bool {
+	keyType = types.UnwrapType(keyType)
+	switch kt := keyType.(type) {
+	case *types.PrimitiveType:
+		// Primitives have specialized hash functions
+		switch kt.GetName() {
+		case types.TYPE_I32, types.TYPE_I64, types.TYPE_F32, types.TYPE_F64, types.TYPE_STRING:
+			return false
+		}
+		// Other primitives (bool, byte, etc.) could use universal or bytes
+		return false
+	case *types.NamedType:
+		return b.needsUniversalHashing(kt.Underlying)
+	case *types.MapType, *types.ArrayType, *types.StructType, *types.InterfaceType:
+		// Complex types need universal hashing for content comparison
+		return true
+	}
+	return false
 }
 
 func (b *functionBuilder) mapRuntimeFns(keyType types.SemType) mapRuntimeFns {
 	keyType = types.UnwrapType(keyType)
 	switch kt := keyType.(type) {
 	case *types.PrimitiveType:
-		switch kt.GetName() {
-		case types.TYPE_I32:
-			return mapRuntimeFns{
-				newFn:       "ferret_map_new_i32",
-				fromPairsFn: "ferret_map_from_pairs_i32",
-			}
-		case types.TYPE_I64:
-			return mapRuntimeFns{
-				newFn:       "ferret_map_new_i64",
-				fromPairsFn: "ferret_map_from_pairs_i64",
-			}
-		case types.TYPE_F32:
-			return mapRuntimeFns{
-				newFn:       "ferret_map_new_f32",
-				fromPairsFn: "ferret_map_from_pairs_f32",
-			}
-		case types.TYPE_F64:
-			return mapRuntimeFns{
-				newFn:       "ferret_map_new_f64",
-				fromPairsFn: "ferret_map_from_pairs_f64",
-			}
-		case types.TYPE_STRING:
+		// String needs special handling (pointer dereference)
+		if kt.GetName() == types.TYPE_STRING {
 			return mapRuntimeFns{
 				newFn:       "ferret_map_new_str",
 				fromPairsFn: "ferret_map_from_pairs_str",
 			}
 		}
+		// All numeric types (integers and floats) use generic numeric functions
+		if types.IsNumericTypeName(kt.GetName()) {
+			return mapRuntimeFns{
+				newFn:       "ferret_map_new_numeric",
+				fromPairsFn: "ferret_map_from_pairs_numeric",
+			}
+		}
 	case *types.NamedType:
 		return b.mapRuntimeFns(kt.Underlying)
 	}
+	// For complex types, use universal hashing if needed
+	if b.needsUniversalHashing(keyType) {
+		return mapRuntimeFns{
+			newFn:         "ferret_map_new_universal",
+			fromPairsFn:   "ferret_map_from_pairs_universal",
+			needsTypeInfo: true,
+		}
+	}
+	// Default to bytes for simple composite types
 	return mapRuntimeFns{
 		newFn:       "ferret_map_new_bytes",
 		fromPairsFn: "ferret_map_from_pairs_bytes",
+	}
+}
+
+// getOrCreateTypeDescriptor returns a ValueID for the type descriptor global address
+// The actual type descriptor structure will be created during C codegen based on the registered type
+func (b *functionBuilder) getOrCreateTypeDescriptor(typ types.SemType) mir.ValueID {
+	if b.gen == nil {
+		return mir.InvalidValue
+	}
+
+	// Generate unique key for this type
+	key := b.typeDescriptorKey(typ)
+
+	// Check if we already have a global name for this type
+	globalName, exists := b.gen.typeDescriptors[key]
+	if !exists {
+		// Register new type descriptor
+		b.gen.typeDescSeq++
+		globalName = fmt.Sprintf("$typedesc%d", b.gen.typeDescSeq)
+		b.gen.typeDescriptors[key] = globalName
+		// Store the type for QBE codegen to emit the actual structure
+		b.gen.typeDescTypes[globalName] = typ
+	}
+
+	// Emit a constant that references the global type descriptor
+	// QBE will see this as the address of the global
+	return b.emitConst(types.NewReference(types.TypeVoid), globalName, source.Location{})
+}
+
+// typeDescriptorKey generates a unique key for a type
+func (b *functionBuilder) typeDescriptorKey(typ types.SemType) string {
+	typ = types.UnwrapType(typ)
+	switch t := typ.(type) {
+	case *types.PrimitiveType:
+		return "prim_" + string(t.GetName())
+	case *types.MapType:
+		return "map_" + b.typeDescriptorKey(t.Key) + "_" + b.typeDescriptorKey(t.Value)
+	case *types.ArrayType:
+		if t.Length < 0 {
+			return fmt.Sprintf("slice_%s", b.typeDescriptorKey(t.Element))
+		}
+		return fmt.Sprintf("array_%d_%s", t.Length, b.typeDescriptorKey(t.Element))
+	case *types.StructType:
+		return fmt.Sprintf("struct_%p", t) // Use pointer for uniqueness
+	case *types.InterfaceType:
+		return "interface"
+	case *types.ReferenceType:
+		return "ref_" + b.typeDescriptorKey(t.Inner)
+	case *types.NamedType:
+		return "named_" + t.Name + "_" + b.typeDescriptorKey(t.Underlying)
+	default:
+		return fmt.Sprintf("unknown_%T", typ)
 	}
 }
 

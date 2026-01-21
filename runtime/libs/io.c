@@ -7,9 +7,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <limits.h>
+#include <inttypes.h>
+#include <string.h>
 #include "../core/alloc.h"
 #include "../core/array.h"
-#include "../core/bigint.h"
+#include "../core/type_system.h"
 
 // For ssize_t on non-POSIX systems
 #ifdef _WIN32
@@ -59,8 +61,7 @@ static ssize_t getline(char** lineptr, size_t* n, FILE* stream) {
 }
 #endif
 // Printable union layout: [4-byte tag][32 bytes data] = 36 bytes total (to accommodate 256-bit types)
-// Tags: 0=i8, 1=i16, 2=i32, 3=i64, 4=i128, 5=i256, 6=u8, 7=u16, 8=u32, 9=u64, 10=u128, 11=u256,
-//       12=f32, 13=f64, 14=f128, 15=f256, 16=str, 17=byte, 18=bool
+// Tags follow ferret_type_kind_t for primitives (Printable union order).
 
 // Print a float/double with at least one decimal place (e.g., 8.0 not 8)
 static void print_float(double val, int precision) {
@@ -84,92 +85,164 @@ static void print_float(double val, int precision) {
     }
 }
 
+static void print_char_codepoint(uint32_t codepoint) {
+    if (codepoint <= 0x7F) {
+        // ASCII
+        printf("%c", (char)codepoint);
+    } else if (codepoint <= 0x7FF) {
+        // 2-byte UTF-8
+        printf("%c%c",
+            (char)(0xC0 | (codepoint >> 6)),
+            (char)(0x80 | (codepoint & 0x3F)));
+    } else if (codepoint <= 0xFFFF) {
+        // 3-byte UTF-8
+        printf("%c%c%c",
+            (char)(0xE0 | (codepoint >> 12)),
+            (char)(0x80 | ((codepoint >> 6) & 0x3F)),
+            (char)(0x80 | (codepoint & 0x3F)));
+    } else if (codepoint <= 0x10FFFF) {
+        // 4-byte UTF-8
+        printf("%c%c%c%c",
+            (char)(0xF0 | (codepoint >> 18)),
+            (char)(0x80 | ((codepoint >> 12) & 0x3F)),
+            (char)(0x80 | ((codepoint >> 6) & 0x3F)),
+            (char)(0x80 | (codepoint & 0x3F)));
+    } else {
+        printf("\\u{%X}", codepoint);
+    }
+}
+
+#define FERRET_DECLARE_TO_STRING_PTR_INT(name, lower, ctype, bits) \
+    char* ferret_##lower##_to_string_ptr(const ctype* val);
+
+#define FERRET_DECLARE_TO_STRING_PTR_UINT(name, lower, ctype, bits) \
+    char* ferret_##lower##_to_string_ptr(const ctype* val);
+
+#define FERRET_DECLARE_TO_STRING_PTR_FLOAT(name, lower, ctype, bits) \
+    char* ferret_##lower##_to_string_ptr(const ctype* val);
+
+#define FERRET_DECLARE_TO_STRING_PTR_STRING(name, lower, ctype, bits)
+#define FERRET_DECLARE_TO_STRING_PTR_BYTE(name, lower, ctype, bits)
+#define FERRET_DECLARE_TO_STRING_PTR_CHAR(name, lower, ctype, bits)
+#define FERRET_DECLARE_TO_STRING_PTR_BOOL(name, lower, ctype, bits)
+
+#define FERRET_DECLARE_TO_STRING_PTR(name, lower, ctype, category, bits) \
+    FERRET_DECLARE_TO_STRING_PTR_##category(name, lower, ctype, bits)
+
+FERRET_PRIMITIVE_TYPES(FERRET_DECLARE_TO_STRING_PTR)
+#undef FERRET_DECLARE_TO_STRING_PTR
+#undef FERRET_DECLARE_TO_STRING_PTR_INT
+#undef FERRET_DECLARE_TO_STRING_PTR_UINT
+#undef FERRET_DECLARE_TO_STRING_PTR_FLOAT
+#undef FERRET_DECLARE_TO_STRING_PTR_STRING
+#undef FERRET_DECLARE_TO_STRING_PTR_BYTE
+#undef FERRET_DECLARE_TO_STRING_PTR_CHAR
+#undef FERRET_DECLARE_TO_STRING_PTR_BOOL
+
+#define FERRET_PRINT_BODY_INT(data, ctype, bits, lower) \
+    do { \
+        if ((bits) <= 64) { \
+            uint64_t raw = 0; \
+            int64_t value = 0; \
+            size_t bytes = (bits) / 8; \
+            memcpy(&raw, (data), bytes); \
+            if ((bits) < 64) { \
+                int shift = 64 - (bits); \
+                value = (int64_t)((raw << shift)) >> shift; \
+            } else { \
+                value = (int64_t)raw; \
+            } \
+            printf("%" PRId64, value); \
+            break; \
+        } \
+        char* s = ferret_##lower##_to_string_ptr((const ctype*)(data)); \
+        if (s != NULL) { \
+            printf("%s", s); \
+            free(s); \
+        } \
+    } while (0)
+
+#define FERRET_PRINT_BODY_UINT(data, ctype, bits, lower) \
+    do { \
+        if ((bits) <= 64) { \
+            uint64_t value = 0; \
+            size_t bytes = (bits) / 8; \
+            memcpy(&value, (data), bytes); \
+            printf("%" PRIu64, value); \
+            break; \
+        } \
+        char* s = ferret_##lower##_to_string_ptr((const ctype*)(data)); \
+        if (s != NULL) { \
+            printf("%s", s); \
+            free(s); \
+        } \
+    } while (0)
+
+#define FERRET_PRINT_BODY_FLOAT(data, ctype, bits, lower) \
+    do { \
+        if ((bits) <= 32) { \
+            print_float(*(const float*)(data), 6); \
+            break; \
+        } \
+        if ((bits) <= 64) { \
+            print_float(*(const double*)(data), 15); \
+            break; \
+        } \
+        char* s = ferret_##lower##_to_string_ptr((const ctype*)(data)); \
+        if (s != NULL) { \
+            printf("%s", s); \
+            free(s); \
+        } \
+    } while (0)
+
+#define FERRET_PRINT_BODY_STRING(data, ctype, bits, lower) \
+    do { \
+        const char* str = *(const char**)(data); \
+        printf("%s", str ? str : "(null)"); \
+    } while (0)
+
+#define FERRET_PRINT_BODY_BYTE(data, ctype, bits, lower) \
+    do { \
+        printf("%c", *(const uint8_t*)(data)); \
+    } while (0)
+
+#define FERRET_PRINT_BODY_CHAR(data, ctype, bits, lower) \
+    do { \
+        print_char_codepoint(*(const uint32_t*)(data)); \
+    } while (0)
+
+#define FERRET_PRINT_BODY_BOOL(data, ctype, bits, lower) \
+    do { \
+        printf("%s", *(const bool*)(data) ? "true" : "false"); \
+    } while (0)
+
+#define FERRET_DEFINE_PRINT(name, lower, ctype, category, bits) \
+    static void ferret_print_##lower(const void* data) { \
+        FERRET_PRINT_BODY_##category(data, ctype, bits, lower); \
+    }
+
+FERRET_PRIMITIVE_TYPES(FERRET_DEFINE_PRINT)
+#undef FERRET_DEFINE_PRINT
+#undef FERRET_PRINT_BODY_INT
+#undef FERRET_PRINT_BODY_UINT
+#undef FERRET_PRINT_BODY_FLOAT
+#undef FERRET_PRINT_BODY_STRING
+#undef FERRET_PRINT_BODY_BYTE
+#undef FERRET_PRINT_BODY_CHAR
+#undef FERRET_PRINT_BODY_BOOL
+#undef FERRET_DEFINE_PRINT
+
 static void print_union(const void* union_ptr) {
     int32_t tag = *(int32_t*)union_ptr;
     const uint8_t* data = (const uint8_t*)union_ptr + 4;
     
     switch (tag) {
-        case 0: printf("%d", *(int8_t*)data); break;      // i8
-        case 1: printf("%d", *(int16_t*)data); break;     // i16
-        case 2: printf("%d", *(int32_t*)data); break;     // i32
-        case 3: printf("%ld", *(int64_t*)data); break;    // i64
-        case 4: {  // i128
-            char* s = ferret_i128_to_string_ptr((const ferret_i128*)data);
-            printf("%s", s);
-            free(s);
+#define FERRET_PRINT_CASE(name, lower, ctype, category, bits) \
+        case FERRET_TYPE_##name: \
+            ferret_print_##lower(data); \
             break;
-        }
-        case 5: {  // i256
-            char* s = ferret_i256_to_string_ptr((const ferret_i256*)data);
-            printf("%s", s);
-            free(s);
-            break;
-        }
-        case 6: printf("%u", *(uint8_t*)data); break;     // u8
-        case 7: printf("%u", *(uint16_t*)data); break;    // u16
-        case 8: printf("%u", *(uint32_t*)data); break;    // u32
-        case 9: printf("%lu", *(uint64_t*)data); break;   // u64
-        case 10: {  // u128
-            char* s = ferret_u128_to_string_ptr((const ferret_u128*)data);
-            printf("%s", s);
-            free(s);
-            break;
-        }
-        case 11: {  // u256
-            char* s = ferret_u256_to_string_ptr((const ferret_u256*)data);
-            printf("%s", s);
-            free(s);
-            break;
-        }
-        case 12: print_float(*(float*)data, 6); break;     // f32
-        case 13: print_float(*(double*)data, 15); break;   // f64
-        case 14: {  // f128
-            char* s = ferret_f128_to_string_ptr((const ferret_f128*)data);
-            printf("%s", s);
-            free(s);
-            break;
-        }
-        case 15: {  // f256
-            char* s = ferret_f256_to_string_ptr((const ferret_f256*)data);
-            printf("%s", s);
-            free(s);
-            break;
-        }
-        case 16: {  // str
-            const char* str = *(const char**)data;
-            printf("%s", str ? str : "(null)");
-            break;
-        }
-        case 17: printf("%c", *(uint8_t*)data); break;    // byte
-        case 18: {  // char (32-bit Unicode scalar)
-            uint32_t codepoint = *(uint32_t*)data;
-            if (codepoint <= 0x7F) {
-                // ASCII
-                printf("%c", (char)codepoint);
-            } else if (codepoint <= 0x7FF) {
-                // 2-byte UTF-8
-                printf("%c%c",
-                    (char)(0xC0 | (codepoint >> 6)),
-                    (char)(0x80 | (codepoint & 0x3F)));
-            } else if (codepoint <= 0xFFFF) {
-                // 3-byte UTF-8
-                printf("%c%c%c",
-                    (char)(0xE0 | (codepoint >> 12)),
-                    (char)(0x80 | ((codepoint >> 6) & 0x3F)),
-                    (char)(0x80 | (codepoint & 0x3F)));
-            } else if (codepoint <= 0x10FFFF) {
-                // 4-byte UTF-8
-                printf("%c%c%c%c",
-                    (char)(0xF0 | (codepoint >> 18)),
-                    (char)(0x80 | ((codepoint >> 12) & 0x3F)),
-                    (char)(0x80 | ((codepoint >> 6) & 0x3F)),
-                    (char)(0x80 | (codepoint & 0x3F)));
-            } else {
-                printf("\\u{%X}", codepoint);
-            }
-            break;
-        }
-        case 19: printf("%s", *(bool*)data ? "true" : "false"); break; // bool
+        FERRET_PRIMITIVE_TYPES(FERRET_PRINT_CASE)
+#undef FERRET_PRINT_CASE
         default: printf("<invalid union tag %d>", tag); break;
     }
 }

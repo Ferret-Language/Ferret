@@ -1,0 +1,13 @@
+import "std/io";
+
+fn main() {
+    io::Println("Creating slice...");
+    let slice1: []i32 = [1, 2, 3];
+    io::Println("Slice created");
+    
+    io::Println("About to use slice in map literal...");
+    let slice_map := { slice1 => "First" } as map[[]i32]str;
+    io::Println("Map literal created!");
+    
+    io::Println("✅ Done");
+}

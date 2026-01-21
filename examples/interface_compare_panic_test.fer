@@ -1,0 +1,49 @@
+import "std/io";
+
+type Container interface {
+    get() -> i32
+};
+
+type ValidBox struct {
+    .value: i32
+};
+
+fn (self: ValidBox) get() -> i32 {
+    return self.value;
+}
+
+type InvalidBox struct {
+    .data: map[str]i32  // maps are not comparable!
+};
+
+fn (self: InvalidBox) get() -> i32 {
+    return 42;
+}
+
+fn main() {
+    io::Println("Test 1: Valid comparable type in interface");
+    let valid: ValidBox = { .value = 10 };
+    let iface1: Container = valid;
+    let iface2: Container = valid;
+    
+    // This should work - ValidBox is comparable
+    if iface1 == iface2 {
+        io::Println("Valid interfaces are equal");
+    }
+    
+    io::Println("\nTest 2: Invalid non-comparable type in interface");
+    let data: map[str]i32 = {} as map[str]i32;
+    let invalid: InvalidBox = { .data = data };
+    let iface3: Container = invalid;
+    let iface4: Container = invalid;
+    
+    io::Println("Assignment succeeded (no panic yet)");
+    
+    // This should panic - InvalidBox contains a map which is not comparable
+    io::Println("About to compare...");
+    if iface3 == iface4 {
+        io::Println("This should not print. iface are equal");
+    } else {
+        io::Println("This should not print either. iface are not equal");
+    }
+}

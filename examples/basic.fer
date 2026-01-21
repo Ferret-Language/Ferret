@@ -6,10 +6,36 @@ fn main() {
     let x: i32 = 10;
     let y: i32 = 10;
     
+    let bigx : i256 = 10;
+    let bigy : i256 = 10;
+    
+    let arr1 := [1,2,3,4];
+
+    append(&mut arr1, 5);
+    
+    io::Println("len of arr1:", len(arr1), "last:", arr1[-1]);
+    io::Println("len of array literal:", len([1,2,3,4]));
+    //Len(x);
+        
+    let simpleMap := {
+        "a" => 1,
+        "2" => 3
+    };
+    
+    io::Println("size of map before:", size(simpleMap));
+
+    set(&mut simpleMap, "task", 6);
+
+    io::Println("size of map after:", size(simpleMap));
+
+    io::Println("added value:", simpleMap["task"]);
+
     // Arithmetic
     let sum := x + y;
     let diff := x - y;
     let prod := x * y;
+    
+    let prod_big := bigx * bigy;
     
     // If-else
     if sum > 25 {
@@ -20,6 +46,7 @@ fn main() {
     
     // Function call
     print_result(sum);
+    print_result(prod_big as i32);
 }
 
 fn print_result(value: i32) {

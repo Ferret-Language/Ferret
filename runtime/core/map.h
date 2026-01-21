@@ -25,6 +25,7 @@ typedef struct {
     size_t value_size;             // Size of value type in bytes
     uint32_t (*hash_fn)(const void* key, size_t key_size); // Hash function
     bool (*equals_fn)(const void* key1, const void* key2, size_t key_size); // Equality function
+    void* key_type_info;           // Type descriptor for universal hashing (ferret_type_info_t*)
 } ferret_map_t;
 
 // Create a new map
@@ -66,10 +67,7 @@ void ferret_map_assign(ferret_map_t** dst, const ferret_map_t* src);
         size_t count \
     );
 
-FERRET_MAP_TYPED_DECL(i32)
-FERRET_MAP_TYPED_DECL(i64)
-FERRET_MAP_TYPED_DECL(f32)
-FERRET_MAP_TYPED_DECL(f64)
+FERRET_MAP_TYPED_DECL(numeric)  // Generic numeric maps for all integer and float types
 FERRET_MAP_TYPED_DECL(str)
 FERRET_MAP_TYPED_DECL(bytes)
 
@@ -125,17 +123,11 @@ void ferret_map_destroy(ferret_map_t* map);
 #define FERRET_MAP_HASH_DECL(suffix) uint32_t ferret_map_hash_##suffix(const void* key, size_t key_size);
 #define FERRET_MAP_EQUALS_DECL(suffix) bool ferret_map_equals_##suffix(const void* key1, const void* key2, size_t key_size);
 
-FERRET_MAP_HASH_DECL(i32)
-FERRET_MAP_HASH_DECL(i64)
-FERRET_MAP_HASH_DECL(f32)
-FERRET_MAP_HASH_DECL(f64)
+FERRET_MAP_HASH_DECL(numeric)  // Generic numeric hash for all integer and float types
 FERRET_MAP_HASH_DECL(str)
 FERRET_MAP_HASH_DECL(bytes)
 
-FERRET_MAP_EQUALS_DECL(i32)
-FERRET_MAP_EQUALS_DECL(i64)
-FERRET_MAP_EQUALS_DECL(f32)
-FERRET_MAP_EQUALS_DECL(f64)
+FERRET_MAP_EQUALS_DECL(numeric)  // Generic numeric equality for all integer and float types
 FERRET_MAP_EQUALS_DECL(str)
 FERRET_MAP_EQUALS_DECL(bytes)
 
@@ -150,5 +142,22 @@ bool ferret_map_iter_begin(const ferret_map_t* map, ferret_map_iter_t* iter);
 
 // Advance iterator; returns true while elements remain and sets key/value pointers
 bool ferret_map_iter_next(const ferret_map_t* map, ferret_map_iter_t* iter, void** key_out, void** value_out);
+
+// Universal hash/equals functions for all types
+#include "hash.h"
+
+// Set the current thread's key type for universal hashing
+void ferret_map_set_universal_key_type(ferret_type_info_t* type_info);
+
+// Universal map constructors that use content-based hashing
+ferret_map_t* ferret_map_new_universal(size_t key_size, size_t value_size, ferret_type_info_t* key_type_info);
+ferret_map_t* ferret_map_from_pairs_universal(
+    size_t key_size, 
+    size_t value_size, 
+    const void* keys, 
+    const void* values, 
+    size_t count,
+    ferret_type_info_t* key_type_info
+);
 
 #endif // FERRET_MAP_H

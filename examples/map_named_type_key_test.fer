@@ -1,0 +1,23 @@
+import "std/io";
+
+type UserId i32;
+
+fn main() {
+    // Named types should be allowed as map keys (like Go)
+    
+    let user1: UserId = 100;
+    let user2: UserId = 200;
+    let user3: UserId = 300;
+    
+    let users := {
+        user1 => "Alice",
+        user2 => "Bob",
+        user3 => "Charlie"
+    } as map[UserId]str;
+    
+    let lookup: UserId = 100;
+    let username := users[lookup];
+    
+    io::Println("User 100:");
+    io::Println(username);
+}

@@ -1,0 +1,26 @@
+import "std/io";
+
+type Point struct {
+    .x: i32,
+    .y: i32
+};
+
+fn main() {
+    // Structs should be allowed as map keys (like Go)
+    
+    let origin: Point = { .x = 0, .y = 0 };
+    let right: Point = { .x = 1, .y = 0 };
+    let up: Point = { .x = 0, .y = 1 };
+    
+    let locations := {
+        origin => "Origin",
+        right => "Right",
+        up => "Up"
+    } as map[Point]str;
+    
+    let lookup: Point = { .x = 0, .y = 0 };
+    let name := locations[lookup];
+    
+    io::Println("Location at origin:");
+    io::Println(name);
+}

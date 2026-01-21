@@ -1,0 +1,30 @@
+import "std/io";
+
+type MyInt i32;
+
+type ValueOrRef union {
+    MyInt,
+    &MyInt
+};
+
+fn test(v: ValueOrRef) {
+    io::Println("Processing union value");
+}
+
+fn main() {
+    // Case 1: Named type value
+    let named: MyInt = 100;
+    test(named);
+    
+    // Case 2: Named type reference
+    test(&named);
+    
+    // Case 3: Base type value (implicit upcast i32 -> MyInt)
+    let base: i32 = 200;
+    test(base);
+    
+    // Case 4: Base type reference (implicit upcast &i32 -> &MyInt)
+    test(&base);
+    
+    io::Println("All union implicit conversion tests passed!");
+}

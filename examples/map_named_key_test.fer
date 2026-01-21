@@ -1,0 +1,13 @@
+import "std/io";
+
+type UserId i32;
+
+fn main() {
+    // Named types should be allowed as map keys
+    let users: map[UserId]str = {
+        1 => "Alice",
+        2 => "Bob"
+    };
+    
+    io::Println("Test passed!");
+}

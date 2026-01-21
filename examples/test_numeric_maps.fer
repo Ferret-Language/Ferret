@@ -1,0 +1,52 @@
+// Test generic numeric map support for all numeric types
+import "std/io";
+
+fn main() {
+
+    let itype: interface{} = 0;
+
+    // Test i32 (default integer type)
+    let map_i32: map[i32]str = {} as map[i32]str;
+    map_i32[0] = "zero";
+    map_i32[42] = "answer";
+    io::Println("i32 works");
+    
+    // Test f32 (default float type)
+    let map_f32: map[f32]str = {} as map[f32]str;
+    map_f32[0.0] = "zero";
+    map_f32[3.14] = "pi";
+    io::Println("f32 works");
+    
+    // Test bool
+    let map_bool: map[bool]str = {} as map[bool]str;
+    map_bool[true] = "yes";
+    map_bool[false] = "no";
+    io::Println("bool works");
+
+    let map_i8: map[i8]str = {} as map[i8]str;
+    map_i8[1] = "one";
+    io::Println("i8 works");
+
+    let map_i16: map[i16]str = {} as map[i16]str;
+    map_i16[2] = "two";
+    io::Println("i16 works");
+
+    let map_i64: map[i64]str = {} as map[i64]str;
+    map_i64[3] = "three";
+    io::Println("i64 works");
+
+    let map_i128: map[i128]str = {} as map[i128]str;
+    map_i128[4] = "four";
+    io::Println("i128 works");
+
+    let map_i256: map[i256]str = {} as map[i256]str;
+    map_i256[5] = "five";
+    io::Println("i256 works");
+
+    let map_interface: map[interface{}]str = {} as map[interface{}]str;
+    map_interface[6] = "six";
+    io::Println("interface{} works");
+    
+    io::Println("All numeric types work!");
+}
+

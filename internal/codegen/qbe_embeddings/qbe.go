@@ -32,6 +32,7 @@ type Generator struct {
 
 	hoistedAllocas   []*mir.Alloca
 	hoistedAllocaIDs map[mir.ValueID]struct{}
+	emittedTypeDescs map[string]bool // Track which type descriptors have been emitted
 }
 
 func New(ctx *context_v2.CompilerContext, mod *context_v2.Module, mirMod *mir.Module) *Generator {
@@ -40,14 +41,15 @@ func New(ctx *context_v2.CompilerContext, mod *context_v2.Module, mirMod *mir.Mo
 		pointerSize = ctx.Config.PointerSize
 	}
 	return &Generator{
-		ctx:        ctx,
-		mod:        mod,
-		mirMod:     mirMod,
-		layout:     mir.NewDataLayout(pointerSize),
-		valueTypes: make(map[mir.ValueID]types.SemType),
-		stringLits: make(map[string]string),
-		enumTables: make(map[string]string),
-		enumCounts: make(map[string]int),
+		ctx:              ctx,
+		mod:              mod,
+		mirMod:           mirMod,
+		layout:           mir.NewDataLayout(pointerSize),
+		valueTypes:       make(map[mir.ValueID]types.SemType),
+		stringLits:       make(map[string]string),
+		enumTables:       make(map[string]string),
+		enumCounts:       make(map[string]int),
+		emittedTypeDescs: make(map[string]bool),
 	}
 }
 
@@ -58,6 +60,7 @@ func (g *Generator) Emit() (string, error) {
 
 	g.emitVTables()
 	g.emitTypeIDs()
+	g.emitTypeDescriptors()
 	for _, fn := range g.mirMod.Functions {
 		g.emitFunction(fn)
 	}
@@ -107,6 +110,28 @@ func (g *Generator) emitTypeIDs() {
 		}
 		bytes = append(bytes, "b 0") // null terminator
 		g.data.WriteString(fmt.Sprintf("data $%s = { %s }\n", globalName, strings.Join(bytes, ", ")))
+	}
+}
+
+func (g *Generator) emitTypeDescriptors() {
+	if g == nil || g.mirMod == nil || len(g.mirMod.TypeDescriptors) == 0 {
+		return
+	}
+
+	// Emit ferret_type_info_t structures for each type used as a map key
+	// Keep iterating until no new descriptors are added (handles nested types)
+	for {
+		anyNew := false
+		for globalName, typ := range g.mirMod.TypeDescriptors {
+			if !g.emittedTypeDescs[globalName] {
+				g.emitTypeDescriptor(globalName, typ)
+				g.emittedTypeDescs[globalName] = true
+				anyNew = true
+			}
+		}
+		if !anyNew {
+			break
+		}
 	}
 }
 

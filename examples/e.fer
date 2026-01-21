@@ -1,5 +1,46 @@
 import "std/io";
 
+type Int1 i32;
+type Int2 i32;
+
+type ValOrRef1 union {
+    Int1,
+    &Int1
+};
+
+type ValOrRef2 union {
+    []Int2,
+    &[]Int2
+};
+
+fn test1(v: ValOrRef1) {
+    // match v {
+    //     Int1 => io::Println("Got Int1 value:", v),
+    //     &Int1 => io::Println("Got reference to Int1:", v),
+    // }
+}
+
+fn test2(v: ValOrRef2) {
+    // match v {
+    //     Int2 => io::Println("Got Int2 value:", v),
+    //     &Int2 => io::Println("Got reference to Int2:", v),
+    // }
+}
+
 fn main() {
-    io::Printf("A{}\nB", 1);
+    let val1_builtin: i32 = 100;
+    let val2_builtin: i32 = 200;
+
+    let val1: Int1 = 10;
+    let val2: Int2 = 20;
+
+    let arr1: []Int2 = [1,2,4];
+
+    test1(val1);
+    test1(&val1);
+    test1(val1_builtin);  // Implicit upcast to Int1
+
+    test2([val2]);
+    test2(arr1);
+    test2(&arr1);
 }

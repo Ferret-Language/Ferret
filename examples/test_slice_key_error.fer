@@ -1,0 +1,14 @@
+import "std/io";
+
+fn main() {
+    // This should FAIL: slices are not comparable
+    let slice1: []i32 = [1, 2, 3];
+    let slice2: []i32 = [4, 5, 6];
+    
+    let slice_map: map[[]i32]str = {
+        slice1 => "first",
+        slice2 => "second"
+    };
+    
+    io::Println("Should not compile!");
+}

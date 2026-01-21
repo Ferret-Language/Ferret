@@ -1,0 +1,21 @@
+import "std/io";
+
+fn main() {
+    io::Println("=== Testing Empty Map with Slice Key ===");
+    
+    // Empty map
+    let empty_map := {} as map[[]i32]str;
+    
+    io::Println("Created empty map");
+    
+    // Now insert
+    let slice1: []i32 = [1, 2, 3];
+    empty_map[slice1] = "First";
+    
+    io::Println("Inserted into map");
+    
+    let result := empty_map[slice1];
+    io::Println(result);
+    
+    io::Println("✅ Done");
+}

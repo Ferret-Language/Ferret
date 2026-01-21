@@ -1,0 +1,31 @@
+import "std/io";
+
+type Printer interface {
+    print()
+};
+
+type Document struct {
+    .name: str
+};
+
+fn (self: &Document) print() {
+    io::Println("Document:", self.name);
+}
+
+fn main() {
+    // Interfaces should be allowed as map keys (like Go)
+    
+    let doc1: Document = { .name = "Report" };
+    
+    let printer1: Printer = doc1;
+    
+    let descriptions := {
+        printer1 => "First document"
+    } as map[Printer]str;
+    
+    // Use the same interface value for lookup
+    let desc := descriptions[printer1];
+    
+    io::Println("Description:");
+    io::Println(desc);
+}

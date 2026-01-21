@@ -2,6 +2,7 @@
 // Hash table with chaining for collision resolution
 
 #include "map.h"
+#include "hash.h"
 #include <string.h>
 
 #define FERRET_MAP_INITIAL_BUCKETS 16
@@ -86,12 +87,25 @@ ferret_map_t* ferret_map_new(
     map->value_size = value_size;
     map->hash_fn = hash_fn;
     map->equals_fn = equals_fn;
+    map->key_type_info = NULL;  // Initialize to NULL, set by universal constructors
 
     return map;
 }
 
+// Global variable to hold type info for universal hashing
+static __thread ferret_type_info_t* g_universal_key_type = NULL;
+
+// Helper to set type info before universal map operations
+static inline void ferret_map_prepare_universal(const ferret_map_t* map) {
+    if (map != NULL && map->key_type_info != NULL) {
+        g_universal_key_type = (ferret_type_info_t*)map->key_type_info;
+    }
+}
+
 // Resize map to new bucket count
 static bool ferret_map_resize(ferret_map_t* map, size_t new_bucket_count) {
+    ferret_map_prepare_universal(map);  // Set type info for universal maps before rehashing
+    
     ferret_map_entry_t** new_buckets = (ferret_map_entry_t**)calloc(new_bucket_count, sizeof(ferret_map_entry_t*));
     if (new_buckets == NULL) {
         return false;
@@ -171,6 +185,9 @@ ferret_map_t* ferret_map_clone(const ferret_map_t* src) {
     if (map == NULL) {
         return NULL;
     }
+    
+    // Copy type info for universal maps
+    map->key_type_info = src->key_type_info;
 
     if (src->bucket_count > map->bucket_count) {
         if (!ferret_map_resize(map, src->bucket_count)) {
@@ -179,6 +196,7 @@ ferret_map_t* ferret_map_clone(const ferret_map_t* src) {
         }
     }
 
+    ferret_map_prepare_universal(map);  // Set type info before cloning entries
     for (size_t i = 0; i < src->bucket_count; i++) {
         ferret_map_entry_t* entry = src->buckets[i];
         while (entry != NULL) {
@@ -267,10 +285,7 @@ void ferret_map_assign(ferret_map_t** dst, const ferret_map_t* src) {
         return ferret_map_from_pairs(key_size, value_size, keys, values, count, hash_fn, equals_fn); \
     }
 
-FERRET_MAP_TYPED_CONSTRUCTOR(i32, ferret_map_hash_i32, ferret_map_equals_i32)
-FERRET_MAP_TYPED_CONSTRUCTOR(i64, ferret_map_hash_i64, ferret_map_equals_i64)
-FERRET_MAP_TYPED_CONSTRUCTOR(f32, ferret_map_hash_f32, ferret_map_equals_f32)
-FERRET_MAP_TYPED_CONSTRUCTOR(f64, ferret_map_hash_f64, ferret_map_equals_f64)
+FERRET_MAP_TYPED_CONSTRUCTOR(numeric, ferret_map_hash_numeric, ferret_map_equals_numeric)
 FERRET_MAP_TYPED_CONSTRUCTOR(str, ferret_map_hash_str, ferret_map_equals_str)
 FERRET_MAP_TYPED_CONSTRUCTOR(bytes, ferret_map_hash_bytes, ferret_map_equals_bytes)
 
@@ -279,6 +294,7 @@ void* ferret_map_get(const ferret_map_t* map, const void* key) {
         return NULL;
     }
 
+    ferret_map_prepare_universal(map);  // Set type info for universal maps
     uint32_t hash = map->hash_fn(key, map->key_size);
     size_t bucket = hash % map->bucket_count;
 
@@ -335,6 +351,9 @@ bool ferret_map_set(ferret_map_t* map, const void* key, const void* value) {
     if (map == NULL || key == NULL) {
         return false;
     }
+
+
+    ferret_map_prepare_universal(map);  // Set type info for universal maps
 
     // Resize if needed
     if (map->size >= (size_t)(map->bucket_count * FERRET_MAP_LOAD_FACTOR)) {
@@ -445,6 +464,15 @@ FERRET_MAP_HASH_INT(i64, int64_t)
 FERRET_MAP_HASH_FLOAT(f32, float)
 FERRET_MAP_HASH_FLOAT(f64, double)
 
+// Generic numeric hash function that works for all integer and float types
+uint32_t ferret_map_hash_numeric(const void* key, size_t key_size) {
+    if (key == NULL) {
+        return 0;
+    }
+    // Use murmur3 hash on the raw bytes of any numeric type
+    return murmur3_32((const uint8_t*)key, key_size, FERRET_MAP_HASH_SEED);
+}
+
 uint32_t ferret_map_hash_str(const void* key, size_t key_size) {
     (void)key_size; // Unused
     // key is a pointer to const char*, so we need to dereference it
@@ -463,17 +491,14 @@ uint32_t ferret_map_hash_bytes(const void* key, size_t key_size) {
     return murmur3_32((const uint8_t*)key, key_size, FERRET_MAP_HASH_SEED);
 }
 
-// Equality functions
-#define FERRET_MAP_EQUALS_SCALAR(suffix, type) \
-    bool ferret_map_equals_##suffix(const void* key1, const void* key2, size_t key_size) { \
-        (void)key_size; \
-        return *(const type*)key1 == *(const type*)key2; \
+// Generic numeric equality function that works for all integer and float types
+bool ferret_map_equals_numeric(const void* key1, const void* key2, size_t key_size) {
+    if (key1 == NULL || key2 == NULL) {
+        return key1 == key2;
     }
-
-FERRET_MAP_EQUALS_SCALAR(i32, int32_t)
-FERRET_MAP_EQUALS_SCALAR(i64, int64_t)
-FERRET_MAP_EQUALS_SCALAR(f32, float)
-FERRET_MAP_EQUALS_SCALAR(f64, double)
+    // Byte-wise comparison works for all numeric types
+    return memcmp(key1, key2, key_size) == 0;
+}
 
 bool ferret_map_equals_str(const void* key1, const void* key2, size_t key_size) {
     (void)key_size; // Unused
@@ -548,4 +573,84 @@ bool ferret_map_iter_next(const ferret_map_t* map, ferret_map_iter_t* iter, void
     // End of map
     iter->entry = NULL;
     return true;
+}
+
+// Universal map support
+void ferret_map_set_universal_key_type(ferret_type_info_t* type_info) {
+    g_universal_key_type = type_info;
+}
+
+// Universal hash wrapper
+static uint32_t ferret_map_hash_universal_wrapper(const void* key, size_t key_size) {
+    (void)key_size;
+    if (g_universal_key_type == NULL) {
+        // Fallback to byte hashing if no type info
+        return ferret_map_hash_bytes(key, key_size);
+    }
+    return ferret_hash_universal(key, g_universal_key_type);
+}
+
+// Universal equals wrapper
+static bool ferret_map_equals_universal_wrapper(const void* key1, const void* key2, size_t key_size) {
+    (void)key_size;
+    if (g_universal_key_type == NULL) {
+        // Fallback to byte comparison if no type info
+        return ferret_map_equals_bytes(key1, key2, key_size);
+    }
+    return ferret_equals_universal(key1, key2, g_universal_key_type);
+}
+
+// Universal map constructor - type_info can be NULL for fallback to byte comparison
+ferret_map_t* ferret_map_new_universal(size_t key_size, size_t value_size, ferret_type_info_t* key_type_info) {
+    ferret_map_set_universal_key_type(key_type_info);  // Sets thread-local for initial creation
+    ferret_map_t* map = ferret_map_new(key_size, value_size, 
+                         ferret_map_hash_universal_wrapper,
+                         ferret_map_equals_universal_wrapper);
+    if (map != NULL) {
+        map->key_type_info = key_type_info;  // Store in map for future operations
+    }
+    return map;
+}
+
+ferret_map_t* ferret_map_from_pairs_universal(
+    size_t key_size, 
+    size_t value_size, 
+    const void* keys, 
+    const void* values, 
+    size_t count,
+    ferret_type_info_t* key_type_info
+) {
+    ferret_map_set_universal_key_type(key_type_info);  // Sets thread-local for initial creation
+    
+    // Create map with universal hash/equals and store type info
+    ferret_map_t* map = ferret_map_new_universal(key_size, value_size, key_type_info);
+    if (map == NULL) {
+        return NULL;
+    }
+
+    // Pre-allocate enough buckets if needed
+    size_t needed_buckets = (size_t)(count / FERRET_MAP_LOAD_FACTOR) + 1;
+    if (needed_buckets > map->bucket_count) {
+        // Round up to next power of 2
+        size_t new_buckets = FERRET_MAP_INITIAL_BUCKETS;
+        while (new_buckets < needed_buckets) {
+            new_buckets *= 2;
+        }
+        if (!ferret_map_resize(map, new_buckets)) {
+            ferret_map_destroy(map);
+            return NULL;
+        }
+    }
+
+    // Insert all pairs
+    const uint8_t* key_ptr = (const uint8_t*)keys;
+    const uint8_t* value_ptr = (const uint8_t*)values;
+    for (size_t i = 0; i < count; i++) {
+        if (!ferret_map_set(map, key_ptr + i * key_size, value_ptr + i * value_size)) {
+            ferret_map_destroy(map);
+            return NULL;
+        }
+    }
+
+    return map;
 }

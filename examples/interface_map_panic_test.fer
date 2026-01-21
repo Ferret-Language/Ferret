@@ -1,0 +1,33 @@
+import "std/io";
+
+type Container interface {
+    get() -> i32
+};
+
+type InvalidBox struct {
+    .data: map[str]i32  // maps are not comparable!
+};
+
+fn (self: InvalidBox) get() -> i32 {
+    return 42;
+}
+
+fn main() {
+    io::Println("Creating interface with non-comparable dynamic type");
+    let data: map[str]i32 = {} as map[str]i32;
+    let invalid: InvalidBox = { .data = data };
+    let iface: Container = invalid;
+    
+    io::Println("Assignment succeeded - no panic yet");
+    io::Println("Now using interface as map key...");
+    
+    // This is where it should panic in Go - when the map needs to compare keys
+    let m := { iface => "value" } as map[Container]str;
+    
+    io::Println("Map created successfully");
+    
+    // This lookup will try to compare the interface values
+    let result := m[iface];
+    io::Println("Lookup result:");
+    io::Println(result);
+}

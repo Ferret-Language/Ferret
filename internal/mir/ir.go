@@ -18,11 +18,12 @@ const (
 
 // Module is the MIR root for a single source module.
 type Module struct {
-	ImportPath string
-	Functions  []*Function
-	VTables    []VTable
-	TypeIDs    map[string]string // Maps global name to type ID string
-	Location   source.Location
+	ImportPath      string
+	Functions       []*Function
+	VTables         []VTable
+	TypeIDs         map[string]string        // Maps global name to type ID string
+	TypeDescriptors map[string]types.SemType // Maps global name to type for universal hashing
+	Location        source.Location
 }
 
 // VTable describes an interface vtable instance for codegen.

@@ -1,0 +1,21 @@
+import "std/io";
+
+fn main() {
+    // Fixed-size arrays should be allowed as map keys (like Go)
+    
+    let coord1: [2]i32 = [0, 0];
+    let coord2: [2]i32 = [1, 0];
+    let coord3: [2]i32 = [0, 1];
+    
+    let grid := {
+        coord1 => "Origin",
+        coord2 => "Right",
+        coord3 => "Up"
+    } as map[[2]i32]str;
+    
+    let lookup: [2]i32 = [0, 0];
+    let name := grid[lookup];
+    
+    io::Println("Grid position at [0,0]:");
+    io::Println(name);
+}

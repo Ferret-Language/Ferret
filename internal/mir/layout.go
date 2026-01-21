@@ -55,7 +55,8 @@ func (d *DataLayout) SizeOf(t types.SemType) int {
 		return d.PointerSize
 	case *types.ArrayType:
 		if tt.Length < 0 {
-			return d.PointerSize
+			// Slice: {data, len, cap} = 3 pointers
+			return d.PointerSize * 3
 		}
 		elemSize := d.SizeOf(tt.Element)
 		if elemSize < 0 {

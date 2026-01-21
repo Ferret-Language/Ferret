@@ -1,0 +1,28 @@
+import "std/io";
+
+type MyInt i32;
+type MyStr str;
+
+type ValueOrRef union {
+    MyInt,
+    &MyInt,
+    MyStr,
+    &MyStr
+};
+
+fn process(v: ValueOrRef) {
+    io::Println("Processing value");
+}
+
+fn main() {
+    let num: MyInt = 42;
+    let text: MyStr = "hello";
+    
+    // Test all variants
+    process(num);       // MyInt value
+    process(&num);      // &MyInt reference
+    process(text);      // MyStr value
+    process(&text);     // &MyStr reference
+    
+    io::Println("All tests passed!");
+}
