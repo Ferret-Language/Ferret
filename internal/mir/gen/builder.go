@@ -10,6 +10,7 @@ import (
 	"compiler/internal/mir"
 	"compiler/internal/semantics/narrowing"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typechecker"
 	"compiler/internal/source"
 	"compiler/internal/tokens"
 	"compiler/internal/types"
@@ -1798,6 +1799,10 @@ func (b *functionBuilder) isImplicitlyCompatible(source, target types.SemType) b
 		return false
 	}
 
+	if b != nil && b.gen != nil && b.gen.ctx != nil && b.gen.mod != nil {
+		return typechecker.IsImplicitlyCompatibleTypes(b.gen.ctx, b.gen.mod, source, target)
+	}
+
 	// Exact match
 	if source.Equals(target) {
 		return true
@@ -2570,7 +2575,11 @@ func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemTy
 
 	// If value type doesn't exactly match target variant, insert implicit cast
 	if !valueType.Equals(targetVariant) {
-		value = b.emitCast(value, targetVariant, loc)
+		if interfaceTypeOf(targetVariant) != nil {
+			value = b.boxInterfaceValue(value, valueType, targetVariant, loc)
+		} else {
+			value = b.emitCast(value, targetVariant, loc)
+		}
 		valueType = targetVariant
 	}
 

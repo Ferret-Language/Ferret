@@ -1,14 +1,77 @@
 // Basic Ferret program demonstrating supported features
 import "std/io";
 
+type Type interface{};
+type Type1 interface{};
+type Type2 interface{};
+
+type SequenceView union{
+  []Type,
+  &[]Type
+};
+
+type SequenceRef &mut []Type;
+
+type MapView union {
+    &map[Type1]Type2,
+    map[Type1]Type2
+};
+
+type MapRef &mut map[Type1]Type2;
+
+fn Len(n: SequenceView) -> i32 {
+    io::Println("Len called");
+    return 0;
+}
+
+fn Append(n: SequenceRef) -> bool {
+    return true;
+}
+
+fn At(n: SequenceView) -> Type? {
+    return none;
+}
+
+fn Size(m: MapView) -> i32 {
+    io::Println("Size called");
+    return 0;
+}
+
+fn Get(m: MapView) -> Type2? {
+    return none;
+}
+
+fn Set(m: MapRef) -> bool {
+    return true;
+}
+
+fn testref(v: &i32) {
+    io::Println(*v);
+}
+
 fn main() {
     // Variables
     let x: i32 = 10;
     let y: i32 = 10;
     
+    testref(&mut x);
+    
     let bigx : i256 = 10;
     let bigy : i256 = 10;
     
+    let arr1 := [1,2,3,4];
+    
+    Len(arr1);
+    Len([1,2,3,4]);
+    //Len(x);
+        
+    let simpleMap := {
+        "a" => 1,
+        "2" => 3
+    };
+    
+    Size(simpleMap);
+
     // Arithmetic
     let sum := x + y;
     let diff := x - y;

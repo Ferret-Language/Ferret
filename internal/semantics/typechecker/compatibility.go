@@ -44,6 +44,15 @@ func isImplicitlyCompatible(compatibility TypeCompatibility) bool {
 	return compatibility == Identical || compatibility == ImplicitCastable
 }
 
+// IsImplicitlyCompatibleTypes reports whether source can be assigned to target without an explicit cast.
+func IsImplicitlyCompatibleTypes(ctx *context_v2.CompilerContext, mod *context_v2.Module, source, target types.SemType) bool {
+	if source == nil || target == nil {
+		return false
+	}
+	compatibility := checkTypeCompatibilityWithContext(ctx, mod, source, target)
+	return isImplicitlyCompatible(compatibility)
+}
+
 func isEmptyInterfaceType(typ types.SemType) bool {
 	if typ == nil {
 		return false
@@ -336,8 +345,18 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 	// Reference type compatibility (both source and target are references)
 	if srcRef, ok := types.UnwrapType(source).(*types.ReferenceType); ok {
 		if tgtRef, ok := types.UnwrapType(target).(*types.ReferenceType); ok {
-			// Both mutability levels must match exactly - no implicit coercion
+			// Allow &mut T to coerce to &T, but never the other way around.
 			if tgtRef.Mutable != srcRef.Mutable {
+				if srcRef.Mutable && !tgtRef.Mutable {
+					innerCompat := checkTypeCompatibility(srcRef.Inner, tgtRef.Inner)
+					if innerCompat == Identical || innerCompat == ImplicitCastable {
+						return ImplicitCastable
+					}
+					if isEmptyInterfaceType(tgtRef.Inner) {
+						return ImplicitCastable
+					}
+					return Incompatible
+				}
 				return Incompatible
 			}
 			// Check if inner types are identical
