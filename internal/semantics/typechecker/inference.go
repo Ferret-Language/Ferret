@@ -362,10 +362,6 @@ func inferDerefExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 
 // inferCallExprType determines the return type of a function call
 func inferCallExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr) types.SemType {
-	if name, ok := builtinCallName(mod, expr); ok {
-		return inferBuiltinCallType(name)
-	}
-
 	// Get the type of the called expression (function or method)
 	funType := inferExprType(ctx, mod, expr.Fun)
 

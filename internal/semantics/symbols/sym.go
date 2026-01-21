@@ -34,13 +34,9 @@ type Symbol struct {
 	IsReadonly    bool                   // True for read-only variables (loop index, catch error, etc.)
 	IsHeap        bool                   // True if storage is heap-allocated via '#'
 
-	// Native function support (for builtin functions implemented in Go/C)
+	// Native function support (for @extern functions implemented in Go/C)
 	IsNative   bool   // true if this function is implemented in native code (Go/C)
 	NativeName string // C function name for code generation (e.g., "ferret_io_Println")
-
-	// Intrinsic builtin support (compiler-handled functions like len/append)
-	IsBuiltin   bool
-	BuiltinName string // Logical builtin name (e.g., "len", "append")
 }
 
 // MethodInfo stores information about a method attached to a named type

@@ -11,8 +11,3 @@ void *ferret_alloc(uint64_t size) {
     }
     return ptr;
 }
-
-// Union printing (placeholder)
-void ferret_io_Println_union(void* u) {
-    printf("<union>\n");
-}

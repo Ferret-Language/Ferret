@@ -507,6 +507,110 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return resultStrF64(value, null);
   }
 
+  const UNION_TAG_SIZE = 4;
+
+  function readUnionTag(ptr: number): number {
+    if (!ptr) {
+      return -1;
+    }
+    return view().getInt32(ptr, true);
+  }
+
+  function readUnionPtr(ptr: number): number {
+    if (!ptr) {
+      return 0;
+    }
+    return view().getUint32(ptr + UNION_TAG_SIZE, true);
+  }
+
+  function readUnionPtrDeref(ptr: number): number {
+    const ref = readUnionPtr(ptr);
+    if (!ref) {
+      return 0;
+    }
+    return view().getUint32(ref, true);
+  }
+
+  function optionalNoneInterface(): number {
+    const valueSize = 8;
+    const payload = align(valueSize + 1, 4);
+    const ptr = ferret_alloc(payload);
+    const mem = new Uint8Array(memory!.buffer);
+    mem.fill(0, ptr, ptr + payload);
+    return ptr >>> 0;
+  }
+
+  function ferret_global_len(seqPtr: number): number {
+    if (!seqPtr) {
+      return 0;
+    }
+    const tag = readUnionTag(seqPtr);
+    let arrPtr = 0;
+    if (tag === 0) {
+      arrPtr = readUnionPtr(seqPtr);
+    } else if (tag === 1) {
+      arrPtr = readUnionPtrDeref(seqPtr);
+    }
+    if (!arrPtr) {
+      return 0;
+    }
+    return ferret_array_len(arrPtr);
+  }
+
+  function ferret_global_append(seqRefPtr: number, _heap: number): number {
+    return seqRefPtr ? 1 : 0;
+  }
+
+  function ferret_global_at(_seqPtr: number): number {
+    return optionalNoneInterface();
+  }
+
+  function ferret_global_size(mapViewPtr: number): number {
+    if (!mapViewPtr) {
+      return 0;
+    }
+    const tag = readUnionTag(mapViewPtr);
+    let mapPtr = 0;
+    if (tag === 0) {
+      mapPtr = readUnionPtrDeref(mapViewPtr);
+    } else if (tag === 1) {
+      mapPtr = readUnionPtr(mapViewPtr);
+    }
+    if (!mapPtr) {
+      return 0;
+    }
+    return ferret_map_size(mapPtr);
+  }
+
+  function ferret_global_get(_mapViewPtr: number): number {
+    return optionalNoneInterface();
+  }
+
+  function ferret_global_set(mapRefPtr: number, _heap: number): number {
+    return mapRefPtr ? 1 : 0;
+  }
+
+  function ferret_global_addr(
+    valuePtr: number,
+    _heap: number | bigint,
+  ): bigint {
+    return normalizeU64(valuePtr >>> 0);
+  }
+
+  function ferret_global_self_addr(
+    valuePtr: number,
+    _heap: number | bigint,
+  ): bigint {
+    return normalizeU64(valuePtr >>> 0);
+  }
+
+  function ferret_global_heap_addr(
+    _valuePtr: number,
+    heap: number | bigint,
+  ): bigint {
+    return normalizeU64(heap);
+  }
+
   function ferret_global_panic(msgPtr: number) {
     const msg = msgPtr ? readCString(msgPtr) : "";
     const text = msg ? `panic: ${msg}` : "panic";
@@ -3118,6 +3222,15 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_std_io_ReadUnsafe,
         ferret_std_io_ReadInt,
         ferret_std_io_ReadFloat,
+        ferret_global_len,
+        ferret_global_append,
+        ferret_global_at,
+        ferret_global_size,
+        ferret_global_get,
+        ferret_global_set,
+        ferret_global_addr,
+        ferret_global_self_addr,
+        ferret_global_heap_addr,
         ferret_global_panic,
         ferret_string_len,
         ferret_io_ConcatStrings,
