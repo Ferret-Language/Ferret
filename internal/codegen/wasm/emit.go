@@ -226,7 +226,7 @@ func (g *Generator) collectImports() error {
 		return err
 	}
 	if err := g.ensureImport("ferret_array_new", funcSig{
-		params:  []ValType{valTypeI32, valTypeI32},
+		params:  []ValType{valTypeI32, valTypeI32, valTypeI32},
 		results: []ValType{valTypeI32},
 	}); err != nil {
 		return err

@@ -114,7 +114,7 @@ void ferret_global_at(void* out, const void* seq, int32_t index) {
         }
         ferret_interface_t* iface = (ferret_interface_t*)opt;
         iface->data = boxed;
-        iface->type_id = (void*)ferret_unknown_type_id;
+        iface->type_id = (void*)(arr->elem_type_id != NULL ? arr->elem_type_id : ferret_unknown_type_id);
     }
     uint8_t* flag = (uint8_t*)opt + iface_size;
     *flag = 1;
@@ -198,7 +198,7 @@ void ferret_global_get(void* out, const void* map_view, const void* key) {
     }
     ferret_interface_t* iface = (ferret_interface_t*)opt;
     iface->data = boxed;
-    iface->type_id = (void*)ferret_unknown_type_id;
+    iface->type_id = (void*)(map->value_type_id != NULL ? map->value_type_id : ferret_unknown_type_id);
     uint8_t* flag = (uint8_t*)opt + iface_size;
     *flag = 1;
     *out_ptr = opt;

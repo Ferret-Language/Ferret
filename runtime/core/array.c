@@ -9,7 +9,7 @@
 #define FERRET_ARRAY_MIN_CAPACITY 4
 #define FERRET_ARRAY_GROWTH_FACTOR 2
 
-ferret_array_t* ferret_array_new(size_t elem_size, int32_t initial_capacity) {
+ferret_array_t* ferret_array_new(size_t elem_size, int32_t initial_capacity, const char* elem_type_id) {
     if (initial_capacity < FERRET_ARRAY_MIN_CAPACITY) {
         initial_capacity = FERRET_ARRAY_MIN_CAPACITY;
     }
@@ -28,11 +28,12 @@ ferret_array_t* ferret_array_new(size_t elem_size, int32_t initial_capacity) {
     arr->length = 0;
     arr->capacity = initial_capacity;
     arr->elem_size = elem_size;
+    arr->elem_type_id = elem_type_id;
     
     return arr;
 }
 
-ferret_array_t* ferret_array_from_data(void* data, int32_t length, int32_t capacity, size_t elem_size) {
+ferret_array_t* ferret_array_from_data(void* data, int32_t length, int32_t capacity, size_t elem_size, const char* elem_type_id) {
     ferret_array_t* arr = (ferret_array_t*)malloc(sizeof(ferret_array_t));
     if (arr == NULL) {
         return NULL;
@@ -42,6 +43,7 @@ ferret_array_t* ferret_array_from_data(void* data, int32_t length, int32_t capac
     arr->length = length;
     arr->capacity = capacity;
     arr->elem_size = elem_size;
+    arr->elem_type_id = elem_type_id;
     
     return arr;
 }
@@ -73,6 +75,7 @@ ferret_array_t* ferret_array_clone(const ferret_array_t* src) {
     arr->length = src->length;
     arr->capacity = src->capacity;
     arr->elem_size = src->elem_size;
+    arr->elem_type_id = src->elem_type_id;
 
     return arr;
 }
@@ -99,6 +102,7 @@ void ferret_array_assign(ferret_array_t** dst, const ferret_array_t* src) {
     if (out->elem_size != src->elem_size) {
         out->elem_size = src->elem_size;
     }
+    out->elem_type_id = src->elem_type_id;
 
     if (src->length > out->capacity) {
         int32_t new_capacity = src->length;

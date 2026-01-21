@@ -213,9 +213,9 @@ static uint32_t utf8_decode(const uint8_t** ptr) {
 }
 
 // Convert string to []char (UTF-8 decode to Unicode codepoints)
-ferret_array_t* ferret_string_to_char_array(const char* str) {
+ferret_array_t* ferret_string_to_char_array(const char* str, const char* elem_type_id) {
     if (str == NULL) {
-        return ferret_array_new(4, 0); // char is 4 bytes
+        return ferret_array_new(4, 0, elem_type_id); // char is 4 bytes
     }
     
     // First pass: count UTF-8 characters
@@ -237,7 +237,7 @@ ferret_array_t* ferret_string_to_char_array(const char* str) {
     }
     
     // Create array with exact capacity
-    ferret_array_t* arr = ferret_array_new(4, char_count); // char is 4 bytes (uint32_t)
+    ferret_array_t* arr = ferret_array_new(4, char_count, elem_type_id); // char is 4 bytes (uint32_t)
     if (arr == NULL) return NULL;
     
     // Second pass: decode UTF-8 and populate array
@@ -251,13 +251,13 @@ ferret_array_t* ferret_string_to_char_array(const char* str) {
 }
 
 // Convert string to []byte (raw UTF-8 bytes)
-ferret_array_t* ferret_string_to_byte_array(const char* str) {
+ferret_array_t* ferret_string_to_byte_array(const char* str, const char* elem_type_id) {
     if (str == NULL) {
-        return ferret_array_new(1, 0); // byte is 1 byte
+        return ferret_array_new(1, 0, elem_type_id); // byte is 1 byte
     }
     
     int32_t len = strlen(str);
-    ferret_array_t* arr = ferret_array_new(1, len); // byte is 1 byte (uint8_t)
+    ferret_array_t* arr = ferret_array_new(1, len, elem_type_id); // byte is 1 byte (uint8_t)
     if (arr == NULL) return NULL;
     
     // Copy bytes directly
@@ -364,4 +364,3 @@ char* ferret_byte_array_to_string(const ferret_array_t* arr) {
     
     return str;
 }
-

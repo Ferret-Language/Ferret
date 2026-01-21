@@ -10,6 +10,11 @@ fn main() {
     let bigy : i256 = 10;
     
     let arr1 := [1,2,3,4];
+    let arr2 := ["This", "is", "an"];
+
+    append(&mut arr2, "array");
+
+    io::Println(arr2[-1]);
 
     append(&mut arr1, 5);
     

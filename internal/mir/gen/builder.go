@@ -2525,6 +2525,22 @@ func (b *functionBuilder) emitInterfaceDataPtr(ifaceAddr mir.ValueID, loc source
 	return b.emitLoad(dataSlot, ptrType, loc)
 }
 
+func (b *functionBuilder) emitTypeIDPtr(typ types.SemType, loc source.Location) mir.ValueID {
+	if b == nil {
+		return mir.InvalidValue
+	}
+	ptrType := types.NewReference(types.TypeU8)
+	if b.gen == nil {
+		return b.emitConst(ptrType, "0", loc)
+	}
+	typeID := typeIDString(typ)
+	typeIDGlobal := b.gen.ensureTypeIDGlobal(typeID)
+	if typeIDGlobal == "" {
+		return b.emitConst(ptrType, "0", loc)
+	}
+	return b.emitConst(ptrType, "$"+typeIDGlobal, loc)
+}
+
 // boxUnionValue creates a tagged union value from a variant value.
 // Union layout: [4-byte discriminant/tag][variant data]
 func (b *functionBuilder) boxUnionValue(value mir.ValueID, valueType types.SemType, unionType *types.UnionType, loc source.Location) mir.ValueID {
@@ -3709,12 +3725,13 @@ func (b *functionBuilder) lowerRangeExpr(expr *hir.RangeExpr) mir.ValueID {
 	}
 	sizeVal := b.emitConst(sizeType, strconv.Itoa(elemSize), loc)
 	capVal := b.emitConst(types.TypeI32, "0", loc)
+	typeIDPtr := b.emitTypeIDPtr(elemType, loc)
 
 	arrVal := b.gen.nextValueID()
 	b.emitInstr(&mir.Call{
 		Result:   arrVal,
 		Target:   "ferret_array_new",
-		Args:     []mir.ValueID{sizeVal, capVal},
+		Args:     []mir.ValueID{sizeVal, capVal, typeIDPtr},
 		Type:     expr.Type,
 		Location: loc,
 	})
@@ -3906,6 +3923,8 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 
 	keySizeVal := b.emitConst(sizeType, strconv.Itoa(keySize), lit.Location)
 	valSizeVal := b.emitConst(sizeType, strconv.Itoa(valSize), lit.Location)
+	keyTypeIDPtr := b.emitTypeIDPtr(mapType.Key, lit.Location)
+	valueTypeIDPtr := b.emitTypeIDPtr(mapType.Value, lit.Location)
 
 	fns := b.mapRuntimeFns(mapType.Key)
 
@@ -3913,9 +3932,9 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 	if fns.needsTypeInfo {
 		// Generate type descriptor for universal hashing
 		typeDesc := b.getOrCreateTypeDescriptor(mapType.Key)
-		args = []mir.ValueID{keySizeVal, valSizeVal, typeDesc}
+		args = []mir.ValueID{keySizeVal, valSizeVal, typeDesc, keyTypeIDPtr, valueTypeIDPtr}
 	} else {
-		args = []mir.ValueID{keySizeVal, valSizeVal}
+		args = []mir.ValueID{keySizeVal, valSizeVal, keyTypeIDPtr, valueTypeIDPtr}
 	}
 
 	if len(lit.Elts) == 0 {
@@ -3993,9 +4012,9 @@ func (b *functionBuilder) lowerMapLiteral(mapType *types.MapType, lit *hir.Compo
 	if fns.needsTypeInfo {
 		// Generate type descriptor for universal hashing
 		typeDesc := b.getOrCreateTypeDescriptor(mapType.Key)
-		pairsArgs = []mir.ValueID{keySizeVal, valSizeVal, keysAddr, valsAddr, countVal, typeDesc}
+		pairsArgs = []mir.ValueID{keySizeVal, valSizeVal, keysAddr, valsAddr, countVal, typeDesc, keyTypeIDPtr, valueTypeIDPtr}
 	} else {
-		pairsArgs = []mir.ValueID{keySizeVal, valSizeVal, keysAddr, valsAddr, countVal}
+		pairsArgs = []mir.ValueID{keySizeVal, valSizeVal, keysAddr, valsAddr, countVal, keyTypeIDPtr, valueTypeIDPtr}
 	}
 
 	b.emitInstr(&mir.Call{
@@ -4026,12 +4045,13 @@ func (b *functionBuilder) lowerDynamicArrayLiteral(arrType *types.ArrayType, lit
 
 	sizeVal := b.emitConst(sizeType, strconv.Itoa(elemSize), lit.Location)
 	capVal := b.emitConst(types.TypeI32, strconv.Itoa(len(lit.Elts)), lit.Location)
+	typeIDPtr := b.emitTypeIDPtr(arrType.Element, lit.Location)
 
 	arr := b.gen.nextValueID()
 	b.emitInstr(&mir.Call{
 		Result:   arr,
 		Target:   "ferret_array_new",
-		Args:     []mir.ValueID{sizeVal, capVal},
+		Args:     []mir.ValueID{sizeVal, capVal, typeIDPtr},
 		Type:     lit.Type,
 		Location: lit.Location,
 	})
@@ -6488,11 +6508,12 @@ func (b *functionBuilder) castValue(value mir.ValueID, from, to types.SemType, l
 		if toArr, ok := toUnwrapped.(*types.ArrayType); ok && toArr.Length < 0 {
 			if elemPrim, ok := toArr.Element.(*types.PrimitiveType); ok && elemPrim.GetName() == types.TYPE_CHAR {
 				// Call ferret_string_to_char_array
+				typeIDPtr := b.emitTypeIDPtr(toArr.Element, loc)
 				result := b.gen.nextValueID()
 				b.emitInstr(&mir.Call{
 					Result:   result,
 					Target:   "ferret_string_to_char_array",
-					Args:     []mir.ValueID{value},
+					Args:     []mir.ValueID{value, typeIDPtr},
 					Type:     to,
 					Location: loc,
 				})
@@ -6506,11 +6527,12 @@ func (b *functionBuilder) castValue(value mir.ValueID, from, to types.SemType, l
 		if toArr, ok := toUnwrapped.(*types.ArrayType); ok && toArr.Length < 0 {
 			if elemPrim, ok := toArr.Element.(*types.PrimitiveType); ok && (elemPrim.GetName() == types.TYPE_BYTE || elemPrim.GetName() == types.TYPE_U8) {
 				// Call ferret_string_to_byte_array
+				typeIDPtr := b.emitTypeIDPtr(toArr.Element, loc)
 				result := b.gen.nextValueID()
 				b.emitInstr(&mir.Call{
 					Result:   result,
 					Target:   "ferret_string_to_byte_array",
-					Args:     []mir.ValueID{value},
+					Args:     []mir.ValueID{value, typeIDPtr},
 					Type:     to,
 					Location: loc,
 				})

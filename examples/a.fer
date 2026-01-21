@@ -7,6 +7,10 @@ fn (d: D) dummy() {
     
 }
 
+fn (d: D2) dummy() {
+    
+}
+
 type ann interface{
     dummy()
 };
@@ -25,7 +29,7 @@ fn main() {
     let anyval : D2 = { .X = 20 };
     let another : any2 = anyval;
 
-    let a := #10;
+    let a := 10;
     let addr_a := addr(&a);
     let haddr_a := heap_addr(&a);
     
