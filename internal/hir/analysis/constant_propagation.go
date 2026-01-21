@@ -188,17 +188,17 @@ func walkExprConstEval(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 		walkExprConstEval(ctx, mod, e.Y)
 	case *hir.UnaryExpr:
 		walkExprConstEval(ctx, mod, e.X)
-		// Clear constant value when address is taken (&x or &mut x)
+		// Clear constant tracking when address is taken (&x or &mut x)
 		// The variable can be modified through the reference
 		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_TOKEN {
-			clearConstValue(identFromExpr(e.X))
+			clearConstTracking(identFromExpr(e.X))
 		}
 	case *hir.PrefixExpr:
 		walkExprConstEval(ctx, mod, e.X)
-		clearConstValue(identFromExpr(e.X))
+		clearConstTracking(identFromExpr(e.X))
 	case *hir.PostfixExpr:
 		walkExprConstEval(ctx, mod, e.X)
-		clearConstValue(identFromExpr(e.X))
+		clearConstTracking(identFromExpr(e.X))
 	case *hir.CallExpr:
 		walkExprConstEval(ctx, mod, e.Fun)
 		for _, arg := range e.Args {
@@ -269,11 +269,13 @@ func updateConstValue(ident *hir.Ident, val *consteval.ConstValue) {
 	ident.Symbol.ConstValue = nil
 }
 
-func clearConstValue(ident *hir.Ident) {
+func clearConstTracking(ident *hir.Ident) {
 	if ident == nil || ident.Symbol == nil {
 		return
 	}
 	ident.Symbol.ConstValue = nil
+	delete(arrayLiteralLengths, ident.Symbol)
+	delete(rangeExprLengths, ident.Symbol)
 }
 
 func identFromExpr(expr hir.Expr) *hir.Ident {

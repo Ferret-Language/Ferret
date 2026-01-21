@@ -13,7 +13,7 @@ fn main() {
 
     append(&mut arr1, 5);
     
-    io::Println("len of arr1: ", len(arr1));
+    io::Println("len of arr1:", len(arr1), "last:", arr1[-1]);
     io::Println("len of array literal:", len([1,2,3,4]));
     //Len(x);
         
@@ -27,6 +27,8 @@ fn main() {
     set(&mut simpleMap, "task", 6);
 
     io::Println("size of map after:", size(simpleMap));
+
+    io::Println("added value:", simpleMap["task"]);
 
     // Arithmetic
     let sum := x + y;

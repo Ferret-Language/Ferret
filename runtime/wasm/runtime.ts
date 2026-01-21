@@ -531,15 +531,28 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return view().getUint32(ref, true);
   }
 
-  function optionalNoneInterface(): number {
-    const valueSize = 8;
-    const payload = align(valueSize + 1, 4);
+  function optionalPayloadSize(valueSize: number, valueAlign: number): number {
+    const alignSize = valueAlign > 0 ? valueAlign : 1;
+    return align(valueSize + 1, alignSize);
+  }
+
+  function optionalAllocNone(valueSize: number, valueAlign: number): number {
+    const payload = optionalPayloadSize(valueSize, valueAlign);
     const ptr = ferret_alloc(payload);
     const mem = new Uint8Array(memory!.buffer);
     mem.fill(0, ptr, ptr + payload);
     return ptr >>> 0;
   }
 
+  const interfaceSize = 8;
+  let unknownTypeIdPtr = 0;
+
+  function getUnknownTypeId(): number {
+    if (!unknownTypeIdPtr) {
+      unknownTypeIdPtr = writeCString("<unknown>");
+    }
+    return unknownTypeIdPtr;
+  }
   function ferret_global_len(seqPtr: number): number {
     if (!seqPtr) {
       return 0;
@@ -570,11 +583,60 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     if (!arrPtr) {
       return 0;
     }
-    return ferret_array_append(arrPtr, _valuePtr);
+    const elemSize = dv.getUint32(arrPtr + 12, true);
+    let valuePtr = _valuePtr;
+    if (elemSize !== interfaceSize) {
+      valuePtr = dv.getUint32(_valuePtr, true);
+      if (!valuePtr) {
+        return 0;
+      }
+    }
+    return ferret_array_append(arrPtr, valuePtr);
   }
 
-  function ferret_global_at(_seqPtr: number): number {
-    return optionalNoneInterface();
+  function ferret_global_at(seqPtr: number, index: number): number {
+    if (!seqPtr) {
+      return optionalAllocNone(8, 4);
+    }
+    const tag = readUnionTag(seqPtr);
+    let arrPtr = 0;
+    if (tag === 0) {
+      arrPtr = readUnionPtr(seqPtr);
+    } else if (tag === 1) {
+      arrPtr = readUnionPtrDeref(seqPtr);
+    }
+    if (!arrPtr) {
+      return optionalAllocNone(8, 4);
+    }
+    const dv = view();
+    const length = dv.getInt32(arrPtr + 4, true);
+    const elemSize = dv.getUint32(arrPtr + 12, true);
+    let idx = index | 0;
+    if (idx < 0) {
+      idx = length + idx;
+    }
+    if (idx < 0 || idx >= length) {
+      return optionalAllocNone(interfaceSize, 4);
+    }
+    const dataPtr = dv.getUint32(arrPtr + 0, true);
+    const elemPtr = (dataPtr + idx * elemSize) >>> 0;
+    const outPtr = optionalAllocNone(interfaceSize, 4);
+    const mem = new Uint8Array(memory!.buffer);
+    if (elemSize === interfaceSize) {
+      if (elemSize > 0) {
+        ferret_memcpy(outPtr, elemPtr, elemSize);
+      }
+    } else {
+      const allocSize = elemSize > 0 ? elemSize : 1;
+      const boxedPtr = ferret_alloc(allocSize);
+      if (elemSize > 0) {
+        ferret_memcpy(boxedPtr, elemPtr, elemSize);
+      }
+      dv.setUint32(outPtr + 0, boxedPtr >>> 0, true);
+      dv.setUint32(outPtr + 4, getUnknownTypeId(), true);
+    }
+    mem[outPtr + interfaceSize] = 1;
+    return outPtr;
   }
 
   function ferret_global_size(mapViewPtr: number): number {
@@ -594,8 +656,51 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return ferret_map_size(mapPtr);
   }
 
-  function ferret_global_get(_mapViewPtr: number): number {
-    return optionalNoneInterface();
+  function ferret_global_get(mapViewPtr: number, keyPtr: number): number {
+    if (!mapViewPtr || !keyPtr) {
+      return optionalAllocNone(8, 4);
+    }
+    const tag = readUnionTag(mapViewPtr);
+    let mapPtr = 0;
+    if (tag === 0) {
+      mapPtr = readUnionPtrDeref(mapViewPtr);
+    } else if (tag === 1) {
+      mapPtr = readUnionPtr(mapViewPtr);
+    }
+    if (!mapPtr) {
+      return optionalAllocNone(interfaceSize, 4);
+    }
+    const meta = mapGetMeta(mapPtr);
+    if (!meta) {
+      return optionalAllocNone(interfaceSize, 4);
+    }
+    let keyLookupPtr = keyPtr;
+    if (meta.keySize !== interfaceSize) {
+      keyLookupPtr = view().getUint32(keyPtr, true);
+      if (!keyLookupPtr) {
+        return optionalAllocNone(interfaceSize, 4);
+      }
+    }
+    const outPtr = optionalAllocNone(interfaceSize, 4);
+    if (meta.valueSize === interfaceSize) {
+      ferret_map_get_optional_out(mapPtr, keyLookupPtr, outPtr);
+      return outPtr;
+    }
+    const valuePtr = ferret_map_get(mapPtr, keyLookupPtr);
+    if (!valuePtr) {
+      return outPtr;
+    }
+    const allocSize = meta.valueSize > 0 ? meta.valueSize : 1;
+    const boxedPtr = ferret_alloc(allocSize);
+    if (meta.valueSize > 0) {
+      ferret_memcpy(boxedPtr, valuePtr, meta.valueSize);
+    }
+    const dv = view();
+    dv.setUint32(outPtr + 0, boxedPtr >>> 0, true);
+    dv.setUint32(outPtr + 4, getUnknownTypeId(), true);
+    const mem = new Uint8Array(memory!.buffer);
+    mem[outPtr + interfaceSize] = 1;
+    return outPtr;
   }
 
   function ferret_global_set(
@@ -612,7 +717,25 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     if (!mapPtr) {
       return 0;
     }
-    ferret_map_set(mapPtr, keyPtr, valuePtr);
+    const meta = mapGetMeta(mapPtr);
+    if (!meta) {
+      return 0;
+    }
+    let keyValuePtr = keyPtr;
+    let valueValuePtr = valuePtr;
+    if (meta.keySize !== interfaceSize) {
+      keyValuePtr = dv.getUint32(keyPtr, true);
+      if (!keyValuePtr) {
+        return 0;
+      }
+    }
+    if (meta.valueSize !== interfaceSize) {
+      valueValuePtr = dv.getUint32(valuePtr, true);
+      if (!valueValuePtr) {
+        return 0;
+      }
+    }
+    ferret_map_set(mapPtr, keyValuePtr, valueValuePtr);
     return 1;
   }
 
