@@ -10,6 +10,8 @@ fn main() {
     let bigy : i256 = 10;
     
     let arr1 := [1,2,3,4];
+
+    append(&mut arr1, 5);
     
     io::Println("len of arr1: ", len(arr1));
     io::Println("len of array literal:", len([1,2,3,4]));

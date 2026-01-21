@@ -26,8 +26,9 @@ int32_t ferret_global_len(const void* seq) {
     return ferret_array_len(arr);
 }
 
-bool ferret_global_append(ferret_array_t** seq_ref, uint64_t heap) {
+bool ferret_global_append(ferret_array_t** seq_ref, uint64_t heap, const void* value) {
     (void)heap;
+    (void)value;
     return seq_ref != NULL;
 }
 
@@ -58,8 +59,9 @@ void* ferret_global_get(const void* map_view) {
     return ferret_optional_alloc_none(sizeof(void*) * 2, sizeof(void*));
 }
 
-bool ferret_global_set(ferret_map_t** map_ref, uint64_t heap) {
+bool ferret_global_set(ferret_map_t** map_ref, uint64_t heap, const void* value) {
     (void)heap;
+    (void)value;
     return map_ref != NULL;
 }
 

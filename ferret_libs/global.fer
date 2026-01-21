@@ -23,7 +23,7 @@ type MapRef &mut map[Type1]Type2;
 // @extern
 fn len(value: SequenceView) -> i32;
 // @extern
-fn append(values: SequenceRef) -> bool;
+fn append(source: SequenceRef, value: Type) -> bool;
 // @extern
 fn at(value: SequenceView) -> Type?;
 // @extern
@@ -31,7 +31,7 @@ fn size(value: MapView) -> i32;
 // @extern
 fn get(value: MapView) -> Type2?;
 // @extern
-fn set(value: MapRef) -> bool;
+fn set(source: MapRef, value: Type2) -> bool;
 
 // @extern
 fn addr(value: &Type) -> u64;

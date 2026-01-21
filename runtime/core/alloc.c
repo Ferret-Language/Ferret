@@ -1,7 +1,6 @@
 #include "alloc.h"
 
 #include <stdlib.h>
-#include <stdio.h>
 #include <stdint.h>
 
 void *ferret_alloc(uint64_t size) {

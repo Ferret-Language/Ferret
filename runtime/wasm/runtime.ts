@@ -557,7 +557,11 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return ferret_array_len(arrPtr);
   }
 
-  function ferret_global_append(seqRefPtr: number, _heap: number): number {
+  function ferret_global_append(
+    seqRefPtr: number,
+    _heap: number,
+    _valuePtr: number,
+  ): number {
     return seqRefPtr ? 1 : 0;
   }
 
@@ -586,7 +590,11 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return optionalNoneInterface();
   }
 
-  function ferret_global_set(mapRefPtr: number, _heap: number): number {
+  function ferret_global_set(
+    mapRefPtr: number,
+    _heap: number,
+    _valuePtr: number,
+  ): number {
     return mapRefPtr ? 1 : 0;
   }
 

@@ -1,4 +1,3 @@
-#include <stdio.h>
 #include <string.h>
 #include "union.h"
 
@@ -28,10 +27,4 @@ void* ferret_union_load_ptr_deref(const void* u) {
     }
     memcpy(&value, ptr, sizeof(value));
     return value;
-}
-
-// Placeholder union print
-void ferret_io_Println_union(void* u) {
-    (void)u;
-    printf("<union>\n");
 }
