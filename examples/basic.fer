@@ -6,10 +6,15 @@ fn main() {
     let x: i32 = 10;
     let y: i32 = 10;
     
+    let bigx : i256 = 10;
+    let bigy : i256 = 10;
+    
     // Arithmetic
     let sum := x + y;
     let diff := x - y;
     let prod := x * y;
+    
+    let prod_big := bigx * bigy;
     
     // If-else
     if sum > 25 {
@@ -20,6 +25,7 @@ fn main() {
     
     // Function call
     print_result(sum);
+    print_result(prod_big as i32);
 }
 
 fn print_result(value: i32) {

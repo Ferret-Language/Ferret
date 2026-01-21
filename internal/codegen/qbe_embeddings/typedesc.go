@@ -5,6 +5,47 @@ import (
 	"fmt"
 )
 
+var ferretPrimitiveTypeOrder = []types.TYPE_NAME{
+	types.TYPE_I8,
+	types.TYPE_I16,
+	types.TYPE_I32,
+	types.TYPE_I64,
+	types.TYPE_I128,
+	types.TYPE_I256,
+	types.TYPE_U8,
+	types.TYPE_U16,
+	types.TYPE_U32,
+	types.TYPE_U64,
+	types.TYPE_U128,
+	types.TYPE_U256,
+	types.TYPE_F32,
+	types.TYPE_F64,
+	types.TYPE_F128,
+	types.TYPE_F256,
+	types.TYPE_STRING,
+	types.TYPE_BYTE,
+	types.TYPE_CHAR,
+	types.TYPE_BOOL,
+}
+
+var ferretPrimitiveKindByName = func() map[types.TYPE_NAME]int {
+	kinds := make(map[types.TYPE_NAME]int, len(ferretPrimitiveTypeOrder))
+	for idx, name := range ferretPrimitiveTypeOrder {
+		kinds[name] = idx
+	}
+	return kinds
+}()
+
+var (
+	ferretTypePointerKind   = len(ferretPrimitiveTypeOrder)
+	ferretTypeStructKind    = ferretTypePointerKind + 1
+	ferretTypeArrayKind     = ferretTypeStructKind + 1
+	ferretTypeSliceKind     = ferretTypeArrayKind + 1
+	ferretTypeMapKind       = ferretTypeSliceKind + 1
+	ferretTypeFunctionKind  = ferretTypeMapKind + 1
+	ferretTypeInterfaceKind = ferretTypeFunctionKind + 1
+)
+
 // emitTypeDescriptor generates a ferret_type_info_t structure for a given type
 // This enables runtime content-based hashing for universal map keys
 func (g *Generator) emitTypeDescriptor(globalName string, typ types.SemType) {
@@ -42,39 +83,12 @@ func (g *Generator) emitTypeDescriptor(globalName string, typ types.SemType) {
 }
 
 func (g *Generator) emitPrimitiveTypeDesc(globalName string, typ *types.PrimitiveType) {
-	var kind int
-	var size int
-
-	switch typ.GetName() {
-	case "i8", "u8":
-		kind = 0 // FERRET_TYPE_I8 - wait, need to check the enum order!
-		size = 1
-	case "i16", "u16":
-		kind = 1 // FERRET_TYPE_I16
-		size = 2
-	case "i32", "u32":
-		kind = 0 // FERRET_TYPE_I32 (first in enum)
-		size = 4
-	case "i64", "u64":
-		kind = 1 // FERRET_TYPE_I64
-		size = 8
-	case "f32":
-		kind = 2 // FERRET_TYPE_F32
-		size = 4
-	case "f64":
-		kind = 3 // FERRET_TYPE_F64
-		size = 8
-	case "bool":
-		kind = 4 // FERRET_TYPE_BOOL
-		size = 1
-	case "byte":
-		kind = 5 // FERRET_TYPE_BYTE
-		size = 1
-	case "str":
-		kind = 6 // FERRET_TYPE_STRING
-		size = g.layout.PointerSize
-	default:
-		kind = 0 // Default to I32
+	kind, ok := ferretPrimitiveKindByName[typ.GetName()]
+	if !ok {
+		kind = ferretPrimitiveKindByName[types.TYPE_I32]
+	}
+	size := g.layout.SizeOf(typ)
+	if size < 0 {
 		size = 4
 	}
 
@@ -92,7 +106,7 @@ func (g *Generator) emitMapTypeDesc(globalName string, typ *types.MapType) {
 
 	// Emit: { .kind = FERRET_TYPE_MAP, .size = sizeof(void*), .map_info = {key, value} }
 	// Layout: { kind (4), padding (4), size (8), key_ptr (8), value_ptr (8) }
-	kind := 11 // FERRET_TYPE_MAP
+	kind := ferretTypeMapKind
 	size := g.layout.PointerSize
 	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %s, l %s }\n",
 		globalName, kind, size, keyDescName, valueDescName))
@@ -104,7 +118,7 @@ func (g *Generator) emitSliceTypeDesc(globalName string, typ *types.ArrayType) {
 
 	// Emit: { .kind = FERRET_TYPE_SLICE, .size = sizeof(ferret_slice_t), .slice_info = {elem} }
 	// Layout: { kind (4), padding (4), size (8), element_ptr (8), unused (8) }
-	kind := 10                       // FERRET_TYPE_SLICE
+	kind := ferretTypeSliceKind
 	size := g.layout.PointerSize * 3 // {data, len, cap}
 	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %s, l 0 }\n",
 		globalName, kind, size, elemDescName))
@@ -118,7 +132,7 @@ func (g *Generator) emitArrayTypeDesc(globalName string, typ *types.ArrayType) {
 
 	// Emit: { .kind = FERRET_TYPE_ARRAY, .size = elem_size * length, .array_info = {length, elem} }
 	// Layout: { kind (4), padding (4), size (8), length (8), element_ptr (8) }
-	kind := 9 // FERRET_TYPE_ARRAY
+	kind := ferretTypeArrayKind
 	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %d, l %s }\n",
 		globalName, kind, arraySize, typ.Length, elemDescName))
 }
@@ -136,7 +150,7 @@ func (g *Generator) emitStructTypeDesc(globalName string, typ *types.StructType)
 
 	// Emit: { .kind = FERRET_TYPE_STRUCT, .size = sizeof(struct), .struct_info = {field_count, fields} }
 	// Layout: { kind (4), padding (4), size (8), field_count (8), fields_ptr (8) }
-	kind := 8 // FERRET_TYPE_STRUCT
+	kind := ferretTypeStructKind
 	size := g.layout.SizeOf(typ)
 	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %d, l %s }\n",
 		globalName, kind, size, len(typ.Fields), fieldDescName))
@@ -168,7 +182,7 @@ func (g *Generator) emitPointerTypeDesc(globalName string, typ *types.ReferenceT
 
 	// Emit: { .kind = FERRET_TYPE_POINTER, .size = sizeof(void*), .pointer_info = {pointee} }
 	// Layout: { kind (4), padding (4), size (8), pointee_ptr (8), unused (8) }
-	kind := 7 // FERRET_TYPE_POINTER
+	kind := ferretTypePointerKind
 	size := g.layout.PointerSize
 	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %s, l 0 }\n",
 		globalName, kind, size, innerDescName))
@@ -178,7 +192,7 @@ func (g *Generator) emitInterfaceTypeDesc(globalName string) {
 	// Interface uses pointer equality
 	// Emit: { .kind = FERRET_TYPE_INTERFACE, .size = sizeof(void*) }
 	// Layout: { kind (4), padding (4), size (8), unused (8), unused (8) }
-	kind := 13 // FERRET_TYPE_INTERFACE
+	kind := ferretTypeInterfaceKind
 	size := g.layout.PointerSize
 	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l 0, l 0 }\n",
 		globalName, kind, size))

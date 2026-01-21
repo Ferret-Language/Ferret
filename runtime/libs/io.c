@@ -10,6 +10,7 @@
 #include "../core/alloc.h"
 #include "../core/array.h"
 #include "../core/bigint.h"
+#include "../core/type_system.h"
 
 // For ssize_t on non-POSIX systems
 #ifdef _WIN32
@@ -59,8 +60,7 @@ static ssize_t getline(char** lineptr, size_t* n, FILE* stream) {
 }
 #endif
 // Printable union layout: [4-byte tag][32 bytes data] = 36 bytes total (to accommodate 256-bit types)
-// Tags: 0=i8, 1=i16, 2=i32, 3=i64, 4=i128, 5=i256, 6=u8, 7=u16, 8=u32, 9=u64, 10=u128, 11=u256,
-//       12=f32, 13=f64, 14=f128, 15=f256, 16=str, 17=byte, 18=bool
+// Tags follow ferret_type_kind_t for primitives (Printable union order).
 
 // Print a float/double with at least one decimal place (e.g., 8.0 not 8)
 static void print_float(double val, int precision) {
@@ -89,59 +89,59 @@ static void print_union(const void* union_ptr) {
     const uint8_t* data = (const uint8_t*)union_ptr + 4;
     
     switch (tag) {
-        case 0: printf("%d", *(int8_t*)data); break;      // i8
-        case 1: printf("%d", *(int16_t*)data); break;     // i16
-        case 2: printf("%d", *(int32_t*)data); break;     // i32
-        case 3: printf("%ld", *(int64_t*)data); break;    // i64
-        case 4: {  // i128
+        case FERRET_TYPE_I8: printf("%d", *(int8_t*)data); break;      // i8
+        case FERRET_TYPE_I16: printf("%d", *(int16_t*)data); break;    // i16
+        case FERRET_TYPE_I32: printf("%d", *(int32_t*)data); break;    // i32
+        case FERRET_TYPE_I64: printf("%ld", *(int64_t*)data); break;   // i64
+        case FERRET_TYPE_I128: {  // i128
             char* s = ferret_i128_to_string_ptr((const ferret_i128*)data);
             printf("%s", s);
             free(s);
             break;
         }
-        case 5: {  // i256
+        case FERRET_TYPE_I256: {  // i256
             char* s = ferret_i256_to_string_ptr((const ferret_i256*)data);
             printf("%s", s);
             free(s);
             break;
         }
-        case 6: printf("%u", *(uint8_t*)data); break;     // u8
-        case 7: printf("%u", *(uint16_t*)data); break;    // u16
-        case 8: printf("%u", *(uint32_t*)data); break;    // u32
-        case 9: printf("%lu", *(uint64_t*)data); break;   // u64
-        case 10: {  // u128
+        case FERRET_TYPE_U8: printf("%u", *(uint8_t*)data); break;     // u8
+        case FERRET_TYPE_U16: printf("%u", *(uint16_t*)data); break;   // u16
+        case FERRET_TYPE_U32: printf("%u", *(uint32_t*)data); break;   // u32
+        case FERRET_TYPE_U64: printf("%lu", *(uint64_t*)data); break;  // u64
+        case FERRET_TYPE_U128: {  // u128
             char* s = ferret_u128_to_string_ptr((const ferret_u128*)data);
             printf("%s", s);
             free(s);
             break;
         }
-        case 11: {  // u256
+        case FERRET_TYPE_U256: {  // u256
             char* s = ferret_u256_to_string_ptr((const ferret_u256*)data);
             printf("%s", s);
             free(s);
             break;
         }
-        case 12: print_float(*(float*)data, 6); break;     // f32
-        case 13: print_float(*(double*)data, 15); break;   // f64
-        case 14: {  // f128
+        case FERRET_TYPE_F32: print_float(*(float*)data, 6); break;     // f32
+        case FERRET_TYPE_F64: print_float(*(double*)data, 15); break;   // f64
+        case FERRET_TYPE_F128: {  // f128
             char* s = ferret_f128_to_string_ptr((const ferret_f128*)data);
             printf("%s", s);
             free(s);
             break;
         }
-        case 15: {  // f256
+        case FERRET_TYPE_F256: {  // f256
             char* s = ferret_f256_to_string_ptr((const ferret_f256*)data);
             printf("%s", s);
             free(s);
             break;
         }
-        case 16: {  // str
+        case FERRET_TYPE_STRING: {  // str
             const char* str = *(const char**)data;
             printf("%s", str ? str : "(null)");
             break;
         }
-        case 17: printf("%c", *(uint8_t*)data); break;    // byte
-        case 18: {  // char (32-bit Unicode scalar)
+        case FERRET_TYPE_BYTE: printf("%c", *(uint8_t*)data); break;    // byte
+        case FERRET_TYPE_CHAR: {  // char (32-bit Unicode scalar)
             uint32_t codepoint = *(uint32_t*)data;
             if (codepoint <= 0x7F) {
                 // ASCII
@@ -169,7 +169,7 @@ static void print_union(const void* union_ptr) {
             }
             break;
         }
-        case 19: printf("%s", *(bool*)data ? "true" : "false"); break; // bool
+        case FERRET_TYPE_BOOL: printf("%s", *(bool*)data ? "true" : "false"); break; // bool
         default: printf("<invalid union tag %d>", tag); break;
     }
 }

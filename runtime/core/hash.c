@@ -3,6 +3,8 @@
 
 #include "hash.h"
 #include "map.h"
+#include "bigint.h"
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 
@@ -29,17 +31,8 @@ uint32_t ferret_hash_universal(const void* data, ferret_type_info_t* type_info) 
         return 0;
     }
 
-    switch (type_info->kind) {
-        case FERRET_TYPE_I32:
-        case FERRET_TYPE_I64:
-        case FERRET_TYPE_F32:
-        case FERRET_TYPE_F64:
-        case FERRET_TYPE_BOOL:
-        case FERRET_TYPE_BYTE:
-            // Hash primitive types by their bytes
-            return fnv1a_hash((const uint8_t*)data, type_info->size, FNV_OFFSET_BASIS);
-        
-        case FERRET_TYPE_STRING: {
+    if (ferret_type_kind_is_primitive(type_info->kind)) {
+        if (type_info->kind == FERRET_TYPE_STRING) {
             // String is stored as char* pointer
             const char* str = *(const char**)data;
             if (str == NULL) {
@@ -47,13 +40,17 @@ uint32_t ferret_hash_universal(const void* data, ferret_type_info_t* type_info) 
             }
             return fnv1a_hash((const uint8_t*)str, strlen(str), FNV_OFFSET_BASIS);
         }
-        
+        // Hash primitive types by their bytes
+        return fnv1a_hash((const uint8_t*)data, type_info->size, FNV_OFFSET_BASIS);
+    }
+
+    switch (type_info->kind) {
         case FERRET_TYPE_POINTER: {
             // Hash pointer by value (identity)
             void* ptr = *(void**)data;
             return fnv1a_hash((const uint8_t*)&ptr, sizeof(void*), FNV_OFFSET_BASIS);
         }
-        
+
         case FERRET_TYPE_STRUCT: {
             // Hash all fields recursively
             uint32_t hash = FNV_OFFSET_BASIS;
@@ -168,37 +165,35 @@ bool ferret_equals_universal(const void* data1, const void* data2, ferret_type_i
         return false;
     }
     
-    switch (type_info->kind) {
-        case FERRET_TYPE_I32:
-            return *(const int32_t*)data1 == *(const int32_t*)data2;
-        
-        case FERRET_TYPE_I64:
-            return *(const int64_t*)data1 == *(const int64_t*)data2;
-        
-        case FERRET_TYPE_F32:
-            return *(const float*)data1 == *(const float*)data2;
-        
-        case FERRET_TYPE_F64:
-            return *(const double*)data1 == *(const double*)data2;
-        
-        case FERRET_TYPE_BOOL:
-        case FERRET_TYPE_BYTE:
-            return *(const uint8_t*)data1 == *(const uint8_t*)data2;
-        
-        case FERRET_TYPE_STRING: {
-            const char* str1 = *(const char**)data1;
-            const char* str2 = *(const char**)data2;
-            if (str1 == str2) return true;
-            if (str1 == NULL || str2 == NULL) return false;
-            return strcmp(str1, str2) == 0;
+    if (ferret_type_kind_is_primitive(type_info->kind)) {
+        switch (type_info->kind) {
+            case FERRET_TYPE_STRING: {
+                const char* str1 = *(const char**)data1;
+                const char* str2 = *(const char**)data2;
+                if (str1 == str2) return true;
+                if (str1 == NULL || str2 == NULL) return false;
+                return strcmp(str1, str2) == 0;
+            }
+            case FERRET_TYPE_F32:
+                return *(const float*)data1 == *(const float*)data2;
+            case FERRET_TYPE_F64:
+                return *(const double*)data1 == *(const double*)data2;
+            case FERRET_TYPE_F128:
+                return ferret_f128_eq(*(const ferret_f128*)data1, *(const ferret_f128*)data2);
+            case FERRET_TYPE_F256:
+                return ferret_f256_eq(*(const ferret_f256*)data1, *(const ferret_f256*)data2);
+            default:
+                return memcmp(data1, data2, type_info->size) == 0;
         }
-        
+    }
+
+    switch (type_info->kind) {
         case FERRET_TYPE_POINTER: {
             void* ptr1 = *(void**)data1;
             void* ptr2 = *(void**)data2;
             return ptr1 == ptr2;
         }
-        
+
         case FERRET_TYPE_STRUCT: {
             // Compare all fields recursively
             for (size_t i = 0; i < type_info->struct_info.field_count; i++) {
@@ -311,7 +306,11 @@ ferret_type_info_t* ferret_type_info_primitive(ferret_type_kind_t kind, size_t s
     if (info == NULL) return NULL;
     
     info->kind = kind;
-    info->size = size;
+    if (size == 0 && ferret_type_kind_is_primitive(kind)) {
+        info->size = ferret_primitive_size(kind);
+    } else {
+        info->size = size;
+    }
     return info;
 }
 
