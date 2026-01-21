@@ -562,7 +562,15 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     _heap: number,
     _valuePtr: number,
   ): number {
-    return seqRefPtr ? 1 : 0;
+    if (!seqRefPtr || !_valuePtr) {
+      return 0;
+    }
+    const dv = view();
+    const arrPtr = dv.getUint32(seqRefPtr, true);
+    if (!arrPtr) {
+      return 0;
+    }
+    return ferret_array_append(arrPtr, _valuePtr);
   }
 
   function ferret_global_at(_seqPtr: number): number {
@@ -592,10 +600,20 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_global_set(
     mapRefPtr: number,
-    _heap: number,
-    _valuePtr: number,
+    _heap: number | bigint,
+    keyPtr: number,
+    valuePtr: number,
   ): number {
-    return mapRefPtr ? 1 : 0;
+    if (!mapRefPtr || !keyPtr || !valuePtr) {
+      return 0;
+    }
+    const dv = view();
+    const mapPtr = dv.getUint32(mapRefPtr, true);
+    if (!mapPtr) {
+      return 0;
+    }
+    ferret_map_set(mapPtr, keyPtr, valuePtr);
+    return 1;
   }
 
   function ferret_global_addr(

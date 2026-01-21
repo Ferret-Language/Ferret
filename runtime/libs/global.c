@@ -28,8 +28,14 @@ int32_t ferret_global_len(const void* seq) {
 
 bool ferret_global_append(ferret_array_t** seq_ref, uint64_t heap, const void* value) {
     (void)heap;
-    (void)value;
-    return seq_ref != NULL;
+    if (seq_ref == NULL || value == NULL) {
+        return false;
+    }
+    ferret_array_t* arr = *seq_ref;
+    if (arr == NULL) {
+        return false;
+    }
+    return ferret_array_append(arr, value);
 }
 
 void* ferret_global_at(const void* seq) {
@@ -59,10 +65,16 @@ void* ferret_global_get(const void* map_view) {
     return ferret_optional_alloc_none(sizeof(void*) * 2, sizeof(void*));
 }
 
-bool ferret_global_set(ferret_map_t** map_ref, uint64_t heap, const void* value) {
+bool ferret_global_set(ferret_map_t** map_ref, uint64_t heap, const void* key, const void* value) {
     (void)heap;
-    (void)value;
-    return map_ref != NULL;
+    if (map_ref == NULL || key == NULL || value == NULL) {
+        return false;
+    }
+    ferret_map_t* map = *map_ref;
+    if (map == NULL) {
+        return false;
+    }
+    return ferret_map_set(map, key, value);
 }
 
 uint64_t ferret_global_addr(const void* value, uint64_t heap) {

@@ -22,7 +22,11 @@ fn main() {
         "2" => 3
     };
     
-    io::Println("size of map:", size(simpleMap));
+    io::Println("size of map before:", size(simpleMap));
+
+    set(&mut simpleMap, "task", 6);
+
+    io::Println("size of map after:", size(simpleMap));
 
     // Arithmetic
     let sum := x + y;

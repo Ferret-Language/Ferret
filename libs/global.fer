@@ -31,7 +31,7 @@ fn size(value: MapView) -> i32;
 // @extern
 fn get(value: MapView) -> Type2?;
 // @extern
-fn set(source: MapRef, value: Type2) -> bool;
+fn set(source: MapRef, key: Type1, value: Type2) -> bool;
 
 // @extern
 fn addr(value: &Type) -> u64;
