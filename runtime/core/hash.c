@@ -3,7 +3,6 @@
 
 #include "hash.h"
 #include "map.h"
-#include "bigint.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -166,25 +165,7 @@ bool ferret_equals_universal(const void* data1, const void* data2, ferret_type_i
     }
     
     if (ferret_type_kind_is_primitive(type_info->kind)) {
-        switch (type_info->kind) {
-            case FERRET_TYPE_STRING: {
-                const char* str1 = *(const char**)data1;
-                const char* str2 = *(const char**)data2;
-                if (str1 == str2) return true;
-                if (str1 == NULL || str2 == NULL) return false;
-                return strcmp(str1, str2) == 0;
-            }
-            case FERRET_TYPE_F32:
-                return *(const float*)data1 == *(const float*)data2;
-            case FERRET_TYPE_F64:
-                return *(const double*)data1 == *(const double*)data2;
-            case FERRET_TYPE_F128:
-                return ferret_f128_eq(*(const ferret_f128*)data1, *(const ferret_f128*)data2);
-            case FERRET_TYPE_F256:
-                return ferret_f256_eq(*(const ferret_f256*)data1, *(const ferret_f256*)data2);
-            default:
-                return memcmp(data1, data2, type_info->size) == 0;
-        }
+        return ferret_primitive_equals(type_info->kind, data1, data2);
     }
 
     switch (type_info->kind) {

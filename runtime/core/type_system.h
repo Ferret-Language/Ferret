@@ -7,32 +7,33 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "bigint.h"
 
 // Primitive types in Printable union order (ferret_libs/std/io.fer).
 #define FERRET_PRIMITIVE_TYPES(X) \
-    X(I8, i8, int8_t, INT) \
-    X(I16, i16, int16_t, INT) \
-    X(I32, i32, int32_t, INT) \
-    X(I64, i64, int64_t, INT) \
-    X(I128, i128, ferret_i128, INT) \
-    X(I256, i256, ferret_i256, INT) \
-    X(U8, u8, uint8_t, UINT) \
-    X(U16, u16, uint16_t, UINT) \
-    X(U32, u32, uint32_t, UINT) \
-    X(U64, u64, uint64_t, UINT) \
-    X(U128, u128, ferret_u128, UINT) \
-    X(U256, u256, ferret_u256, UINT) \
-    X(F32, f32, float, FLOAT) \
-    X(F64, f64, double, FLOAT) \
-    X(F128, f128, ferret_f128, FLOAT) \
-    X(F256, f256, ferret_f256, FLOAT) \
-    X(STRING, str, char*, STRING) \
-    X(BYTE, byte, uint8_t, BYTE) \
-    X(CHAR, char, uint32_t, CHAR) \
-    X(BOOL, bool, bool, BOOL)
+    X(I8, i8, int8_t, INT, 8) \
+    X(I16, i16, int16_t, INT, 16) \
+    X(I32, i32, int32_t, INT, 32) \
+    X(I64, i64, int64_t, INT, 64) \
+    X(I128, i128, ferret_i128, INT, 128) \
+    X(I256, i256, ferret_i256, INT, 256) \
+    X(U8, u8, uint8_t, UINT, 8) \
+    X(U16, u16, uint16_t, UINT, 16) \
+    X(U32, u32, uint32_t, UINT, 32) \
+    X(U64, u64, uint64_t, UINT, 64) \
+    X(U128, u128, ferret_u128, UINT, 128) \
+    X(U256, u256, ferret_u256, UINT, 256) \
+    X(F32, f32, float, FLOAT, 32) \
+    X(F64, f64, double, FLOAT, 64) \
+    X(F128, f128, ferret_f128, FLOAT, 128) \
+    X(F256, f256, ferret_f256, FLOAT, 256) \
+    X(STRING, str, char*, STRING, 0) \
+    X(BYTE, byte, uint8_t, BYTE, 8) \
+    X(CHAR, char, uint32_t, CHAR, 32) \
+    X(BOOL, bool, bool, BOOL, 1)
 
 typedef enum {
-#define FERRET_TYPE_ENUM(name, lower, ctype, category) FERRET_TYPE_##name,
+#define FERRET_TYPE_ENUM(name, lower, ctype, category, bits) FERRET_TYPE_##name,
     FERRET_PRIMITIVE_TYPES(FERRET_TYPE_ENUM)
 #undef FERRET_TYPE_ENUM
     FERRET_TYPE__PRIMITIVE_END,
@@ -108,7 +109,7 @@ typedef struct ferret_type_info {
 } ferret_type_info_t;
 
 // Built-in primitive type descriptors.
-#define FERRET_DECLARE_PRIMITIVE_DESC(name, lower, ctype, category) \
+#define FERRET_DECLARE_PRIMITIVE_DESC(name, lower, ctype, category, bits) \
     extern const ferret_type_info_t ferret_type_##lower;
 FERRET_PRIMITIVE_TYPES(FERRET_DECLARE_PRIMITIVE_DESC)
 #undef FERRET_DECLARE_PRIMITIVE_DESC
@@ -139,5 +140,15 @@ static inline bool ferret_type_kind_is_float(ferret_type_kind_t kind) {
 static inline bool ferret_type_kind_is_string(ferret_type_kind_t kind) {
     return kind == FERRET_TYPE_STRING;
 }
+
+static inline bool ferret_f32_eq(float a, float b) {
+    return a == b;
+}
+
+static inline bool ferret_f64_eq(double a, double b) {
+    return a == b;
+}
+
+bool ferret_primitive_equals(ferret_type_kind_t kind, const void* data1, const void* data2);
 
 #endif // FERRET_TYPE_SYSTEM_H
