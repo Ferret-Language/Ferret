@@ -195,7 +195,6 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const capacity = dv.getInt32(arrPtr + 8, true);
     const elemSize = dv.getUint32(arrPtr + 12, true);
     const elemTypeId = dv.getUint32(arrPtr + 16, true);
-    const elemTypeId = dv.getUint32(arrPtr + 16, true);
 
     const dataSize = elemSize * capacity;
     const newDataPtr = dataSize > 0 ? ferret_alloc(dataSize) : 0;
@@ -301,6 +300,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const dataPtr = dv.getUint32(arrPtr + 0, true);
     const length = dv.getInt32(arrPtr + 4, true);
     const elemSize = dv.getUint32(arrPtr + 12, true);
+    const elemTypeId = dv.getUint32(arrPtr + 16, true);
     if (index < 0 || index >= length) {
       return 0;
     }
@@ -618,6 +618,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const dv = view();
     const length = dv.getInt32(arrPtr + 4, true);
     const elemSize = dv.getUint32(arrPtr + 12, true);
+    const elemTypeId = dv.getUint32(arrPtr + 16, true);
     let idx = index | 0;
     if (idx < 0) {
       idx = length + idx;
@@ -747,21 +748,21 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   }
 
   function ferret_global_addr(
-    valuePtr: number,
+    bindingPtr: number,
     _heap: number | bigint,
   ): bigint {
-    return normalizeU64(valuePtr >>> 0);
+    return normalizeU64(bindingPtr >>> 0);
   }
 
   function ferret_global_self_addr(
-    valuePtr: number,
+    bindingPtr: number,
     _heap: number | bigint,
   ): bigint {
-    return normalizeU64(valuePtr >>> 0);
+    return normalizeU64(bindingPtr >>> 0);
   }
 
   function ferret_global_heap_addr(
-    _valuePtr: number,
+    _bindingPtr: number,
     heap: number | bigint,
   ): bigint {
     return normalizeU64(heap);
