@@ -978,13 +978,53 @@ func (p *Parser) isCompositeLiteral() bool {
 	}
 
 	// Check for key => val (map literal)
-	// We need to parse ahead to see if there's a =>
-	if p.match(tokens.IDENTIFIER_TOKEN, tokens.NUMBER_TOKEN, tokens.STRING_TOKEN, tokens.OPEN_PAREN, tokens.OPEN_BRACKET) {
-		// Try to skip past a potential key expression
-		p.advance()
-		if p.match(tokens.FAT_ARROW_TOKEN) {
-			p.current = savedPos
-			return true
+	// Keys can be any expression (including nested {...} literals), so a simple
+	// one-token peek isn't sufficient. We scan only the *first* element and look
+	// for a top-level `=>` before we hit a top-level `,` or `}`.
+	{
+		parenDepth := 0
+		bracketDepth := 0
+		curlyDepth := 0
+
+		for !p.isAtEnd() {
+			tok := p.peekRaw()
+			k := tok.Kind
+
+			// If we're at top-level inside this brace literal, then:
+			// - FAT_ARROW means it's a map literal
+			// - COMMA or CLOSE_CURLY ends the first element (no FAT_ARROW found)
+			if parenDepth == 0 && bracketDepth == 0 && curlyDepth == 0 {
+				if k == tokens.FAT_ARROW_TOKEN {
+					p.current = savedPos
+					return true
+				}
+				if k == tokens.COMMA_TOKEN || k == tokens.CLOSE_CURLY {
+					break
+				}
+			}
+
+			switch k {
+			case tokens.OPEN_PAREN:
+				parenDepth++
+			case tokens.CLOSE_PAREN:
+				if parenDepth > 0 {
+					parenDepth--
+				}
+			case tokens.OPEN_BRACKET:
+				bracketDepth++
+			case tokens.CLOSE_BRACKET:
+				if bracketDepth > 0 {
+					bracketDepth--
+				}
+			case tokens.OPEN_CURLY:
+				curlyDepth++
+			case tokens.CLOSE_CURLY:
+				if curlyDepth > 0 {
+					curlyDepth--
+				}
+			}
+
+			p.advanceRaw()
 		}
 	}
 

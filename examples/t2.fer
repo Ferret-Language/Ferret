@@ -5,7 +5,11 @@ fn main() {
     let version: i32 = 1;
     
     let m := {
-        {.X: i32} => ".x",
-        {.X: i32, .Y: i32} => ".x .y"
+        {.X = 0} => ".x",
+        {.X = 1, .Y = 2} => ".x .y"
     };
+
+    let val : str = m;
+
+    io::Println(val);
 }
