@@ -5660,7 +5660,7 @@ func (b *functionBuilder) lookupQualifiedConst(name string) (string, bool) {
 				}
 				symName := strings.Join(parts[1:], "::")
 				if sym, ok := imported.ModuleScope.GetSymbol(symName); ok && sym.ConstValue != nil && sym.ConstValue.IsConstant() {
-					return sym.ConstValue.String(), true
+					return constValueLiteral(sym.ConstValue)
 				}
 				return "", false
 			}
@@ -5671,9 +5671,21 @@ func (b *functionBuilder) lookupQualifiedConst(name string) (string, bool) {
 		return "", false
 	}
 	if sym, ok := mod.ModuleScope.GetSymbol(name); ok && sym.ConstValue != nil && sym.ConstValue.IsConstant() {
-		return sym.ConstValue.String(), true
+		return constValueLiteral(sym.ConstValue)
 	}
 	return "", false
+}
+
+func constValueLiteral(value symbols.ConstValue) (string, bool) {
+	if value == nil || !value.IsConstant() {
+		return "", false
+	}
+	if cv, ok := value.(*consteval.ConstValue); ok {
+		if str, ok := cv.AsString(); ok {
+			return str, true
+		}
+	}
+	return value.String(), true
 }
 
 func (b *functionBuilder) matchCaseValue(pattern hir.Expr) (string, bool) {
@@ -5686,7 +5698,7 @@ func (b *functionBuilder) matchCaseValue(pattern hir.Expr) (string, bool) {
 		return p.Value, true
 	case *hir.Ident:
 		if p.Symbol != nil && p.Symbol.ConstValue != nil && p.Symbol.ConstValue.IsConstant() {
-			return p.Symbol.ConstValue.String(), true
+			return constValueLiteral(p.Symbol.ConstValue)
 		}
 	case *hir.ScopeResolutionExpr:
 		if name, ok := b.qualifiedName(p); ok {
@@ -5698,6 +5710,9 @@ func (b *functionBuilder) matchCaseValue(pattern hir.Expr) (string, bool) {
 
 	if b.gen != nil && b.gen.ctx != nil && b.gen.mod != nil {
 		if value := consteval.EvaluateHIRExpr(b.gen.ctx, b.gen.mod, pattern); value != nil && value.IsConstant() {
+			if str, ok := value.AsString(); ok {
+				return str, true
+			}
 			return value.String(), true
 		}
 	}

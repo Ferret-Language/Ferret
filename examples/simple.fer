@@ -1,9 +1,10 @@
 import "std/io";
+import "examples/print";
 
 fn f() -> i32 {
-    while true {        // infinite loop, no break/return
-        let x := 1;
-    }
+    // while true {        // infinite loop, no break/return
+    //     let x := 1;
+    // }
     return 42;     // should be unreachable
 }
 
@@ -22,7 +23,7 @@ fn main() {
     let a := 10;
     
     let b := &mut a;
-    let c: i32 = b;
+    let c: i32 = *b;
 
-    io::Println("Hello from Ferret!");
+    io::Println("Hello from Ferret!", print::Name);
 }
