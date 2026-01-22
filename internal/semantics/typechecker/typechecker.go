@@ -1483,18 +1483,11 @@ func checkIndexExpr(ctx *context_v2.CompilerContext, expr *ast.IndexExpr, baseTy
 		return
 	}
 	baseType = types.UnwrapType(baseType)
+	if ref, ok := baseType.(*types.ReferenceType); ok {
+		baseType = types.UnwrapType(ref.Inner)
+	}
 	indexType = types.UnwrapType(indexType)
 	isIntegerIndex := types.IsInteger(indexType) || types.IsUntypedInt(indexType)
-
-	if _, ok := baseType.(*types.ReferenceType); ok {
-		ctx.Diagnostics.Add(
-			diagnostics.NewError("cannot index through reference").
-				WithCode(diagnostics.ErrInvalidOperation).
-				WithPrimaryLabel(expr.X.Loc(), "explicit deref required").
-				WithHelp("dereference the base first: (*ref)[index]"),
-		)
-		return
-	}
 
 	if arrType, ok := baseType.(*types.ArrayType); ok {
 		if !isIntegerIndex {
@@ -2292,22 +2285,6 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 		}
 	}
 
-	if idx, ok := stmt.Lhs.(*ast.IndexExpr); ok {
-		baseType := inferExprType(ctx, mod, idx.X)
-		if isReferenceType(baseType) {
-			// NOTE: Remove this check to allow implicit deref for index assignments on references.
-			ctx.Diagnostics.Add(
-				diagnostics.NewError("cannot assign through indexed reference").
-					WithCode(diagnostics.ErrInvalidAssignment).
-					WithPrimaryLabel(stmt.Lhs.Loc(), "explicit deref required").
-					WithHelp("use '(*ref)[index]' to update the referenced data"),
-			)
-			if stmt.Rhs != nil {
-				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
-			}
-			return
-		}
-	}
 	assignType := lhsType
 	isMapIndex := false
 	if idx, ok := stmt.Lhs.(*ast.IndexExpr); ok {
@@ -2328,7 +2305,7 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("cannot use %s on a reference", stmt.Op.Value)).
 					WithPrimaryLabel(stmt.Lhs.Loc(), "explicit deref required").
-					WithHelp(fmt.Sprintf("dereference the target first: (*value)%s", stmt.Op.Value)),
+					WithHelp(fmt.Sprintf("dereference the target first: (*%s)%s", stmt.Lhs.Loc().GetText(ctx.Diagnostics.GetSourceCache()), stmt.Op.Value)),
 			)
 			return
 		}
@@ -2352,7 +2329,7 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("cannot use %s on a reference", stmt.Op.Value)).
 					WithPrimaryLabel(stmt.Lhs.Loc(), "explicit deref required").
-					WithHelp(fmt.Sprintf("dereference the target first: (*value) %s ...", stmt.Op.Value)),
+					WithHelp(fmt.Sprintf("dereference the target first: (*%s)%s", stmt.Lhs.Loc().GetText(ctx.Diagnostics.GetSourceCache()), stmt.Op.Value)),
 			)
 			if stmt.Rhs != nil {
 				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
@@ -2636,6 +2613,9 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 			return false
 		}
 		baseType = types.UnwrapType(baseType)
+		if ref, ok := baseType.(*types.ReferenceType); ok {
+			baseType = types.UnwrapType(ref.Inner)
+		}
 		if _, ok := baseType.(*types.MapType); ok {
 			return isBorrowableTarget(ctx, mod, e.X)
 		}
@@ -2860,7 +2840,7 @@ func checkIncDecTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 		ctx.Diagnostics.Add(
 			diagnostics.NewError(fmt.Sprintf("cannot use %s on a reference", op.Value)).
 				WithPrimaryLabel(target.Loc(), "explicit deref required").
-				WithHelp(fmt.Sprintf("dereference the target first: (*value)%s", op.Value)),
+				WithHelp(fmt.Sprintf("dereference the target first: (*%s)%s", target.Loc().GetText(ctx.Diagnostics.GetSourceCache()), op.Value)),
 		)
 		return
 	}
@@ -3227,6 +3207,9 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		checkIndexExpr(ctx, e, baseType, indexType)
 		// Return element type
 		resolvedBase := types.UnwrapType(baseType)
+		if ref, ok := resolvedBase.(*types.ReferenceType); ok {
+			resolvedBase = types.UnwrapType(ref.Inner)
+		}
 		if arrType, ok := resolvedBase.(*types.ArrayType); ok {
 			mod.SetExprType(expr, arrType.Element)
 			return arrType.Element
