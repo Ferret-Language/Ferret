@@ -1,6 +1,7 @@
 package gen
 
 import (
+	"crypto/sha1"
 	"fmt"
 
 	"compiler/internal/mir"
@@ -90,9 +91,8 @@ func (g *Generator) ensureTypeIDGlobal(typeID string) string {
 		return globalName
 	}
 
-	// Create a new global
-	g.typeIDSeq++
-	globalName := fmt.Sprintf("__typeid_%d", g.typeIDSeq)
+	sum := sha1.Sum([]byte(typeID))
+	globalName := fmt.Sprintf("__typeid_%x", sum)
 	g.typeIDGlobals[typeID] = globalName
 
 	// The actual global will be emitted during module generation

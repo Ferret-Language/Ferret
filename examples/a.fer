@@ -7,6 +7,10 @@ fn (d: D) dummy() {
     
 }
 
+fn (d: D2) dummy() {
+    
+}
+
 type ann interface{
     dummy()
 };
@@ -27,11 +31,13 @@ fn main() {
 
     let a := #10;
     let addr_a := addr(&a);
+    let saddr_a := self_addr(&a);
     let haddr_a := heap_addr(&a);
     
     let b := @a;
     //io::Println(a);  
     let addr_b := addr(&b);
+    let saddr_b := self_addr(&b);
     let haddr_b := heap_addr(&b);
 
     a = 100;
@@ -41,10 +47,12 @@ fn main() {
 
     io::Println("Address of a:", addr_a);
     io::Println("Address of b:", addr_b);
-    io::Println("H Address of a:", haddr_a);
-    io::Println("H Address of b:", haddr_b);
+    io::Println("Self Address of a:", saddr_a);
+    io::Println("Self Address of b:", saddr_b);
+    io::Println("Heap Address of a:", haddr_a);
+    io::Println("Heap Address of b:", haddr_b);
     io::Println("New Address of a:", naddr_a);
-    io::Println("New H Address of a:", nhaddr_a);
+    io::Println("New Heap Address of a:", nhaddr_a);
 
     io::Println(a, b);
 
