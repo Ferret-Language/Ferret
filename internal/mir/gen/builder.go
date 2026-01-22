@@ -2238,6 +2238,17 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
+	isSelfAddrCall := false
+	isAddrCall := false
+	if ident, ok := expr.Fun.(*hir.Ident); ok {
+		if ident.Name == "self_addr" && ident.Symbol != nil && ident.Symbol.IsNative {
+			isSelfAddrCall = true
+		}
+		if ident.Name == "addr" && ident.Symbol != nil && ident.Symbol.IsNative {
+			isAddrCall = true
+		}
+	}
+
 	fnType, _ := types.UnwrapType(b.exprType(expr.Fun)).(*types.FunctionType)
 
 	if selector, ok := expr.Fun.(*hir.SelectorExpr); ok {
@@ -2275,25 +2286,16 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 	}
 
 	if target, ok := b.callTarget(expr.Fun); ok {
-		if isAddrTarget(target) {
-			args := b.lowerAddrArgs(expr, fnType)
-			if args == nil {
-				return mir.InvalidValue
-			}
-			return b.emitCall(target, args, expr)
-		}
-		if isSelfAddrTarget(target) {
-			args := b.lowerSelfAddrArgs(expr, fnType)
-			if args == nil {
-				return mir.InvalidValue
-			}
-			return b.emitCall(target, args, expr)
-		}
 		// Print/Println resolve by concrete arg type in QBE.
 		skipInterfaceBoxing := b.isStdIoPrintTarget(target)
 		args := b.lowerCallArgs(expr.Args, fnType, expr.Location, skipInterfaceBoxing)
 		if args == nil {
 			return mir.InvalidValue
+		}
+		if (isSelfAddrCall || isAddrCall) && len(expr.Args) == 1 && len(args) >= 1 {
+			if addr := b.bindingAddrArg(expr.Args[0]); addr != mir.InvalidValue {
+				args[0] = addr
+			}
 		}
 		if heapRet, ok := b.heapReturnType(target); ok {
 			ptr := b.emitHeapReturnCall(target, args, heapRet, expr.Location)
@@ -2321,98 +2323,20 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 	return mir.InvalidValue
 }
 
-func (b *functionBuilder) lowerAddrArgs(expr *hir.CallExpr, fnType *types.FunctionType) []mir.ValueID {
-	if expr == nil {
-		return nil
-	}
-	if len(expr.Args) != 1 {
-		return b.lowerCallArgs(expr.Args, fnType, expr.Location, false)
-	}
-
-	arg := expr.Args[0]
-	argVal := b.lowerExpr(arg)
-	if argVal == mir.InvalidValue {
-		return nil
-	}
-
-	callVal := argVal
-	switch e := unwrapParenExpr(arg).(type) {
-	case *hir.UnaryExpr:
-		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_TOKEN {
-			if ident, ok := unwrapParenExpr(e.X).(*hir.Ident); ok {
-				if addr := b.bindingAddr(ident); addr != mir.InvalidValue {
-					callVal = addr
-				}
-			} else {
-				if addr := b.lowerLValue(e.X); addr != mir.InvalidValue {
-					callVal = addr
-				}
-			}
-		}
+func (b *functionBuilder) bindingAddrArg(expr hir.Expr) mir.ValueID {
+	expr = unwrapParenExpr(expr)
+	switch e := expr.(type) {
 	case *hir.Ident:
-		// For reference variables, addr returns the referenced address (already in argVal).
-	}
-
-	out := []mir.ValueID{callVal}
-	if fnType != nil && len(fnType.Params) > 0 {
-		if refType, ok := types.UnwrapType(fnType.Params[0].Type).(*types.ReferenceType); ok {
-			heapArg := b.computeBorrowHeap(arg, argVal, refType.Inner, expr.Location)
-			if heapArg == mir.InvalidValue {
-				heapArg = b.emitConst(types.TypeU64, "0", expr.Location)
-			}
-			out = append(out, heapArg)
-		}
-	}
-	return out
-}
-
-func (b *functionBuilder) lowerSelfAddrArgs(expr *hir.CallExpr, fnType *types.FunctionType) []mir.ValueID {
-	if expr == nil {
-		return nil
-	}
-	if len(expr.Args) != 1 {
-		return b.lowerCallArgs(expr.Args, fnType, expr.Location, false)
-	}
-
-	arg := expr.Args[0]
-	argVal := b.lowerExpr(arg)
-	if argVal == mir.InvalidValue {
-		return nil
-	}
-
-	callVal := argVal
-	switch e := unwrapParenExpr(arg).(type) {
+		return b.bindingAddr(e)
 	case *hir.UnaryExpr:
-		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_TOKEN {
-			if ident, ok := unwrapParenExpr(e.X).(*hir.Ident); ok {
-				if addr := b.bindingAddr(ident); addr != mir.InvalidValue {
-					callVal = addr
-				}
-			} else {
-				if addr := b.lowerLValue(e.X); addr != mir.InvalidValue {
-					callVal = addr
-				}
-			}
+		if e.Op.Kind != tokens.BIT_AND_TOKEN && e.Op.Kind != tokens.MUT_TOKEN {
+			return mir.InvalidValue
 		}
-	case *hir.Ident:
-		if _, ok := types.UnwrapType(e.Type).(*types.ReferenceType); ok {
-			if addr := b.bindingAddr(e); addr != mir.InvalidValue {
-				callVal = addr
-			}
+		if ident, ok := unwrapParenExpr(e.X).(*hir.Ident); ok {
+			return b.bindingAddr(ident)
 		}
 	}
-
-	out := []mir.ValueID{callVal}
-	if fnType != nil && len(fnType.Params) > 0 {
-		if refType, ok := types.UnwrapType(fnType.Params[0].Type).(*types.ReferenceType); ok {
-			heapArg := b.computeBorrowHeap(arg, argVal, refType.Inner, expr.Location)
-			if heapArg == mir.InvalidValue {
-				heapArg = b.emitConst(types.TypeU64, "0", expr.Location)
-			}
-			out = append(out, heapArg)
-		}
-	}
-	return out
+	return mir.InvalidValue
 }
 
 func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionType, loc source.Location, skipInterfaceBoxing bool) []mir.ValueID {
@@ -2590,20 +2514,6 @@ func (b *functionBuilder) isStdIoPrintTarget(target string) bool {
 		return false
 	}
 	return b.gen.mod.ImportAliasMap[moduleAlias] == "std/io"
-}
-
-func isSelfAddrTarget(target string) bool {
-	if target == "self_addr" {
-		return true
-	}
-	return strings.HasSuffix(target, "::self_addr")
-}
-
-func isAddrTarget(target string) bool {
-	if target == "addr" {
-		return true
-	}
-	return strings.HasSuffix(target, "::addr")
 }
 
 func isRefToEmptyInterface(typ types.SemType) bool {
