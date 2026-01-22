@@ -1,0 +1,26 @@
+import "std/io";
+// Variables with type inference
+// Functions
+fn greet(name: str) -> str {
+    return "Hello, " + name + "!";
+}
+
+fn main() {
+    let name: str = "Ferret";
+    let version: i32 = 1;
+
+    // Optional types
+    let maybeValue: i32? = 42;
+
+    if maybeValue != none {
+        // Type narrowing - maybeValue is i32 here
+        let doubled: i32 = maybeValue * 2;
+    }
+
+    // Coalescing operator for default values
+    let value: i32 = maybeValue ?? 0;
+
+    io::Println(greet(name));
+
+    io::Println(0b101111);
+}

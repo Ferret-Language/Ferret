@@ -1,0 +1,13 @@
+import "std/io";
+
+type Point struct {
+    .X: i32,
+    .Y: i32
+};
+
+fn main() {
+    let p := { .X = 1, .Y = 2 } as Point;
+    let pr := &p;
+    io::Println(pr.X);
+    io::Println(pr.Y);
+}

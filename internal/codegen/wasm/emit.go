@@ -2605,9 +2605,9 @@ func parseI32Const(typ types.SemType, value string, stringPtr func(string) int32
 		return 0, nil
 	}
 	clean := stripNumeric(value)
-	v, err := strconv.ParseInt(clean, 10, 32)
+	v, err := strconv.ParseInt(clean, 0, 32)
 	if err != nil {
-		u, uerr := strconv.ParseUint(clean, 10, 32)
+		u, uerr := strconv.ParseUint(clean, 0, 32)
 		if uerr != nil {
 			return 0, err
 		}
@@ -2621,9 +2621,9 @@ func parseI64Const(typ types.SemType, value string) (int64, error) {
 		return 0, fmt.Errorf("wasm: string const cannot be i64")
 	}
 	clean := stripNumeric(value)
-	v, err := strconv.ParseInt(clean, 10, 64)
+	v, err := strconv.ParseInt(clean, 0, 64)
 	if err != nil {
-		u, uerr := strconv.ParseUint(clean, 10, 64)
+		u, uerr := strconv.ParseUint(clean, 0, 64)
 		if uerr != nil {
 			return 0, err
 		}

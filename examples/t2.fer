@@ -1,0 +1,11 @@
+import "std/io";
+
+fn main() {
+    let name: str = "Ferret";
+    let version: i32 = 1;
+    
+    let m := {
+        {.X: i32} => ".x",
+        {.X: i32, .Y: i32} => ".x .y"
+    };
+}

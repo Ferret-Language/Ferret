@@ -1,0 +1,9 @@
+import "std/io";
+
+fn main() {
+    let arr := [10, 20, 30];
+    let arr_ref := &mut arr;
+    io::Println((*arr_ref)[1]);
+    (*arr_ref)[0] = 99;
+    io::Println(arr[0]);
+}
