@@ -231,8 +231,8 @@ func inferIdentifierType(_ *context_v2.CompilerContext, mod *context_v2.Module, 
 func inferBinaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.BinaryExpr) types.SemType {
 	lhsType := inferExprType(ctx, mod, expr.X)
 	rhsType := inferExprType(ctx, mod, expr.Y)
-	lhsType = dereferenceType(types.UnwrapType(lhsType))
-	rhsType = dereferenceType(types.UnwrapType(rhsType))
+	lhsType = types.UnwrapType(lhsType)
+	rhsType = types.UnwrapType(rhsType)
 
 	switch expr.Op.Kind {
 	case tokens.DOUBLE_EQUAL_TOKEN, tokens.NOT_EQUAL_TOKEN,

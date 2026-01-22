@@ -8,6 +8,9 @@ fn f() -> i32 {
     return 42;     // should be unreachable
 }
 
+fn incr(x: &mut i32) {
+    (*x)++;
+}
 
 fn main() {
     
@@ -21,7 +24,9 @@ fn main() {
     // 
     
     let a := 10;
-    
+    io::Println(a);
+    incr(&mut a);
+    io::Println(a);
     let b := &mut a;
     let c: i32 = *b;
 

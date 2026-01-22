@@ -724,6 +724,107 @@ func (p *Parser) parseUnary() ast.Expression {
 	return p.parseUnaryDepth(0)
 }
 
+// parseUnaryNoPostfix parses unary expressions but does not consume postfix operators.
+// Used to give dereference higher precedence than postfix operations.
+func (p *Parser) parseUnaryNoPostfix(depth int) ast.Expression {
+	// Limit recursion depth to prevent stack overflow on pathological inputs like "------...x"
+	const maxUnaryDepth = 100
+	if depth >= maxUnaryDepth {
+		tok := p.peek()
+		p.diagnostics.Add(
+			diagnostics.NewError("too many nested unary operators (maximum 100)").
+				WithCode(diagnostics.ErrMax).
+				WithPrimaryLabel(source.NewLocation(&p.filepath, &tok.Start, &tok.End), "excessive nesting"),
+		)
+		return p.parsePrimary()
+	}
+
+	// Handle borrow operators: & or &mut
+	if p.match(tokens.BIT_AND_TOKEN) {
+		op := p.advance()
+		isMutable := false
+
+		// Check if followed by 'mut' keyword
+		if p.match(tokens.MUT_TOKEN) {
+			p.advance()
+			isMutable = true
+		}
+
+		expr := p.parseUnaryNoPostfix(depth + 1)
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+
+		// Create a token representing &mut or & for the UnaryExpr
+		borrowToken := op
+		if isMutable {
+			// Create synthetic token for &mut
+			borrowToken = tokens.NewToken(tokens.MUT_TOKEN, "&mut", op.Start, op.End)
+		}
+
+		return &ast.UnaryExpr{
+			Op:       borrowToken,
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
+		}
+	}
+
+	if p.match(tokens.NOT_TOKEN, tokens.MINUS_TOKEN) {
+		op := p.advance()
+		expr := p.parseUnaryNoPostfix(depth + 1)
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.UnaryExpr{
+			Op:       op,
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
+		}
+	}
+
+	if p.match(tokens.AT_TOKEN) {
+		op := p.advance()
+		expr := p.parseUnaryNoPostfix(depth + 1)
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.UnaryExpr{
+			Op:       op,
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
+		}
+	}
+
+	if p.match(tokens.HASH_TOKEN) {
+		op := p.advance()
+		expr := p.parseUnaryNoPostfix(depth + 1)
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.UnaryExpr{
+			Op:       op,
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
+		}
+	}
+
+	// Prefix increment/decrement: ++a or --a
+	if p.match(tokens.PLUS_PLUS_TOKEN, tokens.MINUS_MINUS_TOKEN) {
+		op := p.advance()
+		expr := p.parseUnaryNoPostfix(depth + 1)
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.PrefixExpr{
+			Op:       op,
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
+		}
+	}
+
+	return p.parsePrimary()
+}
+
 // parseUnaryDepth parses unary expressions with depth tracking to prevent stack overflow
 func (p *Parser) parseUnaryDepth(depth int) ast.Expression {
 	// Limit recursion depth to prevent stack overflow on pathological inputs like "------...x"
@@ -765,29 +866,6 @@ func (p *Parser) parseUnaryDepth(depth int) ast.Expression {
 			Op:       borrowToken,
 			X:        expr,
 			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
-		}
-	}
-
-	// Handle dereference operator: *expr
-	if p.match(tokens.MUL_TOKEN) {
-		star := p.advance()
-
-		// Check if this is actually a dereference by looking ahead
-		// If next is an operator or delimiter, it's likely multiplication
-		if p.match(tokens.SEMICOLON_TOKEN, tokens.COMMA_TOKEN, tokens.CLOSE_PAREN,
-			tokens.CLOSE_BRACKET, tokens.CLOSE_CURLY, tokens.EOF_TOKEN) {
-			// This looks like it should be parsed as primary (incomplete expression)
-			p.current-- // Back up
-			return p.parsePostfix()
-		}
-
-		expr := p.parseUnaryDepth(depth + 1)
-		if expr == nil {
-			expr = p.invalidExpr()
-		}
-		return &ast.DerefExpr{
-			X:        expr,
-			Location: *source.NewLocation(&p.filepath, &star.Start, p.safeLoc(expr).End),
 		}
 	}
 
@@ -1128,6 +1206,17 @@ func (p *Parser) parsePrimary() ast.Expression {
 		expr := p.parseExpr()
 		p.expect(tokens.CLOSE_PAREN)
 		return expr
+
+	case tokens.MUL_TOKEN:
+		star := p.advance()
+		expr := p.parseUnaryNoPostfix(0)
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.DerefExpr{
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &star.Start, p.safeLoc(expr).End),
+		}
 
 	case tokens.OPEN_BRACKET:
 		return p.parseArrayLiteral()
