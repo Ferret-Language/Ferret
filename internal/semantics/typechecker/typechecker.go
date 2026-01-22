@@ -41,6 +41,59 @@ func dereferenceType(typ types.SemType) types.SemType {
 	return typ
 }
 
+type autoDerefKind int
+
+const (
+	autoDerefSelector autoDerefKind = iota
+	autoDerefIndex
+	autoDerefIncDec
+)
+
+var autoDerefKinds = []autoDerefKind{
+	autoDerefSelector,
+	autoDerefIndex,
+}
+
+func AutoDerefAllowed(expr ast.Expression) bool {
+	return autoDerefAllowedExpr(expr)
+}
+
+func autoDerefAllowedExpr(expr ast.Expression) bool {
+	kind, ok := autoDerefExprKind(expr)
+	if !ok {
+		return false
+	}
+	for _, allowed := range autoDerefKinds {
+		if allowed == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func autoDerefExprKind(expr ast.Expression) (autoDerefKind, bool) {
+	switch expr.(type) {
+	case *ast.SelectorExpr:
+		return autoDerefSelector, true
+	case *ast.IndexExpr:
+		return autoDerefIndex, true
+	case *ast.PrefixExpr, *ast.PostfixExpr:
+		return autoDerefIncDec, true
+	default:
+		return 0, false
+	}
+}
+
+func autoDerefBaseType(expr ast.Expression, typ types.SemType) types.SemType {
+	typ = types.UnwrapType(typ)
+	if ref, ok := typ.(*types.ReferenceType); ok {
+		if autoDerefAllowedExpr(expr) {
+			typ = types.UnwrapType(ref.Inner)
+		}
+	}
+	return typ
+}
+
 // Helper functions
 
 // addParamsToScope adds function/method parameters to the given scope with their types
@@ -1482,10 +1535,7 @@ func checkIndexExpr(ctx *context_v2.CompilerContext, expr *ast.IndexExpr, baseTy
 	if indexType.Equals(types.TypeUnknown) {
 		return
 	}
-	baseType = types.UnwrapType(baseType)
-	if ref, ok := baseType.(*types.ReferenceType); ok {
-		baseType = types.UnwrapType(ref.Inner)
-	}
+	baseType = autoDerefBaseType(expr, baseType)
 	indexType = types.UnwrapType(indexType)
 	isIntegerIndex := types.IsInteger(indexType) || types.IsUntypedInt(indexType)
 
@@ -1841,25 +1891,27 @@ func checkSelectorExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 
 	// Auto-dereference for selector expressions (method calls and field access)
 	// This allows: ref.field instead of (*ref).field
-	baseType = dereferenceType(baseType)
+	baseType = autoDerefBaseType(expr, baseType)
 
 	fieldName := expr.Field.Name
 
-	if derefExpr := explicitDerefBase(expr.X); derefExpr != nil {
-		operandType := inferExprType(ctx, mod, derefExpr.X)
-		if isReferenceType(operandType) {
-			help := "remove the explicit dereference on the base value"
-			if ctx != nil && derefExpr.X != nil && derefExpr.X.Loc() != nil {
-				baseText := derefExpr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache())
-				if baseText != "" {
-					help = fmt.Sprintf("use %s.%s instead of (*%s).%s", baseText, fieldName, baseText, fieldName)
+	if autoDerefAllowedExpr(expr) {
+		if derefExpr := explicitDerefBase(expr.X); derefExpr != nil {
+			operandType := inferExprType(ctx, mod, derefExpr.X)
+			if isReferenceType(operandType) {
+				help := "remove the explicit dereference on the base value"
+				if ctx != nil && derefExpr.X != nil && derefExpr.X.Loc() != nil {
+					baseText := derefExpr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache())
+					if baseText != "" {
+						help = fmt.Sprintf("use %s.%s instead of (*%s).%s", baseText, fieldName, baseText, fieldName)
+					}
 				}
+				ctx.Diagnostics.Add(
+					diagnostics.NewWarning("explicit dereference is unnecessary for selector access").
+						WithPrimaryLabel(derefExpr.Loc(), "auto-dereference applies here").
+						WithHelp(help),
+				)
 			}
-			ctx.Diagnostics.Add(
-				diagnostics.NewWarning("explicit dereference is unnecessary for selector access").
-					WithPrimaryLabel(derefExpr.Loc(), "auto-dereference applies here").
-					WithHelp(help),
-			)
 		}
 	}
 
@@ -2612,10 +2664,7 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		if baseType == nil || baseType.Equals(types.TypeUnknown) {
 			return false
 		}
-		baseType = types.UnwrapType(baseType)
-		if ref, ok := baseType.(*types.ReferenceType); ok {
-			baseType = types.UnwrapType(ref.Inner)
-		}
+		baseType = autoDerefBaseType(e, baseType)
 		if _, ok := baseType.(*types.MapType); ok {
 			return isBorrowableTarget(ctx, mod, e.X)
 		}
@@ -2816,11 +2865,15 @@ func reportExplicitEnumValue(ctx *context_v2.CompilerContext, name string, loc *
 	)
 }
 
-func checkIncDecTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, target ast.Expression, targetType types.SemType, op tokens.Token) {
+func checkIncDecTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression, target ast.Expression, targetType types.SemType, op tokens.Token) types.SemType {
 	// Use unified mutability checking system
 	mutInfo := checkMutability(ctx, mod, target)
 	if reportMutabilityError(ctx, mutInfo, target) {
-		return
+		return targetType
+	}
+
+	if targetType == nil || targetType.Equals(types.TypeUnknown) {
+		return targetType
 	}
 
 	// Also check the targetType for direct immutable reference (for cases like dereferenced refs)
@@ -2831,18 +2884,22 @@ func checkIncDecTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 					WithCode(diagnostics.ErrInvalidAssignment).
 					WithPrimaryLabel(target.Loc(), "immutable reference"),
 			)
-			return
+			return targetType
 		}
 	}
 
 	targetType = types.UnwrapType(targetType)
 	if _, ok := targetType.(*types.ReferenceType); ok {
-		ctx.Diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("cannot use %s on a reference", op.Value)).
-				WithPrimaryLabel(target.Loc(), "explicit deref required").
-				WithHelp(fmt.Sprintf("dereference the target first: (*%s)%s", target.Loc().GetText(ctx.Diagnostics.GetSourceCache()), op.Value)),
-		)
-		return
+		if !autoDerefAllowedExpr(expr) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot use %s on a reference", op.Value)).
+					WithPrimaryLabel(target.Loc(), "explicit deref required").
+					WithHelp(fmt.Sprintf("dereference the target first: (*%s)%s", target.Loc().GetText(ctx.Diagnostics.GetSourceCache()), op.Value)),
+			)
+			return targetType
+		}
+		refType := targetType.(*types.ReferenceType)
+		targetType = refType.Inner
 	}
 	if !types.IsNumeric(targetType) {
 		ctx.Diagnostics.Add(
@@ -2851,6 +2908,7 @@ func checkIncDecTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 				WithHelp("increment/decrement operators only work on numeric types"),
 		)
 	}
+	return targetType
 }
 
 func checkUnaryOp(ctx *context_v2.CompilerContext, expr *ast.UnaryExpr, operandType types.SemType) {
@@ -3188,14 +3246,14 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 	case *ast.PrefixExpr:
 		// Validate ++/-- target and operand type
 		targetType := checkExpr(ctx, mod, e.X, types.TypeUnknown)
-		checkIncDecTarget(ctx, mod, e.X, targetType, e.Op)
+		targetType = checkIncDecTarget(ctx, mod, e, e.X, targetType, e.Op)
 		// Return the target type
 		mod.SetExprType(expr, targetType)
 		return targetType
 	case *ast.PostfixExpr:
 		// Validate ++/-- target and operand type
 		targetType := checkExpr(ctx, mod, e.X, types.TypeUnknown)
-		checkIncDecTarget(ctx, mod, e.X, targetType, e.Op)
+		targetType = checkIncDecTarget(ctx, mod, e, e.X, targetType, e.Op)
 		// Return the target type
 		mod.SetExprType(expr, targetType)
 		return targetType
@@ -3206,10 +3264,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		indexType := checkExpr(ctx, mod, e.Index, types.TypeUnknown)
 		checkIndexExpr(ctx, e, baseType, indexType)
 		// Return element type
-		resolvedBase := types.UnwrapType(baseType)
-		if ref, ok := resolvedBase.(*types.ReferenceType); ok {
-			resolvedBase = types.UnwrapType(ref.Inner)
-		}
+		resolvedBase := autoDerefBaseType(e, baseType)
 		if arrType, ok := resolvedBase.(*types.ArrayType); ok {
 			mod.SetExprType(expr, arrType.Element)
 			return arrType.Element

@@ -4448,7 +4448,7 @@ func (b *functionBuilder) lowerIndexValue(expr *hir.IndexExpr) mir.ValueID {
 	}
 
 	// Not a literal or not an array - try normal array handling
-	arrType := b.arrayTypeOfIndex(expr.X)
+	arrType, _ := b.indexBaseType(expr.X).(*types.ArrayType)
 	if arrType != nil {
 		// Not a literal - handle normally
 		if arrType.Length < 0 {
@@ -4507,7 +4507,7 @@ func (b *functionBuilder) lowerIndexAddr(expr *hir.IndexExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
-	if mapType := b.mapTypeOfIndex(expr.X); mapType != nil {
+	if mapType, ok := b.indexBaseType(expr.X).(*types.MapType); ok {
 		mapVal := b.lowerExpr(expr.X)
 		if mapVal == mir.InvalidValue {
 			return mir.InvalidValue
@@ -4534,7 +4534,7 @@ func (b *functionBuilder) lowerIndexAddr(expr *hir.IndexExpr) mir.ValueID {
 		return result
 	}
 
-	arrType := b.arrayTypeOfIndex(expr.X)
+	arrType, _ := b.indexBaseType(expr.X).(*types.ArrayType)
 	if arrType == nil {
 		b.reportUnsupported("index base", expr.Loc())
 		return mir.InvalidValue
@@ -4647,12 +4647,12 @@ func (b *functionBuilder) lowerIndexAssign(expr *hir.IndexExpr, rhs hir.Expr, op
 		return
 	}
 
-	if mapType := b.mapTypeOfIndex(expr.X); mapType != nil {
+	if mapType, ok := b.indexBaseType(expr.X).(*types.MapType); ok {
 		b.lowerMapIndexAssign(expr, rhs, op, loc, mapType)
 		return
 	}
 
-	arrType := b.arrayTypeOfIndex(expr.X)
+	arrType, _ := b.indexBaseType(expr.X).(*types.ArrayType)
 	if arrType != nil {
 		// Use ArraySet MIR instruction for both fixed and dynamic arrays
 		// This ensures consistent bounds checking and panicking behavior
@@ -5004,24 +5004,6 @@ func (b *functionBuilder) arrayTypeOf(expr hir.Expr) *types.ArrayType {
 	return arrType
 }
 
-func (b *functionBuilder) arrayTypeOfIndex(expr hir.Expr) *types.ArrayType {
-	if expr == nil {
-		return nil
-	}
-
-	baseType := b.exprType(expr)
-	if baseType == nil {
-		return nil
-	}
-	baseType = types.UnwrapType(baseType)
-	if ref, ok := baseType.(*types.ReferenceType); ok {
-		baseType = types.UnwrapType(ref.Inner)
-	}
-
-	arrType, _ := baseType.(*types.ArrayType)
-	return arrType
-}
-
 func (b *functionBuilder) isStringType(expr hir.Expr) bool {
 	if expr == nil {
 		return false
@@ -5052,7 +5034,7 @@ func (b *functionBuilder) mapTypeOf(expr hir.Expr) *types.MapType {
 	return mapType
 }
 
-func (b *functionBuilder) mapTypeOfIndex(expr hir.Expr) *types.MapType {
+func (b *functionBuilder) indexBaseType(expr hir.Expr) types.SemType {
 	if expr == nil {
 		return nil
 	}
@@ -5062,12 +5044,7 @@ func (b *functionBuilder) mapTypeOfIndex(expr hir.Expr) *types.MapType {
 		return nil
 	}
 	baseType = types.UnwrapType(baseType)
-	if ref, ok := baseType.(*types.ReferenceType); ok {
-		baseType = types.UnwrapType(ref.Inner)
-	}
-
-	mapType, _ := baseType.(*types.MapType)
-	return mapType
+	return baseType
 }
 
 type mapRuntimeFns struct {

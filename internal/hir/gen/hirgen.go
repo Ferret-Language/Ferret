@@ -153,13 +153,13 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 	case *ast.PrefixExpr:
 		return &hir.PrefixExpr{
 			Op:       e.Op,
-			X:        g.lowerExpr(e.X),
+			X:        g.autoDerefExpr(expr, e.X),
 			Type:     g.exprType(expr),
 			Location: locFromNode(e),
 		}
 	case *ast.PostfixExpr:
 		return &hir.PostfixExpr{
-			X:        g.lowerExpr(e.X),
+			X:        g.autoDerefExpr(expr, e.X),
 			Op:       e.Op,
 			Type:     g.exprType(expr),
 			Location: locFromNode(e),
@@ -181,7 +181,7 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 		}
 	case *ast.IndexExpr:
 		return &hir.IndexExpr{
-			X:        g.lowerExpr(e.X),
+			X:        g.autoDerefExpr(expr, e.X),
 			Index:    g.lowerExpr(e.Index),
 			Type:     g.exprType(expr),
 			Location: locFromNode(e),
@@ -243,6 +243,30 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 	default:
 		g.reportUnsupported("expression", expr)
 		return &hir.Invalid{Location: locFromNode(expr)}
+	}
+}
+
+func (g *Generator) autoDerefExpr(access ast.Expression, base ast.Expression) hir.Expr {
+	lowered := g.lowerExpr(base)
+	if access == nil || base == nil {
+		return lowered
+	}
+	if !typechecker.AutoDerefAllowed(access) {
+		return lowered
+	}
+	baseType := g.exprType(base)
+	if baseType == nil || baseType.Equals(types.TypeUnknown) {
+		return lowered
+	}
+	baseType = types.UnwrapType(baseType)
+	ref, ok := baseType.(*types.ReferenceType)
+	if !ok {
+		return lowered
+	}
+	return &hir.DerefExpr{
+		X:        lowered,
+		Type:     ref.Inner,
+		Location: locFromNode(base),
 	}
 }
 
@@ -622,7 +646,7 @@ func (g *Generator) lowerSelectorExpr(expr *ast.SelectorExpr) *hir.SelectorExpr 
 		field.Location = locFromNode(expr.Field)
 	}
 	return &hir.SelectorExpr{
-		X:        g.lowerExpr(expr.X),
+		X:        g.autoDerefExpr(expr, expr.X),
 		Field:    field,
 		Type:     g.exprType(expr),
 		Location: locFromNode(expr),

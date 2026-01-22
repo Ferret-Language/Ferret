@@ -199,11 +199,19 @@ func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 
 	case *ast.PrefixExpr:
 		// Prefix operators (++, --) return the type of the operand
-		return inferExprType(ctx, mod, e.X)
+		opType := inferExprType(ctx, mod, e.X)
+		if ref, ok := types.UnwrapType(opType).(*types.ReferenceType); ok && autoDerefAllowedExpr(e) {
+			return ref.Inner
+		}
+		return opType
 
 	case *ast.PostfixExpr:
 		// Postfix operators (++, --) return the type of the operand
-		return inferExprType(ctx, mod, e.X)
+		opType := inferExprType(ctx, mod, e.X)
+		if ref, ok := types.UnwrapType(opType).(*types.ReferenceType); ok && autoDerefAllowedExpr(e) {
+			return ref.Inner
+		}
+		return opType
 
 	case *ast.TypeCheckPattern:
 		// Type check patterns always return bool (true if type matches)
@@ -412,10 +420,7 @@ func inferIndexExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 
 	// Unwrap any named types to get to the underlying structure
 	// Allow implicit deref for index expressions.
-	baseType = types.UnwrapType(baseType)
-	if ref, ok := baseType.(*types.ReferenceType); ok {
-		baseType = types.UnwrapType(ref.Inner)
-	}
+	baseType = autoDerefBaseType(expr, baseType)
 
 	switch bt := baseType.(type) {
 	case *types.ArrayType:
@@ -450,7 +455,7 @@ func inferSelectorExprType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 
 	// Auto-dereference for selector expressions (method calls and field access)
 	// This allows: ref.field instead of (*ref).field
-	baseType = dereferenceType(baseType)
+	baseType = autoDerefBaseType(expr, baseType)
 
 	fieldName := expr.Field.Name
 
