@@ -474,241 +474,131 @@ func (p *Parser) parseExprOrAssign() ast.Node {
 
 // parseExpr parses an expression
 func (p *Parser) parseExpr() ast.Expression {
-	return p.parseCoalescing()
+	return p.parseExpression(precLowest)
 }
 
-// parseCoalescing parses coalescing operator (a ?? b)
-// Coalescing has lower precedence than logical operators and is right-associative
-func (p *Parser) parseCoalescing() ast.Expression {
-	left := p.parseLogicalOr()
-	if left == nil {
-		return nil
-	}
+type assoc int
 
-	if p.match(tokens.COALESCING_TOKEN) {
-		p.advance()                  // consume ??
-		right := p.parseCoalescing() // Right-associative: recursively parse coalescing on the right
-		if right == nil {
-			right = p.invalidExpr()
-		}
-		return &ast.CoalescingExpr{
-			Cond:     left,
-			Default:  right,
-			Location: *source.NewLocation(&p.filepath, p.safeLoc(left).Start, p.safeLoc(right).End),
-		}
-	}
+const (
+	leftAssoc assoc = iota
+	rightAssoc
+)
 
-	return left
+const (
+	precLowest         = 1
+	precCoalescing     = 2
+	precLogicalOr      = 3
+	precLogicalAnd     = 4
+	precEquality       = 5
+	precComparison     = 6
+	precRange          = 7
+	precAdditive       = 8
+	precMultiplicative = 9
+	precExponent       = 10
+)
+
+func (p *Parser) infixPrecedence(kind tokens.TOKEN) (int, assoc, bool) {
+	switch kind {
+	case tokens.COALESCING_TOKEN:
+		return precCoalescing, rightAssoc, true
+	case tokens.OR_TOKEN:
+		return precLogicalOr, leftAssoc, true
+	case tokens.AND_TOKEN:
+		return precLogicalAnd, leftAssoc, true
+	case tokens.DOUBLE_EQUAL_TOKEN, tokens.NOT_EQUAL_TOKEN, tokens.IS_TOKEN:
+		return precEquality, leftAssoc, true
+	case tokens.LESS_TOKEN, tokens.LESS_EQUAL_TOKEN, tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN, tokens.IN_TOKEN:
+		return precComparison, leftAssoc, true
+	case tokens.RANGE_TOKEN, tokens.RANGE_INCLUSIVE_TOKEN:
+		return precRange, leftAssoc, true
+	case tokens.PLUS_TOKEN, tokens.MINUS_TOKEN:
+		return precAdditive, leftAssoc, true
+	case tokens.MUL_TOKEN, tokens.DIV_TOKEN, tokens.MOD_TOKEN:
+		return precMultiplicative, leftAssoc, true
+	case tokens.EXP_TOKEN:
+		return precExponent, rightAssoc, true
+	default:
+		return 0, leftAssoc, false
+	}
 }
 
-func (p *Parser) parseLogicalOr() ast.Expression {
-	left := p.parseLogicalAnd()
-	if left == nil {
-		return nil
-	}
-
-	for p.match(tokens.OR_TOKEN) {
-		op := p.advance()
-		right := p.parseLogicalAnd()
-		if right == nil {
-			right = p.invalidExpr()
-		}
-		left = &ast.BinaryExpr{
-			X:        left,
-			Op:       op,
-			Y:        right,
-			Location: *source.NewLocation(&p.filepath, p.safeLoc(left).Start, p.safeLoc(right).End),
-		}
-	}
-
-	return left
-}
-
-func (p *Parser) parseLogicalAnd() ast.Expression {
-	left := p.parseEquality()
-	if left == nil {
-		return nil
-	}
-
-	for p.match(tokens.AND_TOKEN) {
-		op := p.advance()
-		right := p.parseEquality()
-		if right == nil {
-			right = p.invalidExpr()
-		}
-		left = &ast.BinaryExpr{
-			X:        left,
-			Op:       op,
-			Y:        right,
-			Location: *source.NewLocation(&p.filepath, p.safeLoc(left).Start, p.safeLoc(right).End),
-		}
-	}
-
-	return left
-}
-
-func (p *Parser) parseEquality() ast.Expression {
-	left := p.parseComparison()
-	if left == nil {
-		return nil
-	}
-
-	for p.match(tokens.DOUBLE_EQUAL_TOKEN, tokens.NOT_EQUAL_TOKEN, tokens.IS_TOKEN) {
-		op := p.advance()
-		var right ast.Expression
-
-		// For 'is' operator, parse the right side as a type
-		if op.Kind == tokens.IS_TOKEN {
-			typeNode := p.parseType()
-			// Wrap the type in a TypeExpr (which implements Expression interface)
-			right = &ast.TypeExpr{
-				Type:     typeNode,
-				Location: *p.safeLoc(typeNode),
-			}
-		} else {
-			right = p.parseComparison()
-			if right == nil {
-				right = p.invalidExpr()
-			}
-		}
-
-		left = &ast.BinaryExpr{
-			X:        left,
-			Op:       op,
-			Y:        right,
-			Location: *source.NewLocation(&p.filepath, p.safeLoc(left).Start, p.safeLoc(right).End),
-		}
-	}
-
-	return left
-}
-
-func (p *Parser) parseComparison() ast.Expression {
-	left := p.parseRange()
-	if left == nil {
-		return nil
-	}
-
-	for p.match(tokens.LESS_TOKEN, tokens.LESS_EQUAL_TOKEN, tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN, tokens.IN_TOKEN) {
-		op := p.advance()
-		right := p.parseRange()
-		if right == nil {
-			right = p.invalidExpr()
-		}
-		left = &ast.BinaryExpr{
-			X:        left,
-			Op:       op,
-			Y:        right,
-			Location: *source.NewLocation(&p.filepath, p.safeLoc(left).Start, p.safeLoc(right).End),
-		}
-	}
-
-	return left
-}
-
-// parseRange parses range expressions: start..end, start..=end, or start..end:incr
-// This allows ranges to be used as standalone expressions: let arr := 0..10 or 0..=10
-func (p *Parser) parseRange() ast.Expression {
-	left := p.parseAdditive()
-	if left == nil {
-		return nil
-	}
-
-	// Check for range operators '..' or '..='
-	if p.match(tokens.RANGE_TOKEN, tokens.RANGE_INCLUSIVE_TOKEN) {
-		inclusive := p.match(tokens.RANGE_INCLUSIVE_TOKEN)
-		p.advance()
-		end := p.parseAdditive()
-		if end == nil {
-			end = p.invalidExpr()
-		}
-
-		// Check for optional increment (:incr)
-		var incr ast.Expression
-		if p.match(tokens.COLON_TOKEN) {
-			p.advance()
-			incr = p.parseAdditive()
-			if incr == nil {
-				incr = p.invalidExpr()
-			}
-		}
-
-		endPos := p.safeLoc(end).End
-		if incr != nil {
-			endPos = p.safeLoc(incr).End
-		}
-
-		return &ast.RangeExpr{
-			Start:     left,
-			End:       end,
-			Incr:      incr,
-			Inclusive: inclusive,
-			Location:  *source.NewLocation(&p.filepath, p.safeLoc(left).Start, endPos),
-		}
-	}
-
-	return left
-}
-
-func (p *Parser) parseAdditive() ast.Expression {
-	left := p.parseMultiplicative()
-	if left == nil {
-		return nil
-	}
-
-	for p.match(tokens.PLUS_TOKEN, tokens.MINUS_TOKEN) {
-		op := p.advance()
-		right := p.parseMultiplicative()
-		if right == nil {
-			right = p.invalidExpr()
-		}
-		left = &ast.BinaryExpr{
-			X:        left,
-			Op:       op,
-			Y:        right,
-			Location: *source.NewLocation(&p.filepath, p.safeLoc(left).Start, p.safeLoc(right).End),
-		}
-	}
-
-	return left
-}
-
-func (p *Parser) parseMultiplicative() ast.Expression {
-	left := p.parseExponentiation()
-	if left == nil {
-		return nil
-	}
-
-	for p.match(tokens.MUL_TOKEN, tokens.DIV_TOKEN, tokens.MOD_TOKEN) {
-		op := p.advance()
-		right := p.parseExponentiation()
-		if right == nil {
-			right = p.invalidExpr()
-		}
-		left = &ast.BinaryExpr{
-			X:        left,
-			Op:       op,
-			Y:        right,
-			Location: *source.NewLocation(&p.filepath, p.safeLoc(left).Start, p.safeLoc(right).End),
-		}
-	}
-
-	return left
-}
-
-func (p *Parser) parseExponentiation() ast.Expression {
+func (p *Parser) parseExpression(minPrec int) ast.Expression {
 	left := p.parseUnary()
 	if left == nil {
 		return nil
 	}
 
-	// Right-associative: 2 ** 3 ** 2 = 2 ** (3 ** 2) = 512
-	if p.match(tokens.EXP_TOKEN) {
-		op := p.advance()
-		right := p.parseExponentiation() // Recursive call for right-associativity
-		if right == nil {
-			right = p.invalidExpr()
+	for {
+		next := p.peek()
+		prec, assoc, ok := p.infixPrecedence(next.Kind)
+		if !ok || prec < minPrec {
+			break
 		}
+
+		if next.Kind == tokens.RANGE_TOKEN || next.Kind == tokens.RANGE_INCLUSIVE_TOKEN {
+			op := p.advance()
+			inclusive := op.Kind == tokens.RANGE_INCLUSIVE_TOKEN
+			right := p.parseExpression(prec + 1)
+			if right == nil {
+				right = p.invalidExpr()
+			}
+
+			var incr ast.Expression
+			if p.match(tokens.COLON_TOKEN) {
+				p.advance()
+				incr = p.parseExpression(prec + 1)
+				if incr == nil {
+					incr = p.invalidExpr()
+				}
+			}
+
+			endPos := p.safeLoc(right).End
+			if incr != nil {
+				endPos = p.safeLoc(incr).End
+			}
+			left = &ast.RangeExpr{
+				Start:     left,
+				End:       right,
+				Incr:      incr,
+				Inclusive: inclusive,
+				Location:  *source.NewLocation(&p.filepath, p.safeLoc(left).Start, endPos),
+			}
+			continue
+		}
+
+		op := p.advance()
+		nextMin := prec + 1
+		if assoc == rightAssoc {
+			nextMin = prec
+		}
+
+		if op.Kind == tokens.COALESCING_TOKEN {
+			right := p.parseExpression(nextMin)
+			if right == nil {
+				right = p.invalidExpr()
+			}
+			left = &ast.CoalescingExpr{
+				Cond:     left,
+				Default:  right,
+				Location: *source.NewLocation(&p.filepath, p.safeLoc(left).Start, p.safeLoc(right).End),
+			}
+			continue
+		}
+
+		var right ast.Expression
+		if op.Kind == tokens.IS_TOKEN {
+			typeNode := p.parseType()
+			right = &ast.TypeExpr{
+				Type:     typeNode,
+				Location: *p.safeLoc(typeNode),
+			}
+		} else {
+			right = p.parseExpression(nextMin)
+			if right == nil {
+				right = p.invalidExpr()
+			}
+		}
+
 		left = &ast.BinaryExpr{
 			X:        left,
 			Op:       op,
