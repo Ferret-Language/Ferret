@@ -1533,7 +1533,6 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		if value == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		value, _ = b.derefValueIfNeeded(value, b.exprType(e.Value), e.Location)
 		id := b.gen.nextValueID()
 		b.emitInstr(&mir.UnionVariantCheck{
 			Result:       id,
@@ -1548,7 +1547,6 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		if value == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		value, _ = b.derefValueIfNeeded(value, b.exprType(e.Value), e.Location)
 		id := b.gen.nextValueID()
 		b.emitInstr(&mir.UnionExtract{
 			Result:       id,
@@ -1608,14 +1606,12 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 			return mir.InvalidValue
 		}
 		leftType := b.exprType(e.X)
-		left, leftType = b.derefValueIfNeeded(left, leftType, e.Location)
 
 		right := b.lowerExpr(e.Y)
 		if right == mir.InvalidValue {
 			return mir.InvalidValue
 		}
 		rightType := b.exprType(e.Y)
-		right, rightType = b.derefValueIfNeeded(right, rightType, e.Location)
 
 		// String concatenation: str + str, str + number, str + bool
 		if e.Op.Kind == tokens.PLUS_TOKEN && b.isStringType(e.X) {
@@ -1671,7 +1667,6 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 			if operand == mir.InvalidValue {
 				return mir.InvalidValue
 			}
-			operand, _ = b.derefValueIfNeeded(operand, b.exprType(e.X), e.Location)
 			if ident, ok := e.X.(*hir.Ident); ok && b.isHeapLValue(ident) {
 				b.resetHeapBinding(ident, e.Location)
 			}
@@ -1684,7 +1679,6 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		if operand == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		operand, _ = b.derefValueIfNeeded(operand, b.exprType(e.X), e.Location)
 		return b.emitUnary(e.Op.Kind, operand, e.Type, e.Location)
 	case *hir.DerefExpr:
 		// Dereference: load the value from the reference
@@ -1769,19 +1763,7 @@ func (b *functionBuilder) lowerValueExpr(expr hir.Expr, loc source.Location) mir
 	if val == mir.InvalidValue {
 		return mir.InvalidValue
 	}
-	val, _ = b.derefValueIfNeeded(val, b.exprType(expr), loc)
 	return val
-}
-
-func (b *functionBuilder) derefValueIfNeeded(val mir.ValueID, typ types.SemType, loc source.Location) (mir.ValueID, types.SemType) {
-	if val == mir.InvalidValue || typ == nil {
-		return val, typ
-	}
-	if ref, ok := types.UnwrapType(typ).(*types.ReferenceType); ok {
-		val = b.emitLoad(val, ref.Inner, loc)
-		typ = ref.Inner
-	}
-	return val, typ
 }
 
 func (b *functionBuilder) useAddrValue(typ types.SemType) bool {
@@ -2116,7 +2098,6 @@ func (b *functionBuilder) lowerPrefix(expr *hir.PrefixExpr) mir.ValueID {
 		if operand == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		operand, _ = b.derefValueIfNeeded(operand, b.exprType(expr.X), expr.Location)
 		return b.emitUnary(expr.Op.Kind, operand, expr.Type, expr.Location)
 	}
 
@@ -2126,30 +2107,6 @@ func (b *functionBuilder) lowerPrefix(expr *hir.PrefixExpr) mir.ValueID {
 	}
 
 	typ := b.exprType(expr.X)
-	if ref, ok := types.UnwrapType(typ).(*types.ReferenceType); ok {
-		refPtr := b.emitLoad(addr, typ, expr.Location)
-		if refPtr == mir.InvalidValue {
-			return mir.InvalidValue
-		}
-		cur := b.emitLoad(refPtr, ref.Inner, expr.Location)
-		if cur == mir.InvalidValue {
-			return mir.InvalidValue
-		}
-		one := mir.InvalidValue
-		if isLargePrimitiveType(ref.Inner) {
-			one = b.emitLargeConst(ref.Inner, "1", expr.Location)
-		} else {
-			one = b.emitConst(ref.Inner, "1", expr.Location)
-		}
-		op := tokens.PLUS_TOKEN
-		if expr.Op.Kind == tokens.MINUS_MINUS_TOKEN {
-			op = tokens.MINUS_TOKEN
-		}
-		next := b.emitBinary(op, cur, one, ref.Inner, expr.Location)
-		b.emitStore(refPtr, next, expr.Location)
-		return next
-	}
-
 	cur := b.emitLoad(addr, typ, expr.Location)
 	if cur == mir.InvalidValue {
 		return mir.InvalidValue
@@ -2179,7 +2136,6 @@ func (b *functionBuilder) lowerPostfix(expr *hir.PostfixExpr) mir.ValueID {
 		if operand == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		operand, _ = b.derefValueIfNeeded(operand, b.exprType(expr.X), expr.Location)
 		return b.emitUnary(expr.Op.Kind, operand, expr.Type, expr.Location)
 	}
 
@@ -2189,30 +2145,6 @@ func (b *functionBuilder) lowerPostfix(expr *hir.PostfixExpr) mir.ValueID {
 	}
 
 	typ := b.exprType(expr.X)
-	if ref, ok := types.UnwrapType(typ).(*types.ReferenceType); ok {
-		refPtr := b.emitLoad(addr, typ, expr.Location)
-		if refPtr == mir.InvalidValue {
-			return mir.InvalidValue
-		}
-		cur := b.emitLoad(refPtr, ref.Inner, expr.Location)
-		if cur == mir.InvalidValue {
-			return mir.InvalidValue
-		}
-		one := mir.InvalidValue
-		if isLargePrimitiveType(ref.Inner) {
-			one = b.emitLargeConst(ref.Inner, "1", expr.Location)
-		} else {
-			one = b.emitConst(ref.Inner, "1", expr.Location)
-		}
-		op := tokens.PLUS_TOKEN
-		if expr.Op.Kind == tokens.MINUS_MINUS_TOKEN {
-			op = tokens.MINUS_TOKEN
-		}
-		next := b.emitBinary(op, cur, one, ref.Inner, expr.Location)
-		b.emitStore(refPtr, next, expr.Location)
-		return cur
-	}
-
 	cur := b.emitLoad(addr, typ, expr.Location)
 	if cur == mir.InvalidValue {
 		return mir.InvalidValue
@@ -2752,8 +2684,6 @@ func (b *functionBuilder) emitShortCircuitBinary(e *hir.BinaryExpr) mir.ValueID 
 	if left == mir.InvalidValue {
 		return mir.InvalidValue
 	}
-	leftType := b.exprType(e.X)
-	left, _ = b.derefValueIfNeeded(left, leftType, e.Location)
 
 	// Create blocks for the control flow
 	rightBlock := b.newBlock("and_or.right", e.Location)
@@ -2779,8 +2709,6 @@ func (b *functionBuilder) emitShortCircuitBinary(e *hir.BinaryExpr) mir.ValueID 
 		if right == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		rightType := b.exprType(e.Y)
-		right, _ = b.derefValueIfNeeded(right, rightType, e.Location)
 
 		// Store right result and branch to merge
 		b.emitStore(resultSlot, right, e.Location)
@@ -2805,8 +2733,6 @@ func (b *functionBuilder) emitShortCircuitBinary(e *hir.BinaryExpr) mir.ValueID 
 		if right == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		rightType := b.exprType(e.Y)
-		right, _ = b.derefValueIfNeeded(right, rightType, e.Location)
 
 		// Store right result and branch to merge
 		b.emitStore(resultSlot, right, e.Location)
@@ -2846,8 +2772,6 @@ func (b *functionBuilder) emitTypeCheck(expr *hir.BinaryExpr) mir.ValueID {
 			valType = ident.Symbol.Type
 		}
 	}
-
-	val, valType = b.derefValueIfNeeded(val, valType, expr.Location)
 
 	unwrappedType := types.UnwrapType(valType)
 
@@ -2960,22 +2884,17 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 	valType := b.exprType(expr.X)
-	val, valType = b.derefValueIfNeeded(val, valType, expr.Location)
 
 	// Lower the range bounds
 	startVal := b.lowerExpr(rangeExpr.Start)
 	if startVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
-	startType := b.exprType(rangeExpr.Start)
-	startVal, _ = b.derefValueIfNeeded(startVal, startType, expr.Location)
 
 	endVal := b.lowerExpr(rangeExpr.End)
 	if endVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
-	endType := b.exprType(rangeExpr.End)
-	endVal, _ = b.derefValueIfNeeded(endVal, endType, expr.Location)
 
 	// Generate: val >= start
 	lowerCheck := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, val, startVal, types.TypeBool, expr.Location)
@@ -3015,8 +2934,6 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 		if stepVal == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		stepType := b.exprType(rangeExpr.Incr)
-		stepVal, _ = b.derefValueIfNeeded(stepVal, stepType, expr.Location)
 
 		// Calculate: val - start
 		diffID := b.gen.nextValueID()
@@ -3984,7 +3901,6 @@ func (b *functionBuilder) lowerRangeValue(expr hir.Expr, elemType types.SemType,
 		return mir.InvalidValue
 	}
 	valType := b.exprType(expr)
-	val, valType = b.derefValueIfNeeded(val, valType, loc)
 	return b.castValue(val, valType, elemType, loc)
 }
 
@@ -4588,7 +4504,6 @@ func (b *functionBuilder) lowerIndexAddr(expr *hir.IndexExpr) mir.ValueID {
 		if mapVal == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		mapVal, _ = b.derefValueIfNeeded(mapVal, b.exprType(expr.X), expr.Location)
 
 		keyVal := b.lowerExpr(expr.Index)
 		if keyVal == mir.InvalidValue {
@@ -4622,7 +4537,6 @@ func (b *functionBuilder) lowerIndexAddr(expr *hir.IndexExpr) mir.ValueID {
 		if arrVal == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		arrVal, _ = b.derefValueIfNeeded(arrVal, b.exprType(expr.X), expr.Location)
 
 		indexVal := b.lowerExpr(expr.Index)
 		if indexVal == mir.InvalidValue {
@@ -4737,9 +4651,6 @@ func (b *functionBuilder) lowerIndexAssign(expr *hir.IndexExpr, rhs hir.Expr, op
 		arrVal := b.lowerExpr(expr.X)
 		if arrVal == mir.InvalidValue {
 			return
-		}
-		if arrType.Length < 0 {
-			arrVal, _ = b.derefValueIfNeeded(arrVal, b.exprType(expr.X), loc)
 		}
 
 		indexVal := b.lowerExpr(expr.Index)
@@ -4895,7 +4806,6 @@ func (b *functionBuilder) lowerStringIndexValue(expr *hir.IndexExpr) mir.ValueID
 	if base == mir.InvalidValue {
 		return mir.InvalidValue
 	}
-	base, _ = b.derefValueIfNeeded(base, b.exprType(expr.X), expr.Location)
 	indexVal := b.lowerExpr(expr.Index)
 	if indexVal == mir.InvalidValue {
 		return mir.InvalidValue
@@ -4924,7 +4834,6 @@ func (b *functionBuilder) lowerDynamicIndexValue(expr *hir.IndexExpr, arrType *t
 	if arrVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
-	arrVal, _ = b.derefValueIfNeeded(arrVal, b.exprType(expr.X), expr.Location)
 
 	indexVal := b.lowerExpr(expr.Index)
 	if indexVal == mir.InvalidValue {
@@ -4975,7 +4884,6 @@ func (b *functionBuilder) lowerMapIndexValue(expr *hir.IndexExpr, mapType *types
 	if mapVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
-	mapVal, _ = b.derefValueIfNeeded(mapVal, b.exprType(expr.X), expr.Location)
 
 	keyVal := b.lowerExpr(expr.Index)
 	if keyVal == mir.InvalidValue {
@@ -5006,7 +4914,6 @@ func (b *functionBuilder) lowerMapIndexAssign(expr *hir.IndexExpr, rhs hir.Expr,
 	if mapVal == mir.InvalidValue {
 		return
 	}
-	mapVal, _ = b.derefValueIfNeeded(mapVal, b.exprType(expr.X), loc)
 
 	keyVal := b.lowerExpr(expr.Index)
 	if keyVal == mir.InvalidValue {
@@ -5084,9 +4991,6 @@ func (b *functionBuilder) arrayTypeOf(expr hir.Expr) *types.ArrayType {
 		return nil
 	}
 	baseType = types.UnwrapType(baseType)
-	if ref, ok := baseType.(*types.ReferenceType); ok {
-		baseType = types.UnwrapType(ref.Inner)
-	}
 
 	arrType, _ := baseType.(*types.ArrayType)
 	return arrType
@@ -5101,9 +5005,6 @@ func (b *functionBuilder) isStringType(expr hir.Expr) bool {
 		return false
 	}
 	baseType = types.UnwrapType(baseType)
-	if ref, ok := baseType.(*types.ReferenceType); ok {
-		baseType = types.UnwrapType(ref.Inner)
-	}
 	if prim, ok := baseType.(*types.PrimitiveType); ok {
 		return prim.GetName() == types.TYPE_STRING
 	}
@@ -5120,9 +5021,6 @@ func (b *functionBuilder) mapTypeOf(expr hir.Expr) *types.MapType {
 		return nil
 	}
 	baseType = types.UnwrapType(baseType)
-	if ref, ok := baseType.(*types.ReferenceType); ok {
-		baseType = types.UnwrapType(ref.Inner)
-	}
 
 	mapType, _ := baseType.(*types.MapType)
 	return mapType

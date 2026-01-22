@@ -983,8 +983,8 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 	if lhsType.Equals(types.TypeUnknown) || rhsType.Equals(types.TypeUnknown) {
 		return
 	}
-	lhsBase := dereferenceType(types.UnwrapType(lhsType))
-	rhsBase := dereferenceType(types.UnwrapType(rhsType))
+	lhsBase := types.UnwrapType(lhsType)
+	rhsBase := types.UnwrapType(rhsType)
 
 	switch expr.Op.Kind {
 	case tokens.PLUS_TOKEN:
@@ -1200,7 +1200,7 @@ func bindUntypedNumericLiteral(ctx *context_v2.CompilerContext, mod *context_v2.
 		return exprType
 	}
 
-	otherBase := dereferenceType(types.UnwrapType(otherType))
+	otherBase := types.UnwrapType(otherType)
 	if !types.IsNumeric(otherBase) {
 		return exprType
 	}
@@ -1482,9 +1482,19 @@ func checkIndexExpr(ctx *context_v2.CompilerContext, expr *ast.IndexExpr, baseTy
 	if indexType.Equals(types.TypeUnknown) {
 		return
 	}
-	baseType = dereferenceType(types.UnwrapType(baseType))
+	baseType = types.UnwrapType(baseType)
 	indexType = types.UnwrapType(indexType)
 	isIntegerIndex := types.IsInteger(indexType) || types.IsUntypedInt(indexType)
+
+	if _, ok := baseType.(*types.ReferenceType); ok {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot index through reference").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.X.Loc(), "explicit deref required").
+				WithHelp("dereference the base first: (*ref)[index]"),
+		)
+		return
+	}
 
 	if arrType, ok := baseType.(*types.ArrayType); ok {
 		if !isIntegerIndex {
@@ -1816,6 +1826,17 @@ func formatStructCompatibilityNote(missingFields, mismatchedFields []string, add
 	return strings.Join(noteParts, "; ")
 }
 
+func explicitDerefBase(expr ast.Expression) *ast.DerefExpr {
+	switch e := expr.(type) {
+	case *ast.DerefExpr:
+		return e
+	case *ast.ParenExpr:
+		return explicitDerefBase(e.X)
+	default:
+		return nil
+	}
+}
+
 func checkSelectorExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.SelectorExpr) {
 	// Infer the base type
 	baseType := inferExprType(ctx, mod, expr.X)
@@ -1830,6 +1851,24 @@ func checkSelectorExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 	baseType = dereferenceType(baseType)
 
 	fieldName := expr.Field.Name
+
+	if derefExpr := explicitDerefBase(expr.X); derefExpr != nil {
+		operandType := inferExprType(ctx, mod, derefExpr.X)
+		if isReferenceType(operandType) {
+			help := "remove the explicit dereference on the base value"
+			if ctx != nil && derefExpr.X != nil && derefExpr.X.Loc() != nil {
+				baseText := derefExpr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache())
+				if baseText != "" {
+					help = fmt.Sprintf("use %s.%s instead of (*%s).%s", baseText, fieldName, baseText, fieldName)
+				}
+			}
+			ctx.Diagnostics.Add(
+				diagnostics.NewWarning("explicit dereference is unnecessary for selector access").
+					WithPrimaryLabel(derefExpr.Loc(), "auto-dereference applies here").
+					WithHelp(help),
+			)
+		}
+	}
 
 	// Check if baseType is an interface type (or NamedType wrapping an interface)
 	var interfaceType *types.InterfaceType
@@ -2282,20 +2321,20 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 			isMapIndex = true
 		}
 	}
-	if ref, ok := types.UnwrapType(lhsType).(*types.ReferenceType); ok && !isMapIndex {
-		if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
-			assignType = ref.Inner
-		}
-	}
 
 	// Handle increment/decrement operators (x++, x--)
 	if stmt.Op != nil && (stmt.Op.Kind == tokens.PLUS_PLUS_TOKEN || stmt.Op.Kind == tokens.MINUS_MINUS_TOKEN) {
+		if lhsIsRef {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot use %s on a reference", stmt.Op.Value)).
+					WithPrimaryLabel(stmt.Lhs.Loc(), "explicit deref required").
+					WithHelp(fmt.Sprintf("dereference the target first: (*value)%s", stmt.Op.Value)),
+			)
+			return
+		}
 		// For ++ and --, RHS is nil
 		// Check that LHS is a numeric type
-		incDecType := lhsType
-		if ref, ok := types.UnwrapType(lhsType).(*types.ReferenceType); ok {
-			incDecType = ref.Inner
-		}
+		incDecType := types.UnwrapType(lhsType)
 		if !types.IsNumeric(incDecType) {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("cannot use %s operator on non-numeric type '%s'", stmt.Op.Value, incDecType.String())).
@@ -2309,6 +2348,17 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 
 	// Handle compound assignment operators (x += y, x -= y, etc.)
 	if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
+		if lhsIsRef {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot use %s on a reference", stmt.Op.Value)).
+					WithPrimaryLabel(stmt.Lhs.Loc(), "explicit deref required").
+					WithHelp(fmt.Sprintf("dereference the target first: (*value) %s ...", stmt.Op.Value)),
+			)
+			if stmt.Rhs != nil {
+				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
+			}
+			return
+		}
 		// For compound assignments, we need to check that the operation is valid
 		// The RHS should be compatible with the operation
 		rhsType := checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
@@ -2552,7 +2602,7 @@ func isAssignableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		return isAssignableTarget(ctx, mod, e.X)
 	case *ast.IndexExpr:
 		baseType := inferExprType(ctx, mod, e.X)
-		baseType = dereferenceType(types.UnwrapType(baseType))
+		baseType = types.UnwrapType(baseType)
 		if _, ok := baseType.(*types.MapType); ok {
 			return isAssignableTarget(ctx, mod, e.X)
 		}
@@ -2585,7 +2635,7 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		if baseType == nil || baseType.Equals(types.TypeUnknown) {
 			return false
 		}
-		baseType = dereferenceType(types.UnwrapType(baseType))
+		baseType = types.UnwrapType(baseType)
 		if _, ok := baseType.(*types.MapType); ok {
 			return isBorrowableTarget(ctx, mod, e.X)
 		}
@@ -2805,13 +2855,73 @@ func checkIncDecTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 		}
 	}
 
-	targetType = dereferenceType(types.UnwrapType(targetType))
+	targetType = types.UnwrapType(targetType)
+	if _, ok := targetType.(*types.ReferenceType); ok {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot use %s on a reference", op.Value)).
+				WithPrimaryLabel(target.Loc(), "explicit deref required").
+				WithHelp(fmt.Sprintf("dereference the target first: (*value)%s", op.Value)),
+		)
+		return
+	}
 	if !types.IsNumeric(targetType) {
 		ctx.Diagnostics.Add(
 			diagnostics.NewError(fmt.Sprintf("cannot use %s operator on non-numeric type '%s'", op.Value, targetType.String())).
 				WithPrimaryLabel(target.Loc(), "expected numeric type").
 				WithHelp("increment/decrement operators only work on numeric types"),
 		)
+	}
+}
+
+func checkUnaryOp(ctx *context_v2.CompilerContext, expr *ast.UnaryExpr, operandType types.SemType) {
+	if ctx == nil || expr == nil || operandType == nil {
+		return
+	}
+
+	operandBase := types.UnwrapType(operandType)
+	if ref, ok := operandBase.(*types.ReferenceType); ok {
+		if unaryOpAllowsType(expr.Op.Kind, ref.Inner) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot use %s on a reference", expr.Op.Value)).
+					WithPrimaryLabel(expr.Loc(), "explicit deref required").
+					WithHelp(fmt.Sprintf("dereference the value first: %s*value", expr.Op.Value)),
+			)
+			return
+		}
+	}
+
+	switch expr.Op.Kind {
+	case tokens.NOT_TOKEN:
+		if !operandBase.Equals(types.TypeBool) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot use %s on type '%s'", expr.Op.Value, operandBase.String())).
+					WithPrimaryLabel(expr.Loc(), "expected bool type").
+					WithHelp("logical not requires a bool operand"),
+			)
+		}
+	case tokens.PLUS_TOKEN, tokens.MINUS_TOKEN:
+		if !types.IsNumericType(operandBase) && !types.IsUntyped(operandBase) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot use %s on type '%s'", expr.Op.Value, operandBase.String())).
+					WithPrimaryLabel(expr.Loc(), "expected numeric type").
+					WithHelp("unary +/- operators only work on numeric types"),
+			)
+		}
+	}
+}
+
+func unaryOpAllowsType(op tokens.TOKEN, typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	base := types.UnwrapType(typ)
+	switch op {
+	case tokens.NOT_TOKEN:
+		return base.Equals(types.TypeBool)
+	case tokens.PLUS_TOKEN, tokens.MINUS_TOKEN:
+		return types.IsNumericType(base) || types.IsUntyped(base)
+	default:
+		return false
 	}
 }
 
@@ -3015,6 +3125,8 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 			return operandType
 		}
 
+		checkUnaryOp(ctx, e, operandType)
+
 		// For other unary ops like -, return operand type
 		mod.SetExprType(expr, resolveNumericExprTypeForModule(ctx, expr, expected, operandType))
 		return operandType
@@ -3114,7 +3226,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		indexType := checkExpr(ctx, mod, e.Index, types.TypeUnknown)
 		checkIndexExpr(ctx, e, baseType, indexType)
 		// Return element type
-		resolvedBase := dereferenceType(types.UnwrapType(baseType))
+		resolvedBase := types.UnwrapType(baseType)
 		if arrType, ok := resolvedBase.(*types.ArrayType); ok {
 			mod.SetExprType(expr, arrType.Element)
 			return arrType.Element
@@ -3775,7 +3887,7 @@ func resolveNumericExprTypeForModule(_ *context_v2.CompilerContext, expr ast.Exp
 	}
 
 	expectedBase := unwrapOptionalType(expected)
-	expectedUnwrapped := dereferenceType(types.UnwrapType(expectedBase))
+	expectedUnwrapped := types.UnwrapType(expectedBase)
 	if !expected.Equals(types.TypeUnknown) && types.IsNumeric(expectedUnwrapped) {
 		if value, ok := evaluateNumericConst(expr); ok {
 			valueStr := numericConstValueString(value)
@@ -3844,7 +3956,7 @@ func checkFitness(ctx *context_v2.CompilerContext, targetType types.SemType, val
 	if valueStr == "" {
 		return true
 	}
-	targetBase := dereferenceType(types.UnwrapType(targetType))
+	targetBase := types.UnwrapType(targetType)
 
 	// Check integer literal overflow
 	// Check literal directly (works for both untyped and already-resolved literals)

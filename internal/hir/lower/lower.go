@@ -308,7 +308,7 @@ func (l *Lowerer) lowerForStmt(stmt *hir.ForStmt) hir.Node {
 		return l.lowerRangeFor(stmt, rangeExpr)
 	}
 
-	rangeType := types.UnwrapType(dereferenceType(l.exprType(stmt.Range)))
+	rangeType := types.UnwrapType(l.exprType(stmt.Range))
 	if arrayType, ok := rangeType.(*types.ArrayType); ok {
 		return l.lowerArrayFor(stmt, arrayType)
 	}
@@ -1560,7 +1560,7 @@ func isDiscardIdent(ident *hir.Ident) bool {
 }
 
 func (l *Lowerer) rangeElementType(rangeExpr hir.Expr, rng *hir.RangeExpr) types.SemType {
-	rangeType := types.UnwrapType(dereferenceType(l.exprType(rangeExpr)))
+	rangeType := types.UnwrapType(l.exprType(rangeExpr))
 	if arrayType, ok := rangeType.(*types.ArrayType); ok && arrayType.Element != nil {
 		return arrayType.Element
 	}
