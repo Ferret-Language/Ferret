@@ -2224,7 +2224,15 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 		if args == nil {
 			return mir.InvalidValue
 		}
-		if (isSelfAddrCall || isAddrCall) && len(expr.Args) == 1 && len(args) >= 1 {
+		if isAddrCall && len(expr.Args) == 1 && len(args) >= 1 {
+			argType := b.exprType(expr.Args[0])
+			if _, ok := types.UnwrapType(argType).(*types.ReferenceType); !ok {
+				if addr := b.bindingAddrArg(expr.Args[0]); addr != mir.InvalidValue {
+					args[0] = addr
+				}
+			}
+		}
+		if isSelfAddrCall && len(expr.Args) == 1 && len(args) >= 1 {
 			if addr := b.bindingAddrArg(expr.Args[0]); addr != mir.InvalidValue {
 				args[0] = addr
 			}
