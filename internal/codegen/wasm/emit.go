@@ -54,6 +54,47 @@ type Generator struct {
 	dataSymbols map[string]uint32
 }
 
+var wasmPrimitiveTypeOrder = []types.TYPE_NAME{
+	types.TYPE_I8,
+	types.TYPE_I16,
+	types.TYPE_I32,
+	types.TYPE_I64,
+	types.TYPE_I128,
+	types.TYPE_I256,
+	types.TYPE_U8,
+	types.TYPE_U16,
+	types.TYPE_U32,
+	types.TYPE_U64,
+	types.TYPE_U128,
+	types.TYPE_U256,
+	types.TYPE_F32,
+	types.TYPE_F64,
+	types.TYPE_F128,
+	types.TYPE_F256,
+	types.TYPE_STRING,
+	types.TYPE_BYTE,
+	types.TYPE_CHAR,
+	types.TYPE_BOOL,
+}
+
+var wasmPrimitiveKindByName = func() map[types.TYPE_NAME]uint32 {
+	kinds := make(map[types.TYPE_NAME]uint32, len(wasmPrimitiveTypeOrder))
+	for idx, name := range wasmPrimitiveTypeOrder {
+		kinds[name] = uint32(idx)
+	}
+	return kinds
+}()
+
+var (
+	wasmTypePointerKind   = uint32(len(wasmPrimitiveTypeOrder))
+	wasmTypeStructKind    = wasmTypePointerKind + 1
+	wasmTypeArrayKind     = wasmTypeStructKind + 1
+	wasmTypeSliceKind     = wasmTypeArrayKind + 1
+	wasmTypeMapKind       = wasmTypeSliceKind + 1
+	wasmTypeFunctionKind  = wasmTypeMapKind + 1
+	wasmTypeInterfaceKind = wasmTypeFunctionKind + 1
+)
+
 func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("wasm: missing compiler context")
@@ -135,6 +176,9 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 	}
 
 	if err := gen.emitVTables(); err != nil {
+		return nil, err
+	}
+	if err := gen.emitTypeDescriptors(); err != nil {
 		return nil, err
 	}
 	if err := gen.emitTypeIDs(); err != nil {
@@ -2224,6 +2268,275 @@ func (g *Generator) addDataSymbol(name string, data []byte, align uint32) uint32
 	return offset
 }
 
+func (g *Generator) emitTypeDescriptors() error {
+	typeDescTypes := make(map[string]types.SemType)
+	typeDescByKey := make(map[string]string)
+	alias := make(map[string]string)
+	nestedSeq := 0
+
+	ensureTypeDesc := func(typ types.SemType, preferred string) (string, bool) {
+		if typ == nil {
+			return "", false
+		}
+		key := typeDescriptorKey(typ)
+		if existing, ok := typeDescByKey[key]; ok {
+			if preferred != "" && preferred != existing {
+				alias[preferred] = existing
+			}
+			return existing, false
+		}
+		name := preferred
+		if name == "" {
+			for {
+				nestedSeq++
+				candidate := fmt.Sprintf("typedesc_nested%d", nestedSeq)
+				if _, exists := typeDescTypes[candidate]; !exists {
+					name = candidate
+					break
+				}
+			}
+		}
+		typeDescByKey[key] = name
+		typeDescTypes[name] = typ
+		if preferred != "" {
+			alias[preferred] = name
+		}
+		return name, true
+	}
+
+	for _, unit := range g.units {
+		if unit.MIR == nil || len(unit.MIR.TypeDescriptors) == 0 {
+			continue
+		}
+		for globalName, typ := range unit.MIR.TypeDescriptors {
+			symbol := strings.TrimPrefix(globalName, "$")
+			ensureTypeDesc(typ, symbol)
+		}
+	}
+
+	if len(typeDescTypes) == 0 {
+		return nil
+	}
+
+	queue := make([]string, 0, len(typeDescTypes))
+	for name := range typeDescTypes {
+		queue = append(queue, name)
+	}
+
+	for i := 0; i < len(queue); i++ {
+		name := queue[i]
+		typ := typeDescTypes[name]
+		collectTypeDescDeps(typ, func(dep types.SemType) {
+			if dep == nil {
+				return
+			}
+			if depName, added := ensureTypeDesc(dep, ""); added {
+				queue = append(queue, depName)
+			}
+		})
+	}
+
+	names := make([]string, 0, len(typeDescTypes))
+	for name := range typeDescTypes {
+		names = append(names, name)
+	}
+	sortStrings(names)
+
+	fieldSymbols := make(map[string]string)
+	for _, name := range names {
+		typ := types.UnwrapType(typeDescTypes[name])
+		if st, ok := typ.(*types.StructType); ok && len(st.Fields) > 0 {
+			fieldName := name + "_fields"
+			fieldSymbols[name] = fieldName
+			g.addDataSymbol(fieldName, make([]byte, len(st.Fields)*8), 4)
+		}
+	}
+
+	for _, name := range names {
+		g.addDataSymbol(name, make([]byte, 16), 4)
+	}
+
+	for _, name := range names {
+		typ := typeDescTypes[name]
+		if err := g.fillTypeDescriptorData(name, typ, typeDescByKey, fieldSymbols); err != nil {
+			return err
+		}
+	}
+
+	for aliasName, canonical := range alias {
+		if aliasName == canonical {
+			continue
+		}
+		if ptr, ok := g.dataSymbols[canonical]; ok {
+			g.dataSymbols[aliasName] = ptr
+		}
+	}
+
+	return nil
+}
+
+func collectTypeDescDeps(typ types.SemType, add func(types.SemType)) {
+	if typ == nil {
+		return
+	}
+	typ = types.UnwrapType(typ)
+	switch t := typ.(type) {
+	case *types.NamedType:
+		collectTypeDescDeps(t.Underlying, add)
+	case *types.MapType:
+		add(t.Key)
+		add(t.Value)
+	case *types.ArrayType:
+		add(t.Element)
+	case *types.StructType:
+		for _, field := range t.Fields {
+			add(field.Type)
+		}
+	case *types.ReferenceType:
+		add(t.Inner)
+	}
+}
+
+func (g *Generator) fillTypeDescriptorData(name string, typ types.SemType, typeDescByKey map[string]string, fieldSymbols map[string]string) error {
+	if g == nil || typ == nil {
+		return nil
+	}
+
+	typ = types.UnwrapType(typ)
+
+	getTypePtr := func(dep types.SemType) uint32 {
+		if dep == nil {
+			return 0
+		}
+		key := typeDescriptorKey(dep)
+		symbol, ok := typeDescByKey[key]
+		if !ok {
+			return 0
+		}
+		ptr, ok := g.dataSymbols[symbol]
+		if !ok {
+			return 0
+		}
+		return ptr
+	}
+
+	var kind uint32
+	var size uint32
+	var info1 uint32
+	var info2 uint32
+
+	switch t := typ.(type) {
+	case *types.PrimitiveType:
+		k, ok := wasmPrimitiveKindByName[t.GetName()]
+		if !ok {
+			k = wasmPrimitiveKindByName[types.TYPE_I32]
+		}
+		kind = k
+		typeSize := g.layout.SizeOf(t)
+		if typeSize < 0 {
+			typeSize = 4
+		}
+		size = uint32(typeSize)
+	case *types.MapType:
+		kind = wasmTypeMapKind
+		size = uint32(g.layout.PointerSize)
+		info1 = getTypePtr(t.Key)
+		info2 = getTypePtr(t.Value)
+	case *types.ArrayType:
+		if t.Length < 0 {
+			kind = wasmTypeSliceKind
+			size = uint32(g.layout.PointerSize * 3)
+			info1 = getTypePtr(t.Element)
+		} else {
+			kind = wasmTypeArrayKind
+			elemSize := g.layout.SizeOf(t.Element)
+			if elemSize < 0 {
+				elemSize = 0
+			}
+			size = uint32(elemSize * t.Length)
+			info1 = uint32(t.Length)
+			info2 = getTypePtr(t.Element)
+		}
+	case *types.StructType:
+		kind = wasmTypeStructKind
+		typeSize := g.layout.SizeOf(t)
+		if typeSize < 0 {
+			typeSize = 0
+		}
+		size = uint32(typeSize)
+		info1 = uint32(len(t.Fields))
+		if fieldName, ok := fieldSymbols[name]; ok {
+			info2 = g.dataSymbols[fieldName]
+			if err := g.fillStructFields(fieldName, t, typeDescByKey); err != nil {
+				return err
+			}
+		}
+	case *types.ReferenceType:
+		kind = wasmTypePointerKind
+		size = uint32(g.layout.PointerSize)
+		info1 = getTypePtr(t.Inner)
+	case *types.InterfaceType:
+		kind = wasmTypeInterfaceKind
+		size = uint32(g.layout.PointerSize * 2)
+		info1 = uint32(len(t.Methods))
+	case *types.FunctionType:
+		kind = wasmTypeFunctionKind
+		size = uint32(g.layout.PointerSize)
+	case *types.NamedType:
+		return g.fillTypeDescriptorData(name, t.Underlying, typeDescByKey, fieldSymbols)
+	default:
+		kind = wasmTypePointerKind
+		size = uint32(g.layout.PointerSize)
+	}
+
+	ptr, ok := g.dataSymbols[name]
+	if !ok {
+		return fmt.Errorf("wasm: missing type descriptor symbol %s", name)
+	}
+	offset := int(ptr - g.dataBase)
+	if offset < 0 || offset+16 > len(g.data) {
+		return fmt.Errorf("wasm: invalid type descriptor offset for %s", name)
+	}
+	binary.LittleEndian.PutUint32(g.data[offset:], kind)
+	binary.LittleEndian.PutUint32(g.data[offset+4:], size)
+	binary.LittleEndian.PutUint32(g.data[offset+8:], info1)
+	binary.LittleEndian.PutUint32(g.data[offset+12:], info2)
+	return nil
+}
+
+func (g *Generator) fillStructFields(name string, typ *types.StructType, typeDescByKey map[string]string) error {
+	if g == nil || typ == nil {
+		return nil
+	}
+	ptr, ok := g.dataSymbols[name]
+	if !ok {
+		return fmt.Errorf("wasm: missing struct field symbol %s", name)
+	}
+	offset := int(ptr - g.dataBase)
+	if offset < 0 || offset+len(typ.Fields)*8 > len(g.data) {
+		return fmt.Errorf("wasm: invalid struct field offset for %s", name)
+	}
+	structLayout := g.layout.StructLayout(typ)
+	for i, field := range typ.Fields {
+		fieldOffset, ok := structLayout.FieldOffset(field.Name)
+		if !ok {
+			fieldOffset = 0
+		}
+		fieldTypePtr := uint32(0)
+		if field.Type != nil {
+			key := typeDescriptorKey(field.Type)
+			symbol, ok := typeDescByKey[key]
+			if ok {
+				fieldTypePtr = g.dataSymbols[symbol]
+			}
+		}
+		entryOffset := offset + i*8
+		binary.LittleEndian.PutUint32(g.data[entryOffset:], uint32(fieldOffset))
+		binary.LittleEndian.PutUint32(g.data[entryOffset+4:], fieldTypePtr)
+	}
+	return nil
+}
+
 func (g *Generator) emitTypeIDs() error {
 	for _, unit := range g.units {
 		if unit.MIR == nil || len(unit.MIR.TypeIDs) == 0 {
@@ -2680,6 +2993,56 @@ func sortStrings(values []string) {
 				values[i], values[j] = values[j], values[i]
 			}
 		}
+	}
+}
+
+func typeDescriptorKey(typ types.SemType) string {
+	return typeDescriptorKeyWithSeen(typ, make(map[types.SemType]bool))
+}
+
+func typeDescriptorKeyWithSeen(typ types.SemType, seen map[types.SemType]bool) string {
+	typ = types.UnwrapType(typ)
+	switch t := typ.(type) {
+	case *types.PrimitiveType:
+		return "prim_" + string(t.GetName())
+	case *types.MapType:
+		return "map_" + typeDescriptorKeyWithSeen(t.Key, seen) + "_" + typeDescriptorKeyWithSeen(t.Value, seen)
+	case *types.ArrayType:
+		if t.Length < 0 {
+			return fmt.Sprintf("slice_%s", typeDescriptorKeyWithSeen(t.Element, seen))
+		}
+		return fmt.Sprintf("array_%d_%s", t.Length, typeDescriptorKeyWithSeen(t.Element, seen))
+	case *types.StructType:
+		if seen[typ] {
+			return fmt.Sprintf("struct_rec_%p", t)
+		}
+		seen[typ] = true
+		var sb strings.Builder
+		sb.WriteString("struct{")
+		for i, field := range t.Fields {
+			if i > 0 {
+				sb.WriteString(";")
+			}
+			sb.WriteString(field.Name)
+			sb.WriteString(":")
+			sb.WriteString(typeDescriptorKeyWithSeen(field.Type, seen))
+		}
+		sb.WriteString("}")
+		return sb.String()
+	case *types.InterfaceType:
+		if len(t.Methods) == 0 {
+			return "interface_empty"
+		}
+		if t.ID != "" {
+			return "interface_" + t.ID
+		}
+		return fmt.Sprintf("interface_%p", t)
+	case *types.ReferenceType:
+		return "ref_" + typeDescriptorKeyWithSeen(t.Inner, seen)
+	case *types.NamedType:
+		return "named_" + t.Name + "_" + typeDescriptorKeyWithSeen(t.Underlying, seen)
+	default:
+		return fmt.Sprintf("unknown_%T", typ)
 	}
 }
 

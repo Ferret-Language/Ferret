@@ -69,8 +69,8 @@ ferret_map_t* ferret_map_new(
     size_t value_size,
     uint32_t (*hash_fn)(const void* key, size_t key_size),
     bool (*equals_fn)(const void* key1, const void* key2, size_t key_size),
-    const char* key_type_id,
-    const char* value_type_id
+    ferret_type_info_t* key_type_id,
+    ferret_type_info_t* value_type_id
 ) {
     ferret_map_t* map = (ferret_map_t*)malloc(sizeof(ferret_map_t));
     if (map == NULL) {
@@ -102,7 +102,7 @@ static __thread ferret_type_info_t* g_universal_key_type = NULL;
 // Helper to set type info before universal map operations
 static inline void ferret_map_prepare_universal(const ferret_map_t* map) {
     if (map != NULL && map->key_type_info != NULL) {
-        g_universal_key_type = (ferret_type_info_t*)map->key_type_info;
+        g_universal_key_type = map->key_type_info;
     }
 }
 
@@ -147,8 +147,8 @@ ferret_map_t* ferret_map_from_pairs(
     size_t count,
     uint32_t (*hash_fn)(const void* key, size_t key_size),
     bool (*equals_fn)(const void* key1, const void* key2, size_t key_size),
-    const char* key_type_id,
-    const char* value_type_id
+    ferret_type_info_t* key_type_id,
+    ferret_type_info_t* value_type_id
 ) {
     ferret_map_t* map = ferret_map_new(key_size, value_size, hash_fn, equals_fn, key_type_id, value_type_id);
     if (map == NULL) {
@@ -294,10 +294,10 @@ void ferret_map_assign(ferret_map_t** dst, const ferret_map_t* src) {
 
 // Macro to generate typed map constructors and from_pairs functions
 #define FERRET_MAP_TYPED_CONSTRUCTOR(suffix, hash_fn, equals_fn) \
-    ferret_map_t* ferret_map_new_##suffix(size_t key_size, size_t value_size, const char* key_type_id, const char* value_type_id) { \
+    ferret_map_t* ferret_map_new_##suffix(size_t key_size, size_t value_size, ferret_type_info_t* key_type_id, ferret_type_info_t* value_type_id) { \
         return ferret_map_new(key_size, value_size, hash_fn, equals_fn, key_type_id, value_type_id); \
     } \
-    ferret_map_t* ferret_map_from_pairs_##suffix(size_t key_size, size_t value_size, const void* keys, const void* values, size_t count, const char* key_type_id, const char* value_type_id) { \
+    ferret_map_t* ferret_map_from_pairs_##suffix(size_t key_size, size_t value_size, const void* keys, const void* values, size_t count, ferret_type_info_t* key_type_id, ferret_type_info_t* value_type_id) { \
         return ferret_map_from_pairs(key_size, value_size, keys, values, count, hash_fn, equals_fn, key_type_id, value_type_id); \
     }
 
@@ -621,8 +621,8 @@ ferret_map_t* ferret_map_new_universal(
     size_t key_size,
     size_t value_size,
     ferret_type_info_t* key_type_info,
-    const char* key_type_id,
-    const char* value_type_id
+    ferret_type_info_t* key_type_id,
+    ferret_type_info_t* value_type_id
 ) {
     ferret_map_set_universal_key_type(key_type_info);  // Sets thread-local for initial creation
     ferret_map_t* map = ferret_map_new(
@@ -640,14 +640,14 @@ ferret_map_t* ferret_map_new_universal(
 }
 
 ferret_map_t* ferret_map_from_pairs_universal(
-    size_t key_size, 
-    size_t value_size, 
-    const void* keys, 
-    const void* values, 
+    size_t key_size,
+    size_t value_size,
+    const void* keys,
+    const void* values,
     size_t count,
     ferret_type_info_t* key_type_info,
-    const char* key_type_id,
-    const char* value_type_id
+    ferret_type_info_t* key_type_id,
+    ferret_type_info_t* value_type_id
 ) {
     ferret_map_set_universal_key_type(key_type_info);  // Sets thread-local for initial creation
     

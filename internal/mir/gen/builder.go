@@ -2598,12 +2598,14 @@ func (b *functionBuilder) emitTypeIDPtr(typ types.SemType, loc source.Location) 
 	if b.gen == nil {
 		return b.emitConst(ptrType, "0", loc)
 	}
-	typeID := typeIDString(typ)
-	typeIDGlobal := b.gen.ensureTypeIDGlobal(typeID)
-	if typeIDGlobal == "" {
+	if typ == nil || typ.Equals(types.TypeUnknown) {
 		return b.emitConst(ptrType, "0", loc)
 	}
-	return b.emitConst(ptrType, "$"+typeIDGlobal, loc)
+	typeDesc := b.getOrCreateTypeDescriptor(typ)
+	if typeDesc == mir.InvalidValue {
+		return b.emitConst(ptrType, "0", loc)
+	}
+	return b.emitCast(typeDesc, ptrType, loc)
 }
 
 // boxUnionValue creates a tagged union value from a variant value.

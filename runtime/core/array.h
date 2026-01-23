@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include "type_system.h"
 // Note: string.h is included in array.c, not here, to avoid include order issues
 
 // Dynamic array structure
@@ -16,15 +17,15 @@ typedef struct {
     int32_t length;    // Current number of elements
     int32_t capacity;  // Allocated capacity
     size_t elem_size;  // Size of each element in bytes
-    const char* elem_type_id; // Type ID string for element type
+    ferret_type_info_t* elem_type_info; // Type descriptor for element type
 } ferret_array_t;
 
 // Create a new dynamic array with initial capacity
 // Returns NULL on allocation failure
-ferret_array_t* ferret_array_new(size_t elem_size, int32_t initial_capacity, const char* elem_type_id);
+ferret_array_t* ferret_array_new(size_t elem_size, int32_t initial_capacity, ferret_type_info_t* elem_type_info);
 
 // Create array from existing data (takes ownership)
-ferret_array_t* ferret_array_from_data(void* data, int32_t length, int32_t capacity, size_t elem_size, const char* elem_type_id);
+ferret_array_t* ferret_array_from_data(void* data, int32_t length, int32_t capacity, size_t elem_size, ferret_type_info_t* elem_type_info);
 
 // Clone array (deep copy of elements)
 ferret_array_t* ferret_array_clone(const ferret_array_t* arr);

@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include "type_system.h"
 
 // Hash table entry
 typedef struct ferret_map_entry {
@@ -25,9 +26,9 @@ typedef struct {
     size_t value_size;             // Size of value type in bytes
     uint32_t (*hash_fn)(const void* key, size_t key_size); // Hash function
     bool (*equals_fn)(const void* key1, const void* key2, size_t key_size); // Equality function
-    void* key_type_info;           // Type descriptor for universal hashing (ferret_type_info_t*)
-    const char* key_type_id;       // Type ID string for key type
-    const char* value_type_id;     // Type ID string for value type
+    ferret_type_info_t* key_type_info;   // Type descriptor for universal hashing
+    ferret_type_info_t* key_type_id;     // Type descriptor for key type
+    ferret_type_info_t* value_type_id;   // Type descriptor for value type
 } ferret_map_t;
 
 // Create a new map
@@ -37,8 +38,8 @@ ferret_map_t* ferret_map_new(
     size_t value_size,
     uint32_t (*hash_fn)(const void* key, size_t key_size),
     bool (*equals_fn)(const void* key1, const void* key2, size_t key_size),
-    const char* key_type_id,
-    const char* value_type_id
+    ferret_type_info_t* key_type_id,
+    ferret_type_info_t* value_type_id
 );
 
 // Create a map from initial key-value pairs
@@ -52,8 +53,8 @@ ferret_map_t* ferret_map_from_pairs(
     size_t count,
     uint32_t (*hash_fn)(const void* key, size_t key_size),
     bool (*equals_fn)(const void* key1, const void* key2, size_t key_size),
-    const char* key_type_id,
-    const char* value_type_id
+    ferret_type_info_t* key_type_id,
+    ferret_type_info_t* value_type_id
 );
 
 // Clone map (deep copy of entries)
@@ -64,15 +65,15 @@ void ferret_map_assign(ferret_map_t** dst, const ferret_map_t* src);
 
 // Typed map constructors (avoid function pointer arguments in IR)
 #define FERRET_MAP_TYPED_DECL(suffix) \
-    ferret_map_t* ferret_map_new_##suffix(size_t key_size, size_t value_size, const char* key_type_id, const char* value_type_id); \
+    ferret_map_t* ferret_map_new_##suffix(size_t key_size, size_t value_size, ferret_type_info_t* key_type_id, ferret_type_info_t* value_type_id); \
     ferret_map_t* ferret_map_from_pairs_##suffix( \
         size_t key_size, \
         size_t value_size, \
         const void* keys, \
         const void* values, \
         size_t count, \
-        const char* key_type_id, \
-        const char* value_type_id \
+        ferret_type_info_t* key_type_id, \
+        ferret_type_info_t* value_type_id \
     );
 
 FERRET_MAP_TYPED_DECL(numeric)  // Generic numeric maps for all integer and float types
@@ -162,8 +163,8 @@ ferret_map_t* ferret_map_new_universal(
     size_t key_size,
     size_t value_size,
     ferret_type_info_t* key_type_info,
-    const char* key_type_id,
-    const char* value_type_id
+    ferret_type_info_t* key_type_id,
+    ferret_type_info_t* value_type_id
 );
 ferret_map_t* ferret_map_from_pairs_universal(
     size_t key_size, 
@@ -172,8 +173,8 @@ ferret_map_t* ferret_map_from_pairs_universal(
     const void* values, 
     size_t count,
     ferret_type_info_t* key_type_info,
-    const char* key_type_id,
-    const char* value_type_id
+    ferret_type_info_t* key_type_id,
+    ferret_type_info_t* value_type_id
 );
 
 #endif // FERRET_MAP_H

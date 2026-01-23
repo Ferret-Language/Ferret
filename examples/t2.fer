@@ -9,7 +9,7 @@ fn main() {
         {.X = 1} => ".x .y",
     };
 
-    let val : str = m["name"];
+    let val : str = m[{.X = 0}];
 
     io::Println(val);
 }

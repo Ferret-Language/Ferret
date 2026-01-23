@@ -13,10 +13,8 @@
 
 typedef struct {
     void* data;
-    void* type_id;
+    void* type_info;
 } ferret_interface_t;
-
-static const char ferret_unknown_type_id[] = "<unknown>";
 
 int32_t ferret_global_len(const void* seq) {
     if (seq == NULL) {
@@ -114,7 +112,7 @@ void ferret_global_at(void* out, const void* seq, int32_t index) {
         }
         ferret_interface_t* iface = (ferret_interface_t*)opt;
         iface->data = boxed;
-        iface->type_id = (void*)(arr->elem_type_id != NULL ? arr->elem_type_id : ferret_unknown_type_id);
+        iface->type_info = (void*)(arr->elem_type_info);
     }
     uint8_t* flag = (uint8_t*)opt + iface_size;
     *flag = 1;
@@ -198,7 +196,7 @@ void ferret_global_get(void* out, const void* map_view, const void* key) {
     }
     ferret_interface_t* iface = (ferret_interface_t*)opt;
     iface->data = boxed;
-    iface->type_id = (void*)(map->value_type_id != NULL ? map->value_type_id : ferret_unknown_type_id);
+    iface->type_info = (void*)(map->value_type_id);
     uint8_t* flag = (uint8_t*)opt + iface_size;
     *flag = 1;
     *out_ptr = opt;
