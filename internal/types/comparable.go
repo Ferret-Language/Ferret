@@ -44,7 +44,7 @@ func IsMapKeyComparable(t SemType) bool {
 		// Named types are comparable if their underlying type is comparable
 		return IsMapKeyComparable(v.Underlying)
 	case *InterfaceType:
-		// Interfaces are comparable (16-byte struct: data pointer + type ID string)
+		// Interfaces are comparable (data pointer + type descriptor)
 		// Two interface values are equal if they have identical dynamic types and equal dynamic values
 		return true
 	case *FunctionType, *MapType:

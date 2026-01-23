@@ -140,11 +140,32 @@ uint32_t ferret_hash_universal(const void* data, ferret_type_info_t* type_info) 
         }
         
         case FERRET_TYPE_INTERFACE: {
-            // Interface is typically { void* vtable; void* data; }
-            // Hash both pointers for identity-based comparison
-            typedef struct { void* vtable; void* data; } interface_t;
+            // Interface layout: { void* data; void* extra }
+            // For empty interface, extra holds the dynamic type descriptor.
+            // For non-empty interface, extra holds the vtable pointer.
+            typedef struct { void* data; void* extra; } interface_t;
             const interface_t* iface = (const interface_t*)data;
-            uint32_t h1 = fnv1a_hash((const uint8_t*)&iface->vtable, sizeof(void*), FNV_OFFSET_BASIS);
+
+            if (type_info->interface_info.method_count == 0) {
+                ferret_type_info_t* dyn_type = (ferret_type_info_t*)iface->extra;
+                if (dyn_type == NULL) {
+                    uint32_t h1 = fnv1a_hash((const uint8_t*)&iface->extra, sizeof(void*), FNV_OFFSET_BASIS);
+                    uint32_t h2 = fnv1a_hash((const uint8_t*)&iface->data, sizeof(void*), FNV_OFFSET_BASIS);
+                    return hash_combine(h1, h2);
+                }
+
+                const void* payload = iface->data;
+                if (dyn_type->kind == FERRET_TYPE_POINTER) {
+                    payload = &iface->data;
+                }
+
+                uint32_t type_hash = fnv1a_hash((const uint8_t*)&dyn_type, sizeof(void*), FNV_OFFSET_BASIS);
+                uint32_t value_hash = ferret_hash_universal(payload, dyn_type);
+                return hash_combine(type_hash, value_hash);
+            }
+
+            // Non-empty interface: identity-based hashing (vtable + data pointers)
+            uint32_t h1 = fnv1a_hash((const uint8_t*)&iface->extra, sizeof(void*), FNV_OFFSET_BASIS);
             uint32_t h2 = fnv1a_hash((const uint8_t*)&iface->data, sizeof(void*), FNV_OFFSET_BASIS);
             return hash_combine(h1, h2);
         }
@@ -269,10 +290,31 @@ bool ferret_equals_universal(const void* data1, const void* data2, ferret_type_i
         }
         
         case FERRET_TYPE_INTERFACE: {
-            typedef struct { void* vtable; void* data; } interface_t;
+            typedef struct { void* data; void* extra; } interface_t;
             const interface_t* iface1 = (const interface_t*)data1;
             const interface_t* iface2 = (const interface_t*)data2;
-            return iface1->vtable == iface2->vtable && iface1->data == iface2->data;
+
+            if (type_info->interface_info.method_count == 0) {
+                ferret_type_info_t* dyn1 = (ferret_type_info_t*)iface1->extra;
+                ferret_type_info_t* dyn2 = (ferret_type_info_t*)iface2->extra;
+                if (dyn1 != dyn2) {
+                    return false;
+                }
+                if (dyn1 == NULL) {
+                    return iface1->data == iface2->data;
+                }
+
+                const void* payload1 = iface1->data;
+                const void* payload2 = iface2->data;
+                if (dyn1->kind == FERRET_TYPE_POINTER) {
+                    payload1 = &iface1->data;
+                    payload2 = &iface2->data;
+                }
+
+                return ferret_equals_universal(payload1, payload2, dyn1);
+            }
+
+            return iface1->extra == iface2->extra && iface1->data == iface2->data;
         }
         
         default:

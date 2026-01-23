@@ -2555,12 +2555,11 @@ func (b *functionBuilder) boxInterfaceValue(value mir.ValueID, valueType, ifaceT
 	b.emitStore(dataSlot, dataPtr, loc)
 
 	if isEmptyInterface(ifaceType) {
-		// For empty interface{}, store type ID string pointer at offset PointerSize
-		typeID := typeIDString(valueType)
-		typeIDGlobal := b.gen.ensureTypeIDGlobal(typeID)
-		typeIDPtr := b.emitConst(ptrType, "$"+typeIDGlobal, loc)
-		typeIDSlot := b.emitPtrAdd(ifaceAddr, b.gen.layout.PointerSize, ptrType, loc)
-		b.emitStore(typeIDSlot, typeIDPtr, loc)
+		// For empty interface{}, store type descriptor pointer at offset PointerSize
+		typeDesc := b.getOrCreateTypeDescriptor(valueType)
+		typeDescPtr := b.emitCast(typeDesc, ptrType, loc)
+		typeDescSlot := b.emitPtrAdd(ifaceAddr, b.gen.layout.PointerSize, ptrType, loc)
+		b.emitStore(typeDescSlot, typeDescPtr, loc)
 	} else {
 		// For interfaces with methods, store vtable pointer at offset PointerSize
 		vtableName, ok := b.gen.ensureInterfaceVTable(valueType, ifaceType, loc)
@@ -2837,34 +2836,20 @@ func (b *functionBuilder) emitUnionTypeCheckImpl(unionVal mir.ValueID, unionType
 // emitInterfaceTypeCheck implements interface{} type checking.
 // Compares the stored type ID string with the expected type ID.
 func (b *functionBuilder) emitInterfaceTypeCheck(ifaceVal mir.ValueID, targetType types.SemType, loc source.Location) mir.ValueID {
-	// Load the type ID pointer from the interface at offset PointerSize
+	// Load the type descriptor pointer from the interface at offset PointerSize
 	ptrType := types.NewReference(types.TypeU8)
-	typeIDSlot := b.emitPtrAdd(ifaceVal, b.gen.layout.PointerSize, ptrType, loc)
-	storedTypeIDPtr := b.emitLoad(typeIDSlot, ptrType, loc)
+	typeSlot := b.emitPtrAdd(ifaceVal, b.gen.layout.PointerSize, ptrType, loc)
+	storedTypePtr := b.emitLoad(typeSlot, ptrType, loc)
 
-	// Get the expected type ID
-	expectedTypeID := typeIDString(targetType)
-	expectedTypeIDGlobal := b.gen.ensureTypeIDGlobal(expectedTypeID)
-	expectedTypeIDPtr := b.emitConst(ptrType, "$"+expectedTypeIDGlobal, loc)
+	expectedTypeDesc := b.getOrCreateTypeDescriptor(targetType)
+	expectedTypePtr := b.emitCast(expectedTypeDesc, ptrType, loc)
 
-	// Compare the two type ID string pointers using strcmp
-	result := b.gen.nextValueID()
-	b.emitInstr(&mir.Call{
-		Result:   result,
-		Target:   "ferret_strcmp",
-		Args:     []mir.ValueID{storedTypeIDPtr, expectedTypeIDPtr},
-		Type:     types.TypeI32,
-		Location: loc,
-	})
-
-	// strcmp returns 0 if equal, so we need to compare result == 0
-	zero := b.emitConst(types.TypeI32, "0", loc)
 	isEqual := b.gen.nextValueID()
 	b.emitInstr(&mir.Binary{
 		Result:   isEqual,
 		Op:       tokens.DOUBLE_EQUAL_TOKEN,
-		Left:     result,
-		Right:    zero,
+		Left:     storedTypePtr,
+		Right:    expectedTypePtr,
 		Type:     types.TypeBool,
 		Location: loc,
 	})
@@ -5138,25 +5123,50 @@ func (b *functionBuilder) getOrCreateTypeDescriptor(typ types.SemType) mir.Value
 
 // typeDescriptorKey generates a unique key for a type
 func (b *functionBuilder) typeDescriptorKey(typ types.SemType) string {
+	return b.typeDescriptorKeyWithSeen(typ, make(map[types.SemType]bool))
+}
+
+func (b *functionBuilder) typeDescriptorKeyWithSeen(typ types.SemType, seen map[types.SemType]bool) string {
 	typ = types.UnwrapType(typ)
 	switch t := typ.(type) {
 	case *types.PrimitiveType:
 		return "prim_" + string(t.GetName())
 	case *types.MapType:
-		return "map_" + b.typeDescriptorKey(t.Key) + "_" + b.typeDescriptorKey(t.Value)
+		return "map_" + b.typeDescriptorKeyWithSeen(t.Key, seen) + "_" + b.typeDescriptorKeyWithSeen(t.Value, seen)
 	case *types.ArrayType:
 		if t.Length < 0 {
-			return fmt.Sprintf("slice_%s", b.typeDescriptorKey(t.Element))
+			return fmt.Sprintf("slice_%s", b.typeDescriptorKeyWithSeen(t.Element, seen))
 		}
-		return fmt.Sprintf("array_%d_%s", t.Length, b.typeDescriptorKey(t.Element))
+		return fmt.Sprintf("array_%d_%s", t.Length, b.typeDescriptorKeyWithSeen(t.Element, seen))
 	case *types.StructType:
-		return fmt.Sprintf("struct_%p", t) // Use pointer for uniqueness
+		if seen[typ] {
+			return fmt.Sprintf("struct_rec_%p", t)
+		}
+		seen[typ] = true
+		var sb strings.Builder
+		sb.WriteString("struct{")
+		for i, field := range t.Fields {
+			if i > 0 {
+				sb.WriteString(";")
+			}
+			sb.WriteString(field.Name)
+			sb.WriteString(":")
+			sb.WriteString(b.typeDescriptorKeyWithSeen(field.Type, seen))
+		}
+		sb.WriteString("}")
+		return sb.String()
 	case *types.InterfaceType:
-		return "interface"
+		if len(t.Methods) == 0 {
+			return "interface_empty"
+		}
+		if t.ID != "" {
+			return "interface_" + t.ID
+		}
+		return fmt.Sprintf("interface_%p", t)
 	case *types.ReferenceType:
-		return "ref_" + b.typeDescriptorKey(t.Inner)
+		return "ref_" + b.typeDescriptorKeyWithSeen(t.Inner, seen)
 	case *types.NamedType:
-		return "named_" + t.Name + "_" + b.typeDescriptorKey(t.Underlying)
+		return "named_" + t.Name + "_" + b.typeDescriptorKeyWithSeen(t.Underlying, seen)
 	default:
 		return fmt.Sprintf("unknown_%T", typ)
 	}

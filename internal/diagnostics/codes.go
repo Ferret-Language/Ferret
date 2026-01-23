@@ -56,6 +56,7 @@ const (
 	ErrMissingField            = "T0029"
 	ErrUnknownField            = "T0030"
 	ErrInvalidDefer            = "T0031"
+	ErrExtraField              = "T0032"
 
 	// Module/Import errors (M prefix)
 	ErrModuleNotFound    = "M0001"

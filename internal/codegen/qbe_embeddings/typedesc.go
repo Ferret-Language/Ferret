@@ -3,6 +3,7 @@ package qbe
 import (
 	"compiler/internal/types"
 	"fmt"
+	"strings"
 )
 
 var ferretPrimitiveTypeOrder = []types.TYPE_NAME{
@@ -71,7 +72,7 @@ func (g *Generator) emitTypeDescriptor(globalName string, typ types.SemType) {
 	case *types.ReferenceType:
 		g.emitPointerTypeDesc(globalName, t)
 	case *types.InterfaceType:
-		g.emitInterfaceTypeDesc(globalName)
+		g.emitInterfaceTypeDesc(globalName, t)
 	case *types.NamedType:
 		// For named types, emit descriptor for the underlying type
 		g.emitTypeDescriptor(globalName, t.Underlying)
@@ -188,14 +189,18 @@ func (g *Generator) emitPointerTypeDesc(globalName string, typ *types.ReferenceT
 		globalName, kind, size, innerDescName))
 }
 
-func (g *Generator) emitInterfaceTypeDesc(globalName string) {
-	// Interface uses pointer equality
-	// Emit: { .kind = FERRET_TYPE_INTERFACE, .size = sizeof(void*) }
-	// Layout: { kind (4), padding (4), size (8), unused (8), unused (8) }
+func (g *Generator) emitInterfaceTypeDesc(globalName string, typ *types.InterfaceType) {
+	// Interface descriptor stores method count for runtime checks.
+	// Emit: { .kind = FERRET_TYPE_INTERFACE, .size = sizeof(interface), .interface_info = {method_count} }
+	// Layout: { kind (4), padding (4), size (8), method_count (8), unused (8) }
 	kind := ferretTypeInterfaceKind
-	size := g.layout.PointerSize
-	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l 0, l 0 }\n",
-		globalName, kind, size))
+	size := g.layout.PointerSize * 2
+	methodCount := 0
+	if typ != nil {
+		methodCount = len(typ.Methods)
+	}
+	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %d, l 0 }\n",
+		globalName, kind, size, methodCount))
 }
 
 // getOrCreateTypeDescName ensures a type descriptor exists and returns its global name
@@ -224,25 +229,50 @@ func (g *Generator) getOrCreateTypeDescName(typ types.SemType) string {
 
 // typeDescriptorKey generates a unique key for a type (same logic as in builder.go)
 func typeDescriptorKey(typ types.SemType) string {
+	return typeDescriptorKeyWithSeen(typ, make(map[types.SemType]bool))
+}
+
+func typeDescriptorKeyWithSeen(typ types.SemType, seen map[types.SemType]bool) string {
 	typ = types.UnwrapType(typ)
 	switch t := typ.(type) {
 	case *types.PrimitiveType:
 		return "prim_" + string(t.GetName())
 	case *types.MapType:
-		return "map_" + typeDescriptorKey(t.Key) + "_" + typeDescriptorKey(t.Value)
+		return "map_" + typeDescriptorKeyWithSeen(t.Key, seen) + "_" + typeDescriptorKeyWithSeen(t.Value, seen)
 	case *types.ArrayType:
 		if t.Length < 0 {
-			return fmt.Sprintf("slice_%s", typeDescriptorKey(t.Element))
+			return fmt.Sprintf("slice_%s", typeDescriptorKeyWithSeen(t.Element, seen))
 		}
-		return fmt.Sprintf("array_%d_%s", t.Length, typeDescriptorKey(t.Element))
+		return fmt.Sprintf("array_%d_%s", t.Length, typeDescriptorKeyWithSeen(t.Element, seen))
 	case *types.StructType:
-		return fmt.Sprintf("struct_%p", t)
+		if seen[typ] {
+			return fmt.Sprintf("struct_rec_%p", t)
+		}
+		seen[typ] = true
+		var sb strings.Builder
+		sb.WriteString("struct{")
+		for i, field := range t.Fields {
+			if i > 0 {
+				sb.WriteString(";")
+			}
+			sb.WriteString(field.Name)
+			sb.WriteString(":")
+			sb.WriteString(typeDescriptorKeyWithSeen(field.Type, seen))
+		}
+		sb.WriteString("}")
+		return sb.String()
 	case *types.InterfaceType:
-		return "interface"
+		if len(t.Methods) == 0 {
+			return "interface_empty"
+		}
+		if t.ID != "" {
+			return "interface_" + t.ID
+		}
+		return fmt.Sprintf("interface_%p", t)
 	case *types.ReferenceType:
-		return "ref_" + typeDescriptorKey(t.Inner)
+		return "ref_" + typeDescriptorKeyWithSeen(t.Inner, seen)
 	case *types.NamedType:
-		return "named_" + t.Name + "_" + typeDescriptorKey(t.Underlying)
+		return "named_" + t.Name + "_" + typeDescriptorKeyWithSeen(t.Underlying, seen)
 	default:
 		return fmt.Sprintf("unknown_%T", typ)
 	}

@@ -6,10 +6,10 @@ fn main() {
     
     let m := {
         {.X = 0} => ".x",
-        {.X = 1, .Y = 2} => ".x .y"
+        {.X = 1} => ".x .y",
     };
 
-    let val : str = m;
+    let val : str = m["name"];
 
     io::Println(val);
 }

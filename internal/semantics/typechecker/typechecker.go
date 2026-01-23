@@ -939,6 +939,19 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 			// Type inference from initializer
 			rhsType := checkExpr(ctx, mod, item.Value, types.TypeUnknown)
 
+			if rhsType.Equals(types.TypeUnknown) {
+				if compLit, ok := item.Value.(*ast.CompositeLit); ok {
+					kind := compositeLiteralKind(compLit)
+					ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("cannot infer type for '%s' from %s literal", name, kind)).
+							WithPrimaryLabel(item.Value.Loc(), "type is ambiguous").
+							WithHelp(fmt.Sprintf("add an explicit type: let %s : <type> = ... or cast with `as <type>`", name)),
+					)
+					sym.Type = types.TypeUnknown
+					continue
+				}
+			}
+
 			// If the RHS is UNTYPED, finalize it to a default type
 			if types.IsUntyped(rhsType) {
 				if resolved, ok := resolveUntypedNumericExpr(item.Value); ok {
@@ -1525,6 +1538,15 @@ func isNumericOrBool(typ types.SemType) bool {
 	return types.IsNumericType(typ)
 }
 
+func isInterfaceType(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	typ = types.UnwrapType(typ)
+	_, ok := typ.(*types.InterfaceType)
+	return ok
+}
+
 func checkIndexExpr(ctx *context_v2.CompilerContext, expr *ast.IndexExpr, baseType, indexType types.SemType) {
 	if ctx == nil || expr == nil {
 		return
@@ -1558,6 +1580,13 @@ func checkIndexExpr(ctx *context_v2.CompilerContext, expr *ast.IndexExpr, baseTy
 				diagnostics.NewError(fmt.Sprintf("map index must be %s", mapType.Key.String())).
 					WithCode(diagnostics.ErrInvalidOperation).
 					WithPrimaryLabel(expr.Index.Loc(), "incompatible map key type"),
+			)
+		}
+		if isInterfaceType(mapType.Key) && !indexType.Equals(types.TypeUnknown) && !isInterfaceType(indexType) && !types.IsMapKeyComparable(indexType) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("map key type '%s' is not comparable", indexType.String())).
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(expr.Index.Loc(), "map keys must be comparable"),
 			)
 		}
 		return
@@ -1667,9 +1696,9 @@ func validateStructLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 				}
 				if !found {
 					ctx.Diagnostics.Add(
-						diagnostics.NewError(fmt.Sprintf("unknown field '.%s' in struct literal", ident.Name)).
-							WithCode(diagnostics.ErrUnknownField).
-							WithPrimaryLabel(kv.Key.Loc(), "unknown field"),
+						diagnostics.NewError(fmt.Sprintf("extra field '.%s' in struct literal", ident.Name)).
+							WithCode(diagnostics.ErrExtraField).
+							WithPrimaryLabel(kv.Key.Loc(), "extra field"),
 					)
 				}
 			}
@@ -1768,6 +1797,13 @@ func checkMapLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, li
 
 		// Check key type compatibility - with contextualization
 		keyType := checkExpr(ctx, mod, kv.Key, mapType.Key)
+		if isInterfaceType(mapType.Key) && !keyType.Equals(types.TypeUnknown) && !isInterfaceType(keyType) && !types.IsMapKeyComparable(keyType) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("map key type '%s' is not comparable", keyType.String())).
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(kv.Key.Loc(), "map keys must be comparable"),
+			)
+		}
 		if compat := checkTypeCompatibility(keyType, mapType.Key); !isImplicitlyCompatible(compat) {
 			keyTypeStr := types.ResolveUntypedType(keyType, types.TypeUnknown)
 			diag := diagnostics.NewError(fmt.Sprintf("map keys must all be same type, expected %s but found %s", mapType.Key.String(), keyTypeStr)).
@@ -4918,6 +4954,45 @@ func isEmptyLiteral(expr ast.Expression) bool {
 	}
 
 	return false
+}
+
+func compositeLiteralKind(lit *ast.CompositeLit) string {
+	if lit == nil {
+		return "composite"
+	}
+
+	if len(lit.Elts) == 0 {
+		return "composite"
+	}
+
+	allKeyValue := true
+	hasStructSyntax := false
+	hasMapSyntax := false
+
+	for _, elem := range lit.Elts {
+		kv, ok := elem.(*ast.KeyValueExpr)
+		if !ok {
+			allKeyValue = false
+			break
+		}
+		if _, ok := kv.Key.(*ast.IdentifierExpr); ok {
+			hasStructSyntax = true
+		} else {
+			hasMapSyntax = true
+		}
+	}
+
+	if !allKeyValue {
+		return "array"
+	}
+	if hasStructSyntax && !hasMapSyntax {
+		return "struct"
+	}
+	if hasMapSyntax {
+		return "map"
+	}
+
+	return "composite"
 }
 
 // inferTypeFromEmptyLiteral attempts to infer the type from an empty literal to suggest the correct type annotation

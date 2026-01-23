@@ -105,6 +105,11 @@ typedef struct ferret_type_info {
         struct {
             struct ferret_type_info* pointee_type;
         } pointer_info;
+
+        // For FERRET_TYPE_INTERFACE
+        struct {
+            size_t method_count;
+        } interface_info;
     };
 } ferret_type_info_t;
 

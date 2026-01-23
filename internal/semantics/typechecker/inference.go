@@ -716,7 +716,7 @@ func inferCompositeLitType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 				}
 			} else if hasMapSyntax || len(lit.Elts) > 0 {
 				// Map literal: { "key" => value, "key2" => value2 }
-				// Infer key and value types by finding the widest type needed across all elements
+				// Infer key and value types by widening numeric types and preserving identical non-numeric types.
 				var keyType, valueType types.SemType = types.TypeUnknown, types.TypeUnknown
 
 				for _, elem := range lit.Elts {
@@ -740,17 +740,25 @@ func inferCompositeLitType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 						}
 					}
 
-					// Find the widest type needed (promote if necessary)
+					// Merge key/value types: widen numeric types, keep identical non-numeric types.
 					if keyType.Equals(types.TypeUnknown) {
 						keyType = elemKeyType
 					} else if !elemKeyType.Equals(types.TypeUnknown) {
-						keyType = widerType(keyType, elemKeyType)
+						if types.IsNumericType(keyType) && types.IsNumericType(elemKeyType) {
+							keyType = widerType(keyType, elemKeyType)
+						} else if keyType.Equals(elemKeyType) {
+							keyType = elemKeyType
+						}
 					}
 
 					if valueType.Equals(types.TypeUnknown) {
 						valueType = elemValueType
 					} else if !elemValueType.Equals(types.TypeUnknown) {
-						valueType = widerType(valueType, elemValueType)
+						if types.IsNumericType(valueType) && types.IsNumericType(elemValueType) {
+							valueType = widerType(valueType, elemValueType)
+						} else if valueType.Equals(elemValueType) {
+							valueType = elemValueType
+						}
 					}
 				}
 
