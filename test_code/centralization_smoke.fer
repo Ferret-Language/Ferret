@@ -1,0 +1,91 @@
+import "std/io";
+import "math";
+
+type Point struct {
+    .x: i32,
+    .y: i32
+};
+
+type Circle struct {
+    .Rad: f64,
+};
+
+fn (c: &Circle) Area() -> f64 {
+    return math::PI as f64 * c.Rad * c.Rad;
+}
+
+type Rectangle struct {
+    .Height: i32,
+    .Width: i32
+};
+
+fn (c: &mut Rectangle) Area() -> f64 {
+    c.Height++;
+    return (c.Height * c.Width) as f64;
+}
+
+type Shape interface{
+    Area() -> f64
+};
+
+fn printArea(s: Shape) {
+    io::Println("Area: ", s.Area());
+}
+
+fn main() {
+    let p1: Point = { .x = 1, .y = 2 };
+    let p2: Point = { .x = 3, .y = 4 };
+
+    let any_map: map[interface{}]str = {} as map[interface{}]str;
+
+    let key_i: interface{} = 42 as interface{};
+    let key_s: interface{} = "hello" as interface{};
+    let key_p1: interface{} = p1 as interface{};
+    let key_p2: interface{} = p2 as interface{};
+
+    any_map[key_i] = "int-key";
+    any_map[key_s] = "str-key";
+    any_map[key_p1] = "p1-key";
+    any_map[key_p2] = "p2-key";
+
+    io::Println(any_map[key_i]);
+    io::Println(any_map[key_s]);
+    io::Println(any_map[key_p1]);
+    io::Println(any_map[key_p2]);
+
+    let points := {
+        p1 => "left",
+        p2 => "right"
+    } as map[Point]str;
+
+    io::Println(points[p1]);
+    io::Println(points[p2]);
+
+    let a: i128 = 170141183460469231731687303715884105727;
+    let two_i: i128 = 2;
+    let c := a - two_i;
+    io::Println(c);
+
+    let u: u256 = 79228162514264337593543950334;
+    let two_u: u256 = 2;
+    let u2 := u + two_u;
+    let u3 := u2 * two_u;
+    io::Println(u2);
+    io::Println(u3);
+
+    let f1: f128 = 1.5;
+    let f2: f128 = 2.25;
+    let f3 := f1 + f2;
+    io::Println(f3);
+
+    let g1: f256 = 3.5;
+    let g2: f256 = 0.5;
+    let g3 := g1 / g2;
+    io::Println(g3);
+
+    let ci : Circle = { .Rad = 872.31 };
+    let sq : Rectangle = { .Height = 10, .Width = 20 };
+
+    printArea(ci as Shape);
+    printArea(sq);
+}

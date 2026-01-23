@@ -1095,8 +1095,8 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 					diagnostics.NewError(fmt.Sprintf("mismatched types in arithmetic: %s and %s", lhsType.String(), rhsType.String())).
 						WithCode(diagnostics.ErrTypeMismatch).
 						WithPrimaryLabel(expr.Loc(), "operands must have the same type").
-						WithHelp(fmt.Sprintf("cast one operand to match: `a as %s` or `b as %s`",
-							rhsType.String(), lhsType.String())),
+						WithHelp(fmt.Sprintf("cast one operand to match: `%s as %s` or `%s as %s`",
+							expr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache()), rhsType.String(), expr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache()), lhsType.String())),
 				)
 				return
 			}
@@ -1137,7 +1137,7 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 					WithCode(diagnostics.ErrTypeMismatch).
 					WithPrimaryLabel(expr.Loc(), "operands must have the same type").
 					WithHelp(fmt.Sprintf("cast one operand to match: `%s as %s` or `%s as %s`",
-						"value", lhsType.String(), "value", rhsType.String())),
+						expr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache()), lhsType.String(), expr.Y.Loc().GetText(ctx.Diagnostics.GetSourceCache()), rhsType.String())),
 			)
 			return
 		}
