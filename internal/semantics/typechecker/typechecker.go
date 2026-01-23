@@ -4497,7 +4497,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 		}
 
 		// Check compatibility (use WithContext to handle interfaces properly)
-		compatibility := checkTypeCompatibility(argType, param.Type)
+		compatibility := checkTypeCompatibilityWithContext(ctx, mod, argType, param.Type)
 
 		if !isImplicitlyCompatible(compatibility) {
 			// Format the argument type in a user-friendly way

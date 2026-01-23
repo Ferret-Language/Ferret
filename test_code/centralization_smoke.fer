@@ -86,6 +86,6 @@ fn main() {
     let ci : Circle = { .Rad = 872.31 };
     let sq : Rectangle = { .Height = 10, .Width = 20 };
 
-    printArea(ci as Shape);
+    printArea(ci);
     printArea(sq);
 }
