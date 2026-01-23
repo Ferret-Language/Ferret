@@ -1142,6 +1142,32 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 			return
 		}
 
+	case tokens.BIT_AND_TOKEN, tokens.BIT_OR_TOKEN, tokens.BIT_XOR_TOKEN:
+		// Allow untyped integer operands - literal fitness is checked earlier
+		lhsInt := types.IsInteger(lhsBase) || types.IsUntypedInt(lhsBase)
+		rhsInt := types.IsInteger(rhsBase) || types.IsUntypedInt(rhsBase)
+		if !lhsInt || !rhsInt {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("invalid operation: %s (mismatched types %s and %s)", expr.Op.Value, lhsType.String(), rhsType.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(expr.Loc(), fmt.Sprintf("cannot use '%s' operator with %s and %s", expr.Op.Value, lhsType.String(), rhsType.String())).
+					WithHelp("bitwise operators require integer operands"),
+			)
+			return
+		}
+
+		// Require exact type match once operands are typed
+		if !types.IsUntyped(lhsBase) && !types.IsUntyped(rhsBase) && !lhsType.Equals(rhsType) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("mismatched types in bitwise operation: %s and %s", lhsType.String(), rhsType.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(expr.Loc(), "operands must have the same type").
+					WithHelp(fmt.Sprintf("cast one operand to match: `%s as %s` or `%s as %s`",
+						expr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache()), lhsType.String(), expr.Y.Loc().GetText(ctx.Diagnostics.GetSourceCache()), rhsType.String())),
+			)
+			return
+		}
+
 	case tokens.DOUBLE_EQUAL_TOKEN, tokens.NOT_EQUAL_TOKEN:
 		// Allow untyped operands for comparisons - literal fitness is checked earlier
 		if types.IsUntyped(lhsType) || types.IsUntyped(rhsType) {
@@ -2973,6 +2999,14 @@ func checkUnaryOp(ctx *context_v2.CompilerContext, expr *ast.UnaryExpr, operandT
 					WithHelp("logical not requires a bool operand"),
 			)
 		}
+	case tokens.BIT_NOT_TOKEN:
+		if !types.IsInteger(operandBase) && !types.IsUntypedInt(operandBase) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot use %s on type '%s'", expr.Op.Value, operandBase.String())).
+					WithPrimaryLabel(expr.Loc(), "expected integer type").
+					WithHelp("bitwise not requires an integer operand"),
+			)
+		}
 	case tokens.PLUS_TOKEN, tokens.MINUS_TOKEN:
 		if !types.IsNumericType(operandBase) && !types.IsUntyped(operandBase) {
 			ctx.Diagnostics.Add(
@@ -2992,6 +3026,8 @@ func unaryOpAllowsType(op tokens.TOKEN, typ types.SemType) bool {
 	switch op {
 	case tokens.NOT_TOKEN:
 		return base.Equals(types.TypeBool)
+	case tokens.BIT_NOT_TOKEN:
+		return types.IsInteger(base) || types.IsUntypedInt(base)
 	case tokens.PLUS_TOKEN, tokens.MINUS_TOKEN:
 		return types.IsNumericType(base) || types.IsUntyped(base)
 	default:

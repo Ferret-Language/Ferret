@@ -2538,6 +2538,13 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       writeValue(outPtr, res);
     }
 
+    function not(aPtr: number, outPtr: number) {
+      if (!outPtr || !aPtr) return;
+      const a = readValue(aPtr);
+      const res = signed ? wrapSigned(~a, bits) : wrapUnsigned(~a, bits);
+      writeValue(outPtr, res);
+    }
+
     function pow(basePtr: number, expPtr: number, outPtr: number) {
       if (!outPtr || !basePtr || !expPtr) return;
       const base = readValue(basePtr);
@@ -2589,6 +2596,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       [`ferret_${name}_and_ptr`]: and,
       [`ferret_${name}_or_ptr`]: or,
       [`ferret_${name}_xor_ptr`]: xor,
+      [`ferret_${name}_not_ptr`]: not,
       [`ferret_${name}_pow_ptr`]: pow,
       [`ferret_${name}_${fromName}`]: fromInt,
       [`ferret_${name}_${toName}`]: toInt,

@@ -6086,6 +6086,21 @@ func (b *functionBuilder) emitLargeUnary(op tokens.TOKEN, value mir.ValueID, typ
 	case tokens.MINUS_TOKEN:
 		zero := b.emitLargeConst(typ, "0", loc)
 		return b.emitLargeBinary(tokens.MINUS_TOKEN, zero, value, typ, loc)
+	case tokens.BIT_NOT_TOKEN:
+		typeName, ok := largePrimitiveName(typ)
+		if !ok {
+			b.reportUnsupported("large unary", &loc)
+			return mir.InvalidValue
+		}
+		out := b.emitAlloca(typ, loc)
+		b.emitInstr(&mir.Call{
+			Result:   mir.InvalidValue,
+			Target:   "ferret_" + typeName + "_not_ptr",
+			Args:     []mir.ValueID{value, out},
+			Type:     types.TypeVoid,
+			Location: loc,
+		})
+		return out
 	default:
 		b.reportUnsupported(fmt.Sprintf("unary op %s", op), &loc)
 		return mir.InvalidValue

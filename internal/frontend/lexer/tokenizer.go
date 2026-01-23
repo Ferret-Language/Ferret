@@ -91,6 +91,7 @@ func New(filepath, content string, diag *diagnostics.DiagnosticBag) *Lexer {
 			{regexp.MustCompile(`&`), defaultHandler(tokens.BIT_AND_TOKEN)},
 			{regexp.MustCompile(`\|`), defaultHandler(tokens.BIT_OR_TOKEN)},
 			{regexp.MustCompile(`\^`), defaultHandler(tokens.BIT_XOR_TOKEN)},
+			{regexp.MustCompile(`~`), defaultHandler(tokens.BIT_NOT_TOKEN)},
 			{regexp.MustCompile(`!`), defaultHandler(tokens.NOT_TOKEN)},
 			{regexp.MustCompile(`@`), defaultHandler(tokens.AT_TOKEN)},
 			{regexp.MustCompile(`#`), defaultHandler(tokens.HASH_TOKEN)},

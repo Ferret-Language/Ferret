@@ -176,6 +176,14 @@ func (g *Generator) emitUnary(u *mir.Unary) {
 		}
 		g.emitLine(fmt.Sprintf("%s =%s copy %s", resultName, qbeType, operand))
 		g.valueTypes[u.Result] = u.Type
+	case tokens.BIT_NOT_TOKEN:
+		qbeType, err := g.qbeType(u.Type)
+		if err != nil {
+			g.reportError(err.Error(), &u.Location)
+			return
+		}
+		g.emitLine(fmt.Sprintf("%s =%s xor %s, -1", resultName, qbeType, operand))
+		g.valueTypes[u.Result] = u.Type
 	default:
 		g.reportUnsupported(fmt.Sprintf("unary op %s", u.Op), &u.Location)
 	}

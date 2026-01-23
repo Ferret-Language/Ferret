@@ -64,6 +64,7 @@ const (
 	BIT_AND_TOKEN TOKEN = "&"
 	BIT_OR_TOKEN  TOKEN = "|"
 	BIT_XOR_TOKEN TOKEN = "^"
+	BIT_NOT_TOKEN TOKEN = "~"
 	//reference operators
 	MUT_TOKEN  TOKEN = "mut"
 	STAR_TOKEN TOKEN = "*" // dereference operator (also used for multiplication)

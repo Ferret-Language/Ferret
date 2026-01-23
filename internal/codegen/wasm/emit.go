@@ -949,6 +949,23 @@ func (g *Generator) emitUnary(u *mir.Unary, locals map[mir.ValueID]uint32) ([]by
 		out = append(out, opcodeLocalGet)
 		out = append(out, encodeU32(locals[u.X])...)
 		out = append(out, opcodeI32Eqz)
+	case tokens.BIT_NOT_TOKEN:
+		switch valType {
+		case valTypeI32:
+			out = append(out, opcodeLocalGet)
+			out = append(out, encodeU32(locals[u.X])...)
+			out = append(out, opcodeI32Const)
+			out = append(out, encodeS32(-1)...)
+			out = append(out, opcodeI32Xor)
+		case valTypeI64:
+			out = append(out, opcodeLocalGet)
+			out = append(out, encodeU32(locals[u.X])...)
+			out = append(out, opcodeI64Const)
+			out = append(out, encodeS64(-1)...)
+			out = append(out, opcodeI64Xor)
+		default:
+			return nil, fmt.Errorf("wasm: unsupported unary ~")
+		}
 	default:
 		return nil, fmt.Errorf("wasm: unsupported unary op %s", u.Op)
 	}

@@ -489,12 +489,15 @@ const (
 	precCoalescing     = 2
 	precLogicalOr      = 3
 	precLogicalAnd     = 4
-	precEquality       = 5
-	precComparison     = 6
-	precRange          = 7
-	precAdditive       = 8
-	precMultiplicative = 9
-	precExponent       = 10
+	precBitwiseOr      = 5
+	precBitwiseXor     = 6
+	precBitwiseAnd     = 7
+	precEquality       = 8
+	precComparison     = 9
+	precRange          = 10
+	precAdditive       = 11
+	precMultiplicative = 12
+	precExponent       = 13
 )
 
 func (p *Parser) infixPrecedence(kind tokens.TOKEN) (int, assoc, bool) {
@@ -505,6 +508,12 @@ func (p *Parser) infixPrecedence(kind tokens.TOKEN) (int, assoc, bool) {
 		return precLogicalOr, leftAssoc, true
 	case tokens.AND_TOKEN:
 		return precLogicalAnd, leftAssoc, true
+	case tokens.BIT_OR_TOKEN:
+		return precBitwiseOr, leftAssoc, true
+	case tokens.BIT_XOR_TOKEN:
+		return precBitwiseXor, leftAssoc, true
+	case tokens.BIT_AND_TOKEN:
+		return precBitwiseAnd, leftAssoc, true
 	case tokens.DOUBLE_EQUAL_TOKEN, tokens.NOT_EQUAL_TOKEN, tokens.IS_TOKEN:
 		return precEquality, leftAssoc, true
 	case tokens.LESS_TOKEN, tokens.LESS_EQUAL_TOKEN, tokens.GREATER_TOKEN, tokens.GREATER_EQUAL_TOKEN, tokens.IN_TOKEN:
@@ -659,7 +668,7 @@ func (p *Parser) parseUnaryNoPostfix(depth int) ast.Expression {
 		}
 	}
 
-	if p.match(tokens.NOT_TOKEN, tokens.MINUS_TOKEN) {
+	if p.match(tokens.NOT_TOKEN, tokens.MINUS_TOKEN, tokens.BIT_NOT_TOKEN) {
 		op := p.advance()
 		expr := p.parseUnaryNoPostfix(depth + 1)
 		if expr == nil {
@@ -759,7 +768,7 @@ func (p *Parser) parseUnaryDepth(depth int) ast.Expression {
 		}
 	}
 
-	if p.match(tokens.NOT_TOKEN, tokens.MINUS_TOKEN) {
+	if p.match(tokens.NOT_TOKEN, tokens.MINUS_TOKEN, tokens.BIT_NOT_TOKEN) {
 		op := p.advance()
 		expr := p.parseUnaryDepth(depth + 1)
 		if expr == nil {

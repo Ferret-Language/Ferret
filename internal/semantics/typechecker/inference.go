@@ -311,6 +311,9 @@ func inferBinaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module
 		// Power operator **: returns double (f64)
 		// Always returns f64 for accuracy (can be cast to int if needed)
 		return types.TypeF64
+	case tokens.BIT_AND_TOKEN, tokens.BIT_OR_TOKEN, tokens.BIT_XOR_TOKEN:
+		// Bitwise operators preserve operand type
+		return lhsType
 	default:
 		return types.TypeUnknown
 	}
@@ -328,6 +331,9 @@ func inferUnaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	case tokens.NOT_TOKEN:
 		// Logical not returns bool
 		return types.TypeBool
+	case tokens.BIT_NOT_TOKEN:
+		// Bitwise not preserves integer type
+		return xType
 	case tokens.BIT_AND_TOKEN:
 		// Address-of returns immutable reference type
 		if _, ok := xType.(*types.ReferenceType); ok {
