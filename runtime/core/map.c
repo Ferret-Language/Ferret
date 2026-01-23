@@ -7,7 +7,6 @@
 
 #define FERRET_MAP_INITIAL_BUCKETS 16
 #define FERRET_MAP_LOAD_FACTOR 0.75
-#define FERRET_MAP_HASH_SEED 0x9747b28cU
 
 static uint32_t rotl32(uint32_t value, int shift) {
     return (value << shift) | (value >> (32 - shift));

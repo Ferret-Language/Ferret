@@ -1,3 +1,74 @@
+import {
+  BIG_FLOAT_SPECS,
+  BIG_INT_WIDTHS,
+  FIELD_INFO_OFFSET_OFFSET,
+  FIELD_INFO_SIZE,
+  FIELD_INFO_TYPE_OFFSET,
+  ARRAY_CAP_OFFSET,
+  ARRAY_DATA_OFFSET,
+  ARRAY_ELEM_SIZE_OFFSET,
+  ARRAY_ELEM_TYPE_OFFSET,
+  ARRAY_HEADER_SIZE,
+  ARRAY_LEN_OFFSET,
+  FNV_OFFSET_BASIS,
+  FNV_PRIME,
+  INTERFACE_DATA_OFFSET,
+  INTERFACE_EXTRA_OFFSET,
+  INTERFACE_SIZE,
+  MAP_KEY_KINDS,
+  MAP_HANDLE_SIZE,
+  MAP_HASH_SEED,
+  SOFT_EXTRA_BITS,
+  WASM_IMPORT_FERRET_ALLOC,
+  WASM_IMPORT_FERRET_ARRAY_APPEND,
+  WASM_IMPORT_FERRET_ARRAY_GET,
+  WASM_IMPORT_FERRET_ARRAY_NEW,
+  WASM_IMPORT_FERRET_ARRAY_SET,
+  WASM_IMPORT_FERRET_GLOBAL_PANIC,
+  WASM_IMPORT_FERRET_MAP_GET,
+  WASM_IMPORT_FERRET_MAP_GET_OPTIONAL_OUT,
+  WASM_IMPORT_FERRET_MAP_SET,
+  WASM_IMPORT_FERRET_MEMCPY,
+  WASM_IMPORT_FERRET_OPTIONAL_UNWRAP_OR,
+  WASM_IMPORT_FERRET_POW,
+  SLICE_DATA_OFFSET,
+  SLICE_ELEM_SIZE_OFFSET,
+  SLICE_LEN_OFFSET,
+  UNION_PTR_OFFSET,
+  UNION_TAG_SIZE,
+  TYPE_DESC_INFO1_OFFSET,
+  TYPE_DESC_INFO2_OFFSET,
+  TYPE_DESC_KIND_OFFSET,
+  TYPE_DESC_SIZE_OFFSET,
+  TYPE_KIND_I8,
+  TYPE_KIND_I16,
+  TYPE_KIND_I32,
+  TYPE_KIND_I64,
+  TYPE_KIND_I128,
+  TYPE_KIND_I256,
+  TYPE_KIND_U8,
+  TYPE_KIND_U16,
+  TYPE_KIND_U32,
+  TYPE_KIND_U64,
+  TYPE_KIND_U128,
+  TYPE_KIND_U256,
+  TYPE_KIND_F32,
+  TYPE_KIND_F64,
+  TYPE_KIND_F128,
+  TYPE_KIND_F256,
+  TYPE_KIND_STRING,
+  TYPE_KIND_BYTE,
+  TYPE_KIND_CHAR,
+  TYPE_KIND_BOOL,
+  TYPE_KIND_POINTER,
+  TYPE_KIND_STRUCT,
+  TYPE_KIND_ARRAY,
+  TYPE_KIND_SLICE,
+  TYPE_KIND_MAP,
+  TYPE_KIND_FUNCTION,
+  TYPE_KIND_INTERFACE,
+} from "./runtime_abi";
+
 console.log("Runtime module loaded.");
 
 export type FerretRuntimeOptions = {
@@ -170,18 +241,22 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     }
   }
 
-  function ferret_array_new(elemSize: number, cap: number, elemTypeId: number) {
+  function ferret_array_new(
+    elemSize: number,
+    cap: number,
+    elemTypeDesc: number,
+  ) {
     const elemBytes = Number(elemSize);
     const capacity = Number(cap);
     const dataSize = elemBytes * capacity;
     const dataPtr = dataSize > 0 ? ferret_alloc(dataSize) : 0;
-    const arrPtr = ferret_alloc(20);
+    const arrPtr = ferret_alloc(ARRAY_HEADER_SIZE);
     const dv = view();
-    dv.setUint32(arrPtr + 0, dataPtr, true);
-    dv.setInt32(arrPtr + 4, 0, true);
-    dv.setInt32(arrPtr + 8, capacity, true);
-    dv.setUint32(arrPtr + 12, elemBytes, true);
-    dv.setUint32(arrPtr + 16, elemTypeId >>> 0, true);
+    dv.setUint32(arrPtr + ARRAY_DATA_OFFSET, dataPtr, true);
+    dv.setInt32(arrPtr + ARRAY_LEN_OFFSET, 0, true);
+    dv.setInt32(arrPtr + ARRAY_CAP_OFFSET, capacity, true);
+    dv.setUint32(arrPtr + ARRAY_ELEM_SIZE_OFFSET, elemBytes, true);
+    dv.setUint32(arrPtr + ARRAY_ELEM_TYPE_OFFSET, elemTypeDesc >>> 0, true);
     return arrPtr >>> 0;
   }
 
@@ -190,11 +265,11 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       return 0;
     }
     const dv = view();
-    const dataPtr = dv.getUint32(arrPtr + 0, true);
-    const length = dv.getInt32(arrPtr + 4, true);
-    const capacity = dv.getInt32(arrPtr + 8, true);
-    const elemSize = dv.getUint32(arrPtr + 12, true);
-    const elemTypeId = dv.getUint32(arrPtr + 16, true);
+    const dataPtr = dv.getUint32(arrPtr + ARRAY_DATA_OFFSET, true);
+    const length = dv.getInt32(arrPtr + ARRAY_LEN_OFFSET, true);
+    const capacity = dv.getInt32(arrPtr + ARRAY_CAP_OFFSET, true);
+    const elemSize = dv.getUint32(arrPtr + ARRAY_ELEM_SIZE_OFFSET, true);
+    const elemTypeDesc = dv.getUint32(arrPtr + ARRAY_ELEM_TYPE_OFFSET, true);
 
     const dataSize = elemSize * capacity;
     const newDataPtr = dataSize > 0 ? ferret_alloc(dataSize) : 0;
@@ -203,12 +278,12 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       mem.copyWithin(newDataPtr, dataPtr, dataPtr + length * elemSize);
     }
 
-    const newArrPtr = ferret_alloc(20);
-    dv.setUint32(newArrPtr + 0, newDataPtr, true);
-    dv.setInt32(newArrPtr + 4, length, true);
-    dv.setInt32(newArrPtr + 8, capacity, true);
-    dv.setUint32(newArrPtr + 12, elemSize, true);
-    dv.setUint32(newArrPtr + 16, elemTypeId, true);
+    const newArrPtr = ferret_alloc(ARRAY_HEADER_SIZE);
+    dv.setUint32(newArrPtr + ARRAY_DATA_OFFSET, newDataPtr, true);
+    dv.setInt32(newArrPtr + ARRAY_LEN_OFFSET, length, true);
+    dv.setInt32(newArrPtr + ARRAY_CAP_OFFSET, capacity, true);
+    dv.setUint32(newArrPtr + ARRAY_ELEM_SIZE_OFFSET, elemSize, true);
+    dv.setUint32(newArrPtr + ARRAY_ELEM_TYPE_OFFSET, elemTypeDesc, true);
     return newArrPtr >>> 0;
   }
 
@@ -221,7 +296,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     if (!src) {
       const dst = dv.getUint32(dstSlot, true);
       if (dst) {
-        dv.setInt32(dst + 4, 0, true);
+        dv.setInt32(dst + ARRAY_LEN_OFFSET, 0, true);
       }
       return 1;
     }
@@ -235,14 +310,14 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       return 1;
     }
 
-    const srcData = dv.getUint32(src + 0, true);
-    const srcLen = dv.getInt32(src + 4, true);
-    const srcCap = dv.getInt32(src + 8, true);
-    const elemSize = dv.getUint32(src + 12, true);
-    const elemTypeId = dv.getUint32(src + 16, true);
+    const srcData = dv.getUint32(src + ARRAY_DATA_OFFSET, true);
+    const srcLen = dv.getInt32(src + ARRAY_LEN_OFFSET, true);
+    const srcCap = dv.getInt32(src + ARRAY_CAP_OFFSET, true);
+    const elemSize = dv.getUint32(src + ARRAY_ELEM_SIZE_OFFSET, true);
+    const elemTypeDesc = dv.getUint32(src + ARRAY_ELEM_TYPE_OFFSET, true);
 
-    let dstData = dv.getUint32(dst + 0, true);
-    let dstCap = dv.getInt32(dst + 8, true);
+    let dstData = dv.getUint32(dst + ARRAY_DATA_OFFSET, true);
+    let dstCap = dv.getInt32(dst + ARRAY_CAP_OFFSET, true);
     if (srcLen > dstCap) {
       const newSize = elemSize * srcLen;
       const newData = newSize > 0 ? ferret_alloc(newSize) : 0;
@@ -252,11 +327,11 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       }
       dstData = newData;
       dstCap = srcLen;
-      dv.setUint32(dst + 0, dstData, true);
-      dv.setInt32(dst + 8, dstCap, true);
-      dv.setUint32(dst + 12, elemSize, true);
-      dv.setUint32(dst + 16, elemTypeId, true);
-      dv.setInt32(dst + 4, srcLen, true);
+      dv.setUint32(dst + ARRAY_DATA_OFFSET, dstData, true);
+      dv.setInt32(dst + ARRAY_CAP_OFFSET, dstCap, true);
+      dv.setUint32(dst + ARRAY_ELEM_SIZE_OFFSET, elemSize, true);
+      dv.setUint32(dst + ARRAY_ELEM_TYPE_OFFSET, elemTypeDesc, true);
+      dv.setInt32(dst + ARRAY_LEN_OFFSET, srcLen, true);
       return 1;
     }
 
@@ -264,18 +339,18 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       const mem = new Uint8Array(memory!.buffer);
       mem.copyWithin(dstData, srcData, srcData + srcLen * elemSize);
     }
-    dv.setInt32(dst + 4, srcLen, true);
-    dv.setUint32(dst + 12, elemSize, true);
-    dv.setUint32(dst + 16, elemTypeId, true);
+    dv.setInt32(dst + ARRAY_LEN_OFFSET, srcLen, true);
+    dv.setUint32(dst + ARRAY_ELEM_SIZE_OFFSET, elemSize, true);
+    dv.setUint32(dst + ARRAY_ELEM_TYPE_OFFSET, elemTypeDesc, true);
     return 1;
   }
 
   function ferret_array_append(arrPtr: number, elemPtr: number) {
     const dv = view();
-    let dataPtr = dv.getUint32(arrPtr + 0, true);
-    const length = dv.getInt32(arrPtr + 4, true);
-    let capacity = dv.getInt32(arrPtr + 8, true);
-    const elemSize = dv.getUint32(arrPtr + 12, true);
+    let dataPtr = dv.getUint32(arrPtr + ARRAY_DATA_OFFSET, true);
+    const length = dv.getInt32(arrPtr + ARRAY_LEN_OFFSET, true);
+    let capacity = dv.getInt32(arrPtr + ARRAY_CAP_OFFSET, true);
+    const elemSize = dv.getUint32(arrPtr + ARRAY_ELEM_SIZE_OFFSET, true);
     if (length >= capacity) {
       const newCap = capacity > 0 ? capacity * 2 : 1;
       const newSize = elemSize * newCap;
@@ -286,21 +361,21 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       }
       dataPtr = newDataPtr;
       capacity = newCap;
-      dv.setUint32(arrPtr + 0, dataPtr, true);
-      dv.setInt32(arrPtr + 8, capacity, true);
+      dv.setUint32(arrPtr + ARRAY_DATA_OFFSET, dataPtr, true);
+      dv.setInt32(arrPtr + ARRAY_CAP_OFFSET, capacity, true);
     }
     const dest = dataPtr + length * elemSize;
     ferret_memcpy(dest, elemPtr, elemSize);
-    dv.setInt32(arrPtr + 4, length + 1, true);
+    dv.setInt32(arrPtr + ARRAY_LEN_OFFSET, length + 1, true);
     return 1;
   }
 
   function ferret_array_get(arrPtr: number, index: number) {
     const dv = view();
-    const dataPtr = dv.getUint32(arrPtr + 0, true);
-    const length = dv.getInt32(arrPtr + 4, true);
-    const elemSize = dv.getUint32(arrPtr + 12, true);
-    const elemTypeId = dv.getUint32(arrPtr + 16, true);
+    const dataPtr = dv.getUint32(arrPtr + ARRAY_DATA_OFFSET, true);
+    const length = dv.getInt32(arrPtr + ARRAY_LEN_OFFSET, true);
+    const elemSize = dv.getUint32(arrPtr + ARRAY_ELEM_SIZE_OFFSET, true);
+    const elemTypeDesc = dv.getUint32(arrPtr + ARRAY_ELEM_TYPE_OFFSET, true);
     if (index < 0 || index >= length) {
       return 0;
     }
@@ -309,9 +384,9 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_array_set(arrPtr: number, index: number, elemPtr: number) {
     const dv = view();
-    const dataPtr = dv.getUint32(arrPtr + 0, true);
-    const length = dv.getInt32(arrPtr + 4, true);
-    const elemSize = dv.getUint32(arrPtr + 12, true);
+    const dataPtr = dv.getUint32(arrPtr + ARRAY_DATA_OFFSET, true);
+    const length = dv.getInt32(arrPtr + ARRAY_LEN_OFFSET, true);
+    const elemSize = dv.getUint32(arrPtr + ARRAY_ELEM_SIZE_OFFSET, true);
     if (index < 0 || index >= length) {
       return 0;
     }
@@ -321,18 +396,18 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_array_len(arrPtr: number) {
     const dv = view();
-    return dv.getInt32(arrPtr + 4, true);
+    return dv.getInt32(arrPtr + ARRAY_LEN_OFFSET, true);
   }
 
   function ferret_array_cap(arrPtr: number) {
     const dv = view();
-    return dv.getInt32(arrPtr + 8, true);
+    return dv.getInt32(arrPtr + ARRAY_CAP_OFFSET, true);
   }
 
   function printUnion(ptr: number) {
     const dv = view();
     const tag = dv.getInt32(ptr, true);
-    const data = ptr + 4;
+    const data = ptr + UNION_TAG_SIZE;
     switch (tag) {
       case 0:
         return String(dv.getInt8(data));
@@ -362,28 +437,32 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         return String(dv.getFloat32(data, true));
       case 13:
         return String(dv.getFloat64(data, true));
-      case 14:
+      case 14: {
+        const spec = getSoftFloatSpec(128);
         return softToString(
-          readF128Bits(data),
-          F128_FRAC_BITS,
-          F128_EXP_BITS,
-          F128_EXP_BIAS,
-          F128_EXP_MAX,
-          F128_MIN_EXP,
-          F128_MAX_EXP,
-          F128_DECIMAL_DIG,
+          readBigFloatBits(data, spec.bits),
+          spec.fracBits,
+          spec.expBits,
+          spec.expBias,
+          spec.expMax,
+          spec.minExp,
+          spec.maxExp,
+          spec.decimalDig,
         );
-      case 15:
+      }
+      case 15: {
+        const spec = getSoftFloatSpec(256);
         return softToString(
-          readF256Bits(data),
-          F256_FRAC_BITS,
-          F256_EXP_BITS,
-          F256_EXP_BIAS,
-          F256_EXP_MAX,
-          F256_MIN_EXP,
-          F256_MAX_EXP,
-          F256_DECIMAL_DIG,
+          readBigFloatBits(data, spec.bits),
+          spec.fracBits,
+          spec.expBits,
+          spec.expBias,
+          spec.expMax,
+          spec.minExp,
+          spec.maxExp,
+          spec.decimalDig,
         );
+      }
       case 16: {
         const strPtr = dv.getUint32(data, true);
         return readCString(strPtr);
@@ -409,9 +488,9 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   function ferret_std_io_Print(slicePtr: number) {
     if (!slicePtr) return;
     const dv = view();
-    const dataPtr = dv.getUint32(slicePtr + 0, true);
-    const length = dv.getInt32(slicePtr + 4, true);
-    const elemSize = dv.getUint32(slicePtr + 12, true);
+    const dataPtr = dv.getUint32(slicePtr + SLICE_DATA_OFFSET, true);
+    const length = dv.getInt32(slicePtr + SLICE_LEN_OFFSET, true);
+    const elemSize = dv.getUint32(slicePtr + SLICE_ELEM_SIZE_OFFSET, true);
     const parts: string[] = [];
     for (let i = 0; i < length; i++) {
       parts.push(printUnion(dataPtr + i * elemSize));
@@ -432,9 +511,9 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       return;
     }
     const dv = view();
-    const dataPtr = dv.getUint32(slicePtr + 0, true);
-    const length = dv.getInt32(slicePtr + 4, true);
-    const elemSize = dv.getUint32(slicePtr + 12, true);
+    const dataPtr = dv.getUint32(slicePtr + SLICE_DATA_OFFSET, true);
+    const length = dv.getInt32(slicePtr + SLICE_LEN_OFFSET, true);
+    const elemSize = dv.getUint32(slicePtr + SLICE_ELEM_SIZE_OFFSET, true);
     const parts: string[] = [];
     for (let i = 0; i < length; i++) {
       parts.push(printUnion(dataPtr + i * elemSize));
@@ -514,8 +593,6 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return resultStrF64(value, null);
   }
 
-  const UNION_TAG_SIZE = 4;
-
   function readUnionTag(ptr: number): number {
     if (!ptr) {
       return -1;
@@ -527,7 +604,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     if (!ptr) {
       return 0;
     }
-    return view().getUint32(ptr + UNION_TAG_SIZE, true);
+    return view().getUint32(ptr + UNION_PTR_OFFSET, true);
   }
 
   function readUnionPtrDeref(ptr: number): number {
@@ -551,15 +628,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return ptr >>> 0;
   }
 
-  const interfaceSize = 8;
-  let unknownTypeIdPtr = 0;
-
-  function getUnknownTypeId(): number {
-    if (!unknownTypeIdPtr) {
-      unknownTypeIdPtr = writeCString("<unknown>");
-    }
-    return unknownTypeIdPtr;
-  }
+  const unknownTypeDescPtr = 0;
   function ferret_global_len(seqPtr: number): number {
     if (!seqPtr) {
       return 0;
@@ -590,9 +659,9 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     if (!arrPtr) {
       return 0;
     }
-    const elemSize = dv.getUint32(arrPtr + 12, true);
+    const elemSize = dv.getUint32(arrPtr + ARRAY_ELEM_SIZE_OFFSET, true);
     let valuePtr = _valuePtr;
-    if (elemSize !== interfaceSize) {
+    if (elemSize !== INTERFACE_SIZE) {
       valuePtr = dv.getUint32(_valuePtr, true);
       if (!valuePtr) {
         return 0;
@@ -603,7 +672,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_global_at(seqPtr: number, index: number): number {
     if (!seqPtr) {
-      return optionalAllocNone(8, 4);
+      return optionalAllocNone(INTERFACE_SIZE, 4);
     }
     const tag = readUnionTag(seqPtr);
     let arrPtr = 0;
@@ -613,24 +682,24 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       arrPtr = readUnionPtrDeref(seqPtr);
     }
     if (!arrPtr) {
-      return optionalAllocNone(8, 4);
+      return optionalAllocNone(INTERFACE_SIZE, 4);
     }
     const dv = view();
-    const length = dv.getInt32(arrPtr + 4, true);
-    const elemSize = dv.getUint32(arrPtr + 12, true);
-    const elemTypeId = dv.getUint32(arrPtr + 16, true);
+    const length = dv.getInt32(arrPtr + ARRAY_LEN_OFFSET, true);
+    const elemSize = dv.getUint32(arrPtr + ARRAY_ELEM_SIZE_OFFSET, true);
+    const elemTypeDesc = dv.getUint32(arrPtr + ARRAY_ELEM_TYPE_OFFSET, true);
     let idx = index | 0;
     if (idx < 0) {
       idx = length + idx;
     }
     if (idx < 0 || idx >= length) {
-      return optionalAllocNone(interfaceSize, 4);
+      return optionalAllocNone(INTERFACE_SIZE, 4);
     }
-    const dataPtr = dv.getUint32(arrPtr + 0, true);
+    const dataPtr = dv.getUint32(arrPtr + ARRAY_DATA_OFFSET, true);
     const elemPtr = (dataPtr + idx * elemSize) >>> 0;
-    const outPtr = optionalAllocNone(interfaceSize, 4);
+    const outPtr = optionalAllocNone(INTERFACE_SIZE, 4);
     const mem = new Uint8Array(memory!.buffer);
-    if (elemSize === interfaceSize) {
+    if (elemSize === INTERFACE_SIZE) {
       if (elemSize > 0) {
         ferret_memcpy(outPtr, elemPtr, elemSize);
       }
@@ -641,9 +710,9 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_memcpy(boxedPtr, elemPtr, elemSize);
       }
       dv.setUint32(outPtr + 0, boxedPtr >>> 0, true);
-      dv.setUint32(outPtr + 4, elemTypeId || getUnknownTypeId(), true);
+      dv.setUint32(outPtr + 4, elemTypeDesc || unknownTypeDescPtr, true);
     }
-    mem[outPtr + interfaceSize] = 1;
+    mem[outPtr + INTERFACE_SIZE] = 1;
     return outPtr;
   }
 
@@ -666,7 +735,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_global_get(mapViewPtr: number, keyPtr: number): number {
     if (!mapViewPtr || !keyPtr) {
-      return optionalAllocNone(8, 4);
+      return optionalAllocNone(INTERFACE_SIZE, 4);
     }
     const tag = readUnionTag(mapViewPtr);
     let mapPtr = 0;
@@ -676,21 +745,21 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       mapPtr = readUnionPtr(mapViewPtr);
     }
     if (!mapPtr) {
-      return optionalAllocNone(interfaceSize, 4);
+      return optionalAllocNone(INTERFACE_SIZE, 4);
     }
     const meta = mapGetMeta(mapPtr);
     if (!meta) {
-      return optionalAllocNone(interfaceSize, 4);
+      return optionalAllocNone(INTERFACE_SIZE, 4);
     }
     let keyLookupPtr = keyPtr;
-    if (meta.keySize !== interfaceSize) {
+    if (meta.keySize !== INTERFACE_SIZE) {
       keyLookupPtr = view().getUint32(keyPtr, true);
       if (!keyLookupPtr) {
-        return optionalAllocNone(interfaceSize, 4);
+        return optionalAllocNone(INTERFACE_SIZE, 4);
       }
     }
-    const outPtr = optionalAllocNone(interfaceSize, 4);
-    if (meta.valueSize === interfaceSize) {
+    const outPtr = optionalAllocNone(INTERFACE_SIZE, 4);
+    if (meta.valueSize === INTERFACE_SIZE) {
       ferret_map_get_optional_out(mapPtr, keyLookupPtr, outPtr);
       return outPtr;
     }
@@ -705,9 +774,9 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     }
     const dv = view();
     dv.setUint32(outPtr + 0, boxedPtr >>> 0, true);
-    dv.setUint32(outPtr + 4, meta.valueTypeId || getUnknownTypeId(), true);
+    dv.setUint32(outPtr + 4, meta.valueTypeDesc || unknownTypeDescPtr, true);
     const mem = new Uint8Array(memory!.buffer);
-    mem[outPtr + interfaceSize] = 1;
+    mem[outPtr + INTERFACE_SIZE] = 1;
     return outPtr;
   }
 
@@ -731,13 +800,13 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     }
     let keyValuePtr = keyPtr;
     let valueValuePtr = valuePtr;
-    if (meta.keySize !== interfaceSize) {
+    if (meta.keySize !== INTERFACE_SIZE) {
       keyValuePtr = dv.getUint32(keyPtr, true);
       if (!keyValuePtr) {
         return 0;
       }
     }
-    if (meta.valueSize !== interfaceSize) {
+    if (meta.valueSize !== INTERFACE_SIZE) {
       valueValuePtr = dv.getUint32(valuePtr, true);
       if (!valueValuePtr) {
         return 0;
@@ -957,7 +1026,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   // Convert string to []char (array of Unicode codepoints)
   function ferret_string_to_char_array(
     strPtr: number,
-    elemTypeId: number,
+    elemTypeDesc: number,
   ): number {
     const str = strPtr ? readCString(strPtr) : "";
     const bytes = encoder.encode(str);
@@ -972,7 +1041,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     }
 
     // Create array with exact capacity (char is 4 bytes = uint32)
-    const arrPtr = ferret_array_new(4, charCount, elemTypeId);
+    const arrPtr = ferret_array_new(4, charCount, elemTypeDesc);
 
     // Second pass: decode UTF-8 and populate array
     i = 0;
@@ -992,13 +1061,13 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   // Convert string to []byte (raw UTF-8 bytes)
   function ferret_string_to_byte_array(
     strPtr: number,
-    elemTypeId: number,
+    elemTypeDesc: number,
   ): number {
     const str = strPtr ? readCString(strPtr) : "";
     const bytes = encoder.encode(str);
 
     // Create array with exact capacity (byte is 1 byte = uint8)
-    const arrPtr = ferret_array_new(1, bytes.length, elemTypeId);
+    const arrPtr = ferret_array_new(1, bytes.length, elemTypeDesc);
 
     // Copy bytes directly
     for (let i = 0; i < bytes.length; i++) {
@@ -1064,20 +1133,13 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return writeCString(str);
   }
 
-  const BIGINT_BITS_128 = 128;
-  const BIGINT_BITS_256 = 256;
-  const BIGINT_MASK_128 = (1n << 128n) - 1n;
-  const BIGINT_MASK_256 = (1n << 256n) - 1n;
-  const BIGINT_SIGN_128 = 1n << 127n;
-  const BIGINT_SIGN_256 = 1n << 255n;
-  const bigintMaskCache = new Map<number, bigint>([
-    [BIGINT_BITS_128, BIGINT_MASK_128],
-    [BIGINT_BITS_256, BIGINT_MASK_256],
-  ]);
-  const bigintSignCache = new Map<number, bigint>([
-    [BIGINT_BITS_128, BIGINT_SIGN_128],
-    [BIGINT_BITS_256, BIGINT_SIGN_256],
-  ]);
+  const bigintMaskCache = new Map<number, bigint>();
+  const bigintSignCache = new Map<number, bigint>();
+  for (const bits of BIG_INT_WIDTHS) {
+    const bigBits = BigInt(bits);
+    bigintMaskCache.set(bits, (1n << bigBits) - 1n);
+    bigintSignCache.set(bits, 1n << (bigBits - 1n));
+  }
 
   function bigintMask(bits: number): bigint {
     const cached = bigintMaskCache.get(bits);
@@ -1182,25 +1244,43 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return true;
   }
 
-  const SOFT_EXTRA_BITS = 3n;
+  type SoftFloatSpec = {
+    bits: number;
+    words: number;
+    fracBits: bigint;
+    expBits: bigint;
+    expBias: number;
+    expMax: bigint;
+    minExp: number;
+    maxExp: number;
+    decimalDig: number;
+  };
 
-  const F128_FRAC_BITS = 112n;
-  const F128_EXP_BITS = 15n;
-  const F128_EXP_BIAS = 16383;
-  const F128_EXP_MAX = (1n << F128_EXP_BITS) - 1n;
-  const F128_SIG_BITS = F128_FRAC_BITS + 1n;
-  const F128_MAX_EXP = 16383;
-  const F128_MIN_EXP = -16382;
-  const F128_DECIMAL_DIG = 36;
+  const softFloatSpecs = new Map<number, SoftFloatSpec>();
+  for (const spec of BIG_FLOAT_SPECS) {
+    const expMax = (1n << spec.expBits) - 1n;
+    const minExp = 1 - spec.expBias;
+    const maxExp = spec.expBias;
+    softFloatSpecs.set(spec.bits, {
+      bits: spec.bits,
+      words: spec.words,
+      fracBits: spec.fracBits,
+      expBits: spec.expBits,
+      expBias: spec.expBias,
+      expMax,
+      minExp,
+      maxExp,
+      decimalDig: spec.decimalDig,
+    });
+  }
 
-  const F256_FRAC_BITS = 236n;
-  const F256_EXP_BITS = 19n;
-  const F256_EXP_BIAS = 262143;
-  const F256_EXP_MAX = (1n << F256_EXP_BITS) - 1n;
-  const F256_SIG_BITS = F256_FRAC_BITS + 1n;
-  const F256_MAX_EXP = 262143;
-  const F256_MIN_EXP = -262142;
-  const F256_DECIMAL_DIG = 73;
+  function getSoftFloatSpec(bits: number): SoftFloatSpec {
+    const spec = softFloatSpecs.get(bits);
+    if (!spec) {
+      throw new Error(`Unsupported float size: ${bits}`);
+    }
+    return spec;
+  }
 
   const SOFT_CLASS_ZERO = 0;
   const SOFT_CLASS_NORMAL = 1;
@@ -1210,20 +1290,12 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   const f64Buf = new ArrayBuffer(8);
   const f64View = new DataView(f64Buf);
 
-  function readF128Bits(ptr: number): bigint {
-    return readBigIntUnsigned(ptr, 16);
+  function readBigFloatBits(ptr: number, bits: number): bigint {
+    return readBigIntUnsigned(ptr, bits >> 3);
   }
 
-  function writeF128Bits(ptr: number, bits: bigint): void {
-    writeBigIntUnsigned(ptr, 128, bits);
-  }
-
-  function readF256Bits(ptr: number): bigint {
-    return readBigIntUnsigned(ptr, 32);
-  }
-
-  function writeF256Bits(ptr: number, bits: bigint): void {
-    writeBigIntUnsigned(ptr, 256, bits);
+  function writeBigFloatBits(ptr: number, bits: number, value: bigint): void {
+    writeBigIntUnsigned(ptr, bits, value);
   }
 
   function bitLengthBigInt(value: bigint): number {
@@ -2525,12 +2597,11 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     };
   }
 
-  const BIG_INT_TYPES: BigIntTypeSpec[] = [
-    { name: "i128", bits: BIGINT_BITS_128, signed: true },
-    { name: "u128", bits: BIGINT_BITS_128, signed: false },
-    { name: "i256", bits: BIGINT_BITS_256, signed: true },
-    { name: "u256", bits: BIGINT_BITS_256, signed: false },
-  ];
+  const BIG_INT_TYPES: BigIntTypeSpec[] = [];
+  for (const bits of BIG_INT_WIDTHS) {
+    BIG_INT_TYPES.push({ name: `i${bits}`, bits, signed: true });
+    BIG_INT_TYPES.push({ name: `u${bits}`, bits, signed: false });
+  }
 
   const bigIntBindings: BindingMap = {};
   for (const spec of BIG_INT_TYPES) {
@@ -2774,39 +2845,28 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     };
   }
 
-  const BIG_FLOAT_TYPES: BigFloatTypeSpec[] = [
-    {
-      name: "f128",
-      readBits: readF128Bits,
-      writeBits: writeF128Bits,
-      fracBits: F128_FRAC_BITS,
-      expBits: F128_EXP_BITS,
-      expBias: F128_EXP_BIAS,
-      expMax: F128_EXP_MAX,
-      minExp: F128_MIN_EXP,
-      maxExp: F128_MAX_EXP,
-      decimalDig: F128_DECIMAL_DIG,
-    },
-    {
-      name: "f256",
-      readBits: readF256Bits,
-      writeBits: writeF256Bits,
-      fracBits: F256_FRAC_BITS,
-      expBits: F256_EXP_BITS,
-      expBias: F256_EXP_BIAS,
-      expMax: F256_EXP_MAX,
-      minExp: F256_MIN_EXP,
-      maxExp: F256_MAX_EXP,
-      decimalDig: F256_DECIMAL_DIG,
-    },
-  ];
+  const BIG_FLOAT_TYPES: BigFloatTypeSpec[] = [];
+  for (const spec of BIG_FLOAT_SPECS) {
+    const derived = getSoftFloatSpec(spec.bits);
+    BIG_FLOAT_TYPES.push({
+      name: `f${spec.bits}`,
+      readBits: (ptr: number) => readBigFloatBits(ptr, spec.bits),
+      writeBits: (ptr: number, bits: bigint) =>
+        writeBigFloatBits(ptr, spec.bits, bits),
+      fracBits: derived.fracBits,
+      expBits: derived.expBits,
+      expBias: derived.expBias,
+      expMax: derived.expMax,
+      minExp: derived.minExp,
+      maxExp: derived.maxExp,
+      decimalDig: derived.decimalDig,
+    });
+  }
 
   const bigFloatBindings: BindingMap = {};
   for (const spec of BIG_FLOAT_TYPES) {
     Object.assign(bigFloatBindings, makeBigFloatBindings(spec));
   }
-
-  const MAP_HASH_SEED = 0x9747b28c;
 
   function rotl32(value: number, shift: number): number {
     return (value << shift) | (value >>> (32 - shift));
@@ -2863,7 +2923,379 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   const zeroHash32 = murmur3_32_bytes(new Uint8Array(4), MAP_HASH_SEED);
   const zeroHash64 = murmur3_32_bytes(new Uint8Array(8), MAP_HASH_SEED);
 
-  type FerretMapKeyKind = "i32" | "i64" | "f32" | "f64" | "str" | "bytes";
+  function isPrimitiveKind(kind: number): boolean {
+    return kind >= TYPE_KIND_I8 && kind < TYPE_KIND_POINTER;
+  }
+
+  function fnv1aHashBytes(ptr: number, len: number, seed: number): number {
+    if (!ptr || len <= 0) {
+      return seed >>> 0;
+    }
+    const mem = new Uint8Array(memory!.buffer, ptr >>> 0, len >>> 0);
+    let hash = seed >>> 0;
+    for (let i = 0; i < mem.length; i++) {
+      hash ^= mem[i];
+      hash = Math.imul(hash, FNV_PRIME);
+    }
+    return hash >>> 0;
+  }
+
+  function fnv1aHashU32(value: number, seed: number): number {
+    let hash = seed >>> 0;
+    hash ^= value & 0xff;
+    hash = Math.imul(hash, FNV_PRIME);
+    hash ^= (value >>> 8) & 0xff;
+    hash = Math.imul(hash, FNV_PRIME);
+    hash ^= (value >>> 16) & 0xff;
+    hash = Math.imul(hash, FNV_PRIME);
+    hash ^= (value >>> 24) & 0xff;
+    hash = Math.imul(hash, FNV_PRIME);
+    return hash >>> 0;
+  }
+
+  function hashCombine(h1: number, h2: number): number {
+    return (h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >>> 2))) >>> 0;
+  }
+
+  function readTypeDesc(ptr: number): {
+    kind: number;
+    size: number;
+    info1: number;
+    info2: number;
+  } | null {
+    if (!ptr) {
+      return null;
+    }
+    const dv = view();
+    return {
+      kind: dv.getUint32(ptr + TYPE_DESC_KIND_OFFSET, true),
+      size: dv.getUint32(ptr + TYPE_DESC_SIZE_OFFSET, true),
+      info1: dv.getUint32(ptr + TYPE_DESC_INFO1_OFFSET, true),
+      info2: dv.getUint32(ptr + TYPE_DESC_INFO2_OFFSET, true),
+    };
+  }
+
+  function hashUniversal(dataPtr: number, typeDescPtr: number): number {
+    if (!dataPtr || !typeDescPtr) {
+      return 0;
+    }
+    const desc = readTypeDesc(typeDescPtr);
+    if (!desc) {
+      return 0;
+    }
+    const dv = view();
+    if (isPrimitiveKind(desc.kind)) {
+      if (desc.kind === TYPE_KIND_STRING) {
+        const strPtr = dv.getUint32(dataPtr, true);
+        if (!strPtr) {
+          return 0;
+        }
+        return fnv1aHashBytes(
+          strPtr,
+          ferret_string_len(strPtr),
+          FNV_OFFSET_BASIS,
+        );
+      }
+      return fnv1aHashBytes(dataPtr, desc.size, FNV_OFFSET_BASIS);
+    }
+    switch (desc.kind) {
+      case TYPE_KIND_POINTER:
+      case TYPE_KIND_FUNCTION: {
+        const ptrVal = dv.getUint32(dataPtr, true);
+        return fnv1aHashU32(ptrVal, FNV_OFFSET_BASIS);
+      }
+      case TYPE_KIND_STRUCT: {
+        let hash = FNV_OFFSET_BASIS;
+        const fieldsPtr = desc.info2;
+        for (let i = 0; i < desc.info1; i++) {
+          const fieldEntry = fieldsPtr + i * FIELD_INFO_SIZE;
+          const fieldOffset = dv.getUint32(
+            fieldEntry + FIELD_INFO_OFFSET_OFFSET,
+            true,
+          );
+          const fieldTypePtr = dv.getUint32(
+            fieldEntry + FIELD_INFO_TYPE_OFFSET,
+            true,
+          );
+          const fieldHash = hashUniversal(dataPtr + fieldOffset, fieldTypePtr);
+          hash = hashCombine(hash, fieldHash);
+        }
+        return hash;
+      }
+      case TYPE_KIND_ARRAY: {
+        let hash = FNV_OFFSET_BASIS;
+        const length = desc.info1;
+        const elemTypePtr = desc.info2;
+        const elemDesc = readTypeDesc(elemTypePtr);
+        if (!elemDesc) {
+          return hash;
+        }
+        const elemSize = elemDesc.size;
+        for (let i = 0; i < length; i++) {
+          const elemHash = hashUniversal(dataPtr + i * elemSize, elemTypePtr);
+          hash = hashCombine(hash, elemHash);
+        }
+        return hash;
+      }
+      case TYPE_KIND_SLICE: {
+        const sliceData = dv.getUint32(dataPtr + SLICE_DATA_OFFSET, true);
+        const sliceLen = dv.getInt32(dataPtr + SLICE_LEN_OFFSET, true);
+        if (!sliceData || sliceLen <= 0) {
+          return 0;
+        }
+        const elemTypePtr = desc.info1;
+        const elemDesc = readTypeDesc(elemTypePtr);
+        if (!elemDesc) {
+          return 0;
+        }
+        let hash = FNV_OFFSET_BASIS;
+        const elemSize = elemDesc.size;
+        for (let i = 0; i < sliceLen; i++) {
+          const elemHash = hashUniversal(sliceData + i * elemSize, elemTypePtr);
+          hash = hashCombine(hash, elemHash);
+        }
+        return hash;
+      }
+      case TYPE_KIND_MAP: {
+        const mapPtr = dv.getUint32(dataPtr, true);
+        const meta = mapGetMeta(mapPtr);
+        if (!meta || meta.size === 0) {
+          return 0;
+        }
+        let hash = 0;
+        const keyTypePtr = desc.info1;
+        const valueTypePtr = desc.info2;
+        for (const bucket of meta.buckets.values()) {
+          for (const entry of bucket) {
+            const keyHash = hashUniversal(entry.keyPtr, keyTypePtr);
+            const valHash = hashUniversal(entry.valuePtr, valueTypePtr);
+            hash ^= hashCombine(keyHash, valHash);
+          }
+        }
+        return hash >>> 0;
+      }
+      case TYPE_KIND_INTERFACE: {
+        const ifaceData = dv.getUint32(dataPtr + INTERFACE_DATA_OFFSET, true);
+        const ifaceExtra = dv.getUint32(dataPtr + INTERFACE_EXTRA_OFFSET, true);
+        if (desc.info1 === 0) {
+          const dynTypePtr = ifaceExtra;
+          if (!dynTypePtr) {
+            const h1 = fnv1aHashU32(ifaceExtra, FNV_OFFSET_BASIS);
+            const h2 = fnv1aHashU32(ifaceData, FNV_OFFSET_BASIS);
+            return hashCombine(h1, h2);
+          }
+          const dynDesc = readTypeDesc(dynTypePtr);
+          if (!dynDesc) {
+            return 0;
+          }
+          const payloadPtr =
+            dynDesc.kind === TYPE_KIND_POINTER ? dataPtr : ifaceData;
+          const typeHash = fnv1aHashU32(dynTypePtr, FNV_OFFSET_BASIS);
+          const valueHash = hashUniversal(payloadPtr, dynTypePtr);
+          return hashCombine(typeHash, valueHash);
+        }
+        const h1 = fnv1aHashU32(ifaceExtra, FNV_OFFSET_BASIS);
+        const h2 = fnv1aHashU32(ifaceData, FNV_OFFSET_BASIS);
+        return hashCombine(h1, h2);
+      }
+      default:
+        return fnv1aHashBytes(dataPtr, desc.size, FNV_OFFSET_BASIS);
+    }
+  }
+
+  function primitiveEquals(
+    kind: number,
+    size: number,
+    ptrA: number,
+    ptrB: number,
+  ): boolean {
+    const dv = view();
+    switch (kind) {
+      case TYPE_KIND_STRING: {
+        const strPtrA = dv.getUint32(ptrA, true);
+        const strPtrB = dv.getUint32(ptrB, true);
+        if (strPtrA === strPtrB) {
+          return true;
+        }
+        if (!strPtrA || !strPtrB) {
+          return false;
+        }
+        return readCString(strPtrA) === readCString(strPtrB);
+      }
+      case TYPE_KIND_F32:
+        return dv.getFloat32(ptrA, true) === dv.getFloat32(ptrB, true);
+      case TYPE_KIND_F64:
+        return dv.getFloat64(ptrA, true) === dv.getFloat64(ptrB, true);
+      default:
+        return bytesEqual(ptrA, ptrB, size);
+    }
+  }
+
+  function equalsUniversal(
+    dataPtrA: number,
+    dataPtrB: number,
+    typeDescPtr: number,
+  ): boolean {
+    if (dataPtrA === dataPtrB) {
+      return true;
+    }
+    if (!dataPtrA || !dataPtrB || !typeDescPtr) {
+      return false;
+    }
+    const desc = readTypeDesc(typeDescPtr);
+    if (!desc) {
+      return false;
+    }
+    const dv = view();
+    if (isPrimitiveKind(desc.kind)) {
+      return primitiveEquals(desc.kind, desc.size, dataPtrA, dataPtrB);
+    }
+    switch (desc.kind) {
+      case TYPE_KIND_POINTER:
+      case TYPE_KIND_FUNCTION:
+        return dv.getUint32(dataPtrA, true) === dv.getUint32(dataPtrB, true);
+      case TYPE_KIND_STRUCT: {
+        const fieldsPtr = desc.info2;
+        for (let i = 0; i < desc.info1; i++) {
+          const fieldEntry = fieldsPtr + i * FIELD_INFO_SIZE;
+          const fieldOffset = dv.getUint32(
+            fieldEntry + FIELD_INFO_OFFSET_OFFSET,
+            true,
+          );
+          const fieldTypePtr = dv.getUint32(
+            fieldEntry + FIELD_INFO_TYPE_OFFSET,
+            true,
+          );
+          if (
+            !equalsUniversal(
+              dataPtrA + fieldOffset,
+              dataPtrB + fieldOffset,
+              fieldTypePtr,
+            )
+          ) {
+            return false;
+          }
+        }
+        return true;
+      }
+      case TYPE_KIND_ARRAY: {
+        const length = desc.info1;
+        const elemTypePtr = desc.info2;
+        const elemDesc = readTypeDesc(elemTypePtr);
+        if (!elemDesc) {
+          return false;
+        }
+        const elemSize = elemDesc.size;
+        for (let i = 0; i < length; i++) {
+          if (
+            !equalsUniversal(
+              dataPtrA + i * elemSize,
+              dataPtrB + i * elemSize,
+              elemTypePtr,
+            )
+          ) {
+            return false;
+          }
+        }
+        return true;
+      }
+      case TYPE_KIND_SLICE: {
+        const dataA = dv.getUint32(dataPtrA, true);
+        const dataB = dv.getUint32(dataPtrB, true);
+        const lenA = dv.getInt32(dataPtrA + 4, true);
+        const lenB = dv.getInt32(dataPtrB + 4, true);
+        if (lenA !== lenB) {
+          return false;
+        }
+        if (dataA === dataB) {
+          return true;
+        }
+        if (!dataA || !dataB) {
+          return false;
+        }
+        const elemTypePtr = desc.info1;
+        const elemDesc = readTypeDesc(elemTypePtr);
+        if (!elemDesc) {
+          return false;
+        }
+        const elemSize = elemDesc.size;
+        for (let i = 0; i < lenA; i++) {
+          if (
+            !equalsUniversal(
+              dataA + i * elemSize,
+              dataB + i * elemSize,
+              elemTypePtr,
+            )
+          ) {
+            return false;
+          }
+        }
+        return true;
+      }
+      case TYPE_KIND_MAP: {
+        const mapPtrA = dv.getUint32(dataPtrA, true);
+        const mapPtrB = dv.getUint32(dataPtrB, true);
+        if (mapPtrA === mapPtrB) {
+          return true;
+        }
+        const metaA = mapGetMeta(mapPtrA);
+        const metaB = mapGetMeta(mapPtrB);
+        if (!metaA || !metaB) {
+          return false;
+        }
+        if (metaA.size !== metaB.size) {
+          return false;
+        }
+        for (const bucket of metaA.buckets.values()) {
+          for (const entry of bucket) {
+            const hash = mapHashKey(metaB, entry.keyPtr);
+            const match = mapFindEntry(metaB, entry.keyPtr, hash);
+            if (!match) {
+              return false;
+            }
+            if (!equalsUniversal(entry.valuePtr, match.valuePtr, desc.info2)) {
+              return false;
+            }
+          }
+        }
+        return true;
+      }
+      case TYPE_KIND_INTERFACE: {
+        const ifaceDataA = dv.getUint32(dataPtrA + INTERFACE_DATA_OFFSET, true);
+        const ifaceDataB = dv.getUint32(dataPtrB + INTERFACE_DATA_OFFSET, true);
+        const ifaceExtraA = dv.getUint32(
+          dataPtrA + INTERFACE_EXTRA_OFFSET,
+          true,
+        );
+        const ifaceExtraB = dv.getUint32(
+          dataPtrB + INTERFACE_EXTRA_OFFSET,
+          true,
+        );
+        if (desc.info1 === 0) {
+          if (ifaceExtraA !== ifaceExtraB) {
+            return false;
+          }
+          if (!ifaceExtraA) {
+            return ifaceDataA === ifaceDataB;
+          }
+          const dynDesc = readTypeDesc(ifaceExtraA);
+          if (!dynDesc) {
+            return false;
+          }
+          const payloadA =
+            dynDesc.kind === TYPE_KIND_POINTER ? dataPtrA : ifaceDataA;
+          const payloadB =
+            dynDesc.kind === TYPE_KIND_POINTER ? dataPtrB : ifaceDataB;
+          return equalsUniversal(payloadA, payloadB, ifaceExtraA);
+        }
+        return ifaceExtraA === ifaceExtraB && ifaceDataA === ifaceDataB;
+      }
+      default:
+        return bytesEqual(dataPtrA, dataPtrB, desc.size);
+    }
+  }
+
+  type FerretMapKeyKind = (typeof MAP_KEY_KINDS)[number];
   type FerretMapEntry = { keyPtr: number; valuePtr: number; hash: number };
   type FerretMapMeta = {
     keySize: number;
@@ -2871,8 +3303,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     keyKind: FerretMapKeyKind;
     buckets: Map<number, FerretMapEntry[]>;
     size: number;
-    keyTypeId: number;
-    valueTypeId: number;
+    keyTypeDesc: number;
+    valueTypeDesc: number;
   };
 
   // JS-side map storage: mapPtr -> metadata
@@ -2921,6 +3353,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       }
       case "bytes":
         return hashBytes(keyPtr, meta.keySize);
+      case "numeric":
+        return hashBytes(keyPtr, meta.keySize);
+      case "universal":
+        return hashUniversal(keyPtr, meta.keyTypeDesc);
     }
   }
 
@@ -2963,6 +3399,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         }
         return true;
       }
+      case "numeric":
+        return bytesEqual(keyPtr, entryKeyPtr, meta.keySize);
+      case "universal":
+        return equalsUniversal(keyPtr, entryKeyPtr, meta.keyTypeDesc);
     }
   }
 
@@ -3021,18 +3461,18 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     keysPtr: number,
     valuesPtr: number,
     count: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
-    const mapPtr = ferret_alloc(8);
+    const mapPtr = ferret_alloc(MAP_HANDLE_SIZE);
     const meta: FerretMapMeta = {
       keySize: Number(keySize),
       valueSize: Number(valueSize),
       keyKind,
       buckets: new Map(),
       size: 0,
-      keyTypeId: keyTypeId >>> 0,
-      valueTypeId: valueTypeId >>> 0,
+      keyTypeDesc: keyTypeDesc >>> 0,
+      valueTypeDesc: valueTypeDesc >>> 0,
     };
     ferretMapStore.set(mapPtr, meta);
     const kSize = Number(keySize);
@@ -3046,21 +3486,61 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return mapPtr >>> 0;
   }
 
+  function ferret_map_new_numeric(
+    keySize: number,
+    valueSize: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
+  ): number {
+    const mapPtr = ferret_alloc(MAP_HANDLE_SIZE);
+    ferretMapStore.set(mapPtr, {
+      keySize: Number(keySize),
+      valueSize: Number(valueSize),
+      keyKind: "numeric",
+      buckets: new Map(),
+      size: 0,
+      keyTypeDesc: keyTypeDesc >>> 0,
+      valueTypeDesc: valueTypeDesc >>> 0,
+    });
+    return mapPtr >>> 0;
+  }
+
+  function ferret_map_new_universal(
+    keySize: number,
+    valueSize: number,
+    keyTypeInfo: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
+  ): number {
+    const mapPtr = ferret_alloc(MAP_HANDLE_SIZE);
+    const keyDesc = (keyTypeDesc || keyTypeInfo) >>> 0;
+    ferretMapStore.set(mapPtr, {
+      keySize: Number(keySize),
+      valueSize: Number(valueSize),
+      keyKind: "universal",
+      buckets: new Map(),
+      size: 0,
+      keyTypeDesc: keyDesc,
+      valueTypeDesc: valueTypeDesc >>> 0,
+    });
+    return mapPtr >>> 0;
+  }
+
   function ferret_map_new_i32(
     keySize: number,
     valueSize: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
-    const mapPtr = ferret_alloc(8);
+    const mapPtr = ferret_alloc(MAP_HANDLE_SIZE);
     ferretMapStore.set(mapPtr, {
       keySize: Number(keySize),
       valueSize: Number(valueSize),
       keyKind: "i32",
       buckets: new Map(),
       size: 0,
-      keyTypeId: keyTypeId >>> 0,
-      valueTypeId: valueTypeId >>> 0,
+      keyTypeDesc: keyTypeDesc >>> 0,
+      valueTypeDesc: valueTypeDesc >>> 0,
     });
     return mapPtr >>> 0;
   }
@@ -3068,18 +3548,18 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   function ferret_map_new_i64(
     keySize: number,
     valueSize: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
-    const mapPtr = ferret_alloc(8);
+    const mapPtr = ferret_alloc(MAP_HANDLE_SIZE);
     ferretMapStore.set(mapPtr, {
       keySize: Number(keySize),
       valueSize: Number(valueSize),
       keyKind: "i64",
       buckets: new Map(),
       size: 0,
-      keyTypeId: keyTypeId >>> 0,
-      valueTypeId: valueTypeId >>> 0,
+      keyTypeDesc: keyTypeDesc >>> 0,
+      valueTypeDesc: valueTypeDesc >>> 0,
     });
     return mapPtr >>> 0;
   }
@@ -3087,18 +3567,18 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   function ferret_map_new_f32(
     keySize: number,
     valueSize: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
-    const mapPtr = ferret_alloc(8);
+    const mapPtr = ferret_alloc(MAP_HANDLE_SIZE);
     ferretMapStore.set(mapPtr, {
       keySize: Number(keySize),
       valueSize: Number(valueSize),
       keyKind: "f32",
       buckets: new Map(),
       size: 0,
-      keyTypeId: keyTypeId >>> 0,
-      valueTypeId: valueTypeId >>> 0,
+      keyTypeDesc: keyTypeDesc >>> 0,
+      valueTypeDesc: valueTypeDesc >>> 0,
     });
     return mapPtr >>> 0;
   }
@@ -3106,18 +3586,18 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   function ferret_map_new_f64(
     keySize: number,
     valueSize: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
-    const mapPtr = ferret_alloc(8);
+    const mapPtr = ferret_alloc(MAP_HANDLE_SIZE);
     ferretMapStore.set(mapPtr, {
       keySize: Number(keySize),
       valueSize: Number(valueSize),
       keyKind: "f64",
       buckets: new Map(),
       size: 0,
-      keyTypeId: keyTypeId >>> 0,
-      valueTypeId: valueTypeId >>> 0,
+      keyTypeDesc: keyTypeDesc >>> 0,
+      valueTypeDesc: valueTypeDesc >>> 0,
     });
     return mapPtr >>> 0;
   }
@@ -3125,18 +3605,18 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   function ferret_map_new_str(
     keySize: number,
     valueSize: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
-    const mapPtr = ferret_alloc(8);
+    const mapPtr = ferret_alloc(MAP_HANDLE_SIZE);
     ferretMapStore.set(mapPtr, {
       keySize: Number(keySize),
       valueSize: Number(valueSize),
       keyKind: "str",
       buckets: new Map(),
       size: 0,
-      keyTypeId: keyTypeId >>> 0,
-      valueTypeId: valueTypeId >>> 0,
+      keyTypeDesc: keyTypeDesc >>> 0,
+      valueTypeDesc: valueTypeDesc >>> 0,
     });
     return mapPtr >>> 0;
   }
@@ -3144,20 +3624,64 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   function ferret_map_new_bytes(
     keySize: number,
     valueSize: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
-    const mapPtr = ferret_alloc(8);
+    const mapPtr = ferret_alloc(MAP_HANDLE_SIZE);
     ferretMapStore.set(mapPtr, {
       keySize: Number(keySize),
       valueSize: Number(valueSize),
       keyKind: "bytes",
       buckets: new Map(),
       size: 0,
-      keyTypeId: keyTypeId >>> 0,
-      valueTypeId: valueTypeId >>> 0,
+      keyTypeDesc: keyTypeDesc >>> 0,
+      valueTypeDesc: valueTypeDesc >>> 0,
     });
     return mapPtr >>> 0;
+  }
+
+  function ferret_map_from_pairs_numeric(
+    keySize: number,
+    valueSize: number,
+    keysPtr: number,
+    valuesPtr: number,
+    count: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
+  ): number {
+    return mapFromPairs(
+      "numeric",
+      keySize,
+      valueSize,
+      keysPtr,
+      valuesPtr,
+      count,
+      keyTypeDesc,
+      valueTypeDesc,
+    );
+  }
+
+  function ferret_map_from_pairs_universal(
+    keySize: number,
+    valueSize: number,
+    keysPtr: number,
+    valuesPtr: number,
+    count: number,
+    keyTypeInfo: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
+  ): number {
+    const keyDesc = (keyTypeDesc || keyTypeInfo) >>> 0;
+    return mapFromPairs(
+      "universal",
+      keySize,
+      valueSize,
+      keysPtr,
+      valuesPtr,
+      count,
+      keyDesc,
+      valueTypeDesc,
+    );
   }
 
   function ferret_map_from_pairs_i32(
@@ -3166,8 +3690,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     keysPtr: number,
     valuesPtr: number,
     count: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
     return mapFromPairs(
       "i32",
@@ -3176,8 +3700,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       keysPtr,
       valuesPtr,
       count,
-      keyTypeId,
-      valueTypeId,
+      keyTypeDesc,
+      valueTypeDesc,
     );
   }
 
@@ -3187,8 +3711,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     keysPtr: number,
     valuesPtr: number,
     count: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
     return mapFromPairs(
       "i64",
@@ -3197,8 +3721,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       keysPtr,
       valuesPtr,
       count,
-      keyTypeId,
-      valueTypeId,
+      keyTypeDesc,
+      valueTypeDesc,
     );
   }
 
@@ -3208,8 +3732,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     keysPtr: number,
     valuesPtr: number,
     count: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
     return mapFromPairs(
       "f32",
@@ -3218,8 +3742,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       keysPtr,
       valuesPtr,
       count,
-      keyTypeId,
-      valueTypeId,
+      keyTypeDesc,
+      valueTypeDesc,
     );
   }
 
@@ -3229,8 +3753,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     keysPtr: number,
     valuesPtr: number,
     count: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
     return mapFromPairs(
       "f64",
@@ -3239,8 +3763,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       keysPtr,
       valuesPtr,
       count,
-      keyTypeId,
-      valueTypeId,
+      keyTypeDesc,
+      valueTypeDesc,
     );
   }
 
@@ -3250,8 +3774,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     keysPtr: number,
     valuesPtr: number,
     count: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
     return mapFromPairs(
       "str",
@@ -3260,8 +3784,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       keysPtr,
       valuesPtr,
       count,
-      keyTypeId,
-      valueTypeId,
+      keyTypeDesc,
+      valueTypeDesc,
     );
   }
 
@@ -3271,8 +3795,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     keysPtr: number,
     valuesPtr: number,
     count: number,
-    keyTypeId: number,
-    valueTypeId: number,
+    keyTypeDesc: number,
+    valueTypeDesc: number,
   ): number {
     return mapFromPairs(
       "bytes",
@@ -3281,8 +3805,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
       keysPtr,
       valuesPtr,
       count,
-      keyTypeId,
-      valueTypeId,
+      keyTypeDesc,
+      valueTypeDesc,
     );
   }
 
@@ -3297,48 +3821,65 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         outPtr = ferret_map_new_i32(
           meta.keySize,
           meta.valueSize,
-          meta.keyTypeId,
-          meta.valueTypeId,
+          meta.keyTypeDesc,
+          meta.valueTypeDesc,
         );
         break;
       case "i64":
         outPtr = ferret_map_new_i64(
           meta.keySize,
           meta.valueSize,
-          meta.keyTypeId,
-          meta.valueTypeId,
+          meta.keyTypeDesc,
+          meta.valueTypeDesc,
         );
         break;
       case "f32":
         outPtr = ferret_map_new_f32(
           meta.keySize,
           meta.valueSize,
-          meta.keyTypeId,
-          meta.valueTypeId,
+          meta.keyTypeDesc,
+          meta.valueTypeDesc,
         );
         break;
       case "f64":
         outPtr = ferret_map_new_f64(
           meta.keySize,
           meta.valueSize,
-          meta.keyTypeId,
-          meta.valueTypeId,
+          meta.keyTypeDesc,
+          meta.valueTypeDesc,
         );
         break;
       case "str":
         outPtr = ferret_map_new_str(
           meta.keySize,
           meta.valueSize,
-          meta.keyTypeId,
-          meta.valueTypeId,
+          meta.keyTypeDesc,
+          meta.valueTypeDesc,
         );
         break;
       case "bytes":
         outPtr = ferret_map_new_bytes(
           meta.keySize,
           meta.valueSize,
-          meta.keyTypeId,
-          meta.valueTypeId,
+          meta.keyTypeDesc,
+          meta.valueTypeDesc,
+        );
+        break;
+      case "numeric":
+        outPtr = ferret_map_new_numeric(
+          meta.keySize,
+          meta.valueSize,
+          meta.keyTypeDesc,
+          meta.valueTypeDesc,
+        );
+        break;
+      case "universal":
+        outPtr = ferret_map_new_universal(
+          meta.keySize,
+          meta.valueSize,
+          meta.keyTypeDesc,
+          meta.keyTypeDesc,
+          meta.valueTypeDesc,
         );
         break;
     }
@@ -3393,8 +3934,8 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     dstMeta.keySize = srcMeta.keySize;
     dstMeta.valueSize = srcMeta.valueSize;
     dstMeta.keyKind = srcMeta.keyKind;
-    dstMeta.keyTypeId = srcMeta.keyTypeId;
-    dstMeta.valueTypeId = srcMeta.valueTypeId;
+    dstMeta.keyTypeDesc = srcMeta.keyTypeDesc;
+    dstMeta.valueTypeDesc = srcMeta.valueTypeDesc;
     for (const bucket of srcMeta.buckets.values()) {
       for (const entry of bucket) {
         mapSetEntry(dstMeta, entry.keyPtr, entry.valuePtr);
@@ -3513,15 +4054,15 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     reset,
     imports: {
       ferret: {
-        ferret_alloc,
-        ferret_memcpy,
-        ferret_optional_unwrap_or,
-        ferret_array_new,
+        [WASM_IMPORT_FERRET_ALLOC]: ferret_alloc,
+        [WASM_IMPORT_FERRET_MEMCPY]: ferret_memcpy,
+        [WASM_IMPORT_FERRET_OPTIONAL_UNWRAP_OR]: ferret_optional_unwrap_or,
+        [WASM_IMPORT_FERRET_ARRAY_NEW]: ferret_array_new,
         ferret_array_clone,
         ferret_array_assign,
-        ferret_array_append,
-        ferret_array_get,
-        ferret_array_set,
+        [WASM_IMPORT_FERRET_ARRAY_APPEND]: ferret_array_append,
+        [WASM_IMPORT_FERRET_ARRAY_GET]: ferret_array_get,
+        [WASM_IMPORT_FERRET_ARRAY_SET]: ferret_array_set,
         ferret_array_len,
         ferret_array_cap,
         ferret_string_assign,
@@ -3540,7 +4081,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_global_addr,
         ferret_global_self_addr,
         ferret_global_heap_addr,
-        ferret_global_panic,
+        [WASM_IMPORT_FERRET_GLOBAL_PANIC]: ferret_global_panic,
         ferret_string_len,
         ferret_io_ConcatStrings,
         ferret_string_concat_i64,
@@ -3552,7 +4093,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_string_to_byte_array,
         ferret_char_array_to_string,
         ferret_byte_array_to_string,
-        ferret_pow,
+        [WASM_IMPORT_FERRET_POW]: ferret_pow,
         ...bigIntBindings,
         ...bigFloatBindings,
         ferret_map_new_i32,
@@ -3561,17 +4102,21 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
         ferret_map_new_f64,
         ferret_map_new_str,
         ferret_map_new_bytes,
+        ferret_map_new_numeric,
+        ferret_map_new_universal,
         ferret_map_from_pairs_i32,
         ferret_map_from_pairs_i64,
         ferret_map_from_pairs_f32,
         ferret_map_from_pairs_f64,
         ferret_map_from_pairs_str,
         ferret_map_from_pairs_bytes,
+        ferret_map_from_pairs_numeric,
+        ferret_map_from_pairs_universal,
         ferret_map_clone,
         ferret_map_assign,
-        ferret_map_get,
-        ferret_map_get_optional_out,
-        ferret_map_set,
+        [WASM_IMPORT_FERRET_MAP_GET]: ferret_map_get,
+        [WASM_IMPORT_FERRET_MAP_GET_OPTIONAL_OUT]: ferret_map_get_optional_out,
+        [WASM_IMPORT_FERRET_MAP_SET]: ferret_map_set,
         ferret_map_size,
         ferret_map_iter_begin,
         ferret_map_iter_next,

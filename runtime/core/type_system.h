@@ -8,42 +8,21 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "bigint.h"
-
-// Primitive types in Printable union order (ferret_libs/std/io.fer).
-#define FERRET_PRIMITIVE_TYPES(X) \
-    X(I8, i8, int8_t, INT, 8) \
-    X(I16, i16, int16_t, INT, 16) \
-    X(I32, i32, int32_t, INT, 32) \
-    X(I64, i64, int64_t, INT, 64) \
-    X(I128, i128, ferret_i128, INT, 128) \
-    X(I256, i256, ferret_i256, INT, 256) \
-    X(U8, u8, uint8_t, UINT, 8) \
-    X(U16, u16, uint16_t, UINT, 16) \
-    X(U32, u32, uint32_t, UINT, 32) \
-    X(U64, u64, uint64_t, UINT, 64) \
-    X(U128, u128, ferret_u128, UINT, 128) \
-    X(U256, u256, ferret_u256, UINT, 256) \
-    X(F32, f32, float, FLOAT, 32) \
-    X(F64, f64, double, FLOAT, 64) \
-    X(F128, f128, ferret_f128, FLOAT, 128) \
-    X(F256, f256, ferret_f256, FLOAT, 256) \
-    X(STRING, str, char*, STRING, 0) \
-    X(BYTE, byte, uint8_t, BYTE, 8) \
-    X(CHAR, char, uint32_t, CHAR, 32) \
-    X(BOOL, bool, bool, BOOL, 1)
+#include "abi_constants.h"
+#include "primitive_types.h"
 
 typedef enum {
-#define FERRET_TYPE_ENUM(name, lower, ctype, category, bits) FERRET_TYPE_##name,
+#define FERRET_TYPE_ENUM(name, lower, ctype, category, bits) FERRET_TYPE_##name = FERRET_TYPE_KIND_##name,
     FERRET_PRIMITIVE_TYPES(FERRET_TYPE_ENUM)
 #undef FERRET_TYPE_ENUM
-    FERRET_TYPE__PRIMITIVE_END,
-    FERRET_TYPE_POINTER = FERRET_TYPE__PRIMITIVE_END,
-    FERRET_TYPE_STRUCT,
-    FERRET_TYPE_ARRAY,
-    FERRET_TYPE_SLICE,
-    FERRET_TYPE_MAP,
-    FERRET_TYPE_FUNCTION,
-    FERRET_TYPE_INTERFACE,
+    FERRET_TYPE__PRIMITIVE_END = FERRET_TYPE_KIND_POINTER,
+    FERRET_TYPE_POINTER = FERRET_TYPE_KIND_POINTER,
+    FERRET_TYPE_STRUCT = FERRET_TYPE_KIND_STRUCT,
+    FERRET_TYPE_ARRAY = FERRET_TYPE_KIND_ARRAY,
+    FERRET_TYPE_SLICE = FERRET_TYPE_KIND_SLICE,
+    FERRET_TYPE_MAP = FERRET_TYPE_KIND_MAP,
+    FERRET_TYPE_FUNCTION = FERRET_TYPE_KIND_FUNCTION,
+    FERRET_TYPE_INTERFACE = FERRET_TYPE_KIND_INTERFACE,
 } ferret_type_kind_t;
 
 typedef enum {

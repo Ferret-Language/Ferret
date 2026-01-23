@@ -143,37 +143,6 @@ var keyWordsMap map[TOKEN]bool = map[TOKEN]bool{
 	MUT_TOKEN:       true,
 }
 
-var builtinTypes map[string]bool = map[string]bool{
-	string(types.TYPE_U8):   true,
-	string(types.TYPE_U16):  true,
-	string(types.TYPE_U32):  true,
-	string(types.TYPE_U64):  true,
-	string(types.TYPE_U128): true,
-	string(types.TYPE_U256): true,
-
-	string(types.TYPE_I8):   true,
-	string(types.TYPE_I16):  true,
-	string(types.TYPE_I32):  true,
-	string(types.TYPE_I64):  true,
-	string(types.TYPE_I128): true,
-	string(types.TYPE_I256): true,
-
-	string(types.TYPE_F32):  true,
-	string(types.TYPE_F64):  true,
-	string(types.TYPE_F128): true,
-	string(types.TYPE_F256): true,
-
-	string(types.TYPE_BOOL): true,
-
-	string(types.TYPE_STRING): true,
-
-	string(types.TYPE_BYTE): true,
-
-	string(types.TYPE_CHAR): true,
-
-	string(types.TYPE_VOID): true,
-}
-
 func IsKeyword(token string) bool {
 	if _, ok := keyWordsMap[TOKEN(token)]; ok {
 		return true
@@ -235,10 +204,7 @@ func IsComment(token string) bool {
 }
 
 func IsBuiltinType(token string) bool {
-	if _, ok := builtinTypes[token]; ok {
-		return true
-	}
-	return false
+	return types.IsBuiltinTypeName(token)
 }
 
 type Token struct {

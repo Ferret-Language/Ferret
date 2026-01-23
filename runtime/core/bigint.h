@@ -1,6 +1,8 @@
 #ifndef FERRET_BIGINT_H
 #define FERRET_BIGINT_H
 
+#include "abi_constants.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
@@ -23,14 +25,6 @@
 #else
     typedef uint32_t ferret_limb_t;
 #endif
-
-#define FERRET_INT_WIDTHS(X) \
-    X(128) \
-    X(256)
-
-#define FERRET_FLOAT_SPECS(X) \
-    X(128, 2, 112, 15, 16383, 36) \
-    X(256, 4, 236, 19, 262143, 73)
 
 #define FERRET_LIMBS_FOR_BITS(BITS) (((BITS) + FERRET_LIMB_BITS - 1) / FERRET_LIMB_BITS)
 #define FERRET_LIMB_MAX ((ferret_limb_t)~(ferret_limb_t)0)

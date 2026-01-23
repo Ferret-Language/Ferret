@@ -738,7 +738,7 @@ typedef enum {
 } soft_class_t;
 
 #define SOFT_WORD_BITS 64
-#define SOFT_EXTRA_BITS 3
+#define SOFT_EXTRA_BITS FERRET_SOFT_EXTRA_BITS
 
 static int soft_clz64(uint64_t v) {
 #if defined(__GNUC__)

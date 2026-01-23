@@ -8,6 +8,7 @@ import (
 
 	"compiler/internal/context_v2"
 	"compiler/internal/mir"
+	runtimeabi "compiler/internal/runtime/abi"
 	"compiler/internal/source"
 	"compiler/internal/tokens"
 	"compiler/internal/types"
@@ -54,45 +55,16 @@ type Generator struct {
 	dataSymbols map[string]uint32
 }
 
-var wasmPrimitiveTypeOrder = []types.TYPE_NAME{
-	types.TYPE_I8,
-	types.TYPE_I16,
-	types.TYPE_I32,
-	types.TYPE_I64,
-	types.TYPE_I128,
-	types.TYPE_I256,
-	types.TYPE_U8,
-	types.TYPE_U16,
-	types.TYPE_U32,
-	types.TYPE_U64,
-	types.TYPE_U128,
-	types.TYPE_U256,
-	types.TYPE_F32,
-	types.TYPE_F64,
-	types.TYPE_F128,
-	types.TYPE_F256,
-	types.TYPE_STRING,
-	types.TYPE_BYTE,
-	types.TYPE_CHAR,
-	types.TYPE_BOOL,
-}
-
-var wasmPrimitiveKindByName = func() map[types.TYPE_NAME]uint32 {
-	kinds := make(map[types.TYPE_NAME]uint32, len(wasmPrimitiveTypeOrder))
-	for idx, name := range wasmPrimitiveTypeOrder {
-		kinds[name] = uint32(idx)
-	}
-	return kinds
-}()
+var wasmPrimitiveKindByName = runtimeabi.PrimitiveKindByName
 
 var (
-	wasmTypePointerKind   = uint32(len(wasmPrimitiveTypeOrder))
-	wasmTypeStructKind    = wasmTypePointerKind + 1
-	wasmTypeArrayKind     = wasmTypeStructKind + 1
-	wasmTypeSliceKind     = wasmTypeArrayKind + 1
-	wasmTypeMapKind       = wasmTypeSliceKind + 1
-	wasmTypeFunctionKind  = wasmTypeMapKind + 1
-	wasmTypeInterfaceKind = wasmTypeFunctionKind + 1
+	wasmTypePointerKind   = runtimeabi.TypeKindPointer
+	wasmTypeStructKind    = runtimeabi.TypeKindStruct
+	wasmTypeArrayKind     = runtimeabi.TypeKindArray
+	wasmTypeSliceKind     = runtimeabi.TypeKindSlice
+	wasmTypeMapKind       = runtimeabi.TypeKindMap
+	wasmTypeFunctionKind  = runtimeabi.TypeKindFunction
+	wasmTypeInterfaceKind = runtimeabi.TypeKindInterface
 )
 
 func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) {
@@ -252,36 +224,36 @@ func (g *Generator) collectFunctions() error {
 }
 
 func (g *Generator) collectImports() error {
-	if err := g.ensureImport("ferret_alloc", funcSig{
+	if err := g.ensureImport(runtimeabi.WasmImportAlloc, funcSig{
 		params:  []ValType{valTypeI64},
 		results: []ValType{valTypeI32},
 	}); err != nil {
 		return err
 	}
-	if err := g.ensureImport("ferret_memcpy", funcSig{
+	if err := g.ensureImport(runtimeabi.WasmImportMemcpy, funcSig{
 		params: []ValType{valTypeI32, valTypeI32, valTypeI64},
 	}); err != nil {
 		return err
 	}
-	if err := g.ensureImport("ferret_array_get", funcSig{
+	if err := g.ensureImport(runtimeabi.WasmImportArrayGet, funcSig{
 		params:  []ValType{valTypeI32, valTypeI32},
 		results: []ValType{valTypeI32},
 	}); err != nil {
 		return err
 	}
-	if err := g.ensureImport("ferret_array_new", funcSig{
+	if err := g.ensureImport(runtimeabi.WasmImportArrayNew, funcSig{
 		params:  []ValType{valTypeI32, valTypeI32, valTypeI32},
 		results: []ValType{valTypeI32},
 	}); err != nil {
 		return err
 	}
-	if err := g.ensureImport("ferret_array_append", funcSig{
+	if err := g.ensureImport(runtimeabi.WasmImportArrayAppend, funcSig{
 		params:  []ValType{valTypeI32, valTypeI32},
 		results: []ValType{valTypeI32},
 	}); err != nil {
 		return err
 	}
-	if err := g.ensureImport("ferret_array_set", funcSig{
+	if err := g.ensureImport(runtimeabi.WasmImportArraySet, funcSig{
 		params:  []ValType{valTypeI32, valTypeI32, valTypeI32},
 		results: []ValType{valTypeI32},
 	}); err != nil {
@@ -297,7 +269,7 @@ func (g *Generator) collectImports() error {
 			}
 			for _, instr := range block.Instrs {
 				if _, ok := instr.(*mir.Alloca); ok {
-					if err := g.ensureImport("ferret_alloc", funcSig{
+					if err := g.ensureImport(runtimeabi.WasmImportAlloc, funcSig{
 						params:  []ValType{valTypeI64},
 						results: []ValType{valTypeI32},
 					}); err != nil {
@@ -305,32 +277,32 @@ func (g *Generator) collectImports() error {
 					}
 				}
 				if _, ok := instr.(*mir.MapGet); ok {
-					if err := g.ensureImport("ferret_map_get", funcSig{
+					if err := g.ensureImport(runtimeabi.WasmImportMapGet, funcSig{
 						params:  []ValType{valTypeI32, valTypeI32},
 						results: []ValType{valTypeI32},
 					}); err != nil {
 						return err
 					}
-					if err := g.ensureImport("ferret_map_get_optional_out", funcSig{
+					if err := g.ensureImport(runtimeabi.WasmImportMapGetOptionalOut, funcSig{
 						params: []ValType{valTypeI32, valTypeI32, valTypeI32},
 					}); err != nil {
 						return err
 					}
-					if err := g.ensureImport("ferret_global_panic", funcSig{
+					if err := g.ensureImport(runtimeabi.WasmImportGlobalPanic, funcSig{
 						params: []ValType{valTypeI32},
 					}); err != nil {
 						return err
 					}
 				}
 				if _, ok := instr.(*mir.MapSet); ok {
-					if err := g.ensureImport("ferret_map_set", funcSig{
+					if err := g.ensureImport(runtimeabi.WasmImportMapSet, funcSig{
 						params: []ValType{valTypeI32, valTypeI32, valTypeI32},
 					}); err != nil {
 						return err
 					}
 				}
 				if bin, ok := instr.(*mir.Binary); ok && bin.Op == tokens.EXP_TOKEN {
-					if err := g.ensureImport("ferret_pow", funcSig{
+					if err := g.ensureImport(runtimeabi.WasmImportPow, funcSig{
 						params:  []ValType{valTypeF64, valTypeF64},
 						results: []ValType{valTypeF64},
 					}); err != nil {
@@ -338,7 +310,7 @@ func (g *Generator) collectImports() error {
 					}
 				}
 				if opt, ok := instr.(*mir.OptionalUnwrap); ok && opt.HasDefault {
-					if err := g.ensureImport("ferret_optional_unwrap_or", funcSig{
+					if err := g.ensureImport(runtimeabi.WasmImportOptionalUnwrapOr, funcSig{
 						params: []ValType{valTypeI32, valTypeI32, valTypeI32, valTypeI64},
 					}); err != nil {
 						return err
@@ -2348,12 +2320,12 @@ func (g *Generator) emitTypeDescriptors() error {
 		if st, ok := typ.(*types.StructType); ok && len(st.Fields) > 0 {
 			fieldName := name + "_fields"
 			fieldSymbols[name] = fieldName
-			g.addDataSymbol(fieldName, make([]byte, len(st.Fields)*8), 4)
+			g.addDataSymbol(fieldName, make([]byte, len(st.Fields)*int(runtimeabi.FieldInfoSizeBytes)), 4)
 		}
 	}
 
 	for _, name := range names {
-		g.addDataSymbol(name, make([]byte, 16), 4)
+		g.addDataSymbol(name, make([]byte, runtimeabi.TypeDescSizeBytes), 4)
 	}
 
 	for _, name := range names {
@@ -2494,13 +2466,13 @@ func (g *Generator) fillTypeDescriptorData(name string, typ types.SemType, typeD
 		return fmt.Errorf("wasm: missing type descriptor symbol %s", name)
 	}
 	offset := int(ptr - g.dataBase)
-	if offset < 0 || offset+16 > len(g.data) {
+	if offset < 0 || offset+int(runtimeabi.TypeDescSizeBytes) > len(g.data) {
 		return fmt.Errorf("wasm: invalid type descriptor offset for %s", name)
 	}
-	binary.LittleEndian.PutUint32(g.data[offset:], kind)
-	binary.LittleEndian.PutUint32(g.data[offset+4:], size)
-	binary.LittleEndian.PutUint32(g.data[offset+8:], info1)
-	binary.LittleEndian.PutUint32(g.data[offset+12:], info2)
+	binary.LittleEndian.PutUint32(g.data[offset+int(runtimeabi.TypeDescKindOffset):], kind)
+	binary.LittleEndian.PutUint32(g.data[offset+int(runtimeabi.TypeDescSizeOffset):], size)
+	binary.LittleEndian.PutUint32(g.data[offset+int(runtimeabi.TypeDescInfo1Offset):], info1)
+	binary.LittleEndian.PutUint32(g.data[offset+int(runtimeabi.TypeDescInfo2Offset):], info2)
 	return nil
 }
 
@@ -2513,7 +2485,8 @@ func (g *Generator) fillStructFields(name string, typ *types.StructType, typeDes
 		return fmt.Errorf("wasm: missing struct field symbol %s", name)
 	}
 	offset := int(ptr - g.dataBase)
-	if offset < 0 || offset+len(typ.Fields)*8 > len(g.data) {
+	fieldInfoSize := int(runtimeabi.FieldInfoSizeBytes)
+	if offset < 0 || offset+len(typ.Fields)*fieldInfoSize > len(g.data) {
 		return fmt.Errorf("wasm: invalid struct field offset for %s", name)
 	}
 	structLayout := g.layout.StructLayout(typ)
@@ -2530,9 +2503,9 @@ func (g *Generator) fillStructFields(name string, typ *types.StructType, typeDes
 				fieldTypePtr = g.dataSymbols[symbol]
 			}
 		}
-		entryOffset := offset + i*8
-		binary.LittleEndian.PutUint32(g.data[entryOffset:], uint32(fieldOffset))
-		binary.LittleEndian.PutUint32(g.data[entryOffset+4:], fieldTypePtr)
+		entryOffset := offset + i*fieldInfoSize
+		binary.LittleEndian.PutUint32(g.data[entryOffset+int(runtimeabi.FieldInfoOffsetOffset):], uint32(fieldOffset))
+		binary.LittleEndian.PutUint32(g.data[entryOffset+int(runtimeabi.FieldInfoTypeOffset):], fieldTypePtr)
 	}
 	return nil
 }

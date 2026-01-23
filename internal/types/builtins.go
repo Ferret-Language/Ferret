@@ -47,3 +47,35 @@ const (
 	// DEFAULT_FLOAT_TYPE is the default type for untyped float literals
 	DEFAULT_FLOAT_TYPE TYPE_NAME = TYPE_F32
 )
+
+// PrimitiveTypeNames defines the ABI-ordered list of primitive types.
+var PrimitiveTypeNames = []TYPE_NAME{
+	TYPE_I8,
+	TYPE_I16,
+	TYPE_I32,
+	TYPE_I64,
+	TYPE_I128,
+	TYPE_I256,
+	TYPE_U8,
+	TYPE_U16,
+	TYPE_U32,
+	TYPE_U64,
+	TYPE_U128,
+	TYPE_U256,
+	TYPE_F32,
+	TYPE_F64,
+	TYPE_F128,
+	TYPE_F256,
+	TYPE_STRING,
+	TYPE_BYTE,
+	TYPE_CHAR,
+	TYPE_BOOL,
+}
+
+// BuiltinTypeNames enumerates the user-visible builtin types.
+var BuiltinTypeNames = func() []TYPE_NAME {
+	names := make([]TYPE_NAME, 0, len(PrimitiveTypeNames)+1)
+	names = append(names, PrimitiveTypeNames...)
+	names = append(names, TYPE_VOID)
+	return names
+}()

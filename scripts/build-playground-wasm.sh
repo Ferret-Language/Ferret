@@ -20,4 +20,6 @@ if [ -d "$WEBSITE_ROOT" ]; then
   mkdir -p "$WEBSITE_ROOT/src/lib"
   cp "$ROOT/runtime/wasm/runtime.ts" "$WEBSITE_ROOT/src/lib/runtime.ts"
   echo "Copied runtime TS to $WEBSITE_ROOT/src/lib/runtime.ts"
+  cp "$ROOT/runtime/wasm/runtime_abi.ts" "$WEBSITE_ROOT/src/lib/runtime_abi.ts"
+  echo "Copied runtime ABI TS to $WEBSITE_ROOT/src/lib/runtime_abi.ts"
 fi

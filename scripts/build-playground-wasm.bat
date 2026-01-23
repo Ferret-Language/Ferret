@@ -30,6 +30,8 @@ if exist "%WEBSITE_ROOT%" (
   )
   copy /Y "%ROOT%\runtime\wasm\runtime.ts" "%WEBSITE_ROOT%\src\lib\runtime.ts" >nul
   echo Copied runtime TS to %WEBSITE_ROOT%\src\lib\runtime.ts
+  copy /Y "%ROOT%\runtime\wasm\runtime_abi.ts" "%WEBSITE_ROOT%\src\lib\runtime_abi.ts" >nul
+  echo Copied runtime ABI TS to %WEBSITE_ROOT%\src\lib\runtime_abi.ts
 )
 
 endlocal

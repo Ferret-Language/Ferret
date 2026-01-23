@@ -1,51 +1,56 @@
 package qbe
 
 import (
+	runtimeabi "compiler/internal/runtime/abi"
 	"compiler/internal/types"
 	"fmt"
 	"strings"
 )
 
-var ferretPrimitiveTypeOrder = []types.TYPE_NAME{
-	types.TYPE_I8,
-	types.TYPE_I16,
-	types.TYPE_I32,
-	types.TYPE_I64,
-	types.TYPE_I128,
-	types.TYPE_I256,
-	types.TYPE_U8,
-	types.TYPE_U16,
-	types.TYPE_U32,
-	types.TYPE_U64,
-	types.TYPE_U128,
-	types.TYPE_U256,
-	types.TYPE_F32,
-	types.TYPE_F64,
-	types.TYPE_F128,
-	types.TYPE_F256,
-	types.TYPE_STRING,
-	types.TYPE_BYTE,
-	types.TYPE_CHAR,
-	types.TYPE_BOOL,
-}
-
-var ferretPrimitiveKindByName = func() map[types.TYPE_NAME]int {
-	kinds := make(map[types.TYPE_NAME]int, len(ferretPrimitiveTypeOrder))
-	for idx, name := range ferretPrimitiveTypeOrder {
-		kinds[name] = idx
-	}
-	return kinds
-}()
+var ferretPrimitiveKindByName = runtimeabi.PrimitiveKindByName
 
 var (
-	ferretTypePointerKind   = len(ferretPrimitiveTypeOrder)
-	ferretTypeStructKind    = ferretTypePointerKind + 1
-	ferretTypeArrayKind     = ferretTypeStructKind + 1
-	ferretTypeSliceKind     = ferretTypeArrayKind + 1
-	ferretTypeMapKind       = ferretTypeSliceKind + 1
-	ferretTypeFunctionKind  = ferretTypeMapKind + 1
-	ferretTypeInterfaceKind = ferretTypeFunctionKind + 1
+	ferretTypePointerKind   = runtimeabi.TypeKindPointer
+	ferretTypeStructKind    = runtimeabi.TypeKindStruct
+	ferretTypeArrayKind     = runtimeabi.TypeKindArray
+	ferretTypeSliceKind     = runtimeabi.TypeKindSlice
+	ferretTypeMapKind       = runtimeabi.TypeKindMap
+	ferretTypeFunctionKind  = runtimeabi.TypeKindFunction
+	ferretTypeInterfaceKind = runtimeabi.TypeKindInterface
 )
+
+func (g *Generator) qbePtrType() string {
+	return runtimeabi.QBEWordType(g.layout.PointerSize)
+}
+
+func (g *Generator) emitTypeDescData(globalName string, kind uint32, size int, info1 string, info2 string) {
+	ptrType := g.qbePtrType()
+	if runtimeabi.QBETypeDescNeedsPad(g.layout.PointerSize) {
+		g.data.WriteString(fmt.Sprintf(
+			"data %s = { w %d, w 0, %s %d, %s %s, %s %s }\n",
+			globalName,
+			kind,
+			ptrType,
+			size,
+			ptrType,
+			info1,
+			ptrType,
+			info2,
+		))
+		return
+	}
+	g.data.WriteString(fmt.Sprintf(
+		"data %s = { w %d, %s %d, %s %s, %s %s }\n",
+		globalName,
+		kind,
+		ptrType,
+		size,
+		ptrType,
+		info1,
+		ptrType,
+		info2,
+	))
+}
 
 // emitTypeDescriptor generates a ferret_type_info_t structure for a given type
 // This enables runtime content-based hashing for universal map keys
@@ -93,10 +98,8 @@ func (g *Generator) emitPrimitiveTypeDesc(globalName string, typ *types.Primitiv
 		size = 4
 	}
 
-	// Memory layout: { kind (4), padding (4), size (8), union (16) }
-	// Union is unused for primitives, so all zeros
-	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l 0, l 0 }\n",
-		globalName, kind, size))
+	// Union is unused for primitives, so all zeros.
+	g.emitTypeDescData(globalName, kind, size, "0", "0")
 }
 
 func (g *Generator) emitMapTypeDesc(globalName string, typ *types.MapType) {
@@ -105,24 +108,18 @@ func (g *Generator) emitMapTypeDesc(globalName string, typ *types.MapType) {
 	keyDescName := g.getOrCreateTypeDescName(typ.Key)
 	valueDescName := g.getOrCreateTypeDescName(typ.Value)
 
-	// Emit: { .kind = FERRET_TYPE_MAP, .size = sizeof(void*), .map_info = {key, value} }
-	// Layout: { kind (4), padding (4), size (8), key_ptr (8), value_ptr (8) }
 	kind := ferretTypeMapKind
 	size := g.layout.PointerSize
-	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %s, l %s }\n",
-		globalName, kind, size, keyDescName, valueDescName))
+	g.emitTypeDescData(globalName, kind, size, keyDescName, valueDescName)
 }
 
 func (g *Generator) emitSliceTypeDesc(globalName string, typ *types.ArrayType) {
 	// Slice descriptor needs element type pointer
 	elemDescName := g.getOrCreateTypeDescName(typ.Element)
 
-	// Emit: { .kind = FERRET_TYPE_SLICE, .size = sizeof(ferret_slice_t), .slice_info = {elem} }
-	// Layout: { kind (4), padding (4), size (8), element_ptr (8), unused (8) }
 	kind := ferretTypeSliceKind
 	size := g.layout.PointerSize * 3 // {data, len, cap}
-	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %s, l 0 }\n",
-		globalName, kind, size, elemDescName))
+	g.emitTypeDescData(globalName, kind, size, elemDescName, "0")
 }
 
 func (g *Generator) emitArrayTypeDesc(globalName string, typ *types.ArrayType) {
@@ -131,11 +128,8 @@ func (g *Generator) emitArrayTypeDesc(globalName string, typ *types.ArrayType) {
 	elemSize := g.layout.SizeOf(typ.Element)
 	arraySize := elemSize * typ.Length
 
-	// Emit: { .kind = FERRET_TYPE_ARRAY, .size = elem_size * length, .array_info = {length, elem} }
-	// Layout: { kind (4), padding (4), size (8), length (8), element_ptr (8) }
 	kind := ferretTypeArrayKind
-	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %d, l %s }\n",
-		globalName, kind, arraySize, typ.Length, elemDescName))
+	g.emitTypeDescData(globalName, kind, arraySize, fmt.Sprintf("%d", typ.Length), elemDescName)
 }
 
 func (g *Generator) emitStructTypeDesc(globalName string, typ *types.StructType) {
@@ -149,12 +143,9 @@ func (g *Generator) emitStructTypeDesc(globalName string, typ *types.StructType)
 		fieldDescName = "0" // NULL for no fields
 	}
 
-	// Emit: { .kind = FERRET_TYPE_STRUCT, .size = sizeof(struct), .struct_info = {field_count, fields} }
-	// Layout: { kind (4), padding (4), size (8), field_count (8), fields_ptr (8) }
 	kind := ferretTypeStructKind
 	size := g.layout.SizeOf(typ)
-	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %d, l %s }\n",
-		globalName, kind, size, len(typ.Fields), fieldDescName))
+	g.emitTypeDescData(globalName, kind, size, fmt.Sprintf("%d", len(typ.Fields)), fieldDescName)
 }
 
 func (g *Generator) emitStructFields(arrayName string, typ *types.StructType) {
@@ -162,6 +153,7 @@ func (g *Generator) emitStructFields(arrayName string, typ *types.StructType) {
 	// Each field: { .offset = X, .type = ptr }
 	// Need to compute struct layout first
 	structLayout := g.layout.StructLayout(typ)
+	ptrType := g.qbePtrType()
 
 	fields := make([]string, 0, len(typ.Fields)*2)
 	for _, field := range typ.Fields {
@@ -170,9 +162,9 @@ func (g *Generator) emitStructFields(arrayName string, typ *types.StructType) {
 			offset = 0 // Fallback
 		}
 		fieldTypeDesc := g.getOrCreateTypeDescName(field.Type)
-		// Each ferret_field_info_t is two longs: {offset, type_ptr}
-		fields = append(fields, fmt.Sprintf("l %d", offset))
-		fields = append(fields, fmt.Sprintf("l %s", fieldTypeDesc))
+		// Each ferret_field_info_t is two pointer-sized values: {offset, type_ptr}
+		fields = append(fields, fmt.Sprintf("%s %d", ptrType, offset))
+		fields = append(fields, fmt.Sprintf("%s %s", ptrType, fieldTypeDesc))
 	}
 	g.data.WriteString(fmt.Sprintf("data %s = { %s }\n", arrayName, joinStrings(fields, ", ")))
 }
@@ -181,26 +173,19 @@ func (g *Generator) emitPointerTypeDesc(globalName string, typ *types.ReferenceT
 	// Pointer descriptor needs inner type pointer
 	innerDescName := g.getOrCreateTypeDescName(typ.Inner)
 
-	// Emit: { .kind = FERRET_TYPE_POINTER, .size = sizeof(void*), .pointer_info = {pointee} }
-	// Layout: { kind (4), padding (4), size (8), pointee_ptr (8), unused (8) }
 	kind := ferretTypePointerKind
 	size := g.layout.PointerSize
-	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %s, l 0 }\n",
-		globalName, kind, size, innerDescName))
+	g.emitTypeDescData(globalName, kind, size, innerDescName, "0")
 }
 
 func (g *Generator) emitInterfaceTypeDesc(globalName string, typ *types.InterfaceType) {
-	// Interface descriptor stores method count for runtime checks.
-	// Emit: { .kind = FERRET_TYPE_INTERFACE, .size = sizeof(interface), .interface_info = {method_count} }
-	// Layout: { kind (4), padding (4), size (8), method_count (8), unused (8) }
 	kind := ferretTypeInterfaceKind
 	size := g.layout.PointerSize * 2
 	methodCount := 0
 	if typ != nil {
 		methodCount = len(typ.Methods)
 	}
-	g.data.WriteString(fmt.Sprintf("data %s = { w %d, w 0, l %d, l %d, l 0 }\n",
-		globalName, kind, size, methodCount))
+	g.emitTypeDescData(globalName, kind, size, fmt.Sprintf("%d", methodCount), "0")
 }
 
 // getOrCreateTypeDescName ensures a type descriptor exists and returns its global name

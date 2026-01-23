@@ -675,6 +675,15 @@ var (
 	// Untyped literal types
 	TypeUntypedInt   SemType
 	TypeUntypedFloat SemType
+
+	// PrimitiveTypeByName maps primitive type names to their canonical instances.
+	PrimitiveTypeByName map[TYPE_NAME]SemType
+
+	// BuiltinTypeNameSet is a fast lookup for builtin type names.
+	BuiltinTypeNameSet map[string]struct{}
+
+	// BuiltinTypes lists the builtin types registered in the universe scope.
+	BuiltinTypes []SemType
 )
 
 func init() {
@@ -704,6 +713,41 @@ func init() {
 
 	TypeUntypedInt = NewUntypedInt()
 	TypeUntypedFloat = NewUntypedFloat()
+
+	PrimitiveTypeByName = map[TYPE_NAME]SemType{
+		TYPE_I8:      TypeI8,
+		TYPE_I16:     TypeI16,
+		TYPE_I32:     TypeI32,
+		TYPE_I64:     TypeI64,
+		TYPE_I128:    TypeI128,
+		TYPE_I256:    TypeI256,
+		TYPE_U8:      TypeU8,
+		TYPE_U16:     TypeU16,
+		TYPE_U32:     TypeU32,
+		TYPE_U64:     TypeU64,
+		TYPE_U128:    TypeU128,
+		TYPE_U256:    TypeU256,
+		TYPE_F32:     TypeF32,
+		TYPE_F64:     TypeF64,
+		TYPE_F128:    TypeF128,
+		TYPE_F256:    TypeF256,
+		TYPE_BOOL:    TypeBool,
+		TYPE_STRING:  TypeString,
+		TYPE_NONE:    TypeNone,
+		TYPE_VOID:    TypeVoid,
+		TYPE_BYTE:    TypeByte,
+		TYPE_CHAR:    TypeChar,
+		TYPE_UNKNOWN: TypeUnknown,
+	}
+
+	BuiltinTypeNameSet = make(map[string]struct{}, len(BuiltinTypeNames))
+	BuiltinTypes = make([]SemType, 0, len(BuiltinTypeNames))
+	for _, name := range BuiltinTypeNames {
+		BuiltinTypeNameSet[string(name)] = struct{}{}
+		if typ, ok := PrimitiveTypeByName[name]; ok && typ != nil {
+			BuiltinTypes = append(BuiltinTypes, typ)
+		}
+	}
 }
 
 // UnwrapType recursively unwraps NamedTypes to get the underlying structural type

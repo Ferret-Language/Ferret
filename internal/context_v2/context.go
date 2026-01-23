@@ -303,12 +303,7 @@ func dirHasExtension(dir, ext string) bool {
 
 // registerBuiltins populates the universe scope with built-in types
 func registerBuiltins(universe *table.SymbolTable) {
-	builtinTypes := []types.SemType{
-		types.TypeI8, types.TypeI16, types.TypeI32, types.TypeI64,
-		types.TypeU8, types.TypeU16, types.TypeU32, types.TypeU64,
-		types.TypeF32, types.TypeF64,
-		types.TypeString, types.TypeBool, types.TypeVoid,
-	}
+	builtinTypes := types.BuiltinTypesList()
 
 	for _, typ := range builtinTypes {
 		universe.Declare(typ.String(), &symbols.Symbol{

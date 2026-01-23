@@ -7,14 +7,12 @@
 #include <string.h>
 #include <stdio.h>
 
-#define FNV_OFFSET_BASIS 2166136261U
-#define FNV_PRIME 16777619U
 
 // FNV-1a hash for combining hashes
 static uint32_t fnv1a_hash(const uint8_t* data, size_t len, uint32_t hash) {
     for (size_t i = 0; i < len; i++) {
         hash ^= data[i];
-        hash *= FNV_PRIME;
+        hash *= FERRET_FNV_PRIME;
     }
     return hash;
 }
@@ -37,22 +35,22 @@ uint32_t ferret_hash_universal(const void* data, ferret_type_info_t* type_info) 
             if (str == NULL) {
                 return 0;
             }
-            return fnv1a_hash((const uint8_t*)str, strlen(str), FNV_OFFSET_BASIS);
+            return fnv1a_hash((const uint8_t*)str, strlen(str), FERRET_FNV_OFFSET_BASIS);
         }
         // Hash primitive types by their bytes
-        return fnv1a_hash((const uint8_t*)data, type_info->size, FNV_OFFSET_BASIS);
+        return fnv1a_hash((const uint8_t*)data, type_info->size, FERRET_FNV_OFFSET_BASIS);
     }
 
     switch (type_info->kind) {
         case FERRET_TYPE_POINTER: {
             // Hash pointer by value (identity)
             void* ptr = *(void**)data;
-            return fnv1a_hash((const uint8_t*)&ptr, sizeof(void*), FNV_OFFSET_BASIS);
+            return fnv1a_hash((const uint8_t*)&ptr, sizeof(void*), FERRET_FNV_OFFSET_BASIS);
         }
 
         case FERRET_TYPE_STRUCT: {
             // Hash all fields recursively
-            uint32_t hash = FNV_OFFSET_BASIS;
+            uint32_t hash = FERRET_FNV_OFFSET_BASIS;
             for (size_t i = 0; i < type_info->struct_info.field_count; i++) {
                 ferret_field_info_t* field = &type_info->struct_info.fields[i];
                 const uint8_t* field_data = (const uint8_t*)data + field->offset;
@@ -64,7 +62,7 @@ uint32_t ferret_hash_universal(const void* data, ferret_type_info_t* type_info) 
         
         case FERRET_TYPE_ARRAY: {
             // Hash all elements recursively
-            uint32_t hash = FNV_OFFSET_BASIS;
+            uint32_t hash = FERRET_FNV_OFFSET_BASIS;
             size_t elem_size = type_info->array_info.element_type->size;
             const uint8_t* elem_ptr = (const uint8_t*)data;
             for (size_t i = 0; i < type_info->array_info.length; i++) {
@@ -93,7 +91,7 @@ uint32_t ferret_hash_universal(const void* data, ferret_type_info_t* type_info) 
             }
             
             // Hash all elements
-            uint32_t hash = FNV_OFFSET_BASIS;
+            uint32_t hash = FERRET_FNV_OFFSET_BASIS;
             size_t elem_size = type_info->slice_info.element_type->size;
             const uint8_t* elem_ptr = (const uint8_t*)slice->data;
             for (size_t i = 0; i < slice->len; i++) {
@@ -136,7 +134,7 @@ uint32_t ferret_hash_universal(const void* data, ferret_type_info_t* type_info) 
         case FERRET_TYPE_FUNCTION: {
             // Hash function pointer by value (identity)
             void* fn_ptr = *(void**)data;
-            return fnv1a_hash((const uint8_t*)&fn_ptr, sizeof(void*), FNV_OFFSET_BASIS);
+            return fnv1a_hash((const uint8_t*)&fn_ptr, sizeof(void*), FERRET_FNV_OFFSET_BASIS);
         }
         
         case FERRET_TYPE_INTERFACE: {
@@ -149,8 +147,8 @@ uint32_t ferret_hash_universal(const void* data, ferret_type_info_t* type_info) 
             if (type_info->interface_info.method_count == 0) {
                 ferret_type_info_t* dyn_type = (ferret_type_info_t*)iface->extra;
                 if (dyn_type == NULL) {
-                    uint32_t h1 = fnv1a_hash((const uint8_t*)&iface->extra, sizeof(void*), FNV_OFFSET_BASIS);
-                    uint32_t h2 = fnv1a_hash((const uint8_t*)&iface->data, sizeof(void*), FNV_OFFSET_BASIS);
+                    uint32_t h1 = fnv1a_hash((const uint8_t*)&iface->extra, sizeof(void*), FERRET_FNV_OFFSET_BASIS);
+                    uint32_t h2 = fnv1a_hash((const uint8_t*)&iface->data, sizeof(void*), FERRET_FNV_OFFSET_BASIS);
                     return hash_combine(h1, h2);
                 }
 
@@ -159,20 +157,20 @@ uint32_t ferret_hash_universal(const void* data, ferret_type_info_t* type_info) 
                     payload = &iface->data;
                 }
 
-                uint32_t type_hash = fnv1a_hash((const uint8_t*)&dyn_type, sizeof(void*), FNV_OFFSET_BASIS);
+                uint32_t type_hash = fnv1a_hash((const uint8_t*)&dyn_type, sizeof(void*), FERRET_FNV_OFFSET_BASIS);
                 uint32_t value_hash = ferret_hash_universal(payload, dyn_type);
                 return hash_combine(type_hash, value_hash);
             }
 
             // Non-empty interface: identity-based hashing (vtable + data pointers)
-            uint32_t h1 = fnv1a_hash((const uint8_t*)&iface->extra, sizeof(void*), FNV_OFFSET_BASIS);
-            uint32_t h2 = fnv1a_hash((const uint8_t*)&iface->data, sizeof(void*), FNV_OFFSET_BASIS);
+            uint32_t h1 = fnv1a_hash((const uint8_t*)&iface->extra, sizeof(void*), FERRET_FNV_OFFSET_BASIS);
+            uint32_t h2 = fnv1a_hash((const uint8_t*)&iface->data, sizeof(void*), FERRET_FNV_OFFSET_BASIS);
             return hash_combine(h1, h2);
         }
         
         default:
             // Fallback: hash raw bytes
-            return fnv1a_hash((const uint8_t*)data, type_info->size, FNV_OFFSET_BASIS);
+            return fnv1a_hash((const uint8_t*)data, type_info->size, FERRET_FNV_OFFSET_BASIS);
     }
 }
 
