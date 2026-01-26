@@ -277,20 +277,27 @@ func checkModuleScopeUseBeforeDecl(ctx *context_v2.CompilerContext, mod *context
 	)
 }
 
-func referencesIdentOutsideFuncLit(expr ast.Expression, name string) bool {
+func referencesIdentOutsideFuncLit(expr ast.Expression, name string) (bool, *source.Location) {
 	if expr == nil || name == "" {
-		return false
+		return false, nil
 	}
 
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
-		return e.Name == name
+		if e.Name == name {
+			return true, e.Loc()
+		}
 	case *ast.BasicLit:
-		return false
+		return false, nil
 	case *ast.FuncLit:
-		return false
+		return false, nil
 	case *ast.BinaryExpr:
-		return referencesIdentOutsideFuncLit(e.X, name) || referencesIdentOutsideFuncLit(e.Y, name)
+		if found, loc := referencesIdentOutsideFuncLit(e.X, name); found {
+			return found, loc
+		}
+		if found, loc := referencesIdentOutsideFuncLit(e.Y, name); found {
+			return found, loc
+		}
 	case *ast.UnaryExpr:
 		return referencesIdentOutsideFuncLit(e.X, name)
 	case *ast.PrefixExpr:
@@ -298,20 +305,27 @@ func referencesIdentOutsideFuncLit(expr ast.Expression, name string) bool {
 	case *ast.PostfixExpr:
 		return referencesIdentOutsideFuncLit(e.X, name)
 	case *ast.CallExpr:
-		if referencesIdentOutsideFuncLit(e.Fun, name) {
-			return true
+		if found, loc :=  referencesIdentOutsideFuncLit(e.Fun, name); found {
+			return found, loc
 		}
 		for _, arg := range e.Args {
-			if referencesIdentOutsideFuncLit(arg, name) {
-				return true
+			if found, loc := referencesIdentOutsideFuncLit(arg, name); found {
+				return found, loc
 			}
 		}
-		if e.Catch != nil && referencesIdentOutsideFuncLit(e.Catch.Fallback, name) {
-			return true
+		if e.Catch == nil {
+			return false, nil
 		}
-		return false
+		if found, loc := referencesIdentOutsideFuncLit(e.Catch.Fallback, name); found {
+			return found, loc
+		}
 	case *ast.IndexExpr:
-		return referencesIdentOutsideFuncLit(e.X, name) || referencesIdentOutsideFuncLit(e.Index, name)
+		if found, loc := referencesIdentOutsideFuncLit(e.X, name); found {
+			return found, loc
+		}
+		if found, loc := referencesIdentOutsideFuncLit(e.Index, name); found {
+			return found, loc
+		}
 	case *ast.SelectorExpr:
 		return referencesIdentOutsideFuncLit(e.X, name)
 	case *ast.ScopeResolutionExpr:
@@ -323,36 +337,33 @@ func referencesIdentOutsideFuncLit(expr ast.Expression, name string) bool {
 	case *ast.CompositeLit:
 		for _, elem := range e.Elts {
 			if kv, ok := elem.(*ast.KeyValueExpr); ok {
-				if referencesIdentOutsideFuncLit(kv.Value, name) {
-					return true
+				if found, loc := referencesIdentOutsideFuncLit(kv.Value, name); found {
+					return found, loc
 				}
 				continue
 			}
-			if referencesIdentOutsideFuncLit(elem, name) {
-				return true
+			if found, loc := referencesIdentOutsideFuncLit(elem, name); found {
+				return found, loc
 			}
 		}
-		return false
 	case *ast.KeyValueExpr:
 		return referencesIdentOutsideFuncLit(e.Value, name)
 	case *ast.CoalescingExpr:
-		return referencesIdentOutsideFuncLit(e.Cond, name) || referencesIdentOutsideFuncLit(e.Default, name)
+		//return referencesIdentOutsideFuncLit(e.Cond, name) || referencesIdentOutsideFuncLit(e.Default, name)
 	case *ast.RangeExpr:
-		if referencesIdentOutsideFuncLit(e.Start, name) {
-			return true
+		if found, loc := referencesIdentOutsideFuncLit(e.Start, name); found {
+			return found, loc
 		}
-		if referencesIdentOutsideFuncLit(e.End, name) {
-			return true
+		if found, loc := referencesIdentOutsideFuncLit(e.End, name); found {
+			return found, loc
 		}
-		if referencesIdentOutsideFuncLit(e.Incr, name) {
-			return true
+		if found, loc := referencesIdentOutsideFuncLit(e.Incr, name); found {
+			return found, loc
 		}
-		return false
 	case *ast.ForkExpr:
 		return referencesIdentOutsideFuncLit(e.Call, name)
-	default:
-		return false
 	}
+	return false, nil
 }
 
 // CheckModule performs type checking on a module.
@@ -873,13 +884,15 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 			}
 		}
 
-		if item.Value != nil && referencesIdentOutsideFuncLit(item.Value, name) {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("'%s' references itself in its initializer", name)).
-					WithCode(diagnostics.ErrCircularDependency).
-					WithPrimaryLabel(item.Value.Loc(), "self reference here").
-					WithSecondaryLabel(item.Name.Loc(), "declared here"),
-			)
+		if item.Value != nil {
+			if found, loc := referencesIdentOutsideFuncLit(item.Value, name); found {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("'%s' references itself in its initializer", name)).
+						WithCode(diagnostics.ErrCircularDependency).
+						WithPrimaryLabel(loc, "self reference here").
+						WithSecondaryLabel(item.Name.Loc(), "declared here"),
+				)
+			}
 		}
 
 		// Determine the type
