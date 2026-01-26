@@ -100,7 +100,9 @@ func TestIfConstantConditions(t *testing.T) {
 		{
 			name:          "if_no_else_branch",
 			code:          "fn main() { if true { let x := 1; } }",
-			expectWarning: false,
+			expectWarning: true,
+			warningCode:   diagnostics.WarnConstantConditionTrue,
+			contains:      "always true",
 		},
 		{
 			name:          "if_false_warns_then_dead",

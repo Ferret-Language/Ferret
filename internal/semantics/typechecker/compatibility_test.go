@@ -228,7 +228,7 @@ func TestCheckTypeCompatibility(t *testing.T) {
 		{types.NewReference(types.TypeI32), types.NewReference(anyIface), ImplicitCastable},
 		{types.NewMutableReference(types.TypeI32), types.NewMutableReference(anyIface), ImplicitCastable},
 		{types.NewReference(types.TypeI32), types.NewMutableReference(anyIface), Incompatible},
-		{types.NewMutableReference(types.TypeI32), types.NewReference(anyIface), Incompatible},
+		{types.NewMutableReference(types.TypeI32), types.NewReference(anyIface), ImplicitCastable},
 
 		// Incompatible
 		{types.TypeI32, types.TypeString, Incompatible},

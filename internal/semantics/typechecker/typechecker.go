@@ -1082,21 +1082,20 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 			return
 		}
 
-		// Both numeric - check for strict type match
+		// Both numeric - allow implicit widening
 		if lhsNumericOrUntyped && rhsNumericOrUntyped {
 			// Allow untyped operands - literal fitness is checked earlier
 			if types.IsUntyped(lhsBase) || types.IsUntyped(rhsBase) {
 				return
 			}
 
-			// Require exact type match (strict typing - no automatic promotion)
-			if !lhsType.Equals(rhsType) {
+			if numericCommonType(lhsType, rhsType).Equals(types.TypeUnknown) {
 				ctx.Diagnostics.Add(
 					diagnostics.NewError(fmt.Sprintf("mismatched types in arithmetic: %s and %s", lhsType.String(), rhsType.String())).
 						WithCode(diagnostics.ErrTypeMismatch).
-						WithPrimaryLabel(expr.Loc(), "operands must have the same type").
+						WithPrimaryLabel(expr.Loc(), "operands must have compatible numeric types").
 						WithHelp(fmt.Sprintf("cast one operand to match: `%s as %s` or `%s as %s`",
-							expr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache()), rhsType.String(), expr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache()), lhsType.String())),
+							expr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache()), rhsType.String(), expr.Y.Loc().GetText(ctx.Diagnostics.GetSourceCache()), lhsType.String())),
 				)
 				return
 			}
@@ -1112,14 +1111,9 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 		return
 
 	case tokens.MINUS_TOKEN, tokens.MUL_TOKEN, tokens.DIV_TOKEN, tokens.MOD_TOKEN:
-		// Allow untyped operands - literal fitness is checked earlier
-		if types.IsUntyped(lhsBase) || types.IsUntyped(rhsBase) {
-			return
-		}
-
 		// These operators only work with numeric types
-		lhsNumeric := types.IsNumericType(lhsBase)
-		rhsNumeric := types.IsNumericType(rhsBase)
+		lhsNumeric := types.IsNumericType(lhsBase) || types.IsUntyped(lhsBase)
+		rhsNumeric := types.IsNumericType(rhsBase) || types.IsUntyped(rhsBase)
 
 		if !lhsNumeric || !rhsNumeric {
 			ctx.Diagnostics.Add(
@@ -1130,14 +1124,18 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 			return
 		}
 
-		// Require exact type match (strict typing - no automatic promotion)
-		if !lhsType.Equals(rhsType) {
+		// Allow untyped operands - literal fitness is checked earlier
+		if types.IsUntyped(lhsBase) || types.IsUntyped(rhsBase) {
+			return
+		}
+
+		if numericCommonType(lhsType, rhsType).Equals(types.TypeUnknown) {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("mismatched types in arithmetic: %s and %s", lhsType.String(), rhsType.String())).
 					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(expr.Loc(), "operands must have the same type").
+					WithPrimaryLabel(expr.Loc(), "operands must have compatible numeric types").
 					WithHelp(fmt.Sprintf("cast one operand to match: `%s as %s` or `%s as %s`",
-						expr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache()), lhsType.String(), expr.Y.Loc().GetText(ctx.Diagnostics.GetSourceCache()), rhsType.String())),
+						expr.X.Loc().GetText(ctx.Diagnostics.GetSourceCache()), rhsType.String(), expr.Y.Loc().GetText(ctx.Diagnostics.GetSourceCache()), lhsType.String())),
 			)
 			return
 		}
@@ -1276,6 +1274,79 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 			)
 		}
 	}
+}
+
+func numericCommonType(lhsType, rhsType types.SemType) types.SemType {
+	if lhsType == nil || rhsType == nil {
+		return types.TypeUnknown
+	}
+	if lhsType.Equals(types.TypeUnknown) || rhsType.Equals(types.TypeUnknown) {
+		return types.TypeUnknown
+	}
+
+	lhsBase := types.UnwrapType(lhsType)
+	rhsBase := types.UnwrapType(rhsType)
+	lhsNumericOrUntyped := types.IsNumericType(lhsBase) || types.IsUntyped(lhsBase)
+	rhsNumericOrUntyped := types.IsNumericType(rhsBase) || types.IsUntyped(rhsBase)
+
+	if !lhsNumericOrUntyped || !rhsNumericOrUntyped {
+		return types.TypeUnknown
+	}
+
+	if types.IsUntyped(lhsBase) && types.IsUntyped(rhsBase) {
+		if types.IsUntypedFloat(lhsBase) || types.IsUntypedFloat(rhsBase) {
+			return types.TypeUntypedFloat
+		}
+		return types.TypeUntypedInt
+	}
+	if types.IsUntyped(lhsBase) {
+		return rhsType
+	}
+	if types.IsUntyped(rhsBase) {
+		return lhsType
+	}
+
+	if lhsType.Equals(rhsType) {
+		return lhsType
+	}
+
+	if isImplicitlyCompatible(checkTypeCompatibility(lhsType, rhsType)) {
+		return rhsType
+	}
+	if isImplicitlyCompatible(checkTypeCompatibility(rhsType, lhsType)) {
+		return lhsType
+	}
+
+	return types.TypeUnknown
+}
+
+func numericBinaryResultType(op tokens.TOKEN, lhsType, rhsType types.SemType) types.SemType {
+	common := numericCommonType(lhsType, rhsType)
+	if common.Equals(types.TypeUnknown) {
+		return types.TypeUnknown
+	}
+	if types.IsUntyped(common) {
+		return common
+	}
+
+	if op != tokens.DIV_TOKEN {
+		return common
+	}
+
+	commonBase := types.UnwrapType(common)
+	if types.IsFloat(commonBase) {
+		return common
+	}
+	if isLargeIntType(common) {
+		return common
+	}
+	if primType, ok := commonBase.(*types.PrimitiveType); ok {
+		bitWidth := types.GetNumberBitSize(primType.GetName())
+		if bitWidth > 0 && bitWidth <= 32 {
+			return types.TypeF32
+		}
+	}
+	return types.TypeF64
 }
 
 func bindUntypedNumericLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression, exprType, otherType types.SemType, otherExpr ast.Expression) types.SemType {
@@ -3192,12 +3263,16 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 				if types.UnwrapType(lhsType).Equals(types.TypeString) {
 					resultType = types.TypeString
 				} else {
-					// Arithmetic: result is lhsType
-					resultType = lhsType
+					// Arithmetic: result widens to a compatible numeric type
+					resultType = numericBinaryResultType(e.Op.Kind, lhsType, rhsType)
 				}
 			case tokens.MINUS_TOKEN, tokens.MUL_TOKEN, tokens.DIV_TOKEN, tokens.MOD_TOKEN,
 				tokens.BIT_AND_TOKEN, tokens.BIT_OR_TOKEN, tokens.BIT_XOR_TOKEN:
-				resultType = lhsType
+				if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.BIT_OR_TOKEN || e.Op.Kind == tokens.BIT_XOR_TOKEN {
+					resultType = lhsType
+				} else {
+					resultType = numericBinaryResultType(e.Op.Kind, lhsType, rhsType)
+				}
 			case tokens.EXP_TOKEN:
 				// Power operator: use the larger type for large primitives, f64 otherwise
 				resultType = types.GetPowerResultType(lhsType, rhsType)

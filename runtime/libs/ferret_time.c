@@ -10,7 +10,7 @@
 #include <sys/time.h>
 #endif
 
-#include "alloc.h"
+#include "../core/alloc.h"
 
 // Get current time as ISO 8601 string
 char* ferret_time_Now(void) {
