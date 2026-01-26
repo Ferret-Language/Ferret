@@ -1,0 +1,12 @@
+import "std/io";
+
+fn main() {
+    io::Print("Enter your name: ");
+    let name := io::Read() catch "invalid";
+    io::Printf("Greetings.. {}. What's your age? ", name);
+    let age : i32 = io::ReadInt() catch err {
+        io::Println("Error:", err);
+        return;
+    }; 
+    io::Printf("So you are {} years old\n", age);
+}
