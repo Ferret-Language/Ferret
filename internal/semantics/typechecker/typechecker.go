@@ -85,6 +85,22 @@ func autoDerefExprKind(expr ast.Expression) (autoDerefKind, bool) {
 }
 
 func autoDerefBaseType(expr ast.Expression, typ types.SemType) types.SemType {
+	// Preserve NamedType for selector expressions so method lookup works.
+	// For other expressions (index/inc/dec), keep the old unwrapping behavior.
+	if _, ok := expr.(*ast.SelectorExpr); ok {
+		if ref, ok := typ.(*types.ReferenceType); ok {
+			if autoDerefAllowedExpr(expr) {
+				return ref.Inner
+			}
+		}
+		if named, ok := typ.(*types.NamedType); ok {
+			if ref, ok := named.Underlying.(*types.ReferenceType); ok && autoDerefAllowedExpr(expr) {
+				return ref.Inner
+			}
+		}
+		return typ
+	}
+
 	typ = types.UnwrapType(typ)
 	if ref, ok := typ.(*types.ReferenceType); ok {
 		if autoDerefAllowedExpr(expr) {
@@ -305,7 +321,7 @@ func referencesIdentOutsideFuncLit(expr ast.Expression, name string) (bool, *sou
 	case *ast.PostfixExpr:
 		return referencesIdentOutsideFuncLit(e.X, name)
 	case *ast.CallExpr:
-		if found, loc :=  referencesIdentOutsideFuncLit(e.Fun, name); found {
+		if found, loc := referencesIdentOutsideFuncLit(e.Fun, name); found {
 			return found, loc
 		}
 		for _, arg := range e.Args {
