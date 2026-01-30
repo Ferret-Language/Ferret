@@ -1,0 +1,106 @@
+// Native HTTP module - implementations live in C.
+// This file provides type declarations and a small ergonomic API surface
+// aimed to feel similar to Express.
+
+// Request contains the parsed HTTP request data.
+type Request struct {
+    .Method: str,            // "GET", "POST", ...
+    .Path: str,              // URL path without query string
+    .Url: str,               // Full URL path with query string
+    .Query: map[str]str,     // Query params (?a=1)
+    .Params: map[str]str,    // Route params (/users/:id)
+    .Headers: map[str]str,   // Request headers
+    .Body: str,              // Body as UTF-8 string
+    .BodyBytes: []byte,      // Raw body bytes
+    .IP: str                 // Remote address (best-effort)
+};
+
+// Response represents a writable HTTP response.
+type Response struct {
+    .handle: i64             // Internal response handle
+};
+
+// App is the main HTTP server/router instance.
+type App struct {
+    .handle: i64             // Internal app handle
+};
+
+// Create a new HTTP app.
+// @extern
+fn New() -> App;
+
+// ============================================
+// App lifecycle
+// ============================================
+
+// Start listening on port (e.g. 3000).
+// @extern
+fn (app: &App) Listen(port: i32) -> str ! bool;
+
+// Start listening on explicit address (e.g. "127.0.0.1:3000").
+// @extern
+fn (app: &App) ListenAddr(addr: str) -> str ! bool;
+
+// Gracefully stop the server.
+// @extern
+fn (app: &App) Close();
+
+// ============================================
+// Routing
+// ============================================
+
+// @extern
+fn (app: &App) Get(path: str, handler: fn(req: &Request, res: &mut Response) -> void);
+// @extern
+fn (app: &App) Post(path: str, handler: fn(req: &Request, res: &mut Response) -> void);
+// @extern
+fn (app: &App) Put(path: str, handler: fn(req: &Request, res: &mut Response) -> void);
+// @extern
+fn (app: &App) Patch(path: str, handler: fn(req: &Request, res: &mut Response) -> void);
+// @extern
+fn (app: &App) Delete(path: str, handler: fn(req: &Request, res: &mut Response) -> void);
+// @extern
+fn (app: &App) Options(path: str, handler: fn(req: &Request, res: &mut Response) -> void);
+// @extern
+fn (app: &App) Head(path: str, handler: fn(req: &Request, res: &mut Response) -> void);
+// @extern
+fn (app: &App) Any(path: str, handler: fn(req: &Request, res: &mut Response) -> void);
+
+// Register middleware. Call next() to continue the chain.
+// @extern
+fn (app: &App) Use(handler: fn(req: &Request, res: &mut Response, next: fn() -> void) -> void);
+
+// Serve static files from a directory.
+// Example: app.Static("/public", "./public");
+// @extern
+fn (app: &App) Static(prefix: str, dir: str);
+
+// ============================================
+// Request helpers
+// ============================================
+
+// @extern
+fn (req: &Request) Header(name: str) -> str?;
+// @extern
+fn (req: &Request) Query(name: str) -> str?;
+// @extern
+fn (req: &Request) Param(name: str) -> str?;
+
+// ============================================
+// Response helpers
+// ============================================
+
+// @extern
+fn (res: &mut Response) Status(code: i32) -> &mut Response;
+// @extern
+fn (res: &mut Response) Header(name: str, value: str) -> &mut Response;
+// @extern
+fn (res: &mut Response) Send(body: str);
+// @extern
+fn (res: &mut Response) Json(body: str);
+// @extern
+fn (res: &mut Response) Redirect(url: str);
+// @extern
+fn (res: &mut Response) End();
+// @extern
+fn (res: &mut Response) SendFile(path: str) -> str ! bool;
