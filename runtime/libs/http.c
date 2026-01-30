@@ -311,20 +311,21 @@ static bool ferret_http_send_response(ferret_http_response_t* res, const char* b
     return true;
 }
 
-static void ferret_http_set_optional_str(void* out, const char* value) {
+static void ferret_http_write_optional_str_ptr(void* out, const char* value) {
     if (!out) {
         return;
     }
-    uint8_t* bytes = (uint8_t*)out;
-    size_t offset = sizeof(char*);
-    if (value) {
-        memcpy(bytes, &value, sizeof(char*));
-        bytes[offset] = 1;
-    } else {
-        char* zero = NULL;
-        memcpy(bytes, &zero, sizeof(char*));
-        bytes[offset] = 0;
+    void* opt = ferret_optional_alloc_none(sizeof(char*), sizeof(void*));
+    if (!opt) {
+        *(void**)out = NULL;
+        return;
     }
+    if (value) {
+        memcpy(opt, &value, sizeof(char*));
+        uint8_t* flag = (uint8_t*)opt + sizeof(char*);
+        *flag = 1;
+    }
+    *(void**)out = opt;
 }
 
 static void ferret_http_result_err_str(void* out, const char* err) {
@@ -1041,33 +1042,51 @@ void std_http_App_ListenAddr(void* out, ferret_std_http_App* app, uint64_t app_h
 void std_http_Request_Header(void* out, ferret_std_http_Request* req, uint64_t req_heap, const char* name) {
     (void)req_heap;
     if (!req || !name) {
-        ferret_http_set_optional_str(out, NULL);
+        ferret_http_write_optional_str_ptr(out, NULL);
+        return;
+    }
+    void* opt = ferret_optional_alloc_none(sizeof(char*), sizeof(void*));
+    if (!opt) {
+        *(void**)out = NULL;
         return;
     }
     char* key = ferret_http_strdup(name);
     ferret_http_lowercase(key);
     char* key_ptr = key;
-    ferret_map_get_optional_out(req->Headers, &key_ptr, out);
+    ferret_map_get_optional_out(req->Headers, &key_ptr, opt);
+    *(void**)out = opt;
 }
 
 void std_http_Request_Query(void* out, ferret_std_http_Request* req, uint64_t req_heap, const char* name) {
     (void)req_heap;
     if (!req || !name) {
-        ferret_http_set_optional_str(out, NULL);
+        ferret_http_write_optional_str_ptr(out, NULL);
+        return;
+    }
+    void* opt = ferret_optional_alloc_none(sizeof(char*), sizeof(void*));
+    if (!opt) {
+        *(void**)out = NULL;
         return;
     }
     char* key = (char*)name;
-    ferret_map_get_optional_out(req->Query, &key, out);
+    ferret_map_get_optional_out(req->Query, &key, opt);
+    *(void**)out = opt;
 }
 
 void std_http_Request_Param(void* out, ferret_std_http_Request* req, uint64_t req_heap, const char* name) {
     (void)req_heap;
     if (!req || !name) {
-        ferret_http_set_optional_str(out, NULL);
+        ferret_http_write_optional_str_ptr(out, NULL);
+        return;
+    }
+    void* opt = ferret_optional_alloc_none(sizeof(char*), sizeof(void*));
+    if (!opt) {
+        *(void**)out = NULL;
         return;
     }
     char* key = (char*)name;
-    ferret_map_get_optional_out(req->Params, &key, out);
+    ferret_map_get_optional_out(req->Params, &key, opt);
+    *(void**)out = opt;
 }
 
 // Response helpers
