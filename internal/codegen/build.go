@@ -108,6 +108,7 @@ func DefaultBuildOptions() *BuildOptions {
 			windowsLibArg(toolchainLib, []string{"libmsvcrt.a"}, "-lmsvcrt"),
 			windowsLibArg(toolchainLib, []string{"libkernel32.a"}, "-lkernel32"),
 			windowsLibArg(toolchainLib, []string{"libuser32.a"}, "-luser32"),
+			windowsLibArg(toolchainLib, []string{"libws2_32.a", "libws2_32.dll.a"}, "-lws2_32"),
 			windowsLibArg(toolchainLib, []string{"libgcc.a"}, "-lgcc"),
 			windowsLibArg(toolchainLib, []string{"libgcc_eh.a"}, "-lgcc_eh"),
 			windowsLibArg(toolchainLib, []string{"libwinpthread.a", "libwinpthread.dll.a"}, "-lwinpthread"),

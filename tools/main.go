@@ -448,8 +448,18 @@ func copyWindowsToolchain(libDir, cc, asPath, ldPath string) error {
 	if libuser32 == "" {
 		libuser32 = findInDirs(libDirs, "libuser32.a")
 	}
+	libws2_32 := gccPrintFile(cc, "libws2_32.a")
+	if libws2_32 == "" {
+		libws2_32 = gccPrintFile(cc, "libws2_32.dll.a")
+	}
+	if libws2_32 == "" {
+		libws2_32 = findInDirs(libDirs, "libws2_32.a")
+		if libws2_32 == "" {
+			libws2_32 = findInDirs(libDirs, "libws2_32.dll.a")
+		}
+	}
 
-	if err := copyIfExists(libDir, crt2, crtbegin, crtend, libm, libmsvcrt, libmingw32, libmingwex, libgcc, libgcceh, libgccs, libwinpthread, libkernel32, libuser32); err != nil {
+	if err := copyIfExists(libDir, crt2, crtbegin, crtend, libm, libmsvcrt, libmingw32, libmingwex, libgcc, libgcceh, libgccs, libwinpthread, libkernel32, libuser32, libws2_32); err != nil {
 		return err
 	}
 
