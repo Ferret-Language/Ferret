@@ -9,6 +9,18 @@ A modern compiler for the Ferret programming language.
 4. **Fast compilation.**: The compiler is optimized for speed to provide a smooth development experience
 ## Quick Start
 
+### Install C toolchain
+
+Linux/macOS:
+```bash
+./scripts/install-toolchain.sh
+```
+
+Windows (PowerShell):
+```powershell
+.\scripts\install-toolchain.ps1
+```
+
 ### Run the compiler
 
 ```batch

@@ -1,12 +1,12 @@
 package codegen
 
 import (
-	"slices"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"compiler/colors"
@@ -29,22 +29,11 @@ type BuildOptions struct {
 	LdDefaults  bool // Whether ld defaults were applied
 }
 
-// DefaultBuildOptions returns default build options
-// Environment variables are checked with fallbacks, so the code works reliably
-// even if env vars are not set (os.Getenv returns empty string for unset vars).
+// DefaultBuildOptions returns default build options.
 func DefaultBuildOptions() *BuildOptions {
 	linkFlags := []string{"-s"}
-	// Check FERRET_AS first, then AS, then toolchain, then default to "as"
-	assembler := os.Getenv("FERRET_AS")
-	if assembler == "" {
-		assembler = os.Getenv("AS")
-	}
-
-	// Check FERRET_LD first, then LD, then toolchain, then default to "ld"
-	linker := os.Getenv("FERRET_LD")
-	if linker == "" {
-		linker = os.Getenv("LD")
-	}
+	assembler := ""
+	linker := ""
 
 	toolchainPath := resolveToolchainPath()
 	if toolchainPath != "" {
@@ -691,23 +680,14 @@ func withPathEnv(env []string, key, dir string) []string {
 }
 
 func resolveCCompiler() string {
-	if val := os.Getenv("FERRET_CC"); val != "" {
-		if path, err := exec.LookPath(val); err == nil {
-			return path
-		}
-	}
-	if val := os.Getenv("CC"); val != "" {
-		if path, err := exec.LookPath(val); err == nil {
-			return path
-		}
-	}
+	candidates := []string{"gcc", "cc", "clang"}
 	if runtime.GOOS == "darwin" {
-		if path, err := exec.LookPath("clang"); err == nil {
+		candidates = []string{"clang", "cc", "gcc"}
+	}
+	for _, name := range candidates {
+		if path, err := exec.LookPath(name); err == nil {
 			return path
 		}
-	}
-	if path, err := exec.LookPath("gcc"); err == nil {
-		return path
 	}
 	return ""
 }

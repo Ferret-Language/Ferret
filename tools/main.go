@@ -114,7 +114,7 @@ func buildRuntimeLib(runtimeDir, libsDir string) error {
 	// Collect C files from both core and libs subdirectories
 	coreDir := filepath.Join(runtimeDir, "core")
 	libsRuntimeDir := filepath.Join(runtimeDir, "libs")
-	
+
 	coreFiles, err := filepath.Glob(filepath.Join(coreDir, "*.c"))
 	if err != nil {
 		return fmt.Errorf("scan core runtime sources: %w", err)
@@ -123,17 +123,17 @@ func buildRuntimeLib(runtimeDir, libsDir string) error {
 	if err != nil {
 		return fmt.Errorf("scan libs runtime sources: %w", err)
 	}
-	
+
 	cFiles := append(coreFiles, libsFiles...)
 	if len(cFiles) == 0 {
 		return fmt.Errorf("no runtime C files found in %s/core or %s/libs", runtimeDir, runtimeDir)
 	}
 
-	cc, err := resolveTool("FERRET_CC", "CC", defaultCompiler())
+	cc, err := resolveCCompiler()
 	if err != nil {
 		return err
 	}
-	ar, err := resolveTool("AR", "", "ar")
+	ar, err := resolveCompilerTool(cc, "ar", "ar")
 	if err != nil {
 		return err
 	}
@@ -203,11 +203,15 @@ func copyToolchain(libsDir string) error {
 		return fmt.Errorf("create toolchain lib dir: %w", err)
 	}
 
-	asPath, err := resolveTool("FERRET_AS", "AS", "as")
+	cc, err := resolveCCompiler()
 	if err != nil {
 		return err
 	}
-	ldPath, err := resolveTool("FERRET_LD", "LD", "ld")
+	asPath, err := resolveCompilerTool(cc, "as", "as")
+	if err != nil {
+		return err
+	}
+	ldPath, err := resolveCompilerTool(cc, "ld", "ld")
 	if err != nil {
 		return err
 	}
@@ -221,25 +225,11 @@ func copyToolchain(libsDir string) error {
 		return fmt.Errorf("copy ld: %w", err)
 	}
 
-	if err := copyToolchainDeps(libDir, asPath, ldPath); err != nil {
+	if err := copyToolchainDeps(libDir, cc, asPath, ldPath); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func resolveTool(primaryEnv, fallbackEnv, defaultName string) (string, error) {
-	if primaryEnv != "" {
-		if val := os.Getenv(primaryEnv); val != "" {
-			return resolveToolPath(val)
-		}
-	}
-	if fallbackEnv != "" {
-		if val := os.Getenv(fallbackEnv); val != "" {
-			return resolveToolPath(val)
-		}
-	}
-	return resolveToolPath(defaultName)
 }
 
 func resolveToolPath(name string) (string, error) {
@@ -250,13 +240,44 @@ func resolveToolPath(name string) (string, error) {
 	return path, nil
 }
 
-func defaultCompiler() string {
+func resolveCCompiler() (string, error) {
+	candidates := []string{"gcc", "cc", "clang"}
 	if runtime.GOOS == "darwin" {
-		if _, err := exec.LookPath("clang"); err == nil {
-			return "clang"
+		candidates = []string{"clang", "cc", "gcc"}
+	}
+	for _, name := range candidates {
+		path, err := exec.LookPath(name)
+		if err == nil {
+			return path, nil
 		}
 	}
-	return "gcc"
+	return "", fmt.Errorf("C compiler not found (tried: %s)", strings.Join(candidates, ", "))
+}
+
+func resolveCompilerTool(cc, tool, fallback string) (string, error) {
+	if cc != "" {
+		if name := compilerProgName(cc, tool); name != "" {
+			if path, err := exec.LookPath(name); err == nil {
+				return path, nil
+			}
+		}
+	}
+	return resolveToolPath(fallback)
+}
+
+func compilerProgName(cc, tool string) string {
+	if cc == "" {
+		return ""
+	}
+	out, err := exec.Command(cc, "-print-prog-name="+tool).CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(string(out))
+	if name == "" {
+		return ""
+	}
+	return name
 }
 
 func copyFile(src, dst string) error {
@@ -299,21 +320,20 @@ func shouldBundleToolchain() bool {
 	return runtime.GOOS != "darwin"
 }
 
-func copyToolchainDeps(libDir, asPath, ldPath string) error {
+func copyToolchainDeps(libDir, cc, asPath, ldPath string) error {
 	switch runtime.GOOS {
 	case "linux":
-		return copyLinuxToolchain(libDir, asPath, ldPath)
+		return copyLinuxToolchain(libDir, cc, asPath, ldPath)
 	case "windows":
-		return copyWindowsToolchain(libDir, asPath, ldPath)
+		return copyWindowsToolchain(libDir, cc, asPath, ldPath)
 	default:
 		return copyBinaryDeps(libDir, asPath, ldPath)
 	}
 }
 
-func copyLinuxToolchain(libDir, asPath, ldPath string) error {
-	cc, err := resolveTool("FERRET_CC", "CC", defaultCompiler())
-	if err != nil {
-		return err
+func copyLinuxToolchain(libDir, cc, asPath, ldPath string) error {
+	if cc == "" {
+		return fmt.Errorf("C compiler not found")
 	}
 
 	crt1 := gccPrintFile(cc, "crt1.o")
@@ -343,10 +363,9 @@ func copyLinuxToolchain(libDir, asPath, ldPath string) error {
 	return nil
 }
 
-func copyWindowsToolchain(libDir, asPath, ldPath string) error {
-	cc, err := resolveTool("FERRET_CC", "CC", defaultCompiler())
-	if err != nil {
-		return err
+func copyWindowsToolchain(libDir, cc, asPath, ldPath string) error {
+	if cc == "" {
+		return fmt.Errorf("C compiler not found")
 	}
 	ccPath, _ := exec.LookPath(cc)
 	libDirs := gccLibDirs(cc)
