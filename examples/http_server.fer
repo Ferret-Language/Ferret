@@ -2,7 +2,7 @@ import "std/http";
 import "std/io";
 
 fn main() {
-    let app := http::New();
+    let app := http::Server();
 
     app.Get("/", fn(req: &http::Request, res: &mut http::Response) {
         res.Send("Hello from Ferret HTTP!");

@@ -27,7 +27,7 @@ type App struct {
 
 // Create a new HTTP app.
 // @extern
-fn New() -> App;
+fn Server() -> App;
 
 // ============================================
 // App lifecycle
