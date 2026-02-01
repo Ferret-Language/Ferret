@@ -90,18 +90,29 @@ func DefaultBuildOptions() *BuildOptions {
 
 	linkLibs := []string{"-lm"}
 	if runtime.GOOS == "windows" {
+		toolchainLib := ""
+		if toolchainPath != "" {
+			candidate := filepath.Join(toolchainPath, "lib")
+			if utilsfs.IsDir(candidate) {
+				toolchainLib = candidate
+			}
+		}
+
 		// Add Windows-specific flags
 		// -m i386pep: Use PE+ format for 64-bit Windows
 		linkFlags = append(linkFlags, "-m", "i386pep")
 		linkLibs = []string{
-			"-lmingw32",
-			"-lmingwex",
-			"-lmsvcrt",
-			"-lkernel32",
-			"-luser32",
-			"-lgcc",
-			"-lgcc_eh",
-			"-lm",
+			"--start-group", // enable rescanning
+			windowsLibArg(toolchainLib, []string{"libmingw32.a"}, "-lmingw32"),
+			windowsLibArg(toolchainLib, []string{"libmingwex.a"}, "-lmingwex"),
+			windowsLibArg(toolchainLib, []string{"libmsvcrt.a"}, "-lmsvcrt"),
+			windowsLibArg(toolchainLib, []string{"libkernel32.a"}, "-lkernel32"),
+			windowsLibArg(toolchainLib, []string{"libuser32.a"}, "-luser32"),
+			windowsLibArg(toolchainLib, []string{"libgcc.a"}, "-lgcc"),
+			windowsLibArg(toolchainLib, []string{"libgcc_eh.a"}, "-lgcc_eh"),
+			windowsLibArg(toolchainLib, []string{"libwinpthread.a", "libwinpthread.dll.a"}, "-lwinpthread"),
+			windowsLibArg(toolchainLib, []string{"libm.a", "libm.dll.a"}, "-lm"),
+			"--end-group",
 		}
 	}
 
@@ -244,30 +255,23 @@ func ensureToolExists(kind, tool string) error {
 // applyLdDefaults sets up platform-specific linker defaults.
 // This function only runs for GNU ld linkers (checked via isLdLinker).
 // For other linkers (LLD, Gold, clang's linker), users should configure
-// linking manually via FERRET_LD_FLAGS and FERRET_LD_LIBS environment variables.
+// linking manually via toolchain-specific options.
 func applyLdDefaults(opts *BuildOptions) error {
 	if opts == nil || opts.LdDefaults || !isLdLinker(opts.Linker) {
 		return nil
 	}
 	opts.LdDefaults = true
 
-	if extraFlags := strings.Fields(os.Getenv("FERRET_LD_FLAGS")); len(extraFlags) > 0 {
-		opts.LinkFlags = append(opts.LinkFlags, extraFlags...)
-	}
-	if extraLibs := strings.Fields(os.Getenv("FERRET_LD_LIBS")); len(extraLibs) > 0 {
-		opts.LinkLibs = append(opts.LinkLibs, extraLibs...)
-	}
-
 	switch runtime.GOOS {
 	case "linux":
 		crt1, crti, crtn := findLinuxCrtObjects()
 		if crt1 == "" || crti == "" || crtn == "" {
-			return fmt.Errorf("ld: missing C runtime objects; set FERRET_LD_CRT1, FERRET_LD_CRTI, and FERRET_LD_CRTN")
+			return fmt.Errorf("ld: missing C runtime objects (crt1/crti/crtn)")
 		}
 
 		dyn := findLinuxDynamicLinker()
 		if dyn == "" {
-			return fmt.Errorf("ld: dynamic linker not found; set FERRET_LD_DYNAMIC_LINKER")
+			return fmt.Errorf("ld: dynamic linker not found")
 		}
 
 		if !containsArg(opts.LinkFlags, "-dynamic-linker") {
@@ -325,7 +329,7 @@ func applyLdDefaults(opts *BuildOptions) error {
 		// We don't add -lc because Windows doesn't have a separate libc.
 		crt2, crtbegin, crtend := findWindowsCrtObjects()
 		if crt2 == "" || crtbegin == "" || crtend == "" {
-			return fmt.Errorf("ld: missing C runtime objects; set FERRET_LD_CRT2, FERRET_LD_CRTBEGIN, and FERRET_LD_CRTEND")
+			return fmt.Errorf("ld: missing C runtime objects (crt2/crtbegin/crtend)")
 		}
 		opts.LinkInputs = append(opts.LinkInputs, crt2, crtbegin)
 		opts.LinkPost = append(opts.LinkPost, crtend)
@@ -335,9 +339,9 @@ func applyLdDefaults(opts *BuildOptions) error {
 }
 
 func findLinuxCrtObjects() (string, string, string) {
-	crt1 := os.Getenv("FERRET_LD_CRT1")
-	crti := os.Getenv("FERRET_LD_CRTI")
-	crtn := os.Getenv("FERRET_LD_CRTN")
+	crt1 := ""
+	crti := ""
+	crtn := ""
 
 	// First, check toolchain/lib directory (bundled files from bootstrap)
 	if tcLib := toolchainLibDir(); tcLib != "" {
@@ -394,10 +398,6 @@ func findLinuxCrtObjects() (string, string, string) {
 }
 
 func findLinuxDynamicLinker() string {
-	if override := os.Getenv("FERRET_LD_DYNAMIC_LINKER"); override != "" {
-		return override
-	}
-
 	candidates := linuxLoaderCandidates()
 
 	// First, check toolchain/lib directory (bundled files from bootstrap)
@@ -520,9 +520,9 @@ func windowsLibDirs() []string {
 }
 
 func findWindowsCrtObjects() (string, string, string) {
-	crt2 := os.Getenv("FERRET_LD_CRT2")
-	crtbegin := os.Getenv("FERRET_LD_CRTBEGIN")
-	crtend := os.Getenv("FERRET_LD_CRTEND")
+	crt2 := ""
+	crtbegin := ""
+	crtend := ""
 
 	// First, check toolchain/lib directory (bundled files from bootstrap)
 	if tcLib := toolchainLibDir(); tcLib != "" {
@@ -602,18 +602,6 @@ func containsLibDir(flags []string, dir string) bool {
 }
 
 func resolveToolchainPath() string {
-	if override := os.Getenv("FERRET_TOOLCHAIN_PATH"); override != "" {
-		if utilsfs.IsDir(override) {
-			return override
-		}
-	}
-	if libsOverride := os.Getenv("FERRET_LIBS_PATH"); libsOverride != "" {
-		candidate := filepath.Join(libsOverride, "toolchain")
-		if utilsfs.IsDir(candidate) {
-			return candidate
-		}
-	}
-
 	if execPath, err := os.Executable(); err == nil {
 		candidate := filepath.Join(filepath.Dir(execPath), "../libs/toolchain")
 		if utilsfs.IsDir(candidate) {
@@ -756,4 +744,16 @@ func linuxLoaderCandidates() []string {
 	default:
 		return []string{"ld-linux.so.2", "ld-musl.so.1"}
 	}
+}
+
+func windowsLibArg(libDir string, candidates []string, fallback string) string {
+	if libDir != "" {
+		for _, name := range candidates {
+			path := filepath.Join(libDir, name)
+			if utilsfs.IsValidFile(path) {
+				return "-l:" + name
+			}
+		}
+	}
+	return fallback
 }

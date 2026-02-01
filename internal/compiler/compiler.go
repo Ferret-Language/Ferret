@@ -78,9 +78,7 @@ func Compile(opts *Options) Result {
 	execPath, _ := os.Executable()
 	execDir := filepath.Dir(execPath)
 	libsPath := filepath.Join(execDir, "../libs")
-	if override := os.Getenv("FERRET_LIBS_PATH"); override != "" {
-		libsPath = override
-	} else if !fs.IsDir(libsPath) {
+	if !fs.IsDir(libsPath) {
 		if cwd, err := os.Getwd(); err == nil {
 			candidate := filepath.Join(cwd, "libs")
 			if fs.IsDir(candidate) {
