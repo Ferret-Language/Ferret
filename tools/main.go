@@ -312,11 +312,12 @@ func fileExists(path string) bool {
 	return err == nil && !info.IsDir()
 }
 
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 func shouldBundleToolchain() bool {
-	if val := strings.TrimSpace(os.Getenv("FERRET_BUNDLE_TOOLCHAIN")); val != "" {
-		val = strings.ToLower(val)
-		return val == "1" || val == "true" || val == "yes"
-	}
 	return runtime.GOOS != "darwin"
 }
 
@@ -419,6 +420,26 @@ func copyWindowsToolchain(libDir, cc, asPath, ldPath string) error {
 	if libgcceh == "" {
 		libgcceh = findInDirs(libDirs, "libgcc_eh.a")
 	}
+	libgccs := gccPrintFile(cc, "libgcc_s.a")
+	if libgccs == "" {
+		libgccs = gccPrintFile(cc, "libgcc_s.dll.a")
+	}
+	if libgccs == "" {
+		libgccs = findInDirs(libDirs, "libgcc_s.a")
+		if libgccs == "" {
+			libgccs = findInDirs(libDirs, "libgcc_s.dll.a")
+		}
+	}
+	libwinpthread := gccPrintFile(cc, "libwinpthread.a")
+	if libwinpthread == "" {
+		libwinpthread = gccPrintFile(cc, "libwinpthread.dll.a")
+	}
+	if libwinpthread == "" {
+		libwinpthread = findInDirs(libDirs, "libwinpthread.a")
+		if libwinpthread == "" {
+			libwinpthread = findInDirs(libDirs, "libwinpthread.dll.a")
+		}
+	}
 	libkernel32 := gccPrintFile(cc, "libkernel32.a")
 	if libkernel32 == "" {
 		libkernel32 = findInDirs(libDirs, "libkernel32.a")
@@ -428,7 +449,7 @@ func copyWindowsToolchain(libDir, cc, asPath, ldPath string) error {
 		libuser32 = findInDirs(libDirs, "libuser32.a")
 	}
 
-	if err := copyIfExists(libDir, crt2, crtbegin, crtend, libm, libmsvcrt, libmingw32, libmingwex, libgcc, libgcceh, libkernel32, libuser32); err != nil {
+	if err := copyIfExists(libDir, crt2, crtbegin, crtend, libm, libmsvcrt, libmingw32, libmingwex, libgcc, libgcceh, libgccs, libwinpthread, libkernel32, libuser32); err != nil {
 		return err
 	}
 
@@ -626,13 +647,28 @@ func gccPrintFile(cc, name string) string {
 		return ""
 	}
 	path := strings.TrimSpace(string(out))
-	if path == "" || path == name {
+	if path == "" {
 		return ""
 	}
-	if !fileExists(path) {
-		return ""
+	if fileExists(path) {
+		return path
 	}
-	return path
+	if runtime.GOOS == "windows" {
+		if path == name || !strings.ContainsAny(path, `/\`) {
+			if dirs := gccLibDirs(cc); len(dirs) > 0 {
+				if resolved := findInDirs(dirs, name); resolved != "" {
+					return resolved
+				}
+			}
+		}
+		if ccPath, err := exec.LookPath(cc); err == nil {
+			fallback := filepath.Join(filepath.Dir(ccPath), "..", "lib")
+			if resolved := findInDirs([]string{fallback}, name); resolved != "" {
+				return resolved
+			}
+		}
+	}
+	return ""
 }
 
 func findLinuxDynamicLoader(cc string) string {
@@ -689,16 +725,77 @@ func gccLibDirs(cc string) []string {
 			continue
 		}
 		chunks := strings.Split(raw, string(os.PathListSeparator))
-		dirs := make([]string, 0, len(chunks))
+		dirs := make([]string, 0, len(chunks)+1)
+		msysRoot := ""
+		if runtime.GOOS == "windows" {
+			msysRoot = windowsMsysRoot(cc)
+		}
 		for _, chunk := range chunks {
 			if chunk == "" {
 				continue
 			}
+			if runtime.GOOS == "windows" {
+				chunk = normalizeWindowsGccPath(chunk, msysRoot)
+			}
 			dirs = append(dirs, chunk)
+		}
+		if runtime.GOOS == "windows" {
+			if libDir := windowsMingwLibDir(cc); libDir != "" {
+				dirs = append(dirs, libDir)
+			}
 		}
 		return dirs
 	}
 	return nil
+}
+
+func windowsMsysRoot(cc string) string {
+	ccPath, err := exec.LookPath(cc)
+	if err != nil || ccPath == "" {
+		return ""
+	}
+	binDir := filepath.Dir(ccPath)
+	prefix := filepath.Dir(binDir)
+	if !dirExists(prefix) {
+		return ""
+	}
+	root := filepath.Dir(prefix)
+	if !dirExists(root) {
+		return ""
+	}
+	return root
+}
+
+func windowsMingwLibDir(cc string) string {
+	ccPath, err := exec.LookPath(cc)
+	if err != nil || ccPath == "" {
+		return ""
+	}
+	binDir := filepath.Dir(ccPath)
+	prefix := filepath.Dir(binDir)
+	libDir := filepath.Join(prefix, "lib")
+	if dirExists(libDir) {
+		return libDir
+	}
+	return ""
+}
+
+func normalizeWindowsGccPath(path, msysRoot string) string {
+	if path == "" {
+		return path
+	}
+	path = filepath.FromSlash(path)
+	if len(path) >= 2 && path[1] == ':' {
+		return filepath.Clean(path)
+	}
+	if msysRoot == "" {
+		return filepath.Clean(path)
+	}
+	if strings.HasPrefix(path, string(os.PathSeparator)) {
+		trimmed := strings.TrimPrefix(path, string(os.PathSeparator))
+		return filepath.Join(msysRoot, trimmed)
+	}
+	return filepath.Clean(path)
 }
 
 func darwinSearchDirs(binaries ...string) []string {

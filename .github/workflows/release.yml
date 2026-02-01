@@ -35,17 +35,17 @@ jobs:
       - name: Set artifact name (unix)
         if: runner.os != 'Windows'
         run: |
-          echo "FERRET_GOOS=$(go env GOOS)" >> "$GITHUB_ENV"
-          echo "FERRET_GOARCH=$(go env GOARCH)" >> "$GITHUB_ENV"
-          echo "FERRET_ARTIFACT=ferret-$(go env GOOS)-$(go env GOARCH)" >> "$GITHUB_ENV"
+          echo "TARGET_GOOS=$(go env GOOS)" >> "$GITHUB_ENV"
+          echo "TARGET_GOARCH=$(go env GOARCH)" >> "$GITHUB_ENV"
+          echo "ARTIFACT_NAME=ferret-$(go env GOOS)-$(go env GOARCH)" >> "$GITHUB_ENV"
 
       - name: Set artifact name (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          "FERRET_GOOS=$(go env GOOS)" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "FERRET_GOARCH=$(go env GOARCH)" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "FERRET_ARTIFACT=ferret-$(go env GOOS)-$(go env GOARCH)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TARGET_GOOS=$(go env GOOS)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "TARGET_GOARCH=$(go env GOARCH)" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ARTIFACT_NAME=ferret-$(go env GOOS)-$(go env GOARCH)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Clean generated files (unix)
         if: runner.os != 'Windows'
@@ -76,7 +76,6 @@ jobs:
         if: runner.os != 'Windows'
         env:
           CGO_ENABLED: "1"
-          FERRET_BUNDLE_TOOLCHAIN: ${{ runner.os == 'macOS' && '0' || '1' }}
         run: go run ./tools
 
       - name: Bootstrap libs/toolchain (windows)
@@ -93,10 +92,10 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           rm -rf dist stage
-          mkdir -p "stage/$FERRET_ARTIFACT/bin" dist
-          go build -v -o "stage/$FERRET_ARTIFACT/bin/ferret"
-          cp -R libs "stage/$FERRET_ARTIFACT/"
-          cp LICENSE README.md "stage/$FERRET_ARTIFACT/"
+          mkdir -p "stage/$ARTIFACT_NAME/bin" dist
+          go build -v -o "stage/$ARTIFACT_NAME/bin/ferret"
+          cp -R libs "stage/$ARTIFACT_NAME/"
+          cp LICENSE README.md "stage/$ARTIFACT_NAME/"
 
       - name: Build (windows)
         if: runner.os == 'Windows'
@@ -106,26 +105,26 @@ jobs:
           CC: gcc
         run: |
           Remove-Item -Recurse -Force stage, dist -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path "stage\$env:FERRET_ARTIFACT\bin", dist | Out-Null
-          go build -v -o "stage\$env:FERRET_ARTIFACT\bin\ferret.exe"
-          Copy-Item -Recurse -Force libs "stage\$env:FERRET_ARTIFACT\"
-          Copy-Item -Force LICENSE, README.md "stage\$env:FERRET_ARTIFACT\"
+          New-Item -ItemType Directory -Force -Path "stage\$env:ARTIFACT_NAME\bin", dist | Out-Null
+          go build -v -o "stage\$env:ARTIFACT_NAME\bin\ferret.exe"
+          Copy-Item -Recurse -Force libs "stage\$env:ARTIFACT_NAME\"
+          Copy-Item -Force LICENSE, README.md "stage\$env:ARTIFACT_NAME\"
 
       - name: Package (unix)
         if: runner.os != 'Windows'
         run: |
-          tar -czf "dist/${FERRET_ARTIFACT}.tar.gz" -C "stage/${FERRET_ARTIFACT}" .
+          tar -czf "dist/${ARTIFACT_NAME}.tar.gz" -C "stage/${ARTIFACT_NAME}" .
 
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path "stage\$env:FERRET_ARTIFACT\*" -DestinationPath "dist/$env:FERRET_ARTIFACT.zip"
+          Compress-Archive -Path "stage\$env:ARTIFACT_NAME\*" -DestinationPath "dist/$env:ARTIFACT_NAME.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.FERRET_ARTIFACT }}
+          name: ${{ env.ARTIFACT_NAME }}
           path: dist/*
 
   release:
