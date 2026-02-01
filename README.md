@@ -3,7 +3,7 @@
 A modern compiler for the Ferret programming language.
 
 ## Design philosophy
-1. **It does what it looks like.**: The language syntax and semantics are designed to be intuitive and predicsymbol_table.
+1. **It does what it looks like.**: The language syntax and semantics are designed to be intuitive and symbol_table.
 2. **Helpful error messages.**: The compiler provides clear and actionable error messages to help developers fix issues quickly.
 3. **Nearly 0 runtime error**: The type system and compile-time checks aim to eliminate runtime errors as much as possible.
 4. **Fast compilation.**: The compiler is optimized for speed to provide a smooth development experience
