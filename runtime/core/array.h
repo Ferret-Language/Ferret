@@ -49,14 +49,4 @@ int32_t ferret_array_len(const ferret_array_t* arr);
 // Get array capacity
 int32_t ferret_array_cap(const ferret_array_t* arr);
 
-// Resize array to new capacity (may reallocate)
-// Returns false on allocation failure
-bool ferret_array_resize(ferret_array_t* arr, int32_t new_capacity);
-
-// Free array memory (doesn't free the array struct itself if stack-allocated)
-void ferret_array_free(ferret_array_t* arr);
-
-// Free array and the struct itself
-void ferret_array_destroy(ferret_array_t* arr);
-
 #endif // FERRET_ARRAY_H

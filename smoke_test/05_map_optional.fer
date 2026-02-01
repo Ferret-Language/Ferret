@@ -7,7 +7,10 @@ fn main() {
     } as map[str]i32;
 
     io::Println(scores["alpha"]);
-    io::Println(scores["gamma"]); // fail
+    //io::Println(scores["gamma"]); // fail
+    let maybe : i32? = 4;
+    io::Println(maybe ?? -1);
+    
 
     scores["gamma"] = 3;
     io::Println(scores["gamma"]);

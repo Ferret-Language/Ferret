@@ -324,22 +324,6 @@ void* ferret_map_get(const ferret_map_t* map, const void* key) {
     return NULL;
 }
 
-ferret_map_get_result_t ferret_map_get_optional(const ferret_map_t* map, const void* key) {
-    ferret_map_get_result_t result = {.value_ptr = NULL, .is_some = 0};
-    
-    if (map == NULL || key == NULL) {
-        return result;
-    }
-
-    void* value_ptr = ferret_map_get(map, key);
-    if (value_ptr != NULL) {
-        result.value_ptr = value_ptr;
-        result.is_some = 1;
-    }
-    
-    return result;
-}
-
 void ferret_map_get_optional_out(const ferret_map_t* map, const void* key, void* out_optional) {
     if (out_optional == NULL) {
         return;
@@ -351,15 +335,21 @@ void ferret_map_get_optional_out(const ferret_map_t* map, const void* key, void*
     }
     uint8_t* flag_ptr = out_bytes + value_size;
 
-    ferret_map_get_result_t result = ferret_map_get_optional(map, key);
-    if (result.is_some && result.value_ptr != NULL) {
+    if (map == NULL || key == NULL) {
+        *flag_ptr = 0;
+        return;
+    }
+
+    void* value_ptr = ferret_map_get(map, key);
+    if (value_ptr != NULL) {
         if (value_size > 0) {
-            memcpy(out_bytes, result.value_ptr, value_size);
+            memcpy(out_bytes, value_ptr, value_size);
         }
         *flag_ptr = 1;
-    } else {
-        *flag_ptr = 0;
+        return;
     }
+
+    *flag_ptr = 0;
 }
 
 bool ferret_map_set(ferret_map_t* map, const void* key, const void* value) {
@@ -414,10 +404,6 @@ bool ferret_map_set(ferret_map_t* map, const void* key, const void* value) {
     map->size++;
 
     return true;
-}
-
-bool ferret_map_has(const ferret_map_t* map, const void* key) {
-    return ferret_map_get(map, key) != NULL;
 }
 
 size_t ferret_map_size(const ferret_map_t* map) {

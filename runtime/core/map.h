@@ -81,44 +81,16 @@ FERRET_MAP_TYPED_DECL(str)
 FERRET_MAP_TYPED_DECL(bytes)
 
 // Get value for a key (returns pointer to value, or NULL if not found)
-// The returned pointer is valid until the map is modified
-// DEPRECATED: Use ferret_map_get_optional instead
+// The returned pointer is valid until the map is modified.
 void* ferret_map_get(const ferret_map_t* map, const void* key);
-
-// Get value for a key as an optional type
-// Returns a generic optional structure that should be cast to the appropriate optional type
-// The structure has: { void* value_ptr; int is_some; }
-// For value type T, cast to ferret_optional_T and access .value (which is T) and .is_some
-typedef struct {
-    void* value_ptr;  // Pointer to the value (needs to be dereferenced and cast to T)
-    int is_some;      // 1 if value exists, 0 if not found
-} ferret_map_get_result_t;
-
-ferret_map_get_result_t ferret_map_get_optional(const ferret_map_t* map, const void* key);
 
 // Write optional map get result into a Ferret optional layout (value bytes + 1-byte flag).
 // out_optional must point to a buffer of size (value_size + 1 + padding).
 void ferret_map_get_optional_out(const ferret_map_t* map, const void* key, void* out_optional);
 
-// Macro to get value from map as optional type
-// Usage: FERRET_MAP_GET_OPTIONAL(map, key, optional_type_name, value_type)
-// Example: FERRET_MAP_GET_OPTIONAL(capitals, &key, ferret_optional_const_char_ptr, const char*)
-// This macro constructs the optional type directly
-#define FERRET_MAP_GET_OPTIONAL(map, key, opt_type_name, value_type) \
-    ({ \
-        ferret_map_get_result_t __result = ferret_map_get_optional((map), (key)); \
-        (opt_type_name)({ \
-            .value = __result.is_some ? *(value_type*)(__result.value_ptr) : ((value_type)0), \
-            .is_some = __result.is_some \
-        }); \
-    })
-
 // Set value for a key (inserts or updates)
 // Returns false on allocation failure
 bool ferret_map_set(ferret_map_t* map, const void* key, const void* value);
-
-// Check if key exists in map
-bool ferret_map_has(const ferret_map_t* map, const void* key);
 
 // Get map size (number of entries)
 size_t ferret_map_size(const ferret_map_t* map);

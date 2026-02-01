@@ -37,19 +37,14 @@ void ferret_optional_unwrap_or(const void* opt, const void* default_val, void* o
     }
 }
 
-size_t ferret_optional_payload_size(size_t value_size, size_t value_align) {
+void* ferret_optional_alloc_none(size_t value_size, size_t value_align) {
     if (value_align == 0) {
         value_align = 1;
     }
-    size_t size = value_size + 1;
+    size_t payload = value_size + 1;
     if (value_align > 1) {
-        size = (size + value_align - 1) & ~(value_align - 1);
+        payload = (payload + value_align - 1) & ~(value_align - 1);
     }
-    return size;
-}
-
-void* ferret_optional_alloc_none(size_t value_size, size_t value_align) {
-    size_t payload = ferret_optional_payload_size(value_size, value_align);
     uint8_t* out = (uint8_t*)ferret_alloc(payload);
     if (out == NULL) {
         return NULL;
