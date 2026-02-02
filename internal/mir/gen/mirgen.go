@@ -72,9 +72,12 @@ func (g *Generator) GenerateModule(hirMod *hir.Module) *mir.Module {
 
 	g.loadHeapReturns()
 
+	initNodes, globals := g.collectGlobals(hirMod)
+
 	mirMod := &mir.Module{
 		ImportPath: g.mod.ImportPath,
 		Location:   hirMod.Location,
+		Globals:    globals,
 	}
 
 	for _, item := range hirMod.Items {
@@ -88,6 +91,9 @@ func (g *Generator) GenerateModule(hirMod *hir.Module) *mir.Module {
 				mirMod.Functions = append(mirMod.Functions, fn)
 			}
 		}
+	}
+	if initFn := g.buildInitFunction(initNodes, hirMod.Location); initFn != nil {
+		mirMod.Functions = append(mirMod.Functions, initFn)
 	}
 	if len(g.extraFns) > 0 {
 		mirMod.Functions = append(mirMod.Functions, g.extraFns...)
@@ -113,6 +119,8 @@ func (g *Generator) GenerateModule(hirMod *hir.Module) *mir.Module {
 			mirMod.TypeDescriptors[globalName] = typ
 		}
 	}
+
+	g.injectEntryInitCall(mirMod)
 
 	return mirMod
 }

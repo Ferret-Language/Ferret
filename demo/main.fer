@@ -1,0 +1,27 @@
+
+
+import "std/io";
+import "demo/module";
+
+let a := 11;
+
+fn incr() {
+    a++;
+}
+
+fn getA() -> i32 {
+    return a;
+}
+
+let b := getA();
+
+fn print(value: &i32) {
+    io::Println("Value:", *value);
+}
+
+fn main() {
+    //module::Value = 12;
+    incr();
+    io::Println("Main", module::Name, module::Value, a, b);
+    print(&module::Value);
+}

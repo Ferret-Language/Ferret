@@ -147,6 +147,9 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 		mod.addExport("__indirect_function_table", exportKindTable, 0)
 	}
 
+	if err := gen.emitGlobals(); err != nil {
+		return nil, err
+	}
 	if err := gen.emitVTables(); err != nil {
 		return nil, err
 	}
@@ -2573,6 +2576,29 @@ func (g *Generator) emitVTables() error {
 				entries = append(entries, buf...)
 			}
 			g.addDataSymbol(table.Name, entries, 4)
+		}
+	}
+	return nil
+}
+
+func (g *Generator) emitGlobals() error {
+	for _, unit := range g.units {
+		if unit.MIR == nil || len(unit.MIR.Globals) == 0 {
+			continue
+		}
+		for _, glob := range unit.MIR.Globals {
+			if glob.Name == "" || glob.Type == nil {
+				continue
+			}
+			size := g.layout.SizeOf(glob.Type)
+			if size <= 0 {
+				size = 1
+			}
+			align := g.layout.AlignOf(glob.Type)
+			if align <= 0 {
+				align = 1
+			}
+			g.addDataSymbol(glob.Name, make([]byte, size), uint32(align))
 		}
 	}
 	return nil

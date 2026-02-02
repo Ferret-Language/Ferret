@@ -356,7 +356,9 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 		refInner = ref.Inner
 	}
 
-	if item.Value != nil {
+	isGlobal := b.isModuleGlobalIdent(item.Name)
+
+	if !isGlobal && item.Value != nil {
 		if heapExpr, ok := item.Value.(*hir.UnaryExpr); ok && heapExpr.Op.Kind == tokens.HASH_TOKEN {
 			val := b.lowerExpr(heapExpr.X)
 			if val != mir.InvalidValue {
@@ -380,7 +382,7 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 		}
 	}
 
-	if item.Value != nil {
+	if !isGlobal && item.Value != nil {
 		if moveExpr, ok := item.Value.(*hir.UnaryExpr); ok && moveExpr.Op.Kind == tokens.AT_TOKEN {
 			if ident, ok := moveExpr.X.(*hir.Ident); ok && ident.Symbol != nil {
 				if b.isHeapLValue(ident) {
@@ -405,7 +407,7 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 		}
 	}
 
-	if item.Value != nil {
+	if !isGlobal && item.Value != nil {
 		if call, ok := item.Value.(*hir.CallExpr); ok {
 			if heapRet, ok := b.isHeapReturnCall(call); ok {
 				heapAddr := b.lowerHeapReturnCall(call, heapRet, item.Name.Location)
@@ -427,12 +429,59 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 		}
 	}
 
-	addr := b.emitAlloca(typ, item.Name.Location)
-	if item.Name.Symbol != nil {
-		b.slots[item.Name.Symbol] = addr
-		b.bindings[item.Name.Symbol] = addr
+	var addr mir.ValueID
+	if isGlobal {
+		if item.Name.Symbol == nil {
+			return
+		}
+		if globalAddr, _, ok := b.moduleGlobalStorageAddr(item.Name.Symbol, item.Name.Location); ok {
+			addr = globalAddr
+		} else {
+			return
+		}
+		if item.Name.Symbol.IsHeap {
+			if item.Value != nil {
+				if heapExpr, ok := item.Value.(*hir.UnaryExpr); ok && heapExpr.Op.Kind == tokens.HASH_TOKEN {
+					val := b.lowerExpr(heapExpr.X)
+					if val != mir.InvalidValue {
+						val = b.coerceValueForAssign(val, b.exprType(heapExpr.X), typ, item.Name.Location)
+					}
+					heapAddr := b.emitHeapAlloc(val, typ, item.Name.Location)
+					if heapAddr != mir.InvalidValue {
+						b.emitStore(addr, heapAddr, item.Name.Location)
+					}
+					return
+				}
+				if call, ok := item.Value.(*hir.CallExpr); ok {
+					if heapRet, ok := b.isHeapReturnCall(call); ok {
+						heapAddr := b.lowerHeapReturnCall(call, heapRet, item.Name.Location)
+						if heapAddr != mir.InvalidValue {
+							b.emitStore(addr, heapAddr, item.Name.Location)
+						}
+						return
+					}
+				}
+				if moveExpr, ok := item.Value.(*hir.UnaryExpr); ok && moveExpr.Op.Kind == tokens.AT_TOKEN {
+					if ident, ok := moveExpr.X.(*hir.Ident); ok && ident.Symbol != nil && b.isHeapLValue(ident) {
+						heapAddr := b.addrForIdent(ident)
+						if heapAddr != mir.InvalidValue {
+							b.emitStore(addr, heapAddr, item.Name.Location)
+							b.resetHeapBinding(ident, moveExpr.Location)
+						}
+						return
+					}
+				}
+			}
+			return
+		}
 	} else {
-		b.tempSlots[item.Name] = addr
+		addr = b.emitAlloca(typ, item.Name.Location)
+		if item.Name.Symbol != nil {
+			b.slots[item.Name.Symbol] = addr
+			b.bindings[item.Name.Symbol] = addr
+		} else {
+			b.tempSlots[item.Name] = addr
+		}
 	}
 
 	if item.Value != nil {
@@ -545,6 +594,10 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 	rebindRef := false
 	var refInner types.SemType
 	var lhsIdent *hir.Ident
+	if ident, ok := stmt.Lhs.(*hir.Ident); ok {
+		lhsIdent = ident
+	}
+	lhsIsGlobal := lhsIdent != nil && b.isModuleGlobalIdent(lhsIdent)
 
 	if (stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN) && rhsIsMove {
 		if moveExpr, ok := stmt.Rhs.(*hir.UnaryExpr); ok && moveExpr.Op.Kind == tokens.AT_TOKEN {
@@ -552,25 +605,34 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 				if dstIdent, ok := stmt.Lhs.(*hir.Ident); ok && dstIdent.Symbol != nil {
 					heapAddr := b.addrForIdent(srcIdent)
 					if heapAddr != mir.InvalidValue {
-						b.slots[dstIdent.Symbol] = heapAddr
-						b.boxed[dstIdent.Symbol] = heapAddr
-						if bind, ok := b.bindings[dstIdent.Symbol]; ok {
-							if elem, ok := b.ptrElem[bind]; ok {
-								if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
-									b.emitStore(bind, heapAddr, stmt.Location)
-								}
+						if lhsIsGlobal && dstIdent.Symbol.IsHeap {
+							if storageAddr, _, ok := b.moduleGlobalStorageAddr(dstIdent.Symbol, stmt.Location); ok {
+								b.emitStore(storageAddr, heapAddr, stmt.Location)
+								b.resetHeapBinding(srcIdent, stmt.Location)
+								return
 							}
-						} else {
-							lhsType := b.exprType(stmt.Lhs)
-							if lhsType == nil {
-								lhsType = types.TypeUnknown
-							}
-							bind := b.emitAlloca(types.NewReference(lhsType), stmt.Location)
-							b.emitStore(bind, heapAddr, stmt.Location)
-							b.bindings[dstIdent.Symbol] = bind
 						}
-						b.resetHeapBinding(srcIdent, stmt.Location)
-						return
+						if !lhsIsGlobal {
+							b.slots[dstIdent.Symbol] = heapAddr
+							b.boxed[dstIdent.Symbol] = heapAddr
+							if bind, ok := b.bindings[dstIdent.Symbol]; ok {
+								if elem, ok := b.ptrElem[bind]; ok {
+									if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
+										b.emitStore(bind, heapAddr, stmt.Location)
+									}
+								}
+							} else {
+								lhsType := b.exprType(stmt.Lhs)
+								if lhsType == nil {
+									lhsType = types.TypeUnknown
+								}
+								bind := b.emitAlloca(types.NewReference(lhsType), stmt.Location)
+								b.emitStore(bind, heapAddr, stmt.Location)
+								b.bindings[dstIdent.Symbol] = bind
+							}
+							b.resetHeapBinding(srcIdent, stmt.Location)
+							return
+						}
 					}
 				}
 			}
@@ -583,25 +645,33 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 				if dstIdent, ok := stmt.Lhs.(*hir.Ident); ok && dstIdent.Symbol != nil {
 					heapAddr := b.lowerHeapReturnCall(call, heapRet, stmt.Location)
 					if heapAddr != mir.InvalidValue {
-						b.slots[dstIdent.Symbol] = heapAddr
-						b.boxed[dstIdent.Symbol] = heapAddr
-						if bind, ok := b.bindings[dstIdent.Symbol]; ok {
-							if elem, ok := b.ptrElem[bind]; ok {
-								if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
-									b.emitStore(bind, heapAddr, stmt.Location)
+						if lhsIsGlobal && dstIdent.Symbol.IsHeap {
+							if storageAddr, _, ok := b.moduleGlobalStorageAddr(dstIdent.Symbol, stmt.Location); ok {
+								b.emitStore(storageAddr, heapAddr, stmt.Location)
+								return
+							}
+						}
+						if !lhsIsGlobal {
+							b.slots[dstIdent.Symbol] = heapAddr
+							b.boxed[dstIdent.Symbol] = heapAddr
+							if bind, ok := b.bindings[dstIdent.Symbol]; ok {
+								if elem, ok := b.ptrElem[bind]; ok {
+									if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
+										b.emitStore(bind, heapAddr, stmt.Location)
+									}
 								}
+							} else {
+								lhsType := b.exprType(stmt.Lhs)
+								if lhsType == nil {
+									lhsType = types.TypeUnknown
+								}
+								bind := b.emitAlloca(types.NewReference(lhsType), stmt.Location)
+								b.emitStore(bind, heapAddr, stmt.Location)
+								b.bindings[dstIdent.Symbol] = bind
 							}
-						} else {
-							lhsType := b.exprType(stmt.Lhs)
-							if lhsType == nil {
-								lhsType = types.TypeUnknown
-							}
-							bind := b.emitAlloca(types.NewReference(lhsType), stmt.Location)
-							b.emitStore(bind, heapAddr, stmt.Location)
-							b.bindings[dstIdent.Symbol] = bind
+							return
 						}
 					}
-					return
 				}
 			}
 		}
@@ -621,14 +691,22 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 				}
 				heapAddr := b.emitHeapAlloc(val, b.exprType(stmt.Lhs), stmt.Location)
 				if heapAddr != mir.InvalidValue {
-					if ident.Symbol != nil {
-						b.slots[ident.Symbol] = heapAddr
-						b.boxed[ident.Symbol] = heapAddr
-					} else {
-						b.tempSlots[ident] = heapAddr
+					if lhsIsGlobal && ident.Symbol != nil && ident.Symbol.IsHeap {
+						if storageAddr, _, ok := b.moduleGlobalStorageAddr(ident.Symbol, stmt.Location); ok {
+							b.emitStore(storageAddr, heapAddr, stmt.Location)
+							return
+						}
+					}
+					if !lhsIsGlobal {
+						if ident.Symbol != nil {
+							b.slots[ident.Symbol] = heapAddr
+							b.boxed[ident.Symbol] = heapAddr
+						} else {
+							b.tempSlots[ident] = heapAddr
+						}
+						return
 					}
 				}
-				return
 			}
 		}
 	}
@@ -3376,6 +3454,22 @@ func (b *functionBuilder) lowerQualifiedValue(expr *hir.ScopeResolutionExpr) mir
 	if _, ok := types.UnwrapType(expr.Type).(*types.FunctionType); ok {
 		return b.makeFuncValue(name, expr.Type, expr.Location)
 	}
+	if globalName, sym, ok := b.lookupQualifiedGlobal(name); ok {
+		storageType := globalStorageType(sym)
+		addr := b.emitGlobalAddrByName(globalName, storageType, expr.Location)
+		if addr == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		if sym != nil && sym.IsHeap {
+			heapPtr := b.emitLoad(addr, storageType, expr.Location)
+			b.ptrElem[heapPtr] = sym.Type
+			addr = heapPtr
+		}
+		if b.useAddrValue(expr.Type) {
+			return addr
+		}
+		return b.emitLoad(addr, expr.Type, expr.Location)
+	}
 
 	b.reportUnsupported(fmt.Sprintf("qualified value %s", name), &expr.Location)
 	return mir.InvalidValue
@@ -3416,6 +3510,12 @@ func (b *functionBuilder) lowerLValue(expr hir.Expr) mir.ValueID {
 	switch e := expr.(type) {
 	case *hir.Ident:
 		return b.addrForIdent(e)
+	case *hir.ScopeResolutionExpr:
+		if addr := b.addrForQualified(e); addr != mir.InvalidValue {
+			return addr
+		}
+		b.reportUnsupported("lvalue", expr.Loc())
+		return mir.InvalidValue
 	case *hir.DerefExpr:
 		// For dereference, the operand IS the address (it's a reference/pointer)
 		return b.lowerExpr(e.X)
@@ -3574,6 +3674,23 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 		return wrap(val)
 	}
 
+	if ident.Symbol != nil {
+		if addr, storageType, ok := b.moduleGlobalStorageAddr(ident.Symbol, ident.Location); ok {
+			if ident.Symbol.IsHeap {
+				heapPtr := b.emitLoad(addr, storageType, ident.Location)
+				b.ptrElem[heapPtr] = ident.Symbol.Type
+				if b.useAddrValue(ident.Type) {
+					return wrap(heapPtr)
+				}
+				return wrap(b.emitLoad(heapPtr, ident.Type, ident.Location))
+			}
+			if b.useAddrValue(ident.Type) {
+				return wrap(addr)
+			}
+			return wrap(b.emitLoad(addr, ident.Type, ident.Location))
+		}
+	}
+
 	if ident.Name != "" {
 		b.reportUnsupported(fmt.Sprintf("identifier %s", ident.Name), &ident.Location)
 	} else {
@@ -3625,7 +3742,89 @@ func (b *functionBuilder) addrForIdent(ident *hir.Ident) mir.ValueID {
 		return addr
 	}
 
+	if ident.Symbol != nil {
+		if addr, storageType, ok := b.moduleGlobalStorageAddr(ident.Symbol, ident.Location); ok {
+			if ident.Symbol.IsHeap {
+				heapPtr := b.emitLoad(addr, storageType, ident.Location)
+				b.ptrElem[heapPtr] = ident.Symbol.Type
+				return heapPtr
+			}
+			return addr
+		}
+	}
+
 	return mir.InvalidValue
+}
+
+func (b *functionBuilder) isModuleGlobalIdent(ident *hir.Ident) bool {
+	if ident == nil {
+		return false
+	}
+	return b.isModuleGlobalSymbol(ident.Symbol)
+}
+
+func (b *functionBuilder) isModuleGlobalSymbol(sym *symbols.Symbol) bool {
+	if sym == nil || b.gen == nil || b.gen.mod == nil || b.gen.mod.ModuleScope == nil {
+		return false
+	}
+	return sym.DeclaredScope == b.gen.mod.ModuleScope
+}
+
+func (b *functionBuilder) moduleGlobalStorageAddr(sym *symbols.Symbol, loc source.Location) (mir.ValueID, types.SemType, bool) {
+	if sym == nil {
+		return mir.InvalidValue, nil, false
+	}
+	if !b.isModuleGlobalSymbol(sym) {
+		return mir.InvalidValue, nil, false
+	}
+	name := globalSymbolName(b.gen.mod.ImportPath, sym.Name)
+	if name == "" {
+		return mir.InvalidValue, nil, false
+	}
+	storageType := globalStorageType(sym)
+	addr := b.emitGlobalAddrByName(name, storageType, loc)
+	if addr == mir.InvalidValue {
+		return mir.InvalidValue, nil, false
+	}
+	return addr, storageType, true
+}
+
+func (b *functionBuilder) emitGlobalAddrByName(name string, storageType types.SemType, loc source.Location) mir.ValueID {
+	if name == "" {
+		return mir.InvalidValue
+	}
+	if storageType == nil {
+		storageType = types.TypeUnknown
+	}
+	addrType := types.NewReference(storageType)
+	id := b.emitConst(addrType, "$"+name, loc)
+	b.ptrElem[id] = storageType
+	return id
+}
+
+func (b *functionBuilder) addrForQualified(expr *hir.ScopeResolutionExpr) mir.ValueID {
+	if expr == nil {
+		return mir.InvalidValue
+	}
+	name, ok := b.qualifiedName(expr)
+	if !ok {
+		return mir.InvalidValue
+	}
+	globalName, sym, ok := b.lookupQualifiedGlobal(name)
+	if !ok {
+		return mir.InvalidValue
+	}
+	storageType := globalStorageType(sym)
+	addr := b.emitGlobalAddrByName(globalName, storageType, expr.Location)
+	if addr == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	if sym != nil && sym.IsHeap {
+		heapPtr := b.emitLoad(addr, storageType, expr.Location)
+		b.ptrElem[heapPtr] = sym.Type
+		return heapPtr
+	}
+	return addr
 }
 
 func (b *functionBuilder) lowerFieldAddr(expr *hir.SelectorExpr) mir.ValueID {
@@ -5605,6 +5804,40 @@ func (b *functionBuilder) lookupQualifiedConst(name string) (string, bool) {
 		return constValueLiteral(sym.ConstValue)
 	}
 	return "", false
+}
+
+func (b *functionBuilder) lookupQualifiedGlobal(name string) (string, *symbols.Symbol, bool) {
+	if b.gen == nil || b.gen.mod == nil || b.gen.ctx == nil {
+		return "", nil, false
+	}
+	parts := strings.Split(name, "::")
+	if len(parts) < 2 {
+		return "", nil, false
+	}
+	moduleAlias := parts[0]
+	if moduleAlias == "" {
+		return "", nil, false
+	}
+	importPath := ""
+	if b.gen.mod.ImportAliasMap != nil {
+		importPath = b.gen.mod.ImportAliasMap[moduleAlias]
+	}
+	if importPath == "" {
+		return "", nil, false
+	}
+	imported, ok := b.gen.ctx.GetModule(importPath)
+	if !ok || imported == nil || imported.ModuleScope == nil {
+		return "", nil, false
+	}
+	symName := strings.Join(parts[1:], "::")
+	sym, ok := imported.ModuleScope.GetSymbol(symName)
+	if !ok || sym == nil {
+		return "", nil, false
+	}
+	if sym.Kind != symbols.SymbolVariable && sym.Kind != symbols.SymbolConstant {
+		return "", nil, false
+	}
+	return globalSymbolName(importPath, sym.Name), sym, true
 }
 
 func constValueLiteral(value symbols.ConstValue) (string, bool) {
