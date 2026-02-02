@@ -203,9 +203,7 @@ type Config struct {
 	PointerSize  int    // Target pointer size in bytes (0 = default)
 
 	// Module resolution
-	BuiltinModulesPath string            // Path to standard library
-	BuiltinModules     map[string]string // name -> path mapping
-	RuntimePath        string            // Path to runtime library directory (relative to executable)
+	RuntimePath string // Path to runtime/stdlib library directory (relative to executable)
 
 	// Remote modules (future)
 	RemoteCachePath string // Cache directory for remote dependencies (.ferret)
@@ -239,66 +237,7 @@ func New(config *Config, debug bool) *CompilerContext {
 		Config:        config,
 	}
 
-	// Auto-load builtin modules if path is provided
-	if config.BuiltinModulesPath != "" {
-		ctx.loadBuiltinModules()
-	}
-
-	// Native builtin modules are now declared in stdlib files via @extern.
-
 	return ctx
-}
-
-// loadBuiltinModules discovers and registers all builtin modules from the builtin path
-func (ctx *CompilerContext) loadBuiltinModules() {
-	if ctx.Config.BuiltinModules == nil {
-		ctx.Config.BuiltinModules = make(map[string]string)
-	}
-
-	builtinPath := ctx.Config.BuiltinModulesPath
-
-	// Check if builtin path exists
-	if !fs.IsDir(builtinPath) {
-		// Silently skip if builtin path doesn't exist (for testing/minimal setups)
-		return
-	}
-
-	// Scan for .fer files in builtin directory
-	entries, err := os.ReadDir(builtinPath)
-	if err != nil {
-		// Non-critical error - just skip builtin loading
-		return
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			// For directories, register as module package
-			dirPath := filepath.Join(builtinPath, entry.Name())
-			if dirHasExtension(dirPath, ctx.Config.Extension) {
-				ctx.Config.BuiltinModules[entry.Name()] = dirPath
-			}
-		} else if strings.HasSuffix(entry.Name(), ctx.Config.Extension) {
-			// For individual .fer files, register as standalone module
-			moduleName := strings.TrimSuffix(entry.Name(), ctx.Config.Extension)
-			ctx.Config.BuiltinModules[moduleName] = builtinPath
-		}
-	}
-}
-
-func dirHasExtension(dir, ext string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if strings.HasSuffix(entry.Name(), ext) {
-			return true
-		}
-	}
-	return false
 }
 
 // registerBuiltins populates the universe scope with built-in types
@@ -492,27 +431,12 @@ func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, Mod
 		return "", ModuleUnknown, fmt.Errorf("module not found: %s", importPath)
 	}
 
-	// Check if it's a builtin module
-	// First check if it's a native module (registered in Go)
-	if ctx.HasModule(importPath) {
-		mod, _ := ctx.GetModule(importPath)
-		if mod.Type == ModuleBuiltin && importPath != GlobalModuleImport {
-			// Native module - return a virtual path
-			return "native://" + importPath, ModuleBuiltin, nil
-		}
-	}
-
-	// Then check for file-based builtin modules
-	if builtinPath, ok := ctx.Config.BuiltinModules[packageName]; ok {
-		filePath := filepath.Join(builtinPath, cleanPath+ctx.Config.Extension)
+	if ctx.Config.RuntimePath != "" {
+		relPath := filepath.FromSlash(importPath) + ctx.Config.Extension
+		filePath := filepath.Join(ctx.Config.RuntimePath, relPath)
 		if fs.IsValidFile(filePath) {
 			return filepath.ToSlash(filePath), ModuleBuiltin, nil
 		}
-		// If file doesn't exist but we have a native module, that's OK
-		if ctx.HasModule(importPath) {
-			return "native://" + importPath, ModuleBuiltin, nil
-		}
-		return "", ModuleUnknown, fmt.Errorf("builtin module not found: %s", importPath)
 	}
 
 	// Check if it's a remote module (future implementation)
