@@ -27,7 +27,7 @@ app.Get("/assets/ferret.svg", fn(req: &http::Request, res: &mut http::Response) 
 });
 
 app.Get("/api/data", fn(req: &http::Request, res: &mut http::Response) {
-    res.Json("[1, 2, 3, 4]");
+    res.Json("{\"status\":\"ok\",\"framework\":\"Ferret\",\"items\":[1,2,3,4]}");
 });
 
 app.Get("/plaintext", fn(req: &http::Request, res: &mut http::Response) {

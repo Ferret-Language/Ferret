@@ -14,10 +14,10 @@ func TestParserEdgeCases(t *testing.T) {
 		source        string
 		expectError   bool
 		errorContains string
-	}{	
+	}{
 		{
-			name:		   "Anonymous function",
-			source:		   "fn(){}",
+			name:          "Anonymous function",
+			source:        "fn(){}",
 			expectError:   true,
 			errorContains: "expected ';'",
 		},
@@ -75,6 +75,11 @@ func TestParserEdgeCases(t *testing.T) {
 		{
 			name:        "Nested blocks",
 			source:      "fn test() { { { let x := 42; } } }",
+			expectError: false,
+		},
+		{
+			name:        "String literal with escaped quotes",
+			source:      `let s := "{\"a\":\"b\"}";`,
 			expectError: false,
 		},
 		{

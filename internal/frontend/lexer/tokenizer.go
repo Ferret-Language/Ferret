@@ -64,7 +64,7 @@ func New(filepath, content string, diag *diagnostics.DiagnosticBag) *Lexer {
 			{regexp.MustCompile(`\s+`), skipHandler},                                                   // whitespace
 			{regexp.MustCompile(`//[^\n\r]*`), commentHandler},                                         // single line comments (Unicode support)
 			{regexp.MustCompile(`(?s)/\*.*?\*/`), commentHandler},                                      // multi line comments (Unicode support)
-			{regexp.MustCompile(`"[^"]*"`), stringHandler},                                             // string literals (Unicode support)
+			{regexp.MustCompile(`"(?:\\.|[^"\\])*"`), stringHandler},                                   // string literals (supports escapes)
 			{regexp.MustCompile(`b'(?:\\.|[^'])*'`), byteHandler},                                      // byte literals (validation deferred to semantic analysis)
 			{regexp.MustCompile(`'(?:\\x[0-9a-fA-F]{2}|\\u\{[0-9a-fA-F]+\}|\\.|[^'])*'`), charHandler}, // char literals (Unicode support, validation in handler)
 			{regexp.MustCompile(numeric.NumberPattern), numberHandler},                                 // numbers (hex, octal, binary, float, integer)
