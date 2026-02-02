@@ -20,7 +20,7 @@ const (
 	HTML
 )
 
-const Version = "0.0.6"
+const Version = "0.0.3"
 
 // Options for compilation
 type Options struct {
