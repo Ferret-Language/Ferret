@@ -1545,7 +1545,11 @@ func (g *Generator) stringSymbol(value string) string {
 	g.stringLits[value] = name
 
 	escaped := escapeString(value)
-	g.data.WriteString(fmt.Sprintf("data %s = { b \"%s\", b 0 }\n", name, escaped))
+	align := g.layout.AlignOf(types.TypeU8)
+	if align < 1 {
+		align = 1
+	}
+	g.data.WriteString(fmt.Sprintf("data %s = align %d { b \"%s\", b 0 }\n", name, align, escaped))
 	return name
 }
 
@@ -1595,7 +1599,11 @@ func (g *Generator) enumStringTable(typ types.SemType) (string, int, error) {
 		entries = append(entries, fmt.Sprintf("l %s", g.stringSymbol(variant.Name)))
 	}
 
-	g.data.WriteString(fmt.Sprintf("data %s = { %s }\n", tableName, strings.Join(entries, ", ")))
+	align := g.layout.PointerSize
+	if align < 1 {
+		align = 1
+	}
+	g.data.WriteString(fmt.Sprintf("data %s = align %d { %s }\n", tableName, align, strings.Join(entries, ", ")))
 	g.enumTables[key] = tableName
 	g.enumCounts[key] = len(enumType.Variants)
 	return tableName, len(enumType.Variants), nil

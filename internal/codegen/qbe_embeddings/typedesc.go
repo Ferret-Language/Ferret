@@ -25,10 +25,12 @@ func (g *Generator) qbePtrType() string {
 
 func (g *Generator) emitTypeDescData(globalName string, kind uint32, size int, info1 string, info2 string) {
 	ptrType := g.qbePtrType()
+	align := maxInt(4, g.layout.PointerSize)
 	if runtimeabi.QBETypeDescNeedsPad(g.layout.PointerSize) {
 		g.data.WriteString(fmt.Sprintf(
-			"data %s = { w %d, w 0, %s %d, %s %s, %s %s }\n",
+			"data %s = align %d { w %d, w 0, %s %d, %s %s, %s %s }\n",
 			globalName,
+			align,
 			kind,
 			ptrType,
 			size,
@@ -40,8 +42,9 @@ func (g *Generator) emitTypeDescData(globalName string, kind uint32, size int, i
 		return
 	}
 	g.data.WriteString(fmt.Sprintf(
-		"data %s = { w %d, %s %d, %s %s, %s %s }\n",
+		"data %s = align %d { w %d, %s %d, %s %s, %s %s }\n",
 		globalName,
+		align,
 		kind,
 		ptrType,
 		size,

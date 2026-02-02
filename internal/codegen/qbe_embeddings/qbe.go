@@ -83,6 +83,11 @@ func (g *Generator) emitVTables() {
 		return
 	}
 
+	align := g.layout.PointerSize
+	if align < 1 {
+		align = 1
+	}
+
 	for _, table := range g.mirMod.VTables {
 		if table.Name == "" || len(table.Methods) == 0 {
 			continue
@@ -92,13 +97,18 @@ func (g *Generator) emitVTables() {
 			name := g.qbeFuncName(method, g.moduleImportPath())
 			entries = append(entries, fmt.Sprintf("l $%s", name))
 		}
-		g.data.WriteString(fmt.Sprintf("data $%s = { %s }\n", table.Name, strings.Join(entries, ", ")))
+		g.data.WriteString(fmt.Sprintf("data $%s = align %d { %s }\n", table.Name, align, strings.Join(entries, ", ")))
 	}
 }
 
 func (g *Generator) emitTypeIDs() {
 	if g == nil || g.mirMod == nil || len(g.mirMod.TypeIDs) == 0 {
 		return
+	}
+
+	align := g.layout.AlignOf(types.TypeU8)
+	if align < 1 {
+		align = 1
 	}
 
 	// Emit each type ID as a null-terminated string constant
@@ -109,7 +119,7 @@ func (g *Generator) emitTypeIDs() {
 			bytes = append(bytes, fmt.Sprintf("b %d", ch))
 		}
 		bytes = append(bytes, "b 0") // null terminator
-		g.data.WriteString(fmt.Sprintf("data $%s = { %s }\n", globalName, strings.Join(bytes, ", ")))
+		g.data.WriteString(fmt.Sprintf("data $%s = align %d { %s }\n", globalName, align, strings.Join(bytes, ", ")))
 	}
 }
 
