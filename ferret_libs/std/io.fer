@@ -46,10 +46,9 @@ fn Printf(fmt: str, args: ...Printable) {
             Print(args[aCount]);
             count += 2;
             aCount++;
+            continue;
         }
         Print(chars[count]);
         count++;
     }
 }
-
-Printf("Hello {} {}", 3, 34);

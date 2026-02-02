@@ -87,10 +87,10 @@ func walkBlockConstEval(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 func walkDeclItemsConstEval(ctx *context_v2.CompilerContext, mod *context_v2.Module, items []hir.DeclItem) {
 	for _, item := range items {
 		walkExprConstEval(ctx, mod, item.Value)
-		updateConstValue(item.Name, consteval.EvaluateHIRExpr(ctx, mod, item.Value))
+		updateConstValue(mod, item.Name, consteval.EvaluateHIRExpr(ctx, mod, item.Value))
 
 		// Track array literal lengths for dynamic arrays
-		if item.Name != nil && item.Name.Symbol != nil {
+		if item.Name != nil && item.Name.Symbol != nil && !isModuleScopeVar(mod, item.Name.Symbol) {
 			if lit, ok := item.Value.(*hir.CompositeLit); ok {
 				if arrType := arrayTypeOf(item.Value); arrType != nil && arrType.Length < 0 {
 					// Dynamic array literal - store its length
@@ -104,6 +104,10 @@ func walkDeclItemsConstEval(ctx *context_v2.CompilerContext, mod *context_v2.Mod
 					}
 				}
 			}
+		}
+		if item.Name != nil && item.Name.Symbol != nil && isModuleScopeVar(mod, item.Name.Symbol) {
+			delete(arrayLiteralLengths, item.Name.Symbol)
+			delete(rangeExprLengths, item.Name.Symbol)
 		}
 	}
 }
@@ -127,9 +131,14 @@ func walkAssignConstEval(ctx *context_v2.CompilerContext, mod *context_v2.Module
 		return
 	}
 
-	updateConstValue(ident, consteval.EvaluateHIRExpr(ctx, mod, stmt.Rhs))
+	updateConstValue(mod, ident, consteval.EvaluateHIRExpr(ctx, mod, stmt.Rhs))
 
 	// Track array literal lengths for dynamic arrays
+	if isModuleScopeVar(mod, ident.Symbol) {
+		delete(arrayLiteralLengths, ident.Symbol)
+		delete(rangeExprLengths, ident.Symbol)
+		return
+	}
 	if lit, ok := stmt.Rhs.(*hir.CompositeLit); ok {
 		if arrType := arrayTypeOf(stmt.Rhs); arrType != nil && arrType.Length < 0 {
 			// Dynamic array literal - store its length
@@ -258,8 +267,12 @@ func walkCatchClauseConstEval(ctx *context_v2.CompilerContext, mod *context_v2.M
 	walkExprConstEval(ctx, mod, clause.Fallback)
 }
 
-func updateConstValue(ident *hir.Ident, val *consteval.ConstValue) {
+func updateConstValue(mod *context_v2.Module, ident *hir.Ident, val *consteval.ConstValue) {
 	if ident == nil || ident.Symbol == nil {
+		return
+	}
+	if isModuleScopeVar(mod, ident.Symbol) {
+		ident.Symbol.ConstValue = nil
 		return
 	}
 	if val != nil && val.IsConstant() {
@@ -276,6 +289,13 @@ func clearConstTracking(ident *hir.Ident) {
 	ident.Symbol.ConstValue = nil
 	delete(arrayLiteralLengths, ident.Symbol)
 	delete(rangeExprLengths, ident.Symbol)
+}
+
+func isModuleScopeVar(mod *context_v2.Module, sym *symbols.Symbol) bool {
+	if mod == nil || mod.ModuleScope == nil || sym == nil || sym.Kind != symbols.SymbolVariable {
+		return false
+	}
+	return sym.DeclaredScope == mod.ModuleScope
 }
 
 func identFromExpr(expr hir.Expr) *hir.Ident {

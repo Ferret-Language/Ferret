@@ -21,6 +21,16 @@ func FormatModule(mod *Module) string {
 		b.WriteString("module <unknown>\n")
 	}
 
+	if len(mod.Globals) > 0 {
+		b.WriteString("\nglobals\n")
+		for _, glob := range mod.Globals {
+			if glob.Name == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "  %s: %s\n", glob.Name, formatType(glob.Type))
+		}
+	}
+
 	for _, fn := range mod.Functions {
 		b.WriteString("\n")
 		writeFunction(&b, fn)

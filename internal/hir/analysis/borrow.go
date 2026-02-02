@@ -473,7 +473,10 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 	case *hir.ForkExpr:
 		b.checkExpr(e.Call)
 	case *hir.ScopeResolutionExpr:
-		b.checkExpr(e.X)
+		place, via := b.borrowAccessPlace(e)
+		if place.base != nil {
+			b.checkAccess(place, accessRead, e.Loc(), via)
+		}
 	case *hir.ParenExpr:
 		b.checkExpr(e.X)
 	case *hir.KeyValueExpr:
@@ -749,6 +752,11 @@ func (b *borrowChecker) borrowAccessPlace(expr hir.Expr) (borrowPlace, *symbols.
 		return place.withIndex(), via
 	case *hir.ParenExpr:
 		return b.borrowAccessPlace(e.X)
+	case *hir.ScopeResolutionExpr:
+		if sym := b.resolveScopeResolutionSymbol(e); sym != nil {
+			return borrowPlace{base: sym}, nil
+		}
+		return borrowPlace{}, nil
 	default:
 		return borrowPlace{}, nil
 	}
@@ -811,9 +819,46 @@ func (b *borrowChecker) checkAddressableExpr(expr hir.Expr, base *symbols.Symbol
 		b.checkExpr(e.Index)
 	case *hir.ParenExpr:
 		b.checkAddressableExpr(e.X, base)
+	case *hir.ScopeResolutionExpr:
+		if sym := b.resolveScopeResolutionSymbol(e); sym != nil && sym != base {
+			b.checkAccess(borrowPlace{base: sym}, accessRead, e.Loc(), nil)
+		}
 	default:
 		b.checkExpr(expr)
 	}
+}
+
+func (b *borrowChecker) resolveScopeResolutionSymbol(expr *hir.ScopeResolutionExpr) *symbols.Symbol {
+	if b == nil || b.ctx == nil || b.mod == nil || expr == nil || expr.Selector == nil {
+		return nil
+	}
+	ident, ok := expr.X.(*hir.Ident)
+	if !ok || ident == nil {
+		return nil
+	}
+	leftName := ident.Name
+	rightName := expr.Selector.Name
+	if leftName == "" || rightName == "" {
+		return nil
+	}
+	if b.mod.CurrentScope != nil {
+		if typeSym, ok := b.mod.CurrentScope.Lookup(leftName); ok && typeSym.Kind == symbols.SymbolType {
+			return nil
+		}
+	}
+	importPath, ok := b.mod.ImportAliasMap[leftName]
+	if !ok {
+		return nil
+	}
+	importedMod, exists := b.ctx.GetModule(importPath)
+	if !exists {
+		return nil
+	}
+	sym, ok := importedMod.ModuleScope.GetSymbol(rightName)
+	if !ok {
+		return nil
+	}
+	return sym
 }
 
 type accessKind int

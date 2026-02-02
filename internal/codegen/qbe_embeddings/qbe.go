@@ -59,6 +59,7 @@ func (g *Generator) Emit() (string, error) {
 	}
 
 	g.emitVTables()
+	g.emitGlobals()
 	g.emitTypeIDs()
 	g.emitTypeDescriptors()
 	for _, fn := range g.mirMod.Functions {
@@ -93,6 +94,26 @@ func (g *Generator) emitVTables() {
 			entries = append(entries, fmt.Sprintf("l $%s", name))
 		}
 		g.data.WriteString(fmt.Sprintf("data $%s = { %s }\n", table.Name, strings.Join(entries, ", ")))
+	}
+}
+
+func (g *Generator) emitGlobals() {
+	if g == nil || g.mirMod == nil || len(g.mirMod.Globals) == 0 {
+		return
+	}
+	for _, glob := range g.mirMod.Globals {
+		if glob.Name == "" || glob.Type == nil {
+			continue
+		}
+		size := g.layout.SizeOf(glob.Type)
+		if size <= 0 {
+			size = 1
+		}
+		bytes := make([]string, 0, size)
+		for i := 0; i < size; i++ {
+			bytes = append(bytes, "b 0")
+		}
+		g.data.WriteString(fmt.Sprintf("export data $%s = { %s }\n", glob.Name, strings.Join(bytes, ", ")))
 	}
 }
 

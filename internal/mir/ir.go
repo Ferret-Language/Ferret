@@ -20,10 +20,18 @@ const (
 type Module struct {
 	ImportPath      string
 	Functions       []*Function
+	Globals         []Global
 	VTables         []VTable
 	TypeIDs         map[string]string        // Maps global name to type ID string
 	TypeDescriptors map[string]types.SemType // Maps global name to type for universal hashing
 	Location        source.Location
+}
+
+// Global describes a module-level storage slot emitted in data.
+type Global struct {
+	Name     string
+	Type     types.SemType
+	Location source.Location
 }
 
 // VTable describes an interface vtable instance for codegen.

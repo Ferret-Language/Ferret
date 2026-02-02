@@ -2780,6 +2780,17 @@ func isAssignableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
 		return true
+	case *ast.ScopeResolutionExpr:
+		sym, ok := resolveScopeResolutionSymbol(ctx, mod, e)
+		if !ok || sym == nil {
+			return false
+		}
+		switch sym.Kind {
+		case symbols.SymbolVariable, symbols.SymbolConstant:
+			return true
+		default:
+			return false
+		}
 	case *ast.DerefExpr:
 		// Dereferenced references are assignable (*ref = value)
 		return true
@@ -2817,6 +2828,17 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		// Mutable reference (&mut) is checked separately in checkUnaryExpr
 		// So const variables are borrowable here
 		return true
+	case *ast.ScopeResolutionExpr:
+		sym, ok := resolveScopeResolutionSymbol(ctx, mod, e)
+		if !ok || sym == nil {
+			return false
+		}
+		switch sym.Kind {
+		case symbols.SymbolVariable, symbols.SymbolConstant:
+			return true
+		default:
+			return false
+		}
 	case *ast.ParenExpr:
 		return isBorrowableTarget(ctx, mod, e.X)
 	case *ast.SelectorExpr:
@@ -2858,8 +2880,20 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 		return
 	}
 	if expr.Op.Kind == tokens.MUT_TOKEN {
-		if ident, ok := expr.X.(*ast.IdentifierExpr); ok {
-			if sym, found := mod.CurrentScope.Lookup(ident.Name); found {
+		switch target := expr.X.(type) {
+		case *ast.IdentifierExpr:
+			if sym, found := mod.CurrentScope.Lookup(target.Name); found {
+				if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError("cannot take mutable reference of a read-only value").
+							WithCode(diagnostics.ErrInvalidOperation).
+							WithPrimaryLabel(expr.X.Loc(), "value is not mutable"),
+					)
+					return
+				}
+			}
+		case *ast.ScopeResolutionExpr:
+			if sym, ok := resolveScopeResolutionSymbol(ctx, mod, target); ok && sym != nil {
 				if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
 					ctx.Diagnostics.Add(
 						diagnostics.NewError("cannot take mutable reference of a read-only value").
@@ -2881,6 +2915,37 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 	}
 }
 
+func resolveScopeResolutionSymbol(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.ScopeResolutionExpr) (*symbols.Symbol, bool) {
+	if ctx == nil || mod == nil || expr == nil || expr.Selector == nil {
+		return nil, false
+	}
+	ident, ok := expr.X.(*ast.IdentifierExpr)
+	if !ok || ident == nil {
+		return nil, false
+	}
+	leftName := ident.Name
+	rightName := expr.Selector.Name
+	if leftName == "" || rightName == "" {
+		return nil, false
+	}
+	if typeSym, ok := mod.CurrentScope.Lookup(leftName); ok && typeSym.Kind == symbols.SymbolType {
+		return nil, false
+	}
+	importPath, ok := mod.ImportAliasMap[leftName]
+	if !ok {
+		return nil, false
+	}
+	importedMod, exists := ctx.GetModule(importPath)
+	if !exists {
+		return nil, false
+	}
+	sym, ok := importedMod.ModuleScope.GetSymbol(rightName)
+	if !ok {
+		return nil, false
+	}
+	return sym, true
+}
+
 func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.UnaryExpr, operandType types.SemType) {
 	if ctx == nil || mod == nil || expr == nil {
 		return
@@ -2888,8 +2953,27 @@ func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	if expr.Op.Kind != tokens.AT_TOKEN {
 		return
 	}
-	ident, ok := expr.X.(*ast.IdentifierExpr)
-	if !ok {
+	var (
+		sym           *symbols.Symbol
+		found         bool
+		symName       string
+		isModuleScope bool
+	)
+	switch target := expr.X.(type) {
+	case *ast.IdentifierExpr:
+		symName = target.Name
+		sym, found = mod.CurrentScope.Lookup(target.Name)
+		if !found || sym == nil {
+			return
+		}
+	case *ast.ScopeResolutionExpr:
+		sym, found = resolveScopeResolutionSymbol(ctx, mod, target)
+		if !found || sym == nil {
+			return
+		}
+		symName = sym.Name
+		isModuleScope = true
+	default:
 		ctx.Diagnostics.Add(
 			diagnostics.NewError("cannot move non-lvalue").
 				WithCode(diagnostics.ErrInvalidOperation).
@@ -2898,13 +2982,9 @@ func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		)
 		return
 	}
-	sym, found := mod.CurrentScope.Lookup(ident.Name)
-	if !found || sym == nil {
-		return
-	}
 	if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
 		ctx.Diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("cannot move from %s '%s'", sym.Kind.String(), ident.Name)).
+			diagnostics.NewError(fmt.Sprintf("cannot move from %s '%s'", sym.Kind.String(), symName)).
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(expr.X.Loc(), "value is read-only"),
 		)
@@ -2912,16 +2992,16 @@ func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	}
 	if sym.Kind != symbols.SymbolVariable && sym.Kind != symbols.SymbolParameter && sym.Kind != symbols.SymbolReceiver {
 		ctx.Diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("cannot move from %s '%s'", sym.Kind.String(), ident.Name)).
+			diagnostics.NewError(fmt.Sprintf("cannot move from %s '%s'", sym.Kind.String(), symName)).
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(expr.X.Loc(), "not a movable binding").
 				WithHelp("move only local variables or parameters"),
 		)
 		return
 	}
-	if mod.ModuleScope != nil && sym.DeclaredScope == mod.ModuleScope {
+	if isModuleScope || (mod.ModuleScope != nil && sym.DeclaredScope == mod.ModuleScope) {
 		ctx.Diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("cannot move from module-level binding '%s'", ident.Name)).
+			diagnostics.NewError(fmt.Sprintf("cannot move from module-level binding '%s'", symName)).
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(expr.X.Loc(), "module scope values cannot be moved"),
 		)
