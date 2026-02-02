@@ -113,7 +113,7 @@ func (g *Generator) emitGlobals() {
 		for i := 0; i < size; i++ {
 			bytes = append(bytes, "b 0")
 		}
-		g.data.WriteString(fmt.Sprintf("data $%s = { %s }\n", glob.Name, strings.Join(bytes, ", ")))
+		g.data.WriteString(fmt.Sprintf("export data $%s = { %s }\n", glob.Name, strings.Join(bytes, ", ")))
 	}
 }
 

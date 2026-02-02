@@ -48,13 +48,23 @@ func checkMutability(ctx *context_v2.CompilerContext, mod *context_v2.Module, ta
 	}
 
 	// Check for constant or read-only at the root
-	if ident, ok := target.(*ast.IdentifierExpr); ok {
-		if sym, found := mod.CurrentScope.Lookup(ident.Name); found {
+	switch t := target.(type) {
+	case *ast.IdentifierExpr:
+		if sym, found := mod.CurrentScope.Lookup(t.Name); found {
 			if sym.Kind == symbols.SymbolConstant {
-				return MutabilityInfo{Result: MutabilityConstant, Symbol: sym, Location: ident.Loc()}
+				return MutabilityInfo{Result: MutabilityConstant, Symbol: sym, Location: t.Loc()}
 			}
 			if sym.IsReadonly {
-				return MutabilityInfo{Result: MutabilityReadOnly, Symbol: sym, Location: ident.Loc()}
+				return MutabilityInfo{Result: MutabilityReadOnly, Symbol: sym, Location: t.Loc()}
+			}
+		}
+	case *ast.ScopeResolutionExpr:
+		if sym, ok := resolveScopeResolutionSymbol(ctx, mod, t); ok && sym != nil {
+			if sym.Kind == symbols.SymbolConstant {
+				return MutabilityInfo{Result: MutabilityConstant, Symbol: sym, Location: t.Loc()}
+			}
+			if sym.IsReadonly {
+				return MutabilityInfo{Result: MutabilityReadOnly, Symbol: sym, Location: t.Loc()}
 			}
 		}
 	}
@@ -199,6 +209,13 @@ func findImmutableRefInChain(ctx *context_v2.CompilerContext, mod *context_v2.Mo
 	case *ast.IdentifierExpr:
 		// Check if this identifier is an immutable reference
 		if sym, found := mod.CurrentScope.Lookup(e.Name); found {
+			if refType, ok := sym.Type.(*types.ReferenceType); ok && !refType.Mutable {
+				return sym, e.Loc()
+			}
+		}
+		return nil, nil
+	case *ast.ScopeResolutionExpr:
+		if sym, ok := resolveScopeResolutionSymbol(ctx, mod, e); ok && sym != nil {
 			if refType, ok := sym.Type.(*types.ReferenceType); ok && !refType.Mutable {
 				return sym, e.Loc()
 			}

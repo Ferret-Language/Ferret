@@ -1,3 +1,7 @@
 
 let Name := "Fuad";
 let Value := 10;
+
+fn Update() {
+    Value++;
+}

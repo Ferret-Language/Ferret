@@ -23,5 +23,11 @@ fn main() {
     //module::Value = 12;
     incr();
     io::Println("Main", module::Name, module::Value, a, b);
-    print(&module::Value);
+    io::Println("Before call:", module::Value);
+    module::Update();
+    io::Println("After call:", module::Value);
+    module::Value++;
+    io::Println("After manual update:", module::Value);
+
+    let newValue := @module::Value;
 }
