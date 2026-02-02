@@ -1,11 +1,12 @@
 import "std/io";
 
 fn modify(a: &mut i32) {
-    a++;
+    *a++;
 }
 
 fn main() {
     let a := 12;
+    let arr := [1,2,3,4,5];
     modify(&mut a);
-    io::Println(a);
+    io::Println(a, len(&arr));
 }

@@ -70,35 +70,10 @@ func (p *Pipeline) parseModule(importPath string, requestedLocation *source.Loca
 
 		filePath, modType, err = p.ctx.ImportPathToFilePath(importPath)
 		if err != nil {
-			if p.ctx.HasModule(importPath) {
-				mod, _ := p.ctx.GetModule(importPath)
-				if mod.Type == context_v2.ModuleBuiltin && mod.AST == nil {
-					// Builtin module with no file - advance through phases like native modules
-					p.ctx.SetModulePhase(importPath, phase.PhaseLexed)
-					if !p.ctx.AdvanceModulePhase(importPath, phase.PhaseParsed) {
-						p.ctx.SetModulePhase(importPath, phase.PhaseParsed)
-					}
-					return
-				}
-			}
 			p.ctx.Diagnostics.Add(
 				diagnostics.NewError(err.Error()).
 					WithPrimaryLabel(requestedLocation, ""),
 			)
-			return
-		}
-
-		if strings.HasPrefix(filePath, "native://") {
-			module.Mu.Lock()
-			if module.AST == nil {
-				module.AST = &ast.Module{Nodes: []ast.Node{}}
-			}
-			module.Mu.Unlock()
-
-			p.ctx.SetModulePhase(importPath, phase.PhaseLexed)
-			if !p.ctx.AdvanceModulePhase(importPath, phase.PhaseParsed) {
-				p.ctx.SetModulePhase(importPath, phase.PhaseParsed)
-			}
 			return
 		}
 

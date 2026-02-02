@@ -1,24 +1,29 @@
 import "std/http";
 import "std/io";
 
+let app := http::New();
+
+app.Get("/", fn(req: &http::Request, res: &mut http::Response) {
+    res.Send("Hello from Ferret HTTP!");
+});
+
+app.Get("/hello/:name", fn(req: &http::Request, res: &mut http::Response) {
+    let name := req.Param("name") ?? "world";
+    res.Send("Hello " + name + "!");
+});
+
+app.Post("/echo", fn(req: &http::Request, res: &mut http::Response) {
+    res.Send(req.Body);
+});
+
+let a := 10;
+
 fn main() {
-    let app := http::New();
 
-    app.Get("/", fn(req: &http::Request, res: &mut http::Response) {
-        res.Send("Hello from Ferret HTTP!");
-    });
-
-    app.Get("/hello/:name", fn(req: &http::Request, res: &mut http::Response) {
-        let name := req.Param("name") ?? "world";
-        res.Send("Hello " + name + "!");
-    });
-
-    app.Post("/echo", fn(req: &http::Request, res: &mut http::Response) {
-        res.Send(req.Body);
-    });
-
-    app.Listen(3000) catch err {
-        io::Println("HTTP error:", err);
-        return;
-    };
+    // app.Listen(3000) catch err {
+    //     io::Println("HTTP error:", err);
+    //     return;
+    // };
+    // 
+    io::Println(a);
 }

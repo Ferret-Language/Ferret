@@ -871,7 +871,38 @@ func collectTypeDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, de
 // collectImport handles import statements
 func collectImport(ctx *context_v2.CompilerContext, mod *context_v2.Module, stmt *ast.ImportStmt) {
 	// BasicLit has a Value field containing the string value
-	path := stmt.Path.Value
+	rawPath := stmt.Path.Value
+	path := fs.NormalizePath(strings.Trim(rawPath, "\""))
+	if path == "" {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("import path is empty").
+				WithCode(diagnostics.ErrInvalidImportPath).
+				WithPrimaryLabel(stmt.Loc(), "empty import path"),
+		)
+		return
+	}
+
+	if path == context_v2.GlobalModuleImport {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot import global module").
+				WithCode(diagnostics.ErrInvalidImportPath).
+				WithPrimaryLabel(stmt.Loc(), "global is implicitly available").
+				WithHelp("remove this import; the global module is always loaded"),
+		)
+		return
+	}
+
+	if imp, exists := mod.Imports[path]; exists {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("duplicate import '%s'", path)).
+				WithCode(diagnostics.ErrRedeclaredSymbol).
+				WithPrimaryLabel(stmt.Loc(), "duplicate import here").
+				WithSecondaryLabel(imp.Location, "previous import here").
+				WithHelp("remove the duplicate import"),
+		)
+		return
+	}
+
 	alias := ""
 	if stmt.Alias != nil && stmt.Alias.Name != "" {
 		alias = stmt.Alias.Name
@@ -880,15 +911,12 @@ func collectImport(ctx *context_v2.CompilerContext, mod *context_v2.Module, stmt
 	}
 
 	// Get or create import entry
-	imp, exists := mod.Imports[path]
-	if !exists {
-		imp = &context_v2.Import{
-			Path:     path,
-			Alias:    alias,
-			Location: stmt.Loc(),
-		}
-		mod.Imports[path] = imp
+	imp := &context_v2.Import{
+		Path:     path,
+		Alias:    alias,
+		Location: stmt.Loc(),
 	}
+	mod.Imports[path] = imp
 
 	if oldImpPath, exists := mod.ImportAliasMap[alias]; exists {
 		oldImp := mod.Imports[oldImpPath]

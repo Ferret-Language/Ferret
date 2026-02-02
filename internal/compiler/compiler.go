@@ -101,17 +101,16 @@ func Compile(opts *Options) Result {
 	}
 
 	config := &context_v2.Config{
-		ProjectName:        projectName,
-		ProjectRoot:        projectRoot,
-		Extension:          ".fer",
-		BuiltinModulesPath: libsPath,
-		RuntimePath:        libsPath, // Runtime library path relative to executable
-		OutputPath:         outputPath,
-		SaveAST:            opts.SaveAST,
-		KeepGenFiles:       opts.KeepGenFiles,
-		TypeCheckOnly:      opts.TypecheckOnly,
-		CodegenBackend:     opts.CodegenBackend,
-		PointerSize:        0,
+		ProjectName:    projectName,
+		ProjectRoot:    projectRoot,
+		Extension:      ".fer",
+		RuntimePath:    libsPath, // Runtime/stdlib library path relative to executable
+		OutputPath:     outputPath,
+		SaveAST:        opts.SaveAST,
+		KeepGenFiles:   opts.KeepGenFiles,
+		TypeCheckOnly:  opts.TypecheckOnly,
+		CodegenBackend: opts.CodegenBackend,
+		PointerSize:    0,
 	}
 	if opts.CodegenBackend == "wasm" {
 		config.PointerSize = 4
