@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <errno.h>
 #ifndef _WIN32
 #include <strings.h>
 #endif
@@ -33,6 +34,9 @@ typedef int ferret_socket_t;
 #include "../core/map.h"
 #include "../core/optional.h"
 #include "../core/type_system.h"
+
+#define FERRET_HTTP_MAX_BODY (10 * 1024 * 1024)
+#define FERRET_HTTP_MAX_STATIC_FILE (10 * 1024 * 1024)
 
 typedef struct {
     int64_t handle;
@@ -243,6 +247,7 @@ static const char* ferret_http_status_text(int status) {
         case 403: return "Forbidden";
         case 404: return "Not Found";
         case 405: return "Method Not Allowed";
+        case 413: return "Payload Too Large";
         case 500: return "Internal Server Error";
         default: return "OK";
     }
@@ -308,6 +313,29 @@ static bool ferret_http_send_response(ferret_http_response_t* res, const char* b
         }
     }
     res->sent = true;
+    return true;
+}
+
+static bool ferret_http_parse_content_length(const char* value, size_t* out_len) {
+    if (!value || !out_len) {
+        return false;
+    }
+    errno = 0;
+    char* end = NULL;
+    long long parsed = strtoll(value, &end, 10);
+    if (errno != 0 || end == value) {
+        return false;
+    }
+    while (*end == ' ' || *end == '\t') {
+        end++;
+    }
+    if (*end != '\0') {
+        return false;
+    }
+    if (parsed < 0 || (unsigned long long)parsed > FERRET_HTTP_MAX_BODY) {
+        return false;
+    }
+    *out_len = (size_t)parsed;
     return true;
 }
 
@@ -466,6 +494,7 @@ static void ferret_http_run_route(ferret_http_app_t* app, ferret_std_http_Reques
         }
         snprintf(full, path_len, "%s/%s", st->dir, rel);
         FILE* f = fopen(full, "rb");
+        free(full);
         if (!f) {
             continue;
         }
@@ -476,18 +505,37 @@ static void ferret_http_run_route(ferret_http_app_t* app, ferret_std_http_Reques
             fclose(f);
             continue;
         }
+        if ((size_t)fsize > FERRET_HTTP_MAX_STATIC_FILE) {
+            fclose(f);
+            ferret_http_response_t* resp = (ferret_http_response_t*)(intptr_t)res->handle;
+            if (resp) {
+                resp->status = 413;
+                ferret_http_send_response(resp, "Payload Too Large", 17);
+            }
+            return;
+        }
         char* buf = (char*)ferret_alloc((size_t)fsize);
         if (!buf) {
             fclose(f);
             continue;
         }
-        fread(buf, 1, (size_t)fsize, f);
+        size_t total_read = fread(buf, 1, (size_t)fsize, f);
+        int read_error = ferror(f);
         fclose(f);
+        if (read_error) {
+            free(buf);
+            continue;
+        }
+        if (total_read == 0) {
+            free(buf);
+            continue;
+        }
         ferret_http_response_t* resp = (ferret_http_response_t*)(intptr_t)res->handle;
         if (resp) {
             resp->status = 200;
-            ferret_http_send_response(resp, buf, (size_t)fsize);
+            ferret_http_send_response(resp, buf, total_read);
         }
+        free(buf);
         return;
     }
 
@@ -535,10 +583,12 @@ static bool ferret_http_parse_request(ferret_socket_t fd, ferret_std_http_Reques
         if (len + 1024 > cap) {
             size_t next_cap = cap * 2;
             if (next_cap > max_header) {
+                free(buf);
                 return false;
             }
             char* next = (char*)realloc(buf, next_cap);
             if (!next) {
+                free(buf);
                 return false;
             }
             buf = next;
@@ -546,6 +596,7 @@ static bool ferret_http_parse_request(ferret_socket_t fd, ferret_std_http_Reques
         }
         int r = recv(fd, buf + len, (int)(cap - len), 0);
         if (r <= 0) {
+            free(buf);
             return false;
         }
         len += (size_t)r;
@@ -558,6 +609,7 @@ static bool ferret_http_parse_request(ferret_socket_t fd, ferret_std_http_Reques
             break;
         }
         if (len > max_header) {
+            free(buf);
             return false;
         }
     }
@@ -566,12 +618,14 @@ static bool ferret_http_parse_request(ferret_socket_t fd, ferret_std_http_Reques
     char* line = buf;
     char* next_line = strstr(line, "\r\n");
     if (!next_line) {
+        free(buf);
         return false;
     }
     *next_line = '\0';
     char* method = strtok(line, " ");
     char* url = strtok(NULL, " ");
     if (!method || !url) {
+        free(buf);
         return false;
     }
     out_req->Method = ferret_http_strdup(method);
@@ -591,7 +645,7 @@ static bool ferret_http_parse_request(ferret_socket_t fd, ferret_std_http_Reques
 
     // Headers
     line = next_line + 2;
-    int content_length = 0;
+    size_t content_length = 0;
     while (line && *line) {
         next_line = strstr(line, "\r\n");
         if (!next_line) {
@@ -607,7 +661,10 @@ static bool ferret_http_parse_request(ferret_socket_t fd, ferret_std_http_Reques
             char* key_copy = ferret_http_strdup(key);
             ferret_http_lowercase(key_copy);
             if (strcasecmp(key_copy, "content-length") == 0) {
-                content_length = atoi(value);
+                if (!ferret_http_parse_content_length(value, &content_length)) {
+                    free(buf);
+                    return false;
+                }
             }
             ferret_http_map_set(out_req->Headers, key_copy, value);
         }
@@ -618,19 +675,25 @@ static bool ferret_http_parse_request(ferret_socket_t fd, ferret_std_http_Reques
     if (qmark) {
         char* query = qmark + 1;
         char* qcopy = ferret_http_strdup(query);
-        char* tok = strtok(qcopy, "&");
-        while (tok) {
-            char* eq = strchr(tok, '=');
-            if (eq) {
-                *eq = '\0';
-                char* k = ferret_http_url_decode(tok);
-                char* v = ferret_http_url_decode(eq + 1);
-                ferret_http_map_set(out_req->Query, k ? k : "", v ? v : "");
-            } else {
-                char* k = ferret_http_url_decode(tok);
-                ferret_http_map_set(out_req->Query, k ? k : "", "");
+        if (qcopy) {
+            char* tok = strtok(qcopy, "&");
+            while (tok) {
+                char* eq = strchr(tok, '=');
+                if (eq) {
+                    *eq = '\0';
+                    char* k = ferret_http_url_decode(tok);
+                    char* v = ferret_http_url_decode(eq + 1);
+                    ferret_http_map_set(out_req->Query, k ? k : "", v ? v : "");
+                    if (k) free(k);
+                    if (v) free(v);
+                } else {
+                    char* k = ferret_http_url_decode(tok);
+                    ferret_http_map_set(out_req->Query, k ? k : "", "");
+                    if (k) free(k);
+                }
+                tok = strtok(NULL, "&");
             }
-            tok = strtok(NULL, "&");
+            free(qcopy);
         }
     }
 
@@ -638,16 +701,17 @@ static bool ferret_http_parse_request(ferret_socket_t fd, ferret_std_http_Reques
     size_t body_len = 0;
     char* body = NULL;
     if (content_length > 0) {
-        body = (char*)ferret_alloc((size_t)content_length + 1);
+        body = (char*)ferret_alloc(content_length + 1);
         if (!body) {
+            free(buf);
             return false;
         }
         size_t already = len - header_end;
-        size_t to_copy = already < (size_t)content_length ? already : (size_t)content_length;
+        size_t to_copy = already < content_length ? already : content_length;
         memcpy(body, buf + header_end, to_copy);
         size_t offset = to_copy;
-        while (offset < (size_t)content_length) {
-            int r = recv(fd, body + offset, (int)((size_t)content_length - offset), 0);
+        while (offset < content_length) {
+            int r = recv(fd, body + offset, (int)(content_length - offset), 0);
             if (r <= 0) {
                 break;
             }
@@ -671,6 +735,7 @@ static bool ferret_http_parse_request(ferret_socket_t fd, ferret_std_http_Reques
         out_req->BodyBytes = ferret_array_new(sizeof(uint8_t), 0, (ferret_type_info_t*)&ferret_type_byte);
     }
 
+    free(buf);
     return true;
 }
 
@@ -905,6 +970,10 @@ void std_http_App_Listen(void* out, ferret_std_http_App* app, uint64_t app_heap,
         ferret_http_result_err_str(out, "invalid app handle");
         return;
     }
+    if (port <= 0 || port > 65535) {
+        ferret_http_result_err_str(out, "invalid port");
+        return;
+    }
 
 #ifdef _WIN32
     static bool wsa_initialized = false;
@@ -968,8 +1037,11 @@ void std_http_App_ListenAddr(void* out, ferret_std_http_App* app, uint64_t app_h
         return;
     }
     char* host = ferret_http_strndup(addr, (size_t)(colon - addr));
-    int port = atoi(colon + 1);
-    if (port <= 0) {
+    errno = 0;
+    char* end = NULL;
+    long port = strtol(colon + 1, &end, 10);
+    if (errno != 0 || end == (colon + 1) || port <= 0 || port > 65535) {
+        if (host) free(host);
         ferret_http_result_err_str(out, "invalid port");
         return;
     }
@@ -999,6 +1071,7 @@ void std_http_App_ListenAddr(void* out, ferret_std_http_App* app, uint64_t app_h
     addr_in.sin_family = AF_INET;
     if (host && strlen(host) > 0) {
         if (inet_pton(AF_INET, host, &addr_in.sin_addr) != 1) {
+            if (host) free(host);
             ferret_close_socket(server_fd);
             ferret_http_result_err_str(out, "invalid host");
             return;
@@ -1006,6 +1079,7 @@ void std_http_App_ListenAddr(void* out, ferret_std_http_App* app, uint64_t app_h
     } else {
         addr_in.sin_addr.s_addr = htonl(INADDR_ANY);
     }
+    if (host) free(host);
     addr_in.sin_port = htons((uint16_t)port);
     if (bind(server_fd, (struct sockaddr*)&addr_in, sizeof(addr_in)) != 0) {
         ferret_close_socket(server_fd);
