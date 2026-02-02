@@ -91,6 +91,10 @@ func (g *Generator) collectGlobals(hirMod *hir.Module) ([]hir.Node, []mir.Global
 				}
 				addGlobal(decl.Name.Symbol, decl.Name.Location)
 			}
+		case *hir.FuncDecl, *hir.MethodDecl, *hir.TypeDecl, *hir.ImportStmt:
+			continue
+		default:
+			initNodes = append(initNodes, item)
 		}
 	}
 
