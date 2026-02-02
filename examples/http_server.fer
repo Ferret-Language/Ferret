@@ -19,6 +19,7 @@ app.Post("/echo", fn(req: &http::Request, res: &mut http::Response) {
 let a := 10;
 
 fn main() {
+    let app := http::Server();
 
     // app.Listen(3000) catch err {
     //     io::Println("HTTP error:", err);
@@ -27,3 +28,5 @@ fn main() {
     // 
     io::Println(a);
 }
+
+

@@ -797,7 +797,7 @@ static void ferret_http_static_add(ferret_http_app_t* app, const char* prefix, c
 // Externs for std/http
 // ============================================
 
-void ferret_std_http_New(ferret_std_http_App* out) {
+void ferret_std_http_Server(ferret_std_http_App* out) {
     if (!out) {
         return;
     }
