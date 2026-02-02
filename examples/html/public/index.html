@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ferret HTML Example</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="hero">
+        <img class="logo" src="/assets/ferret.svg" alt="Ferret" />
+        <div>
+          <p class="eyebrow">Ferret std/http</p>
+          <h1>HTML + CSS + JSON + Text</h1>
+          <p class="subtitle">
+            This page is served by Ferret with external CSS and an SVG asset.
+          </p>
+        </div>
+      </header>
+
+      <section class="card">
+        <h2>API Response</h2>
+        <pre id="api">Loading…</pre>
+      </section>
+
+      <section class="card">
+        <h2>Plain Text Endpoint</h2>
+        <p id="text">Loading…</p>
+      </section>
+    </main>
+
+    <script>
+      async function fetchText(url) {
+        const res = await fetch(url);
+        return res.text();
+      }
+
+      async function run() {
+        try {
+          const [api, text] = await Promise.all([
+            fetchText("/api/data"),
+            fetchText("/plaintext"),
+          ]);
+          document.getElementById("api").textContent = api;
+          document.getElementById("text").textContent = text;
+        } catch (err) {
+          document.getElementById("api").textContent = String(err);
+          document.getElementById("text").textContent = String(err);
+        }
+      }
+
+      run();
+    </script>
+  </body>
+</html>

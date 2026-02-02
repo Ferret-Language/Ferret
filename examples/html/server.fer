@@ -1,0 +1,44 @@
+import "std/http";
+import "std/io";
+import "std/fs";
+
+let app := http::Server();
+
+fn sendFileText(res: &mut http::Response, path: str, contentType: str) {
+    let content := fs::ReadFile(path) catch err {
+        res.Status(500);
+        res.Send("Failed to read file: " + err);
+        return;
+    };
+    res.Header("Content-Type", contentType);
+    res.Send(content);
+}
+
+app.Get("/", fn(req: &http::Request, res: &mut http::Response) {
+    sendFileText(res, "examples/html/public/index.html", "text/html; charset=utf-8");
+});
+
+app.Get("/assets/styles.css", fn(req: &http::Request, res: &mut http::Response) {
+    sendFileText(res, "examples/html/public/styles.css", "text/css; charset=utf-8");
+});
+
+app.Get("/assets/ferret.svg", fn(req: &http::Request, res: &mut http::Response) {
+    sendFileText(res, "examples/html/public/ferret.svg", "image/svg+xml; charset=utf-8");
+});
+
+app.Get("/api/data", fn(req: &http::Request, res: &mut http::Response) {
+    res.Json("[1, 2, 3, 4]");
+});
+
+app.Get("/plaintext", fn(req: &http::Request, res: &mut http::Response) {
+    res.Header("Content-Type", "text/plain; charset=utf-8");
+    res.Send("Hello from Ferret HTTP (plain text)");
+});
+
+fn main() {
+    app.Listen(3000) catch err {
+        io::Println("HTTP error:", err);
+        return;
+    };
+    io::Println("Server running at http://127.0.0.1:3000");
+}
