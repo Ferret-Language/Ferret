@@ -27,7 +27,7 @@ func (g *Generator) emitTypeDescData(globalName string, kind uint32, size int, i
 	ptrType := g.qbePtrType()
 	align := maxInt(4, g.layout.PointerSize)
 	if runtimeabi.QBETypeDescNeedsPad(g.layout.PointerSize) {
-		g.data.WriteString(fmt.Sprintf(
+		fmt.Fprintf(&g.data,
 			"data %s = align %d { w %d, w 0, %s %d, %s %s, %s %s }\n",
 			globalName,
 			align,
@@ -38,10 +38,10 @@ func (g *Generator) emitTypeDescData(globalName string, kind uint32, size int, i
 			info1,
 			ptrType,
 			info2,
-		))
+		)
 		return
 	}
-	g.data.WriteString(fmt.Sprintf(
+	fmt.Fprintf(&g.data,
 		"data %s = align %d { w %d, %s %d, %s %s, %s %s }\n",
 		globalName,
 		align,
@@ -52,7 +52,7 @@ func (g *Generator) emitTypeDescData(globalName string, kind uint32, size int, i
 		info1,
 		ptrType,
 		info2,
-	))
+	)
 }
 
 // emitTypeDescriptor generates a ferret_type_info_t structure for a given type
@@ -86,7 +86,7 @@ func (g *Generator) emitTypeDescriptor(globalName string, typ types.SemType) {
 		g.emitTypeDescriptor(globalName, t.Underlying)
 	default:
 		// Fallback: emit a basic descriptor with pointer size
-		g.data.WriteString(fmt.Sprintf("# Unsupported type %T for %s\n", typ, globalName))
+		fmt.Fprintf(&g.data, "# Unsupported type %T for %s\n", typ, globalName)
 		g.emitPointerTypeDesc(globalName, types.NewReference(types.TypeVoid))
 	}
 }
@@ -169,7 +169,7 @@ func (g *Generator) emitStructFields(arrayName string, typ *types.StructType) {
 		fields = append(fields, fmt.Sprintf("%s %d", ptrType, offset))
 		fields = append(fields, fmt.Sprintf("%s %s", ptrType, fieldTypeDesc))
 	}
-	g.data.WriteString(fmt.Sprintf("data %s = { %s }\n", arrayName, joinStrings(fields, ", ")))
+	fmt.Fprintf(&g.data, "data %s = { %s }\n", arrayName, strings.Join(fields, ", "))
 }
 
 func (g *Generator) emitPointerTypeDesc(globalName string, typ *types.ReferenceType) {
@@ -264,15 +264,4 @@ func typeDescriptorKeyWithSeen(typ types.SemType, seen map[types.SemType]bool) s
 	default:
 		return fmt.Sprintf("unknown_%T", typ)
 	}
-}
-
-func joinStrings(strs []string, sep string) string {
-	if len(strs) == 0 {
-		return ""
-	}
-	result := strs[0]
-	for i := 1; i < len(strs); i++ {
-		result += sep + strs[i]
-	}
-	return result
 }

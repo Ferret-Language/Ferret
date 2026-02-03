@@ -1,3 +1,5 @@
+import "std/io";
+
 // Native HTTP module - implementations live in C.
 // This file provides type declarations and a small ergonomic API surface
 // aimed to feel similar to Express.
@@ -104,3 +106,8 @@ fn (res: &mut Response) Redirect(url: str);
 fn (res: &mut Response) End();
 // @extern
 fn (res: &mut Response) SendFile(path: str) -> str ! bool;
+
+fn Log(req: &Request, res: &mut Response, next: fn() -> void) {
+    io::Printf("[{}]: {}\n", req.Method, req.Path);
+    next();
+}

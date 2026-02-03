@@ -479,6 +479,9 @@ static void ferret_http_run_route(ferret_http_app_t* app, ferret_std_http_Reques
         }
         const char* rel = req->Path + prefix_len;
         if (*rel == '/') rel++;
+        if (*rel == '\0') {
+            continue;
+        }
         if (strstr(rel, "..")) {
             ferret_http_response_t* resp = (ferret_http_response_t*)(intptr_t)res->handle;
             if (resp) {
