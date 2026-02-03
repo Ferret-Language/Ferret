@@ -428,7 +428,7 @@ func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, Mod
 				return filepath.ToSlash(filePath), ModuleLocal, nil
 			}
 		}
-		return "", ModuleUnknown, fmt.Errorf("module not found: %s", importPath)
+		// Fall through to runtime lookup if no local module is found.
 	}
 
 	if ctx.Config.RuntimePath != "" {
