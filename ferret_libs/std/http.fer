@@ -1,4 +1,5 @@
 import "std/io";
+import "std/net" as net;
 
 // Native HTTP module - implementations live in C.
 // This file provides type declarations and a small ergonomic API surface
@@ -40,12 +41,17 @@ fn Server() -> App;
 fn (app: &App) Listen(port: i32) -> str ! bool;
 
 // Start listening on explicit address (e.g. "127.0.0.1:3000").
+// Implemented as a wrapper over std/net.
 // @extern
-fn (app: &App) ListenAddr(addr: str) -> str ! bool;
+fn (app: &App) ListenAddrNative(addr: str) -> str ! bool;
 
 // Gracefully stop the server.
 // @extern
 fn (app: &App) Close();
+
+// Serve on an existing TCP listener.
+// @extern
+fn (app: &App) Serve(listener: net::TcpListener) -> str ! bool;
 
 // ============================================
 // Routing
@@ -110,4 +116,14 @@ fn (res: &mut Response) SendFile(path: str) -> str ! bool;
 fn Log(req: &Request, res: &mut Response, next: fn() -> void) {
     io::Printf("[{}]: {}\n", req.Method, req.Path);
     next();
+}
+
+// Convenience wrapper: listen on address using std/net then serve.
+fn (app: &App) ListenAddr(addr: str) -> str ! bool {
+    let listener := net::ListenTcp(addr) catch err {
+        return err!;
+    };
+    return app.Serve(listener) catch err {
+        return err!;
+    };
 }

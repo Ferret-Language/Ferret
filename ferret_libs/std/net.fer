@@ -1,0 +1,79 @@
+// Native net module - transport primitives (TCP).
+// Implementations live in C.
+
+// IP address wrapper (optional helper type).
+type IpAddr struct {
+    .Value: str
+};
+
+// Socket address wrapper (host + port).
+type SocketAddr struct {
+    .Host: str,
+    .Port: i32
+};
+
+// TCP listener handle.
+type TcpListener struct {
+    .handle: i64,
+    .addr: str
+};
+
+// TCP connection handle.
+type TcpConn struct {
+    .handle: i64,
+    .local: str,
+    .remote: str
+};
+
+// Listen on address (e.g. "0.0.0.0:3000").
+// @extern
+fn ListenTcp(addr: str) -> str ! TcpListener;
+
+// Dial a TCP address (e.g. "127.0.0.1:3000").
+// @extern
+fn DialTcp(addr: str) -> str ! TcpConn;
+
+// Accept a new connection.
+// @extern
+fn Accept(listener: TcpListener) -> str ! TcpConn;
+
+// Close a TCP listener.
+// @extern
+fn CloseListener(listener: TcpListener);
+
+// Close a TCP connection.
+// @extern
+fn CloseConn(conn: TcpConn);
+
+// Read up to maxBytes into a byte slice.
+// @extern
+fn Read(conn: TcpConn, maxBytes: i32) -> str ! []byte;
+
+// Write bytes to the connection. Returns bytes written.
+// @extern
+fn Write(conn: TcpConn, data: []byte) -> str ! i32;
+
+// Write a string to the connection. Returns bytes written.
+// @extern
+fn WriteStr(conn: TcpConn, data: str) -> str ! i32;
+
+// Socket options.
+// @extern
+fn SetReadTimeoutMs(conn: TcpConn, ms: i32) -> str ! bool;
+// @extern
+fn SetWriteTimeoutMs(conn: TcpConn, ms: i32) -> str ! bool;
+// @extern
+fn SetKeepAlive(conn: TcpConn, enabled: bool) -> str ! bool;
+
+// Convenience aliases.
+fn Listen(addr: str) -> str ! TcpListener {
+    return ListenTcp(addr) catch err {
+        return err!;
+    };
+}
+
+fn Dial(addr: str) -> str ! TcpConn {
+    return DialTcp(addr) catch err {
+        return err!;
+    };
+}

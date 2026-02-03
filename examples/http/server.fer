@@ -5,7 +5,7 @@ import "std/fs";
 
 let app := http::Server();
 
-app.Static("/", "examples/html/public");
+app.Static("/", "examples/http/public");
 
 app.Use(http::Log);
 
@@ -20,7 +20,7 @@ fn sendFileText(res: &mut http::Response, path: str, contentType: str) {
 }
 
 app.Get("/", fn(req: &http::Request, res: &mut http::Response) {
-    sendFileText(res, "examples/html/index.html", "text/html; charset=utf-8");
+    sendFileText(res, "examples/http/index.html", "text/html; charset=utf-8");
 });
 
 app.Get("/api/data", fn(req: &http::Request, res: &mut http::Response) {

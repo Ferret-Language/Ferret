@@ -1,0 +1,28 @@
+import "std/io";
+import "std/net" as net;
+
+fn main() {
+    let listener := net::ListenTcp("127.0.0.1:9090") catch err {
+        io::Println("listen error:", err);
+        return;
+    };
+
+    let conn := net::Accept(listener) catch err {
+        io::Println("accept error:", err);
+        return;
+    };
+
+    net::SetReadTimeoutMs(conn, 5000) catch false;
+
+    let data := net::Read(conn, 1024) catch err {
+        io::Println("read error:", err);
+        return;
+    };
+
+    io::Println("received bytes:", len(&data));
+
+    let written := net::WriteStr(conn, "pong") catch 0;
+
+    net::CloseConn(conn);
+    net::CloseListener(listener);
+}
