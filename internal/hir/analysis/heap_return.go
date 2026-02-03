@@ -85,40 +85,79 @@ func collectReturnExprs(node hir.Node, out *[]hir.Expr) {
 
 	switch n := node.(type) {
 	case *hir.Block:
+		if n == nil {
+			return
+		}
 		for _, child := range n.Nodes {
 			collectReturnExprs(child, out)
 		}
 	case *hir.ReturnStmt:
+		if n == nil {
+			return
+		}
 		*out = append(*out, n.Result)
 	case *hir.DeclStmt:
+		if n == nil {
+			return
+		}
 		collectReturnExprs(n.Decl, out)
 	case *hir.VarDecl:
+		if n == nil {
+			return
+		}
 		return
 	case *hir.ConstDecl:
+		if n == nil {
+			return
+		}
 		return
 	case *hir.TypeDecl:
+		if n == nil {
+			return
+		}
 		return
 	case *hir.AssignStmt:
+		if n == nil {
+			return
+		}
 		return
 	case *hir.ExprStmt:
+		if n == nil {
+			return
+		}
 		if call, ok := n.X.(*hir.CallExpr); ok && call.Catch != nil {
 			collectReturnExprs(call.Catch.Handler, out)
 		}
 	case *hir.IfStmt:
+		if n == nil {
+			return
+		}
 		collectReturnExprs(n.Body, out)
 		if n.Else != nil {
 			collectReturnExprs(n.Else, out)
 		}
 	case *hir.ForStmt:
+		if n == nil {
+			return
+		}
 		collectReturnExprs(n.Iterator, out)
 		collectReturnExprs(n.Body, out)
 	case *hir.WhileStmt:
+		if n == nil {
+			return
+		}
 		collectReturnExprs(n.Body, out)
 	case *hir.MatchStmt:
+		if n == nil {
+			return
+		}
 		for _, clause := range n.Cases {
 			collectReturnExprs(clause.Body, out)
 		}
 	case *hir.DeferStmt:
+		if n == nil {
+			return
+		}
 		if n.Catch != nil {
 			collectReturnExprs(n.Catch.Handler, out)
 		}

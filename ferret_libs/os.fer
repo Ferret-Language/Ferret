@@ -1,0 +1,75 @@
+// Native OS module - implementations live in C.
+// This file provides type declarations for type checking.
+
+// ============================================
+// Process & runtime
+// ============================================
+
+// Command-line arguments (argv).
+// @extern
+fn Args() -> []str;
+
+// Exit the process with a code.
+// @extern
+fn Exit(code: i32) -> void;
+
+// Get current process ID.
+// @extern
+fn GetPid() -> i32;
+
+// Sleep for N milliseconds.
+// @extern
+fn Sleep(ms: i32) -> void;
+
+// Execute a shell command and return its exit code.
+// @extern
+fn Exec(cmd: str) -> str ! i32;
+
+// Send a signal to a process.
+// @extern
+fn Kill(pid: i32, signal: i32) -> str ! bool;
+
+// Send a signal to the current process.
+// @extern
+fn Signal(signal: i32) -> str ! bool;
+
+// ============================================
+// Environment
+// ============================================
+
+// Get an environment variable value.
+// @extern
+fn GetEnv(key: str) -> str ! str;
+
+// Set an environment variable value.
+// @extern
+fn SetEnv(key: str, value: str) -> str ! bool;
+
+// Unset an environment variable.
+// @extern
+fn UnsetEnv(key: str) -> str ! bool;
+
+// ============================================
+// System info
+// ============================================
+
+// Hostname of the machine.
+// @extern
+fn Hostname() -> str ! str;
+
+// Number of logical CPUs.
+// @extern
+fn Cpus() -> i32;
+
+// ============================================
+// Common POSIX signal constants (best-effort)
+// ============================================
+
+const SIGINT := 2;
+const SIGILL := 4;
+const SIGABRT := 6;
+const SIGFPE := 8;
+const SIGKILL := 9;
+const SIGSEGV := 11;
+const SIGPIPE := 13;
+const SIGTERM := 15;

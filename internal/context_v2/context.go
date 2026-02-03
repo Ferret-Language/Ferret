@@ -191,8 +191,9 @@ type Config struct {
 	// Codegen backend to use ("none", "qbe")
 	CodegenBackend string
 	// Project information
-	ProjectName string // Name of the project
-	ProjectRoot string // Root directory of the project
+	ProjectName   string // Name of the project
+	ProjectPrefix string // Internal prefix for project import root. It's used so project name do not colide with any module
+	ProjectRoot   string // Root directory of the project
 
 	// Build configuration
 	OutputPath   string // Where to write compiled output
@@ -394,10 +395,23 @@ func (ctx *CompilerContext) FilePathToImportPath(filePath string) string {
 	relPath = strings.TrimSuffix(relPath, ctx.Config.Extension)
 
 	// Build import path: projectname/path/to/module
-	if ctx.Config.ProjectName != "" {
-		return ctx.Config.ProjectName + "/" + relPath
+	if root := ctx.projectImportRoot(); root != "" {
+		return root + "/" + relPath
 	}
 	return relPath
+}
+
+func (ctx *CompilerContext) projectImportRoot() string {
+	if ctx == nil || ctx.Config == nil {
+		return ""
+	}
+	if ctx.Config.ProjectName == "" {
+		return ""
+	}
+	if ctx.Config.ProjectPrefix == "" {
+		return ctx.Config.ProjectName
+	}
+	return ctx.Config.ProjectPrefix + ctx.Config.ProjectName
 }
 
 // ImportPathToFilePath converts an import path to a file path
@@ -408,10 +422,17 @@ func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, Mod
 
 	// Determine module type
 	packageName := fs.FirstPart(importPath)
+	internalProjectName := ctx.projectImportRoot()
 	cleanPath := strings.TrimPrefix(importPath, packageName+"/")
 
+	// If a project prefix is set, map unprefixed project imports (with subpaths) to the internal root.
+	if ctx.Config != nil && ctx.Config.ProjectPrefix != "" && packageName == ctx.Config.ProjectName && strings.Contains(importPath, "/") {
+		importPath = internalProjectName + "/" + cleanPath
+		packageName = internalProjectName
+	}
+
 	// Check if it's a local module
-	if packageName == ctx.Config.ProjectName {
+	if packageName == internalProjectName && internalProjectName != "" {
 		// For local modules, cleanPath is the relative path from project root
 		// But if ProjectName is set, we need to handle the case where the entry file
 		// is in a subdirectory (e.g., test_local/main.fer) and imports are relative to that
@@ -428,7 +449,7 @@ func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, Mod
 				return filepath.ToSlash(filePath), ModuleLocal, nil
 			}
 		}
-		return "", ModuleUnknown, fmt.Errorf("module not found: %s", importPath)
+		// Fall through to runtime lookup if no local module is found.
 	}
 
 	if ctx.Config.RuntimePath != "" {
