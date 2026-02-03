@@ -102,6 +102,7 @@ func Compile(opts *Options) Result {
 
 	config := &context_v2.Config{
 		ProjectName:    projectName,
+		ProjectPrefix:  "__ferret_project_",
 		ProjectRoot:    projectRoot,
 		Extension:      ".fer",
 		RuntimePath:    libsPath, // Runtime/stdlib library path relative to executable
