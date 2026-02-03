@@ -49,6 +49,10 @@ fn CloseConn(conn: TcpConn);
 // @extern
 fn Read(conn: TcpConn, maxBytes: i32) -> str ! []byte;
 
+// Read up to maxBytes and return as string.
+// @extern
+fn ReadStr(conn: TcpConn, maxBytes: i32) -> str ! str;
+
 // Write bytes to the connection. Returns bytes written.
 // @extern
 fn Write(conn: TcpConn, data: []byte) -> str ! i32;

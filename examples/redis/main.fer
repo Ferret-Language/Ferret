@@ -1,0 +1,69 @@
+import "std/io";
+import "db/redis" as redis;
+
+fn main() {
+    io::Println("Redis net test (requires local Redis on 127.0.0.1:6379)");
+
+    let client := redis::Connect("127.0.0.1:6379") catch err {
+        io::Println("dial error:", err);
+        return;
+    };
+
+    let key := "ferret:net:demo";
+
+    let pong := client.Ping() catch "";
+
+    io::Println("PING ->", pong);
+
+    let ok := client.Set(key, "hello") catch err {
+        io::Println("SET error:", err);
+        return;
+    };
+    
+    io::Println("SET ->", ok);
+
+    let val1 := client.Get(key) catch err {
+        io::Println("GET error:", err);
+        return;
+    };
+    
+    if val1 == none {
+        io::Println("GET -> (nil)");
+    } else {
+        io::Println("GET ->", val1);
+    }
+
+    let ok2 := client.Set(key, "world") catch err {
+        io::Println("UPDATE error:", err);
+        return;
+    };
+    io::Println("UPDATE ->", ok2);
+
+    let val2 := client.Get(key) catch err {
+        io::Println("GET error:", err);
+        return;
+    };
+    if val2 == none {
+        io::Println("GET -> (nil)");
+    } else {
+        io::Println("GET ->", val2);
+    }
+
+    // let deleted := client.Del(key) catch err {
+    //     io::Println("DEL error:", err);
+    //     return;
+    // };
+    // io::Println("DEL ->", deleted);
+
+    let val3 := client.Get(key) catch err {
+        io::Println("GET error:", err);
+        return;
+    };
+    if val3 == none {
+        io::Println("GET -> (nil)");
+    } else {
+        io::Println("GET ->", val3);
+    }
+
+    client.Close();
+}

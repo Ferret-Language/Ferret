@@ -1,0 +1,103 @@
+import "std/io";
+import "std/net" as net;
+
+fn dumpBytes(label: str, data: []byte) {
+    io::Print(label, " len=", len(&data), " bytes:");
+    let i: i32 = 0;
+    while i < len(&data) {
+        io::Print(" ", data[i] as i32);
+        i += 1;
+    }
+    io::Println("");
+}
+
+fn findCrlf(data: []byte, start: i32) -> i32 {
+    let i: i32 = start;
+    let n := len(&data);
+    while i + 1 < n {
+        if data[i] == 13 && data[i + 1] == 10 {
+            return i;
+        }
+        i += 1;
+    }
+    return -1;
+}
+
+fn bytesToStr(data: []byte, start: i32, length: i32) -> str {
+    let out := "";
+    let i: i32 = 0;
+    while i < length {
+        out = out + data[start + i];
+        i += 1;
+    }
+    return out;
+}
+
+fn parseRespStr(data: []byte) -> str ! str? {
+    let n := len(&data);
+    if n <= 0 {
+        return "empty response"!;
+    }
+
+    let prefix := data[0];
+    let lineEnd := findCrlf(data, 1);
+    if lineEnd < 0 {
+        return "invalid response"!;
+    }
+
+    let lineStart: i32 = 1;
+    let lineLen: i32 = lineEnd - lineStart;
+
+    if prefix == 43 { // '+'
+        return bytesToStr(data, lineStart, lineLen);
+    }
+    if prefix == 45 { // '-'
+        return bytesToStr(data, lineStart, lineLen)!;
+    }
+    if prefix == 58 { // ':'
+        return "int response not supported"!;
+    }
+    if prefix == 36 { // '$'
+        return "bulk response not supported"!;
+    }
+    return "unknown response"!;
+}
+
+fn main() {
+    io::Println("Redis raw test (PING via net)");
+
+    let conn := net::DialTcp("127.0.0.1:6379") catch err {
+        io::Println("dial error:", err);
+        return;
+    };
+
+    let cmd := "*1\r\n$4\r\nPING\r\n";
+    let sent := net::WriteStr(conn, cmd) catch err {
+        io::Println("write error:", err);
+        return;
+    };
+    io::Println("sent:", sent);
+
+    let data := net::Read(conn, 128) catch err {
+        io::Println("read error:", err);
+        return;
+    };
+    dumpBytes("reply", data);
+
+    let crlf := findCrlf(data, 1);
+    if crlf > 1 {
+        let parsed := bytesToStr(data, 1, crlf - 1);
+        io::Println("parsed:", parsed);
+    }
+
+    let asStr := data as str;
+    io::Println("cast:", asStr);
+
+    let res := parseRespStr(data) catch err {
+        io::Println("parse err:", err);
+        return;
+    };
+    io::Println("parseRespStr:", res ?? "");
+
+    net::CloseConn(conn);
+}

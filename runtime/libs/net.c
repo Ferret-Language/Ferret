@@ -99,8 +99,18 @@ static void ferret_net_result_ok_i32(void* out, int32_t value) {
     *tag_ptr = 1;
 }
 
+static void ferret_net_result_ok_str(void* out, const char* value) {
+    if (!out) {
+        return;
+    }
+    char** val_ptr = (char**)out;
+    uint8_t* tag_ptr = (uint8_t*)((char*)out + 8);
+    *val_ptr = (char*)(value ? value : "");
+    *tag_ptr = 1;
+}
+
 static void ferret_net_result_err_bytes(void* out, const char* msg) {
-    ferret_net_result_err_at(out, msg, 24);
+    ferret_net_result_err_at(out, msg, sizeof(void*));
 }
 
 static void ferret_net_result_ok_bytes(void* out, ferret_array_t* arr) {
@@ -108,7 +118,7 @@ static void ferret_net_result_ok_bytes(void* out, ferret_array_t* arr) {
         return;
     }
     ferret_array_t** arr_ptr = (ferret_array_t**)out;
-    uint8_t* tag_ptr = (uint8_t*)((char*)out + 24);
+    uint8_t* tag_ptr = (uint8_t*)((char*)out + sizeof(void*));
     *arr_ptr = arr;
     *tag_ptr = 1;
 }
@@ -441,6 +451,44 @@ void ferret_std_net_Read(void* out, const ferret_std_net_TcpConn* conn, int32_t 
     }
     ferret_array_t* arr = ferret_array_from_data(buf, r, r, sizeof(uint8_t), (ferret_type_info_t*)&ferret_type_byte);
     ferret_net_result_ok_bytes(out, arr);
+}
+
+// Read bytes as string
+void ferret_std_net_ReadStr(void* out, const ferret_std_net_TcpConn* conn, int32_t maxBytes) {
+    if (!out) {
+        return;
+    }
+    if (!conn || conn->handle == 0) {
+        ferret_net_result_err(out, "invalid connection");
+        return;
+    }
+    if (maxBytes <= 0) {
+        ferret_net_result_err(out, "maxBytes must be > 0");
+        return;
+    }
+    ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
+    uint8_t* buf = (uint8_t*)ferret_alloc((size_t)maxBytes);
+    if (!buf) {
+        ferret_net_result_err(out, "out of memory");
+        return;
+    }
+    int r = (int)recv(sock, (char*)buf, maxBytes, 0);
+    if (r < 0) {
+        ferret_net_result_err(out, "recv failed");
+        return;
+    }
+    if (r == 0) {
+        ferret_net_result_ok_str(out, "");
+        return;
+    }
+    char* str = (char*)ferret_alloc((size_t)r + 1);
+    if (!str) {
+        ferret_net_result_err(out, "out of memory");
+        return;
+    }
+    memcpy(str, buf, (size_t)r);
+    str[r] = '\0';
+    ferret_net_result_ok_str(out, str);
 }
 
 // Write bytes

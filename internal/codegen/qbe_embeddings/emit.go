@@ -1121,13 +1121,6 @@ func (g *Generator) emitOptionalUnwrap(o *mir.OptionalUnwrap) {
 		return
 	}
 	byRef := g.needsByRefType(inner)
-	if !byRef {
-		if _, ok := g.optionalType(inner); ok {
-			byRef = true
-		} else if _, ok := g.resultType(inner); ok {
-			byRef = true
-		}
-	}
 
 	if o.HasDefault {
 		outAlign := g.layout.AlignOf(inner)
@@ -1363,13 +1356,6 @@ func (g *Generator) emitResultUnwrap(r *mir.ResultUnwrap) {
 	}
 
 	byRef := g.needsByRefType(inner)
-	if !byRef {
-		if _, ok := g.optionalType(inner); ok {
-			byRef = true
-		} else if _, ok := g.resultType(inner); ok {
-			byRef = true
-		}
-	}
 
 	if byRef {
 		align := g.layout.AlignOf(inner)
