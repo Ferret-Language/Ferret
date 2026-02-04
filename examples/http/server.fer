@@ -1,4 +1,4 @@
-import "std/http";
+import "net/http";
 import "std/io";
 import "std/fs";
 

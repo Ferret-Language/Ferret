@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include "../core/alloc.h"
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -30,6 +31,10 @@
 #include "../core/alloc.h"
 #include "../core/array.h"
 #include "../core/type_system.h"
+#include "../core/runtime_naming.h"
+
+// Define the module prefix for this file (implements ferret_libs/os.fer)
+#define MODULE_PREFIX ferret_os
 
 static char* ferret_os_strdup(const char* s) {
     if (!s) {
@@ -109,7 +114,7 @@ static ferret_array_t* ferret_os_args_from_proc(void) {
 
     size_t cap = 256;
     size_t len = 0;
-    char* buf = (char*)malloc(cap);
+    char* buf = (char*)ferret_alloc(cap);
     if (!buf) {
         fclose(f);
         return ferret_array_new(sizeof(char*), 0, (ferret_type_info_t*)&ferret_type_str);
@@ -118,7 +123,7 @@ static ferret_array_t* ferret_os_args_from_proc(void) {
     for (;;) {
         if (len + 128 > cap) {
             size_t new_cap = cap * 2;
-            char* next = (char*)realloc(buf, new_cap);
+            char* next = (char*)ferret_realloc(buf, new_cap);
             if (!next) {
                 break;
             }
@@ -135,7 +140,7 @@ static ferret_array_t* ferret_os_args_from_proc(void) {
 
     ferret_array_t* arr = ferret_array_new(sizeof(char*), 0, (ferret_type_info_t*)&ferret_type_str);
     if (!arr) {
-        free(buf);
+        ferret_free(buf);
         return NULL;
     }
 
@@ -169,13 +174,13 @@ static ferret_array_t* ferret_os_args_from_proc(void) {
         ferret_array_append(arr, &arg);
     }
 
-    free(buf);
+    ferret_free(buf);
     return arr;
 }
 #endif
 
 // Command-line arguments
-ferret_array_t* ferret_os_Args(void) {
+ferret_array_t* FERRET_FUNC(Args)(void) {
 #ifdef _WIN32
     int argc = 0;
     LPWSTR* argv_w = CommandLineToArgvW(GetCommandLineW(), &argc);
@@ -228,12 +233,12 @@ ferret_array_t* ferret_os_Args(void) {
 }
 
 // Exit the process
-void ferret_os_Exit(int32_t code) {
+void FERRET_FUNC(Exit)(int32_t code) {
     exit((int)code);
 }
 
 // Get current process ID
-int32_t ferret_os_GetPid(void) {
+int32_t FERRET_FUNC(GetPid)(void) {
 #ifdef _WIN32
     return (int32_t)GetCurrentProcessId();
 #else
@@ -242,7 +247,7 @@ int32_t ferret_os_GetPid(void) {
 }
 
 // Sleep for N milliseconds
-void ferret_os_Sleep(int32_t ms) {
+void FERRET_FUNC(Sleep)(int32_t ms) {
     if (ms <= 0) {
         return;
     }
@@ -257,7 +262,7 @@ void ferret_os_Sleep(int32_t ms) {
 }
 
 // Execute a shell command (str!i32)
-void ferret_os_Exec(void* out, const char* cmd) {
+void FERRET_FUNC(Exec)(void* out, const char* cmd) {
     if (!out) {
         return;
     }
@@ -284,7 +289,7 @@ void ferret_os_Exec(void* out, const char* cmd) {
 }
 
 // Send a signal to a process (str!bool)
-void ferret_os_Kill(void* out, int32_t pid, int32_t signal) {
+void FERRET_FUNC(Kill)(void* out, int32_t pid, int32_t signal) {
     if (!out) {
         return;
     }
@@ -321,7 +326,7 @@ void ferret_os_Kill(void* out, int32_t pid, int32_t signal) {
 }
 
 // Send a signal to the current process (str!bool)
-void ferret_os_Signal(void* out, int32_t signal) {
+void FERRET_FUNC(Signal)(void* out, int32_t signal) {
     if (!out) {
         return;
     }
@@ -333,7 +338,7 @@ void ferret_os_Signal(void* out, int32_t signal) {
 }
 
 // Get environment variable (str!str)
-void ferret_os_GetEnv(void* out, const char* key) {
+void FERRET_FUNC(GetEnv)(void* out, const char* key) {
     if (!out) {
         return;
     }
@@ -370,7 +375,7 @@ void ferret_os_GetEnv(void* out, const char* key) {
 }
 
 // Set environment variable (str!bool)
-void ferret_os_SetEnv(void* out, const char* key, const char* value) {
+void FERRET_FUNC(SetEnv)(void* out, const char* key, const char* value) {
     if (!out) {
         return;
     }
@@ -394,7 +399,7 @@ void ferret_os_SetEnv(void* out, const char* key, const char* value) {
 }
 
 // Unset environment variable (str!bool)
-void ferret_os_UnsetEnv(void* out, const char* key) {
+void FERRET_FUNC(UnsetEnv)(void* out, const char* key) {
     if (!out) {
         return;
     }
@@ -418,7 +423,7 @@ void ferret_os_UnsetEnv(void* out, const char* key) {
 }
 
 // Hostname (str!str)
-void ferret_os_Hostname(void* out) {
+void FERRET_FUNC(Hostname)(void* out) {
     if (!out) {
         return;
     }
@@ -452,7 +457,7 @@ void ferret_os_Hostname(void* out) {
 }
 
 // Number of logical CPUs
-int32_t ferret_os_Cpus(void) {
+int32_t FERRET_FUNC(Cpus)(void) {
 #ifdef _WIN32
     SYSTEM_INFO info;
     GetSystemInfo(&info);

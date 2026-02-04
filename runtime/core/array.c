@@ -5,6 +5,7 @@
 // Include system string.h before array.h to avoid conflict with runtime/string.h
 #include <string.h>
 #include "array.h"
+#include "alloc.h"
 
 #define FERRET_ARRAY_MIN_CAPACITY 4
 #define FERRET_ARRAY_GROWTH_FACTOR 2
@@ -14,14 +15,14 @@ ferret_array_t* ferret_array_new(size_t elem_size, int32_t initial_capacity, fer
         initial_capacity = FERRET_ARRAY_MIN_CAPACITY;
     }
     
-    ferret_array_t* arr = (ferret_array_t*)malloc(sizeof(ferret_array_t));
+    ferret_array_t* arr = (ferret_array_t*)ferret_alloc(sizeof(ferret_array_t));
     if (arr == NULL) {
         return NULL;
     }
     
-    arr->data = malloc(elem_size * initial_capacity);
+    arr->data = ferret_alloc(elem_size * initial_capacity);
     if (arr->data == NULL) {
-        free(arr);
+        ferret_free(arr);
         return NULL;
     }
     
@@ -34,7 +35,7 @@ ferret_array_t* ferret_array_new(size_t elem_size, int32_t initial_capacity, fer
 }
 
 ferret_array_t* ferret_array_from_data(void* data, int32_t length, int32_t capacity, size_t elem_size, ferret_type_info_t* elem_type_info) {
-    ferret_array_t* arr = (ferret_array_t*)malloc(sizeof(ferret_array_t));
+    ferret_array_t* arr = (ferret_array_t*)ferret_alloc(sizeof(ferret_array_t));
     if (arr == NULL) {
         return NULL;
     }
@@ -53,7 +54,7 @@ ferret_array_t* ferret_array_clone(const ferret_array_t* src) {
         return NULL;
     }
 
-    ferret_array_t* arr = (ferret_array_t*)malloc(sizeof(ferret_array_t));
+    ferret_array_t* arr = (ferret_array_t*)ferret_alloc(sizeof(ferret_array_t));
     if (arr == NULL) {
         return NULL;
     }
@@ -61,9 +62,9 @@ ferret_array_t* ferret_array_clone(const ferret_array_t* src) {
     size_t bytes = (size_t)src->elem_size * (size_t)src->capacity;
     void* data = NULL;
     if (bytes > 0) {
-        data = malloc(bytes);
+        data = ferret_alloc(bytes);
         if (data == NULL) {
-            free(arr);
+            ferret_free(arr);
             return NULL;
         }
         if (src->data != NULL && src->length > 0) {
@@ -106,7 +107,7 @@ void ferret_array_assign(ferret_array_t** dst, const ferret_array_t* src) {
 
     if (src->length > out->capacity) {
         int32_t new_capacity = src->length;
-        void* new_data = realloc(out->data, out->elem_size * new_capacity);
+        void* new_data = ferret_realloc(out->data, out->elem_size * new_capacity);
         if (new_data == NULL) {
             return;
         }
@@ -132,7 +133,7 @@ bool ferret_array_append(ferret_array_t* arr, const void* elem) {
             new_capacity = FERRET_ARRAY_MIN_CAPACITY;
         }
         
-        void* new_data = realloc(arr->data, arr->elem_size * new_capacity);
+        void* new_data = ferret_realloc(arr->data, arr->elem_size * new_capacity);
         if (new_data == NULL) {
             return false;
         }

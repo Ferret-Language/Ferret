@@ -2006,7 +2006,7 @@ func (g *Generator) qbeFuncName(name, importPath string) string {
 	base := g.sanitizeName(name)
 	if name != "main" && importPath != "" && importPath != g.entryModulePath() {
 		prefix := g.sanitizeName(ustrings.ToIdentifier(importPath))
-		return prefix + "_" + base
+		return "ferret_" + prefix + "_" + base
 	}
 	return base
 }

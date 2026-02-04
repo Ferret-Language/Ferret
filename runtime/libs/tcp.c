@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "../core/alloc.h"
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
@@ -32,19 +33,25 @@ typedef int ferret_socket_t;
 #include "../core/alloc.h"
 #include "../core/array.h"
 #include "../core/type_system.h"
+#include "../core/runtime_naming.h"
+
+// Define the module prefix for this file (implements ferret_libs/net/tcp.fer)
+#define MODULE_PREFIX ferret_net_tcp
+#define CONN FERRET_TYPE(CONN)
+#define LISTENER FERRET_TYPE(LISTENER)
 
 typedef struct {
     int64_t handle;
     const char* addr;
-} ferret_std_net_TcpListener;
+} LISTENER;
 
 typedef struct {
     int64_t handle;
     const char* local;
     const char* remote;
-} ferret_std_net_TcpConn;
+} CONN;
 
-static char* ferret_net_strdup(const char* s) {
+static char* FERRET_FUNC(strdup)(const char* s) {
     if (!s) {
         return NULL;
     }
@@ -57,7 +64,7 @@ static char* ferret_net_strdup(const char* s) {
     return out;
 }
 
-static void ferret_net_result_err_at(void* out, const char* msg, size_t tag_offset) {
+static void FERRET_FUNC(result_err_at)(void* out, const char* msg, size_t tag_offset) {
     if (!out) {
         return;
     }
@@ -67,19 +74,19 @@ static void ferret_net_result_err_at(void* out, const char* msg, size_t tag_offs
     *tag_ptr = 0;
 }
 
-static void ferret_net_result_err(void* out, const char* msg) {
-    ferret_net_result_err_at(out, msg, 8);
+static void FERRET_FUNC(result_err)(void* out, const char* msg) {
+    FERRET_FUNC(result_err_at)(out, msg, 8);
 }
 
-static void ferret_net_result_err_listener(void* out, const char* msg) {
-    ferret_net_result_err_at(out, msg, 16);
+static void FERRET_FUNC(result_err_listener)(void* out, const char* msg) {
+    FERRET_FUNC(result_err_at)(out, msg, 16);
 }
 
-static void ferret_net_result_err_conn(void* out, const char* msg) {
-    ferret_net_result_err_at(out, msg, 24);
+static void FERRET_FUNC(result_err_conn)(void* out, const char* msg) {
+    FERRET_FUNC(result_err_at)(out, msg, 24);
 }
 
-static void ferret_net_result_ok_bool(void* out, bool value) {
+static void FERRET_FUNC(result_ok_bool)(void* out, bool value) {
     if (!out) {
         return;
     }
@@ -89,7 +96,7 @@ static void ferret_net_result_ok_bool(void* out, bool value) {
     *tag_ptr = 1;
 }
 
-static void ferret_net_result_ok_i32(void* out, int32_t value) {
+static void FERRET_FUNC(result_ok_i32)(void* out, int32_t value) {
     if (!out) {
         return;
     }
@@ -99,7 +106,7 @@ static void ferret_net_result_ok_i32(void* out, int32_t value) {
     *tag_ptr = 1;
 }
 
-static void ferret_net_result_ok_str(void* out, const char* value) {
+static void FERRET_FUNC(result_ok_str)(void* out, const char* value) {
     if (!out) {
         return;
     }
@@ -109,11 +116,11 @@ static void ferret_net_result_ok_str(void* out, const char* value) {
     *tag_ptr = 1;
 }
 
-static void ferret_net_result_err_bytes(void* out, const char* msg) {
-    ferret_net_result_err_at(out, msg, sizeof(void*));
+static void FERRET_FUNC(result_err_bytes)(void* out, const char* msg) {
+    FERRET_FUNC(result_err_at)(out, msg, sizeof(void*));
 }
 
-static void ferret_net_result_ok_bytes(void* out, ferret_array_t* arr) {
+static void FERRET_FUNC(result_ok_bytes)(void* out, ferret_array_t* arr) {
     if (!out) {
         return;
     }
@@ -124,7 +131,7 @@ static void ferret_net_result_ok_bytes(void* out, ferret_array_t* arr) {
 }
 
 #ifdef _WIN32
-static void ferret_net_init_winsock(void) {
+static void FERRET_FUNC(init_winsock)(void) {
     static bool initialized = false;
     if (initialized) {
         return;
@@ -136,7 +143,7 @@ static void ferret_net_init_winsock(void) {
 }
 #endif
 
-static bool ferret_net_split_addr(const char* addr, char** host_out, char** port_out) {
+static bool FERRET_FUNC(split_addr)(const char* addr, char** host_out, char** port_out) {
     if (!addr || !host_out || !port_out) {
         return false;
     }
@@ -170,7 +177,7 @@ static bool ferret_net_split_addr(const char* addr, char** host_out, char** port
     }
 
     size_t host_len = (size_t)(host_end - host_start);
-    char* host = (char*)malloc(host_len + 1);
+    char* host = (char*)ferret_alloc(host_len + 1);
     if (!host) {
         return false;
     }
@@ -179,9 +186,9 @@ static bool ferret_net_split_addr(const char* addr, char** host_out, char** port
     }
     host[host_len] = '\0';
 
-    char* port = (char*)malloc(strlen(port_start) + 1);
+    char* port = (char*)ferret_alloc(strlen(port_start) + 1);
     if (!port) {
-        free(host);
+        ferret_free(host);
         return false;
     }
     memcpy(port, port_start, strlen(port_start) + 1);
@@ -191,9 +198,9 @@ static bool ferret_net_split_addr(const char* addr, char** host_out, char** port
     return true;
 }
 
-static char* ferret_net_join_host_port(const char* host, const char* port) {
+static char* FERRET_FUNC(join_host_port)(const char* host, const char* port) {
     if (!host || !port) {
-        return ferret_net_strdup("");
+        return FERRET_FUNC(strdup)("");
     }
     bool is_ipv6 = strchr(host, ':') != NULL;
     size_t host_len = strlen(host);
@@ -212,7 +219,7 @@ static char* ferret_net_join_host_port(const char* host, const char* port) {
     return out;
 }
 
-static void ferret_net_socket_addrs(ferret_socket_t sock, char** local_out, char** remote_out) {
+static void FERRET_FUNC(socket_addrs)(ferret_socket_t sock, char** local_out, char** remote_out) {
     if (local_out) {
         *local_out = NULL;
     }
@@ -227,11 +234,11 @@ static void ferret_net_socket_addrs(ferret_socket_t sock, char** local_out, char
         char host[256] = {0};
         char serv[64] = {0};
         if (getnameinfo((struct sockaddr*)&addr, len, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) == 0) {
-            *local_out = ferret_net_join_host_port(host, serv);
+            *local_out = FERRET_FUNC(join_host_port)(host, serv);
         }
     }
     if (local_out && *local_out == NULL) {
-        *local_out = ferret_net_strdup("");
+        *local_out = FERRET_FUNC(strdup)("");
     }
 
     len = sizeof(addr);
@@ -239,32 +246,32 @@ static void ferret_net_socket_addrs(ferret_socket_t sock, char** local_out, char
         char host[256] = {0};
         char serv[64] = {0};
         if (getnameinfo((struct sockaddr*)&addr, len, host, sizeof(host), serv, sizeof(serv), NI_NUMERICHOST | NI_NUMERICSERV) == 0) {
-            *remote_out = ferret_net_join_host_port(host, serv);
+            *remote_out = FERRET_FUNC(join_host_port)(host, serv);
         }
     }
     if (remote_out && *remote_out == NULL) {
-        *remote_out = ferret_net_strdup("");
+        *remote_out = FERRET_FUNC(strdup)("");
     }
 }
 
 // Listen on TCP address (str!TcpListener)
-void ferret_std_net_ListenTcp(void* out, const char* addr) {
+void FERRET_FUNC(ListenTcp)(void* out, const char* addr) {
     if (!out) {
         return;
     }
     if (!addr) {
-        ferret_net_result_err_listener(out, "addr is null");
+        FERRET_FUNC(result_err_listener)(out, "addr is null");
         return;
     }
 
 #ifdef _WIN32
-    ferret_net_init_winsock();
+    FERRET_FUNC(init_winsock)();
 #endif
 
     char* host = NULL;
     char* port = NULL;
-    if (!ferret_net_split_addr(addr, &host, &port)) {
-        ferret_net_result_err_listener(out, "invalid addr");
+    if (!FERRET_FUNC(split_addr)(addr, &host, &port)) {
+        FERRET_FUNC(result_err_listener)(out, "invalid addr");
         return;
     }
 
@@ -276,10 +283,10 @@ void ferret_std_net_ListenTcp(void* out, const char* addr) {
 
     struct addrinfo* res = NULL;
     int rc = getaddrinfo((host && host[0] != '\0') ? host : NULL, port, &hints, &res);
-    free(host);
-    free(port);
+    ferret_free(host);
+    ferret_free(port);
     if (rc != 0 || !res) {
-        ferret_net_result_err_listener(out, "getaddrinfo failed");
+        FERRET_FUNC(result_err_listener)(out, "getaddrinfo failed");
         return;
     }
 
@@ -303,7 +310,7 @@ void ferret_std_net_ListenTcp(void* out, const char* addr) {
     freeaddrinfo(res);
 
     if (server_fd == FERRET_INVALID_SOCKET) {
-        ferret_net_result_err_listener(out, "listen failed");
+        FERRET_FUNC(result_err_listener)(out, "listen failed");
         return;
     }
 
@@ -311,28 +318,28 @@ void ferret_std_net_ListenTcp(void* out, const char* addr) {
     char** addr_ptr = (char**)((char*)out + 8);
     uint8_t* tag_ptr = (uint8_t*)((char*)out + 16);
     *handle_ptr = (int64_t)(intptr_t)server_fd;
-    *addr_ptr = ferret_net_strdup(addr);
+    *addr_ptr = FERRET_FUNC(strdup)(addr);
     *tag_ptr = 1;
 }
 
 // Dial TCP address (str!TcpConn)
-void ferret_std_net_DialTcp(void* out, const char* addr) {
+void FERRET_FUNC(DialTcp)(void* out, const char* addr) {
     if (!out) {
         return;
     }
     if (!addr) {
-        ferret_net_result_err_conn(out, "addr is null");
+        FERRET_FUNC(result_err_conn)(out, "addr is null");
         return;
     }
 
 #ifdef _WIN32
-    ferret_net_init_winsock();
+    FERRET_FUNC(init_winsock)();
 #endif
 
     char* host = NULL;
     char* port = NULL;
-    if (!ferret_net_split_addr(addr, &host, &port)) {
-        ferret_net_result_err_conn(out, "invalid addr");
+    if (!FERRET_FUNC(split_addr)(addr, &host, &port)) {
+        FERRET_FUNC(result_err_conn)(out, "invalid addr");
         return;
     }
 
@@ -343,10 +350,10 @@ void ferret_std_net_DialTcp(void* out, const char* addr) {
 
     struct addrinfo* res = NULL;
     int rc = getaddrinfo(host, port, &hints, &res);
-    free(host);
-    free(port);
+    ferret_free(host);
+    ferret_free(port);
     if (rc != 0 || !res) {
-        ferret_net_result_err_conn(out, "getaddrinfo failed");
+        FERRET_FUNC(result_err_conn)(out, "getaddrinfo failed");
         return;
     }
 
@@ -366,7 +373,7 @@ void ferret_std_net_DialTcp(void* out, const char* addr) {
     freeaddrinfo(res);
 
     if (sock == FERRET_INVALID_SOCKET) {
-        ferret_net_result_err_conn(out, "connect failed");
+        FERRET_FUNC(result_err_conn)(out, "connect failed");
         return;
     }
 
@@ -375,23 +382,23 @@ void ferret_std_net_DialTcp(void* out, const char* addr) {
     char** remote_ptr = (char**)((char*)out + 16);
     uint8_t* tag_ptr = (uint8_t*)((char*)out + 24);
     *handle_ptr = (int64_t)(intptr_t)sock;
-    ferret_net_socket_addrs(sock, local_ptr, remote_ptr);
+    FERRET_FUNC(socket_addrs)(sock, local_ptr, remote_ptr);
     *tag_ptr = 1;
 }
 
 // Accept TCP connection (str!TcpConn)
-void ferret_std_net_Accept(void* out, const ferret_std_net_TcpListener* listener) {
+void FERRET_FUNC(Accept)(void* out, const LISTENER* listener) {
     if (!out) {
         return;
     }
     if (!listener || listener->handle == 0) {
-        ferret_net_result_err_conn(out, "invalid listener");
+        FERRET_FUNC(result_err_conn)(out, "invalid listener");
         return;
     }
     ferret_socket_t server_fd = (ferret_socket_t)(intptr_t)listener->handle;
     ferret_socket_t client = accept(server_fd, NULL, NULL);
     if (client == FERRET_INVALID_SOCKET) {
-        ferret_net_result_err_conn(out, "accept failed");
+        FERRET_FUNC(result_err_conn)(out, "accept failed");
         return;
     }
 
@@ -400,12 +407,12 @@ void ferret_std_net_Accept(void* out, const ferret_std_net_TcpListener* listener
     char** remote_ptr = (char**)((char*)out + 16);
     uint8_t* tag_ptr = (uint8_t*)((char*)out + 24);
     *handle_ptr = (int64_t)(intptr_t)client;
-    ferret_net_socket_addrs(client, local_ptr, remote_ptr);
+    FERRET_FUNC(socket_addrs)(client, local_ptr, remote_ptr);
     *tag_ptr = 1;
 }
 
 // Close listener
-void ferret_std_net_CloseListener(const ferret_std_net_TcpListener* listener) {
+void FERRET_FUNC(CloseListener)(const LISTENER* listener) {
     if (!listener || listener->handle == 0) {
         return;
     }
@@ -413,7 +420,7 @@ void ferret_std_net_CloseListener(const ferret_std_net_TcpListener* listener) {
 }
 
 // Close connection
-void ferret_std_net_CloseConn(const ferret_std_net_TcpConn* conn) {
+void FERRET_FUNC(CloseConn)(const CONN* conn) {
     if (!conn || conn->handle == 0) {
         return;
     }
@@ -421,87 +428,87 @@ void ferret_std_net_CloseConn(const ferret_std_net_TcpConn* conn) {
 }
 
 // Read bytes
-void ferret_std_net_Read(void* out, const ferret_std_net_TcpConn* conn, int32_t maxBytes) {
+void FERRET_FUNC(Read)(void* out, const CONN* conn, int32_t maxBytes) {
     if (!out) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        ferret_net_result_err_bytes(out, "invalid connection");
+        FERRET_FUNC(result_err_bytes)(out, "invalid connection");
         return;
     }
     if (maxBytes <= 0) {
-        ferret_net_result_err_bytes(out, "maxBytes must be > 0");
+        FERRET_FUNC(result_err_bytes)(out, "maxBytes must be > 0");
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
     uint8_t* buf = (uint8_t*)ferret_alloc((size_t)maxBytes);
     if (!buf) {
-        ferret_net_result_err_bytes(out, "out of memory");
+        FERRET_FUNC(result_err_bytes)(out, "out of memory");
         return;
     }
     int r = (int)recv(sock, (char*)buf, maxBytes, 0);
     if (r < 0) {
-        ferret_net_result_err_bytes(out, "recv failed");
+        FERRET_FUNC(result_err_bytes)(out, "recv failed");
         return;
     }
     if (r == 0) {
         ferret_array_t* empty = ferret_array_new(sizeof(uint8_t), 0, (ferret_type_info_t*)&ferret_type_byte);
-        ferret_net_result_ok_bytes(out, empty);
+        FERRET_FUNC(result_ok_bytes)(out, empty);
         return;
     }
     ferret_array_t* arr = ferret_array_from_data(buf, r, r, sizeof(uint8_t), (ferret_type_info_t*)&ferret_type_byte);
-    ferret_net_result_ok_bytes(out, arr);
+    FERRET_FUNC(result_ok_bytes)(out, arr);
 }
 
 // Read bytes as string
-void ferret_std_net_ReadStr(void* out, const ferret_std_net_TcpConn* conn, int32_t maxBytes) {
+void FERRET_FUNC(ReadStr)(void* out, const CONN* conn, int32_t maxBytes) {
     if (!out) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        ferret_net_result_err(out, "invalid connection");
+        FERRET_FUNC(result_err)(out, "invalid connection");
         return;
     }
     if (maxBytes <= 0) {
-        ferret_net_result_err(out, "maxBytes must be > 0");
+        FERRET_FUNC(result_err)(out, "maxBytes must be > 0");
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
     uint8_t* buf = (uint8_t*)ferret_alloc((size_t)maxBytes);
     if (!buf) {
-        ferret_net_result_err(out, "out of memory");
+        FERRET_FUNC(result_err)(out, "out of memory");
         return;
     }
     int r = (int)recv(sock, (char*)buf, maxBytes, 0);
     if (r < 0) {
-        ferret_net_result_err(out, "recv failed");
+        FERRET_FUNC(result_err)(out, "recv failed");
         return;
     }
     if (r == 0) {
-        ferret_net_result_ok_str(out, "");
+        FERRET_FUNC(result_ok_str)(out, "");
         return;
     }
     char* str = (char*)ferret_alloc((size_t)r + 1);
     if (!str) {
-        ferret_net_result_err(out, "out of memory");
+        FERRET_FUNC(result_err)(out, "out of memory");
         return;
     }
     memcpy(str, buf, (size_t)r);
     str[r] = '\0';
-    ferret_net_result_ok_str(out, str);
+    FERRET_FUNC(result_ok_str)(out, str);
 }
 
 // Write bytes
-void ferret_std_net_Write(void* out, const ferret_std_net_TcpConn* conn, ferret_array_t* data) {
+void FERRET_FUNC(Write)(void* out, const CONN* conn, ferret_array_t* data) {
     if (!out) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        ferret_net_result_err(out, "invalid connection");
+        FERRET_FUNC(result_err)(out, "invalid connection");
         return;
     }
     if (!data || data->length == 0) {
-        ferret_net_result_ok_i32(out, 0);
+        FERRET_FUNC(result_ok_i32)(out, 0);
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
@@ -511,32 +518,32 @@ void ferret_std_net_Write(void* out, const ferret_std_net_TcpConn* conn, ferret_
     while (remaining > 0) {
         int sent = (int)send(sock, (const char*)ptr, remaining, 0);
         if (sent <= 0) {
-            ferret_net_result_err(out, "send failed");
+            FERRET_FUNC(result_err)(out, "send failed");
             return;
         }
         total += sent;
         remaining -= sent;
         ptr += sent;
     }
-    ferret_net_result_ok_i32(out, total);
+    FERRET_FUNC(result_ok_i32)(out, total);
 }
 
 // Write string
-void ferret_std_net_WriteStr(void* out, const ferret_std_net_TcpConn* conn, const char* data) {
+void FERRET_FUNC(WriteStr)(void* out, const CONN* conn, const char* data) {
     if (!out) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        ferret_net_result_err(out, "invalid connection");
+        FERRET_FUNC(result_err)(out, "invalid connection");
         return;
     }
     if (!data) {
-        ferret_net_result_ok_i32(out, 0);
+        FERRET_FUNC(result_ok_i32)(out, 0);
         return;
     }
     size_t len = strlen(data);
     if (len == 0) {
-        ferret_net_result_ok_i32(out, 0);
+        FERRET_FUNC(result_ok_i32)(out, 0);
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
@@ -546,30 +553,30 @@ void ferret_std_net_WriteStr(void* out, const ferret_std_net_TcpConn* conn, cons
     while (remaining > 0) {
         int sent = (int)send(sock, ptr, (int)remaining, 0);
         if (sent <= 0) {
-            ferret_net_result_err(out, "send failed");
+            FERRET_FUNC(result_err)(out, "send failed");
             return;
         }
         total += sent;
         remaining -= (size_t)sent;
         ptr += sent;
     }
-    ferret_net_result_ok_i32(out, total);
+    FERRET_FUNC(result_ok_i32)(out, total);
 }
 
 // Read timeout
-void ferret_std_net_SetReadTimeoutMs(void* out, const ferret_std_net_TcpConn* conn, int32_t ms) {
+void FERRET_FUNC(SetReadTimeoutMs)(void* out, const CONN* conn, int32_t ms) {
     if (!out) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        ferret_net_result_err(out, "invalid connection");
+        FERRET_FUNC(result_err)(out, "invalid connection");
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
 #ifdef _WIN32
     DWORD timeout = ms < 0 ? 0 : (DWORD)ms;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout)) != 0) {
-        ferret_net_result_err(out, "setsockopt failed");
+        FERRET_FUNC(result_err)(out, "setsockopt failed");
         return;
     }
 #else
@@ -577,27 +584,27 @@ void ferret_std_net_SetReadTimeoutMs(void* out, const ferret_std_net_TcpConn* co
     tv.tv_sec = ms / 1000;
     tv.tv_usec = (ms % 1000) * 1000;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0) {
-        ferret_net_result_err(out, strerror(errno));
+        FERRET_FUNC(result_err)(out, strerror(errno));
         return;
     }
 #endif
-    ferret_net_result_ok_bool(out, true);
+    FERRET_FUNC(result_ok_bool)(out, true);
 }
 
 // Write timeout
-void ferret_std_net_SetWriteTimeoutMs(void* out, const ferret_std_net_TcpConn* conn, int32_t ms) {
+void FERRET_FUNC(SetWriteTimeoutMs)(void* out, const CONN* conn, int32_t ms) {
     if (!out) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        ferret_net_result_err(out, "invalid connection");
+        FERRET_FUNC(result_err)(out, "invalid connection");
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
 #ifdef _WIN32
     DWORD timeout = ms < 0 ? 0 : (DWORD)ms;
     if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout)) != 0) {
-        ferret_net_result_err(out, "setsockopt failed");
+        FERRET_FUNC(result_err)(out, "setsockopt failed");
         return;
     }
 #else
@@ -605,27 +612,27 @@ void ferret_std_net_SetWriteTimeoutMs(void* out, const ferret_std_net_TcpConn* c
     tv.tv_sec = ms / 1000;
     tv.tv_usec = (ms % 1000) * 1000;
     if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0) {
-        ferret_net_result_err(out, strerror(errno));
+        FERRET_FUNC(result_err)(out, strerror(errno));
         return;
     }
 #endif
-    ferret_net_result_ok_bool(out, true);
+    FERRET_FUNC(result_ok_bool)(out, true);
 }
 
 // Keepalive
-void ferret_std_net_SetKeepAlive(void* out, const ferret_std_net_TcpConn* conn, bool enabled) {
+void FERRET_FUNC(SetKeepAlive)(void* out, const CONN* conn, bool enabled) {
     if (!out) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        ferret_net_result_err(out, "invalid connection");
+        FERRET_FUNC(result_err)(out, "invalid connection");
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
     int opt = enabled ? 1 : 0;
     if (setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (const char*)&opt, sizeof(opt)) != 0) {
-        ferret_net_result_err(out, "setsockopt failed");
+        FERRET_FUNC(result_err)(out, "setsockopt failed");
         return;
     }
-    ferret_net_result_ok_bool(out, true);
+    FERRET_FUNC(result_ok_bool)(out, true);
 }

@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include "string_runtime.h"
 #include "array.h"
+#include "alloc.h"
 
 typedef struct ferret_string_node {
     char* ptr;
@@ -29,7 +30,7 @@ static void ferret_string_track(char* ptr) {
     if (ptr == NULL || ferret_string_tracked(ptr)) {
         return;
     }
-    ferret_string_node_t* node = (ferret_string_node_t*)malloc(sizeof(ferret_string_node_t));
+    ferret_string_node_t* node = (ferret_string_node_t*)ferret_alloc(sizeof(ferret_string_node_t));
     if (node == NULL) {
         return;
     }
@@ -100,7 +101,7 @@ void ferret_string_assign(char** dst, const char* src) {
             cur[src_len] = '\0';
             return;
         }
-        char* next = (char*)realloc(cur, src_len + 1);
+        char* next = (char*)ferret_realloc(cur, src_len + 1);
         if (next == NULL) {
             return;
         }
@@ -111,7 +112,7 @@ void ferret_string_assign(char** dst, const char* src) {
         return;
     }
 
-    char* next = (char*)malloc(src_len + 1);
+    char* next = (char*)ferret_alloc(src_len + 1);
     if (next == NULL) {
         return;
     }
@@ -125,7 +126,7 @@ void ferret_string_assign(char** dst, const char* src) {
 char* ferret_io_ConcatStrings(const char* s1, const char* s2) {
     size_t len1 = s1 ? strlen(s1) : 0;
     size_t len2 = s2 ? strlen(s2) : 0;
-    char* result = (char*)malloc(len1 + len2 + 1);
+    char* result = (char*)ferret_alloc(len1 + len2 + 1);
     if (!result) return NULL;
     if (s1) memcpy(result, s1, len1);
     if (s2) memcpy(result + len1, s2, len2);
@@ -168,7 +169,7 @@ char* ferret_string_concat_f64(const char* s, double n) {
 // String + byte/char concatenation
 char* ferret_string_concat_byte(const char* s, uint8_t c) {
     size_t len = s ? strlen(s) : 0;
-    char* result = (char*)malloc(len + 2);
+    char* result = (char*)ferret_alloc(len + 2);
     if (!result) return NULL;
     if (s) memcpy(result, s, len);
     result[len] = (char)c;
@@ -303,7 +304,7 @@ static int utf8_encode(uint32_t codepoint, uint8_t* out) {
 // Convert []char to string (UTF-8 encode from Unicode codepoints)
 char* ferret_char_array_to_string(const ferret_array_t* arr) {
     if (arr == NULL || arr->length == 0) {
-        char* empty = (char*)malloc(1);
+        char* empty = (char*)ferret_alloc(1);
         if (empty) empty[0] = '\0';
         return empty;
     }
@@ -322,7 +323,7 @@ char* ferret_char_array_to_string(const ferret_array_t* arr) {
     }
     
     // Allocate string buffer
-    char* str = (char*)malloc(total_bytes + 1);
+    char* str = (char*)ferret_alloc(total_bytes + 1);
     if (str == NULL) return NULL;
     
     // Second pass: encode UTF-8
@@ -342,13 +343,13 @@ char* ferret_char_array_to_string(const ferret_array_t* arr) {
 // Convert []byte to string (interpret as UTF-8)
 char* ferret_byte_array_to_string(const ferret_array_t* arr) {
     if (arr == NULL || arr->length == 0) {
-        char* empty = (char*)malloc(1);
+        char* empty = (char*)ferret_alloc(1);
         if (empty) empty[0] = '\0';
         return empty;
     }
     
     // Allocate string buffer
-    char* str = (char*)malloc(arr->length + 1);
+    char* str = (char*)ferret_alloc(arr->length + 1);
     if (str == NULL) return NULL;
     
     // Copy bytes directly

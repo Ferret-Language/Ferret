@@ -92,7 +92,7 @@ func Compile(opts *Options) Result {
 		ProjectPrefix:  "", // No prefix - stdlib takes priority over local
 		ProjectRoot:    projectRoot,
 		Extension:      ".fer",
-		RuntimePath:    "", // Resolved by build.go relative to ferret binary
+		RuntimePath:    fs.ResolveLibsPath(), // Resolved by build.go relative to ferret binary
 		OutputPath:     outputPath,
 		SaveAST:        opts.SaveAST,
 		KeepGenFiles:   opts.KeepGenFiles,
@@ -105,8 +105,10 @@ func Compile(opts *Options) Result {
 	}
 
 	ctx := context_v2.New(config, opts.Debug)
-	// Always load embedded stdlib - it contains global.fer and std library
-	loadEmbeddedBuiltins(ctx)
+	// Load embedded stdlib for WASM builds, filesystem for native builds
+	if opts.CodegenBackend == "wasm" {
+		loadEmbeddedBuiltins(ctx)
+	}
 
 	// Set entry point
 	var err error

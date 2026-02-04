@@ -8,6 +8,10 @@
 #include "../core/array.h"
 #include "../core/map.h"
 #include "../core/alloc.h"
+#include "../core/runtime_naming.h"
+
+// Define the module prefix for this file (implements ferret_libs/global.fer)
+#define MODULE_PREFIX ferret_global
 #include "../core/optional.h"
 #include "../core/union.h"
 
@@ -16,7 +20,7 @@ typedef struct {
     void* type_info;
 } ferret_interface_t;
 
-int32_t ferret_global_len(const void* seq) {
+int32_t FERRET_FUNC(len)(const void* seq) {
     if (seq == NULL) {
         return 0;
     }
@@ -33,7 +37,7 @@ int32_t ferret_global_len(const void* seq) {
     return ferret_array_len(arr);
 }
 
-bool ferret_global_append(ferret_array_t** seq_ref, uint64_t heap, const void* value) {
+bool FERRET_FUNC(append)(ferret_array_t** seq_ref, uint64_t heap, const void* value) {
     (void)heap;
     if (seq_ref == NULL || value == NULL) {
         return false;
@@ -54,7 +58,7 @@ bool ferret_global_append(ferret_array_t** seq_ref, uint64_t heap, const void* v
     return ferret_array_append(arr, elem_ptr);
 }
 
-void ferret_global_at(void* out, const void* seq, int32_t index) {
+void FERRET_FUNC(at)(void* out, const void* seq, int32_t index) {
     if (out == NULL) {
         return;
     }
@@ -119,7 +123,7 @@ void ferret_global_at(void* out, const void* seq, int32_t index) {
     *out_ptr = opt;
 }
 
-int32_t ferret_global_size(const void* map_view) {
+int32_t FERRET_FUNC(size)(const void* map_view) {
     if (map_view == NULL) {
         return 0;
     }
@@ -136,7 +140,7 @@ int32_t ferret_global_size(const void* map_view) {
     return (int32_t)ferret_map_size(map);
 }
 
-void ferret_global_get(void* out, const void* map_view, const void* key) {
+void FERRET_FUNC(get)(void* out, const void* map_view, const void* key) {
     if (out == NULL) {
         return;
     }
@@ -202,7 +206,7 @@ void ferret_global_get(void* out, const void* map_view, const void* key) {
     *out_ptr = opt;
 }
 
-bool ferret_global_set(ferret_map_t** map_ref, uint64_t heap, const void* key, const void* value) {
+bool FERRET_FUNC(set)(ferret_map_t** map_ref, uint64_t heap, const void* key, const void* value) {
     (void)heap;
     if (map_ref == NULL || key == NULL || value == NULL) {
         return false;
@@ -231,17 +235,17 @@ bool ferret_global_set(ferret_map_t** map_ref, uint64_t heap, const void* key, c
     return ferret_map_set(map, key_ptr, value_ptr);
 }
 
-uint64_t ferret_global_addr(const void* value, uint64_t heap) {
+uint64_t FERRET_FUNC(addr)(const void* value, uint64_t heap) {
     (void)heap;
     return (uint64_t)(uintptr_t)value;
 }
 
-uint64_t ferret_global_self_addr(const void* value, uint64_t heap) {
+uint64_t FERRET_FUNC(self_addr)(const void* value, uint64_t heap) {
     (void)heap;
     return (uint64_t)(uintptr_t)value;
 }
 
-uint64_t ferret_global_heap_addr(const void* value, uint64_t heap) {
+uint64_t FERRET_FUNC(heap_addr)(const void* value, uint64_t heap) {
     (void)value;
     return heap;
 }

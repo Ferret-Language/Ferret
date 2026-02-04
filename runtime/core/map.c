@@ -3,6 +3,7 @@
 
 #include "map.h"
 #include "hash.h"
+#include "alloc.h"
 #include <string.h>
 
 #define FERRET_MAP_INITIAL_BUCKETS 16
@@ -71,15 +72,15 @@ ferret_map_t* ferret_map_new(
     ferret_type_info_t* key_type_id,
     ferret_type_info_t* value_type_id
 ) {
-    ferret_map_t* map = (ferret_map_t*)malloc(sizeof(ferret_map_t));
+    ferret_map_t* map = (ferret_map_t*)ferret_alloc(sizeof(ferret_map_t));
     if (map == NULL) {
         return NULL;
     }
 
     map->bucket_count = FERRET_MAP_INITIAL_BUCKETS;
-    map->buckets = (ferret_map_entry_t**)calloc(map->bucket_count, sizeof(ferret_map_entry_t*));
+    map->buckets = (ferret_map_entry_t**)ferret_calloc(map->bucket_count, sizeof(ferret_map_entry_t*));
     if (map->buckets == NULL) {
-        free(map);
+        ferret_free(map);
         return NULL;
     }
 
@@ -109,7 +110,7 @@ static inline void ferret_map_prepare_universal(const ferret_map_t* map) {
 static bool ferret_map_resize(ferret_map_t* map, size_t new_bucket_count) {
     ferret_map_prepare_universal(map);  // Set type info for universal maps before rehashing
     
-    ferret_map_entry_t** new_buckets = (ferret_map_entry_t**)calloc(new_bucket_count, sizeof(ferret_map_entry_t*));
+    ferret_map_entry_t** new_buckets = (ferret_map_entry_t**)ferret_calloc(new_bucket_count, sizeof(ferret_map_entry_t*));
     if (new_buckets == NULL) {
         return false;
     }
@@ -131,7 +132,7 @@ static bool ferret_map_resize(ferret_map_t* map, size_t new_bucket_count) {
         }
     }
 
-    free(map->buckets);
+    ferret_free(map->buckets);
     map->buckets = new_buckets;
     map->bucket_count = new_bucket_count;
 
@@ -233,7 +234,7 @@ static void ferret_map_clear_entries(ferret_map_t* map) {
             ferret_map_entry_t* next = entry->next;
             free(entry->key);
             free(entry->value);
-            free(entry);
+            ferret_free(entry);
             entry = next;
         }
         map->buckets[i] = NULL;
@@ -382,17 +383,17 @@ bool ferret_map_set(ferret_map_t* map, const void* key, const void* value) {
     }
 
     // Create new entry
-    entry = (ferret_map_entry_t*)malloc(sizeof(ferret_map_entry_t));
+    entry = (ferret_map_entry_t*)ferret_alloc(sizeof(ferret_map_entry_t));
     if (entry == NULL) {
         return false;
     }
 
-    entry->key = malloc(map->key_size);
-    entry->value = malloc(map->value_size);
+    entry->key = ferret_alloc(map->key_size);
+    entry->value = ferret_alloc(map->value_size);
     if (entry->key == NULL || entry->value == NULL) {
         free(entry->key);
         free(entry->value);
-        free(entry);
+        ferret_free(entry);
         return false;
     }
 
@@ -421,12 +422,12 @@ void ferret_map_free(ferret_map_t* map) {
             ferret_map_entry_t* next = entry->next;
             free(entry->key);
             free(entry->value);
-            free(entry);
+            ferret_free(entry);
             entry = next;
         }
     }
 
-    free(map->buckets);
+    ferret_free(map->buckets);
     map->buckets = NULL;
     map->size = 0;
     map->bucket_count = 0;
@@ -435,7 +436,7 @@ void ferret_map_free(ferret_map_t* map) {
 void ferret_map_destroy(ferret_map_t* map) {
     if (map != NULL) {
         ferret_map_free(map);
-        free(map);
+        ferret_free(map);
     }
 }
 

@@ -12,6 +12,10 @@
 #include "../core/alloc.h"
 #include "../core/array.h"
 #include "../core/type_system.h"
+#include "../core/runtime_naming.h"
+
+// Define the module prefix for this file (implements ferret_libs/std/io.fer)
+#define MODULE_PREFIX ferret_std_io
 
 // For ssize_t on non-POSIX systems
 #ifdef _WIN32
@@ -25,7 +29,7 @@ static ssize_t getline(char** lineptr, size_t* n, FILE* stream) {
 
     if (*lineptr == NULL || *n == 0) {
         *n = 128;
-        *lineptr = (char*)malloc(*n);
+        *lineptr = (char*)ferret_alloc(*n);
         if (*lineptr == NULL) {
             return -1;
         }
@@ -38,7 +42,7 @@ static ssize_t getline(char** lineptr, size_t* n, FILE* stream) {
         // Need space for character + null terminator
         if (pos + 2 > *n) {
             size_t new_size = *n * 2;
-            char* new_ptr = (char*)realloc(*lineptr, new_size);
+            char* new_ptr = (char*)ferret_realloc(*lineptr, new_size);
             if (new_ptr == NULL) {
                 return -1;
             }
@@ -158,7 +162,7 @@ FERRET_PRIMITIVE_TYPES(FERRET_DECLARE_TO_STRING_PTR)
         char* s = ferret_##lower##_to_string_ptr((const ctype*)(data)); \
         if (s != NULL) { \
             printf("%s", s); \
-            free(s); \
+            ferret_free(s); \
         } \
     } while (0)
 
@@ -174,7 +178,7 @@ FERRET_PRIMITIVE_TYPES(FERRET_DECLARE_TO_STRING_PTR)
         char* s = ferret_##lower##_to_string_ptr((const ctype*)(data)); \
         if (s != NULL) { \
             printf("%s", s); \
-            free(s); \
+            ferret_free(s); \
         } \
     } while (0)
 
@@ -191,7 +195,7 @@ FERRET_PRIMITIVE_TYPES(FERRET_DECLARE_TO_STRING_PTR)
         char* s = ferret_##lower##_to_string_ptr((const ctype*)(data)); \
         if (s != NULL) { \
             printf("%s", s); \
-            free(s); \
+            ferret_free(s); \
         } \
     } while (0)
 
@@ -249,7 +253,7 @@ static void print_union(const void* union_ptr) {
 
 // Naming convention: std_io_Print -> ferret_std_io_Print
 // Slice layout: { void* ptr; int32_t len; int32_t cap } = 16 bytes (with padding)
-void ferret_std_io_Print(void* slice_ptr) {
+void FERRET_FUNC(Print)(void* slice_ptr) {
     if (!slice_ptr) {
         return;
     }
@@ -264,19 +268,19 @@ void ferret_std_io_Print(void* slice_ptr) {
     }
 }
 
-void ferret_std_io_Println(void* slice_ptr) {
-    ferret_std_io_Print(slice_ptr);
+void FERRET_FUNC(Println)(void* slice_ptr) {
+    FERRET_FUNC(Print)(slice_ptr);
     printf("\n");
 }
 
 // Read a line from stdin, returns str (unsafe, no result wrapper)
-char* ferret_std_io_ReadUnsafe(void) {
+char* FERRET_FUNC(ReadUnsafe)(void) {
     char* line = NULL;
     size_t len = 0;
     ssize_t read = getline(&line, &len, stdin);
 
     if (read == -1) {
-        if (line) free(line);
+        if (line) ferret_free(line);
         char* empty = (char*)ferret_alloc(1);
         if (empty != NULL) {
             empty[0] = '\0';
@@ -295,7 +299,7 @@ char* ferret_std_io_ReadUnsafe(void) {
 // The union holds the str pointer (8 bytes on 64-bit)
 
 // Read a line from stdin, returns str!str
-void ferret_std_io_Read(void* out) {
+void FERRET_FUNC(Read)(void* out) {
     if (!out) return;
     
     char* line = NULL;
@@ -310,7 +314,7 @@ void ferret_std_io_Read(void* out) {
         // Error case
         *str_ptr = "failed to read input";
         *tag_ptr = 0;  // Err
-        if (line) free(line);
+        if (line) ferret_free(line);
     } else {
         // Remove trailing newline if present
         if (read > 0 && line[read - 1] == '\n') {
@@ -323,7 +327,7 @@ void ferret_std_io_Read(void* out) {
 
 // Result layout for str!T: [8-byte union][1-byte tag] (+ padding)
 #define FERRET_STD_IO_READ_NUMERIC(name, out_type, parse_type, parse_expr, invalid_msg, range_check, range_msg) \
-    void ferret_std_io_##name(void* out) { \
+    void FERRET_FUNC(name)(void* out) { \
         if (!out) return; \
         char* line = NULL; \
         size_t len = 0; \
@@ -347,7 +351,7 @@ void ferret_std_io_Read(void* out) {
                 *tag_ptr = 1; \
             } \
         } \
-        if (line) free(line); \
+        if (line) ferret_free(line); \
     }
 
 // Read an integer from stdin, returns str!i32
@@ -374,7 +378,7 @@ FERRET_STD_IO_READ_NUMERIC(
 
 // Enum to string conversion helper
 // Used by codegen to convert enum tags to variant names
-const char* ferret_enum_to_string(const char* const* table, uint32_t count, int32_t tag) {
+const char* FERRET_FUNC(enum_to_string)(const char* const* table, uint32_t count, int32_t tag) {
     if (tag < 0 || (uint32_t)tag >= count) {
         return "<invalid enum tag>";
     }

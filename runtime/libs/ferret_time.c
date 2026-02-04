@@ -11,9 +11,13 @@
 #endif
 
 #include "../core/alloc.h"
+#include "../core/runtime_naming.h"
+
+// Define the module prefix for this file (implements ferret_libs/time.fer)
+#define MODULE_PREFIX ferret_time
 
 // Get current time as ISO 8601 string
-char* ferret_time_Now(void) {
+char* FERRET_FUNC(Now)(void) {
     time_t raw = time(NULL);
     if (raw == (time_t)-1) {
         char* empty = (char*)ferret_alloc(1);
@@ -49,7 +53,7 @@ char* ferret_time_Now(void) {
     return buffer;
 }
 
-int64_t ferret_time_NowUnix(void) {
+int64_t FERRET_FUNC(NowUnix)(void) {
     time_t raw = time(NULL);
     if (raw == (time_t)-1) {
         return 0;
@@ -57,7 +61,7 @@ int64_t ferret_time_NowUnix(void) {
     return (int64_t)raw;
 }
 
-int64_t ferret_time_NowUnixMs(void) {
+int64_t FERRET_FUNC(NowUnixMs)(void) {
 #if defined(_WIN32)
     FILETIME ft;
     ULARGE_INTEGER ticks;
@@ -71,13 +75,13 @@ int64_t ferret_time_NowUnixMs(void) {
 #else
     struct timeval tv;
     if (gettimeofday(&tv, NULL) != 0) {
-        return ferret_time_NowUnix() * 1000;
+        return FERRET_FUNC(NowUnix)() * 1000;
     }
     return ((int64_t)tv.tv_sec * 1000) + (int64_t)(tv.tv_usec / 1000);
 #endif
 }
 
-void ferret_time_SleepMs(int32_t ms) {
+void FERRET_FUNC(SleepMs)(int32_t ms) {
     if (ms <= 0) {
         return;
     }

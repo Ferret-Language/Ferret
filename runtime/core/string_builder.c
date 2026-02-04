@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdarg.h>
+#include "alloc.h"
 
 // String builder structure (similar to Go's strings.Builder)
 typedef struct {
@@ -24,14 +25,14 @@ ferret_string_builder_t* ferret_string_builder_new(int32_t initial_capacity) {
         initial_capacity = FERRET_STRING_MIN_CAPACITY;
     }
     
-    ferret_string_builder_t* sb = (ferret_string_builder_t*)malloc(sizeof(ferret_string_builder_t));
+    ferret_string_builder_t* sb = (ferret_string_builder_t*)ferret_alloc(sizeof(ferret_string_builder_t));
     if (sb == NULL) {
         return NULL;
     }
     
-    sb->data = (char*)malloc(initial_capacity);
+    sb->data = (char*)ferret_alloc(initial_capacity);
     if (sb->data == NULL) {
-        free(sb);
+        ferret_free(sb);
         return NULL;
     }
     
@@ -57,7 +58,7 @@ bool ferret_string_builder_append(ferret_string_builder_t* sb, const char* str) 
             new_capacity *= FERRET_STRING_GROWTH_FACTOR;
         }
         
-        char* new_data = (char*)realloc(sb->data, new_capacity);
+        char* new_data = (char*)ferret_realloc(sb->data, new_capacity);
         if (new_data == NULL) {
             return false;
         }
@@ -82,7 +83,7 @@ bool ferret_string_builder_append_char(ferret_string_builder_t* sb, char c) {
     // Grow if needed
     if (sb->length + 1 >= sb->capacity) {
         int32_t new_capacity = sb->capacity * FERRET_STRING_GROWTH_FACTOR;
-        char* new_data = (char*)realloc(sb->data, new_capacity);
+        char* new_data = (char*)ferret_realloc(sb->data, new_capacity);
         if (new_data == NULL) {
             return false;
         }
@@ -99,14 +100,14 @@ bool ferret_string_builder_append_char(ferret_string_builder_t* sb, char c) {
 
 char* ferret_string_builder_string(ferret_string_builder_t* sb) {
     if (sb == NULL || sb->length == 0) {
-        char* empty = (char*)malloc(1);
+        char* empty = (char*)ferret_alloc(1);
         if (empty != NULL) {
             empty[0] = '\0';
         }
         return empty;
     }
     
-    char* result = (char*)malloc(sb->length + 1);
+    char* result = (char*)ferret_alloc(sb->length + 1);
     if (result == NULL) {
         return NULL;
     }
@@ -139,7 +140,7 @@ void ferret_string_builder_reset(ferret_string_builder_t* sb) {
 
 void ferret_string_builder_free(ferret_string_builder_t* sb) {
     if (sb != NULL && sb->data != NULL) {
-        free(sb->data);
+        ferret_free(sb->data);
         sb->data = NULL;
         sb->length = 0;
         sb->capacity = 0;
@@ -149,7 +150,7 @@ void ferret_string_builder_free(ferret_string_builder_t* sb) {
 void ferret_string_builder_destroy(ferret_string_builder_t* sb) {
     if (sb != NULL) {
         ferret_string_builder_free(sb);
-        free(sb);
+        ferret_free(sb);
     }
 }
 
@@ -171,7 +172,7 @@ char* ferret_string_concat_many(const char* str1, ...) {
     va_end(args);
     
     // Allocate result
-    char* result = (char*)malloc(total_len + 1);
+    char* result = (char*)ferret_alloc(total_len + 1);
     if (result == NULL) {
         return NULL;
     }

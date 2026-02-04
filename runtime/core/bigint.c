@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "bigint.h"
+#include "alloc.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -354,7 +355,7 @@ static uint32_t ferret_div_small_limbs(const ferret_limb_t* val, ferret_limb_t* 
 
 static char* ferret_limbs_to_decimal(const ferret_limb_t* val, int n) {
     if (ferret_is_zero_limbs(val, n)) {
-        char* out = (char*)malloc(2);
+        char* out = (char*)ferret_alloc(2);
         if (!out) return NULL;
         out[0] = '0';
         out[1] = '\0';
@@ -363,9 +364,9 @@ static char* ferret_limbs_to_decimal(const ferret_limb_t* val, int n) {
 
     int bits = n * FERRET_LIMB_BITS;
     int max_digits = (int)ceil(bits * 0.30102999566) + 1;
-    char* digits = (char*)malloc((size_t)max_digits);
-    ferret_limb_t* work = (ferret_limb_t*)malloc((size_t)n * sizeof(*work));
-    ferret_limb_t* quot = (ferret_limb_t*)malloc((size_t)n * sizeof(*quot));
+    char* digits = (char*)ferret_alloc((size_t)max_digits);
+    ferret_limb_t* work = (ferret_limb_t*)ferret_alloc((size_t)n * sizeof(*work));
+    ferret_limb_t* quot = (ferret_limb_t*)ferret_alloc((size_t)n * sizeof(*quot));
     if (!digits || !work || !quot) {
         free(digits);
         free(work);
@@ -384,7 +385,7 @@ static char* ferret_limbs_to_decimal(const ferret_limb_t* val, int n) {
         ferret_copy_limbs(work, quot, n);
     }
 
-    char* out = (char*)malloc((size_t)len + 1);
+    char* out = (char*)ferret_alloc((size_t)len + 1);
     if (!out) {
         free(digits);
         free(work);
@@ -679,7 +680,7 @@ static void ferret_shr1_limbs(ferret_limb_t* v, int n) {
         char* digits = ferret_limbs_to_decimal(mag.words, FERRET_U##BITS##_LIMBS); \
         if (!digits) return NULL; \
         size_t len = strlen(digits); \
-        char* out = (char*)malloc(len + 2); \
+        char* out = (char*)ferret_alloc(len + 2); \
         if (!out) { \
             free(digits); \
             return NULL; \
@@ -1149,7 +1150,7 @@ static void soft_float_pack(const soft_float_spec* spec, int sign, int exp, uint
 
 static void soft_float_add(const soft_float_spec* spec, const uint64_t* a_words, const uint64_t* b_words, uint64_t* out_words, bool sub) {
     size_t words = (size_t)spec->words;
-    uint64_t* buf = (uint64_t*)malloc(words * 3 * sizeof(uint64_t));
+    uint64_t* buf = (uint64_t*)ferret_alloc(words * 3 * sizeof(uint64_t));
     if (!buf) {
         soft_float_make_special(spec, 0, SOFT_CLASS_ZERO, out_words);
         return;
@@ -1242,7 +1243,7 @@ cleanup:
 
 static void soft_float_mul(const soft_float_spec* spec, const uint64_t* a_words, const uint64_t* b_words, uint64_t* out_words) {
     size_t words = (size_t)spec->words;
-    uint64_t* buf = (uint64_t*)malloc(words * 9 * sizeof(uint64_t));
+    uint64_t* buf = (uint64_t*)ferret_alloc(words * 9 * sizeof(uint64_t));
     if (!buf) {
         soft_float_make_special(spec, 0, SOFT_CLASS_ZERO, out_words);
         return;
@@ -1308,7 +1309,7 @@ cleanup:
 
 static void soft_float_div(const soft_float_spec* spec, const uint64_t* a_words, const uint64_t* b_words, uint64_t* out_words) {
     size_t words = (size_t)spec->words;
-    uint64_t* buf = (uint64_t*)malloc(words * 13 * sizeof(uint64_t));
+    uint64_t* buf = (uint64_t*)ferret_alloc(words * 13 * sizeof(uint64_t));
     if (!buf) {
         soft_float_make_special(spec, 0, SOFT_CLASS_ZERO, out_words);
         return;
@@ -1382,7 +1383,7 @@ cleanup:
 
 static int soft_float_compare(const soft_float_spec* spec, const uint64_t* a_words, const uint64_t* b_words, bool* unordered) {
     size_t words = (size_t)spec->words;
-    uint64_t* buf = (uint64_t*)malloc(words * 2 * sizeof(uint64_t));
+    uint64_t* buf = (uint64_t*)ferret_alloc(words * 2 * sizeof(uint64_t));
     if (!buf) {
         if (unordered) {
             *unordered = true;
@@ -1471,7 +1472,7 @@ static void soft_float_from_f64(const soft_float_spec* spec, double val, uint64_
     uint64_t exp_raw = (bits.u >> 52) & 0x7FFu;
     uint64_t frac = bits.u & 0xFFFFFFFFFFFFFULL;
 
-    uint64_t* sig = (uint64_t*)malloc((size_t)spec->words * sizeof(uint64_t));
+    uint64_t* sig = (uint64_t*)ferret_alloc((size_t)spec->words * sizeof(uint64_t));
     if (!sig) {
         soft_float_make_special(spec, 0, SOFT_CLASS_ZERO, out_words);
         return;
@@ -1531,7 +1532,7 @@ static double soft_to_double(int sign, int exp, const uint64_t* sig, int sig_wor
 
 static double soft_float_to_f64(const soft_float_spec* spec, const uint64_t* words) {
     size_t wcount = (size_t)spec->words;
-    uint64_t* buf = (uint64_t*)malloc(wcount * 2 * sizeof(uint64_t));
+    uint64_t* buf = (uint64_t*)ferret_alloc(wcount * 2 * sizeof(uint64_t));
     if (!buf) {
         return 0.0;
     }
@@ -1963,7 +1964,7 @@ static void big_pow5(uint32_t exp, ferret_big_uint* out) {
 
 static char* big_to_decimal(const ferret_big_uint* b) {
     if (b->len == 0) {
-        char* out = (char*)malloc(2);
+        char* out = (char*)ferret_alloc(2);
         if (!out) return NULL;
         out[0] = '0';
         out[1] = '\0';
@@ -1992,7 +1993,7 @@ static char* big_to_decimal(const ferret_big_uint* b) {
         parts[parts_len++] = rem;
     }
     size_t buf_size = parts_len * 9 + 1;
-    char* out = (char*)malloc(buf_size);
+    char* out = (char*)ferret_alloc(buf_size);
     if (!out) {
         free(parts);
         big_free(&tmp);
@@ -2031,13 +2032,13 @@ static long double soft_log2_from_sig(const uint64_t* sig, int words) {
 
 static char* soft_format_decimal(int sign, int exp, const uint64_t* sig_raw, int sig_words, int sig_bits, soft_class_t cls, int precision) {
     if (cls == SOFT_CLASS_NAN) {
-        char* out = (char*)malloc(4);
+        char* out = (char*)ferret_alloc(4);
         if (!out) return NULL;
         strcpy(out, "nan");
         return out;
     }
     if (cls == SOFT_CLASS_INF) {
-        char* out = (char*)malloc(sign ? 5 : 4);
+        char* out = (char*)ferret_alloc(sign ? 5 : 4);
         if (!out) return NULL;
         if (sign) {
             strcpy(out, "-inf");
@@ -2047,7 +2048,7 @@ static char* soft_format_decimal(int sign, int exp, const uint64_t* sig_raw, int
         return out;
     }
     if (cls == SOFT_CLASS_ZERO || soft_u64_is_zero(sig_raw, sig_words)) {
-        char* out = (char*)malloc(sign ? 5 : 4);
+        char* out = (char*)ferret_alloc(sign ? 5 : 4);
         if (!out) return NULL;
         if (sign) {
             strcpy(out, "-0.0");
@@ -2138,7 +2139,7 @@ static char* soft_format_decimal(int sign, int exp, const uint64_t* sig_raw, int
     }
     if (len < (size_t)precision) {
         size_t diff = (size_t)precision - len;
-        char* padded = (char*)malloc((size_t)precision + 1);
+        char* padded = (char*)ferret_alloc((size_t)precision + 1);
         if (!padded) {
             free(digits);
             big_free(&num);
@@ -2157,7 +2158,7 @@ static char* soft_format_decimal(int sign, int exp, const uint64_t* sig_raw, int
 
     int use_fixed = (exp10 >= -4 && exp10 < precision);
     size_t out_cap = (size_t)precision + 32;
-    char* out = (char*)malloc(out_cap);
+    char* out = (char*)ferret_alloc(out_cap);
     if (!out) {
         free(digits);
         big_free(&num);
@@ -2267,7 +2268,7 @@ static bool ferret_parse_float_string(const char* str, int* sign, char** digits_
         s++;
     }
     size_t cap = strlen(s) + 1;
-    char* digits = (char*)malloc(cap);
+    char* digits = (char*)ferret_alloc(cap);
     if (!digits) {
         return false;
     }
@@ -2464,7 +2465,7 @@ static void soft_float_from_decimal(const soft_float_spec* spec, const char* str
         goto cleanup;
     }
 
-    uint64_t* sig = (uint64_t*)malloc((size_t)spec->words * sizeof(uint64_t));
+    uint64_t* sig = (uint64_t*)ferret_alloc((size_t)spec->words * sizeof(uint64_t));
     if (!sig) {
         soft_float_make_special(spec, sign, SOFT_CLASS_ZERO, out_words);
         goto cleanup;
@@ -2484,7 +2485,7 @@ cleanup:
 
 static char* soft_float_to_string(const soft_float_spec* spec, const uint64_t* words) {
     size_t wcount = (size_t)spec->words;
-    uint64_t* buf = (uint64_t*)malloc(wcount * 2 * sizeof(uint64_t));
+    uint64_t* buf = (uint64_t*)ferret_alloc(wcount * 2 * sizeof(uint64_t));
     if (!buf) {
         return NULL;
     }

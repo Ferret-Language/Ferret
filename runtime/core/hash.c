@@ -3,6 +3,7 @@
 
 #include "hash.h"
 #include "map.h"
+#include "alloc.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -323,7 +324,7 @@ bool ferret_equals_universal(const void* data1, const void* data2, ferret_type_i
 
 // Create type info for primitives
 ferret_type_info_t* ferret_type_info_primitive(ferret_type_kind_t kind, size_t size) {
-    ferret_type_info_t* info = (ferret_type_info_t*)malloc(sizeof(ferret_type_info_t));
+    ferret_type_info_t* info = (ferret_type_info_t*)ferret_alloc(sizeof(ferret_type_info_t));
     if (info == NULL) return NULL;
     
     info->kind = kind;
@@ -337,7 +338,7 @@ ferret_type_info_t* ferret_type_info_primitive(ferret_type_kind_t kind, size_t s
 
 // Create type info for structs
 ferret_type_info_t* ferret_type_info_struct(size_t field_count, ferret_field_info_t* fields, size_t size) {
-    ferret_type_info_t* info = (ferret_type_info_t*)malloc(sizeof(ferret_type_info_t));
+    ferret_type_info_t* info = (ferret_type_info_t*)ferret_alloc(sizeof(ferret_type_info_t));
     if (info == NULL) return NULL;
     
     info->kind = FERRET_TYPE_STRUCT;
@@ -349,7 +350,7 @@ ferret_type_info_t* ferret_type_info_struct(size_t field_count, ferret_field_inf
 
 // Create type info for arrays
 ferret_type_info_t* ferret_type_info_array(ferret_type_info_t* element_type, size_t length) {
-    ferret_type_info_t* info = (ferret_type_info_t*)malloc(sizeof(ferret_type_info_t));
+    ferret_type_info_t* info = (ferret_type_info_t*)ferret_alloc(sizeof(ferret_type_info_t));
     if (info == NULL) return NULL;
     
     info->kind = FERRET_TYPE_ARRAY;
@@ -361,7 +362,7 @@ ferret_type_info_t* ferret_type_info_array(ferret_type_info_t* element_type, siz
 
 // Create type info for slices
 ferret_type_info_t* ferret_type_info_slice(ferret_type_info_t* element_type) {
-    ferret_type_info_t* info = (ferret_type_info_t*)malloc(sizeof(ferret_type_info_t));
+    ferret_type_info_t* info = (ferret_type_info_t*)ferret_alloc(sizeof(ferret_type_info_t));
     if (info == NULL) return NULL;
     
     info->kind = FERRET_TYPE_SLICE;
@@ -372,7 +373,7 @@ ferret_type_info_t* ferret_type_info_slice(ferret_type_info_t* element_type) {
 
 // Create type info for maps
 ferret_type_info_t* ferret_type_info_map(ferret_type_info_t* key_type, ferret_type_info_t* value_type) {
-    ferret_type_info_t* info = (ferret_type_info_t*)malloc(sizeof(ferret_type_info_t));
+    ferret_type_info_t* info = (ferret_type_info_t*)ferret_alloc(sizeof(ferret_type_info_t));
     if (info == NULL) return NULL;
     
     info->kind = FERRET_TYPE_MAP;
@@ -384,7 +385,7 @@ ferret_type_info_t* ferret_type_info_map(ferret_type_info_t* key_type, ferret_ty
 
 // Create type info for pointers
 ferret_type_info_t* ferret_type_info_pointer(ferret_type_info_t* pointee_type) {
-    ferret_type_info_t* info = (ferret_type_info_t*)malloc(sizeof(ferret_type_info_t));
+    ferret_type_info_t* info = (ferret_type_info_t*)ferret_alloc(sizeof(ferret_type_info_t));
     if (info == NULL) return NULL;
     
     info->kind = FERRET_TYPE_POINTER;
@@ -396,6 +397,6 @@ ferret_type_info_t* ferret_type_info_pointer(ferret_type_info_t* pointee_type) {
 // Free type info (non-recursive, assumes shared type info)
 void ferret_type_info_free(ferret_type_info_t* type_info) {
     if (type_info != NULL) {
-        free(type_info);
+        ferret_free(type_info);
     }
 }

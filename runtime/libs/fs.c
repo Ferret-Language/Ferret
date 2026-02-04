@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include "../core/alloc.h"
 #include <string.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -32,6 +33,11 @@ typedef long long ssize_t;
 #define PATH_SEP '/'
 #endif
 
+#include "../core/runtime_naming.h"
+
+// Define the module prefix for this file (implements ferret_libs/std/fs.fer)
+#define MODULE_PREFIX ferret_std_fs
+
 // Result layout: [8-byte union (value or error str)][1-byte tag] (+ padding)
 // Tag: 1 = Ok, 0 = Err
 
@@ -42,7 +48,7 @@ typedef long long ssize_t;
 static char* str_dup(const char* s) {
     if (!s) return NULL;
     size_t len = strlen(s);
-    char* copy = (char*)malloc(len + 1);
+    char* copy = (char*)ferret_alloc(len + 1);
     if (copy) {
         memcpy(copy, s, len + 1);
     }
@@ -50,7 +56,7 @@ static char* str_dup(const char* s) {
 }
 
 #define FERRET_FS_DEFINE_OPEN(name, mode_str, open_error) \
-    void ferret_std_fs_##name(void* out, const char* path) { \
+    void FERRET_FUNC(name)(void* out, const char* path) { \
         if (!out) return; \
         int64_t* handle_ptr = (int64_t*)out; \
         char** path_out = (char**)((char*)out + 8); \
@@ -74,7 +80,7 @@ static char* str_dup(const char* s) {
     }
 
 #define FERRET_FS_DEFINE_WRITE_FILE(name, mode_str, open_error) \
-    void ferret_std_fs_##name(void* out, const char* path, const char* content) { \
+    void FERRET_FUNC(name)(void* out, const char* path, const char* content) { \
         if (!out) return; \
         bool* val_ptr = (bool*)out; \
         int8_t* tag_ptr = (int8_t*)((char*)out + 8); \
@@ -105,7 +111,7 @@ static char* str_dup(const char* s) {
     }
 
 #define FERRET_FS_DEFINE_WRITE_HANDLE(name, add_newline) \
-    void ferret_std_fs_##name(void* out, int64_t handle, const char* path, const char* mode, const char* content) { \
+    void FERRET_FUNC(name)(void* out, int64_t handle, const char* path, const char* mode, const char* content) { \
         (void)path; \
         (void)mode; \
         if (!out) return; \
@@ -143,7 +149,7 @@ static char* str_dup(const char* s) {
 
 // Read entire file as string
 // OUT PARAM FIRST: compiler generates call $func(l %out, l %path)
-void ferret_std_fs_ReadFile(void* out, const char* path) {
+void FERRET_FUNC(ReadFile)(void* out, const char* path) {
     if (!out) return;
     
     char** str_ptr = (char**)out;
@@ -174,7 +180,7 @@ void ferret_std_fs_ReadFile(void* out, const char* path) {
         return;
     }
     
-    char* content = (char*)malloc(size + 1);
+    char* content = (char*)ferret_alloc(size + 1);
     if (!content) {
         fclose(f);
         *str_ptr = "out of memory";
@@ -203,7 +209,7 @@ FERRET_FS_DEFINE_WRITE_FILE(AppendFile, "a", "failed to open file for append")
 // ============================================
 
 // Check if file exists
-bool ferret_std_fs_Exists(const char* path) {
+bool FERRET_FUNC(Exists)(const char* path) {
     if (!path) return false;
     return access(path, F_OK) == 0;
 }
@@ -212,7 +218,7 @@ bool ferret_std_fs_Exists(const char* path) {
 // FileInfo layout: { str path (8), i64 size (8), bool isDir (1), bool isFile (1), bool exists (1) }
 // With alignment: offset 0=path, 8=size, 16=isDir, 17=isFile, 18=exists
 // OUT PARAM FIRST
-void ferret_std_fs_Stat(void* out, const char* path) {
+void FERRET_FUNC(Stat)(void* out, const char* path) {
     if (!out) return;
     
     // Result layout: [FileInfo struct][4-byte tag]
@@ -252,7 +258,7 @@ void ferret_std_fs_Stat(void* out, const char* path) {
 
 // Get file size
 // OUT PARAM FIRST
-void ferret_std_fs_Size(void* out, const char* path) {
+void FERRET_FUNC(Size)(void* out, const char* path) {
     if (!out) return;
     
     int64_t* size_ptr = (int64_t*)out;
@@ -294,7 +300,7 @@ FERRET_FS_DEFINE_OPEN(OpenAppend, "a", "failed to open file for append")
 
 // Close file handle
 // File struct passed by value: { i64 handle, str path, str mode }
-void ferret_std_fs_Close(int64_t handle, const char* path, const char* mode) {
+void FERRET_FUNC(Close)(int64_t handle, const char* path, const char* mode) {
     (void)path;  // unused
     (void)mode;  // unused
     if (handle == 0) return;
@@ -304,7 +310,7 @@ void ferret_std_fs_Close(int64_t handle, const char* path, const char* mode) {
 
 // Read line from file handle
 // OUT PARAM FIRST
-void ferret_std_fs_ReadLine(void* out, int64_t handle, const char* path, const char* mode) {
+void FERRET_FUNC(ReadLine)(void* out, int64_t handle, const char* path, const char* mode) {
     (void)path;
     (void)mode;
     if (!out) return;
@@ -326,7 +332,7 @@ void ferret_std_fs_ReadLine(void* out, int64_t handle, const char* path, const c
 #ifdef _WIN32
     // Windows fallback: manual line reading
     size_t capacity = 128;
-    line = (char*)malloc(capacity);
+    line = (char*)ferret_alloc(capacity);
     if (!line) {
         *str_ptr = "out of memory";
         *tag_ptr = 0;
@@ -338,9 +344,9 @@ void ferret_std_fs_ReadLine(void* out, int64_t handle, const char* path, const c
     while ((c = fgetc(f)) != EOF && c != '\n') {
         if (len + 1 >= capacity) {
             capacity *= 2;
-            char* newline = (char*)realloc(line, capacity);
+            char* newline = (char*)ferret_realloc(line, capacity);
             if (!newline) {
-                free(line);
+                ferret_free(line);
                 *str_ptr = "out of memory";
                 *tag_ptr = 0;
                 return;
@@ -351,7 +357,7 @@ void ferret_std_fs_ReadLine(void* out, int64_t handle, const char* path, const c
     }
     
     if (len == 0 && c == EOF) {
-        free(line);
+        ferret_free(line);
         *str_ptr = "end of file";
         *tag_ptr = 0;
         return;
@@ -361,7 +367,7 @@ void ferret_std_fs_ReadLine(void* out, int64_t handle, const char* path, const c
 #else
     ssize_t read = getline(&line, &len, f);
     if (read == -1) {
-        if (line) free(line);
+        if (line) ferret_free(line);
         *str_ptr = "end of file";
         *tag_ptr = 0;
         return;
@@ -391,7 +397,7 @@ FERRET_FS_DEFINE_WRITE_HANDLE(WriteLine, 1)
 
 // Delete file
 // OUT PARAM FIRST
-void ferret_std_fs_Remove(void* out, const char* path) {
+void FERRET_FUNC(Remove)(void* out, const char* path) {
     if (!out) return;
     
     bool* val_ptr = (bool*)out;
@@ -415,7 +421,7 @@ void ferret_std_fs_Remove(void* out, const char* path) {
 
 // Create directory
 // OUT PARAM FIRST
-void ferret_std_fs_Mkdir(void* out, const char* path) {
+void FERRET_FUNC(Mkdir)(void* out, const char* path) {
     if (!out) return;
     
     bool* val_ptr = (bool*)out;
@@ -445,7 +451,7 @@ void ferret_std_fs_Mkdir(void* out, const char* path) {
 
 // Remove directory
 // OUT PARAM FIRST
-void ferret_std_fs_Rmdir(void* out, const char* path) {
+void FERRET_FUNC(Rmdir)(void* out, const char* path) {
     if (!out) return;
     
     bool* val_ptr = (bool*)out;
@@ -472,13 +478,13 @@ void ferret_std_fs_Rmdir(void* out, const char* path) {
 // ============================================
 
 // Get current working directory
-void ferret_std_fs_Cwd(void* out) {
+void FERRET_FUNC(Cwd)(void* out) {
     if (!out) return;
     
     char** str_ptr = (char**)out;
     int8_t* tag_ptr = (int8_t*)((char*)out + 8);
     
-    char* buf = (char*)malloc(4096);
+    char* buf = (char*)ferret_alloc(4096);
     if (!buf) {
         *str_ptr = "out of memory";
         *tag_ptr = 0;
@@ -486,7 +492,7 @@ void ferret_std_fs_Cwd(void* out) {
     }
     
     if (!getcwd(buf, 4096)) {
-        free(buf);
+        ferret_free(buf);
         *str_ptr = "failed to get current directory";
         *tag_ptr = 0;
         return;
@@ -497,7 +503,7 @@ void ferret_std_fs_Cwd(void* out) {
 }
 
 // Join two path components
-char* ferret_std_fs_Join(const char* base, const char* path) {
+char* FERRET_FUNC(Join)(const char* base, const char* path) {
     if (!base && !path) return str_dup("");
     if (!base) return str_dup(path);
     if (!path) return str_dup(base);
@@ -509,7 +515,7 @@ char* ferret_std_fs_Join(const char* base, const char* path) {
     bool has_sep = (base_len > 0 && (base[base_len-1] == '/' || base[base_len-1] == '\\'));
     
     size_t total = base_len + path_len + (has_sep ? 1 : 2);
-    char* result = (char*)malloc(total);
+    char* result = (char*)ferret_alloc(total);
     if (!result) return NULL;
     
     memcpy(result, base, base_len);
@@ -524,7 +530,7 @@ char* ferret_std_fs_Join(const char* base, const char* path) {
 }
 
 // Get file extension
-char* ferret_std_fs_Ext(const char* path) {
+char* FERRET_FUNC(Ext)(const char* path) {
     if (!path) return str_dup("");
     
     size_t len = strlen(path);
@@ -541,7 +547,7 @@ char* ferret_std_fs_Ext(const char* path) {
 }
 
 // Get base name (filename without directory)
-char* ferret_std_fs_Base(const char* path) {
+char* FERRET_FUNC(Base)(const char* path) {
     if (!path) return str_dup("");
     
     size_t len = strlen(path);
@@ -555,14 +561,14 @@ char* ferret_std_fs_Base(const char* path) {
 }
 
 // Get directory part
-char* ferret_std_fs_Dir(const char* path) {
+char* FERRET_FUNC(Dir)(const char* path) {
     if (!path) return str_dup("");
     
     size_t len = strlen(path);
     // Find last separator
     for (size_t i = len; i > 0; i--) {
         if (path[i-1] == '/' || path[i-1] == '\\') {
-            char* result = (char*)malloc(i);
+            char* result = (char*)ferret_alloc(i);
             if (!result) return NULL;
             memcpy(result, path, i - 1);
             result[i - 1] = '\0';

@@ -1,4 +1,4 @@
-// Native net module - transport primitives (TCP).
+// Native network module - transport primitives (TCP).
 // Implementations live in C.
 
 // IP address wrapper (optional helper type).
