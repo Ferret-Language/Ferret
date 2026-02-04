@@ -55,7 +55,6 @@ func (d *DataLayout) SizeOf(t types.SemType) int {
 		return d.PointerSize
 	case *types.ArrayType:
 		if tt.Length < 0 {
-			// Slice (native): represented as pointer to runtime array handle.
 			return d.PointerSize
 		}
 		elemSize := d.SizeOf(tt.Element)

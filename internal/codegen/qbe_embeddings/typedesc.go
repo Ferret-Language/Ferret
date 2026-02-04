@@ -121,7 +121,7 @@ func (g *Generator) emitSliceTypeDesc(globalName string, typ *types.ArrayType) {
 	elemDescName := g.getOrCreateTypeDescName(typ.Element)
 
 	kind := ferretTypeSliceKind
-	size := g.layout.PointerSize * 3 // {data, len, cap}
+	size := g.layout.SizeOf(typ)
 	g.emitTypeDescData(globalName, kind, size, elemDescName, "0")
 }
 

@@ -71,9 +71,15 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 	if ctx == nil {
 		return nil, fmt.Errorf("wasm: missing compiler context")
 	}
+	pointerSize := 4
+	if ctx.Config != nil {
+		if ctx.Config.PointerSize > 0 {
+			pointerSize = ctx.Config.PointerSize
+		}
+	}
 	gen := &Generator{
 		ctx:         ctx,
-		layout:      mir.NewDataLayout(4),
+		layout:      mir.NewDataLayout(pointerSize),
 		units:       units,
 		funcs:       make(map[string]*funcInfo),
 		imports:     make(map[string]funcSig),
@@ -2437,7 +2443,7 @@ func (g *Generator) fillTypeDescriptorData(name string, typ types.SemType, typeD
 	case *types.ArrayType:
 		if t.Length < 0 {
 			kind = wasmTypeSliceKind
-			size = uint32(g.layout.PointerSize * 3)
+			size = uint32(g.layout.SizeOf(t))
 			info1 = getTypePtr(t.Element)
 		} else {
 			kind = wasmTypeArrayKind
