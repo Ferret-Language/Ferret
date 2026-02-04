@@ -26,6 +26,7 @@
 
 #ifdef __APPLE__
 #include <crt_externs.h>
+#include <sys/sysctl.h>
 #endif
 
 #include "../core/alloc.h"
@@ -465,6 +466,19 @@ int32_t FERRET_FUNC(Cpus)(void) {
         return 0;
     }
     return (int32_t)info.dwNumberOfProcessors;
+#elif defined(__APPLE__)
+    int count;
+    size_t size = sizeof(count);
+    if (sysctlbyname("hw.ncpu", &count, &size, NULL, 0) != 0) {
+        return 0;
+    }
+    if (count < 1) {
+        return 0;
+    }
+    if (count > INT32_MAX) {
+        return INT32_MAX;
+    }
+    return (int32_t)count;
 #else
     long count = sysconf(_SC_NPROCESSORS_ONLN);
     if (count < 1) {
