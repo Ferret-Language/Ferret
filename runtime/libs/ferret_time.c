@@ -80,17 +80,3 @@ int64_t FERRET_FUNC(NowUnixMs)(void) {
     return ((int64_t)tv.tv_sec * 1000) + (int64_t)(tv.tv_usec / 1000);
 #endif
 }
-
-void FERRET_FUNC(SleepMs)(int32_t ms) {
-    if (ms <= 0) {
-        return;
-    }
-#if defined(_WIN32)
-    Sleep((DWORD)ms);
-#else
-    struct timespec req;
-    req.tv_sec = ms / 1000;
-    req.tv_nsec = (long)(ms % 1000) * 1000000L;
-    nanosleep(&req, NULL);
-#endif
-}

@@ -4,8 +4,6 @@ fn Now() -> str;
 fn NowUnix() -> i64;
 // @extern
 fn NowUnixMs() -> i64;
-// @extern
-fn SleepMs(ms: i32) -> void;
 
 fn SinceUnix(start: i64) -> i64 {
     return NowUnix() - start;
@@ -13,12 +11,4 @@ fn SinceUnix(start: i64) -> i64 {
 
 fn SinceUnixMs(start: i64) -> i64 {
     return NowUnixMs() - start;
-}
-
-fn SleepSeconds(seconds: i32) -> void {
-    SleepMs(seconds * 1000);
-}
-
-fn SleepMinutes(minutes: i32) -> void {
-    SleepSeconds(minutes * 60);
 }

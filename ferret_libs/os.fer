@@ -21,6 +21,14 @@ fn GetPid() -> i32;
 // @extern
 fn Sleep(ms: i32) -> void;
 
+fn SleepSeconds(seconds: i32) -> void {
+    SleepMs(seconds * 1000);
+}
+
+fn SleepMinutes(minutes: i32) -> void {
+    SleepSeconds(minutes * 60);
+}
+
 // Execute a shell command and return its exit code.
 // @extern
 fn Exec(cmd: str) -> str ! i32;
