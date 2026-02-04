@@ -1,33 +1,7 @@
-import "std/io";
-import "time";
+// Example: Project named "os" to test shadowing warning
+// This project name conflicts with stdlib "os" module
 import "os";
 
 fn main() {
-    let pid := os::GetPid();
-    io::Println("pid:", pid);
-    io::Println("cpus:", os::Cpus());
-
-    let hostname := os::Hostname() catch "unknown";
-    io::Println("hostname:", hostname);
-
-    let args := os::Args();
-    io::Println("args:", len(&args));
-    let i := 0;
-    while i < len(&args) {
-        io::Println(args[i]);
-        i++;
-    }
-
-    os::SetEnv("FERRET_OS_TEST", "1") catch false;
-    let env := os::GetEnv("FERRET_OS_TEST") catch "missing";
-    io::Println("FERRET_OS_TEST:", env);
-    os::UnsetEnv("FERRET_OS_TEST") catch false;
-
-    let execCode := os::Exec("echo ferret_os") catch -1;
-    io::Println("exec code:", execCode);
-
-    let alive := os::Kill(pid, 0) catch false;
-    io::Println("self alive:", alive);
-
-    os::Sleep(10);
+    os::Local_func();
 }

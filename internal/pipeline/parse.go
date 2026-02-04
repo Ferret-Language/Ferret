@@ -41,7 +41,14 @@ func (p *Pipeline) processModule(importPath string, requestedLocation *source.Lo
 func (p *Pipeline) parseModule(importPath string, requestedLocation *source.Location) {
 	module, exists := p.ctx.GetModule(importPath)
 	if !exists {
-		modScope := table.NewSymbolTable(p.ctx.Universe)
+		// For the global prelude module, use the Universe scope directly
+		// so its symbols are automatically available to all modules
+		var modScope *table.SymbolTable
+		if importPath == context_v2.GlobalModuleImport {
+			modScope = p.ctx.Universe
+		} else {
+			modScope = table.NewSymbolTable(p.ctx.Universe)
+		}
 		module = &context_v2.Module{
 			FilePath:     "",
 			ImportPath:   importPath,
@@ -54,7 +61,14 @@ func (p *Pipeline) parseModule(importPath string, requestedLocation *source.Loca
 			Artifacts:    make(map[string]any),
 		}
 		p.ctx.AddModule(importPath, module)
+	} else if module.Type == context_v2.ModuleBuiltin {
+		// Check if a local file would shadow this stdlib module
+		p.ctx.CheckModuleShadowing(importPath, requestedLocation)
 	}
+
+	// Use the module's actual import path for all operations.
+	// This handles the case where "playground/other" maps to "__ferret_project_playground/other".
+	actualImportPath := module.ImportPath
 
 	var content string
 	var filePath string
@@ -101,13 +115,13 @@ func (p *Pipeline) parseModule(importPath string, requestedLocation *source.Loca
 	tokenizer := lexer.New(filePath, content, p.ctx.Diagnostics)
 	tokens := tokenizer.Tokenize(false)
 
-	if !p.ctx.AdvanceModulePhase(importPath, phase.PhaseLexed) {
-		p.ctx.ReportError(fmt.Sprintf("cannot advance module %s to PhaseLexed", importPath), nil)
+	if !p.ctx.AdvanceModulePhase(actualImportPath, phase.PhaseLexed) {
+		p.ctx.ReportError(fmt.Sprintf("cannot advance module %s to PhaseLexed", actualImportPath), nil)
 		return
 	}
 
-	if !p.ctx.HasModule(importPath) {
-		p.ctx.AddModule(importPath, module)
+	if !p.ctx.HasModule(actualImportPath) {
+		p.ctx.AddModule(actualImportPath, module)
 	}
 
 	astModule := parser.Parse(tokens, filePath, p.ctx.Diagnostics)
@@ -121,17 +135,17 @@ func (p *Pipeline) parseModule(importPath string, requestedLocation *source.Loca
 		astModule.SaveAST()
 	}
 
-	if !p.ctx.AdvanceModulePhase(importPath, phase.PhaseParsed) {
-		p.ctx.ReportError(fmt.Sprintf("cannot advance module %s to PhaseParsed", importPath), nil)
+	if !p.ctx.AdvanceModulePhase(actualImportPath, phase.PhaseParsed) {
+		p.ctx.ReportError(fmt.Sprintf("cannot advance module %s to PhaseParsed", actualImportPath), nil)
 		return
 	}
 
 	if p.ctx.Config.Debug {
-		colors.PURPLE.Printf("  ✓ %s\n", importPath)
+		colors.PURPLE.Printf("  ✓ %s\n", actualImportPath)
 	}
 
-	if importPath != context_v2.GlobalModuleImport && p.ctx.HasModule(context_v2.GlobalModuleImport) {
-		if err := p.ctx.AddDependency(importPath, context_v2.GlobalModuleImport); err != nil {
+	if actualImportPath != context_v2.GlobalModuleImport && p.ctx.HasModule(context_v2.GlobalModuleImport) {
+		if err := p.ctx.AddDependency(actualImportPath, context_v2.GlobalModuleImport); err != nil {
 			p.ctx.ReportError(err.Error(), requestedLocation)
 		}
 	}
@@ -142,7 +156,7 @@ func (p *Pipeline) parseModule(importPath string, requestedLocation *source.Loca
 	}
 
 	for _, imp := range imports {
-		if err := p.ctx.AddDependency(importPath, imp.path); err != nil {
+		if err := p.ctx.AddDependency(actualImportPath, imp.path); err != nil {
 			p.ctx.ReportError(err.Error(), imp.location)
 			continue
 		}

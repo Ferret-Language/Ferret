@@ -155,18 +155,6 @@ func (p *Pipeline) Run() error {
 }
 
 func (p *Pipeline) ensureGlobalPrelude() {
-	if p.ctx == nil {
-		return
-	}
-	if p.ctx.HasModule(context_v2.GlobalModuleImport) {
-		return
-	}
-	mod := &context_v2.Module{
-		ImportPath:   context_v2.GlobalModuleImport,
-		Type:         context_v2.ModuleBuiltin,
-		ModuleScope:  p.ctx.Universe,
-		CurrentScope: p.ctx.Universe,
-		Artifacts:    make(map[string]any),
-	}
-	p.ctx.AddModule(context_v2.GlobalModuleImport, mod)
+	// Global prelude is now loaded from global.fer in libs - no synthetic module needed
+	// The processModule call will load it from the stdlib path
 }

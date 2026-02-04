@@ -1,0 +1,250 @@
+import "std/net" as net;
+
+// Minimal Redis client over RESP (pure Ferret).
+
+type Client struct {
+    .conn: net::TcpConn
+};
+
+fn Connect(addr: str) -> str ! Client {
+    let conn := net::DialTcp(addr) catch err {
+        return err!;
+    };
+    return { .conn = conn };
+}
+
+fn (c: &mut Client) Close() {
+    net::CloseConn(c.conn);
+}
+
+fn strLen(s: str) -> i32 {
+    let bytes := s as []byte;
+    return len(&bytes);
+}
+
+fn respBulk(s: str) -> str {
+    return "$" + strLen(s) + "\r\n" + s + "\r\n";
+}
+
+fn buildCommand(args: []str) -> str {
+    let out := "*" + len(&args) + "\r\n";
+    let i: i32 = 0;
+    while i < len(&args) {
+        out = out + respBulk(args[i]);
+        i += 1;
+    }
+    return out;
+}
+
+fn findCrlf(data: []byte, start: i32) -> i32 {
+    let i: i32 = start;
+    let n := len(&data);
+    while i + 1 < n {
+        if data[i] == 13 && data[i + 1] == 10 {
+            return i;
+        }
+        i += 1;
+    }
+    return -1;
+}
+
+fn parseInt64(data: []byte, start: i32, end: i32) -> i64 {
+    let i: i32 = start;
+    if i >= end {
+        return 0;
+    }
+    let sign: i64 = 1;
+    if data[i] == 45 { // '-'
+        sign = -1;
+        i += 1;
+    }
+    let n: i64 = 0;
+    while i < end {
+        n = n * 10 + ((data[i] as i64) - 48);
+        i += 1;
+    }
+    return n * sign;
+}
+
+fn parseInt32(data: []byte, start: i32, end: i32) -> i32 {
+    let i: i32 = start;
+    if i >= end {
+        return 0;
+    }
+    let sign: i32 = 1;
+    if data[i] == 45 { // '-'
+        sign = -1;
+        i += 1;
+    }
+    let n: i32 = 0;
+    while i < end {
+        n = n * 10 + ((data[i] as i32) - 48);
+        i += 1;
+    }
+    return n * sign;
+}
+
+fn bytesToStr(data: []byte, start: i32, length: i32) -> str {
+    let out := "";
+    let i: i32 = 0;
+    while i < length {
+        out = out + data[start + i];
+        i += 1;
+    }
+    return out;
+}
+
+fn parseRespStr(data: []byte) -> str ! str? {
+    let n := len(&data);
+    if n <= 0 {
+        return "empty response"!;
+    }
+
+    let prefix := data[0];
+    let lineEnd := findCrlf(data, 1);
+    if lineEnd < 0 {
+        return "invalid response"!;
+    }
+
+    let lineStart: i32 = 1;
+    let lineLen: i32 = lineEnd - lineStart;
+
+    if prefix == 43 { // '+'
+        return bytesToStr(data, lineStart, lineLen);
+    }
+    if prefix == 45 { // '-'
+        return bytesToStr(data, lineStart, lineLen)!;
+    }
+    if prefix == 58 { // ':'
+        let val := parseInt64(data, lineStart, lineEnd);
+        return "" + val;
+    }
+    if prefix == 36 { // '$'
+        let bulkLen := parseInt32(data, lineStart, lineEnd);
+        if bulkLen < 0 {
+            return none;
+        }
+        let bodyStart := lineEnd + 2;
+        if bodyStart + bulkLen > n {
+            return "invalid bulk response"!;
+        }
+        return bytesToStr(data, bodyStart, bulkLen);
+    }
+    if prefix == 42 { // '*'
+        return "array replies not supported yet"!;
+    }
+
+    return "unknown response"!;
+}
+
+fn (c: &mut Client) readReplyOpt() -> str ! str? {
+    let data := net::Read(c.conn, 4096) catch err {
+        return err!;
+    };
+    if len(&data) == 0 {
+        return "connection closed"!;
+    }
+    return parseRespStr(data) catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) readReplyInt() -> str ! i64 {
+    let data := net::Read(c.conn, 4096) catch err {
+        return err!;
+    };
+    if len(&data) == 0 {
+        return "connection closed"!;
+    }
+    let prefix := data[0];
+    let lineEnd := findCrlf(data, 1);
+    if lineEnd < 0 {
+        return "invalid response"!;
+    }
+
+    if prefix == 45 { // '-'
+        let text := bytesToStr(data, 1, lineEnd - 1);
+        return text!;
+    }
+    if prefix != 58 { // ':'
+        return "unexpected reply type"!;
+    }
+    return parseInt64(data, 1, lineEnd);
+}
+
+fn (c: &mut Client) commandArgs(args: []str) -> str ! bool {
+    let cmd := buildCommand(args);
+    let written := net::WriteStr(c.conn, cmd) catch err {
+        return err!;
+    };
+    return true;
+}
+
+fn (c: &mut Client) CommandArgs(args: []str) -> str ! str {
+    let ok := c.commandArgs(args) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    let val := c.readReplyOpt() catch err {
+        return err!;
+    };
+    return val ?? "";
+}
+
+fn (c: &mut Client) CommandStr(args: ...str) -> str ! str {
+    let ok := c.commandArgs(args) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    let val := c.readReplyOpt() catch err {
+        return err!;
+    };
+    return val ?? "";
+}
+
+fn (c: &mut Client) CommandInt(args: ...str) -> str ! i64 {
+    let ok := c.commandArgs(args) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyInt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) Ping() -> str ! str {
+    return c.CommandStr("PING") catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) Get(key: str) -> str ! str? {
+    let ok := c.commandArgs(["GET", key]) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyOpt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) Set(key: str, value: str) -> str ! bool {
+    let rep := c.CommandStr("SET", key, value) catch err {
+        return err!;
+    };
+    return rep == "OK";
+}
+
+fn (c: &mut Client) Del(key: str) -> str ! i64 {
+    return c.CommandInt("DEL", key) catch err {
+        return err!;
+    };
+}

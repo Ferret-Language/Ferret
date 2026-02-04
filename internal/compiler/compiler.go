@@ -2,7 +2,6 @@ package compiler
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -75,18 +74,6 @@ func Compile(opts *Options) Result {
 		projectRoot = entryDir
 	}
 
-	execPath, _ := os.Executable()
-	execDir := filepath.Dir(execPath)
-	libsPath := filepath.Join(execDir, "../libs")
-	if !fs.IsDir(libsPath) {
-		if cwd, err := os.Getwd(); err == nil {
-			candidate := filepath.Join(cwd, "libs")
-			if fs.IsDir(candidate) {
-				libsPath = candidate
-			}
-		}
-	}
-
 	// Determine output path
 	outputPath := opts.OutputExecutable
 	if outputPath == "" {
@@ -102,10 +89,10 @@ func Compile(opts *Options) Result {
 
 	config := &context_v2.Config{
 		ProjectName:    projectName,
-		ProjectPrefix:  "__ferret_project_",
+		ProjectPrefix:  "", // No prefix - stdlib takes priority over local
 		ProjectRoot:    projectRoot,
 		Extension:      ".fer",
-		RuntimePath:    libsPath, // Runtime/stdlib library path relative to executable
+		RuntimePath:    "", // Resolved by build.go relative to ferret binary
 		OutputPath:     outputPath,
 		SaveAST:        opts.SaveAST,
 		KeepGenFiles:   opts.KeepGenFiles,
@@ -118,9 +105,8 @@ func Compile(opts *Options) Result {
 	}
 
 	ctx := context_v2.New(config, opts.Debug)
-	if opts.CodegenBackend == "wasm" || opts.Code != "" || opts.Files != nil {
-		loadEmbeddedBuiltins(ctx)
-	}
+	// Always load embedded stdlib - it contains global.fer and std library
+	loadEmbeddedBuiltins(ctx)
 
 	// Set entry point
 	var err error

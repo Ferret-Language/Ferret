@@ -1028,7 +1028,52 @@ void std_http_App_Listen(void* out, ferret_std_http_App* app, uint64_t app_heap,
     }
 }
 
-void std_http_App_ListenAddr(void* out, ferret_std_http_App* app, uint64_t app_heap, const char* addr) {
+void std_http_App_Serve(void* out, ferret_std_http_App* app, uint64_t app_heap, int64_t listener_handle, const char* listener_addr) {
+    (void)app_heap;
+    (void)listener_addr;
+    if (!app) {
+        ferret_http_result_err_str(out, "invalid app");
+        return;
+    }
+    if (listener_handle == 0) {
+        ferret_http_result_err_str(out, "invalid listener");
+        return;
+    }
+
+#ifdef _WIN32
+    static bool wsa_initialized = false;
+    if (!wsa_initialized) {
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+            ferret_http_result_err_str(out, "WSAStartup failed");
+            return;
+        }
+        wsa_initialized = true;
+    }
+#endif
+
+    ferret_http_app_t* a = (ferret_http_app_t*)(intptr_t)app->handle;
+    if (!a) {
+        ferret_http_result_err_str(out, "invalid app handle");
+        return;
+    }
+
+    ferret_socket_t server_fd = (ferret_socket_t)(intptr_t)listener_handle;
+    a->server_fd = server_fd;
+    a->running = true;
+
+    ferret_http_result_ok_bool(out, true);
+
+    while (a->running) {
+        ferret_socket_t client = accept(server_fd, NULL, NULL);
+        if (client == FERRET_INVALID_SOCKET) {
+            break;
+        }
+        ferret_http_handle_connection(a, client);
+    }
+}
+
+void std_http_App_ListenAddrNative(void* out, ferret_std_http_App* app, uint64_t app_heap, const char* addr) {
     (void)app_heap;
     if (!addr) {
         ferret_http_result_err_str(out, "addr is null");
