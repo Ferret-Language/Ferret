@@ -504,11 +504,11 @@ func (ctx *CompilerContext) CheckModuleShadowing(importPath string, loc *source.
 
 	if fs.IsValidFile(localPath) {
 		warning := diagnostics.NewWarning(fmt.Sprintf(
-			"local module %q is shadowed by stdlib module with the same import path",
+			"local module %q is overridden by language module with the same import path",
 			importPath,
 		))
 		if loc != nil {
-			warning = warning.WithPrimaryLabel(loc, "stdlib module takes priority")
+			warning = warning.WithPrimaryLabel(loc, "language module takes priority")
 		}
 		ctx.Diagnostics.Add(warning)
 	}
