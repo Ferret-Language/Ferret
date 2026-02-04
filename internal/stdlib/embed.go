@@ -1,6 +1,4 @@
-//go:build js && wasm
-
-package compiler
+package stdlib
 
 import (
 	"io/fs"
@@ -15,7 +13,7 @@ import (
 
 var embeddedStdlib = ferretlibs.FS
 
-func loadEmbeddedBuiltins(ctx *context_v2.CompilerContext) {
+func LoadEmbeddedBuiltins(ctx *context_v2.CompilerContext) {
 	if ctx == nil {
 		return
 	}

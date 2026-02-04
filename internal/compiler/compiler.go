@@ -9,6 +9,7 @@ import (
 	"compiler/colors"
 	"compiler/internal/context_v2"
 	"compiler/internal/pipeline"
+	"compiler/internal/stdlib"
 	"compiler/internal/utils/fs"
 )
 
@@ -26,8 +27,6 @@ type Options struct {
 	// For file-based compilation
 	EntryFile string
 	// For in-memory compilation (WASM)
-	Code string // Single file (deprecated - use Files instead)
-	// For multi-file in-memory compilation (WASM)
 	Files map[string]string // map[filename]content - e.g. {"main.fer": "...", "utils.fer": "..."}
 	// Debug output
 	Debug   bool
@@ -42,7 +41,7 @@ type Options struct {
 	// Skip codegen (stop after type checking)
 	TypecheckOnly bool
 
-	// Codegen backend ("none", "qbe")
+	// Codegen backend ("wasm", "qbe")
 	CodegenBackend string
 }
 
@@ -89,7 +88,6 @@ func Compile(opts *Options) Result {
 
 	config := &context_v2.Config{
 		ProjectName:    projectName,
-		ProjectPrefix:  "", // No prefix - stdlib takes priority over local
 		ProjectRoot:    projectRoot,
 		Extension:      ".fer",
 		RuntimePath:    fs.ResolveLibsPath(), // Resolved by build.go relative to ferret binary
@@ -105,19 +103,16 @@ func Compile(opts *Options) Result {
 	}
 
 	ctx := context_v2.New(config, opts.Debug)
-	// Load embedded stdlib for WASM builds, filesystem for native builds
-	if opts.CodegenBackend == "wasm" {
-		loadEmbeddedBuiltins(ctx)
+	// Load embedded stdlib for WASM builds and in-memory compilation
+	if opts.CodegenBackend == "wasm" || opts.Files != nil {
+		stdlib.LoadEmbeddedBuiltins(ctx)
 	}
 
 	// Set entry point
 	var err error
 	if opts.Files != nil {
-		// Multi-file mode (preferred for WASM)
+		// In-memory mode
 		err = ctx.SetEntryPointWithFiles(opts.Files, "main")
-	} else if opts.Code != "" {
-		// Single-file mode (backward compatibility)
-		err = ctx.SetEntryPointWithCode(opts.Code, "main")
 	} else {
 		// File-based mode
 		err = ctx.SetEntryPoint(opts.EntryFile)

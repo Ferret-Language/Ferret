@@ -7,8 +7,7 @@ import (
 
 	"compiler/internal/context_v2"
 	"compiler/internal/phase"
-	"compiler/internal/semantics/table"
-	"compiler/internal/stdlib"
+	"compiler/internal/utils/fs"
 	"compiler/internal/utils/lists"
 )
 
@@ -29,11 +28,11 @@ func TestPipelineBasic(t *testing.T) {
 		ProjectRoot:   tmpDir,
 		Extension:     ".fer",
 		TypeCheckOnly: true,
+		RuntimePath:   fs.ResolveLibsPath(),
 	}
 
-	// Create context and load embedded stdlib
+	// Create context
 	ctx := context_v2.New(config, false)
-	stdlib.LoadEmbedded(ctx)
 	if err := ctx.SetEntryPoint(mainPath); err != nil {
 		t.Fatalf("Failed to set entry point: %v", err)
 	}
@@ -113,10 +112,10 @@ fn square(x: f64) -> f64 {
 			ProjectRoot:   tmpDir,
 			Extension:     ".fer",
 			TypeCheckOnly: true,
+			RuntimePath:   fs.ResolveLibsPath(),
 		}
 
 		ctx := context_v2.New(config, false)
-		stdlib.LoadEmbedded(ctx)
 		if err := ctx.SetEntryPoint(mainPath); err != nil {
 			t.Fatalf("Run %d: Failed to set entry point: %v", run, err)
 		}
@@ -263,10 +262,10 @@ const B := 2;`
 			ProjectRoot:   tmpDir,
 			Extension:     ".fer",
 			TypeCheckOnly: true,
+			RuntimePath:   fs.ResolveLibsPath(),
 		}
 
 		ctx := context_v2.New(config, false)
-		stdlib.LoadEmbedded(ctx)
 		if err := ctx.SetEntryPoint(filepath.Join(tmpDir, "main.fer")); err != nil {
 			t.Fatalf("Run %d: Failed to set entry point: %v", run, err)
 		}
@@ -383,16 +382,21 @@ let result := 42;`
 		ProjectRoot:   tmpDir,
 		Extension:     ".fer",
 		TypeCheckOnly: true,
+		RuntimePath:   fs.ResolveLibsPath(),
 	}
 
 	ctx := context_v2.New(config, false)
-	stdlib.LoadEmbedded(ctx)
 	if err := ctx.SetEntryPoint(filepath.Join(tmpDir, "main.fer")); err != nil {
 		t.Fatalf("Failed to set entry point: %v", err)
 	}
 
 	p := New(ctx)
 	if err := p.Run(); err != nil {
+		// Print diagnostics to understand what's failing
+		diags := ctx.Diagnostics.Diagnostics()
+		for _, d := range diags {
+			t.Logf("Diagnostic: %s", d.Message)
+		}
 		t.Fatalf("Pipeline failed: %v", err)
 	}
 
@@ -490,36 +494,24 @@ func TestImportPathNormalization(t *testing.T) {
 				ProjectRoot:   virtualRoot,
 				Extension:     ".fer",
 				TypeCheckOnly: true,
+				RuntimePath:   fs.ResolveLibsPath(),
 			}
 
-			// Create context and load embedded stdlib
+			// Create context
 			ctx := context_v2.New(config, false)
-			stdlib.LoadEmbedded(ctx)
 
-			// Create main module in-memory using SetEntryPointWithCode
+			// Create main module in-memory using SetEntryPointWithFiles
 			mainContent := tc.importStmt + "\nlet x := 42;"
-			if err := ctx.SetEntryPointWithCode(mainContent, "main"); err != nil {
-				t.Fatalf("Failed to set entry point with code: %v", err)
-			}
-
-			// Pre-register the utils module in-memory so the import can resolve
-			// This simulates the module existing without requiring filesystem access
 			utilsContent := `let pi := 3.14;`
-			utilsVirtualPath := filepath.Join(virtualRoot, "utils.fer")
-			ctx.Diagnostics.AddSourceContent(utilsVirtualPath, utilsContent)
 
-			// Initialize the module scope with Universe as parent (like SetEntryPointWithCode does)
-			utilsScope := table.NewSymbolTable(ctx.Universe)
-			utilsModule := &context_v2.Module{
-				FilePath:     utilsVirtualPath,
-				Type:         context_v2.ModuleLocal,
-				Phase:        phase.PhaseNotStarted,
-				ModuleScope:  utilsScope,
-				CurrentScope: utilsScope,
-				Content:      utilsContent,
-				Artifacts:    make(map[string]any),
+			files := map[string]string{
+				"main.fer":  mainContent,
+				"utils.fer": utilsContent,
 			}
-			ctx.AddModule(tc.expectedNormPath, utilsModule)
+
+			if err := ctx.SetEntryPointWithFiles(files, "main"); err != nil {
+				t.Fatalf("Failed to set entry point with files: %v", err)
+			}
 
 			// Create and run pipeline
 			p := New(ctx)

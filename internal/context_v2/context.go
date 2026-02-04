@@ -195,7 +195,6 @@ type Config struct {
 	CodegenBackend string
 	// Project information
 	ProjectName   string // Name of the project
-	ProjectPrefix string // Internal prefix for project import root. It's used so project name do not colide with any module
 	ProjectRoot   string // Root directory of the project
 
 	// Build configuration
@@ -300,36 +299,6 @@ func (ctx *CompilerContext) SetEntryPoint(filePath string) error {
 	// Derive import path from file path
 	ctx.EntryModule = ctx.FilePathToImportPath(absPath)
 
-	return nil
-}
-
-// SetEntryPointWithCode sets the entry point with in-memory code (for WASM/playground)
-func (ctx *CompilerContext) SetEntryPointWithCode(code, moduleName string) error {
-	// For in-memory compilation, use a virtual path
-	virtualPath := filepath.Join(ctx.Config.ProjectRoot, moduleName+ctx.Config.Extension)
-	ctx.EntryPoint = filepath.ToSlash(virtualPath)
-
-	// Derive import path consistently with file mode
-	ctx.EntryModule = ctx.FilePathToImportPath(virtualPath)
-
-	// Add source content to diagnostic bag's cache so it can display source lines
-	ctx.Diagnostics.AddSourceContent(virtualPath, code)
-
-	modScope := table.NewSymbolTable(ctx.Universe)
-
-	// Create the entry module directly with the provided code
-	module := &Module{
-		ImportPath:   ctx.EntryModule,
-		FilePath:     virtualPath,
-		Type:         ModuleLocal,
-		Phase:        phase.PhaseNotStarted,
-		ModuleScope:  modScope,
-		CurrentScope: modScope,
-		Content:      code,
-		Artifacts:    make(map[string]any),
-	}
-
-	ctx.AddModule(ctx.EntryModule, module)
 	return nil
 }
 

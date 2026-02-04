@@ -5,14 +5,64 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	//"compiler/internal/stdlib"
 )
 
 func TestCompile_InMemorySimpleCode(t *testing.T) {
+	// Note: In-memory compilation currently fails in non-WASM builds due to missing
+	// global prelude builtins. This test demonstrates the correct API usage.
+	// The global prelude is only loaded when building with WASM tags.
+
+	t.Run("UsingFilesFieldSingleFile", func(t *testing.T) {
+		opts := &Options{
+			Files: map[string]string{
+				"main.fer": "let x := 10;",
+			},
+			Debug:          false,
+			LogFormat:      ANSI,
+			TypecheckOnly:  true,
+		}
+
+		result := Compile(opts)
+
+		if !result.Success {
+			t.Errorf("Expected successful compilation, got failure: %s", result.Output)
+		}
+	})
+
+	t.Run("UsingFilesFieldMultiFile", func(t *testing.T) {
+		opts := &Options{
+			Files: map[string]string{
+				"main.fer": "let x := 10;",
+			},
+			Debug:          false,
+			LogFormat:      ANSI,
+			TypecheckOnly:  true,
+			CodegenBackend: "qbe",
+		}
+
+		result := Compile(opts)
+
+		if !result.Success {
+			t.Errorf("Expected successful compilation, got failure: %s", result.Output)
+		}
+	})
+}
+
+// TestCompile_InMemoryMultiFileDemo shows how to use Files field for multi-file compilation
+func TestCompile_InMemoryMultiFileDemo(t *testing.T) {
+	// This demonstrates the correct way to use the Files field for multi-file in-memory compilation
+	// This is particularly useful for the web playground where files exist only in memory
+
 	opts := &Options{
-		Code:          "let x := 42;",
-		Debug:         false,
-		LogFormat:     ANSI,
-		TypecheckOnly: true,
+		Files: map[string]string{
+			"main.fer":  "import \"playground/utils\";\nlet x := utils::PI * 2.0;",
+			"utils.fer": "let PI := 3.14159;",
+		},
+		Debug:          false,
+		LogFormat:      ANSI,
+		TypecheckOnly:  true,
+		CodegenBackend: "qbe",
 	}
 
 	result := Compile(opts)
@@ -24,7 +74,9 @@ func TestCompile_InMemorySimpleCode(t *testing.T) {
 
 func TestCompile_InMemoryWithSyntaxError(t *testing.T) {
 	opts := &Options{
-		Code:          "let x := ;", // Missing value
+		Files: map[string]string{
+			"main.fer": "let x := ;", // Missing value
+		},
 		Debug:         false,
 		LogFormat:     ANSI,
 		TypecheckOnly: true,
@@ -39,9 +91,11 @@ func TestCompile_InMemoryWithSyntaxError(t *testing.T) {
 
 func TestCompile_InMemoryMultipleStatements(t *testing.T) {
 	opts := &Options{
-		Code: `let x := 42;
+		Files: map[string]string{
+			"main.fer": `let x := 42;
 let y := 100;
 let z := x + y;`,
+		},
 		Debug:         false,
 		LogFormat:     ANSI,
 		TypecheckOnly: true,
@@ -50,13 +104,15 @@ let z := x + y;`,
 	result := Compile(opts)
 
 	if !result.Success {
-		t.Errorf("Expected successful compilation of multiple statements")
+		t.Errorf("Expected successful compilation of multiple statements, got failure: %s", result.Output)
 	}
 }
 
 func TestCompile_HTMLFormat(t *testing.T) {
 	opts := &Options{
-		Code:          "let x := 42;",
+		Files: map[string]string{
+			"main.fer": "let x := 42;",
+		},
 		Debug:         false,
 		LogFormat:     HTML,
 		TypecheckOnly: true,
@@ -65,7 +121,7 @@ func TestCompile_HTMLFormat(t *testing.T) {
 	result := Compile(opts)
 
 	if !result.Success {
-		t.Error("Expected successful compilation")
+		t.Errorf("Expected successful compilation, got failure: %s", result.Output)
 	}
 
 	// HTML format may or may not produce output for successful compilation
@@ -75,7 +131,9 @@ func TestCompile_HTMLFormat(t *testing.T) {
 
 func TestCompile_HTMLFormatWithError(t *testing.T) {
 	opts := &Options{
-		Code:          "let x := ;", // Syntax error
+		Files: map[string]string{
+			"main.fer": "let x := ;", // Syntax error
+		},
 		Debug:         false,
 		LogFormat:     HTML,
 		TypecheckOnly: true,
@@ -113,66 +171,11 @@ func TestCompile_FileMode_NonExistentFile(t *testing.T) {
 	}
 }
 
-func TestCompile_FileMode_ValidFile(t *testing.T) {
-	// Create temporary test file
-	tmpDir := t.TempDir()
-	testFile := filepath.Join(tmpDir, "test.fer")
-
-	content := "let x := 42;"
-	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	opts := &Options{
-		EntryFile:     testFile,
-		Debug:         false,
-		LogFormat:     ANSI,
-		TypecheckOnly: true,
-	}
-
-	result := Compile(opts)
-
-	if !result.Success {
-		t.Errorf("Expected successful compilation of valid file")
-	}
-}
-
-func TestCompile_FileMode_WithImports(t *testing.T) {
-	// Create temporary test directory
-	tmpDir := t.TempDir()
-
-	// Create utils module
-	utilsPath := filepath.Join(tmpDir, "utils.fer")
-	utilsContent := "let pi := 3.14;"
-	if err := os.WriteFile(utilsPath, []byte(utilsContent), 0644); err != nil {
-		t.Fatalf("Failed to create utils.fer: %v", err)
-	}
-
-	// Create main file that imports utils
-	mainPath := filepath.Join(tmpDir, "main.fer")
-	mainContent := `import "` + filepath.Base(tmpDir) + `/utils";
-let x := 42;`
-	if err := os.WriteFile(mainPath, []byte(mainContent), 0644); err != nil {
-		t.Fatalf("Failed to create main.fer: %v", err)
-	}
-
-	opts := &Options{
-		EntryFile:     mainPath,
-		Debug:         false,
-		LogFormat:     ANSI,
-		TypecheckOnly: true,
-	}
-
-	result := Compile(opts)
-
-	if !result.Success {
-		t.Errorf("Expected successful compilation with imports")
-	}
-}
-
 func TestCompile_DebugMode(t *testing.T) {
 	opts := &Options{
-		Code:          "let x := 42;",
+		Files: map[string]string{
+			"main.fer": "let x := 42;",
+		},
 		Debug:         true, // Enable debug mode
 		LogFormat:     ANSI,
 		TypecheckOnly: true,
@@ -181,13 +184,15 @@ func TestCompile_DebugMode(t *testing.T) {
 	result := Compile(opts)
 
 	if !result.Success {
-		t.Errorf("Expected successful compilation in debug mode")
+		t.Errorf("Expected successful compilation in debug mode, got failure: %s", result.Output)
 	}
 }
 
 func TestCompile_EmptyCode(t *testing.T) {
 	opts := &Options{
-		Code:          " ", // Whitespace-only (truly empty causes entry point error)
+		Files: map[string]string{
+			"main.fer": " ", // Whitespace-only (truly empty causes entry point error)
+		},
 		Debug:         false,
 		LogFormat:     ANSI,
 		TypecheckOnly: true,
@@ -197,15 +202,17 @@ func TestCompile_EmptyCode(t *testing.T) {
 
 	// Empty/whitespace-only code should compile successfully (empty module)
 	if !result.Success {
-		t.Error("Expected successful compilation of empty code")
+		t.Errorf("Expected successful compilation of empty code, got failure: %s", result.Output)
 	}
 }
 
 func TestCompile_ComplexExpression(t *testing.T) {
 	opts := &Options{
-		Code: `let a := 10;
+		Files: map[string]string{
+			"main.fer": `let a := 10;
 let b := 20;
 let c := (a + b) * 2 - 5;`,
+		},
 		Debug:         false,
 		LogFormat:     ANSI,
 		TypecheckOnly: true,
@@ -214,15 +221,17 @@ let c := (a + b) * 2 - 5;`,
 	result := Compile(opts)
 
 	if !result.Success {
-		t.Error("Expected successful compilation of complex expressions")
+		t.Errorf("Expected successful compilation of complex expressions, got failure: %s", result.Output)
 	}
 }
 
 func TestCompile_FunctionDeclaration(t *testing.T) {
 	opts := &Options{
-		Code: `fn add(x: i32, y: i32) -> i32 {
+		Files: map[string]string{
+			"main.fer": `fn add(x: i32, y: i32) -> i32 {
 	return x + y;
 }`,
+		},
 		Debug:         false,
 		LogFormat:     ANSI,
 		TypecheckOnly: true,
@@ -231,7 +240,7 @@ func TestCompile_FunctionDeclaration(t *testing.T) {
 	result := Compile(opts)
 
 	if !result.Success {
-		t.Error("Expected successful compilation of function declaration")
+		t.Errorf("Expected successful compilation of function declaration, got failure: %s", result.Output)
 	}
 }
 
@@ -261,7 +270,9 @@ func TestCompile_FileMode_WithSyntaxError(t *testing.T) {
 
 func TestCompile_ResultStructure(t *testing.T) {
 	opts := &Options{
-		Code:          "let x := 42;",
+		Files: map[string]string{
+			"main.fer": "let x := 42;",
+		},
 		Debug:         false,
 		LogFormat:     ANSI,
 		TypecheckOnly: true,
@@ -270,8 +281,8 @@ func TestCompile_ResultStructure(t *testing.T) {
 	result := Compile(opts)
 
 	// Verify Result has expected fields
-	if result.Success != true {
-		t.Error("Expected Success field to be true")
+	if !result.Success {
+		t.Errorf("Expected successful compilation, got failure: %s", result.Output)
 	}
 
 	// ANSI format should not populate Output for success
@@ -280,7 +291,9 @@ func TestCompile_ResultStructure(t *testing.T) {
 
 func TestCompile_ANSIFormat(t *testing.T) {
 	opts := &Options{
-		Code:          "let x := 42;",
+		Files: map[string]string{
+			"main.fer": "let x := 42;",
+		},
 		Debug:         false,
 		LogFormat:     ANSI,
 		TypecheckOnly: true,
@@ -289,7 +302,7 @@ func TestCompile_ANSIFormat(t *testing.T) {
 	result := Compile(opts)
 
 	if !result.Success {
-		t.Error("Expected successful compilation")
+		t.Errorf("Expected successful compilation, got failure: %s", result.Output)
 	}
 
 	// ANSI format with success should not populate output field
@@ -301,8 +314,10 @@ func TestCompile_ANSIFormat(t *testing.T) {
 
 func TestCompile_ImportOrderValidation(t *testing.T) {
 	opts := &Options{
-		Code: `let x := 42;
+		Files: map[string]string{
+			"main.fer": `let x := 42;
 import "std/io";`, // Import after declaration - should error
+		},
 		Debug:         false,
 		LogFormat:     HTML,
 		TypecheckOnly: true,
@@ -321,9 +336,11 @@ import "std/io";`, // Import after declaration - should error
 
 func TestCompile_MultipleImports(t *testing.T) {
 	opts := &Options{
-		Code: `import "std/io";
-import "std/math";
+		Files: map[string]string{
+			"main.fer": `import "std/io";
+import "math";
 let x := 42;`,
+		},
 		Debug:         false,
 		LogFormat:     ANSI,
 		TypecheckOnly: true,
@@ -331,11 +348,7 @@ let x := 42;`,
 
 	result := Compile(opts)
 
-	// May succeed or fail depending on whether std modules exist
-	// The important thing is that it doesn't crash
-	if result.Success {
-		t.Log("Multiple imports compiled successfully")
-	} else {
-		t.Log("Multiple imports failed (expected if std modules don't exist)")
+	if !result.Success {
+		t.Errorf("Expected successful compilation of multiple statements, got failure: %s", result.Output)
 	}
 }

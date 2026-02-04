@@ -43,11 +43,11 @@ func compile(this js.Value, args []js.Value) (result any) {
 
 	var opts *compiler.Options
 
-	// Check if first argument is an object (multi-file mode) or string (single-file mode)
+	// Handle both object (multi-file) and string (single-file) input by converting to Files format
+	files := make(map[string]string)
+
 	if firstArg.Type() == js.TypeObject {
 		// Multi-file mode: { "main.fer": "...", "utils.fer": "..." }
-		files := make(map[string]string)
-
 		// Get all keys from the JS object
 		keys := js.Global().Get("Object").Call("keys", firstArg)
 		length := keys.Length()
@@ -57,24 +57,18 @@ func compile(this js.Value, args []js.Value) (result any) {
 			value := firstArg.Get(key).String()
 			files[key] = value
 		}
-
-		opts = &compiler.Options{
-			Files:            files,
-			Debug:            debug,
-			LogFormat:        compiler.HTML,
-			CodegenBackend:   "wasm",
-			OutputExecutable: "out.wasm",
-		}
 	} else {
-		// Single-file mode (backward compatibility)
+		// Single-file mode: convert string to Files format with main.fer
 		code := firstArg.String()
-		opts = &compiler.Options{
-			Code:             code,
-			Debug:            debug,
-			LogFormat:        compiler.HTML,
-			CodegenBackend:   "wasm",
-			OutputExecutable: "out.wasm",
-		}
+		files["main.fer"] = code
+	}
+
+	opts = &compiler.Options{
+		Files:            files,
+		Debug:            debug,
+		LogFormat:        compiler.HTML,
+		CodegenBackend:   "wasm",
+		OutputExecutable: "out.wasm",
 	}
 
 	compileResult := compiler.Compile(opts)
