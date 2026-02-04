@@ -174,6 +174,9 @@ type CompilerContext struct {
 	// Diagnostics: centralized error collection
 	Diagnostics *diagnostics.DiagnosticBag
 
+	// Track emitted shadowing warnings to avoid duplicates
+	shadowingWarned map[string]bool
+
 	// Dependency graph: import path -> list of imported paths
 	// Used for cycle detection and build ordering
 	DepGraph map[string][]string
@@ -230,12 +233,13 @@ func New(config *Config, debug bool) *CompilerContext {
 	registerBuiltins(universe)
 
 	ctx := &CompilerContext{
-		Modules:       make(map[string]*Module),
-		sortedModules: []string{},
-		Universe:      universe,
-		Diagnostics:   diagnostics.NewDiagnosticBag(""),
-		DepGraph:      make(map[string][]string),
-		Config:        config,
+		Modules:         make(map[string]*Module),
+		sortedModules:   []string{},
+		Universe:        universe,
+		Diagnostics:     diagnostics.NewDiagnosticBag(""),
+		DepGraph:        make(map[string][]string),
+		Config:          config,
+		shadowingWarned: make(map[string]bool),
 	}
 
 	return ctx
@@ -404,23 +408,25 @@ func (ctx *CompilerContext) FilePathToImportPath(filePath string) string {
 }
 
 // ImportPathToFilePath converts an import path to a file path.
-// Resolution priority: stdlib (libs) first, then local project files.
+// Resolution priority: stdlib (embedded or libs) first, then local project files.
 func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, ModuleType, error) {
 	// Normalize import path to ensure consistent lookup
 	importPath = fs.NormalizePath(importPath)
 
-	// 1. First check stdlib/runtime (libs take priority)
+	// 1. Check if module already exists (embedded stdlib or previously loaded)
+	if mod, exists := ctx.Modules[importPath]; exists {
+		if mod.Content != "" || mod.FilePath != "" {
+			return mod.FilePath, mod.Type, nil
+		}
+	}
+
+	// 2. Check stdlib/runtime on disk (libs directory)
 	if ctx.Config.RuntimePath != "" {
 		relPath := filepath.FromSlash(importPath) + ctx.Config.Extension
 		filePath := filepath.Join(ctx.Config.RuntimePath, relPath)
 		if fs.IsValidFile(filePath) {
 			return filepath.ToSlash(filePath), ModuleBuiltin, nil
 		}
-	}
-
-	// 2. Check for in-memory modules (playground/WASM)
-	if mod, exists := ctx.Modules[importPath]; exists && mod.Content != "" {
-		return mod.FilePath, ModuleLocal, nil
 	}
 
 	// 3. Check if it's a local project module
@@ -458,6 +464,54 @@ func (ctx *CompilerContext) isRemoteImport(importPath string) bool {
 	return strings.HasPrefix(importPath, "github.com/") ||
 		strings.HasPrefix(importPath, "gitlab.com/") ||
 		strings.HasPrefix(importPath, "bitbucket.org/")
+}
+
+// CheckModuleShadowing warns if a local module would shadow a stdlib module.
+// This is called when we find a stdlib module and want to check if the user
+// has a local file with the same import path that is being shadowed.
+func (ctx *CompilerContext) CheckModuleShadowing(importPath string, loc *source.Location) {
+	// Skip if already warned about this path
+	ctx.mu.Lock()
+	if ctx.shadowingWarned[importPath] {
+		ctx.mu.Unlock()
+		return
+	}
+	ctx.shadowingWarned[importPath] = true
+	ctx.mu.Unlock()
+
+	// Check if project name matches the first part of the import path
+	// e.g., project "os" importing "os/path" - check if local os/path.fer exists
+	packageName := fs.FirstPart(importPath)
+	if packageName != ctx.Config.ProjectName || ctx.Config.ProjectName == "" {
+		return
+	}
+
+	// Strip the project prefix to get the relative path
+	cleanPath := strings.TrimPrefix(importPath, packageName+"/")
+	if cleanPath == importPath {
+		// No prefix stripped, this is a top-level module like "os"
+		cleanPath = ""
+	}
+
+	// Check if a local file exists with this path
+	var localPath string
+	if cleanPath != "" {
+		localPath = filepath.Join(ctx.Config.ProjectRoot, cleanPath+ctx.Config.Extension)
+	} else {
+		// Top-level module - check for project_name.fer in project root
+		localPath = filepath.Join(ctx.Config.ProjectRoot, ctx.Config.ProjectName+ctx.Config.Extension)
+	}
+
+	if fs.IsValidFile(localPath) {
+		warning := diagnostics.NewWarning(fmt.Sprintf(
+			"local module %q is shadowed by stdlib module with the same import path",
+			importPath,
+		))
+		if loc != nil {
+			warning = warning.WithPrimaryLabel(loc, "stdlib module takes priority")
+		}
+		ctx.Diagnostics.Add(warning)
+	}
 }
 
 // AddModule registers a module in the context.

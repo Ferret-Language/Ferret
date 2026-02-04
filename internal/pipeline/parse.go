@@ -61,6 +61,9 @@ func (p *Pipeline) parseModule(importPath string, requestedLocation *source.Loca
 			Artifacts:    make(map[string]any),
 		}
 		p.ctx.AddModule(importPath, module)
+	} else if module.Type == context_v2.ModuleBuiltin {
+		// Check if a local file would shadow this stdlib module
+		p.ctx.CheckModuleShadowing(importPath, requestedLocation)
 	}
 
 	// Use the module's actual import path for all operations.

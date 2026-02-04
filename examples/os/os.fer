@@ -1,0 +1,5 @@
+// This local os.fer is shadowed by stdlib os.fer
+// You should see a warning when compiling main.fer
+fn Local_func() -> i32 {
+    return 42;
+}
