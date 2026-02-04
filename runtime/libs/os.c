@@ -1,7 +1,11 @@
 // Ferret runtime: OS utilities
 // Native implementations for os module
 
+#ifdef __APPLE__
+#define _DARWIN_C_SOURCE
+#else
 #define _POSIX_C_SOURCE 200809L
+#endif
 
 #include <stdlib.h>
 #include <stdint.h>
