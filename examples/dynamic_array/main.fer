@@ -1,0 +1,67 @@
+import "std/io";
+import "dynamic_array/other";
+
+type Bucket struct {
+    .Name: str,
+    .Items: []i32
+};
+
+fn sum(nums: []i32) -> i32 {
+    let i: i32 = 0;
+    let total: i32 = 0;
+    while i < len(&nums) {
+        total += nums[i];
+        i += 1;
+    }
+    return total;
+}
+
+fn make_nums(ok: bool) -> str ! []i32 {
+    if !ok {
+        return "no nums"!;
+    }
+    let nums: []i32 = [1, 2, 3];
+    append(&mut nums, 4);
+    return nums;
+}
+
+fn maybe_nums(ok: bool) -> str ! []i32 {
+    if !ok {
+        return "missing nums"!;
+    }
+    let nums: []i32 = [7, 8, 9];
+    return nums;
+}
+
+fn main() {
+    let base: []i32 = [1, 2, 3];
+    append(&mut base, 4);
+    append(&mut base, 5);
+
+    io::Println("base len:", len(&base));
+    io::Println("base sum:", sum(base));
+    io::Println("base idx2:", base[2]);
+
+    let bucket: Bucket = { .Name = "alpha", .Items = base };
+    io::Println("bucket:", bucket.Name, sum(bucket.Items));
+
+    let res := make_nums(true) catch e {
+        io::Println("make_nums error:", e);
+        return;
+    };
+    io::Println("res len:", len(&res));
+
+    let fallback: []i32 = maybe_nums(false) catch [0];
+    io::Println("fallback len:", len(&fallback));
+
+    let ok_nums: []i32 = maybe_nums(true) catch [0];
+    io::Println("ok len:", len(&ok_nums));
+
+    let slice_map: map[str][]i32 = {};
+    slice_map["base"] = base;
+    slice_map["res"] = res;
+    io::Println("map base sum:", sum(slice_map["base"]));
+    io::Println("map res sum:", sum(slice_map["res"]));
+
+    io::Println("done");
+}

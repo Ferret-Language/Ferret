@@ -315,6 +315,7 @@ func (ctx *CompilerContext) SetEntryPointWithCode(code, moduleName string) error
 
 	// Create the entry module directly with the provided code
 	module := &Module{
+		ImportPath:   ctx.EntryModule,
 		FilePath:     virtualPath,
 		Type:         ModuleLocal,
 		Phase:        phase.PhaseNotStarted,
@@ -358,6 +359,7 @@ func (ctx *CompilerContext) SetEntryPointWithFiles(files map[string]string, entr
 
 		modScope := table.NewSymbolTable(ctx.Universe)
 		module := &Module{
+			ImportPath:   importPath,
 			FilePath:     virtualPath,
 			Type:         ModuleLocal,
 			Phase:        phase.PhaseNotStarted,
@@ -395,63 +397,19 @@ func (ctx *CompilerContext) FilePathToImportPath(filePath string) string {
 	relPath = strings.TrimSuffix(relPath, ctx.Config.Extension)
 
 	// Build import path: projectname/path/to/module
-	if root := ctx.projectImportRoot(); root != "" {
-		return root + "/" + relPath
+	if ctx.Config.ProjectName != "" {
+		return ctx.Config.ProjectName + "/" + relPath
 	}
 	return relPath
 }
 
-func (ctx *CompilerContext) projectImportRoot() string {
-	if ctx == nil || ctx.Config == nil {
-		return ""
-	}
-	if ctx.Config.ProjectName == "" {
-		return ""
-	}
-	if ctx.Config.ProjectPrefix == "" {
-		return ctx.Config.ProjectName
-	}
-	return ctx.Config.ProjectPrefix + ctx.Config.ProjectName
-}
-
-// ImportPathToFilePath converts an import path to a file path
-// fromModulePath is optional - if provided, relative imports will be resolved relative to that module's directory
+// ImportPathToFilePath converts an import path to a file path.
+// Resolution priority: stdlib (libs) first, then local project files.
 func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, ModuleType, error) {
 	// Normalize import path to ensure consistent lookup
 	importPath = fs.NormalizePath(importPath)
 
-	// Determine module type
-	packageName := fs.FirstPart(importPath)
-	internalProjectName := ctx.projectImportRoot()
-	cleanPath := strings.TrimPrefix(importPath, packageName+"/")
-
-	// If a project prefix is set, map unprefixed project imports (with subpaths) to the internal root.
-	if ctx.Config != nil && ctx.Config.ProjectPrefix != "" && packageName == ctx.Config.ProjectName && strings.Contains(importPath, "/") {
-		importPath = internalProjectName + "/" + cleanPath
-		packageName = internalProjectName
-	}
-
-	// Check if it's a local module
-	if packageName == internalProjectName && internalProjectName != "" {
-		// For local modules, cleanPath is the relative path from project root
-		// But if ProjectName is set, we need to handle the case where the entry file
-		// is in a subdirectory (e.g., test_local/main.fer) and imports are relative to that
-		filePath := filepath.Join(ctx.Config.ProjectRoot, cleanPath+ctx.Config.Extension)
-		if fs.IsValidFile(filePath) {
-			return filepath.ToSlash(filePath), ModuleLocal, nil
-		}
-		// If not found, try relative to entry file's directory (for cases where ProjectName
-		// is the directory name but files are in that subdirectory)
-		if ctx.EntryPoint != "" {
-			entryDir := filepath.Dir(ctx.EntryPoint)
-			filePath = filepath.Join(entryDir, cleanPath+ctx.Config.Extension)
-			if fs.IsValidFile(filePath) {
-				return filepath.ToSlash(filePath), ModuleLocal, nil
-			}
-		}
-		// Fall through to runtime lookup if no local module is found.
-	}
-
+	// 1. First check stdlib/runtime (libs take priority)
 	if ctx.Config.RuntimePath != "" {
 		relPath := filepath.FromSlash(importPath) + ctx.Config.Extension
 		filePath := filepath.Join(ctx.Config.RuntimePath, relPath)
@@ -460,7 +418,33 @@ func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, Mod
 		}
 	}
 
-	// Check if it's a remote module (future implementation)
+	// 2. Check for in-memory modules (playground/WASM)
+	if mod, exists := ctx.Modules[importPath]; exists && mod.Content != "" {
+		return mod.FilePath, ModuleLocal, nil
+	}
+
+	// 3. Check if it's a local project module
+	packageName := fs.FirstPart(importPath)
+	if packageName == ctx.Config.ProjectName && ctx.Config.ProjectName != "" {
+		cleanPath := strings.TrimPrefix(importPath, packageName+"/")
+
+		// Try relative to project root
+		filePath := filepath.Join(ctx.Config.ProjectRoot, cleanPath+ctx.Config.Extension)
+		if fs.IsValidFile(filePath) {
+			return filepath.ToSlash(filePath), ModuleLocal, nil
+		}
+
+		// Try relative to entry file's directory
+		if ctx.EntryPoint != "" {
+			entryDir := filepath.Dir(ctx.EntryPoint)
+			filePath = filepath.Join(entryDir, cleanPath+ctx.Config.Extension)
+			if fs.IsValidFile(filePath) {
+				return filepath.ToSlash(filePath), ModuleLocal, nil
+			}
+		}
+	}
+
+	// 4. Check if it's a remote module (future implementation)
 	if ctx.isRemoteImport(importPath) {
 		// TODO: Implement remote module resolution
 		return "", ModuleRemote, fmt.Errorf("remote imports not yet implemented: %s", importPath)
@@ -498,7 +482,7 @@ func (ctx *CompilerContext) AddModule(importPath string, module *Module) {
 	ctx.Modules[importPath] = mod
 }
 
-// GetModule retrieves a module by import path
+// GetModule retrieves a module by import path.
 func (ctx *CompilerContext) GetModule(importPath string) (*Module, bool) {
 	ctx.mu.RLock()
 	defer ctx.mu.RUnlock()

@@ -1,0 +1,5 @@
+import "local_test/other"
+
+let result = other.add(2, 3)
+
+print(result)

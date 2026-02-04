@@ -8,6 +8,7 @@ import (
 	"compiler/internal/context_v2"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/table"
+	"compiler/internal/stdlib"
 	"compiler/internal/utils/lists"
 )
 
@@ -30,8 +31,9 @@ func TestPipelineBasic(t *testing.T) {
 		TypeCheckOnly: true,
 	}
 
-	// Create context
+	// Create context and load embedded stdlib
 	ctx := context_v2.New(config, false)
+	stdlib.LoadEmbedded(ctx)
 	if err := ctx.SetEntryPoint(mainPath); err != nil {
 		t.Fatalf("Failed to set entry point: %v", err)
 	}
@@ -114,6 +116,7 @@ fn square(x: f64) -> f64 {
 		}
 
 		ctx := context_v2.New(config, false)
+		stdlib.LoadEmbedded(ctx)
 		if err := ctx.SetEntryPoint(mainPath); err != nil {
 			t.Fatalf("Run %d: Failed to set entry point: %v", run, err)
 		}
@@ -135,18 +138,19 @@ fn square(x: f64) -> f64 {
 
 		// Invariant 1: Each module should be processed exactly once through the pipeline
 		moduleNames := ctx.GetModuleNames()
-		// skip the builin modules
-		for i, moduleName := range moduleNames {
-			if mod, _ := ctx.GetModule(moduleName); mod.Type == context_v2.ModuleBuiltin {
-				moduleNames = append(moduleNames[:i], moduleNames[i+1:]...)
+		// Filter out builtin modules (stdlib)
+		var userModules []string
+		for _, moduleName := range moduleNames {
+			if mod, _ := ctx.GetModule(moduleName); mod.Type != context_v2.ModuleBuiltin {
+				userModules = append(userModules, moduleName)
 			}
 		}
 
-		if len(moduleNames) != 3 {
-			t.Errorf("Run %d: Expected 3 modules (main, utils, helper), got %d", run, len(moduleNames))
+		if len(userModules) != 3 {
+			t.Errorf("Run %d: Expected 3 user modules (main, utils, helper), got %d: %v", run, len(userModules), userModules)
 		}
 
-		for _, moduleName := range moduleNames {
+		for _, moduleName := range userModules {
 			module, exists := ctx.GetModule(moduleName)
 			if !exists {
 				t.Errorf("Run %d: Module %q not found", run, moduleName)
@@ -262,6 +266,7 @@ const B := 2;`
 		}
 
 		ctx := context_v2.New(config, false)
+		stdlib.LoadEmbedded(ctx)
 		if err := ctx.SetEntryPoint(filepath.Join(tmpDir, "main.fer")); err != nil {
 			t.Fatalf("Run %d: Failed to set entry point: %v", run, err)
 		}
@@ -381,6 +386,7 @@ let result := 42;`
 	}
 
 	ctx := context_v2.New(config, false)
+	stdlib.LoadEmbedded(ctx)
 	if err := ctx.SetEntryPoint(filepath.Join(tmpDir, "main.fer")); err != nil {
 		t.Fatalf("Failed to set entry point: %v", err)
 	}
@@ -486,8 +492,9 @@ func TestImportPathNormalization(t *testing.T) {
 				TypeCheckOnly: true,
 			}
 
-			// Create context
+			// Create context and load embedded stdlib
 			ctx := context_v2.New(config, false)
+			stdlib.LoadEmbedded(ctx)
 
 			// Create main module in-memory using SetEntryPointWithCode
 			mainContent := tc.importStmt + "\nlet x := 42;"

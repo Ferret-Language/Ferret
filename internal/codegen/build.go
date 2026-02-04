@@ -138,6 +138,12 @@ func BuildExecutable(ctx *context_v2.CompilerContext, asmFiles []string, opts *B
 	if runtimePath == "" && ctx.Config.RuntimePath != "" {
 		runtimePath = ctx.Config.RuntimePath
 	}
+	// If still empty or relative "libs", resolve relative to ferret binary
+	if runtimePath == "" || runtimePath == "libs" {
+		if resolved := resolveLibsPath(); resolved != "" {
+			runtimePath = resolved
+		}
+	}
 
 	// Make it absolute
 	if !filepath.IsAbs(runtimePath) {
@@ -602,21 +608,32 @@ func containsLibDir(flags []string, dir string) bool {
 	return false
 }
 
-func resolveToolchainPath() string {
+// resolveLibsPath finds the libs directory relative to the ferret binary: bin/ferret -> ../libs
+func resolveLibsPath() string {
 	if execPath, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(execPath), "../libs/toolchain")
+		candidate := filepath.Join(filepath.Dir(execPath), "../libs")
 		if utilsfs.IsDir(candidate) {
 			return candidate
 		}
 	}
 
 	if cwd, err := os.Getwd(); err == nil {
-		candidate := filepath.Join(cwd, "libs", "toolchain")
+		candidate := filepath.Join(cwd, "libs")
 		if utilsfs.IsDir(candidate) {
 			return candidate
 		}
 	}
 
+	return ""
+}
+
+func resolveToolchainPath() string {
+	if libs := resolveLibsPath(); libs != "" {
+		candidate := filepath.Join(libs, "toolchain")
+		if utilsfs.IsDir(candidate) {
+			return candidate
+		}
+	}
 	return ""
 }
 
