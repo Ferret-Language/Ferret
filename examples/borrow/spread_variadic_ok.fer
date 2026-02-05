@@ -1,0 +1,9 @@
+fn takes(args: ...i32) {
+    print(...args);
+}
+
+fn main() {
+    let xs: []i32 = [1, 2, 3];
+    let xs2: []i32 = [3, 5];
+    takes(1, 2, ...xs, 100, ...xs2);
+}

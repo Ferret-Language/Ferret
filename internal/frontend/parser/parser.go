@@ -868,10 +868,10 @@ func (p *Parser) parseCallExpr(fun ast.Expression) *ast.CallExpr {
 	p.advance() // consume '('
 	args := []ast.Expression{}
 	if !p.match(tokens.CLOSE_PAREN) {
-		args = append(args, p.parseExpr())
+		args = append(args, p.parseCallArg())
 		for p.match(tokens.COMMA_TOKEN) {
 			p.advance()
-			args = append(args, p.parseExpr())
+			args = append(args, p.parseCallArg())
 		}
 	}
 
@@ -890,6 +890,21 @@ func (p *Parser) parseCallExpr(fun ast.Expression) *ast.CallExpr {
 		Catch:    catchClause,
 		Location: *source.NewLocation(&p.filepath, p.safeLoc(fun).Start, &end),
 	}
+}
+
+func (p *Parser) parseCallArg() ast.Expression {
+	if p.match(tokens.THREE_DOT_TOKEN) {
+		dots := p.advance()
+		expr := p.parseExpr()
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.SpreadExpr{
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &dots.Start, p.safeLoc(expr).End),
+		}
+	}
+	return p.parseExpr()
 }
 
 // parseCatchClause parses a catch clause: catch [ident] [block] [fallback]

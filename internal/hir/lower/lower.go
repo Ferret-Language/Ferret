@@ -959,6 +959,8 @@ func (l *Lowerer) lowerExpr(expr hir.Expr, expected types.SemType) hir.Expr {
 		lowered = l.lowerBinaryExpr(e)
 	case *hir.UnaryExpr:
 		lowered = &hir.UnaryExpr{Op: e.Op, X: l.lowerExpr(e.X, types.TypeUnknown), Type: e.Type, Location: e.Location}
+	case *hir.SpreadExpr:
+		lowered = l.lowerExpr(e.X, expected)
 	case *hir.DerefExpr:
 		lowered = &hir.DerefExpr{X: l.lowerExpr(e.X, types.TypeUnknown), Type: e.Type, Location: e.Location}
 	case *hir.PrefixExpr:
@@ -1113,21 +1115,73 @@ func (l *Lowerer) lowerCallExpr(expr *hir.CallExpr) hir.Expr {
 			// Bundle variadic args into array literal
 			variadicArgs := expr.Args[lastParamIdx:]
 			elemType := lastParam.Type
-
-			// Create array literal elements
-			litElts := make([]hir.Expr, len(variadicArgs))
-			for i, arg := range variadicArgs {
-				litElts[i] = l.lowerExpr(arg, elemType)
-			}
-
-			// Create []T array literal
 			arrayType := types.NewArray(elemType, -1)
-			sliceLit := &hir.CompositeLit{
-				Type:     arrayType,
-				Elts:     litElts,
-				Location: expr.Location,
+
+			if len(variadicArgs) > 0 {
+				hasSpread := false
+				for _, arg := range variadicArgs {
+					if _, ok := arg.(*hir.SpreadExpr); ok {
+						hasSpread = true
+						break
+					}
+				}
+				if hasSpread {
+					if len(variadicArgs) == 1 {
+						if spread, ok := variadicArgs[0].(*hir.SpreadExpr); ok {
+							spreadType := types.UnwrapType(l.exprType(spread.X))
+							arrayTypeU := types.UnwrapType(arrayType)
+							if spreadType != nil && arrayTypeU != nil && spreadType.Equals(arrayTypeU) {
+								args = append(args, l.lowerExpr(spread.X, arrayType))
+							} else {
+								litElts := []hir.Expr{&hir.SpreadExpr{
+									X:        l.lowerExpr(spread.X, arrayType),
+									Type:     arrayType,
+									Location: spread.Location,
+								}}
+								sliceLit := &hir.CompositeLit{
+									Type:     arrayType,
+									Elts:     litElts,
+									Location: expr.Location,
+								}
+								args = append(args, sliceLit)
+							}
+						}
+					} else {
+						litElts := make([]hir.Expr, 0, len(variadicArgs))
+						for _, arg := range variadicArgs {
+							if spread, ok := arg.(*hir.SpreadExpr); ok {
+								litElts = append(litElts, &hir.SpreadExpr{
+									X:        l.lowerExpr(spread.X, arrayType),
+									Type:     arrayType,
+									Location: spread.Location,
+								})
+								continue
+							}
+							litElts = append(litElts, l.lowerExpr(arg, elemType))
+						}
+						sliceLit := &hir.CompositeLit{
+							Type:     arrayType,
+							Elts:     litElts,
+							Location: expr.Location,
+						}
+						args = append(args, sliceLit)
+					}
+				} else {
+					// Create array literal elements
+					litElts := make([]hir.Expr, len(variadicArgs))
+					for i, arg := range variadicArgs {
+						litElts[i] = l.lowerExpr(arg, elemType)
+					}
+
+					// Create []T array literal
+					sliceLit := &hir.CompositeLit{
+						Type:     arrayType,
+						Elts:     litElts,
+						Location: expr.Location,
+					}
+					args = append(args, sliceLit)
+				}
 			}
-			args = append(args, sliceLit)
 		} else {
 			// Non-variadic
 			args = make([]hir.Expr, 0, len(expr.Args))
@@ -1227,7 +1281,16 @@ func (l *Lowerer) lowerCompositeLit(lit *hir.CompositeLit) *hir.CompositeLit {
 		}
 	case *types.ArrayType:
 		lowered.Elts = make([]hir.Expr, 0, len(lit.Elts))
+		sliceType := types.NewArray(t.Element, -1)
 		for _, elt := range lit.Elts {
+			if spread, ok := elt.(*hir.SpreadExpr); ok {
+				lowered.Elts = append(lowered.Elts, &hir.SpreadExpr{
+					X:        l.lowerExpr(spread.X, sliceType),
+					Type:     sliceType,
+					Location: spread.Location,
+				})
+				continue
+			}
 			lowered.Elts = append(lowered.Elts, l.lowerExpr(elt, t.Element))
 		}
 	default:
@@ -1449,6 +1512,8 @@ func (l *Lowerer) exprType(expr hir.Expr) types.SemType {
 	case *hir.BinaryExpr:
 		return safeType(e.Type)
 	case *hir.UnaryExpr:
+		return safeType(e.Type)
+	case *hir.SpreadExpr:
 		return safeType(e.Type)
 	case *hir.DerefExpr:
 		return safeType(e.Type)

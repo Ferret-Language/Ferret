@@ -164,6 +164,9 @@ func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	case *ast.UnaryExpr:
 		return inferUnaryExprType(ctx, mod, e)
 
+	case *ast.SpreadExpr:
+		return inferExprType(ctx, mod, e.X)
+
 	case *ast.DerefExpr:
 		return inferDerefExprType(ctx, mod, e)
 

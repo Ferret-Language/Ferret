@@ -290,6 +290,8 @@ func referencesIdentOutsideFuncLit(expr ast.Expression, name string) (bool, *sou
 		}
 	case *ast.UnaryExpr:
 		return referencesIdentOutsideFuncLit(e.X, name)
+	case *ast.SpreadExpr:
+		return referencesIdentOutsideFuncLit(e.X, name)
 	case *ast.PrefixExpr:
 		return referencesIdentOutsideFuncLit(e.X, name)
 	case *ast.PostfixExpr:
@@ -3261,6 +3263,12 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		mod.SetExprType(expr, callReturnType)
 		return callReturnType
 
+	case *ast.SpreadExpr:
+		// Spread is only valid in call arguments; type check inner expression.
+		innerType := checkExpr(ctx, mod, e.X, expected)
+		mod.SetExprType(expr, innerType)
+		return innerType
+
 	case *ast.SelectorExpr:
 		// Validate base expression first
 		checkExpr(ctx, mod, e.X, types.TypeUnknown)
@@ -4665,10 +4673,39 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 		regularParamCount = paramCount - 1
 	}
 
+	// Detect spread arguments
+	firstSpread := -1
+	for i, arg := range expr.Args {
+		if _, ok := arg.(*ast.SpreadExpr); ok {
+			firstSpread = i
+			break
+		}
+	}
+	if firstSpread >= 0 {
+		if !isVariadic {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot use spread argument with non-variadic function").
+					WithPrimaryLabel(expr.Args[firstSpread].Loc(), "spread argument here").
+					WithHelp("remove '...' or call a variadic function"),
+			)
+		}
+		if firstSpread < regularParamCount {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("spread argument must come after regular parameters").
+					WithPrimaryLabel(expr.Args[firstSpread].Loc(), "spread argument here").
+					WithHelp("move '...' after the regular parameters"),
+			)
+		}
+	}
+
 	// Validate regular parameters
 	for i := 0; i < regularParamCount && i < argCount; i++ {
 		param := funcType.Params[i]
 		arg := expr.Args[i]
+		if spread, ok := arg.(*ast.SpreadExpr); ok {
+			checkExpr(ctx, mod, spread.X, param.Type)
+			continue
+		}
 
 		// Infer argument type with parameter type as context
 		argType := checkExpr(ctx, mod, arg, param.Type)
@@ -4733,6 +4770,27 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 
 		for i := startIdx; i < argCount; i++ {
 			arg := expr.Args[i]
+			if spread, ok := arg.(*ast.SpreadExpr); ok {
+				sliceType := types.NewArray(variadicElemType, -1)
+				argType := checkExpr(ctx, mod, spread.X, sliceType)
+				if ok := checkFitness(ctx, sliceType, spread.X, nil); !ok {
+					continue
+				}
+				compatibility := checkTypeCompatibilityWithContext(ctx, mod, argType, sliceType)
+				if !isImplicitlyCompatible(compatibility) {
+					argTypeDesc := types.ResolveUntypedType(argType, sliceType)
+					diag := diagnostics.ArgumentTypeMismatch(
+						mod.FilePath,
+						spread.Loc(),
+						variadicParam.Name,
+						sliceType.String(),
+						argTypeDesc.String(),
+					)
+					diag = addExplicitCastHint(ctx, diag, sliceType, compatibility, spread.X)
+					ctx.Diagnostics.Add(diag)
+				}
+				continue
+			}
 
 			// Infer argument type with variadic element type as context
 			argType := checkExpr(ctx, mod, arg, variadicElemType)

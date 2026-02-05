@@ -414,6 +414,8 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 			return
 		}
 		b.checkExpr(e.X)
+	case *hir.SpreadExpr:
+		b.checkExpr(e.X)
 	case *hir.DerefExpr:
 		// Dereference requires read access to the referenced place.
 		if ident, ok := e.X.(*hir.Ident); ok && isReferenceSymbol(ident.Symbol) {
@@ -1496,6 +1498,8 @@ func collectRefUsesExpr(expr hir.Expr, refs map[*symbols.Symbol]struct{}, uses m
 		collectRefUsesExpr(e.Y, refs, uses)
 	case *hir.UnaryExpr:
 		collectRefUsesExpr(e.X, refs, uses)
+	case *hir.SpreadExpr:
+		collectRefUsesExpr(e.X, refs, uses)
 	case *hir.DerefExpr:
 		collectRefUsesExpr(e.X, refs, uses)
 	case *hir.PrefixExpr:
@@ -1779,6 +1783,8 @@ func (b *borrowChecker) localRefInExpr(expr hir.Expr) (localRefUse, bool) {
 		if isMoveOp(e.Op.Kind) {
 			return b.localRefInExpr(e.X)
 		}
+		return b.localRefInExpr(e.X)
+	case *hir.SpreadExpr:
 		return b.localRefInExpr(e.X)
 	case *hir.DerefExpr:
 		return b.localRefInExpr(e.X)

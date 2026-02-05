@@ -438,6 +438,8 @@ func checkExprForCatchHandlers(ctx *context_v2.CompilerContext, mod *context_v2.
 		checkExprForCatchHandlers(ctx, mod, e.Y)
 	case *hir.UnaryExpr:
 		checkExprForCatchHandlers(ctx, mod, e.X)
+	case *hir.SpreadExpr:
+		checkExprForCatchHandlers(ctx, mod, e.X)
 	case *hir.PrefixExpr:
 		checkExprForCatchHandlers(ctx, mod, e.X)
 	case *hir.PostfixExpr:

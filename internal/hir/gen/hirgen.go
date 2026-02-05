@@ -144,6 +144,12 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 			Type:     g.exprType(expr),
 			Location: locFromNode(e),
 		}
+	case *ast.SpreadExpr:
+		return &hir.SpreadExpr{
+			X:        g.lowerExpr(e.X),
+			Type:     g.exprType(expr),
+			Location: locFromNode(e),
+		}
 	case *ast.DerefExpr:
 		return &hir.DerefExpr{
 			X:        g.lowerExpr(e.X),

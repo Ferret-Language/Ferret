@@ -232,6 +232,18 @@ func (u *UnaryExpr) hirNode()              {}
 func (u *UnaryExpr) hirExpr()              {}
 func (u *UnaryExpr) Loc() *source.Location { return &u.Location }
 
+// SpreadExpr represents a spread argument expression (...x).
+// Note: Only valid in call arguments.
+type SpreadExpr struct {
+	X        Expr
+	Type     types.SemType
+	Location source.Location
+}
+
+func (s *SpreadExpr) hirNode()              {}
+func (s *SpreadExpr) hirExpr()              {}
+func (s *SpreadExpr) Loc() *source.Location { return &s.Location }
+
 // DerefExpr represents a dereference operation (*x).
 type DerefExpr struct {
 	X        Expr

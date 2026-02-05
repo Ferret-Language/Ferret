@@ -4356,18 +4356,12 @@ func (b *functionBuilder) lowerDynamicArrayLiteral(arrType *types.ArrayType, lit
 		Location: lit.Location,
 	})
 
-	for _, elt := range lit.Elts {
-		if _, ok := elt.(*hir.KeyValueExpr); ok {
-			b.reportUnsupported("array key/value literal", elt.Loc())
-			return mir.InvalidValue
-		}
-		value := b.lowerExpr(elt)
+	appendValue := func(value mir.ValueID, valueType types.SemType, rawStore bool, loc source.Location) bool {
 		if value == mir.InvalidValue {
-			return mir.InvalidValue
+			return false
 		}
 		// Box into union if element type is union
-		eltType := b.exprType(elt)
-		value = b.coerceValueForAssign(value, eltType, arrType.Element, lit.Location)
+		value = b.coerceValueForAssign(value, valueType, arrType.Element, loc)
 
 		// ferret_array_append expects a pointer to the element
 		// For unions, coerceValueForAssign already returns a pointer
@@ -4375,15 +4369,15 @@ func (b *functionBuilder) lowerDynamicArrayLiteral(arrType *types.ArrayType, lit
 		valuePtr := value
 		if _, isUnion := types.UnwrapType(arrType.Element).(*types.UnionType); !isUnion {
 			// Allocate storage for the element
-			temp := b.emitAlloca(arrType.Element, lit.Location)
-			if b.isDynamicArrayLiteralExpr(elt, arrType.Element) {
+			temp := b.emitAlloca(arrType.Element, loc)
+			if rawStore {
 				b.emitInstr(&mir.Store{
 					Addr:     temp,
 					Value:    value,
-					Location: lit.Location,
+					Location: loc,
 				})
 			} else {
-				b.emitStore(temp, value, lit.Location)
+				b.emitStore(temp, value, loc)
 			}
 			valuePtr = temp
 		}
@@ -4393,8 +4387,66 @@ func (b *functionBuilder) lowerDynamicArrayLiteral(arrType *types.ArrayType, lit
 			Target:   "ferret_array_append",
 			Args:     []mir.ValueID{arr, valuePtr},
 			Type:     types.TypeBool,
-			Location: lit.Location,
+			Location: loc,
 		})
+		return true
+	}
+
+	for _, elt := range lit.Elts {
+		if _, ok := elt.(*hir.KeyValueExpr); ok {
+			b.reportUnsupported("array key/value literal", elt.Loc())
+			return mir.InvalidValue
+		}
+		if spread, ok := elt.(*hir.SpreadExpr); ok {
+			spreadVal := b.lowerExpr(spread.X)
+			if spreadVal == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			spreadElemType := arrType.Element
+			if spreadType, ok := types.UnwrapType(b.exprType(spread.X)).(*types.ArrayType); ok && spreadType != nil {
+				if spreadType.Element != nil {
+					spreadElemType = spreadType.Element
+				}
+			}
+			lenVal := b.emitArrayLen(spreadVal, lit.Location)
+			idxAddr := b.emitAlloca(types.TypeI32, lit.Location)
+			b.emitStore(idxAddr, b.emitConst(types.TypeI32, "0", lit.Location), lit.Location)
+
+			condBlock := b.newBlock("spread.cond", lit.Location)
+			bodyBlock := b.newBlock("spread.body", lit.Location)
+			exitBlock := b.newBlock("spread.end", lit.Location)
+
+			b.branchIfNoTerm(condBlock.ID, lit.Location)
+
+			b.setBlock(condBlock)
+			idxVal := b.emitLoad(idxAddr, types.TypeI32, lit.Location)
+			cond := b.emitBinary(tokens.LESS_TOKEN, idxVal, lenVal, types.TypeBool, lit.Location)
+			b.current.Term = &mir.CondBr{
+				Cond:     cond,
+				Then:     bodyBlock.ID,
+				Else:     exitBlock.ID,
+				Location: lit.Location,
+			}
+
+			b.setBlock(bodyBlock)
+			elemVal := b.emitDynamicArrayGet(spreadVal, idxVal, spreadElemType, lit.Location)
+			if !appendValue(elemVal, spreadElemType, false, lit.Location) {
+				return mir.InvalidValue
+			}
+			nextIdx := b.emitBinary(tokens.PLUS_TOKEN, idxVal, b.emitConst(types.TypeI32, "1", lit.Location), types.TypeI32, lit.Location)
+			b.emitStore(idxAddr, nextIdx, lit.Location)
+			b.branchIfNoTerm(condBlock.ID, lit.Location)
+
+			b.setBlock(exitBlock)
+			continue
+		}
+		value := b.lowerExpr(elt)
+		if value == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		if !appendValue(value, b.exprType(elt), b.isDynamicArrayLiteralExpr(elt, arrType.Element), lit.Location) {
+			return mir.InvalidValue
+		}
 	}
 
 	return arr

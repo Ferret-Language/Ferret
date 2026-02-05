@@ -28,6 +28,17 @@ func (u *UnaryExpr) INode()                {} // Implements Node interface
 func (u *UnaryExpr) Expr()                 {} // Expr is a marker interface for all expressions
 func (u *UnaryExpr) Loc() *source.Location { return &u.Location }
 
+// SpreadExpr represents a spread argument expression (...x)
+// Note: Only valid in call arguments.
+type SpreadExpr struct {
+	X Expression // operand
+	source.Location
+}
+
+func (s *SpreadExpr) INode()                {} // Implements Node interface
+func (s *SpreadExpr) Expr()                 {} // Expr is a marker interface for all expressions
+func (s *SpreadExpr) Loc() *source.Location { return &s.Location }
+
 // DerefExpr represents a dereference expression (*x)
 type DerefExpr struct {
 	X Expression // operand (must be a reference type)

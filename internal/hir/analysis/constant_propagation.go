@@ -534,6 +534,8 @@ func exprType(expr hir.Expr) types.SemType {
 		return e.Type
 	case *hir.UnaryExpr:
 		return e.Type
+	case *hir.SpreadExpr:
+		return e.Type
 	case *hir.PrefixExpr:
 		return e.Type
 	case *hir.PostfixExpr:

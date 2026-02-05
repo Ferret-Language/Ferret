@@ -43,6 +43,8 @@ func ExprKey(expr ast.Expression) (string, bool) {
 			return "", false
 		}
 		return "*" + base, true
+	case *ast.SpreadExpr:
+		return ExprKey(e.X)
 	default:
 		return "", false
 	}

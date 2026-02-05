@@ -233,6 +233,9 @@ func resolveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr a
 	case *ast.UnaryExpr:
 		resolveExpr(ctx, mod, e.X)
 
+	case *ast.SpreadExpr:
+		resolveExpr(ctx, mod, e.X)
+
 	case *ast.CallExpr:
 		resolveExpr(ctx, mod, e.Fun)
 		for _, arg := range e.Args {

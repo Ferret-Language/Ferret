@@ -44,10 +44,5 @@ fn heap_addr(value: &Type) -> u64;
 fn panic(msg: str) -> void;
 
 fn print(args: ...io::Printable) {
-    let i := 0;
-    while i < len(&args) {
-        io::Print(args[i]);
-        i++;
-    }
-    io::Println();
+    io::Println(...args);
 }

@@ -794,6 +794,8 @@ func extractVariablesFromExpr(expr hir.Expr) []string {
 		vars = append(vars, extractVariablesFromExpr(e.Y)...)
 	case *hir.UnaryExpr:
 		vars = append(vars, extractVariablesFromExpr(e.X)...)
+	case *hir.SpreadExpr:
+		vars = append(vars, extractVariablesFromExpr(e.X)...)
 	case *hir.ParenExpr:
 		vars = append(vars, extractVariablesFromExpr(e.X)...)
 	case *hir.CallExpr:
