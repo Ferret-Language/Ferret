@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"compiler/internal/context_v2"
 	"compiler/internal/mir"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/source"
 	"compiler/internal/tokens"
 	"compiler/internal/types"
@@ -1950,8 +1952,13 @@ func (g *Generator) resolveCallTarget(target string, args []callArg) (string, []
 	}
 
 	if g.mod != nil && g.mod.ModuleScope != nil {
-		if sym, ok := g.mod.ModuleScope.Lookup(target); ok && sym.IsNative && sym.NativeName != "" {
-			return sym.NativeName, args, nil
+		if sym, ok := g.mod.ModuleScope.Lookup(target); ok {
+			if sym.IsNative && sym.NativeName != "" {
+				return sym.NativeName, args, nil
+			}
+			if g.ctx != nil && g.ctx.Universe != nil && sym.DeclaredScope == g.ctx.Universe && sym.Kind == symbols.SymbolFunction {
+				return g.qbeFuncName(target, context_v2.GlobalModuleImport), args, nil
+			}
 		}
 	}
 
@@ -1994,8 +2001,13 @@ func (g *Generator) resolveFuncSymbol(target string) (string, error) {
 	}
 
 	if g.mod != nil && g.mod.ModuleScope != nil {
-		if sym, ok := g.mod.ModuleScope.GetSymbol(target); ok && sym.IsNative && sym.NativeName != "" {
-			return sym.NativeName, nil
+		if sym, ok := g.mod.ModuleScope.Lookup(target); ok {
+			if sym.IsNative && sym.NativeName != "" {
+				return sym.NativeName, nil
+			}
+			if g.ctx != nil && g.ctx.Universe != nil && sym.DeclaredScope == g.ctx.Universe && sym.Kind == symbols.SymbolFunction {
+				return g.qbeFuncName(target, context_v2.GlobalModuleImport), nil
+			}
 		}
 	}
 

@@ -24,14 +24,6 @@ func (p *Pipeline) runHIRLoweringPhase() error {
 			continue
 		}
 
-		// Skip the global prelude module (synthetic, has no HIR)
-		if importPath == context_v2.GlobalModuleImport {
-			if !p.ctx.AdvanceModulePhase(importPath, phase.PhaseHIRLowered) {
-				p.ctx.SetModulePhase(importPath, phase.PhaseHIRLowered)
-			}
-			continue
-		}
-
 		if module.Type == context_v2.ModuleBuiltin && module.AST != nil && len(module.AST.Nodes) == 0 {
 			hirMod := hir.ModuleFromModule(module)
 			if hirMod == nil {
