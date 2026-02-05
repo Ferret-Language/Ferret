@@ -1,19 +1,11 @@
-import "std/io";
-
-type Point struct { .X: i32, .Y: i32 };
-
-fn (p: &mut Point) move(dx: i32, dy: i32) {
-    p.X += dx;
-    p.Y += dy;
-}
+fn id(p: &i32) -> &i32 { return p; }
 
 fn main() {
-    let point: Point = { .X = 0, .Y = 0 };
+    let a := 10;
+    let r := id(&a);   // r now holds a borrow
 
-    let r := &point;          // immutable borrow starts
-    io::Println(r.X);         // use it (so it can't be "released" early)
+    let w := &mut a;   // should error if r is still alive
+    *w = 20;
 
-    point.move(5, 10);        // ERROR: needs &mut point, but r is still alive
-
-    io::Println(r.Y);         // r still used later => definitely alive
+    let n := r;
 }

@@ -1,0 +1,9 @@
+fn id(p: &i32) -> &i32 { return p; }
+
+fn main() {
+    let a := 10;
+    let r := id(&a);       // immutable borrow of a
+    let w := &mut a;       // mutable borrow of a - should conflict!
+    *w = 20;               // use the mutable borrow
+    let n := *r;           // use the immutable borrow - should error!
+}

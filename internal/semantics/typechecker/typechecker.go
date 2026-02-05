@@ -144,22 +144,13 @@ func setupFunctionContext(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 	}
 }
 
-// lookupTypeSymbol finds a type symbol by name, checking current module first, then imported modules.
+// lookupTypeSymbol finds a type symbol by name in the current module's scope.
 // Returns the symbol and true if found, nil and false otherwise.
+// Note: Imported types use qualified syntax (module::Type) and are resolved separately.
 func lookupTypeSymbol(ctx *context_v2.CompilerContext, mod *context_v2.Module, typeName string) (*symbols.Symbol, bool) {
-	// First check current module's scope
+	// Check current module's scope
 	if sym, found := mod.ModuleScope.Lookup(typeName); found {
 		return sym, true
-	}
-
-	// TODO: check if the loop required later
-	// Not in current module, search imported modules
-	for _, importPath := range mod.ImportAliasMap {
-		if importedMod, exists := ctx.GetModule(importPath); exists {
-			if sym, ok := importedMod.ModuleScope.GetSymbol(typeName); ok && sym.Kind == symbols.SymbolType {
-				return sym, true
-			}
-		}
 	}
 
 	return nil, false

@@ -547,16 +547,6 @@ func (b *borrowChecker) requiresMutableReceiver(selector *hir.SelectorExpr) bool
 	var typeSym *symbols.Symbol
 	if sym, found := b.mod.ModuleScope.Lookup(named.Name); found && sym.Kind == symbols.SymbolType {
 		typeSym = sym
-	} else {
-		// Search imported modules
-		for _, importPath := range b.mod.ImportAliasMap {
-			if importedMod, exists := b.ctx.GetModule(importPath); exists {
-				if sym, ok := importedMod.ModuleScope.GetSymbol(named.Name); ok && sym.Kind == symbols.SymbolType {
-					typeSym = sym
-					break
-				}
-			}
-		}
 	}
 
 	if typeSym == nil || typeSym.Methods == nil {

@@ -1,0 +1,7 @@
+fn main() {
+    let a := 10;
+    let r := &a;           // immutable borrow
+    let w := &mut a;       // mutable borrow - should conflict!
+    *w = 20;
+    let n := *r;           // use immutable borrow - should error!
+}
