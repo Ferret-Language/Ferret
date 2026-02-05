@@ -1,0 +1,11 @@
+fn main() {
+    let a := 1;
+    let r: ?&mut i32 = &mut a;
+
+    if r != none {
+        let m1 := &mut *r;
+        let m2 := &mut *r;
+        *m1 = 2;
+        *m2 = 3;
+    }
+}

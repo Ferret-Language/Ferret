@@ -1709,7 +1709,11 @@ func isReferenceType(t types.SemType) bool {
 	if t == nil {
 		return false
 	}
-	_, ok := types.UnwrapType(t).(*types.ReferenceType)
+	t = types.UnwrapType(t)
+	if opt, ok := t.(*types.OptionalType); ok {
+		t = types.UnwrapType(opt.Inner)
+	}
+	_, ok := t.(*types.ReferenceType)
 	return ok
 }
 

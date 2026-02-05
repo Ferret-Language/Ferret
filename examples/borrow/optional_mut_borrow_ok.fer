@@ -1,0 +1,12 @@
+import "std/io";
+
+fn main() {
+    let a := 1;
+    let r: ?&mut i32 = &mut a;
+
+    if r != none {
+        *r = 2;
+    }
+
+    io::Println(a);
+}
