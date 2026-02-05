@@ -1,0 +1,12 @@
+import "std/io";
+
+fn main() {
+    let a := 10;
+    let m := &mut a;
+
+    let r := &*m;      // shared reborrow through deref
+    io::Println(*r);   // read ok
+
+    *m = 20;           // write still ok after last use of r
+    io::Println(a);
+}

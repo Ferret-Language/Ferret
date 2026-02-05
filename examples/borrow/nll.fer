@@ -1,0 +1,10 @@
+fn main() {
+    let a := 10;
+    let m := &mut a;
+
+    let m1 := &mut *m;
+    *m1 = 1;          // last use of m1, should end here
+
+    let m2 := &mut *m; // should be allowed now
+    *m2 = 2;
+}

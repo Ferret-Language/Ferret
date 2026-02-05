@@ -1,0 +1,10 @@
+fn main() {
+    let a := 10;
+    let m := &mut a;
+
+    let m1 := &mut *m;
+    let m2 := &mut *m;   // must error: two active &mut to same place
+
+    *m1 = 1;
+    *m2 = 2;
+}
