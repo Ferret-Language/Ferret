@@ -430,7 +430,7 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 		}
 		b.checkExpr(e.X)
 	case *hir.CallExpr:
-		b.checkExpr(e.Fun)
+		b.checkMethodCall(e)
 		for _, arg := range e.Args {
 			b.checkExpr(arg)
 		}
@@ -488,6 +488,88 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 			nested.checkBlock(e.Body)
 		}
 	}
+}
+
+func (b *borrowChecker) checkMethodCall(call *hir.CallExpr) {
+	if call == nil || call.Fun == nil {
+		b.checkExpr(call.Fun)
+		return
+	}
+
+	// Check if this is a method call (Fun is a SelectorExpr)
+	selector, ok := call.Fun.(*hir.SelectorExpr)
+	if !ok {
+		b.checkExpr(call.Fun)
+		return
+	}
+
+	// Get method info by looking up the method in the receiver type
+	if b.requiresMutableReceiver(selector) {
+		// Method needs &mut receiver, check if we can get mutable borrow
+		place, via := b.borrowAccessPlace(selector.X)
+		if place.base != nil {
+			if !b.checkNotMoved(place.base, selector.Loc()) {
+				b.checkExpr(call.Fun)
+				return
+			}
+			// Check if we can get a mutable borrow (don't actually add it yet)
+			entries := b.borrows[place.base]
+			if entry, ok := b.findBorrow(entries, place.base, place.path, nil, via); ok {
+				releaseLoc := b.borrowReleaseLoc(place.base, entry)
+				b.reportBorrowError(selector.Loc(), fmt.Sprintf("cannot borrow '%s' because it is still actively borrowed", place.base.Name), entry.loc, releaseLoc)
+				return
+			}
+		}
+	}
+
+	// Now check the function expression normally
+	b.checkExpr(call.Fun)
+}
+
+func (b *borrowChecker) requiresMutableReceiver(selector *hir.SelectorExpr) bool {
+	if selector == nil || selector.Field == nil {
+		return false
+	}
+
+	baseType := exprType(selector.X) // typename
+	if baseType == nil {
+		return false
+	}
+
+	baseType = types.DereferenceType(baseType)
+
+	named, ok := baseType.(*types.NamedType)
+	if !ok || named.Name == "" {
+		return false
+	}
+
+	// Look up type symbol using existing module scope pattern
+	var typeSym *symbols.Symbol
+	if sym, found := b.mod.ModuleScope.Lookup(named.Name); found && sym.Kind == symbols.SymbolType {
+		typeSym = sym
+	} else {
+		// Search imported modules
+		for _, importPath := range b.mod.ImportAliasMap {
+			if importedMod, exists := b.ctx.GetModule(importPath); exists {
+				if sym, ok := importedMod.ModuleScope.GetSymbol(named.Name); ok && sym.Kind == symbols.SymbolType {
+					typeSym = sym
+					break
+				}
+			}
+		}
+	}
+
+	if typeSym == nil || typeSym.Methods == nil {
+		return false
+	}
+
+	method, ok := typeSym.Methods[selector.Field.Name]
+	if !ok || method == nil || method.Receiver == nil {
+		return false
+	}
+
+	refType, ok := types.UnwrapType(method.Receiver).(*types.ReferenceType)
+	return ok && refType.Mutable
 }
 
 func (b *borrowChecker) checkCatchClause(clause *hir.CatchClause) {

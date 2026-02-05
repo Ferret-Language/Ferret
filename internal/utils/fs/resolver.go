@@ -1,7 +1,6 @@
 package fs
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +10,6 @@ import (
 func ResolveLibsPath() string {
 	// First try the normal approach for production binaries
 	if execPath, err := os.Executable(); err == nil {
-		fmt.Printf("exec path: %q\n", execPath)
 		// Skip this approach if we're running a test binary
 		if !strings.Contains(execPath, "go-build") && !strings.HasSuffix(execPath, ".test") {
 			candidate := filepath.Join(filepath.Dir(execPath), "../libs")
@@ -25,7 +23,6 @@ func ResolveLibsPath() string {
 	// walk up the directory tree from the current working directory
 	// to find the project root (containing go.mod or libs directory)
 	if cwd, err := os.Getwd(); err == nil {
-		fmt.Printf("cwd path: %q\n", cwd)
 
 		// Try current directory first
 		candidate := filepath.Join(cwd, "libs")

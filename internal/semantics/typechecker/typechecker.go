@@ -23,24 +23,6 @@ import (
 
 var narrowingAnalyzer = narrowing.NewConditionAnalyzer()
 
-// unwrapOptionalType unwraps optional types: T? -> T
-// Returns the inner type if it's optional, otherwise returns the original type.
-func unwrapOptionalType(typ types.SemType) types.SemType {
-	if optType, ok := typ.(*types.OptionalType); ok {
-		return optType.Inner
-	}
-	return typ
-}
-
-// dereferenceType unwraps reference types: &T -> T
-// Returns the inner type if it's a reference, otherwise returns the original type.
-func dereferenceType(typ types.SemType) types.SemType {
-	if refType, ok := typ.(*types.ReferenceType); ok {
-		return refType.Inner
-	}
-	return typ
-}
-
 type autoDerefKind int
 
 const (
@@ -170,6 +152,7 @@ func lookupTypeSymbol(ctx *context_v2.CompilerContext, mod *context_v2.Module, t
 		return sym, true
 	}
 
+	// TODO: check if the loop required later
 	// Not in current module, search imported modules
 	for _, importPath := range mod.ImportAliasMap {
 		if importedMod, exists := ctx.GetModule(importPath); exists {
@@ -2219,7 +2202,7 @@ func checkMethodSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.M
 	}
 
 	// Unwrap reference types: &T -> T
-	receiverType = dereferenceType(receiverType)
+	receiverType = types.DereferenceType(receiverType)
 
 	// Extract type name - only NamedType can have methods
 	var typeName string
@@ -3491,7 +3474,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 
 		expectedForLit := expected
 		if e.Kind == ast.INT || e.Kind == ast.FLOAT {
-			expectedForLit = unwrapOptionalType(expected)
+			expectedForLit = types.UnwrapOptionalType(expected)
 		}
 		litType := inferLiteralType(e, expectedForLit)
 		if optType, ok := expected.(*types.OptionalType); ok && litType.Equals(optType.Inner) {
@@ -3622,7 +3605,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 	if !expected.Equals(types.TypeUnknown) {
 		if lit, ok := expr.(*ast.BasicLit); ok {
 			// If expected is optional, contextualize to inner type
-			expectedForLit := unwrapOptionalType(expected)
+			expectedForLit := types.UnwrapOptionalType(expected)
 			// For numeric literals, always try to contextualize to expected type
 			// inferLiteralType will return expected type if compatible, or default if not
 			if lit.Kind == ast.INT || lit.Kind == ast.FLOAT {
@@ -3842,7 +3825,7 @@ func addDerefHintIfNeeded(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 		return diag
 	}
 
-	expectedBase := unwrapOptionalType(expected)
+	expectedBase := types.UnwrapOptionalType(expected)
 	compatibility := checkTypeCompatibility(refType.Inner, expectedBase)
 	if ctx != nil && mod != nil {
 		compatibility = checkTypeCompatibilityWithContext(ctx, mod, refType.Inner, expectedBase)
@@ -4180,7 +4163,7 @@ func resolveNumericExprTypeForModule(_ *context_v2.CompilerContext, expr ast.Exp
 		return resultType
 	}
 
-	expectedBase := unwrapOptionalType(expected)
+	expectedBase := types.UnwrapOptionalType(expected)
 	expectedUnwrapped := types.UnwrapType(expectedBase)
 	if !expected.Equals(types.TypeUnknown) && types.IsNumeric(expectedUnwrapped) {
 		if value, ok := evaluateNumericConst(expr); ok {
@@ -4706,7 +4689,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 					diagnostics.NewError(fmt.Sprintf("argument '%s' must be a mutable reference", param.Name)).
 						WithCode(diagnostics.ErrInvalidAssignment).
 						WithPrimaryLabel(arg.Loc(), "expected a mutable reference").
-						WithHelp("use \"&'\" to pass a mutable reference"),
+						WithHelp("use '&mut' to pass a mutable reference"),
 				)
 				continue
 			}
@@ -4770,7 +4753,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 						diagnostics.NewError(fmt.Sprintf("argument '%s' must be a mutable reference", variadicParam.Name)).
 							WithCode(diagnostics.ErrInvalidAssignment).
 							WithPrimaryLabel(arg.Loc(), "expected a mutable reference").
-							WithHelp("use \"&'\" to pass a mutable reference"),
+							WithHelp("use '&mut' to pass a mutable reference"),
 					)
 					continue
 				}

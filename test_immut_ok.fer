@@ -1,0 +1,19 @@
+import "std/io";
+
+type Point struct { .X: i32, .Y: i32 };
+
+fn (p: &Point) getX() -> i32 {
+    return p.X;
+}
+
+fn main() {
+    let point: Point = { .X = 5, .Y = 10 };
+
+    let r := &point;          // immutable borrow starts
+    io::Println(r.X);         // use it 
+    
+    let val := point.getX();  // OK: method only needs immutable reference
+    io::Println(val);
+    
+    io::Println(r.Y);         // r still used => still alive
+}
