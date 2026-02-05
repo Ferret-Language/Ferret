@@ -1,0 +1,9 @@
+import "std/io";
+
+fn main() {
+    let nums: []?i32 = [1, none, 3];
+
+    if nums[1] == none {
+        io::Println("missing");
+    }
+}

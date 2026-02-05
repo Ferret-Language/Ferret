@@ -1,8 +1,8 @@
 import "std/io";
 
 fn main() {
-    let a: i32? = 5;
-    let b: i32? = none;
+let a: ?i32 = 5;
+let b: ?i32 = none;
 
     let v := a ?? 0;
     let w := b ?? 7;

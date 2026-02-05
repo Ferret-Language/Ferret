@@ -1,0 +1,14 @@
+import "std/io";
+
+fn main() {
+    let none_nums: ?[]i32 = none;
+    let some_nums: ?[]i32 = [1, 2, 3];
+
+    if none_nums == none {
+        io::Println("none");
+    }
+
+    if some_nums != none {
+        io::Println("some");
+    }
+}

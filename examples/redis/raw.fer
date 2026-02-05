@@ -33,7 +33,7 @@ fn bytesToStr(data: []byte, start: i32, length: i32) -> str {
     return out;
 }
 
-fn parseRespStr(data: []byte) -> str ! str? {
+fn parseRespStr(data: []byte) -> str ! ?str {
     let n := len(&data);
     if n <= 0 {
         return "empty response"!;

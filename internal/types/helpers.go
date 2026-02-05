@@ -154,7 +154,7 @@ func promotionSequenceFrom(defaultType TYPE_NAME, order []TYPE_NAME) []TYPE_NAME
 	return order[start:]
 }
 
-// UnwrapOptionalType unwraps optional types: T? -> T
+// UnwrapOptionalType unwraps optional types: ?T -> T
 // Returns the inner type if it's optional, otherwise returns the original type.
 func UnwrapOptionalType(typ SemType) SemType {
 	if optType, ok := typ.(*OptionalType); ok {

@@ -205,25 +205,25 @@ func TestFunctionTypeEquals(t *testing.T) {
 }
 
 func TestOptionalType(t *testing.T) {
-	// i32?
+	// ?i32
 	opt := NewOptional(TypeI32)
-	if got := opt.String(); got != "i32?" {
-		t.Errorf("OptionalType.String() = %q, want %q", got, "i32?")
+	if got := opt.String(); got != "?i32" {
+		t.Errorf("OptionalType.String() = %q, want %q", got, "?i32")
 	}
 	if got := opt.Size(); got != 5 { // 4 bytes + 1 flag
 		t.Errorf("OptionalType.Size() = %d, want %d", got, 5)
 	}
 
-	// str?
+	// ?str
 	optStr := NewOptional(TypeString)
-	if got := optStr.String(); got != "str?" {
-		t.Errorf("OptionalType.String() = %q, want %q", got, "str?")
+	if got := optStr.String(); got != "?str" {
+		t.Errorf("OptionalType.String() = %q, want %q", got, "?str")
 	}
 
-	// []i32?
+	// ?[]i32
 	optArray := NewOptional(NewArray(TypeI32, -1))
-	if got := optArray.String(); got != "[]i32?" {
-		t.Errorf("OptionalType.String() = %q, want %q", got, "[]i32?")
+	if got := optArray.String(); got != "?[]i32" {
+		t.Errorf("OptionalType.String() = %q, want %q", got, "?[]i32")
 	}
 }
 
@@ -233,10 +233,10 @@ func TestOptionalTypeEquals(t *testing.T) {
 	opt3 := NewOptional(TypeString)
 
 	if !opt1.Equals(opt2) {
-		t.Errorf("i32? should equal i32?")
+		t.Errorf("?i32 should equal ?i32")
 	}
 	if opt1.Equals(opt3) {
-		t.Errorf("i32? should not equal str?")
+		t.Errorf("?i32 should not equal ?str")
 	}
 }
 

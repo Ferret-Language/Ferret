@@ -1,5 +1,5 @@
 // MIR smoke test for map indexing
-fn use_map(m: map[str]i32) -> i32? {
+fn use_map(m: map[str]i32) -> ?i32 {
     let v := m["alice"];
     return v;
 }

@@ -5971,8 +5971,6 @@ func exprKeyHIR(expr hir.Expr) (string, bool) {
 	switch e := expr.(type) {
 	case *hir.Ident:
 		return e.Name, true
-	case *hir.Literal:
-		return e.Value, true
 	case *hir.SelectorExpr:
 		base, ok := exprKeyHIR(e.X)
 		if !ok || e.Field == nil {

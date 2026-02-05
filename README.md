@@ -74,7 +74,7 @@ str, bool, byte           // String, boolean, byte
 // Both support negative indexing: arr[-1] accesses last element
 
 // Optional types
-i32?                      // Nullable integer
+?i32                      // Nullable integer
 
 // Result types
 Error ! Data              // Used with functions that can fail
@@ -82,7 +82,7 @@ Error ! Data              // Used with functions that can fail
 fn get_data() -> str ! i32 { // Error type first, success type second
     // ...
     if fail {
-        return "Failed to get data"!;  // returning str as error. The `!` operator marks an expression as error 
+        return "Failed to get data"!;  // returning str as error. The `!` operator marks an expression as error
     }
 
     return 42; // returning i32 as success value
@@ -167,7 +167,7 @@ fn (p: &Point) SetY(val: i32) {
 fn test() {
     // ✅ OK - struct literal can set all fields
     let p := { .X = 10, .y = 20 } as Point;
-    
+
     let x := p.X;     // ✅ OK - public field
     let y := p.y;     // ❌ Error - private field access
     let y2 := p.GetY();  // ✅ OK - use method for controlled access
@@ -225,7 +225,7 @@ fn add(a: i32, b: i32) -> i32 {
 ### Optional Types & Coalescing Operator
 
 ```ferret
-let maybe: i32? = None;
+let maybe: ?i32 = None;
 let value := maybe ?? 42;  // Defaults to 42 if None. Kind of like `??` in other languages. Or we may switch to `??` later. making ?? a ternary operator.
 ```
 
@@ -300,7 +300,7 @@ while x < 5 {
     x = x + 1;
 }
 
-// match statement 
+// match statement
 match value {
     1 => println("one"),
     2 => println("two"),
@@ -329,13 +329,13 @@ Compilation failed with 1 error(s)
 
 error: integer literal 200 overflows i8
   --> example.fer:13:13
-   | 
+   |
 12 | let e: i8 = 100;  // OK: literal 100 fits in i8
 13 | let f: i8 = 200;  // Error: 200 doesn't fit in i8 (-128 to 127)
    |     -       ~~~ need at least u8 or i16
    |     |
    |     -- type 'i8'
-   | 
+   |
    = help: i8 can hold values in range: -128 to 127
 
 ```

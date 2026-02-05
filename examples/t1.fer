@@ -10,7 +10,7 @@ fn main() {
     let version: i32 = 1;
 
     // Optional types
-    let maybeValue: i32? = 42;
+let maybeValue: ?i32 = 42;
 
     if maybeValue != none {
         // Type narrowing - maybeValue is i32 here

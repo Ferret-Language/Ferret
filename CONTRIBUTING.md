@@ -69,7 +69,7 @@ Source Code → Lexer → Parser → AST → Semantic Analysis → HIR Gen → H
 - **Type Inference**: `:=` operator for automatic type deduction
 - **Rich Type Features**:
   - Basic types: `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64`, `str`, `bool`, `byte`
-  - Optional types: `T?` for nullable values
+  - Optional types: `?T` for nullable values
   - Result types: `E ! T` for error handling
   - Reference types: `&T` for references (parsed, semantics pending)
   - Arrays: `[]T` (dynamic), `[N]T` (fixed-size)
@@ -93,7 +93,7 @@ Source Code → Lexer → Parser → AST → Semantic Analysis → HIR Gen → H
 - Functions (regular and anonymous)
 - Control flow (`if`, `else`, `for`, `while`, `match`)
 - Error handling (`E ! T`, `catch` expressions)
-- Optional types (`T?`, coalescing operator `??`)
+- Optional types (`?T`, coalescing operator `??`)
 - Scope resolution (`::` for enums and modules)
 - Composite literals (structs, arrays, maps)
 - Variadic parameters (`...T`)
@@ -366,11 +366,11 @@ let multiply := fn (a: i32, b: i32) -> i32 {
 
 #### Optional Types
 ```ferret
-let maybe: i32? = none;
+let maybe: ?i32 = none;
 let value := maybe ?? 42;  // Coalescing operator - defaults to 42 if none
 
 // Optional chaining
-let result: str? = getValue()?;
+let result: ?str = getValue()?;
 ```
 
 #### Error Types and Handling

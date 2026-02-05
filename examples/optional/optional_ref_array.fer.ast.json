@@ -1,0 +1,942 @@
+{
+  "FullPath": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer",
+  "ImportPath": "",
+  "Alias": "",
+  "Nodes": [
+    {
+      "Path": {
+        "Kind": 2,
+        "Value": "std/io",
+        "Start": {
+          "Line": 1,
+          "Column": 8,
+          "Index": 7
+        },
+        "End": {
+          "Line": 1,
+          "Column": 16,
+          "Index": 15
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+      },
+      "Alias": {
+        "Name": "",
+        "Start": null,
+        "End": null,
+        "Filename": null
+      },
+      "LocationOnDisk": "",
+      "Start": {
+        "Line": 1,
+        "Column": 1,
+        "Index": 0
+      },
+      "End": {
+        "Line": 1,
+        "Column": 17,
+        "Index": 16
+      },
+      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+    },
+    {
+      "Name": {
+        "Name": "main",
+        "Start": {
+          "Line": 3,
+          "Column": 4,
+          "Index": 21
+        },
+        "End": {
+          "Line": 3,
+          "Column": 8,
+          "Index": 25
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+      },
+      "Type": {
+        "Params": null,
+        "Result": null,
+        "Start": {
+          "Line": 3,
+          "Column": 1,
+          "Index": 18
+        },
+        "End": {
+          "Line": 3,
+          "Column": 10,
+          "Index": 27
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+      },
+      "Body": {
+        "Nodes": [
+          {
+            "Decls": [
+              {
+                "Name": {
+                  "Name": "arr",
+                  "Start": {
+                    "Line": 4,
+                    "Column": 9,
+                    "Index": 38
+                  },
+                  "End": {
+                    "Line": 4,
+                    "Column": 12,
+                    "Index": 41
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                "Type": {
+                  "Len": null,
+                  "ElType": {
+                    "Name": "i32",
+                    "Start": {
+                      "Line": 4,
+                      "Column": 16,
+                      "Index": 45
+                    },
+                    "End": {
+                      "Line": 4,
+                      "Column": 19,
+                      "Index": 48
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                  },
+                  "Start": {
+                    "Line": 4,
+                    "Column": 14,
+                    "Index": 43
+                  },
+                  "End": {
+                    "Line": 4,
+                    "Column": 19,
+                    "Index": 48
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                "Value": {
+                  "Type": null,
+                  "Elts": [
+                    {
+                      "Kind": 0,
+                      "Value": "1",
+                      "Start": {
+                        "Line": 4,
+                        "Column": 23,
+                        "Index": 52
+                      },
+                      "End": {
+                        "Line": 4,
+                        "Column": 24,
+                        "Index": 53
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                    },
+                    {
+                      "Kind": 0,
+                      "Value": "2",
+                      "Start": {
+                        "Line": 4,
+                        "Column": 26,
+                        "Index": 55
+                      },
+                      "End": {
+                        "Line": 4,
+                        "Column": 27,
+                        "Index": 56
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                    }
+                  ],
+                  "Start": {
+                    "Line": 4,
+                    "Column": 22,
+                    "Index": 51
+                  },
+                  "End": {
+                    "Line": 4,
+                    "Column": 28,
+                    "Index": 57
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                }
+              }
+            ],
+            "Doc": null,
+            "Start": {
+              "Line": 4,
+              "Column": 5,
+              "Index": 34
+            },
+            "End": {
+              "Line": 4,
+              "Column": 29,
+              "Index": 58
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+          },
+          {
+            "Decls": [
+              {
+                "Name": {
+                  "Name": "r1",
+                  "Start": {
+                    "Line": 5,
+                    "Column": 9,
+                    "Index": 67
+                  },
+                  "End": {
+                    "Line": 5,
+                    "Column": 11,
+                    "Index": 69
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                "Type": {
+                  "Base": {
+                    "Base": {
+                      "Len": null,
+                      "ElType": {
+                        "Name": "i32",
+                        "Start": {
+                          "Line": 5,
+                          "Column": 17,
+                          "Index": 75
+                        },
+                        "End": {
+                          "Line": 5,
+                          "Column": 20,
+                          "Index": 78
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                      },
+                      "Start": {
+                        "Line": 5,
+                        "Column": 15,
+                        "Index": 73
+                      },
+                      "End": {
+                        "Line": 5,
+                        "Column": 20,
+                        "Index": 78
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                    },
+                    "Mutable": false,
+                    "Start": {
+                      "Line": 5,
+                      "Column": 14,
+                      "Index": 72
+                    },
+                    "End": {
+                      "Line": 5,
+                      "Column": 20,
+                      "Index": 78
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                  },
+                  "Start": {
+                    "Line": 5,
+                    "Column": 13,
+                    "Index": 71
+                  },
+                  "End": {
+                    "Line": 5,
+                    "Column": 20,
+                    "Index": 78
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                "Value": {
+                  "Op": {
+                    "Kind": "\u0026",
+                    "Value": "\u0026",
+                    "Start": {
+                      "Line": 5,
+                      "Column": 23,
+                      "Index": 81
+                    },
+                    "End": {
+                      "Line": 5,
+                      "Column": 24,
+                      "Index": 82
+                    }
+                  },
+                  "X": {
+                    "Name": "arr",
+                    "Start": {
+                      "Line": 5,
+                      "Column": 24,
+                      "Index": 82
+                    },
+                    "End": {
+                      "Line": 5,
+                      "Column": 27,
+                      "Index": 85
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                  },
+                  "Start": {
+                    "Line": 5,
+                    "Column": 23,
+                    "Index": 81
+                  },
+                  "End": {
+                    "Line": 5,
+                    "Column": 27,
+                    "Index": 85
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                }
+              }
+            ],
+            "Doc": null,
+            "Start": {
+              "Line": 5,
+              "Column": 5,
+              "Index": 63
+            },
+            "End": {
+              "Line": 5,
+              "Column": 28,
+              "Index": 86
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+          },
+          {
+            "Decls": [
+              {
+                "Name": {
+                  "Name": "oarr",
+                  "Start": {
+                    "Line": 7,
+                    "Column": 9,
+                    "Index": 96
+                  },
+                  "End": {
+                    "Line": 7,
+                    "Column": 13,
+                    "Index": 100
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                "Type": {
+                  "Base": {
+                    "Len": null,
+                    "ElType": {
+                      "Name": "i32",
+                      "Start": {
+                        "Line": 7,
+                        "Column": 18,
+                        "Index": 105
+                      },
+                      "End": {
+                        "Line": 7,
+                        "Column": 21,
+                        "Index": 108
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                    },
+                    "Start": {
+                      "Line": 7,
+                      "Column": 16,
+                      "Index": 103
+                    },
+                    "End": {
+                      "Line": 7,
+                      "Column": 21,
+                      "Index": 108
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                  },
+                  "Start": {
+                    "Line": 7,
+                    "Column": 15,
+                    "Index": 102
+                  },
+                  "End": {
+                    "Line": 7,
+                    "Column": 21,
+                    "Index": 108
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                "Value": {
+                  "Type": null,
+                  "Elts": [
+                    {
+                      "Kind": 0,
+                      "Value": "3",
+                      "Start": {
+                        "Line": 7,
+                        "Column": 25,
+                        "Index": 112
+                      },
+                      "End": {
+                        "Line": 7,
+                        "Column": 26,
+                        "Index": 113
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                    },
+                    {
+                      "Kind": 0,
+                      "Value": "4",
+                      "Start": {
+                        "Line": 7,
+                        "Column": 28,
+                        "Index": 115
+                      },
+                      "End": {
+                        "Line": 7,
+                        "Column": 29,
+                        "Index": 116
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                    }
+                  ],
+                  "Start": {
+                    "Line": 7,
+                    "Column": 24,
+                    "Index": 111
+                  },
+                  "End": {
+                    "Line": 7,
+                    "Column": 30,
+                    "Index": 117
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                }
+              }
+            ],
+            "Doc": null,
+            "Start": {
+              "Line": 7,
+              "Column": 5,
+              "Index": 92
+            },
+            "End": {
+              "Line": 7,
+              "Column": 31,
+              "Index": 118
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+          },
+          {
+            "Decls": [
+              {
+                "Name": {
+                  "Name": "r2",
+                  "Start": {
+                    "Line": 8,
+                    "Column": 9,
+                    "Index": 127
+                  },
+                  "End": {
+                    "Line": 8,
+                    "Column": 11,
+                    "Index": 129
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                "Type": {
+                  "Base": {
+                    "Base": {
+                      "Len": null,
+                      "ElType": {
+                        "Name": "i32",
+                        "Start": {
+                          "Line": 8,
+                          "Column": 17,
+                          "Index": 135
+                        },
+                        "End": {
+                          "Line": 8,
+                          "Column": 20,
+                          "Index": 138
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                      },
+                      "Start": {
+                        "Line": 8,
+                        "Column": 15,
+                        "Index": 133
+                      },
+                      "End": {
+                        "Line": 8,
+                        "Column": 20,
+                        "Index": 138
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                    },
+                    "Start": {
+                      "Line": 8,
+                      "Column": 14,
+                      "Index": 132
+                    },
+                    "End": {
+                      "Line": 8,
+                      "Column": 20,
+                      "Index": 138
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                  },
+                  "Mutable": false,
+                  "Start": {
+                    "Line": 8,
+                    "Column": 13,
+                    "Index": 131
+                  },
+                  "End": {
+                    "Line": 8,
+                    "Column": 20,
+                    "Index": 138
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                "Value": {
+                  "Op": {
+                    "Kind": "\u0026",
+                    "Value": "\u0026",
+                    "Start": {
+                      "Line": 8,
+                      "Column": 23,
+                      "Index": 141
+                    },
+                    "End": {
+                      "Line": 8,
+                      "Column": 24,
+                      "Index": 142
+                    }
+                  },
+                  "X": {
+                    "Name": "oarr",
+                    "Start": {
+                      "Line": 8,
+                      "Column": 24,
+                      "Index": 142
+                    },
+                    "End": {
+                      "Line": 8,
+                      "Column": 28,
+                      "Index": 146
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                  },
+                  "Start": {
+                    "Line": 8,
+                    "Column": 23,
+                    "Index": 141
+                  },
+                  "End": {
+                    "Line": 8,
+                    "Column": 28,
+                    "Index": 146
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                }
+              }
+            ],
+            "Doc": null,
+            "Start": {
+              "Line": 8,
+              "Column": 5,
+              "Index": 123
+            },
+            "End": {
+              "Line": 8,
+              "Column": 29,
+              "Index": 147
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+          },
+          {
+            "Cond": {
+              "X": {
+                "Name": "r1",
+                "Start": {
+                  "Line": 10,
+                  "Column": 8,
+                  "Index": 156
+                },
+                "End": {
+                  "Line": 10,
+                  "Column": 10,
+                  "Index": 158
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+              },
+              "Op": {
+                "Kind": "!=",
+                "Value": "!=",
+                "Start": {
+                  "Line": 10,
+                  "Column": 11,
+                  "Index": 159
+                },
+                "End": {
+                  "Line": 10,
+                  "Column": 13,
+                  "Index": 161
+                }
+              },
+              "Y": {
+                "Name": "none",
+                "Start": {
+                  "Line": 10,
+                  "Column": 14,
+                  "Index": 162
+                },
+                "End": {
+                  "Line": 10,
+                  "Column": 18,
+                  "Index": 166
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+              },
+              "Start": {
+                "Line": 10,
+                "Column": 8,
+                "Index": 156
+              },
+              "End": {
+                "Line": 10,
+                "Column": 18,
+                "Index": 166
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+            },
+            "Body": {
+              "Nodes": [
+                {
+                  "X": {
+                    "Fun": {
+                      "X": {
+                        "Name": "io",
+                        "Start": {
+                          "Line": 11,
+                          "Column": 9,
+                          "Index": 177
+                        },
+                        "End": {
+                          "Line": 11,
+                          "Column": 11,
+                          "Index": 179
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                      },
+                      "Selector": {
+                        "Name": "Println",
+                        "Start": {
+                          "Line": 11,
+                          "Column": 13,
+                          "Index": 181
+                        },
+                        "End": {
+                          "Line": 11,
+                          "Column": 20,
+                          "Index": 188
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                      },
+                      "Start": {
+                        "Line": 11,
+                        "Column": 9,
+                        "Index": 177
+                      },
+                      "End": {
+                        "Line": 11,
+                        "Column": 20,
+                        "Index": 188
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                    },
+                    "Args": [
+                      {
+                        "Kind": 2,
+                        "Value": "r1",
+                        "Start": {
+                          "Line": 11,
+                          "Column": 21,
+                          "Index": 189
+                        },
+                        "End": {
+                          "Line": 11,
+                          "Column": 25,
+                          "Index": 193
+                        },
+                        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                      }
+                    ],
+                    "Catch": null,
+                    "Start": {
+                      "Line": 11,
+                      "Column": 9,
+                      "Index": 177
+                    },
+                    "End": {
+                      "Line": 11,
+                      "Column": 26,
+                      "Index": 194
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                  },
+                  "Start": {
+                    "Line": 11,
+                    "Column": 9,
+                    "Index": 177
+                  },
+                  "End": {
+                    "Line": 11,
+                    "Column": 27,
+                    "Index": 195
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                }
+              ],
+              "Scope": null,
+              "Start": {
+                "Line": 10,
+                "Column": 19,
+                "Index": 167
+              },
+              "End": {
+                "Line": 12,
+                "Column": 6,
+                "Index": 201
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+            },
+            "Else": null,
+            "Scope": null,
+            "Start": {
+              "Line": 10,
+              "Column": 5,
+              "Index": 153
+            },
+            "End": {
+              "Line": 12,
+              "Column": 6,
+              "Index": 201
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+          },
+          {
+            "Lhs": {
+              "X": {
+                "Name": "r2",
+                "Start": {
+                  "Line": 14,
+                  "Column": 6,
+                  "Index": 208
+                },
+                "End": {
+                  "Line": 14,
+                  "Column": 8,
+                  "Index": 210
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+              },
+              "Start": {
+                "Line": 14,
+                "Column": 5,
+                "Index": 207
+              },
+              "End": {
+                "Line": 14,
+                "Column": 8,
+                "Index": 210
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+            },
+            "Rhs": {
+              "Type": null,
+              "Elts": [
+                {
+                  "Kind": 0,
+                  "Value": "5",
+                  "Start": {
+                    "Line": 14,
+                    "Column": 12,
+                    "Index": 214
+                  },
+                  "End": {
+                    "Line": 14,
+                    "Column": 13,
+                    "Index": 215
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                {
+                  "Kind": 0,
+                  "Value": "6",
+                  "Start": {
+                    "Line": 14,
+                    "Column": 15,
+                    "Index": 217
+                  },
+                  "End": {
+                    "Line": 14,
+                    "Column": 16,
+                    "Index": 218
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                }
+              ],
+              "Start": {
+                "Line": 14,
+                "Column": 11,
+                "Index": 213
+              },
+              "End": {
+                "Line": 14,
+                "Column": 17,
+                "Index": 219
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+            },
+            "Op": {
+              "Kind": "=",
+              "Value": "=",
+              "Start": {
+                "Line": 14,
+                "Column": 9,
+                "Index": 211
+              },
+              "End": {
+                "Line": 14,
+                "Column": 10,
+                "Index": 212
+              }
+            },
+            "Start": {
+              "Line": 14,
+              "Column": 5,
+              "Index": 207
+            },
+            "End": {
+              "Line": 14,
+              "Column": 17,
+              "Index": 219
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+          },
+          {
+            "X": {
+              "Fun": {
+                "X": {
+                  "Name": "io",
+                  "Start": {
+                    "Line": 15,
+                    "Column": 5,
+                    "Index": 225
+                  },
+                  "End": {
+                    "Line": 15,
+                    "Column": 7,
+                    "Index": 227
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                "Selector": {
+                  "Name": "Println",
+                  "Start": {
+                    "Line": 15,
+                    "Column": 9,
+                    "Index": 229
+                  },
+                  "End": {
+                    "Line": 15,
+                    "Column": 16,
+                    "Index": 236
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                },
+                "Start": {
+                  "Line": 15,
+                  "Column": 5,
+                  "Index": 225
+                },
+                "End": {
+                  "Line": 15,
+                  "Column": 16,
+                  "Index": 236
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+              },
+              "Args": [
+                {
+                  "Kind": 2,
+                  "Value": "r2",
+                  "Start": {
+                    "Line": 15,
+                    "Column": 17,
+                    "Index": 237
+                  },
+                  "End": {
+                    "Line": 15,
+                    "Column": 21,
+                    "Index": 241
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+                }
+              ],
+              "Catch": null,
+              "Start": {
+                "Line": 15,
+                "Column": 5,
+                "Index": 225
+              },
+              "End": {
+                "Line": 15,
+                "Column": 22,
+                "Index": 242
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+            },
+            "Start": {
+              "Line": 15,
+              "Column": 5,
+              "Index": 225
+            },
+            "End": {
+              "Line": 15,
+              "Column": 23,
+              "Index": 243
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+          }
+        ],
+        "Scope": null,
+        "Start": {
+          "Line": 3,
+          "Column": 11,
+          "Index": 28
+        },
+        "End": {
+          "Line": 16,
+          "Column": 2,
+          "Index": 245
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+      },
+      "Scope": null,
+      "Doc": null,
+      "Start": {
+        "Line": 3,
+        "Column": 1,
+        "Index": 18
+      },
+      "End": {
+        "Line": 16,
+        "Column": 2,
+        "Index": 245
+      },
+      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/optional/optional_ref_array.fer"
+    }
+  ],
+  "Start": null,
+  "End": null,
+  "Filename": null
+}

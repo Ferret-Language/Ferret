@@ -11,10 +11,18 @@ import (
 
 // parseType parses a type expression
 func (p *Parser) parseType() ast.TypeNode {
-	return p.parseTypeWithOptional(true)
+	return p.parseTypeWithOptional()
 }
 
-func (p *Parser) parseTypeWithOptional(allowOptional bool) ast.TypeNode {
+func (p *Parser) parseTypeWithOptional() ast.TypeNode {
+	var optionalStart *source.Position
+	var optionalTokEnd *source.Position
+	if p.match(tokens.QUESTION_TOKEN) {
+		optTok := p.advance()
+		optionalStart = &optTok.Start
+		optionalTokEnd = &optTok.End
+	}
+
 	tok := p.peek()
 
 	var t ast.TypeNode
@@ -30,7 +38,7 @@ func (p *Parser) parseTypeWithOptional(allowOptional bool) ast.TypeNode {
 			isMutable = true
 		}
 
-		baseType := p.parseTypeWithOptional(false)
+		baseType := p.parseTypeWithOptional()
 		// Handle case where baseType might be Invalid with potential nil location issues
 		var endPos *source.Position
 		if baseType != nil && baseType.Loc() != nil && baseType.Loc().End != nil {
@@ -92,12 +100,43 @@ func (p *Parser) parseTypeWithOptional(allowOptional bool) ast.TypeNode {
 		}
 	}
 
-	// Check for optional type T?
-	if allowOptional && p.match(tokens.QUESTION_TOKEN) {
-		p.advance()
+	// Apply prefix optional type ?T
+	if optionalStart != nil && t != nil {
+		endPos := optionalTokEnd
+		if t.Loc() != nil && t.Loc().End != nil {
+			endPos = t.Loc().End
+		}
 		t = &ast.OptionalType{
 			Base:     t,
-			Location: *t.Loc(),
+			Location: *source.NewLocation(&p.filepath, optionalStart, endPos),
+		}
+	}
+
+	// Reject postfix optional type T?
+	if p.match(tokens.QUESTION_TOKEN) {
+		q := p.advance()
+		loc := source.NewLocation(&p.filepath, &q.Start, &q.End)
+		p.diagnostics.Add(
+			diagnostics.NewError("postfix optional types are no longer supported").
+				WithCode(diagnostics.ErrInvalidType).
+				WithPrimaryLabel(loc, "use prefix optional syntax").
+				WithHelp("write '?T' instead of 'T?'"),
+		)
+		if t != nil {
+			endPos := &q.End
+			startPos := &q.Start
+			if t.Loc() != nil {
+				if t.Loc().Start != nil {
+					startPos = t.Loc().Start
+				}
+				if t.Loc().End != nil {
+					endPos = &q.End
+				}
+			}
+			t = &ast.OptionalType{
+				Base:     t,
+				Location: *source.NewLocation(&p.filepath, startPos, endPos),
+			}
 		}
 	}
 

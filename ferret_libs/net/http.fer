@@ -88,11 +88,11 @@ fn (app: &App) Static(prefix: str, dir: str);
 // ============================================
 
 // @extern
-fn (req: &Request) Header(name: str) -> str?;
+fn (req: &Request) Header(name: str) -> ?str;
 // @extern
-fn (req: &Request) Query(name: str) -> str?;
+fn (req: &Request) Query(name: str) -> ?str;
 // @extern
-fn (req: &Request) Param(name: str) -> str?;
+fn (req: &Request) Param(name: str) -> ?str;
 
 // ============================================
 // Response helpers

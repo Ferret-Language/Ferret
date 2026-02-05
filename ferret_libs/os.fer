@@ -22,7 +22,7 @@ fn GetPid() -> i32;
 fn Sleep(ms: i32) -> void;
 
 fn SleepSeconds(seconds: i32) -> void {
-    SleepMs(seconds * 1000);
+    Sleep(seconds * 1000);
 }
 
 fn SleepMinutes(minutes: i32) -> void {

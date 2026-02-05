@@ -94,7 +94,7 @@ fn bytesToStr(data: []byte, start: i32, length: i32) -> str {
     return out;
 }
 
-fn parseRespStr(data: []byte) -> str ! str? {
+fn parseRespStr(data: []byte) -> str ! ?str {
     let n := len(&data);
     if n <= 0 {
         return "empty response"!;
@@ -137,7 +137,7 @@ fn parseRespStr(data: []byte) -> str ! str? {
     return "unknown response"!;
 }
 
-fn (c: &mut Client) readReplyOpt() -> str ! str? {
+fn (c: &mut Client) readReplyOpt() -> str ! ?str {
     let data := net::Read(c.conn, 4096) catch err {
         return err!;
     };
@@ -224,7 +224,7 @@ fn (c: &mut Client) Ping() -> str ! str {
     };
 }
 
-fn (c: &mut Client) Get(key: str) -> str ! str? {
+fn (c: &mut Client) Get(key: str) -> str ! ?str {
     let ok := c.commandArgs(["GET", key]) catch err {
         return err!;
     };

@@ -148,9 +148,18 @@ func setupFunctionContext(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 // Returns the symbol and true if found, nil and false otherwise.
 // Note: Imported types use qualified syntax (module::Type) and are resolved separately.
 func lookupTypeSymbol(ctx *context_v2.CompilerContext, mod *context_v2.Module, typeName string) (*symbols.Symbol, bool) {
-	// Check current module's scope
+	// First check current module's scope
 	if sym, found := mod.ModuleScope.Lookup(typeName); found {
 		return sym, true
+	}
+
+	// Not in current module, search imported modules
+	for _, importPath := range mod.ImportAliasMap {
+		if importedMod, exists := ctx.GetModule(importPath); exists {
+			if sym, ok := importedMod.ModuleScope.GetSymbol(typeName); ok && sym.Kind == symbols.SymbolType {
+				return sym, true
+			}
+		}
 	}
 
 	return nil, false
@@ -901,7 +910,7 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 				ctx.Diagnostics.Add(
 					diagnostics.NewError(fmt.Sprintf("%s '%s' cannot have type 'none'", declKind, name)).
 						WithPrimaryLabel(item.Name.Loc(), "'none' is not a valid type for variables or constants").
-						WithHelp("'none' is only used as a value for optional types like i32?"),
+						WithHelp("'none' is only used as a value for optional types like ?i32"),
 				)
 				sym.Type = types.TypeUnknown
 				continue
@@ -1190,7 +1199,7 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 			rhsOptional = true
 		}
 
-		// Allow T? == none or none == T?
+		// Allow ?T == none or none == ?T
 		if (lhsOptional && rhsNone) || (rhsOptional && lhsNone) {
 			return // Valid comparison
 		}
@@ -3651,7 +3660,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		}
 	}
 
-	// Handle optional type wrapping (T -> T?)
+	// Handle optional type wrapping (T -> ?T)
 	if !expected.Equals(types.TypeUnknown) {
 		if optType, ok := expected.(*types.OptionalType); ok {
 			// If assigning non-optional to optional, check if inner types match
@@ -4436,7 +4445,7 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 		return types.NewArray(elementType, length)
 
 	case *ast.OptionalType:
-		// Optional type: T?
+		// Optional type: ?T
 		innerType := TypeFromTypeNodeWithContext(ctx, mod, t.Base)
 		return types.NewOptional(innerType)
 

@@ -42,7 +42,7 @@ func (a *ArrayType) INode()                {} // Implements Node interface
 func (a *ArrayType) TypeExpr()             {} // Type nodes implement TypeExpr
 func (a *ArrayType) Loc() *source.Location { return &a.Location }
 
-// OptionalType represents optional/nullable type T?
+// OptionalType represents optional/nullable type ?T
 type OptionalType struct {
 	Base TypeNode // The base type that is optional
 	source.Location

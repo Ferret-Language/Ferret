@@ -965,7 +965,7 @@ func inferRangeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 
 // inferCoalescingExprType determines the result type of an coalescing expression (a ?? b)
 // The coalescing operator unwraps optional types:
-// - If 'a' has type T?, the result is T (non-optional)
+// - If 'a' has type ?T, the result is T (non-optional)
 // - The fallback 'b' should have type T to match
 // - Result type is always the non-optional inner type
 func inferCoalescingExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CoalescingExpr) types.SemType {
@@ -973,7 +973,7 @@ func inferCoalescingExprType(ctx *context_v2.CompilerContext, mod *context_v2.Mo
 
 	// Check if condition is an optional type
 	if optType, ok := condType.(*types.OptionalType); ok {
-		// Coalescing operator unwraps the optional: T? ?? T → T
+		// Coalescing operator unwraps the optional: ?T ?? T → T
 		return optType.Inner
 	}
 
@@ -993,7 +993,7 @@ func inferCoalescingExprType(ctx *context_v2.CompilerContext, mod *context_v2.Mo
 		diagnostics.NewError(fmt.Sprintf("invalid operation: '??' operator requires optional type, got %s", displayType.String())).
 			WithCode(diagnostics.ErrTypeMismatch).
 			WithPrimaryLabel(expr.Cond.Loc(), fmt.Sprintf("this has type %s, which is not optional", displayType.String())).
-			WithHelp("the '??' operator unwraps optional values; use it with optional types like 'i32?', 'str?', etc."),
+			WithHelp("the '??' operator unwraps optional values; use it with optional types like '?i32', '?str', etc."),
 	)
 
 	// Return TypeUnknown to signal an error

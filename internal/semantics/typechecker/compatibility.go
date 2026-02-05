@@ -219,15 +219,6 @@ func checkCompositeTypeCompatibility(source, target types.SemType) TypeCompatibi
 		return Incompatible
 	}
 
-	// Check optional compatibility: T? -> U?
-	if srcOpt, srcIsOpt := source.(*types.OptionalType); srcIsOpt {
-		if tgtOpt, tgtIsOpt := target.(*types.OptionalType); tgtIsOpt {
-			// Recursively check inner type compatibility
-			return checkTypeCompatibility(srcOpt.Inner, tgtOpt.Inner)
-		}
-		return Incompatible
-	}
-
 	// Check result type compatibility: E1!T1 -> E2!T2
 	if srcRes, srcIsRes := source.(*types.ResultType); srcIsRes {
 		if tgtRes, tgtIsRes := target.(*types.ResultType); tgtIsRes {
@@ -342,6 +333,27 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 		return Incompatible
 	}
 
+	// Optional type compatibility (handle before reference checks)
+	if tgtOpt, ok := types.UnwrapType(target).(*types.OptionalType); ok {
+		if source.Equals(types.TypeNone) {
+			return ImplicitCastable
+		}
+		if srcOpt, ok := types.UnwrapType(source).(*types.OptionalType); ok {
+			return checkTypeCompatibility(srcOpt.Inner, tgtOpt.Inner)
+		}
+		innerCompat := checkTypeCompatibility(source, tgtOpt.Inner)
+		if innerCompat == Identical || innerCompat == ImplicitCastable {
+			return ImplicitCastable
+		}
+		if innerCompat == ExplicitCastable {
+			return ExplicitCastable
+		}
+		return Incompatible
+	}
+	if _, ok := types.UnwrapType(source).(*types.OptionalType); ok {
+		return Incompatible
+	}
+
 	// Reference type compatibility (both source and target are references)
 	if srcRef, ok := types.UnwrapType(source).(*types.ReferenceType); ok {
 		if tgtRef, ok := types.UnwrapType(target).(*types.ReferenceType); ok {
@@ -398,7 +410,7 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 	}
 
 	// Special handling for none
-	// none can be assigned to any optional type (T?) or empty interface (any)
+	// none can be assigned to any optional type (?T) or empty interface (any)
 	if source.Equals(types.TypeNone) {
 		if _, ok := target.(*types.OptionalType); ok {
 			return ImplicitCastable

@@ -2,12 +2,12 @@ import "std/io";
 
 type Node struct {
     .Data: i32,
-    .Next: i32?
+    .Next: ?i32
 };
 
 type List struct {
     .Nodes: []Node,
-    .Head: i32?
+    .Head: ?i32
 };
 
 fn new_list() -> List {
@@ -45,7 +45,7 @@ fn length(list: &List) -> i32 {
 
 type A struct {
     .Data: i32,
-    .Next: &mut A?,
+    .Next: ?&mut A,
 };
 
 fn make_bad_ref() -> i32 {
@@ -83,29 +83,29 @@ fn main() {
         io::Println("Updated data");
         a4.Next.Data = 100;
     }
-    
+
     io::Println("--------");
 
-    let curr : &mut A? = &mut a4;
+    let curr : ?&mut A = &mut a4;
     while curr != none {
         io::Println(curr.Data);
         curr = curr.Next;
     }
-    
+
     io::Println("--------");
-    
+
     io::Println(a3.Data);
 
     // io::Println("== Test 1: double &mut alias ==");
-    
+
     // let x: i32 = 5;
     // let r1: &mut i32 = &mut x;
     // let r2: &mut i32 = &mut x; // MUST FAIL if &mut is unique
-    
+
     // *r1 = 10;
     // *r2 = 20;
     // io::Println(x);
-    
+
     // io::Println("== Test 2: struct holds &mut, then reborrow ==");
 
     // let a1t: A = { .Data = 1, .Next = none };
@@ -123,13 +123,13 @@ fn main() {
     // let a3x: A = { .Data = 13, .Next = &mut a2x };
     // let a4x: A = { .Data = 14, .Next = &mut a3x };
 
-    // let curr2: &mut A? = &mut a4x;
+    // let curr2: ?&mut A = &mut a4x;
 
     // // While curr is alive, this SHOULD FAIL if you track reachable aliases:
     // a3x.Data = 777;
 
     // io::Println("a3x =", a3x.Data);
-     
+
     let rr := make_bad_ref();
     //*rr = 9;
     io::Println(rr);

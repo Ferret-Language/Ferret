@@ -14,8 +14,6 @@ func ExprKey(expr ast.Expression) (string, bool) {
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
 		return e.Name, true
-	case *ast.BasicLit:
-		return e.Value, true
 	case *ast.SelectorExpr:
 		base, ok := ExprKey(e.X)
 		if !ok {

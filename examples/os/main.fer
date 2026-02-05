@@ -3,5 +3,5 @@
 import "os";
 
 fn main() {
-    os::Local_func();
+    //os::Local_func();
 }

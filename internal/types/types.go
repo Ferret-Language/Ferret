@@ -250,7 +250,7 @@ func (f *FunctionType) Equals(other SemType) bool {
 	return false
 }
 
-// OptionalType represents nullable types: T?
+// OptionalType represents nullable types: ?T
 type OptionalType struct {
 	Inner SemType
 }
@@ -260,7 +260,7 @@ func NewOptional(inner SemType) *OptionalType {
 }
 
 func (o *OptionalType) String() string {
-	return fmt.Sprintf("%s?", o.Inner.String())
+	return fmt.Sprintf("?%s", o.Inner.String())
 }
 
 func (o *OptionalType) Size() int {

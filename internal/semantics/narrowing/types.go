@@ -47,7 +47,7 @@ func getTypeFromTypeNode(mod *context_v2.Module, typeNode ast.TypeNode) types.Se
 		}
 
 	case *ast.OptionalType:
-		// Optional type T?
+		// Optional type ?T
 		innerType := getTypeFromTypeNode(mod, t.Base)
 		if innerType != nil {
 			return types.NewOptional(innerType)

@@ -1,0 +1,9 @@
+import "std/io";
+
+fn main() {
+    let x: i32 = 10;
+    let r: ?&i32 = &x;
+
+    let v := r ?? &x;
+    io::Println(*v);
+}
