@@ -2817,6 +2817,14 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		return isBorrowableTarget(ctx, mod, e.X)
 	case *ast.SelectorExpr:
 		return isBorrowableTarget(ctx, mod, e.X)
+	case *ast.DerefExpr:
+		baseType := inferExprType(ctx, mod, e.X)
+		if baseType == nil || baseType.Equals(types.TypeUnknown) {
+			return false
+		}
+		baseType = types.UnwrapType(baseType)
+		_, ok := baseType.(*types.ReferenceType)
+		return ok
 	case *ast.IndexExpr:
 		baseType := inferExprType(ctx, mod, e.X)
 		if baseType == nil || baseType.Equals(types.TypeUnknown) {
@@ -2884,7 +2892,7 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 			diagnostics.NewError("cannot take reference of this expression").
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(expr.X.Loc(), "not an addressable value").
-				WithHelp("borrow a variable, field, array element, or map element"),
+				WithHelp("borrow a variable, dereferenced reference, field, array element, or map element"),
 		)
 	}
 }

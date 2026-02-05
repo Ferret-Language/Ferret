@@ -1,11 +1,9 @@
-fn id(p: &i32) -> &i32 { return p; }
-
 fn main() {
-    let a := 10;
-    let r := id(&a);   // r now holds a borrow
+    let arr := [1, 2, 3];
 
-    let w := &mut a;   // should error if r is still alive
-    *w = 20;
+    let a := &mut arr[0];
+    let b := &mut arr[0];   // should error
 
-    let n := r;
+    *a = 10;
+    *b = 20;
 }
