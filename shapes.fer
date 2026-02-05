@@ -1,0 +1,23 @@
+// Module that defines custom types for testing import type resolution
+
+type Rectangle struct {
+    .Width: i32,
+    .Height: i32
+};
+
+type Circle struct {
+    .Radius: f64
+};
+
+type Shape union {
+    Rectangle,
+    Circle
+};
+
+fn (r: &Rectangle) area() -> i32 {
+    return r.Width * r.Height;
+}
+
+fn (c: &Circle) area() -> f64 {
+    return 3.14159 * c.Radius * c.Radius;
+}

@@ -153,3 +153,21 @@ func promotionSequenceFrom(defaultType TYPE_NAME, order []TYPE_NAME) []TYPE_NAME
 	}
 	return order[start:]
 }
+
+// UnwrapOptionalType unwraps optional types: T? -> T
+// Returns the inner type if it's optional, otherwise returns the original type.
+func UnwrapOptionalType(typ SemType) SemType {
+	if optType, ok := typ.(*OptionalType); ok {
+		return optType.Inner
+	}
+	return typ
+}
+
+// DereferenceType unwraps reference types: &T -> T
+// Returns the inner type if it's a reference, otherwise returns the original type.
+func DereferenceType(typ SemType) SemType {
+	if refType, ok := typ.(*ReferenceType); ok {
+		return refType.Inner
+	}
+	return typ
+}

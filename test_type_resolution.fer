@@ -1,0 +1,53 @@
+import "std/io";
+
+// Define types in current module
+type Rectangle struct {
+    .Width: i32,
+    .Height: i32
+};
+
+type Circle struct {
+    .Radius: f64
+};
+
+// These will be in current module scope, but let's also test with 
+// a more complex scenario using nested type resolution
+
+type Point struct { .X: i32, .Y: i32 };
+
+type Shape union {
+    Rectangle,
+    Circle,
+    Point
+};
+
+fn (r: &Rectangle) area() -> i32 {
+    return r.Width * r.Height;
+}
+
+fn (c: &Circle) area() -> f64 {
+    return 3.14159 * c.Radius * c.Radius;
+}
+
+fn main() {
+    // This will test type resolution - the typechecker needs to find these types
+    let rect: Rectangle = {
+        .Width = 10,
+        .Height = 20
+    };
+    
+    let circle: Circle = {
+        .Radius = 5.0
+    };
+    
+    let point: Point = { .X = 1, .Y = 2 };
+    
+    // Using the union type - this should trigger more complex type resolution
+    let shape1: Shape = rect;
+    let shape2: Shape = circle;
+    let shape3: Shape = point;
+    
+    io::Println("Rectangle area:", rect.area());
+    io::Println("Circle area:", circle.area());
+    io::Println("Types resolved successfully");
+}

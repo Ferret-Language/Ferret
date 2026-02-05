@@ -1,0 +1,21 @@
+// Module defining custom types for import testing
+
+type CustomType struct {
+    .Value: i32
+};
+
+type AnotherType struct {
+    .Name: str,
+    .Count: i32
+};
+
+type TypeUnion union {
+    CustomType,
+    AnotherType
+};
+
+fn (ct: &CustomType) getValue() -> i32 {
+    return ct.Value;
+}
+
+let ModuleConstant := 42;

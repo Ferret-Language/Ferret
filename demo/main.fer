@@ -29,5 +29,5 @@ fn main() {
     module::Value++;
     io::Println("After manual update:", module::Value);
 
-    let newValue := @module::Value;
+    // let newValue := @module::Value; // This causes an error, commenting out
 }

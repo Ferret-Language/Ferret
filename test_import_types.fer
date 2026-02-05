@@ -1,0 +1,25 @@
+import "std/io";
+import "demo/types";
+
+fn main() {
+    // This will trigger the lookupTypeSymbol function to search through
+    // imported modules when it encounters these imported types
+    
+    let custom: types::CustomType = {
+        .Value = 100
+    };
+    
+    let another: types::AnotherType = {
+        .Name = "test",
+        .Count = 5
+    };
+    
+    // Use the union type from the imported module
+    // This should definitely trigger the TODO loop in lookupTypeSymbol
+    let typeUnion: types::TypeUnion = custom;
+    
+    io::Println("Custom type value:", custom.getValue());
+    io::Println("Another type name:", another.Name);
+    io::Println("Module constant:", types::moduleConstant);
+    io::Println("Type resolution test completed successfully");
+}

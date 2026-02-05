@@ -25,9 +25,7 @@ func (p *Pipeline) collectModulesForCodegen() []string {
 		case context_v2.ModuleLocal:
 			include = modulePhase >= phase.PhaseMIRGenerated
 		case context_v2.ModuleBuiltin:
-			if importPath != context_v2.GlobalModuleImport {
-				include = modulePhase >= phase.PhaseMIRGenerated
-			}
+			include = modulePhase >= phase.PhaseMIRGenerated
 		}
 
 		if include {

@@ -1,0 +1,11 @@
+fn main() {
+    let a := 1;
+    let m := &mut a;
+
+    {
+        let m2 := &mut *m;
+        *m2 = 1;
+    }
+
+    *m = 2;
+}

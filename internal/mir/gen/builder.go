@@ -6090,7 +6090,7 @@ func (b *functionBuilder) getStorageType(expr hir.Expr) types.SemType {
 
 func isAddressableExpr(expr hir.Expr) bool {
 	switch expr.(type) {
-	case *hir.Ident, *hir.SelectorExpr, *hir.IndexExpr, *hir.ScopeResolutionExpr:
+	case *hir.Ident, *hir.SelectorExpr, *hir.IndexExpr, *hir.ScopeResolutionExpr, *hir.DerefExpr:
 		return true
 	default:
 		return false

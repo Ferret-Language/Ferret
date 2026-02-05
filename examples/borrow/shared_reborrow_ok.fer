@@ -1,0 +1,10 @@
+fn main() {
+    let a := 1;
+    let m := &mut a;
+
+    let r := &*m;
+    let x := *r;
+
+    *m = 2;
+    let y := x;
+}

@@ -23,24 +23,6 @@ import (
 
 var narrowingAnalyzer = narrowing.NewConditionAnalyzer()
 
-// unwrapOptionalType unwraps optional types: T? -> T
-// Returns the inner type if it's optional, otherwise returns the original type.
-func unwrapOptionalType(typ types.SemType) types.SemType {
-	if optType, ok := typ.(*types.OptionalType); ok {
-		return optType.Inner
-	}
-	return typ
-}
-
-// dereferenceType unwraps reference types: &T -> T
-// Returns the inner type if it's a reference, otherwise returns the original type.
-func dereferenceType(typ types.SemType) types.SemType {
-	if refType, ok := typ.(*types.ReferenceType); ok {
-		return refType.Inner
-	}
-	return typ
-}
-
 type autoDerefKind int
 
 const (
@@ -162,21 +144,13 @@ func setupFunctionContext(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 	}
 }
 
-// lookupTypeSymbol finds a type symbol by name, checking current module first, then imported modules.
+// lookupTypeSymbol finds a type symbol by name in the current module's scope.
 // Returns the symbol and true if found, nil and false otherwise.
+// Note: Imported types use qualified syntax (module::Type) and are resolved separately.
 func lookupTypeSymbol(ctx *context_v2.CompilerContext, mod *context_v2.Module, typeName string) (*symbols.Symbol, bool) {
-	// First check current module's scope
+	// Check current module's scope
 	if sym, found := mod.ModuleScope.Lookup(typeName); found {
 		return sym, true
-	}
-
-	// Not in current module, search imported modules
-	for _, importPath := range mod.ImportAliasMap {
-		if importedMod, exists := ctx.GetModule(importPath); exists {
-			if sym, ok := importedMod.ModuleScope.GetSymbol(typeName); ok && sym.Kind == symbols.SymbolType {
-				return sym, true
-			}
-		}
 	}
 
 	return nil, false
@@ -2219,7 +2193,7 @@ func checkMethodSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.M
 	}
 
 	// Unwrap reference types: &T -> T
-	receiverType = dereferenceType(receiverType)
+	receiverType = types.DereferenceType(receiverType)
 
 	// Extract type name - only NamedType can have methods
 	var typeName string
@@ -2843,6 +2817,14 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		return isBorrowableTarget(ctx, mod, e.X)
 	case *ast.SelectorExpr:
 		return isBorrowableTarget(ctx, mod, e.X)
+	case *ast.DerefExpr:
+		baseType := inferExprType(ctx, mod, e.X)
+		if baseType == nil || baseType.Equals(types.TypeUnknown) {
+			return false
+		}
+		baseType = types.UnwrapType(baseType)
+		_, ok := baseType.(*types.ReferenceType)
+		return ok
 	case *ast.IndexExpr:
 		baseType := inferExprType(ctx, mod, e.X)
 		if baseType == nil || baseType.Equals(types.TypeUnknown) {
@@ -2910,7 +2892,7 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 			diagnostics.NewError("cannot take reference of this expression").
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(expr.X.Loc(), "not an addressable value").
-				WithHelp("borrow a variable, field, array element, or map element"),
+				WithHelp("borrow a variable, dereferenced reference, field, array element, or map element"),
 		)
 	}
 }
@@ -3491,7 +3473,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 
 		expectedForLit := expected
 		if e.Kind == ast.INT || e.Kind == ast.FLOAT {
-			expectedForLit = unwrapOptionalType(expected)
+			expectedForLit = types.UnwrapOptionalType(expected)
 		}
 		litType := inferLiteralType(e, expectedForLit)
 		if optType, ok := expected.(*types.OptionalType); ok && litType.Equals(optType.Inner) {
@@ -3622,7 +3604,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 	if !expected.Equals(types.TypeUnknown) {
 		if lit, ok := expr.(*ast.BasicLit); ok {
 			// If expected is optional, contextualize to inner type
-			expectedForLit := unwrapOptionalType(expected)
+			expectedForLit := types.UnwrapOptionalType(expected)
 			// For numeric literals, always try to contextualize to expected type
 			// inferLiteralType will return expected type if compatible, or default if not
 			if lit.Kind == ast.INT || lit.Kind == ast.FLOAT {
@@ -3842,7 +3824,7 @@ func addDerefHintIfNeeded(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 		return diag
 	}
 
-	expectedBase := unwrapOptionalType(expected)
+	expectedBase := types.UnwrapOptionalType(expected)
 	compatibility := checkTypeCompatibility(refType.Inner, expectedBase)
 	if ctx != nil && mod != nil {
 		compatibility = checkTypeCompatibilityWithContext(ctx, mod, refType.Inner, expectedBase)
@@ -4180,7 +4162,7 @@ func resolveNumericExprTypeForModule(_ *context_v2.CompilerContext, expr ast.Exp
 		return resultType
 	}
 
-	expectedBase := unwrapOptionalType(expected)
+	expectedBase := types.UnwrapOptionalType(expected)
 	expectedUnwrapped := types.UnwrapType(expectedBase)
 	if !expected.Equals(types.TypeUnknown) && types.IsNumeric(expectedUnwrapped) {
 		if value, ok := evaluateNumericConst(expr); ok {
@@ -4706,7 +4688,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 					diagnostics.NewError(fmt.Sprintf("argument '%s' must be a mutable reference", param.Name)).
 						WithCode(diagnostics.ErrInvalidAssignment).
 						WithPrimaryLabel(arg.Loc(), "expected a mutable reference").
-						WithHelp("use \"&'\" to pass a mutable reference"),
+						WithHelp("use '&mut' to pass a mutable reference"),
 				)
 				continue
 			}
@@ -4770,7 +4752,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 						diagnostics.NewError(fmt.Sprintf("argument '%s' must be a mutable reference", variadicParam.Name)).
 							WithCode(diagnostics.ErrInvalidAssignment).
 							WithPrimaryLabel(arg.Loc(), "expected a mutable reference").
-							WithHelp("use \"&'\" to pass a mutable reference"),
+							WithHelp("use '&mut' to pass a mutable reference"),
 					)
 					continue
 				}

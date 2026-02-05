@@ -23,14 +23,6 @@ func (p *Pipeline) runMIRGenerationPhase() error {
 			continue
 		}
 
-		// Skip the global prelude module (synthetic, has no HIR)
-		if importPath == context_v2.GlobalModuleImport {
-			if !p.ctx.AdvanceModulePhase(importPath, phase.PhaseMIRGenerated) {
-				p.ctx.SetModulePhase(importPath, phase.PhaseMIRGenerated)
-			}
-			continue
-		}
-
 		if module.Type == context_v2.ModuleBuiltin && module.AST != nil && len(module.AST.Nodes) == 0 {
 			mir.StoreModule(module, &mir.Module{ImportPath: importPath})
 			if !p.ctx.AdvanceModulePhase(importPath, phase.PhaseMIRGenerated) {

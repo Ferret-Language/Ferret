@@ -194,8 +194,8 @@ type Config struct {
 	// Codegen backend to use ("none", "qbe")
 	CodegenBackend string
 	// Project information
-	ProjectName   string // Name of the project
-	ProjectRoot   string // Root directory of the project
+	ProjectName string // Name of the project
+	ProjectRoot string // Root directory of the project
 
 	// Build configuration
 	OutputPath   string // Where to write compiled output
@@ -581,6 +581,11 @@ func (ctx *CompilerContext) AddDependency(importer, imported string) error {
 
 	// Check for cycle before adding
 	if cycle := ctx.findCycle(imported, importer); cycle != nil {
+		if imported == GlobalModuleImport {
+			// Allow implicit global prelude dependency to be skipped when it would
+			// create a cycle with modules that global itself imports.
+			return nil
+		}
 		return fmt.Errorf("circular import detected: %s", formatCycle(cycle))
 	}
 

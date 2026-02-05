@@ -22,15 +22,6 @@ func (p *Pipeline) runHIRGenerationPhase() error {
 			continue
 		}
 
-		// Skip the global prelude module (synthetic, has no AST)
-		if importPath == context_v2.GlobalModuleImport {
-			hir.StoreModule(module, &hir.Module{ImportPath: importPath})
-			if !p.ctx.AdvanceModulePhase(importPath, phase.PhaseHIRGenerated) {
-				p.ctx.SetModulePhase(importPath, phase.PhaseHIRGenerated)
-			}
-			continue
-		}
-
 		if module.Type == context_v2.ModuleBuiltin && module.AST != nil && len(module.AST.Nodes) == 0 {
 			hir.StoreModule(module, &hir.Module{ImportPath: importPath})
 			if !p.ctx.AdvanceModulePhase(importPath, phase.PhaseHIRGenerated) {
