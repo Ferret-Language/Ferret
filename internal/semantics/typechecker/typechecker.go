@@ -3431,10 +3431,14 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 				// No need to validate rhsType - any type is valid
 				return types.TypeBool
 			} else {
-				ctx.Diagnostics.Add(
-					diagnostics.NewError("'is' operator requires left operand to be a union type or interface{}").
-						WithPrimaryLabel(e.X.Loc(), "expected union or interface{}"),
-				)
+				// Allow 'is' on concrete types; this becomes a compile-time check.
+				if rhsType == nil || rhsType.Equals(types.TypeUnknown) {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError("invalid type in 'is' operator").
+							WithPrimaryLabel(e.Y.Loc(), "cannot resolve type").
+							WithCode(diagnostics.ErrTypeMismatch),
+					)
+				}
 				return types.TypeBool
 			}
 		}

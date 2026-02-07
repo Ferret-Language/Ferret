@@ -1437,10 +1437,15 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 						// Type not found in union - always false
 						cmp = b.emitConst(types.TypeBool, "0", clause.Location)
 					}
+				} else if isEmptyInterface(matchType) {
+					cmp = b.emitInterfaceTypeCheck(cond, pat.Type, clause.Location)
 				} else {
-					// Not a union type - cannot do type check
-					b.reportUnsupported("type check pattern on non-union type", clause.Pattern.Loc())
-					cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+					// Concrete type: compile-time check
+					if matchType != nil && matchType.Equals(pat.Type) {
+						cmp = b.emitConst(types.TypeBool, "1", clause.Location)
+					} else {
+						cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+					}
 				}
 
 			case *hir.RangeCheckPattern:
@@ -1454,12 +1459,16 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 				// Regular value match pattern
 				value, ok := b.matchCaseConstValue(clause.Pattern, matchType)
 				if !ok {
-					b.reportUnsupported("match pattern", clause.Pattern.Loc())
-					// Skip this case
-					if elseBlock != nil {
-						current = elseBlock
+					patVal := b.lowerExpr(clause.Pattern)
+					if patVal == mir.InvalidValue {
+						if elseBlock != nil {
+							current = elseBlock
+						}
+						continue
 					}
-					continue
+					patType := b.exprType(clause.Pattern)
+					cmp = b.emitEqualityCompare(cond, matchType, patVal, patType, clause.Location)
+					break
 				}
 
 				if isLargePrimitiveType(matchType) {
@@ -2867,9 +2876,14 @@ func (b *functionBuilder) emitTypeCheck(expr *hir.BinaryExpr) mir.ValueID {
 		return b.emitInterfaceTypeCheck(val, expr.TargetType, expr.Location)
 	}
 
-	// Not a union or interface - should have been caught by type checker
-	b.reportUnsupported("'is' check on non-union/non-interface type", expr.Loc())
-	return mir.InvalidValue
+	// Concrete type: compile-time check
+	if valType == nil || expr.TargetType == nil {
+		return b.emitConst(types.TypeBool, "0", expr.Location)
+	}
+	if valType.Equals(expr.TargetType) {
+		return b.emitConst(types.TypeBool, "1", expr.Location)
+	}
+	return b.emitConst(types.TypeBool, "0", expr.Location)
 }
 
 // emitUnionTypeCheckImpl implements union variant checking.

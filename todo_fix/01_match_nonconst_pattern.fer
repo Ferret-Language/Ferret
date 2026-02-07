@@ -1,3 +1,4 @@
+import "std/io";
 // TODO: should be supported (match on non-const pattern expression)
 // Current error: MIR lowering unsupported: match pattern
 fn foo() -> i32 {
@@ -7,7 +8,11 @@ fn foo() -> i32 {
 fn main() {
     let v: i32 = 2;
     match v {
-        foo() => { }
-        _ => { }
+        foo() => { 
+            io::Println("foo");
+        }
+        _ => {
+            io::Println("none");
+        }
     }
 }

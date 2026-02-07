@@ -1,8 +1,9 @@
+import "std/io";
 // TODO: should be supported (is operator for native types)
 // Current error: 'is' requires union or interface{}
 fn main() {
     let x: i32 = 3;
     if x is i32 {
-        // no-op
+        io::Println("is i32");
     }
 }
