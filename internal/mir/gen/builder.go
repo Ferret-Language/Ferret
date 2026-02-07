@@ -1445,29 +1445,9 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 
 			case *hir.RangeCheckPattern:
 				// Range check pattern: in Range or in Array
-				if rangeExpr, ok := pat.Range.(*hir.RangeExpr); ok {
-					// Generate: cond >= start && cond < end (or <= for inclusive)
-					startVal := b.lowerExpr(rangeExpr.Start)
-					endVal := b.lowerExpr(rangeExpr.End)
-
-					// Check lower bound: cond >= start
-					lowerCmp := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, cond, startVal, matchType, clause.Location)
-
-					// Check upper bound: cond < end or cond <= end
-					var upperCmp mir.ValueID
-					if rangeExpr.Inclusive {
-						upperCmp = b.emitBinary(tokens.LESS_EQUAL_TOKEN, cond, endVal, matchType, clause.Location)
-					} else {
-						upperCmp = b.emitBinary(tokens.LESS_TOKEN, cond, endVal, matchType, clause.Location)
-					}
-
-					// Combine: lower && upper
-					cmp = b.emitBinary(tokens.AND_TOKEN, lowerCmp, upperCmp, types.TypeBool, clause.Location)
-				} else {
-					cmp = b.emitInCheckValue(cond, matchType, pat.Range, clause.Location)
-					if cmp == mir.InvalidValue {
-						cmp = b.emitConst(types.TypeBool, "0", clause.Location)
-					}
+				cmp = b.emitInCheckValue(cond, matchType, pat.Range, clause.Location)
+				if cmp == mir.InvalidValue {
+					cmp = b.emitConst(types.TypeBool, "0", clause.Location)
 				}
 
 			default:
@@ -2986,58 +2966,77 @@ func (b *functionBuilder) emitRangeCheckValue(val mir.ValueID, valType types.Sem
 		return mir.InvalidValue
 	}
 
-	startVal := b.lowerExpr(rangeExpr.Start)
+	elemType := valType
+	if rangeExpr.Type != nil {
+		if arrType, ok := types.UnwrapType(rangeExpr.Type).(*types.ArrayType); ok && arrType != nil && arrType.Element != nil {
+			elemType = arrType.Element
+		}
+	}
+	if elemType == nil {
+		elemType = types.TypeUnknown
+	}
+
+	// Cast the checked value to the range element type when possible.
+	if valType != nil && elemType != nil && types.IsNumeric(types.UnwrapType(valType)) && types.IsNumeric(types.UnwrapType(elemType)) && !valType.Equals(elemType) {
+		val = b.castValue(val, valType, elemType, loc)
+		valType = elemType
+	}
+
+	startVal := b.lowerRangeValue(rangeExpr.Start, elemType, loc)
 	if startVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
 
-	endVal := b.lowerExpr(rangeExpr.End)
+	endVal := b.lowerRangeValue(rangeExpr.End, elemType, loc)
 	if endVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
 
-	// Generate: val >= start
-	lowerCheck := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, val, startVal, types.TypeBool, loc)
-	if lowerCheck == mir.InvalidValue {
+	var incrVal mir.ValueID
+	if rangeExpr.Incr != nil {
+		incrVal = b.lowerRangeValue(rangeExpr.Incr, elemType, loc)
+	} else {
+		incrVal = b.rangeConst(elemType, "1", loc)
+	}
+	if incrVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
 
-	// Generate: val < end (or val <= end for inclusive)
-	upperOp := tokens.LESS_TOKEN
+	startType := b.exprType(rangeExpr.Start)
+	endType := b.exprType(rangeExpr.End)
+	incrType := b.exprType(rangeExpr.Incr)
+	mismatch := b.rangeStepFloatMismatch(startType, endType, incrType)
+	b.emitRangeValidation(startVal, endVal, incrVal, elemType, loc, mismatch)
+
+	condToken := tokens.LESS_TOKEN
+	negCondToken := tokens.GREATER_TOKEN
 	if rangeExpr.Inclusive {
-		upperOp = tokens.LESS_EQUAL_TOKEN
+		condToken = tokens.LESS_EQUAL_TOKEN
+		negCondToken = tokens.GREATER_EQUAL_TOKEN
 	}
-	upperCheck := b.emitBinary(upperOp, val, endVal, types.TypeBool, loc)
-	if upperCheck == mir.InvalidValue {
+
+	zeroVal := b.rangeConst(elemType, "0", loc)
+	if zeroVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
 
-	// Combine: lowerCheck && upperCheck
-	boundsCheck := lowerCheck
-	if lowerCheck != upperCheck {
-		id := b.gen.nextValueID()
-		b.emitInstr(&mir.Binary{
-			Result:   id,
-			Op:       tokens.AND_TOKEN,
-			Left:     lowerCheck,
-			Right:    upperCheck,
-			Type:     types.TypeBool,
-			Location: loc,
-		})
-		boundsCheck = id
-	}
+	posCheck := b.rangeCompare(tokens.GREATER_TOKEN, incrVal, zeroVal, elemType, loc)
+	negCheck := b.rangeCompare(tokens.LESS_TOKEN, incrVal, zeroVal, elemType, loc)
+
+	posLower := b.rangeCompare(tokens.GREATER_EQUAL_TOKEN, val, startVal, elemType, loc)
+	posUpper := b.rangeCompare(condToken, val, endVal, elemType, loc)
+	posBounds := b.emitBinary(tokens.AND_TOKEN, posLower, posUpper, types.TypeBool, loc)
+
+	negLower := b.rangeCompare(tokens.LESS_EQUAL_TOKEN, val, startVal, elemType, loc)
+	negUpper := b.rangeCompare(negCondToken, val, endVal, elemType, loc)
+	negBounds := b.emitBinary(tokens.AND_TOKEN, negLower, negUpper, types.TypeBool, loc)
+
+	posAnd := b.emitBinary(tokens.AND_TOKEN, posCheck, posBounds, types.TypeBool, loc)
+	negAnd := b.emitBinary(tokens.AND_TOKEN, negCheck, negBounds, types.TypeBool, loc)
+	boundsCheck := b.emitBinary(tokens.OR_TOKEN, posAnd, negAnd, types.TypeBool, loc)
 
 	// If there's a step, check alignment: (val - start) % step == 0
 	if rangeExpr.Incr != nil {
-		stepVal := b.lowerExpr(rangeExpr.Incr)
-		if stepVal == mir.InvalidValue {
-			return mir.InvalidValue
-		}
-
-		if valType == nil || valType.Equals(types.TypeUnknown) {
-			valType = b.exprType(rangeExpr.Start)
-		}
-
 		diffID := b.gen.nextValueID()
 		b.emitInstr(&mir.Binary{
 			Result:   diffID,
@@ -3053,7 +3052,7 @@ func (b *functionBuilder) emitRangeCheckValue(val mir.ValueID, valType types.Sem
 			Result:   modID,
 			Op:       tokens.MOD_TOKEN,
 			Left:     diffID,
-			Right:    stepVal,
+			Right:    incrVal,
 			Type:     valType,
 			Location: loc,
 		})

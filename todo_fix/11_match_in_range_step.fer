@@ -1,0 +1,7 @@
+fn main() {
+    let x: i32 = 9;
+    match x {
+        in 0..10:2 => print("matched"),
+        _ => print("no"),
+    }
+}
