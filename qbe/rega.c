@@ -487,6 +487,7 @@ rega(Fn *fn)
 	int j, t, r, x, rl[Tmp0];
 	Blk *b, *b1, *s, ***ps, *blist, **blk, **bp;
 	RMap *end, *beg, cur, old, *m;
+	BSet def[1];
 	Ins *i;
 	Phi *p;
 	uint u, n;
@@ -507,6 +508,7 @@ rega(Fn *fn)
 	}
 	bsinit(cur.b, fn->ntmp);
 	bsinit(old.b, fn->ntmp);
+	bsinit(def, fn->ntmp);
 
 	loop = INT_MAX;
 	for (t=0; t<fn->ntmp; t++) {
@@ -559,6 +561,13 @@ rega(Fn *fn)
 	for (s=fn->start; s; s=s->link) {
 		if (s->npred <= 1)
 			continue;
+		bszero(def);
+		for (p=s->phi; p; p=p->link)
+			if (rtype(p->to) == RTmp)
+				bsset(def, p->to.val);
+		for (i=s->ins; i-s->ins < s->nins; i++)
+			if (rtype(i->to) == RTmp)
+				bsset(def, i->to.val);
 		m = &beg[s->id];
 
 		/* rl maps a register that is live at the
@@ -579,7 +588,11 @@ rega(Fn *fn)
 				if (rtype(src) != RTmp)
 					continue;
 				x = rfind(&end[b->id], src.val);
-				assert(x != -1);
+				if (x == -1) {
+					fprintf(stderr, "rega missing phi tmp %d(%s) in pred %d(%s) for block %d(%s) in %s\n",
+						src.val, tmp[src.val].name, b->id, b->name, s->id, s->name, fn->name);
+					abort();
+				}
 				rl[r] = (!rl[r] || rl[r] == x) ? x : -1;
 			}
 			if (rl[r] == 0)
@@ -590,11 +603,17 @@ rega(Fn *fn)
 		for (j=0; j<m->n; j++) {
 			t = m->t[j];
 			r = m->r[j];
-			if (rl[r] || t < Tmp0 /* todo, remove this */)
+			if (rl[r] || t < Tmp0 /* todo, remove this */ || bshas(def, t))
 				continue;
 			for (bp=s->pred; bp<&s->pred[s->npred]; bp++) {
 				x = rfind(&end[(*bp)->id], t);
-				assert(x != -1);
+				if (x == -1) {
+					if (tmp[t].slot != -1)
+						continue;
+					fprintf(stderr, "rega missing tmp %d(%s) in pred %d(%s) for block %d(%s) in %s\n",
+						t, tmp[t].name, (*bp)->id, (*bp)->name, s->id, s->name, fn->name);
+					abort();
+				}
 				rl[r] = (!rl[r] || rl[r] == x) ? x : -1;
 			}
 		}

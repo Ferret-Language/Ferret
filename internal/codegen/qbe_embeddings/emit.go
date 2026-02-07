@@ -829,7 +829,7 @@ func (g *Generator) emitMapGet(m *mir.MapGet) {
 		g.emitLine(fmt.Sprintf("@%s", panicLabel))
 		msgSym := g.stringSymbol("key not found in map")
 		g.emitLine(fmt.Sprintf("call $ferret_global_panic(l %s)", msgSym))
-		g.emitLine("ret") // Unreachable after panic, but QBE needs it
+		g.emitFallbackReturn()
 		g.emitLine(fmt.Sprintf("@%s", okLabel))
 
 		if byRef {
@@ -921,7 +921,7 @@ func (g *Generator) emitArrayGet(a *mir.ArrayGet) {
 		g.emitLine(fmt.Sprintf("@%s", panicLabel))
 		msgSym := g.stringSymbol("index out of bounds")
 		g.emitLine(fmt.Sprintf("call $ferret_global_panic(l %s)", msgSym))
-		g.emitLine("ret") // Unreachable after panic
+		g.emitFallbackReturn()
 		g.emitLine(fmt.Sprintf("@%s", okLabel))
 
 		// Load the value from the pointer
@@ -999,7 +999,7 @@ func (g *Generator) emitArraySet(a *mir.ArraySet) {
 		g.emitLine(fmt.Sprintf("@%s", panicLabel))
 		msgSym := g.stringSymbol("index out of bounds")
 		g.emitLine(fmt.Sprintf("call $ferret_global_panic(l %s)", msgSym))
-		g.emitLine("ret") // Unreachable after panic
+		g.emitFallbackReturn()
 		g.emitLine(fmt.Sprintf("@%s", okLabel))
 	}
 }
@@ -2128,9 +2128,6 @@ func (g *Generator) optionalType(typ types.SemType) (*types.OptionalType, bool) 
 		return nil, false
 	}
 	typ = types.UnwrapType(typ)
-	if ref, ok := typ.(*types.ReferenceType); ok {
-		typ = types.UnwrapType(ref.Inner)
-	}
 	opt, ok := typ.(*types.OptionalType)
 	return opt, ok
 }

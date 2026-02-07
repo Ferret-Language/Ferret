@@ -1663,6 +1663,48 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 			return b.emitTypeCheck(e)
 		}
 
+		// Special handling for optional comparisons against none
+		if e.Op.Kind == tokens.DOUBLE_EQUAL_TOKEN || e.Op.Kind == tokens.NOT_EQUAL_TOKEN {
+			if isNoneExpr(e.X) {
+				optType := b.exprType(e.Y)
+				if _, ok := types.UnwrapType(optType).(*types.OptionalType); ok {
+					val := b.lowerExpr(e.Y)
+					if val == mir.InvalidValue {
+						return mir.InvalidValue
+					}
+					isSome := b.gen.nextValueID()
+					b.emitInstr(&mir.OptionalIsSome{
+						Result:   isSome,
+						Value:    val,
+						Location: e.Location,
+					})
+					if e.Op.Kind == tokens.DOUBLE_EQUAL_TOKEN {
+						return b.emitUnary(tokens.NOT_TOKEN, isSome, types.TypeBool, e.Location)
+					}
+					return isSome
+				}
+			}
+			if isNoneExpr(e.Y) {
+				optType := b.exprType(e.X)
+				if _, ok := types.UnwrapType(optType).(*types.OptionalType); ok {
+					val := b.lowerExpr(e.X)
+					if val == mir.InvalidValue {
+						return mir.InvalidValue
+					}
+					isSome := b.gen.nextValueID()
+					b.emitInstr(&mir.OptionalIsSome{
+						Result:   isSome,
+						Value:    val,
+						Location: e.Location,
+					})
+					if e.Op.Kind == tokens.DOUBLE_EQUAL_TOKEN {
+						return b.emitUnary(tokens.NOT_TOKEN, isSome, types.TypeBool, e.Location)
+					}
+					return isSome
+				}
+			}
+		}
+
 		// Special handling for 'in' operator: x in a..b => x >= a && x < b
 		if e.Op.Kind == tokens.IN_TOKEN {
 			return b.emitRangeCheck(e)
@@ -2000,6 +2042,9 @@ func (b *functionBuilder) coerceValueForAssign(val mir.ValueID, fromType, toType
 	if val == mir.InvalidValue || fromType == nil || toType == nil {
 		return val
 	}
+	if optType, ok := types.UnwrapType(toType).(*types.OptionalType); ok {
+		return b.coerceToOptional(val, fromType, optType, loc)
+	}
 	if ref, ok := types.UnwrapType(toType).(*types.ReferenceType); ok {
 		if isEmptyInterface(ref.Inner) {
 			if _, ok := types.UnwrapType(fromType).(*types.ReferenceType); ok {
@@ -2025,6 +2070,48 @@ func (b *functionBuilder) coerceValueForAssign(val mir.ValueID, fromType, toType
 		fromType = ref.Inner
 	}
 	return val
+}
+
+func (b *functionBuilder) coerceToOptional(val mir.ValueID, fromType types.SemType, optType *types.OptionalType, loc source.Location) mir.ValueID {
+	if val == mir.InvalidValue || fromType == nil || optType == nil {
+		return val
+	}
+
+	if fromOpt, ok := types.UnwrapType(fromType).(*types.OptionalType); ok {
+		if fromOpt.Equals(optType) {
+			return val
+		}
+		return val
+	}
+
+	if types.UnwrapType(fromType).Equals(types.TypeNone) {
+		id := b.gen.nextValueID()
+		b.emitInstr(&mir.OptionalNone{
+			Result:   id,
+			Type:     optType,
+			Location: loc,
+		})
+		return id
+	}
+
+	innerVal := val
+	innerType := fromType
+	if ref, ok := types.UnwrapType(fromType).(*types.ReferenceType); ok {
+		if _, ok := types.UnwrapType(optType.Inner).(*types.ReferenceType); !ok {
+			innerVal = b.emitLoad(val, ref.Inner, loc)
+			innerType = ref.Inner
+		}
+	}
+
+	innerVal = b.coerceValueForAssign(innerVal, innerType, optType.Inner, loc)
+	id := b.gen.nextValueID()
+	b.emitInstr(&mir.OptionalSome{
+		Result:   id,
+		Value:    innerVal,
+		Type:     optType,
+		Location: loc,
+	})
+	return id
 }
 
 func (b *functionBuilder) lowerResultUnwrap(expr *hir.ResultUnwrap) mir.ValueID {
@@ -2302,7 +2389,13 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 	if target, ok := b.callTarget(expr.Fun); ok {
 		// Print/Println resolve by concrete arg type in QBE.
 		skipInterfaceBoxing := b.isStdIoPrintTarget(target)
-		args := b.lowerCallArgs(expr.Args, fnType, expr.Location, skipInterfaceBoxing)
+		var args []mir.ValueID
+		if target == "append" {
+			args = b.lowerAppendArgs(expr, fnType, expr.Location, skipInterfaceBoxing)
+		}
+		if args == nil {
+			args = b.lowerCallArgs(expr.Args, fnType, expr.Location, skipInterfaceBoxing)
+		}
 		if args == nil {
 			return mir.InvalidValue
 		}
@@ -2362,6 +2455,10 @@ func (b *functionBuilder) bindingAddrArg(expr hir.Expr) mir.ValueID {
 }
 
 func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionType, loc source.Location, skipInterfaceBoxing bool) []mir.ValueID {
+	return b.lowerCallArgsWithCoerce(args, fnType, loc, skipInterfaceBoxing, nil)
+}
+
+func (b *functionBuilder) lowerCallArgsWithCoerce(args []hir.Expr, fnType *types.FunctionType, loc source.Location, skipInterfaceBoxing bool, coerceArgTypes map[int]types.SemType) []mir.ValueID {
 	out := make([]mir.ValueID, 0, len(args))
 	for i, arg := range args {
 		boxedUnion := false
@@ -2394,6 +2491,15 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 						val = b.emitMapClone(val, paramType, loc)
 					}
 				}
+			}
+		}
+		if coerceArgTypes != nil {
+			if coerceType, ok := coerceArgTypes[i]; ok && coerceType != nil {
+				val = b.coerceValueForAssign(val, argType, coerceType, loc)
+				if val == mir.InvalidValue {
+					return nil
+				}
+				argType = coerceType
 			}
 		}
 		if !skipInterfaceBoxing && paramType != nil && interfaceTypeOf(paramType) != nil {
@@ -2439,6 +2545,38 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 	return out
 }
 
+func (b *functionBuilder) lowerAppendArgs(expr *hir.CallExpr, fnType *types.FunctionType, loc source.Location, skipInterfaceBoxing bool) []mir.ValueID {
+	if expr == nil || len(expr.Args) < 2 {
+		return nil
+	}
+	ident, ok := expr.Fun.(*hir.Ident)
+	if !ok || ident.Symbol == nil || !ident.Symbol.IsNative || ident.Name != "append" {
+		return nil
+	}
+	elemType := b.appendElementType(expr.Args[0])
+	if elemType == nil {
+		return nil
+	}
+	return b.lowerCallArgsWithCoerce(expr.Args, fnType, loc, skipInterfaceBoxing, map[int]types.SemType{1: elemType})
+}
+
+func (b *functionBuilder) appendElementType(arg hir.Expr) types.SemType {
+	if arg == nil {
+		return nil
+	}
+	argType := b.exprType(arg)
+	if argType == nil {
+		return nil
+	}
+	if ref, ok := types.UnwrapType(argType).(*types.ReferenceType); ok {
+		argType = ref.Inner
+	}
+	if arr, ok := types.UnwrapType(argType).(*types.ArrayType); ok && arr.Length < 0 {
+		return arr.Element
+	}
+	return nil
+}
+
 func (b *functionBuilder) isHeapReturnCall(call *hir.CallExpr) (types.SemType, bool) {
 	if call == nil {
 		return nil, false
@@ -2452,6 +2590,26 @@ func (b *functionBuilder) isHeapReturnCall(call *hir.CallExpr) (types.SemType, b
 		return b.heapReturnType(target)
 	}
 	return nil, false
+}
+
+func isNoneExpr(expr hir.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *hir.OptionalNone:
+		return true
+	case *hir.Literal:
+		return e.Kind == hir.LiteralNone
+	case *hir.Ident:
+		if e.Name == "none" {
+			return true
+		}
+		if e.Symbol != nil && e.Symbol.Type != nil {
+			return e.Symbol.Type.Equals(types.TypeNone)
+		}
+	}
+	return false
 }
 
 func (b *functionBuilder) lowerHeapReturnCall(call *hir.CallExpr, inner types.SemType, loc source.Location) mir.ValueID {
@@ -6980,6 +7138,7 @@ func (b *functionBuilder) emitBoundsCheckedIndex(indexVal, lenVal mir.ValueID, i
 	mergeBlock := b.newBlock("index.merge", loc)
 	okBlock := b.newBlock("index.ok", loc)
 	oobBlock := b.newBlock("index.oob", loc)
+	idxSlot := b.emitAlloca(indexType, loc)
 
 	b.current.Term = &mir.CondBr{
 		Cond:     condNeg,
@@ -6990,23 +7149,15 @@ func (b *functionBuilder) emitBoundsCheckedIndex(indexVal, lenVal mir.ValueID, i
 
 	b.setBlock(negBlock)
 	idxNeg := b.emitBinary(tokens.PLUS_TOKEN, lenVal, indexVal, indexType, loc)
+	b.emitStore(idxSlot, idxNeg, loc)
 	negBlock.Term = &mir.Br{Target: mergeBlock.ID, Location: loc}
 
 	b.setBlock(posBlock)
-	idxPos := indexVal
+	b.emitStore(idxSlot, indexVal, loc)
 	posBlock.Term = &mir.Br{Target: mergeBlock.ID, Location: loc}
 
 	b.setBlock(mergeBlock)
-	idxAdj := b.gen.nextValueID()
-	b.emitInstr(&mir.Phi{
-		Result: idxAdj,
-		Type:   indexType,
-		Incoming: []mir.PhiIncoming{
-			{Pred: negBlock.ID, Value: idxNeg},
-			{Pred: posBlock.ID, Value: idxPos},
-		},
-		Location: loc,
-	})
+	idxAdj := b.emitLoad(idxSlot, indexType, loc)
 
 	condLow := b.emitBinary(tokens.LESS_TOKEN, idxAdj, zero, indexType, loc)
 	condHigh := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, idxAdj, lenVal, indexType, loc)

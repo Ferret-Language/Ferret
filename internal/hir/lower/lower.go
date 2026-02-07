@@ -1098,6 +1098,52 @@ func (l *Lowerer) lowerCallExpr(expr *hir.CallExpr) hir.Expr {
 
 	funType := l.getFunctionType(expr.Fun)
 
+	if l.isBuiltinAppendCall(expr) && len(expr.Args) > 0 {
+		args := make([]hir.Expr, 0, len(expr.Args))
+		args = append(args, l.lowerExpr(expr.Args[0], types.TypeUnknown))
+		elemType := l.appendElemType(expr.Args[0])
+		if len(expr.Args) > 1 {
+			expected := types.TypeUnknown
+			if elemType != nil {
+				expected = elemType
+			}
+			args = append(args, l.lowerExpr(expr.Args[1], expected))
+		}
+		for i := 2; i < len(expr.Args); i++ {
+			args = append(args, l.lowerExpr(expr.Args[i], types.TypeUnknown))
+		}
+
+		callType := expr.Type
+		if funType != nil && funType.Return != nil {
+			callType = funType.Return
+		}
+		call := &hir.CallExpr{
+			Fun:      l.lowerExpr(expr.Fun, types.TypeUnknown),
+			Args:     args,
+			Catch:    nil,
+			Type:     callType,
+			Location: expr.Location,
+		}
+
+		if expr.Catch == nil {
+			return call
+		}
+
+		fallbackExpected := expr.Type
+		if funType != nil {
+			if resultType, ok := types.UnwrapType(funType.Return).(*types.ResultType); ok {
+				fallbackExpected = resultType.Ok
+			}
+		}
+
+		return &hir.ResultUnwrap{
+			Value:    call,
+			Catch:    l.lowerCatchClause(expr.Catch, fallbackExpected),
+			Type:     expr.Type,
+			Location: expr.Location,
+		}
+	}
+
 	// Check if this is a variadic call - bundle args into array literal
 	var args []hir.Expr
 	if funType != nil && len(funType.Params) > 0 {
@@ -1365,7 +1411,11 @@ func (l *Lowerer) wrapOptional(expr hir.Expr, expected types.SemType) hir.Expr {
 		return expr
 	}
 
-	if isOptionalType(actualType) || actualType.Equals(expectedOpt.Inner) {
+	if isOptionalType(actualType) {
+		return expr
+	}
+
+	if actualType.Equals(expectedOpt.Inner) {
 		value := l.forceExprType(expr, expectedOpt.Inner)
 		return &hir.OptionalSome{Value: value, Type: expected, Location: locationFromExpr(expr)}
 	}
@@ -1594,6 +1644,37 @@ func (l *Lowerer) expectedArgType(fn *types.FunctionType, index int) types.SemTy
 		return fn.Params[index].Type
 	}
 	return fn.Params[last].Type
+}
+
+func (l *Lowerer) isBuiltinAppendCall(expr *hir.CallExpr) bool {
+	if expr == nil {
+		return false
+	}
+	ident, ok := expr.Fun.(*hir.Ident)
+	if !ok || ident == nil {
+		return false
+	}
+	if ident.Name != "append" || ident.Symbol == nil || !ident.Symbol.IsNative {
+		return false
+	}
+	return true
+}
+
+func (l *Lowerer) appendElemType(arg hir.Expr) types.SemType {
+	if arg == nil {
+		return nil
+	}
+	argType := l.exprType(arg)
+	if argType == nil {
+		return nil
+	}
+	if ref, ok := types.UnwrapType(argType).(*types.ReferenceType); ok {
+		argType = ref.Inner
+	}
+	if arr, ok := types.UnwrapType(argType).(*types.ArrayType); ok && arr.Length < 0 {
+		return arr.Element
+	}
+	return nil
 }
 
 func iteratorItems(iterator hir.Node) ([]hir.DeclItem, source.Location, bool) {

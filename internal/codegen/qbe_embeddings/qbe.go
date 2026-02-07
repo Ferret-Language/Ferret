@@ -18,17 +18,19 @@ type Generator struct {
 	data strings.Builder
 	buf  strings.Builder
 
-	valueTypes  map[mir.ValueID]types.SemType
-	stringLits  map[string]string
-	enumTables  map[string]string
-	enumCounts  map[string]int
-	tempID      int
-	stringID    int
-	labelID     int
-	enumTableID int
-	retOutParam string
-	retOutType  types.SemType
-	entryBlock  mir.BlockID
+	valueTypes     map[mir.ValueID]types.SemType
+	stringLits     map[string]string
+	enumTables     map[string]string
+	enumCounts     map[string]int
+	tempID         int
+	stringID       int
+	labelID        int
+	enumTableID    int
+	retOutParam    string
+	retOutType     types.SemType
+	entryBlock     mir.BlockID
+	currentReturn  types.SemType
+	mainReturnsInt bool
 
 	hoistedAllocas   []*mir.Alloca
 	hoistedAllocaIDs map[mir.ValueID]struct{}
@@ -176,6 +178,8 @@ func (g *Generator) emitFunction(fn *mir.Function) {
 	g.retOutParam = ""
 	g.retOutType = nil
 	g.entryBlock = mir.InvalidBlock
+	g.currentReturn = fn.Return
+	g.mainReturnsInt = false
 	g.collectAllocas(fn)
 	if len(fn.Blocks) > 0 {
 		g.entryBlock = fn.Blocks[0].ID
@@ -193,6 +197,7 @@ func (g *Generator) emitFunction(fn *mir.Function) {
 	} else {
 		retType, mainReturnsInt = g.qbeReturnType(fn.Name, fn.Return)
 	}
+	g.mainReturnsInt = mainReturnsInt
 
 	g.buf.WriteString("export function")
 	if retType != "" {
@@ -360,11 +365,7 @@ func (g *Generator) emitInstr(instr mir.Instr) {
 func (g *Generator) emitTerm(term mir.Term, mainReturnsInt bool) {
 	if term == nil {
 		g.reportUnsupported("terminator", nil)
-		if mainReturnsInt {
-			g.emitLine("ret 0")
-		} else {
-			g.emitLine("ret")
-		}
+		g.emitFallbackReturn()
 		return
 	}
 
@@ -398,17 +399,40 @@ func (g *Generator) emitTerm(term mir.Term, mainReturnsInt bool) {
 		g.reportUnsupported("switch", t.Loc())
 		g.emitLine(fmt.Sprintf("jmp %s", g.blockName(t.Default)))
 	case *mir.Unreachable:
-		if mainReturnsInt {
-			g.emitLine("ret 0")
-		} else {
-			g.emitLine("ret")
-		}
+		g.emitFallbackReturn()
 	default:
 		g.reportUnsupported("terminator", t.Loc())
-		if mainReturnsInt {
-			g.emitLine("ret 0")
-		} else {
-			g.emitLine("ret")
-		}
+		g.emitFallbackReturn()
+	}
+}
+
+func (g *Generator) emitFallbackReturn() {
+	if g == nil {
+		return
+	}
+	if g.retOutType != nil {
+		g.emitLine("ret")
+		return
+	}
+	if g.mainReturnsInt {
+		g.emitLine("ret 0")
+		return
+	}
+	if g.currentReturn == nil || g.currentReturn.Equals(types.TypeVoid) {
+		g.emitLine("ret")
+		return
+	}
+	qbeType, err := g.qbeType(g.currentReturn)
+	if err != nil || qbeType == "" {
+		g.emitLine("ret")
+		return
+	}
+	switch qbeType {
+	case "s":
+		g.emitLine("ret s_0")
+	case "d":
+		g.emitLine("ret d_0")
+	default:
+		g.emitLine("ret 0")
 	}
 }
