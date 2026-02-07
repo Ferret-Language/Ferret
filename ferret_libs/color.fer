@@ -1,0 +1,56 @@
+// ANSI color helpers for terminal output.
+// Usage:
+//   import "color";
+//   io::Println(color::Paint(color::Green, "ok"));
+
+const Reset := "\x1b[0m";
+const Bold := "\x1b[1m";
+const Dim := "\x1b[2m";
+const Underline := "\x1b[4m";
+
+const Black := "\x1b[30m";
+const Red := "\x1b[31m";
+const Green := "\x1b[32m";
+const Yellow := "\x1b[33m";
+const Blue := "\x1b[34m";
+const Magenta := "\x1b[35m";
+const Cyan := "\x1b[36m";
+const White := "\x1b[37m";
+const Grey := "\x1b[90m";
+
+const BrightRed := "\x1b[91m";
+const BrightGreen := "\x1b[92m";
+const BrightYellow := "\x1b[93m";
+const BrightBlue := "\x1b[94m";
+const BrightMagenta := "\x1b[95m";
+const BrightCyan := "\x1b[96m";
+const BrightWhite := "\x1b[97m";
+
+const BgBlack := "\x1b[40m";
+const BgRed := "\x1b[41m";
+const BgGreen := "\x1b[42m";
+const BgYellow := "\x1b[43m";
+const BgBlue := "\x1b[44m";
+const BgMagenta := "\x1b[45m";
+const BgCyan := "\x1b[46m";
+const BgWhite := "\x1b[47m";
+
+fn Paint(color: str, text: str) -> str {
+    return color + text + Reset;
+}
+
+fn PaintBold(color: str, text: str) -> str {
+    return Bold + color + text + Reset;
+}
+
+fn Pass(text: str) -> str {
+    return Paint(Green, text);
+}
+
+fn Fail(text: str) -> str {
+    return Paint(Red, text);
+}
+
+fn Warn(text: str) -> str {
+    return Paint(Yellow, text);
+}
