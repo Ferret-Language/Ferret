@@ -6,6 +6,7 @@ type Client struct {
     .conn: net::TcpConn
 };
 
+
 fn Connect(addr: str) -> str ! Client {
     let conn := net::DialTcp(addr) catch err {
         return err!;
@@ -137,6 +138,111 @@ fn parseRespStr(data: []byte) -> str ! ?str {
     return "unknown response"!;
 }
 
+fn parseRespArray(data: []byte) -> str ! []?str {
+    let n := len(&data);
+    if n <= 0 {
+        return "empty response"!;
+    }
+    let idx: i32 = 0;
+    if data[idx] != 42 { // '*'
+        return "unexpected reply type"!;
+    }
+    idx += 1;
+    let lineEnd := findCrlf(data, idx);
+    if lineEnd < 0 {
+        return "invalid response"!;
+    }
+    let count := parseInt32(data, idx, lineEnd);
+    idx = lineEnd + 2;
+
+    let out: []?str = [] as []?str;
+    if count <= 0 {
+        return out;
+    }
+
+    let i: i32 = 0;
+    while i < count {
+        if idx >= n {
+            return "invalid response"!;
+        }
+        let prefix := data[idx];
+        idx += 1;
+
+        if prefix == 43 { // '+'
+            let e := findCrlf(data, idx);
+            if e < 0 {
+                return "invalid response"!;
+            }
+            let val := bytesToStr(data, idx, e - idx);
+            idx = e + 2;
+            append(&mut out, val);
+            i += 1;
+            continue;
+        }
+        if prefix == 45 { // '-'
+            let e := findCrlf(data, idx);
+            if e < 0 {
+                return "invalid response"!;
+            }
+            let err := bytesToStr(data, idx, e - idx);
+            return err!;
+        }
+        if prefix == 58 { // ':'
+            let e := findCrlf(data, idx);
+            if e < 0 {
+                return "invalid response"!;
+            }
+            let val := parseInt64(data, idx, e);
+            idx = e + 2;
+            append(&mut out, "" + val);
+            i += 1;
+            continue;
+        }
+        if prefix == 36 { // '$'
+            let e := findCrlf(data, idx);
+            if e < 0 {
+                return "invalid response"!;
+            }
+            let bulkLen := parseInt32(data, idx, e);
+            idx = e + 2;
+            if bulkLen < 0 {
+                append(&mut out, none);
+                i += 1;
+                continue;
+            }
+            if idx + bulkLen > n {
+                return "invalid bulk response"!;
+            }
+            let val := bytesToStr(data, idx, bulkLen);
+            idx = idx + bulkLen + 2;
+            append(&mut out, val);
+            i += 1;
+            continue;
+        }
+        if prefix == 42 { // '*'
+            return "nested array replies not supported yet"!;
+        }
+
+        return "unknown response"!;
+    }
+
+    return out;
+}
+
+fn expectArrayStr(values: []?str) -> str ! []str {
+    let out: []str = [];
+    let i: i32 = 0;
+    while i < len(&values) {
+        let v := values[i];
+        if v == none {
+            return "nil array element"!;
+        }
+        append(&mut out, v ?? "");
+        i += 1;
+    }
+    return out;
+}
+
 fn (c: &mut Client) readReplyOpt() -> str ! ?str {
     let data := net::Read(c.conn, 4096) catch err {
         return err!;
@@ -170,6 +276,27 @@ fn (c: &mut Client) readReplyInt() -> str ! i64 {
         return "unexpected reply type"!;
     }
     return parseInt64(data, 1, lineEnd);
+}
+
+fn (c: &mut Client) readReplyArrayOpt() -> str ! []?str {
+    let data := net::Read(c.conn, 4096) catch err {
+        return err!;
+    };
+    if len(&data) == 0 {
+        return "connection closed"!;
+    }
+    return parseRespArray(data) catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) readReplyArrayStr() -> str ! []str {
+    let vals := c.readReplyArrayOpt() catch err {
+        return err!;
+    };
+    return expectArrayStr(vals) catch err {
+        return err!;
+    };
 }
 
 fn (c: &mut Client) commandArgs(args: []str) -> str ! bool {
@@ -245,6 +372,272 @@ fn (c: &mut Client) Set(key: str, value: str) -> str ! bool {
 
 fn (c: &mut Client) Del(key: str) -> str ! i64 {
     return c.CommandInt("DEL", key) catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) Exists(key: str) -> str ! bool {
+    let n := c.CommandInt("EXISTS", key) catch err {
+        return err!;
+    };
+    return n > 0;
+}
+
+fn (c: &mut Client) Expire(key: str, seconds: i64) -> str ! bool {
+    let n := c.CommandInt("EXPIRE", key, "" + seconds) catch err {
+        return err!;
+    };
+    return n == 1;
+}
+
+fn (c: &mut Client) TTL(key: str) -> str ! i64 {
+    return c.CommandInt("TTL", key) catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) Incr(key: str) -> str ! i64 {
+    return c.CommandInt("INCR", key) catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) Decr(key: str) -> str ! i64 {
+    return c.CommandInt("DECR", key) catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) MGet(keys: ...str) -> str ! []?str {
+    if len(&keys) == 0 {
+        return [] as []?str;
+    }
+    let args := ["MGET", ...keys];
+    let ok := c.commandArgs(args) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyArrayOpt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) MSet(pairs: ...str) -> str ! bool {
+    let n := len(&pairs);
+    if n == 0 {
+        return "missing pairs"!;
+    }
+    if (n % 2) != 0 {
+        return "mset requires even number of args"!;
+    }
+    let args := ["MSET", ...pairs];
+    let rep := c.CommandArgs(args) catch err {
+        return err!;
+    };
+    return rep == "OK";
+}
+
+fn (c: &mut Client) HSet(key: str, field: str, value: str) -> str ! i64 {
+    return c.CommandInt("HSET", key, field, value) catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) HGet(key: str, field: str) -> str ! ?str {
+    let ok := c.commandArgs(["HGET", key, field]) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyOpt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) HMGet(key: str, fields: ...str) -> str ! []?str {
+    if len(&fields) == 0 {
+        return [] as []?str;
+    }
+    let args := ["HMGET", key, ...fields];
+    let ok := c.commandArgs(args) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyArrayOpt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) HDel(key: str, fields: ...str) -> str ! i64 {
+    if len(&fields) == 0 {
+        return 0;
+    }
+    let args := ["HDEL", key, ...fields];
+    let ok := c.commandArgs(args) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyInt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) HGetAll(key: str) -> str ! map[str]str {
+    let ok := c.commandArgs(["HGETALL", key]) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    let vals := c.readReplyArrayOpt() catch err {
+        return err!;
+    };
+    let out: map[str]str;
+    let n := len(&vals);
+    if (n % 2) != 0 {
+        return "invalid hash reply"!;
+    }
+    let i: i32 = 0;
+    while i < n {
+        let k := vals[i];
+        let v := vals[i + 1];
+        if k == none || v == none {
+            return "nil hash field"!;
+        }
+        out[k ?? ""] = v ?? "";
+        i += 2;
+    }
+    return out;
+}
+
+fn (c: &mut Client) SAdd(key: str, members: ...str) -> str ! i64 {
+    if len(&members) == 0 {
+        return 0;
+    }
+    let args := ["SADD", key, ...members];
+    let ok := c.commandArgs(args) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyInt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) SRem(key: str, members: ...str) -> str ! i64 {
+    if len(&members) == 0 {
+        return 0;
+    }
+    let args := ["SREM", key, ...members];
+    let ok := c.commandArgs(args) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyInt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) SIsMember(key: str, member: str) -> str ! bool {
+    let n := c.CommandInt("SISMEMBER", key, member) catch err {
+        return err!;
+    };
+    return n == 1;
+}
+
+fn (c: &mut Client) SMembers(key: str) -> str ! []str {
+    let ok := c.commandArgs(["SMEMBERS", key]) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyArrayStr() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) LPush(key: str, values: ...str) -> str ! i64 {
+    if len(&values) == 0 {
+        return 0;
+    }
+    let args := ["LPUSH", key, ...values];
+    let ok := c.commandArgs(args) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyInt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) RPush(key: str, values: ...str) -> str ! i64 {
+    if len(&values) == 0 {
+        return 0;
+    }
+    let args := ["RPUSH", key, ...values];
+    let ok := c.commandArgs(args) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyInt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) LPop(key: str) -> str ! ?str {
+    let ok := c.commandArgs(["LPOP", key]) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyOpt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) RPop(key: str) -> str ! ?str {
+    let ok := c.commandArgs(["RPOP", key]) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyOpt() catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) LLen(key: str) -> str ! i64 {
+    return c.CommandInt("LLEN", key) catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) LRange(key: str, start: i64, stop: i64) -> str ! []str {
+    let ok := c.commandArgs(["LRANGE", key, "" + start, "" + stop]) catch err {
+        return err!;
+    };
+    if !ok {
+        return "send failed"!;
+    }
+    return c.readReplyArrayStr() catch err {
         return err!;
     };
 }

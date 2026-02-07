@@ -1,0 +1,40 @@
+import "std/io";
+
+fn showOptInt(label: str, value: ?i32) {
+    if value == none {
+        io::Println(label, "none");
+        return;
+    }
+    io::Println(label, value ?? 0);
+}
+
+fn showOptStr(label: str, value: ?str) {
+    if value == none {
+        io::Println(label, "none");
+        return;
+    }
+    io::Println(label, value ?? "");
+}
+
+fn main() {
+    let a: ?i32 = 42;
+    let b: ?i32 = none;
+    showOptInt("a", a);
+    showOptInt("b", b);
+    io::Println("b default", b ?? 7);
+
+    let s: ?str = "hello";
+    let t: ?str = none;
+    showOptStr("s", s);
+    showOptStr("t", t);
+    io::Println("t default", t ?? "fallback");
+
+    let arr1: ?[]i32 = [1, 2, 3];
+    let arr2: ?[]i32 = none;
+
+    let arr1_val := arr1 ?? [] as []i32;
+    let arr2_val := arr2 ?? [] as []i32;
+
+    io::Println("arr1 len", len(&arr1_val));
+    io::Println("arr2 len", len(&arr2_val));
+}

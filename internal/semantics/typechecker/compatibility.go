@@ -351,6 +351,9 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 		return Incompatible
 	}
 	if _, ok := types.UnwrapType(source).(*types.OptionalType); ok {
+		if isEmptyInterfaceType(target) {
+			return ImplicitCastable
+		}
 		return Incompatible
 	}
 

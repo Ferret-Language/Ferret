@@ -1776,6 +1776,16 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 	case *hir.IndexExpr:
 		return b.lowerIndexValue(e)
 	case *hir.CastExpr:
+		if lit, ok := unwrapParenExpr(e.X).(*hir.CompositeLit); ok {
+			if lit.Type == nil || types.UnwrapType(lit.Type).Equals(types.TypeUnknown) {
+				targetType := e.Type
+				if opt, ok := types.UnwrapType(targetType).(*types.OptionalType); ok && opt != nil && opt.Inner != nil {
+					targetType = opt.Inner
+				}
+				lit.Type = targetType
+				return b.lowerCompositeLit(lit)
+			}
+		}
 		value := b.lowerExpr(e.X)
 		if value == mir.InvalidValue {
 			return mir.InvalidValue
