@@ -751,28 +751,73 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 					caseNarrowing, _ = narrowingAnalyzer.AnalyzeCondition(ctx, mod, syntheticIsExpr, nil)
 
 				case *ast.RangeCheckPattern:
-					// Range check pattern: in Range
-					// Check that the range expression is valid
+					// Range check pattern: in Range or in Array
 					rangeType := checkExpr(ctx, mod, pattern.Range, types.TypeUnknown)
 
-					// Check if it's a RangeExpr
-					if _, ok := pattern.Range.(*ast.RangeExpr); !ok {
-						ctx.Diagnostics.Add(
-							diagnostics.NewError("range check pattern requires a range expression").
-								WithPrimaryLabel(pattern.Range.Loc(), "not a range expression").
-								WithCode(diagnostics.ErrTypeMismatch).
-								WithHelp("use a range expression like '0..10' or '0..=10'"),
-						)
-					}
+					if rangeExpr, ok := pattern.Range.(*ast.RangeExpr); ok {
+						// Range expression: numeric only
+						if !matchType.Equals(types.TypeUnknown) && !rangeType.Equals(types.TypeUnknown) {
+							if !types.IsNumericType(matchType) {
+								ctx.Diagnostics.Add(
+									diagnostics.NewError(fmt.Sprintf("range check requires numeric match expression, got '%s'", matchType.String())).
+										WithPrimaryLabel(n.Expr.Loc(), "not a numeric type").
+										WithCode(diagnostics.ErrTypeMismatch),
+								)
+							}
+						}
 
-					// Check that match expression type is compatible with ranges (numeric types)
-					if !matchType.Equals(types.TypeUnknown) && !rangeType.Equals(types.TypeUnknown) {
-						if !types.IsNumericType(matchType) {
+						// Check that range bounds are numeric
+						startType := inferExprType(ctx, mod, rangeExpr.Start)
+						endType := inferExprType(ctx, mod, rangeExpr.End)
+						startBase := types.UnwrapType(startType)
+						endBase := types.UnwrapType(endType)
+
+						if !types.IsNumericType(startBase) && !types.IsUntyped(startBase) {
 							ctx.Diagnostics.Add(
-								diagnostics.NewError(fmt.Sprintf("range check requires numeric match expression, got '%s'", matchType.String())).
-									WithPrimaryLabel(n.Expr.Loc(), "not a numeric type").
-									WithCode(diagnostics.ErrTypeMismatch),
+								diagnostics.NewError(fmt.Sprintf("range start must be numeric, got '%s'", startType.String())).
+									WithCode(diagnostics.ErrTypeMismatch).
+									WithPrimaryLabel(rangeExpr.Start.Loc(), "not a numeric type"),
 							)
+						}
+
+						if !types.IsNumericType(endBase) && !types.IsUntyped(endBase) {
+							ctx.Diagnostics.Add(
+								diagnostics.NewError(fmt.Sprintf("range end must be numeric, got '%s'", endType.String())).
+									WithCode(diagnostics.ErrTypeMismatch).
+									WithPrimaryLabel(rangeExpr.End.Loc(), "not a numeric type"),
+							)
+						}
+					} else {
+						// Array membership
+						rangeBase := types.UnwrapType(rangeType)
+						if ref, ok := rangeBase.(*types.ReferenceType); ok {
+							rangeBase = ref.Inner
+						}
+						arrayType, ok := rangeBase.(*types.ArrayType)
+						if !ok {
+							ctx.Diagnostics.Add(
+								diagnostics.NewError("range check pattern requires a range or array expression").
+									WithPrimaryLabel(pattern.Range.Loc(), "not a range or array expression").
+									WithCode(diagnostics.ErrTypeMismatch).
+									WithHelp("use a range expression like '0..10' or an array like '[1, 2, 3]'"),
+							)
+							break
+						}
+
+						elemType := arrayType.Element
+						if elemType == nil {
+							elemType = types.TypeUnknown
+						}
+						if !matchType.Equals(types.TypeUnknown) && !elemType.Equals(types.TypeUnknown) {
+							compat := checkTypeCompatibility(matchType, elemType)
+							if compat == Incompatible {
+								ctx.Diagnostics.Add(
+									diagnostics.NewError(fmt.Sprintf("pattern type '%s' does not match array element type '%s'", matchType.String(), elemType.String())).
+										WithPrimaryLabel(pattern.Range.Loc(), "incompatible pattern type").
+										WithCode(diagnostics.ErrTypeMismatch).
+										WithNote(fmt.Sprintf("match expression has type '%s'", matchType.String())),
+								)
+							}
 						}
 					}
 
@@ -1233,49 +1278,76 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 		}
 
 	case tokens.IN_TOKEN:
-		// 'in' operator: value in range
-		// RHS must be a RangeExpr
-		rangeExpr, ok := expr.Y.(*ast.RangeExpr)
+		// 'in' operator: value in range OR value in array
+		if rangeExpr, ok := expr.Y.(*ast.RangeExpr); ok {
+			// Range check: numeric only
+			if !types.IsNumericType(lhsBase) && !types.IsUntyped(lhsBase) {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("'in' operator requires numeric value, got '%s'", lhsType.String())).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(expr.X.Loc(), "not a numeric type"),
+				)
+				return
+			}
+
+			// Check that range bounds are numeric
+			startType := inferExprType(ctx, mod, rangeExpr.Start)
+			endType := inferExprType(ctx, mod, rangeExpr.End)
+			startBase := types.UnwrapType(startType)
+			endBase := types.UnwrapType(endType)
+
+			if !types.IsNumericType(startBase) && !types.IsUntyped(startBase) {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("range start must be numeric, got '%s'", startType.String())).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(rangeExpr.Start.Loc(), "not a numeric type"),
+				)
+			}
+
+			if !types.IsNumericType(endBase) && !types.IsUntyped(endBase) {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("range end must be numeric, got '%s'", endType.String())).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(rangeExpr.End.Loc(), "not a numeric type"),
+				)
+			}
+			return
+		}
+
+		// Array membership
+		rhsBase := types.UnwrapType(rhsType)
+		if ref, ok := rhsBase.(*types.ReferenceType); ok {
+			rhsBase = ref.Inner
+		}
+		arrayType, ok := rhsBase.(*types.ArrayType)
 		if !ok {
 			ctx.Diagnostics.Add(
-				diagnostics.NewError("'in' operator requires a range expression on the right side").
+				diagnostics.NewError("'in' operator requires a range or array expression on the right side").
 					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(expr.Y.Loc(), "not a range expression").
-					WithHelp("use a range like '0..10' or 'a..=b'"),
+					WithPrimaryLabel(expr.Y.Loc(), "not a range or array expression").
+					WithHelp("use a range like '0..10' or an array like '[1, 2, 3]'"),
 			)
 			return
 		}
 
-		// LHS must be numeric (to compare with range bounds)
-		if !types.IsNumericType(lhsBase) && !types.IsUntyped(lhsBase) {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("'in' operator requires numeric value, got '%s'", lhsType.String())).
-					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(expr.X.Loc(), "not a numeric type"),
-			)
+		elemType := arrayType.Element
+		if elemType == nil {
+			elemType = types.TypeUnknown
+		}
+		// Range expressions are typed as dynamic arrays but should be treated
+		// as numeric range checks for `in` to avoid allocation in codegen.
+		if _, ok := expr.Y.(*ast.RangeExpr); ok {
 			return
 		}
-
-		// Check that range bounds are numeric
-		startType := inferExprType(ctx, mod, rangeExpr.Start)
-		endType := inferExprType(ctx, mod, rangeExpr.End)
-		startBase := types.UnwrapType(startType)
-		endBase := types.UnwrapType(endType)
-
-		if !types.IsNumericType(startBase) && !types.IsUntyped(startBase) {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("range start must be numeric, got '%s'", startType.String())).
-					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(rangeExpr.Start.Loc(), "not a numeric type"),
-			)
-		}
-
-		if !types.IsNumericType(endBase) && !types.IsUntyped(endBase) {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("range end must be numeric, got '%s'", endType.String())).
-					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(rangeExpr.End.Loc(), "not a numeric type"),
-			)
+		if !types.IsUntyped(lhsType) && !types.IsUntyped(elemType) {
+			compatibility := checkTypeCompatibility(lhsType, elemType)
+			if compatibility == Incompatible {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("'in' operator requires compatible types, got '%s' in '%s'", lhsType.String(), elemType.String())).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(expr.Loc(), "incompatible types in membership check"),
+				)
+			}
 		}
 
 	case tokens.AND_TOKEN, tokens.OR_TOKEN:

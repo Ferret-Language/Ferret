@@ -1444,7 +1444,7 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 				}
 
 			case *hir.RangeCheckPattern:
-				// Range check pattern: in Range
+				// Range check pattern: in Range or in Array
 				if rangeExpr, ok := pat.Range.(*hir.RangeExpr); ok {
 					// Generate: cond >= start && cond < end (or <= for inclusive)
 					startVal := b.lowerExpr(rangeExpr.Start)
@@ -1464,8 +1464,10 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 					// Combine: lower && upper
 					cmp = b.emitBinary(tokens.AND_TOKEN, lowerCmp, upperCmp, types.TypeBool, clause.Location)
 				} else {
-					b.reportUnsupported("invalid range in range check pattern", clause.Pattern.Loc())
-					cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+					cmp = b.emitInCheckValue(cond, matchType, pat.Range, clause.Location)
+					if cmp == mir.InvalidValue {
+						cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+					}
 				}
 
 			default:
@@ -1487,6 +1489,9 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 				}
 			}
 
+			// Some pattern checks may emit control flow (e.g., array membership).
+			// Ensure we terminate the current block where the comparison result lives.
+			current = b.current
 			current.Term = &mir.CondBr{
 				Cond:     cmp,
 				Then:     entry.block.ID,
@@ -2954,13 +2959,6 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
-	// The RHS must be a RangeExpr
-	rangeExpr, ok := expr.Y.(*hir.RangeExpr)
-	if !ok {
-		b.reportUnsupported("'in' operator without range expression", expr.Loc())
-		return mir.InvalidValue
-	}
-
 	// Lower the value being checked (LHS)
 	val := b.lowerExpr(expr.X)
 	if val == mir.InvalidValue {
@@ -2968,7 +2966,26 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 	}
 	valType := b.exprType(expr.X)
 
-	// Lower the range bounds
+	return b.emitInCheckValue(val, valType, expr.Y, expr.Location)
+}
+
+func (b *functionBuilder) emitInCheckValue(val mir.ValueID, valType types.SemType, rhs hir.Expr, loc source.Location) mir.ValueID {
+	if rhs == nil {
+		return mir.InvalidValue
+	}
+
+	if rangeExpr, ok := rhs.(*hir.RangeExpr); ok {
+		return b.emitRangeCheckValue(val, valType, rangeExpr, loc)
+	}
+
+	return b.emitArrayMembershipValue(val, valType, rhs, loc)
+}
+
+func (b *functionBuilder) emitRangeCheckValue(val mir.ValueID, valType types.SemType, rangeExpr *hir.RangeExpr, loc source.Location) mir.ValueID {
+	if rangeExpr == nil {
+		return mir.InvalidValue
+	}
+
 	startVal := b.lowerExpr(rangeExpr.Start)
 	if startVal == mir.InvalidValue {
 		return mir.InvalidValue
@@ -2980,7 +2997,7 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 	}
 
 	// Generate: val >= start
-	lowerCheck := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, val, startVal, types.TypeBool, expr.Location)
+	lowerCheck := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, val, startVal, types.TypeBool, loc)
 	if lowerCheck == mir.InvalidValue {
 		return mir.InvalidValue
 	}
@@ -2990,7 +3007,7 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 	if rangeExpr.Inclusive {
 		upperOp = tokens.LESS_EQUAL_TOKEN
 	}
-	upperCheck := b.emitBinary(upperOp, val, endVal, types.TypeBool, expr.Location)
+	upperCheck := b.emitBinary(upperOp, val, endVal, types.TypeBool, loc)
 	if upperCheck == mir.InvalidValue {
 		return mir.InvalidValue
 	}
@@ -3005,20 +3022,22 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 			Left:     lowerCheck,
 			Right:    upperCheck,
 			Type:     types.TypeBool,
-			Location: expr.Location,
+			Location: loc,
 		})
 		boundsCheck = id
 	}
 
-	// If there's a step, we need to check alignment: (val - start) % step == 0
-	// Note: Float ranges are rejected at type-checking phase, so we only handle integers here.
+	// If there's a step, check alignment: (val - start) % step == 0
 	if rangeExpr.Incr != nil {
 		stepVal := b.lowerExpr(rangeExpr.Incr)
 		if stepVal == mir.InvalidValue {
 			return mir.InvalidValue
 		}
 
-		// Calculate: val - start
+		if valType == nil || valType.Equals(types.TypeUnknown) {
+			valType = b.exprType(rangeExpr.Start)
+		}
+
 		diffID := b.gen.nextValueID()
 		b.emitInstr(&mir.Binary{
 			Result:   diffID,
@@ -3026,10 +3045,9 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 			Left:     val,
 			Right:    startVal,
 			Type:     valType,
-			Location: expr.Location,
+			Location: loc,
 		})
 
-		// Calculate: (val - start) % step
 		modID := b.gen.nextValueID()
 		b.emitInstr(&mir.Binary{
 			Result:   modID,
@@ -3037,22 +3055,19 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 			Left:     diffID,
 			Right:    stepVal,
 			Type:     valType,
-			Location: expr.Location,
+			Location: loc,
 		})
 
-		// Create zero constant for comparison
-		zeroID := b.emitConst(valType, "0", expr.Location)
+		zeroID := b.emitConst(valType, "0", loc)
 		if zeroID == mir.InvalidValue {
 			return mir.InvalidValue
 		}
 
-		// Check: mod == 0
-		alignCheck := b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, modID, zeroID, types.TypeBool, expr.Location)
+		alignCheck := b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, modID, zeroID, types.TypeBool, loc)
 		if alignCheck == mir.InvalidValue {
 			return mir.InvalidValue
 		}
 
-		// Final result: boundsCheck && alignCheck
 		finalID := b.gen.nextValueID()
 		b.emitInstr(&mir.Binary{
 			Result:   finalID,
@@ -3060,12 +3075,145 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 			Left:     boundsCheck,
 			Right:    alignCheck,
 			Type:     types.TypeBool,
-			Location: expr.Location,
+			Location: loc,
 		})
 		return finalID
 	}
 
 	return boundsCheck
+}
+
+func (b *functionBuilder) emitArrayMembershipValue(val mir.ValueID, valType types.SemType, arrExpr hir.Expr, loc source.Location) mir.ValueID {
+	if arrExpr == nil {
+		return mir.InvalidValue
+	}
+
+	arrExprType := b.exprType(arrExpr)
+	if arrExprType == nil {
+		b.reportUnsupported("'in' operator array type", &loc)
+		return mir.InvalidValue
+	}
+	arrExprType = types.UnwrapType(arrExprType)
+	var refType *types.ReferenceType
+	if ref, ok := arrExprType.(*types.ReferenceType); ok {
+		refType = ref
+		arrExprType = types.UnwrapType(ref.Inner)
+	}
+	arrType, ok := arrExprType.(*types.ArrayType)
+	if !ok || arrType == nil {
+		b.reportUnsupported("'in' operator array type", &loc)
+		return mir.InvalidValue
+	}
+
+	arrVal := b.lowerExpr(arrExpr)
+	if arrVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	// If we have a reference to a dynamic array, load the array value.
+	if refType != nil && arrType.Length < 0 {
+		arrVal = b.emitLoad(arrVal, refType.Inner, loc)
+	}
+
+	elemType := arrType.Element
+	if elemType == nil {
+		elemType = types.TypeUnknown
+	}
+
+	// Initialize loop index and found flag
+	idxAddr := b.emitAlloca(types.TypeI32, loc)
+	b.emitStore(idxAddr, b.emitConst(types.TypeI32, "0", loc), loc)
+	foundAddr := b.emitAlloca(types.TypeBool, loc)
+	b.emitStore(foundAddr, b.emitConst(types.TypeBool, "0", loc), loc)
+
+	var lenVal mir.ValueID
+	if arrType.Length >= 0 {
+		lenVal = b.emitConst(types.TypeI32, strconv.Itoa(arrType.Length), loc)
+	} else {
+		lenVal = b.emitArrayLen(arrVal, loc)
+	}
+
+	condBlock := b.newBlock("in.cond", loc)
+	bodyBlock := b.newBlock("in.body", loc)
+	foundBlock := b.newBlock("in.found", loc)
+	nextBlock := b.newBlock("in.next", loc)
+	exitBlock := b.newBlock("in.end", loc)
+
+	b.branchIfNoTerm(condBlock.ID, loc)
+
+	b.setBlock(condBlock)
+	idxVal := b.emitLoad(idxAddr, types.TypeI32, loc)
+	cond := b.emitBinary(tokens.LESS_TOKEN, idxVal, lenVal, types.TypeBool, loc)
+	b.current.Term = &mir.CondBr{
+		Cond:     cond,
+		Then:     bodyBlock.ID,
+		Else:     exitBlock.ID,
+		Location: loc,
+	}
+
+	b.setBlock(bodyBlock)
+	elemVal := b.gen.nextValueID()
+	b.emitInstr(&mir.ArrayGet{
+		Result:   elemVal,
+		Array:    arrVal,
+		Index:    idxVal,
+		Type:     elemType,
+		Location: loc,
+	})
+	eq := b.emitEqualityCompare(val, valType, elemVal, elemType, loc)
+	if eq == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	b.current.Term = &mir.CondBr{
+		Cond:     eq,
+		Then:     foundBlock.ID,
+		Else:     nextBlock.ID,
+		Location: loc,
+	}
+
+	b.setBlock(foundBlock)
+	b.emitStore(foundAddr, b.emitConst(types.TypeBool, "1", loc), loc)
+	b.branchIfNoTerm(exitBlock.ID, loc)
+
+	b.setBlock(nextBlock)
+	curIdx := b.emitLoad(idxAddr, types.TypeI32, loc)
+	nextIdx := b.emitBinary(tokens.PLUS_TOKEN, curIdx, b.emitConst(types.TypeI32, "1", loc), types.TypeI32, loc)
+	b.emitStore(idxAddr, nextIdx, loc)
+	b.branchIfNoTerm(condBlock.ID, loc)
+
+	b.setBlock(exitBlock)
+	return b.emitLoad(foundAddr, types.TypeBool, loc)
+}
+
+func (b *functionBuilder) emitEqualityCompare(left mir.ValueID, leftType types.SemType, right mir.ValueID, rightType types.SemType, loc source.Location) mir.ValueID {
+	if leftType == nil || leftType.Equals(types.TypeUnknown) {
+		leftType = rightType
+	}
+	if rightType == nil || rightType.Equals(types.TypeUnknown) {
+		rightType = leftType
+	}
+
+	leftBase := types.UnwrapType(leftType)
+	rightBase := types.UnwrapType(rightType)
+	leftIsFloat := types.IsFloat(leftBase) || types.IsUntypedFloat(leftType)
+	rightIsFloat := types.IsFloat(rightBase) || types.IsUntypedFloat(rightType)
+	if (leftIsFloat || rightIsFloat) && !isLargePrimitiveType(leftType) && !isLargePrimitiveType(rightType) {
+		target := compareFloatType(leftType, rightType)
+		if target != nil && !target.Equals(types.TypeUnknown) {
+			if leftType != nil && types.IsNumeric(types.UnwrapType(leftType)) && !leftType.Equals(target) {
+				left = b.castValue(left, leftType, target, loc)
+				leftType = target
+			}
+			if rightType != nil && types.IsNumeric(types.UnwrapType(rightType)) && !rightType.Equals(target) {
+				right = b.castValue(right, rightType, target, loc)
+				rightType = target
+			}
+		}
+	}
+
+	if isLargePrimitiveType(leftType) {
+		return b.emitLargeCompare(tokens.DOUBLE_EQUAL_TOKEN, left, right, leftType, loc)
+	}
+	return b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, left, right, types.TypeBool, loc)
 }
 
 func isMoveExpr(expr hir.Expr) bool {
