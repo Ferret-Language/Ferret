@@ -1,0 +1,24 @@
+fn main() {
+    let out: []?str = [] as []?str;
+    let i: i32 = 0;
+    while i < 4 {
+        if (i % 2) == 0 {
+            append(&mut out, none);
+        } else {
+            let s := "v" + ("" + i);
+            append(&mut out, s);
+        }
+        i += 1;
+    }
+
+    let j: i32 = 0;
+    while j < len(&out) {
+        let v := out[j];
+        if v == none {
+            print("nil");
+        } else {
+            print(v);
+        }
+        j += 1;
+    }
+}

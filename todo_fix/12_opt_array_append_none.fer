@@ -1,0 +1,17 @@
+fn main() {
+    let out: []?str = [] as []?str;
+    append(&mut out, none);
+    append(&mut out, "a");
+    append(&mut out, none);
+
+    let i: i32 = 0;
+    while i < len(&out) {
+        let v := out[i];
+        if v == none {
+            print("nil");
+        } else {
+            print(v);
+        }
+        i += 1;
+    }
+}
