@@ -679,13 +679,37 @@ func inferCompositeLitType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 				return types.TypeUnknown
 			}
 
-			// Infer type from first element
-			firstElemType := inferExprType(ctx, mod, lit.Elts[0])
+			// Infer type from first element (handle spread elements)
+			firstElemType := types.TypeUnknown
+			var firstElemExpr ast.Expression
+			for _, elem := range lit.Elts {
+				if spread, ok := elem.(*ast.SpreadExpr); ok {
+					spreadType := inferExprType(ctx, mod, spread.X)
+					if arrType, ok := types.UnwrapType(spreadType).(*types.ArrayType); ok && arrType != nil {
+						firstElemType = arrType.Element
+						firstElemExpr = nil
+						break
+					}
+					if !spreadType.Equals(types.TypeUnknown) {
+						firstElemType = spreadType
+						firstElemExpr = spread
+						break
+					}
+					continue
+				}
+				firstElemType = inferExprType(ctx, mod, elem)
+				firstElemExpr = elem
+				break
+			}
 
 			// If first element is untyped literal, infer its type
 			if types.IsUntyped(firstElemType) {
-				if lit, ok := lit.Elts[0].(*ast.BasicLit); ok {
-					firstElemType = inferLiteralType(lit, types.TypeUnknown)
+				if firstElemExpr != nil {
+					if lit, ok := firstElemExpr.(*ast.BasicLit); ok {
+						firstElemType = inferLiteralType(lit, types.TypeUnknown)
+					} else {
+						firstElemType = types.ResolveUntypedType(firstElemType, types.TypeUnknown)
+					}
 				} else {
 					firstElemType = types.ResolveUntypedType(firstElemType, types.TypeUnknown)
 				}

@@ -1862,6 +1862,33 @@ func validateStructLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 func validateArrayLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, lit *ast.CompositeLit, arrayType *types.ArrayType) {
 	for _, elem := range lit.Elts {
 		if _, isKV := elem.(*ast.KeyValueExpr); !isKV {
+			if spread, ok := elem.(*ast.SpreadExpr); ok {
+				// Spread element must be an array/slice of the element type.
+				sliceType := types.NewArray(arrayType.Element, -1)
+				spreadType := checkExpr(ctx, mod, spread.X, sliceType)
+				spreadType = types.UnwrapType(spreadType)
+				arrType, ok := spreadType.(*types.ArrayType)
+				if !ok || arrType == nil {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("spread expression in array literal must be an array, found %s", spreadType.String())).
+							WithCode(diagnostics.ErrTypeMismatch).
+							WithPrimaryLabel(spread.Loc(), "expected array value"),
+					)
+					continue
+				}
+				if compat := checkTypeCompatibility(arrType.Element, arrayType.Element); !isImplicitlyCompatible(compat) {
+					elemTypeStr := types.ResolveUntypedType(arrType.Element, types.TypeUnknown)
+					diag := diagnostics.NewError(fmt.Sprintf("spread array element type must be %s but found %s", arrayType.Element.String(), elemTypeStr)).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(spread.Loc(), fmt.Sprintf("type %s", elemTypeStr)).
+						WithHelp(fmt.Sprintf("spread arrays must contain %s elements", arrayType.Element.String()))
+					diag = addExplicitCastHint(ctx, diag, arrayType.Element, compat, spread.X)
+					diag = addDerefHintIfNeeded(ctx, mod, diag, arrayType.Element, arrType.Element, spread.X)
+					ctx.Diagnostics.Add(diag)
+				}
+				continue
+			}
+
 			elemType := checkExpr(ctx, mod, elem, arrayType.Element)
 			if isReferenceType(arrayType.Element) && !elemType.Equals(types.TypeUnknown) && !isReferenceType(elemType) {
 				ctx.Diagnostics.Add(
@@ -3273,7 +3300,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		return callReturnType
 
 	case *ast.SpreadExpr:
-		// Spread is only valid in call arguments; type check inner expression.
+		// Spread is only valid in call arguments or array literals; type check inner expression.
 		innerType := checkExpr(ctx, mod, e.X, expected)
 		mod.SetExprType(expr, innerType)
 		return innerType

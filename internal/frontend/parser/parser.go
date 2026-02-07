@@ -1267,7 +1267,7 @@ func (p *Parser) parseArrayLiteral() *ast.CompositeLit {
 
 	elems := []ast.Expression{}
 	if !p.match(tokens.CLOSE_BRACKET) {
-		elem := p.parseExpr()
+		elem := p.parseArrayLiteralElement()
 		if elem != nil {
 			elems = append(elems, elem)
 		}
@@ -1276,7 +1276,7 @@ func (p *Parser) parseArrayLiteral() *ast.CompositeLit {
 			if p.match(tokens.CLOSE_BRACKET) {
 				break
 			}
-			elem := p.parseExpr()
+			elem := p.parseArrayLiteralElement()
 			if elem != nil {
 				elems = append(elems, elem)
 			}
@@ -1289,6 +1289,21 @@ func (p *Parser) parseArrayLiteral() *ast.CompositeLit {
 		Elts:     elems,
 		Location: *source.NewLocation(&p.filepath, &start, &end),
 	}
+}
+
+func (p *Parser) parseArrayLiteralElement() ast.Expression {
+	if p.match(tokens.THREE_DOT_TOKEN) {
+		dots := p.advance()
+		expr := p.parseExpr()
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.SpreadExpr{
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &dots.Start, p.safeLoc(expr).End),
+		}
+	}
+	return p.parseExpr()
 }
 
 func (p *Parser) parseIdentifier() *ast.IdentifierExpr {

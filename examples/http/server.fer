@@ -1,6 +1,7 @@
 import "net/http";
 import "std/io";
 import "std/fs";
+import "time";
 
 
 let app := http::Server();
@@ -33,9 +34,17 @@ app.Get("/plaintext", fn(req: &http::Request, res: &mut http::Response) {
 });
 
 fn main() {
+
+    io::Println(time::Now());
+    io::Println(time::Local());
+    io::Println(time::NowUnix());
+    io::Println(time::NowUnixMs());
+    // io::Println(time::SinceUnix());
+    // io::Println(time::SinceUnixMs());
+
     app.Listen(3000) catch err {
         io::Println("HTTP error:", err);
         return;
     };
-    io::Println("Server running at http://127.0.0.1:3000");
+   
 }

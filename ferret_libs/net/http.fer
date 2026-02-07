@@ -1,5 +1,7 @@
 import "std/io";
+import "std/color";
 import "net/tcp";
+import "time";
 
 // Native HTTP module - implementations live in C.
 // This file provides type declarations and a small ergonomic API surface
@@ -101,6 +103,8 @@ fn (req: &Request) Param(name: str) -> ?str;
 // @extern
 fn (res: &mut Response) Status(code: i32) -> &mut Response;
 // @extern
+fn (res: &mut Response) StatusCode() -> i32;
+// @extern
 fn (res: &mut Response) Header(name: str, value: str) -> &mut Response;
 // @extern
 fn (res: &mut Response) Send(body: str);
@@ -113,9 +117,51 @@ fn (res: &mut Response) End();
 // @extern
 fn (res: &mut Response) SendFile(path: str) -> str ! bool;
 
+fn statusColor(status: i32) -> str {
+    if status >= 200 && status < 300 {
+        return color::Green;
+    }
+    if status >= 300 && status < 400 {
+        return color::Yellow;
+    }
+    if status >= 400 && status < 500 {
+        return color::Red;
+    }
+    if status >= 500 {
+        return color::BrightRed;
+    }
+    return color::Grey;
+}
+
+fn durationColor(us: i64) -> str {
+    if us < 1000 {
+        return color::Grey;
+    }
+    if us < 10000 {
+        return color::Cyan;
+    }
+    if us < 100000 {
+        return color::Yellow;
+    }
+    return color::Red;
+}
+
 fn Log(req: &Request, res: &mut Response, next: fn() -> void) {
-    io::Printf("[{}]: {}\n", req.Method, req.Path);
+    let start := time::NowUnixUs();
+    let timeStr := color::Paint(color::Dim, time::Now());
     next();
+    let us := time::NowUnixUs() - start;
+    let status := res.StatusCode();
+    let methodStr := color::Paint(color::Blue, req.Method);
+    let pathStr := color::Paint(color::Cyan, req.Path);
+    let sColor := statusColor(status);
+    let dColor := durationColor(us);
+    io::Printf("{} {}[{}]{} {} {} {}{}μs{}\n",
+        timeStr,
+        sColor, status, color::Reset,
+        methodStr,
+        pathStr,
+        dColor, us, color::Reset);
 }
 
 // Convenience wrapper: listen on address using net/tcp then serve.
