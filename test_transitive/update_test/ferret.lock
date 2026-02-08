@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "direct_deps": [
+    "github.com/user/logger"
+  ],
+  "dependencies": {
+    "github.com/user/logger": {
+      "version": "v1.9.0",
+      "resolved_url": "github.com/user/logger",
+      "direct": true,
+      "description": "logger"
+    }
+  },
+  "generated_at": "2026-02-08T20:56:55+06:00"
+}

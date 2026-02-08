@@ -1,8 +1,12 @@
-[package]
-name = "testapp"
-version = "1.0.0"
-description = "Test application using neighbor package"
-author = "Test Author"
 
 [dependencies]
 mathlib = "../mathlib"
+thirdlib = "../thirdlib"
+
+[package]
+name = "testapp"
+version = "1.0.0"
+
+[dev]
+mock_remote = true
+mock_path = "../mock-packages"

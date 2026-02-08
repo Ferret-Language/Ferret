@@ -1,0 +1,10 @@
+[package]
+name = "updatetest"
+version = "v1.0.0"
+
+[dependencies]
+logger = "github.com/user/logger@^v1.0.0"
+
+[dev]
+mock_remote = true
+mock_path = "../mock-packages"

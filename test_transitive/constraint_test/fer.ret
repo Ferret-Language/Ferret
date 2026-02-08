@@ -1,0 +1,12 @@
+[package]
+name = "myapp"
+version = "v1.0.0"
+
+[dependencies]
+http-client = "github.com/user/http-client@v1.2.0"
+websocket = "github.com/user/websocket@v2.1.0"
+logger = "github.com/user/logger@^v1.0.0"
+
+[dev]
+mock_remote = true
+mock_path = "../mock-packages"

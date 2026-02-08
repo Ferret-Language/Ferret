@@ -25,10 +25,10 @@ type LockfileEntry struct {
 
 // Lockfile represents the ferret.lock file
 type Lockfile struct {
-	Version      string                    `json:"version"`       // Lockfile format version
-	DirectDeps   []string                  `json:"direct_deps"`   // List of direct dependencies
-	Dependencies map[string]LockfileEntry  `json:"dependencies"`  // package@version -> info
-	GeneratedAt  string                    `json:"generated_at"`
+	Version      string                   `json:"version"`      // Lockfile format version
+	DirectDeps   []string                 `json:"direct_deps"`  // List of direct dependencies
+	Dependencies map[string]LockfileEntry `json:"dependencies"` // package@version -> info
+	GeneratedAt  string                   `json:"generated_at"`
 }
 
 // NewLockfile creates a new empty lockfile
@@ -44,7 +44,7 @@ func NewLockfile() *Lockfile {
 // LoadLockfile loads a lockfile from disk
 func LoadLockfile(projectRoot string) (*Lockfile, error) {
 	lockfilePath := filepath.Join(projectRoot, LockfileName)
-	
+
 	data, err := os.ReadFile(lockfilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -65,10 +65,10 @@ func LoadLockfile(projectRoot string) (*Lockfile, error) {
 // SaveLockfile saves the lockfile to disk (sorted for deterministic output)
 func SaveLockfile(projectRoot string, lockfile *Lockfile) error {
 	lockfilePath := filepath.Join(projectRoot, LockfileName)
-	
+
 	// Update generated timestamp
 	lockfile.GeneratedAt = time.Now().Format(time.RFC3339)
-	
+
 	// Sort dependencies for deterministic output
 	sortedDeps := make([]string, 0, len(lockfile.Dependencies))
 	for dep := range lockfile.Dependencies {
@@ -83,7 +83,7 @@ func SaveLockfile(projectRoot string, lockfile *Lockfile) error {
 		Dependencies: make(map[string]LockfileEntry),
 		GeneratedAt:  lockfile.GeneratedAt,
 	}
-	
+
 	for _, dep := range sortedDeps {
 		outputLockfile.Dependencies[dep] = lockfile.Dependencies[dep]
 	}
@@ -116,7 +116,7 @@ func (l *Lockfile) GetDependency(key string) (LockfileEntry, bool) {
 // RemoveDependency removes a dependency from the lockfile
 func (l *Lockfile) RemoveDependency(key string) {
 	delete(l.Dependencies, key)
-	
+
 	// Remove from direct deps list if present
 	for i, dep := range l.DirectDeps {
 		if dep == key {
@@ -132,14 +132,14 @@ func (l *Lockfile) AddUsedBy(depKey, parentKey string) {
 	if !exists {
 		return
 	}
-	
+
 	// Check if already present
 	for _, u := range entry.UsedBy {
 		if u == parentKey {
 			return
 		}
 	}
-	
+
 	entry.UsedBy = append(entry.UsedBy, parentKey)
 	l.Dependencies[depKey] = entry
 }
@@ -150,14 +150,14 @@ func (l *Lockfile) RemoveUsedBy(depKey, parentKey string) {
 	if !exists {
 		return
 	}
-	
+
 	newUsedBy := make([]string, 0, len(entry.UsedBy))
 	for _, u := range entry.UsedBy {
 		if u != parentKey {
 			newUsedBy = append(newUsedBy, u)
 		}
 	}
-	
+
 	entry.UsedBy = newUsedBy
 	l.Dependencies[depKey] = entry
 }

@@ -15,7 +15,7 @@ func IsModuleCached(cachePath, repoName, version string) bool {
 
 // GetModulePath returns the path to a cached module
 func GetModulePath(cachePath, repoName, version string) string {
-	return filepath.Join(cachePath, "github.com", repoName+"@"+version)
+	return filepath.Join(cachePath, repoName+"@"+version)
 }
 
 // DeleteModule removes a module from the cache
@@ -30,7 +30,7 @@ func DeleteModule(cachePath, repoName, version string) error {
 // ValidateModuleCache verifies that a cached module has required files
 func ValidateModuleCache(cachePath, repoName, version string) error {
 	modulePath := GetModulePath(cachePath, repoName, version)
-	
+
 	// Check if directory exists
 	info, err := os.Stat(modulePath)
 	if err != nil {

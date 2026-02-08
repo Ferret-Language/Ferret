@@ -29,7 +29,7 @@ func ResolveNeighborPackage(projectRoot, neighborPath string) (string, error) {
 // ResolveRemotePackage resolves a remote package from cache
 func ResolveRemotePackage(cachePath, repoName, version string) (string, error) {
 	modulePath := GetModulePath(cachePath, repoName, version)
-	
+
 	// Verify module exists and is valid
 	if err := ValidateModuleCache(cachePath, repoName, version); err != nil {
 		return "", err

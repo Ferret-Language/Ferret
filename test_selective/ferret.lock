@@ -1,0 +1,22 @@
+{
+  "version": "1.0",
+  "direct_deps": [
+    "github.com/user/logger",
+    "github.com/user/http-client"
+  ],
+  "dependencies": {
+    "github.com/user/http-client": {
+      "version": "v1.2.0",
+      "resolved_url": "github.com/user/http-client",
+      "direct": true,
+      "description": "http-client"
+    },
+    "github.com/user/logger": {
+      "version": "v1.9.0",
+      "resolved_url": "github.com/user/logger",
+      "direct": true,
+      "description": "logger"
+    }
+  },
+  "generated_at": "2026-02-08T21:13:37+06:00"
+}

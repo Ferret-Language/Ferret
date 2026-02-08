@@ -18,14 +18,14 @@ func CheckRemoteSecurity(manifestPath string) error {
 	// TODO: Implement [remote] section in manifest
 	// For now, we'll assume remote imports are disabled
 	_ = m
-	
+
 	return fmt.Errorf("remote imports not yet implemented")
 }
 
 // ValidatePackageForSharing checks if a package can be shared (imported by others)
 func ValidatePackageForSharing(packagePath string) error {
 	manifestPath := filepath.Join(packagePath, "fer.ret")
-	
+
 	// Check if manifest exists
 	if _, err := os.Stat(manifestPath); err != nil {
 		return fmt.Errorf("package missing fer.ret manifest: %w", err)
@@ -43,6 +43,6 @@ func ValidatePackageForSharing(packagePath string) error {
 	}
 
 	// TODO: Check [remote].share = true when implemented
-	
+
 	return nil
 }

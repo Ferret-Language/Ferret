@@ -11,11 +11,11 @@ import (
 func ParseTOMLFile(filename string) (TOMLData, error) {
 	file, err := os.Open(filename)
 	if err != nil {
-		return nil, err
+		return TOMLData{}, err
 	}
 	defer file.Close()
 
-	data := make(TOMLData)
+	data := NewTOMLData()
 	currentSection := ""
 
 	scanner := bufio.NewScanner(file)
@@ -28,17 +28,17 @@ func ParseTOMLFile(filename string) (TOMLData, error) {
 
 		if isSectionHeader(line) {
 			currentSection = parseSectionHeader(line)
-			ensureSectionExists(data, currentSection)
+			ensureSectionExists(&data, currentSection)
 			continue
 		}
 
-		if err := parseKeyValuePair(data, line, currentSection); err != nil {
-			return nil, err
+		if err := parseKeyValuePair(&data, line, currentSection); err != nil {
+			return TOMLData{}, err
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return TOMLData{}, err
 	}
 	return data, nil
 }
@@ -55,13 +55,14 @@ func parseSectionHeader(line string) string {
 	return strings.TrimSpace(line[1 : len(line)-1])
 }
 
-func ensureSectionExists(data TOMLData, section string) {
-	if _, exists := data[section]; !exists {
-		data[section] = make(TOMLTable)
+func ensureSectionExists(data *TOMLData, section string) {
+	if _, exists := data.Sections[section]; !exists {
+		data.Sections[section] = make(TOMLTable)
+		data.SectionOrder = append(data.SectionOrder, section)
 	}
 }
 
-func parseKeyValuePair(data TOMLData, line, currentSection string) error {
+func parseKeyValuePair(data *TOMLData, line, currentSection string) error {
 	parts := strings.SplitN(line, "=", 2)
 	if len(parts) != 2 {
 		return fmt.Errorf("invalid line: %s", line)
@@ -76,7 +77,13 @@ func parseKeyValuePair(data TOMLData, line, currentSection string) error {
 
 	section := getEffectiveSection(currentSection)
 	ensureSectionExists(data, section)
-	data[section][key] = value
+
+	// Track key order if this is a new key
+	if _, exists := data.Sections[section][key]; !exists {
+		data.KeyOrder[section] = append(data.KeyOrder[section], key)
+	}
+
+	data.Sections[section][key] = value
 
 	return nil
 }

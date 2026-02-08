@@ -71,7 +71,7 @@ func (v *Version) Compare(other *Version) int {
 }
 
 // MatchesConstraint checks if the version matches a constraint
-// Supports: ^v1.0.0 (compatible), ~v1.2.0 (patch), v1.2.3 (exact), latest
+// Supports: ^v1.0.0 (compatible), ~v1.2.0 (patch), v1.2.3 (exact), >=v1.0.0, >v1.0.0, <=v1.0.0, <v1.0.0, latest
 func MatchesConstraint(version, constraint string) (bool, error) {
 	if constraint == "latest" {
 		return true, nil
@@ -84,13 +84,40 @@ func MatchesConstraint(version, constraint string) (bool, error) {
 
 	constraint = strings.TrimSpace(constraint)
 
-	// Exact match
-	if !strings.HasPrefix(constraint, "^") && !strings.HasPrefix(constraint, "~") {
-		c, err := ParseVersion(constraint)
+	// Greater than or equal (>=)
+	if strings.HasPrefix(constraint, ">=") {
+		c, err := ParseVersion(strings.TrimPrefix(constraint, ">="))
 		if err != nil {
 			return false, err
 		}
-		return v.Compare(c) == 0, nil
+		return v.Compare(c) >= 0, nil
+	}
+
+	// Greater than (>)
+	if strings.HasPrefix(constraint, ">") {
+		c, err := ParseVersion(strings.TrimPrefix(constraint, ">"))
+		if err != nil {
+			return false, err
+		}
+		return v.Compare(c) > 0, nil
+	}
+
+	// Less than or equal (<=)
+	if strings.HasPrefix(constraint, "<=") {
+		c, err := ParseVersion(strings.TrimPrefix(constraint, "<="))
+		if err != nil {
+			return false, err
+		}
+		return v.Compare(c) <= 0, nil
+	}
+
+	// Less than (<)
+	if strings.HasPrefix(constraint, "<") {
+		c, err := ParseVersion(strings.TrimPrefix(constraint, "<"))
+		if err != nil {
+			return false, err
+		}
+		return v.Compare(c) < 0, nil
 	}
 
 	// Caret (^) - compatible version (same major)
@@ -111,7 +138,12 @@ func MatchesConstraint(version, constraint string) (bool, error) {
 		return v.Major == c.Major && v.Minor == c.Minor && v.Compare(c) >= 0, nil
 	}
 
-	return false, fmt.Errorf("unknown constraint format: %s", constraint)
+	// Exact match
+	c, err := ParseVersion(constraint)
+	if err != nil {
+		return false, err
+	}
+	return v.Compare(c) == 0, nil
 }
 
 // FindBestMatch finds the best version from a list that matches the constraint
@@ -146,6 +178,56 @@ func FindBestMatch(versions []string, constraint string) (string, error) {
 
 	if bestMatch == nil {
 		return "", fmt.Errorf("no version found matching constraint: %s", constraint)
+	}
+
+	return bestMatchStr, nil
+}
+
+// FindBestMatchMultipleConstraints finds the best version that satisfies all constraints
+// Returns error if no version satisfies all constraints (version conflict)
+func FindBestMatchMultipleConstraints(versions []string, constraints []string) (string, error) {
+	if len(constraints) == 0 {
+		if len(versions) > 0 {
+			return versions[len(versions)-1], nil
+		}
+		return "", fmt.Errorf("no versions available")
+	}
+
+	// Handle single constraint case
+	if len(constraints) == 1 {
+		return FindBestMatch(versions, constraints[0])
+	}
+
+	var bestMatch *Version
+	var bestMatchStr string
+
+	// Check each version against all constraints
+	for _, verStr := range versions {
+		v, err := ParseVersion(verStr)
+		if err != nil {
+			continue // Skip invalid versions
+		}
+
+		// Check if this version satisfies ALL constraints
+		satisfiesAll := true
+		for _, constraint := range constraints {
+			matches, err := MatchesConstraint(verStr, constraint)
+			if err != nil || !matches {
+				satisfiesAll = false
+				break
+			}
+		}
+
+		if satisfiesAll {
+			if bestMatch == nil || v.Compare(bestMatch) > 0 {
+				bestMatch = v
+				bestMatchStr = verStr
+			}
+		}
+	}
+
+	if bestMatch == nil {
+		return "", fmt.Errorf("version conflict: no version satisfies all constraints %v", constraints)
 	}
 
 	return bestMatchStr, nil
