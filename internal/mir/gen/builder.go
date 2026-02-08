@@ -3057,7 +3057,7 @@ func (b *functionBuilder) emitUnionTypeCheckImpl(unionVal mir.ValueID, unionType
 
 	if variantIndex < 0 {
 		// Target type is not a variant - should have been caught by type checker
-		b.reportUnsupported("invalid union variant", &loc)
+		b.reportUnsupported("internal error: invalid union variant access (type checker bug)", &loc)
 		return mir.InvalidValue
 	}
 
@@ -3261,7 +3261,7 @@ func (b *functionBuilder) emitArrayMembershipValue(val mir.ValueID, valType type
 
 	arrExprType := b.exprType(arrExpr)
 	if arrExprType == nil {
-		b.reportUnsupported("'in' operator array type", &loc)
+		b.reportUnsupported("'in' operator not yet implemented for arrays", &loc)
 		return mir.InvalidValue
 	}
 	arrExprType = types.UnwrapType(arrExprType)
@@ -3272,7 +3272,7 @@ func (b *functionBuilder) emitArrayMembershipValue(val mir.ValueID, valType type
 	}
 	arrType, ok := arrExprType.(*types.ArrayType)
 	if !ok || arrType == nil {
-		b.reportUnsupported("'in' operator array type", &loc)
+		b.reportUnsupported("'in' operator requires array type, got non-array", &loc)
 		return mir.InvalidValue
 	}
 
@@ -3652,7 +3652,7 @@ func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.
 			Location: expr.Location,
 		})
 		if expr.Catch != nil {
-			b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+			b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 		}
 		return result
 	}
@@ -3667,7 +3667,7 @@ func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.
 			Location: expr.Location,
 		})
 		if expr.Catch != nil {
-			b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+			b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 		}
 		return out
 	}
@@ -3686,7 +3686,7 @@ func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.
 	})
 
 	if expr.Catch != nil {
-		b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+		b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 	}
 
 	return result
@@ -3724,7 +3724,7 @@ func (b *functionBuilder) emitCallIndirect(callee mir.ValueID, args []mir.ValueI
 			Location: expr.Location,
 		})
 		if expr.Catch != nil {
-			b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+			b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 		}
 		return result
 	}
@@ -3739,7 +3739,7 @@ func (b *functionBuilder) emitCallIndirect(callee mir.ValueID, args []mir.ValueI
 			Location: expr.Location,
 		})
 		if expr.Catch != nil {
-			b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+			b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 		}
 		return out
 	}
@@ -3757,7 +3757,7 @@ func (b *functionBuilder) emitCallIndirect(callee mir.ValueID, args []mir.ValueI
 	})
 
 	if expr.Catch != nil {
-		b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+		b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 	}
 
 	return result
@@ -3770,7 +3770,7 @@ func (b *functionBuilder) lowerQualifiedValue(expr *hir.ScopeResolutionExpr) mir
 
 	name, ok := b.qualifiedName(expr)
 	if !ok {
-		b.reportUnsupported("qualified value", &expr.Location)
+		b.reportUnsupported("internal error: malformed qualified name", &expr.Location)
 		return mir.InvalidValue
 	}
 
@@ -3800,7 +3800,7 @@ func (b *functionBuilder) lowerQualifiedValue(expr *hir.ScopeResolutionExpr) mir
 		return b.emitLoad(addr, expr.Type, expr.Location)
 	}
 
-	b.reportUnsupported(fmt.Sprintf("qualified value %s", name), &expr.Location)
+	b.reportUnsupported(fmt.Sprintf("cannot resolve qualified name '%s' (not found as const, function, or global)", name), &expr.Location)
 	return mir.InvalidValue
 }
 
@@ -4164,7 +4164,7 @@ func (b *functionBuilder) lowerFieldAddr(expr *hir.SelectorExpr) mir.ValueID {
 	basePtr := mir.InvalidValue
 	baseType := b.exprType(expr.X)
 	if baseType == nil {
-		b.reportUnsupported("selector base", expr.Loc())
+		b.reportUnsupported("empty selector base", expr.Loc())
 		return mir.InvalidValue
 	}
 
@@ -4238,6 +4238,30 @@ func (b *functionBuilder) lowerCompositeLit(expr *hir.CompositeLit) mir.ValueID 
 		b.reportUnsupported("composite literal type", expr.Loc())
 		return mir.InvalidValue
 	}
+
+	// Handle optional-wrapped composite literals: ?[]T, ?StructType, ?MapType
+	if optType, ok := types.UnwrapType(expr.Type).(*types.OptionalType); ok {
+		// Create a temporary expression with the unwrapped type
+		innerExpr := *expr
+		innerExpr.Type = optType.Inner
+
+		// Lower the inner composite literal
+		innerValue := b.lowerCompositeLit(&innerExpr)
+		if innerValue == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+
+		// Wrap the result in OptionalSome
+		id := b.gen.nextValueID()
+		b.emitInstr(&mir.OptionalSome{
+			Result:   id,
+			Value:    innerValue,
+			Type:     optType,
+			Location: expr.Location,
+		})
+		return id
+	}
+
 	switch typ := types.UnwrapType(expr.Type).(type) {
 	case *types.StructType:
 		out := b.emitAlloca(expr.Type, expr.Location)

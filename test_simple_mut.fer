@@ -1,16 +1,45 @@
 import "std/io";
 
-type Point struct { .X: i32, .Y: i32 };
+type D struct { .X: i32 };
+type D2 struct{ .Y: i32 };
 
-fn (p: &mut Point) move(dx: i32, dy: i32) {
-    p.X += dx;
-    p.Y += dy;
+fn (d: D) dummy() {
+    io::Println("D.dummy()");
 }
 
+fn (d: D2) dummy() {
+    io::Println("D2.dummy()");
+}
+
+type ann interface{
+    dummy()
+};
+type any2 interface{
+    dummy()
+};
+
 fn main() {
-    let point: Point = { .X = 0, .Y = 0 };
+    // This should work - D implements ann
+    let d : D = { .X = 20 };
+    let anyval : ann = d as ann;
+    
+    // This should fail - ann and any2 are different named types
+    // let another : any2 = anyval;
+    
+    // Casting between interface types doesn't work - they're nominal types
+    // let another : any2 = anyval as any2;
+    
+    // But we can directly assign the concrete type to both interfaces
+    let another2 : any2 = d;
+    
+    io::Println("All tests passed!");
 
-    point.move(5, 10);        // This should work - no other borrows active
+    let opt : ?[]i32 = [23,45];
 
-    io::Println(point.Y);     // Print the result
+    if opt != none {
+        io::Println(opt[1]);
+    } else {
+        io::Println("none");
+    }
+    
 }
