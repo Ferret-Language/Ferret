@@ -100,7 +100,7 @@ func UpdateCommand(args []string) error {
 		// Get constraint from manifest (for direct deps) or from lockfile
 		var constraint string
 		isDirect := entry.Direct
-		
+
 		if isDirect {
 			// Find constraint in manifest
 			for _, dep := range m.Dependencies {

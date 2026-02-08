@@ -114,7 +114,7 @@ func installPackageRecursive(cachePath, repoPath, versionConstraint string, devC
 		// Verify the installed version satisfies the new constraint
 		matches, err := packages.MatchesConstraint(entry.Version, versionConstraint)
 		if err != nil || !matches {
-			return fmt.Errorf("version conflict: %s@%s already installed but does not satisfy constraint %s", 
+			return fmt.Errorf("version conflict: %s@%s already installed but does not satisfy constraint %s",
 				repoPath, entry.Version, versionConstraint)
 		}
 

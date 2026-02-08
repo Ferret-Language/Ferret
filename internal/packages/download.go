@@ -4,8 +4,8 @@ package packages
 
 import (
 	"archive/tar"
-	"compress/gzip"
 	"compiler/internal/manifest"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,7 +31,7 @@ func DownloadRemotePackage(cachePath, repoName, version string, mockConfig *mani
 func downloadFromGit(cachePath, repoName, version string) error {
 	// Determine Git provider
 	var downloadURL string
-	
+
 	if strings.HasPrefix(repoName, "github.com/") {
 		// GitHub: https://github.com/user/repo/archive/refs/tags/v1.0.0.tar.gz
 		parts := strings.TrimPrefix(repoName, "github.com/")
@@ -95,11 +95,11 @@ func downloadFromMock(cachePath, repoName, version string, mockBasePath string) 
 	packageName := filepath.Base(repoPath)
 	packageDir := filepath.Dir(repoPath)
 	versionedDir := packageName + "-" + version
-	
+
 	// Try with full domain path first (github.com/user/logger-v1.9.0)
 	sourcePath := filepath.Join(mockBasePath, repoName)
 	sourcePath = filepath.Join(filepath.Dir(sourcePath), versionedDir)
-	
+
 	// If not found, try without domain (user/logger-v1.9.0)
 	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
 		sourcePath = filepath.Join(mockBasePath, packageDir, versionedDir)

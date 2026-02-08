@@ -78,6 +78,19 @@ func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, Mod
 		}
 	}
 
+	// For non-stdlib/builtin imports, manifest is required
+	// If we reach here and there's no manifest, it means the import is not:
+	// - Already loaded (step 1)
+	// - A builtin module from RuntimePath (step 2)
+	// - A local project module (step 3)
+	// The only exception is "global" which is implicitly loaded
+	if ctx.Manifest == nil && importPath != "global" {
+		return "", ModuleUnknown, fmt.Errorf(
+			"manifest file (fer.ret) is required for non-stdlib imports.\n\nImport: %s\n\nTo fix this issue:\n  1. Run: ferret init\n  2. Add dependencies to fer.ret\n  3. Run: ferret get",
+			importPath,
+		)
+	}
+
 	// 4. Check neighbor packages (from fer.ret dependencies)
 	if ctx.Manifest != nil && len(ctx.Manifest.Dependencies) > 0 {
 		// Try to resolve from dependencies

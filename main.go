@@ -92,7 +92,7 @@ func main() {
 		fmt.Fprintln(os.Stdout, "\nUsage:")
 		fmt.Fprintln(os.Stdout, "  ferret [command] [args]")
 		fmt.Fprintln(os.Stdout, "  ferret [options] <file>")
-		
+
 		fmt.Fprintln(os.Stdout, "\nPackage Management Commands:")
 		fmt.Fprintln(os.Stdout, "  init [name]              Create a new Ferret project with fer.ret")
 		fmt.Fprintln(os.Stdout, "  get                      Install all dependencies from fer.ret")
@@ -102,17 +102,17 @@ func main() {
 		fmt.Fprintln(os.Stdout, "  remove <package>         Remove a dependency and cleanup orphaned deps")
 		fmt.Fprintln(os.Stdout, "  list                     List all dependencies (direct and transitive)")
 		fmt.Fprintln(os.Stdout, "  cleanup                  Remove unused cached packages")
-		
+
 		fmt.Fprintln(os.Stdout, "\nCompilation Options:")
 		flag.PrintDefaults()
-		
+
 		fmt.Fprintln(os.Stdout, "\nExamples:")
 		fmt.Fprintln(os.Stdout, "  ferret init myapp")
 		fmt.Fprintln(os.Stdout, "  ferret get github.com/user/logger@^v1.0.0")
 		fmt.Fprintln(os.Stdout, "  ferret update")
 		fmt.Fprintln(os.Stdout, "  ferret main.fer")
 		fmt.Fprintln(os.Stdout, "  ferret -o app main.fer")
-		
+
 		fmt.Fprintln(os.Stdout, "\nFor more information, visit: https://ferret-lang.org")
 		os.Exit(0)
 	}
