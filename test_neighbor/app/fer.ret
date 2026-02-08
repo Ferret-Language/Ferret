@@ -1,0 +1,8 @@
+[package]
+name = "testapp"
+version = "1.0.0"
+description = "Test application using neighbor package"
+author = "Test Author"
+
+[dependencies]
+mathlib = "../mathlib"

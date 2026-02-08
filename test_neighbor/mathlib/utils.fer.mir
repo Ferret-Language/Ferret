@@ -1,0 +1,36 @@
+module mathlib/utils
+
+globals
+  __ferret_init_done_mathlib_utils: bool
+
+fn Add(a: i32, b: i32) -> i32 {
+  block b1 entry:
+    %t3 = + i32 %t1, %t2
+    ret %t3
+}
+
+fn Multiply(a: i32, b: i32) -> i32 {
+  block b2 entry:
+    %t6 = * i32 %t4, %t5
+    ret %t6
+}
+
+fn Square(x: i32) -> i32 {
+  block b3 entry:
+    %t8 = * i32 %t7, %t7
+    ret %t8
+}
+
+fn __ferret_init() -> void {
+  block b5 init_guard:
+    %t11 = const &bool $__ferret_init_done_mathlib_utils
+    %t12 = load bool %t11
+    br_if %t12, b6, b4
+  block b4 entry:
+    %t9 = const &bool $__ferret_init_done_mathlib_utils
+    %t10 = const bool 1
+    store %t9, %t10
+    ret
+  block b6 init_done:
+    ret
+}
