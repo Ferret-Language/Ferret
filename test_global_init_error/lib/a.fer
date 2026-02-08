@@ -1,0 +1,2 @@
+// a.fer - tries to use B_value in initializer (should error)
+let A_computed: i32 = B_value + 10;

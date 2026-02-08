@@ -1,0 +1,2 @@
+// b.fer - first variable
+let B_value: i32 = 42;

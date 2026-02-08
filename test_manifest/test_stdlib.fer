@@ -1,0 +1,10 @@
+import "std/io";
+import "std/time";
+import "std/math";
+import "std/os";
+import "std/color";
+
+fn main() {
+    io::Println("Testing reorganized stdlib...");
+    io::Println("All imports successful!");
+}

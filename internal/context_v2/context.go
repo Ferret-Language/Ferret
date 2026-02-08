@@ -25,6 +25,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/manifest"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -168,6 +169,9 @@ type CompilerContext struct {
 	EntryPoint  string // Full path to entry file
 	EntryModule string // Import path of entry module
 
+	// Package manifest
+	Manifest *manifest.PackageManifest // Loaded from fer.toml
+
 	// Universe scope: built-in types and functions
 	Universe *table.SymbolTable
 
@@ -296,8 +300,40 @@ func (ctx *CompilerContext) SetEntryPoint(filePath string) error {
 
 	ctx.EntryPoint = filepath.ToSlash(absPath)
 
+	// Try to load package manifest (fer.toml)
+	if err := ctx.LoadManifest(); err == nil {
+		// Manifest found - use package name from manifest
+		if ctx.Manifest != nil && ctx.Manifest.Package.Name != "" {
+			ctx.Config.ProjectName = ctx.Manifest.Package.Name
+		}
+	}
+	// If no manifest found, that's okay - continue without it
+
 	// Derive import path from file path
 	ctx.EntryModule = ctx.FilePathToImportPath(absPath)
+
+	return nil
+}
+
+// LoadManifest attempts to load fer.toml from the project directory
+func (ctx *CompilerContext) LoadManifest() error {
+	// Find fer.toml starting from entry point's directory
+	startDir := filepath.Dir(ctx.EntryPoint)
+	manifestPath, err := manifest.FindManifest(startDir)
+	if err != nil {
+		return err // No manifest found
+	}
+
+	// Load and parse manifest
+	m, err := manifest.LoadManifest(manifestPath)
+	if err != nil {
+		return fmt.Errorf("failed to load manifest: %w", err)
+	}
+
+	ctx.Manifest = m
+
+	// Update project root to manifest's directory
+	ctx.Config.ProjectRoot = filepath.Dir(manifestPath)
 
 	return nil
 }
@@ -348,7 +384,8 @@ func (ctx *CompilerContext) SetEntryPointWithFiles(files map[string]string, entr
 	return nil
 }
 
-// FilePathToImportPath converts a file path to a logical import path
+// FilePathToImportPath converts a file path to a logical import path.
+// Returns the file path without extension for file-based imports.
 func (ctx *CompilerContext) FilePathToImportPath(filePath string) string {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
@@ -361,15 +398,16 @@ func (ctx *CompilerContext) FilePathToImportPath(filePath string) string {
 	// Get relative path from project root
 	relPath, err := filepath.Rel(projectRoot, absPath)
 	if err != nil {
-		// If not under project root, use filename
+		// If not under project root, use the filename without extension
 		return strings.TrimSuffix(filepath.Base(filePath), ctx.Config.Extension)
 	}
 
 	relPath = filepath.ToSlash(relPath)
+
 	// Remove extension
 	relPath = strings.TrimSuffix(relPath, ctx.Config.Extension)
 
-	// Build import path: projectname/path/to/module
+	// Build import path: projectname/path/to/file
 	if ctx.Config.ProjectName != "" {
 		return ctx.Config.ProjectName + "/" + relPath
 	}
@@ -377,6 +415,7 @@ func (ctx *CompilerContext) FilePathToImportPath(filePath string) string {
 }
 
 // ImportPathToFilePath converts an import path to a file path.
+// Returns the specific file path for file-based imports.
 // Resolution priority: stdlib (embedded or libs) first, then local project files.
 func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, ModuleType, error) {
 	// Normalize import path to ensure consistent lookup
@@ -393,6 +432,7 @@ func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, Mod
 	if ctx.Config.RuntimePath != "" {
 		relPath := filepath.FromSlash(importPath) + ctx.Config.Extension
 		filePath := filepath.Join(ctx.Config.RuntimePath, relPath)
+
 		if fs.IsValidFile(filePath) {
 			return filepath.ToSlash(filePath), ModuleBuiltin, nil
 		}
@@ -400,11 +440,24 @@ func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, Mod
 
 	// 3. Check if it's a local project module
 	packageName := fs.FirstPart(importPath)
+
 	if packageName == ctx.Config.ProjectName && ctx.Config.ProjectName != "" {
 		cleanPath := strings.TrimPrefix(importPath, packageName+"/")
 
-		// Try relative to project root
-		filePath := filepath.Join(ctx.Config.ProjectRoot, cleanPath+ctx.Config.Extension)
+		// If cleanPath equals importPath, it means there was no "/" after packageName
+		if cleanPath == importPath {
+			cleanPath = ""
+		}
+
+		// Try as file
+		var filePath string
+		if cleanPath == "" {
+			// Root module: projectRoot/projectName.fer
+			filePath = filepath.Join(ctx.Config.ProjectRoot, packageName+ctx.Config.Extension)
+		} else {
+			filePath = filepath.Join(ctx.Config.ProjectRoot, cleanPath+ctx.Config.Extension)
+		}
+
 		if fs.IsValidFile(filePath) {
 			return filepath.ToSlash(filePath), ModuleLocal, nil
 		}
@@ -412,7 +465,13 @@ func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, Mod
 		// Try relative to entry file's directory
 		if ctx.EntryPoint != "" {
 			entryDir := filepath.Dir(ctx.EntryPoint)
-			filePath = filepath.Join(entryDir, cleanPath+ctx.Config.Extension)
+
+			if cleanPath == "" {
+				filePath = filepath.Join(entryDir, packageName+ctx.Config.Extension)
+			} else {
+				filePath = filepath.Join(entryDir, cleanPath+ctx.Config.Extension)
+			}
+
 			if fs.IsValidFile(filePath) {
 				return filepath.ToSlash(filePath), ModuleLocal, nil
 			}

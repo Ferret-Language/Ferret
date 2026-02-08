@@ -1,0 +1,7 @@
+// b.fer - defines global variable and uses functions from a.fer
+
+let B_global_value: i32 = 42;
+
+fn Use_computed_sum() -> i32 {
+    return Compute_sum() + 100;
+}

@@ -1,8 +1,9 @@
 import "std/io";
-import "methods_cross/lib" as lib;
+// With unit compilation, lib.fer is in the same folder,
+// so we can access its symbols directly without importing!
 
 fn main() {
-    let c := lib::NewCounter();
+    let c := NewCounter();  // Direct access - no lib:: prefix needed
     c.Inc();
     c.Inc();
     io::Println(c.Get());

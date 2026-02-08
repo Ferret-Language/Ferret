@@ -39,7 +39,7 @@
 #include "../core/runtime_naming.h"
 
 // Define the module prefix for this file (implements ferret_libs/os.fer)
-#define MODULE_PREFIX ferret_os
+#define MODULE_PREFIX ferret_std_os
 
 static char* ferret_os_strdup(const char* s) {
     if (!s) {

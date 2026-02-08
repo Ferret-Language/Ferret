@@ -1,0 +1,14 @@
+// c.fer - Defines type used by a.fer
+
+type Point struct {
+    .X: i32,
+    .Y: i32
+};
+
+fn Create_point(x: i32, y: i32) -> Point {
+    return { .X = x, .Y = y } as Point;
+}
+
+fn Use_c_type(p: Point) -> i32 {
+    return p.X + p.Y;
+}

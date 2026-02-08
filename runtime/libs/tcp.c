@@ -36,7 +36,7 @@ typedef int ferret_socket_t;
 #include "../core/runtime_naming.h"
 
 // Define the module prefix for this file (implements ferret_libs/net/tcp.fer)
-#define MODULE_PREFIX ferret_net_tcp
+#define MODULE_PREFIX ferret_std_net_tcp
 #define CONN FERRET_TYPE(CONN)
 #define LISTENER FERRET_TYPE(LISTENER)
 

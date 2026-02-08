@@ -1,4 +1,4 @@
-import "net/tcp" as net;
+import "std/net/tcp" as net;
 
 // Minimal Redis client over RESP (pure Ferret).
 

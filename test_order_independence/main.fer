@@ -1,0 +1,18 @@
+// main.fer - Test that file order doesn't matter
+import "std/io";
+import "test_order_independence/order_test" as order;
+
+fn main() {
+    // a.fer calls b.fer functions, b.fer calls a.fer functions
+    // Should work regardless of parse order
+    let result1 := order::Use_b_function();
+    io::Println("Use_b_function result: ", result1);
+    
+    let result2 := order::Use_a_function();
+    io::Println("Use_a_function result: ", result2);
+    
+    let result3 := order::Another_function();
+    io::Println("Another_function result: ", result3);
+    
+    io::Println("File order independence test passed!");
+}

@@ -1,0 +1,8 @@
+import "std/io";
+import "myapp/utils/math";  // Import using package name from manifest
+
+fn main() {
+    let sum := math::Add(5, 3);
+    io::Println("Sum: ", sum);
+    io::Println("Package loaded from fer.ret!");
+}

@@ -1,7 +1,7 @@
 import "std/io";
 import "std/color";
 import "net/tcp";
-import "time";
+import "std/time";
 
 // Native HTTP module - implementations live in C.
 // This file provides type declarations and a small ergonomic API surface

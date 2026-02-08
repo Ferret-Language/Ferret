@@ -1,0 +1,11 @@
+[package]
+name = "myapp"
+version = "0.1.0"
+compiler = "0.1.0"
+
+[dependencies]
+# Remote dependencies
+# http = "1.0.0"
+
+# Neighbor dependencies (local packages outside this project)
+# mylib = "../mylib"

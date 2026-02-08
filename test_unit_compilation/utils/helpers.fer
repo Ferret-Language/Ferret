@@ -1,0 +1,20 @@
+// helpers.fer - Helper utilities (part of utils unit)
+
+// Public function (uppercase)
+fn Helper_func(val: i32) -> i32 {
+    return Add(val, 1);  // Can call Add() from math.fer without import
+}
+
+// Public constant
+const Max_value: i32 = 100;
+
+// Private function (lowercase) - only accessible within utils module
+fn normalize(x: i32) -> i32 {
+    if x < 0 {
+        return 0;
+    }
+    return x;
+}
+
+// Private constant
+const min_value: i32 = 0;

@@ -1,0 +1,4 @@
+// string.fer - string utilities
+fn Format(s: str, suffix: str) -> str {
+    return s + suffix;
+}

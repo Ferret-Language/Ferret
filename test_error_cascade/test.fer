@@ -1,0 +1,7 @@
+// Test: What happens when referenced variable itself has an error
+
+const B_bad: i32;  // Error: constant requires initializer
+let A_ref: i32 = B_bad + 10;  // What error do we get?
+
+fn main() {
+}

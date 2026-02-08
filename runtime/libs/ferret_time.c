@@ -13,8 +13,8 @@
 #include "../core/alloc.h"
 #include "../core/runtime_naming.h"
 
-// Define the module prefix for this file (implements ferret_libs/time.fer)
-#define MODULE_PREFIX ferret_time
+// Define the module prefix for this file (implements ferret_libs/std/time.fer)
+#define MODULE_PREFIX ferret_std_time
 
 // Get current local time as HH:MM:SS
 char* FERRET_FUNC(Now)(void) {

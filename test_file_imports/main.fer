@@ -1,0 +1,15 @@
+import "std/io";
+import "test_file_imports/utils/math";  // Import specific file
+import "test_file_imports/utils/string";  // Import specific file
+
+fn main() {
+    // Use symbols from imported modules
+    let sum := math::Add(5, 3);
+    io::Println("Sum: ", sum);
+    
+    let product := math::Multiply(4, 2);
+    io::Println("Product: ", product);
+    
+    let formatted := string::Format("Hello", "!");
+    io::Println(formatted);
+}

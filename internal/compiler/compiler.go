@@ -73,25 +73,12 @@ func Compile(opts *Options) Result {
 		projectRoot = entryDir
 	}
 
-	// Determine output path
-	outputPath := opts.OutputExecutable
-	if outputPath == "" {
-		outputPath = filepath.Join(projectRoot, projectName)
-	}
-	if opts.CodegenBackend == "wasm" && !strings.HasSuffix(strings.ToLower(outputPath), ".wasm") {
-		outputPath += ".wasm"
-	}
-	// Ensure .exe suffix on Windows for native binaries
-	if opts.CodegenBackend != "wasm" && runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(outputPath), ".exe") {
-		outputPath += ".exe"
-	}
-
 	config := &context_v2.Config{
 		ProjectName:    projectName,
 		ProjectRoot:    projectRoot,
 		Extension:      ".fer",
 		RuntimePath:    fs.ResolveLibsPath(), // Resolved by build.go relative to ferret binary
-		OutputPath:     outputPath,
+		OutputPath:     "",                   // Will be set after loading manifest
 		SaveAST:        opts.SaveAST,
 		KeepGenFiles:   opts.KeepGenFiles,
 		TypeCheckOnly:  opts.TypecheckOnly,
@@ -117,6 +104,26 @@ func Compile(opts *Options) Result {
 		// File-based mode
 		err = ctx.SetEntryPoint(opts.EntryFile)
 	}
+
+	if err != nil {
+		return Result{Success: false, Output: fmt.Sprintf("Failed to set entry point: %v", err)}
+	}
+
+	// Determine output path after loading manifest (so we can use package name)
+	outputPath := opts.OutputExecutable
+	if outputPath == "" {
+		// Use package name from manifest if available, otherwise use directory name
+		finalProjectName := ctx.Config.ProjectName
+		outputPath = filepath.Join(ctx.Config.ProjectRoot, finalProjectName)
+	}
+	if opts.CodegenBackend == "wasm" && !strings.HasSuffix(strings.ToLower(outputPath), ".wasm") {
+		outputPath += ".wasm"
+	}
+	// Ensure .exe suffix on Windows for native binaries
+	if opts.CodegenBackend != "wasm" && runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(outputPath), ".exe") {
+		outputPath += ".exe"
+	}
+	ctx.Config.OutputPath = outputPath
 
 	if err != nil {
 		ctx.ReportError(fmt.Sprintf("Failed to set entry point: %v", err), nil)

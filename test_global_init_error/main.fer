@@ -1,0 +1,6 @@
+import "std/io";
+import "test_global_init_error/lib" as lib;
+
+fn main() {
+    io::Println("Testing global variable initializer error");
+}

@@ -87,6 +87,14 @@ func syncFerretLibs(srcDir, destDir string) error {
 		return fmt.Errorf("ferret_libs is not a directory: %s", srcDir)
 	}
 
+	// Clean destination directory first to remove any stale files
+	if err := os.RemoveAll(destDir); err != nil {
+		return fmt.Errorf("clean libs dir: %w", err)
+	}
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("recreate libs dir: %w", err)
+	}
+
 	return filepath.WalkDir(srcDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -103,7 +111,8 @@ func syncFerretLibs(srcDir, destDir string) error {
 		if entry.IsDir() {
 			return os.MkdirAll(destPath, 0755)
 		}
-		if filepath.Ext(path) != ".fer" {
+		// Skip Go files, copy everything else
+		if filepath.Ext(path) == ".go" {
 			return nil
 		}
 		return copyFile(path, destPath)
