@@ -38,7 +38,7 @@ typedef int ferret_socket_t;
 #include "../core/runtime_naming.h"
 
 // Define the module prefix for this file (implements ferret_libs/net/http.fer)
-#define MODULE_PREFIX ferret_std_net_http
+#define MODULE_PREFIX ferret_net_http
 
 #define REQUEST FERRET_TYPE(Request)
 #define RESPONSE FERRET_TYPE(Response)

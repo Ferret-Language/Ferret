@@ -22,7 +22,7 @@ func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, Mod
 	importPath = fs.NormalizePath(importPath)
 
 	// 1. Check if module already exists (embedded stdlib or previously loaded)
-	if mod, exists := ctx.Modules[importPath]; exists {
+	if mod, exists := ctx.GetModule(importPath); exists {
 		if mod.Content != "" || mod.FilePath != "" {
 			return mod.FilePath, mod.Type, nil
 		}

@@ -1,7 +1,7 @@
 import "net/http";
 import "std/io";
 import "std/fs";
-import "time";
+import "std/time";
 
 
 let app := http::Server();
