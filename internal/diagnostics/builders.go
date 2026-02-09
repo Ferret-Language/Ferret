@@ -113,3 +113,27 @@ func CatchTypeMismatch(filepath string, loc *source.Location, expected, found st
 		WithPrimaryLabel(loc, fmt.Sprintf("expected %s, found %s", expected, found)).
 		WithHelp("ensure fallback value has the same type as the success value")
 }
+
+// InvalidErrorPropagate creates a diagnostic for using !! on non-Result expression
+func InvalidErrorPropagate(filepath string, loc *source.Location, actualType string) *Diagnostic {
+	return NewError("cannot use '!!' on expression that does not return a result type").
+		WithCode(ErrInvalidErrorPropagate).
+		WithPrimaryLabel(loc, fmt.Sprintf("expression has type %s, not a result type", actualType)).
+		WithHelp("'!!' can only be used on expressions that return a result type (E ! T)")
+}
+
+// ErrorPropagateNotInResultFunc creates a diagnostic for !! in a function that doesn't return a Result
+func ErrorPropagateNotInResultFunc(filepath string, loc *source.Location, returnType string) *Diagnostic {
+	return NewError("cannot use '!!' in function that does not return a result type").
+		WithCode(ErrInvalidErrorPropagate).
+		WithPrimaryLabel(loc, fmt.Sprintf("enclosing function returns %s, not a result type", returnType)).
+		WithHelp("change the enclosing function's return type to a result type (E ! T) to propagate errors")
+}
+
+// ErrorPropagateTypeMismatch creates a diagnostic for !! with incompatible error types
+func ErrorPropagateTypeMismatch(filepath string, loc *source.Location, innerErr, outerErr string) *Diagnostic {
+	return NewError("error type mismatch in error propagation").
+		WithCode(ErrInvalidErrorPropagate).
+		WithPrimaryLabel(loc, fmt.Sprintf("expression error type is %s, but enclosing function error type is %s", innerErr, outerErr)).
+		WithHelp("ensure the error types are compatible or use a catch clause to convert the error")
+}

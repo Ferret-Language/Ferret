@@ -955,6 +955,12 @@ func (l *Lowerer) lowerExpr(expr hir.Expr, expected types.SemType) hir.Expr {
 			Type:     e.Type,
 			Location: e.Location,
 		}
+	case *hir.ResultPropagate:
+		lowered = &hir.ResultPropagate{
+			Value:    l.lowerExpr(e.Value, types.TypeUnknown),
+			Type:     e.Type,
+			Location: e.Location,
+		}
 	case *hir.BinaryExpr:
 		lowered = l.lowerBinaryExpr(e)
 	case *hir.UnaryExpr:
@@ -1558,6 +1564,8 @@ func (l *Lowerer) exprType(expr hir.Expr) types.SemType {
 	case *hir.ResultErr:
 		return safeType(e.Type)
 	case *hir.ResultUnwrap:
+		return safeType(e.Type)
+	case *hir.ResultPropagate:
 		return safeType(e.Type)
 	case *hir.BinaryExpr:
 		return safeType(e.Type)

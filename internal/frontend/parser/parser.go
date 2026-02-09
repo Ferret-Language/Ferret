@@ -855,6 +855,13 @@ func (p *Parser) parsePostfixAfter(expr ast.Expression) ast.Expression {
 				Op:       op,
 				Location: *source.NewLocation(&p.filepath, p.safeLoc(expr).Start, &op.End),
 			}
+		} else if p.match(tokens.DOUBLE_BANG_TOKEN) {
+			// Error propagation: expr!!
+			op := p.advance()
+			expr = &ast.ErrorPropagateExpr{
+				X:        expr,
+				Location: *source.NewLocation(&p.filepath, p.safeLoc(expr).Start, &op.End),
+			}
 		} else {
 			break
 		}

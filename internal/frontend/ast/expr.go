@@ -71,6 +71,17 @@ func (p *PostfixExpr) INode()                {} // Implements Node interface
 func (p *PostfixExpr) Expr()                 {} // Expr is a marker interface for all expressions
 func (p *PostfixExpr) Loc() *source.Location { return &p.Location }
 
+// ErrorPropagateExpr represents an error propagation expression (expr!!)
+// If expr is a Result type, it unwraps the ok value or returns the error to the caller.
+type ErrorPropagateExpr struct {
+	X Expression // operand (must be a Result type expression)
+	source.Location
+}
+
+func (e *ErrorPropagateExpr) INode()                {} // Implements Node interface
+func (e *ErrorPropagateExpr) Expr()                 {} // Expr is a marker interface for all expressions
+func (e *ErrorPropagateExpr) Loc() *source.Location { return &e.Location }
+
 // IdentifierExpr represents an identifier
 type IdentifierExpr struct {
 	Name string

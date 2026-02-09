@@ -216,6 +216,14 @@ func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		}
 		return opType
 
+	case *ast.ErrorPropagateExpr:
+		// Error propagation (!!) unwraps the ok type from a Result
+		innerType := inferExprType(ctx, mod, e.X)
+		if resultType, ok := types.UnwrapType(innerType).(*types.ResultType); ok {
+			return resultType.Ok
+		}
+		return innerType
+
 	case *ast.TypeCheckPattern:
 		// Type check patterns always return bool (true if type matches)
 		return types.TypeBool

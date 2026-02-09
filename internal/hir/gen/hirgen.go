@@ -170,6 +170,12 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 			Type:     g.exprType(expr),
 			Location: locFromNode(e),
 		}
+	case *ast.ErrorPropagateExpr:
+		return &hir.ResultPropagate{
+			Value:    g.lowerExpr(e.X),
+			Type:     g.exprType(expr),
+			Location: locFromNode(e),
+		}
 	case *ast.CallExpr:
 		return g.lowerCallExpr(e)
 	case *ast.SelectorExpr:

@@ -305,6 +305,8 @@ func referencesIdentOutsideFuncLit(expr ast.Expression, name string) (bool, *sou
 		return referencesIdentOutsideFuncLit(e.X, name)
 	case *ast.PostfixExpr:
 		return referencesIdentOutsideFuncLit(e.X, name)
+	case *ast.ErrorPropagateExpr:
+		return referencesIdentOutsideFuncLit(e.X, name)
 	case *ast.CallExpr:
 		if found, loc := referencesIdentOutsideFuncLit(e.Fun, name); found {
 			return found, loc
@@ -3616,6 +3618,46 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		mod.SetExprType(expr, targetType)
 		return targetType
 
+	case *ast.ErrorPropagateExpr:
+		// Error propagation (!!) - unwraps Result or propagates error to caller
+		// Set flag to suppress UncaughtError on inner call expressions
+		oldInErrorPropagate := mod.InErrorPropagate
+		mod.InErrorPropagate = true
+		innerType := checkExpr(ctx, mod, e.X, types.TypeUnknown)
+		mod.InErrorPropagate = oldInErrorPropagate
+		resultType, isResult := types.UnwrapType(innerType).(*types.ResultType)
+		if !isResult {
+			// Cannot use !! on non-Result expression
+			ctx.Diagnostics.Add(
+				diagnostics.InvalidErrorPropagate(mod.FilePath, e.Loc(), innerType.String()),
+			)
+			mod.SetExprType(expr, innerType)
+			return innerType
+		}
+		// Check that enclosing function returns a compatible Result type
+		enclosingReturn := mod.CurrentFunctionReturnType
+		if enclosingReturn == nil {
+			enclosingReturn = types.TypeUnknown
+		}
+		enclosingResult, enclosingIsResult := types.UnwrapType(enclosingReturn).(*types.ResultType)
+		if !enclosingIsResult {
+			ctx.Diagnostics.Add(
+				diagnostics.ErrorPropagateNotInResultFunc(mod.FilePath, e.Loc(), enclosingReturn.String()),
+			)
+		} else {
+			// Check error type compatibility: inner error must be assignable to enclosing error
+			if !resultType.Err.Equals(types.TypeUnknown) && !enclosingResult.Err.Equals(types.TypeUnknown) {
+				if !resultType.Err.Equals(enclosingResult.Err) {
+					ctx.Diagnostics.Add(
+						diagnostics.ErrorPropagateTypeMismatch(mod.FilePath, e.Loc(), resultType.Err.String(), enclosingResult.Err.String()),
+					)
+				}
+			}
+		}
+		okType := resultType.Ok
+		mod.SetExprType(expr, okType)
+		return okType
+
 	case *ast.IndexExpr:
 		// Check both array and index expressions
 		baseType := checkExpr(ctx, mod, e.X, types.TypeUnknown)
@@ -4979,6 +5021,10 @@ func validateResultTypeHandling(ctx *context_v2.CompilerContext, mod *context_v2
 		if expr.Catch == nil {
 			// In defer context, Result without catch is allowed (catch is optional)
 			if mod.InDeferContext {
+				return
+			}
+			// In error propagation context (!!), Result without catch is handled by !!
+			if mod.InErrorPropagate {
 				return
 			}
 			// No catch clause - error must be handled

@@ -1671,6 +1671,8 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		return id
 	case *hir.ResultUnwrap:
 		return b.lowerResultUnwrap(e)
+	case *hir.ResultPropagate:
+		return b.lowerResultPropagate(e)
 	case *hir.BinaryExpr:
 		// Special handling for 'is' operator
 		if e.Op.Kind == tokens.IS_TOKEN {
@@ -2255,6 +2257,94 @@ func (b *functionBuilder) lowerResultUnwrap(expr *hir.ResultUnwrap) mir.ValueID 
 	}
 
 	b.setBlock(okBlock)
+	return okVal
+}
+
+func (b *functionBuilder) lowerResultPropagate(expr *hir.ResultPropagate) mir.ValueID {
+	if expr == nil {
+		return mir.InvalidValue
+	}
+
+	value := b.lowerExpr(expr.Value)
+	if value == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+
+	valueType := b.exprType(expr.Value)
+	resultType, ok := types.UnwrapType(valueType).(*types.ResultType)
+	if !ok || resultType == nil {
+		b.reportUnsupported("result propagation type", expr.Loc())
+		return mir.InvalidValue
+	}
+
+	// Branch on whether the result is ok
+	isOk := b.gen.nextValueID()
+	b.emitInstr(&mir.ResultIsOk{
+		Result:   isOk,
+		Value:    value,
+		Location: expr.Location,
+	})
+
+	okBlock := b.newBlock("propagate.ok", expr.Location)
+	errBlock := b.newBlock("propagate.err", expr.Location)
+
+	b.current.Term = &mir.CondBr{
+		Cond:     isOk,
+		Then:     okBlock.ID,
+		Else:     errBlock.ID,
+		Location: expr.Location,
+	}
+
+	// Error path: extract error, wrap in ResultErr, and return it
+	b.setBlock(errBlock)
+	errType := resultType.Err
+	if errType == nil {
+		errType = types.TypeUnknown
+	}
+	errVal := b.gen.nextValueID()
+	b.emitInstr(&mir.ResultUnwrap{
+		Result:     errVal,
+		Value:      value,
+		Default:    mir.InvalidValue,
+		HasDefault: false,
+		Type:       errType,
+		Location:   expr.Location,
+	})
+
+	// Wrap error in ResultErr for the enclosing function's return type
+	retType := b.fn.Return
+	if retType == nil {
+		retType = valueType
+	}
+	errWrapped := b.gen.nextValueID()
+	b.emitInstr(&mir.ResultErr{
+		Result:   errWrapped,
+		Value:    errVal,
+		Type:     retType,
+		Location: expr.Location,
+	})
+
+	// Emit deferred calls before returning
+	b.emitDeferredCalls()
+	b.emitHeapCleanup(expr.Location)
+	b.current.Term = &mir.Return{HasValue: true, Value: errWrapped, Location: expr.Location}
+
+	// Ok path: unwrap the ok value
+	b.setBlock(okBlock)
+	okType := resultType.Ok
+	if okType == nil {
+		okType = expr.Type
+	}
+	okVal := b.gen.nextValueID()
+	b.emitInstr(&mir.ResultUnwrap{
+		Result:     okVal,
+		Value:      value,
+		Default:    mir.InvalidValue,
+		HasDefault: false,
+		Type:       okType,
+		Location:   expr.Location,
+	})
+
 	return okVal
 }
 
@@ -6464,6 +6554,8 @@ func (b *functionBuilder) exprType(expr hir.Expr) types.SemType {
 	case *hir.ResultErr:
 		return e.Type
 	case *hir.ResultUnwrap:
+		return e.Type
+	case *hir.ResultPropagate:
 		return e.Type
 	case *hir.DerefExpr:
 		return e.Type
