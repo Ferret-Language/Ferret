@@ -529,6 +529,17 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 		if e.Body != nil {
 			nested := newBorrowChecker(b.ctx, b.mod)
 			nested.checkBlock(e.Body)
+			// Closures capture by reference — any move of a captured
+			// variable inside the closure body effectively moves it in
+			// the outer scope too.  Propagate those moves back.
+			for _, cap := range e.Captures {
+				if cap == nil || cap.Symbol == nil {
+					continue
+				}
+				if moveLoc, ok := nested.moved[cap.Symbol]; ok {
+					b.markMoved(cap.Symbol, moveLoc)
+				}
+			}
 		}
 	}
 }
