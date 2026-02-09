@@ -125,16 +125,6 @@ func Compile(opts *Options) Result {
 	}
 	ctx.Config.OutputPath = outputPath
 
-	if err != nil {
-		ctx.ReportError(fmt.Sprintf("Failed to set entry point: %v", err), nil)
-		if opts.LogFormat == HTML {
-			output := ctx.Diagnostics.EmitAllToString()
-			return Result{Success: false, Output: colors.ConvertANSIToHTML(output), Artifact: ctx.CodegenOutput}
-		}
-		ctx.EmitDiagnostics()
-		return Result{Success: false, Artifact: ctx.CodegenOutput}
-	}
-
 	// Run pipeline
 	p := pipeline.New(ctx)
 	p.Run()

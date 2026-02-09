@@ -1879,7 +1879,7 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 	}
 }
 
-func (b *functionBuilder) lowerValueExpr(expr hir.Expr, loc source.Location) mir.ValueID {
+func (b *functionBuilder) lowerValueExpr(expr hir.Expr, _ source.Location) mir.ValueID {
 	if expr == nil {
 		return mir.InvalidValue
 	}

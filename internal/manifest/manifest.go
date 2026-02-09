@@ -211,9 +211,10 @@ func SaveManifest(manifestPath string, manifest *PackageManifest) error {
 		var depNames []string
 		for name, dep := range manifest.Dependencies {
 			depNames = append(depNames, name)
-			if dep.Type == DependencyNeighbor {
+			switch dep.Type {
+			case DependencyNeighbor:
 				depsSection[name] = dep.Path
-			} else if dep.Type == DependencyRemote {
+			case DependencyRemote:
 				// Format: "github.com/user/repo@version"
 				if dep.Version != "" && dep.Version != "latest" {
 					depsSection[name] = dep.Path + "@" + dep.Version

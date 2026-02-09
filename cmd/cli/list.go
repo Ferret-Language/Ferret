@@ -36,10 +36,11 @@ func ListCommand(args []string) error {
 
 	// Show direct dependencies
 	for name, dep := range m.Dependencies {
-		if dep.Type == manifest.DependencyNeighbor {
+		switch dep.Type {
+		case manifest.DependencyNeighbor:
 			fmt.Printf("  %s (neighbor)\n", name)
 			fmt.Printf("    Path: %s\n", dep.Path)
-		} else if dep.Type == manifest.DependencyRemote {
+		case manifest.DependencyRemote:
 			fmt.Printf("  %s (remote)\n", name)
 			fmt.Printf("    URL: %s\n", dep.Path)
 			fmt.Printf("    Constraint: %s\n", dep.Version)
