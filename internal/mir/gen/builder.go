@@ -37,6 +37,7 @@ type functionBuilder struct {
 	closureEnv      mir.ValueID
 	captures        map[*symbols.Symbol]captureInfo
 	boxed           map[*symbols.Symbol]mir.ValueID
+	moved           map[*symbols.Symbol]bool
 	bindings        map[*symbols.Symbol]mir.ValueID
 	refHeapSlots    map[*symbols.Symbol]mir.ValueID
 	tempRefHeap     map[*hir.Ident]mir.ValueID
@@ -67,6 +68,7 @@ func newFunctionBuilder(gen *Generator, fn *mir.Function) *functionBuilder {
 		closureEnv:      mir.InvalidValue,
 		captures:        nil,
 		boxed:           make(map[*symbols.Symbol]mir.ValueID),
+		moved:           make(map[*symbols.Symbol]bool),
 		bindings:        make(map[*symbols.Symbol]mir.ValueID),
 		refHeapSlots:    make(map[*symbols.Symbol]mir.ValueID),
 		tempRefHeap:     make(map[*hir.Ident]mir.ValueID),
@@ -193,6 +195,7 @@ func (b *functionBuilder) finalizeCurrent() {
 
 	// Emit deferred calls before implicit return
 	b.emitDeferredCalls()
+	b.emitHeapCleanup(b.current.Location)
 
 	if b.fn.Return != nil && b.fn.Return.Equals(types.TypeVoid) {
 		b.current.Term = &mir.Return{HasValue: false, Location: b.current.Location}
@@ -920,6 +923,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 	b.emitDeferredCalls()
 
 	if stmt.Result == nil {
+		b.emitHeapCleanup(stmt.Location)
 		b.current.Term = &mir.Return{HasValue: false, Location: stmt.Location}
 		return
 	}
@@ -930,6 +934,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 			b.current.Term = &mir.Unreachable{Location: stmt.Location}
 			return
 		}
+		b.emitHeapCleanup(stmt.Location)
 		b.current.Term = &mir.Return{HasValue: true, Value: heapPtr, Location: stmt.Location}
 		return
 	}
@@ -960,6 +965,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 					}
 					b.emitStore(b.refOutHeapParam, heapVal, stmt.Location)
 				}
+				b.emitHeapCleanup(stmt.Location)
 				b.current.Term = &mir.Return{HasValue: true, Value: b.refOutParam, Location: stmt.Location}
 				return
 			}
@@ -1000,6 +1006,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 					}
 					b.emitStore(b.refOutHeapParam, heapVal, stmt.Location)
 				}
+				b.emitHeapCleanup(stmt.Location)
 				b.current.Term = &mir.Return{HasValue: true, Value: val, Location: stmt.Location}
 				return
 			}
@@ -1014,6 +1021,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 			}
 			b.emitStore(b.refOutHeapParam, heapVal, stmt.Location)
 		}
+		b.emitHeapCleanup(stmt.Location)
 		b.current.Term = &mir.Return{HasValue: true, Value: b.refOutParam, Location: stmt.Location}
 		return
 	}
@@ -1025,10 +1033,12 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		} else {
 			b.emitMemcpy(b.retParam, val, retType, stmt.Location)
 		}
+		b.emitHeapCleanup(stmt.Location)
 		b.current.Term = &mir.Return{HasValue: false, Location: stmt.Location}
 		return
 	}
 
+	b.emitHeapCleanup(stmt.Location)
 	b.current.Term = &mir.Return{HasValue: true, Value: val, Location: stmt.Location}
 }
 
@@ -1047,6 +1057,10 @@ func (b *functionBuilder) lowerHeapReturnValue(expr hir.Expr, inner types.SemTyp
 
 	if unary, ok := expr.(*hir.UnaryExpr); ok && unary.Op.Kind == tokens.AT_TOKEN {
 		if ident, ok := unary.X.(*hir.Ident); ok && b.isHeapLValue(ident) {
+			// Mark as moved — ownership transfers to the caller
+			if ident.Symbol != nil {
+				b.moved[ident.Symbol] = true
+			}
 			return b.addrForIdent(ident)
 		}
 	}
@@ -3458,29 +3472,9 @@ func (b *functionBuilder) resetHeapBinding(ident *hir.Ident, loc source.Location
 	if ident == nil || ident.Symbol == nil {
 		return
 	}
-	typ := b.getStorageType(ident)
-	if typ == nil {
-		return
-	}
-	heapAddr := b.emitHeapAlloc(mir.InvalidValue, typ, loc)
-	if heapAddr == mir.InvalidValue {
-		return
-	}
-	b.slots[ident.Symbol] = heapAddr
-	b.boxed[ident.Symbol] = heapAddr
-
-	bind, ok := b.bindings[ident.Symbol]
-	if ok {
-		if elem, ok := b.ptrElem[bind]; ok {
-			if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
-				b.emitStore(bind, heapAddr, loc)
-				return
-			}
-		}
-	}
-	bind = b.emitAlloca(types.NewReference(typ), loc)
-	b.emitStore(bind, heapAddr, loc)
-	b.bindings[ident.Symbol] = bind
+	// Mark the symbol as moved — the heap pointer ownership has been transferred.
+	// Do NOT allocate a fresh heap slot; the variable is dead after move.
+	b.moved[ident.Symbol] = true
 }
 
 func (b *functionBuilder) bindingAddr(ident *hir.Ident) mir.ValueID {
@@ -6968,6 +6962,34 @@ func (b *functionBuilder) emitHeapAlloc(value mir.ValueID, typ types.SemType, lo
 		b.emitStore(box, value, loc)
 	}
 	return box
+}
+
+// emitHeapFree emits a call to ferret_free for a heap pointer.
+func (b *functionBuilder) emitHeapFree(heapPtr mir.ValueID, loc source.Location) {
+	if heapPtr == mir.InvalidValue {
+		return
+	}
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   "ferret_free",
+		Args:     []mir.ValueID{heapPtr},
+		Type:     types.TypeVoid,
+		Location: loc,
+	})
+}
+
+// emitHeapCleanup frees all heap-allocated variables that haven't been moved.
+// Called before return statements and at implicit function exit.
+func (b *functionBuilder) emitHeapCleanup(loc source.Location) {
+	if b.current == nil || b.current.Term != nil {
+		return
+	}
+	for sym, heapPtr := range b.boxed {
+		if b.moved[sym] {
+			continue
+		}
+		b.emitHeapFree(heapPtr, loc)
+	}
 }
 
 func (b *functionBuilder) emitStore(addr, value mir.ValueID, loc source.Location) {
