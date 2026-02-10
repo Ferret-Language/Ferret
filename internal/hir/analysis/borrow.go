@@ -328,9 +328,7 @@ func (b *borrowChecker) checkForStmt(stmt *hir.ForStmt) {
 	b.withTempScope(func() {
 		b.checkExpr(stmt.Range)
 	})
-	if stmt.Body != nil {
-		b.checkBlock(stmt.Body)
-	}
+	b.checkLoopBodyMoves(stmt.Body, &stmt.Location)
 	b.popScope()
 }
 
@@ -342,9 +340,7 @@ func (b *borrowChecker) checkWhileStmt(stmt *hir.WhileStmt) {
 	b.withTempScope(func() {
 		b.checkExpr(stmt.Cond)
 	})
-	if stmt.Body != nil {
-		b.checkBlock(stmt.Body)
-	}
+	b.checkLoopBodyMoves(stmt.Body, &stmt.Location)
 }
 
 func (b *borrowChecker) checkMatchStmt(stmt *hir.MatchStmt) {
@@ -364,6 +360,43 @@ func (b *borrowChecker) checkMatchStmt(stmt *hir.MatchStmt) {
 		if clause.Body != nil {
 			b.checkBlock(clause.Body)
 		}
+	}
+}
+
+func (b *borrowChecker) checkLoopBodyMoves(body *hir.Block, loopLoc *source.Location) {
+	if body == nil {
+		return
+	}
+
+	// Snapshot moved state and locals before analyzing body
+	movedBefore := make(map[*symbols.Symbol]*source.Location, len(b.moved))
+	for sym, loc := range b.moved {
+		movedBefore[sym] = loc
+	}
+	localsBefore := make(map[*symbols.Symbol]struct{}, len(b.locals))
+	for sym := range b.locals {
+		localsBefore[sym] = struct{}{}
+	}
+
+	b.checkBlock(body)
+
+	// Find symbols newly moved inside the body that were declared before the loop
+	for sym, moveLoc := range b.moved {
+		if _, wasMovedBefore := movedBefore[sym]; wasMovedBefore {
+			continue // already moved before the loop
+		}
+		if _, declaredBeforeLoop := localsBefore[sym]; !declaredBeforeLoop {
+			continue // declared inside the loop body, OK to move
+		}
+		// This variable was declared outside the loop and moved inside — on
+		// the next iteration the move would operate on an already-moved value.
+		diag := diagnostics.NewError(fmt.Sprintf("cannot move '%s' inside loop body", sym.Name)).
+			WithCode(diagnostics.ErrInvalidOperation)
+		if moveLoc != nil {
+			diag = diag.WithPrimaryLabel(moveLoc, "value moved here")
+		}
+		diag = diag.WithHelp("the value would be moved on the first iteration and unavailable on subsequent iterations")
+		b.ctx.Diagnostics.Add(diag)
 	}
 }
 
@@ -496,6 +529,17 @@ func (b *borrowChecker) checkExpr(expr hir.Expr) {
 		if e.Body != nil {
 			nested := newBorrowChecker(b.ctx, b.mod)
 			nested.checkBlock(e.Body)
+			// Closures capture by reference — any move of a captured
+			// variable inside the closure body effectively moves it in
+			// the outer scope too.  Propagate those moves back.
+			for _, cap := range e.Captures {
+				if cap == nil || cap.Symbol == nil {
+					continue
+				}
+				if moveLoc, ok := nested.moved[cap.Symbol]; ok {
+					b.markMoved(cap.Symbol, moveLoc)
+				}
+			}
 		}
 	}
 }

@@ -1,0 +1,19 @@
+import "std/io";
+
+fn log(prefix: str, args: ...i32) {
+    io::Println(prefix, "len", len(&args));
+    let i: i32 = 0;
+    while i < len(&args) {
+        io::Println(prefix, "arg", i, ":", args[i]);
+        i += 1;
+    }
+}
+
+fn main() {
+    let value: i32 = 10;
+    let xs: []i32 = [100, 200];
+
+    value |> log("pipe-no-placeholder", 1, 2, ...xs);
+    value |> log("pipe-placeholder", _, 1, 2, ...xs);
+    value |> log("pipe-middle", 1, _, 2, ...xs);
+}

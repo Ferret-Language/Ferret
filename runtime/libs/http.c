@@ -1240,6 +1240,18 @@ RESPONSE* FERRET_FUNC(Response_Status)(RESPONSE** out, uint64_t* out_heap, RESPO
     return res;
 }
 
+int32_t FERRET_FUNC(Response_StatusCode)(RESPONSE* res, uint64_t res_heap) {
+    (void)res_heap;
+    if (!res) {
+        return 0;
+    }
+    RESPONSE_T* r = (RESPONSE_T*)(intptr_t)res->handle;
+    if (!r) {
+        return 0;
+    }
+    return (int32_t)r->status;
+}
+
 RESPONSE* FERRET_FUNC(Response_Header)(RESPONSE** out, uint64_t* out_heap, RESPONSE* res, uint64_t res_heap, const char* name, const char* value) {
     if (out) {
         *out = res;

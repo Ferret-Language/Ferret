@@ -200,6 +200,9 @@ func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	case *ast.CoalescingExpr:
 		return inferCoalescingExprType(ctx, mod, e)
 
+	case *ast.PipeExpr:
+		return inferPipeExprType(ctx, mod, e)
+
 	case *ast.PrefixExpr:
 		// Prefix operators (++, --) return the type of the operand
 		opType := inferExprType(ctx, mod, e.X)
@@ -215,6 +218,14 @@ func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 			return ref.Inner
 		}
 		return opType
+
+	case *ast.ErrorPropagateExpr:
+		// Error propagation (!!) unwraps the ok type from a Result
+		innerType := inferExprType(ctx, mod, e.X)
+		if resultType, ok := types.UnwrapType(innerType).(*types.ResultType); ok {
+			return resultType.Ok
+		}
+		return innerType
 
 	case *ast.TypeCheckPattern:
 		// Type check patterns always return bool (true if type matches)
@@ -679,13 +690,37 @@ func inferCompositeLitType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 				return types.TypeUnknown
 			}
 
-			// Infer type from first element
-			firstElemType := inferExprType(ctx, mod, lit.Elts[0])
+			// Infer type from first element (handle spread elements)
+			firstElemType := types.TypeUnknown
+			var firstElemExpr ast.Expression
+			for _, elem := range lit.Elts {
+				if spread, ok := elem.(*ast.SpreadExpr); ok {
+					spreadType := inferExprType(ctx, mod, spread.X)
+					if arrType, ok := types.UnwrapType(spreadType).(*types.ArrayType); ok && arrType != nil {
+						firstElemType = arrType.Element
+						firstElemExpr = nil
+						break
+					}
+					if !spreadType.Equals(types.TypeUnknown) {
+						firstElemType = spreadType
+						firstElemExpr = spread
+						break
+					}
+					continue
+				}
+				firstElemType = inferExprType(ctx, mod, elem)
+				firstElemExpr = elem
+				break
+			}
 
 			// If first element is untyped literal, infer its type
 			if types.IsUntyped(firstElemType) {
-				if lit, ok := lit.Elts[0].(*ast.BasicLit); ok {
-					firstElemType = inferLiteralType(lit, types.TypeUnknown)
+				if firstElemExpr != nil {
+					if lit, ok := firstElemExpr.(*ast.BasicLit); ok {
+						firstElemType = inferLiteralType(lit, types.TypeUnknown)
+					} else {
+						firstElemType = types.ResolveUntypedType(firstElemType, types.TypeUnknown)
+					}
 				} else {
 					firstElemType = types.ResolveUntypedType(firstElemType, types.TypeUnknown)
 				}
@@ -998,4 +1033,51 @@ func inferCoalescingExprType(ctx *context_v2.CompilerContext, mod *context_v2.Mo
 
 	// Return TypeUnknown to signal an error
 	return types.TypeUnknown
+}
+
+// inferPipeExprType determines the result type of a pipe expression (value |> func)
+// The pipe operator passes the left value as an argument to the right function call
+// The result type is the return type of the function being called
+func inferPipeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.PipeExpr) types.SemType {
+	// The right side must be a call expression
+	callExpr, ok := expr.Call.(*ast.CallExpr)
+	if !ok {
+		return types.TypeUnknown
+	}
+
+	// Create a transformed call expression for type inference
+	transformedArgs := make([]ast.Expression, len(callExpr.Args))
+	copy(transformedArgs, callExpr.Args)
+
+	// Find placeholders (_) in the call arguments
+	placeholderCount := 0
+	placeholderIndex := -1
+	for i, arg := range transformedArgs {
+		if ident, ok := arg.(*ast.IdentifierExpr); ok && ident.Name == "_" {
+			placeholderCount++
+			if placeholderIndex == -1 {
+				placeholderIndex = i
+			}
+		}
+	}
+
+	// Transform arguments based on placeholder usage
+	if placeholderCount == 0 {
+		// No placeholder: prepend the piped value as the first argument
+		transformedArgs = append([]ast.Expression{expr.Value}, transformedArgs...)
+	} else {
+		// Replace the placeholder with the piped value
+		transformedArgs[placeholderIndex] = expr.Value
+	}
+
+	// Create a temporary call expression for type inference
+	tempCallExpr := &ast.CallExpr{
+		Fun:      callExpr.Fun,
+		Args:     transformedArgs,
+		Catch:    callExpr.Catch,
+		Location: callExpr.Location,
+	}
+
+	// Infer the return type of the transformed call
+	return inferCallExprType(ctx, mod, tempCallExpr)
 }

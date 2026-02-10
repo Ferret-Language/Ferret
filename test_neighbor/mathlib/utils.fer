@@ -1,0 +1,11 @@
+fn Add(a: i32, b: i32) -> i32 {
+    return a + b;
+}
+
+fn Multiply(a: i32, b: i32) -> i32 {
+    return a * b;
+}
+
+fn Square(x: i32) -> i32 {
+    return x * x;
+}

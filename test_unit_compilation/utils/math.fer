@@ -1,0 +1,16 @@
+// math.fer - Math utilities module (part of utils unit)
+
+// Public function (uppercase)
+fn Add(a: i32, b: i32) -> i32 {
+    return normalize(a) + normalize(b);  // Call private function from helpers.fer
+}
+
+// Public function
+fn Multiply(a: i32, b: i32) -> i32 {
+    return a * Helper_func(b);  // Call public function from helpers.fer
+}
+
+// Private function (lowercase) - only accessible within utils module
+fn add_internal(x: i32) -> i32 {
+    return x + 1;
+}

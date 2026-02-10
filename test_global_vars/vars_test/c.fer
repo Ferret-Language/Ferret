@@ -1,0 +1,7 @@
+// c.fer - defines global variable and uses variables and functions from other files
+
+let C_global_value: i32 = 15;
+
+fn Use_both_vars() -> i32 {
+    return Compute_sum() + B_global_value;
+}

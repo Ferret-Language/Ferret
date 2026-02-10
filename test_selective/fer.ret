@@ -1,0 +1,12 @@
+
+[package]
+name = "testapp"
+version = "v1.0.0"
+
+[dependencies]
+logger = "github.com/user/logger@^v1.0.0"
+http-client = "github.com/user/http-client@v1.2.0"
+
+[dev]
+mock_remote = true
+mock_path = "../test_transitive/mock-packages"

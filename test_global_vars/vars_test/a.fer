@@ -1,0 +1,17 @@
+// a.fer - uses global variables from b.fer and c.fer
+
+fn Use_b_var() -> i32 {
+    return B_global_value + 10;
+}
+
+fn Use_c_var() -> i32 {
+    return C_global_value * 2;
+}
+
+// Try to use global variable in initializer (should error with helpful message)
+let A_computed: i32 = B_global_value + C_global_value;
+
+// Function that computes sum (works - functions evaluated in Phase 2)
+fn Compute_sum() -> i32 {
+    return B_global_value + C_global_value;
+}

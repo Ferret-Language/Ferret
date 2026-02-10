@@ -1,0 +1,13 @@
+import "std/io";
+
+fn add(x: i32, y: i32) -> i32 {
+    return x + y;
+}
+
+fn main() {
+    let result: i32 = add(5, 10);
+    io::Println("The result of add(5, 10) is: ", result);
+
+    let piped: i32 = result |> add(20);
+    io::Println("The result after piping is: ", piped);
+}

@@ -1,0 +1,18 @@
+// types.fer - Type definitions (part of utils unit)
+
+type Point struct {
+    .X: i32,
+    .Y: i32
+};
+
+// Public function using types from same unit
+fn Create_point(x: i32, y: i32) -> Point {
+    let normalized_x := normalize(x);  // Can call private function
+    let normalized_y := normalize(y);
+    return { .X = normalized_x, .Y = normalized_y } as Point;
+}
+
+// Private helper type (lowercase)
+type internal_config struct {
+    .value: i32
+};

@@ -25,6 +25,7 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/manifest"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
@@ -78,6 +79,7 @@ type Module struct {
 	CurrentFunctionReturnType types.SemType    // Expected return type for current function being checked
 	CurrentDeferredStmts      []*ast.DeferStmt // Deferred statements in current function (LIFO order)
 	InDeferContext            bool             // True when type-checking a defer statement (skip Result validation)
+	InErrorPropagate          bool             // True when type-checking inner expr of !! (skip UncaughtError)
 
 	Imports           map[string]*Import               // Resolved imports
 	ImportAliasMap    map[string]string                // alias/name -> import path mapping for module access
@@ -167,6 +169,9 @@ type CompilerContext struct {
 	// Entry point
 	EntryPoint  string // Full path to entry file
 	EntryModule string // Import path of entry module
+
+	// Package manifest
+	Manifest *manifest.PackageManifest // Loaded from fer.toml
 
 	// Universe scope: built-in types and functions
 	Universe *table.SymbolTable
@@ -296,8 +301,40 @@ func (ctx *CompilerContext) SetEntryPoint(filePath string) error {
 
 	ctx.EntryPoint = filepath.ToSlash(absPath)
 
+	// Try to load package manifest (fer.toml)
+	if err := ctx.LoadManifest(); err == nil {
+		// Manifest found - use package name from manifest
+		if ctx.Manifest != nil && ctx.Manifest.Package.Name != "" {
+			ctx.Config.ProjectName = ctx.Manifest.Package.Name
+		}
+	}
+	// If no manifest found, that's okay - continue without it
+
 	// Derive import path from file path
 	ctx.EntryModule = ctx.FilePathToImportPath(absPath)
+
+	return nil
+}
+
+// LoadManifest attempts to load fer.toml from the project directory
+func (ctx *CompilerContext) LoadManifest() error {
+	// Find fer.toml starting from entry point's directory
+	startDir := filepath.Dir(ctx.EntryPoint)
+	manifestPath, err := manifest.FindManifest(startDir)
+	if err != nil {
+		return err // No manifest found
+	}
+
+	// Load and parse manifest
+	m, err := manifest.LoadManifest(manifestPath)
+	if err != nil {
+		return fmt.Errorf("failed to load manifest: %w", err)
+	}
+
+	ctx.Manifest = m
+
+	// Update project root to manifest's directory
+	ctx.Config.ProjectRoot = filepath.Dir(manifestPath)
 
 	return nil
 }
@@ -348,7 +385,8 @@ func (ctx *CompilerContext) SetEntryPointWithFiles(files map[string]string, entr
 	return nil
 }
 
-// FilePathToImportPath converts a file path to a logical import path
+// FilePathToImportPath converts a file path to a logical import path.
+// Returns the file path without extension for file-based imports.
 func (ctx *CompilerContext) FilePathToImportPath(filePath string) string {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
@@ -361,78 +399,20 @@ func (ctx *CompilerContext) FilePathToImportPath(filePath string) string {
 	// Get relative path from project root
 	relPath, err := filepath.Rel(projectRoot, absPath)
 	if err != nil {
-		// If not under project root, use filename
+		// If not under project root, use the filename without extension
 		return strings.TrimSuffix(filepath.Base(filePath), ctx.Config.Extension)
 	}
 
 	relPath = filepath.ToSlash(relPath)
+
 	// Remove extension
 	relPath = strings.TrimSuffix(relPath, ctx.Config.Extension)
 
-	// Build import path: projectname/path/to/module
+	// Build import path: projectname/path/to/file
 	if ctx.Config.ProjectName != "" {
 		return ctx.Config.ProjectName + "/" + relPath
 	}
 	return relPath
-}
-
-// ImportPathToFilePath converts an import path to a file path.
-// Resolution priority: stdlib (embedded or libs) first, then local project files.
-func (ctx *CompilerContext) ImportPathToFilePath(importPath string) (string, ModuleType, error) {
-	// Normalize import path to ensure consistent lookup
-	importPath = fs.NormalizePath(importPath)
-
-	// 1. Check if module already exists (embedded stdlib or previously loaded)
-	if mod, exists := ctx.Modules[importPath]; exists {
-		if mod.Content != "" || mod.FilePath != "" {
-			return mod.FilePath, mod.Type, nil
-		}
-	}
-
-	// 2. Check stdlib/runtime on disk (libs directory)
-	if ctx.Config.RuntimePath != "" {
-		relPath := filepath.FromSlash(importPath) + ctx.Config.Extension
-		filePath := filepath.Join(ctx.Config.RuntimePath, relPath)
-		if fs.IsValidFile(filePath) {
-			return filepath.ToSlash(filePath), ModuleBuiltin, nil
-		}
-	}
-
-	// 3. Check if it's a local project module
-	packageName := fs.FirstPart(importPath)
-	if packageName == ctx.Config.ProjectName && ctx.Config.ProjectName != "" {
-		cleanPath := strings.TrimPrefix(importPath, packageName+"/")
-
-		// Try relative to project root
-		filePath := filepath.Join(ctx.Config.ProjectRoot, cleanPath+ctx.Config.Extension)
-		if fs.IsValidFile(filePath) {
-			return filepath.ToSlash(filePath), ModuleLocal, nil
-		}
-
-		// Try relative to entry file's directory
-		if ctx.EntryPoint != "" {
-			entryDir := filepath.Dir(ctx.EntryPoint)
-			filePath = filepath.Join(entryDir, cleanPath+ctx.Config.Extension)
-			if fs.IsValidFile(filePath) {
-				return filepath.ToSlash(filePath), ModuleLocal, nil
-			}
-		}
-	}
-
-	// 4. Check if it's a remote module (future implementation)
-	if ctx.isRemoteImport(importPath) {
-		// TODO: Implement remote module resolution
-		return "", ModuleRemote, fmt.Errorf("remote imports not yet implemented: %s", importPath)
-	}
-
-	return "", ModuleUnknown, fmt.Errorf("cannot resolve import: %s", importPath)
-}
-
-// isRemoteImport checks if an import path is a remote module
-func (ctx *CompilerContext) isRemoteImport(importPath string) bool {
-	return strings.HasPrefix(importPath, "github.com/") ||
-		strings.HasPrefix(importPath, "gitlab.com/") ||
-		strings.HasPrefix(importPath, "bitbucket.org/")
 }
 
 // CheckModuleShadowing warns if a local module would shadow a stdlib module.

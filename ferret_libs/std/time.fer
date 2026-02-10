@@ -1,0 +1,38 @@
+type DateFormat enum {
+    MM_DD_YY,
+    MM_DD_YYYY,
+    DD_MM_YY,
+    DD_MM_YYYY,
+    YYYY_MM_DD
+};
+
+// Local time (HH:MM:SS)
+// @extern
+fn Now() -> str;
+// Local date + time (YYYY-MM-DD HH:MM:SS)
+// @extern
+fn Local() -> str;
+// UTC time (ISO 8601, YYYY-MM-DDTHH:MM:SSZ)
+// @extern
+fn NowUTC() -> str;
+// @extern
+fn NowUnixUs() -> i64;
+// Local date by format
+// @extern
+fn Date(format: DateFormat) -> str;
+// @extern
+fn NowUnix() -> i64;
+// @extern
+fn NowUnixMs() -> i64;
+
+fn SinceUnix(start: i64) -> i64 {
+    return NowUnix() - start;
+}
+
+fn SinceUnixMs(start: i64) -> i64 {
+    return NowUnixMs() - start;
+}
+
+fn SinceUnixUs(start: i64) -> i64 {
+    return NowUnixUs() - start;
+}

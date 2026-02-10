@@ -19,14 +19,14 @@ fn main() {
         io::Println("SET error:", err);
         return;
     };
-    
+
     io::Println("SET ->", ok);
 
     let val1 := client.Get(key) catch err {
         io::Println("GET error:", err);
         return;
     };
-    
+
     if val1 == none {
         io::Println("GET -> (nil)");
     } else {
@@ -64,6 +64,65 @@ fn main() {
     } else {
         io::Println("GET ->", val3);
     }
+
+    // // Hash
+    // let hkey := "ferret:net:hash";
+    // let hset1 := client.HSet(hkey, "a", "1") catch err {
+    //     io::Println("HSET error:", err);
+    //     return;
+    // };
+    // io::Println("HSET ->", hset1);
+    // let hget1 := client.HGet(hkey, "a") catch err {
+    //     io::Println("HGET error:", err);
+    //     return;
+    // };
+    // io::Println("HGET ->", hget1);
+
+    // // MSet / MGet
+    // let mok := client.MSet("ferret:net:m1", "v1", "ferret:net:m2", "v2") catch err {
+    //     io::Println("MSET error:", err);
+    //     return;
+    // };
+    // io::Println("MSET ->", mok);
+    // let mvals := client.MGet("ferret:net:m1", "ferret:net:m2", "ferret:net:missing") catch err {
+    //     io::Println("MGET error:", err);
+    //     return;
+    // };
+    // io::Println("MGET ->", mvals);
+
+    // // Set
+    // let skey := "ferret:net:set";
+    // let sadd := client.SAdd(skey, "x", "y", "z") catch err {
+    //     io::Println("SADD error:", err);
+    //     return;
+    // };
+    // io::Println("SADD ->", sadd);
+    // let smembers := client.SMembers(skey) catch err {
+    //     io::Println("SMEMBERS error:", err);
+    //     return;
+    // };
+    // io::Println("SMEMBERS ->", smembers);
+
+    // // List
+    // let lkey := "ferret:net:list";
+    // let lpush := client.LPush(lkey, "a", "b", "c") catch err {
+    //     io::Println("LPUSH error:", err);
+    //     return;
+    // };
+    // io::Println("LPUSH ->", lpush);
+    // let lpop := client.LPop(lkey) catch err {
+    //     io::Println("LPOP error:", err);
+    //     return;
+    // };
+    // io::Println("LPOP ->", lpop);
+
+    // IncrBy
+    let ckey := "ferret:net:counter";
+    let incr := client.IncrBy(ckey, 10) catch err {
+        io::Println("INCRBY error:", err);
+        return;
+    };
+    io::Println("INCRBY ->", incr);
 
     client.Close();
 }

@@ -1,0 +1,9 @@
+// Edge case 1: Nested expressions
+let Value1: i32 = 10;
+let Value2: i32 = 20;
+
+// Should error on both
+let Computed: i32 = (Value1 + Value2) * 2;
+
+fn main() {
+}

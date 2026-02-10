@@ -23,10 +23,25 @@ func WriteTOMLFile(filename string, data TOMLData, inlineComments map[string]map
 }
 
 func writeTOMLSections(file *os.File, data TOMLData, inlineComments map[string]map[string]string) error {
-	sectionOrder := []string{"default", "compiler", "build", "cache", "external", "neighbors", "dependencies"}
+	// Use the preserved section order from the original file
+	// If no order is preserved (e.g., newly created), use a sensible default
+	sectionOrder := data.SectionOrder
+	if len(sectionOrder) == 0 {
+		// Default order for new files
+		sectionOrder = []string{"package", "default", "compiler", "build", "cache", "external", "neighbors", "dependencies", "dev"}
+		// Only include sections that actually exist
+		var actualOrder []string
+		for _, name := range sectionOrder {
+			if _, exists := data.Sections[name]; exists {
+				actualOrder = append(actualOrder, name)
+			}
+		}
+		sectionOrder = actualOrder
+	}
+
 	for _, sectionName := range sectionOrder {
-		if sectionData, exists := data[sectionName]; exists {
-			err := writeTOMLSection(file, sectionName, sectionData, inlineComments)
+		if sectionData, exists := data.Sections[sectionName]; exists {
+			err := writeTOMLSection(file, sectionName, sectionData, data.KeyOrder[sectionName], inlineComments)
 			if err != nil {
 				return err
 			}
@@ -36,7 +51,7 @@ func writeTOMLSections(file *os.File, data TOMLData, inlineComments map[string]m
 }
 
 // writeTOMLSection writes a single TOML section to the file
-func writeTOMLSection(file *os.File, sectionName string, sectionData TOMLTable, inlineComments map[string]map[string]string) error {
+func writeTOMLSection(file *os.File, sectionName string, sectionData TOMLTable, keyOrder []string, inlineComments map[string]map[string]string) error {
 	// Write section header (except for default)
 	if sectionName != "default" {
 		_, err := fmt.Fprintf(file, "\n[%s]\n", sectionName)
@@ -45,11 +60,23 @@ func writeTOMLSection(file *os.File, sectionName string, sectionData TOMLTable, 
 		}
 	}
 
-	// Write key-value pairs
-	for key, value := range sectionData {
-		err := writeTOMLKeyValue(file, key, value, sectionName, inlineComments)
-		if err != nil {
-			return err
+	// Write key-value pairs in order if available
+	if len(keyOrder) > 0 {
+		for _, key := range keyOrder {
+			if value, exists := sectionData[key]; exists {
+				err := writeTOMLKeyValue(file, key, value, sectionName, inlineComments)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	} else {
+		// Fallback: write keys in arbitrary order
+		for key, value := range sectionData {
+			err := writeTOMLKeyValue(file, key, value, sectionName, inlineComments)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil

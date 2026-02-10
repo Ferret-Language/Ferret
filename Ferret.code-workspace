@@ -17,6 +17,9 @@
 		},
 		{
 			"path": "../../OSS/extensions"
+		},
+		{
+			"path": "../Ferret-Compiler-OLD"
 		}
 	],
 	"settings": {

@@ -1,0 +1,12 @@
+import "std/io";
+
+fn main() {
+    let x: i32 = 10;
+    let y: i32 = 8;
+    let z: i32 = 0;
+    let w: i32 = 1;
+    io::Println("x", x in 10..=0:-2);
+    io::Println("y", y in 10..=0:-2);
+    io::Println("z", z in 10..=0:-2);
+    io::Println("w", w in 10..=0:-2);
+}

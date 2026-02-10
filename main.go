@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"compiler/cmd/cli"
 	"compiler/colors"
 	"compiler/internal/compiler"
 )
@@ -30,6 +31,55 @@ func main() {
 
 	flag.Parse()
 
+	// Get command/args
+	args := flag.Args()
+
+	// Check for CLI commands (before flags check)
+	if len(args) > 0 {
+		command := args[0]
+		commandArgs := args[1:]
+
+		// Handle package management commands
+		switch command {
+		case "get":
+			if err := cli.GetCommand(commandArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "remove", "rm":
+			if err := cli.RemoveCommand(commandArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "list", "ls":
+			if err := cli.ListCommand(commandArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "update":
+			if err := cli.UpdateCommand(commandArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "cleanup", "clean":
+			if err := cli.CleanupCommand(commandArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "init":
+			if err := cli.InitCommand(commandArgs); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
 	// Handle version
 	if *showVersion {
 		fmt.Printf("Ferret compiler version %s\n", compiler.Version)
@@ -38,20 +88,43 @@ func main() {
 
 	// Handle help
 	if *help {
-		fmt.Fprintln(os.Stdout, "Usage: ferret [options] <file>")
-		fmt.Fprintln(os.Stdout, "\nNote: Flags must come before the file argument")
-		fmt.Fprintln(os.Stdout, "\nOptions:")
+		fmt.Fprintln(os.Stdout, "Ferret - A modern programming language")
+		fmt.Fprintln(os.Stdout, "\nUsage:")
+		fmt.Fprintln(os.Stdout, "  ferret [command] [args]")
+		fmt.Fprintln(os.Stdout, "  ferret [options] <file>")
+
+		fmt.Fprintln(os.Stdout, "\nPackage Management Commands:")
+		fmt.Fprintln(os.Stdout, "  init [name]              Create a new Ferret project with fer.ret")
+		fmt.Fprintln(os.Stdout, "  get                      Install all dependencies from fer.ret")
+		fmt.Fprintln(os.Stdout, "  get <pkg1> <pkg2>...     Install specific packages")
+		fmt.Fprintln(os.Stdout, "  update                   Update all dependencies to latest compatible versions")
+		fmt.Fprintln(os.Stdout, "  update <pkg1> <pkg2>...  Update specific packages")
+		fmt.Fprintln(os.Stdout, "  remove <package>         Remove a dependency and cleanup orphaned deps")
+		fmt.Fprintln(os.Stdout, "  list                     List all dependencies (direct and transitive)")
+		fmt.Fprintln(os.Stdout, "  cleanup                  Remove unused cached packages")
+
+		fmt.Fprintln(os.Stdout, "\nCompilation Options:")
 		flag.PrintDefaults()
+
+		fmt.Fprintln(os.Stdout, "\nExamples:")
+		fmt.Fprintln(os.Stdout, "  ferret init myapp")
+		fmt.Fprintln(os.Stdout, "  ferret get github.com/user/logger@^v1.0.0")
+		fmt.Fprintln(os.Stdout, "  ferret update")
+		fmt.Fprintln(os.Stdout, "  ferret main.fer")
+		fmt.Fprintln(os.Stdout, "  ferret -o app main.fer")
+
+		fmt.Fprintln(os.Stdout, "\nFor more information, visit: https://ferret-lang.org")
 		os.Exit(0)
 	}
 
 	// Get entry file
-	args := flag.Args()
+	args = flag.Args()
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: ferret [options] <file>")
-		fmt.Fprintln(os.Stderr, "\nNote: Flags must come before the file argument")
-		fmt.Fprintln(os.Stderr, "\nOptions:")
-		flag.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "Error: No input file specified")
+		fmt.Fprintln(os.Stderr, "\nUsage:")
+		fmt.Fprintln(os.Stderr, "  ferret [options] <file>")
+		fmt.Fprintln(os.Stderr, "  ferret [command] [args]")
+		fmt.Fprintln(os.Stderr, "\nRun 'ferret --help' for more information")
 		os.Exit(1)
 	}
 

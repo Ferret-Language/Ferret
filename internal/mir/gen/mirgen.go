@@ -36,8 +36,6 @@ type Generator struct {
 	wrapID          int
 	vtableSeq       int
 	vtables         map[string]*mir.VTable
-	typeIDGlobals   map[string]string // Maps type ID string to global name
-	typeIDSeq       int               // Counter for generating unique type ID global names
 	heapReturns     map[string]types.SemType
 	typeDescriptors map[string]string        // Maps type key to type descriptor global name
 	typeDescTypes   map[string]types.SemType // Maps global name to type for codegen
@@ -57,7 +55,6 @@ func New(ctx *context_v2.CompilerContext, mod *context_v2.Module) *Generator {
 		funcLits:        make(map[string]*closureInfo),
 		funcWraps:       make(map[string]string),
 		vtables:         make(map[string]*mir.VTable),
-		typeIDGlobals:   make(map[string]string),
 		heapReturns:     make(map[string]types.SemType),
 		typeDescriptors: make(map[string]string),
 		typeDescTypes:   make(map[string]types.SemType),
@@ -105,12 +102,6 @@ func (g *Generator) GenerateModule(hirMod *hir.Module) *mir.Module {
 				continue
 			}
 			mirMod.VTables = append(mirMod.VTables, *table)
-		}
-	}
-	if len(g.typeIDGlobals) > 0 {
-		mirMod.TypeIDs = make(map[string]string, len(g.typeIDGlobals))
-		for typeID, globalName := range g.typeIDGlobals {
-			mirMod.TypeIDs[globalName] = typeID
 		}
 	}
 	if len(g.typeDescTypes) > 0 {

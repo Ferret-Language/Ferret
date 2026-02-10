@@ -1,0 +1,6 @@
+[package]
+name = "websocket"
+version = "v2.1.0"
+
+[dependencies]
+logger = "github.com/user/logger@~v1.5.0"

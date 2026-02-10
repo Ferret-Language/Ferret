@@ -1,0 +1,7 @@
+fn main() {
+    let out: []?str = [] as []?str;
+    append(&mut out, none);
+    append(&mut out, "a");
+    append(&mut out, none);
+    print("ok");
+}

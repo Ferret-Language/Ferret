@@ -1,2 +1,0 @@
-// @extern
-fn Random() -> f32;

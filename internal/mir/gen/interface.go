@@ -1,7 +1,6 @@
 package gen
 
 import (
-	"crypto/sha1"
 	"fmt"
 
 	"compiler/internal/mir"
@@ -68,36 +67,6 @@ func concreteTypeName(typ types.SemType) string {
 		return named.Name
 	}
 	return ""
-}
-
-// typeIDString generates a unique string identifier for a type for runtime type checking.
-// This is used for interface{} to store type information at runtime.
-func typeIDString(typ types.SemType) string {
-	if typ == nil {
-		return "nil"
-	}
-	// Use the type's string representation as its unique ID
-	// This gives us unique IDs like "i32", "str", "[]i32", "[]interface{}", etc.
-	return typ.String()
-}
-
-// ensureTypeIDGlobal creates or returns a global string constant for a type ID.
-// The returned string is the global variable name (without $).
-func (g *Generator) ensureTypeIDGlobal(typeID string) string {
-	if g == nil {
-		return ""
-	}
-	if globalName, ok := g.typeIDGlobals[typeID]; ok {
-		return globalName
-	}
-
-	sum := sha1.Sum([]byte(typeID))
-	globalName := fmt.Sprintf("__typeid_%x", sum)
-	g.typeIDGlobals[typeID] = globalName
-
-	// The actual global will be emitted during module generation
-	// For now, just track that we need it
-	return globalName
 }
 
 func (g *Generator) lookupTypeSymbol(name string) (*symbols.Symbol, string, bool) {

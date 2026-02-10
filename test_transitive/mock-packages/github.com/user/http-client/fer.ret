@@ -1,0 +1,6 @@
+[package]
+name = "http-client"
+version = "v1.2.0"
+
+[dependencies]
+logger = "github.com/user/logger@^v1.0.0"

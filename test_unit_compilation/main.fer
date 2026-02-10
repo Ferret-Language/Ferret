@@ -1,0 +1,27 @@
+// main.fer - Test unit compilation
+import "std/io";
+import "test_unit_compilation/utils";  // Import the entire utils folder
+
+fn main() {
+    // Test calling public functions from the utils module
+    let sum := utils::Add(5, 3);
+    io::Println("Sum: ", sum);
+    
+    let product := utils::Multiply(4, 2);
+    io::Println("Product: ", product);
+    
+    // Test using public constant
+    io::Println("Max value: ", utils::Max_value);
+    
+    // Test using type from the module
+    let p := utils::Create_point(10, 20);
+    io::Println("Point X: ", p.X);
+    io::Println("Point Y: ", p.Y);
+    
+    // The following should NOT be accessible (private/lowercase):
+    // utils::normalize(5);      // Error: private function
+    // utils::min_value;         // Error: private constant
+    // utils::add_internal(5);   // Error: private function
+    
+    io::Println("Unit compilation test passed!");
+}

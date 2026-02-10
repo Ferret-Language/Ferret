@@ -37,6 +37,7 @@ type functionBuilder struct {
 	closureEnv      mir.ValueID
 	captures        map[*symbols.Symbol]captureInfo
 	boxed           map[*symbols.Symbol]mir.ValueID
+	moved           map[*symbols.Symbol]bool
 	bindings        map[*symbols.Symbol]mir.ValueID
 	refHeapSlots    map[*symbols.Symbol]mir.ValueID
 	tempRefHeap     map[*hir.Ident]mir.ValueID
@@ -67,6 +68,7 @@ func newFunctionBuilder(gen *Generator, fn *mir.Function) *functionBuilder {
 		closureEnv:      mir.InvalidValue,
 		captures:        nil,
 		boxed:           make(map[*symbols.Symbol]mir.ValueID),
+		moved:           make(map[*symbols.Symbol]bool),
 		bindings:        make(map[*symbols.Symbol]mir.ValueID),
 		refHeapSlots:    make(map[*symbols.Symbol]mir.ValueID),
 		tempRefHeap:     make(map[*hir.Ident]mir.ValueID),
@@ -193,6 +195,7 @@ func (b *functionBuilder) finalizeCurrent() {
 
 	// Emit deferred calls before implicit return
 	b.emitDeferredCalls()
+	b.emitHeapCleanup(b.current.Location)
 
 	if b.fn.Return != nil && b.fn.Return.Equals(types.TypeVoid) {
 		b.current.Term = &mir.Return{HasValue: false, Location: b.current.Location}
@@ -920,6 +923,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 	b.emitDeferredCalls()
 
 	if stmt.Result == nil {
+		b.emitHeapCleanup(stmt.Location)
 		b.current.Term = &mir.Return{HasValue: false, Location: stmt.Location}
 		return
 	}
@@ -930,6 +934,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 			b.current.Term = &mir.Unreachable{Location: stmt.Location}
 			return
 		}
+		b.emitHeapCleanup(stmt.Location)
 		b.current.Term = &mir.Return{HasValue: true, Value: heapPtr, Location: stmt.Location}
 		return
 	}
@@ -960,6 +965,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 					}
 					b.emitStore(b.refOutHeapParam, heapVal, stmt.Location)
 				}
+				b.emitHeapCleanup(stmt.Location)
 				b.current.Term = &mir.Return{HasValue: true, Value: b.refOutParam, Location: stmt.Location}
 				return
 			}
@@ -1000,6 +1006,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 					}
 					b.emitStore(b.refOutHeapParam, heapVal, stmt.Location)
 				}
+				b.emitHeapCleanup(stmt.Location)
 				b.current.Term = &mir.Return{HasValue: true, Value: val, Location: stmt.Location}
 				return
 			}
@@ -1014,6 +1021,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 			}
 			b.emitStore(b.refOutHeapParam, heapVal, stmt.Location)
 		}
+		b.emitHeapCleanup(stmt.Location)
 		b.current.Term = &mir.Return{HasValue: true, Value: b.refOutParam, Location: stmt.Location}
 		return
 	}
@@ -1025,10 +1033,12 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		} else {
 			b.emitMemcpy(b.retParam, val, retType, stmt.Location)
 		}
+		b.emitHeapCleanup(stmt.Location)
 		b.current.Term = &mir.Return{HasValue: false, Location: stmt.Location}
 		return
 	}
 
+	b.emitHeapCleanup(stmt.Location)
 	b.current.Term = &mir.Return{HasValue: true, Value: val, Location: stmt.Location}
 }
 
@@ -1047,6 +1057,10 @@ func (b *functionBuilder) lowerHeapReturnValue(expr hir.Expr, inner types.SemTyp
 
 	if unary, ok := expr.(*hir.UnaryExpr); ok && unary.Op.Kind == tokens.AT_TOKEN {
 		if ident, ok := unary.X.(*hir.Ident); ok && b.isHeapLValue(ident) {
+			// Mark as moved — ownership transfers to the caller
+			if ident.Symbol != nil {
+				b.moved[ident.Symbol] = true
+			}
 			return b.addrForIdent(ident)
 		}
 	}
@@ -1437,34 +1451,21 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 						// Type not found in union - always false
 						cmp = b.emitConst(types.TypeBool, "0", clause.Location)
 					}
+				} else if isEmptyInterface(matchType) {
+					cmp = b.emitInterfaceTypeCheck(cond, pat.Type, clause.Location)
 				} else {
-					// Not a union type - cannot do type check
-					b.reportUnsupported("type check pattern on non-union type", clause.Pattern.Loc())
-					cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+					// Concrete type: compile-time check
+					if matchType != nil && matchType.Equals(pat.Type) {
+						cmp = b.emitConst(types.TypeBool, "1", clause.Location)
+					} else {
+						cmp = b.emitConst(types.TypeBool, "0", clause.Location)
+					}
 				}
 
 			case *hir.RangeCheckPattern:
-				// Range check pattern: in Range
-				if rangeExpr, ok := pat.Range.(*hir.RangeExpr); ok {
-					// Generate: cond >= start && cond < end (or <= for inclusive)
-					startVal := b.lowerExpr(rangeExpr.Start)
-					endVal := b.lowerExpr(rangeExpr.End)
-
-					// Check lower bound: cond >= start
-					lowerCmp := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, cond, startVal, matchType, clause.Location)
-
-					// Check upper bound: cond < end or cond <= end
-					var upperCmp mir.ValueID
-					if rangeExpr.Inclusive {
-						upperCmp = b.emitBinary(tokens.LESS_EQUAL_TOKEN, cond, endVal, matchType, clause.Location)
-					} else {
-						upperCmp = b.emitBinary(tokens.LESS_TOKEN, cond, endVal, matchType, clause.Location)
-					}
-
-					// Combine: lower && upper
-					cmp = b.emitBinary(tokens.AND_TOKEN, lowerCmp, upperCmp, types.TypeBool, clause.Location)
-				} else {
-					b.reportUnsupported("invalid range in range check pattern", clause.Pattern.Loc())
+				// Range check pattern: in Range or in Array
+				cmp = b.emitInCheckValue(cond, matchType, pat.Range, clause.Location)
+				if cmp == mir.InvalidValue {
 					cmp = b.emitConst(types.TypeBool, "0", clause.Location)
 				}
 
@@ -1472,12 +1473,16 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 				// Regular value match pattern
 				value, ok := b.matchCaseConstValue(clause.Pattern, matchType)
 				if !ok {
-					b.reportUnsupported("match pattern", clause.Pattern.Loc())
-					// Skip this case
-					if elseBlock != nil {
-						current = elseBlock
+					patVal := b.lowerExpr(clause.Pattern)
+					if patVal == mir.InvalidValue {
+						if elseBlock != nil {
+							current = elseBlock
+						}
+						continue
 					}
-					continue
+					patType := b.exprType(clause.Pattern)
+					cmp = b.emitEqualityCompare(cond, matchType, patVal, patType, clause.Location)
+					break
 				}
 
 				if isLargePrimitiveType(matchType) {
@@ -1487,6 +1492,9 @@ func (b *functionBuilder) lowerMatch(stmt *hir.MatchStmt) {
 				}
 			}
 
+			// Some pattern checks may emit control flow (e.g., array membership).
+			// Ensure we terminate the current block where the comparison result lives.
+			current = b.current
 			current.Term = &mir.CondBr{
 				Cond:     cmp,
 				Then:     entry.block.ID,
@@ -1663,10 +1671,54 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		return id
 	case *hir.ResultUnwrap:
 		return b.lowerResultUnwrap(e)
+	case *hir.ResultPropagate:
+		return b.lowerResultPropagate(e)
 	case *hir.BinaryExpr:
 		// Special handling for 'is' operator
 		if e.Op.Kind == tokens.IS_TOKEN {
 			return b.emitTypeCheck(e)
+		}
+
+		// Special handling for optional comparisons against none
+		if e.Op.Kind == tokens.DOUBLE_EQUAL_TOKEN || e.Op.Kind == tokens.NOT_EQUAL_TOKEN {
+			if isNoneExpr(e.X) {
+				optType := b.exprType(e.Y)
+				if _, ok := types.UnwrapType(optType).(*types.OptionalType); ok {
+					val := b.lowerExpr(e.Y)
+					if val == mir.InvalidValue {
+						return mir.InvalidValue
+					}
+					isSome := b.gen.nextValueID()
+					b.emitInstr(&mir.OptionalIsSome{
+						Result:   isSome,
+						Value:    val,
+						Location: e.Location,
+					})
+					if e.Op.Kind == tokens.DOUBLE_EQUAL_TOKEN {
+						return b.emitUnary(tokens.NOT_TOKEN, isSome, types.TypeBool, e.Location)
+					}
+					return isSome
+				}
+			}
+			if isNoneExpr(e.Y) {
+				optType := b.exprType(e.X)
+				if _, ok := types.UnwrapType(optType).(*types.OptionalType); ok {
+					val := b.lowerExpr(e.X)
+					if val == mir.InvalidValue {
+						return mir.InvalidValue
+					}
+					isSome := b.gen.nextValueID()
+					b.emitInstr(&mir.OptionalIsSome{
+						Result:   isSome,
+						Value:    val,
+						Location: e.Location,
+					})
+					if e.Op.Kind == tokens.DOUBLE_EQUAL_TOKEN {
+						return b.emitUnary(tokens.NOT_TOKEN, isSome, types.TypeBool, e.Location)
+					}
+					return isSome
+				}
+			}
 		}
 
 		// Special handling for 'in' operator: x in a..b => x >= a && x < b
@@ -1776,6 +1828,16 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 	case *hir.IndexExpr:
 		return b.lowerIndexValue(e)
 	case *hir.CastExpr:
+		if lit, ok := unwrapParenExpr(e.X).(*hir.CompositeLit); ok {
+			if lit.Type == nil || types.UnwrapType(lit.Type).Equals(types.TypeUnknown) {
+				targetType := e.Type
+				if opt, ok := types.UnwrapType(targetType).(*types.OptionalType); ok && opt != nil && opt.Inner != nil {
+					targetType = opt.Inner
+				}
+				lit.Type = targetType
+				return b.lowerCompositeLit(lit)
+			}
+		}
 		value := b.lowerExpr(e.X)
 		if value == mir.InvalidValue {
 			return mir.InvalidValue
@@ -1833,7 +1895,7 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 	}
 }
 
-func (b *functionBuilder) lowerValueExpr(expr hir.Expr, loc source.Location) mir.ValueID {
+func (b *functionBuilder) lowerValueExpr(expr hir.Expr, _ source.Location) mir.ValueID {
 	if expr == nil {
 		return mir.InvalidValue
 	}
@@ -1996,6 +2058,9 @@ func (b *functionBuilder) coerceValueForAssign(val mir.ValueID, fromType, toType
 	if val == mir.InvalidValue || fromType == nil || toType == nil {
 		return val
 	}
+	if optType, ok := types.UnwrapType(toType).(*types.OptionalType); ok {
+		return b.coerceToOptional(val, fromType, optType, loc)
+	}
 	if ref, ok := types.UnwrapType(toType).(*types.ReferenceType); ok {
 		if isEmptyInterface(ref.Inner) {
 			if _, ok := types.UnwrapType(fromType).(*types.ReferenceType); ok {
@@ -2021,6 +2086,48 @@ func (b *functionBuilder) coerceValueForAssign(val mir.ValueID, fromType, toType
 		fromType = ref.Inner
 	}
 	return val
+}
+
+func (b *functionBuilder) coerceToOptional(val mir.ValueID, fromType types.SemType, optType *types.OptionalType, loc source.Location) mir.ValueID {
+	if val == mir.InvalidValue || fromType == nil || optType == nil {
+		return val
+	}
+
+	if fromOpt, ok := types.UnwrapType(fromType).(*types.OptionalType); ok {
+		if fromOpt.Equals(optType) {
+			return val
+		}
+		return val
+	}
+
+	if types.UnwrapType(fromType).Equals(types.TypeNone) {
+		id := b.gen.nextValueID()
+		b.emitInstr(&mir.OptionalNone{
+			Result:   id,
+			Type:     optType,
+			Location: loc,
+		})
+		return id
+	}
+
+	innerVal := val
+	innerType := fromType
+	if ref, ok := types.UnwrapType(fromType).(*types.ReferenceType); ok {
+		if _, ok := types.UnwrapType(optType.Inner).(*types.ReferenceType); !ok {
+			innerVal = b.emitLoad(val, ref.Inner, loc)
+			innerType = ref.Inner
+		}
+	}
+
+	innerVal = b.coerceValueForAssign(innerVal, innerType, optType.Inner, loc)
+	id := b.gen.nextValueID()
+	b.emitInstr(&mir.OptionalSome{
+		Result:   id,
+		Value:    innerVal,
+		Type:     optType,
+		Location: loc,
+	})
+	return id
 }
 
 func (b *functionBuilder) lowerResultUnwrap(expr *hir.ResultUnwrap) mir.ValueID {
@@ -2150,6 +2257,94 @@ func (b *functionBuilder) lowerResultUnwrap(expr *hir.ResultUnwrap) mir.ValueID 
 	}
 
 	b.setBlock(okBlock)
+	return okVal
+}
+
+func (b *functionBuilder) lowerResultPropagate(expr *hir.ResultPropagate) mir.ValueID {
+	if expr == nil {
+		return mir.InvalidValue
+	}
+
+	value := b.lowerExpr(expr.Value)
+	if value == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+
+	valueType := b.exprType(expr.Value)
+	resultType, ok := types.UnwrapType(valueType).(*types.ResultType)
+	if !ok || resultType == nil {
+		b.reportUnsupported("result propagation type", expr.Loc())
+		return mir.InvalidValue
+	}
+
+	// Branch on whether the result is ok
+	isOk := b.gen.nextValueID()
+	b.emitInstr(&mir.ResultIsOk{
+		Result:   isOk,
+		Value:    value,
+		Location: expr.Location,
+	})
+
+	okBlock := b.newBlock("propagate.ok", expr.Location)
+	errBlock := b.newBlock("propagate.err", expr.Location)
+
+	b.current.Term = &mir.CondBr{
+		Cond:     isOk,
+		Then:     okBlock.ID,
+		Else:     errBlock.ID,
+		Location: expr.Location,
+	}
+
+	// Error path: extract error, wrap in ResultErr, and return it
+	b.setBlock(errBlock)
+	errType := resultType.Err
+	if errType == nil {
+		errType = types.TypeUnknown
+	}
+	errVal := b.gen.nextValueID()
+	b.emitInstr(&mir.ResultUnwrap{
+		Result:     errVal,
+		Value:      value,
+		Default:    mir.InvalidValue,
+		HasDefault: false,
+		Type:       errType,
+		Location:   expr.Location,
+	})
+
+	// Wrap error in ResultErr for the enclosing function's return type
+	retType := b.fn.Return
+	if retType == nil {
+		retType = valueType
+	}
+	errWrapped := b.gen.nextValueID()
+	b.emitInstr(&mir.ResultErr{
+		Result:   errWrapped,
+		Value:    errVal,
+		Type:     retType,
+		Location: expr.Location,
+	})
+
+	// Emit deferred calls before returning
+	b.emitDeferredCalls()
+	b.emitHeapCleanup(expr.Location)
+	b.current.Term = &mir.Return{HasValue: true, Value: errWrapped, Location: expr.Location}
+
+	// Ok path: unwrap the ok value
+	b.setBlock(okBlock)
+	okType := resultType.Ok
+	if okType == nil {
+		okType = expr.Type
+	}
+	okVal := b.gen.nextValueID()
+	b.emitInstr(&mir.ResultUnwrap{
+		Result:     okVal,
+		Value:      value,
+		Default:    mir.InvalidValue,
+		HasDefault: false,
+		Type:       okType,
+		Location:   expr.Location,
+	})
+
 	return okVal
 }
 
@@ -2298,7 +2493,13 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 	if target, ok := b.callTarget(expr.Fun); ok {
 		// Print/Println resolve by concrete arg type in QBE.
 		skipInterfaceBoxing := b.isStdIoPrintTarget(target)
-		args := b.lowerCallArgs(expr.Args, fnType, expr.Location, skipInterfaceBoxing)
+		var args []mir.ValueID
+		if target == "append" {
+			args = b.lowerAppendArgs(expr, fnType, expr.Location, skipInterfaceBoxing)
+		}
+		if args == nil {
+			args = b.lowerCallArgs(expr.Args, fnType, expr.Location, skipInterfaceBoxing)
+		}
 		if args == nil {
 			return mir.InvalidValue
 		}
@@ -2358,6 +2559,10 @@ func (b *functionBuilder) bindingAddrArg(expr hir.Expr) mir.ValueID {
 }
 
 func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionType, loc source.Location, skipInterfaceBoxing bool) []mir.ValueID {
+	return b.lowerCallArgsWithCoerce(args, fnType, loc, skipInterfaceBoxing, nil)
+}
+
+func (b *functionBuilder) lowerCallArgsWithCoerce(args []hir.Expr, fnType *types.FunctionType, loc source.Location, skipInterfaceBoxing bool, coerceArgTypes map[int]types.SemType) []mir.ValueID {
 	out := make([]mir.ValueID, 0, len(args))
 	for i, arg := range args {
 		boxedUnion := false
@@ -2390,6 +2595,15 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 						val = b.emitMapClone(val, paramType, loc)
 					}
 				}
+			}
+		}
+		if coerceArgTypes != nil {
+			if coerceType, ok := coerceArgTypes[i]; ok && coerceType != nil {
+				val = b.coerceValueForAssign(val, argType, coerceType, loc)
+				if val == mir.InvalidValue {
+					return nil
+				}
+				argType = coerceType
 			}
 		}
 		if !skipInterfaceBoxing && paramType != nil && interfaceTypeOf(paramType) != nil {
@@ -2435,6 +2649,38 @@ func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionT
 	return out
 }
 
+func (b *functionBuilder) lowerAppendArgs(expr *hir.CallExpr, fnType *types.FunctionType, loc source.Location, skipInterfaceBoxing bool) []mir.ValueID {
+	if expr == nil || len(expr.Args) < 2 {
+		return nil
+	}
+	ident, ok := expr.Fun.(*hir.Ident)
+	if !ok || ident.Symbol == nil || !ident.Symbol.IsNative || ident.Name != "append" {
+		return nil
+	}
+	elemType := b.appendElementType(expr.Args[0])
+	if elemType == nil {
+		return nil
+	}
+	return b.lowerCallArgsWithCoerce(expr.Args, fnType, loc, skipInterfaceBoxing, map[int]types.SemType{1: elemType})
+}
+
+func (b *functionBuilder) appendElementType(arg hir.Expr) types.SemType {
+	if arg == nil {
+		return nil
+	}
+	argType := b.exprType(arg)
+	if argType == nil {
+		return nil
+	}
+	if ref, ok := types.UnwrapType(argType).(*types.ReferenceType); ok {
+		argType = ref.Inner
+	}
+	if arr, ok := types.UnwrapType(argType).(*types.ArrayType); ok && arr.Length < 0 {
+		return arr.Element
+	}
+	return nil
+}
+
 func (b *functionBuilder) isHeapReturnCall(call *hir.CallExpr) (types.SemType, bool) {
 	if call == nil {
 		return nil, false
@@ -2448,6 +2694,26 @@ func (b *functionBuilder) isHeapReturnCall(call *hir.CallExpr) (types.SemType, b
 		return b.heapReturnType(target)
 	}
 	return nil, false
+}
+
+func isNoneExpr(expr hir.Expr) bool {
+	if expr == nil {
+		return false
+	}
+	switch e := expr.(type) {
+	case *hir.OptionalNone:
+		return true
+	case *hir.Literal:
+		return e.Kind == hir.LiteralNone
+	case *hir.Ident:
+		if e.Name == "none" {
+			return true
+		}
+		if e.Symbol != nil && e.Symbol.Type != nil {
+			return e.Symbol.Type.Equals(types.TypeNone)
+		}
+	}
+	return false
 }
 
 func (b *functionBuilder) lowerHeapReturnCall(call *hir.CallExpr, inner types.SemType, loc source.Location) mir.ValueID {
@@ -2872,9 +3138,14 @@ func (b *functionBuilder) emitTypeCheck(expr *hir.BinaryExpr) mir.ValueID {
 		return b.emitInterfaceTypeCheck(val, expr.TargetType, expr.Location)
 	}
 
-	// Not a union or interface - should have been caught by type checker
-	b.reportUnsupported("'is' check on non-union/non-interface type", expr.Loc())
-	return mir.InvalidValue
+	// Concrete type: compile-time check
+	if valType == nil || expr.TargetType == nil {
+		return b.emitConst(types.TypeBool, "0", expr.Location)
+	}
+	if valType.Equals(expr.TargetType) {
+		return b.emitConst(types.TypeBool, "1", expr.Location)
+	}
+	return b.emitConst(types.TypeBool, "0", expr.Location)
 }
 
 // emitUnionTypeCheckImpl implements union variant checking.
@@ -2890,7 +3161,7 @@ func (b *functionBuilder) emitUnionTypeCheckImpl(unionVal mir.ValueID, unionType
 
 	if variantIndex < 0 {
 		// Target type is not a variant - should have been caught by type checker
-		b.reportUnsupported("invalid union variant", &loc)
+		b.reportUnsupported("internal error: invalid union variant access (type checker bug)", &loc)
 		return mir.InvalidValue
 	}
 
@@ -2944,13 +3215,6 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
-	// The RHS must be a RangeExpr
-	rangeExpr, ok := expr.Y.(*hir.RangeExpr)
-	if !ok {
-		b.reportUnsupported("'in' operator without range expression", expr.Loc())
-		return mir.InvalidValue
-	}
-
 	// Lower the value being checked (LHS)
 	val := b.lowerExpr(expr.X)
 	if val == mir.InvalidValue {
@@ -2958,57 +3222,97 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 	}
 	valType := b.exprType(expr.X)
 
-	// Lower the range bounds
-	startVal := b.lowerExpr(rangeExpr.Start)
+	return b.emitInCheckValue(val, valType, expr.Y, expr.Location)
+}
+
+func (b *functionBuilder) emitInCheckValue(val mir.ValueID, valType types.SemType, rhs hir.Expr, loc source.Location) mir.ValueID {
+	if rhs == nil {
+		return mir.InvalidValue
+	}
+
+	if rangeExpr, ok := rhs.(*hir.RangeExpr); ok {
+		return b.emitRangeCheckValue(val, valType, rangeExpr, loc)
+	}
+
+	return b.emitArrayMembershipValue(val, valType, rhs, loc)
+}
+
+func (b *functionBuilder) emitRangeCheckValue(val mir.ValueID, valType types.SemType, rangeExpr *hir.RangeExpr, loc source.Location) mir.ValueID {
+	if rangeExpr == nil {
+		return mir.InvalidValue
+	}
+
+	elemType := valType
+	if rangeExpr.Type != nil {
+		if arrType, ok := types.UnwrapType(rangeExpr.Type).(*types.ArrayType); ok && arrType != nil && arrType.Element != nil {
+			elemType = arrType.Element
+		}
+	}
+	if elemType == nil {
+		elemType = types.TypeUnknown
+	}
+
+	// Cast the checked value to the range element type when possible.
+	if valType != nil && elemType != nil && types.IsNumeric(types.UnwrapType(valType)) && types.IsNumeric(types.UnwrapType(elemType)) && !valType.Equals(elemType) {
+		val = b.castValue(val, valType, elemType, loc)
+		valType = elemType
+	}
+
+	startVal := b.lowerRangeValue(rangeExpr.Start, elemType, loc)
 	if startVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
 
-	endVal := b.lowerExpr(rangeExpr.End)
+	endVal := b.lowerRangeValue(rangeExpr.End, elemType, loc)
 	if endVal == mir.InvalidValue {
 		return mir.InvalidValue
 	}
 
-	// Generate: val >= start
-	lowerCheck := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, val, startVal, types.TypeBool, expr.Location)
-	if lowerCheck == mir.InvalidValue {
-		return mir.InvalidValue
-	}
-
-	// Generate: val < end (or val <= end for inclusive)
-	upperOp := tokens.LESS_TOKEN
-	if rangeExpr.Inclusive {
-		upperOp = tokens.LESS_EQUAL_TOKEN
-	}
-	upperCheck := b.emitBinary(upperOp, val, endVal, types.TypeBool, expr.Location)
-	if upperCheck == mir.InvalidValue {
-		return mir.InvalidValue
-	}
-
-	// Combine: lowerCheck && upperCheck
-	boundsCheck := lowerCheck
-	if lowerCheck != upperCheck {
-		id := b.gen.nextValueID()
-		b.emitInstr(&mir.Binary{
-			Result:   id,
-			Op:       tokens.AND_TOKEN,
-			Left:     lowerCheck,
-			Right:    upperCheck,
-			Type:     types.TypeBool,
-			Location: expr.Location,
-		})
-		boundsCheck = id
-	}
-
-	// If there's a step, we need to check alignment: (val - start) % step == 0
-	// Note: Float ranges are rejected at type-checking phase, so we only handle integers here.
+	var incrVal mir.ValueID
 	if rangeExpr.Incr != nil {
-		stepVal := b.lowerExpr(rangeExpr.Incr)
-		if stepVal == mir.InvalidValue {
-			return mir.InvalidValue
-		}
+		incrVal = b.lowerRangeValue(rangeExpr.Incr, elemType, loc)
+	} else {
+		incrVal = b.rangeConst(elemType, "1", loc)
+	}
+	if incrVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
 
-		// Calculate: val - start
+	startType := b.exprType(rangeExpr.Start)
+	endType := b.exprType(rangeExpr.End)
+	incrType := b.exprType(rangeExpr.Incr)
+	mismatch := b.rangeStepFloatMismatch(startType, endType, incrType)
+	b.emitRangeValidation(startVal, endVal, incrVal, elemType, loc, mismatch)
+
+	condToken := tokens.LESS_TOKEN
+	negCondToken := tokens.GREATER_TOKEN
+	if rangeExpr.Inclusive {
+		condToken = tokens.LESS_EQUAL_TOKEN
+		negCondToken = tokens.GREATER_EQUAL_TOKEN
+	}
+
+	zeroVal := b.rangeConst(elemType, "0", loc)
+	if zeroVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+
+	posCheck := b.rangeCompare(tokens.GREATER_TOKEN, incrVal, zeroVal, elemType, loc)
+	negCheck := b.rangeCompare(tokens.LESS_TOKEN, incrVal, zeroVal, elemType, loc)
+
+	posLower := b.rangeCompare(tokens.GREATER_EQUAL_TOKEN, val, startVal, elemType, loc)
+	posUpper := b.rangeCompare(condToken, val, endVal, elemType, loc)
+	posBounds := b.emitBinary(tokens.AND_TOKEN, posLower, posUpper, types.TypeBool, loc)
+
+	negLower := b.rangeCompare(tokens.LESS_EQUAL_TOKEN, val, startVal, elemType, loc)
+	negUpper := b.rangeCompare(negCondToken, val, endVal, elemType, loc)
+	negBounds := b.emitBinary(tokens.AND_TOKEN, negLower, negUpper, types.TypeBool, loc)
+
+	posAnd := b.emitBinary(tokens.AND_TOKEN, posCheck, posBounds, types.TypeBool, loc)
+	negAnd := b.emitBinary(tokens.AND_TOKEN, negCheck, negBounds, types.TypeBool, loc)
+	boundsCheck := b.emitBinary(tokens.OR_TOKEN, posAnd, negAnd, types.TypeBool, loc)
+
+	// If there's a step, check alignment: (val - start) % step == 0
+	if rangeExpr.Incr != nil {
 		diffID := b.gen.nextValueID()
 		b.emitInstr(&mir.Binary{
 			Result:   diffID,
@@ -3016,33 +3320,29 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 			Left:     val,
 			Right:    startVal,
 			Type:     valType,
-			Location: expr.Location,
+			Location: loc,
 		})
 
-		// Calculate: (val - start) % step
 		modID := b.gen.nextValueID()
 		b.emitInstr(&mir.Binary{
 			Result:   modID,
 			Op:       tokens.MOD_TOKEN,
 			Left:     diffID,
-			Right:    stepVal,
+			Right:    incrVal,
 			Type:     valType,
-			Location: expr.Location,
+			Location: loc,
 		})
 
-		// Create zero constant for comparison
-		zeroID := b.emitConst(valType, "0", expr.Location)
+		zeroID := b.emitConst(valType, "0", loc)
 		if zeroID == mir.InvalidValue {
 			return mir.InvalidValue
 		}
 
-		// Check: mod == 0
-		alignCheck := b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, modID, zeroID, types.TypeBool, expr.Location)
+		alignCheck := b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, modID, zeroID, types.TypeBool, loc)
 		if alignCheck == mir.InvalidValue {
 			return mir.InvalidValue
 		}
 
-		// Final result: boundsCheck && alignCheck
 		finalID := b.gen.nextValueID()
 		b.emitInstr(&mir.Binary{
 			Result:   finalID,
@@ -3050,12 +3350,145 @@ func (b *functionBuilder) emitRangeCheck(expr *hir.BinaryExpr) mir.ValueID {
 			Left:     boundsCheck,
 			Right:    alignCheck,
 			Type:     types.TypeBool,
-			Location: expr.Location,
+			Location: loc,
 		})
 		return finalID
 	}
 
 	return boundsCheck
+}
+
+func (b *functionBuilder) emitArrayMembershipValue(val mir.ValueID, valType types.SemType, arrExpr hir.Expr, loc source.Location) mir.ValueID {
+	if arrExpr == nil {
+		return mir.InvalidValue
+	}
+
+	arrExprType := b.exprType(arrExpr)
+	if arrExprType == nil {
+		b.reportUnsupported("'in' operator not yet implemented for arrays", &loc)
+		return mir.InvalidValue
+	}
+	arrExprType = types.UnwrapType(arrExprType)
+	var refType *types.ReferenceType
+	if ref, ok := arrExprType.(*types.ReferenceType); ok {
+		refType = ref
+		arrExprType = types.UnwrapType(ref.Inner)
+	}
+	arrType, ok := arrExprType.(*types.ArrayType)
+	if !ok || arrType == nil {
+		b.reportUnsupported("'in' operator requires array type, got non-array", &loc)
+		return mir.InvalidValue
+	}
+
+	arrVal := b.lowerExpr(arrExpr)
+	if arrVal == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	// If we have a reference to a dynamic array, load the array value.
+	if refType != nil && arrType.Length < 0 {
+		arrVal = b.emitLoad(arrVal, refType.Inner, loc)
+	}
+
+	elemType := arrType.Element
+	if elemType == nil {
+		elemType = types.TypeUnknown
+	}
+
+	// Initialize loop index and found flag
+	idxAddr := b.emitAlloca(types.TypeI32, loc)
+	b.emitStore(idxAddr, b.emitConst(types.TypeI32, "0", loc), loc)
+	foundAddr := b.emitAlloca(types.TypeBool, loc)
+	b.emitStore(foundAddr, b.emitConst(types.TypeBool, "0", loc), loc)
+
+	var lenVal mir.ValueID
+	if arrType.Length >= 0 {
+		lenVal = b.emitConst(types.TypeI32, strconv.Itoa(arrType.Length), loc)
+	} else {
+		lenVal = b.emitArrayLen(arrVal, loc)
+	}
+
+	condBlock := b.newBlock("in.cond", loc)
+	bodyBlock := b.newBlock("in.body", loc)
+	foundBlock := b.newBlock("in.found", loc)
+	nextBlock := b.newBlock("in.next", loc)
+	exitBlock := b.newBlock("in.end", loc)
+
+	b.branchIfNoTerm(condBlock.ID, loc)
+
+	b.setBlock(condBlock)
+	idxVal := b.emitLoad(idxAddr, types.TypeI32, loc)
+	cond := b.emitBinary(tokens.LESS_TOKEN, idxVal, lenVal, types.TypeBool, loc)
+	b.current.Term = &mir.CondBr{
+		Cond:     cond,
+		Then:     bodyBlock.ID,
+		Else:     exitBlock.ID,
+		Location: loc,
+	}
+
+	b.setBlock(bodyBlock)
+	elemVal := b.gen.nextValueID()
+	b.emitInstr(&mir.ArrayGet{
+		Result:   elemVal,
+		Array:    arrVal,
+		Index:    idxVal,
+		Type:     elemType,
+		Location: loc,
+	})
+	eq := b.emitEqualityCompare(val, valType, elemVal, elemType, loc)
+	if eq == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	b.current.Term = &mir.CondBr{
+		Cond:     eq,
+		Then:     foundBlock.ID,
+		Else:     nextBlock.ID,
+		Location: loc,
+	}
+
+	b.setBlock(foundBlock)
+	b.emitStore(foundAddr, b.emitConst(types.TypeBool, "1", loc), loc)
+	b.branchIfNoTerm(exitBlock.ID, loc)
+
+	b.setBlock(nextBlock)
+	curIdx := b.emitLoad(idxAddr, types.TypeI32, loc)
+	nextIdx := b.emitBinary(tokens.PLUS_TOKEN, curIdx, b.emitConst(types.TypeI32, "1", loc), types.TypeI32, loc)
+	b.emitStore(idxAddr, nextIdx, loc)
+	b.branchIfNoTerm(condBlock.ID, loc)
+
+	b.setBlock(exitBlock)
+	return b.emitLoad(foundAddr, types.TypeBool, loc)
+}
+
+func (b *functionBuilder) emitEqualityCompare(left mir.ValueID, leftType types.SemType, right mir.ValueID, rightType types.SemType, loc source.Location) mir.ValueID {
+	if leftType == nil || leftType.Equals(types.TypeUnknown) {
+		leftType = rightType
+	}
+	if rightType == nil || rightType.Equals(types.TypeUnknown) {
+		rightType = leftType
+	}
+
+	leftBase := types.UnwrapType(leftType)
+	rightBase := types.UnwrapType(rightType)
+	leftIsFloat := types.IsFloat(leftBase) || types.IsUntypedFloat(leftType)
+	rightIsFloat := types.IsFloat(rightBase) || types.IsUntypedFloat(rightType)
+	if (leftIsFloat || rightIsFloat) && !isLargePrimitiveType(leftType) && !isLargePrimitiveType(rightType) {
+		target := compareFloatType(leftType, rightType)
+		if target != nil && !target.Equals(types.TypeUnknown) {
+			if leftType != nil && types.IsNumeric(types.UnwrapType(leftType)) && !leftType.Equals(target) {
+				left = b.castValue(left, leftType, target, loc)
+				leftType = target
+			}
+			if rightType != nil && types.IsNumeric(types.UnwrapType(rightType)) && !rightType.Equals(target) {
+				right = b.castValue(right, rightType, target, loc)
+				rightType = target
+			}
+		}
+	}
+
+	if isLargePrimitiveType(leftType) {
+		return b.emitLargeCompare(tokens.DOUBLE_EQUAL_TOKEN, left, right, leftType, loc)
+	}
+	return b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, left, right, types.TypeBool, loc)
 }
 
 func isMoveExpr(expr hir.Expr) bool {
@@ -3129,29 +3562,9 @@ func (b *functionBuilder) resetHeapBinding(ident *hir.Ident, loc source.Location
 	if ident == nil || ident.Symbol == nil {
 		return
 	}
-	typ := b.getStorageType(ident)
-	if typ == nil {
-		return
-	}
-	heapAddr := b.emitHeapAlloc(mir.InvalidValue, typ, loc)
-	if heapAddr == mir.InvalidValue {
-		return
-	}
-	b.slots[ident.Symbol] = heapAddr
-	b.boxed[ident.Symbol] = heapAddr
-
-	bind, ok := b.bindings[ident.Symbol]
-	if ok {
-		if elem, ok := b.ptrElem[bind]; ok {
-			if _, ok := types.UnwrapType(elem).(*types.ReferenceType); ok {
-				b.emitStore(bind, heapAddr, loc)
-				return
-			}
-		}
-	}
-	bind = b.emitAlloca(types.NewReference(typ), loc)
-	b.emitStore(bind, heapAddr, loc)
-	b.bindings[ident.Symbol] = bind
+	// Mark the symbol as moved — the heap pointer ownership has been transferred.
+	// Do NOT allocate a fresh heap slot; the variable is dead after move.
+	b.moved[ident.Symbol] = true
 }
 
 func (b *functionBuilder) bindingAddr(ident *hir.Ident) mir.ValueID {
@@ -3323,7 +3736,7 @@ func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.
 			Location: expr.Location,
 		})
 		if expr.Catch != nil {
-			b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+			b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 		}
 		return result
 	}
@@ -3338,7 +3751,7 @@ func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.
 			Location: expr.Location,
 		})
 		if expr.Catch != nil {
-			b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+			b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 		}
 		return out
 	}
@@ -3357,7 +3770,7 @@ func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.
 	})
 
 	if expr.Catch != nil {
-		b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+		b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 	}
 
 	return result
@@ -3395,7 +3808,7 @@ func (b *functionBuilder) emitCallIndirect(callee mir.ValueID, args []mir.ValueI
 			Location: expr.Location,
 		})
 		if expr.Catch != nil {
-			b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+			b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 		}
 		return result
 	}
@@ -3410,7 +3823,7 @@ func (b *functionBuilder) emitCallIndirect(callee mir.ValueID, args []mir.ValueI
 			Location: expr.Location,
 		})
 		if expr.Catch != nil {
-			b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+			b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 		}
 		return out
 	}
@@ -3428,7 +3841,7 @@ func (b *functionBuilder) emitCallIndirect(callee mir.ValueID, args []mir.ValueI
 	})
 
 	if expr.Catch != nil {
-		b.reportUnsupported("call-site catch should be lowered in HIR", &expr.Location)
+		b.reportUnsupported("internal error: call-site catch should have been lowered in HIR phase", &expr.Location)
 	}
 
 	return result
@@ -3441,7 +3854,7 @@ func (b *functionBuilder) lowerQualifiedValue(expr *hir.ScopeResolutionExpr) mir
 
 	name, ok := b.qualifiedName(expr)
 	if !ok {
-		b.reportUnsupported("qualified value", &expr.Location)
+		b.reportUnsupported("internal error: malformed qualified name", &expr.Location)
 		return mir.InvalidValue
 	}
 
@@ -3471,7 +3884,7 @@ func (b *functionBuilder) lowerQualifiedValue(expr *hir.ScopeResolutionExpr) mir
 		return b.emitLoad(addr, expr.Type, expr.Location)
 	}
 
-	b.reportUnsupported(fmt.Sprintf("qualified value %s", name), &expr.Location)
+	b.reportUnsupported(fmt.Sprintf("cannot resolve qualified name '%s' (not found as const, function, or global)", name), &expr.Location)
 	return mir.InvalidValue
 }
 
@@ -3835,7 +4248,7 @@ func (b *functionBuilder) lowerFieldAddr(expr *hir.SelectorExpr) mir.ValueID {
 	basePtr := mir.InvalidValue
 	baseType := b.exprType(expr.X)
 	if baseType == nil {
-		b.reportUnsupported("selector base", expr.Loc())
+		b.reportUnsupported("empty selector base", expr.Loc())
 		return mir.InvalidValue
 	}
 
@@ -3909,6 +4322,30 @@ func (b *functionBuilder) lowerCompositeLit(expr *hir.CompositeLit) mir.ValueID 
 		b.reportUnsupported("composite literal type", expr.Loc())
 		return mir.InvalidValue
 	}
+
+	// Handle optional-wrapped composite literals: ?[]T, ?StructType, ?MapType
+	if optType, ok := types.UnwrapType(expr.Type).(*types.OptionalType); ok {
+		// Create a temporary expression with the unwrapped type
+		innerExpr := *expr
+		innerExpr.Type = optType.Inner
+
+		// Lower the inner composite literal
+		innerValue := b.lowerCompositeLit(&innerExpr)
+		if innerValue == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+
+		// Wrap the result in OptionalSome
+		id := b.gen.nextValueID()
+		b.emitInstr(&mir.OptionalSome{
+			Result:   id,
+			Value:    innerValue,
+			Type:     optType,
+			Location: expr.Location,
+		})
+		return id
+	}
+
 	switch typ := types.UnwrapType(expr.Type).(type) {
 	case *types.StructType:
 		out := b.emitAlloca(expr.Type, expr.Location)
@@ -6118,6 +6555,8 @@ func (b *functionBuilder) exprType(expr hir.Expr) types.SemType {
 		return e.Type
 	case *hir.ResultUnwrap:
 		return e.Type
+	case *hir.ResultPropagate:
+		return e.Type
 	case *hir.DerefExpr:
 		return e.Type
 	default:
@@ -6617,6 +7056,34 @@ func (b *functionBuilder) emitHeapAlloc(value mir.ValueID, typ types.SemType, lo
 	return box
 }
 
+// emitHeapFree emits a call to ferret_free for a heap pointer.
+func (b *functionBuilder) emitHeapFree(heapPtr mir.ValueID, loc source.Location) {
+	if heapPtr == mir.InvalidValue {
+		return
+	}
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   "ferret_free",
+		Args:     []mir.ValueID{heapPtr},
+		Type:     types.TypeVoid,
+		Location: loc,
+	})
+}
+
+// emitHeapCleanup frees all heap-allocated variables that haven't been moved.
+// Called before return statements and at implicit function exit.
+func (b *functionBuilder) emitHeapCleanup(loc source.Location) {
+	if b.current == nil || b.current.Term != nil {
+		return
+	}
+	for sym, heapPtr := range b.boxed {
+		if b.moved[sym] {
+			continue
+		}
+		b.emitHeapFree(heapPtr, loc)
+	}
+}
+
 func (b *functionBuilder) emitStore(addr, value mir.ValueID, loc source.Location) {
 	if elem, ok := b.ptrElem[addr]; ok {
 		if _, ok := dynamicArrayValueType(elem); ok {
@@ -6809,6 +7276,7 @@ func (b *functionBuilder) emitBoundsCheckedIndex(indexVal, lenVal mir.ValueID, i
 	mergeBlock := b.newBlock("index.merge", loc)
 	okBlock := b.newBlock("index.ok", loc)
 	oobBlock := b.newBlock("index.oob", loc)
+	idxSlot := b.emitAlloca(indexType, loc)
 
 	b.current.Term = &mir.CondBr{
 		Cond:     condNeg,
@@ -6819,23 +7287,15 @@ func (b *functionBuilder) emitBoundsCheckedIndex(indexVal, lenVal mir.ValueID, i
 
 	b.setBlock(negBlock)
 	idxNeg := b.emitBinary(tokens.PLUS_TOKEN, lenVal, indexVal, indexType, loc)
+	b.emitStore(idxSlot, idxNeg, loc)
 	negBlock.Term = &mir.Br{Target: mergeBlock.ID, Location: loc}
 
 	b.setBlock(posBlock)
-	idxPos := indexVal
+	b.emitStore(idxSlot, indexVal, loc)
 	posBlock.Term = &mir.Br{Target: mergeBlock.ID, Location: loc}
 
 	b.setBlock(mergeBlock)
-	idxAdj := b.gen.nextValueID()
-	b.emitInstr(&mir.Phi{
-		Result: idxAdj,
-		Type:   indexType,
-		Incoming: []mir.PhiIncoming{
-			{Pred: negBlock.ID, Value: idxNeg},
-			{Pred: posBlock.ID, Value: idxPos},
-		},
-		Location: loc,
-	})
+	idxAdj := b.emitLoad(idxSlot, indexType, loc)
 
 	condLow := b.emitBinary(tokens.LESS_TOKEN, idxAdj, zero, indexType, loc)
 	condHigh := b.emitBinary(tokens.GREATER_EQUAL_TOKEN, idxAdj, lenVal, indexType, loc)

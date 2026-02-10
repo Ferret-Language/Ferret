@@ -25,6 +25,8 @@ memopt(Fn *fn)
 		for (u=t->use; u != &t->use[t->nuse]; u++) {
 			if (u->type != UIns)
 				goto Skip;
+			if (u->bid != b->id)
+				goto Skip;
 			l = u->u.ins;
 			if (isload(l->op))
 			if (s == -1 || s == loadsz(l)) {

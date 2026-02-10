@@ -1,0 +1,13 @@
+import "std/io";
+import "test_global_vars/vars_test" as vars;
+
+fn main() {
+    io::Println("B_global_value: ", vars::B_global_value);
+    io::Println("C_global_value: ", vars::C_global_value);
+    io::Println("Compute_sum (B+C): ", vars::Compute_sum());
+    io::Println("Use_b_var result: ", vars::Use_b_var());
+    io::Println("Use_c_var result: ", vars::Use_c_var());
+    io::Println("Use_computed_sum result: ", vars::Use_computed_sum());
+    io::Println("Use_both_vars result: ", vars::Use_both_vars());
+    io::Println("Global variable order independence test passed!");
+}

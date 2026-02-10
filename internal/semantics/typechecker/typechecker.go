@@ -305,6 +305,8 @@ func referencesIdentOutsideFuncLit(expr ast.Expression, name string) (bool, *sou
 		return referencesIdentOutsideFuncLit(e.X, name)
 	case *ast.PostfixExpr:
 		return referencesIdentOutsideFuncLit(e.X, name)
+	case *ast.ErrorPropagateExpr:
+		return referencesIdentOutsideFuncLit(e.X, name)
 	case *ast.CallExpr:
 		if found, loc := referencesIdentOutsideFuncLit(e.Fun, name); found {
 			return found, loc
@@ -751,28 +753,73 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 					caseNarrowing, _ = narrowingAnalyzer.AnalyzeCondition(ctx, mod, syntheticIsExpr, nil)
 
 				case *ast.RangeCheckPattern:
-					// Range check pattern: in Range
-					// Check that the range expression is valid
+					// Range check pattern: in Range or in Array
 					rangeType := checkExpr(ctx, mod, pattern.Range, types.TypeUnknown)
 
-					// Check if it's a RangeExpr
-					if _, ok := pattern.Range.(*ast.RangeExpr); !ok {
-						ctx.Diagnostics.Add(
-							diagnostics.NewError("range check pattern requires a range expression").
-								WithPrimaryLabel(pattern.Range.Loc(), "not a range expression").
-								WithCode(diagnostics.ErrTypeMismatch).
-								WithHelp("use a range expression like '0..10' or '0..=10'"),
-						)
-					}
+					if rangeExpr, ok := pattern.Range.(*ast.RangeExpr); ok {
+						// Range expression: numeric only
+						if !matchType.Equals(types.TypeUnknown) && !rangeType.Equals(types.TypeUnknown) {
+							if !types.IsNumericType(matchType) {
+								ctx.Diagnostics.Add(
+									diagnostics.NewError(fmt.Sprintf("range check requires numeric match expression, got '%s'", matchType.String())).
+										WithPrimaryLabel(n.Expr.Loc(), "not a numeric type").
+										WithCode(diagnostics.ErrTypeMismatch),
+								)
+							}
+						}
 
-					// Check that match expression type is compatible with ranges (numeric types)
-					if !matchType.Equals(types.TypeUnknown) && !rangeType.Equals(types.TypeUnknown) {
-						if !types.IsNumericType(matchType) {
+						// Check that range bounds are numeric
+						startType := inferExprType(ctx, mod, rangeExpr.Start)
+						endType := inferExprType(ctx, mod, rangeExpr.End)
+						startBase := types.UnwrapType(startType)
+						endBase := types.UnwrapType(endType)
+
+						if !types.IsNumericType(startBase) && !types.IsUntyped(startBase) {
 							ctx.Diagnostics.Add(
-								diagnostics.NewError(fmt.Sprintf("range check requires numeric match expression, got '%s'", matchType.String())).
-									WithPrimaryLabel(n.Expr.Loc(), "not a numeric type").
-									WithCode(diagnostics.ErrTypeMismatch),
+								diagnostics.NewError(fmt.Sprintf("range start must be numeric, got '%s'", startType.String())).
+									WithCode(diagnostics.ErrTypeMismatch).
+									WithPrimaryLabel(rangeExpr.Start.Loc(), "not a numeric type"),
 							)
+						}
+
+						if !types.IsNumericType(endBase) && !types.IsUntyped(endBase) {
+							ctx.Diagnostics.Add(
+								diagnostics.NewError(fmt.Sprintf("range end must be numeric, got '%s'", endType.String())).
+									WithCode(diagnostics.ErrTypeMismatch).
+									WithPrimaryLabel(rangeExpr.End.Loc(), "not a numeric type"),
+							)
+						}
+					} else {
+						// Array membership
+						rangeBase := types.UnwrapType(rangeType)
+						if ref, ok := rangeBase.(*types.ReferenceType); ok {
+							rangeBase = ref.Inner
+						}
+						arrayType, ok := rangeBase.(*types.ArrayType)
+						if !ok {
+							ctx.Diagnostics.Add(
+								diagnostics.NewError("range check pattern requires a range or array expression").
+									WithPrimaryLabel(pattern.Range.Loc(), "not a range or array expression").
+									WithCode(diagnostics.ErrTypeMismatch).
+									WithHelp("use a range expression like '0..10' or an array like '[1, 2, 3]'"),
+							)
+							break
+						}
+
+						elemType := arrayType.Element
+						if elemType == nil {
+							elemType = types.TypeUnknown
+						}
+						if !matchType.Equals(types.TypeUnknown) && !elemType.Equals(types.TypeUnknown) {
+							compat := checkTypeCompatibility(matchType, elemType)
+							if compat == Incompatible {
+								ctx.Diagnostics.Add(
+									diagnostics.NewError(fmt.Sprintf("pattern type '%s' does not match array element type '%s'", matchType.String(), elemType.String())).
+										WithPrimaryLabel(pattern.Range.Loc(), "incompatible pattern type").
+										WithCode(diagnostics.ErrTypeMismatch).
+										WithNote(fmt.Sprintf("match expression has type '%s'", matchType.String())),
+								)
+							}
 						}
 					}
 
@@ -1233,49 +1280,76 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 		}
 
 	case tokens.IN_TOKEN:
-		// 'in' operator: value in range
-		// RHS must be a RangeExpr
-		rangeExpr, ok := expr.Y.(*ast.RangeExpr)
+		// 'in' operator: value in range OR value in array
+		if rangeExpr, ok := expr.Y.(*ast.RangeExpr); ok {
+			// Range check: numeric only
+			if !types.IsNumericType(lhsBase) && !types.IsUntyped(lhsBase) {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("'in' operator requires numeric value, got '%s'", lhsType.String())).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(expr.X.Loc(), "not a numeric type"),
+				)
+				return
+			}
+
+			// Check that range bounds are numeric
+			startType := inferExprType(ctx, mod, rangeExpr.Start)
+			endType := inferExprType(ctx, mod, rangeExpr.End)
+			startBase := types.UnwrapType(startType)
+			endBase := types.UnwrapType(endType)
+
+			if !types.IsNumericType(startBase) && !types.IsUntyped(startBase) {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("range start must be numeric, got '%s'", startType.String())).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(rangeExpr.Start.Loc(), "not a numeric type"),
+				)
+			}
+
+			if !types.IsNumericType(endBase) && !types.IsUntyped(endBase) {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("range end must be numeric, got '%s'", endType.String())).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(rangeExpr.End.Loc(), "not a numeric type"),
+				)
+			}
+			return
+		}
+
+		// Array membership
+		rhsBase := types.UnwrapType(rhsType)
+		if ref, ok := rhsBase.(*types.ReferenceType); ok {
+			rhsBase = ref.Inner
+		}
+		arrayType, ok := rhsBase.(*types.ArrayType)
 		if !ok {
 			ctx.Diagnostics.Add(
-				diagnostics.NewError("'in' operator requires a range expression on the right side").
+				diagnostics.NewError("'in' operator requires a range or array expression on the right side").
 					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(expr.Y.Loc(), "not a range expression").
-					WithHelp("use a range like '0..10' or 'a..=b'"),
+					WithPrimaryLabel(expr.Y.Loc(), "not a range or array expression").
+					WithHelp("use a range like '0..10' or an array like '[1, 2, 3]'"),
 			)
 			return
 		}
 
-		// LHS must be numeric (to compare with range bounds)
-		if !types.IsNumericType(lhsBase) && !types.IsUntyped(lhsBase) {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("'in' operator requires numeric value, got '%s'", lhsType.String())).
-					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(expr.X.Loc(), "not a numeric type"),
-			)
+		elemType := arrayType.Element
+		if elemType == nil {
+			elemType = types.TypeUnknown
+		}
+		// Range expressions are typed as dynamic arrays but should be treated
+		// as numeric range checks for `in` to avoid allocation in codegen.
+		if _, ok := expr.Y.(*ast.RangeExpr); ok {
 			return
 		}
-
-		// Check that range bounds are numeric
-		startType := inferExprType(ctx, mod, rangeExpr.Start)
-		endType := inferExprType(ctx, mod, rangeExpr.End)
-		startBase := types.UnwrapType(startType)
-		endBase := types.UnwrapType(endType)
-
-		if !types.IsNumericType(startBase) && !types.IsUntyped(startBase) {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("range start must be numeric, got '%s'", startType.String())).
-					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(rangeExpr.Start.Loc(), "not a numeric type"),
-			)
-		}
-
-		if !types.IsNumericType(endBase) && !types.IsUntyped(endBase) {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("range end must be numeric, got '%s'", endType.String())).
-					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(rangeExpr.End.Loc(), "not a numeric type"),
-			)
+		if !types.IsUntyped(lhsType) && !types.IsUntyped(elemType) {
+			compatibility := checkTypeCompatibility(lhsType, elemType)
+			if compatibility == Incompatible {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("'in' operator requires compatible types, got '%s' in '%s'", lhsType.String(), elemType.String())).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(expr.Loc(), "incompatible types in membership check"),
+				)
+			}
 		}
 
 	case tokens.AND_TOKEN, tokens.OR_TOKEN:
@@ -1605,6 +1679,57 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	}
 }
 
+func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.PipeExpr) {
+	callExpr, ok := expr.Call.(*ast.CallExpr)
+	if !ok {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("pipe operator (|>) requires a function call on the right side").
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(expr.Call.Loc(), "expected a function call here"),
+		)
+		return
+	}
+
+	// Copy args because we may rewrite them.
+	args := append([]ast.Expression(nil), callExpr.Args...)
+
+	placeholderIdx := -1
+	for i, arg := range args {
+		ident, ok := arg.(*ast.IdentifierExpr)
+		if !ok {
+			continue
+		}
+		if ident.Name != "_" {
+			continue
+		}
+		if placeholderIdx != -1 {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("pipe expression can only have one placeholder (_)").
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(expr.Call.Loc(), "found multiple placeholders").
+					WithHelp("Use only one placeholder (_) to specify where the piped value should be inserted"),
+			)
+			return
+		}
+		placeholderIdx = i
+	}
+
+	if placeholderIdx == -1 {
+		args = append([]ast.Expression{expr.Value}, args...)
+	} else {
+		args[placeholderIdx] = expr.Value
+	}
+
+	// Reuse callExpr shape, just swap args for typecheck.
+	temp := *callExpr
+	temp.Args = args
+
+	checkCallExpr(ctx, mod, &temp)
+	if temp.Catch != nil {
+		checkCatchClause(ctx, mod, &temp)
+	}
+}
+
 func isEnumType(typ types.SemType) bool {
 	if typ == nil {
 		return false
@@ -1862,6 +1987,33 @@ func validateStructLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 func validateArrayLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, lit *ast.CompositeLit, arrayType *types.ArrayType) {
 	for _, elem := range lit.Elts {
 		if _, isKV := elem.(*ast.KeyValueExpr); !isKV {
+			if spread, ok := elem.(*ast.SpreadExpr); ok {
+				// Spread element must be an array/slice of the element type.
+				sliceType := types.NewArray(arrayType.Element, -1)
+				spreadType := checkExpr(ctx, mod, spread.X, sliceType)
+				spreadType = types.UnwrapType(spreadType)
+				arrType, ok := spreadType.(*types.ArrayType)
+				if !ok || arrType == nil {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("spread expression in array literal must be an array, found %s", spreadType.String())).
+							WithCode(diagnostics.ErrTypeMismatch).
+							WithPrimaryLabel(spread.Loc(), "expected array value"),
+					)
+					continue
+				}
+				if compat := checkTypeCompatibility(arrType.Element, arrayType.Element); !isImplicitlyCompatible(compat) {
+					elemTypeStr := types.ResolveUntypedType(arrType.Element, types.TypeUnknown)
+					diag := diagnostics.NewError(fmt.Sprintf("spread array element type must be %s but found %s", arrayType.Element.String(), elemTypeStr)).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(spread.Loc(), fmt.Sprintf("type %s", elemTypeStr)).
+						WithHelp(fmt.Sprintf("spread arrays must contain %s elements", arrayType.Element.String()))
+					diag = addExplicitCastHint(ctx, diag, arrayType.Element, compat, spread.X)
+					diag = addDerefHintIfNeeded(ctx, mod, diag, arrayType.Element, arrType.Element, spread.X)
+					ctx.Diagnostics.Add(diag)
+				}
+				continue
+			}
+
 			elemType := checkExpr(ctx, mod, elem, arrayType.Element)
 			if isReferenceType(arrayType.Element) && !elemType.Equals(types.TypeUnknown) && !isReferenceType(elemType) {
 				ctx.Diagnostics.Add(
@@ -3273,7 +3425,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		return callReturnType
 
 	case *ast.SpreadExpr:
-		// Spread is only valid in call arguments; type check inner expression.
+		// Spread is only valid in call arguments or array literals; type check inner expression.
 		innerType := checkExpr(ctx, mod, e.X, expected)
 		mod.SetExprType(expr, innerType)
 		return innerType
@@ -3332,10 +3484,14 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 				// No need to validate rhsType - any type is valid
 				return types.TypeBool
 			} else {
-				ctx.Diagnostics.Add(
-					diagnostics.NewError("'is' operator requires left operand to be a union type or interface{}").
-						WithPrimaryLabel(e.X.Loc(), "expected union or interface{}"),
-				)
+				// Allow 'is' on concrete types; this becomes a compile-time check.
+				if rhsType == nil || rhsType.Equals(types.TypeUnknown) {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError("invalid type in 'is' operator").
+							WithPrimaryLabel(e.Y.Loc(), "cannot resolve type").
+							WithCode(diagnostics.ErrTypeMismatch),
+					)
+				}
 				return types.TypeBool
 			}
 		}
@@ -3513,6 +3669,46 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		mod.SetExprType(expr, targetType)
 		return targetType
 
+	case *ast.ErrorPropagateExpr:
+		// Error propagation (!!) - unwraps Result or propagates error to caller
+		// Set flag to suppress UncaughtError on inner call expressions
+		oldInErrorPropagate := mod.InErrorPropagate
+		mod.InErrorPropagate = true
+		innerType := checkExpr(ctx, mod, e.X, types.TypeUnknown)
+		mod.InErrorPropagate = oldInErrorPropagate
+		resultType, isResult := types.UnwrapType(innerType).(*types.ResultType)
+		if !isResult {
+			// Cannot use !! on non-Result expression
+			ctx.Diagnostics.Add(
+				diagnostics.InvalidErrorPropagate(mod.FilePath, e.Loc(), innerType.String()),
+			)
+			mod.SetExprType(expr, innerType)
+			return innerType
+		}
+		// Check that enclosing function returns a compatible Result type
+		enclosingReturn := mod.CurrentFunctionReturnType
+		if enclosingReturn == nil {
+			enclosingReturn = types.TypeUnknown
+		}
+		enclosingResult, enclosingIsResult := types.UnwrapType(enclosingReturn).(*types.ResultType)
+		if !enclosingIsResult {
+			ctx.Diagnostics.Add(
+				diagnostics.ErrorPropagateNotInResultFunc(mod.FilePath, e.Loc(), enclosingReturn.String()),
+			)
+		} else {
+			// Check error type compatibility: inner error must be assignable to enclosing error
+			if !resultType.Err.Equals(types.TypeUnknown) && !enclosingResult.Err.Equals(types.TypeUnknown) {
+				if !resultType.Err.Equals(enclosingResult.Err) {
+					ctx.Diagnostics.Add(
+						diagnostics.ErrorPropagateTypeMismatch(mod.FilePath, e.Loc(), resultType.Err.String(), enclosingResult.Err.String()),
+					)
+				}
+			}
+		}
+		okType := resultType.Ok
+		mod.SetExprType(expr, okType)
+		return okType
+
 	case *ast.IndexExpr:
 		// Check both array and index expressions
 		baseType := checkExpr(ctx, mod, e.X, types.TypeUnknown)
@@ -3550,6 +3746,15 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		checkCastExpr(ctx, mod, e, sourceType, targetType)
 		mod.SetExprType(expr, targetType)
 		return targetType
+
+	case *ast.PipeExpr:
+		// For the call expression, we need to check it with the piped value,
+		// so we don't check e.Call independently - checkPipeExpr does it
+		checkPipeExpr(ctx, mod, e)
+		// Return the result type of the call
+		resultType := inferPipeExprType(ctx, mod, e)
+		mod.SetExprType(expr, resultType)
+		return resultType
 
 	case *ast.CompositeLit:
 		// Determine target type for validation
@@ -4876,6 +5081,10 @@ func validateResultTypeHandling(ctx *context_v2.CompilerContext, mod *context_v2
 		if expr.Catch == nil {
 			// In defer context, Result without catch is allowed (catch is optional)
 			if mod.InDeferContext {
+				return
+			}
+			// In error propagation context (!!), Result without catch is handled by !!
+			if mod.InErrorPropagate {
 				return
 			}
 			// No catch clause - error must be handled

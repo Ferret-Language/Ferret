@@ -206,6 +206,18 @@ func (r *ResultUnwrap) hirNode()              {}
 func (r *ResultUnwrap) hirExpr()              {}
 func (r *ResultUnwrap) Loc() *source.Location { return &r.Location }
 
+// ResultPropagate handles error propagation (expr!!).
+// Unwraps the ok value or returns the error to the enclosing function.
+type ResultPropagate struct {
+	Value    Expr
+	Type     types.SemType // the Ok type (result of the expression)
+	Location source.Location
+}
+
+func (r *ResultPropagate) hirNode()              {}
+func (r *ResultPropagate) hirExpr()              {}
+func (r *ResultPropagate) Loc() *source.Location { return &r.Location }
+
 // BinaryExpr represents a binary operation.
 type BinaryExpr struct {
 	X          Expr

@@ -486,22 +486,25 @@ const (
 
 const (
 	precLowest         = 1
-	precCoalescing     = 2
-	precLogicalOr      = 3
-	precLogicalAnd     = 4
-	precBitwiseOr      = 5
-	precBitwiseXor     = 6
-	precBitwiseAnd     = 7
-	precEquality       = 8
-	precComparison     = 9
-	precRange          = 10
-	precAdditive       = 11
-	precMultiplicative = 12
-	precExponent       = 13
+	precPipe           = 2 // Pipe operator (|>)
+	precCoalescing     = 3
+	precLogicalOr      = 4
+	precLogicalAnd     = 5
+	precBitwiseOr      = 6
+	precBitwiseXor     = 7
+	precBitwiseAnd     = 8
+	precEquality       = 9
+	precComparison     = 10
+	precRange          = 11
+	precAdditive       = 12
+	precMultiplicative = 13
+	precExponent       = 14
 )
 
 func (p *Parser) infixPrecedence(kind tokens.TOKEN) (int, assoc, bool) {
 	switch kind {
+	case tokens.PIPE_TOKEN:
+		return precPipe, leftAssoc, true
 	case tokens.COALESCING_TOKEN:
 		return precCoalescing, rightAssoc, true
 	case tokens.OR_TOKEN:
@@ -589,6 +592,19 @@ func (p *Parser) parseExpression(minPrec int) ast.Expression {
 			left = &ast.CoalescingExpr{
 				Cond:     left,
 				Default:  right,
+				Location: *source.NewLocation(&p.filepath, p.safeLoc(left).Start, p.safeLoc(right).End),
+			}
+			continue
+		}
+
+		if op.Kind == tokens.PIPE_TOKEN {
+			right := p.parseExpression(nextMin)
+			if right == nil {
+				right = p.invalidExpr()
+			}
+			left = &ast.PipeExpr{
+				Value:    left,
+				Call:     right,
 				Location: *source.NewLocation(&p.filepath, p.safeLoc(left).Start, p.safeLoc(right).End),
 			}
 			continue
@@ -853,6 +869,13 @@ func (p *Parser) parsePostfixAfter(expr ast.Expression) ast.Expression {
 			expr = &ast.PostfixExpr{
 				X:        expr,
 				Op:       op,
+				Location: *source.NewLocation(&p.filepath, p.safeLoc(expr).Start, &op.End),
+			}
+		} else if p.match(tokens.DOUBLE_BANG_TOKEN) {
+			// Error propagation: expr!!
+			op := p.advance()
+			expr = &ast.ErrorPropagateExpr{
+				X:        expr,
 				Location: *source.NewLocation(&p.filepath, p.safeLoc(expr).Start, &op.End),
 			}
 		} else {
@@ -1267,7 +1290,7 @@ func (p *Parser) parseArrayLiteral() *ast.CompositeLit {
 
 	elems := []ast.Expression{}
 	if !p.match(tokens.CLOSE_BRACKET) {
-		elem := p.parseExpr()
+		elem := p.parseArrayLiteralElement()
 		if elem != nil {
 			elems = append(elems, elem)
 		}
@@ -1276,7 +1299,7 @@ func (p *Parser) parseArrayLiteral() *ast.CompositeLit {
 			if p.match(tokens.CLOSE_BRACKET) {
 				break
 			}
-			elem := p.parseExpr()
+			elem := p.parseArrayLiteralElement()
 			if elem != nil {
 				elems = append(elems, elem)
 			}
@@ -1289,6 +1312,21 @@ func (p *Parser) parseArrayLiteral() *ast.CompositeLit {
 		Elts:     elems,
 		Location: *source.NewLocation(&p.filepath, &start, &end),
 	}
+}
+
+func (p *Parser) parseArrayLiteralElement() ast.Expression {
+	if p.match(tokens.THREE_DOT_TOKEN) {
+		dots := p.advance()
+		expr := p.parseExpr()
+		if expr == nil {
+			expr = p.invalidExpr()
+		}
+		return &ast.SpreadExpr{
+			X:        expr,
+			Location: *source.NewLocation(&p.filepath, &dots.Start, p.safeLoc(expr).End),
+		}
+	}
+	return p.parseExpr()
 }
 
 func (p *Parser) parseIdentifier() *ast.IdentifierExpr {

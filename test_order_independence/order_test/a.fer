@@ -1,0 +1,9 @@
+// a.fer - Uses function from b.fer before it's defined
+
+fn Use_b_function() -> i32 {
+    return Call_me() + 10;  // Call_me is defined in b.fer
+}
+
+fn Another_function() -> i32 {
+    return Use_c_type(Create_point(5, 10));  // Uses type and function from c.fer
+}

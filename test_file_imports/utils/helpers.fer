@@ -1,0 +1,7 @@
+// helpers.fer - tries to use math.fer without importing
+fn Double_add(a: i32, b: i32) -> i32 {
+    return Add(a, b) * 2;  // Should error - Add not imported
+}
+
+fn main() {
+}

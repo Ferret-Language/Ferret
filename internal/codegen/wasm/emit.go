@@ -2725,9 +2725,6 @@ func (g *Generator) optionalType(typ types.SemType) (*types.OptionalType, bool) 
 		return nil, false
 	}
 	typ = types.UnwrapType(typ)
-	if ref, ok := typ.(*types.ReferenceType); ok {
-		typ = types.UnwrapType(ref.Inner)
-	}
 	opt, ok := typ.(*types.OptionalType)
 	return opt, ok
 }

@@ -1,4 +1,4 @@
-import "std/io";
+//import "std/io";
 // Global builtins (implicitly available in every module).
 // Declarations only; implementations live in the runtime or compiler.
 
@@ -43,6 +43,6 @@ fn heap_addr(value: &Type) -> u64;
 // @extern
 fn panic(msg: str) -> void;
 
-fn print(args: ...io::Printable) {
-    io::Println(...args);
-}
+// fn print(args: ...io::Printable) {
+//     io::Println(...args);
+// }

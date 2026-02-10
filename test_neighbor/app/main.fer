@@ -1,0 +1,12 @@
+import "std/io";
+import "mathlib/utils";
+
+fn main() {
+    let sum := utils::Add(10, 20);
+    let product := utils::Multiply(5, 7);
+    let squared := utils::Square(9);
+    
+    io::Println("Sum: ", sum);
+    io::Println("Product: ", product);
+    io::Println("Square: ", squared);
+}

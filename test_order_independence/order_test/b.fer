@@ -1,0 +1,9 @@
+// b.fer - Defines function used by a.fer
+
+fn Call_me() -> i32 {
+    return 42;
+}
+
+fn Use_a_function() -> i32 {
+    return Use_b_function() * 2;  // Uses function from a.fer
+}

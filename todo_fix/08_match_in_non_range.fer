@@ -1,0 +1,14 @@
+import "std/io";
+// TODO: should be supported (match range pattern should accept arrays)
+// Current error: range check pattern requires a range expression
+fn main() {
+    let x: i32 = 21;
+    match x {
+        in [1, 2, 3] => {
+            io::Println("Yes");
+        }
+        _ => {
+            io::Println("No");
+        }
+    }
+}

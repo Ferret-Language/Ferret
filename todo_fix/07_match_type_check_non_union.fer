@@ -1,0 +1,14 @@
+import "std/io";
+// TODO: should be supported (type check on native types in match)
+// Current error: MIR lowering unsupported: type check pattern on non-union type
+fn main() {
+    let x: i32 = 1;
+    match x {
+        is i32 => { 
+            io::Println("is i32");
+        }
+        _ => { 
+            io::Println("not i32");
+        }
+    }
+}

@@ -1,0 +1,487 @@
+module redis/main
+
+globals
+  __ferret_init_done_redis_main: bool
+
+fn main() -> void {
+  block b1 entry:
+    call __ferret_init() : void
+    %t1 = const i64 36
+    %t2 = const i32 1
+    %t3 = const &void $typedesc1
+    %t4 = cast &u8 %t3
+    %t5 = call ferret_array_new(%t1, %t2, %t4) : []Printable
+    %t6 = const str Redis net test (requires local Redis on 127.0.0.1:6379)
+    %t7 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t8 = ptr_add i32 %t7, 0
+    %t9 = const i32 16
+    store %t8, %t9
+    %t10 = ptr_add str %t7, 4
+    store %t10, %t6
+    call ferret_array_append(%t5, %t7) : bool
+    call io::Println(%t5) : void
+    %t11 = alloca Client
+    %t12 = const str 127.0.0.1:6379
+    %t13 = call redis::Connect(%t12) : str ! Client
+    %t14 = result_is_ok %t13
+    br_if %t14, b2, b3
+  block b2 result.ok:
+    %t15 = result_unwrap Client %t13
+    %t33 = const u64 24
+    call ferret_memcpy(%t11, %t15, %t33) : void
+    %t34 = alloca str
+    %t35 = const u64 0
+    %t36 = cast str %t35
+    store %t34, %t36
+    %t37 = const str ferret:net:demo
+    call ferret_string_assign(%t34, %t37) : void
+    %t38 = alloca str
+    %t39 = const u64 0
+    %t40 = cast str %t39
+    store %t38, %t40
+    %t41 = const u64 0
+    %t42 = call redis::Client_Ping(%t11, %t41) : str ! str
+    %t43 = result_is_ok %t42
+    br_if %t43, b4, b5
+  block b3 result.err:
+    %t16 = result_unwrap str %t13
+    %t17 = alloca str
+    store %t17, %t16
+    %t18 = const i64 36
+    %t19 = const i32 2
+    %t20 = const &void $typedesc1
+    %t21 = cast &u8 %t20
+    %t22 = call ferret_array_new(%t18, %t19, %t21) : []Printable
+    %t23 = const str dial error:
+    %t24 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t25 = ptr_add i32 %t24, 0
+    %t26 = const i32 16
+    store %t25, %t26
+    %t27 = ptr_add str %t24, 4
+    store %t27, %t23
+    call ferret_array_append(%t22, %t24) : bool
+    %t28 = load str %t17
+    %t29 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t30 = ptr_add i32 %t29, 0
+    %t31 = const i32 16
+    store %t30, %t31
+    %t32 = ptr_add str %t29, 4
+    store %t32, %t28
+    call ferret_array_append(%t22, %t29) : bool
+    call io::Println(%t22) : void
+    ret
+  block b4 result.ok:
+    %t44 = result_unwrap str %t42
+    br b6
+  block b5 result.err:
+    %t45 = const str 
+    br b6
+  block b6 result.merge:
+    %t46 = phi str [b4: %t44, b5: %t45]
+    call ferret_string_assign(%t38, %t46) : void
+    %t47 = const i64 36
+    %t48 = const i32 2
+    %t49 = const &void $typedesc1
+    %t50 = cast &u8 %t49
+    %t51 = call ferret_array_new(%t47, %t48, %t50) : []Printable
+    %t52 = const str PING ->
+    %t53 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t54 = ptr_add i32 %t53, 0
+    %t55 = const i32 16
+    store %t54, %t55
+    %t56 = ptr_add str %t53, 4
+    store %t56, %t52
+    call ferret_array_append(%t51, %t53) : bool
+    %t57 = load str %t38
+    %t58 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t59 = ptr_add i32 %t58, 0
+    %t60 = const i32 16
+    store %t59, %t60
+    %t61 = ptr_add str %t58, 4
+    store %t61, %t57
+    call ferret_array_append(%t51, %t58) : bool
+    call io::Println(%t51) : void
+    %t62 = alloca bool
+    %t63 = const u64 0
+    %t64 = load str %t34
+    %t65 = const str hello
+    %t66 = call redis::Client_Set(%t11, %t63, %t64, %t65) : str ! bool
+    %t67 = result_is_ok %t66
+    br_if %t67, b7, b8
+  block b7 result.ok:
+    %t68 = result_unwrap bool %t66
+    store %t62, %t68
+    %t86 = const i64 36
+    %t87 = const i32 2
+    %t88 = const &void $typedesc1
+    %t89 = cast &u8 %t88
+    %t90 = call ferret_array_new(%t86, %t87, %t89) : []Printable
+    %t91 = const str SET ->
+    %t92 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t93 = ptr_add i32 %t92, 0
+    %t94 = const i32 16
+    store %t93, %t94
+    %t95 = ptr_add str %t92, 4
+    store %t95, %t91
+    call ferret_array_append(%t90, %t92) : bool
+    %t96 = load bool %t62
+    %t97 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t98 = ptr_add i32 %t97, 0
+    %t99 = const i32 19
+    store %t98, %t99
+    %t100 = ptr_add bool %t97, 4
+    store %t100, %t96
+    call ferret_array_append(%t90, %t97) : bool
+    call io::Println(%t90) : void
+    %t101 = alloca ?str
+    %t102 = const u64 0
+    %t103 = load str %t34
+    %t104 = call redis::Client_Get(%t11, %t102, %t103) : str ! ?str
+    %t105 = result_is_ok %t104
+    br_if %t105, b9, b10
+  block b8 result.err:
+    %t69 = result_unwrap str %t66
+    %t70 = alloca str
+    store %t70, %t69
+    %t71 = const i64 36
+    %t72 = const i32 2
+    %t73 = const &void $typedesc1
+    %t74 = cast &u8 %t73
+    %t75 = call ferret_array_new(%t71, %t72, %t74) : []Printable
+    %t76 = const str SET error:
+    %t77 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t78 = ptr_add i32 %t77, 0
+    %t79 = const i32 16
+    store %t78, %t79
+    %t80 = ptr_add str %t77, 4
+    store %t80, %t76
+    call ferret_array_append(%t75, %t77) : bool
+    %t81 = load str %t70
+    %t82 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t83 = ptr_add i32 %t82, 0
+    %t84 = const i32 16
+    store %t83, %t84
+    %t85 = ptr_add str %t82, 4
+    store %t85, %t81
+    call ferret_array_append(%t75, %t82) : bool
+    call io::Println(%t75) : void
+    ret
+  block b9 result.ok:
+    %t106 = result_unwrap ?str %t104
+    store %t101, %t106
+    %t124 = load ?str %t101
+    %t125 = optional_is_some %t124
+    %t126 = ! bool %t125
+    br_if %t126, b11, b13
+  block b10 result.err:
+    %t107 = result_unwrap str %t104
+    %t108 = alloca str
+    store %t108, %t107
+    %t109 = const i64 36
+    %t110 = const i32 2
+    %t111 = const &void $typedesc1
+    %t112 = cast &u8 %t111
+    %t113 = call ferret_array_new(%t109, %t110, %t112) : []Printable
+    %t114 = const str GET error:
+    %t115 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t116 = ptr_add i32 %t115, 0
+    %t117 = const i32 16
+    store %t116, %t117
+    %t118 = ptr_add str %t115, 4
+    store %t118, %t114
+    call ferret_array_append(%t113, %t115) : bool
+    %t119 = load str %t108
+    %t120 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t121 = ptr_add i32 %t120, 0
+    %t122 = const i32 16
+    store %t121, %t122
+    %t123 = ptr_add str %t120, 4
+    store %t123, %t119
+    call ferret_array_append(%t113, %t120) : bool
+    call io::Println(%t113) : void
+    ret
+  block b11 if.then:
+    %t127 = const i64 36
+    %t128 = const i32 1
+    %t129 = const &void $typedesc1
+    %t130 = cast &u8 %t129
+    %t131 = call ferret_array_new(%t127, %t128, %t130) : []Printable
+    %t132 = const str GET -> (nil)
+    %t133 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t134 = ptr_add i32 %t133, 0
+    %t135 = const i32 16
+    store %t134, %t135
+    %t136 = ptr_add str %t133, 4
+    store %t136, %t132
+    call ferret_array_append(%t131, %t133) : bool
+    call io::Println(%t131) : void
+    br b12
+  block b12 if.end:
+    %t153 = alloca bool
+    %t154 = const u64 0
+    %t155 = load str %t34
+    %t156 = const str world
+    %t157 = call redis::Client_Set(%t11, %t154, %t155, %t156) : str ! bool
+    %t158 = result_is_ok %t157
+    br_if %t158, b14, b15
+  block b13 if.else:
+    %t137 = const i64 36
+    %t138 = const i32 2
+    %t139 = const &void $typedesc1
+    %t140 = cast &u8 %t139
+    %t141 = call ferret_array_new(%t137, %t138, %t140) : []Printable
+    %t142 = const str GET ->
+    %t143 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t144 = ptr_add i32 %t143, 0
+    %t145 = const i32 16
+    store %t144, %t145
+    %t146 = ptr_add str %t143, 4
+    store %t146, %t142
+    call ferret_array_append(%t141, %t143) : bool
+    %t147 = load ?str %t101
+    %t148 = optional_unwrap str %t147
+    %t149 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t150 = ptr_add i32 %t149, 0
+    %t151 = const i32 16
+    store %t150, %t151
+    %t152 = ptr_add str %t149, 4
+    store %t152, %t148
+    call ferret_array_append(%t141, %t149) : bool
+    call io::Println(%t141) : void
+    br b12
+  block b14 result.ok:
+    %t159 = result_unwrap bool %t157
+    store %t153, %t159
+    %t177 = const i64 36
+    %t178 = const i32 2
+    %t179 = const &void $typedesc1
+    %t180 = cast &u8 %t179
+    %t181 = call ferret_array_new(%t177, %t178, %t180) : []Printable
+    %t182 = const str UPDATE ->
+    %t183 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t184 = ptr_add i32 %t183, 0
+    %t185 = const i32 16
+    store %t184, %t185
+    %t186 = ptr_add str %t183, 4
+    store %t186, %t182
+    call ferret_array_append(%t181, %t183) : bool
+    %t187 = load bool %t153
+    %t188 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t189 = ptr_add i32 %t188, 0
+    %t190 = const i32 19
+    store %t189, %t190
+    %t191 = ptr_add bool %t188, 4
+    store %t191, %t187
+    call ferret_array_append(%t181, %t188) : bool
+    call io::Println(%t181) : void
+    %t192 = alloca ?str
+    %t193 = const u64 0
+    %t194 = load str %t34
+    %t195 = call redis::Client_Get(%t11, %t193, %t194) : str ! ?str
+    %t196 = result_is_ok %t195
+    br_if %t196, b16, b17
+  block b15 result.err:
+    %t160 = result_unwrap str %t157
+    %t161 = alloca str
+    store %t161, %t160
+    %t162 = const i64 36
+    %t163 = const i32 2
+    %t164 = const &void $typedesc1
+    %t165 = cast &u8 %t164
+    %t166 = call ferret_array_new(%t162, %t163, %t165) : []Printable
+    %t167 = const str UPDATE error:
+    %t168 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t169 = ptr_add i32 %t168, 0
+    %t170 = const i32 16
+    store %t169, %t170
+    %t171 = ptr_add str %t168, 4
+    store %t171, %t167
+    call ferret_array_append(%t166, %t168) : bool
+    %t172 = load str %t161
+    %t173 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t174 = ptr_add i32 %t173, 0
+    %t175 = const i32 16
+    store %t174, %t175
+    %t176 = ptr_add str %t173, 4
+    store %t176, %t172
+    call ferret_array_append(%t166, %t173) : bool
+    call io::Println(%t166) : void
+    ret
+  block b16 result.ok:
+    %t197 = result_unwrap ?str %t195
+    store %t192, %t197
+    %t215 = load ?str %t192
+    %t216 = optional_is_some %t215
+    %t217 = ! bool %t216
+    br_if %t217, b18, b20
+  block b17 result.err:
+    %t198 = result_unwrap str %t195
+    %t199 = alloca str
+    store %t199, %t198
+    %t200 = const i64 36
+    %t201 = const i32 2
+    %t202 = const &void $typedesc1
+    %t203 = cast &u8 %t202
+    %t204 = call ferret_array_new(%t200, %t201, %t203) : []Printable
+    %t205 = const str GET error:
+    %t206 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t207 = ptr_add i32 %t206, 0
+    %t208 = const i32 16
+    store %t207, %t208
+    %t209 = ptr_add str %t206, 4
+    store %t209, %t205
+    call ferret_array_append(%t204, %t206) : bool
+    %t210 = load str %t199
+    %t211 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t212 = ptr_add i32 %t211, 0
+    %t213 = const i32 16
+    store %t212, %t213
+    %t214 = ptr_add str %t211, 4
+    store %t214, %t210
+    call ferret_array_append(%t204, %t211) : bool
+    call io::Println(%t204) : void
+    ret
+  block b18 if.then:
+    %t218 = const i64 36
+    %t219 = const i32 1
+    %t220 = const &void $typedesc1
+    %t221 = cast &u8 %t220
+    %t222 = call ferret_array_new(%t218, %t219, %t221) : []Printable
+    %t223 = const str GET -> (nil)
+    %t224 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t225 = ptr_add i32 %t224, 0
+    %t226 = const i32 16
+    store %t225, %t226
+    %t227 = ptr_add str %t224, 4
+    store %t227, %t223
+    call ferret_array_append(%t222, %t224) : bool
+    call io::Println(%t222) : void
+    br b19
+  block b19 if.end:
+    %t244 = alloca ?str
+    %t245 = const u64 0
+    %t246 = load str %t34
+    %t247 = call redis::Client_Get(%t11, %t245, %t246) : str ! ?str
+    %t248 = result_is_ok %t247
+    br_if %t248, b21, b22
+  block b20 if.else:
+    %t228 = const i64 36
+    %t229 = const i32 2
+    %t230 = const &void $typedesc1
+    %t231 = cast &u8 %t230
+    %t232 = call ferret_array_new(%t228, %t229, %t231) : []Printable
+    %t233 = const str GET ->
+    %t234 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t235 = ptr_add i32 %t234, 0
+    %t236 = const i32 16
+    store %t235, %t236
+    %t237 = ptr_add str %t234, 4
+    store %t237, %t233
+    call ferret_array_append(%t232, %t234) : bool
+    %t238 = load ?str %t192
+    %t239 = optional_unwrap str %t238
+    %t240 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t241 = ptr_add i32 %t240, 0
+    %t242 = const i32 16
+    store %t241, %t242
+    %t243 = ptr_add str %t240, 4
+    store %t243, %t239
+    call ferret_array_append(%t232, %t240) : bool
+    call io::Println(%t232) : void
+    br b19
+  block b21 result.ok:
+    %t249 = result_unwrap ?str %t247
+    store %t244, %t249
+    %t267 = load ?str %t244
+    %t268 = optional_is_some %t267
+    %t269 = ! bool %t268
+    br_if %t269, b23, b25
+  block b22 result.err:
+    %t250 = result_unwrap str %t247
+    %t251 = alloca str
+    store %t251, %t250
+    %t252 = const i64 36
+    %t253 = const i32 2
+    %t254 = const &void $typedesc1
+    %t255 = cast &u8 %t254
+    %t256 = call ferret_array_new(%t252, %t253, %t255) : []Printable
+    %t257 = const str GET error:
+    %t258 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t259 = ptr_add i32 %t258, 0
+    %t260 = const i32 16
+    store %t259, %t260
+    %t261 = ptr_add str %t258, 4
+    store %t261, %t257
+    call ferret_array_append(%t256, %t258) : bool
+    %t262 = load str %t251
+    %t263 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t264 = ptr_add i32 %t263, 0
+    %t265 = const i32 16
+    store %t264, %t265
+    %t266 = ptr_add str %t263, 4
+    store %t266, %t262
+    call ferret_array_append(%t256, %t263) : bool
+    call io::Println(%t256) : void
+    ret
+  block b23 if.then:
+    %t270 = const i64 36
+    %t271 = const i32 1
+    %t272 = const &void $typedesc1
+    %t273 = cast &u8 %t272
+    %t274 = call ferret_array_new(%t270, %t271, %t273) : []Printable
+    %t275 = const str GET -> (nil)
+    %t276 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t277 = ptr_add i32 %t276, 0
+    %t278 = const i32 16
+    store %t277, %t278
+    %t279 = ptr_add str %t276, 4
+    store %t279, %t275
+    call ferret_array_append(%t274, %t276) : bool
+    call io::Println(%t274) : void
+    br b24
+  block b24 if.end:
+    %t296 = const u64 0
+    call redis::Client_Close(%t11, %t296) : void
+    ret
+  block b25 if.else:
+    %t280 = const i64 36
+    %t281 = const i32 2
+    %t282 = const &void $typedesc1
+    %t283 = cast &u8 %t282
+    %t284 = call ferret_array_new(%t280, %t281, %t283) : []Printable
+    %t285 = const str GET ->
+    %t286 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t287 = ptr_add i32 %t286, 0
+    %t288 = const i32 16
+    store %t287, %t288
+    %t289 = ptr_add str %t286, 4
+    store %t289, %t285
+    call ferret_array_append(%t284, %t286) : bool
+    %t290 = load ?str %t244
+    %t291 = optional_unwrap str %t290
+    %t292 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t293 = ptr_add i32 %t292, 0
+    %t294 = const i32 16
+    store %t293, %t294
+    %t295 = ptr_add str %t292, 4
+    store %t295, %t291
+    call ferret_array_append(%t284, %t292) : bool
+    call io::Println(%t284) : void
+    br b24
+}
+
+fn __ferret_init() -> void {
+  block b27 init_guard:
+    %t299 = const &bool $__ferret_init_done_redis_main
+    %t300 = load bool %t299
+    br_if %t300, b28, b26
+  block b26 entry:
+    %t297 = const &bool $__ferret_init_done_redis_main
+    %t298 = const bool 1
+    store %t297, %t298
+    call io::__ferret_init() : void
+    call redis::__ferret_init() : void
+    ret
+  block b28 init_done:
+    ret
+}

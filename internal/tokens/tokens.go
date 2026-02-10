@@ -69,9 +69,10 @@ const (
 	MUT_TOKEN  TOKEN = "mut"
 	STAR_TOKEN TOKEN = "*" // dereference operator (also used for multiplication)
 	//unary operators
-	NOT_TOKEN  TOKEN = "!"
-	AT_TOKEN   TOKEN = "@"
-	HASH_TOKEN TOKEN = "#"
+	NOT_TOKEN         TOKEN = "!"
+	DOUBLE_BANG_TOKEN TOKEN = "!!"
+	AT_TOKEN          TOKEN = "@"
+	HASH_TOKEN        TOKEN = "#"
 	//arithmetic operators
 	EXP_TOKEN   TOKEN = "**"
 	MINUS_TOKEN TOKEN = "-"
@@ -110,6 +111,7 @@ const (
 	SEMICOLON_TOKEN  TOKEN = ";"
 	ARROW_TOKEN      TOKEN = "->"
 	FAT_ARROW_TOKEN  TOKEN = "=>"
+	PIPE_TOKEN       TOKEN = "|>"
 	COALESCING_TOKEN TOKEN = "??"
 	QUESTION_TOKEN   TOKEN = "?"
 

@@ -248,3 +248,16 @@ fn (c: &mut Client) Del(key: str) -> str ! i64 {
         return err!;
     };
 }
+
+fn (c: &mut Client) Incr(key: str) -> str ! i64 {
+    return c.CommandInt("INCR", key) catch err {
+        return err!;
+    };
+}
+
+fn (c: &mut Client) IncrBy(key: str, delta: i64) -> str ! i64 {
+    return c.CommandInt("INCRBY", key, "" + delta) catch err {
+        return err!;
+    };
+}
+

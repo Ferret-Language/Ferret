@@ -1,0 +1,105 @@
+import "std/io";
+
+// ---------- math helpers ----------
+
+fn add(x: i32, y: i32) -> i32 {
+    return x + y;
+}
+
+fn multiply(x: i32, y: i32) -> i32 {
+    return x * y;
+}
+
+// ---------- map / filter for []i32 ----------
+
+fn map_i32(xs: []i32, f: fn(_: i32) -> i32) -> []i32 {
+    let out: []i32 = [];
+    for x in xs {
+        append(&mut out, f(x));
+    }
+    return out;
+}
+
+fn filter_i32(xs: []i32, pred: fn(_: i32) -> bool) -> []i32 {
+    let out: []i32 = [];
+    for x in xs {
+        if pred(x) {
+            append(&mut out, x);
+        }
+    }
+    return out;
+}
+
+// ---------- predicates & transforms ----------
+
+fn is_even(x: i32) -> bool {
+    return (x & 1) == 0;
+}
+
+fn gt5(x: i32) -> bool {
+    return x > 5;
+}
+
+fn double(x: i32) -> i32 {
+    return x * 2;
+}
+
+fn plus1(x: i32) -> i32 {
+    return x + 1;
+}
+
+
+fn printArr(data: []i32) {
+    io::Print("[ ");
+    for i, v in data {
+        io::Print(v);
+        io::Print(" ");
+    }
+    io::Println("]");
+}
+
+// ---------- bitwise smoke corner ----------
+
+fn bitwise_demo() {
+    let a := 5 | 3;
+    let b := 5 ^ 3;
+    let c := 5 & 3;
+    let d := ~5;
+    io::Println("bitwise:", a, b, c, d);
+}
+
+// ---------- main pipe tests ----------
+
+fn main() {
+    bitwise_demo();
+
+    let xs: []i32 = [1,2,3,4,5,6,7,8];
+
+    // basic pipe append
+    let r1 := xs
+        |> filter_i32(is_even)
+        |> map_i32(double);
+    //io::Println("r1 =", r1); // [4,8,12,16]
+    printArr(r1);
+
+    // placeholder pipe
+    let r2 := xs
+        |> filter_i32(gt5)
+        |> map_i32(double);
+    //io::Println("r2 =", r2); // [12,14,16]
+    printArr(r2);
+
+
+    // mixed chaining
+    let r3 := xs
+        |> map_i32(double)
+        |> filter_i32(is_even)
+        |> map_i32(plus1);
+    //io::Println("r3 =", r3);
+    printArr(r3);
+
+
+    // scalar pipe still works
+    let s := 5 |> add(10) |> multiply(2);
+    io::Println("scalar =", s); // 30
+}

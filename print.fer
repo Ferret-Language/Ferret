@@ -1,3 +1,16 @@
+import "std/io";
+
+fn make() -> i32 {
+    let temp := 10;
+    io::Println(temp, heap_addr(&temp));
+    return temp;
+}
+
 fn main() {
-    print("hi");
+    io::Println("hi");
+
+    let a := 10;
+    let b := make();
+
+    io::Println(b, heap_addr(&b));
 }

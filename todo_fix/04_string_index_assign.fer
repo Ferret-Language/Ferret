@@ -1,0 +1,6 @@
+// Expected error (by design): string indexing must be explicit cast to []byte or []char
+fn main() {
+    let s: str = "hi";
+    let b: byte = 65;
+    s[0] = b;
+}

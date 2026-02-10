@@ -1,0 +1,7 @@
+import "std/io";
+import "net/http";
+
+fn main() {
+    let app := http::Server();
+    io::Println("Testing HTTP with bad import...");
+}

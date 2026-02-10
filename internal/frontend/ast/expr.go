@@ -71,6 +71,17 @@ func (p *PostfixExpr) INode()                {} // Implements Node interface
 func (p *PostfixExpr) Expr()                 {} // Expr is a marker interface for all expressions
 func (p *PostfixExpr) Loc() *source.Location { return &p.Location }
 
+// ErrorPropagateExpr represents an error propagation expression (expr!!)
+// If expr is a Result type, it unwraps the ok value or returns the error to the caller.
+type ErrorPropagateExpr struct {
+	X Expression // operand (must be a Result type expression)
+	source.Location
+}
+
+func (e *ErrorPropagateExpr) INode()                {} // Implements Node interface
+func (e *ErrorPropagateExpr) Expr()                 {} // Expr is a marker interface for all expressions
+func (e *ErrorPropagateExpr) Loc() *source.Location { return &e.Location }
+
 // IdentifierExpr represents an identifier
 type IdentifierExpr struct {
 	Name string
@@ -169,6 +180,19 @@ type CoalescingExpr struct {
 func (e *CoalescingExpr) INode()                {} // Implements Node interface
 func (e *CoalescingExpr) Expr()                 {} // Expr is a marker interface for all expressions
 func (e *CoalescingExpr) Loc() *source.Location { return &e.Location }
+
+// PipeExpr represents a pipe operation (value |> func)
+// The value on the left is passed as an argument to the function on the right.
+// The placeholder '_' in the function call indicates where the piped value should be inserted.
+type PipeExpr struct {
+	Value Expression // the value being piped (left side)
+	Call  Expression // the function call (right side)
+	source.Location
+}
+
+func (p *PipeExpr) INode()                {} // Implements Node interface
+func (p *PipeExpr) Expr()                 {} // Expr is a marker interface for all expressions
+func (p *PipeExpr) Loc() *source.Location { return &p.Location }
 
 // ForkExpr represents a fork expression for coroutines
 type ForkExpr struct {

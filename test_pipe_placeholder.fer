@@ -1,0 +1,27 @@
+import "std/io";
+
+fn add(x: i32, y: i32) -> i32 {
+    io::Println("Adding ", x, " and ", y);
+    return x + y;
+}
+
+fn printArr(data: []i32, n: i32) {
+    for v in data {
+        if v == n {
+            continue;
+        } 
+        io::Println(v);
+    }
+}
+
+fn main() {
+    let result: i32 = add(5, 10);
+    io::Println("The result of add(5, 10) is: ", result);
+
+    result |> add(1) |> io::Println("The result of add(1) is: ", _);
+    result |> add(_, 1) |> io::Println("The result of add(_, 1) is: ", _);
+
+    let arr := [1,2,3,4];
+
+    arr |> printArr(_, 4);
+}

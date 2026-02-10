@@ -2,7 +2,7 @@ type Counter struct {
     .Value: i32
 };
 
-fn (c: &Counter) Inc() {
+fn (c: &mut Counter) Inc() {  // Changed to &mut
     c.Value++;
 }
 
