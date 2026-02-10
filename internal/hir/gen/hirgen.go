@@ -656,9 +656,9 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 		}
 	}
 
-	// If no placeholder, append the piped value as the last argument
+	// If no placeholder, prepend the piped value as the first argument
 	if !placeholderFound {
-		transformedArgs = append(transformedArgs, pipedValue)
+		transformedArgs = append([]hir.Expr{pipedValue}, transformedArgs...)
 	}
 
 	// Create the transformed call expression

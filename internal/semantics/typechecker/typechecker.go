@@ -1710,21 +1710,24 @@ func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		}
 	}
 
-	// If no placeholder, append the piped value as the last argument
-	switch placeholderCount {
-	case 0:
-		transformedArgs = append(transformedArgs, expr.Value)
-	case 1:
-		// Replace the placeholder with the piped value
-		transformedArgs[placeholderIndex] = expr.Value
-	default:
-		// Multiple placeholders not allowed
+	// Check for multiple placeholders before transformation
+	if placeholderCount > 1 {
 		ctx.Diagnostics.Add(
 			diagnostics.NewError("pipe expression can only have one placeholder (_)").
 				WithCode(diagnostics.ErrTypeMismatch).
-				WithPrimaryLabel(expr.Call.Loc(), fmt.Sprintf("found %d placeholders", placeholderCount)),
+				WithPrimaryLabel(expr.Call.Loc(), fmt.Sprintf("found %d placeholders", placeholderCount)).
+				WithHelp("Use only one placeholder (_) to specify where the piped value should be inserted"),
 		)
 		return
+	}
+
+	// Transform arguments based on placeholder usage
+	if placeholderCount == 0 {
+		// No placeholder: prepend the piped value as the first argument
+		transformedArgs = append([]ast.Expression{expr.Value}, transformedArgs...)
+	} else {
+		// Replace the placeholder with the piped value
+		transformedArgs[placeholderIndex] = expr.Value
 	}
 
 	// Create a temporary call expression for type checking

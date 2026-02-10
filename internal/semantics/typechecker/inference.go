@@ -1050,18 +1050,30 @@ func inferPipeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 	copy(transformedArgs, callExpr.Args)
 
 	// Find placeholders (_) in the call arguments
-	placeholderFound := false
+	placeholderCount := 0
+	placeholderIndex := -1
 	for i, arg := range transformedArgs {
 		if ident, ok := arg.(*ast.IdentifierExpr); ok && ident.Name == "_" {
-			transformedArgs[i] = expr.Value
-			placeholderFound = true
-			break
+			placeholderCount++
+			if placeholderIndex == -1 {
+				placeholderIndex = i
+			}
 		}
 	}
 
-	// If no placeholder, append the piped value as the last argument
-	if !placeholderFound {
-		transformedArgs = append(transformedArgs, expr.Value)
+	// Handle multiple placeholders
+	if placeholderCount > 1 {
+		// Error will be reported in checkPipeExpr
+		return types.TypeUnknown
+	}
+
+	// Transform arguments based on placeholder usage
+	if placeholderCount == 0 {
+		// No placeholder: prepend the piped value as the first argument
+		transformedArgs = append([]ast.Expression{expr.Value}, transformedArgs...)
+	} else {
+		// Replace the placeholder with the piped value
+		transformedArgs[placeholderIndex] = expr.Value
 	}
 
 	// Create a temporary call expression for type inference
