@@ -1,0 +1,14 @@
+import "std/io";
+
+fn add(x: i32, y: i32) -> i32 {
+    io::Println("Adding ", x, " and ", y);
+    return x + y;
+}
+
+fn main() {
+    let result: i32 = add(5, 10);
+    io::Println("The result of add(5, 10) is: ", result);
+
+    result |> add(1) |> io::Println("The result of add(1) is: ", _);
+    result |> add(_, 1) |> io::Println("The result of add(_, 1) is: ", _);
+}

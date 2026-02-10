@@ -200,6 +200,9 @@ func inferExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	case *ast.CoalescingExpr:
 		return inferCoalescingExprType(ctx, mod, e)
 
+	case *ast.PipeExpr:
+		return inferPipeExprType(ctx, mod, e)
+
 	case *ast.PrefixExpr:
 		// Prefix operators (++, --) return the type of the operand
 		opType := inferExprType(ctx, mod, e.X)
@@ -1030,4 +1033,45 @@ func inferCoalescingExprType(ctx *context_v2.CompilerContext, mod *context_v2.Mo
 
 	// Return TypeUnknown to signal an error
 	return types.TypeUnknown
+}
+
+// inferPipeExprType determines the result type of a pipe expression (value |> func)
+// The pipe operator passes the left value as an argument to the right function call
+// The result type is the return type of the function being called
+func inferPipeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.PipeExpr) types.SemType {
+	// The right side must be a call expression
+	callExpr, ok := expr.Call.(*ast.CallExpr)
+	if !ok {
+		return types.TypeUnknown
+	}
+
+	// Create a transformed call expression for type inference
+	transformedArgs := make([]ast.Expression, len(callExpr.Args))
+	copy(transformedArgs, callExpr.Args)
+
+	// Find placeholders (_) in the call arguments
+	placeholderFound := false
+	for i, arg := range transformedArgs {
+		if ident, ok := arg.(*ast.IdentifierExpr); ok && ident.Name == "_" {
+			transformedArgs[i] = expr.Value
+			placeholderFound = true
+			break
+		}
+	}
+
+	// If no placeholder, append the piped value as the last argument
+	if !placeholderFound {
+		transformedArgs = append(transformedArgs, expr.Value)
+	}
+
+	// Create a temporary call expression for type inference
+	tempCallExpr := &ast.CallExpr{
+		Fun:      callExpr.Fun,
+		Args:     transformedArgs,
+		Catch:    callExpr.Catch,
+		Location: callExpr.Location,
+	}
+
+	// Infer the return type of the transformed call
+	return inferCallExprType(ctx, mod, tempCallExpr)
 }

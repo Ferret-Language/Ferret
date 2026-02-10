@@ -207,6 +207,9 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 			Type:     g.exprType(expr),
 			Location: locFromNode(e),
 		}
+	case *ast.PipeExpr:
+		// Transform pipe expression into a call expression
+		return g.lowerPipeExpr(e)
 	case *ast.ForkExpr:
 		return &hir.ForkExpr{
 			Call:     g.lowerExpr(e.Call),
@@ -617,6 +620,52 @@ func (g *Generator) lowerCallExpr(expr *ast.CallExpr) *hir.CallExpr {
 		Fun:      g.lowerExpr(expr.Fun),
 		Args:     args,
 		Catch:    g.lowerCatchClause(expr.Catch),
+		Type:     g.exprType(expr),
+		Location: locFromNode(expr),
+	}
+}
+
+// lowerPipeExpr transforms a pipe expression into a call expression
+// value |> func(...) becomes func(..., value) or func(..., value, ...) with _ replaced
+func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
+	if expr == nil {
+		return nil
+	}
+
+	// The right side must be a call expression
+	callExpr, ok := expr.Call.(*ast.CallExpr)
+	if !ok {
+		// This should not happen if type checking passed
+		return nil
+	}
+
+	// Lower the piped value
+	pipedValue := g.lowerExpr(expr.Value)
+
+	// Transform the arguments
+	transformedArgs := make([]hir.Expr, 0, len(callExpr.Args)+1)
+	placeholderFound := false
+
+	for _, arg := range callExpr.Args {
+		// Check if this is a placeholder
+		if ident, ok := arg.(*ast.IdentifierExpr); ok && ident.Name == "_" {
+			transformedArgs = append(transformedArgs, pipedValue)
+			placeholderFound = true
+		} else {
+			transformedArgs = append(transformedArgs, g.lowerExpr(arg))
+		}
+	}
+
+	// If no placeholder, append the piped value as the last argument
+	if !placeholderFound {
+		transformedArgs = append(transformedArgs, pipedValue)
+	}
+
+	// Create the transformed call expression
+	return &hir.CallExpr{
+		Fun:      g.lowerExpr(callExpr.Fun),
+		Args:     transformedArgs,
+		Catch:    g.lowerCatchClause(callExpr.Catch),
 		Type:     g.exprType(expr),
 		Location: locFromNode(expr),
 	}

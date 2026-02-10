@@ -181,6 +181,19 @@ func (e *CoalescingExpr) INode()                {} // Implements Node interface
 func (e *CoalescingExpr) Expr()                 {} // Expr is a marker interface for all expressions
 func (e *CoalescingExpr) Loc() *source.Location { return &e.Location }
 
+// PipeExpr represents a pipe operation (value |> func)
+// The value on the left is passed as an argument to the function on the right.
+// The placeholder '_' in the function call indicates where the piped value should be inserted.
+type PipeExpr struct {
+	Value Expression // the value being piped (left side)
+	Call  Expression // the function call (right side)
+	source.Location
+}
+
+func (p *PipeExpr) INode()                {} // Implements Node interface
+func (p *PipeExpr) Expr()                 {} // Expr is a marker interface for all expressions
+func (p *PipeExpr) Loc() *source.Location { return &p.Location }
+
 // ForkExpr represents a fork expression for coroutines
 type ForkExpr struct {
 	Call Expression // the function call to fork

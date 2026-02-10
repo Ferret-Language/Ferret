@@ -1679,6 +1679,71 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	}
 }
 
+// checkPipeExpr validates and transforms a pipe expression (value |> func)
+// The pipe operator passes the left value as an argument to the right function call
+// Supports placeholder _ to specify where the piped value should be inserted
+func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.PipeExpr, valueType types.SemType) {
+	// The right side must be a call expression
+	callExpr, ok := expr.Call.(*ast.CallExpr)
+	if !ok {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("pipe operator (|>) requires a function call on the right side").
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(expr.Call.Loc(), "expected a function call here"),
+		)
+		return
+	}
+
+	// Create a copy of the arguments to avoid modifying the original AST
+	transformedArgs := make([]ast.Expression, len(callExpr.Args))
+	copy(transformedArgs, callExpr.Args)
+
+	// Find placeholders (_) in the call arguments
+	placeholderCount := 0
+	placeholderIndex := -1
+	for i, arg := range transformedArgs {
+		if ident, ok := arg.(*ast.IdentifierExpr); ok && ident.Name == "_" {
+			placeholderCount++
+			if placeholderIndex == -1 {
+				placeholderIndex = i
+			}
+		}
+	}
+
+	// If no placeholder, append the piped value as the last argument
+	switch placeholderCount {
+	case 0:
+		transformedArgs = append(transformedArgs, expr.Value)
+	case 1:
+		// Replace the placeholder with the piped value
+		transformedArgs[placeholderIndex] = expr.Value
+	default:
+		// Multiple placeholders not allowed
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("pipe expression can only have one placeholder (_)").
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(expr.Call.Loc(), fmt.Sprintf("found %d placeholders", placeholderCount)),
+		)
+		return
+	}
+
+	// Create a temporary call expression for type checking
+	tempCallExpr := &ast.CallExpr{
+		Fun:      callExpr.Fun,
+		Args:     transformedArgs,
+		Catch:    callExpr.Catch,
+		Location: callExpr.Location,
+	}
+
+	// Type check the transformed call expression
+	checkCallExpr(ctx, mod, tempCallExpr)
+
+	// Handle catch clause if present
+	if tempCallExpr.Catch != nil {
+		checkCatchClause(ctx, mod, tempCallExpr)
+	}
+}
+
 func isEnumType(typ types.SemType) bool {
 	if typ == nil {
 		return false
@@ -3695,6 +3760,20 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		checkCastExpr(ctx, mod, e, sourceType, targetType)
 		mod.SetExprType(expr, targetType)
 		return targetType
+
+	case *ast.PipeExpr:
+		// Check pipe operation: value |> call
+		// Type check the value being piped
+		valueType := checkExpr(ctx, mod, e.Value, types.TypeUnknown)
+
+		// For the call expression, we need to check it with the piped value,
+		// so we don't check e.Call independently - checkPipeExpr does it
+		checkPipeExpr(ctx, mod, e, valueType)
+
+		// Return the result type of the call
+		resultType := inferPipeExprType(ctx, mod, e)
+		mod.SetExprType(expr, resultType)
+		return resultType
 
 	case *ast.CompositeLit:
 		// Determine target type for validation
