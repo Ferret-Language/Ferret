@@ -1061,12 +1061,6 @@ func inferPipeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 		}
 	}
 
-	// Handle multiple placeholders
-	if placeholderCount > 1 {
-		// Error will be reported in checkPipeExpr
-		return types.TypeUnknown
-	}
-
 	// Transform arguments based on placeholder usage
 	if placeholderCount == 0 {
 		// No placeholder: prepend the piped value as the first argument

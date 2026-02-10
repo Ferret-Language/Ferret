@@ -1679,11 +1679,7 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	}
 }
 
-// checkPipeExpr validates and transforms a pipe expression (value |> func)
-// The pipe operator passes the left value as an argument to the right function call
-// Supports placeholder _ to specify where the piped value should be inserted
-func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.PipeExpr, valueType types.SemType) {
-	// The right side must be a call expression
+func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.PipeExpr) {
 	callExpr, ok := expr.Call.(*ast.CallExpr)
 	if !ok {
 		ctx.Diagnostics.Add(
@@ -1694,56 +1690,43 @@ func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		return
 	}
 
-	// Create a copy of the arguments to avoid modifying the original AST
-	transformedArgs := make([]ast.Expression, len(callExpr.Args))
-	copy(transformedArgs, callExpr.Args)
+	// Copy args because we may rewrite them.
+	args := append([]ast.Expression(nil), callExpr.Args...)
 
-	// Find placeholders (_) in the call arguments
-	placeholderCount := 0
-	placeholderIndex := -1
-	for i, arg := range transformedArgs {
-		if ident, ok := arg.(*ast.IdentifierExpr); ok && ident.Name == "_" {
-			placeholderCount++
-			if placeholderIndex == -1 {
-				placeholderIndex = i
-			}
+	placeholderIdx := -1
+	for i, arg := range args {
+		ident, ok := arg.(*ast.IdentifierExpr)
+		if !ok {
+			continue
 		}
+		if ident.Name != "_" {
+			continue
+		}
+		if placeholderIdx != -1 {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("pipe expression can only have one placeholder (_)").
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(expr.Call.Loc(), "found multiple placeholders").
+					WithHelp("Use only one placeholder (_) to specify where the piped value should be inserted"),
+			)
+			return
+		}
+		placeholderIdx = i
 	}
 
-	// Check for multiple placeholders before transformation
-	if placeholderCount > 1 {
-		ctx.Diagnostics.Add(
-			diagnostics.NewError("pipe expression can only have one placeholder (_)").
-				WithCode(diagnostics.ErrTypeMismatch).
-				WithPrimaryLabel(expr.Call.Loc(), fmt.Sprintf("found %d placeholders", placeholderCount)).
-				WithHelp("Use only one placeholder (_) to specify where the piped value should be inserted"),
-		)
-		return
-	}
-
-	// Transform arguments based on placeholder usage
-	if placeholderCount == 0 {
-		// No placeholder: prepend the piped value as the first argument
-		transformedArgs = append([]ast.Expression{expr.Value}, transformedArgs...)
+	if placeholderIdx == -1 {
+		args = append([]ast.Expression{expr.Value}, args...)
 	} else {
-		// Replace the placeholder with the piped value
-		transformedArgs[placeholderIndex] = expr.Value
+		args[placeholderIdx] = expr.Value
 	}
 
-	// Create a temporary call expression for type checking
-	tempCallExpr := &ast.CallExpr{
-		Fun:      callExpr.Fun,
-		Args:     transformedArgs,
-		Catch:    callExpr.Catch,
-		Location: callExpr.Location,
-	}
+	// Reuse callExpr shape, just swap args for typecheck.
+	temp := *callExpr
+	temp.Args = args
 
-	// Type check the transformed call expression
-	checkCallExpr(ctx, mod, tempCallExpr)
-
-	// Handle catch clause if present
-	if tempCallExpr.Catch != nil {
-		checkCatchClause(ctx, mod, tempCallExpr)
+	checkCallExpr(ctx, mod, &temp)
+	if temp.Catch != nil {
+		checkCatchClause(ctx, mod, &temp)
 	}
 }
 
@@ -3765,14 +3748,9 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		return targetType
 
 	case *ast.PipeExpr:
-		// Check pipe operation: value |> call
-		// Type check the value being piped
-		valueType := checkExpr(ctx, mod, e.Value, types.TypeUnknown)
-
 		// For the call expression, we need to check it with the piped value,
 		// so we don't check e.Call independently - checkPipeExpr does it
-		checkPipeExpr(ctx, mod, e, valueType)
-
+		checkPipeExpr(ctx, mod, e)
 		// Return the result type of the call
 		resultType := inferPipeExprType(ctx, mod, e)
 		mod.SetExprType(expr, resultType)
