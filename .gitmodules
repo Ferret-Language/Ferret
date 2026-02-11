@@ -1,4 +1,0 @@
-[submodule "qbe"]
-	path = qbe
-	url = git://c9x.me/qbe.git
-	branch = winabi
