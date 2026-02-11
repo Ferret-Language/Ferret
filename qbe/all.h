@@ -20,6 +20,8 @@ typedef struct Ins Ins;
 typedef struct Phi Phi;
 typedef struct Blk Blk;
 typedef struct Use Use;
+typedef struct Sym Sym;
+typedef struct Num Num;
 typedef struct Alias Alias;
 typedef struct Tmp Tmp;
 typedef struct Con Con;
@@ -28,11 +30,11 @@ typedef struct Fn Fn;
 typedef struct Typ Typ;
 typedef struct Field Field;
 typedef struct Dat Dat;
+typedef struct Lnk Lnk;
 typedef struct Target Target;
 
 enum {
-	NString = 128,
-	NPred   = 63,
+	NString = 80,
 	NIns    = 1 << 20,
 	NAlign  = 3,
 	NField  = 32,
@@ -40,6 +42,9 @@ enum {
 };
 
 struct Target {
+	char name[16];
+	char apple;
+	char windows;
 	int gpr0;   /* first general purpose reg */
 	int ngpr;
 	int fpr0;   /* first floating point reg */
@@ -51,9 +56,14 @@ struct Target {
 	bits (*retregs)(Ref, int[2]);
 	bits (*argregs)(Ref, int[2]);
 	int (*memargs)(int);
-	void (*abi)(Fn *);
+	void (*abi0)(Fn *);
+	void (*abi1)(Fn *);
 	void (*isel)(Fn *);
 	void (*emitfn)(Fn *, FILE *);
+	void (*emitfin)(FILE *);
+	char asloc[4];
+	char assym[4];
+	uint cansel:1;
 };
 
 #define BIT(n) ((bits)1 << (n))
@@ -76,20 +86,23 @@ struct Ref {
 enum {
 	RTmp,
 	RCon,
-	RType,
+	RInt,
+	RType, /* last kind to come out of the parser */
 	RSlot,
 	RCall,
 	RMem,
 };
 
-#define R        (Ref){0, 0}
+#define R        (Ref){RTmp, 0}
+#define UNDEF    (Ref){RCon, 0}  /* represents uninitialized data */
+#define CON_Z    (Ref){RCon, 1}
 #define TMP(x)   (Ref){RTmp, x}
 #define CON(x)   (Ref){RCon, x}
-#define CON_Z    CON(0)          /* reserved zero constant */
 #define SLOT(x)  (Ref){RSlot, (x)&0x1fffffff}
 #define TYPE(x)  (Ref){RType, x}
 #define CALL(x)  (Ref){RCall, x}
 #define MEM(x)   (Ref){RMem, x}
+#define INT(x)   (Ref){RInt, (x)&0x1fffffff}
 
 static inline int req(Ref a, Ref b)
 {
@@ -101,6 +114,11 @@ static inline int rtype(Ref r)
 	if (req(r, R))
 		return -1;
 	return r.type;
+}
+
+static inline int rsval(Ref r)
+{
+	return ((int)r.val ^ 0x10000000) - 0x10000000;
 }
 
 enum CmpI {
@@ -140,13 +158,14 @@ enum O {
 enum J {
 	Jxxx,
 #define JMPS(X)                                 \
-	X(ret0)   X(retw)   X(retl)   X(rets)   \
-	X(retd)   X(retc)   X(jmp)    X(jnz)    \
+	X(retw)   X(retl)   X(rets)   X(retd)   \
+	X(retsb)  X(retub)  X(retsh)  X(retuh)  \
+	X(retc)   X(ret0)   X(jmp)    X(jnz)    \
 	X(jfieq)  X(jfine)  X(jfisge) X(jfisgt) \
 	X(jfisle) X(jfislt) X(jfiuge) X(jfiugt) \
 	X(jfiule) X(jfiult) X(jffeq)  X(jffge)  \
 	X(jffgt)  X(jffle)  X(jfflt)  X(jffne)  \
-	X(jffo)   X(jffuo)
+	X(jffo)   X(jffuo)  X(hlt)
 #define X(j) J##j,
 	JMPS(X)
 #undef X
@@ -166,19 +185,27 @@ enum {
 	Oalloc1 = Oalloc16,
 	Oflag = Oflagieq,
 	Oflag1 = Oflagfuo,
+	Oxsel = Oxselieq,
+	Oxsel1 = Oxselfuo,
 	NPubOp = Onop,
 	Jjf = Jjfieq,
 	Jjf1 = Jjffuo,
 };
 
-#define isstore(o) (Ostoreb <= o && o <= Ostored)
-#define isload(o) (Oloadsb <= o && o <= Oload)
-#define isext(o) (Oextsb <= o && o <= Oextuw)
-#define ispar(o) (Opar <= o && o <= Opare)
-#define isarg(o) (Oarg <= o && o <= Oarge)
-#define isret(j) (Jret0 <= j && j <= Jretc)
+#define INRANGE(x, l, u) ((unsigned)(x) - l <= u - l) /* linear in x */
+#define isstore(o) INRANGE(o, Ostoreb, Ostored)
+#define isload(o) INRANGE(o, Oloadsb, Oload)
+#define isalloc(o) INRANGE(o, Oalloc4, Oalloc16)
+#define isext(o) INRANGE(o, Oextsb, Oextuw)
+#define ispar(o) INRANGE(o, Opar, Opare)
+#define isarg(o) INRANGE(o, Oarg, Oargv)
+#define isret(j) INRANGE(j, Jretw, Jret0)
+#define isparbh(o) INRANGE(o, Oparsb, Oparuh)
+#define isargbh(o) INRANGE(o, Oargsb, Oarguh)
+#define isretbh(j) INRANGE(j, Jretsb, Jretuh)
+#define isxsel(o) INRANGE(o, Oxsel, Oxsel1)
 
-enum Class {
+enum {
 	Kx = -1, /* "top" class (see usecheck() and clsmerge()) */
 	Kw,
 	Kl,
@@ -192,22 +219,32 @@ enum Class {
 struct Op {
 	char *name;
 	short argcls[2][4];
-	int canfold;
+	uint canfold:1;
+	uint hasid:1;     /* op identity value? */
+	uint idval:1;     /* identity value 0/1 */
+	uint commutes:1;  /* commutative op? */
+	uint assoc:1;     /* associative op? */
+	uint idemp:1;     /* idempotent op? */
+	uint cmpeqwl:1;   /* Kl/Kw cmp eq/ne? */
+	uint cmplgtewl:1; /* Kl/Kw cmp lt/gt/le/ge? */
+	uint eqval:1;     /* 1 for eq; 0 for ne */
+	uint pinned:1;    /* GCM pinned op? */
 };
 
 struct Ins {
 	uint op:30;
+	uint cls:2;
 	Ref to;
 	Ref arg[2];
-	uint cls:2;
 };
 
 struct Phi {
 	Ref to;
-	Ref arg[NPred];
-	Blk *blk[NPred];
+	Ref *arg;
+	Blk **blk;
 	uint narg;
-	int cls;
+	short cls;
+	uint visit:1;
 	Phi *link;
 };
 
@@ -230,6 +267,7 @@ struct Blk {
 	Blk *dom, *dlink;
 	Blk **fron;
 	uint nfron;
+	int depth;
 
 	Blk **pred;
 	uint npred;
@@ -246,11 +284,25 @@ struct Use {
 		UIns,
 		UJmp,
 	} type;
-	int bid;
+	uint bid;
 	union {
 		Ins *ins;
 		Phi *phi;
 	} u;
+};
+
+struct Sym {
+	enum {
+		SGlo,
+		SThr,
+	} type;
+	uint32_t id;
+};
+
+struct Num {
+	uchar n;
+	uchar nl, nr;
+	Ref l, r;
 };
 
 enum {
@@ -269,18 +321,26 @@ struct Alias {
 		AUnk = 6,
 	#define astack(t) ((t) & 1)
 	} type;
-	Ref base;
-	uint32_t label;
+	int base;
 	int64_t offset;
+	union {
+		Sym sym;
+		struct {
+			int sz; /* -1 if > NBit */
+			bits m;
+		} loc;
+	} u;
 	Alias *slot;
 };
 
 struct Tmp {
 	char name[NString];
+	Ins *def;
 	Use *use;
 	uint ndef, nuse;
+	uint bid; /* id of a defining block */
 	uint cost;
-	short slot; /* -1 for unset */
+	int slot; /* -1 for unset */
 	short cls;
 	struct {
 		int r;  /* register or -1 */
@@ -299,6 +359,7 @@ struct Tmp {
 		Wuw
 	} width;
 	int visit;
+	uint gcmbid;
 };
 
 struct Con {
@@ -307,14 +368,13 @@ struct Con {
 		CBits,
 		CAddr,
 	} type;
-	uint32_t label;
+	Sym sym;
 	union {
 		int64_t i;
 		double d;
 		float s;
 	} bits;
 	char flt; /* 1 to print as s, 2 to print as d */
-	char local;
 };
 
 typedef struct Addr Addr;
@@ -324,6 +384,15 @@ struct Addr { /* amd64 addressing */
 	Ref base;
 	Ref index;
 	int scale;
+};
+
+struct Lnk {
+	char export;
+	char thread;
+	char common;
+	char align;
+	char *sec;
+	char *secf;
 };
 
 struct Fn {
@@ -340,15 +409,18 @@ struct Fn {
 	Blk **rpo;
 	bits reg;
 	int slot;
-	char export;
+	int salign;
 	char vararg;
 	char dynalloc;
+	char leaf;
 	char name[NString];
+	Lnk lnk;
 };
 
 struct Typ {
 	char name[NString];
-	int dark;
+	char isdark;
+	char isunion;
 	int align;
 	uint64_t size;
 	uint nunion;
@@ -372,27 +444,26 @@ struct Dat {
 	enum {
 		DStart,
 		DEnd,
-		DName,
-		DAlign,
 		DB,
 		DH,
 		DW,
 		DL,
 		DZ
 	} type;
+	char *name;
+	Lnk *lnk;
 	union {
 		int64_t num;
 		double fltd;
 		float flts;
 		char *str;
 		struct {
-			char *nam;
+			char *name;
 			int64_t off;
 		} ref;
 	} u;
 	char isref;
 	char isstr;
-	char export;
 };
 
 /* main.c */
@@ -401,8 +472,8 @@ extern char debug['Z'+1];
 
 /* util.c */
 typedef enum {
-	Pheap, /* free() necessary */
-	Pfn, /* discarded after processing the function */
+	PHeap, /* free() necessary */
+	PFn, /* discarded after processing the function */
 } Pool;
 
 extern Typ *typ;
@@ -415,26 +486,36 @@ void freeall(void);
 void *vnew(ulong, size_t, Pool);
 void vfree(void *);
 void vgrow(void *, ulong);
+void addins(Ins **, uint *, Ins *);
+void addbins(Ins **, uint *, Blk *);
+void strf(char[NString], char *, ...);
 uint32_t intern(char *);
 char *str(uint32_t);
 int argcls(Ins *, int);
 int isreg(Ref);
 int iscmp(int, int *, int *);
+void igroup(Blk *, Ins *, Ins **, Ins **);
 void emit(int, int, Ref, Ref, Ref);
 void emiti(Ins);
-void idup(Ins **, Ins *, ulong);
+void idup(Blk *, Ins *, ulong);
 Ins *icpy(Ins *, Ins *, ulong);
 int cmpop(int);
 int cmpneg(int);
+int cmpwlneg(int);
 int clsmerge(short *, short);
 int phicls(int, Tmp *);
+uint phiargn(Phi *, Blk *);
+Ref phiarg(Phi *, Blk *);
 Ref newtmp(char *, int, Fn *);
 void chuse(Ref, int, Fn *);
+int symeq(Sym, Sym);
+Ref newcon(Con *, Fn *);
 Ref getcon(int64_t, Fn *);
-void addcon(Con *, Con *);
-void blit(Ref, uint, Ref, uint, Fn *);
+int addcon(Con *, Con *, int);
+int isconbits(Fn *fn, Ref r, int64_t *v);
+void salloc(Ref, Ref, Fn *);
 void dumpts(BSet *, Tmp *, FILE *);
-
+void runmatch(uchar *, Num *, Ref, Ref *);
 void bsinit(BSet *, uint);
 void bszero(BSet *);
 uint bscount(BSet *);
@@ -456,30 +537,40 @@ bshas(BSet *bs, uint elt)
 
 /* parse.c */
 extern Op optab[NOp];
-void parse(FILE *, char *, void (Dat *), void (Fn *));
+void parse(FILE *, char *, void (char *), void (Dat *), void (Fn *));
 void printfn(Fn *, FILE *);
 void printref(Ref, Fn *, FILE *);
 void err(char *, ...) __attribute__((noreturn));
 
+/* abi.c */
+void elimsb(Fn *);
+
 /* cfg.c */
-Blk *blknew(void);
-void edgedel(Blk *, Blk **);
+Blk *newblk(void);
 void fillpreds(Fn *);
-void fillrpo(Fn *);
+void fillcfg(Fn *);
 void filldom(Fn *);
 int sdom(Blk *, Blk *);
 int dom(Blk *, Blk *);
 void fillfron(Fn *);
 void loopiter(Fn *, void (*)(Blk *, Blk *));
+void filldepth(Fn *);
+Blk *lca(Blk *, Blk *);
 void fillloop(Fn *);
 void simpljmp(Fn *);
+int reaches(Fn *, Blk *, Blk *);
+int reachesnotvia(Fn *, Blk *, Blk *, Blk *);
+int ifgraph(Blk *, Blk **, Blk **, Blk **);
+void simplcfg(Fn *);
 
 /* mem.c */
-void memopt(Fn *);
+void promote(Fn *);
+void coalesce(Fn *);
 
 /* alias.c */
 void fillalias(Fn *);
-int alias(Ref, int, Ref, int, int *, Fn *);
+void getalias(Alias *, Ref, Fn *);
+int alias(Ref, int, int, Ref, int, int *, Fn *);
 int escapes(Ref, Fn *);
 
 /* load.c */
@@ -488,20 +579,34 @@ int storesz(Ins *);
 void loadopt(Fn *);
 
 /* ssa.c */
+void adduse(Tmp *, int, Blk *, ...);
 void filluse(Fn *);
-void fillpreds(Fn *);
-void fillrpo(Fn *);
 void ssa(Fn *);
 void ssacheck(Fn *);
 
-/* simpl.c */
-void simpl(Fn *);
-
 /* copy.c */
-void copy(Fn *);
+void narrowpars(Fn *fn);
+Ref copyref(Fn *, Blk *, Ins *);
+Ref phicopyref(Fn *, Blk *, Phi *);
 
 /* fold.c */
-void fold(Fn *);
+int foldint(Con *, int, int, Con *, Con *);
+Ref foldref(Fn *, Ins *);
+
+/* gvn.c */
+extern Ref con01[2];  /* 0 and 1 */
+int zeroval(Fn *, Blk *, Ref, int, int *);
+void gvn(Fn *);
+
+/* gcm.c */
+int pinned(Ins *);
+void gcm(Fn *);
+
+/* ifopt.c */
+void ifconvert(Fn *fn);
+
+/* simpl.c */
+void simpl(Fn *);
 
 /* live.c */
 void liveon(BSet *, Blk *, Blk *);
@@ -514,9 +619,13 @@ void spill(Fn *);
 /* rega.c */
 void rega(Fn *);
 
-/* gas.c */
-extern char *gasloc;
-extern char *gassym;
-void gasemitdat(Dat *, FILE *);
-int gasstash(void *, int);
-void gasemitfin(FILE *);
+/* emit.c */
+void emitfnlnk(char *, Lnk *, FILE *);
+void emitdat(Dat *, FILE *);
+void emitdbgfile(char *, FILE *);
+void emitdbgloc(uint, uint, FILE *);
+int stashbits(bits, int);
+void elf_emitfnfin(char *, FILE *);
+void elf_emitfin(FILE *);
+void macho_emitfin(FILE *);
+void pe_emitfin(FILE *);

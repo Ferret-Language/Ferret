@@ -1537,6 +1537,36 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 
 	switch e := expr.(type) {
 	case *hir.Literal:
+		if opt, ok := types.UnwrapType(e.Type).(*types.OptionalType); ok {
+			if e.Kind == hir.LiteralNone {
+				id := b.gen.nextValueID()
+				b.emitInstr(&mir.OptionalNone{
+					Result:   id,
+					Type:     e.Type,
+					Location: e.Location,
+				})
+				return id
+			}
+			if opt.Inner != nil {
+				var innerVal mir.ValueID
+				if isLargePrimitiveType(opt.Inner) {
+					innerVal = b.emitLargeConst(opt.Inner, e.Value, e.Location)
+				} else {
+					innerVal = b.emitConst(opt.Inner, e.Value, e.Location)
+				}
+				if innerVal == mir.InvalidValue {
+					return mir.InvalidValue
+				}
+				id := b.gen.nextValueID()
+				b.emitInstr(&mir.OptionalSome{
+					Result:   id,
+					Value:    innerVal,
+					Type:     e.Type,
+					Location: e.Location,
+				})
+				return id
+			}
+		}
 		if isLargePrimitiveType(e.Type) {
 			return b.emitLargeConst(e.Type, e.Value, e.Location)
 		}

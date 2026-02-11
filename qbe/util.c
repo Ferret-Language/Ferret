@@ -116,7 +116,7 @@ vnew(ulong len, size_t esz, Pool pool)
 
 	for (cap=VMin; cap<len; cap*=2)
 		;
-	f = pool == Pheap ? emalloc : alloc;
+	f = pool == PHeap ? emalloc : alloc;
 	v = f(cap * esz + sizeof(Vec));
 	v->mag = VMag;
 	v->cap = cap;
@@ -132,7 +132,7 @@ vfree(void *p)
 
 	v = (Vec *)p - 1;
 	assert(v->mag == VMag);
-	if (v->pool == Pheap) {
+	if (v->pool == PHeap) {
 		v->mag = 0;
 		free(v);
 	}
@@ -154,6 +154,34 @@ vgrow(void *vp, ulong len)
 	*(Vec **)vp = v1;
 }
 
+void
+addins(Ins **pvins, uint *pnins, Ins *i)
+{
+	if (i->op == Onop)
+		return;
+	vgrow(pvins, ++(*pnins));
+	(*pvins)[(*pnins)-1] = *i;
+}
+
+void
+addbins(Ins **pvins, uint *pnins, Blk *b)
+{
+	Ins *i;
+
+	for (i=b->ins; i<&b->ins[b->nins]; i++)
+		addins(pvins, pnins, i);
+}
+
+void
+strf(char str[NString], char *s, ...)
+{
+	va_list ap;
+
+	va_start(ap, s);
+	vsnprintf(str, NString, s, ap);
+	va_end(ap);
+}
+
 uint32_t
 intern(char *s)
 {
@@ -172,7 +200,7 @@ intern(char *s)
 	if (n == 1<<(32-IBits))
 		die("interning table overflow");
 	if (n == 0)
-		b->str = vnew(1, sizeof b->str[0], Pheap);
+		b->str = vnew(1, sizeof b->str[0], PHeap);
 	else if ((n & (n-1)) == 0)
 		vgrow(&b->str, n+n);
 
@@ -219,6 +247,62 @@ iscmp(int op, int *pk, int *pc)
 	return 1;
 }
 
+void
+igroup(Blk *b, Ins *i, Ins **i0, Ins **i1)
+{
+	Ins *ib, *ie;
+
+	ib = b->ins;
+	ie = ib + b->nins;
+	switch (i->op) {
+	case Oblit0:
+		*i0 = i;
+		*i1 = i + 2;
+		return;
+	case Oblit1:
+		*i0 = i - 1;
+		*i1 = i + 1;
+		return;
+	case_Opar:
+		for (; i>ib && ispar((i-1)->op); i--)
+			;
+		*i0 = i;
+		for (; i<ie && ispar(i->op); i++)
+			;
+		*i1 = i;
+		return;
+	case Ocall:
+	case_Oarg:
+		for (; i>ib && isarg((i-1)->op); i--)
+			;
+		*i0 = i;
+		for (; i<ie && i->op != Ocall; i++)
+			;
+		assert(i < ie);
+		*i1 = i + 1;
+		return;
+	case Osel1:
+		for (; i>ib && (i-1)->op == Osel1; i--)
+			;
+		assert(i->op == Osel0);
+		/* fall through */
+	case Osel0:
+		*i0 = i++;
+		for (; i<ie && i->op == Osel1; i++)
+			;
+		*i1 = i;
+		return;
+	default:
+		if (ispar(i->op))
+			goto case_Opar;
+		if (isarg(i->op))
+			goto case_Oarg;
+		*i0 = i;
+		*i1 = i + 1;
+		return;
+	}
+}
+
 int
 argcls(Ins *i, int n)
 {
@@ -243,16 +327,18 @@ emiti(Ins i)
 }
 
 void
-idup(Ins **pd, Ins *s, ulong n)
+idup(Blk *b, Ins *s, ulong n)
 {
-	*pd = alloc(n * sizeof(Ins));
-	memcpy(*pd, s, n * sizeof(Ins));
+	vgrow(&b->ins, n);
+	icpy(b->ins, s, n);
+	b->nins = n;
 }
 
 Ins *
 icpy(Ins *d, Ins *s, ulong n)
 {
-	memcpy(d, s, n * sizeof(Ins));
+	if (n)
+		memmove(d, s, n * sizeof(Ins));
 	return d + n;
 }
 
@@ -293,6 +379,16 @@ cmpop(int c)
 }
 
 int
+cmpwlneg(int op)
+{
+	if (INRANGE(op, Ocmpw, Ocmpw1))
+		return cmpneg(op - Ocmpw) + Ocmpw;
+	if (INRANGE(op, Ocmpl, Ocmpl1))
+		return cmpneg(op - Ocmpl) + Ocmpl;
+	die("not a wl comparison");
+}
+
+int
 clsmerge(short *pk, short k)
 {
 	short k1;
@@ -322,6 +418,28 @@ phicls(int t, Tmp *tmp)
 	return t1;
 }
 
+uint
+phiargn(Phi *p, Blk *b)
+{
+	uint n;
+
+	if (p)
+		for (n=0; n<p->narg; n++)
+			if (p->blk[n] == b)
+				return n;
+	return -1;
+}
+
+Ref
+phiarg(Phi *p, Blk *b)
+{
+	uint n;
+
+	n = phiargn(p, b);
+	assert(n != -1u && "block not found");
+	return p->arg[n];
+}
+
 Ref
 newtmp(char *prfx, int k,  Fn *fn)
 {
@@ -332,7 +450,7 @@ newtmp(char *prfx, int k,  Fn *fn)
 	vgrow(&fn->tmp, fn->ntmp);
 	memset(&fn->tmp[t], 0, sizeof(Tmp));
 	if (prfx)
-		sprintf(fn->tmp[t].name, "%s.%d", prfx, ++n);
+		strf(fn->tmp[t].name, "%s.%d", prfx, ++n);
 	fn->tmp[t].cls = k;
 	fn->tmp[t].slot = -1;
 	fn->tmp[t].nuse = +1;
@@ -347,56 +465,107 @@ chuse(Ref r, int du, Fn *fn)
 		fn->tmp[r.val].nuse += du;
 }
 
+int
+symeq(Sym s0, Sym s1)
+{
+	return s0.type == s1.type && s0.id == s1.id;
+}
+
+Ref
+newcon(Con *c0, Fn *fn)
+{
+	Con *c1;
+	int i;
+
+	for (i=1; i<fn->ncon; i++) {
+		c1 = &fn->con[i];
+		if (c0->type == c1->type
+		&& symeq(c0->sym, c1->sym)
+		&& c0->bits.i == c1->bits.i)
+			return CON(i);
+	}
+	vgrow(&fn->con, ++fn->ncon);
+	fn->con[i] = *c0;
+	return CON(i);
+}
+
 Ref
 getcon(int64_t val, Fn *fn)
 {
 	int c;
 
-	for (c=0; c<fn->ncon; c++)
-		if (fn->con[c].type == CBits && fn->con[c].bits.i == val)
+	for (c=1; c<fn->ncon; c++)
+		if (fn->con[c].type == CBits
+		&& fn->con[c].bits.i == val)
 			return CON(c);
 	vgrow(&fn->con, ++fn->ncon);
 	fn->con[c] = (Con){.type = CBits, .bits.i = val};
 	return CON(c);
 }
 
-void
-addcon(Con *c0, Con *c1)
+int
+addcon(Con *c0, Con *c1, int m)
 {
-	if (c0->type == CUndef)
+	if (m != 1 && c1->type == CAddr)
+		return 0;
+	if (c0->type == CUndef) {
 		*c0 = *c1;
-	else {
+		c0->bits.i *= m;
+	} else {
 		if (c1->type == CAddr) {
-			assert(c0->type != CAddr && "adding two addresses");
+			if (c0->type == CAddr)
+				return 0;
 			c0->type = CAddr;
-			c0->label = c1->label;
+			c0->sym = c1->sym;
 		}
-		c0->bits.i += c1->bits.i;
+		c0->bits.i += c1->bits.i * m;
 	}
+	return 1;
+}
+
+int
+isconbits(Fn *fn, Ref r, int64_t *v)
+{
+	Con *c;
+
+	if (rtype(r) == RCon) {
+		c = &fn->con[r.val];
+		if (c->type == CBits) {
+			*v = c->bits.i;
+			return 1;
+		}
+	}
+	return 0;
 }
 
 void
-blit(Ref rdst, uint doff, Ref rsrc, uint sz, Fn *fn)
+salloc(Ref rt, Ref rs, Fn *fn)
 {
-	struct { int st, ld, cls, size; } *p, tbl[] = {
-		{ Ostorel, Oload,   Kl, 8 },
-		{ Ostorew, Oload,   Kw, 8 },
-		{ Ostoreh, Oloaduh, Kw, 2 },
-		{ Ostoreb, Oloadub, Kw, 1 }
-	};
-	Ref r, r1;
-	uint boff, s;
+	Ref r0, r1;
+	int64_t sz;
 
-	for (boff=0, p=tbl; sz; p++)
-		for (s=p->size; sz>=s; sz-=s, doff+=s, boff+=s) {
-			r = newtmp("blt", Kl, fn);
-			r1 = newtmp("blt", Kl, fn);
-			emit(p->st, 0, R, r, r1);
-			emit(Oadd, Kl, r1, rdst, getcon(doff, fn));
-			r1 = newtmp("blt", Kl, fn);
-			emit(p->ld, p->cls, r, r1, R);
-			emit(Oadd, Kl, r1, rsrc, getcon(boff, fn));
-		}
+	/* we need to make sure
+	 * the stack remains aligned
+	 * (rsp = 0) mod 16
+	 */
+	fn->dynalloc = 1;
+	if (rtype(rs) == RCon) {
+		sz = fn->con[rs.val].bits.i;
+		if (sz < 0 || sz >= INT_MAX-15)
+			err("invalid alloc size %"PRId64, sz);
+		sz = (sz + 15)  & -16;
+		emit(Osalloc, Kl, rt, getcon(sz, fn), R);
+	} else {
+		/* r0 = (r + 15) & -16 */
+		r0 = newtmp("isel", Kl, fn);
+		r1 = newtmp("isel", Kl, fn);
+		emit(Osalloc, Kl, rt, r0, R);
+		emit(Oand, Kl, r0, r1, getcon(-16, fn));
+		emit(Oadd, Kl, r1, rs, getcon(15, fn));
+		if (fn->tmp[rs.val].slot != -1)
+			err("unlikely alloc argument %%%s for %%%s",
+				fn->tmp[rs.val].name, fn->tmp[rt.val].name);
+	}
 }
 
 void
@@ -548,4 +717,58 @@ dumpts(BSet *bs, Tmp *tmp, FILE *f)
 	for (t=Tmp0; bsiter(bs, &t); t++)
 		fprintf(f, " %s", tmp[t].name);
 	fprintf(f, " ]\n");
+}
+
+void
+runmatch(uchar *code, Num *tn, Ref ref, Ref *var)
+{
+	Ref stkbuf[20], *stk;
+	uchar *s, *pc;
+	int bc, i;
+	int n, nl, nr;
+
+	assert(rtype(ref) == RTmp);
+	stk = stkbuf;
+	pc = code;
+	while ((bc = *pc))
+		switch (bc) {
+		case 1: /* pushsym */
+		case 2: /* push */
+			assert(stk < &stkbuf[20]);
+			assert(rtype(ref) == RTmp);
+			nl = tn[ref.val].nl;
+			nr = tn[ref.val].nr;
+			if (bc == 1 && nl > nr) {
+				*stk++ = tn[ref.val].l;
+				ref = tn[ref.val].r;
+			} else {
+				*stk++ = tn[ref.val].r;
+				ref = tn[ref.val].l;
+			}
+			pc++;
+			break;
+		case 3: /* set */
+			var[*++pc] = ref;
+			if (*(pc + 1) == 0)
+				return;
+			/* fall through */
+		case 4: /* pop */
+			assert(stk > &stkbuf[0]);
+			ref = *--stk;
+			pc++;
+			break;
+		case 5: /* switch */
+			assert(rtype(ref) == RTmp);
+			n = tn[ref.val].n;
+			s = pc + 1;
+			for (i=*s++; i>0; i--, s++)
+				if (n == *s++)
+					break;
+			pc += *s;
+			break;
+		default: /* jump */
+			assert(bc >= 10);
+			pc = code + (bc - 10);
+			break;
+		}
 }

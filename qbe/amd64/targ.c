@@ -12,36 +12,56 @@ amd64_memargs(int op)
 	return amd64_op[op].nmem;
 }
 
+#define AMD64_COMMON \
+	.gpr0 = RAX, \
+	.ngpr = NGPR, \
+	.fpr0 = XMM0, \
+	.nfpr = NFPR, \
+	.rglob = BIT(RBP) | BIT(RSP), \
+	.nrglob = 2, \
+	.memargs = amd64_memargs, \
+	.abi0 = elimsb, \
+	.isel = amd64_isel, \
+	.cansel = 1,
+
 Target T_amd64_sysv = {
-	.gpr0 = RAX,
-	.ngpr = NGPR,
-	.fpr0 = XMM0,
-	.nfpr = NFPR,
-	.rglob = BIT(RBP) | BIT(RSP),
-	.nrglob = 2,
+	.name = "amd64_sysv",
+	.emitfin = elf_emitfin,
+	.asloc = ".L",
+	.abi1 = amd64_sysv_abi,
 	.rsave = amd64_sysv_rsave,
-	.nrsave = {NGPS, NFPS},
+	.nrsave = {NGPS_SYSV, NFPS},
 	.retregs = amd64_sysv_retregs,
 	.argregs = amd64_sysv_argregs,
-	.memargs = amd64_memargs,
-	.abi = amd64_sysv_abi,
-	.isel = amd64_isel,
-	.emitfn = amd64_emitfn,
+	.emitfn = amd64_sysv_emitfn,
+	AMD64_COMMON
 };
 
-Target T_amd64_win64 = {
-	.gpr0 = RAX,
-	.ngpr = NGPR,
-	.fpr0 = XMM0,
-	.nfpr = NFPR,
-	.rglob = BIT(RBP) | BIT(RSP),
-	.nrglob = 2,
-	.rsave = amd64_win64_rsave,
-	.nrsave = {NGPS, NFPS},
-	.retregs = amd64_win64_retregs,
-	.argregs = amd64_win64_argregs,
-	.memargs = amd64_memargs,
-	.abi = amd64_win64_abi,
-	.isel = amd64_isel,
-	.emitfn = amd64_win64_emitfn,
+Target T_amd64_apple = {
+	.name = "amd64_apple",
+	.apple = 1,
+	.emitfin = macho_emitfin,
+	.asloc = "L",
+	.assym = "_",
+	.abi1 = amd64_sysv_abi,
+	.rsave = amd64_sysv_rsave,
+	.nrsave = {NGPS_SYSV, NFPS},
+	.retregs = amd64_sysv_retregs,
+	.argregs = amd64_sysv_argregs,
+	.emitfn = amd64_sysv_emitfn,
+	AMD64_COMMON
+};
+
+Target T_amd64_win = {
+	.name = "amd64_win",
+	.windows = 1,
+	.emitfin = pe_emitfin,
+	.asloc = "L",
+	.abi1 = amd64_winabi_abi,
+	.rsave = amd64_winabi_rsave,
+	.nrsave = {NGPS_WIN, NFPS},
+	.retregs = amd64_winabi_retregs,
+	.argregs = amd64_winabi_argregs,
+	.emitfn = amd64_winabi_emitfn,
+	AMD64_COMMON
 };

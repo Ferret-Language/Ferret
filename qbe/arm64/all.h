@@ -14,7 +14,7 @@ enum Arm64Reg {
 
 	NFPR = V30 - V0 + 1,
 	NGPR = SP - R0 + 1,
-	NGPS = R18 - R0 + 1,
+	NGPS = R18 - R0 + 1 /* LR */ + 1,
 	NFPS = (V7 - V0 + 1) + (V30 - V16 + 1),
 	NCLR = (R28 - R19 + 1) + (V15 - V8 + 1),
 };
@@ -28,6 +28,7 @@ extern int arm64_rclob[];
 bits arm64_retregs(Ref, int[2]);
 bits arm64_argregs(Ref, int[2]);
 void arm64_abi(Fn *);
+void apple_extsb(Fn *);
 
 /* isel.c */
 int arm64_logimm(uint64_t, int);

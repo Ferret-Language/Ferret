@@ -1,7 +1,7 @@
 # Ferret Compiler
 
 A modern compiler for the Ferret programming language.
-Backend: Ferret uses customised QBE backend for code generation (https://github.com/8l/qbe).
+Backend: Ferret uses the official QBE backend as a submodule (git://c9x.me/qbe.git).
 
 ## Design philosophy
 1. **It does what it looks like.**: The language syntax and semantics are designed to be intuitive and symbol_table.
@@ -9,6 +9,12 @@ Backend: Ferret uses customised QBE backend for code generation (https://github.
 3. **Nearly 0 runtime error**: The type system and compile-time checks aim to eliminate runtime errors as much as possible.
 4. **Fast compilation.**: The compiler is optimized for speed to provide a smooth development experience
 ## Quick Start
+
+### Initialize submodules
+
+```bash
+git submodule update --init --recursive
+```
 
 ### Install C toolchain
 

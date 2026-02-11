@@ -77,7 +77,7 @@ fillcost(Fn *fn)
 			}
 		}
 		n = b->loop;
-		for (i=b->ins; i-b->ins < b->nins; i++) {
+		for (i=b->ins; i<&b->ins[b->nins]; i++) {
 			tmpuse(i->to, 0, n, fn);
 			tmpuse(i->arg[0], 1, n, fn);
 			tmpuse(i->arg[1], 1, n, fn);
@@ -155,6 +155,12 @@ slot(int t)
 	return SLOT(s);
 }
 
+/* restricts b to hold at most k
+ * temporaries, preferring those
+ * present in f (if given), then
+ * those with the largest spill
+ * cost
+ */
 static void
 limit(BSet *b, int k, BSet *f)
 {
@@ -173,11 +179,13 @@ limit(BSet *b, int k, BSet *f)
 		bsclr(b, t);
 		tarr[i++] = t;
 	}
-	if (!f)
-		qsort(tarr, nt, sizeof tarr[0], tcmp0);
-	else {
-		fst = f;
-		qsort(tarr, nt, sizeof tarr[0], tcmp1);
+	if (nt > 1) {
+		if (!f)
+			qsort(tarr, nt, sizeof tarr[0], tcmp0);
+		else {
+			fst = f;
+			qsort(tarr, nt, sizeof tarr[0], tcmp1);
+		}
 	}
 	for (i=0; i<k && i<nt; i++)
 		bsset(b, tarr[i]);
@@ -185,8 +193,14 @@ limit(BSet *b, int k, BSet *f)
 		slot(tarr[i]);
 }
 
+/* spills temporaries to fit the
+ * target limits using the same
+ * preferences as limit(); assumes
+ * that k1 gprs and k2 fprs are
+ * currently in use
+ */
 static void
-limit2(BSet *b1, int k1, int k2, BSet *fst)
+limit2(BSet *b1, int k1, int k2, BSet *f)
 {
 	BSet b2[1];
 
@@ -194,8 +208,8 @@ limit2(BSet *b1, int k1, int k2, BSet *fst)
 	bscopy(b2, b1);
 	bsinter(b1, mask[0]);
 	bsinter(b2, mask[1]);
-	limit(b1, T.ngpr - k1, fst);
-	limit(b2, T.nfpr - k2, fst);
+	limit(b1, T.ngpr - k1, f);
+	limit(b2, T.nfpr - k2, f);
 	bsunion(b1, b2);
 }
 
@@ -208,6 +222,9 @@ sethint(BSet *u, bits r)
 		tmp[phicls(t, tmp)].hint.m |= r;
 }
 
+/* reloads temporaries in u that are
+ * not in v from their slots
+ */
 static void
 reloads(BSet *u, BSet *v)
 {
@@ -280,6 +297,19 @@ dopm(Blk *b, Ins *i, BSet *v)
 	return i;
 }
 
+static void
+merge(BSet *u, Blk *bu, BSet *v, Blk *bv)
+{
+	int t;
+
+	if (bu->loop <= bv->loop)
+		bsunion(u, v);
+	else
+		for (t=0; bsiter(v, &t); t++)
+			if (tmp[t].slot == -1)
+				bsset(u, t);
+}
+
 /* spill code insertion
  * requires spill costs, rpo, liveness
  *
@@ -325,7 +355,7 @@ spill(Fn *fn)
 
 	for (bp=&fn->rpo[fn->nblk]; bp!=fn->rpo;) {
 		b = *--bp;
-		/* invariant: all bocks with bigger rpo got
+		/* invariant: all blocks with bigger rpo got
 		 * their in,out updated. */
 
 		/* 1. find temporaries in registers at
@@ -360,12 +390,15 @@ spill(Fn *fn)
 				bsunion(v, u);
 			}
 		} else if (s1) {
-			liveon(v, b, s1);
+			/* avoid reloading temporaries
+			 * in the middle of loops */
+			bszero(v);
+			liveon(w, b, s1);
+			merge(v, b, w, s1);
 			if (s2) {
 				liveon(u, b, s2);
-				bscopy(w, u);
-				bsinter(w, v);
-				bsunion(v, u);
+				merge(v, b, u, s2);
+				bsinter(w, u);
 			}
 			limit2(v, 0, 0, w);
 		} else {
@@ -373,13 +406,20 @@ spill(Fn *fn)
 			if (rtype(b->jmp.arg) == RCall)
 				v->t[0] |= T.retregs(b->jmp.arg, 0);
 		}
+		if (rtype(b->jmp.arg) == RTmp) {
+			t = b->jmp.arg.val;
+			assert(KBASE(tmp[t].cls) == 0);
+			bsset(v, t);
+			limit2(v, 0, 0, NULL);
+			if (!bshas(v, t))
+				b->jmp.arg = slot(t);
+		}
 		for (t=Tmp0; bsiter(b->out, &t); t++)
 			if (!bshas(v, t))
 				slot(t);
 		bscopy(b->out, v);
 
 		/* 2. process the block instructions */
-		r = v->t[0];
 		curi = &insb[NIns];
 		for (i=&b->ins[b->nins]; i!=b->ins;) {
 			i--;
@@ -396,6 +436,7 @@ spill(Fn *fn)
 				else {
 					/* make sure we have a reg
 					 * for the result */
+					assert(t >= Tmp0 && "dead reg");
 					bsset(v, t);
 					bsset(w, t);
 				}
@@ -433,7 +474,7 @@ spill(Fn *fn)
 					t = i->arg[n].val;
 					if (!bshas(v, t)) {
 						/* do not reload if the
-						 * the temporary was dead
+						 * argument is dead
 						 */
 						if (!lvarg[n])
 							bsclr(u, t);
@@ -444,14 +485,20 @@ spill(Fn *fn)
 			if (!req(i->to, R)) {
 				t = i->to.val;
 				store(i->to, tmp[t].slot);
-				bsclr(v, t);
+				if (t >= Tmp0)
+					/* in case i->to was a
+					 * dead temporary */
+					bsclr(v, t);
 			}
 			emiti(*i);
 			r = v->t[0]; /* Tmp0 is NBit */
 			if (r)
 				sethint(v, r);
 		}
-		assert(r == T.rglob || b == fn->start);
+		if (b == fn->start)
+			assert(v->t[0] == (T.rglob | fn->reg));
+		else
+			assert(v->t[0] == T.rglob);
 
 		for (p=b->phi; p; p=p->link) {
 			assert(rtype(p->to) == RTmp);
@@ -464,8 +511,7 @@ spill(Fn *fn)
 				p->to = slot(p->to.val);
 		}
 		bscopy(b->in, v);
-		b->nins = &insb[NIns] - curi;
-		idup(&b->ins, curi, b->nins);
+		idup(b, curi, &insb[NIns]-curi);
 	}
 
 	/* align the locals to a 16 byte boundary */

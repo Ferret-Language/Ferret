@@ -4,6 +4,7 @@ typedef struct AClass AClass;
 typedef struct RAlloc RAlloc;
 
 struct AClass {
+	Typ *type;
 	int inmem;
 	int align;
 	uint size;
@@ -72,10 +73,11 @@ typclass(AClass *a, Typ *t)
 		al = 8;
 	sz = (sz + al-1) & -al;
 
+	a->type = t;
 	a->size = sz;
 	a->align = t->align;
 
-	if (t->dark || sz > 16 || sz == 0) {
+	if (t->isdark || sz > 16 || sz == 0) {
 		/* large or unaligned structures are
 		 * required to be passed in memory
 		 */
@@ -125,7 +127,8 @@ selret(Blk *b, Fn *fn)
 		if (aret.inmem) {
 			assert(rtype(fn->retr) == RTmp);
 			emit(Ocopy, Kl, TMP(RAX), fn->retr, R);
-			blit(fn->retr, 0, r0, aret.size, fn);
+			emit(Oblit1, 0, R, INT(aret.type->size), R);
+			emit(Oblit0, 0, R, r0, fn->retr);
 			ca = 1;
 		} else {
 			ca = retr(reg, &aret);
@@ -153,7 +156,7 @@ selret(Blk *b, Fn *fn)
 static int
 argsclass(Ins *i0, Ins *i1, AClass *ac, int op, AClass *aret, Ref *env)
 {
-	int nint, ni, nsse, ns, n, *pn;
+	int varc, envc, nint, ni, nsse, ns, n, *pn;
 	AClass *a;
 	Ins *i;
 
@@ -162,6 +165,8 @@ argsclass(Ins *i0, Ins *i1, AClass *ac, int op, AClass *aret, Ref *env)
 	else
 		nint = 6;
 	nsse = 8;
+	varc = 0;
+	envc = 0;
 	for (i=i0, a=ac; i<i1; i++, a++)
 		switch (i->op - op + Oarg) {
 		case Oarg:
@@ -196,14 +201,23 @@ argsclass(Ins *i0, Ins *i1, AClass *ac, int op, AClass *aret, Ref *env)
 				a->inmem = 1;
 			break;
 		case Oarge:
+			envc = 1;
 			if (op == Opar)
 				*env = i->to;
 			else
 				*env = i->arg[0];
 			break;
+		case Oargv:
+			varc = 1;
+			break;
+		default:
+			die("unreachable");
 		}
 
-	return ((6-nint) << 4) | ((8-nsse) << 8);
+	if (varc && envc)
+		err("sysv abi does not support variadic env calls");
+
+	return ((varc|envc) << 12) | ((6-nint) << 4) | ((8-nsse) << 8);
 }
 
 int amd64_sysv_rsave[] = {
@@ -214,8 +228,8 @@ int amd64_sysv_rsave[] = {
 int amd64_sysv_rclob[] = {RBX, R12, R13, R14, R15, -1};
 
 MAKESURE(sysv_arrays_ok,
-	sizeof amd64_sysv_rsave == (NGPS+NFPS+1) * sizeof(int) &&
-	sizeof amd64_sysv_rclob == (NCLR+1) * sizeof(int)
+	sizeof amd64_sysv_rsave == (NGPS_SYSV+NFPS+1) * sizeof(int) &&
+	sizeof amd64_sysv_rclob == (NCLR_SYSV+1) * sizeof(int)
 );
 
 /* layout of call's second argument (RCall)
@@ -290,7 +304,7 @@ selcall(Fn *fn, Ins *i0, Ins *i1, RAlloc **rap)
 {
 	Ins *i;
 	AClass *ac, *a, aret;
-	int ca, ni, ns, al, varc, envc;
+	int ca, ni, ns, al;
 	uint stk, off;
 	Ref r, r1, r2, reg[2], env;
 	RAlloc *ra;
@@ -327,6 +341,10 @@ selcall(Fn *fn, Ins *i0, Ins *i1, RAlloc **rap)
 			emit(Ocopy, Kl, i1->to, TMP(RAX), R);
 			ca += 1;
 		} else {
+			/* todo, may read out of bounds.
+			 * gcc did this up until 5.2, but
+			 * this should still be fixed.
+			 */
 			if (aret.size > 8) {
 				r = newtmp("abi", Kl, fn);
 				aret.ref[1] = newtmp("abi", aret.cls[1], fn);
@@ -345,7 +363,7 @@ selcall(Fn *fn, Ins *i0, Ins *i1, RAlloc **rap)
 		ra = alloc(sizeof *ra);
 		/* specific to NAlign == 3 */
 		al = aret.align >= 2 ? aret.align - 2 : 0;
-		ra->i = (Ins){Oalloc+al, r1, {getcon(aret.size, fn)}, Kl};
+		ra->i = (Ins){Oalloc+al, Kl, r1, {getcon(aret.size, fn)}};
 		ra->link = (*rap);
 		*rap = ra;
 	} else {
@@ -358,22 +376,20 @@ selcall(Fn *fn, Ins *i0, Ins *i1, RAlloc **rap)
 			ca += 1 << 2;
 		}
 	}
-	envc = !req(R, env);
-	varc = i1->op == Ovacall;
-	if (varc && envc)
-		err("sysv abi does not support variadic env calls");
-	ca |= (varc | envc) << 12;
+
 	emit(Ocall, i1->cls, R, i1->arg[0], CALL(ca));
-	if (envc)
+
+	if (!req(R, env))
 		emit(Ocopy, Kl, TMP(RAX), env, R);
-	if (varc)
+	else if ((ca >> 12) & 1) /* vararg call */
 		emit(Ocopy, Kw, TMP(RAX), getcon((ca >> 8) & 15, fn), R);
 
 	ni = ns = 0;
 	if (ra && aret.inmem)
 		emit(Ocopy, Kl, rarg(Kl, &ni, &ns), ra->i.to, R); /* pass hidden argument */
+
 	for (i=i0, a=ac; i<i1; i++, a++) {
-		if (a->inmem)
+		if (i->op >= Oarge || a->inmem)
 			continue;
 		r1 = rarg(a->cls[0], &ni, &ns);
 		if (i->op == Oargc) {
@@ -393,17 +409,17 @@ selcall(Fn *fn, Ins *i0, Ins *i1, RAlloc **rap)
 
 	r = newtmp("abi", Kl, fn);
 	for (i=i0, a=ac, off=0; i<i1; i++, a++) {
-		if (!a->inmem)
+		if (i->op >= Oarge || !a->inmem)
 			continue;
+		r1 = newtmp("abi", Kl, fn);
 		if (i->op == Oargc) {
 			if (a->align == 4)
 				off += off & 15;
-			blit(r, off, i->arg[1], a->size, fn);
-		} else {
-			r1 = newtmp("abi", Kl, fn);
+			emit(Oblit1, 0, R, INT(a->type->size), R);
+			emit(Oblit0, 0, R, i->arg[1], r1);
+		} else
 			emit(Ostorel, 0, R, i->arg[0], r1);
-			emit(Oadd, Kl, r1, r, getcon(off, fn));
-		}
+		emit(Oadd, Kl, r1, r, getcon(off, fn));
 		off += a->size;
 	}
 	emit(Osalloc, Kl, r, getcon(stk, fn), R);
@@ -427,6 +443,7 @@ selpar(Fn *fn, Ins *i0, Ins *i1)
 		fa = argsclass(i0, i1, ac, Opar, &aret, &env);
 	} else
 		fa = argsclass(i0, i1, ac, Opar, 0, &env);
+	fn->reg = amd64_sysv_argregs(CALL(fa), 0);
 
 	for (i=i0, a=ac; i<i1; i++, a++) {
 		if (i->op != Oparc || a->inmem)
@@ -465,12 +482,14 @@ selpar(Fn *fn, Ins *i0, Ins *i1)
 			s += 2;
 			continue;
 		}
+		if (i->op == Opare)
+			continue;
 		r = rarg(a->cls[0], &ni, &ns);
 		if (i->op == Oparc) {
-			emit(Ocopy, Kl, a->ref[0], r, R);
+			emit(Ocopy, a->cls[0], a->ref[0], r, R);
 			if (a->size > 8) {
 				r = rarg(a->cls[1], &ni, &ns);
-				emit(Ocopy, Kl, a->ref[1], r, R);
+				emit(Ocopy, a->cls[1], a->ref[1], r, R);
 			}
 		} else
 			emit(Ocopy, i->cls, i->to, r, R);
@@ -488,12 +507,11 @@ split(Fn *fn, Blk *b)
 	Blk *bn;
 
 	++fn->nblk;
-	bn = blknew();
-	bn->nins = &insb[NIns] - curi;
-	idup(&bn->ins, curi, bn->nins);
+	bn = newblk();
+	idup(bn, curi, &insb[NIns]-curi);
 	curi = &insb[NIns];
 	bn->visit = ++b->visit;
-	snprintf(bn->name, NString, "%s.%d", b->name, b->visit);
+	strf(bn->name, "%s.%d", b->name, b->visit);
 	bn->loop = b->loop;
 	bn->link = b->link;
 	b->link = bn;
@@ -590,9 +608,13 @@ selvaarg(Fn *fn, Blk *b, Ins *i)
 	*b0->phi = (Phi){
 		.cls = Kl, .to = loc,
 		.narg = 2,
-		.blk = {bstk, breg},
-		.arg = {lstk, lreg},
+		.blk = vnew(2, sizeof b0->phi->blk[0], PFn),
+		.arg = vnew(2, sizeof b0->phi->arg[0], PFn),
 	};
+	b0->phi->blk[0] = bstk;
+	b0->phi->blk[1] = breg;
+	b0->phi->arg[0] = lstk;
+	b0->phi->arg[1] = lreg;
 	r0 = newtmp("abi", Kl, fn);
 	r1 = newtmp("abi", Kw, fn);
 	b->jmp.type = Jjnz;
@@ -634,24 +656,25 @@ void
 amd64_sysv_abi(Fn *fn)
 {
 	Blk *b;
-	Ins *i, *i0, *ip;
+	Ins *i, *i0;
 	RAlloc *ral;
-	int n, fa;
+	int n0, n1, ioff, fa;
 
 	for (b=fn->start; b; b=b->link)
 		b->visit = 0;
 
 	/* lower parameters */
-	for (b=fn->start, i=b->ins; i-b->ins<b->nins; i++)
+	for (b=fn->start, i=b->ins; i<&b->ins[b->nins]; i++)
 		if (!ispar(i->op))
 			break;
 	fa = selpar(fn, b->ins, i);
-	n = b->nins - (i - b->ins) + (&insb[NIns] - curi);
-	i0 = alloc(n * sizeof(Ins));
-	ip = icpy(ip = i0, curi, &insb[NIns] - curi);
-	ip = icpy(ip, i, &b->ins[b->nins] - i);
-	b->nins = n;
-	b->ins = i0;
+	n0 = &insb[NIns] - curi;
+	ioff = i - b->ins;
+	n1 = b->nins - ioff;
+	vgrow(&b->ins, n0+n1);
+	icpy(b->ins+n0, b->ins+ioff, n1);
+	icpy(b->ins, curi, n0);
+	b->nins = n0+n1;
 
 	/* lower calls, returns, and vararg instructions */
 	ral = 0;
@@ -669,7 +692,6 @@ amd64_sysv_abi(Fn *fn)
 				emiti(*i);
 				break;
 			case Ocall:
-			case Ovacall:
 				for (i0=i; i0>b->ins; i0--)
 					if (!isarg((i0-1)->op))
 						break;
@@ -689,8 +711,7 @@ amd64_sysv_abi(Fn *fn)
 		if (b == fn->start)
 			for (; ral; ral=ral->link)
 				emiti(ral->i);
-		b->nins = &insb[NIns] - curi;
-		idup(&b->ins, curi, b->nins);
+		idup(b, curi, &insb[NIns]-curi);
 	} while (b != fn->start);
 
 	if (debug['A']) {

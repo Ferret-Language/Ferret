@@ -1,6 +1,6 @@
 #include "all.h"
 
-static void
+void
 getalias(Alias *a, Ref r, Fn *fn)
 {
 	Con *c;
@@ -18,7 +18,7 @@ getalias(Alias *a, Ref r, Fn *fn)
 		c = &fn->con[r.val];
 		if (c->type == CAddr) {
 			a->type = ASym;
-			a->label = c->label;
+			a->u.sym = c->sym;
 		} else
 			a->type = ACon;
 		a->offset = c->bits.i;
@@ -28,13 +28,17 @@ getalias(Alias *a, Ref r, Fn *fn)
 }
 
 int
-alias(Ref p, int sp, Ref q, int sq, int *delta, Fn *fn)
+alias(Ref p, int op, int sp, Ref q, int sq, int *delta, Fn *fn)
 {
 	Alias ap, aq;
 	int ovlap;
 
 	getalias(&ap, p, fn);
 	getalias(&aq, q, fn);
+	ap.offset += op;
+	/* when delta is meaningful (ovlap == 1),
+	 * we do not overflow int because sp and
+	 * sq are bounded by 2^28 */
 	*delta = ap.offset - aq.offset;
 	ovlap = ap.offset < aq.offset + sq && aq.offset < ap.offset + sp;
 
@@ -42,7 +46,7 @@ alias(Ref p, int sp, Ref q, int sq, int *delta, Fn *fn)
 		/* if both are offsets of the same
 		 * stack slot, they alias iif they
 		 * overlap */
-		if (req(ap.base, aq.base) && ovlap)
+		if (ap.base == aq.base && ovlap)
 			return MustAlias;
 		return NoAlias;
 	}
@@ -51,7 +55,7 @@ alias(Ref p, int sp, Ref q, int sq, int *delta, Fn *fn)
 		/* they conservatively alias if the
 		 * symbols are different, or they
 		 * alias for sure if they overlap */
-		if (ap.label != aq.label)
+		if (!symeq(ap.u.sym, aq.u.sym))
 			return MayAlias;
 		if (ovlap)
 			return MustAlias;
@@ -59,7 +63,7 @@ alias(Ref p, int sp, Ref q, int sq, int *delta, Fn *fn)
 	}
 
 	if ((ap.type == ACon && aq.type == ACon)
-	|| (ap.type == aq.type && req(ap.base, aq.base))) {
+	|| (ap.type == aq.type && ap.base == aq.base)) {
 		assert(ap.type == ACon || ap.type == AUnk);
 		/* if they have the same base, we
 		 * can rely on the offsets only */
@@ -103,15 +107,42 @@ esc(Ref r, Fn *fn)
 	}
 }
 
+static void
+store(Ref r, int sz, Fn *fn)
+{
+	Alias *a;
+	int64_t off;
+	bits m;
+
+	if (rtype(r) == RTmp) {
+		a = &fn->tmp[r.val].alias;
+		if (a->slot) {
+			assert(astack(a->type));
+			off = a->offset;
+			if (sz >= NBit
+			|| (off < 0 || off >= NBit))
+				m = -1;
+			else
+				m = (BIT(sz) - 1) << off;
+			a->slot->u.loc.m |= m;
+		}
+	}
+}
+
 void
 fillalias(Fn *fn)
 {
 	uint n;
+	int t, sz;
+	int64_t x;
 	Blk *b;
 	Phi *p;
 	Ins *i;
+	Con *c;
 	Alias *a, a0, a1;
 
+	for (t=0; t<fn->ntmp; t++)
+		fn->tmp[t].alias.type = ABot;
 	for (n=0; n<fn->nblk; ++n) {
 		b = fn->rpo[n];
 		for (p=b->phi; p; p=p->link) {
@@ -119,7 +150,7 @@ fillalias(Fn *fn)
 			a = &fn->tmp[p->to.val].alias;
 			assert(a->type == ABot);
 			a->type = AUnk;
-			a->base = p->to;
+			a->base = p->to.val;
 			a->offset = 0;
 			a->slot = 0;
 		}
@@ -132,11 +163,19 @@ fillalias(Fn *fn)
 				if (Oalloc <= i->op && i->op <= Oalloc1) {
 					a->type = ALoc;
 					a->slot = a;
+					a->u.loc.sz = -1;
+					if (rtype(i->arg[0]) == RCon) {
+						c = &fn->con[i->arg[0].val];
+						x = c->bits.i;
+						if (c->type == CBits)
+						if (0 <= x && x <= NBit)
+							a->u.loc.sz = x;
+					}
 				} else {
 					a->type = AUnk;
 					a->slot = 0;
 				}
-				a->base = i->to;
+				a->base = i->to.val;
 				a->offset = 0;
 			}
 			if (i->op == Ocopy) {
@@ -155,13 +194,29 @@ fillalias(Fn *fn)
 					a->offset += a1.offset;
 				}
 			}
-			if (req(i->to, R) || a->type == AUnk) {
+			if (req(i->to, R) || a->type == AUnk)
+			if (i->op != Oblit0) {
 				if (!isload(i->op))
 					esc(i->arg[0], fn);
 				if (!isstore(i->op))
+				if (i->op != Oargc)
 					esc(i->arg[1], fn);
 			}
+			if (i->op == Oblit0) {
+				++i;
+				assert(i->op == Oblit1);
+				assert(rtype(i->arg[0]) == RInt);
+				sz = abs(rsval(i->arg[0]));
+				store((i-1)->arg[1], sz, fn);
+			}
+			if (isstore(i->op))
+				store(i->arg[1], storesz(i), fn);
 		}
-		esc(b->jmp.arg, fn);
+		if (b->jmp.type != Jretc)
+			esc(b->jmp.arg, fn);
 	}
+	for (b=fn->start; b; b=b->link)
+		for (p=b->phi; p; p=p->link)
+			for (n=0; n<p->narg; n++)
+				esc(p->arg[n], fn);
 }

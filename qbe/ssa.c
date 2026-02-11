@@ -1,7 +1,7 @@
 #include "all.h"
 #include <stdarg.h>
 
-static void
+void
 adduse(Tmp *tmp, int ty, Blk *b, ...)
 {
 	Use *u;
@@ -40,25 +40,27 @@ filluse(Fn *fn)
 	Blk *b;
 	Phi *p;
 	Ins *i;
-	int m, t, tp, w;
+	int m, t, tp, w, x;
 	uint a;
 	Tmp *tmp;
 
-	/* todo, is this the correct file? */
 	tmp = fn->tmp;
 	for (t=Tmp0; t<fn->ntmp; t++) {
+		tmp[t].def = 0;
+		tmp[t].bid = -1u;
 		tmp[t].ndef = 0;
 		tmp[t].nuse = 0;
 		tmp[t].cls = 0;
 		tmp[t].phi = 0;
 		tmp[t].width = WFull;
 		if (tmp[t].use == 0)
-			tmp[t].use = vnew(0, sizeof(Use), Pfn);
+			tmp[t].use = vnew(0, sizeof(Use), PFn);
 	}
 	for (b=fn->start; b; b=b->link) {
 		for (p=b->phi; p; p=p->link) {
 			assert(rtype(p->to) == RTmp);
 			tp = p->to.val;
+			tmp[tp].bid = b->id;
 			tmp[tp].ndef++;
 			tmp[tp].cls = p->cls;
 			tp = phicls(tp, fn->tmp);
@@ -71,19 +73,25 @@ filluse(Fn *fn)
 						tmp[t].phi = tp;
 				}
 		}
-		for (i=b->ins; i-b->ins < b->nins; i++) {
+		for (i=b->ins; i<&b->ins[b->nins]; i++) {
 			if (!req(i->to, R)) {
 				assert(rtype(i->to) == RTmp);
 				w = WFull;
+				if (isparbh(i->op))
+					w = Wsb + (i->op - Oparsb);
 				if (isload(i->op) && i->op != Oload)
 					w = Wsb + (i->op - Oloadsb);
 				if (isext(i->op))
 					w = Wsb + (i->op - Oextsb);
+				if (iscmp(i->op, &x, &x))
+					w = Wub;
 				if (w == Wsw || w == Wuw)
 				if (i->cls == Kw)
 					w = WFull;
 				t = i->to.val;
 				tmp[t].width = w;
+				tmp[t].def = i;
+				tmp[t].bid = b->id;
 				tmp[t].ndef++;
 				tmp[t].cls = i->cls;
 			}
@@ -111,9 +119,10 @@ phiins(Fn *fn)
 	Blk *a, *b, **blist, **be, **bp;
 	Ins *i;
 	Phi *p;
+	Use *use;
 	Ref r;
-	int t, nt;
-	uint n;
+	int t, nt, ok;
+	uint n, defb;
 	short k;
 
 	bsinit(u, fn->nblk);
@@ -125,13 +134,22 @@ phiins(Fn *fn)
 		fn->tmp[t].visit = 0;
 		if (fn->tmp[t].phi != 0)
 			continue;
+		if (fn->tmp[t].ndef == 1) {
+			ok = 1;
+			defb = fn->tmp[t].bid;
+			use = fn->tmp[t].use;
+			for (n=fn->tmp[t].nuse; n--; use++)
+				ok &= use->bid == defb;
+			if (ok || defb == fn->start->id)
+				continue;
+		}
 		bszero(u);
-		k = -1;
+		k = Kx;
 		bp = be;
 		for (b=fn->start; b; b=b->link) {
 			b->visit = 0;
 			r = R;
-			for (i=b->ins; i-b->ins < b->nins; i++) {
+			for (i=b->ins; i<&b->ins[b->nins]; i++) {
 				if (!req(r, R)) {
 					if (req(i->arg[0], TMP(t)))
 						i->arg[0] = r;
@@ -140,10 +158,7 @@ phiins(Fn *fn)
 				}
 				if (req(i->to, TMP(t))) {
 					if (!bshas(b->out, t)) {
-						if (fn->tmp[t].ndef == 1)
-							r = TMP(t);
-						else
-							r = refindex(t, fn);
+						r = refindex(t, fn);
 						i->to = r;
 					} else {
 						if (!bshas(u, b->id)) {
@@ -171,6 +186,8 @@ phiins(Fn *fn)
 					p->cls = k;
 					p->to = TMP(t);
 					p->link = a->phi;
+					p->arg = vnew(0, sizeof p->arg[0], PFn);
+					p->blk = vnew(0, sizeof p->blk[0], PFn);
 					a->phi = p;
 					if (!bshas(defs, a->id))
 					if (!bshas(u, a->id)) {
@@ -248,7 +265,7 @@ getstk(int t, Blk *b, Name **stk)
 	stk[t] = n;
 	if (!n) {
 		/* uh, oh, warn */
-		return CON_Z;
+		return UNDEF;
 	} else
 		return n->r;
 }
@@ -263,7 +280,7 @@ renblk(Blk *b, Name **stk, Fn *fn)
 
 	for (p=b->phi; p; p=p->link)
 		rendef(&p->to, b, stk, fn);
-	for (i=b->ins; i-b->ins < b->nins; i++) {
+	for (i=b->ins; i<&b->ins[b->nins]; i++) {
 		for (m=0; m<2; m++) {
 			t = i->arg[m].val;
 			if (rtype(i->arg[m]) == RTmp)
@@ -284,8 +301,8 @@ renblk(Blk *b, Name **stk, Fn *fn)
 			t = p->to.val;
 			if ((t=fn->tmp[t].visit)) {
 				m = p->narg++;
-				if (m == NPred)
-					die("renblk, too many phi args");
+				vgrow(&p->arg, p->narg);
+				vgrow(&p->blk, p->narg);
 				p->arg[m] = getstk(t, b, stk);
 				p->blk[m] = b;
 			}
@@ -294,7 +311,7 @@ renblk(Blk *b, Name **stk, Fn *fn)
 		renblk(s, stk, fn);
 }
 
-/* require rpo and ndef */
+/* require rpo and use */
 void
 ssa(Fn *fn)
 {
@@ -374,7 +391,7 @@ ssacheck(Fn *fn)
 		for (p=b->phi; p; p=p->link) {
 			r = p->to;
 			t = &fn->tmp[r.val];
-			for (u=t->use; u-t->use < t->nuse; u++) {
+			for (u=t->use; u<&t->use[t->nuse]; u++) {
 				bu = fn->rpo[u->bid];
 				if (u->type == UPhi) {
 					if (phicheck(u->u.phi, b, r))
@@ -384,12 +401,12 @@ ssacheck(Fn *fn)
 						goto Err;
 			}
 		}
-		for (i=b->ins; i-b->ins < b->nins; i++) {
+		for (i=b->ins; i<&b->ins[b->nins]; i++) {
 			if (rtype(i->to) != RTmp)
 				continue;
 			r = i->to;
 			t = &fn->tmp[r.val];
-			for (u=t->use; u-t->use < t->nuse; u++) {
+			for (u=t->use; u<&t->use[t->nuse]; u++) {
 				bu = fn->rpo[u->bid];
 				if (u->type == UPhi) {
 					if (phicheck(u->u.phi, b, r))

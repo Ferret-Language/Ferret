@@ -50,8 +50,11 @@ sethint(int t, int r)
 static void
 rcopy(RMap *ma, RMap *mb)
 {
-	memcpy(ma, mb, sizeof *ma);
+	memcpy(ma->t, mb->t, sizeof ma->t);
+	memcpy(ma->r, mb->r, sizeof ma->r);
+	memcpy(ma->w, mb->w, sizeof ma->w);
 	bscopy(ma->b, mb->b);
+	ma->n = mb->n;
 }
 
 static int
@@ -63,17 +66,6 @@ rfind(RMap *m, int t)
 		if (m->t[i] == t)
 			return m->r[i];
 	return -1;
-}
-
-static int
-regused(RMap *m, int r, int skip)
-{
-	int i;
-
-	for (i=0; i<m->n; i++)
-		if (i != skip && m->r[i] == r)
-			return 1;
-	return 0;
 }
 
 static Ref
@@ -247,6 +239,8 @@ pmrec(enum PMStat *status, int i, int *k)
 		c = -1;
 		emit(Ocopy, pm[i].cls, pm[i].dst, pm[i].src, R);
 		break;
+	default:
+		die("unreachable");
 	}
 	status[i] = Moved;
 	return c;
@@ -367,8 +361,6 @@ doblk(Blk *b, RMap *cur)
 	Mem *m;
 	Ref *ra[4];
 
-	for (r=0; bsiter(b->out, &r) && r<Tmp0; r++)
-		radd(cur, r, r);
 	if (rtype(b->jmp.arg) == RTmp)
 		b->jmp.arg = ralloc(cur, b->jmp.arg.val);
 	curi = &insb[NIns];
@@ -425,10 +417,11 @@ doblk(Blk *b, RMap *cur)
 			}
 		for (r=0; r<nr; r++)
 			*ra[r] = ralloc(cur, ra[r]->val);
+		if (i->op == Ocopy && req(i->to, i->arg[0]))
+			curi++;
 
 		/* try to change the register of a hinted
 		 * temporary if rf is available */
-		x = 1;
 		if (rf != -1 && (t = cur->w[rf]) != 0)
 		if (!bshas(cur->b, rf) && *hint(t) == rf
 		&& (rt = rfree(cur, t)) != -1) {
@@ -446,8 +439,7 @@ doblk(Blk *b, RMap *cur)
 			 * the above loop must be changed */
 		}
 	}
-	b->nins = &insb[NIns] - curi;
-	idup(&b->ins, curi, b->nins);
+	idup(b, curi, &insb[NIns]-curi);
 }
 
 /* qsort() comparison function to peel
@@ -487,7 +479,6 @@ rega(Fn *fn)
 	int j, t, r, x, rl[Tmp0];
 	Blk *b, *b1, *s, ***ps, *blist, **blk, **bp;
 	RMap *end, *beg, cur, old, *m;
-	BSet def[1];
 	Ins *i;
 	Phi *p;
 	uint u, n;
@@ -508,7 +499,6 @@ rega(Fn *fn)
 	}
 	bsinit(cur.b, fn->ntmp);
 	bsinit(old.b, fn->ntmp);
-	bsinit(def, fn->ntmp);
 
 	loop = INT_MAX;
 	for (t=0; t<fn->ntmp; t++) {
@@ -519,7 +509,7 @@ rega(Fn *fn)
 	for (bp=blk, b=fn->start; b; b=b->link)
 		*bp++ = b;
 	qsort(blk, fn->nblk, sizeof blk[0], carve);
-	for (b=fn->start, i=b->ins; i-b->ins < b->nins; i++)
+	for (b=fn->start, i=b->ins; i<&b->ins[b->nins]; i++)
 		if (i->op != Ocopy || !isreg(i->arg[0]))
 			break;
 		else {
@@ -543,6 +533,8 @@ rega(Fn *fn)
 				rl[j] = t;
 			}
 		}
+		for (r=0; bsiter(b->out, &r) && r<Tmp0; r++)
+			radd(&cur, r, r);
 		for (j=0; j<x; j++)
 			ralloctry(&cur, rl[j], 1);
 		for (j=0; j<x; j++)
@@ -561,13 +553,6 @@ rega(Fn *fn)
 	for (s=fn->start; s; s=s->link) {
 		if (s->npred <= 1)
 			continue;
-		bszero(def);
-		for (p=s->phi; p; p=p->link)
-			if (rtype(p->to) == RTmp)
-				bsset(def, p->to.val);
-		for (i=s->ins; i-s->ins < s->nins; i++)
-			if (rtype(i->to) == RTmp)
-				bsset(def, i->to.val);
 		m = &beg[s->id];
 
 		/* rl maps a register that is live at the
@@ -579,8 +564,8 @@ rega(Fn *fn)
 		 * predecessor, we have to find the
 		 * corresponding argument */
 		for (p=s->phi; p; p=p->link) {
-			r = rfind(m, p->to.val);
-			if (r == -1)
+			if (rtype(p->to) != RTmp
+			|| (r=rfind(m, p->to.val)) == -1)
 				continue;
 			for (u=0; u<p->narg; u++) {
 				b = p->blk[u];
@@ -588,11 +573,8 @@ rega(Fn *fn)
 				if (rtype(src) != RTmp)
 					continue;
 				x = rfind(&end[b->id], src.val);
-				if (x == -1) {
-					fprintf(stderr, "rega missing phi tmp %d(%s) in pred %d(%s) for block %d(%s) in %s\n",
-						src.val, tmp[src.val].name, b->id, b->name, s->id, s->name, fn->name);
-					abort();
-				}
+				if (x == -1) /* spilled */
+					continue;
 				rl[r] = (!rl[r] || rl[r] == x) ? x : -1;
 			}
 			if (rl[r] == 0)
@@ -603,19 +585,16 @@ rega(Fn *fn)
 		for (j=0; j<m->n; j++) {
 			t = m->t[j];
 			r = m->r[j];
-			if (rl[r] || t < Tmp0 /* todo, remove this */ || bshas(def, t))
+			if (rl[r] || t < Tmp0 /* todo, remove this */)
 				continue;
 			for (bp=s->pred; bp<&s->pred[s->npred]; bp++) {
 				x = rfind(&end[(*bp)->id], t);
-				if (x == -1) {
-					if (tmp[t].slot != -1)
-						continue;
-					fprintf(stderr, "rega missing tmp %d(%s) in pred %d(%s) for block %d(%s) in %s\n",
-						t, tmp[t].name, (*bp)->id, (*bp)->name, s->id, s->name, fn->name);
-					abort();
-				}
+				if (x == -1) /* spilled */
+					continue;
 				rl[r] = (!rl[r] || rl[r] == x) ? x : -1;
 			}
+			if (rl[r] == 0)
+				rl[r] = -1;
 		}
 
 		npm = 0;
@@ -624,16 +603,10 @@ rega(Fn *fn)
 			r = m->r[j];
 			x = rl[r];
 			assert(x != 0 || t < Tmp0 /* todo, ditto */);
-			if (x > 0) {
-				if (x != r && regused(m, x, j))
-					continue;
+			if (x > 0 && !bshas(m->b, x)) {
 				pmadd(TMP(x), TMP(r), tmp[t].cls);
-				if (x != r) {
-					if (!regused(m, r, j))
-						bsclr(m->b, r);
-					bsset(m->b, x);
-				}
 				m->r[j] = x;
+				bsset(m->b, x);
 			}
 		}
 		curi = &insb[NIns];
@@ -691,16 +664,15 @@ rega(Fn *fn)
 			pmgen();
 			if (curi == &insb[NIns])
 				continue;
-			b1 = blknew();
+			b1 = newblk();
 			b1->loop = (b->loop+s->loop) / 2;
 			b1->link = blist;
 			blist = b1;
 			fn->nblk++;
-			sprintf(b1->name, "%s_%s", b->name, s->name);
-			b1->nins = &insb[NIns] - curi;
-			stmov += b1->nins;
+			strf(b1->name, "%s_%s", b->name, s->name);
+			stmov += &insb[NIns]-curi;
 			stblk += 1;
-			idup(&b1->ins, curi, b1->nins);
+			idup(b1, curi, &insb[NIns]-curi);
 			b1->jmp.type = Jjmp;
 			b1->s1 = s;
 			**ps = b1;

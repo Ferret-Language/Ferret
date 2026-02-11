@@ -6,7 +6,6 @@ typedef struct Loc Loc;
 typedef struct Slice Slice;
 typedef struct Insert Insert;
 
-
 struct Loc {
 	enum {
 		LRoot,   /* right above the original load */
@@ -19,6 +18,7 @@ struct Loc {
 
 struct Slice {
 	Ref ref;
+	int off;
 	short sz;
 	short cls; /* load class */
 };
@@ -77,7 +77,7 @@ iins(int cls, int op, Ref a0, Ref a1, Loc *l)
 	ist->num = inum++;
 	ist->bid = l->blk->id;
 	ist->off = l->off;
-	ist->new.ins = (Ins){op, R, {a0, a1}, cls};
+	ist->new.ins = (Ins){op, cls, R, {a0, a1}};
 	return ist->new.ins.to = newtmp("ld", cls, curf);
 }
 
@@ -92,14 +92,17 @@ cast(Ref *r, int cls, Loc *l)
 	cls0 = curf->tmp[r->val].cls;
 	if (cls0 == cls || (cls == Kw && cls0 == Kl))
 		return;
-	assert(!KWIDE(cls0) || KWIDE(cls));
-	if (KWIDE(cls) == KWIDE(cls0))
-		*r = iins(cls, Ocast, *r, R, l);
-	else {
-		assert(cls == Kl);
+	if (KWIDE(cls0) < KWIDE(cls)) {
 		if (cls0 == Ks)
 			*r = iins(Kw, Ocast, *r, R, l);
 		*r = iins(Kl, Oextuw, *r, R, l);
+		if (cls == Kd)
+			*r = iins(Kd, Ocast, *r, R, l);
+	} else {
+		if (cls0 == Kd && cls != Kl)
+			*r = iins(Kl, Ocast, *r, R, l);
+		if (cls0 != Kd || cls != Kw)
+			*r = iins(cls, Ocast, *r, R, l);
 	}
 }
 
@@ -115,7 +118,8 @@ load(Slice sl, bits msk, Loc *l)
 {
 	Alias *a;
 	Ref r, r1;
-	int ld, cls, all, c;
+	int ld, cls, all;
+	Con c;
 
 	ld = (int[]){
 		[1] = Oloadub,
@@ -140,7 +144,7 @@ load(Slice sl, bits msk, Loc *l)
 		case ALoc:
 		case AEsc:
 		case AUnk:
-			r = a->base;
+			r = TMP(a->base);
 			if (!a->offset)
 				break;
 			r1 = getcon(a->offset, curf);
@@ -148,13 +152,11 @@ load(Slice sl, bits msk, Loc *l)
 			break;
 		case ACon:
 		case ASym:
-			c = curf->ncon++;
-			vgrow(&curf->con, curf->ncon);
-			curf->con[c].type = CAddr;
-			curf->con[c].label = a->label;
-			curf->con[c].bits.i = a->offset;
-			curf->con[c].local = 0;
-			r = CON(c);
+			memset(&c, 0, sizeof c);
+			c.type = CAddr;
+			c.sym = a->u.sym;
+			c.bits.i = a->offset;
+			r = newcon(&c, curf);
 			break;
 		}
 	}
@@ -176,7 +178,7 @@ killsl(Ref r, Slice sl)
 	default:   die("unreachable");
 	case ALoc:
 	case AEsc:
-	case AUnk: return req(a->base, r);
+	case AUnk: return req(TMP(a->base), r);
 	case ACon:
 	case ASym: return 0;
 	}
@@ -192,6 +194,7 @@ killsl(Ref r, Slice sl)
 static Ref
 def(Slice sl, bits msk, Blk *b, Ins *i, Loc *il)
 {
+	Slice sl1;
 	Blk *bp;
 	bits msk1, msks;
 	int off, cls, cls1, op, sz, ld;
@@ -242,10 +245,34 @@ def(Slice sl, bits msk, Blk *b, Ins *i, Loc *il)
 			sz = storesz(i);
 			r1 = i->arg[1];
 			r = i->arg[0];
+		} else if (i->op == Oblit1) {
+			assert(rtype(i->arg[0]) == RInt);
+			sz = abs(rsval(i->arg[0]));
+			assert(i > b->ins);
+			--i;
+			assert(i->op == Oblit0);
+			r1 = i->arg[1];
 		} else
 			continue;
-		switch (alias(sl.ref, sl.sz, r1, sz, &off, curf)) {
+		switch (alias(sl.ref, sl.off, sl.sz, r1, sz, &off, curf)) {
 		case MustAlias:
+			if (i->op == Oblit0) {
+				sl1 = sl;
+				sl1.ref = i->arg[0];
+				if (off >= 0) {
+					assert(off < sz);
+					sl1.off = off;
+					sz -= off;
+					off = 0;
+				} else {
+					sl1.off = 0;
+					sl1.sz += off;
+				}
+				if (sz > sl1.sz)
+					sz = sl1.sz;
+				assert(sz <= 8);
+				sl1.sz = sz;
+			}
 			if (off < 0) {
 				off = -off;
 				msk1 = (MASK(sz) << 8*off) & msks;
@@ -255,7 +282,12 @@ def(Slice sl, bits msk, Blk *b, Ins *i, Loc *il)
 				op = Oshr;
 			}
 			if ((msk1 & msk) == 0)
-				break;
+				continue;
+			if (i->op == Oblit0) {
+				r = def(sl1, MASK(sz), b, i, il);
+				if (req(r, R))
+					goto Load;
+			}
 			if (off) {
 				cls1 = cls;
 				if (op == Oshr && off + sl.sz > 4)
@@ -277,11 +309,11 @@ def(Slice sl, bits msk, Blk *b, Ins *i, Loc *il)
 			return r;
 		case MayAlias:
 			if (ld)
-				break;
+				continue;
 			else
 				goto Load;
 		case NoAlias:
-			break;
+			continue;
 		default:
 			die("unreachable");
 		}
@@ -290,6 +322,7 @@ def(Slice sl, bits msk, Blk *b, Ins *i, Loc *il)
 	for (ist=ilog; ist<&ilog[nlog]; ++ist)
 		if (ist->isphi && ist->bid == b->id)
 		if (req(ist->new.phi.m.ref, sl.ref))
+		if (ist->new.phi.m.off == sl.off)
 		if (ist->new.phi.m.sz == sl.sz) {
 			r = ist->new.phi.p->to;
 			if (msk != msks)
@@ -330,6 +363,8 @@ def(Slice sl, bits msk, Blk *b, Ins *i, Loc *il)
 	p->to = r;
 	p->cls = sl.cls;
 	p->narg = b->npred;
+	p->arg = vnew(p->narg, sizeof p->arg[0], PFn);
+	p->blk = vnew(p->narg, sizeof p->blk[0], PFn);
 	for (np=0; np<b->npred; ++np) {
 		bp = b->pred[np];
 		if (!bp->s2
@@ -345,6 +380,7 @@ def(Slice sl, bits msk, Blk *b, Ins *i, Loc *il)
 			goto Load;
 		p->arg[np] = r1;
 		p->blk[np] = bp;
+		/* XXX - multiplicity in predecessors!!! */
 	}
 	if (msk != msks)
 		mask(cls, &r, msk, il);
@@ -385,7 +421,7 @@ loadopt(Fn *fn)
 	Loc l;
 
 	curf = fn;
-	ilog = vnew(0, sizeof ilog[0], Pheap);
+	ilog = vnew(0, sizeof ilog[0], PHeap);
 	nlog = 0;
 	inum = 0;
 	for (b=fn->start; b; b=b->link)
@@ -393,14 +429,14 @@ loadopt(Fn *fn)
 			if (!isload(i->op))
 				continue;
 			sz = loadsz(i);
-			sl = (Slice){i->arg[0], sz, i->cls};
+			sl = (Slice){i->arg[0], 0, sz, i->cls};
 			l = (Loc){LRoot, i-b->ins, b};
 			i->arg[1] = def(sl, MASK(sz), b, i, &l);
 		}
 	qsort(ilog, nlog, sizeof ilog[0], icmp);
 	vgrow(&ilog, nlog+1);
 	ilog[nlog].bid = fn->nblk; /* add a sentinel */
-	ib = vnew(0, sizeof(Ins), Pheap);
+	ib = vnew(0, sizeof(Ins), PHeap);
 	for (ist=ilog, n=0; n<fn->nblk; ++n) {
 		b = fn->rpo[n];
 		for (; ist->bid == n && ist->isphi; ++ist) {
@@ -434,6 +470,7 @@ loadopt(Fn *fn)
 							i->op = ext;
 							break;
 						}
+						/* fall through */
 					case Oload:
 						i->op = Ocopy;
 						break;
@@ -445,8 +482,7 @@ loadopt(Fn *fn)
 			vgrow(&ib, ++nt);
 			ib[nt-1] = *i;
 		}
-		b->nins = nt;
-		idup(&b->ins, ib, nt);
+		idup(b, ib, nt);
 	}
 	vfree(ib);
 	vfree(ilog);

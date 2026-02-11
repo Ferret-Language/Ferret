@@ -1,0 +1,101 @@
+import "std/io";
+
+fn factorial(n: i32) -> i32 {
+    if n <= 1 {
+        return 1;
+    }
+    let result: i32 = 1;
+    let i := 2;
+    while i <= n {
+        result = result * i;
+        i += 1;
+    }
+    return result;
+}
+
+fn fib(n: i32) -> i32 {
+    if n <= 1 {
+        return n;
+    }
+    let a := 0;
+    let b := 1;
+    for _ in 2..=n {
+        let next := a + b;
+        a = b;
+        b = next;
+    }
+    return b;
+}
+
+fn gcd(a: i32, b: i32) -> i32 {
+    let x := a;
+    let y := b;
+    while y != 0 {
+        let tmp := y;
+        y = x % y;
+        x = tmp;
+    }
+    return x;
+}
+
+fn mod_loop(a: i32, b: i32) -> i32 {
+    let x := a;
+    let y := b;
+    let i := 0;
+    while i < 200 {
+        x = (x * 3 + y * 7) % 1000003;
+        y = (y * 5 + x * 11) % 1000003;
+        i += 1;
+    }
+    return x + y;
+}
+
+fn binary_search(nums: []i32, target: i32) -> i32 {
+    let left := 0;
+    let right := len(nums) - 1;
+    while left <= right {
+        let mid := ((left + right) / 2) as i32;
+        let val := nums[mid];
+        if val == target {
+            return mid;
+        }
+        if val < target {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+    return -1;
+}
+
+fn bubble_sort(nums: &mut []i32) {
+    let n := len(nums);
+    let i := 0;
+    while i < n {
+        let j := 0;
+        while j + 1 < n - i {
+            if nums[j] > nums[j + 1] {
+                let tmp := nums[j];
+                nums[j] = nums[j + 1];
+                nums[j + 1] = tmp;
+            }
+            j += 1;
+        }
+        i += 1;
+    }
+}
+
+fn main() {
+    io::Println(factorial(6)); // 720
+    io::Println(fib(10));      // 55
+    io::Println(gcd(84, 30));  // 6
+    io::Println(mod_loop(123456, 7890));
+
+    let nums := [9, 4, 1, 7, 3, 8, 2, 6, 5];
+    bubble_sort(&mut nums);
+    io::Println(nums[0]);      // 1
+    io::Println(nums[8]);      // 9
+
+    let idx := binary_search(nums, 7);
+    io::Println(idx);          // 6
+}

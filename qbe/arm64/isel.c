@@ -24,7 +24,7 @@ imm(Con *c, int k, int64_t *pn)
 	i = Iplo12;
 	if (n < 0) {
 		i = Inlo12;
-		n = -n;
+		n = -(uint64_t)n;
 	}
 	*pn = n;
 	if ((n & 0x000fff) == n)
@@ -70,26 +70,51 @@ static void
 fixarg(Ref *pr, int k, int phi, Fn *fn)
 {
 	char buf[32];
-	Ref r0, r1, r2;
+	Con *c, cc;
+	Ref r0, r1, r2, r3;
 	int s, n;
-	Con *c;
 
 	r0 = *pr;
 	switch (rtype(r0)) {
 	case RCon:
+		c = &fn->con[r0.val];
+		if (T.apple
+		&& c->type == CAddr
+		&& c->sym.type == SThr) {
+			r1 = newtmp("isel", Kl, fn);
+			*pr = r1;
+			if (c->bits.i) {
+				r2 = newtmp("isel", Kl, fn);
+				cc = (Con){.type = CBits};
+				cc.bits.i = c->bits.i;
+				r3 = newcon(&cc, fn);
+				emit(Oadd, Kl, r1, r2, r3);
+				r1 = r2;
+			}
+			emit(Ocopy, Kl, r1, TMP(R0), R);
+			r1 = newtmp("isel", Kl, fn);
+			r2 = newtmp("isel", Kl, fn);
+			emit(Ocall, 0, R, r1, CALL(33));
+			emit(Ocopy, Kl, TMP(R0), r2, R);
+			emit(Oload, Kl, r1, r2, R);
+			cc = *c;
+			cc.bits.i = 0;
+			r3 = newcon(&cc, fn);
+			emit(Ocopy, Kl, r2, r3, R);
+			break;
+		}
 		if (KBASE(k) == 0 && phi)
 			return;
 		r1 = newtmp("isel", k, fn);
 		if (KBASE(k) == 0) {
 			emit(Ocopy, k, r1, r0, R);
 		} else {
-			c = &fn->con[r0.val];
-			n = gasstash(&c->bits, KWIDE(k) ? 8 : 4);
+			n = stashbits(c->bits.i, KWIDE(k) ? 8 : 4);
 			vgrow(&fn->con, ++fn->ncon);
 			c = &fn->con[fn->ncon-1];
-			sprintf(buf, "fp%d", n);
-			*c = (Con){.type = CAddr, .local = 1};
-			c->label = intern(buf);
+			sprintf(buf, "\"%sfp%d\"", T.asloc, n);
+			*c = (Con){.type = CAddr};
+			c->sym.id = intern(buf);
 			r2 = newtmp("isel", Kl, fn);
 			emit(Oload, k, r1, r2, R);
 			emit(Ocopy, Kl, r2, CON(c-fn->con), R);
@@ -156,14 +181,35 @@ selcmp(Ref arg[2], int k, Fn *fn)
 	return swap;
 }
 
+static int
+callable(Ref r, Fn *fn)
+{
+	Con *c;
+
+	if (rtype(r) == RTmp)
+		return 1;
+	if (rtype(r) == RCon) {
+		c = &fn->con[r.val];
+		if (c->type == CAddr)
+		if (c->bits.i == 0)
+			return 1;
+	}
+	return 0;
+}
+
 static void
 sel(Ins i, Fn *fn)
 {
-	Ref *iarg, r0, r1;
+	Ref *iarg;
 	Ins *i0;
 	int ck, cc;
-	int64_t sz;
 
+	if (INRANGE(i.op, Oalloc, Oalloc1)) {
+		i0 = curi - 1;
+		salloc(i.to, i.arg[0], fn);
+		fixarg(&i0->arg[0], Kl, 0, fn);
+		return;
+	}
 	if (iscmp(i.op, &ck, &cc)) {
 		emit(Oflag, i.cls, i.to, R, R);
 		i0 = curi;
@@ -171,30 +217,14 @@ sel(Ins i, Fn *fn)
 			i0->op += cmpop(cc);
 		else
 			i0->op += cc;
-	} else if (i.op == Oalloc || i.op == Oalloc+1 || i.op == Oalloc+2) {
-		/* we need to make sure
-		 * the stack remains aligned
-		 * (rsp = 0) mod 16
-		 */
-		fn->dynalloc = 1;
-		if (rtype(i.arg[0]) == RCon) {
-			sz = fn->con[i.arg[0].val].bits.i;
-			if (sz < 0 || sz >= INT_MAX-15)
-				err("invalid alloc size %"PRId64, sz);
-			sz = (sz + 15)  & -16;
-			emit(Osalloc, Kl, i.to, getcon(sz, fn), R);
-		} else {
-			/* r0 = (i.arg[0] + 15) & -16 */
-			r0 = newtmp("isel", Kl, fn);
-			r1 = newtmp("isel", Kl, fn);
-			emit(Osalloc, Kl, i.to, r0, R);
-			emit(Oand, Kl, r0, r1, getcon(-16, fn));
-			emit(Oadd, Kl, r1, i.arg[0], getcon(15, fn));
-			if (fn->tmp[i.arg[0].val].slot != -1)
-				err("unlikely argument %%%s in %s",
-					fn->tmp[i.arg[0].val].name, optab[i.op].name);
-		}
-	} else if (i.op != Onop) {
+		return;
+	}
+	if (i.op == Ocall)
+	if (callable(i.arg[0], fn)) {
+		emiti(i);
+		return;
+	}
+	if (i.op != Onop) {
 		emiti(i);
 		iarg = curi->arg; /* fixarg() can change curi */
 		fixarg(&iarg[0], argcls(&i, 0), 0, fn);
@@ -209,16 +239,11 @@ seljmp(Blk *b, Fn *fn)
 	Ins *i, *ir;
 	int ck, cc, use;
 
-	switch (b->jmp.type) {
-	default:
-		assert(0 && "TODO 2");
-		break;
-	case Jret0:
-	case Jjmp:
+	if (b->jmp.type == Jret0
+	|| b->jmp.type == Jjmp
+	|| b->jmp.type == Jhlt)
 		return;
-	case Jjnz:
-		break;
-	}
+	assert(b->jmp.type == Jjnz);
 	r = b->jmp.arg;
 	use = -1;
 	b->jmp.arg = R;
@@ -256,7 +281,7 @@ arm64_isel(Fn *fn)
 	b = fn->start;
 	/* specific to NAlign == 3 */ /* or change n=4 and sz /= 4 below */
 	for (al=Oalloc, n=4; al<=Oalloc1; al++, n*=2)
-		for (i=b->ins; i-b->ins < b->nins; i++)
+		for (i=b->ins; i<&b->ins[b->nins]; i++)
 			if (i->op == al) {
 				if (rtype(i->arg[0]) != RCon)
 					break;
@@ -281,8 +306,7 @@ arm64_isel(Fn *fn)
 		seljmp(b, fn);
 		for (i=&b->ins[b->nins]; i!=b->ins;)
 			sel(*--i, fn);
-		b->nins = &insb[NIns] - curi;
-		idup(&b->ins, curi, b->nins);
+		idup(b, curi, &insb[NIns]-curi);
 	}
 
 	if (debug['I']) {

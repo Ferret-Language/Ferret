@@ -109,6 +109,7 @@ func (p *Pipeline) generateModuleQBE(importPath, tempDir string) ([]string, erro
 
 	asmPath := filepath.Join(tempDir, baseName+".s")
 	if err := qbe.Run(p.ctx, ssaPath, asmPath); err != nil {
+		p.ctx.ReportError(err.Error(), nil)
 		return nil, err
 	}
 

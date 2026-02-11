@@ -18,21 +18,27 @@ func Run(ctx *context_v2.CompilerContext, inputPath, outputPath string) error {
 
 	args := []string{"qbe"}
 	// Set explicit target based on OS and architecture
-	// QBE targets: amd64_sysv (Linux/BSD/macOS x86_64), amd64_win64 (Windows), arm64 (Linux/macOS ARM64)
+	// QBE targets: amd64_sysv, amd64_apple, amd64_win, arm64, arm64_apple, rv64
 	switch runtime.GOOS {
 	case "windows":
-		args = append(args, "-t", "amd64_win64")
+		if runtime.GOARCH == "amd64" {
+			args = append(args, "-t", "amd64_win")
+		} else {
+			return fmt.Errorf("qbe: windows target requires amd64")
+		}
 	case "linux", "freebsd", "openbsd", "netbsd":
-		if runtime.GOARCH == "arm64" {
+		if runtime.GOARCH == "riscv64" {
+			args = append(args, "-t", "rv64")
+		} else if runtime.GOARCH == "arm64" {
 			args = append(args, "-t", "arm64")
 		} else {
 			args = append(args, "-t", "amd64_sysv")
 		}
 	case "darwin":
 		if runtime.GOARCH == "arm64" {
-			args = append(args, "-t", "arm64") // Apple Silicon (M1/M2/M3/M4)
+			args = append(args, "-t", "arm64_apple") // Apple Silicon
 		} else {
-			args = append(args, "-t", "amd64_sysv") // Intel Mac uses System V ABI
+			args = append(args, "-t", "amd64_apple") // Intel Mac
 		}
 	}
 	args = append(args, "-o", outputPath, inputPath)
