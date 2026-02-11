@@ -127,7 +127,9 @@ func Compile(opts *Options) Result {
 
 	// Run pipeline
 	p := pipeline.New(ctx)
-	p.Run()
+	if err := p.Run(); err != nil && !ctx.HasErrors() {
+		ctx.ReportError(err.Error(), nil)
+	}
 
 	// Emit diagnostics and return result
 	if opts.LogFormat == HTML {
