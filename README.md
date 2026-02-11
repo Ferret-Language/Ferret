@@ -1,6 +1,7 @@
 # Ferret Compiler
 
 A modern compiler for the Ferret programming language.
+Backend: Ferret uses customised QBE backend for code generation (https://github.com/8l/qbe).
 
 ## Design philosophy
 1. **It does what it looks like.**: The language syntax and semantics are designed to be intuitive and symbol_table.

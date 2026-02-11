@@ -14,6 +14,15 @@ fn printArr(data: []i32, n: i32) {
     }
 }
 
+fn incr(v: i32) -> i32 {
+    v++;
+    return v;
+}
+
+fn tostr(v: i32) -> str {
+    return "";
+}
+
 fn main() {
     let result: i32 = add(5, 10);
     io::Println("The result of add(5, 10) is: ", result);
@@ -24,4 +33,11 @@ fn main() {
     let arr := [1,2,3,4];
 
     arr |> printArr(_, 4);
+
+    let x := 0
+    |> incr
+    |> incr
+    |> incr;
+    
+    io::Println(x);
 }

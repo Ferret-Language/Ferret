@@ -632,40 +632,44 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 		return nil
 	}
 
-	// The right side must be a call expression
-	callExpr, ok := expr.Call.(*ast.CallExpr)
-	if !ok {
-		// This should not happen if type checking passed
-		return nil
-	}
-
 	// Lower the piped value
 	pipedValue := g.lowerExpr(expr.Value)
 
-	// Transform the arguments
-	transformedArgs := make([]hir.Expr, 0, len(callExpr.Args)+1)
-	placeholderFound := false
+	// If the right side is a call expression, apply placeholder semantics.
+	if callExpr, ok := expr.Call.(*ast.CallExpr); ok {
+		// Transform the arguments
+		transformedArgs := make([]hir.Expr, 0, len(callExpr.Args)+1)
+		placeholderFound := false
 
-	for _, arg := range callExpr.Args {
-		// Check if this is a placeholder
-		if ident, ok := arg.(*ast.IdentifierExpr); ok && ident.Name == "_" {
-			transformedArgs = append(transformedArgs, pipedValue)
-			placeholderFound = true
-		} else {
-			transformedArgs = append(transformedArgs, g.lowerExpr(arg))
+		for _, arg := range callExpr.Args {
+			// Check if this is a placeholder
+			if ident, ok := arg.(*ast.IdentifierExpr); ok && ident.Name == "_" {
+				transformedArgs = append(transformedArgs, pipedValue)
+				placeholderFound = true
+			} else {
+				transformedArgs = append(transformedArgs, g.lowerExpr(arg))
+			}
+		}
+
+		// If no placeholder, prepend the piped value as the first argument
+		if !placeholderFound {
+			transformedArgs = append([]hir.Expr{pipedValue}, transformedArgs...)
+		}
+
+		// Create the transformed call expression
+		return &hir.CallExpr{
+			Fun:      g.lowerExpr(callExpr.Fun),
+			Args:     transformedArgs,
+			Catch:    g.lowerCatchClause(callExpr.Catch),
+			Type:     g.exprType(expr),
+			Location: locFromNode(expr),
 		}
 	}
 
-	// If no placeholder, prepend the piped value as the first argument
-	if !placeholderFound {
-		transformedArgs = append([]hir.Expr{pipedValue}, transformedArgs...)
-	}
-
-	// Create the transformed call expression
+	// Otherwise, treat the right side as a callable expression with a single argument.
 	return &hir.CallExpr{
-		Fun:      g.lowerExpr(callExpr.Fun),
-		Args:     transformedArgs,
-		Catch:    g.lowerCatchClause(callExpr.Catch),
+		Fun:      g.lowerExpr(expr.Call),
+		Args:     []hir.Expr{pipedValue},
 		Type:     g.exprType(expr),
 		Location: locFromNode(expr),
 	}

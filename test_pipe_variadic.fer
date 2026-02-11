@@ -3,6 +3,8 @@ import "std/io";
 fn log(prefix: str, args: ...i32) {
     io::Println(prefix, "len", len(&args));
     let i: i32 = 0;
+    point.move();
+    let val := len(&args);
     while i < len(&args) {
         io::Println(prefix, "arg", i, ":", args[i]);
         i += 1;

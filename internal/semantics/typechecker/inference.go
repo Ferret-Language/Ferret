@@ -1042,7 +1042,13 @@ func inferPipeExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 	// The right side must be a call expression
 	callExpr, ok := expr.Call.(*ast.CallExpr)
 	if !ok {
-		return types.TypeUnknown
+		// Allow callable expressions without explicit ().
+		tempCallExpr := &ast.CallExpr{
+			Fun:      expr.Call,
+			Args:     []ast.Expression{expr.Value},
+			Location: expr.Location,
+		}
+		return inferCallExprType(ctx, mod, tempCallExpr)
 	}
 
 	// Create a transformed call expression for type inference

@@ -1680,13 +1680,40 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 }
 
 func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.PipeExpr) {
+	stageExpr := lastPipeStageExpr(expr.Value)
+	stageLoc := expr.Value.Loc()
+	if stageExpr != nil {
+		stageLoc = stageExpr.Loc()
+	}
+
+	// If the previous stage returns void, piping further is invalid.
+	valueType := inferExprType(ctx, mod, expr.Value)
+	if types.UnwrapType(valueType).Equals(types.TypeVoid) {
+		// Ensure we still type-check the previous stage for any errors.
+		checkExpr(ctx, mod, expr.Value, types.TypeUnknown)
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot pipe value of type void").
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(stageLoc, "this stage returns void").
+				WithSecondaryLabel(expr.Call.Loc(), "next stage here").
+				WithHelp("remove the next '|>' or use a function that returns a value"),
+		)
+		return
+	}
+
 	callExpr, ok := expr.Call.(*ast.CallExpr)
 	if !ok {
-		ctx.Diagnostics.Add(
-			diagnostics.NewError("pipe operator (|>) requires a function call on the right side").
-				WithCode(diagnostics.ErrTypeMismatch).
-				WithPrimaryLabel(expr.Call.Loc(), "expected a function call here"),
-		)
+		// Allow callable expressions without explicit ().
+		temp := &ast.CallExpr{
+			Fun:      expr.Call,
+			Args:     []ast.Expression{expr.Value},
+			Location: expr.Location,
+		}
+		checkCallExprWithPipe(ctx, mod, temp, &pipeArgInfo{
+			Index:     0,
+			StageLoc:  stageLoc,
+			TargetLoc: expr.Call.Loc(),
+		})
 		return
 	}
 
@@ -1694,6 +1721,7 @@ func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	args := append([]ast.Expression(nil), callExpr.Args...)
 
 	placeholderIdx := -1
+	var placeholderLoc *source.Location
 	for i, arg := range args {
 		ident, ok := arg.(*ast.IdentifierExpr)
 		if !ok {
@@ -1712,6 +1740,7 @@ func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 			return
 		}
 		placeholderIdx = i
+		placeholderLoc = ident.Loc()
 	}
 
 	if placeholderIdx == -1 {
@@ -1724,10 +1753,36 @@ func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	temp := *callExpr
 	temp.Args = args
 
-	checkCallExpr(ctx, mod, &temp)
+	pipedIdx := 0
+	targetLoc := callExpr.Loc()
+	if placeholderIdx != -1 {
+		pipedIdx = placeholderIdx
+		if placeholderLoc != nil {
+			targetLoc = placeholderLoc
+		}
+	}
+	checkCallExprWithPipe(ctx, mod, &temp, &pipeArgInfo{
+		Index:     pipedIdx,
+		StageLoc:  stageLoc,
+		TargetLoc: targetLoc,
+	})
 	if temp.Catch != nil {
 		checkCatchClause(ctx, mod, &temp)
 	}
+}
+
+func lastPipeStageExpr(expr ast.Expression) ast.Expression {
+	for expr != nil {
+		switch e := expr.(type) {
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.PipeExpr:
+			expr = e.Call
+		default:
+			return expr
+		}
+	}
+	return nil
 }
 
 func isEnumType(typ types.SemType) bool {
@@ -4069,6 +4124,40 @@ func addDerefHintIfNeeded(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 	return diag.WithHelp(hint)
 }
 
+func pipeArgTypeMismatchDiag(ctx *context_v2.CompilerContext, mod *context_v2.Module, paramName string, expected, actual types.SemType, arg ast.Expression, compatibility TypeCompatibility, stageLoc, targetLoc *source.Location) *diagnostics.Diagnostic {
+	if expected == nil || actual == nil {
+		return nil
+	}
+	if expected.Equals(types.TypeUnknown) || actual.Equals(types.TypeUnknown) {
+		return nil
+	}
+	actualDesc := types.ResolveUntypedType(actual, expected)
+
+	paramLabel := "parameter"
+	if paramName != "" {
+		paramLabel = fmt.Sprintf("parameter '%s'", paramName)
+	}
+
+	diag := diagnostics.NewError("piped value type mismatch").
+		WithCode(diagnostics.ErrTypeMismatch)
+
+	if stageLoc != nil {
+		diag = diag.WithPrimaryLabel(stageLoc, fmt.Sprintf("this stage returns %s", actualDesc.String()))
+	} else if arg != nil && arg.Loc() != nil {
+		diag = diag.WithPrimaryLabel(arg.Loc(), fmt.Sprintf("this value has type %s", actualDesc.String()))
+	}
+
+	if targetLoc != nil {
+		diag = diag.WithSecondaryLabel(targetLoc, fmt.Sprintf("%s expects %s", paramLabel, expected.String()))
+	} else if arg != nil && arg.Loc() != nil {
+		diag = diag.WithSecondaryLabel(arg.Loc(), fmt.Sprintf("%s expects %s", paramLabel, expected.String()))
+	}
+
+	diag = addExplicitCastHint(ctx, diag, expected, compatibility, arg)
+	diag = addDerefHintIfNeeded(ctx, mod, diag, expected, actual, arg)
+	return diag
+}
+
 // formatValueDescription formats a user-friendly description for a value in error messages.
 // For untyped literals, it shows the minimum type needed (e.g., "integer literal (needs i32)").
 func formatValueDescription(typ types.SemType, expr ast.Expression) string {
@@ -4801,7 +4890,17 @@ func typeFromTypeNode(typeNode ast.TypeNode) types.SemType {
 // - Verifying the called expression is actually a function
 // - Checking argument count (regular and variadic functions)
 // - Validating argument types against parameter types
+type pipeArgInfo struct {
+	Index     int
+	StageLoc  *source.Location
+	TargetLoc *source.Location
+}
+
 func checkCallExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr) {
+	checkCallExprWithPipe(ctx, mod, expr, nil)
+}
+
+func checkCallExprWithPipe(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, pipeInfo *pipeArgInfo) {
 	// 0. Validate the callee expression (ordering rules, selectors, nested calls, etc.)
 	checkExpr(ctx, mod, expr.Fun, types.TypeUnknown)
 
@@ -4834,7 +4933,7 @@ func checkCallExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	validateCallArgumentCount(ctx, mod, expr, funcType)
 
 	// 5. Validate argument types
-	validateCallArgumentTypes(ctx, mod, expr, funcType)
+	validateCallArgumentTypes(ctx, mod, expr, funcType, pipeInfo)
 }
 
 // validateCallArgumentCount checks if the number of arguments matches the function signature
@@ -4874,7 +4973,7 @@ func validateCallArgumentCount(ctx *context_v2.CompilerContext, mod *context_v2.
 }
 
 // validateCallArgumentTypes checks if argument types are compatible with parameter types
-func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, funcType *types.FunctionType) {
+func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, funcType *types.FunctionType, pipeInfo *pipeArgInfo) {
 	paramCount := len(funcType.Params)
 	argCount := len(expr.Args)
 
@@ -4912,10 +5011,24 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 		}
 	}
 
+	pipeIndex := -1
+	var pipeStageLoc *source.Location
+	var pipeTargetLoc *source.Location
+	if pipeInfo != nil {
+		pipeIndex = pipeInfo.Index
+		pipeStageLoc = pipeInfo.StageLoc
+		pipeTargetLoc = pipeInfo.TargetLoc
+	}
+
 	// Validate regular parameters
 	for i := 0; i < regularParamCount && i < argCount; i++ {
 		param := funcType.Params[i]
 		arg := expr.Args[i]
+		isPipeArg := pipeIndex == i
+		argLoc := arg.Loc()
+		if isPipeArg && pipeStageLoc != nil {
+			argLoc = pipeStageLoc
+		}
 		if spread, ok := arg.(*ast.SpreadExpr); ok {
 			checkExpr(ctx, mod, spread.X, param.Type)
 			continue
@@ -4929,7 +5042,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 				ctx.Diagnostics.Add(
 					diagnostics.NewError(fmt.Sprintf("argument '%s' must be a reference", param.Name)).
 						WithCode(diagnostics.ErrInvalidAssignment).
-						WithPrimaryLabel(arg.Loc(), "expected a reference value").
+						WithPrimaryLabel(argLoc, "expected a reference value").
 						WithHelp("use '&' to pass a reference"),
 				)
 				continue
@@ -4938,7 +5051,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 				ctx.Diagnostics.Add(
 					diagnostics.NewError(fmt.Sprintf("argument '%s' must be a mutable reference", param.Name)).
 						WithCode(diagnostics.ErrInvalidAssignment).
-						WithPrimaryLabel(arg.Loc(), "expected a mutable reference").
+						WithPrimaryLabel(argLoc, "expected a mutable reference").
 						WithHelp("use '&mut' to pass a mutable reference"),
 				)
 				continue
@@ -4953,6 +5066,13 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 		compatibility := checkTypeCompatibilityWithContext(ctx, mod, argType, param.Type)
 
 		if !isImplicitlyCompatible(compatibility) {
+			if isPipeArg {
+				diag := pipeArgTypeMismatchDiag(ctx, mod, param.Name, param.Type, argType, arg, compatibility, pipeStageLoc, pipeTargetLoc)
+				if diag != nil {
+					ctx.Diagnostics.Add(diag)
+				}
+				continue
+			}
 			// Format the argument type in a user-friendly way
 			argTypeDesc := types.ResolveUntypedType(argType, param.Type)
 			diag := diagnostics.ArgumentTypeMismatch(
@@ -4984,6 +5104,11 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 
 		for i := startIdx; i < argCount; i++ {
 			arg := expr.Args[i]
+			isPipeArg := pipeIndex == i
+			argLoc := arg.Loc()
+			if isPipeArg && pipeStageLoc != nil {
+				argLoc = pipeStageLoc
+			}
 			if spread, ok := arg.(*ast.SpreadExpr); ok {
 				sliceType := types.NewArray(variadicElemType, -1)
 				argType := checkExpr(ctx, mod, spread.X, sliceType)
@@ -5014,7 +5139,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 					ctx.Diagnostics.Add(
 						diagnostics.NewError(fmt.Sprintf("argument '%s' must be a reference", variadicParam.Name)).
 							WithCode(diagnostics.ErrInvalidAssignment).
-							WithPrimaryLabel(arg.Loc(), "expected a reference value").
+							WithPrimaryLabel(argLoc, "expected a reference value").
 							WithHelp("use '&' to pass a reference"),
 					)
 					continue
@@ -5023,7 +5148,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 					ctx.Diagnostics.Add(
 						diagnostics.NewError(fmt.Sprintf("argument '%s' must be a mutable reference", variadicParam.Name)).
 							WithCode(diagnostics.ErrInvalidAssignment).
-							WithPrimaryLabel(arg.Loc(), "expected a mutable reference").
+							WithPrimaryLabel(argLoc, "expected a mutable reference").
 							WithHelp("use '&mut' to pass a mutable reference"),
 					)
 					continue
@@ -5038,6 +5163,13 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 			compatibility := checkTypeCompatibility(argType, variadicElemType)
 
 			if !isImplicitlyCompatible(compatibility) {
+				if isPipeArg {
+					diag := pipeArgTypeMismatchDiag(ctx, mod, variadicParam.Name, variadicElemType, argType, arg, compatibility, pipeStageLoc, pipeTargetLoc)
+					if diag != nil {
+						ctx.Diagnostics.Add(diag)
+					}
+					continue
+				}
 				// Format the argument type in a user-friendly way
 				argTypeDesc := types.ResolveUntypedType(argType, variadicElemType)
 				diag := diagnostics.ArgumentTypeMismatch(
