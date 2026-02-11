@@ -18,10 +18,14 @@ func Run(ctx *context_v2.CompilerContext, inputPath, outputPath string) error {
 
 	args := []string{"qbe"}
 	// Set explicit target based on OS and architecture
-	// QBE targets: amd64_sysv, amd64_apple, arm64, arm64_apple, rv64
+	// QBE targets: amd64_sysv, amd64_apple, amd64_win64, arm64, arm64_apple, rv64
 	switch runtime.GOOS {
 	case "windows":
-		return fmt.Errorf("qbe: windows targets are not supported by upstream qbe")
+		if runtime.GOARCH == "amd64" {
+			args = append(args, "-t", "amd64_win64")
+		} else {
+			return fmt.Errorf("qbe: windows target requires amd64")
+		}
 	case "linux", "freebsd", "openbsd", "netbsd":
 		if runtime.GOARCH == "riscv64" {
 			args = append(args, "-t", "rv64")
