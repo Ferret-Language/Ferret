@@ -1,0 +1,33 @@
+import "std/io";
+
+fn bump(x: &mut i64, v: i64) {
+    *x = *x + v;
+}
+
+fn main() {
+    let a := 1;
+    let b := 2;
+    let c := 3;
+    let d := 4;
+    let e := 5;
+    let f := 6;
+    let g := 7;
+    let h := 8;
+
+    let t0 := a + b + c + d;
+    let t1 := e + f + g + h;
+    let t2 := t0 * 3 + t1 * 5;
+    let t3 := t2 + a + b + c + d;
+    let t4 := t3 + e + f + g + h;
+    let t5 := t4 + t0 + t1;
+
+    if t5 % 2 == 0 {
+        bump(&mut a, t2 + t3 + t4);
+    } else {
+        bump(&mut a, t5 + t1 - t0);
+    }
+
+    // Use a bunch of locals after the branch to keep them live
+    let res := a + b + c + d + e + f + g + h + t0 + t1 + t2 + t3 + t4 + t5;
+    io::Println("res=", res);
+}
