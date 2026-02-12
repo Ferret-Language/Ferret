@@ -232,7 +232,7 @@ pe_emitfin(FILE *f)
 {
 	static char *sec[3] = { ".rodata", ".rodata", ".rodata" };
 
-	emitfin(f ,sec);
+	emitfin(f, sec);
 }
 
 static uint32_t *file;

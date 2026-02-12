@@ -508,7 +508,7 @@ simplcfg(Fn *fn)
 		jmp[b->id].s2 = b->s2;
 		empty[b->id] = !b->phi;
 		for (i=b->ins; i<&b->ins[b->nins]; i++)
-			if (i->op != Onop || i->op != Odbgloc) {
+			if (i->op != Onop && i->op != Odbgloc) {
 				empty[b->id] = 0;
 				break;
 			}

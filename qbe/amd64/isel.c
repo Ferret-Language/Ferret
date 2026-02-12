@@ -96,18 +96,18 @@ fixarg(Ref *r, int k, Ins *i, Fn *fn)
 		a.offset.sym.id = intern(buf);
 		fn->mem[fn->nmem-1] = a;
 	}
-	else if (op != Ocopy && k == Kl && noimm(r0, fn)) {
-		/* load constants that do not fit in
-		 * a 32bit signed integer into a
-		 * long temporary
-		 */
-		r1 = newtmp("isel", Kl, fn);
-		emit(Ocopy, Kl, r1, r0, R);
-	}
 	else if (op == Ocall && r == &i->arg[0]
 	&& rtype(r0) == RCon && fn->con[r0.val].type != CAddr) {
 		/* use a temporary register so that we
 		 * produce an indirect call
+		 */
+		r1 = newtmp("isel", Kl, fn);
+		emit(Ocopy, Kl, r1, r0, R);
+	}
+	else if (op != Ocopy && k == Kl && noimm(r0, fn)) {
+		/* load constants that do not fit in
+		 * a 32bit signed integer into a
+		 * long temporary
 		 */
 		r1 = newtmp("isel", Kl, fn);
 		emit(Ocopy, Kl, r1, r0, R);

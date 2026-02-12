@@ -3,9 +3,9 @@ type :obj = { l, l, l, l }
 export
 function :obj $f(l %self) {
 @_0
-        %_1 =l alloc8 16
+	%_1 =l alloc8 16
 	storel 77, %_1
-        ret %_1
+	ret %_1
 }
 
 # >>> driver
