@@ -1,13 +1,10 @@
 import "net/http";
 import "std/io";
 import "std/fs";
-import "std/time";
-
 
 let app := http::Server();
 
 app.Static("/", "examples/http/public");
-
 app.Use(http::Log);
 
 fn sendFileText(res: &mut http::Response, path: str, contentType: str) {
@@ -34,17 +31,8 @@ app.Get("/plaintext", fn(req: &http::Request, res: &mut http::Response) {
 });
 
 fn main() {
-
-    io::Println(time::Now());
-    io::Println(time::Local());
-    io::Println(time::NowUnix());
-    io::Println(time::NowUnixMs());
-    // io::Println(time::SinceUnix());
-    // io::Println(time::SinceUnixMs());
-
     app.Listen(3000) catch err {
         io::Println("HTTP error:", err);
         return;
     };
-   
 }
