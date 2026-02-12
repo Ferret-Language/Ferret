@@ -156,7 +156,7 @@ fn Log(req: &Request, res: &mut Response, next: fn() -> void) {
     let pathStr := color::Paint(color::Cyan, req.Path);
     let sColor := statusColor(status);
     let dColor := durationColor(us);
-    io::Printf("{} {}[{}]{} {} {} {}{}μs{}\n",
+    io::Printf("{} {}[{}]{} {} {} {}{}us{}\n",
         timeStr,
         sColor, status, color::Reset,
         methodStr,
