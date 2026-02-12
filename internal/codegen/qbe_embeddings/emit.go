@@ -1,3 +1,6 @@
+// the detailed emit logic for instructions, types, 
+// ABI/lowering helpers, and utilities.
+
 package qbe
 
 import (

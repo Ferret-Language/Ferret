@@ -1,3 +1,7 @@
+// defines the `Generator` type and top‑level `Emit()` pipeline 
+// that calls into the emit helpers. 
+// This is the entry point for generating QBE IR.
+
 package qbe
 
 import (

@@ -1,3 +1,6 @@
+// runtime wrapper that runs the embedded QBE backend 
+// on the generated `.ssa` file and writes assembly.
+
 package qbe
 
 import (

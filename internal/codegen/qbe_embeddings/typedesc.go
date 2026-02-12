@@ -1,3 +1,6 @@
+// emits type descriptors and related data 
+// for runtime type info (maps, reflection-ish features)
+
 package qbe
 
 import (
