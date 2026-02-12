@@ -31,3 +31,4 @@ xcode
 *.d2
 *.d2.*
 .ferret
+.Ferret.code-workspace
