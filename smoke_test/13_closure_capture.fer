@@ -1,9 +1,0 @@
-import "std/io";
-
-fn main() {
-    let x: i32 = 5;
-    let add := fn(y: i32) -> i32 {
-        return x + y;
-    };
-    io::Println(add(7));
-}

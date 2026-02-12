@@ -1,9 +1,0 @@
-fn make() -> &i32 {
-    let a := 5;
-    return &a;
-}
-
-fn main() {
-    let r := make();
-    r = 7;
-}

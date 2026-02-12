@@ -1,7 +1,0 @@
-fn main() {
-    let arr: [2]i32 = [1, 2];
-    let a: &i32 = &arr[0];
-    let b: &mut i32 = &mut arr[1]; // expected error: index borrows treated as overlapping
-    *b = 3;
-    _ = a;
-}

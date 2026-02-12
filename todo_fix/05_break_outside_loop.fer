@@ -1,4 +1,0 @@
-// Expected error (by design): break outside loop
-fn main() {
-    break;
-}

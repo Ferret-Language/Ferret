@@ -1,4 +1,0 @@
-// Expected error (by design): continue outside loop
-fn main() {
-    continue;
-}

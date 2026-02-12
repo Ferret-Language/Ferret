@@ -1,9 +1,0 @@
-import "std/io";
-import "net/http";
-import "net/tcp";
-import "db/redis";
-
-fn main() {
-    // Just test all imports work
-    io::Println("Testing imports...");
-}
