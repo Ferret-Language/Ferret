@@ -16,6 +16,32 @@ Backend: Ferret uses the official QBE backend as a submodule (git://c9x.me/qbe.g
 git submodule update --init --recursive
 ```
 
+### Update or switch QBE submodule
+
+Fetch the latest commit on the tracked branch (set in `.gitmodules`):
+
+```bash
+git submodule update --remote --merge qbe
+```
+
+Switch the submodule to another branch and update:
+
+```bash
+git submodule set-branch --branch <branch> qbe
+git submodule update --remote --merge qbe
+```
+
+Pin the submodule to a specific commit:
+
+```bash
+cd qbe
+git checkout <commit-sha>
+cd ..
+git add qbe
+```
+
+After any submodule change, commit the updated `qbe` gitlink and `.gitmodules`.
+
 ### Install C toolchain
 
 Linux/macOS:
