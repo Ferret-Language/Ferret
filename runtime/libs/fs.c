@@ -219,8 +219,7 @@ FERRET_FS_DEFINE_OPEN(Create, "w", "failed to create file")
 FERRET_FS_DEFINE_OPEN(OpenAppend, "a", "failed to open file for append")
 
 // Close file handle
-// File struct passed by value: { i64 handle, str path, str mode }
-void FERRET_FUNC(Close)(const FERRET_FILE* file) {
+void FERRET_FUNC(File_Close)(const FERRET_FILE* file) {
     if (!file || file->handle == 0) return;
     FILE* f = (FILE*)(intptr_t)file->handle;
     fclose(f);
@@ -228,7 +227,7 @@ void FERRET_FUNC(Close)(const FERRET_FILE* file) {
 
 // Read line from file handle
 // OUT PARAM FIRST
-void FERRET_FUNC(ReadLine)(void* out, const FERRET_FILE* file) {
+void FERRET_FUNC(File_ReadLine)(void* out, const FERRET_FILE* file) {
     if (!out) return;
     
     char** str_ptr = (char**)out;
@@ -301,7 +300,7 @@ void FERRET_FUNC(ReadLine)(void* out, const FERRET_FILE* file) {
 
 // Read bytes from file handle
 // OUT PARAM FIRST
-void FERRET_FUNC(ReadBytes)(void* out, const FERRET_FILE* file, int32_t maxBytes) {
+void FERRET_FUNC(File_ReadBytes)(void* out, const FERRET_FILE* file, int32_t maxBytes) {
     if (!out) return;
 
     if (!file || file->handle == 0) {
@@ -348,7 +347,23 @@ void FERRET_FUNC(ReadBytes)(void* out, const FERRET_FILE* file, int32_t maxBytes
 
 // Write string to file handle
 // OUT PARAM FIRST
-FERRET_FS_DEFINE_WRITE_HANDLE(WriteStr, 0)
+void FERRET_FUNC(File_WriteStr)(void* out, const FERRET_FILE* file, const char* content) {
+    if (!out) return;
+    if (!file || file->handle == 0) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+    FILE* f = (FILE*)(intptr_t)file->handle;
+    if (content) {
+        size_t len = strlen(content);
+        size_t written = fwrite(content, 1, len, f);
+        if (written != len) {
+            FERRET_RESULT_ERR(out, 8, "failed to write all data");
+            return;
+        }
+    }
+    FERRET_RESULT_OK(out, 8, bool, true);
+}
 
 // Write bytes to file handle (method receiver)
 // OUT PARAM FIRST
@@ -375,7 +390,27 @@ void FERRET_FUNC(File_Write)(void* out, const FERRET_FILE* file, ferret_array_t*
 
 // Write line to file handle (with newline)
 // OUT PARAM FIRST
-FERRET_FS_DEFINE_WRITE_HANDLE(WriteLine, 1)
+void FERRET_FUNC(File_WriteLine)(void* out, const FERRET_FILE* file, const char* content) {
+    if (!out) return;
+    if (!file || file->handle == 0) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+    FILE* f = (FILE*)(intptr_t)file->handle;
+    if (content) {
+        size_t len = strlen(content);
+        size_t written = fwrite(content, 1, len, f);
+        if (written != len) {
+            FERRET_RESULT_ERR(out, 8, "failed to write all data");
+            return;
+        }
+    }
+    if (fputc('\n', f) == EOF) {
+        FERRET_RESULT_ERR(out, 8, "failed to write newline");
+        return;
+    }
+    FERRET_RESULT_OK(out, 8, bool, true);
+}
 
 // ============================================
 // Directory operations

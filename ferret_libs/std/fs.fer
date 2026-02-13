@@ -17,16 +17,16 @@ type File struct {
 };
 
 // Read entire file as string - simplest way to read a file
-// Example: let content := fs::ReadFile("config.txt") catch |err| { ... };
+// Example: let content := fs::ReadFile("config.txt") catch err { ... };
 fn ReadFile(path: str) -> str ! str {
     let file := Open(path) catch err {
         return err!;
     };
-    defer Close(file);
+    defer file.Close();
     let out: []byte = [] as []byte;
     let bufSize: i32 = 32 * 1024;
     while true {
-        let chunk := ReadBytes(file, bufSize) catch err {
+        let chunk := file.ReadBytes(bufSize) catch err {
             return err!;
         };
         if len(&chunk) == 0 {
@@ -40,26 +40,26 @@ fn ReadFile(path: str) -> str ! str {
 }
 
 // Write string to file (creates or overwrites)
-// Example: fs::WriteFile("output.txt", "Hello!") catch |err| { ... };
+// Example: fs::WriteFile("output.txt", "Hello!") catch err { ... };
 fn WriteFile(path: str, content: str) -> str ! bool {
     let file := Create(path) catch err {
         return err!;
     };
-    defer Close(file);
-    let ok := WriteStr(file, content) catch err {
+    defer file.Close();
+    let ok := file.WriteStr(content) catch err {
         return err!;
     };
     return ok;
 }
 
 // Append string to end of file
-// Example: fs::AppendFile("log.txt", "New line\n") catch |err| { ... };
+// Example: fs::AppendFile("log.txt", "New line\n") catch err { ... };
 fn AppendFile(path: str, content: str) -> str ! bool {
     let file := OpenAppend(path) catch err {
         return err!;
     };
-    defer Close(file);
-    let ok := WriteStr(file, content) catch err {
+    defer file.Close();
+    let ok := file.WriteStr(content) catch err {
         return err!;
     };
     return ok;
@@ -75,12 +75,12 @@ fn AppendFile(path: str, content: str) -> str ! bool {
 fn Exists(path: str) -> bool;
 
 // Get file/directory information
-// Example: let info := fs::Stat("myfile.txt") catch |err| { ... };
+// Example: let info := fs::Stat("myfile.txt") catch err { ... };
 // @extern
 fn Stat(path: str) -> str ! FileInfo;
 
 // Get file size in bytes (convenience wrapper)
-// Example: let size := fs::Size("data.bin") catch |err| { ... };
+// Example: let size := fs::Size("data.bin") catch err { ... };
 // @extern
 fn Size(path: str) -> str ! i64;
 
@@ -89,57 +89,53 @@ fn Size(path: str) -> str ! i64;
 // ============================================
 
 // Open file for reading
-// Example: let file := fs::Open("data.txt") catch |err| { ... };
+// Example: let file := fs::Open("data.txt") catch err { ... };
 // @extern
 fn Open(path: str) -> str ! File;
 
 // Create/truncate file for writing
-// Example: let file := fs::Create("output.txt") catch |err| { ... };
+// Example: let file := fs::Create("output.txt") catch err { ... };
 // @extern
 fn Create(path: str) -> str ! File;
 
 // Open file for appending
-// Example: let file := fs::OpenAppend("log.txt") catch |err| { ... };
+// Example: let file := fs::OpenAppend("log.txt") catch err { ... };
 // @extern
 fn OpenAppend(path: str) -> str ! File;
 
 // Close file handle
-// Example: fs::Close(file);
+// Example: file.Close();
 // @extern
-fn Close(file: File);
+fn (f: File) Close();
 
 // Read a line from file
-// Example: let line := fs::ReadLine(file) catch |err| { break; };
+// Example: let line := file.ReadLine() catch err { break; };
 // @extern
-fn ReadLine(file: File) -> str ! str;
+fn (f: File) ReadLine() -> str ! str;
 
 // Read up to maxBytes from file as bytes
-// Example: let chunk := fs::ReadBytes(file, 4096) catch |err| { ... };
+// Example: let chunk := file.ReadBytes(4096) catch err { ... };
 // @extern
-fn ReadBytes(file: File, maxBytes: i32) -> str ! []byte;
+fn (f: File) ReadBytes(maxBytes: i32) -> str ! []byte;
 
 // Write string to file handle
-// Example: fs::WriteStr(file, "data") catch |err| { ... };
+// Example: file.WriteStr("data") catch err { ... };
 // @extern
-fn WriteStr(file: File, content: str) -> str ! bool;
+fn (f: File) WriteStr(content: str) -> str ! bool;
 
 // Write string with newline to file handle
-// Example: fs::WriteLine(file, "line of text") catch |err| { ... };
+// Example: file.WriteLine("line of text") catch err { ... };
 // @extern
-fn WriteLine(file: File, content: str) -> str ! bool;
+fn (f: File) WriteLine(content: str) -> str ! bool;
 
 fn (f: File) Read(maxBytes: i32) -> str ! []byte {
-    return ReadBytes(f, maxBytes) catch err {
+    return f.ReadBytes(maxBytes) catch err {
         return err!;
     };
 }
 
 // @extern
 fn (f: File) Write(buf: []byte) -> str ! i32;
-
-fn (f: File) Close() {
-    Close(f);
-}
 
 // (no string wrapper; use WriteStr directly)
 
@@ -159,17 +155,17 @@ fn _appendBytes(dst: &mut []byte, src: []byte) -> bool {
 // ============================================
 
 // Delete a file
-// Example: fs::Remove("temp.txt") catch |err| { ... };
+// Example: fs::Remove("temp.txt") catch err { ... };
 // @extern
 fn Remove(path: str) -> str ! bool;
 
 // Create a directory
-// Example: fs::Mkdir("new_folder") catch |err| { ... };
+// Example: fs::Mkdir("new_folder") catch err { ... };
 // @extern
 fn Mkdir(path: str) -> str ! bool;
 
 // Remove empty directory
-// Example: fs::Rmdir("empty_folder") catch |err| { ... };
+// Example: fs::Rmdir("empty_folder") catch err { ... };
 // @extern
 fn Rmdir(path: str) -> str ! bool;
 
@@ -178,7 +174,7 @@ fn Rmdir(path: str) -> str ! bool;
 // ============================================
 
 // Get current working directory
-// Example: let cwd := fs::Cwd() catch |err| { ... };
+// Example: let cwd := fs::Cwd() catch err { ... };
 // @extern
 fn Cwd() -> str ! str;
 
