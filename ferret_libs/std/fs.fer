@@ -46,7 +46,7 @@ fn WriteFile(path: str, content: str) -> str ! bool {
         return err!;
     };
     defer Close(file);
-    let ok := Write(file, content) catch err {
+    let ok := WriteStr(file, content) catch err {
         return err!;
     };
     return ok;
@@ -59,7 +59,7 @@ fn AppendFile(path: str, content: str) -> str ! bool {
         return err!;
     };
     defer Close(file);
-    let ok := Write(file, content) catch err {
+    let ok := WriteStr(file, content) catch err {
         return err!;
     };
     return ok;
@@ -119,14 +119,29 @@ fn ReadLine(file: File) -> str ! str;
 fn ReadBytes(file: File, maxBytes: i32) -> str ! []byte;
 
 // Write string to file handle
-// Example: fs::Write(file, "data") catch |err| { ... };
+// Example: fs::WriteStr(file, "data") catch |err| { ... };
 // @extern
-fn Write(file: File, content: str) -> str ! bool;
+fn WriteStr(file: File, content: str) -> str ! bool;
 
 // Write string with newline to file handle
 // Example: fs::WriteLine(file, "line of text") catch |err| { ... };
 // @extern
 fn WriteLine(file: File, content: str) -> str ! bool;
+
+fn (f: File) Read(maxBytes: i32) -> str ! []byte {
+    return ReadBytes(f, maxBytes) catch err {
+        return err!;
+    };
+}
+
+// @extern
+fn (f: File) Write(buf: []byte) -> str ! i32;
+
+fn (f: File) Close() {
+    Close(f);
+}
+
+// (no string wrapper; use WriteStr directly)
 
 fn _appendBytes(dst: &mut []byte, src: []byte) -> bool {
     let i: i32 = 0;

@@ -346,9 +346,32 @@ void FERRET_FUNC(ReadBytes)(void* out, const FERRET_FILE* file, int32_t maxBytes
     FERRET_RESULT_OK(out, 8, ferret_array_t*, arr);
 }
 
-// Write to file handle
+// Write string to file handle
 // OUT PARAM FIRST
-FERRET_FS_DEFINE_WRITE_HANDLE(Write, 0)
+FERRET_FS_DEFINE_WRITE_HANDLE(WriteStr, 0)
+
+// Write bytes to file handle (method receiver)
+// OUT PARAM FIRST
+void FERRET_FUNC(File_Write)(void* out, const FERRET_FILE* file, ferret_array_t* data) {
+    if (!out) return;
+    if (!file || file->handle == 0) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+    if (!data || data->length == 0) {
+        FERRET_RESULT_OK(out, 8, int32_t, 0);
+        return;
+    }
+
+    FILE* f = (FILE*)(intptr_t)file->handle;
+    size_t len = (size_t)data->length;
+    size_t written = fwrite(data->data, 1, len, f);
+    if (written != len) {
+        FERRET_RESULT_ERR(out, 8, "failed to write all data");
+        return;
+    }
+    FERRET_RESULT_OK(out, 8, int32_t, (int32_t)written);
+}
 
 // Write line to file handle (with newline)
 // OUT PARAM FIRST

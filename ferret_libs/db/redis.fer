@@ -14,7 +14,7 @@ fn Connect(addr: str) -> str ! Client {
 }
 
 fn (c: &mut Client) Close() {
-    net::CloseConn(c.conn);
+    c.conn.Close();
 }
 
 fn strLen(s: str) -> i32 {
@@ -138,7 +138,7 @@ fn parseRespStr(data: []byte) -> str ! ?str {
 }
 
 fn (c: &mut Client) readReplyOpt() -> str ! ?str {
-    let data := net::Read(c.conn, 4096) catch err {
+    let data := c.conn.Read(4096) catch err {
         return err!;
     };
     if len(&data) == 0 {
@@ -150,7 +150,7 @@ fn (c: &mut Client) readReplyOpt() -> str ! ?str {
 }
 
 fn (c: &mut Client) readReplyInt() -> str ! i64 {
-    let data := net::Read(c.conn, 4096) catch err {
+    let data := c.conn.Read(4096) catch err {
         return err!;
     };
     if len(&data) == 0 {
@@ -174,7 +174,7 @@ fn (c: &mut Client) readReplyInt() -> str ! i64 {
 
 fn (c: &mut Client) commandArgs(args: []str) -> str ! bool {
     let cmd := buildCommand(args);
-    let written := net::WriteStr(c.conn, cmd) catch err {
+    let written := c.conn.WriteStr(cmd) catch err {
         return err!;
     };
     return true;
@@ -260,4 +260,3 @@ fn (c: &mut Client) IncrBy(key: str, delta: i64) -> str ! i64 {
         return err!;
     };
 }
-

@@ -7,14 +7,14 @@ fn main() {
         return;
     };
 
-    let written := net::WriteStr(conn, "ping") catch 0;
+    let written := conn.WriteStr("ping") catch 0;
 
-    let resp := net::Read(conn, 1024) catch err {
+    let resp := conn.Read(1024) catch err {
         io::Println("read error:", err);
         return;
     };
 
     io::Println("response bytes:", len(&resp));
 
-    net::CloseConn(conn);
+    conn.Close();
 }

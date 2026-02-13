@@ -25,6 +25,24 @@ type Printable union {
     bool
 };
 
+// Streaming interfaces
+type Reader interface {
+    Read(maxBytes: i32) -> str ! []byte
+};
+
+type Writer interface {
+    Write(buf: []byte) -> str ! i32
+};
+
+type Closer interface {
+    Close()
+};
+
+type ReadWriter interface {
+    Read(maxBytes: i32) -> str ! []byte,
+    Write(buf: []byte) -> str ! i32
+};
+
 // @extern
 fn Println(values: ...Printable);
 // @extern
@@ -37,6 +55,63 @@ fn ReadFloat() -> str ! f64;
 fn Read() -> str ! str;
 // @extern
 fn ReadUnsafe() -> str;
+
+fn _appendBytes(dst: &mut []byte, src: []byte) -> bool {
+    let i: i32 = 0;
+    while i < len(&src) {
+        if !append(dst, src[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+fn WriteString(w: Writer, s: str) -> str ! i32 {
+    return w.Write(s as []byte) catch err {
+        return err!;
+    };
+}
+
+fn Copy(dst: Writer, src: Reader, bufSize: i32) -> str ! i64 {
+    if bufSize <= 0 {
+        return "bufSize must be > 0"!;
+    }
+    let total: i64 = 0;
+    while true {
+        let chunk := src.Read(bufSize) catch err {
+            return err!;
+        };
+        let n := len(&chunk);
+        if n == 0 {
+            break;
+        }
+        let written := dst.Write(chunk) catch err {
+            return err!;
+        };
+        total = total + (written as i64);
+    }
+    return total;
+}
+
+fn ReadAll(src: Reader, bufSize: i32) -> str ! []byte {
+    if bufSize <= 0 {
+        return "bufSize must be > 0"!;
+    }
+    let out: []byte = [] as []byte;
+    while true {
+        let chunk := src.Read(bufSize) catch err {
+            return err!;
+        };
+        if len(&chunk) == 0 {
+            break;
+        }
+        if !_appendBytes(&mut out, chunk) {
+            return "out of memory"!;
+        }
+    }
+    return out;
+}
 
 fn Printf(fmt: str, args: ...Printable) {
     let count := 0, aCount := 0;
