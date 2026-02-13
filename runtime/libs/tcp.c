@@ -34,6 +34,7 @@ typedef int ferret_socket_t;
 #include "../core/array.h"
 #include "../core/type_system.h"
 #include "../core/runtime_naming.h"
+#include "../core/result.h"
 
 // Define the module prefix for this file (implements ferret_libs/net/tcp.fer)
 #define MODULE_PREFIX ferret_net_tcp
@@ -62,72 +63,6 @@ static char* FERRET_FUNC(strdup)(const char* s) {
     }
     memcpy(out, s, len + 1);
     return out;
-}
-
-static void FERRET_FUNC(result_err_at)(void* out, const char* msg, size_t tag_offset) {
-    if (!out) {
-        return;
-    }
-    char** str_ptr = (char**)out;
-    uint8_t* tag_ptr = (uint8_t*)((char*)out + tag_offset);
-    *str_ptr = (char*)(msg ? msg : "unknown error");
-    *tag_ptr = 0;
-}
-
-static void FERRET_FUNC(result_err)(void* out, const char* msg) {
-    FERRET_FUNC(result_err_at)(out, msg, 8);
-}
-
-static void FERRET_FUNC(result_err_listener)(void* out, const char* msg) {
-    FERRET_FUNC(result_err_at)(out, msg, 16);
-}
-
-static void FERRET_FUNC(result_err_conn)(void* out, const char* msg) {
-    FERRET_FUNC(result_err_at)(out, msg, 24);
-}
-
-static void FERRET_FUNC(result_ok_bool)(void* out, bool value) {
-    if (!out) {
-        return;
-    }
-    bool* val_ptr = (bool*)out;
-    uint8_t* tag_ptr = (uint8_t*)((char*)out + 8);
-    *val_ptr = value;
-    *tag_ptr = 1;
-}
-
-static void FERRET_FUNC(result_ok_i32)(void* out, int32_t value) {
-    if (!out) {
-        return;
-    }
-    int32_t* val_ptr = (int32_t*)out;
-    uint8_t* tag_ptr = (uint8_t*)((char*)out + 8);
-    *val_ptr = value;
-    *tag_ptr = 1;
-}
-
-static void FERRET_FUNC(result_ok_str)(void* out, const char* value) {
-    if (!out) {
-        return;
-    }
-    char** val_ptr = (char**)out;
-    uint8_t* tag_ptr = (uint8_t*)((char*)out + 8);
-    *val_ptr = (char*)(value ? value : "");
-    *tag_ptr = 1;
-}
-
-static void FERRET_FUNC(result_err_bytes)(void* out, const char* msg) {
-    FERRET_FUNC(result_err_at)(out, msg, sizeof(void*));
-}
-
-static void FERRET_FUNC(result_ok_bytes)(void* out, ferret_array_t* arr) {
-    if (!out) {
-        return;
-    }
-    ferret_array_t** arr_ptr = (ferret_array_t**)out;
-    uint8_t* tag_ptr = (uint8_t*)((char*)out + sizeof(void*));
-    *arr_ptr = arr;
-    *tag_ptr = 1;
 }
 
 #ifdef _WIN32
@@ -260,7 +195,7 @@ void FERRET_FUNC(ListenTcp)(void* out, const char* addr) {
         return;
     }
     if (!addr) {
-        FERRET_FUNC(result_err_listener)(out, "addr is null");
+        FERRET_RESULT_ERR(out, 16, "addr is null");
         return;
     }
 
@@ -271,7 +206,7 @@ void FERRET_FUNC(ListenTcp)(void* out, const char* addr) {
     char* host = NULL;
     char* port = NULL;
     if (!FERRET_FUNC(split_addr)(addr, &host, &port)) {
-        FERRET_FUNC(result_err_listener)(out, "invalid addr");
+        FERRET_RESULT_ERR(out, 16, "invalid addr");
         return;
     }
 
@@ -286,7 +221,7 @@ void FERRET_FUNC(ListenTcp)(void* out, const char* addr) {
     ferret_free(host);
     ferret_free(port);
     if (rc != 0 || !res) {
-        FERRET_FUNC(result_err_listener)(out, "getaddrinfo failed");
+        FERRET_RESULT_ERR(out, 16, "getaddrinfo failed");
         return;
     }
 
@@ -310,7 +245,7 @@ void FERRET_FUNC(ListenTcp)(void* out, const char* addr) {
     freeaddrinfo(res);
 
     if (server_fd == FERRET_INVALID_SOCKET) {
-        FERRET_FUNC(result_err_listener)(out, "listen failed");
+        FERRET_RESULT_ERR(out, 16, "listen failed");
         return;
     }
 
@@ -328,7 +263,7 @@ void FERRET_FUNC(DialTcp)(void* out, const char* addr) {
         return;
     }
     if (!addr) {
-        FERRET_FUNC(result_err_conn)(out, "addr is null");
+        FERRET_RESULT_ERR(out, 24, "addr is null");
         return;
     }
 
@@ -339,7 +274,7 @@ void FERRET_FUNC(DialTcp)(void* out, const char* addr) {
     char* host = NULL;
     char* port = NULL;
     if (!FERRET_FUNC(split_addr)(addr, &host, &port)) {
-        FERRET_FUNC(result_err_conn)(out, "invalid addr");
+        FERRET_RESULT_ERR(out, 24, "invalid addr");
         return;
     }
 
@@ -353,7 +288,7 @@ void FERRET_FUNC(DialTcp)(void* out, const char* addr) {
     ferret_free(host);
     ferret_free(port);
     if (rc != 0 || !res) {
-        FERRET_FUNC(result_err_conn)(out, "getaddrinfo failed");
+        FERRET_RESULT_ERR(out, 24, "getaddrinfo failed");
         return;
     }
 
@@ -373,7 +308,7 @@ void FERRET_FUNC(DialTcp)(void* out, const char* addr) {
     freeaddrinfo(res);
 
     if (sock == FERRET_INVALID_SOCKET) {
-        FERRET_FUNC(result_err_conn)(out, "connect failed");
+        FERRET_RESULT_ERR(out, 24, "connect failed");
         return;
     }
 
@@ -392,13 +327,13 @@ void FERRET_FUNC(Accept)(void* out, const LISTENER* listener) {
         return;
     }
     if (!listener || listener->handle == 0) {
-        FERRET_FUNC(result_err_conn)(out, "invalid listener");
+        FERRET_RESULT_ERR(out, 24, "invalid listener");
         return;
     }
     ferret_socket_t server_fd = (ferret_socket_t)(intptr_t)listener->handle;
     ferret_socket_t client = accept(server_fd, NULL, NULL);
     if (client == FERRET_INVALID_SOCKET) {
-        FERRET_FUNC(result_err_conn)(out, "accept failed");
+        FERRET_RESULT_ERR(out, 24, "accept failed");
         return;
     }
 
@@ -433,31 +368,31 @@ void FERRET_FUNC(Read)(void* out, const CONN* conn, int32_t maxBytes) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        FERRET_FUNC(result_err_bytes)(out, "invalid connection");
+        FERRET_RESULT_ERR(out, sizeof(void*), "invalid connection");
         return;
     }
     if (maxBytes <= 0) {
-        FERRET_FUNC(result_err_bytes)(out, "maxBytes must be > 0");
+        FERRET_RESULT_ERR(out, sizeof(void*), "maxBytes must be > 0");
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
     uint8_t* buf = (uint8_t*)ferret_alloc((size_t)maxBytes);
     if (!buf) {
-        FERRET_FUNC(result_err_bytes)(out, "out of memory");
+        FERRET_RESULT_ERR(out, sizeof(void*), "out of memory");
         return;
     }
     int r = (int)recv(sock, (char*)buf, maxBytes, 0);
     if (r < 0) {
-        FERRET_FUNC(result_err_bytes)(out, "recv failed");
+        FERRET_RESULT_ERR(out, sizeof(void*), "recv failed");
         return;
     }
     if (r == 0) {
         ferret_array_t* empty = ferret_array_new(sizeof(uint8_t), 0, (ferret_type_info_t*)&ferret_type_byte);
-        FERRET_FUNC(result_ok_bytes)(out, empty);
+        FERRET_RESULT_OK(out, sizeof(void*), ferret_array_t*, empty);
         return;
     }
     ferret_array_t* arr = ferret_array_from_data(buf, r, r, sizeof(uint8_t), (ferret_type_info_t*)&ferret_type_byte);
-    FERRET_FUNC(result_ok_bytes)(out, arr);
+    FERRET_RESULT_OK(out, sizeof(void*), ferret_array_t*, arr);
 }
 
 // Read bytes as string
@@ -466,36 +401,36 @@ void FERRET_FUNC(ReadStr)(void* out, const CONN* conn, int32_t maxBytes) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        FERRET_FUNC(result_err)(out, "invalid connection");
+        FERRET_RESULT_ERR(out, 8, "invalid connection");
         return;
     }
     if (maxBytes <= 0) {
-        FERRET_FUNC(result_err)(out, "maxBytes must be > 0");
+        FERRET_RESULT_ERR(out, 8, "maxBytes must be > 0");
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
     uint8_t* buf = (uint8_t*)ferret_alloc((size_t)maxBytes);
     if (!buf) {
-        FERRET_FUNC(result_err)(out, "out of memory");
+        FERRET_RESULT_ERR(out, 8, "out of memory");
         return;
     }
     int r = (int)recv(sock, (char*)buf, maxBytes, 0);
     if (r < 0) {
-        FERRET_FUNC(result_err)(out, "recv failed");
+        FERRET_RESULT_ERR(out, 8, "recv failed");
         return;
     }
     if (r == 0) {
-        FERRET_FUNC(result_ok_str)(out, "");
+        FERRET_RESULT_OK(out, 8, char*, "");
         return;
     }
     char* str = (char*)ferret_alloc((size_t)r + 1);
     if (!str) {
-        FERRET_FUNC(result_err)(out, "out of memory");
+        FERRET_RESULT_ERR(out, 8, "out of memory");
         return;
     }
     memcpy(str, buf, (size_t)r);
     str[r] = '\0';
-    FERRET_FUNC(result_ok_str)(out, str);
+    FERRET_RESULT_OK(out, 8, char*, str);
 }
 
 // Write bytes
@@ -504,11 +439,11 @@ void FERRET_FUNC(Write)(void* out, const CONN* conn, ferret_array_t* data) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        FERRET_FUNC(result_err)(out, "invalid connection");
+        FERRET_RESULT_ERR(out, 8, "invalid connection");
         return;
     }
     if (!data || data->length == 0) {
-        FERRET_FUNC(result_ok_i32)(out, 0);
+        FERRET_RESULT_OK(out, 8, int32_t, 0);
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
@@ -518,14 +453,14 @@ void FERRET_FUNC(Write)(void* out, const CONN* conn, ferret_array_t* data) {
     while (remaining > 0) {
         int sent = (int)send(sock, (const char*)ptr, remaining, 0);
         if (sent <= 0) {
-            FERRET_FUNC(result_err)(out, "send failed");
+            FERRET_RESULT_ERR(out, 8, "send failed");
             return;
         }
         total += sent;
         remaining -= sent;
         ptr += sent;
     }
-    FERRET_FUNC(result_ok_i32)(out, total);
+    FERRET_RESULT_OK(out, 8, int32_t, total);
 }
 
 // Write string
@@ -534,16 +469,16 @@ void FERRET_FUNC(WriteStr)(void* out, const CONN* conn, const char* data) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        FERRET_FUNC(result_err)(out, "invalid connection");
+        FERRET_RESULT_ERR(out, 8, "invalid connection");
         return;
     }
     if (!data) {
-        FERRET_FUNC(result_ok_i32)(out, 0);
+        FERRET_RESULT_OK(out, 8, int32_t, 0);
         return;
     }
     size_t len = strlen(data);
     if (len == 0) {
-        FERRET_FUNC(result_ok_i32)(out, 0);
+        FERRET_RESULT_OK(out, 8, int32_t, 0);
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
@@ -553,14 +488,14 @@ void FERRET_FUNC(WriteStr)(void* out, const CONN* conn, const char* data) {
     while (remaining > 0) {
         int sent = (int)send(sock, ptr, (int)remaining, 0);
         if (sent <= 0) {
-            FERRET_FUNC(result_err)(out, "send failed");
+            FERRET_RESULT_ERR(out, 8, "send failed");
             return;
         }
         total += sent;
         remaining -= (size_t)sent;
         ptr += sent;
     }
-    FERRET_FUNC(result_ok_i32)(out, total);
+    FERRET_RESULT_OK(out, 8, int32_t, total);
 }
 
 // Read timeout
@@ -569,14 +504,14 @@ void FERRET_FUNC(SetReadTimeoutMs)(void* out, const CONN* conn, int32_t ms) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        FERRET_FUNC(result_err)(out, "invalid connection");
+        FERRET_RESULT_ERR(out, 8, "invalid connection");
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
 #ifdef _WIN32
     DWORD timeout = ms < 0 ? 0 : (DWORD)ms;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char*)&timeout, sizeof(timeout)) != 0) {
-        FERRET_FUNC(result_err)(out, "setsockopt failed");
+        FERRET_RESULT_ERR(out, 8, "setsockopt failed");
         return;
     }
 #else
@@ -584,11 +519,11 @@ void FERRET_FUNC(SetReadTimeoutMs)(void* out, const CONN* conn, int32_t ms) {
     tv.tv_sec = ms / 1000;
     tv.tv_usec = (ms % 1000) * 1000;
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0) {
-        FERRET_FUNC(result_err)(out, strerror(errno));
+        FERRET_RESULT_ERR(out, 8, strerror(errno));
         return;
     }
 #endif
-    FERRET_FUNC(result_ok_bool)(out, true);
+    FERRET_RESULT_OK(out, 8, bool, true);
 }
 
 // Write timeout
@@ -597,14 +532,14 @@ void FERRET_FUNC(SetWriteTimeoutMs)(void* out, const CONN* conn, int32_t ms) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        FERRET_FUNC(result_err)(out, "invalid connection");
+        FERRET_RESULT_ERR(out, 8, "invalid connection");
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
 #ifdef _WIN32
     DWORD timeout = ms < 0 ? 0 : (DWORD)ms;
     if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char*)&timeout, sizeof(timeout)) != 0) {
-        FERRET_FUNC(result_err)(out, "setsockopt failed");
+        FERRET_RESULT_ERR(out, 8, "setsockopt failed");
         return;
     }
 #else
@@ -612,11 +547,11 @@ void FERRET_FUNC(SetWriteTimeoutMs)(void* out, const CONN* conn, int32_t ms) {
     tv.tv_sec = ms / 1000;
     tv.tv_usec = (ms % 1000) * 1000;
     if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) != 0) {
-        FERRET_FUNC(result_err)(out, strerror(errno));
+        FERRET_RESULT_ERR(out, 8, strerror(errno));
         return;
     }
 #endif
-    FERRET_FUNC(result_ok_bool)(out, true);
+    FERRET_RESULT_OK(out, 8, bool, true);
 }
 
 // Keepalive
@@ -625,14 +560,14 @@ void FERRET_FUNC(SetKeepAlive)(void* out, const CONN* conn, bool enabled) {
         return;
     }
     if (!conn || conn->handle == 0) {
-        FERRET_FUNC(result_err)(out, "invalid connection");
+        FERRET_RESULT_ERR(out, 8, "invalid connection");
         return;
     }
     ferret_socket_t sock = (ferret_socket_t)(intptr_t)conn->handle;
     int opt = enabled ? 1 : 0;
     if (setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, (const char*)&opt, sizeof(opt)) != 0) {
-        FERRET_FUNC(result_err)(out, "setsockopt failed");
+        FERRET_RESULT_ERR(out, 8, "setsockopt failed");
         return;
     }
-    FERRET_FUNC(result_ok_bool)(out, true);
+    FERRET_RESULT_OK(out, 8, bool, true);
 }

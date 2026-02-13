@@ -18,18 +18,52 @@ type File struct {
 
 // Read entire file as string - simplest way to read a file
 // Example: let content := fs::ReadFile("config.txt") catch |err| { ... };
-// @extern
-fn ReadFile(path: str) -> str ! str;
+fn ReadFile(path: str) -> str ! str {
+    let file := Open(path) catch err {
+        return err!;
+    };
+    defer Close(file);
+    let out: []byte = [] as []byte;
+    let bufSize: i32 = 32 * 1024;
+    while true {
+        let chunk := ReadBytes(file, bufSize) catch err {
+            return err!;
+        };
+        if len(&chunk) == 0 {
+            break;
+        }
+        if !_appendBytes(&mut out, chunk) {
+            return "out of memory"!;
+        }
+    }
+    return out as str;
+}
 
 // Write string to file (creates or overwrites)
 // Example: fs::WriteFile("output.txt", "Hello!") catch |err| { ... };
-// @extern
-fn WriteFile(path: str, content: str) -> str ! bool;
+fn WriteFile(path: str, content: str) -> str ! bool {
+    let file := Create(path) catch err {
+        return err!;
+    };
+    defer Close(file);
+    let ok := Write(file, content) catch err {
+        return err!;
+    };
+    return ok;
+}
 
 // Append string to end of file
 // Example: fs::AppendFile("log.txt", "New line\n") catch |err| { ... };
-// @extern
-fn AppendFile(path: str, content: str) -> str ! bool;
+fn AppendFile(path: str, content: str) -> str ! bool {
+    let file := OpenAppend(path) catch err {
+        return err!;
+    };
+    defer Close(file);
+    let ok := Write(file, content) catch err {
+        return err!;
+    };
+    return ok;
+}
 
 // ============================================
 // File info functions
@@ -79,6 +113,11 @@ fn Close(file: File);
 // @extern
 fn ReadLine(file: File) -> str ! str;
 
+// Read up to maxBytes from file as bytes
+// Example: let chunk := fs::ReadBytes(file, 4096) catch |err| { ... };
+// @extern
+fn ReadBytes(file: File, maxBytes: i32) -> str ! []byte;
+
 // Write string to file handle
 // Example: fs::Write(file, "data") catch |err| { ... };
 // @extern
@@ -88,6 +127,17 @@ fn Write(file: File, content: str) -> str ! bool;
 // Example: fs::WriteLine(file, "line of text") catch |err| { ... };
 // @extern
 fn WriteLine(file: File, content: str) -> str ! bool;
+
+fn _appendBytes(dst: &mut []byte, src: []byte) -> bool {
+    let i: i32 = 0;
+    while i < len(&src) {
+        if !append(dst, src[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
 
 // ============================================
 // Directory operations
@@ -100,7 +150,7 @@ fn Remove(path: str) -> str ! bool;
 
 // Create a directory
 // Example: fs::Mkdir("new_folder") catch |err| { ... };
-// @extern  
+// @extern
 fn Mkdir(path: str) -> str ! bool;
 
 // Remove empty directory

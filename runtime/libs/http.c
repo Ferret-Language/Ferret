@@ -36,6 +36,7 @@ typedef int ferret_socket_t;
 #include "../core/optional.h"
 #include "../core/type_system.h"
 #include "../core/runtime_naming.h"
+#include "../core/result.h"
 
 // Define the module prefix for this file (implements ferret_libs/net/http.fer)
 #define MODULE_PREFIX ferret_net_http
@@ -365,28 +366,6 @@ static void FERRET_FUNC(write_optional_str_ptr)(void* out, const char* value) {
         *flag = 1;
     }
     *(void**)out = opt;
-}
-
-static void FERRET_FUNC(result_err_str)(void* out, const char* err) {
-    if (!out) {
-        return;
-    }
-    size_t offset = sizeof(char*);
-    char** err_ptr = (char**)out;
-    *err_ptr = (char*)err;
-    int8_t* tag = (int8_t*)((char*)out + offset);
-    *tag = 0;
-}
-
-static void FERRET_FUNC(result_ok_bool)(void* out, bool ok) {
-    if (!out) {
-        return;
-    }
-    size_t offset = sizeof(char*);
-    bool* val_ptr = (bool*)out;
-    *val_ptr = ok;
-    int8_t* tag = (int8_t*)((char*)out + offset);
-    *tag = 1;
 }
 
 static void FERRET_FUNC(call_handler)(void* handler, REQUEST* req, RESPONSE* res) {
@@ -976,16 +955,16 @@ void FERRET_FUNC(App_Close)(APP* app, uint64_t app_heap) {
 void FERRET_FUNC(App_Listen)(void* out, APP* app, uint64_t app_heap, int32_t port) {
     (void)app_heap;
     if (!app) {
-        FERRET_FUNC(result_err_str)(out, "invalid app");
+        FERRET_RESULT_ERR(out, 8, "invalid app");
         return;
     }
     FERRET_TYPE(app_t)* a = (FERRET_TYPE(app_t)*)(intptr_t)app->handle;
     if (!a) {
-        FERRET_FUNC(result_err_str)(out, "invalid app handle");
+        FERRET_RESULT_ERR(out, 8, "invalid app handle");
         return;
     }
     if (port <= 0 || port > 65535) {
-        FERRET_FUNC(result_err_str)(out, "invalid port");
+        FERRET_RESULT_ERR(out, 8, "invalid port");
         return;
     }
 
@@ -994,7 +973,7 @@ void FERRET_FUNC(App_Listen)(void* out, APP* app, uint64_t app_heap, int32_t por
     if (!wsa_initialized) {
         WSADATA wsa;
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-            FERRET_FUNC(result_err_str)(out, "WSAStartup failed");
+            FERRET_RESULT_ERR(out, 8, "WSAStartup failed");
             return;
         }
         wsa_initialized = true;
@@ -1003,7 +982,7 @@ void FERRET_FUNC(App_Listen)(void* out, APP* app, uint64_t app_heap, int32_t por
 
     ferret_socket_t server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd == FERRET_INVALID_SOCKET) {
-        FERRET_FUNC(result_err_str)(out, "socket failed");
+        FERRET_RESULT_ERR(out, 8, "socket failed");
         return;
     }
     int opt = 1;
@@ -1016,19 +995,19 @@ void FERRET_FUNC(App_Listen)(void* out, APP* app, uint64_t app_heap, int32_t por
     addr.sin_port = htons((uint16_t)port);
     if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
         ferret_close_socket(server_fd);
-        FERRET_FUNC(result_err_str)(out, "bind failed");
+        FERRET_RESULT_ERR(out, 8, "bind failed");
         return;
     }
     if (listen(server_fd, 16) != 0) {
         ferret_close_socket(server_fd);
-        FERRET_FUNC(result_err_str)(out, "listen failed");
+        FERRET_RESULT_ERR(out, 8, "listen failed");
         return;
     }
 
     a->server_fd = server_fd;
     a->running = true;
 
-    FERRET_FUNC(result_ok_bool)(out, true);
+    FERRET_RESULT_OK(out, 8, bool, true);
 
     while (a->running) {
         ferret_socket_t client = accept(server_fd, NULL, NULL);
@@ -1043,11 +1022,11 @@ void FERRET_FUNC(App_Serve)(void* out, APP* app, uint64_t app_heap, int64_t list
     (void)app_heap;
     (void)listener_addr;
     if (!app) {
-        FERRET_FUNC(result_err_str)(out, "invalid app");
+        FERRET_RESULT_ERR(out, 8, "invalid app");
         return;
     }
     if (listener_handle == 0) {
-        FERRET_FUNC(result_err_str)(out, "invalid listener");
+        FERRET_RESULT_ERR(out, 8, "invalid listener");
         return;
     }
 
@@ -1056,7 +1035,7 @@ void FERRET_FUNC(App_Serve)(void* out, APP* app, uint64_t app_heap, int64_t list
     if (!wsa_initialized) {
         WSADATA wsa;
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-            FERRET_FUNC(result_err_str)(out, "WSAStartup failed");
+            FERRET_RESULT_ERR(out, 8, "WSAStartup failed");
             return;
         }
         wsa_initialized = true;
@@ -1065,7 +1044,7 @@ void FERRET_FUNC(App_Serve)(void* out, APP* app, uint64_t app_heap, int64_t list
 
     FERRET_TYPE(app_t)* a = (FERRET_TYPE(app_t)*)(intptr_t)app->handle;
     if (!a) {
-        FERRET_FUNC(result_err_str)(out, "invalid app handle");
+        FERRET_RESULT_ERR(out, 8, "invalid app handle");
         return;
     }
 
@@ -1073,7 +1052,7 @@ void FERRET_FUNC(App_Serve)(void* out, APP* app, uint64_t app_heap, int64_t list
     a->server_fd = server_fd;
     a->running = true;
 
-    FERRET_FUNC(result_ok_bool)(out, true);
+    FERRET_RESULT_OK(out, 8, bool, true);
 
     while (a->running) {
         ferret_socket_t client = accept(server_fd, NULL, NULL);
@@ -1087,12 +1066,12 @@ void FERRET_FUNC(App_Serve)(void* out, APP* app, uint64_t app_heap, int64_t list
 void FERRET_FUNC(App_ListenAddrNative)(void* out, APP* app, uint64_t app_heap, const char* addr) {
     (void)app_heap;
     if (!addr) {
-        FERRET_FUNC(result_err_str)(out, "addr is null");
+        FERRET_RESULT_ERR(out, 8, "addr is null");
         return;
     }
     const char* colon = strrchr(addr, ':');
     if (!colon) {
-        FERRET_FUNC(result_err_str)(out, "invalid addr");
+        FERRET_RESULT_ERR(out, 8, "invalid addr");
         return;
     }
     char* host = FERRET_FUNC(strndup)(addr, (size_t)(colon - addr));
@@ -1101,7 +1080,7 @@ void FERRET_FUNC(App_ListenAddrNative)(void* out, APP* app, uint64_t app_heap, c
     long port = strtol(colon + 1, &end, 10);
     if (errno != 0 || end == (colon + 1) || port <= 0 || port > 65535) {
         if (host) ferret_free(host);
-        FERRET_FUNC(result_err_str)(out, "invalid port");
+        FERRET_RESULT_ERR(out, 8, "invalid port");
         return;
     }
 
@@ -1110,7 +1089,7 @@ void FERRET_FUNC(App_ListenAddrNative)(void* out, APP* app, uint64_t app_heap, c
     if (!wsa_initialized) {
         WSADATA wsa;
         if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-            FERRET_FUNC(result_err_str)(out, "WSAStartup failed");
+            FERRET_RESULT_ERR(out, 8, "WSAStartup failed");
             return;
         }
         wsa_initialized = true;
@@ -1119,7 +1098,7 @@ void FERRET_FUNC(App_ListenAddrNative)(void* out, APP* app, uint64_t app_heap, c
 
     ferret_socket_t server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd == FERRET_INVALID_SOCKET) {
-        FERRET_FUNC(result_err_str)(out, "socket failed");
+        FERRET_RESULT_ERR(out, 8, "socket failed");
         return;
     }
     int opt = 1;
@@ -1132,7 +1111,7 @@ void FERRET_FUNC(App_ListenAddrNative)(void* out, APP* app, uint64_t app_heap, c
         if (inet_pton(AF_INET, host, &addr_in.sin_addr) != 1) {
             if (host) ferret_free(host);
             ferret_close_socket(server_fd);
-            FERRET_FUNC(result_err_str)(out, "invalid host");
+            FERRET_RESULT_ERR(out, 8, "invalid host");
             return;
         }
     } else {
@@ -1142,25 +1121,25 @@ void FERRET_FUNC(App_ListenAddrNative)(void* out, APP* app, uint64_t app_heap, c
     addr_in.sin_port = htons((uint16_t)port);
     if (bind(server_fd, (struct sockaddr*)&addr_in, sizeof(addr_in)) != 0) {
         ferret_close_socket(server_fd);
-        FERRET_FUNC(result_err_str)(out, "bind failed");
+        FERRET_RESULT_ERR(out, 8, "bind failed");
         return;
     }
     if (listen(server_fd, 16) != 0) {
         ferret_close_socket(server_fd);
-        FERRET_FUNC(result_err_str)(out, "listen failed");
+        FERRET_RESULT_ERR(out, 8, "listen failed");
         return;
     }
 
     FERRET_TYPE(app_t)* a = (FERRET_TYPE(app_t)*)(intptr_t)app->handle;
     if (!a) {
         ferret_close_socket(server_fd);
-        FERRET_FUNC(result_err_str)(out, "invalid app handle");
+        FERRET_RESULT_ERR(out, 8, "invalid app handle");
         return;
     }
     a->server_fd = server_fd;
     a->running = true;
 
-    FERRET_FUNC(result_ok_bool)(out, true);
+    FERRET_RESULT_OK(out, 8, bool, true);
 
     while (a->running) {
         ferret_socket_t client = accept(server_fd, NULL, NULL);
@@ -1328,12 +1307,12 @@ void FERRET_FUNC(Response_SendFile)(void* out, RESPONSE* res, uint64_t res_heap,
         return;
     }
     if (!res || !path) {
-        FERRET_FUNC(result_err_str)(out, "invalid arguments");
+        FERRET_RESULT_ERR(out, 8, "invalid arguments");
         return;
     }
     FILE* f = fopen(path, "rb");
     if (!f) {
-        FERRET_FUNC(result_err_str)(out, "failed to open file");
+        FERRET_RESULT_ERR(out, 8, "failed to open file");
         return;
     }
     fseek(f, 0, SEEK_END);
@@ -1341,13 +1320,13 @@ void FERRET_FUNC(Response_SendFile)(void* out, RESPONSE* res, uint64_t res_heap,
     fseek(f, 0, SEEK_SET);
     if (size < 0) {
         fclose(f);
-        FERRET_FUNC(result_err_str)(out, "invalid file size");
+        FERRET_RESULT_ERR(out, 8, "invalid file size");
         return;
     }
     char* buf = (char*)ferret_alloc((size_t)size);
     if (!buf) {
         fclose(f);
-        FERRET_FUNC(result_err_str)(out, "alloc failed");
+        FERRET_RESULT_ERR(out, 8, "alloc failed");
         return;
     }
     fread(buf, 1, (size_t)size, f);
@@ -1355,10 +1334,10 @@ void FERRET_FUNC(Response_SendFile)(void* out, RESPONSE* res, uint64_t res_heap,
 
     RESPONSE_T* r = (RESPONSE_T*)(intptr_t)res->handle;
     if (!r) {
-        FERRET_FUNC(result_err_str)(out, "invalid response");
+        FERRET_RESULT_ERR(out, 8, "invalid response");
         return;
     }
     FERRET_FUNC(headers_add)(r, "Content-Type", "application/octet-stream");
     FERRET_FUNC(send_response)(r, buf, (size_t)size);
-    FERRET_FUNC(result_ok_bool)(out, true);
+    FERRET_RESULT_OK(out, 8, bool, true);
 }
