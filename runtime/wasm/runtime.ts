@@ -78,6 +78,42 @@ export type FerretRuntimeOptions = {
   throwOnInputNeeded?: boolean;
 };
 
+type UnavailableModuleSpec = {
+  module: string;
+  importPrefix: string;
+};
+
+const UNAVAILABLE_WASM_MODULES: UnavailableModuleSpec[] = [
+  { module: "std/fs", importPrefix: "ferret_std_fs_" },
+  { module: "std/os", importPrefix: "ferret_std_os_" },
+  { module: "std/random", importPrefix: "ferret_std_random_" },
+  { module: "std/time", importPrefix: "ferret_std_time_" },
+  { module: "net/*", importPrefix: "ferret_net_" },
+  { module: "db/*", importPrefix: "ferret_db_" },
+  { module: "std/db", importPrefix: "ferret_std_db_" },
+];
+
+function unavailableModuleForImport(importName: string): string | null {
+  for (const entry of UNAVAILABLE_WASM_MODULES) {
+    if (importName.startsWith(entry.importPrefix)) {
+      return entry.module;
+    }
+  }
+  return null;
+}
+
+function throwUnavailableImport(importName: string): never {
+  const moduleName = unavailableModuleForImport(importName);
+  if (moduleName) {
+    throw new Error(
+      `Module '${moduleName}' is not available in the web runtime.`,
+    );
+  }
+  throw new Error(
+    `Missing WASM import '${importName}'. This likely requires a native module that is not supported in the web runtime.`,
+  );
+}
+
 export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
   let memory: WebAssembly.Memory | null = null;
   let heapPtr = 0;
@@ -4057,78 +4093,95 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     inputIndex = 0;
   }
 
+  const ferretImports: Record<string, WebAssembly.ImportValue> = {
+    [WASM_IMPORT_FERRET_ALLOC]: ferret_alloc,
+    [WASM_IMPORT_FERRET_MEMCPY]: ferret_memcpy,
+    [WASM_IMPORT_FERRET_OPTIONAL_UNWRAP_OR]: ferret_optional_unwrap_or,
+    [WASM_IMPORT_FERRET_ARRAY_NEW]: ferret_array_new,
+    ferret_array_clone,
+    ferret_array_assign,
+    [WASM_IMPORT_FERRET_ARRAY_APPEND]: ferret_array_append,
+    [WASM_IMPORT_FERRET_ARRAY_GET]: ferret_array_get,
+    [WASM_IMPORT_FERRET_ARRAY_SET]: ferret_array_set,
+    ferret_array_len,
+    ferret_array_cap,
+    ferret_string_assign,
+    ferret_std_io_Print,
+    ferret_std_io_Println,
+    ferret_std_io_Read,
+    ferret_std_io_ReadUnsafe,
+    ferret_std_io_ReadInt,
+    ferret_std_io_ReadFloat,
+    ferret_global_len,
+    ferret_global_append,
+    ferret_global_at,
+    ferret_global_size,
+    ferret_global_get,
+    ferret_global_set,
+    ferret_global_addr,
+    ferret_global_self_addr,
+    ferret_global_heap_addr,
+    [WASM_IMPORT_FERRET_GLOBAL_PANIC]: ferret_global_panic,
+    ferret_string_len,
+    ferret_io_ConcatStrings,
+    ferret_string_concat_i64,
+    ferret_string_concat_u64,
+    ferret_string_concat_f64,
+    ferret_string_concat_byte,
+    ferret_string_concat_bool,
+    ferret_string_to_char_array,
+    ferret_string_to_byte_array,
+    ferret_char_array_to_string,
+    ferret_byte_array_to_string,
+    [WASM_IMPORT_FERRET_POW]: ferret_pow,
+    ...bigIntBindings,
+    ...bigFloatBindings,
+    ferret_map_new_i32,
+    ferret_map_new_i64,
+    ferret_map_new_f32,
+    ferret_map_new_f64,
+    ferret_map_new_str,
+    ferret_map_new_bytes,
+    ferret_map_new_numeric,
+    ferret_map_new_universal,
+    ferret_map_from_pairs_i32,
+    ferret_map_from_pairs_i64,
+    ferret_map_from_pairs_f32,
+    ferret_map_from_pairs_f64,
+    ferret_map_from_pairs_str,
+    ferret_map_from_pairs_bytes,
+    ferret_map_from_pairs_numeric,
+    ferret_map_from_pairs_universal,
+    ferret_map_clone,
+    ferret_map_assign,
+    [WASM_IMPORT_FERRET_MAP_GET]: ferret_map_get,
+    [WASM_IMPORT_FERRET_MAP_GET_OPTIONAL_OUT]: ferret_map_get_optional_out,
+    [WASM_IMPORT_FERRET_MAP_SET]: ferret_map_set,
+    ferret_map_size,
+    ferret_map_iter_begin,
+    ferret_map_iter_next,
+  };
+
+  const ferretImportProxy: Record<string, WebAssembly.ImportValue> = new Proxy(
+    ferretImports,
+    {
+      get(target, prop, receiver) {
+        if (typeof prop !== "string") {
+          return Reflect.get(target, prop, receiver);
+        }
+        if (Object.prototype.hasOwnProperty.call(target, prop)) {
+          return Reflect.get(target, prop, receiver);
+        }
+        return throwUnavailableImport(prop);
+      },
+    },
+  );
+
   return {
     bind,
     reset,
     imports: {
-      ferret: {
-        [WASM_IMPORT_FERRET_ALLOC]: ferret_alloc,
-        [WASM_IMPORT_FERRET_MEMCPY]: ferret_memcpy,
-        [WASM_IMPORT_FERRET_OPTIONAL_UNWRAP_OR]: ferret_optional_unwrap_or,
-        [WASM_IMPORT_FERRET_ARRAY_NEW]: ferret_array_new,
-        ferret_array_clone,
-        ferret_array_assign,
-        [WASM_IMPORT_FERRET_ARRAY_APPEND]: ferret_array_append,
-        [WASM_IMPORT_FERRET_ARRAY_GET]: ferret_array_get,
-        [WASM_IMPORT_FERRET_ARRAY_SET]: ferret_array_set,
-        ferret_array_len,
-        ferret_array_cap,
-        ferret_string_assign,
-        ferret_std_io_Print,
-        ferret_std_io_Println,
-        ferret_std_io_Read,
-        ferret_std_io_ReadUnsafe,
-        ferret_std_io_ReadInt,
-        ferret_std_io_ReadFloat,
-        ferret_global_len,
-        ferret_global_append,
-        ferret_global_at,
-        ferret_global_size,
-        ferret_global_get,
-        ferret_global_set,
-        ferret_global_addr,
-        ferret_global_self_addr,
-        ferret_global_heap_addr,
-        [WASM_IMPORT_FERRET_GLOBAL_PANIC]: ferret_global_panic,
-        ferret_string_len,
-        ferret_io_ConcatStrings,
-        ferret_string_concat_i64,
-        ferret_string_concat_u64,
-        ferret_string_concat_f64,
-        ferret_string_concat_byte,
-        ferret_string_concat_bool,
-        ferret_string_to_char_array,
-        ferret_string_to_byte_array,
-        ferret_char_array_to_string,
-        ferret_byte_array_to_string,
-        [WASM_IMPORT_FERRET_POW]: ferret_pow,
-        ...bigIntBindings,
-        ...bigFloatBindings,
-        ferret_map_new_i32,
-        ferret_map_new_i64,
-        ferret_map_new_f32,
-        ferret_map_new_f64,
-        ferret_map_new_str,
-        ferret_map_new_bytes,
-        ferret_map_new_numeric,
-        ferret_map_new_universal,
-        ferret_map_from_pairs_i32,
-        ferret_map_from_pairs_i64,
-        ferret_map_from_pairs_f32,
-        ferret_map_from_pairs_f64,
-        ferret_map_from_pairs_str,
-        ferret_map_from_pairs_bytes,
-        ferret_map_from_pairs_numeric,
-        ferret_map_from_pairs_universal,
-        ferret_map_clone,
-        ferret_map_assign,
-        [WASM_IMPORT_FERRET_MAP_GET]: ferret_map_get,
-        [WASM_IMPORT_FERRET_MAP_GET_OPTIONAL_OUT]: ferret_map_get_optional_out,
-        [WASM_IMPORT_FERRET_MAP_SET]: ferret_map_set,
-        ferret_map_size,
-        ferret_map_iter_begin,
-        ferret_map_iter_next,
-      },
+      ferret: ferretImportProxy,
     },
   };
 }
