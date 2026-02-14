@@ -33,15 +33,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git config --global http.version HTTP/1.1 || true
           urls=(
+            "git://c9x.me/qbe.git"
             "https://c9x.me/git/qbe.git"
-            "git://c9x.me/git/qbe.git"
           )
           for url in "${urls[@]}"; do
             echo "Trying qbe submodule from $url"
+            git submodule deinit -f qbe || true
+            rm -rf qbe
             git config -f .gitmodules submodule.qbe.url "$url"
             git submodule sync --recursive
-            if GIT_HTTP_VERSION=HTTP/1.1 git submodule update --init --recursive; then
+            if GIT_HTTP_VERSION=HTTP/1.1 git submodule update --init --recursive qbe; then
               echo "Submodule fetched from $url"
               exit 0
             fi
