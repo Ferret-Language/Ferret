@@ -240,6 +240,22 @@ func TestOptionalTypeEquals(t *testing.T) {
 	}
 }
 
+func TestHeapType(t *testing.T) {
+	h := NewHeap(TypeI32)
+	if got := h.String(); got != "#i32" {
+		t.Errorf("HeapType.String() = %q, want %q", got, "#i32")
+	}
+	if got := h.Size(); got != 8 {
+		t.Errorf("HeapType.Size() = %d, want %d", got, 8)
+	}
+	if !h.Equals(NewHeap(TypeI32)) {
+		t.Errorf("#i32 should equal #i32")
+	}
+	if h.Equals(NewHeap(TypeI64)) {
+		t.Errorf("#i32 should not equal #i64")
+	}
+}
+
 func TestResultType(t *testing.T) {
 	// str ! i32 (error type first, success type second)
 	result := NewResult(TypeI32, TypeString)
@@ -253,6 +269,28 @@ func TestResultType(t *testing.T) {
 	resultArray := NewResult(NewArray(TypeI32, -1), errorType)
 	if got := resultArray.String(); got != "Error ! []i32" {
 		t.Errorf("ResultType.String() = %q, want %q", got, "Error ! []i32")
+	}
+}
+
+func TestResourceTypeHelpers(t *testing.T) {
+	fileHandle := NewResourceNamed("__file", TypeI64)
+	if !IsResourceType(fileHandle) {
+		t.Fatalf("expected __file to be a resource type")
+	}
+	if !ContainsResourceType(fileHandle) {
+		t.Fatalf("expected __file to contain a resource")
+	}
+
+	ref := NewReference(fileHandle)
+	if ContainsResourceType(ref) {
+		t.Fatalf("references must not be treated as owning resources")
+	}
+
+	wrapper := NewStruct("Wrapper", []StructField{
+		{Name: "H", Type: fileHandle},
+	})
+	if !ContainsResourceType(wrapper) {
+		t.Fatalf("struct containing resource field must be resource-containing")
 	}
 }
 
@@ -360,7 +398,7 @@ func TestComplexNestedTypes(t *testing.T) {
 	arrayOptPoint := NewArray(optPoint, -1)
 	complexMap := NewMap(TypeString, arrayOptPoint)
 
-	want := "map[str][]Point?"
+	want := "map[str][]?Point"
 	if got := complexMap.String(); got != want {
 		t.Errorf("Complex nested type = %q, want %q", got, want)
 	}

@@ -15,11 +15,13 @@
 #include <stdbool.h>
 #include "../core/alloc.h"
 #include "../core/array.h"
+#include "../core/file_handle.h"
 #include "../core/type_system.h"
 #include "../core/result.h"
 #include <string.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <limits.h>
 
 #ifdef _WIN32
 #include <io.h>
@@ -65,29 +67,72 @@ static char* str_dup(const char* s) {
     return copy;
 }
 
-#define FERRET_FS_DEFINE_OPEN(name, mode_str, open_error) \
-    void FERRET_FUNC(name)(void* out, const char* path) { \
-        if (!out) return; \
-        int64_t* handle_ptr = (int64_t*)out; \
-        char** path_out = (char**)((char*)out + 8); \
-        char** mode_out = (char**)((char*)out + 16); \
-        int8_t* tag_ptr = (int8_t*)((char*)out + 24); \
-        if (!path) { \
-            *(char**)out = "path is null"; \
-            *tag_ptr = 0; \
-            return; \
-        } \
-        FILE* f = fopen(path, mode_str); \
-        if (!f) { \
-            *(char**)out = open_error; \
-            *tag_ptr = 0; \
-            return; \
-        } \
-        *handle_ptr = (int64_t)(intptr_t)f; \
-        *path_out = str_dup(path); \
-        *mode_out = mode_str; \
-        *tag_ptr = 1; \
+static void ferret_fs_open_impl(void* out, const char* path, const char* mode_str, const char* open_error) {
+    if (!out) return;
+    int64_t* handle_ptr = (int64_t*)out;
+    char** path_out = (char**)((char*)out + 8);
+    char** mode_out = (char**)((char*)out + 16);
+    int8_t* tag_ptr = (int8_t*)((char*)out + 24);
+    if (!path) {
+        *(char**)out = "path is null";
+        *tag_ptr = 0;
+        return;
     }
+    FILE* f = fopen(path, mode_str);
+    if (!f) {
+        *(char**)out = (char*)((open_error != NULL) ? open_error : "failed to open file");
+        *tag_ptr = 0;
+        return;
+    }
+    ferret_file_handle_t* handle = ferret_file_handle_new_with_meta(f, path, mode_str);
+    if (!handle) {
+        fclose(f);
+        *(char**)out = "out of memory";
+        *tag_ptr = 0;
+        return;
+    }
+    char* path_copy = str_dup(path);
+    char* mode_copy = str_dup(mode_str);
+    if ((path != NULL && path_copy == NULL) || (mode_str != NULL && mode_copy == NULL)) {
+        if (path_copy != NULL) {
+            ferret_free(path_copy);
+        }
+        if (mode_copy != NULL) {
+            ferret_free(mode_copy);
+        }
+        ferret_file_handle_release(handle);
+        *(char**)out = "out of memory";
+        *tag_ptr = 0;
+        return;
+    }
+    *handle_ptr = ferret_file_handle_to_raw(handle);
+    *path_out = path_copy;
+    *mode_out = mode_copy;
+    *tag_ptr = 1;
+}
+
+static const char* ferret_fs_mode_to_cstr(int32_t mode) {
+    // enum FileMode { Read, Write, Append, ReadWrite, CreateRW, AppendRead }
+    switch (mode) {
+        case 0: return "r";
+        case 1: return "w";
+        case 2: return "a";
+        case 3: return "r+";
+        case 4: return "w+";
+        case 5: return "a+";
+        default: return NULL;
+    }
+}
+
+static int ferret_fs_whence_to_c(int32_t whence) {
+    // enum SeekWhence { Start, Current, End }
+    switch (whence) {
+        case 0: return SEEK_SET;
+        case 1: return SEEK_CUR;
+        case 2: return SEEK_END;
+        default: return INT_MIN;
+    }
+}
 
 #define FERRET_FS_DEFINE_WRITE_HANDLE(name, add_newline) \
     void FERRET_FUNC(name)(void* out, const FERRET_FILE* file, const char* content) { \
@@ -99,7 +144,13 @@ static char* str_dup(const char* s) {
             *tag_ptr = 0; \
             return; \
         } \
-        FILE* f = (FILE*)(intptr_t)file->handle; \
+        ferret_file_handle_t* handle = ferret_file_handle_from_raw(file->handle); \
+        FILE* f = ferret_file_handle_file(handle); \
+        if (!f) { \
+            *(char**)out = "invalid file handle"; \
+            *tag_ptr = 0; \
+            return; \
+        } \
         if (content) { \
             size_t len = strlen(content); \
             size_t written = fwrite(content, 1, len, f); \
@@ -205,30 +256,31 @@ void FERRET_FUNC(Size)(void* out, const char* path) {
 // File handle operations
 // ============================================
 
-// Open file for reading - returns File struct
+// Open file by mode enum
 // File layout: { i64 handle (8), str path (8), str mode (8) } = 24 bytes
+// enum FileMode { Read, Write, Append, ReadWrite, CreateRW, AppendRead }
 // OUT PARAM FIRST
-FERRET_FS_DEFINE_OPEN(Open, "r", "failed to open file")
-
-// Create/truncate file for writing
-// OUT PARAM FIRST
-FERRET_FS_DEFINE_OPEN(Create, "w", "failed to create file")
-
-// Open file for appending
-// OUT PARAM FIRST
-FERRET_FS_DEFINE_OPEN(OpenAppend, "a", "failed to open file for append")
+void FERRET_FUNC(Open)(void* out, const char* path, int32_t mode) {
+    const char* mode_str = ferret_fs_mode_to_cstr(mode);
+    if (!mode_str) {
+        FERRET_RESULT_ERR(out, 24, "invalid file mode");
+        return;
+    }
+    ferret_fs_open_impl(out, path, mode_str, "failed to open file");
+}
 
 // Close file handle
-// File struct passed by value: { i64 handle, str path, str mode }
-void FERRET_FUNC(Close)(const FERRET_FILE* file) {
+void FERRET_FUNC(File_Close)(FERRET_FILE* file) {
     if (!file || file->handle == 0) return;
-    FILE* f = (FILE*)(intptr_t)file->handle;
-    fclose(f);
+    ferret_file_handle_t* handle = ferret_file_handle_from_raw(file->handle);
+    ferret_file_handle_release(handle);
+    file->handle = 0;
 }
 
 // Read line from file handle
 // OUT PARAM FIRST
-void FERRET_FUNC(ReadLine)(void* out, const FERRET_FILE* file) {
+void FERRET_FUNC(File_ReadLine)(void* out, const FERRET_FILE* file, uint64_t file_heap) {
+    (void)file_heap;
     if (!out) return;
     
     char** str_ptr = (char**)out;
@@ -240,7 +292,13 @@ void FERRET_FUNC(ReadLine)(void* out, const FERRET_FILE* file) {
         return;
     }
     
-    FILE* f = (FILE*)(intptr_t)file->handle;
+    ferret_file_handle_t* handle = ferret_file_handle_from_raw(file->handle);
+    FILE* f = ferret_file_handle_file(handle);
+    if (!f) {
+        *str_ptr = "invalid file handle";
+        *tag_ptr = 0;
+        return;
+    }
     
     char* line = NULL;
     size_t len = 0;
@@ -301,7 +359,8 @@ void FERRET_FUNC(ReadLine)(void* out, const FERRET_FILE* file) {
 
 // Read bytes from file handle
 // OUT PARAM FIRST
-void FERRET_FUNC(ReadBytes)(void* out, const FERRET_FILE* file, int32_t maxBytes) {
+void FERRET_FUNC(File_ReadBytes)(void* out, const FERRET_FILE* file, uint64_t file_heap, int32_t maxBytes) {
+    (void)file_heap;
     if (!out) return;
 
     if (!file || file->handle == 0) {
@@ -313,7 +372,12 @@ void FERRET_FUNC(ReadBytes)(void* out, const FERRET_FILE* file, int32_t maxBytes
         return;
     }
 
-    FILE* f = (FILE*)(intptr_t)file->handle;
+    ferret_file_handle_t* handle = ferret_file_handle_from_raw(file->handle);
+    FILE* f = ferret_file_handle_file(handle);
+    if (!f) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
     uint8_t* buf = (uint8_t*)ferret_alloc((size_t)maxBytes);
     if (!buf) {
         FERRET_RESULT_ERR(out, 8, "out of memory");
@@ -346,13 +410,138 @@ void FERRET_FUNC(ReadBytes)(void* out, const FERRET_FILE* file, int32_t maxBytes
     FERRET_RESULT_OK(out, 8, ferret_array_t*, arr);
 }
 
-// Write to file handle
+// Write string to file handle
 // OUT PARAM FIRST
-FERRET_FS_DEFINE_WRITE_HANDLE(Write, 0)
+void FERRET_FUNC(File_WriteStr)(void* out, const FERRET_FILE* file, uint64_t file_heap, const char* content) {
+    (void)file_heap;
+    if (!out) return;
+    if (!file || file->handle == 0) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+    ferret_file_handle_t* handle = ferret_file_handle_from_raw(file->handle);
+    FILE* f = ferret_file_handle_file(handle);
+    if (!f) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+    if (content) {
+        size_t len = strlen(content);
+        size_t written = fwrite(content, 1, len, f);
+        if (written != len) {
+            FERRET_RESULT_ERR(out, 8, "failed to write all data");
+            return;
+        }
+    }
+    FERRET_RESULT_OK(out, 8, bool, true);
+}
+
+// Write bytes to file handle (method receiver)
+// OUT PARAM FIRST
+void FERRET_FUNC(File_Write)(void* out, const FERRET_FILE* file, uint64_t file_heap, ferret_array_t* data) {
+    (void)file_heap;
+    if (!out) return;
+    if (!file || file->handle == 0) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+    if (!data || data->length == 0) {
+        FERRET_RESULT_OK(out, 8, int32_t, 0);
+        return;
+    }
+
+    ferret_file_handle_t* handle = ferret_file_handle_from_raw(file->handle);
+    FILE* f = ferret_file_handle_file(handle);
+    if (!f) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+    size_t len = (size_t)data->length;
+    size_t written = fwrite(data->data, 1, len, f);
+    if (written != len) {
+        FERRET_RESULT_ERR(out, 8, "failed to write all data");
+        return;
+    }
+    FERRET_RESULT_OK(out, 8, int32_t, (int32_t)written);
+}
 
 // Write line to file handle (with newline)
 // OUT PARAM FIRST
-FERRET_FS_DEFINE_WRITE_HANDLE(WriteLine, 1)
+void FERRET_FUNC(File_WriteLine)(void* out, const FERRET_FILE* file, uint64_t file_heap, const char* content) {
+    (void)file_heap;
+    if (!out) return;
+    if (!file || file->handle == 0) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+    ferret_file_handle_t* handle = ferret_file_handle_from_raw(file->handle);
+    FILE* f = ferret_file_handle_file(handle);
+    if (!f) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+    if (content) {
+        size_t len = strlen(content);
+        size_t written = fwrite(content, 1, len, f);
+        if (written != len) {
+            FERRET_RESULT_ERR(out, 8, "failed to write all data");
+            return;
+        }
+    }
+    if (fputc('\n', f) == EOF) {
+        FERRET_RESULT_ERR(out, 8, "failed to write newline");
+        return;
+    }
+    FERRET_RESULT_OK(out, 8, bool, true);
+}
+
+// Seek to position and return new absolute cursor
+// OUT PARAM FIRST
+void FERRET_FUNC(File_Seek)(void* out, const FERRET_FILE* file, uint64_t file_heap, int64_t offset, int32_t whence) {
+    (void)file_heap;
+    if (!out) return;
+    if (!file || file->handle == 0) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+
+    ferret_file_handle_t* handle = ferret_file_handle_from_raw(file->handle);
+    FILE* f = ferret_file_handle_file(handle);
+    if (!f) {
+        FERRET_RESULT_ERR(out, 8, "invalid file handle");
+        return;
+    }
+
+    int c_whence = ferret_fs_whence_to_c(whence);
+    if (c_whence == INT_MIN) {
+        FERRET_RESULT_ERR(out, 8, "invalid seek whence");
+        return;
+    }
+
+#ifdef _WIN32
+    if (_fseeki64(f, (__int64)offset, c_whence) != 0) {
+        FERRET_RESULT_ERR(out, 8, "failed to seek file");
+        return;
+    }
+    __int64 pos = _ftelli64(f);
+    if (pos < 0) {
+        FERRET_RESULT_ERR(out, 8, "failed to tell file position");
+        return;
+    }
+    FERRET_RESULT_OK(out, 8, int64_t, (int64_t)pos);
+#else
+    if (fseeko(f, (off_t)offset, c_whence) != 0) {
+        FERRET_RESULT_ERR(out, 8, "failed to seek file");
+        return;
+    }
+    off_t pos = ftello(f);
+    if (pos < 0) {
+        FERRET_RESULT_ERR(out, 8, "failed to tell file position");
+        return;
+    }
+    FERRET_RESULT_OK(out, 8, int64_t, (int64_t)pos);
+#endif
+}
 
 // ============================================
 // Directory operations

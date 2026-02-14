@@ -34,6 +34,13 @@ fn get(value: MapView, key: Type1) -> ?Type2;
 // @extern
 fn set(source: MapRef, key: Type1, value: Type2) -> bool;
 
+
+/**
+- `addr(&x)`: address of the original storage location (the “place” of `x`).
+- `self_addr(&x)`: address of the parameter slot inside the callee (the argument’s local storage).
+- `heap_addr(&x)`: heap pointer if the value lives on heap; otherwise 0.
+*/
+
 // @extern
 fn addr(value: &Type) -> u64;
 // @extern
@@ -42,6 +49,12 @@ fn self_addr(value: &Type) -> u64;
 fn heap_addr(value: &Type) -> u64;
 // @extern
 fn panic(msg: str) -> void;
+
+// Compiler intrinsics for file-handle copy/drop semantics.
+// @extern
+fn __file_clone(handle: __file) -> __file;
+// @extern
+fn __file_drop(handle: __file) -> void;
 
 // fn print(args: ...io::Printable) {
 //     io::Println(...args);

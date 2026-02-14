@@ -181,12 +181,28 @@ func (p *Parser) parseFunctionParams() []ast.Field {
 			p.advance() // consume '...'
 		}
 
+		// Move-qualified parameter (@T): argument must be moved at call site.
+		isMove := false
+		if p.match(tokens.AT_TOKEN) {
+			isMove = true
+			p.advance() // consume '@'
+		}
+
 		// Parse parameter type
 		paramType := p.parseType()
 
+		// Optional default value: name: T = expr
+		var defaultValue ast.Expression
+		if p.match(tokens.EQUALS_TOKEN) {
+			p.advance() // consume '='
+			defaultValue = p.parseExpr()
+		}
+
 		// Handle nil paramType
 		var endPos *source.Position
-		if paramType != nil && paramType.Loc() != nil {
+		if defaultValue != nil && defaultValue.Loc() != nil {
+			endPos = defaultValue.Loc().End
+		} else if paramType != nil && paramType.Loc() != nil {
 			endPos = paramType.Loc().End
 		} else {
 			endPos = name.End
@@ -196,6 +212,8 @@ func (p *Parser) parseFunctionParams() []ast.Field {
 			Name:       name,
 			Type:       paramType,
 			IsVariadic: isVariadic,
+			IsMove:     isMove,
+			Default:    defaultValue,
 			Location:   *source.NewLocation(&p.filepath, name.Start, endPos),
 		}
 
@@ -313,6 +331,22 @@ func (p *Parser) parseMethodDecl(start source.Position, receivers []ast.Field) *
 			diagnostics.NewError("method can only have one receiver").
 				WithCode(diagnostics.ErrUnexpectedToken).
 				WithPrimaryLabel(secondReceiver.Loc(), "extra receiver"),
+		)
+	}
+
+	receiver := receivers[0]
+	if receiver.IsVariadic {
+		p.diagnostics.Add(
+			diagnostics.NewError("method receiver cannot be variadic").
+				WithCode(diagnostics.ErrUnexpectedToken).
+				WithPrimaryLabel(receiver.Loc(), "remove '...' from receiver"),
+		)
+	}
+	if receiver.Default != nil {
+		p.diagnostics.Add(
+			diagnostics.NewError("method receiver cannot have a default value").
+				WithCode(diagnostics.ErrUnexpectedToken).
+				WithPrimaryLabel(receiver.Default.Loc(), "remove receiver default"),
 		)
 	}
 

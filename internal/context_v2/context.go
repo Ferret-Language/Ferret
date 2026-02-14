@@ -85,6 +85,8 @@ type Module struct {
 	ImportAliasMap    map[string]string                // alias/name -> import path mapping for module access
 	ExprTypes         map[ast.Expression]types.SemType // Type of each expression (filled during type checking)
 	NarrowedExprTypes map[string]types.SemType         // Narrowed type for expression keys during type checking
+	CallResolvedArgs  map[*ast.CallExpr][]ast.Expression
+	PipeResolvedArgs  map[*ast.PipeExpr][]ast.Expression
 
 	// Source metadata
 	Content string // Raw source code (for diagnostics)
@@ -146,6 +148,91 @@ func (mod *Module) ExprType(expr ast.Expression) (types.SemType, bool) {
 	}
 
 	return typ, ok
+}
+
+// SetCallResolvedArgs records the effective argument list for a call after
+// default-parameter resolution.
+func (mod *Module) SetCallResolvedArgs(call *ast.CallExpr, args []ast.Expression) {
+	if mod == nil || call == nil {
+		return
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.CallResolvedArgs == nil {
+		mod.CallResolvedArgs = make(map[*ast.CallExpr][]ast.Expression)
+	}
+	if args == nil {
+		delete(mod.CallResolvedArgs, call)
+		return
+	}
+	copied := make([]ast.Expression, len(args))
+	copy(copied, args)
+	mod.CallResolvedArgs[call] = copied
+}
+
+// CallArgs returns the resolved argument list for a call, if any.
+func (mod *Module) CallArgs(call *ast.CallExpr) ([]ast.Expression, bool) {
+	if mod == nil || call == nil {
+		return nil, false
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.CallResolvedArgs == nil {
+		return nil, false
+	}
+	args, ok := mod.CallResolvedArgs[call]
+	if !ok {
+		return nil, false
+	}
+	copied := make([]ast.Expression, len(args))
+	copy(copied, args)
+	return copied, true
+}
+
+// SetPipeResolvedArgs records the effective lowered call arguments for a pipe expression.
+func (mod *Module) SetPipeResolvedArgs(pipe *ast.PipeExpr, args []ast.Expression) {
+	if mod == nil || pipe == nil {
+		return
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.PipeResolvedArgs == nil {
+		mod.PipeResolvedArgs = make(map[*ast.PipeExpr][]ast.Expression)
+	}
+	if args == nil {
+		delete(mod.PipeResolvedArgs, pipe)
+		return
+	}
+	copied := make([]ast.Expression, len(args))
+	copy(copied, args)
+	mod.PipeResolvedArgs[pipe] = copied
+}
+
+// PipeArgs returns the resolved lowered-call arguments for a pipe expression, if any.
+func (mod *Module) PipeArgs(pipe *ast.PipeExpr) ([]ast.Expression, bool) {
+	if mod == nil || pipe == nil {
+		return nil, false
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.PipeResolvedArgs == nil {
+		return nil, false
+	}
+	args, ok := mod.PipeResolvedArgs[pipe]
+	if !ok {
+		return nil, false
+	}
+	copied := make([]ast.Expression, len(args))
+	copy(copied, args)
+	return copied, true
 }
 
 // Import represents a resolved import statement
@@ -261,6 +348,44 @@ func registerBuiltins(universe *table.SymbolTable) {
 			Exported: true,
 		})
 	}
+
+	// Compiler intrinsic resource handle types (phase 1).
+	// Named type keeps nominal identity while preserving i64 ABI layout.
+	fileHandleType := types.NewResourceNamed("__file", types.TypeI64)
+	universe.Declare("__file", &symbols.Symbol{
+		Name:     "__file",
+		Kind:     symbols.SymbolType,
+		Type:     fileHandleType,
+		Exported: true,
+	})
+	tcpListenerHandleType := types.NewResourceNamed("__tcp_listener", types.TypeI64)
+	universe.Declare("__tcp_listener", &symbols.Symbol{
+		Name:     "__tcp_listener",
+		Kind:     symbols.SymbolType,
+		Type:     tcpListenerHandleType,
+		Exported: true,
+	})
+	tcpConnHandleType := types.NewResourceNamed("__tcp_conn", types.TypeI64)
+	universe.Declare("__tcp_conn", &symbols.Symbol{
+		Name:     "__tcp_conn",
+		Kind:     symbols.SymbolType,
+		Type:     tcpConnHandleType,
+		Exported: true,
+	})
+	httpAppHandleType := types.NewResourceNamed("__http_app", types.TypeI64)
+	universe.Declare("__http_app", &symbols.Symbol{
+		Name:     "__http_app",
+		Kind:     symbols.SymbolType,
+		Type:     httpAppHandleType,
+		Exported: true,
+	})
+	httpResponseHandleType := types.NewResourceNamed("__http_response", types.TypeI64)
+	universe.Declare("__http_response", &symbols.Symbol{
+		Name:     "__http_response",
+		Kind:     symbols.SymbolType,
+		Type:     httpResponseHandleType,
+		Exported: true,
+	})
 
 	// Built-in constants
 	universe.Declare("true", &symbols.Symbol{

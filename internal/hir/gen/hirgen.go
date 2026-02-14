@@ -442,6 +442,7 @@ func (g *Generator) lowerParam(field *ast.Field) *hir.Param {
 		Name:       name,
 		Type:       g.typeFromNode(field.Type),
 		IsVariadic: field.IsVariadic,
+		IsMove:     field.IsMove,
 		Location:   field.Location,
 	}
 }
@@ -612,8 +613,14 @@ func (g *Generator) lowerCallExpr(expr *ast.CallExpr) *hir.CallExpr {
 	if expr == nil {
 		return nil
 	}
-	args := make([]hir.Expr, 0, len(expr.Args))
-	for _, arg := range expr.Args {
+	callArgs := expr.Args
+	if g != nil && g.mod != nil {
+		if resolved, ok := g.mod.CallArgs(expr); ok && len(resolved) > 0 {
+			callArgs = resolved
+		}
+	}
+	args := make([]hir.Expr, 0, len(callArgs))
+	for _, arg := range callArgs {
 		args = append(args, g.lowerExpr(arg))
 	}
 	return &hir.CallExpr{
@@ -637,6 +644,22 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 
 	// If the right side is a call expression, apply placeholder semantics.
 	if callExpr, ok := expr.Call.(*ast.CallExpr); ok {
+		if g != nil && g.mod != nil {
+			if resolved, ok := g.mod.CallArgs(callExpr); ok && len(resolved) > 0 {
+				args := make([]hir.Expr, 0, len(resolved))
+				for _, arg := range resolved {
+					args = append(args, g.lowerExpr(arg))
+				}
+				return &hir.CallExpr{
+					Fun:      g.lowerExpr(callExpr.Fun),
+					Args:     args,
+					Catch:    g.lowerCatchClause(callExpr.Catch),
+					Type:     g.exprType(expr),
+					Location: locFromNode(expr),
+				}
+			}
+		}
+
 		// Transform the arguments
 		transformedArgs := make([]hir.Expr, 0, len(callExpr.Args)+1)
 		placeholderFound := false
@@ -667,6 +690,21 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 	}
 
 	// Otherwise, treat the right side as a callable expression with a single argument.
+	if g != nil && g.mod != nil {
+		if resolved, ok := g.mod.PipeArgs(expr); ok && len(resolved) > 0 {
+			args := make([]hir.Expr, 0, len(resolved))
+			for _, arg := range resolved {
+				args = append(args, g.lowerExpr(arg))
+			}
+			return &hir.CallExpr{
+				Fun:      g.lowerExpr(expr.Call),
+				Args:     args,
+				Type:     g.exprType(expr),
+				Location: locFromNode(expr),
+			}
+		}
+	}
+
 	return &hir.CallExpr{
 		Fun:      g.lowerExpr(expr.Call),
 		Args:     []hir.Expr{pipedValue},

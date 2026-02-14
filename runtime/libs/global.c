@@ -8,6 +8,7 @@
 #include "../core/array.h"
 #include "../core/map.h"
 #include "../core/alloc.h"
+#include "../core/file_handle.h"
 #include "../core/runtime_naming.h"
 
 // Define the module prefix for this file (implements ferret_libs/global.fer)
@@ -248,4 +249,64 @@ uint64_t FERRET_FUNC(self_addr)(const void* value, uint64_t heap) {
 uint64_t FERRET_FUNC(heap_addr)(const void* value, uint64_t heap) {
     (void)value;
     return heap;
+}
+
+static bool ferret_file_mode_is_write_only(const char* mode) {
+    if (mode == NULL) {
+        return false;
+    }
+    if (strchr(mode, '+') != NULL) {
+        return false;
+    }
+    return strchr(mode, 'w') != NULL || strchr(mode, 'a') != NULL;
+}
+
+int64_t FERRET_FUNC(__file_clone)(int64_t handle) {
+    ferret_file_handle_t* h = ferret_file_handle_from_raw(handle);
+    if (h == NULL) {
+        return 0;
+    }
+    FILE* src = ferret_file_handle_file(h);
+    const char* path = ferret_file_handle_path(h);
+    const char* mode = ferret_file_handle_mode(h);
+    if (src == NULL || path == NULL || mode == NULL) {
+        return 0;
+    }
+
+    // Only flush pure write modes to avoid UB on input streams.
+    if (ferret_file_mode_is_write_only(mode)) {
+        fflush(src);
+    }
+
+    long pos = ftell(src);
+    if (pos < 0) {
+        pos = 0;
+    }
+
+    // Copy should not truncate existing file contents.
+    const char* clone_mode = mode;
+    if (strcmp(mode, "w") == 0 || strcmp(mode, "w+") == 0) {
+        clone_mode = "r+";
+    }
+
+    FILE* fp = fopen(path, clone_mode);
+    if (fp == NULL) {
+        return 0;
+    }
+    if (fseek(fp, pos, SEEK_SET) != 0) {
+        fclose(fp);
+        return 0;
+    }
+
+    ferret_file_handle_t* cloned = ferret_file_handle_new_with_meta(fp, path, mode);
+    if (cloned == NULL) {
+        fclose(fp);
+        return 0;
+    }
+    return ferret_file_handle_to_raw(cloned);
+}
+
+void FERRET_FUNC(__file_drop)(int64_t handle) {
+    ferret_file_handle_t* h = ferret_file_handle_from_raw(handle);
+    ferret_file_handle_release(h);
 }

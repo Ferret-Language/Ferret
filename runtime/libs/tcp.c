@@ -322,7 +322,8 @@ void FERRET_FUNC(DialTcp)(void* out, const char* addr) {
 }
 
 // Accept TCP connection (str!TcpConn)
-void FERRET_FUNC(Accept)(void* out, const LISTENER* listener) {
+void FERRET_FUNC(TcpListener_Accept)(void* out, const LISTENER* listener, uint64_t listener_heap) {
+    (void)listener_heap;
     if (!out) {
         return;
     }
@@ -347,23 +348,26 @@ void FERRET_FUNC(Accept)(void* out, const LISTENER* listener) {
 }
 
 // Close listener
-void FERRET_FUNC(CloseListener)(const LISTENER* listener) {
+void FERRET_FUNC(TcpListener_Close)(LISTENER* listener) {
     if (!listener || listener->handle == 0) {
         return;
     }
     ferret_close_socket((ferret_socket_t)(intptr_t)listener->handle);
+    listener->handle = 0;
 }
 
 // Close connection
-void FERRET_FUNC(CloseConn)(const CONN* conn) {
+void FERRET_FUNC(TcpConn_Close)(CONN* conn) {
     if (!conn || conn->handle == 0) {
         return;
     }
     ferret_close_socket((ferret_socket_t)(intptr_t)conn->handle);
+    conn->handle = 0;
 }
 
 // Read bytes
-void FERRET_FUNC(Read)(void* out, const CONN* conn, int32_t maxBytes) {
+void FERRET_FUNC(TcpConn_Read)(void* out, const CONN* conn, uint64_t conn_heap, int32_t maxBytes) {
+    (void)conn_heap;
     if (!out) {
         return;
     }
@@ -396,7 +400,8 @@ void FERRET_FUNC(Read)(void* out, const CONN* conn, int32_t maxBytes) {
 }
 
 // Read bytes as string
-void FERRET_FUNC(ReadStr)(void* out, const CONN* conn, int32_t maxBytes) {
+void FERRET_FUNC(TcpConn_ReadStr)(void* out, const CONN* conn, uint64_t conn_heap, int32_t maxBytes) {
+    (void)conn_heap;
     if (!out) {
         return;
     }
@@ -434,7 +439,8 @@ void FERRET_FUNC(ReadStr)(void* out, const CONN* conn, int32_t maxBytes) {
 }
 
 // Write bytes
-void FERRET_FUNC(Write)(void* out, const CONN* conn, ferret_array_t* data) {
+void FERRET_FUNC(TcpConn_Write)(void* out, const CONN* conn, uint64_t conn_heap, ferret_array_t* data) {
+    (void)conn_heap;
     if (!out) {
         return;
     }
@@ -464,7 +470,8 @@ void FERRET_FUNC(Write)(void* out, const CONN* conn, ferret_array_t* data) {
 }
 
 // Write string
-void FERRET_FUNC(WriteStr)(void* out, const CONN* conn, const char* data) {
+void FERRET_FUNC(TcpConn_WriteStr)(void* out, const CONN* conn, uint64_t conn_heap, const char* data) {
+    (void)conn_heap;
     if (!out) {
         return;
     }
@@ -499,7 +506,8 @@ void FERRET_FUNC(WriteStr)(void* out, const CONN* conn, const char* data) {
 }
 
 // Read timeout
-void FERRET_FUNC(SetReadTimeoutMs)(void* out, const CONN* conn, int32_t ms) {
+void FERRET_FUNC(TcpConn_SetReadTimeoutMs)(void* out, const CONN* conn, uint64_t conn_heap, int32_t ms) {
+    (void)conn_heap;
     if (!out) {
         return;
     }
@@ -527,7 +535,8 @@ void FERRET_FUNC(SetReadTimeoutMs)(void* out, const CONN* conn, int32_t ms) {
 }
 
 // Write timeout
-void FERRET_FUNC(SetWriteTimeoutMs)(void* out, const CONN* conn, int32_t ms) {
+void FERRET_FUNC(TcpConn_SetWriteTimeoutMs)(void* out, const CONN* conn, uint64_t conn_heap, int32_t ms) {
+    (void)conn_heap;
     if (!out) {
         return;
     }
@@ -555,7 +564,8 @@ void FERRET_FUNC(SetWriteTimeoutMs)(void* out, const CONN* conn, int32_t ms) {
 }
 
 // Keepalive
-void FERRET_FUNC(SetKeepAlive)(void* out, const CONN* conn, bool enabled) {
+void FERRET_FUNC(TcpConn_SetKeepAlive)(void* out, const CONN* conn, uint64_t conn_heap, bool enabled) {
+    (void)conn_heap;
     if (!out) {
         return;
     }

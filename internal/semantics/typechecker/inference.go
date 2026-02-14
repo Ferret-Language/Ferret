@@ -246,7 +246,8 @@ func inferIdentifierType(_ *context_v2.CompilerContext, mod *context_v2.Module, 
 	if !ok {
 		return types.TypeUnknown
 	}
-	return sym.Type
+	// In value context, heap owners read as their payload type.
+	return types.UnwrapHeapType(sym.Type)
 }
 
 // inferBinaryExprType determines the result type of a binary expression
@@ -361,14 +362,36 @@ func inferUnaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		}
 		return types.NewMutableReference(xType)
 	case tokens.AT_TOKEN:
-		// Move operator keeps the operand type.
+		// Move preserves ownership type for heap owners.
+		if mod != nil && mod.CurrentScope != nil {
+			if ident, ok := unwrapParenExpr(expr.X).(*ast.IdentifierExpr); ok {
+				if sym, found := mod.CurrentScope.Lookup(ident.Name); found && sym != nil {
+					if types.IsHeapType(sym.Type) {
+						return sym.Type
+					}
+				}
+			}
+		}
 		return xType
 	case tokens.HASH_TOKEN:
-		// Heap operator keeps the operand type.
-		return xType
+		// Heap allocation produces #T.
+		if types.IsHeapType(xType) {
+			return types.TypeUnknown
+		}
+		return types.NewHeap(xType)
 
 	default:
 		return xType
+	}
+}
+
+func unwrapParenExpr(expr ast.Expression) ast.Expression {
+	for {
+		p, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = p.X
 	}
 }
 
@@ -898,14 +921,23 @@ func inferFuncLitType(ctx *context_v2.CompilerContext, mod *context_v2.Module, l
 	params := make([]types.ParamType, len(lit.Type.Params))
 	for i, param := range lit.Type.Params {
 		paramType := TypeFromTypeNodeWithContext(ctx, mod, param.Type)
+		paramName := ""
+		if param.Name != nil {
+			paramName = param.Name.Name
+		}
 		params[i] = types.ParamType{
-			Name: param.Name.Name,
-			Type: paramType,
+			Name:       paramName,
+			Type:       paramType,
+			IsVariadic: param.IsVariadic,
+			IsMove:     param.IsMove,
+			HasDefault: param.Default != nil,
 		}
 
 		// Update symbol table with the parameter's type
-		if sym, ok := mod.CurrentScope.GetSymbol(param.Name.Name); ok {
-			sym.Type = paramType
+		if paramName != "" {
+			if sym, ok := mod.CurrentScope.GetSymbol(paramName); ok {
+				sym.Type = paramType
+			}
 		}
 	}
 
@@ -920,6 +952,8 @@ func inferFuncLitType(ctx *context_v2.CompilerContext, mod *context_v2.Module, l
 	prevReturnType := mod.CurrentFunctionReturnType
 	mod.CurrentFunctionReturnType = returnType
 	defer func() { mod.CurrentFunctionReturnType = prevReturnType }()
+
+	checkDefaultParameterValues(ctx, mod, lit.Type.Params)
 
 	// Type check the function body
 	if lit.Body != nil {

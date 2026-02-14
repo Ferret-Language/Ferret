@@ -338,3 +338,53 @@ func TestDiagnostic_EmptyLabelsAndNotes(t *testing.T) {
 		t.Errorf("New diagnostic should have empty help, got %q", diag.Help)
 	}
 }
+
+func TestDiagnostic_WithCodeHintLines(t *testing.T) {
+	file := "test.fer"
+	loc := source.NewLocation(
+		&file,
+		&source.Position{Line: 2, Column: 1},
+		&source.Position{Line: 2, Column: 6},
+	)
+
+	diag := NewError("test").
+		WithCodeHintLines(loc, []CodeHintLine{
+			{Prefix: "-", Code: "old_call(data);"},
+			{Prefix: "+", Code: "old_call(@data);"},
+		})
+
+	if diag.CodeHint == nil {
+		t.Fatal("expected code hint to be set")
+	}
+	if len(diag.CodeHint.Lines) != 2 {
+		t.Fatalf("expected 2 code hint lines, got %d", len(diag.CodeHint.Lines))
+	}
+	if diag.CodeHint.Lines[0].Prefix != "-" || diag.CodeHint.Lines[1].Prefix != "+" {
+		t.Fatalf("unexpected prefixes: %#v", diag.CodeHint.Lines)
+	}
+}
+
+func TestDiagnostic_WithCodeReplacement(t *testing.T) {
+	file := "test.fer"
+	loc := source.NewLocation(
+		&file,
+		&source.Position{Line: 4, Column: 1},
+		&source.Position{Line: 4, Column: 8},
+	)
+
+	diag := NewError("replace this").
+		WithCodeReplacement(loc, "@&x", "@x")
+
+	if diag.CodeHint == nil {
+		t.Fatal("expected code hint to be set")
+	}
+	if len(diag.CodeHint.Lines) != 2 {
+		t.Fatalf("expected 2 code hint lines, got %d", len(diag.CodeHint.Lines))
+	}
+	if diag.CodeHint.Lines[0].Prefix != "-" {
+		t.Fatalf("expected first replacement line to be '-', got %q", diag.CodeHint.Lines[0].Prefix)
+	}
+	if diag.CodeHint.Lines[1].Prefix != "+" {
+		t.Fatalf("expected second replacement line to be '+', got %q", diag.CodeHint.Lines[1].Prefix)
+	}
+}

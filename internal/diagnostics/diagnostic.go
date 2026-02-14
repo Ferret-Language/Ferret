@@ -61,9 +61,21 @@ type Diagnostic struct {
 	CodeHint *CodeHint
 }
 
+// CodeHintLine represents one rendered hint line with an optional diff prefix.
+// Prefix supports:
+//   - "+" for inserted code
+//   - "-" for removed code
+//   - " " or "" for neutral/context lines
+type CodeHintLine struct {
+	Prefix    string
+	Code      string
+	BaseColor colors.COLOR
+}
+
 // CodeHint renders extra lines after the primary label.
 type CodeHint struct {
 	Code        string
+	Lines       []CodeHintLine
 	Labels      []CodeHintLabel
 	BaseColor   colors.COLOR
 	GutterColor colors.COLOR
@@ -194,6 +206,43 @@ func (d *Diagnostic) WithCodeHint(loc *source.Location, code string, labels ...C
 		GutterColor: colors.GREEN,
 	}
 	return d
+}
+
+// WithCodeHintLines adds a diff-style code hint snippet with explicit line prefixes.
+func (d *Diagnostic) WithCodeHintLines(loc *source.Location, lines []CodeHintLine, labels ...CodeHintLabel) *Diagnostic {
+	if loc == nil {
+		return d
+	}
+
+	d.WithPrimaryLabel(loc, "")
+	d.CodeHint = &CodeHint{
+		Lines:       append([]CodeHintLine(nil), lines...),
+		Labels:      labels,
+		GutterColor: colors.GREEN,
+	}
+	return d
+}
+
+// WithCodeInsertion adds a one-line insertion hint (green '+' line).
+func (d *Diagnostic) WithCodeInsertion(loc *source.Location, code string, labels ...CodeHintLabel) *Diagnostic {
+	return d.WithCodeHintLines(loc, []CodeHintLine{
+		{Prefix: "+", Code: code, BaseColor: colors.GREEN},
+	}, labels...)
+}
+
+// WithCodeRemoval adds a one-line removal hint (red '-' line).
+func (d *Diagnostic) WithCodeRemoval(loc *source.Location, code string, labels ...CodeHintLabel) *Diagnostic {
+	return d.WithCodeHintLines(loc, []CodeHintLine{
+		{Prefix: "-", Code: code, BaseColor: colors.RED},
+	}, labels...)
+}
+
+// WithCodeReplacement adds a two-line replacement hint (red '-' then green '+').
+func (d *Diagnostic) WithCodeReplacement(loc *source.Location, oldCode, newCode string, labels ...CodeHintLabel) *Diagnostic {
+	return d.WithCodeHintLines(loc, []CodeHintLine{
+		{Prefix: "-", Code: oldCode, BaseColor: colors.RED},
+		{Prefix: "+", Code: newCode, BaseColor: colors.GREEN},
+	}, labels...)
 }
 
 // WithNote adds a note to the diagnostic

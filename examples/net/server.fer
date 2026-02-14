@@ -7,22 +7,22 @@ fn main() {
         return;
     };
 
-    let conn := net::Accept(listener) catch err {
+    let conn := listener.Accept() catch err {
         io::Println("accept error:", err);
         return;
     };
 
-    net::SetReadTimeoutMs(conn, 5000) catch false;
+    conn.SetReadTimeoutMs(5000) catch false;
 
-    let data := net::Read(conn, 1024) catch err {
+    let data := conn.Read(1024) catch err {
         io::Println("read error:", err);
         return;
     };
 
     io::Println("received bytes:", len(&data));
 
-    let written := net::WriteStr(conn, "pong") catch 0;
+    let written := conn.WriteStr("pong") catch 0;
 
-    net::CloseConn(conn);
-    net::CloseListener(listener);
+    conn.Close();
+    listener.Close();
 }

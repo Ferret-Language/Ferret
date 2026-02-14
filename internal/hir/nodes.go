@@ -646,6 +646,7 @@ type Param struct {
 	Name       string
 	Type       types.SemType
 	IsVariadic bool
+	IsMove     bool
 	Location   source.Location
 }
 

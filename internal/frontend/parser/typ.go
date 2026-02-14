@@ -27,8 +27,22 @@ func (p *Parser) parseTypeWithOptional() ast.TypeNode {
 
 	var t ast.TypeNode
 
-	// Check for reference type &T or &mut T
-	if p.match(tokens.BIT_AND_TOKEN) {
+	// Check for heap type #T
+	if p.match(tokens.HASH_TOKEN) {
+		hash := p.advance()
+		baseType := p.parseTypeWithOptional()
+		var endPos *source.Position
+		if baseType != nil && baseType.Loc() != nil && baseType.Loc().End != nil {
+			endPos = baseType.Loc().End
+		} else {
+			endPos = &hash.End
+		}
+		t = &ast.HeapType{
+			Base:     baseType,
+			Location: *source.NewLocation(&p.filepath, &hash.Start, endPos),
+		}
+	} else if p.match(tokens.BIT_AND_TOKEN) {
+		// Check for reference type &T or &mut T
 		ampersand := p.advance()
 		isMutable := false
 
@@ -325,11 +339,27 @@ func parseParams(p *Parser) []ast.Field {
 			p.advance() // consume '...'
 		}
 
+		// Move-qualified parameter (@T): argument must be moved at call site.
+		isMove := false
+		if p.match(tokens.AT_TOKEN) {
+			isMove = true
+			p.advance() // consume '@'
+		}
+
 		typ := p.parseType()
+
+		// Optional default value: name: T = expr
+		var defaultValue ast.Expression
+		if p.match(tokens.EQUALS_TOKEN) {
+			p.advance() // consume '='
+			defaultValue = p.parseExpr()
+		}
 
 		// Handle nil type
 		var endPos *source.Position
-		if typ != nil && typ.Loc() != nil {
+		if defaultValue != nil && defaultValue.Loc() != nil {
+			endPos = defaultValue.Loc().End
+		} else if typ != nil && typ.Loc() != nil {
 			endPos = typ.Loc().End
 		} else {
 			endPos = name.End
@@ -339,6 +369,8 @@ func parseParams(p *Parser) []ast.Field {
 			Name:       name,
 			Type:       typ,
 			IsVariadic: isVariadic,
+			IsMove:     isMove,
+			Default:    defaultValue,
 			Location:   *source.NewLocation(&p.filepath, name.Start, endPos),
 		})
 

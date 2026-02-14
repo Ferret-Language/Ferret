@@ -53,6 +53,14 @@ func resolveNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node a
 			defer mod.EnterScope(n.Scope.(*table.SymbolTable))()
 		}
 
+		if n.Type != nil {
+			for _, param := range n.Type.Params {
+				if param.Default != nil {
+					resolveExpr(ctx, mod, param.Default)
+				}
+			}
+		}
+
 		// Bind names in function body
 		if n.Body != nil {
 			resolveBlock(ctx, mod, n.Body)
@@ -67,6 +75,13 @@ func resolveNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node a
 		// Resolve receiver type (if it's a reference type)
 		if n.Receiver != nil && n.Receiver.Type != nil {
 			resolveTypeNode(ctx, mod, n.Receiver.Type)
+		}
+		if n.Type != nil {
+			for _, param := range n.Type.Params {
+				if param.Default != nil {
+					resolveExpr(ctx, mod, param.Default)
+				}
+			}
 		}
 
 		// Bind names in method body
@@ -294,6 +309,13 @@ func resolveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr a
 		if e.Scope != nil {
 			defer mod.EnterScope(e.Scope.(*table.SymbolTable))()
 		}
+		if e.Type != nil {
+			for _, param := range e.Type.Params {
+				if param.Default != nil {
+					resolveExpr(ctx, mod, param.Default)
+				}
+			}
+		}
 
 		// Resolve function body
 		if e.Body != nil {
@@ -419,6 +441,9 @@ func resolveTypeNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, ty
 			}
 		}
 
+	case *ast.HeapType:
+		resolveTypeNode(ctx, mod, t.Base)
+
 	case *ast.ArrayType:
 		// Resolve element type
 		resolveTypeNode(ctx, mod, t.ElType)
@@ -447,6 +472,9 @@ func resolveTypeNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, ty
 		// Resolve parameter types
 		for i := range t.Params {
 			resolveTypeNode(ctx, mod, t.Params[i].Type)
+			if t.Params[i].Default != nil {
+				resolveExpr(ctx, mod, t.Params[i].Default)
+			}
 		}
 		// Resolve return type
 		if t.Result != nil {

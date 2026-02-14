@@ -758,6 +758,43 @@ func validateParams(ctx *context_v2.CompilerContext, _ *context_v2.Module, param
 		)
 	}
 
+	// Rule: variadic parameters cannot have defaults and cannot be move-qualified.
+	if variadicCount == 1 {
+		v := params[variadicIndex]
+		if v.Default != nil {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("variadic parameter cannot have a default value").
+					WithPrimaryLabel(v.Loc(), "remove the default value"),
+			)
+		}
+		if v.IsMove {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("variadic parameter cannot be move-qualified").
+					WithPrimaryLabel(v.Loc(), "remove '@' from variadic parameter"),
+			)
+		}
+	}
+
+	// Rule: default parameters must be trailing.
+	seenDefault := false
+	firstDefaultIdx := -1
+	for i, param := range params {
+		if param.Default != nil {
+			if firstDefaultIdx == -1 {
+				firstDefaultIdx = i
+			}
+			seenDefault = true
+			continue
+		}
+		if seenDefault {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("parameters with default values must be trailing").
+					WithPrimaryLabel(param.Loc(), "non-default parameter after default parameter").
+					WithHelp(fmt.Sprintf("move this parameter before parameter %s", numeric.NumericToOrdinal(firstDefaultIdx+1))),
+			)
+		}
+	}
+
 	// Check for duplicate parameter names
 	paramNames := make(map[string]*ast.Field)
 	for _, param := range params {
@@ -780,6 +817,15 @@ func validateParams(ctx *context_v2.CompilerContext, _ *context_v2.Module, param
 
 	// Check for missing parameter types
 	for _, param := range params {
+		if param.IsMove && param.Type != nil {
+			if _, ok := param.Type.(*ast.ReferenceType); ok {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("move-qualified parameters cannot be references").
+						WithPrimaryLabel(param.Loc(), "remove '@' or use a value type"),
+				)
+			}
+		}
+
 		if param.Type == nil {
 			paramName := "<unnamed>"
 			if param.Name != nil {
@@ -1228,6 +1274,11 @@ func collectFunctionSignatureOnly(ctx *context_v2.CompilerContext, mod *context_
 				}
 			}
 		}
+		for _, param := range funcType.Params {
+			if param.Default != nil {
+				collectExpr(ctx, mod, param.Default)
+			}
+		}
 	}
 }
 
@@ -1281,6 +1332,11 @@ func collectFunctionScope(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 							WithPrimaryLabel(param.Loc(), "parameter already declared"),
 					)
 				}
+			}
+		}
+		for _, param := range funcType.Params {
+			if param.Default != nil {
+				collectExpr(ctx, mod, param.Default)
 			}
 		}
 	}

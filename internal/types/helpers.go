@@ -171,3 +171,94 @@ func DereferenceType(typ SemType) SemType {
 	}
 	return typ
 }
+
+// IsHeapType reports whether t is a heap ownership type (#T).
+func IsHeapType(t SemType) bool {
+	if t == nil {
+		return false
+	}
+	_, ok := UnwrapType(t).(*HeapType)
+	return ok
+}
+
+// UnwrapHeapType returns the payload type for #T, otherwise returns t unchanged.
+func UnwrapHeapType(t SemType) SemType {
+	if heapType, ok := UnwrapType(t).(*HeapType); ok {
+		return heapType.Inner
+	}
+	return t
+}
+
+// IsResourceType reports whether t is a direct resource handle type.
+func IsResourceType(t SemType) bool {
+	if t == nil {
+		return false
+	}
+	if named, ok := t.(*NamedType); ok {
+		if named.Resource {
+			return true
+		}
+		return IsResourceType(named.Underlying)
+	}
+	return false
+}
+
+// ContainsResourceType reports whether values of type t contain resource ownership.
+// References are non-owning views and therefore return false.
+func ContainsResourceType(t SemType) bool {
+	seen := make(map[SemType]struct{})
+	return containsResourceType(t, seen)
+}
+
+func containsResourceType(t SemType, seen map[SemType]struct{}) bool {
+	if t == nil {
+		return false
+	}
+	if _, ok := seen[t]; ok {
+		return false
+	}
+	seen[t] = struct{}{}
+
+	switch tt := t.(type) {
+	case *NamedType:
+		if tt.Resource {
+			return true
+		}
+		return containsResourceType(tt.Underlying, seen)
+	case *ReferenceType:
+		return false
+	case *HeapType:
+		return containsResourceType(tt.Inner, seen)
+	case *StructType:
+		for _, f := range tt.Fields {
+			if containsResourceType(f.Type, seen) {
+				return true
+			}
+		}
+		return false
+	case *ArrayType:
+		return containsResourceType(tt.Element, seen)
+	case *MapType:
+		return containsResourceType(tt.Key, seen) || containsResourceType(tt.Value, seen)
+	case *OptionalType:
+		return containsResourceType(tt.Inner, seen)
+	case *ResultType:
+		return containsResourceType(tt.Ok, seen) || containsResourceType(tt.Err, seen)
+	case *UnionType:
+		for _, v := range tt.Variants {
+			if containsResourceType(v, seen) {
+				return true
+			}
+		}
+		return false
+	case *EnumType:
+		for _, v := range tt.Variants {
+			if containsResourceType(v.Type, seen) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}

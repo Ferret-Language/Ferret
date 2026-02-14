@@ -53,6 +53,8 @@ func (d *DataLayout) SizeOf(t types.SemType) int {
 		}
 	case *types.ReferenceType:
 		return d.PointerSize
+	case *types.HeapType:
+		return d.PointerSize
 	case *types.ArrayType:
 		if tt.Length < 0 {
 			return d.PointerSize
@@ -105,6 +107,8 @@ func (d *DataLayout) AlignOf(t types.SemType) int {
 			return clampAlign(tt.Size(), d.PointerAlign)
 		}
 	case *types.ReferenceType:
+		return d.PointerAlign
+	case *types.HeapType:
 		return d.PointerAlign
 	case *types.ArrayType:
 		if tt.Length < 0 {

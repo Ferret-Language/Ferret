@@ -22,12 +22,12 @@ type Request struct {
 
 // Response represents a writable HTTP response.
 type Response struct {
-    .handle: i64             // Internal response handle
+    .handle: __http_response // Internal response handle
 };
 
 // App is the main HTTP server/router instance.
 type App struct {
-    .handle: i64             // Internal app handle
+    .handle: __http_app      // Internal app handle
 };
 
 // Create a new HTTP app.
@@ -169,7 +169,7 @@ fn (app: &App) ListenAddr(addr: str) -> str ! bool {
     let listener := tcp::ListenTcp(addr) catch err {
         return err!;
     };
-    return app.Serve(listener) catch err {
+    return app.Serve(@listener) catch err {
         return err!;
     };
 }

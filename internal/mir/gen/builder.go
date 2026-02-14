@@ -365,9 +365,9 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 		if heapExpr, ok := item.Value.(*hir.UnaryExpr); ok && heapExpr.Op.Kind == tokens.HASH_TOKEN {
 			val := b.lowerExpr(heapExpr.X)
 			if val != mir.InvalidValue {
-				val = b.coerceValueForAssign(val, b.exprType(heapExpr.X), typ, item.Name.Location)
+				val = b.coerceValueForAssign(val, b.exprType(heapExpr.X), heapInnerType(typ), item.Name.Location)
 			}
-			heapAddr := b.emitHeapAlloc(val, typ, item.Name.Location)
+			heapAddr := b.emitHeapAlloc(val, heapInnerType(typ), item.Name.Location)
 			if heapAddr != mir.InvalidValue {
 				if item.Name.Symbol != nil {
 					b.slots[item.Name.Symbol] = heapAddr
@@ -432,6 +432,33 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 		}
 	}
 
+	// Heap-owner declarations initialized from another heap-owner value should
+	// bind ownership directly instead of creating a stack slot for #T.
+	if !isGlobal && item.Value != nil {
+		if _, targetHeap := types.UnwrapType(typ).(*types.HeapType); targetHeap {
+			if _, rhsHeap := types.UnwrapType(b.exprType(item.Value)).(*types.HeapType); rhsHeap {
+				heapAddr := b.lowerExpr(item.Value)
+				if heapAddr != mir.InvalidValue {
+					heapAddr = b.coerceValueForAssign(heapAddr, b.exprType(item.Value), typ, item.Name.Location)
+				}
+				if heapAddr != mir.InvalidValue {
+					if item.Name.Symbol != nil {
+						b.slots[item.Name.Symbol] = heapAddr
+						b.boxed[item.Name.Symbol] = heapAddr
+						if _, ok := b.bindings[item.Name.Symbol]; !ok {
+							bind := b.emitAlloca(types.NewReference(typ), item.Name.Location)
+							b.emitStore(bind, heapAddr, item.Name.Location)
+							b.bindings[item.Name.Symbol] = bind
+						}
+					} else {
+						b.tempSlots[item.Name] = heapAddr
+					}
+					return
+				}
+			}
+		}
+	}
+
 	var addr mir.ValueID
 	if isGlobal {
 		if item.Name.Symbol == nil {
@@ -442,14 +469,14 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 		} else {
 			return
 		}
-		if item.Name.Symbol.IsHeap {
+		if isHeapSymbol(item.Name.Symbol) {
 			if item.Value != nil {
 				if heapExpr, ok := item.Value.(*hir.UnaryExpr); ok && heapExpr.Op.Kind == tokens.HASH_TOKEN {
 					val := b.lowerExpr(heapExpr.X)
 					if val != mir.InvalidValue {
-						val = b.coerceValueForAssign(val, b.exprType(heapExpr.X), typ, item.Name.Location)
+						val = b.coerceValueForAssign(val, b.exprType(heapExpr.X), heapInnerType(typ), item.Name.Location)
 					}
-					heapAddr := b.emitHeapAlloc(val, typ, item.Name.Location)
+					heapAddr := b.emitHeapAlloc(val, heapInnerType(typ), item.Name.Location)
 					if heapAddr != mir.InvalidValue {
 						b.emitStore(addr, heapAddr, item.Name.Location)
 					}
@@ -572,7 +599,7 @@ func (b *functionBuilder) lowerDeclItem(item hir.DeclItem) {
 			}
 			val = b.coerceValueForAssign(val, b.exprType(item.Value), typ, item.Name.Location)
 			if val != mir.InvalidValue {
-				if isMoveExpr(item.Value) {
+				if isMoveExpr(item.Value) || !isAddressableExpr(item.Value) {
 					b.emitStoreMove(addr, val, item.Name.Location)
 				} else {
 					b.emitStore(addr, val, item.Name.Location)
@@ -594,6 +621,7 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 	}
 
 	rhsIsMove := stmt.Rhs != nil && isMoveExpr(stmt.Rhs)
+	rhsShouldMove := rhsIsMove || (stmt.Rhs != nil && !isAddressableExpr(stmt.Rhs))
 	rebindRef := false
 	var refInner types.SemType
 	var lhsIdent *hir.Ident
@@ -608,7 +636,7 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 				if dstIdent, ok := stmt.Lhs.(*hir.Ident); ok && dstIdent.Symbol != nil {
 					heapAddr := b.addrForIdent(srcIdent)
 					if heapAddr != mir.InvalidValue {
-						if lhsIsGlobal && dstIdent.Symbol.IsHeap {
+						if lhsIsGlobal && isHeapSymbol(dstIdent.Symbol) {
 							if storageAddr, _, ok := b.moduleGlobalStorageAddr(dstIdent.Symbol, stmt.Location); ok {
 								b.emitStore(storageAddr, heapAddr, stmt.Location)
 								b.resetHeapBinding(srcIdent, stmt.Location)
@@ -648,7 +676,7 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 				if dstIdent, ok := stmt.Lhs.(*hir.Ident); ok && dstIdent.Symbol != nil {
 					heapAddr := b.lowerHeapReturnCall(call, heapRet, stmt.Location)
 					if heapAddr != mir.InvalidValue {
-						if lhsIsGlobal && dstIdent.Symbol.IsHeap {
+						if lhsIsGlobal && isHeapSymbol(dstIdent.Symbol) {
 							if storageAddr, _, ok := b.moduleGlobalStorageAddr(dstIdent.Symbol, stmt.Location); ok {
 								b.emitStore(storageAddr, heapAddr, stmt.Location)
 								return
@@ -692,9 +720,9 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 				if val != mir.InvalidValue {
 					val = b.coerceValueForAssign(val, b.exprType(heapExpr.X), b.exprType(stmt.Lhs), stmt.Location)
 				}
-				heapAddr := b.emitHeapAlloc(val, b.exprType(stmt.Lhs), stmt.Location)
+				heapAddr := b.emitHeapAlloc(val, heapInnerType(b.exprType(stmt.Lhs)), stmt.Location)
 				if heapAddr != mir.InvalidValue {
-					if lhsIsGlobal && ident.Symbol != nil && ident.Symbol.IsHeap {
+					if lhsIsGlobal && ident.Symbol != nil && isHeapSymbol(ident.Symbol) {
 						if storageAddr, _, ok := b.moduleGlobalStorageAddr(ident.Symbol, stmt.Location); ok {
 							b.emitStore(storageAddr, heapAddr, stmt.Location)
 							return
@@ -805,7 +833,7 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 				if rhs == mir.InvalidValue {
 					return
 				}
-				if rhsIsMove {
+				if rhsShouldMove {
 					b.emitStoreMove(refPtr, rhs, stmt.Location)
 				} else {
 					b.emitStore(refPtr, rhs, stmt.Location)
@@ -889,7 +917,7 @@ func (b *functionBuilder) lowerAssign(stmt *hir.AssignStmt) {
 	if rhs == mir.InvalidValue {
 		return
 	}
-	if rhsIsMove {
+	if rhsShouldMove {
 		b.emitStoreMove(addr, rhs, stmt.Location)
 	} else {
 		b.emitStore(addr, rhs, stmt.Location)
@@ -972,6 +1000,9 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		}
 	}
 
+	resultIsMove := isMoveExpr(stmt.Result)
+	resultIsAddressable := isAddressableExpr(stmt.Result)
+	resultShouldCopy := !resultIsMove && resultIsAddressable
 	val := b.lowerExpr(stmt.Result)
 	if val == mir.InvalidValue {
 		b.current.Term = &mir.Unreachable{Location: stmt.Location}
@@ -982,9 +1013,24 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 		b.current.Term = &mir.Unreachable{Location: stmt.Location}
 		return
 	}
+	// Ferret is copy-by-default. Returning a heap owner without explicit move
+	// clones the owner payload into a fresh heap allocation.
+	if _, retIsHeap := types.UnwrapType(retType).(*types.HeapType); retIsHeap && resultShouldCopy {
+		val = b.emitHeapOwnerClone(val, retType, stmt.Location)
+		if val == mir.InvalidValue {
+			b.current.Term = &mir.Unreachable{Location: stmt.Location}
+			return
+		}
+	}
+	if resultShouldCopy && isIntrinsicFileType(retType) && !needsByRefType(retType) {
+		val = b.emitIntrinsicCopyValue(val, retType, stmt.Location)
+		if val == mir.InvalidValue {
+			b.current.Term = &mir.Unreachable{Location: stmt.Location}
+			return
+		}
+	}
 
-	resultIsMove := isMoveExpr(stmt.Result)
-	if !resultIsMove {
+	if resultShouldCopy {
 		if _, ok := dynamicArrayValueType(retType); ok {
 			if !b.isDynamicArrayLiteralExpr(stmt.Result, retType) {
 				val = b.emitArrayClone(val, retType, stmt.Location)
@@ -1028,7 +1074,7 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 
 	if b.retParam != mir.InvalidValue {
 		// Return-by-value via out param: always copy the payload.
-		if !resultIsMove && typeNeedsDeepCopy(retType) {
+		if resultShouldCopy && typeNeedsDeepCopy(retType) {
 			b.emitDeepCopy(b.retParam, val, retType, stmt.Location)
 		} else {
 			b.emitMemcpy(b.retParam, val, retType, stmt.Location)
@@ -1823,12 +1869,16 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 			return refVal
 		}
 		if e.Op.Kind == tokens.AT_TOKEN {
+			if ident, ok := e.X.(*hir.Ident); ok && b.isHeapLValue(ident) {
+				addr := b.addrForIdent(ident)
+				if addr != mir.InvalidValue {
+					b.resetHeapBinding(ident, e.Location)
+					return addr
+				}
+			}
 			operand := b.lowerExpr(e.X)
 			if operand == mir.InvalidValue {
 				return mir.InvalidValue
-			}
-			if ident, ok := e.X.(*hir.Ident); ok && b.isHeapLValue(ident) {
-				b.resetHeapBinding(ident, e.Location)
 			}
 			return operand
 		}
@@ -2495,6 +2545,9 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 			if recv == mir.InvalidValue {
 				return mir.InvalidValue
 			}
+			if method.ReceiverIsMove {
+				b.markMethodReceiverMoved(selector)
+			}
 			recvArgs := []mir.ValueID{recv}
 			if method.Receiver != nil {
 				if refType, ok := types.UnwrapType(method.Receiver).(*types.ReferenceType); ok {
@@ -2597,6 +2650,7 @@ func (b *functionBuilder) lowerCallArgsWithCoerce(args []hir.Expr, fnType *types
 	for i, arg := range args {
 		boxedUnion := false
 		argIsMove := isMoveExpr(arg)
+		argShouldMove := argIsMove || !isAddressableExpr(arg)
 		val := b.lowerExpr(arg)
 		if val == mir.InvalidValue {
 			return nil
@@ -2657,7 +2711,8 @@ func (b *functionBuilder) lowerCallArgsWithCoerce(args []hir.Expr, fnType *types
 			paramBase := types.UnwrapType(paramType)
 			if _, ok := paramBase.(*types.ReferenceType); !ok && needsByRefType(paramType) && !boxedUnion {
 				tmp := b.emitAlloca(paramType, loc)
-				if argIsMove {
+				storeAsMove := argShouldMove || typeUsesIntrinsicCopy(paramType)
+				if storeAsMove {
 					b.emitStoreMove(tmp, val, loc)
 				} else {
 					b.emitStore(tmp, val, loc)
@@ -2761,6 +2816,9 @@ func (b *functionBuilder) lowerHeapReturnCall(call *hir.CallExpr, inner types.Se
 			recv := b.methodReceiverArg(selector, method)
 			if recv == mir.InvalidValue {
 				return mir.InvalidValue
+			}
+			if method.ReceiverIsMove {
+				b.markMethodReceiverMoved(selector)
 			}
 			recvArgs := []mir.ValueID{recv}
 			if method.Receiver != nil {
@@ -3536,6 +3594,24 @@ func isMoveExpr(expr hir.Expr) bool {
 	return unary.Op.Kind == tokens.AT_TOKEN
 }
 
+func heapInnerType(typ types.SemType) types.SemType {
+	if heap, ok := types.UnwrapType(typ).(*types.HeapType); ok {
+		return heap.Inner
+	}
+	return typ
+}
+
+func isHeapSymbol(sym *symbols.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	if _, ok := types.UnwrapType(sym.Type).(*types.HeapType); ok {
+		return true
+	}
+	// Backward-compatible fallback while migrating old symbol metadata.
+	return sym.IsHeap
+}
+
 func compareFloatType(leftType, rightType types.SemType) types.SemType {
 	if leftType == nil || rightType == nil {
 		return types.TypeUnknown
@@ -3568,7 +3644,7 @@ func (b *functionBuilder) isHeapLValue(expr hir.Expr) bool {
 		if e.Symbol == nil {
 			return false
 		}
-		if e.Symbol.IsHeap {
+		if isHeapSymbol(e.Symbol) {
 			return true
 		}
 		if b.boxed != nil {
@@ -3718,6 +3794,14 @@ func (b *functionBuilder) computeBorrowHeap(expr hir.Expr, val mir.ValueID, inne
 		lval = expr.(*hir.UnaryExpr).X
 	}
 	if b.isHeapLValue(lval) {
+		// If `val` points to a local slot of type `#T`, load the heap pointer
+		// first; otherwise `val` is already the heap pointer.
+		if elem, ok := b.ptrElem[val]; ok {
+			if _, isHeapSlot := types.UnwrapType(elem).(*types.HeapType); isHeapSlot {
+				ptr := b.emitLoad(val, elem, loc)
+				return b.emitCast(ptr, types.TypeU64, loc)
+			}
+		}
 		return b.emitCast(val, types.TypeU64, loc)
 	}
 	if interfaceTypeOf(inner) != nil {
@@ -3903,9 +3987,9 @@ func (b *functionBuilder) lowerQualifiedValue(expr *hir.ScopeResolutionExpr) mir
 		if addr == mir.InvalidValue {
 			return mir.InvalidValue
 		}
-		if sym != nil && sym.IsHeap {
+		if sym != nil && isHeapSymbol(sym) {
 			heapPtr := b.emitLoad(addr, storageType, expr.Location)
-			b.ptrElem[heapPtr] = sym.Type
+			b.ptrElem[heapPtr] = heapInnerType(sym.Type)
 			addr = heapPtr
 		}
 		if b.useAddrValue(expr.Type) {
@@ -3970,6 +4054,35 @@ func (b *functionBuilder) lowerLValue(expr hir.Expr) mir.ValueID {
 		b.reportUnsupported("lvalue", expr.Loc())
 		return mir.InvalidValue
 	}
+}
+
+func (b *functionBuilder) heapPtrFromBinding(addr mir.ValueID, heapType types.SemType, loc source.Location) mir.ValueID {
+	if addr == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	// If the binding stores a #T value in a stack slot, load that heap pointer.
+	if elem, ok := b.ptrElem[addr]; ok {
+		if _, isHeapSlot := types.UnwrapType(elem).(*types.HeapType); isHeapSlot {
+			heapPtr := b.emitLoad(addr, elem, loc)
+			b.ptrElem[heapPtr] = heapInnerType(heapType)
+			return heapPtr
+		}
+	}
+	// Otherwise the binding already is the heap pointer.
+	return addr
+}
+
+func (b *functionBuilder) loadHeapIdentValue(addr mir.ValueID, identType, heapType types.SemType, loc source.Location) mir.ValueID {
+	heapPtr := b.heapPtrFromBinding(addr, heapType, loc)
+	if heapPtr == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	// Owner context: keep #T as heap pointer.
+	if _, ownerContext := types.UnwrapType(identType).(*types.HeapType); ownerContext {
+		return heapPtr
+	}
+	// Value context: read payload T from the heap.
+	return b.emitLoad(heapPtr, identType, loc)
 }
 
 func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
@@ -4083,6 +4196,9 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 	if ident.Symbol != nil && b.captures != nil {
 		if _, ok := b.captures[ident.Symbol]; ok {
 			if addr := b.addrForIdent(ident); addr != mir.InvalidValue {
+				if isHeapSymbol(ident.Symbol) {
+					return wrap(b.loadHeapIdentValue(addr, ident.Type, ident.Symbol.Type, ident.Location))
+				}
 				if b.useAddrValue(ident.Type) {
 					return wrap(addr)
 				}
@@ -4093,6 +4209,9 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 
 	if ident.Symbol != nil {
 		if addr, ok := b.slots[ident.Symbol]; ok {
+			if isHeapSymbol(ident.Symbol) {
+				return wrap(b.loadHeapIdentValue(addr, ident.Type, ident.Symbol.Type, ident.Location))
+			}
 			if b.useAddrValue(ident.Type) {
 				return wrap(addr)
 			}
@@ -4101,6 +4220,9 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 	}
 
 	if addr, ok := b.tempSlots[ident]; ok {
+		if _, ok := types.UnwrapType(ident.Type).(*types.HeapType); ok {
+			return wrap(b.loadHeapIdentValue(addr, ident.Type, ident.Type, ident.Location))
+		}
 		if b.useAddrValue(ident.Type) {
 			return wrap(addr)
 		}
@@ -4119,13 +4241,9 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 
 	if ident.Symbol != nil {
 		if addr, storageType, ok := b.moduleGlobalStorageAddr(ident.Symbol, ident.Location); ok {
-			if ident.Symbol.IsHeap {
+			if isHeapSymbol(ident.Symbol) {
 				heapPtr := b.emitLoad(addr, storageType, ident.Location)
-				b.ptrElem[heapPtr] = ident.Symbol.Type
-				if b.useAddrValue(ident.Type) {
-					return wrap(heapPtr)
-				}
-				return wrap(b.emitLoad(heapPtr, ident.Type, ident.Location))
+				return wrap(b.loadHeapIdentValue(heapPtr, ident.Type, ident.Symbol.Type, ident.Location))
 			}
 			if b.useAddrValue(ident.Type) {
 				return wrap(addr)
@@ -4155,6 +4273,9 @@ func (b *functionBuilder) addrForIdent(ident *hir.Ident) mir.ValueID {
 			}
 		}
 		if addr, ok := b.slots[ident.Symbol]; ok {
+			if isHeapSymbol(ident.Symbol) {
+				return b.heapPtrFromBinding(addr, ident.Symbol.Type, ident.Location)
+			}
 			return addr
 		}
 		if ident.Symbol.Kind == symbols.SymbolParameter || ident.Symbol.Kind == symbols.SymbolReceiver {
@@ -4182,14 +4303,17 @@ func (b *functionBuilder) addrForIdent(ident *hir.Ident) mir.ValueID {
 	}
 
 	if addr, ok := b.tempSlots[ident]; ok {
+		if _, ok := types.UnwrapType(ident.Type).(*types.HeapType); ok {
+			return b.heapPtrFromBinding(addr, ident.Type, ident.Location)
+		}
 		return addr
 	}
 
 	if ident.Symbol != nil {
 		if addr, storageType, ok := b.moduleGlobalStorageAddr(ident.Symbol, ident.Location); ok {
-			if ident.Symbol.IsHeap {
+			if isHeapSymbol(ident.Symbol) {
 				heapPtr := b.emitLoad(addr, storageType, ident.Location)
-				b.ptrElem[heapPtr] = ident.Symbol.Type
+				b.ptrElem[heapPtr] = heapInnerType(ident.Symbol.Type)
 				return heapPtr
 			}
 			return addr
@@ -4262,9 +4386,9 @@ func (b *functionBuilder) addrForQualified(expr *hir.ScopeResolutionExpr) mir.Va
 	if addr == mir.InvalidValue {
 		return mir.InvalidValue
 	}
-	if sym != nil && sym.IsHeap {
+	if sym != nil && isHeapSymbol(sym) {
 		heapPtr := b.emitLoad(addr, storageType, expr.Location)
-		b.ptrElem[heapPtr] = sym.Type
+		b.ptrElem[heapPtr] = heapInnerType(sym.Type)
 		return heapPtr
 	}
 	return addr
@@ -6197,6 +6321,21 @@ func (b *functionBuilder) methodReceiverArg(expr *hir.SelectorExpr, method *symb
 	return b.methodReceiverValue(expr)
 }
 
+func (b *functionBuilder) markMethodReceiverMoved(selector *hir.SelectorExpr) {
+	if selector == nil {
+		return
+	}
+	ident, ok := unwrapParenExpr(selector.X).(*hir.Ident)
+	if !ok || ident.Symbol == nil {
+		return
+	}
+	if b.isHeapLValue(ident) {
+		b.resetHeapBinding(ident, selector.Location)
+		return
+	}
+	b.moved[ident.Symbol] = true
+}
+
 func (b *functionBuilder) methodReceiverRef(expr *hir.SelectorExpr, recvInner types.SemType) mir.ValueID {
 	exprType := b.exprType(expr.X)
 	if exprType != nil {
@@ -6221,12 +6360,29 @@ func (b *functionBuilder) methodReceiverRef(expr *hir.SelectorExpr, recvInner ty
 }
 
 func (b *functionBuilder) methodReceiverCopy(expr *hir.SelectorExpr, recvInner types.SemType) mir.ValueID {
+	if types.ContainsResourceType(recvInner) && isAddressableExpr(expr.X) {
+		// If the receiver expression is already a reference (e.g. &File),
+		// lowerExpr returns the pointee address we need. lowerLValue would
+		// produce the address of the reference slot (T**), which is invalid.
+		exprType := b.exprType(expr.X)
+		if exprType != nil {
+			if _, ok := types.UnwrapType(exprType).(*types.ReferenceType); ok {
+				return b.lowerExpr(expr.X)
+			}
+		}
+		// Resource receivers must not be implicitly copied. Reuse the original
+		// storage when the receiver expression is addressable.
+		return b.lowerLValue(expr.X)
+	}
+
 	val := b.lowerExpr(expr.X)
 	if val == mir.InvalidValue {
 		return mir.InvalidValue
 	}
 	tmp := b.emitAlloca(recvInner, expr.Location)
-	b.emitStore(tmp, val, expr.Location)
+	// Receiver copies for resource-bearing types are treated as move-like at call
+	// boundaries to avoid retaining transient copies without a matching drop.
+	b.emitStoreMove(tmp, val, expr.Location)
 	return tmp
 }
 
@@ -6651,9 +6807,51 @@ func (b *functionBuilder) emitMemcpy(dst, src mir.ValueID, typ types.SemType, lo
 	})
 }
 
+func isIntrinsicFileType(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	switch t := typ.(type) {
+	case *types.NamedType:
+		return t.Name == "__file"
+	case *types.ReferenceType:
+		return isIntrinsicFileType(t.Inner)
+	case *types.HeapType:
+		return isIntrinsicFileType(t.Inner)
+	default:
+		return false
+	}
+}
+
+func typeUsesIntrinsicCopy(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	if isIntrinsicFileType(typ) {
+		return true
+	}
+	typ = types.UnwrapType(typ)
+	switch t := typ.(type) {
+	case *types.StructType:
+		for _, field := range t.Fields {
+			if typeUsesIntrinsicCopy(field.Type) {
+				return true
+			}
+		}
+	case *types.ArrayType:
+		if t.Length >= 0 {
+			return typeUsesIntrinsicCopy(t.Element)
+		}
+	}
+	return false
+}
+
 func typeNeedsDeepCopy(typ types.SemType) bool {
 	if typ == nil {
 		return false
+	}
+	if typeUsesIntrinsicCopy(typ) {
+		return true
 	}
 	typ = types.UnwrapType(typ)
 	switch t := typ.(type) {
@@ -6685,6 +6883,16 @@ func (b *functionBuilder) emitDeepCopy(dst, src mir.ValueID, typ types.SemType, 
 	}
 	if b.gen == nil || b.gen.layout == nil {
 		b.emitMemcpy(dst, src, typ, loc)
+		return
+	}
+	if isIntrinsicFileType(typ) {
+		srcVal := b.emitLoad(src, typ, loc)
+		copied := b.emitIntrinsicCopyValue(srcVal, typ, loc)
+		b.emitInstr(&mir.Store{
+			Addr:     dst,
+			Value:    copied,
+			Location: loc,
+		})
 		return
 	}
 	typ = types.UnwrapType(typ)
@@ -7086,6 +7294,56 @@ func (b *functionBuilder) emitHeapAlloc(value mir.ValueID, typ types.SemType, lo
 	return box
 }
 
+func (b *functionBuilder) emitHeapOwnerClone(srcPtr mir.ValueID, ownerType types.SemType, loc source.Location) mir.ValueID {
+	if srcPtr == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	inner := heapInnerType(ownerType)
+	if inner == nil {
+		return mir.InvalidValue
+	}
+
+	dstPtr := b.emitHeapAlloc(mir.InvalidValue, inner, loc)
+	if dstPtr == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+
+	if helper, ok := assignHelperForType(inner); ok {
+		srcVal := b.emitLoad(srcPtr, inner, loc)
+		b.emitInstr(&mir.Call{
+			Result:   mir.InvalidValue,
+			Target:   helper,
+			Args:     []mir.ValueID{dstPtr, srcVal},
+			Type:     types.TypeVoid,
+			Location: loc,
+		})
+		return dstPtr
+	}
+
+	if typeNeedsDeepCopy(inner) {
+		b.emitDeepCopy(dstPtr, srcPtr, inner, loc)
+		return dstPtr
+	}
+
+	b.emitMemcpy(dstPtr, srcPtr, inner, loc)
+	return dstPtr
+}
+
+func (b *functionBuilder) emitIntrinsicCopyValue(value mir.ValueID, typ types.SemType, loc source.Location) mir.ValueID {
+	if value == mir.InvalidValue || !isIntrinsicFileType(typ) {
+		return value
+	}
+	id := b.gen.nextValueID()
+	b.emitInstr(&mir.Call{
+		Result:   id,
+		Target:   "__file_clone",
+		Args:     []mir.ValueID{value},
+		Type:     typ,
+		Location: loc,
+	})
+	return id
+}
+
 // emitHeapFree emits a call to ferret_free for a heap pointer.
 func (b *functionBuilder) emitHeapFree(heapPtr mir.ValueID, loc source.Location) {
 	if heapPtr == mir.InvalidValue {
@@ -7116,6 +7374,9 @@ func (b *functionBuilder) emitHeapCleanup(loc source.Location) {
 
 func (b *functionBuilder) emitStore(addr, value mir.ValueID, loc source.Location) {
 	if elem, ok := b.ptrElem[addr]; ok {
+		if typeUsesIntrinsicCopy(elem) && !needsByRefType(elem) {
+			value = b.emitIntrinsicCopyValue(value, elem, loc)
+		}
 		if _, ok := dynamicArrayValueType(elem); ok {
 			value = b.emitArrayClone(value, elem, loc)
 		} else if _, ok := mapValueType(elem); ok {

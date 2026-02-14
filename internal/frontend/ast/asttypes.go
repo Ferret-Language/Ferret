@@ -73,6 +73,16 @@ func (r *ReferenceType) INode()                {} // Implements Node interface
 func (r *ReferenceType) TypeExpr()             {} // Type nodes implement TypeExpr
 func (r *ReferenceType) Loc() *source.Location { return &r.Location }
 
+// HeapType represents boxed heap ownership type #T
+type HeapType struct {
+	Base TypeNode // The inner payload type
+	source.Location
+}
+
+func (h *HeapType) INode()                {} // Implements Node interface
+func (h *HeapType) TypeExpr()             {} // Type nodes implement TypeExpr
+func (h *HeapType) Loc() *source.Location { return &h.Location }
+
 // ResultType represents error-returning type T ! E
 type ResultType struct {
 	Value TypeNode // The value type
@@ -90,6 +100,8 @@ type Field struct {
 	Type       TypeNode        // field type
 	Value      Expression      // initial value (for struct literals), nil otherwise
 	IsVariadic bool            // true if this is a variadic parameter (...type)
+	IsMove     bool            // true if parameter is move-qualified (@T)
+	Default    Expression      // default parameter value (functions only), nil otherwise
 	source.Location
 }
 

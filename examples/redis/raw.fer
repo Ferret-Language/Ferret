@@ -72,13 +72,13 @@ fn main() {
     };
 
     let cmd := "*1\r\n$4\r\nPING\r\n";
-    let sent := net::WriteStr(conn, cmd) catch err {
+    let sent := conn.WriteStr(cmd) catch err {
         io::Println("write error:", err);
         return;
     };
     io::Println("sent:", sent);
 
-    let data := net::Read(conn, 128) catch err {
+    let data := conn.Read(128) catch err {
         io::Println("read error:", err);
         return;
     };
@@ -99,5 +99,5 @@ fn main() {
     };
     io::Println("parseRespStr:", res ?? "");
 
-    net::CloseConn(conn);
+    conn.Close();
 }
