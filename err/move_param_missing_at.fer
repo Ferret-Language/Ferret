@@ -1,0 +1,7 @@
+fn consume(v: @i32) {
+}
+
+fn main() {
+    let n := 42;
+    consume(n);
+}

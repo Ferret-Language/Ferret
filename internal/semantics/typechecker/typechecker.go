@@ -2815,12 +2815,14 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 						return
 					}
 					if referencesHeapOwnerValue(ctx, mod, stmt.Rhs) {
-						ctx.Diagnostics.Add(
-							diagnostics.NewError("heap ownership assignment requires an explicit move").
-								WithCode(diagnostics.ErrInvalidAssignment).
-								WithPrimaryLabel(stmt.Rhs.Loc(), "this value is a heap owner").
-								WithHelp("use '@value' to transfer ownership, or assign a payload value of type 'T'"),
-						)
+						old := exprText(ctx, stmt.Rhs)
+						new := "@" + old
+						diag := diagnostics.NewError("heap ownership assignment requires an explicit move").
+							WithCode(diagnostics.ErrInvalidAssignment).
+							WithPrimaryLabel(stmt.Rhs.Loc(), "this value is a heap owner").
+							WithHelp(fmt.Sprintf("use '%s' to transfer ownership, or assign a payload value of type 'T'", new))
+						ctx.Diagnostics.Add(diag)
+						diag = diag.WithCodeReplacement(stmt.Rhs.Loc(), old, new)
 						return
 					}
 					checkAssignLike(ctx, mod, heapType.Inner, stmt.Lhs, stmt.Rhs)
@@ -3200,6 +3202,13 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 	}
 }
 
+func exprText(ctx *context_v2.CompilerContext, expr ast.Expression) string {
+	if ctx == nil || ctx.Diagnostics == nil || expr == nil || expr.Loc() == nil {
+		return ""
+	}
+	return strings.TrimSpace(expr.Loc().GetText(ctx.Diagnostics.GetSourceCache()))
+}
+
 func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.UnaryExpr, operandType types.SemType) {
 	if ctx == nil || mod == nil || expr == nil {
 		return
@@ -3245,12 +3254,21 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 		}
 	}
 	if innerUnary, ok := expr.X.(*ast.UnaryExpr); ok && innerUnary.Op.Kind == tokens.AT_TOKEN {
-		ctx.Diagnostics.Add(
-			diagnostics.NewError("cannot combine borrow with move").
-				WithCode(diagnostics.ErrInvalidOperation).
-				WithPrimaryLabel(expr.Loc(), "borrow cannot wrap '@' expressions").
-				WithHelp("borrow a binding directly (e.g., '&x' or '&mut x')"),
-		)
+		diag := diagnostics.NewError("cannot combine borrow with move").
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(expr.Loc(), "borrow cannot wrap '@' expressions")
+
+		oldExpr := exprText(ctx, expr)
+		innerTarget := exprText(ctx, innerUnary.X)
+		if oldExpr != "" && innerTarget != "" {
+			replacement := "&" + innerTarget
+			if expr.Op.Kind == tokens.MUT_TOKEN {
+				replacement = "&mut " + innerTarget
+			}
+			diag = diag.WithCodeReplacement(expr.Loc(), oldExpr, replacement)
+		}
+
+		ctx.Diagnostics.Add(diag.WithHelp("borrow a binding directly (e.g., '&x' or '&mut x')"))
 		return
 	}
 	if !isBorrowableTarget(ctx, mod, expr.X) {
@@ -3303,12 +3321,17 @@ func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	}
 	if innerUnary, ok := expr.X.(*ast.UnaryExpr); ok {
 		if innerUnary.Op.Kind == tokens.BIT_AND_TOKEN || innerUnary.Op.Kind == tokens.MUT_TOKEN {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError("cannot combine move with borrow").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(expr.Loc(), "move operator '@' cannot be applied to a borrow expression").
-					WithHelp("move the owned value directly (e.g., '@x')"),
-			)
+			diag := diagnostics.NewError("cannot combine move with borrow").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "move operator '@' cannot be applied to a borrow expression")
+
+			oldExpr := exprText(ctx, expr)
+			innerTarget := exprText(ctx, innerUnary.X)
+			if oldExpr != "" && innerTarget != "" {
+				diag = diag.WithCodeReplacement(expr.Loc(), oldExpr, "@"+innerTarget)
+			}
+
+			ctx.Diagnostics.Add(diag.WithHelp("move the owned value directly (e.g., '@x')"))
 			return
 		}
 	}
@@ -4238,6 +4261,9 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 
 	if _, lhsHeap := types.UnwrapType(leftType).(*types.HeapType); lhsHeap {
 		if _, rhsHeap := types.UnwrapType(rhsType).(*types.HeapType); rhsHeap && !producesHeapOwnership(rightNode) {
+			old := exprText(ctx, rightNode)
+			moveSuggestion := "@"+old
+
 			diag := diagnostics.NewError("heap ownership assignment requires an explicit move or allocation")
 			if rightNode != nil {
 				diag = diag.WithPrimaryLabel(rightNode.Loc(), "this expression does not transfer ownership")
@@ -4245,7 +4271,10 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 			if leftNode != nil {
 				diag = diag.WithSecondaryLabel(leftNode.Loc(), "target expects '#T'")
 			}
-			diag = diag.WithHelp("use '@value' to move ownership or '#expr' to allocate a new heap value")
+			diag = diag.WithHelp(fmt.Sprintf("use '%s' to move ownership or '#expr' to allocate a new heap value", moveSuggestion))
+			if rightNode != nil && old != "" {
+				diag = diag.WithCodeReplacement(rightNode.Loc(), old, moveSuggestion)
+			}
 			ctx.Diagnostics.Add(diag)
 			return
 		}
@@ -5455,12 +5484,18 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 			continue
 		}
 		if param.IsMove && !moveExpr(arg) && resourceCopySourceExpr(arg) {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("argument '%s' must be moved", param.Name)).
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(argLoc, "expected explicit move").
-					WithHelp("use '@value' for move-qualified parameters"),
-			)
+
+			// get the text
+			old := exprText(ctx, arg)
+			new := "@" + old
+			diag := diagnostics.NewError(fmt.Sprintf("argument '%s' must be moved", param.Name)).
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(argLoc, "expected explicit move").
+				WithHelp(fmt.Sprintf("use '%s' for move-qualified parameters", new))
+
+			diag = diag.WithCodeReplacement(argLoc, old, new)
+
+			ctx.Diagnostics.Add(diag)
 			continue
 		}
 
@@ -5564,12 +5599,17 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 				continue
 			}
 			if variadicParam.IsMove && !moveExpr(arg) && resourceCopySourceExpr(arg) {
-				ctx.Diagnostics.Add(
-					diagnostics.NewError(fmt.Sprintf("argument '%s' must be moved", variadicParam.Name)).
-						WithCode(diagnostics.ErrInvalidOperation).
-						WithPrimaryLabel(argLoc, "expected explicit move").
-						WithHelp("use '@value' for move-qualified parameters"),
-				)
+
+				old := exprText(ctx, arg)
+				new := "@" + old
+
+				diag := diagnostics.NewError(fmt.Sprintf("argument '%s' must be moved", variadicParam.Name)).
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(argLoc, "expected explicit move").
+					WithHelp(fmt.Sprintf("use '%s' for move-qualified parameters", new))
+
+				ctx.Diagnostics.Add(diag)
+				diag = diag.WithCodeReplacement(argLoc, old, new)
 				continue
 			}
 

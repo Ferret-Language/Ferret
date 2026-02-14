@@ -3,6 +3,8 @@ package diagnostics
 import (
 	"fmt"
 	"io"
+	"os"
+	pathpkg "path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -175,6 +177,14 @@ func (e *Emitter) printAddedGutter(color colors.COLOR) {
 	color.Fprintf(e.writer, GUTTER_BLANK, e.currentLineNumWidth, "+")
 }
 
+// printRemovedGutter prints a gutter with a red "-" to indicate removed code.
+func (e *Emitter) printRemovedGutter(color colors.COLOR) {
+	if color == "" {
+		color = colors.RED
+	}
+	color.Fprintf(e.writer, GUTTER_BLANK, e.currentLineNumWidth, "-")
+}
+
 // printPipeOnly prints a separator line aligned under the gutter.
 func (e *Emitter) printPipeOnly() {
 	e.printBlankGutter()
@@ -238,6 +248,7 @@ func (e *Emitter) calculateLineNumWidthForDiagnostic(diag *Diagnostic) int {
 
 func (e *Emitter) Emit(diag *Diagnostic) {
 	e.currentLineNumWidth = e.calculateLineNumWidthForDiagnostic(diag)
+	deferredHints := make([]labelContext, 0, 1)
 
 	// Print severity/message first (before file locations)
 	e.printDiagnosticHeader(diag)
@@ -294,17 +305,32 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 				}
 				panic("INTERNAL COMPILER ERROR: Multiple primary labels in diagnostic!: " + strings.Join(labelStrs, ", "))
 			} else {
+				if diag.CodeHint != nil && primaryLabel.Location != nil && primaryLabel.Location.Start != nil {
+					primaryStart := primaryLabel.Location.Start
+					primaryEnd := primaryLabel.Location.End
+					if primaryEnd == nil {
+						primaryEnd = primaryStart
+					}
+					deferredHints = append(deferredHints, labelContext{
+						filepath: filepath,
+						line:     primaryStart.Line,
+						startCol: primaryStart.Column,
+						endCol:   primaryEnd.Column,
+						codeHint: diag.CodeHint,
+						severity: diag.Severity,
+					})
+				}
 				if len(secondaryLabels) == 0 {
-					e.printLabel(filepath, primaryLabel, diag.Severity, diag.CodeHint)
+					e.printLabel(filepath, primaryLabel, diag.Severity, nil)
 				} else if len(secondaryLabels) == 1 &&
 					primaryLabel.Location != nil &&
 					primaryLabel.Location.Start != nil &&
 					secondaryLabels[0].Location != nil &&
 					secondaryLabels[0].Location.Start != nil &&
 					primaryLabel.Location.Start.Line == secondaryLabels[0].Location.Start.Line {
-					e.printCompactDualLabel(filepath, primaryLabel, secondaryLabels[0], diag.Severity, diag.CodeHint)
+					e.printCompactDualLabel(filepath, primaryLabel, secondaryLabels[0], diag.Severity, nil)
 				} else {
-					e.printRoutedLabels(filepath, primaryLabel, secondaryLabels, diag.Severity, diag.CodeHint)
+					e.printRoutedLabels(filepath, primaryLabel, secondaryLabels, diag.Severity, nil)
 				}
 			}
 		}
@@ -319,6 +345,17 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 
 	if diag.Help != "" {
 		e.printHelp(diag.Help)
+	}
+
+	if len(deferredHints) > 0 {
+		e.printSuggestionHeader()
+	}
+
+	for _, hintCtx := range deferredHints {
+		if e.hasRenderableCodeHint(hintCtx.codeHint) {
+			e.printCodeHint(hintCtx)
+			e.printPipeOnly()
+		}
 	}
 
 	fmt.Fprintln(e.writer)
@@ -471,7 +508,7 @@ func (e *Emitter) printSingleLineLabel(ctx labelContext) {
 	sourceLine, err := e.cache.GetLine(ctx.filepath, ctx.line)
 	if err != nil {
 		// If we can't get the source line, still show code hint if present
-		if ctx.codeHint != nil && ctx.codeHint.Code != "" {
+		if e.hasRenderableCodeHint(ctx.codeHint) {
 			e.printCodeHint(ctx)
 			e.printPipeOnly()
 			return
@@ -497,7 +534,7 @@ func (e *Emitter) printSingleLineLabel(ctx labelContext) {
 	e.highlighter.HighlightWithColor(sourceLine, e.writer)
 	fmt.Fprintln(e.writer)
 
-	if ctx.codeHint != nil && ctx.codeHint.Code != "" {
+	if e.hasRenderableCodeHint(ctx.codeHint) {
 		e.printCodeHint(ctx)
 		e.printPipeOnly()
 		return
@@ -552,14 +589,22 @@ func (e *Emitter) printSingleLineLabel(ctx labelContext) {
 
 func (e *Emitter) printCodeHint(ctx labelContext) {
 	hint := ctx.codeHint
-	if hint == nil || hint.Code == "" {
+	if hint == nil {
+		return
+	}
+
+	if e.printInlineReplacementHint(ctx, hint) {
+		return
+	}
+
+	lines := e.codeHintRenderableLines(hint)
+	if len(lines) == 0 {
 		return
 	}
 
 	e.printBlankGutter()
 	fmt.Fprintln(e.writer)
 
-	lines := strings.Split(hint.Code, "\n")
 	labelsByLine := make(map[int][]CodeHintLabel)
 	for _, label := range hint.Labels {
 		if label.Line <= 0 {
@@ -569,11 +614,22 @@ func (e *Emitter) printCodeHint(ctx labelContext) {
 	}
 
 	for i, line := range lines {
-		e.printAddedGutter(hint.GutterColor)
-		if hint.BaseColor != "" {
-			e.highlighter.HighlightWithBaseColor(line, e.writer, hint.BaseColor)
+		prefix := strings.TrimSpace(line.Prefix)
+		switch prefix {
+		case "+":
+			e.printAddedGutter(hint.GutterColor)
+		case "-":
+			e.printRemovedGutter(colors.RED)
+		default:
+			e.printBlankGutter()
+		}
+
+		if line.BaseColor != "" {
+			e.highlighter.HighlightWithBaseColor(line.Code, e.writer, line.BaseColor)
+		} else if hint.BaseColor != "" {
+			e.highlighter.HighlightWithBaseColor(line.Code, e.writer, hint.BaseColor)
 		} else {
-			e.highlighter.HighlightWithColor(line, e.writer)
+			e.highlighter.HighlightWithColor(line.Code, e.writer)
 		}
 		fmt.Fprintln(e.writer)
 
@@ -583,6 +639,182 @@ func (e *Emitter) printCodeHint(ctx labelContext) {
 			}
 		}
 	}
+}
+
+// printInlineReplacementHint renders a Rust-style inline replacement for simple
+// single-line replacements represented as:
+//   - old_fragment
+//   - new_fragment
+//
+// It returns true when such a hint was rendered.
+func (e *Emitter) printInlineReplacementHint(ctx labelContext, hint *CodeHint) bool {
+	if hint == nil {
+		return false
+	}
+	lines := e.codeHintRenderableLines(hint)
+	if len(lines) != 2 {
+		return false
+	}
+
+	if strings.TrimSpace(lines[0].Prefix) != "-" || strings.TrimSpace(lines[1].Prefix) != "+" {
+		return false
+	}
+
+	if strings.Contains(lines[0].Code, "\n") || strings.Contains(lines[1].Code, "\n") {
+		return false
+	}
+
+	if ctx.filepath == "" || ctx.line <= 0 || ctx.startCol <= 0 || ctx.endCol < ctx.startCol {
+		return false
+	}
+
+	sourceLine, err := e.cache.GetLine(ctx.filepath, ctx.line)
+	if err != nil {
+		return false
+	}
+
+	oldFrag := lines[0].Code
+	start := ctx.startCol - 1
+	if start < 0 || start > len(sourceLine) {
+		return false
+	}
+	end := ctx.endCol - 1
+
+	// Some AST locations can be token-only or otherwise too narrow for replacement.
+	// Prefer replacing the old fragment at/near the diagnostic column when possible.
+	if oldFrag != "" {
+		if start+len(oldFrag) <= len(sourceLine) && sourceLine[start:start+len(oldFrag)] == oldFrag {
+			end = start + len(oldFrag)
+		} else if idx := strings.Index(sourceLine, oldFrag); idx >= 0 {
+			start = idx
+			end = idx + len(oldFrag)
+		}
+	}
+	if end < start || end > len(sourceLine) {
+		return false
+	}
+
+	newFrag := lines[1].Code
+	replacementLine := sourceLine[:start] + newFrag + sourceLine[end:]
+	oldAbsStart, oldDiffLen, newAbsStart, newDiffLen := diffHighlightSpans(start, oldFrag, newFrag)
+
+	e.printBlankGutter()
+	fmt.Fprintln(e.writer)
+
+	if oldAbsStart < 0 {
+		oldAbsStart = 0
+	}
+	if oldAbsStart > len(sourceLine) {
+		oldAbsStart = len(sourceLine)
+	}
+
+	relPath := e.diffDisplayPath(ctx.filepath)
+	e.printBlankGutter()
+	colors.RED.Fprintf(e.writer, "  --- a/%s\n", relPath)
+	e.printBlankGutter()
+	colors.GREEN.Fprintf(e.writer, "  +++ b/%s\n", relPath)
+	e.printBlankGutter()
+	colors.GREY.Fprintf(e.writer, "  @@ line %d @@\n", ctx.line)
+
+	e.printBlankGutter()
+	colors.RED.Fprint(e.writer, "- ")
+	e.printLineWithColoredSpan(sourceLine, oldAbsStart, oldDiffLen, colors.RED)
+	fmt.Fprintln(e.writer)
+
+	e.printBlankGutter()
+	colors.GREEN.Fprint(e.writer, "+ ")
+	e.printLineWithColoredSpan(replacementLine, newAbsStart, newDiffLen, colors.GREEN)
+	fmt.Fprintln(e.writer)
+
+	return true
+}
+
+func diffHighlightSpans(baseStart int, oldFrag, newFrag string) (oldStart, oldLen, newStart, newLen int) {
+	oldStart = baseStart
+	newStart = baseStart
+
+	oldRunes := []rune(oldFrag)
+	newRunes := []rune(newFrag)
+
+	prefix := 0
+	for prefix < len(oldRunes) && prefix < len(newRunes) && oldRunes[prefix] == newRunes[prefix] {
+		prefix++
+	}
+
+	suffix := 0
+	for suffix < len(oldRunes)-prefix && suffix < len(newRunes)-prefix &&
+		oldRunes[len(oldRunes)-1-suffix] == newRunes[len(newRunes)-1-suffix] {
+		suffix++
+	}
+
+	oldLen = len(oldRunes) - prefix - suffix
+	newLen = len(newRunes) - prefix - suffix
+	oldStart += prefix
+	newStart += prefix
+
+	return oldStart, oldLen, newStart, newLen
+}
+
+func (e *Emitter) printLineWithColoredSpan(line string, start, length int, spanColor colors.COLOR) {
+	if spanColor == "" || length <= 0 {
+		e.highlighter.HighlightWithColor(line, e.writer)
+		return
+	}
+	if start < 0 || start > len(line) {
+		e.highlighter.HighlightWithColor(line, e.writer)
+		return
+	}
+	end := start + length
+	if end > len(line) {
+		end = len(line)
+	}
+	if start >= end {
+		e.highlighter.HighlightWithColor(line, e.writer)
+		return
+	}
+
+	e.highlighter.HighlightWithColor(line[:start], e.writer)
+	spanColor.Fprint(e.writer, line[start:end])
+	e.highlighter.HighlightWithColor(line[end:], e.writer)
+}
+
+func (e *Emitter) diffDisplayPath(filepath string) string {
+	if filepath == "" {
+		return "unknown"
+	}
+	rel := filepath
+	if wd, err := os.Getwd(); err == nil {
+		if r, err := pathpkg.Rel(wd, filepath); err == nil && r != "" && !strings.HasPrefix(r, "..") {
+			rel = r
+		}
+	}
+	return pathpkg.ToSlash(rel)
+}
+
+func (e *Emitter) hasRenderableCodeHint(hint *CodeHint) bool {
+	return len(e.codeHintRenderableLines(hint)) > 0
+}
+
+func (e *Emitter) codeHintRenderableLines(hint *CodeHint) []CodeHintLine {
+	if hint == nil {
+		return nil
+	}
+	if len(hint.Lines) > 0 {
+		return hint.Lines
+	}
+	if hint.Code == "" {
+		return nil
+	}
+	rawLines := strings.Split(hint.Code, "\n")
+	lines := make([]CodeHintLine, 0, len(rawLines))
+	for _, line := range rawLines {
+		lines = append(lines, CodeHintLine{
+			Prefix:    "+",
+			Code:      line,
+			BaseColor: hint.BaseColor,
+		})
+	}
+	return lines
 }
 
 func (e *Emitter) printCodeHintLabelLine(label CodeHintLabel, severity Severity) {
@@ -719,6 +951,13 @@ func (e *Emitter) printHelp(help string) {
 	fmt.Fprintln(e.writer, help)
 }
 
+func (e *Emitter) printSuggestionHeader() {
+	padding := e.currentLineNumWidth + 1
+	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
+	colors.GREEN.Fprint(e.writer, "= suggestion:")
+	fmt.Fprintln(e.writer)
+}
+
 // printCompactDualLabel prints two labels on same line (Rust-style)
 func (e *Emitter) printCompactDualLabel(filepath string, primary Label, secondary Label, severity Severity, codeHint *CodeHint) {
 	if primary.Location == nil || primary.Location.Start == nil {
@@ -841,8 +1080,15 @@ func (e *Emitter) printCompactDualLabel(filepath string, primary Label, secondar
 	}
 	fmt.Fprintln(e.writer)
 
-	if codeHint != nil && codeHint.Code != "" {
-		e.printCodeHint(labelContext{codeHint: codeHint, severity: severity})
+	if e.hasRenderableCodeHint(codeHint) {
+		e.printCodeHint(labelContext{
+			filepath: filepath,
+			line:     line,
+			startCol: primaryStart.Column,
+			endCol:   primaryEnd.Column,
+			codeHint: codeHint,
+			severity: severity,
+		})
 	}
 
 	e.printPipeOnly()
@@ -971,8 +1217,20 @@ func (e *Emitter) printRoutedLabels(filepath string, primary Label, secondaries 
 		}
 	}
 
-	if codeHint != nil && codeHint.Code != "" {
-		e.printCodeHint(labelContext{codeHint: codeHint, severity: severity})
+	if e.hasRenderableCodeHint(codeHint) {
+		primaryStart := primary.Location.Start
+		primaryEnd := primary.Location.End
+		if primaryEnd == nil {
+			primaryEnd = primaryStart
+		}
+		e.printCodeHint(labelContext{
+			filepath: filepath,
+			line:     primaryLine,
+			startCol: primaryStart.Column,
+			endCol:   primaryEnd.Column,
+			codeHint: codeHint,
+			severity: severity,
+		})
 	}
 
 	e.printPipeOnly()
