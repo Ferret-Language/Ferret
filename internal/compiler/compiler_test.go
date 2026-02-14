@@ -535,6 +535,58 @@ fn main() {
 	}
 }
 
+func TestCompile_DefaultParam_MethodReceiverReferenceRejected(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type S struct {
+	.V: i32
+};
+
+fn (s: &S) M(x: i32 = s.V) -> i32 {
+	return x;
+}
+
+fn main() {
+	let s: S = { .V = 10 };
+	s.M();
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure for receiver-referencing default parameter")
+	}
+	if !strings.Contains(result.Output, "default parameter value cannot reference method receiver") {
+		t.Fatalf("expected method receiver default diagnostic, got: %s", result.Output)
+	}
+}
+
+func TestCompile_HeapAssignmentTypeMismatchRejected(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn main() {
+	let x: #i32 = #1;
+	x = #true;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure for incompatible heap assignment")
+	}
+	if !strings.Contains(result.Output, "#bool") || !strings.Contains(result.Output, "#i32") {
+		t.Fatalf("expected heap assignment type mismatch diagnostic, got: %s", result.Output)
+	}
+}
+
 func TestCompile_MoveQualifiedParam_RequiresMove(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{

@@ -733,22 +733,22 @@ func diffHighlightSpans(baseStart int, oldFrag, newFrag string) (oldStart, oldLe
 	oldStart = baseStart
 	newStart = baseStart
 
-	oldRunes := []rune(oldFrag)
-	newRunes := []rune(newFrag)
+	oldBytes := []byte(oldFrag)
+	newBytes := []byte(newFrag)
 
 	prefix := 0
-	for prefix < len(oldRunes) && prefix < len(newRunes) && oldRunes[prefix] == newRunes[prefix] {
+	for prefix < len(oldBytes) && prefix < len(newBytes) && oldBytes[prefix] == newBytes[prefix] {
 		prefix++
 	}
 
 	suffix := 0
-	for suffix < len(oldRunes)-prefix && suffix < len(newRunes)-prefix &&
-		oldRunes[len(oldRunes)-1-suffix] == newRunes[len(newRunes)-1-suffix] {
+	for suffix < len(oldBytes)-prefix && suffix < len(newBytes)-prefix &&
+		oldBytes[len(oldBytes)-1-suffix] == newBytes[len(newBytes)-1-suffix] {
 		suffix++
 	}
 
-	oldLen = len(oldRunes) - prefix - suffix
-	newLen = len(newRunes) - prefix - suffix
+	oldLen = len(oldBytes) - prefix - suffix
+	newLen = len(newBytes) - prefix - suffix
 	oldStart += prefix
 	newStart += prefix
 

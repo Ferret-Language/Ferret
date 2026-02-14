@@ -251,6 +251,16 @@ uint64_t FERRET_FUNC(heap_addr)(const void* value, uint64_t heap) {
     return heap;
 }
 
+static bool ferret_file_mode_is_write_only(const char* mode) {
+    if (mode == NULL) {
+        return false;
+    }
+    if (strchr(mode, '+') != NULL) {
+        return false;
+    }
+    return strchr(mode, 'w') != NULL || strchr(mode, 'a') != NULL;
+}
+
 int64_t FERRET_FUNC(__file_clone)(int64_t handle) {
     ferret_file_handle_t* h = ferret_file_handle_from_raw(handle);
     if (h == NULL) {
@@ -263,8 +273,10 @@ int64_t FERRET_FUNC(__file_clone)(int64_t handle) {
         return 0;
     }
 
-    // Flush writer state before cloning to ensure the reopened stream sees current data.
-    fflush(src);
+    // Only flush pure write modes to avoid UB on input streams.
+    if (ferret_file_mode_is_write_only(mode)) {
+        fflush(src);
+    }
 
     long pos = ftell(src);
     if (pos < 0) {

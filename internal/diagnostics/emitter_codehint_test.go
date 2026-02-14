@@ -97,3 +97,14 @@ func TestEmitter_CodeReplacementHintWithNarrowLocation(t *testing.T) {
 		t.Fatalf("expected replacement suggestion with narrow location, got:\n%s", out)
 	}
 }
+
+func TestDiffHighlightSpans_UsesByteOffsets(t *testing.T) {
+	oldStart, oldLen, newStart, newLen := diffHighlightSpans(4, "café", "cafe")
+
+	if oldStart != 7 || oldLen != 2 {
+		t.Fatalf("unexpected old span: start=%d len=%d", oldStart, oldLen)
+	}
+	if newStart != 7 || newLen != 1 {
+		t.Fatalf("unexpected new span: start=%d len=%d", newStart, newLen)
+	}
+}

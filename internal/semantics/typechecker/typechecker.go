@@ -119,6 +119,10 @@ func addParamsToScope(ctx *context_v2.CompilerContext, mod *context_v2.Module, s
 }
 
 func checkDefaultParameterValues(ctx *context_v2.CompilerContext, mod *context_v2.Module, params []ast.Field) {
+	checkDefaultParameterValuesWithForbidden(ctx, mod, params, nil)
+}
+
+func checkDefaultParameterValuesWithForbidden(ctx *context_v2.CompilerContext, mod *context_v2.Module, params []ast.Field, forbiddenNames []string) {
 	if len(params) == 0 {
 		return
 	}
@@ -128,6 +132,14 @@ func checkDefaultParameterValues(ctx *context_v2.CompilerContext, mod *context_v
 		if param.Name != nil && param.Name.Name != "" && param.Name.Name != "_" {
 			paramNames = append(paramNames, param.Name.Name)
 		}
+	}
+
+	receiverNames := make([]string, 0, len(forbiddenNames))
+	for _, name := range forbiddenNames {
+		if name == "" || name == "_" {
+			continue
+		}
+		receiverNames = append(receiverNames, name)
 	}
 
 	for _, param := range params {
@@ -143,6 +155,17 @@ func checkDefaultParameterValues(ctx *context_v2.CompilerContext, mod *context_v
 					diagnostics.NewError("default parameter value cannot reference another parameter").
 						WithCode(diagnostics.ErrInvalidOperation).
 						WithPrimaryLabel(loc, fmt.Sprintf("references parameter '%s'", pname)).
+						WithHelp("use a literal or module-level constant in the default expression"),
+				)
+				break
+			}
+		}
+		for _, rname := range receiverNames {
+			if found, loc := referencesIdentOutsideFuncLit(param.Default, rname); found {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("default parameter value cannot reference method receiver").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(loc, fmt.Sprintf("references receiver '%s'", rname)).
 						WithHelp("use a literal or module-level constant in the default expression"),
 				)
 				break
@@ -2573,7 +2596,11 @@ func checkMethodDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, de
 	// Add parameters to the method scope with type information
 	if decl.Type != nil {
 		addParamsToScope(ctx, mod, methodScope, decl.Type.Params)
-		checkDefaultParameterValues(ctx, mod, decl.Type.Params)
+		forbidden := make([]string, 0, 1)
+		if decl.Receiver != nil && decl.Receiver.Name != nil {
+			forbidden = append(forbidden, decl.Receiver.Name.Name)
+		}
+		checkDefaultParameterValuesWithForbidden(ctx, mod, decl.Type.Params, forbidden)
 	}
 
 	// Check the body with the method scope
@@ -2800,7 +2827,7 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 				targetHeapType = sym.Type
 			}
 			if targetHeapType != nil {
-				checkExpr(ctx, mod, stmt.Rhs, targetHeapType)
+				checkAssignLike(ctx, mod, targetHeapType, stmt.Lhs, stmt.Rhs)
 				return
 			}
 		}
@@ -2817,12 +2844,17 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 					if referencesHeapOwnerValue(ctx, mod, stmt.Rhs) {
 						old := exprText(ctx, stmt.Rhs)
 						new := "@" + old
+						if old == "" {
+							new = "@value"
+						}
 						diag := diagnostics.NewError("heap ownership assignment requires an explicit move").
 							WithCode(diagnostics.ErrInvalidAssignment).
 							WithPrimaryLabel(stmt.Rhs.Loc(), "this value is a heap owner").
 							WithHelp(fmt.Sprintf("use '%s' to transfer ownership, or assign a payload value of type 'T'", new))
+						if old != "" {
+							diag = diag.WithCodeReplacement(stmt.Rhs.Loc(), old, new)
+						}
 						ctx.Diagnostics.Add(diag)
-						diag = diag.WithCodeReplacement(stmt.Rhs.Loc(), old, new)
 						return
 					}
 					checkAssignLike(ctx, mod, heapType.Inner, stmt.Lhs, stmt.Rhs)
@@ -4262,7 +4294,10 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 	if _, lhsHeap := types.UnwrapType(leftType).(*types.HeapType); lhsHeap {
 		if _, rhsHeap := types.UnwrapType(rhsType).(*types.HeapType); rhsHeap && !producesHeapOwnership(rightNode) {
 			old := exprText(ctx, rightNode)
-			moveSuggestion := "@"+old
+			moveSuggestion := "@" + old
+			if old == "" {
+				moveSuggestion = "@value"
+			}
 
 			diag := diagnostics.NewError("heap ownership assignment requires an explicit move or allocation")
 			if rightNode != nil {

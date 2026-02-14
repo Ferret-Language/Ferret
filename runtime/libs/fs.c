@@ -91,9 +91,23 @@ static void ferret_fs_open_impl(void* out, const char* path, const char* mode_st
         *tag_ptr = 0;
         return;
     }
+    char* path_copy = str_dup(path);
+    char* mode_copy = str_dup(mode_str);
+    if ((path != NULL && path_copy == NULL) || (mode_str != NULL && mode_copy == NULL)) {
+        if (path_copy != NULL) {
+            ferret_free(path_copy);
+        }
+        if (mode_copy != NULL) {
+            ferret_free(mode_copy);
+        }
+        ferret_file_handle_release(handle);
+        *(char**)out = "out of memory";
+        *tag_ptr = 0;
+        return;
+    }
     *handle_ptr = ferret_file_handle_to_raw(handle);
-    *path_out = str_dup(path);
-    *mode_out = str_dup(mode_str);
+    *path_out = path_copy;
+    *mode_out = mode_copy;
     *tag_ptr = 1;
 }
 

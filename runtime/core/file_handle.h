@@ -68,8 +68,20 @@ static inline ferret_file_handle_t* ferret_file_handle_new_with_meta(FILE* fp, c
         return NULL;
     }
     handle->fp = fp;
-    handle->path = ferret_file_handle_strdup(path);
-    handle->mode = ferret_file_handle_strdup(mode);
+    handle->path = (path != NULL) ? ferret_file_handle_strdup(path) : NULL;
+    if (path != NULL && handle->path == NULL) {
+        ferret_free(handle);
+        return NULL;
+    }
+    handle->mode = (mode != NULL) ? ferret_file_handle_strdup(mode) : NULL;
+    if (mode != NULL && handle->mode == NULL) {
+        if (handle->path != NULL) {
+            ferret_free(handle->path);
+            handle->path = NULL;
+        }
+        ferret_free(handle);
+        return NULL;
+    }
     handle->refs = 1;
     return handle;
 }
