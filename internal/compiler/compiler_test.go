@@ -535,7 +535,7 @@ fn main() {
 	}
 }
 
-func TestCompile_DefaultParam_MethodReceiverReferenceRejected(t *testing.T) {
+func TestCompile_DefaultParam_MethodReceiverReferenceAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
 			"main.fer": `type S struct {
@@ -547,21 +547,19 @@ fn (s: &S) M(x: i32 = s.V) -> i32 {
 }
 
 fn main() {
-	let s: S = { .V = 10 };
-	s.M();
+	let s := 999; // caller symbol with same name should not leak into default resolution
+	let obj: S = { .V = 10 };
+	let x := obj.M();
 }`,
 		},
 		Debug:         false,
-		LogFormat:     HTML,
+		LogFormat:     ANSI,
 		TypecheckOnly: true,
 	}
 
 	result := Compile(opts)
-	if result.Success {
-		t.Fatalf("expected compilation failure for receiver-referencing default parameter")
-	}
-	if !strings.Contains(result.Output, "default parameter value cannot reference method receiver") {
-		t.Fatalf("expected method receiver default diagnostic, got: %s", result.Output)
+	if !result.Success {
+		t.Fatalf("expected compilation success for receiver-referencing default parameter, got: %s", result.Output)
 	}
 }
 

@@ -1,0 +1,17 @@
+type Config struct {
+    .Port: i32
+};
+
+fn (c: &Config) PortOr(port: i32 = c.Port) -> i32 {
+    return port;
+}
+
+fn main() {
+    let c: Config = { .Port = 8080 };
+    let cShadow := 12;
+
+    let a := c.PortOr();
+    let b := c.PortOr(3000);
+
+    let checksum := a + b + cShadow;
+}

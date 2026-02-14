@@ -119,10 +119,6 @@ func addParamsToScope(ctx *context_v2.CompilerContext, mod *context_v2.Module, s
 }
 
 func checkDefaultParameterValues(ctx *context_v2.CompilerContext, mod *context_v2.Module, params []ast.Field) {
-	checkDefaultParameterValuesWithForbidden(ctx, mod, params, nil)
-}
-
-func checkDefaultParameterValuesWithForbidden(ctx *context_v2.CompilerContext, mod *context_v2.Module, params []ast.Field, forbiddenNames []string) {
 	if len(params) == 0 {
 		return
 	}
@@ -132,14 +128,6 @@ func checkDefaultParameterValuesWithForbidden(ctx *context_v2.CompilerContext, m
 		if param.Name != nil && param.Name.Name != "" && param.Name.Name != "_" {
 			paramNames = append(paramNames, param.Name.Name)
 		}
-	}
-
-	receiverNames := make([]string, 0, len(forbiddenNames))
-	for _, name := range forbiddenNames {
-		if name == "" || name == "_" {
-			continue
-		}
-		receiverNames = append(receiverNames, name)
 	}
 
 	for _, param := range params {
@@ -160,18 +148,6 @@ func checkDefaultParameterValuesWithForbidden(ctx *context_v2.CompilerContext, m
 				break
 			}
 		}
-		for _, rname := range receiverNames {
-			if found, loc := referencesIdentOutsideFuncLit(param.Default, rname); found {
-				ctx.Diagnostics.Add(
-					diagnostics.NewError("default parameter value cannot reference method receiver").
-						WithCode(diagnostics.ErrInvalidOperation).
-						WithPrimaryLabel(loc, fmt.Sprintf("references receiver '%s'", rname)).
-						WithHelp("use a literal or module-level constant in the default expression"),
-				)
-				break
-			}
-		}
-
 		paramType := TypeFromTypeNodeWithContext(ctx, mod, param.Type)
 		defaultType := checkExpr(ctx, mod, param.Default, paramType)
 		if defaultType.Equals(types.TypeUnknown) {
@@ -1820,6 +1796,12 @@ func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 			StageLoc:  stageLoc,
 			TargetLoc: expr.Call.Loc(),
 		})
+		if mod != nil {
+			if resolved, ok := mod.CallArgs(temp); ok {
+				mod.SetPipeResolvedArgs(expr, resolved)
+			}
+			mod.SetCallResolvedArgs(temp, nil)
+		}
 		return
 	}
 
@@ -1872,10 +1854,11 @@ func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		StageLoc:  stageLoc,
 		TargetLoc: targetLoc,
 	})
-	if len(temp.Args) > len(args) {
-		// Preserve any defaults expanded during type checking so downstream
-		// HIR/MIR lowering uses the same concrete argument list.
-		callExpr.Args = append(callExpr.Args, temp.Args[len(args):]...)
+	if mod != nil {
+		if resolved, ok := mod.CallArgs(&temp); ok {
+			mod.SetCallResolvedArgs(callExpr, resolved)
+		}
+		mod.SetCallResolvedArgs(&temp, nil)
 	}
 	if temp.Catch != nil {
 		checkCatchClause(ctx, mod, &temp)
@@ -2596,11 +2579,7 @@ func checkMethodDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, de
 	// Add parameters to the method scope with type information
 	if decl.Type != nil {
 		addParamsToScope(ctx, mod, methodScope, decl.Type.Params)
-		forbidden := make([]string, 0, 1)
-		if decl.Receiver != nil && decl.Receiver.Name != nil {
-			forbidden = append(forbidden, decl.Receiver.Name.Name)
-		}
-		checkDefaultParameterValuesWithForbidden(ctx, mod, decl.Type.Params, forbidden)
+		checkDefaultParameterValues(ctx, mod, decl.Type.Params)
 	}
 
 	// Check the body with the method scope
@@ -5317,27 +5296,36 @@ func checkCallExprWithPipe(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 		return
 	}
 
-	expandCallDefaultArgs(ctx, mod, expr, funcType)
+	resolvedArgs, explicitArgCount := resolveCallArgs(ctx, mod, expr, funcType)
+	if mod != nil {
+		mod.SetCallResolvedArgs(expr, resolvedArgs)
+	}
 
 	// 4. Validate argument count
-	validateCallArgumentCount(ctx, mod, expr, funcType)
+	validateCallArgumentCount(ctx, mod, expr, resolvedArgs, funcType)
 
 	// 5. Validate argument types
-	validateCallArgumentTypes(ctx, mod, expr, funcType, pipeInfo)
+	validateCallArgumentTypes(ctx, mod, expr, resolvedArgs, explicitArgCount, funcType, pipeInfo)
 }
 
-func callableDeclParams(ctx *context_v2.CompilerContext, mod *context_v2.Module, fun ast.Expression) []ast.Field {
+type callableDeclInfo struct {
+	Params       []ast.Field
+	ReceiverName string
+	ReceiverExpr ast.Expression
+}
+
+func callableDeclForCall(ctx *context_v2.CompilerContext, mod *context_v2.Module, fun ast.Expression) callableDeclInfo {
 	switch target := fun.(type) {
 	case *ast.IdentifierExpr:
 		if sym, ok := mod.CurrentScope.Lookup(target.Name); ok && sym != nil {
 			if decl, ok := sym.Decl.(*ast.FuncDecl); ok && decl != nil && decl.Type != nil {
-				return decl.Type.Params
+				return callableDeclInfo{Params: decl.Type.Params}
 			}
 		}
 	case *ast.ScopeResolutionExpr:
 		if sym, ok := resolveScopeResolutionSymbol(ctx, mod, target); ok && sym != nil {
 			if decl, ok := sym.Decl.(*ast.FuncDecl); ok && decl != nil && decl.Type != nil {
-				return decl.Type.Params
+				return callableDeclInfo{Params: decl.Type.Params}
 			}
 		}
 	case *ast.SelectorExpr:
@@ -5345,58 +5333,225 @@ func callableDeclParams(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		baseType = autoDerefBaseType(target, baseType)
 		named, ok := baseType.(*types.NamedType)
 		if !ok {
-			return nil
+			return callableDeclInfo{}
 		}
 		typeSym, found := lookupTypeSymbol(ctx, mod, named.Name)
 		if !found || typeSym == nil || typeSym.Methods == nil {
-			return nil
+			return callableDeclInfo{}
 		}
 		method, ok := typeSym.Methods[target.Field.Name]
 		if !ok || method == nil || method.Decl == nil || method.Decl.Type == nil {
-			return nil
+			return callableDeclInfo{}
 		}
-		return method.Decl.Type.Params
+		info := callableDeclInfo{
+			Params:       method.Decl.Type.Params,
+			ReceiverExpr: target.X,
+		}
+		if method.Decl.Receiver != nil && method.Decl.Receiver.Name != nil {
+			info.ReceiverName = method.Decl.Receiver.Name.Name
+		}
+		return info
 	}
 
-	return nil
+	return callableDeclInfo{}
 }
 
-func expandCallDefaultArgs(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, funcType *types.FunctionType) {
+func resolveCallArgs(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, funcType *types.FunctionType) ([]ast.Expression, int) {
+	if expr == nil {
+		return nil, 0
+	}
+	args := append([]ast.Expression(nil), expr.Args...)
+	explicitArgCount := len(args)
+
 	if expr == nil || funcType == nil {
-		return
+		return args, explicitArgCount
 	}
 
 	// Spread arguments make argument arity dynamic; skip default expansion here.
-	for _, arg := range expr.Args {
+	for _, arg := range args {
 		if _, ok := arg.(*ast.SpreadExpr); ok {
-			return
+			return args, explicitArgCount
 		}
 	}
 
 	paramCount := len(funcType.Params)
-	if len(expr.Args) >= paramCount {
-		return
+	if len(args) >= paramCount {
+		return args, explicitArgCount
 	}
 
-	paramDecls := callableDeclParams(ctx, mod, expr.Fun)
-	if len(paramDecls) != paramCount {
-		return
+	declInfo := callableDeclForCall(ctx, mod, expr.Fun)
+	if len(declInfo.Params) != paramCount {
+		return args, explicitArgCount
 	}
 
-	for i := len(expr.Args); i < paramCount; i++ {
+	for i := len(args); i < paramCount; i++ {
 		if i < len(funcType.Params) && funcType.Params[i].IsVariadic {
-			return
+			return args, explicitArgCount
 		}
-		if !funcType.Params[i].HasDefault || paramDecls[i].Default == nil {
-			return
+		if !funcType.Params[i].HasDefault || declInfo.Params[i].Default == nil {
+			return args, explicitArgCount
 		}
-		expr.Args = append(expr.Args, paramDecls[i].Default)
+		resolved := declInfo.Params[i].Default
+		if declInfo.ReceiverName != "" && declInfo.ReceiverExpr != nil {
+			resolved = substituteReceiverInDefault(resolved, declInfo.ReceiverName, declInfo.ReceiverExpr)
+		}
+		args = append(args, resolved)
+	}
+
+	return args, explicitArgCount
+}
+
+func substituteReceiverInDefault(expr ast.Expression, receiverName string, receiverExpr ast.Expression) ast.Expression {
+	if expr == nil || receiverName == "" || receiverExpr == nil {
+		return expr
+	}
+	return cloneExprReplacingIdent(expr, receiverName, receiverExpr)
+}
+
+func cloneExprReplacingIdent(expr ast.Expression, name string, replacement ast.Expression) ast.Expression {
+	if expr == nil {
+		return nil
+	}
+
+	switch e := expr.(type) {
+	case *ast.IdentifierExpr:
+		if name != "" && e.Name == name {
+			return cloneExprReplacingIdent(replacement, "", nil)
+		}
+		cp := *e
+		return &cp
+	case *ast.BasicLit:
+		cp := *e
+		return &cp
+	case *ast.ParenExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		return &cp
+	case *ast.UnaryExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		return &cp
+	case *ast.BinaryExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		cp.Y = cloneExprReplacingIdent(e.Y, name, replacement)
+		return &cp
+	case *ast.SpreadExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		return &cp
+	case *ast.DerefExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		return &cp
+	case *ast.PrefixExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		return &cp
+	case *ast.PostfixExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		return &cp
+	case *ast.ErrorPropagateExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		return &cp
+	case *ast.SelectorExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		if e.Field != nil {
+			field := *e.Field
+			cp.Field = &field
+		}
+		return &cp
+	case *ast.RangeExpr:
+		cp := *e
+		cp.Start = cloneExprReplacingIdent(e.Start, name, replacement)
+		cp.End = cloneExprReplacingIdent(e.End, name, replacement)
+		cp.Incr = cloneExprReplacingIdent(e.Incr, name, replacement)
+		return &cp
+	case *ast.IndexExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		cp.Index = cloneExprReplacingIdent(e.Index, name, replacement)
+		return &cp
+	case *ast.CastExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		return &cp
+	case *ast.CoalescingExpr:
+		cp := *e
+		cp.Cond = cloneExprReplacingIdent(e.Cond, name, replacement)
+		cp.Default = cloneExprReplacingIdent(e.Default, name, replacement)
+		return &cp
+	case *ast.PipeExpr:
+		cp := *e
+		cp.Value = cloneExprReplacingIdent(e.Value, name, replacement)
+		cp.Call = cloneExprReplacingIdent(e.Call, name, replacement)
+		return &cp
+	case *ast.ForkExpr:
+		cp := *e
+		cp.Call = cloneExprReplacingIdent(e.Call, name, replacement)
+		return &cp
+	case *ast.ScopeResolutionExpr:
+		cp := *e
+		cp.X = cloneExprReplacingIdent(e.X, name, replacement)
+		if e.Selector != nil {
+			sel := *e.Selector
+			cp.Selector = &sel
+		}
+		return &cp
+	case *ast.TypeExpr:
+		cp := *e
+		return &cp
+	case *ast.TypeCheckPattern:
+		cp := *e
+		return &cp
+	case *ast.RangeCheckPattern:
+		cp := *e
+		cp.Range = cloneExprReplacingIdent(e.Range, name, replacement)
+		return &cp
+	case *ast.CallExpr:
+		cp := *e
+		cp.Fun = cloneExprReplacingIdent(e.Fun, name, replacement)
+		cp.Args = make([]ast.Expression, 0, len(e.Args))
+		for _, arg := range e.Args {
+			cp.Args = append(cp.Args, cloneExprReplacingIdent(arg, name, replacement))
+		}
+		if e.Catch != nil {
+			catch := *e.Catch
+			if e.Catch.ErrIdent != nil {
+				errIdent := *e.Catch.ErrIdent
+				catch.ErrIdent = &errIdent
+			}
+			catch.Fallback = cloneExprReplacingIdent(e.Catch.Fallback, name, replacement)
+			cp.Catch = &catch
+		}
+		return &cp
+	case *ast.CompositeLit:
+		cp := *e
+		cp.Elts = make([]ast.Expression, 0, len(e.Elts))
+		for _, elt := range e.Elts {
+			cp.Elts = append(cp.Elts, cloneExprReplacingIdent(elt, name, replacement))
+		}
+		return &cp
+	case *ast.KeyValueExpr:
+		cp := *e
+		cp.Key = cloneExprReplacingIdent(e.Key, name, replacement)
+		cp.Value = cloneExprReplacingIdent(e.Value, name, replacement)
+		return &cp
+	case *ast.FuncLit:
+		cp := *e
+		// Keep nested function literals unchanged to avoid rewriting captured names.
+		return &cp
+	default:
+		return expr
 	}
 }
 
 // validateCallArgumentCount checks if the number of arguments matches the function signature
-func validateCallArgumentCount(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, funcType *types.FunctionType) {
-	argCount := len(expr.Args)
+func validateCallArgumentCount(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, args []ast.Expression, funcType *types.FunctionType) {
+	argCount := len(args)
 	paramCount := len(funcType.Params)
 
 	// Check if function is variadic
@@ -5431,9 +5586,9 @@ func validateCallArgumentCount(ctx *context_v2.CompilerContext, mod *context_v2.
 }
 
 // validateCallArgumentTypes checks if argument types are compatible with parameter types
-func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, funcType *types.FunctionType, pipeInfo *pipeArgInfo) {
+func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, args []ast.Expression, explicitArgCount int, funcType *types.FunctionType, pipeInfo *pipeArgInfo) {
 	paramCount := len(funcType.Params)
-	argCount := len(expr.Args)
+	argCount := len(args)
 
 	// Determine if function is variadic
 	isVariadic := paramCount > 0 && funcType.Params[paramCount-1].IsVariadic
@@ -5446,7 +5601,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 
 	// Detect spread arguments
 	firstSpread := -1
-	for i, arg := range expr.Args {
+	for i, arg := range args {
 		if _, ok := arg.(*ast.SpreadExpr); ok {
 			firstSpread = i
 			break
@@ -5456,14 +5611,14 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 		if !isVariadic {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError("cannot use spread argument with non-variadic function").
-					WithPrimaryLabel(expr.Args[firstSpread].Loc(), "spread argument here").
+					WithPrimaryLabel(args[firstSpread].Loc(), "spread argument here").
 					WithHelp("remove '...' or call a variadic function"),
 			)
 		}
 		if firstSpread < regularParamCount {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError("spread argument must come after regular parameters").
-					WithPrimaryLabel(expr.Args[firstSpread].Loc(), "spread argument here").
+					WithPrimaryLabel(args[firstSpread].Loc(), "spread argument here").
 					WithHelp("move '...' after the regular parameters"),
 			)
 		}
@@ -5481,7 +5636,8 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 	// Validate regular parameters
 	for i := 0; i < regularParamCount && i < argCount; i++ {
 		param := funcType.Params[i]
-		arg := expr.Args[i]
+		arg := args[i]
+		isDefaultArg := i >= explicitArgCount
 		isPipeArg := pipeIndex == i
 		argLoc := arg.Loc()
 		if isPipeArg && pipeStageLoc != nil {
@@ -5492,8 +5648,12 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 			continue
 		}
 
-		// Infer argument type with parameter type as context
-		argType := checkExpr(ctx, mod, arg, param.Type)
+		// Declaration-site checks already validated synthesized defaults.
+		argType := param.Type
+		if !isDefaultArg {
+			// Infer argument type with parameter type as context
+			argType = checkExpr(ctx, mod, arg, param.Type)
+		}
 		if refParam, ok := types.UnwrapType(param.Type).(*types.ReferenceType); ok && !argType.Equals(types.TypeUnknown) {
 			refArg, isRefArg := types.UnwrapType(argType).(*types.ReferenceType)
 			if !isRefArg {
@@ -5515,10 +5675,10 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 				continue
 			}
 		}
-		if reportImplicitResourceCopy(ctx, param.Type, argType, arg, "function argument") {
+		if !isDefaultArg && reportImplicitResourceCopy(ctx, param.Type, argType, arg, "function argument") {
 			continue
 		}
-		if param.IsMove && !moveExpr(arg) && resourceCopySourceExpr(arg) {
+		if !isDefaultArg && param.IsMove && !moveExpr(arg) && resourceCopySourceExpr(arg) {
 
 			// get the text
 			old := exprText(ctx, arg)
@@ -5528,14 +5688,18 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 				WithPrimaryLabel(argLoc, "expected explicit move").
 				WithHelp(fmt.Sprintf("use '%s' for move-qualified parameters", new))
 
-			diag = diag.WithCodeReplacement(argLoc, old, new)
+			if old != "" {
+				diag = diag.WithCodeReplacement(argLoc, old, new)
+			}
 
 			ctx.Diagnostics.Add(diag)
 			continue
 		}
 
-		if ok := checkFitness(ctx, param.Type, arg, nil); !ok {
-			continue
+		if !isDefaultArg {
+			if ok := checkFitness(ctx, param.Type, arg, nil); !ok {
+				continue
+			}
 		}
 
 		// Check compatibility (use WithContext to handle interfaces properly)
@@ -5579,7 +5743,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 		}
 
 		for i := startIdx; i < argCount; i++ {
-			arg := expr.Args[i]
+			arg := args[i]
 			isPipeArg := pipeIndex == i
 			argLoc := arg.Loc()
 			if isPipeArg && pipeStageLoc != nil {
@@ -5643,8 +5807,10 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 					WithPrimaryLabel(argLoc, "expected explicit move").
 					WithHelp(fmt.Sprintf("use '%s' for move-qualified parameters", new))
 
+				if old != "" {
+					diag = diag.WithCodeReplacement(argLoc, old, new)
+				}
 				ctx.Diagnostics.Add(diag)
-				diag = diag.WithCodeReplacement(argLoc, old, new)
 				continue
 			}
 
@@ -5689,7 +5855,7 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 	}
 
 	for i := maxChecked; i < argCount; i++ {
-		checkExpr(ctx, mod, expr.Args[i], types.TypeUnknown)
+		checkExpr(ctx, mod, args[i], types.TypeUnknown)
 	}
 
 	// Validate Result type handling: check if function returns Result and needs catch

@@ -1,0 +1,11 @@
+fn add(a: i32, b: i32 = 2) -> i32 {
+    return a + b;
+}
+
+fn main() {
+    let x := add(10);
+    let y := 10 |> add();
+    let z := 10 |> add;
+
+    let sum := x + y + z;
+}
