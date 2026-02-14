@@ -77,13 +77,31 @@ func TestBorrowCheckerTwoMutReborrows(t *testing.T) {
 	src := `fn test() {
 		let a := 1;
 		let m := &mut a;
-		let m1 := &mut *m;
-		let m2 := &mut *m;
+		let m1 := m;
+		let m2 := m;
 	}`
 
 	ctx := analyzeHIR(t, src)
 	diags := ctx.Diagnostics.Diagnostics()
 	if !hasMessage(diags, "cannot borrow") {
 		t.Fatalf("expected borrow conflict error, got %d diagnostics", len(diags))
+	}
+}
+
+func TestBorrowCheckerReturnHeapContainingLocalReferenceRejected(t *testing.T) {
+	src := `type Cell struct {
+	.Value: &i32,
+};
+
+fn make_cell() -> #Cell {
+	let a := 10;
+	let c: #Cell = #{ .Value = &a } as Cell;
+	return c;
+}`
+
+	ctx := analyzeHIR(t, src)
+	diags := ctx.Diagnostics.Diagnostics()
+	if !hasMessage(diags, "cannot return value containing reference to local") {
+		t.Fatalf("expected escaping local reference error, got %d diagnostics", len(diags))
 	}
 }

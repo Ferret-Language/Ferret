@@ -41,10 +41,12 @@ type Symbol struct {
 
 // MethodInfo stores information about a method attached to a named type
 type MethodInfo struct {
-	Name     string
-	FuncType *types.FunctionType
-	Receiver types.SemType
-	Exported bool // Whether method is accessible from other modules
+	Name           string
+	FuncType       *types.FunctionType
+	Receiver       types.SemType
+	ReceiverIsMove bool
+	Decl           *ast.MethodDecl
+	Exported       bool // Whether method is accessible from other modules
 }
 
 // SymbolKind categorizes symbols

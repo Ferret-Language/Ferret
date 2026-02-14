@@ -10,6 +10,9 @@ func largePrimitiveName(typ types.SemType) (string, bool) {
 	if _, ok := typ.(*types.ReferenceType); ok {
 		return "", false
 	}
+	if _, ok := typ.(*types.HeapType); ok {
+		return "", false
+	}
 	prim, ok := typ.(*types.PrimitiveType)
 	if !ok {
 		return "", false
@@ -71,6 +74,9 @@ func needsByRefType(typ types.SemType) bool {
 		return false
 	}
 	if _, ok := types.UnwrapType(typ).(*types.ReferenceType); ok {
+		return false
+	}
+	if _, ok := types.UnwrapType(typ).(*types.HeapType); ok {
 		return false
 	}
 	if isLargePrimitiveType(typ) || isStructType(typ) || isFixedArrayType(typ) {

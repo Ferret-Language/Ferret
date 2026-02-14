@@ -1,0 +1,109 @@
+module Ferret/1
+
+globals
+  __ferret_init_done_Ferret_1: bool
+
+fn make() -> #i32 {
+  block b1 entry:
+    %t1 = const i32 10
+    %t2 = const u64 4
+    %t3 = call ferret_alloc(%t2) : &i32
+    store %t3, %t1
+    %t4 = alloca &#i32
+    store %t4, %t3
+    %t5 = const str Value {} address {}
+
+    %t6 = const i64 36
+    %t7 = const i32 2
+    %t8 = const &void $typedesc1
+    %t9 = cast &u8 %t8
+    %t10 = call ferret_array_new(%t6, %t7, %t9) : []Printable
+    %t11 = load i32 %t3
+    %t12 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t13 = ptr_add i32 %t12, 0
+    %t14 = const i32 2
+    store %t13, %t14
+    %t15 = ptr_add i32 %t12, 4
+    store %t15, %t11
+    call ferret_array_append(%t10, %t12) : bool
+    %t16 = cast u64 %t3
+    %t17 = call heap_addr(%t3, %t16) : u64
+    %t18 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t19 = ptr_add i32 %t18, 0
+    %t20 = const i32 9
+    store %t19, %t20
+    %t21 = ptr_add u64 %t18, 4
+    store %t21, %t17
+    call ferret_array_append(%t10, %t18) : bool
+    call io::Printf(%t5, %t10) : void
+    %t22 = load #i32 %t3
+    call ferret_free(%t3) : void
+    ret %t22
+}
+
+fn main() -> void {
+  block b2 entry:
+    call __ferret_init() : void
+    %t23 = alloca i32
+    %t24 = const i32 10
+    store %t23, %t24
+    %t25 = const i64 36
+    %t26 = const i32 1
+    %t27 = const &void $typedesc1
+    %t28 = cast &u8 %t27
+    %t29 = call ferret_array_new(%t25, %t26, %t28) : []Printable
+    %t30 = load i32 %t23
+    %t31 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t32 = ptr_add i32 %t31, 0
+    %t33 = const i32 2
+    store %t32, %t33
+    %t34 = ptr_add i32 %t31, 4
+    store %t34, %t30
+    call ferret_array_append(%t29, %t31) : bool
+    call io::Println(%t29) : void
+    %t35 = alloca #i32
+    %t36 = call make() : #i32
+    store %t35, %t36
+    %t37 = const str Value {} address {}
+
+    %t38 = const i64 36
+    %t39 = const i32 2
+    %t40 = const &void $typedesc1
+    %t41 = cast &u8 %t40
+    %t42 = call ferret_array_new(%t38, %t39, %t41) : []Printable
+    %t43 = load i32 %t35
+    %t44 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t45 = ptr_add i32 %t44, 0
+    %t46 = const i32 2
+    store %t45, %t46
+    %t47 = ptr_add i32 %t44, 4
+    store %t47, %t43
+    call ferret_array_append(%t42, %t44) : bool
+    %t48 = load #i32 %t35
+    %t49 = cast u64 %t48
+    %t50 = call heap_addr(%t35, %t49) : u64
+    %t51 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool}
+    %t52 = ptr_add i32 %t51, 0
+    %t53 = const i32 9
+    store %t52, %t53
+    %t54 = ptr_add u64 %t51, 4
+    store %t54, %t50
+    call ferret_array_append(%t42, %t51) : bool
+    call io::Printf(%t37, %t42) : void
+    ret
+}
+
+fn __ferret_init() -> void {
+  block b4 init_guard:
+    %t57 = const &bool $__ferret_init_done_Ferret_1
+    %t58 = load bool %t57
+    br_if %t58, b5, b3
+  block b3 entry:
+    %t55 = const &bool $__ferret_init_done_Ferret_1
+    %t56 = const bool 1
+    store %t55, %t56
+    call io::__ferret_init() : void
+    ret
+  block b5 init_done:
+    ret
+}

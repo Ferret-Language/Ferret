@@ -34,8 +34,11 @@ func globalStorageType(sym *symbols.Symbol) types.SemType {
 	if sym == nil || sym.Type == nil {
 		return types.TypeUnknown
 	}
+	if heap, ok := types.UnwrapType(sym.Type).(*types.HeapType); ok {
+		return types.NewReference(heap.Inner)
+	}
 	if sym.IsHeap {
-		return types.NewReference(sym.Type)
+		return types.NewReference(types.UnwrapHeapType(sym.Type))
 	}
 	return sym.Type
 }

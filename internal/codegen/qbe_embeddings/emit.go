@@ -1,4 +1,4 @@
-// the detailed emit logic for instructions, types, 
+// the detailed emit logic for instructions, types,
 // ABI/lowering helpers, and utilities.
 
 package qbe
@@ -1523,6 +1523,16 @@ func (g *Generator) constValue(typ types.SemType, value string) (string, error) 
 		}
 		return val, nil
 	}
+	if _, ok := typ.(*types.HeapType); ok {
+		if strings.HasPrefix(value, "$") {
+			return value, nil
+		}
+		val, err := g.normalizeInt(value)
+		if err != nil {
+			return "", err
+		}
+		return val, nil
+	}
 
 	return "", fmt.Errorf("qbe: unsupported const type %s", typ.String())
 }
@@ -1787,6 +1797,9 @@ func (g *Generator) loadOp(typ types.SemType) (string, error) {
 	if _, ok := typ.(*types.ReferenceType); ok {
 		return "loadl", nil
 	}
+	if _, ok := typ.(*types.HeapType); ok {
+		return "loadl", nil
+	}
 	if _, ok := typ.(*types.OptionalType); ok {
 		return "loadl", nil
 	}
@@ -1838,6 +1851,9 @@ func (g *Generator) storeOp(typ types.SemType) (string, error) {
 	if _, ok := typ.(*types.ReferenceType); ok {
 		return "storel", nil
 	}
+	if _, ok := typ.(*types.HeapType); ok {
+		return "storel", nil
+	}
 	if _, ok := typ.(*types.OptionalType); ok {
 		return "storel", nil
 	}
@@ -1877,6 +1893,8 @@ func (g *Generator) qbeType(typ types.SemType) (string, error) {
 
 	switch typ := typ.(type) {
 	case *types.ReferenceType:
+		return "l", nil
+	case *types.HeapType:
 		return "l", nil
 	case *types.FunctionType:
 		return "l", nil
@@ -2247,6 +2265,9 @@ func (g *Generator) needsByRefType(typ types.SemType) bool {
 	}
 	typ = types.UnwrapType(typ)
 	if _, ok := typ.(*types.ReferenceType); ok {
+		return false
+	}
+	if _, ok := typ.(*types.HeapType); ok {
 		return false
 	}
 	if isLargePrimitiveType(typ) {

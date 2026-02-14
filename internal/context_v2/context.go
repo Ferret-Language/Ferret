@@ -262,6 +262,44 @@ func registerBuiltins(universe *table.SymbolTable) {
 		})
 	}
 
+	// Compiler intrinsic resource handle types (phase 1).
+	// Named type keeps nominal identity while preserving i64 ABI layout.
+	fileHandleType := types.NewResourceNamed("__file", types.TypeI64)
+	universe.Declare("__file", &symbols.Symbol{
+		Name:     "__file",
+		Kind:     symbols.SymbolType,
+		Type:     fileHandleType,
+		Exported: true,
+	})
+	tcpListenerHandleType := types.NewResourceNamed("__tcp_listener", types.TypeI64)
+	universe.Declare("__tcp_listener", &symbols.Symbol{
+		Name:     "__tcp_listener",
+		Kind:     symbols.SymbolType,
+		Type:     tcpListenerHandleType,
+		Exported: true,
+	})
+	tcpConnHandleType := types.NewResourceNamed("__tcp_conn", types.TypeI64)
+	universe.Declare("__tcp_conn", &symbols.Symbol{
+		Name:     "__tcp_conn",
+		Kind:     symbols.SymbolType,
+		Type:     tcpConnHandleType,
+		Exported: true,
+	})
+	httpAppHandleType := types.NewResourceNamed("__http_app", types.TypeI64)
+	universe.Declare("__http_app", &symbols.Symbol{
+		Name:     "__http_app",
+		Kind:     symbols.SymbolType,
+		Type:     httpAppHandleType,
+		Exported: true,
+	})
+	httpResponseHandleType := types.NewResourceNamed("__http_response", types.TypeI64)
+	universe.Declare("__http_response", &symbols.Symbol{
+		Name:     "__http_response",
+		Kind:     symbols.SymbolType,
+		Type:     httpResponseHandleType,
+		Exported: true,
+	})
+
 	// Built-in constants
 	universe.Declare("true", &symbols.Symbol{
 		Name:     "true",

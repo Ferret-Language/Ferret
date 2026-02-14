@@ -60,6 +60,11 @@ func getTypeFromTypeNode(mod *context_v2.Module, typeNode ast.TypeNode) types.Se
 			}
 			return types.NewReference(innerType)
 		}
+	case *ast.HeapType:
+		innerType := getTypeFromTypeNode(mod, t.Base)
+		if innerType != nil {
+			return types.NewHeap(innerType)
+		}
 	}
 
 	return nil

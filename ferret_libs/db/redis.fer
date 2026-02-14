@@ -10,10 +10,10 @@ fn Connect(addr: str) -> str ! Client {
     let conn := net::DialTcp(addr) catch err {
         return err!;
     };
-    return { .conn = conn };
+    return { .conn = @conn };
 }
 
-fn (c: &mut Client) Close() {
+fn (c: @Client) Close() {
     c.conn.Close();
 }
 

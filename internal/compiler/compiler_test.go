@@ -18,9 +18,9 @@ func TestCompile_InMemorySimpleCode(t *testing.T) {
 			Files: map[string]string{
 				"main.fer": "let x := 10;",
 			},
-			Debug:          false,
-			LogFormat:      ANSI,
-			TypecheckOnly:  true,
+			Debug:         false,
+			LogFormat:     ANSI,
+			TypecheckOnly: true,
 		}
 
 		result := Compile(opts)
@@ -338,7 +338,7 @@ func TestCompile_MultipleImports(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
 			"main.fer": `import "std/io";
-import "math";
+import "std/math";
 let x := 42;`,
 		},
 		Debug:         false,
@@ -350,5 +350,309 @@ let x := 42;`,
 
 	if !result.Success {
 		t.Errorf("Expected successful compilation of multiple statements, got failure: %s", result.Output)
+	}
+}
+
+func TestCompile_ResourceImplicitCopyRejected(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `import "std/fs";
+
+fn main() {
+	let f := fs::CreateRW("/tmp/resource_copy_reject.txt") catch err {
+		return;
+	};
+	let g := f;
+	g.Close();
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure for implicit resource copy")
+	}
+	if !strings.Contains(result.Output, "resource values are non-copyable") {
+		t.Fatalf("expected resource copy diagnostic, got: %s", result.Output)
+	}
+}
+
+func TestCompile_ResourceMoveAllowed(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `import "std/fs";
+
+fn main() {
+	let f := fs::CreateRW("/tmp/resource_move_ok.txt") catch err {
+		return;
+	};
+	let g := @f;
+	g.Close();
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success for explicit resource move, got: %s", result.Output)
+	}
+}
+
+func TestCompile_NetResourceImplicitCopyRejected(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `import "net/tcp";
+
+fn main() {
+	let listener := tcp::ListenTcp("127.0.0.1:0") catch err {
+		return;
+	};
+	let alias := listener;
+	alias.Close();
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure for implicit tcp resource copy")
+	}
+	if !strings.Contains(result.Output, "resource values are non-copyable") {
+		t.Fatalf("expected resource copy diagnostic, got: %s", result.Output)
+	}
+}
+
+func TestCompile_HttpServeResourceMoveRequired(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `import "net/http";
+import "net/tcp";
+
+fn main() {
+	let app := http::Server();
+	let listener := tcp::ListenTcp("127.0.0.1:0") catch err {
+		return;
+	};
+	app.Serve(listener) catch err {
+		return;
+	};
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure when passing listener without move")
+	}
+	if !strings.Contains(result.Output, "resource values are non-copyable") {
+		t.Fatalf("expected resource copy diagnostic, got: %s", result.Output)
+	}
+}
+
+func TestCompile_HttpServeResourceMoveAllowed(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `import "net/http";
+import "net/tcp";
+
+fn main() {
+	let app := http::Server();
+	let listener := tcp::ListenTcp("127.0.0.1:0") catch err {
+		return;
+	};
+	app.Serve(@listener) catch err {
+		return;
+	};
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success when moving listener, got: %s", result.Output)
+	}
+}
+
+func TestCompile_DefaultParam_TrailingAllowed(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn add(a: i32, b: i32 = 2) -> i32 {
+	return a + b;
+}
+
+fn main() {
+	let x := add(10);
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success for trailing default parameter, got: %s", result.Output)
+	}
+}
+
+func TestCompile_DefaultParam_NonTrailingRejected(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn bad(a: i32 = 1, b: i32) -> i32 {
+	return a + b;
+}
+
+fn main() {
+	let x := bad(1, 2);
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure for non-trailing default parameter")
+	}
+	if !strings.Contains(result.Output, "default values must be trailing") {
+		t.Fatalf("expected default trailing diagnostic, got: %s", result.Output)
+	}
+}
+
+func TestCompile_MoveQualifiedParam_RequiresMove(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn consume(v: @i32) {
+	let x := v;
+}
+
+fn main() {
+	let n := 10;
+	consume(n);
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure for move-qualified parameter without @")
+	}
+	if !strings.Contains(result.Output, "must be moved") {
+		t.Fatalf("expected move-qualified argument diagnostic, got: %s", result.Output)
+	}
+}
+
+func TestCompile_MoveQualifiedParam_WithMoveAllowed(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn consume(v: @i32) {
+	let x := v;
+}
+
+fn main() {
+	let n := 10;
+	consume(@n);
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success for explicit move argument, got: %s", result.Output)
+	}
+}
+
+func TestCompile_MoveQualifiedReceiver_ConsumesValue(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Box struct {
+	.v: i32
+};
+
+fn (b: @Box) Consume() {
+}
+
+fn main() {
+	let a := { .v = 1 } as Box;
+	a.Consume();
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success for move-qualified receiver call, got: %s", result.Output)
+	}
+}
+
+func TestCompile_MoveQualifiedReceiver_ReferenceRejected(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Box struct {
+	.v: i32
+};
+
+fn (b: @&mut Box) Consume() {
+}
+`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure for move-qualified reference receiver")
+	}
+	if !strings.Contains(result.Output, "move-qualified receiver cannot be a reference") {
+		t.Fatalf("expected move-qualified receiver reference diagnostic, got: %s", result.Output)
+	}
+}
+
+func TestCompile_MoveBorrowMix_Rejected(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn main() {
+	let x := 10;
+	let y := @&x;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure for move+borrow mix")
+	}
+	if !strings.Contains(result.Output, "cannot combine move with borrow") {
+		t.Fatalf("expected move+borrow diagnostic, got: %s", result.Output)
 	}
 }

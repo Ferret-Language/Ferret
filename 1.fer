@@ -1,0 +1,69 @@
+import "std/io";
+import "std/fs";
+
+fn make() -> #i32 {
+    let v := #10;
+    io::Printf("Value {} address {}\n", v, heap_addr(&v));
+
+    return @v;
+}
+
+fn calc(a: i32, b: i32, isMul: bool = false) -> i32 {
+    if isMul {
+        return a * b;
+    }
+    
+    return a + b;
+}
+
+fn main() {
+    let stackVar : i32 = 10;
+
+    io::Println(stackVar);
+
+    let ref := &mut stackVar;
+
+    //let ref2 := ref;
+
+    let h := make();
+    io::Printf("Value {} address {}\n", h, heap_addr(&h));
+
+    // create file
+    let file := fs::CreateRW("1.txt") catch err {
+        io::Println("file error: ", err);
+        return;
+    };
+    defer file.Close();
+
+    file.WriteLine("Hello") catch err {
+        io::Println("file write error: ", err);
+        return;
+    };
+
+    file.Rewind() catch err {
+        io::Println("file seek error: ", err);
+        return;
+    };
+
+    let data := file.Read(1024) catch err {
+        io::Println("file read error: ", err);
+        return;
+    };
+    io::Println(data as str);
+
+
+    let fileCopy := &file;
+    fileCopy.Rewind() catch err {
+        io::Println("file seek error: ", err);
+        return;
+    };
+
+
+    let data2 := fileCopy.Read(1024) catch err {
+        io::Println("file copy read error: ", err);
+        return;
+    };
+    io::Println(data2 as str);
+
+    io::Println(calc(1,2, true));
+}

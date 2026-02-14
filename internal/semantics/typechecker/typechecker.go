@@ -118,6 +118,70 @@ func addParamsToScope(ctx *context_v2.CompilerContext, mod *context_v2.Module, s
 	}
 }
 
+func checkDefaultParameterValues(ctx *context_v2.CompilerContext, mod *context_v2.Module, params []ast.Field) {
+	if len(params) == 0 {
+		return
+	}
+
+	paramNames := make([]string, 0, len(params))
+	for _, param := range params {
+		if param.Name != nil && param.Name.Name != "" && param.Name.Name != "_" {
+			paramNames = append(paramNames, param.Name.Name)
+		}
+	}
+
+	for _, param := range params {
+		if param.Default == nil || param.Type == nil {
+			continue
+		}
+
+		// Default arguments are expanded at call sites, so they cannot depend on
+		// callee-local parameter bindings.
+		for _, pname := range paramNames {
+			if found, loc := referencesIdentOutsideFuncLit(param.Default, pname); found {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("default parameter value cannot reference another parameter").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(loc, fmt.Sprintf("references parameter '%s'", pname)).
+						WithHelp("use a literal or module-level constant in the default expression"),
+				)
+				break
+			}
+		}
+
+		paramType := TypeFromTypeNodeWithContext(ctx, mod, param.Type)
+		defaultType := checkExpr(ctx, mod, param.Default, paramType)
+		if defaultType.Equals(types.TypeUnknown) {
+			continue
+		}
+
+		if reportImplicitResourceCopy(ctx, paramType, defaultType, param.Default, "default parameter") {
+			continue
+		}
+
+		if ok := checkFitness(ctx, paramType, param.Default, nil); !ok {
+			continue
+		}
+
+		compatibility := checkTypeCompatibilityWithContext(ctx, mod, defaultType, paramType)
+		if !isImplicitlyCompatible(compatibility) {
+			paramName := "<param>"
+			if param.Name != nil && param.Name.Name != "" {
+				paramName = param.Name.Name
+			}
+			diag := diagnostics.ArgumentTypeMismatch(
+				mod.FilePath,
+				param.Default.Loc(),
+				paramName,
+				paramType.String(),
+				types.ResolveUntypedType(defaultType, paramType).String(),
+			)
+			diag = addExplicitCastHint(ctx, diag, paramType, compatibility, param.Default)
+			ctx.Diagnostics.Add(diag)
+		}
+	}
+}
+
 // setupFunctionContext sets up function scope and return type tracking.
 // Returns a cleanup function that should be deferred.
 func setupFunctionContext(ctx *context_v2.CompilerContext, mod *context_v2.Module, scope *table.SymbolTable, funcType *ast.FuncType) func() {
@@ -430,6 +494,9 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 				if n.IsError {
 					// Returning error: return "error message"!
 					returnedType := checkExpr(ctx, mod, n.Result, resultType.Err)
+					if reportImplicitResourceCopy(ctx, resultType.Err, returnedType, n.Result, "return") {
+						return
+					}
 
 					if ok := checkFitness(ctx, resultType.Err, n.Result, nil); !ok {
 						return
@@ -460,6 +527,9 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 				} else {
 					// Returning success: return value
 					returnedType := checkExpr(ctx, mod, n.Result, resultType.Ok)
+					if reportImplicitResourceCopy(ctx, resultType.Ok, returnedType, n.Result, "return") {
+						return
+					}
 
 					if ok := checkFitness(ctx, resultType.Ok, n.Result, nil); !ok {
 						return
@@ -497,6 +567,9 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 				} else {
 					// Normal return type checking
 					returnedType := checkExpr(ctx, mod, n.Result, expectedReturnType)
+					if reportImplicitResourceCopy(ctx, expectedReturnType, returnedType, n.Result, "return") {
+						return
+					}
 					if ok := checkFitness(ctx, expectedReturnType, n.Result, nil); !ok {
 						return
 					}
@@ -917,19 +990,13 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 			continue
 		}
 
-		if item.Value != nil {
-			if heapUnaryExpr(item.Value) != nil {
-				if isConst {
-					ctx.Diagnostics.Add(
-						diagnostics.NewError(fmt.Sprintf("constant '%s' cannot use heap allocation", name)).
-							WithCode(diagnostics.ErrInvalidOperation).
-							WithPrimaryLabel(item.Value.Loc(), "heap allocation is not allowed in constants").
-							WithHelp("use a runtime variable instead of const"),
-					)
-				} else {
-					sym.IsHeap = true
-				}
-			}
+		if item.Value != nil && heapUnaryExpr(item.Value) != nil && isConst {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("constant '%s' cannot use heap allocation", name)).
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(item.Value.Loc(), "heap allocation is not allowed in constants").
+					WithHelp("use a runtime variable instead of const"),
+			)
 		}
 
 		if item.Value != nil {
@@ -964,9 +1031,20 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 			}
 
 			sym.Type = declType
+			sym.IsHeap = types.IsHeapType(sym.Type)
 
 			// Check initializer if present
 			if item.Value != nil {
+				if heapUnaryExpr(item.Value) != nil && !types.IsHeapType(declType) {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("variable '%s' has non-heap type '%s' but initializer allocates '#'", name, declType.String())).
+							WithCode(diagnostics.ErrInvalidAssignment).
+							WithPrimaryLabel(item.Value.Loc(), "heap allocation requires a '#T' target type").
+							WithHelp(fmt.Sprintf("change declaration to '#%s' or remove '#'", declType.String())),
+					)
+					checkExpr(ctx, mod, item.Value, types.TypeUnknown)
+					continue
+				}
 				if _, ok := types.UnwrapType(declType).(*types.ReferenceType); ok {
 					initType := inferExprType(ctx, mod, item.Value)
 					if !initType.Equals(types.TypeUnknown) && !isReferenceType(initType) {
@@ -1029,6 +1107,10 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 			}
 
 			sym.Type = rhsType
+			sym.IsHeap = types.IsHeapType(sym.Type)
+			if reportImplicitResourceCopy(ctx, rhsType, rhsType, item.Value, "variable initialization") {
+				continue
+			}
 
 			// Check if initializer is an empty literal (array, map, or struct)
 			// If it has a type (via cast or type annotation), warn to use explicit type annotation
@@ -1094,6 +1176,7 @@ func checkFuncDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 	// Add parameters to the function scope with type information
 	if decl.Type != nil {
 		addParamsToScope(ctx, mod, funcScope, decl.Type.Params)
+		checkDefaultParameterValues(ctx, mod, decl.Type.Params)
 	}
 
 	// Check the body with the function scope
@@ -1766,6 +1849,11 @@ func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		StageLoc:  stageLoc,
 		TargetLoc: targetLoc,
 	})
+	if len(temp.Args) > len(args) {
+		// Preserve any defaults expanded during type checking so downstream
+		// HIR/MIR lowering uses the same concrete argument list.
+		callExpr.Args = append(callExpr.Args, temp.Args[len(args):]...)
+	}
 	if temp.Catch != nil {
 		checkCatchClause(ctx, mod, &temp)
 	}
@@ -2409,6 +2497,16 @@ func checkMethodSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.M
 	if receiverType.Equals(types.TypeUnknown) {
 		return
 	}
+	if decl.Receiver.IsMove {
+		if _, ok := types.UnwrapType(receiverTypeRaw).(*types.ReferenceType); ok {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("move-qualified receiver cannot be a reference").
+					WithCode(diagnostics.ErrInvalidMethodReceiver).
+					WithPrimaryLabel(decl.Receiver.Loc(), "remove '@' or use a value receiver"),
+			)
+			return
+		}
+	}
 
 	// Unwrap reference types: &T -> T
 	receiverType = types.DereferenceType(receiverType)
@@ -2440,10 +2538,12 @@ func checkMethodSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.M
 
 		// Create method info and attach to type symbol
 		typeSym.Methods[decl.Name.Name] = &symbols.MethodInfo{
-			Name:     decl.Name.Name,
-			FuncType: funcType,
-			Receiver: receiverTypeRaw,
-			Exported: utils.IsExported(decl.Name.Name),
+			Name:           decl.Name.Name,
+			FuncType:       funcType,
+			Receiver:       receiverTypeRaw,
+			ReceiverIsMove: decl.Receiver.IsMove,
+			Decl:           decl,
+			Exported:       utils.IsExported(decl.Name.Name),
 		}
 	}
 }
@@ -2473,6 +2573,7 @@ func checkMethodDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, de
 	// Add parameters to the method scope with type information
 	if decl.Type != nil {
 		addParamsToScope(ctx, mod, methodScope, decl.Type.Params)
+		checkDefaultParameterValues(ctx, mod, decl.Type.Params)
 	}
 
 	// Check the body with the method scope
@@ -2666,6 +2767,7 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 
 	if stmt.Rhs != nil {
 		if heapUnaryExpr(stmt.Rhs) != nil {
+			targetHeapType := types.SemType(nil)
 			if stmt.Op != nil && stmt.Op.Kind != tokens.EQUALS_TOKEN {
 				ctx.Diagnostics.Add(
 					diagnostics.NewError("heap allocation cannot be used with compound assignment").
@@ -2685,8 +2787,45 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
 				return
 			}
+			if sym, ok := mod.CurrentScope.Lookup(ident.Name); ok && sym != nil && !types.IsHeapType(sym.Type) {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("heap allocation assignment requires a '#T' target").
+						WithCode(diagnostics.ErrInvalidAssignment).
+						WithPrimaryLabel(stmt.Lhs.Loc(), "target is not a heap owner type"),
+				)
+				checkExpr(ctx, mod, stmt.Rhs, types.TypeUnknown)
+				return
+			}
 			if sym, ok := mod.CurrentScope.Lookup(ident.Name); ok && sym != nil {
-				sym.IsHeap = true
+				targetHeapType = sym.Type
+			}
+			if targetHeapType != nil {
+				checkExpr(ctx, mod, stmt.Rhs, targetHeapType)
+				return
+			}
+		}
+	}
+
+	if stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN {
+		if ident, ok := stmt.Lhs.(*ast.IdentifierExpr); ok && mod != nil && mod.CurrentScope != nil {
+			if sym, ok := mod.CurrentScope.Lookup(ident.Name); ok && sym != nil {
+				if heapType, ok := types.UnwrapType(sym.Type).(*types.HeapType); ok {
+					if moveExpr(stmt.Rhs) || heapUnaryExpr(stmt.Rhs) != nil {
+						checkAssignLike(ctx, mod, sym.Type, stmt.Lhs, stmt.Rhs)
+						return
+					}
+					if referencesHeapOwnerValue(ctx, mod, stmt.Rhs) {
+						ctx.Diagnostics.Add(
+							diagnostics.NewError("heap ownership assignment requires an explicit move").
+								WithCode(diagnostics.ErrInvalidAssignment).
+								WithPrimaryLabel(stmt.Rhs.Loc(), "this value is a heap owner").
+								WithHelp("use '@value' to transfer ownership, or assign a payload value of type 'T'"),
+						)
+						return
+					}
+					checkAssignLike(ctx, mod, heapType.Inner, stmt.Lhs, stmt.Rhs)
+					return
+				}
 			}
 		}
 	}
@@ -3105,6 +3244,15 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 			}
 		}
 	}
+	if innerUnary, ok := expr.X.(*ast.UnaryExpr); ok && innerUnary.Op.Kind == tokens.AT_TOKEN {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot combine borrow with move").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "borrow cannot wrap '@' expressions").
+				WithHelp("borrow a binding directly (e.g., '&x' or '&mut x')"),
+		)
+		return
+	}
 	if !isBorrowableTarget(ctx, mod, expr.X) {
 		ctx.Diagnostics.Add(
 			diagnostics.NewError("cannot take reference of this expression").
@@ -3152,6 +3300,17 @@ func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	}
 	if expr.Op.Kind != tokens.AT_TOKEN {
 		return
+	}
+	if innerUnary, ok := expr.X.(*ast.UnaryExpr); ok {
+		if innerUnary.Op.Kind == tokens.BIT_AND_TOKEN || innerUnary.Op.Kind == tokens.MUT_TOKEN {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot combine move with borrow").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(expr.Loc(), "move operator '@' cannot be applied to a borrow expression").
+					WithHelp("move the owned value directly (e.g., '@x')"),
+			)
+			return
+		}
 	}
 	var (
 		sym           *symbols.Symbol
@@ -3226,6 +3385,15 @@ func checkHeapExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 	if operandType == nil || operandType.Equals(types.TypeUnknown) {
 		return
 	}
+	if types.IsHeapType(operandType) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot heap allocate an already heap-owned value").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.Loc(), "value already has type '#T'").
+				WithHelp("remove '#' or move ownership with '@'"),
+		)
+		return
+	}
 	operandType = types.UnwrapType(operandType)
 	if arr, ok := operandType.(*types.ArrayType); ok && arr.Length < 0 {
 		ctx.Diagnostics.Add(
@@ -3272,6 +3440,102 @@ func heapUnaryExpr(expr ast.Expression) *ast.UnaryExpr {
 		}
 	}
 	return nil
+}
+
+func moveExpr(expr ast.Expression) bool {
+	expr = unwrapParenExprAST(expr)
+	if e, ok := expr.(*ast.UnaryExpr); ok {
+		return e.Op.Kind == tokens.AT_TOKEN
+	}
+	return false
+}
+
+func resourceCopySourceExpr(expr ast.Expression) bool {
+	expr = unwrapParenExprAST(expr)
+	switch e := expr.(type) {
+	case *ast.IdentifierExpr, *ast.ScopeResolutionExpr, *ast.SelectorExpr, *ast.IndexExpr, *ast.DerefExpr:
+		return true
+	case *ast.CastExpr:
+		return resourceCopySourceExpr(e.X)
+	case *ast.UnaryExpr:
+		// @x is explicit move; #x allocates a fresh owner; borrows are non-owning.
+		switch e.Op.Kind {
+		case tokens.AT_TOKEN, tokens.HASH_TOKEN, tokens.BIT_AND_TOKEN, tokens.MUT_TOKEN:
+			return false
+		default:
+			return resourceCopySourceExpr(e.X)
+		}
+	default:
+		return false
+	}
+}
+
+func reportImplicitResourceCopy(ctx *context_v2.CompilerContext, targetType, sourceType types.SemType, sourceExpr ast.Expression, op string) bool {
+	if sourceExpr == nil {
+		return false
+	}
+	if moveExpr(sourceExpr) {
+		return false
+	}
+	if !types.ContainsResourceType(targetType) || !types.ContainsResourceType(sourceType) {
+		return false
+	}
+	if !resourceCopySourceExpr(sourceExpr) {
+		return false
+	}
+
+	diag := diagnostics.NewError("resource values are non-copyable; explicit move required").
+		WithCode(diagnostics.ErrInvalidOperation).
+		WithPrimaryLabel(sourceExpr.Loc(), fmt.Sprintf("implicit resource copy in %s", op)).
+		WithHelp("use '@value' to move ownership, or pass a reference with '&'/'&mut'")
+	ctx.Diagnostics.Add(diag)
+	return true
+}
+
+func unwrapParenExprAST(expr ast.Expression) ast.Expression {
+	for expr != nil {
+		p, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = p.X
+	}
+	return nil
+}
+
+func producesHeapOwnership(expr ast.Expression) bool {
+	expr = unwrapParenExprAST(expr)
+	switch e := expr.(type) {
+	case *ast.UnaryExpr:
+		return e.Op.Kind == tokens.AT_TOKEN || e.Op.Kind == tokens.HASH_TOKEN
+	case *ast.CallExpr:
+		return true
+	default:
+		return false
+	}
+}
+
+func referencesHeapOwnerValue(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression) bool {
+	expr = unwrapParenExprAST(expr)
+	switch e := expr.(type) {
+	case *ast.IdentifierExpr:
+		if mod == nil || mod.CurrentScope == nil {
+			return false
+		}
+		sym, ok := mod.CurrentScope.Lookup(e.Name)
+		if !ok || sym == nil {
+			return false
+		}
+		return types.IsHeapType(sym.Type)
+	case *ast.ScopeResolutionExpr:
+		sym, ok := resolveScopeResolutionSymbol(ctx, mod, e)
+		if !ok || sym == nil {
+			return false
+		}
+		return types.IsHeapType(sym.Type)
+	default:
+		return false
+	}
 }
 
 func isReferenceType(typ types.SemType) bool {
@@ -3453,8 +3717,16 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		checkModuleScopeUseBeforeDecl(ctx, mod, e)
 		sym, ok := mod.CurrentScope.Lookup(e.Name)
 		if ok && sym != nil {
-			mod.SetExprType(expr, sym.Type)
-			return sym.Type
+			resolved := sym.Type
+			if heapType, ok := types.UnwrapType(sym.Type).(*types.HeapType); ok {
+				// In value context, #T reads as T.
+				// Keep #T only when the surrounding context explicitly expects heap ownership.
+				if _, expectHeap := types.UnwrapType(expected).(*types.HeapType); !expectHeap {
+					resolved = heapType.Inner
+				}
+			}
+			mod.SetExprType(expr, resolved)
+			return resolved
 		}
 		return types.TypeUnknown
 	case *ast.EnumType:
@@ -3619,14 +3891,25 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 			return refType
 		}
 		if e.Op.Kind == tokens.AT_TOKEN {
-			checkMoveExpr(ctx, mod, e, operandType)
-			mod.SetExprType(expr, operandType)
-			return operandType
+			moveType := operandType
+			if ident, ok := unwrapParenExprAST(e.X).(*ast.IdentifierExpr); ok && mod != nil && mod.CurrentScope != nil {
+				if sym, found := mod.CurrentScope.Lookup(ident.Name); found && sym != nil && types.IsHeapType(sym.Type) {
+					moveType = sym.Type
+				}
+			}
+			checkMoveExpr(ctx, mod, e, moveType)
+			mod.SetExprType(expr, moveType)
+			return moveType
 		}
 		if e.Op.Kind == tokens.HASH_TOKEN {
 			checkHeapExpr(ctx, mod, e, operandType)
-			mod.SetExprType(expr, operandType)
-			return operandType
+			if types.IsHeapType(operandType) {
+				mod.SetExprType(expr, types.TypeUnknown)
+				return types.TypeUnknown
+			}
+			heapType := types.NewHeap(operandType)
+			mod.SetExprType(expr, heapType)
+			return heapType
 		}
 
 		checkUnaryOp(ctx, e, operandType)
@@ -3948,6 +4231,25 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, leftType types.SemType, leftNode ast.Node, rightNode ast.Expression) {
 	// Pass leftType as expected type so composite literals can be contextualized
 	rhsType := checkExpr(ctx, mod, rightNode, leftType)
+
+	if reportImplicitResourceCopy(ctx, leftType, rhsType, rightNode, "assignment") {
+		return
+	}
+
+	if _, lhsHeap := types.UnwrapType(leftType).(*types.HeapType); lhsHeap {
+		if _, rhsHeap := types.UnwrapType(rhsType).(*types.HeapType); rhsHeap && !producesHeapOwnership(rightNode) {
+			diag := diagnostics.NewError("heap ownership assignment requires an explicit move or allocation")
+			if rightNode != nil {
+				diag = diag.WithPrimaryLabel(rightNode.Loc(), "this expression does not transfer ownership")
+			}
+			if leftNode != nil {
+				diag = diag.WithSecondaryLabel(leftNode.Loc(), "target expects '#T'")
+			}
+			diag = diag.WithHelp("use '@value' to move ownership or '#expr' to allocate a new heap value")
+			ctx.Diagnostics.Add(diag)
+			return
+		}
+	}
 
 	// Special check for integer literals: ensure they fit in the target type
 	if ok := checkFitness(ctx, leftType, rightNode, leftNode); !ok {
@@ -4769,6 +5071,20 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 		}
 		return types.NewReference(innerType)
 
+	case *ast.HeapType:
+		innerType := TypeFromTypeNodeWithContext(ctx, mod, t.Base)
+		if _, ok := types.UnwrapType(innerType).(*types.HeapType); ok {
+			if ctx != nil {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("nested heap types are not supported").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(t.Base.Loc(), "use a single '#' type wrapper"),
+				)
+			}
+			return types.TypeUnknown
+		}
+		return types.NewHeap(innerType)
+
 	case *ast.ResultType:
 		// Result type: T ! E
 		okType := TypeFromTypeNodeWithContext(ctx, mod, t.Value)
@@ -4813,9 +5129,13 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 		// Function type: fn(T1, T2) -> R
 		params := make([]types.ParamType, len(t.Params))
 		for i, param := range t.Params {
-			params[i].Name = param.Name.Name
+			if param.Name != nil {
+				params[i].Name = param.Name.Name
+			}
 			params[i].Type = TypeFromTypeNodeWithContext(ctx, mod, param.Type)
 			params[i].IsVariadic = param.IsVariadic
+			params[i].IsMove = param.IsMove
+			params[i].HasDefault = param.Default != nil
 		}
 		returnType := types.TypeVoid
 		if t.Result != nil {
@@ -4848,9 +5168,13 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 			if funcType, ok := m.Type.(*ast.FuncType); ok {
 				params := make([]types.ParamType, len(funcType.Params))
 				for j, param := range funcType.Params {
-					params[j].Name = param.Name.Name
+					if param.Name != nil {
+						params[j].Name = param.Name.Name
+					}
 					params[j].Type = TypeFromTypeNodeWithContext(ctx, mod, param.Type)
 					params[j].IsVariadic = param.IsVariadic
+					params[j].IsMove = param.IsMove
+					params[j].HasDefault = param.Default != nil
 				}
 				returnType := types.TypeVoid
 				if funcType.Result != nil {
@@ -4929,11 +5253,81 @@ func checkCallExprWithPipe(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 		return
 	}
 
+	expandCallDefaultArgs(ctx, mod, expr, funcType)
+
 	// 4. Validate argument count
 	validateCallArgumentCount(ctx, mod, expr, funcType)
 
 	// 5. Validate argument types
 	validateCallArgumentTypes(ctx, mod, expr, funcType, pipeInfo)
+}
+
+func callableDeclParams(ctx *context_v2.CompilerContext, mod *context_v2.Module, fun ast.Expression) []ast.Field {
+	switch target := fun.(type) {
+	case *ast.IdentifierExpr:
+		if sym, ok := mod.CurrentScope.Lookup(target.Name); ok && sym != nil {
+			if decl, ok := sym.Decl.(*ast.FuncDecl); ok && decl != nil && decl.Type != nil {
+				return decl.Type.Params
+			}
+		}
+	case *ast.ScopeResolutionExpr:
+		if sym, ok := resolveScopeResolutionSymbol(ctx, mod, target); ok && sym != nil {
+			if decl, ok := sym.Decl.(*ast.FuncDecl); ok && decl != nil && decl.Type != nil {
+				return decl.Type.Params
+			}
+		}
+	case *ast.SelectorExpr:
+		baseType := inferExprType(ctx, mod, target.X)
+		baseType = autoDerefBaseType(target, baseType)
+		named, ok := baseType.(*types.NamedType)
+		if !ok {
+			return nil
+		}
+		typeSym, found := lookupTypeSymbol(ctx, mod, named.Name)
+		if !found || typeSym == nil || typeSym.Methods == nil {
+			return nil
+		}
+		method, ok := typeSym.Methods[target.Field.Name]
+		if !ok || method == nil || method.Decl == nil || method.Decl.Type == nil {
+			return nil
+		}
+		return method.Decl.Type.Params
+	}
+
+	return nil
+}
+
+func expandCallDefaultArgs(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, funcType *types.FunctionType) {
+	if expr == nil || funcType == nil {
+		return
+	}
+
+	// Spread arguments make argument arity dynamic; skip default expansion here.
+	for _, arg := range expr.Args {
+		if _, ok := arg.(*ast.SpreadExpr); ok {
+			return
+		}
+	}
+
+	paramCount := len(funcType.Params)
+	if len(expr.Args) >= paramCount {
+		return
+	}
+
+	paramDecls := callableDeclParams(ctx, mod, expr.Fun)
+	if len(paramDecls) != paramCount {
+		return
+	}
+
+	for i := len(expr.Args); i < paramCount; i++ {
+		if i < len(funcType.Params) && funcType.Params[i].IsVariadic {
+			return
+		}
+		if !funcType.Params[i].HasDefault || paramDecls[i].Default == nil {
+			return
+		}
+		expr.Args = append(expr.Args, paramDecls[i].Default)
+	}
 }
 
 // validateCallArgumentCount checks if the number of arguments matches the function signature
@@ -5057,6 +5451,18 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 				continue
 			}
 		}
+		if reportImplicitResourceCopy(ctx, param.Type, argType, arg, "function argument") {
+			continue
+		}
+		if param.IsMove && !moveExpr(arg) && resourceCopySourceExpr(arg) {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("argument '%s' must be moved", param.Name)).
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(argLoc, "expected explicit move").
+					WithHelp("use '@value' for move-qualified parameters"),
+			)
+			continue
+		}
 
 		if ok := checkFitness(ctx, param.Type, arg, nil); !ok {
 			continue
@@ -5153,6 +5559,18 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 					)
 					continue
 				}
+			}
+			if reportImplicitResourceCopy(ctx, variadicElemType, argType, arg, "variadic argument") {
+				continue
+			}
+			if variadicParam.IsMove && !moveExpr(arg) && resourceCopySourceExpr(arg) {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("argument '%s' must be moved", variadicParam.Name)).
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(argLoc, "expected explicit move").
+						WithHelp("use '@value' for move-qualified parameters"),
+				)
+				continue
 			}
 
 			if ok := checkFitness(ctx, variadicElemType, arg, nil); !ok {

@@ -442,6 +442,7 @@ func (g *Generator) lowerParam(field *ast.Field) *hir.Param {
 		Name:       name,
 		Type:       g.typeFromNode(field.Type),
 		IsVariadic: field.IsVariadic,
+		IsMove:     field.IsMove,
 		Location:   field.Location,
 	}
 }

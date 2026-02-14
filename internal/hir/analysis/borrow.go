@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"maps"
 	"compiler/internal/context_v2"
 	"compiler/internal/diagnostics"
 	"compiler/internal/hir"
@@ -56,15 +57,16 @@ type borrowScope struct {
 }
 
 type borrowChecker struct {
-	ctx       *context_v2.CompilerContext
-	mod       *context_v2.Module
-	borrows   map[*symbols.Symbol][]borrowEntry
-	bindings  map[*symbols.Symbol]borrowBinding
-	moved     map[*symbols.Symbol]*source.Location
-	scopes    []borrowScope
-	temp      []borrowRecord
-	locals    map[*symbols.Symbol]struct{}
-	localRefs map[*symbols.Symbol]localRefUse
+	ctx        *context_v2.CompilerContext
+	mod        *context_v2.Module
+	borrows    map[*symbols.Symbol][]borrowEntry
+	bindings   map[*symbols.Symbol]borrowBinding
+	moved      map[*symbols.Symbol]*source.Location
+	deferDepth int
+	scopes     []borrowScope
+	temp       []borrowRecord
+	locals     map[*symbols.Symbol]struct{}
+	localRefs  map[*symbols.Symbol]localRefUse
 }
 
 type lastUseInfo struct {
@@ -218,9 +220,11 @@ func (b *borrowChecker) checkNode(node hir.Node) {
 	case *hir.MatchStmt:
 		b.checkMatchStmt(n)
 	case *hir.DeferStmt:
+		b.deferDepth++
 		b.withTempScope(func() {
 			b.checkExpr(n.Call)
 		})
+		b.deferDepth--
 	}
 }
 
@@ -370,9 +374,7 @@ func (b *borrowChecker) checkLoopBodyMoves(body *hir.Block, loopLoc *source.Loca
 
 	// Snapshot moved state and locals before analyzing body
 	movedBefore := make(map[*symbols.Symbol]*source.Location, len(b.moved))
-	for sym, loc := range b.moved {
-		movedBefore[sym] = loc
-	}
+	maps.Copy(movedBefore, b.moved)
 	localsBefore := make(map[*symbols.Symbol]struct{}, len(b.locals))
 	for sym := range b.locals {
 		localsBefore[sym] = struct{}{}
@@ -557,8 +559,14 @@ func (b *borrowChecker) checkMethodCall(call *hir.CallExpr) {
 		return
 	}
 
+	method := b.methodInfoForSelector(selector)
+	if method == nil {
+		b.checkExpr(call.Fun)
+		return
+	}
+
 	// Get method info by looking up the method in the receiver type
-	if b.requiresMutableReceiver(selector) {
+	if b.requiresMutableReceiver(method) {
 		// Method needs &mut receiver, check if we can get mutable borrow
 		place, via := b.borrowAccessPlace(selector.X)
 		if place.base != nil {
@@ -576,45 +584,144 @@ func (b *borrowChecker) checkMethodCall(call *hir.CallExpr) {
 			}
 		}
 	}
+	if b.isMoveReceiver(method) && b.deferDepth == 0 {
+		if !b.canMoveMethodReceiver(selector) {
+			b.checkExpr(call.Fun)
+			return
+		}
+	}
 
 	// Now check the function expression normally
 	b.checkExpr(call.Fun)
+	if b.isMoveReceiver(method) && b.deferDepth == 0 {
+		b.markMethodReceiverMoved(selector)
+	}
 }
 
-func (b *borrowChecker) requiresMutableReceiver(selector *hir.SelectorExpr) bool {
-	if selector == nil || selector.Field == nil {
+func (b *borrowChecker) isMoveReceiver(method *symbols.MethodInfo) bool {
+	if method == nil {
 		return false
+	}
+	if method.ReceiverIsMove {
+		return true
+	}
+	if method.Decl != nil && method.Decl.Receiver != nil {
+		return method.Decl.Receiver.IsMove
+	}
+	return false
+}
+
+func (b *borrowChecker) requiresMutableReceiver(method *symbols.MethodInfo) bool {
+	if method == nil || method.Receiver == nil {
+		return false
+	}
+	refType, ok := types.UnwrapType(method.Receiver).(*types.ReferenceType)
+	return ok && refType.Mutable
+}
+
+func (b *borrowChecker) methodInfoForSelector(selector *hir.SelectorExpr) *symbols.MethodInfo {
+	if selector == nil || selector.Field == nil {
+		return nil
 	}
 
 	baseType := exprType(selector.X) // typename
 	if baseType == nil {
-		return false
+		return nil
 	}
 
 	baseType = types.DereferenceType(baseType)
 
 	named, ok := baseType.(*types.NamedType)
 	if !ok || named.Name == "" {
-		return false
+		return nil
 	}
 
-	// Look up type symbol using existing module scope pattern
-	var typeSym *symbols.Symbol
-	if sym, found := b.mod.ModuleScope.Lookup(named.Name); found && sym.Kind == symbols.SymbolType {
-		typeSym = sym
-	}
-
-	if typeSym == nil || typeSym.Methods == nil {
-		return false
+	typeSym, found := b.lookupTypeSymbol(named.Name)
+	if !found || typeSym == nil || typeSym.Methods == nil {
+		return nil
 	}
 
 	method, ok := typeSym.Methods[selector.Field.Name]
-	if !ok || method == nil || method.Receiver == nil {
+	if !ok || method == nil {
+		return nil
+	}
+	return method
+}
+
+func (b *borrowChecker) lookupTypeSymbol(name string) (*symbols.Symbol, bool) {
+	if b == nil || b.mod == nil || b.mod.ModuleScope == nil {
+		return nil, false
+	}
+	if sym, ok := b.mod.ModuleScope.GetSymbol(name); ok && sym.Kind == symbols.SymbolType {
+		return sym, true
+	}
+	if b.ctx == nil || b.mod.ImportAliasMap == nil {
+		return nil, false
+	}
+	for _, importPath := range b.mod.ImportAliasMap {
+		importedMod, exists := b.ctx.GetModule(importPath)
+		if !exists || importedMod == nil || importedMod.ModuleScope == nil {
+			continue
+		}
+		if sym, ok := importedMod.ModuleScope.GetSymbol(name); ok && sym.Kind == symbols.SymbolType {
+			return sym, true
+		}
+	}
+	return nil, false
+}
+
+func (b *borrowChecker) canMoveMethodReceiver(selector *hir.SelectorExpr) bool {
+	if selector == nil {
+		return true
+	}
+	ident := directIdent(selector.X)
+	if ident == nil || ident.Symbol == nil {
+		return true
+	}
+	if isReferenceSymbol(ident.Symbol) {
+		diag := diagnostics.NewError(fmt.Sprintf("cannot move '%s' because it is a reference", ident.Symbol.Name)).
+			WithCode(diagnostics.ErrInvalidOperation)
+		if selector.X.Loc() != nil {
+			diag = diag.WithPrimaryLabel(selector.X.Loc(), "receiver move requires an owned value")
+		}
+		b.ctx.Diagnostics.Add(diag)
 		return false
 	}
+	if !b.checkNotMoved(ident.Symbol, selector.Loc()) {
+		return false
+	}
+	entries := b.borrows[ident.Symbol]
+	if entry, ok := b.findBorrow(entries, ident.Symbol, nil, nil, nil); ok {
+		releaseLoc := b.borrowReleaseLoc(ident.Symbol, entry)
+		diag := diagnostics.NewError(fmt.Sprintf("cannot move '%s' because it is borrowed", ident.Symbol.Name)).
+			WithCode(diagnostics.ErrInvalidOperation)
+		if selector.Loc() != nil {
+			diag = diag.WithPrimaryLabel(selector.Loc(), "move receiver here")
+		}
+		if entry.loc != nil {
+			diag = diag.WithSecondaryLabel(entry.loc, "borrowed here")
+		}
+		if releaseLoc != nil && releaseLoc != entry.loc {
+			diag = diag.WithSecondaryLabel(releaseLoc, "borrow ends here")
+		}
+		b.ctx.Diagnostics.Add(diag)
+		return false
+	}
+	return true
+}
 
-	refType, ok := types.UnwrapType(method.Receiver).(*types.ReferenceType)
-	return ok && refType.Mutable
+func (b *borrowChecker) markMethodReceiverMoved(selector *hir.SelectorExpr) {
+	if selector == nil {
+		return
+	}
+	ident := directIdent(selector.X)
+	if ident == nil || ident.Symbol == nil {
+		return
+	}
+	if isReferenceSymbol(ident.Symbol) {
+		return
+	}
+	b.markMoved(ident.Symbol, selector.Loc())
 }
 
 func (b *borrowChecker) checkCatchClause(clause *hir.CatchClause) {
@@ -1290,7 +1397,7 @@ func (b *borrowChecker) checkReturnMove(expr hir.Expr) {
 	if _, ok := b.locals[ident.Symbol]; !ok {
 		return
 	}
-	if ident.Symbol.IsHeap {
+	if isHeapOwnedSymbol(ident.Symbol) {
 		return
 	}
 	diag := diagnostics.NewError(fmt.Sprintf("cannot return moved local '%s'", ident.Symbol.Name)).
@@ -1768,6 +1875,17 @@ func isReferenceSymbol(sym *symbols.Symbol) bool {
 	return isReferenceType(sym.Type)
 }
 
+func isHeapOwnedSymbol(sym *symbols.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	if _, ok := types.UnwrapType(sym.Type).(*types.HeapType); ok {
+		return true
+	}
+	// Backward-compatible fallback while migrating old symbol metadata.
+	return sym.IsHeap
+}
+
 func (b *borrowChecker) updateLocalRefSymbol(name *hir.Ident, expr hir.Expr, allowClear bool) {
 	if name == nil || name.Symbol == nil || expr == nil {
 		return
@@ -1983,6 +2101,8 @@ func typeContainsReferenceHelper(t types.SemType, seen map[types.SemType]bool) b
 	switch tt := t.(type) {
 	case *types.ReferenceType:
 		return true
+	case *types.HeapType:
+		return typeContainsReferenceHelper(tt.Inner, seen)
 	case *types.OptionalType:
 		return typeContainsReferenceHelper(tt.Inner, seen)
 	case *types.ResultType:

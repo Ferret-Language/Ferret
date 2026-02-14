@@ -192,13 +192,19 @@ type ParamType struct {
 	Name       string
 	Type       SemType
 	IsVariadic bool // true if this is a variadic parameter (...type)
+	IsMove     bool // true if argument must be passed via explicit move (@arg) for lvalues
+	HasDefault bool // true if parameter has a default value in declaration syntax
 }
 
 func (p *ParamType) String() string {
-	if p.IsVariadic {
-		return fmt.Sprintf("%s: ...%s", p.Name, p.Type.String())
+	prefix := ""
+	if p.IsMove {
+		prefix = "@"
 	}
-	return fmt.Sprintf("%s: %s", p.Name, p.Type.String())
+	if p.IsVariadic {
+		return fmt.Sprintf("%s: ...%s%s", p.Name, prefix, p.Type.String())
+	}
+	return fmt.Sprintf("%s: %s%s", p.Name, prefix, p.Type.String())
 }
 
 type FunctionType struct {
@@ -242,6 +248,12 @@ func (f *FunctionType) Equals(other SemType) bool {
 			}
 			// Check variadic flag must match
 			if f.Params[i].IsVariadic != ft.Params[i].IsVariadic {
+				return false
+			}
+			if f.Params[i].IsMove != ft.Params[i].IsMove {
+				return false
+			}
+			if f.Params[i].HasDefault != ft.Params[i].HasDefault {
 				return false
 			}
 		}
@@ -354,6 +366,32 @@ func (r *ReferenceType) isType() {}
 func (r *ReferenceType) Equals(other SemType) bool {
 	if rt, ok := other.(*ReferenceType); ok {
 		return r.Mutable == rt.Mutable && r.Inner.Equals(rt.Inner)
+	}
+	return false
+}
+
+// HeapType represents owning heap values: #T
+type HeapType struct {
+	Inner SemType
+}
+
+func NewHeap(inner SemType) *HeapType {
+	return &HeapType{Inner: inner}
+}
+
+func (h *HeapType) String() string {
+	return fmt.Sprintf("#%s", h.Inner.String())
+}
+
+func (h *HeapType) Size() int {
+	return 8 // pointer-sized owning handle
+}
+
+func (h *HeapType) isType() {}
+
+func (h *HeapType) Equals(other SemType) bool {
+	if ht, ok := other.(*HeapType); ok {
+		return h.Inner.Equals(ht.Inner)
 	}
 	return false
 }
@@ -609,10 +647,15 @@ func (i *InterfaceType) Equals(other SemType) bool {
 type NamedType struct {
 	Name       string  // The declared name (e.g., "Point", "UserId")
 	Underlying SemType // The actual type (struct, primitive, another NamedType, etc.)
+	Resource   bool    // True for compiler/runtime resource handles (non-copyable by default)
 }
 
 func NewNamed(name string, underlying SemType) *NamedType {
 	return &NamedType{Name: name, Underlying: underlying}
+}
+
+func NewResourceNamed(name string, underlying SemType) *NamedType {
+	return &NamedType{Name: name, Underlying: underlying, Resource: true}
 }
 
 func (n *NamedType) String() string {

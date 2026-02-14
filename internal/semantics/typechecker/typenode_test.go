@@ -63,3 +63,17 @@ func TestTypeFromTypeNodeEnum(t *testing.T) {
 		t.Fatalf("enum variant names = %q, %q", enumType.Variants[0].Name, enumType.Variants[1].Name)
 	}
 }
+
+func TestTypeFromTypeNodeHeap(t *testing.T) {
+	typeNode := &ast.HeapType{
+		Base: &ast.IdentifierExpr{Name: "i32", Location: source.Location{}},
+	}
+	typ := TypeFromTypeNodeWithContext(nil, nil, typeNode)
+	heap, ok := typ.(*types.HeapType)
+	if !ok {
+		t.Fatalf("TypeFromTypeNodeWithContext(heap) returned %T, want *types.HeapType", typ)
+	}
+	if !heap.Inner.Equals(types.TypeI32) {
+		t.Fatalf("heap inner type = %s, want %s", heap.Inner.String(), types.TypeI32.String())
+	}
+}

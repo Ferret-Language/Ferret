@@ -25,6 +25,9 @@ func IsMapKeyComparable(t SemType) bool {
 	case *ReferenceType:
 		// Pointers are comparable (by address)
 		return true
+	case *HeapType:
+		// Heap owners are pointer-like and comparable by address identity.
+		return true
 	case *StructType:
 		// Structs are comparable if ALL fields are comparable
 		for _, field := range v.Fields {

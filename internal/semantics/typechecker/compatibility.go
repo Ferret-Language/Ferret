@@ -333,6 +333,30 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 		return Incompatible
 	}
 
+	// Heap ownership compatibility (#T)
+	if srcHeap, ok := types.UnwrapType(source).(*types.HeapType); ok {
+		if tgtHeap, ok := types.UnwrapType(target).(*types.HeapType); ok {
+			innerCompat := checkTypeCompatibility(srcHeap.Inner, tgtHeap.Inner)
+			if innerCompat == Identical || innerCompat == ImplicitCastable {
+				if srcHeap.Inner.Equals(tgtHeap.Inner) {
+					return Identical
+				}
+				return ImplicitCastable
+			}
+			return Incompatible
+		}
+		// Reading #T as T is allowed in value contexts.
+		innerCompat := checkTypeCompatibility(srcHeap.Inner, target)
+		if innerCompat == Identical || innerCompat == ImplicitCastable {
+			return ImplicitCastable
+		}
+		return Incompatible
+	}
+	if _, ok := types.UnwrapType(target).(*types.HeapType); ok {
+		// Constructing heap ownership must be explicit (`#expr`) or via ownership transfer.
+		return Incompatible
+	}
+
 	// Optional type compatibility (handle before reference checks)
 	if tgtOpt, ok := types.UnwrapType(target).(*types.OptionalType); ok {
 		if source.Equals(types.TypeNone) {

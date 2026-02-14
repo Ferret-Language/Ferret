@@ -1,0 +1,3 @@
+fn Log(s: str) {
+    // do nothing
+}

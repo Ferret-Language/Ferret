@@ -48,6 +48,9 @@ func markHeapReturnFunctions(_ *context_v2.CompilerContext, mod *context_v2.Modu
 
 	heapReturns := make(map[string]types.SemType)
 	for name, exprs := range fnReturns {
+		if _, alreadyHeapTyped := types.UnwrapType(fnRetTypes[name]).(*types.HeapType); alreadyHeapTyped {
+			continue
+		}
 		for _, expr := range exprs {
 			if isHeapMoveReturn(expr) {
 				heapReturns[name] = fnRetTypes[name]
@@ -61,6 +64,9 @@ func markHeapReturnFunctions(_ *context_v2.CompilerContext, mod *context_v2.Modu
 		changed = false
 		for name, exprs := range fnReturns {
 			if _, ok := heapReturns[name]; ok {
+				continue
+			}
+			if _, alreadyHeapTyped := types.UnwrapType(fnRetTypes[name]).(*types.HeapType); alreadyHeapTyped {
 				continue
 			}
 			for _, expr := range exprs {
@@ -174,6 +180,10 @@ func isHeapMoveReturn(expr hir.Expr) bool {
 	if !ok || ident.Symbol == nil {
 		return false
 	}
+	if _, ok := types.UnwrapType(ident.Symbol.Type).(*types.HeapType); ok {
+		return true
+	}
+	// Backward-compatible fallback while migrating old symbol metadata.
 	return ident.Symbol.IsHeap
 }
 
