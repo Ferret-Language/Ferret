@@ -28,7 +28,26 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive
+
+      - name: Update submodules (with fallback)
+        shell: bash
+        run: |
+          set -euo pipefail
+          urls=(
+            "https://c9x.me/git/qbe.git"
+            "git://c9x.me/git/qbe.git"
+          )
+          for url in "${urls[@]}"; do
+            echo "Trying qbe submodule from $url"
+            git config -f .gitmodules submodule.qbe.url "$url"
+            git submodule sync --recursive
+            if GIT_HTTP_VERSION=HTTP/1.1 git submodule update --init --recursive; then
+              echo "Submodule fetched from $url"
+              exit 0
+            fi
+          done
+          echo "Failed to fetch qbe submodule from all mirrors"
+          exit 1
 
       - name: Setup Go
         uses: actions/setup-go@v5

@@ -1,0 +1,268 @@
+flowchart TD
+  %% Ferret Compiler Architecture (Current Semantics)
+
+  %% =======================
+  %% INPUTS & SETUP
+  %% =======================
+  subgraph Inputs[Inputs]
+    direction TB
+    I1[".fer Source Files"]
+    I2["In-memory Files\n(WASM / Playground)"]
+    I3["Stdlib Modules\n(libs/*.fer or embedded)"]
+    I4["Package Manifest\n(fer.toml)"]
+  end
+
+  %% =======================
+  %% COMPILER CONTEXT
+  %% =======================
+  subgraph Context["Compiler Context\n(context_v2.CompilerContext)"]
+    direction TB
+    C1[("Module Registry\n(import path -> Module)")]
+    C2["Dependency Graph\n(import path -> imports)"]
+    C3["Topological Order\n(sortedModules)"]
+    C4["Universe Scope\n(built-in symbols + globals)"]
+    C5["Config\n(backend, pointer size, paths)"]
+    C6[("Module Artifacts\n(HIR, Lowered HIR, MIR,\nNarrowing, Heap Returns)")]
+  end
+
+  %% =======================
+  %% DIAGNOSTICS
+  %% =======================
+  subgraph Diagnostics["Diagnostics\n(diagnostics/)"]
+    direction TB
+    D1["DiagnosticBag\n(thread-safe)"]
+    D2[("SourceCache\n(file line cache)")]
+    D3["Emitter\n(ANSI/HTML rendering)"]
+    D4["Error Codes\n(L/P/T/M/S/W prefixes)"]
+  end
+
+  D1 -->|Format| D3
+  D1 -->|Cache Source| D2
+  D4 -->|Code Lookup| D3
+
+  %% =======================
+  %% PIPELINE ORCHESTRATOR
+  %% =======================
+  subgraph Pipeline["Pipeline Orchestrator\n(pipeline/)"]
+    direction TB
+    P1["Parallel Parse\n(sync.Map + WaitGroup)"]
+    P2["Compute Topological Order"]
+    P3["Entry Check\n(ensure main)"]
+    P4["Runtime Audit\n(builtin symbols vs runtime C)"]
+  end
+
+  %% =======================
+  %% PHASE 1: LEX + PARSE
+  %% =======================
+  subgraph Phase1["Phase 1: Lex + Parse\n(Parallel per Module)"]
+    direction TB
+    L1["Lexer\n(frontend/lexer)\nRegex-based"]
+    L2["Parser\n(frontend/parser)\nRecursive descent"]
+    L3[("AST\n(frontend/ast)")]
+    L4["Import Scan\n(top-level only)"]
+
+    L1 -->|Token Stream| L2
+    L2 -->|Build Tree| L3
+    L3 -->|Extract Imports| L4
+  end
+
+  %% =======================
+  %% PHASE 2: SYMBOL COLLECTION
+  %% =======================
+  subgraph Phase2["Phase 2: Symbol Collection\n(collector/)"]
+    direction TB
+    S1["Pass 1: Declarations\n(types, funcs, vars, consts)"]
+    S2["Pass 2: Function Bodies"]
+    S3["Pass 3: Method Bodies"]
+    S4[("Symbol Tables\n(module + nested scopes)")]
+    S5["Import Aliases\n(map alias -> import path)"]
+
+    S1 -->|Declare Names| S4
+    S2 -->|Bind Locals| S4
+    S3 -->|Bind Methods| S4
+    S1 -->|Track Imports| S5
+  end
+
+  %% =======================
+  %% PHASE 3: RESOLUTION
+  %% =======================
+  subgraph Phase3["Phase 3: Resolution\n(resolver/)"]
+    direction TB
+    R1["Resolver\n(scope walking + name binding)"]
+    R2["Identifier Binding\n(scope lookup + imports)"]
+
+    R1 -->|Bind Names| R2
+  end
+
+  %% =======================
+  %% PHASE 4: TYPE CHECKING
+  %% =======================
+  subgraph Phase4["Phase 4: Type Checking\n(typechecker/)"]
+    direction TB
+    T1["Top-Level Signature Pass\n(types + method signatures)"]
+    T2["Type Inference\n(untyped literals, defaults)"]
+    T3["Type Compatibility\n(assignability + casts)"]
+    T4["Flow-Narrowing\n(optionals, unions, interface{})"]
+    T5["Optional/Result Checking\n(unwrap, propagate, catch)"]
+
+    T1 -->|Seed Types| T2
+    T2 -->|Check Assignments| T3
+    T4 -->|Validate Uses| T5
+  end
+
+  %% =======================
+  %% PHASE 5: HIR GENERATION
+  %% =======================
+  subgraph Phase5["Phase 5: HIR Generation\n(hir/gen)"]
+    direction TB
+    H1["HIR Generator\n(typed AST -> HIR)"]
+    H2[("HIR Module\n(source-shaped, typed)")]
+
+    H1 -->|Lower AST| H2
+  end
+
+  %% =======================
+  %% PHASE 6: HIR ANALYSIS
+  %% =======================
+  subgraph Phase6["Phase 6: HIR Analysis\n(hir/analysis)"]
+    direction TB
+    A1["CFG Builder\n(basic blocks)"]
+    A2["Return/Loop Analysis\n(missing return, unreachable)"]
+    A3["Const Propagation\n+ Array Bounds"]
+    A4["Dead Code Detection\n(constant conditions)"]
+    A5["Borrow Checking\n(ref rules)"]
+    A6["Heap Return Marking\n(for ABI)"]
+
+    A1 -->|Analyze Paths| A2
+    A3 -->|Warn| A4
+    A5 -->|Feed ABI Info| A6
+  end
+
+  %% =======================
+  %% PHASE 7: HIR LOWERING
+  %% =======================
+  subgraph Phase7["Phase 7: HIR Lowering\n(hir/lower)"]
+    direction TB
+    Lw1["HIR Lowerer\n(canonical form)"]
+    Lw2["Make Optional/Result Ops Explicit"]
+    Lw3["Temp Splitting\n(complex expressions)"]
+    Lw4[("Lowered HIR\n(canonical)")]
+
+    Lw1 -->|Canonicalize| Lw2
+    Lw1 -->|Normalize| Lw3
+    Lw2 -->|Output| Lw4
+    Lw3 -->|Output| Lw4
+  end
+
+  %% =======================
+  %% PHASE 8: MIR GENERATION
+  %% =======================
+  subgraph Phase8["Phase 8: MIR Generation\n(mir/gen)"]
+    direction TB
+    M1["MIR Generator\n(SSA-like)"]
+    M2["Data Layout\n(pointer size, alignment)"]
+    M3["Closure Lowering\n(env capture + wraps)"]
+    M4[("VTables\n(interface dispatch)")]
+    M5[("Type Descriptors\n(runtime type IDs)")]
+    M6["Module Init Function\n(global init)"]
+    M7[("MIR Module\n(functions + blocks)")]
+
+    M2 -->|Size/Align Info| M1
+    M1 -->|Lower| M3
+    M1 -->|Generate| M4
+    M1 -->|Generate| M5
+    M1 -->|Build| M6
+    M1 -->|Output| M7
+  end
+
+  subgraph MIRLowering["MIR Lowering"]
+    direction TB
+    ML1["Lower Switch\n(to compare/jump chains)"]
+  end
+
+  %% =======================
+  %% PHASE 9: CODEGEN
+  %% =======================
+  subgraph Phase9["Phase 9: Code Generation"]
+    direction TB
+    Q1["QBE Backend\n(codegen/qbe_embeddings)"]
+    Q2["QBE IR\n(.ssa)"]
+    Q3["QBE Tool\n(external)"]
+    Q4["Assembly\n(.s)"]
+
+    W1["WASM Backend\n(codegen/wasm)"]
+    W2["WASM Module\n(.wasm bytes)"]
+
+    Q1 -->|Emit| Q2
+    Q2 -->|Compile| Q3
+    Q3 -->|Generate| Q4
+
+    W1 -->|Emit| W2
+  end
+
+  %% =======================
+  %% BUILD & LINK (QBE)
+  %% =======================
+  subgraph Build["Native Build & Link\n(codegen/build)"]
+    direction TB
+    B1["Assembler\n(as / $AS)"]
+    B2["Object Files\n(.o)"]
+    B3["Linker\n(ld / $LD)"]
+    B4[("Runtime Library\n(libferret_runtime.a)")]
+    B5[("CRT Objects\n(crt1/crti/crtn or crt2/crtbegin/crtend)")]
+    B6["Executable\n(native binary)"]
+
+    B1 -->|Assemble| B2
+    B2 -->|Link| B3
+    B4 --> B3
+    B5 --> B3
+    B3 -->|Output| B6
+  end
+
+  %% =======================
+  %% DATA FLOW CONNECTIONS
+  %% =======================
+  I1 -->|Read| L1
+  I2 -->|Read| L1
+  I3 --> P1
+  I4 --> C5
+
+  P1 --> Phase1
+  L3 -->|Store Module| C1
+  L4 -->|Add Edges| C2
+  C2 -->|Compute Order| P2
+  P2 -->|Save| C3
+
+  C3 --> Phase2
+  S4 -->|Update Module| C1
+  Phase2 --> P4
+
+  C3 --> Phase3
+  R2 -->|Update Symbols| C1
+
+  C3 --> Phase4
+  T4 -->|Store Narrowing| C6
+  Phase4 -->|Errors/Warnings| D1
+
+  Phase4 -->|Typed AST| H1
+  H2 -->|Store HIR| C6
+
+  H2 --> Phase6
+  A6 -->|Store Heap Returns| C6
+
+  Phase6 --> Lw1
+  Lw4 -->|Store Lowered HIR| C6
+
+  Lw4 --> M1
+  M7 -->|Store MIR| C6
+  M7 --> ML1
+  MIRLowering --> Q1
+  MIRLowering --> W1
+
+  Q4 --> B1
+  B6 -->|Errors on failure| D1
+
+  P3 --> Phase9
+
+  Phase1 -->|Add Source Content| D1
+  D3 --> D2
