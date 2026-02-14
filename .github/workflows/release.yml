@@ -13,21 +13,25 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x86_64
           - runner: ubuntu-latest
-          # Linux ARM64
           - runner: ubuntu-24.04-arm
-          # macOS ARM64 (Apple Silicon)
           - runner: macos-latest
-          # macOS x86_64 (Intel) - available until August 2027
           - runner: macos-15-intel
-          # Windows x86_64
           - runner: windows-latest
+
     steps:
+      # Fast shallow checkout (no submodules yet)
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          fetch-depth: 1
+          submodules: false
+
+      # Manually init submodules (full clone, fixes dumb http issue)
+      - name: Init submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -51,14 +55,12 @@ jobs:
 
       - name: Clean generated files (unix)
         if: runner.os != 'Windows'
-        run: |
-          rm -rf dist stage libs
+        run: rm -rf dist stage libs
 
       - name: Clean generated files (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          Remove-Item -Recurse -Force stage, dist, libs -ErrorAction SilentlyContinue
+        run: Remove-Item -Recurse -Force stage, dist, libs -ErrorAction SilentlyContinue
 
       - name: Setup MSYS2
         if: runner.os == 'Windows'
@@ -114,14 +116,12 @@ jobs:
 
       - name: Package (unix)
         if: runner.os != 'Windows'
-        run: |
-          tar -czf "dist/${ARTIFACT_NAME}.tar.gz" -C "stage/${ARTIFACT_NAME}" .
+        run: tar -czf "dist/${ARTIFACT_NAME}.tar.gz" -C "stage/${ARTIFACT_NAME}" .
 
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          Compress-Archive -Path "stage\$env:ARTIFACT_NAME\*" -DestinationPath "dist/$env:ARTIFACT_NAME.zip"
+        run: Compress-Archive -Path "stage\$env:ARTIFACT_NAME\*" -DestinationPath "dist/$env:ARTIFACT_NAME.zip"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -135,6 +135,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Clean dist
         run: rm -rf dist
