@@ -45,6 +45,7 @@ type functionBuilder struct {
 	entry           *mir.Block
 	inDeferCatch    bool
 	catchEndLabel   mir.BlockID
+	inPanicEmission bool
 }
 
 type deferScope struct {
@@ -3836,6 +3837,15 @@ func (b *functionBuilder) heapFromValue(val mir.ValueID, typ types.SemType, loc 
 }
 
 func (b *functionBuilder) emitCall(target string, args []mir.ValueID, expr *hir.CallExpr) mir.ValueID {
+	if expr != nil && b.isPanicCallTarget(target) {
+		msg := mir.InvalidValue
+		if len(args) > 0 {
+			msg = args[0]
+		}
+		b.emitPanic(msg, expr.Location)
+		return mir.InvalidValue
+	}
+
 	retType := expr.Type
 	if ref, ok := types.UnwrapType(retType).(*types.ReferenceType); ok {
 		out := b.emitAlloca(ref.Inner, expr.Location)
@@ -3905,6 +3915,85 @@ func (b *functionBuilder) emitHeapReturnCall(target string, args []mir.ValueID, 
 	})
 	b.ptrElem[result] = inner
 	return result
+}
+
+func (b *functionBuilder) isPanicCallTarget(target string) bool {
+	nativeName, ok := b.resolveNativeCallTarget(target)
+	return ok && nativeName == "ferret_global_panic"
+}
+
+func (b *functionBuilder) resolveNativeCallTarget(target string) (string, bool) {
+	if target == "" {
+		return "", false
+	}
+	if b == nil || b.gen == nil || b.gen.mod == nil {
+		return "", false
+	}
+
+	// Qualified call: alias::function
+	if strings.Contains(target, "::") {
+		parts := strings.Split(target, "::")
+		if len(parts) < 2 {
+			return "", false
+		}
+		moduleAlias := strings.Join(parts[:len(parts)-1], "::")
+		funcName := parts[len(parts)-1]
+		if moduleAlias == "" || funcName == "" || b.gen.mod.ImportAliasMap == nil || b.gen.ctx == nil {
+			return "", false
+		}
+		importPath := b.gen.mod.ImportAliasMap[moduleAlias]
+		if importPath == "" {
+			return "", false
+		}
+		imported, ok := b.gen.ctx.GetModule(importPath)
+		if !ok || imported == nil || imported.ModuleScope == nil {
+			return "", false
+		}
+		sym, ok := imported.ModuleScope.GetSymbol(funcName)
+		if !ok || sym == nil || !sym.IsNative || sym.NativeName == "" {
+			return "", false
+		}
+		return sym.NativeName, true
+	}
+
+	// Unqualified call: local/module/global prelude symbol lookup.
+	if b.gen.mod.ModuleScope == nil {
+		return "", false
+	}
+	sym, ok := b.gen.mod.ModuleScope.Lookup(target)
+	if !ok || sym == nil || !sym.IsNative || sym.NativeName == "" {
+		return "", false
+	}
+	return sym.NativeName, true
+}
+
+func (b *functionBuilder) emitPanic(msg mir.ValueID, loc source.Location) {
+	if b.current == nil || b.current.Term != nil {
+		return
+	}
+	if msg == mir.InvalidValue {
+		msg = b.emitConst(types.TypeString, "", loc)
+	}
+
+	// Run function defers exactly once for this panic emission path.
+	if !b.inPanicEmission {
+		prev := b.inPanicEmission
+		b.inPanicEmission = true
+		b.emitDeferredCalls()
+		b.emitHeapCleanup(loc)
+		b.inPanicEmission = prev
+	}
+
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   "ferret_global_panic",
+		Args:     []mir.ValueID{msg},
+		Type:     types.TypeVoid,
+		Location: loc,
+	})
+	if b.current != nil && b.current.Term == nil {
+		b.current.Term = &mir.Unreachable{Location: loc}
+	}
 }
 
 func (b *functionBuilder) emitCallIndirect(callee mir.ValueID, args []mir.ValueID, expr *hir.CallExpr) mir.ValueID {
@@ -4753,14 +4842,7 @@ func (b *functionBuilder) emitRangeValidation(startVal, endVal, incrVal mir.Valu
 
 	b.setBlock(panicBlock)
 	msg := b.emitConst(types.TypeString, "invalid range", loc)
-	b.emitInstr(&mir.Call{
-		Result:   mir.InvalidValue,
-		Target:   "ferret_global_panic",
-		Args:     []mir.ValueID{msg},
-		Type:     types.TypeVoid,
-		Location: loc,
-	})
-	panicBlock.Term = &mir.Unreachable{Location: loc}
+	b.emitPanic(msg, loc)
 
 	b.setBlock(okBlock)
 }
@@ -5731,13 +5813,60 @@ func (b *functionBuilder) lowerMapIndexValue(expr *hir.IndexExpr, mapType *types
 		keyVal = b.castValue(keyVal, b.exprType(expr.Index), mapType.Key, expr.Location)
 	}
 
-	result := b.gen.nextValueID()
+	// Optional map lookup keeps native optional behavior.
+	if _, isOptional := types.UnwrapType(expr.Type).(*types.OptionalType); isOptional {
+		result := b.gen.nextValueID()
+		b.emitInstr(&mir.MapGet{
+			Result:   result,
+			Map:      mapVal,
+			Key:      keyVal,
+			Type:     expr.Type,
+			Location: expr.Location,
+		})
+		return result
+	}
+
+	// Direct map indexing panics on missing key.
+	// Lower as optional-get + explicit panic so panic path runs defers.
+	optType := types.NewOptional(mapType.Value)
+	optResult := b.gen.nextValueID()
 	b.emitInstr(&mir.MapGet{
-		Result:   result,
+		Result:   optResult,
 		Map:      mapVal,
 		Key:      keyVal,
-		Type:     expr.Type,
+		Type:     optType,
 		Location: expr.Location,
+	})
+
+	hasValue := b.gen.nextValueID()
+	b.emitInstr(&mir.OptionalIsSome{
+		Result:   hasValue,
+		Value:    optResult,
+		Location: expr.Location,
+	})
+
+	okBlock := b.newBlock("map.index.ok", expr.Location)
+	panicBlock := b.newBlock("map.index.panic", expr.Location)
+	b.current.Term = &mir.CondBr{
+		Cond:     hasValue,
+		Then:     okBlock.ID,
+		Else:     panicBlock.ID,
+		Location: expr.Location,
+	}
+
+	b.setBlock(panicBlock)
+	msg := b.emitConst(types.TypeString, "key not found in map", expr.Location)
+	b.emitPanic(msg, expr.Location)
+
+	b.setBlock(okBlock)
+	result := b.gen.nextValueID()
+	b.emitInstr(&mir.OptionalUnwrap{
+		Result:     result,
+		Value:      optResult,
+		Default:    mir.InvalidValue,
+		HasDefault: false,
+		Type:       mapType.Value,
+		Location:   expr.Location,
 	})
 	return result
 }
@@ -7143,6 +7272,13 @@ func (b *functionBuilder) emitLargeToString(typeName string, value mir.ValueID, 
 }
 
 func (b *functionBuilder) emitBinary(op tokens.TOKEN, left, right mir.ValueID, typ types.SemType, loc source.Location) mir.ValueID {
+	if op == tokens.DIV_TOKEN || op == tokens.MOD_TOKEN {
+		b.emitDivByZeroGuard(op, right, typ, loc)
+		if b.current == nil || b.current.Term != nil {
+			return mir.InvalidValue
+		}
+	}
+
 	if isLargePrimitiveType(typ) {
 		return b.emitLargeBinary(op, left, right, typ, loc)
 	}
@@ -7156,6 +7292,55 @@ func (b *functionBuilder) emitBinary(op tokens.TOKEN, left, right mir.ValueID, t
 		Location: loc,
 	})
 	return id
+}
+
+func (b *functionBuilder) emitDivByZeroGuard(op tokens.TOKEN, right mir.ValueID, typ types.SemType, loc source.Location) {
+	if b.current == nil || b.current.Term != nil || right == mir.InvalidValue {
+		return
+	}
+
+	baseType := types.UnwrapType(typ)
+	if baseType == nil {
+		return
+	}
+
+	var isZero mir.ValueID
+	if isLargePrimitiveType(baseType) {
+		zero := b.emitLargeConst(baseType, "0", loc)
+		if zero == mir.InvalidValue {
+			return
+		}
+		isZero = b.emitLargeCompare(tokens.DOUBLE_EQUAL_TOKEN, right, zero, baseType, loc)
+	} else {
+		zeroLiteral := "0"
+		if types.IsFloat(baseType) {
+			zeroLiteral = "0.0"
+		}
+		zero := b.emitConst(baseType, zeroLiteral, loc)
+		isZero = b.emitBinary(tokens.DOUBLE_EQUAL_TOKEN, right, zero, baseType, loc)
+	}
+	if isZero == mir.InvalidValue {
+		return
+	}
+
+	panicBlock := b.newBlock("arith.zero", loc)
+	okBlock := b.newBlock("arith.ok", loc)
+	b.current.Term = &mir.CondBr{
+		Cond:     isZero,
+		Then:     panicBlock.ID,
+		Else:     okBlock.ID,
+		Location: loc,
+	}
+
+	b.setBlock(panicBlock)
+	msgText := "division by zero"
+	if op == tokens.MOD_TOKEN {
+		msgText = "modulo by zero"
+	}
+	msg := b.emitConst(types.TypeString, msgText, loc)
+	b.emitPanic(msg, loc)
+
+	b.setBlock(okBlock)
 }
 
 func (b *functionBuilder) emitUnary(op tokens.TOKEN, value mir.ValueID, typ types.SemType, loc source.Location) mir.ValueID {
@@ -7600,14 +7785,7 @@ func (b *functionBuilder) emitBoundsCheckedIndex(indexVal, lenVal mir.ValueID, i
 
 	b.setBlock(oobBlock)
 	msg := b.emitConst(types.TypeString, "index out of bounds", loc)
-	b.emitInstr(&mir.Call{
-		Result:   mir.InvalidValue,
-		Target:   "ferret_global_panic",
-		Args:     []mir.ValueID{msg},
-		Type:     types.TypeVoid,
-		Location: loc,
-	})
-	oobBlock.Term = &mir.Unreachable{Location: loc}
+	b.emitPanic(msg, loc)
 
 	b.setBlock(okBlock)
 	return idxAdj

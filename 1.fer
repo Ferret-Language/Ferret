@@ -17,9 +17,16 @@ fn calc(a: i32, b: i32, isMul: bool = false) -> i32 {
 }
 
 fn main() {
-    let stackVar : i32 = 10;
 
-    io::Println(stackVar);
+    defer fn(){
+        io::Println("First defer");
+    }();
+
+    let stackVar : f32 = 10 / 0;
+
+    io::Println(stackVar + 1.0);
+
+    //panic("Manual error"); 
 
     let ref := &mut stackVar;
 
