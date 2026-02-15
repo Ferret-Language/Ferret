@@ -49,12 +49,10 @@ fn self_addr(value: &Type) -> u64;
 fn heap_addr(value: &Type) -> u64;
 // @extern
 fn panic(msg: str) -> void;
-
-// Compiler intrinsics for file-handle copy/drop semantics.
 // @extern
-fn __file_clone(handle: __file) -> __file;
+fn real(value: &Type) -> f256;
 // @extern
-fn __file_drop(handle: __file) -> void;
+fn imag(value: &Type) -> f256;
 
 // fn print(args: ...io::Printable) {
 //     io::Println(...args);

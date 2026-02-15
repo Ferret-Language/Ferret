@@ -62,6 +62,159 @@ func IsFloatTypeName(typeName TYPE_NAME) bool {
 	}
 }
 
+func IsComplexTypeName(typeName TYPE_NAME) bool {
+	switch typeName {
+	case TYPE_COMPLEX64, TYPE_COMPLEX, TYPE_COMPLEX256, TYPE_COMPLEX512:
+		return true
+	default:
+		return false
+	}
+}
+
+func ComplexComponentTypeName(typeName TYPE_NAME) (TYPE_NAME, bool) {
+	switch typeName {
+	case TYPE_COMPLEX64:
+		return TYPE_F32, true
+	case TYPE_COMPLEX:
+		return TYPE_F64, true
+	case TYPE_COMPLEX256:
+		return TYPE_F128, true
+	case TYPE_COMPLEX512:
+		return TYPE_F256, true
+	default:
+		return TYPE_UNKNOWN, false
+	}
+}
+
+func complexRank(typeName TYPE_NAME) int {
+	switch typeName {
+	case TYPE_COMPLEX64:
+		return 0
+	case TYPE_COMPLEX:
+		return 1
+	case TYPE_COMPLEX256:
+		return 2
+	case TYPE_COMPLEX512:
+		return 3
+	default:
+		return -1
+	}
+}
+
+func complexTypeByRank(rank int) SemType {
+	switch rank {
+	case 0:
+		return TypeComplex64
+	case 1:
+		return TypeComplex
+	case 2:
+		return TypeComplex256
+	case 3:
+		return TypeComplex512
+	default:
+		return TypeComplex
+	}
+}
+
+func ComplexTypeFromName(typeName TYPE_NAME) (SemType, bool) {
+	switch typeName {
+	case TYPE_COMPLEX64:
+		return TypeComplex64, true
+	case TYPE_COMPLEX:
+		return TypeComplex, true
+	case TYPE_COMPLEX256:
+		return TypeComplex256, true
+	case TYPE_COMPLEX512:
+		return TypeComplex512, true
+	default:
+		return nil, false
+	}
+}
+
+func ComplexTypeNameOf(t SemType) (TYPE_NAME, bool) {
+	if t == nil {
+		return TYPE_UNKNOWN, false
+	}
+	t = UnwrapType(t)
+	complexType, ok := t.(*ComplexType)
+	if !ok {
+		return TYPE_UNKNOWN, false
+	}
+	return complexType.GetName(), true
+}
+
+func ComplexComponentType(t SemType) (SemType, bool) {
+	complexName, ok := ComplexTypeNameOf(t)
+	if !ok {
+		return nil, false
+	}
+	componentName, ok := ComplexComponentTypeName(complexName)
+	if !ok {
+		return nil, false
+	}
+	return FromTypeName(componentName), true
+}
+
+func ComplexTypeForNumeric(t SemType) SemType {
+	if t == nil {
+		return TypeComplex
+	}
+	t = UnwrapType(t)
+	prim, ok := t.(*PrimitiveType)
+	if !ok {
+		return TypeComplex
+	}
+	if prim.IsUntyped() {
+		return TypeComplex
+	}
+	bits := GetNumberBitSize(prim.GetName())
+	switch {
+	case bits <= 32:
+		return TypeComplex64
+	case bits <= 64:
+		return TypeComplex
+	case bits <= 128:
+		return TypeComplex256
+	default:
+		return TypeComplex512
+	}
+}
+
+func ComplexBinaryResultType(left, right SemType) SemType {
+	if !IsComplex(left) && !IsComplex(right) {
+		return TypeUnknown
+	}
+
+	maxRank := -1
+	for _, t := range []SemType{left, right} {
+		if t == nil {
+			continue
+		}
+		if IsComplex(t) {
+			if name, ok := ComplexTypeNameOf(t); ok {
+				rank := complexRank(name)
+				if rank > maxRank {
+					maxRank = rank
+				}
+			}
+			continue
+		}
+		if IsNumericType(UnwrapType(t)) || IsUntyped(UnwrapType(t)) {
+			numericComplex := ComplexTypeForNumeric(t)
+			if name, ok := ComplexTypeNameOf(numericComplex); ok {
+				rank := complexRank(name)
+				if rank > maxRank {
+					maxRank = rank
+				}
+			}
+		}
+	}
+	if maxRank < 0 {
+		return TypeComplex
+	}
+	return complexTypeByRank(maxRank)
+}
+
 // IsLargePrimitiveTypeName checks if a type name is a 128-bit or 256-bit type
 func IsLargePrimitiveTypeName(typeName TYPE_NAME) bool {
 	switch typeName {

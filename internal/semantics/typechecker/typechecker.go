@@ -1225,6 +1225,20 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 			return
 		}
 
+		lhsComplex := types.IsComplex(lhsType)
+		rhsComplex := types.IsComplex(rhsType)
+		if lhsComplex || rhsComplex {
+			if (lhsComplex || lhsNumericOrUntyped) && (rhsComplex || rhsNumericOrUntyped) {
+				return
+			}
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("invalid complex operation: %s and %s", lhsType.String(), rhsType.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(expr.Loc(), "complex arithmetic requires complex or numeric operands"),
+			)
+			return
+		}
+
 		// Both numeric - allow implicit widening
 		if lhsNumericOrUntyped && rhsNumericOrUntyped {
 			// Allow untyped operands - literal fitness is checked earlier
@@ -1257,6 +1271,28 @@ func checkBinaryExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 		// These operators only work with numeric types
 		lhsNumeric := types.IsNumericType(lhsBase) || types.IsUntyped(lhsBase)
 		rhsNumeric := types.IsNumericType(rhsBase) || types.IsUntyped(rhsBase)
+		lhsComplex := types.IsComplex(lhsType)
+		rhsComplex := types.IsComplex(rhsType)
+
+		if lhsComplex || rhsComplex {
+			if expr.Op.Kind == tokens.MOD_TOKEN {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("invalid operation: modulo is not supported for complex numbers").
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(expr.Loc(), "cannot use '%' with complex operands"),
+				)
+				return
+			}
+			if (lhsComplex || lhsNumeric) && (rhsComplex || rhsNumeric) {
+				return
+			}
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("invalid complex operation: %s and %s", lhsType.String(), rhsType.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(expr.Loc(), "complex arithmetic requires complex or numeric operands"),
+			)
+			return
+		}
 
 		if !lhsNumeric || !rhsNumeric {
 			ctx.Diagnostics.Add(
@@ -3686,11 +3722,11 @@ func checkUnaryOp(ctx *context_v2.CompilerContext, expr *ast.UnaryExpr, operandT
 			)
 		}
 	case tokens.PLUS_TOKEN, tokens.MINUS_TOKEN:
-		if !types.IsNumericType(operandBase) && !types.IsUntyped(operandBase) {
+		if !types.IsNumericType(operandBase) && !types.IsUntyped(operandBase) && !types.IsComplex(operandType) {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("cannot use %s on type '%s'", expr.Op.Value, operandBase.String())).
-					WithPrimaryLabel(expr.Loc(), "expected numeric type").
-					WithHelp("unary +/- operators only work on numeric types"),
+					WithPrimaryLabel(expr.Loc(), "expected numeric or complex type").
+					WithHelp("unary +/- operators only work on numeric or complex operands"),
 			)
 		}
 	}
@@ -3707,7 +3743,7 @@ func unaryOpAllowsType(op tokens.TOKEN, typ types.SemType) bool {
 	case tokens.BIT_NOT_TOKEN:
 		return types.IsInteger(base) || types.IsUntypedInt(base)
 	case tokens.PLUS_TOKEN, tokens.MINUS_TOKEN:
-		return types.IsNumericType(base) || types.IsUntyped(base)
+		return types.IsNumericType(base) || types.IsUntyped(base) || types.IsComplex(typ)
 	default:
 		return false
 	}
@@ -3775,6 +3811,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		}
 	case *ast.CallExpr:
 		checkCallExpr(ctx, mod, e)
+		checkRealImagCall(ctx, mod, e)
 		// Validate catch clause if present
 		if e.Catch != nil {
 			checkCatchClause(ctx, mod, e)
@@ -3881,8 +3918,18 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 			checkBinaryExpr(ctx, mod, e, lhsType, rhsType)
 			// Return the result type - for most binary ops, it's the same as lhsType
 			var resultType types.SemType
+			lhsBase := types.UnwrapType(lhsType)
+			rhsBase := types.UnwrapType(rhsType)
+			complexArithmetic := (e.Op.Kind == tokens.PLUS_TOKEN || e.Op.Kind == tokens.MINUS_TOKEN || e.Op.Kind == tokens.MUL_TOKEN || e.Op.Kind == tokens.DIV_TOKEN) &&
+				((types.IsComplex(lhsType) || types.IsComplex(rhsType)) &&
+					(types.IsComplex(lhsType) || types.IsNumericType(lhsBase) || types.IsUntyped(lhsBase)) &&
+					(types.IsComplex(rhsType) || types.IsNumericType(rhsBase) || types.IsUntyped(rhsBase)))
 			switch e.Op.Kind {
 			case tokens.PLUS_TOKEN:
+				if complexArithmetic {
+					resultType = types.ComplexBinaryResultType(lhsType, rhsType)
+					break
+				}
 				// PLUS can be string concatenation or arithmetic
 				// String concatenation: str + anything → str
 				if types.UnwrapType(lhsType).Equals(types.TypeString) {
@@ -3893,6 +3940,10 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 				}
 			case tokens.MINUS_TOKEN, tokens.MUL_TOKEN, tokens.DIV_TOKEN, tokens.MOD_TOKEN,
 				tokens.BIT_AND_TOKEN, tokens.BIT_OR_TOKEN, tokens.BIT_XOR_TOKEN:
+				if complexArithmetic {
+					resultType = types.ComplexBinaryResultType(lhsType, rhsType)
+					break
+				}
 				if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.BIT_OR_TOKEN || e.Op.Kind == tokens.BIT_XOR_TOKEN {
 					resultType = lhsType
 				} else {
@@ -3907,8 +3958,9 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 			default:
 				resultType = types.TypeUnknown
 			}
-			mod.SetExprType(expr, resolveNumericExprTypeForModule(ctx, expr, expected, resultType))
-			return resultType
+			resolved := resolveNumericExprTypeForModule(ctx, expr, expected, resultType)
+			mod.SetExprType(expr, resolved)
+			return resolved
 		}
 
 	case *ast.UnaryExpr:
@@ -4017,7 +4069,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 		}
 
 		expectedForLit := expected
-		if e.Kind == ast.INT || e.Kind == ast.FLOAT {
+		if e.Kind == ast.INT || e.Kind == ast.FLOAT || e.Kind == ast.IMAG {
 			expectedForLit = types.UnwrapOptionalType(expected)
 		}
 		litType := inferLiteralType(e, expectedForLit)
@@ -4201,7 +4253,7 @@ func checkExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast
 			expectedForLit := types.UnwrapOptionalType(expected)
 			// For numeric literals, always try to contextualize to expected type
 			// inferLiteralType will return expected type if compatible, or default if not
-			if lit.Kind == ast.INT || lit.Kind == ast.FLOAT {
+			if lit.Kind == ast.INT || lit.Kind == ast.FLOAT || lit.Kind == ast.IMAG {
 				resultType = inferLiteralType(lit, expectedForLit)
 			}
 		}
@@ -4814,12 +4866,22 @@ func reportNumericConstTooLarge(ctx *context_v2.CompilerContext, expr ast.Expres
 }
 
 func resolveNumericExprTypeForModule(_ *context_v2.CompilerContext, expr ast.Expression, expected, resultType types.SemType) types.SemType {
+	expectedBase := types.UnwrapOptionalType(expected)
+	expectedUnwrapped := types.UnwrapType(expectedBase)
+
+	// Contextualize literal-only complex expressions (e.g. `1 + 2i`) to the
+	// expected complex width so declarations like `let z: complex64 = 1 + 2i`
+	// type-check without explicit casts.
+	if !expected.Equals(types.TypeUnknown) && types.IsComplex(expectedUnwrapped) && types.IsComplex(resultType) {
+		if isConstComplexExpr(expr) {
+			return expected
+		}
+	}
+
 	if !types.IsUntyped(resultType) {
 		return resultType
 	}
 
-	expectedBase := types.UnwrapOptionalType(expected)
-	expectedUnwrapped := types.UnwrapType(expectedBase)
 	if !expected.Equals(types.TypeUnknown) && types.IsNumeric(expectedUnwrapped) {
 		if value, ok := evaluateNumericConst(expr); ok {
 			valueStr := numericConstValueString(value)
@@ -4839,6 +4901,33 @@ func resolveNumericExprTypeForModule(_ *context_v2.CompilerContext, expr ast.Exp
 	}
 
 	return resultType
+}
+
+func isConstComplexExpr(expr ast.Expression) bool {
+	if expr == nil {
+		return false
+	}
+
+	switch e := expr.(type) {
+	case *ast.BasicLit:
+		return e.Kind == ast.INT || e.Kind == ast.FLOAT || e.Kind == ast.IMAG
+	case *ast.UnaryExpr:
+		if e.Op.Kind != tokens.PLUS_TOKEN && e.Op.Kind != tokens.MINUS_TOKEN {
+			return false
+		}
+		return isConstComplexExpr(e.X)
+	case *ast.BinaryExpr:
+		switch e.Op.Kind {
+		case tokens.PLUS_TOKEN, tokens.MINUS_TOKEN, tokens.MUL_TOKEN, tokens.DIV_TOKEN:
+			return isConstComplexExpr(e.X) && isConstComplexExpr(e.Y)
+		default:
+			return false
+		}
+	case *ast.ParenExpr:
+		return isConstComplexExpr(e.X)
+	default:
+		return false
+	}
 }
 
 func formatIntegerTypeSuggestions(targetName types.TYPE_NAME, minUnsigned, minSigned types.TYPE_NAME) string {
@@ -5265,6 +5354,39 @@ type pipeArgInfo struct {
 
 func checkCallExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr) {
 	checkCallExprWithPipe(ctx, mod, expr, nil)
+}
+
+func checkRealImagCall(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr) {
+	if expr == nil || len(expr.Args) != 1 {
+		return
+	}
+	ident, ok := expr.Fun.(*ast.IdentifierExpr)
+	if !ok || ident == nil {
+		return
+	}
+	if ident.Name != "real" && ident.Name != "imag" {
+		return
+	}
+
+	argType := inferExprType(ctx, mod, expr.Args[0])
+	refType, ok := types.UnwrapType(argType).(*types.ReferenceType)
+	if !ok {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("%s expects a reference to a complex value", ident.Name)).
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(expr.Args[0].Loc(), "expected '&complex*' argument").
+				WithHelp("borrow the complex value explicitly, e.g. `real(&z)`"),
+		)
+		return
+	}
+	if !types.IsComplex(refType.Inner) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("%s expects a reference to a complex value", ident.Name)).
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(expr.Args[0].Loc(), "expected complex reference").
+				WithHelp("supported argument types are &complex64, &complex, &complex256, &complex512"),
+		)
+	}
 }
 
 func checkCallExprWithPipe(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, pipeInfo *pipeArgInfo) {

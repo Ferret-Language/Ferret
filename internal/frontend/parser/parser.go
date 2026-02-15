@@ -1140,6 +1140,13 @@ func (p *Parser) parsePrimary() ast.Expression {
 	switch tok.Kind {
 	case tokens.NUMBER_TOKEN:
 		p.advance()
+		if strings.HasSuffix(tok.Value, "i") {
+			return &ast.BasicLit{
+				Kind:     ast.IMAG,
+				Value:    strings.TrimSuffix(tok.Value, "i"),
+				Location: *source.NewLocation(&p.filepath, &tok.Start, &tok.End),
+			}
+		}
 		// Determine if int or float by checking for '.' or 'e'/'E'
 		kind := ast.INT
 		if strings.ContainsRune(tok.Value, '.') || strings.ContainsRune(tok.Value, 'e') || strings.ContainsRune(tok.Value, 'E') {

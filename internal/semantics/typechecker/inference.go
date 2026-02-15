@@ -56,6 +56,12 @@ func inferLiteralType(lit *ast.BasicLit, expected types.SemType) types.SemType {
 
 		// No expected type or incompatible: use default without promotion.
 		return types.FromTypeName(types.DEFAULT_FLOAT_TYPE)
+	case ast.IMAG:
+		expectedUnwrapped := types.UnwrapType(expected)
+		if !expected.Equals(types.TypeUnknown) && types.IsComplex(expectedUnwrapped) {
+			return expected
+		}
+		return types.TypeComplex
 
 	case ast.STRING:
 		return types.TypeString
@@ -254,6 +260,8 @@ func inferIdentifierType(_ *context_v2.CompilerContext, mod *context_v2.Module, 
 func inferBinaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.BinaryExpr) types.SemType {
 	lhsType := inferExprType(ctx, mod, expr.X)
 	rhsType := inferExprType(ctx, mod, expr.Y)
+	lhsRaw := lhsType
+	rhsRaw := rhsType
 	lhsType = types.UnwrapType(lhsType)
 	rhsType = types.UnwrapType(rhsType)
 
@@ -288,8 +296,16 @@ func inferBinaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module
 	}
 
 	// Arithmetic operators - result depends on operand types
+	lhsComplex := types.IsComplex(lhsRaw)
+	rhsComplex := types.IsComplex(rhsRaw)
+	lhsNumeric := types.IsNumericType(lhsType)
+	rhsNumeric := types.IsNumericType(rhsType)
+
 	switch expr.Op.Kind {
 	case tokens.PLUS_TOKEN:
+		if (lhsComplex || rhsComplex) && (lhsComplex || lhsNumeric) && (rhsComplex || rhsNumeric) {
+			return types.ComplexBinaryResultType(lhsRaw, rhsRaw)
+		}
 		// PLUS can be numeric addition or string concatenation
 		// String concatenation: str + str, str + number, str + bool -> str
 		if lhsType.Equals(types.TypeString) {
@@ -301,10 +317,19 @@ func inferBinaryExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module
 		// Otherwise numeric addition: result is the wider of the two types
 		return widerType(lhsType, rhsType)
 
-	case tokens.MINUS_TOKEN, tokens.MUL_TOKEN, tokens.MOD_TOKEN:
+	case tokens.MINUS_TOKEN, tokens.MUL_TOKEN:
+		if (lhsComplex || rhsComplex) && (lhsComplex || lhsNumeric) && (rhsComplex || rhsNumeric) {
+			return types.ComplexBinaryResultType(lhsRaw, rhsRaw)
+		}
+		// Arithmetic: result is the wider of the two types
+		return widerType(lhsType, rhsType)
+	case tokens.MOD_TOKEN:
 		// Arithmetic: result is the wider of the two types
 		return widerType(lhsType, rhsType)
 	case tokens.DIV_TOKEN:
+		if (lhsComplex || rhsComplex) && (lhsComplex || lhsNumeric) && (rhsComplex || rhsNumeric) {
+			return types.ComplexBinaryResultType(lhsRaw, rhsRaw)
+		}
 		// For floats, preserve the wider float type (f32..f256).
 		if types.IsFloat(lhsType) || types.IsFloat(rhsType) {
 			return widerType(lhsType, rhsType)
@@ -413,6 +438,27 @@ func inferDerefExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 
 // inferCallExprType determines the return type of a function call
 func inferCallExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr) types.SemType {
+	if ident, ok := expr.Fun.(*ast.IdentifierExpr); ok {
+		if (ident.Name == "real" || ident.Name == "imag") && len(expr.Args) == 1 {
+			argType := ResolvedExprType(ctx, mod, expr.Args[0])
+			if refType, ok := types.UnwrapType(argType).(*types.ReferenceType); ok && types.IsComplex(refType.Inner) {
+				if component, ok := types.ComplexComponentType(refType.Inner); ok {
+					return component
+				}
+			}
+			// Fallback: if the argument is an explicit borrow expression, derive from inner type.
+			if unary, ok := expr.Args[0].(*ast.UnaryExpr); ok &&
+				(unary.Op.Kind == tokens.BIT_AND_TOKEN || unary.Op.Kind == tokens.MUT_TOKEN) {
+				inner := ResolvedExprType(ctx, mod, unary.X)
+				if types.IsComplex(inner) {
+					if component, ok := types.ComplexComponentType(inner); ok {
+						return component
+					}
+				}
+			}
+		}
+	}
+
 	// Get the type of the called expression (function or method)
 	funType := inferExprType(ctx, mod, expr.Fun)
 

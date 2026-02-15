@@ -120,11 +120,11 @@ func main() {
 	// Get entry file
 	args = flag.Args()
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Error: No input file specified")
-		fmt.Fprintln(os.Stderr, "\nUsage:")
-		fmt.Fprintln(os.Stderr, "  ferret [options] <file>")
-		fmt.Fprintln(os.Stderr, "  ferret [command] [args]")
-		fmt.Fprintln(os.Stderr, "\nRun 'ferret --help' for more information")
+		colors.RED.Fprintln(os.Stderr, "Error: No input file specified")
+		colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
+		colors.GREEN.Fprintln(os.Stderr, "  ferret [options] <file>")
+		colors.GREEN.Fprintln(os.Stderr, "  ferret [command] [args]")
+		colors.CYAN.Fprintln(os.Stderr, "\nRun 'ferret --help' for more information")
 		os.Exit(1)
 	}
 

@@ -9,6 +9,7 @@
 #include "../core/map.h"
 #include "../core/alloc.h"
 #include "../core/file_handle.h"
+#include "../core/bigint.h"
 #include "../core/runtime_naming.h"
 
 // Define the module prefix for this file (implements ferret_libs/global.fer)
@@ -20,6 +21,26 @@ typedef struct {
     void* data;
     void* type_info;
 } ferret_interface_t;
+
+typedef struct {
+    float re;
+    float im;
+} ferret_complex64_t;
+
+typedef struct {
+    double re;
+    double im;
+} ferret_complex_t;
+
+typedef struct {
+    ferret_f128 re;
+    ferret_f128 im;
+} ferret_complex256_t;
+
+typedef struct {
+    ferret_f256 re;
+    ferret_f256 im;
+} ferret_complex512_t;
 
 int32_t FERRET_FUNC(len)(const void* seq) {
     if (seq == NULL) {
@@ -249,6 +270,86 @@ uint64_t FERRET_FUNC(self_addr)(const void* value, uint64_t heap) {
 uint64_t FERRET_FUNC(heap_addr)(const void* value, uint64_t heap) {
     (void)value;
     return heap;
+}
+
+float FERRET_FUNC(real_complex64)(const void* value, uint64_t heap) {
+    (void)heap;
+    if (value == NULL) {
+        return 0.0f;
+    }
+    return ((const ferret_complex64_t*)value)->re;
+}
+
+float FERRET_FUNC(imag_complex64)(const void* value, uint64_t heap) {
+    (void)heap;
+    if (value == NULL) {
+        return 0.0f;
+    }
+    return ((const ferret_complex64_t*)value)->im;
+}
+
+double FERRET_FUNC(real_complex)(const void* value, uint64_t heap) {
+    (void)heap;
+    if (value == NULL) {
+        return 0.0;
+    }
+    return ((const ferret_complex_t*)value)->re;
+}
+
+double FERRET_FUNC(imag_complex)(const void* value, uint64_t heap) {
+    (void)heap;
+    if (value == NULL) {
+        return 0.0;
+    }
+    return ((const ferret_complex_t*)value)->im;
+}
+
+void FERRET_FUNC(real_complex256)(ferret_f128* out, const void* value, uint64_t heap) {
+    (void)heap;
+    if (out == NULL) {
+        return;
+    }
+    *out = ferret_f128_from_f64(0.0);
+    if (value == NULL) {
+        return;
+    }
+    *out = ((const ferret_complex256_t*)value)->re;
+}
+
+void FERRET_FUNC(imag_complex256)(ferret_f128* out, const void* value, uint64_t heap) {
+    (void)heap;
+    if (out == NULL) {
+        return;
+    }
+    *out = ferret_f128_from_f64(0.0);
+    if (value == NULL) {
+        return;
+    }
+    *out = ((const ferret_complex256_t*)value)->im;
+}
+
+void FERRET_FUNC(real_complex512)(ferret_f256* out, const void* value, uint64_t heap) {
+    (void)heap;
+    if (out == NULL) {
+        return;
+    }
+    *out = ferret_f256_from_f64(0.0);
+    if (value == NULL) {
+        return;
+    }
+    *out = ((const ferret_complex512_t*)value)->re;
+}
+
+void FERRET_FUNC(imag_complex512)(ferret_f256* out, const void* value, uint64_t heap) {
+    (void)heap;
+    if (out == NULL) {
+        return;
+    }
+    *out = ferret_f256_from_f64(0.0);
+    if (value == NULL) {
+        return;
+    }
+    *out = ((const ferret_complex512_t*)value)->im;
 }
 
 static bool ferret_file_mode_is_write_only(const char* mode) {

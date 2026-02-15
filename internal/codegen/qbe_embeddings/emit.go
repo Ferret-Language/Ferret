@@ -2270,6 +2270,9 @@ func (g *Generator) needsByRefType(typ types.SemType) bool {
 	if _, ok := typ.(*types.HeapType); ok {
 		return false
 	}
+	if types.IsComplex(typ) {
+		return true
+	}
 	if isLargePrimitiveType(typ) {
 		return true
 	}

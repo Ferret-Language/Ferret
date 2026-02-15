@@ -121,6 +121,49 @@ func getPrimitiveSize(name TYPE_NAME) int {
 	}
 }
 
+// ComplexType represents builtin complex number families (complex64/complex/complex256/complex512).
+// Complex values are opaque and do not expose struct fields at the language level.
+type ComplexType struct {
+	name TYPE_NAME
+}
+
+func NewComplexType(name TYPE_NAME) *ComplexType {
+	switch name {
+	case TYPE_COMPLEX64, TYPE_COMPLEX, TYPE_COMPLEX256, TYPE_COMPLEX512:
+		return &ComplexType{name: name}
+	default:
+		return &ComplexType{name: TYPE_COMPLEX}
+	}
+}
+
+func (c *ComplexType) String() string { return string(c.name) }
+func (c *ComplexType) isType()        {}
+func (c *ComplexType) Equals(other SemType) bool {
+	if o, ok := other.(*ComplexType); ok {
+		return c.name == o.name
+	}
+	return false
+}
+
+func (c *ComplexType) Size() int {
+	switch c.name {
+	case TYPE_COMPLEX64:
+		return 8 // 2 x f32
+	case TYPE_COMPLEX:
+		return 16 // 2 x f64
+	case TYPE_COMPLEX256:
+		return 32 // 2 x f128
+	case TYPE_COMPLEX512:
+		return 64 // 2 x f256
+	default:
+		return 16
+	}
+}
+
+func (c *ComplexType) GetName() TYPE_NAME {
+	return c.name
+}
+
 // Array Types
 
 // ArrayType represents array types: [N]T or []T (dynamic)
@@ -691,29 +734,33 @@ func (n *NamedType) Unwrap() SemType {
 
 // Commonly used types (initialized in init())
 var (
-	TypeI8      SemType
-	TypeI16     SemType
-	TypeI32     SemType
-	TypeI64     SemType
-	TypeI128    SemType
-	TypeI256    SemType
-	TypeU8      SemType
-	TypeU16     SemType
-	TypeU32     SemType
-	TypeU64     SemType
-	TypeU128    SemType
-	TypeU256    SemType
-	TypeF32     SemType
-	TypeF64     SemType
-	TypeF128    SemType
-	TypeF256    SemType
-	TypeBool    SemType
-	TypeString  SemType
-	TypeNone    SemType
-	TypeVoid    SemType
-	TypeByte    SemType
-	TypeChar    SemType
-	TypeUnknown SemType
+	TypeI8         SemType
+	TypeI16        SemType
+	TypeI32        SemType
+	TypeI64        SemType
+	TypeI128       SemType
+	TypeI256       SemType
+	TypeU8         SemType
+	TypeU16        SemType
+	TypeU32        SemType
+	TypeU64        SemType
+	TypeU128       SemType
+	TypeU256       SemType
+	TypeF32        SemType
+	TypeF64        SemType
+	TypeF128       SemType
+	TypeF256       SemType
+	TypeBool       SemType
+	TypeString     SemType
+	TypeNone       SemType
+	TypeVoid       SemType
+	TypeByte       SemType
+	TypeChar       SemType
+	TypeComplex64  SemType
+	TypeComplex    SemType
+	TypeComplex256 SemType
+	TypeComplex512 SemType
+	TypeUnknown    SemType
 
 	// Untyped literal types
 	TypeUntypedInt   SemType
@@ -752,6 +799,10 @@ func init() {
 	TypeVoid = NewPrimitive(TYPE_VOID)
 	TypeByte = NewPrimitive(TYPE_BYTE)
 	TypeChar = NewPrimitive(TYPE_CHAR)
+	TypeComplex64 = NewComplexType(TYPE_COMPLEX64)
+	TypeComplex = NewComplexType(TYPE_COMPLEX)
+	TypeComplex256 = NewComplexType(TYPE_COMPLEX256)
+	TypeComplex512 = NewComplexType(TYPE_COMPLEX512)
 	TypeUnknown = NewPrimitive(TYPE_UNKNOWN)
 
 	TypeUntypedInt = NewUntypedInt()
@@ -787,6 +838,28 @@ func init() {
 	BuiltinTypes = make([]SemType, 0, len(BuiltinTypeNames))
 	for _, name := range BuiltinTypeNames {
 		BuiltinTypeNameSet[string(name)] = struct{}{}
+		switch name {
+		case TYPE_COMPLEX64:
+			if TypeComplex64 != nil {
+				BuiltinTypes = append(BuiltinTypes, TypeComplex64)
+				continue
+			}
+		case TYPE_COMPLEX:
+			if TypeComplex != nil {
+				BuiltinTypes = append(BuiltinTypes, TypeComplex)
+				continue
+			}
+		case TYPE_COMPLEX256:
+			if TypeComplex256 != nil {
+				BuiltinTypes = append(BuiltinTypes, TypeComplex256)
+				continue
+			}
+		case TYPE_COMPLEX512:
+			if TypeComplex512 != nil {
+				BuiltinTypes = append(BuiltinTypes, TypeComplex512)
+				continue
+			}
+		}
 		if typ, ok := PrimitiveTypeByName[name]; ok && typ != nil {
 			BuiltinTypes = append(BuiltinTypes, typ)
 		}
@@ -821,7 +894,18 @@ func FromTypeName(name TYPE_NAME) SemType {
 		TYPE_U8, TYPE_U16, TYPE_U32, TYPE_U64, TYPE_U128, TYPE_U256,
 		TYPE_F32, TYPE_F64, TYPE_F128, TYPE_F256,
 		TYPE_STRING, TYPE_BOOL, TYPE_NONE, TYPE_VOID, TYPE_BYTE, TYPE_CHAR,
+		TYPE_COMPLEX64, TYPE_COMPLEX, TYPE_COMPLEX256, TYPE_COMPLEX512,
 		TYPE_UNTYPED, TYPE_UNKNOWN:
+		switch name {
+		case TYPE_COMPLEX64:
+			return TypeComplex64
+		case TYPE_COMPLEX:
+			return TypeComplex
+		case TYPE_COMPLEX256:
+			return TypeComplex256
+		case TYPE_COMPLEX512:
+			return TypeComplex512
+		}
 		return NewPrimitive(name)
 	default:
 		// Unknown type name - not a primitive
@@ -855,6 +939,17 @@ func IsInteger(t SemType) bool {
 func IsFloat(t SemType) bool {
 	if p, ok := t.(*PrimitiveType); ok {
 		return IsFloatTypeName(p.name)
+	}
+	return false
+}
+
+func IsComplex(t SemType) bool {
+	if t == nil {
+		return false
+	}
+	t = UnwrapType(t)
+	if _, ok := t.(*ComplexType); ok {
+		return true
 	}
 	return false
 }

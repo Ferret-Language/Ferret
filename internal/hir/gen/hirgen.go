@@ -1232,6 +1232,8 @@ func lowerLiteralKind(kind ast.LiteralKind) hir.LiteralKind {
 		return hir.LiteralInt
 	case ast.FLOAT:
 		return hir.LiteralFloat
+	case ast.IMAG:
+		return hir.LiteralImag
 	case ast.STRING:
 		return hir.LiteralString
 	case ast.BYTE:

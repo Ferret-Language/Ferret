@@ -1,0 +1,39 @@
+import "std/io";
+
+fn main() {
+    let a := 1 + 2i;
+    let b := 3 - 4i;
+    io::Println("a:", a);
+    io::Println("b:", b);
+    io::Println("real(a):", real(&a));
+    io::Println("imag(a):", imag(&a));
+    io::Println("real(b):", real(&b));
+    io::Println("imag(b):", imag(&b));
+
+    io::Println(a + b);
+    io::Println(a - b);
+    io::Println(a * b);
+    io::Println(a / b);
+
+    io::Println(a + 5);
+    io::Println(5 + a);
+    io::Println(a * 2);
+    io::Println(2 * a);
+    io::Println(a / 2);
+    io::Println(2 / a);
+
+    let c64: complex64 = 3 + 4i;
+    io::Println("c64:", c64);
+    io::Println("real(c64):", real(&c64));
+    io::Println("imag(c64):", imag(&c64));
+
+    let c256: complex256 = 5 + 6i;
+    io::Println("c256:", c256);
+    io::Println("real(c256):", real(&c256));
+    io::Println("imag(c256):", imag(&c256));
+
+    let c512: complex512 = 7 + 8i;
+    io::Println("c512:", c512);
+    io::Println("real(c512):", real(&c512));
+    io::Println("imag(c512):", imag(&c512));
+}

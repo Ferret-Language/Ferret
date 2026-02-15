@@ -7,6 +7,7 @@ type LiteralKind int
 const (
 	INT LiteralKind = iota
 	FLOAT
+	IMAG
 	STRING
 	BYTE
 	CHAR

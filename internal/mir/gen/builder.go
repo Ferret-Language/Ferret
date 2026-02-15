@@ -1584,6 +1584,9 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 
 	switch e := expr.(type) {
 	case *hir.Literal:
+		if e.Kind == hir.LiteralImag {
+			return b.lowerImagLiteral(e)
+		}
 		if opt, ok := types.UnwrapType(e.Type).(*types.OptionalType); ok {
 			if e.Kind == hir.LiteralNone {
 				id := b.gen.nextValueID()
@@ -1824,6 +1827,10 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		if e.Op.Kind == tokens.PLUS_TOKEN && b.isStringType(e.X) {
 			return b.emitStringConcat(left, right, rightType, e.Location)
 		}
+		if b.isComplexArithmeticOp(e.Op.Kind) &&
+			(types.IsComplex(leftType) || types.IsComplex(rightType)) {
+			return b.emitComplexBinary(e.Op.Kind, left, right, leftType, rightType, e.Type, e.Location)
+		}
 		if e.Type != nil && !isCompareOp(e.Op.Kind) {
 			target := types.UnwrapType(e.Type)
 			if types.IsNumeric(target) {
@@ -1889,6 +1896,18 @@ func (b *functionBuilder) lowerExpr(expr hir.Expr) mir.ValueID {
 		operand := b.lowerExpr(e.X)
 		if operand == mir.InvalidValue {
 			return mir.InvalidValue
+		}
+		if (e.Op.Kind == tokens.PLUS_TOKEN || e.Op.Kind == tokens.MINUS_TOKEN) &&
+			types.IsComplex(e.Type) {
+			if e.Op.Kind == tokens.PLUS_TOKEN {
+				return operand
+			}
+			componentType, ok := types.ComplexComponentType(e.Type)
+			if !ok || componentType == nil {
+				return mir.InvalidValue
+			}
+			zero := b.emitZeroValue(componentType, e.Location)
+			return b.emitComplexBinary(tokens.MINUS_TOKEN, zero, operand, componentType, e.Type, e.Type, e.Location)
 		}
 		return b.emitUnary(e.Op.Kind, operand, e.Type, e.Location)
 	case *hir.DerefExpr:
@@ -2526,12 +2545,18 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 
 	isSelfAddrCall := false
 	isAddrCall := false
+	isRealImagCall := false
+	realImagName := ""
 	if ident, ok := expr.Fun.(*hir.Ident); ok {
 		if ident.Name == "self_addr" && ident.Symbol != nil && ident.Symbol.IsNative {
 			isSelfAddrCall = true
 		}
 		if ident.Name == "addr" && ident.Symbol != nil && ident.Symbol.IsNative {
 			isAddrCall = true
+		}
+		if (ident.Name == "real" || ident.Name == "imag") && ident.Symbol != nil && ident.Symbol.IsNative {
+			isRealImagCall = true
+			realImagName = ident.Name
 		}
 	}
 
@@ -2575,6 +2600,9 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 	}
 
 	if target, ok := b.callTarget(expr.Fun); ok {
+		if isRealImagCall {
+			return b.lowerRealImagCall(realImagName, expr, fnType)
+		}
 		// Print/Println resolve by concrete arg type in QBE.
 		skipInterfaceBoxing := b.isStdIoPrintTarget(target)
 		var args []mir.ValueID
@@ -2624,6 +2652,56 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 
 	b.reportUnsupported("call target", &expr.Location)
 	return mir.InvalidValue
+}
+
+func (b *functionBuilder) realImagRuntimeTarget(kind string, complexType types.SemType) (string, bool) {
+	name, ok := types.ComplexTypeNameOf(complexType)
+	if !ok {
+		return "", false
+	}
+	switch name {
+	case types.TYPE_COMPLEX64:
+		return "ferret_global_" + kind + "_complex64", true
+	case types.TYPE_COMPLEX:
+		return "ferret_global_" + kind + "_complex", true
+	case types.TYPE_COMPLEX256:
+		return "ferret_global_" + kind + "_complex256", true
+	case types.TYPE_COMPLEX512:
+		return "ferret_global_" + kind + "_complex512", true
+	default:
+		return "", false
+	}
+}
+
+func (b *functionBuilder) lowerRealImagCall(kind string, expr *hir.CallExpr, fnType *types.FunctionType) mir.ValueID {
+	if expr == nil || len(expr.Args) != 1 {
+		b.reportUnsupported(kind+" call arity", expr.Loc())
+		return mir.InvalidValue
+	}
+
+	argType := b.exprType(expr.Args[0])
+	refType, ok := types.UnwrapType(argType).(*types.ReferenceType)
+	if !ok || !types.IsComplex(refType.Inner) {
+		b.reportUnsupported(kind+" call operand", expr.Args[0].Loc())
+		return mir.InvalidValue
+	}
+
+	// real/imag return the component scalar for the concrete complex width.
+	// Always override the expression type so backend ABI lowering matches runtime symbols.
+	if componentType, ok := types.ComplexComponentType(refType.Inner); ok {
+		expr.Type = componentType
+	}
+
+	args := b.lowerCallArgs(expr.Args, fnType, expr.Location, false)
+	if args == nil {
+		return mir.InvalidValue
+	}
+	target, ok := b.realImagRuntimeTarget(kind, refType.Inner)
+	if !ok {
+		b.reportUnsupported(kind+" runtime target", expr.Loc())
+		return mir.InvalidValue
+	}
+	return b.emitCall(target, args, expr)
 }
 
 func (b *functionBuilder) bindingAddrArg(expr hir.Expr) mir.ValueID {
@@ -7271,6 +7349,220 @@ func (b *functionBuilder) emitLargeToString(typeName string, value mir.ValueID, 
 	return id
 }
 
+func (b *functionBuilder) isComplexArithmeticOp(op tokens.TOKEN) bool {
+	switch op {
+	case tokens.PLUS_TOKEN, tokens.MINUS_TOKEN, tokens.MUL_TOKEN, tokens.DIV_TOKEN:
+		return true
+	default:
+		return false
+	}
+}
+
+func (b *functionBuilder) complexRuntimePrefix(complexType types.SemType) (string, bool) {
+	name, ok := types.ComplexTypeNameOf(complexType)
+	if !ok {
+		return "", false
+	}
+	switch name {
+	case types.TYPE_COMPLEX64:
+		return "ferret_complex64", true
+	case types.TYPE_COMPLEX:
+		return "ferret_complex", true
+	case types.TYPE_COMPLEX256:
+		return "ferret_complex256", true
+	case types.TYPE_COMPLEX512:
+		return "ferret_complex512", true
+	default:
+		return "", false
+	}
+}
+
+func (b *functionBuilder) complexPartAddrs(addr mir.ValueID, complexType types.SemType, loc source.Location) (mir.ValueID, mir.ValueID, types.SemType, bool) {
+	if addr == mir.InvalidValue || b.gen == nil || b.gen.layout == nil {
+		return mir.InvalidValue, mir.InvalidValue, nil, false
+	}
+	componentType, ok := types.ComplexComponentType(complexType)
+	if !ok || componentType == nil {
+		return mir.InvalidValue, mir.InvalidValue, nil, false
+	}
+	componentSize := b.gen.layout.SizeOf(componentType)
+	if componentSize <= 0 {
+		return mir.InvalidValue, mir.InvalidValue, nil, false
+	}
+	reAddr := b.emitPtrAdd(addr, 0, componentType, loc)
+	imAddr := b.emitPtrAdd(addr, componentSize, componentType, loc)
+	return reAddr, imAddr, componentType, true
+}
+
+func (b *functionBuilder) emitZeroValue(typ types.SemType, loc source.Location) mir.ValueID {
+	if typ == nil {
+		return mir.InvalidValue
+	}
+	typ = types.UnwrapType(typ)
+	if isLargePrimitiveType(typ) {
+		return b.emitLargeConst(typ, "0", loc)
+	}
+	if types.IsFloat(typ) {
+		return b.emitConst(typ, "0.0", loc)
+	}
+	return b.emitConst(typ, "0", loc)
+}
+
+func (b *functionBuilder) lowerImagLiteral(lit *hir.Literal) mir.ValueID {
+	if lit == nil {
+		return mir.InvalidValue
+	}
+	complexType := lit.Type
+	if !types.IsComplex(complexType) {
+		complexType = types.TypeComplex
+	}
+	out := b.emitAlloca(complexType, lit.Location)
+	if out == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	reAddr, imAddr, componentType, ok := b.complexPartAddrs(out, complexType, lit.Location)
+	if !ok {
+		return mir.InvalidValue
+	}
+	zero := b.emitZeroValue(componentType, lit.Location)
+	if zero == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	var imag mir.ValueID
+	if isLargePrimitiveType(componentType) {
+		imag = b.emitLargeConst(componentType, lit.Value, lit.Location)
+	} else {
+		imag = b.emitConst(componentType, lit.Value, lit.Location)
+	}
+	if imag == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	b.emitStore(reAddr, zero, lit.Location)
+	b.emitStore(imAddr, imag, lit.Location)
+	return out
+}
+
+func (b *functionBuilder) complexOperandPtr(value mir.ValueID, valueType, targetType types.SemType, loc source.Location) mir.ValueID {
+	if value == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	valueBase := types.UnwrapType(valueType)
+	if types.IsComplex(valueType) {
+		if srcName, ok := types.ComplexTypeNameOf(valueType); ok {
+			if dstName, ok := types.ComplexTypeNameOf(targetType); ok && srcName == dstName && needsByRefType(valueType) {
+				return value
+			}
+		}
+		srcPtr := value
+		if !needsByRefType(valueType) {
+			srcPtr = b.emitAlloca(valueType, loc)
+			if srcPtr == mir.InvalidValue {
+				return mir.InvalidValue
+			}
+			b.emitStore(srcPtr, value, loc)
+		}
+		out := b.emitAlloca(targetType, loc)
+		if out == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		srcRe, srcIm, srcComponent, ok := b.complexPartAddrs(srcPtr, valueType, loc)
+		if !ok {
+			return mir.InvalidValue
+		}
+		dstRe, dstIm, dstComponent, ok := b.complexPartAddrs(out, targetType, loc)
+		if !ok {
+			return mir.InvalidValue
+		}
+		reVal := b.emitLoad(srcRe, srcComponent, loc)
+		imVal := b.emitLoad(srcIm, srcComponent, loc)
+		reCast := b.castValue(reVal, srcComponent, dstComponent, loc)
+		imCast := b.castValue(imVal, srcComponent, dstComponent, loc)
+		if reCast == mir.InvalidValue || imCast == mir.InvalidValue {
+			return mir.InvalidValue
+		}
+		b.emitStore(dstRe, reCast, loc)
+		b.emitStore(dstIm, imCast, loc)
+		return out
+	}
+	if !types.IsNumericType(valueBase) && !types.IsUntyped(valueBase) {
+		return mir.InvalidValue
+	}
+
+	componentType, ok := types.ComplexComponentType(targetType)
+	if !ok {
+		return mir.InvalidValue
+	}
+	real := b.castValue(value, valueType, componentType, loc)
+	if real == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+
+	out := b.emitAlloca(targetType, loc)
+	if out == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	reAddr, imAddr, _, ok := b.complexPartAddrs(out, targetType, loc)
+	if !ok {
+		return mir.InvalidValue
+	}
+	zero := b.emitZeroValue(componentType, loc)
+	b.emitStore(reAddr, real, loc)
+	b.emitStore(imAddr, zero, loc)
+	return out
+}
+
+func (b *functionBuilder) emitComplexBinary(op tokens.TOKEN, left, right mir.ValueID, leftType, rightType, resultHint types.SemType, loc source.Location) mir.ValueID {
+	if !b.isComplexArithmeticOp(op) {
+		return mir.InvalidValue
+	}
+	resultType := types.ComplexBinaryResultType(leftType, rightType)
+	if resultHint != nil && types.IsComplex(resultHint) {
+		resultType = resultHint
+	}
+	if resultType == nil || resultType.Equals(types.TypeUnknown) {
+		resultType = types.TypeComplex
+	}
+	leftPtr := b.complexOperandPtr(left, leftType, resultType, loc)
+	rightPtr := b.complexOperandPtr(right, rightType, resultType, loc)
+	if leftPtr == mir.InvalidValue || rightPtr == mir.InvalidValue {
+		b.reportUnsupported("complex binary operands", &loc)
+		return mir.InvalidValue
+	}
+
+	prefix, ok := b.complexRuntimePrefix(resultType)
+	if !ok {
+		b.reportUnsupported("complex runtime prefix", &loc)
+		return mir.InvalidValue
+	}
+
+	target := prefix
+	switch op {
+	case tokens.PLUS_TOKEN:
+		target += "_add"
+	case tokens.MINUS_TOKEN:
+		target += "_sub"
+	case tokens.MUL_TOKEN:
+		target += "_mul"
+	case tokens.DIV_TOKEN:
+		target += "_div"
+	default:
+		return mir.InvalidValue
+	}
+
+	out := b.emitAlloca(resultType, loc)
+	if out == mir.InvalidValue {
+		return mir.InvalidValue
+	}
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   target,
+		Args:     []mir.ValueID{leftPtr, rightPtr, out},
+		Type:     types.TypeVoid,
+		Location: loc,
+	})
+	return out
+}
+
 func (b *functionBuilder) emitBinary(op tokens.TOKEN, left, right mir.ValueID, typ types.SemType, loc source.Location) mir.ValueID {
 	if op == tokens.DIV_TOKEN || op == tokens.MOD_TOKEN {
 		b.emitDivByZeroGuard(op, right, typ, loc)
@@ -7521,7 +7813,7 @@ func (b *functionBuilder) emitIntrinsicCopyValue(value mir.ValueID, typ types.Se
 	id := b.gen.nextValueID()
 	b.emitInstr(&mir.Call{
 		Result:   id,
-		Target:   "__file_clone",
+		Target:   "ferret_global___file_clone",
 		Args:     []mir.ValueID{value},
 		Type:     typ,
 		Location: loc,

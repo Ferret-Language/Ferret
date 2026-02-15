@@ -22,7 +22,11 @@ type Printable union {
     str,
     byte,
     char,
-    bool
+    bool,
+    complex,
+    complex64,
+    complex256,
+    complex512
 };
 
 // Streaming interfaces

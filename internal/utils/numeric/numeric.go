@@ -25,9 +25,10 @@ const (
 	FloatFrac   = `\.` + DecDigits + `(?:` + DecDigits + `|_` + DecDigits + `)*`
 	FloatExp    = `[eE][+-]?` + DecDigits + `(?:` + DecDigits + `|_` + DecDigits + `)*`
 	FloatNumber = DecNumber + `(?:` + FloatFrac + `)?(?:` + FloatExp + `)?`
+	ImagNumber  = FloatNumber + `i\b`
 
 	// Complete number pattern for tokenizing (does not include sign)
-	NumberPattern = `(?:` + HexNumber + `|` + OctNumber + `|` + BinNumber + `|` + FloatNumber + `)`
+	NumberPattern = `(?:` + HexNumber + `|` + OctNumber + `|` + BinNumber + `|` + ImagNumber + `|` + FloatNumber + `)`
 )
 
 var (

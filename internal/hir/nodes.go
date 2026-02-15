@@ -70,6 +70,7 @@ type LiteralKind int
 const (
 	LiteralInt LiteralKind = iota
 	LiteralFloat
+	LiteralImag
 	LiteralString
 	LiteralByte
 	LiteralBool

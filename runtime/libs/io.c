@@ -64,8 +64,37 @@ static ssize_t getline(char** lineptr, size_t* n, FILE* stream) {
     return (ssize_t)pos;
 }
 #endif
-// Printable union layout: [4-byte tag][32 bytes data] = 36 bytes total (to accommodate 256-bit types)
+// Printable union layout: [4-byte tag][64 bytes data] = 68 bytes total (to accommodate complex512).
 // Tags follow ferret_type_kind_t for primitives (Printable union order).
+// Printable adds complex-family types after primitives in this order:
+// complex, complex64, complex256, complex512.
+#define FERRET_PRINTABLE_TAG_COMPLEX FERRET_TYPE__PRIMITIVE_END
+#define FERRET_PRINTABLE_TAG_COMPLEX64 (FERRET_TYPE__PRIMITIVE_END + 1)
+#define FERRET_PRINTABLE_TAG_COMPLEX256 (FERRET_TYPE__PRIMITIVE_END + 2)
+#define FERRET_PRINTABLE_TAG_COMPLEX512 (FERRET_TYPE__PRIMITIVE_END + 3)
+
+typedef struct {
+    double re;
+    double im;
+} ferret_complex_t;
+
+typedef struct {
+    float re;
+    float im;
+} ferret_complex64_t;
+
+typedef struct {
+    ferret_f128 re;
+    ferret_f128 im;
+} ferret_complex256_t;
+
+typedef struct {
+    ferret_f256 re;
+    ferret_f256 im;
+} ferret_complex512_t;
+
+char* ferret_f128_to_string_ptr(const ferret_f128* val);
+char* ferret_f256_to_string_ptr(const ferret_f256* val);
 
 // Print a float/double with at least one decimal place (e.g., 8.0 not 8)
 static void print_float(double val, int precision) {
@@ -114,6 +143,94 @@ static void print_char_codepoint(uint32_t codepoint) {
     } else {
         printf("\\u{%X}", codepoint);
     }
+}
+
+static void print_complex(const void* data) {
+    const ferret_complex_t* value = (const ferret_complex_t*)data;
+    if (value == NULL) {
+        printf("(nil)");
+        return;
+    }
+    print_float(value->re, 15);
+    if (value->im < 0) {
+        printf("-");
+        print_float(-value->im, 15);
+    } else {
+        printf("+");
+        print_float(value->im, 15);
+    }
+    printf("i");
+}
+
+static void print_complex64(const void* data) {
+    const ferret_complex64_t* value = (const ferret_complex64_t*)data;
+    if (value == NULL) {
+        printf("(nil)");
+        return;
+    }
+    print_float(value->re, 6);
+    if (value->im < 0) {
+        printf("-");
+        print_float(-value->im, 6);
+    } else {
+        printf("+");
+        print_float(value->im, 6);
+    }
+    printf("i");
+}
+
+static void print_complex256(const void* data) {
+    const ferret_complex256_t* value = (const ferret_complex256_t*)data;
+    if (value == NULL) {
+        printf("(nil)");
+        return;
+    }
+
+    char* re = ferret_f128_to_string_ptr(&value->re);
+    char* im = ferret_f128_to_string_ptr(&value->im);
+    if (re == NULL || im == NULL) {
+        if (re != NULL) ferret_free(re);
+        if (im != NULL) ferret_free(im);
+        printf("(nil)");
+        return;
+    }
+
+    printf("%s", re);
+    if (im[0] == '-') {
+        printf("%si", im);
+    } else {
+        printf("+%si", im);
+    }
+
+    ferret_free(re);
+    ferret_free(im);
+}
+
+static void print_complex512(const void* data) {
+    const ferret_complex512_t* value = (const ferret_complex512_t*)data;
+    if (value == NULL) {
+        printf("(nil)");
+        return;
+    }
+
+    char* re = ferret_f256_to_string_ptr(&value->re);
+    char* im = ferret_f256_to_string_ptr(&value->im);
+    if (re == NULL || im == NULL) {
+        if (re != NULL) ferret_free(re);
+        if (im != NULL) ferret_free(im);
+        printf("(nil)");
+        return;
+    }
+
+    printf("%s", re);
+    if (im[0] == '-') {
+        printf("%si", im);
+    } else {
+        printf("+%si", im);
+    }
+
+    ferret_free(re);
+    ferret_free(im);
 }
 
 #define FERRET_DECLARE_TO_STRING_PTR_INT(name, lower, ctype, bits) \
@@ -247,6 +364,18 @@ static void print_union(const void* union_ptr) {
             break;
         FERRET_PRIMITIVE_TYPES(FERRET_PRINT_CASE)
 #undef FERRET_PRINT_CASE
+        case FERRET_PRINTABLE_TAG_COMPLEX:
+            print_complex(data);
+            break;
+        case FERRET_PRINTABLE_TAG_COMPLEX64:
+            print_complex64(data);
+            break;
+        case FERRET_PRINTABLE_TAG_COMPLEX256:
+            print_complex256(data);
+            break;
+        case FERRET_PRINTABLE_TAG_COMPLEX512:
+            print_complex512(data);
+            break;
         default: printf("<invalid union tag %d>", tag); break;
     }
 }
