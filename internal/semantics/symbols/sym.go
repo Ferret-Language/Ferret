@@ -37,7 +37,19 @@ type Symbol struct {
 	// Native function support (for @extern functions implemented in Go/C)
 	IsNative   bool   // true if this function is implemented in native code (Go/C)
 	NativeName string // C function name for code generation (e.g., "ferret_io_Println")
+	Intrinsic  IntrinsicKind
 }
+
+// IntrinsicKind identifies compiler-known builtin functions with special lowering.
+type IntrinsicKind int
+
+const (
+	IntrinsicNone IntrinsicKind = iota
+	IntrinsicAddr
+	IntrinsicSelfAddr
+	IntrinsicReal
+	IntrinsicImag
+)
 
 // MethodInfo stores information about a method attached to a named type
 type MethodInfo struct {

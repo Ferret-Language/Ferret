@@ -256,6 +256,29 @@ func checkTypeCompatibilityWithContext(ctx *context_v2.CompilerContext, mod *con
 		return compatibility
 	}
 
+	// Reference-to-reference compatibility needs context-aware inner checks so
+	// concrete references can satisfy interface references (e.g. &mut T -> &mut Writer).
+	if srcRef, ok := types.UnwrapType(source).(*types.ReferenceType); ok {
+		if tgtRef, ok := types.UnwrapType(target).(*types.ReferenceType); ok {
+			// Allow &mut T to coerce to &T, but never the other way around.
+			if tgtRef.Mutable && !srcRef.Mutable {
+				return Incompatible
+			}
+
+			innerCompat := checkTypeCompatibilityWithContext(ctx, mod, srcRef.Inner, tgtRef.Inner)
+			if innerCompat == Incompatible {
+				return Incompatible
+			}
+			if srcRef.Mutable == tgtRef.Mutable && srcRef.Inner.Equals(tgtRef.Inner) && innerCompat == Identical {
+				return Identical
+			}
+			if innerCompat == ExplicitCastable {
+				return ExplicitCastable
+			}
+			return ImplicitCastable
+		}
+	}
+
 	// Handle interface compatibility
 	// For unnamed interfaces, check structural compatibility (does source implement the interface?)
 	if targetIface, ok := target.(*types.InterfaceType); ok {

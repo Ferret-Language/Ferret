@@ -228,6 +228,52 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return ptr >>> 0;
   }
 
+  function resultStrPtr(
+    okValue: number | null,
+    errValue: string | null,
+  ): number {
+    const ptr = ferret_alloc(8);
+    const dv = view();
+    if (okValue === null) {
+      dv.setUint32(ptr + 0, writeCString(errValue ?? ""), true);
+      dv.setUint8(ptr + 4, 1);
+    } else {
+      dv.setUint32(ptr + 0, okValue >>> 0, true);
+      dv.setUint8(ptr + 4, 0);
+    }
+    return ptr >>> 0;
+  }
+
+  function resultStrBool(
+    okValue: boolean | null,
+    errValue: string | null,
+  ): number {
+    const ptr = ferret_alloc(8);
+    const dv = view();
+    if (okValue === null) {
+      dv.setUint32(ptr + 0, writeCString(errValue ?? ""), true);
+      dv.setUint8(ptr + 4, 1);
+    } else {
+      dv.setUint8(ptr + 0, okValue ? 1 : 0);
+      dv.setUint8(ptr + 4, 0);
+    }
+    return ptr >>> 0;
+  }
+
+  function byteArrayFromBytes(bytes: Uint8Array): number {
+    const arrPtr = ferret_array_new(1, bytes.length, 0);
+    if (!arrPtr) {
+      return 0;
+    }
+    const dv = view();
+    const dataPtr = dv.getUint32(arrPtr + ARRAY_DATA_OFFSET, true);
+    if (dataPtr && bytes.length > 0) {
+      new Uint8Array(memory!.buffer).set(bytes, dataPtr >>> 0);
+    }
+    dv.setInt32(arrPtr + ARRAY_LEN_OFFSET, bytes.length, true);
+    return arrPtr >>> 0;
+  }
+
   function ferret_alloc(size: number) {
     const bytes = Number(size);
     const addr = heapPtr;
@@ -629,6 +675,76 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return resultStrF64(value, null);
   }
 
+  function ferret_std_io__formatPrintable(slicePtr: number) {
+    if (!slicePtr) {
+      return writeCString("");
+    }
+    const dv = view();
+    const dataPtr = dv.getUint32(slicePtr + SLICE_DATA_OFFSET, true);
+    const length = dv.getInt32(slicePtr + SLICE_LEN_OFFSET, true);
+    const elemSize = dv.getUint32(slicePtr + SLICE_ELEM_SIZE_OFFSET, true);
+    if (!dataPtr || length <= 0 || elemSize <= 0) {
+      return writeCString("");
+    }
+    const parts: string[] = [];
+    for (let i = 0; i < length; i++) {
+      parts.push(printUnion(dataPtr + i * elemSize));
+    }
+    return writeCString(parts.join(" "));
+  }
+
+  function ferret_std_io__parseInt(strPtr: number) {
+    const raw = strPtr ? readCString(strPtr) : "";
+    const text = raw.trim();
+    if (!text) {
+      return resultStrI32(null, "invalid integer format");
+    }
+    if (!/^[+-]?\d+$/.test(text)) {
+      return resultStrI32(null, "invalid integer format");
+    }
+    const value = Number(text);
+    if (!Number.isFinite(value) || !Number.isInteger(value)) {
+      return resultStrI32(null, "invalid integer format");
+    }
+    if (value < -2147483648 || value > 2147483647) {
+      return resultStrI32(null, "integer out of range");
+    }
+    return resultStrI32(value, null);
+  }
+
+  function ferret_std_io__parseFloat(strPtr: number) {
+    const raw = strPtr ? readCString(strPtr) : "";
+    const text = raw.trim();
+    if (!text) {
+      return resultStrF64(null, "invalid float format");
+    }
+    const value = Number(text);
+    if (!Number.isFinite(value)) {
+      return resultStrF64(null, "invalid float format");
+    }
+    return resultStrF64(value, null);
+  }
+
+  function ferret_std_io__readLine() {
+    return ferret_std_io_Read();
+  }
+
+  function ferret_std_io__readLineUnsafe() {
+    return ferret_std_io_ReadUnsafe();
+  }
+
+  function ferret_std_io_StreamWriter_Write(
+    writerPtr: number,
+    _writerHeap: number | bigint,
+    bufPtr: number,
+  ) {
+    if (!writerPtr) {
+      return resultStrI32(null, "invalid stream writer");
+    }
+    const stream = view().getInt32(writerPtr, true);
+    return ferret_global_write(stream, bufPtr);
+  }
+
   function readUnionTag(ptr: number): number {
     if (!ptr) {
       return -1;
@@ -877,6 +993,67 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const msg = msgPtr ? readCString(msgPtr) : "";
     const text = msg ? `panic: ${msg}` : "panic";
     throw new Error(text);
+  }
+
+  const STREAM_STDIN = 0;
+  const STREAM_STDOUT = 1;
+  const STREAM_STDERR = 2;
+
+  function ferret_global_write(stream: number, dataPtr: number): number {
+    const s = Number(stream);
+    if (s !== STREAM_STDOUT && s !== STREAM_STDERR) {
+      return resultStrI32(null, "invalid stream");
+    }
+    if (!dataPtr) {
+      return resultStrI32(0, null);
+    }
+    const dv = view();
+    const arrData = dv.getUint32(dataPtr + ARRAY_DATA_OFFSET, true);
+    const length = dv.getInt32(dataPtr + ARRAY_LEN_OFFSET, true);
+    const elemSize = dv.getUint32(dataPtr + ARRAY_ELEM_SIZE_OFFSET, true);
+    if (elemSize !== 1) {
+      return resultStrI32(null, "write expects []byte");
+    }
+    if (!arrData || length <= 0) {
+      return resultStrI32(0, null);
+    }
+    const mem = new Uint8Array(memory!.buffer);
+    const bytes = mem.slice(arrData, arrData + length);
+    const text = decoder.decode(bytes);
+    emit(text);
+    if (emitEvent) {
+      emitEvent({ type: "output", text });
+    }
+    return resultStrI32(length, null);
+  }
+
+  function ferret_global_read(stream: number, maxBytes: number): number {
+    const s = Number(stream);
+    if (s !== STREAM_STDIN) {
+      return resultStrPtr(null, "invalid stream");
+    }
+    const max = Number(maxBytes);
+    if (!Number.isFinite(max) || max <= 0) {
+      return resultStrPtr(null, "maxBytes must be > 0");
+    }
+    const line = nextInputLine();
+    if (line == null) {
+      return resultStrPtr(byteArrayFromBytes(new Uint8Array(0)), null);
+    }
+    if (emitEvent) {
+      emitEvent({ type: "input", text: line });
+    }
+    const encoded = encoder.encode(line);
+    const truncated = encoded.subarray(0, Math.max(0, Math.trunc(max)));
+    return resultStrPtr(byteArrayFromBytes(truncated), null);
+  }
+
+  function ferret_global_flush(stream: number): number {
+    const s = Number(stream);
+    if (s !== STREAM_STDOUT && s !== STREAM_STDERR) {
+      return resultStrBool(null, "invalid stream");
+    }
+    return resultStrBool(true, null);
   }
 
   function ferret_string_len(ptr: number) {
@@ -4112,6 +4289,12 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     ferret_std_io_ReadUnsafe,
     ferret_std_io_ReadInt,
     ferret_std_io_ReadFloat,
+    ferret_std_io__formatPrintable,
+    ferret_std_io__parseInt,
+    ferret_std_io__parseFloat,
+    ferret_std_io__readLine,
+    ferret_std_io__readLineUnsafe,
+    ferret_std_io_StreamWriter_Write,
     ferret_global_len,
     ferret_global_append,
     ferret_global_at,
@@ -4121,6 +4304,9 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     ferret_global_addr,
     ferret_global_self_addr,
     ferret_global_heap_addr,
+    ferret_global_write,
+    ferret_global_read,
+    ferret_global_flush,
     [WASM_IMPORT_FERRET_GLOBAL_PANIC]: ferret_global_panic,
     ferret_string_len,
     ferret_io_ConcatStrings,

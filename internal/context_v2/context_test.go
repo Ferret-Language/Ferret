@@ -45,6 +45,31 @@ func TestNewContext(t *testing.T) {
 	if _, ok := ctx.Universe.Lookup("true"); !ok {
 		t.Error("Expected true constant to be registered")
 	}
+	if sym, ok := ctx.Universe.Lookup("stdout"); !ok || sym.Kind != symbols.SymbolConstant {
+		t.Error("Expected stdout builtin constant to be registered")
+	}
+	if sym, ok := ctx.Universe.Lookup("write"); !ok || sym.Kind != symbols.SymbolFunction || !sym.IsNative {
+		t.Error("Expected write builtin function to be registered as native")
+	}
+
+	for _, handleName := range CompilerBuiltinHandleTypeNames() {
+		sym, ok := ctx.Universe.Lookup(handleName)
+		if !ok {
+			t.Errorf("Expected %s type to be registered in universe", handleName)
+			continue
+		}
+		if sym.Kind != symbols.SymbolType {
+			t.Errorf("Expected %s to be a type symbol", handleName)
+			continue
+		}
+		isResource := types.IsResourceType(sym.Type)
+		if IsCompilerResourceHandleTypeName(handleName) && !isResource {
+			t.Errorf("Expected %s to be marked as resource type", handleName)
+		}
+		if !IsCompilerResourceHandleTypeName(handleName) && isResource {
+			t.Errorf("Expected %s to be a non-resource builtin handle type", handleName)
+		}
+	}
 }
 
 func TestAddModule(t *testing.T) {

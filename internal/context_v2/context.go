@@ -349,43 +349,58 @@ func registerBuiltins(universe *table.SymbolTable) {
 		})
 	}
 
-	// Compiler intrinsic resource handle types (phase 1).
-	// Named type keeps nominal identity while preserving i64 ABI layout.
-	fileHandleType := types.NewResourceNamed("__file", types.TypeI64)
-	universe.Declare("__file", &symbols.Symbol{
-		Name:     "__file",
-		Kind:     symbols.SymbolType,
-		Type:     fileHandleType,
-		Exported: true,
-	})
-	tcpListenerHandleType := types.NewResourceNamed("__tcp_listener", types.TypeI64)
-	universe.Declare("__tcp_listener", &symbols.Symbol{
-		Name:     "__tcp_listener",
-		Kind:     symbols.SymbolType,
-		Type:     tcpListenerHandleType,
-		Exported: true,
-	})
-	tcpConnHandleType := types.NewResourceNamed("__tcp_conn", types.TypeI64)
-	universe.Declare("__tcp_conn", &symbols.Symbol{
-		Name:     "__tcp_conn",
-		Kind:     symbols.SymbolType,
-		Type:     tcpConnHandleType,
-		Exported: true,
-	})
-	httpAppHandleType := types.NewResourceNamed("__http_app", types.TypeI64)
-	universe.Declare("__http_app", &symbols.Symbol{
-		Name:     "__http_app",
-		Kind:     symbols.SymbolType,
-		Type:     httpAppHandleType,
-		Exported: true,
-	})
-	httpResponseHandleType := types.NewResourceNamed("__http_response", types.TypeI64)
-	universe.Declare("__http_response", &symbols.Symbol{
-		Name:     "__http_response",
-		Kind:     symbols.SymbolType,
-		Type:     httpResponseHandleType,
-		Exported: true,
-	})
+	// Compiler-owned resource handle types preserve nominal identity while
+	// keeping an i64 ABI layout. Stream handles are copyable (non-resource).
+	for _, name := range CompilerBuiltinHandleTypeNames() {
+		handleType := types.NewNamed(name, types.TypeI64)
+		if IsCompilerResourceHandleTypeName(name) {
+			handleType = types.NewResourceNamed(name, types.TypeI64)
+		}
+		universe.Declare(name, &symbols.Symbol{
+			Name:     name,
+			Kind:     symbols.SymbolType,
+			Type:     handleType,
+			Exported: false,
+		})
+	}
+
+	streamSym, ok := universe.Lookup("__stream")
+	if ok && streamSym != nil && streamSym.Kind == symbols.SymbolType && streamSym.Type != nil {
+		streamType := streamSym.Type
+		byteSliceType := types.NewArray(types.TypeByte, -1)
+
+		declareBuiltinConst(universe, "stdin", streamType, "0")
+		declareBuiltinConst(universe, "stdout", streamType, "1")
+		declareBuiltinConst(universe, "stderr", streamType, "2")
+
+		declareBuiltinNativeFunc(
+			universe,
+			"write",
+			"ferret_global_write",
+			[]types.ParamType{
+				{Name: "stream", Type: streamType},
+				{Name: "data", Type: byteSliceType},
+			},
+			types.NewResult(types.TypeI32, types.TypeString),
+		)
+		declareBuiltinNativeFunc(
+			universe,
+			"read",
+			"ferret_global_read",
+			[]types.ParamType{
+				{Name: "stream", Type: streamType},
+				{Name: "maxBytes", Type: types.TypeI32},
+			},
+			types.NewResult(byteSliceType, types.TypeString),
+		)
+		declareBuiltinNativeFunc(
+			universe,
+			"flush",
+			"ferret_global_flush",
+			[]types.ParamType{{Name: "stream", Type: streamType}},
+			types.NewResult(types.TypeBool, types.TypeString),
+		)
+	}
 
 	// Built-in constants
 	universe.Declare("true", &symbols.Symbol{
@@ -405,6 +420,45 @@ func registerBuiltins(universe *table.SymbolTable) {
 		Kind:     symbols.SymbolConstant,
 		Type:     types.TypeNone, // Special none type for optional unwrapping
 		Exported: true,
+	})
+}
+
+type builtinConstLiteral struct {
+	literal string
+}
+
+func (c builtinConstLiteral) IsConstant() bool {
+	return true
+}
+
+func (c builtinConstLiteral) String() string {
+	return c.literal
+}
+
+func declareBuiltinConst(universe *table.SymbolTable, name string, typ types.SemType, literal string) {
+	if universe == nil || name == "" || typ == nil {
+		return
+	}
+	_ = universe.Declare(name, &symbols.Symbol{
+		Name:       name,
+		Kind:       symbols.SymbolConstant,
+		Type:       typ,
+		Exported:   true,
+		ConstValue: builtinConstLiteral{literal: literal},
+	})
+}
+
+func declareBuiltinNativeFunc(universe *table.SymbolTable, name, nativeName string, params []types.ParamType, ret types.SemType) {
+	if universe == nil || name == "" || nativeName == "" || ret == nil {
+		return
+	}
+	_ = universe.Declare(name, &symbols.Symbol{
+		Name:       name,
+		Kind:       symbols.SymbolFunction,
+		Type:       types.NewFunction(params, ret),
+		Exported:   true,
+		IsNative:   true,
+		NativeName: nativeName,
 	})
 }
 

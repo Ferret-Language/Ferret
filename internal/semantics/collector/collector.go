@@ -442,6 +442,7 @@ func collectFuncDeclSignature(ctx *context_v2.CompilerContext, mod *context_v2.M
 		} else {
 			sym.IsNative = true
 			sym.NativeName = externNativeName(mod.ImportPath, name)
+			sym.Intrinsic = intrinsicForNativeSymbol(sym.NativeName)
 		}
 	}
 
@@ -485,6 +486,20 @@ func externNativeName(importPath, name string) string {
 	// Convert import path to C-safe name: std/io -> std_io
 	modName := strings.ReplaceAll(importPath, "/", "_")
 	return fmt.Sprintf("ferret_%s_%s", modName, name)
+}
+
+func intrinsicForNativeSymbol(nativeName string) symbols.IntrinsicKind {
+	switch nativeName {
+	case "ferret_global_addr":
+		return symbols.IntrinsicAddr
+	case "ferret_global_self_addr":
+		return symbols.IntrinsicSelfAddr
+	case "ferret_global_real":
+		return symbols.IntrinsicReal
+	case "ferret_global_imag":
+		return symbols.IntrinsicImag
+	}
+	return symbols.IntrinsicNone
 }
 
 // extractReceiverTypeName extracts the type name and optional module from a receiver's TypeNode.
@@ -843,6 +858,15 @@ func validateParams(ctx *context_v2.CompilerContext, _ *context_v2.Module, param
 // collectTypeDecl handles type declarations
 func collectTypeDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl *ast.TypeDecl) {
 	name := decl.Name.Name
+
+	if mod.Type != context_v2.ModuleBuiltin && context_v2.IsCompilerBuiltinHandleTypeName(name) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("type name '%s' is reserved for compiler builtins", name)).
+				WithCode(diagnostics.ErrInvalidDeclaration).
+				WithPrimaryLabel(decl.Loc(), "choose a different type name"),
+		)
+		return
+	}
 
 	// Check for conflict with import alias
 	if importPath, isImport := mod.ImportAliasMap[name]; isImport {

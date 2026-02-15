@@ -1,0 +1,37 @@
+import "std/io";
+import "std/fs";
+
+fn writeToFile(path: str) -> str ! bool {
+    let file := fs::Create(path) catch err {
+        return err!;
+    };
+    io::Fprintln(&mut file, "file via Fprintln:", 456) catch err {
+        return err!;
+    };
+    file.Close();
+    return true;
+}
+
+fn main() {
+    let out := io::Stdout();
+    io::Fprint(&mut out, "stdout via Fprint:", 123, true) catch err {
+        io::Println("stdout write error:", err);
+        return;
+    };
+    io::Fprintln(&mut out, " done") catch err {
+        io::Println("stdout write error:", err);
+        return;
+    };
+
+    let path := "/tmp/ferret_fprint_example.txt";
+    writeToFile(path) catch err {
+        io::Println("write file error:", err);
+        return;
+    };
+
+    let content := fs::ReadFile(path) catch err {
+        io::Println("read file error:", err);
+        return;
+    };
+    io::Println("file content:", content);
+}

@@ -3,13 +3,14 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "../core/array.h"
 #include "../core/map.h"
 #include "../core/alloc.h"
-#include "../core/file_handle.h"
 #include "../core/bigint.h"
+#include "../core/result.h"
 #include "../core/runtime_naming.h"
 
 // Define the module prefix for this file (implements ferret_libs/global.fer)
@@ -272,6 +273,126 @@ uint64_t FERRET_FUNC(heap_addr)(const void* value, uint64_t heap) {
     return heap;
 }
 
+enum {
+    FERRET_STREAM_STDIN = 0,
+    FERRET_STREAM_STDOUT = 1,
+    FERRET_STREAM_STDERR = 2,
+};
+
+static FILE* ferret_stream_file(int64_t stream) {
+    switch (stream) {
+        case FERRET_STREAM_STDIN:
+            return stdin;
+        case FERRET_STREAM_STDOUT:
+            return stdout;
+        case FERRET_STREAM_STDERR:
+            return stderr;
+        default:
+            return NULL;
+    }
+}
+
+void FERRET_FUNC(write)(void* out, int64_t stream, const ferret_array_t* data) {
+    const uint8_t tag_offset = 8;
+    if (out == NULL) {
+        return;
+    }
+    FILE* fp = ferret_stream_file(stream);
+    if (fp == NULL) {
+        FERRET_RESULT_ERR(out, tag_offset, "invalid stream");
+        return;
+    }
+    if (data == NULL) {
+        FERRET_RESULT_OK(out, tag_offset, int32_t, 0);
+        return;
+    }
+    if (data->elem_size != sizeof(uint8_t)) {
+        FERRET_RESULT_ERR(out, tag_offset, "write expects []byte");
+        return;
+    }
+    if (data->length <= 0 || data->data == NULL) {
+        FERRET_RESULT_OK(out, tag_offset, int32_t, 0);
+        return;
+    }
+
+    size_t expected = (size_t)data->length;
+    size_t written = fwrite(data->data, 1, expected, fp);
+    if (written != expected) {
+        FERRET_RESULT_ERR(out, tag_offset, "failed to write all bytes");
+        return;
+    }
+    FERRET_RESULT_OK(out, tag_offset, int32_t, (int32_t)written);
+}
+
+void FERRET_FUNC(read)(void* out, int64_t stream, int32_t max_bytes) {
+    const uint8_t tag_offset = 8;
+    if (out == NULL) {
+        return;
+    }
+    FILE* fp = ferret_stream_file(stream);
+    if (fp == NULL) {
+        FERRET_RESULT_ERR(out, tag_offset, "invalid stream");
+        return;
+    }
+    if (max_bytes <= 0) {
+        FERRET_RESULT_ERR(out, tag_offset, "maxBytes must be > 0");
+        return;
+    }
+
+    uint8_t* buf = (uint8_t*)ferret_alloc((size_t)max_bytes);
+    if (buf == NULL) {
+        FERRET_RESULT_ERR(out, tag_offset, "out of memory");
+        return;
+    }
+
+    size_t n = fread(buf, 1, (size_t)max_bytes, fp);
+    if (ferror(fp)) {
+        ferret_free(buf);
+        FERRET_RESULT_ERR(out, tag_offset, "failed to read bytes");
+        return;
+    }
+
+    ferret_array_t* arr = NULL;
+    if (n > 0) {
+        arr = ferret_array_from_data(buf, (int32_t)n, (int32_t)n, sizeof(uint8_t), (ferret_type_info_t*)&ferret_type_byte);
+        if (arr == NULL) {
+            ferret_free(buf);
+            FERRET_RESULT_ERR(out, tag_offset, "out of memory");
+            return;
+        }
+    } else {
+        ferret_free(buf);
+        arr = ferret_array_new(sizeof(uint8_t), 0, (ferret_type_info_t*)&ferret_type_byte);
+        if (arr == NULL) {
+            FERRET_RESULT_ERR(out, tag_offset, "out of memory");
+            return;
+        }
+    }
+
+    FERRET_RESULT_OK(out, tag_offset, ferret_array_t*, arr);
+}
+
+void FERRET_FUNC(flush)(void* out, int64_t stream) {
+    const uint8_t tag_offset = 8;
+    if (out == NULL) {
+        return;
+    }
+    FILE* fp = ferret_stream_file(stream);
+    if (fp == NULL) {
+        FERRET_RESULT_ERR(out, tag_offset, "invalid stream");
+        return;
+    }
+    if (stream == FERRET_STREAM_STDIN) {
+        FERRET_RESULT_ERR(out, tag_offset, "cannot flush stdin");
+        return;
+    }
+    if (fflush(fp) != 0) {
+        FERRET_RESULT_ERR(out, tag_offset, "flush failed");
+        return;
+    }
+    FERRET_RESULT_OK(out, tag_offset, bool, true);
+}
+
 float FERRET_FUNC(real_complex64)(const void* value, uint64_t heap) {
     (void)heap;
     if (value == NULL) {
@@ -350,64 +471,4 @@ void FERRET_FUNC(imag_complex512)(ferret_f256* out, const void* value, uint64_t 
         return;
     }
     *out = ((const ferret_complex512_t*)value)->im;
-}
-
-static bool ferret_file_mode_is_write_only(const char* mode) {
-    if (mode == NULL) {
-        return false;
-    }
-    if (strchr(mode, '+') != NULL) {
-        return false;
-    }
-    return strchr(mode, 'w') != NULL || strchr(mode, 'a') != NULL;
-}
-
-int64_t FERRET_FUNC(__file_clone)(int64_t handle) {
-    ferret_file_handle_t* h = ferret_file_handle_from_raw(handle);
-    if (h == NULL) {
-        return 0;
-    }
-    FILE* src = ferret_file_handle_file(h);
-    const char* path = ferret_file_handle_path(h);
-    const char* mode = ferret_file_handle_mode(h);
-    if (src == NULL || path == NULL || mode == NULL) {
-        return 0;
-    }
-
-    // Only flush pure write modes to avoid UB on input streams.
-    if (ferret_file_mode_is_write_only(mode)) {
-        fflush(src);
-    }
-
-    long pos = ftell(src);
-    if (pos < 0) {
-        pos = 0;
-    }
-
-    // Copy should not truncate existing file contents.
-    const char* clone_mode = mode;
-    if (strcmp(mode, "w") == 0 || strcmp(mode, "w+") == 0) {
-        clone_mode = "r+";
-    }
-
-    FILE* fp = fopen(path, clone_mode);
-    if (fp == NULL) {
-        return 0;
-    }
-    if (fseek(fp, pos, SEEK_SET) != 0) {
-        fclose(fp);
-        return 0;
-    }
-
-    ferret_file_handle_t* cloned = ferret_file_handle_new_with_meta(fp, path, mode);
-    if (cloned == NULL) {
-        fclose(fp);
-        return 0;
-    }
-    return ferret_file_handle_to_raw(cloned);
-}
-
-void FERRET_FUNC(__file_drop)(int64_t handle) {
-    ferret_file_handle_t* h = ferret_file_handle_from_raw(handle);
-    ferret_file_handle_release(h);
 }

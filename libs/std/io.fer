@@ -47,18 +47,121 @@ type ReadWriter interface {
     Write(buf: []byte) -> str ! i32
 };
 
+type StreamWriter struct {
+    .stream: __stream
+};
+
 // @extern
-fn Println(values: ...Printable);
+fn (w: &mut StreamWriter) Write(buf: []byte) -> str ! i32;
+
+fn Stdout() -> StreamWriter {
+    return { .stream = stdout } as StreamWriter;
+}
+
+fn Stderr() -> StreamWriter {
+    return { .stream = stderr } as StreamWriter;
+}
+
+// Private native helpers used by ferret-level wrappers.
 // @extern
-fn Print(values: ...Printable);
+fn _formatPrintable(values: []Printable) -> str;
 // @extern
-fn ReadInt() -> str ! i32;
+fn _parseInt(value: str) -> str ! i32;
 // @extern
-fn ReadFloat() -> str ! f64;
+fn _parseFloat(value: str) -> str ! f64;
 // @extern
-fn Read() -> str ! str;
+fn _readLine() -> str ! str;
 // @extern
-fn ReadUnsafe() -> str;
+fn _readLineUnsafe() -> str;
+
+fn Print(values: ...Printable) {
+    let text := _formatPrintable(values);
+    write(stdout, text as []byte) catch err {
+        panic(err);
+        return;
+    };
+}
+
+fn Println(values: ...Printable) {
+    let text := _formatPrintable(values) + "\n";
+    write(stdout, text as []byte) catch err {
+        panic(err);
+        return;
+    };
+}
+
+fn Read() -> str ! str {
+    let line := _readLine() catch err {
+        return err!;
+    };
+    return line;
+}
+
+fn ReadUnsafe() -> str {
+    return _readLineUnsafe();
+}
+
+fn ReadInt() -> str ! i32 {
+    let line := Read() catch err {
+        return err!;
+    };
+    return _parseInt(line) catch err {
+        return err!;
+    };
+}
+
+fn ReadFloat() -> str ! f64 {
+    let line := Read() catch err {
+        return err!;
+    };
+    return _parseFloat(line) catch err {
+        return err!;
+    };
+}
+
+fn Write(data: []byte) -> str ! i32 {
+    return write(stdout, data) catch err {
+        return err!;
+    };
+}
+
+fn WriteErr(data: []byte) -> str ! i32 {
+    return write(stderr, data) catch err {
+        return err!;
+    };
+}
+
+fn FlushOut() -> str ! bool {
+    return flush(stdout) catch err {
+        return err!;
+    };
+}
+
+fn FlushErr() -> str ! bool {
+    return flush(stderr) catch err {
+        return err!;
+    };
+}
+
+fn ReadBytes(maxBytes: i32) -> str ! []byte {
+    return read(stdin, maxBytes) catch err {
+        return err!;
+    };
+}
+
+fn Fprint(w: &mut Writer, values: ...Printable) -> str ! i32 {
+    let text := _formatPrintable(values);
+    return w.Write(text as []byte) catch err {
+        return err!;
+    };
+}
+
+fn Fprintln(w: &mut Writer, values: ...Printable) -> str ! i32 {
+    let text := _formatPrintable(values) + "\n";
+    return w.Write(text as []byte) catch err {
+        return err!;
+    };
+}
 
 fn _appendBytes(dst: &mut []byte, src: []byte) -> bool {
     let i: i32 = 0;
@@ -71,7 +174,7 @@ fn _appendBytes(dst: &mut []byte, src: []byte) -> bool {
     return true;
 }
 
-fn WriteString(w: Writer, s: str) -> str ! i32 {
+fn WriteString(w: &mut Writer, s: str) -> str ! i32 {
     return w.Write(s as []byte) catch err {
         return err!;
     };

@@ -579,17 +579,6 @@ func (g *Generator) emitCall(c *mir.Call) {
 		return
 	}
 
-	if len(args) == 1 && isEnumType(args[0].sem) && isPrintFunc(target) {
-		table, count, err := g.enumStringTable(args[0].sem)
-		if err != nil {
-			g.reportError(err.Error(), &c.Location)
-			return
-		}
-		tmp := g.newTemp()
-		g.emitLine(fmt.Sprintf("%s =l call $ferret_enum_to_string(l %s, w %d, w %s)", tmp, table, count, args[0].name))
-		args[0] = callArg{name: tmp, typ: "l", sem: types.TypeString}
-	}
-
 	if optType, ok := g.optionalType(c.Type); ok {
 		size := g.layout.SizeOf(optType)
 		if size <= 0 {
@@ -1568,10 +1557,6 @@ func (g *Generator) normalizeFloat(value string) (string, error) {
 		return "", fmt.Errorf("qbe: invalid float literal %q", value)
 	}
 	return num.String(), nil
-}
-
-func isPrintFunc(target string) bool {
-	return target == "ferret_io_Print" || target == "ferret_io_Println"
 }
 
 func isEnumType(typ types.SemType) bool {

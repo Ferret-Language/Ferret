@@ -5136,6 +5136,14 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 		if ctx != nil && mod != nil {
 			sym, ok := mod.CurrentScope.Lookup(t.Name)
 			if ok && sym.Kind == symbols.SymbolType {
+				if mod.Type != context_v2.ModuleBuiltin && context_v2.IsCompilerBuiltinHandleTypeName(t.Name) {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("type '%s' is compiler-internal", t.Name)).
+							WithCode(diagnostics.ErrInvalidType).
+							WithPrimaryLabel(t.Loc(), "this type is only available inside builtin modules"),
+					)
+					return types.TypeUnknown
+				}
 				// Return the resolved user-defined type
 				return sym.Type
 			}

@@ -1,6 +1,9 @@
 package typechecker
 
 import (
+	"compiler/internal/context_v2"
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/table"
 	"compiler/internal/types"
 	"testing"
 )
@@ -243,6 +246,152 @@ func TestCheckTypeCompatibility(t *testing.T) {
 				tt.source, tt.target, result, tt.expected)
 		}
 	}
+}
+
+func TestCheckTypeCompatibilityWithContextReferenceToInterface(t *testing.T) {
+	ctx := context_v2.New(&context_v2.Config{Extension: ".fer"}, false)
+	modScope := table.NewSymbolTable(ctx.Universe)
+	mod := &context_v2.Module{
+		ImportPath:     "test",
+		FilePath:       "/test/main.fer",
+		Type:           context_v2.ModuleLocal,
+		ModuleScope:    modScope,
+		CurrentScope:   modScope,
+		Imports:        make(map[string]*context_v2.Import),
+		ImportAliasMap: make(map[string]string),
+	}
+	ctx.AddModule(mod.ImportPath, mod)
+
+	writeFn := types.NewFunction([]types.ParamType{
+		{Name: "buf", Type: types.NewArray(types.TypeByte, -1)},
+	}, types.NewResult(types.TypeI32, types.TypeString))
+
+	writerIface := types.NewInterface([]types.InterfaceMethod{
+		{Name: "Write", FuncType: writeFn},
+	})
+	writerNamed := types.NewNamed("Writer", writerIface)
+
+	streamWriter := types.NewNamed("StreamWriter", types.NewStruct("StreamWriter", nil))
+	streamWriterSym := &symbols.Symbol{
+		Name: "StreamWriter",
+		Kind: symbols.SymbolType,
+		Type: streamWriter,
+		Methods: map[string]*symbols.MethodInfo{
+			"Write": {
+				Name:     "Write",
+				FuncType: writeFn,
+				Receiver: types.NewMutableReference(streamWriter),
+			},
+		},
+	}
+	if err := mod.ModuleScope.Declare("StreamWriter", streamWriterSym); err != nil {
+		t.Fatalf("failed to declare StreamWriter: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		source   types.SemType
+		target   types.SemType
+		expected TypeCompatibility
+	}{
+		{
+			name:     "&mut concrete -> &mut named interface",
+			source:   types.NewMutableReference(streamWriter),
+			target:   types.NewMutableReference(writerNamed),
+			expected: ImplicitCastable,
+		},
+		{
+			name:     "&mut concrete -> &named interface",
+			source:   types.NewMutableReference(streamWriter),
+			target:   types.NewReference(writerNamed),
+			expected: ImplicitCastable,
+		},
+		{
+			name:     "&concrete -> &mut named interface",
+			source:   types.NewReference(streamWriter),
+			target:   types.NewMutableReference(writerNamed),
+			expected: Incompatible,
+		},
+	}
+
+	for _, tt := range tests {
+		got := checkTypeCompatibilityWithContext(ctx, mod, tt.source, tt.target)
+		if got != tt.expected {
+			t.Errorf("%s: checkTypeCompatibilityWithContext(%s, %s) = %s, want %s",
+				tt.name, tt.source, tt.target, got, tt.expected)
+		}
+	}
+
+	t.Run("imported module type also satisfies &mut interface", func(t *testing.T) {
+		ctx2 := context_v2.New(&context_v2.Config{Extension: ".fer"}, false)
+
+		ioScope := table.NewSymbolTable(ctx2.Universe)
+		ioMod := &context_v2.Module{
+			ImportPath:     "std/io",
+			FilePath:       "/std/io.fer",
+			Type:           context_v2.ModuleBuiltin,
+			ModuleScope:    ioScope,
+			CurrentScope:   ioScope,
+			Imports:        make(map[string]*context_v2.Import),
+			ImportAliasMap: make(map[string]string),
+		}
+		ctx2.AddModule(ioMod.ImportPath, ioMod)
+
+		mainScope := table.NewSymbolTable(ctx2.Universe)
+		mainMod := &context_v2.Module{
+			ImportPath:   "app/main",
+			FilePath:     "/app/main.fer",
+			Type:         context_v2.ModuleLocal,
+			ModuleScope:  mainScope,
+			CurrentScope: mainScope,
+			Imports: map[string]*context_v2.Import{
+				"std/io": {Path: "std/io", Alias: "io"},
+			},
+			ImportAliasMap: map[string]string{
+				"io": "std/io",
+			},
+		}
+		ctx2.AddModule(mainMod.ImportPath, mainMod)
+
+		ioWriterIface := types.NewInterface([]types.InterfaceMethod{
+			{Name: "Write", FuncType: writeFn},
+		})
+		ioWriterNamed := types.NewNamed("Writer", ioWriterIface)
+		ioStreamWriter := types.NewNamed("StreamWriter", types.NewStruct("StreamWriter", nil))
+
+		if err := ioMod.ModuleScope.Declare("Writer", &symbols.Symbol{
+			Name:    "Writer",
+			Kind:    symbols.SymbolType,
+			Type:    ioWriterNamed,
+			Methods: map[string]*symbols.MethodInfo{},
+		}); err != nil {
+			t.Fatalf("failed to declare Writer: %v", err)
+		}
+		if err := ioMod.ModuleScope.Declare("StreamWriter", &symbols.Symbol{
+			Name: "StreamWriter",
+			Kind: symbols.SymbolType,
+			Type: ioStreamWriter,
+			Methods: map[string]*symbols.MethodInfo{
+				"Write": {
+					Name:     "Write",
+					FuncType: writeFn,
+					Receiver: types.NewMutableReference(ioStreamWriter),
+				},
+			},
+		}); err != nil {
+			t.Fatalf("failed to declare StreamWriter: %v", err)
+		}
+
+		got := checkTypeCompatibilityWithContext(
+			ctx2,
+			mainMod,
+			types.NewMutableReference(ioStreamWriter),
+			types.NewMutableReference(ioWriterNamed),
+		)
+		if got != ImplicitCastable {
+			t.Fatalf("imported ref/interface compatibility = %s, want %s", got, ImplicitCastable)
+		}
+	})
 }
 
 func TestIsLosslessNumericConversion(t *testing.T) {

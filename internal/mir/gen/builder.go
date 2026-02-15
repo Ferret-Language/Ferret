@@ -1023,14 +1023,6 @@ func (b *functionBuilder) lowerReturn(stmt *hir.ReturnStmt) {
 			return
 		}
 	}
-	if resultShouldCopy && isIntrinsicFileType(retType) && !needsByRefType(retType) {
-		val = b.emitIntrinsicCopyValue(val, retType, stmt.Location)
-		if val == mir.InvalidValue {
-			b.current.Term = &mir.Unreachable{Location: stmt.Location}
-			return
-		}
-	}
-
 	if resultShouldCopy {
 		if _, ok := dynamicArrayValueType(retType); ok {
 			if !b.isDynamicArrayLiteralExpr(stmt.Result, retType) {
@@ -2543,23 +2535,6 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 		return mir.InvalidValue
 	}
 
-	isSelfAddrCall := false
-	isAddrCall := false
-	isRealImagCall := false
-	realImagName := ""
-	if ident, ok := expr.Fun.(*hir.Ident); ok {
-		if ident.Name == "self_addr" && ident.Symbol != nil && ident.Symbol.IsNative {
-			isSelfAddrCall = true
-		}
-		if ident.Name == "addr" && ident.Symbol != nil && ident.Symbol.IsNative {
-			isAddrCall = true
-		}
-		if (ident.Name == "real" || ident.Name == "imag") && ident.Symbol != nil && ident.Symbol.IsNative {
-			isRealImagCall = true
-			realImagName = ident.Name
-		}
-	}
-
 	fnType, _ := types.UnwrapType(b.exprType(expr.Fun)).(*types.FunctionType)
 
 	if selector, ok := expr.Fun.(*hir.SelectorExpr); ok {
@@ -2600,22 +2575,24 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 	}
 
 	if target, ok := b.callTarget(expr.Fun); ok {
-		if isRealImagCall {
-			return b.lowerRealImagCall(realImagName, expr, fnType)
+		intrinsic := b.intrinsicForCallee(expr.Fun)
+		if intrinsic == symbols.IntrinsicReal {
+			return b.lowerRealImagCall("real", expr, fnType)
 		}
-		// Print/Println resolve by concrete arg type in QBE.
-		skipInterfaceBoxing := b.isStdIoPrintTarget(target)
+		if intrinsic == symbols.IntrinsicImag {
+			return b.lowerRealImagCall("imag", expr, fnType)
+		}
 		var args []mir.ValueID
 		if target == "append" {
-			args = b.lowerAppendArgs(expr, fnType, expr.Location, skipInterfaceBoxing)
+			args = b.lowerAppendArgs(expr, fnType, expr.Location, false)
 		}
 		if args == nil {
-			args = b.lowerCallArgs(expr.Args, fnType, expr.Location, skipInterfaceBoxing)
+			args = b.lowerCallArgs(expr.Args, fnType, expr.Location, false)
 		}
 		if args == nil {
 			return mir.InvalidValue
 		}
-		if isAddrCall && len(expr.Args) == 1 && len(args) >= 1 {
+		if intrinsic == symbols.IntrinsicAddr && len(expr.Args) == 1 && len(args) >= 1 {
 			argType := b.exprType(expr.Args[0])
 			if _, ok := types.UnwrapType(argType).(*types.ReferenceType); !ok {
 				if addr := b.bindingAddrArg(expr.Args[0]); addr != mir.InvalidValue {
@@ -2623,7 +2600,7 @@ func (b *functionBuilder) lowerCall(expr *hir.CallExpr) mir.ValueID {
 				}
 			}
 		}
-		if isSelfAddrCall && len(expr.Args) == 1 && len(args) >= 1 {
+		if intrinsic == symbols.IntrinsicSelfAddr && len(expr.Args) == 1 && len(args) >= 1 {
 			if addr := b.bindingAddrArg(expr.Args[0]); addr != mir.InvalidValue {
 				args[0] = addr
 			}
@@ -2720,6 +2697,14 @@ func (b *functionBuilder) bindingAddrArg(expr hir.Expr) mir.ValueID {
 	return mir.InvalidValue
 }
 
+func (b *functionBuilder) intrinsicForCallee(expr hir.Expr) symbols.IntrinsicKind {
+	ident, ok := expr.(*hir.Ident)
+	if !ok || ident == nil || ident.Symbol == nil {
+		return symbols.IntrinsicNone
+	}
+	return ident.Symbol.Intrinsic
+}
+
 func (b *functionBuilder) lowerCallArgs(args []hir.Expr, fnType *types.FunctionType, loc source.Location, skipInterfaceBoxing bool) []mir.ValueID {
 	return b.lowerCallArgsWithCoerce(args, fnType, loc, skipInterfaceBoxing, nil)
 }
@@ -2790,7 +2775,7 @@ func (b *functionBuilder) lowerCallArgsWithCoerce(args []hir.Expr, fnType *types
 			paramBase := types.UnwrapType(paramType)
 			if _, ok := paramBase.(*types.ReferenceType); !ok && needsByRefType(paramType) && !boxedUnion {
 				tmp := b.emitAlloca(paramType, loc)
-				storeAsMove := argShouldMove || typeUsesIntrinsicCopy(paramType)
+				storeAsMove := argShouldMove
 				if storeAsMove {
 					b.emitStoreMove(tmp, val, loc)
 				} else {
@@ -2922,8 +2907,7 @@ func (b *functionBuilder) lowerHeapReturnCall(call *hir.CallExpr, inner types.Se
 	}
 
 	if target, ok := b.callTarget(call.Fun); ok {
-		skipInterfaceBoxing := b.isStdIoPrintTarget(target)
-		args := b.lowerCallArgs(call.Args, fnType, call.Location, skipInterfaceBoxing)
+		args := b.lowerCallArgs(call.Args, fnType, call.Location, false)
 		if args == nil {
 			return mir.InvalidValue
 		}
@@ -2935,36 +2919,6 @@ func (b *functionBuilder) lowerHeapReturnCall(call *hir.CallExpr, inner types.Se
 	}
 
 	return mir.InvalidValue
-}
-
-func (b *functionBuilder) isStdIoPrintTarget(target string) bool {
-	if target == "" {
-		return false
-	}
-	if !strings.Contains(target, "::") {
-		if target != "Print" && target != "Println" {
-			return false
-		}
-		return b.gen != nil && b.gen.mod != nil && b.gen.mod.ImportPath == "std/io"
-	}
-
-	parts := strings.Split(target, "::")
-	if len(parts) < 2 {
-		return false
-	}
-	funcName := parts[len(parts)-1]
-	if funcName != "Print" && funcName != "Println" {
-		return false
-	}
-	moduleAlias := strings.Join(parts[:len(parts)-1], "::")
-	if moduleAlias == "" {
-		return false
-	}
-
-	if b.gen == nil || b.gen.mod == nil || b.gen.mod.ImportAliasMap == nil {
-		return false
-	}
-	return b.gen.mod.ImportAliasMap[moduleAlias] == "std/io"
 }
 
 func isRefToEmptyInterface(typ types.SemType) bool {
@@ -3847,7 +3801,11 @@ func (b *functionBuilder) computeBorrowHeap(expr hir.Expr, val mir.ValueID, inne
 		if refType, ok := types.UnwrapType(b.exprType(expr)).(*types.ReferenceType); ok {
 			exprInner := types.UnwrapType(refType.Inner)
 			if interfaceTypeOf(inner) != nil && interfaceTypeOf(exprInner) == nil {
-				inner = exprInner
+				// Keep interface metadata when the lowered value is already an
+				// interface box (implicit concrete->interface argument boxing).
+				if elem, ok := b.ptrElem[val]; !ok || interfaceTypeOf(elem) == nil {
+					inner = exprInner
+				}
 			}
 		}
 	}
@@ -4273,6 +4231,12 @@ func (b *functionBuilder) loadIdent(ident *hir.Ident) mir.ValueID {
 
 	if ident.Symbol != nil && ident.Symbol.Kind == symbols.SymbolFunction {
 		return b.makeFuncValue(ident.Name, ident.Type, ident.Location)
+	}
+	if ident.Symbol != nil && ident.Symbol.Kind == symbols.SymbolConstant &&
+		ident.Symbol.ConstValue != nil && ident.Symbol.ConstValue.IsConstant() {
+		if literal, ok := constValueLiteral(ident.Symbol.ConstValue); ok {
+			return b.emitConst(ident.Type, literal, ident.Location)
+		}
 	}
 
 	wrap := func(val mir.ValueID) mir.ValueID {
@@ -7014,51 +6978,9 @@ func (b *functionBuilder) emitMemcpy(dst, src mir.ValueID, typ types.SemType, lo
 	})
 }
 
-func isIntrinsicFileType(typ types.SemType) bool {
-	if typ == nil {
-		return false
-	}
-	switch t := typ.(type) {
-	case *types.NamedType:
-		return t.Name == "__file"
-	case *types.ReferenceType:
-		return isIntrinsicFileType(t.Inner)
-	case *types.HeapType:
-		return isIntrinsicFileType(t.Inner)
-	default:
-		return false
-	}
-}
-
-func typeUsesIntrinsicCopy(typ types.SemType) bool {
-	if typ == nil {
-		return false
-	}
-	if isIntrinsicFileType(typ) {
-		return true
-	}
-	typ = types.UnwrapType(typ)
-	switch t := typ.(type) {
-	case *types.StructType:
-		for _, field := range t.Fields {
-			if typeUsesIntrinsicCopy(field.Type) {
-				return true
-			}
-		}
-	case *types.ArrayType:
-		if t.Length >= 0 {
-			return typeUsesIntrinsicCopy(t.Element)
-		}
-	}
-	return false
-}
-
 func typeNeedsDeepCopy(typ types.SemType) bool {
 	if typ == nil {
 		return false
-	}
-	if typeUsesIntrinsicCopy(typ) {
-		return true
 	}
 	typ = types.UnwrapType(typ)
 	switch t := typ.(type) {
@@ -7090,16 +7012,6 @@ func (b *functionBuilder) emitDeepCopy(dst, src mir.ValueID, typ types.SemType, 
 	}
 	if b.gen == nil || b.gen.layout == nil {
 		b.emitMemcpy(dst, src, typ, loc)
-		return
-	}
-	if isIntrinsicFileType(typ) {
-		srcVal := b.emitLoad(src, typ, loc)
-		copied := b.emitIntrinsicCopyValue(srcVal, typ, loc)
-		b.emitInstr(&mir.Store{
-			Addr:     dst,
-			Value:    copied,
-			Location: loc,
-		})
 		return
 	}
 	typ = types.UnwrapType(typ)
@@ -7806,21 +7718,6 @@ func (b *functionBuilder) emitHeapOwnerClone(srcPtr mir.ValueID, ownerType types
 	return dstPtr
 }
 
-func (b *functionBuilder) emitIntrinsicCopyValue(value mir.ValueID, typ types.SemType, loc source.Location) mir.ValueID {
-	if value == mir.InvalidValue || !isIntrinsicFileType(typ) {
-		return value
-	}
-	id := b.gen.nextValueID()
-	b.emitInstr(&mir.Call{
-		Result:   id,
-		Target:   "ferret_global___file_clone",
-		Args:     []mir.ValueID{value},
-		Type:     typ,
-		Location: loc,
-	})
-	return id
-}
-
 // emitHeapFree emits a call to ferret_free for a heap pointer.
 func (b *functionBuilder) emitHeapFree(heapPtr mir.ValueID, loc source.Location) {
 	if heapPtr == mir.InvalidValue {
@@ -7851,9 +7748,6 @@ func (b *functionBuilder) emitHeapCleanup(loc source.Location) {
 
 func (b *functionBuilder) emitStore(addr, value mir.ValueID, loc source.Location) {
 	if elem, ok := b.ptrElem[addr]; ok {
-		if typeUsesIntrinsicCopy(elem) && !needsByRefType(elem) {
-			value = b.emitIntrinsicCopyValue(value, elem, loc)
-		}
 		if _, ok := dynamicArrayValueType(elem); ok {
 			value = b.emitArrayClone(value, elem, loc)
 		} else if _, ok := mapValueType(elem); ok {
