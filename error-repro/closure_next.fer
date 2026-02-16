@@ -1,0 +1,49 @@
+import "std/io";
+
+// Repro attempt: closure capturing variables and recursive next() chain.
+
+type Req struct {
+    .X: i32
+};
+
+type Res struct {
+    .Y: i32
+};
+
+type Middleware struct {
+    .Handler: fn(req: &Req, res: &mut Res, next: fn() -> void) -> void
+};
+
+type App struct {
+    .M: []Middleware
+};
+
+fn run(app: &App, req: &Req, res: &mut Res, idx: i32) {
+    if idx < len(&app.M) {
+        let mw := app.M[idx];
+        let next := fn() {
+            run(app, req, res, idx + 1);
+        };
+        mw.Handler(req, res, next);
+    }
+}
+
+fn main() {
+    let app: App = { .M = [] as []Middleware } as App;
+    let mw: Middleware = {
+        .Handler = fn(req: &Req, res: &mut Res, next: fn() -> void) -> void {
+            if req.X > 0 {
+                res.Y = res.Y + 1;
+            }
+            next();
+        }
+    } as Middleware;
+
+    append(&mut app.M, mw);
+
+    let req: Req = { .X = 1 } as Req;
+    let res: Res = { .Y = 2 } as Res;
+
+    run(&app, &req, &mut res, 0);
+    io::Println("done", res.Y);
+}

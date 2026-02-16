@@ -1,0 +1,28 @@
+import "std/io";
+
+fn main() {
+    let counts: map[str]i32 = {} as map[str]i32;
+    io::Println("size(counts)=", size(counts));
+
+    let ok := set(&mut counts, "one", 1);
+    io::Println("set(counts, one)=", ok, "size=", size(counts));
+
+    let one := get(counts, "one");
+    let miss := get(counts, "missing");
+    io::Println("get(counts, one) is none?", one == none);
+    io::Println("get(counts, missing) is none?", miss == none);
+    io::Println("counts[one]=", counts["one"]);
+
+    let headers: map[str]?str = {} as map[str]?str;
+    headers["content-type"] = "text/plain";
+
+    let h1 := headers["content-type"];
+    let hMiss := headers["x-missing"];
+    io::Println("headers[content-type] is none?", h1 == none);
+    io::Println("headers[x-missing] is none?", hMiss == none);
+
+    let g1 := get(headers, "content-type");
+    let gMiss := get(headers, "x-missing");
+    io::Println("get(headers, content-type) is none?", g1 == none);
+    io::Println("get(headers, x-missing) is none?", gMiss == none);
+}

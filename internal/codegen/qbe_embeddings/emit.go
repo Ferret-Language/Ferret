@@ -5,6 +5,7 @@ package qbe
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"compiler/internal/context_v2"
@@ -556,7 +557,7 @@ func (g *Generator) emitCall(c *mir.Call) {
 
 	args := make([]callArg, 0, len(c.Args))
 	for _, arg := range c.Args {
-		semType := g.valueTypes[arg]
+		semType := g.resolveValueType(arg)
 		if semType == nil {
 			g.reportUnsupported("call arg type", &c.Location)
 			return
@@ -669,7 +670,7 @@ func (g *Generator) emitCallIndirect(c *mir.CallIndirect) {
 
 	args := make([]callArg, 0, len(c.Args))
 	for _, arg := range c.Args {
-		semType := g.valueTypes[arg]
+		semType := g.resolveValueType(arg)
 		if semType == nil {
 			g.reportUnsupported("call_indirect arg type", &c.Location)
 			return
@@ -1447,18 +1448,9 @@ func (g *Generator) constValue(typ types.SemType, value string) (string, error) 
 		case types.TYPE_STRING:
 			return g.stringSymbol(value), nil
 		case types.TYPE_CHAR:
-			// Char literals are stored as the character itself, convert to Unicode code point
-			runes := []rune(value)
-			if len(runes) != 1 {
-				return "", fmt.Errorf("qbe: invalid char literal %q", value)
-			}
-			return fmt.Sprintf("%d", int32(runes[0])), nil
+			return g.normalizeCharLiteral(value)
 		case types.TYPE_BYTE:
-			// Byte literals are stored as the character itself, convert to byte value
-			if len(value) != 1 {
-				return "", fmt.Errorf("qbe: invalid byte literal %q", value)
-			}
-			return fmt.Sprintf("%d", byte(value[0])), nil
+			return g.normalizeByteLiteral(value)
 		case types.TYPE_BOOL:
 			if value == "true" {
 				return "1", nil
@@ -1524,6 +1516,31 @@ func (g *Generator) constValue(typ types.SemType, value string) (string, error) 
 	}
 
 	return "", fmt.Errorf("qbe: unsupported const type %s", typ.String())
+}
+
+func (g *Generator) normalizeCharLiteral(value string) (string, error) {
+	// Accept numeric char constants directly (e.g. `97 as char`).
+	if num, err := g.normalizeInt(value); err == nil {
+		return num, nil
+	}
+	runes := []rune(value)
+	if len(runes) != 1 {
+		return "", fmt.Errorf("qbe: invalid char literal %q", value)
+	}
+	return strconv.FormatInt(int64(runes[0]), 10), nil
+}
+
+func (g *Generator) normalizeByteLiteral(value string) (string, error) {
+	// Accept numeric byte constants directly (e.g. `97`, `97 as byte`).
+	if num, err := g.normalizeInt(value); err == nil {
+		return num, nil
+	}
+	runes := []rune(value)
+	if len(runes) != 1 {
+		return "", fmt.Errorf("qbe: invalid byte literal %q", value)
+	}
+	// For char-like literals, keep byte semantics (truncate to low 8 bits).
+	return strconv.FormatInt(int64(byte(runes[0])), 10), nil
 }
 
 func (g *Generator) stringSymbol(value string) string {

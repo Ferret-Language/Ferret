@@ -1,0 +1,18 @@
+import "std/io";
+
+type App struct { .X: i32 };
+
+fn run(app: &App) {
+    let next := fn() {
+        if app.X > 0 {
+            run(app);
+        }
+    };
+    next();
+}
+
+fn main() {
+    let app: App = { .X = 1 } as App;
+    run(&app);
+    io::Println("ok");
+}

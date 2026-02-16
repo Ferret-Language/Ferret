@@ -1,0 +1,9 @@
+import "std/io";
+
+type H struct { .F: fn(g: fn() -> void) -> void };
+
+fn main() {
+    let h: H = { .F = fn(g: fn() -> void) -> void { g(); } } as H;
+    let next := fn() { io::Println("x"); };
+    h.F(next);
+}

@@ -1,0 +1,991 @@
+import "std/io";
+import "std/color";
+import "std/fs";
+import "std/time";
+import "net/tcp";
+
+// Pure Ferret HTTP server built on net/tcp.
+// Minimal HTTP/1.1 implementation for testing and iteration.
+
+// Internal types
+
+// Request contains the parsed HTTP request data.
+type Request struct {
+    .Method: str,
+    .Path: str,
+    .Url: str,
+    .Query: map[str]?str,
+    .Params: map[str]?str,
+    .Headers: map[str]?str,
+    .Body: str,
+    .BodyBytes: []byte,
+    .IP: str
+};
+
+// Response represents a writable HTTP response.
+type Response struct {
+    .Conn: tcp::TcpConn,
+    .Code: i32,
+    .HeaderText: str,
+    .HasContentType: bool,
+    .HasConnection: bool,
+    .SseOpen: bool,
+    .Sent: bool
+};
+
+type Route struct {
+    .Method: str,
+    .Pattern: str,
+    .Handler: fn(req: &Request, res: &mut Response) -> void
+};
+
+type Middleware struct {
+    .Handler: fn(req: &Request, res: &mut Response, next: fn() -> void) -> void
+};
+
+type StaticMapping struct {
+    .Prefix: str,
+    .Dir: str,
+    .Pad: i32
+};
+
+// App is the main HTTP server/router instance.
+type App struct {
+    .Routes: []Route,
+    .Middleware: []Middleware,
+    .Statics: []StaticMapping,
+    .Running: bool
+};
+
+// Create a new HTTP app.
+fn Server() -> App {
+    let routes: []Route = [] as []Route;
+    let middleware: []Middleware = [] as []Middleware;
+    let statics: []StaticMapping = [] as []StaticMapping;
+    return { .Routes = routes, .Middleware = middleware, .Statics = statics, .Running = false } as App;
+}
+
+// ============================================
+// App lifecycle
+// ============================================
+
+fn (app: &mut App) Listen(port: i32) -> str ! bool {
+    let addr := "0.0.0.0:" + port;
+    return app.ListenAddr(addr) catch err {
+        return err!;
+    };
+}
+
+fn (app: &mut App) ListenAddr(addr: str) -> str ! bool {
+    let listener := tcp::ListenTcp(addr) catch err {
+        return err!;
+    };
+    return app.Serve(&mut listener) catch err {
+        return err!;
+    };
+}
+
+// Compatibility with std/http naming.
+fn (app: &mut App) ListenAddrNative(addr: str) -> str ! bool {
+    return app.ListenAddr(addr) catch err {
+        return err!;
+    };
+}
+
+// Gracefully stop the server. (no-op for now)
+fn (app: &mut App) Close() {
+    app.Running = false;
+}
+
+// Serve on an existing TCP listener.
+fn (app: &mut App) Serve(listener: &mut tcp::TcpListener) -> str ! bool {
+    app.Running = true;
+    while app.Running {
+        let conn := listener.Accept() catch err {
+            return err!;
+        };
+        handleConn(app, @conn);
+    }
+    return true;
+}
+
+// ============================================
+// Routing
+// ============================================
+
+fn (app: &mut App) Get(path: str, handler: fn(req: &Request, res: &mut Response) -> void) {
+    app.addRoute("GET", path, handler);
+}
+
+fn (app: &mut App) Post(path: str, handler: fn(req: &Request, res: &mut Response) -> void) {
+    app.addRoute("POST", path, handler);
+}
+
+fn (app: &mut App) Put(path: str, handler: fn(req: &Request, res: &mut Response) -> void) {
+    app.addRoute("PUT", path, handler);
+}
+
+fn (app: &mut App) Patch(path: str, handler: fn(req: &Request, res: &mut Response) -> void) {
+    app.addRoute("PATCH", path, handler);
+}
+
+fn (app: &mut App) Delete(path: str, handler: fn(req: &Request, res: &mut Response) -> void) {
+    app.addRoute("DELETE", path, handler);
+}
+
+fn (app: &mut App) Options(path: str, handler: fn(req: &Request, res: &mut Response) -> void) {
+    app.addRoute("OPTIONS", path, handler);
+}
+
+fn (app: &mut App) Head(path: str, handler: fn(req: &Request, res: &mut Response) -> void) {
+    app.addRoute("HEAD", path, handler);
+}
+
+fn (app: &mut App) Any(path: str, handler: fn(req: &Request, res: &mut Response) -> void) {
+    app.addRoute("ANY", path, handler);
+}
+
+// Register middleware. Call next() to continue the chain.
+fn (app: &mut App) Use(handler: fn(req: &Request, res: &mut Response, next: fn() -> void) -> void) {
+    let mw: Middleware = { .Handler = handler } as Middleware;
+    append(&mut app.Middleware, mw);
+}
+
+// Serve static files from a directory.
+fn (app: &mut App) Static(prefix: str, dir: str) {
+    let s: StaticMapping = { .Prefix = prefix, .Dir = dir, .Pad = 0 } as StaticMapping;
+    append(&mut app.Statics, s);
+}
+
+// ============================================
+// Request helpers
+// ============================================
+
+fn (req: &Request) Header(name: str) -> ?str {
+    let key := lowerAscii(name);
+    return req.Headers[key];
+}
+
+fn (req: &Request) Query(name: str) -> ?str {
+    return req.Query[name];
+}
+
+fn (req: &Request) Param(name: str) -> ?str {
+    return req.Params[name];
+}
+
+// ============================================
+// Response helpers
+// ============================================
+
+fn (res: &mut Response) Status(code: i32) -> &mut Response {
+    res.Code = code;
+    return res;
+}
+
+fn (res: &mut Response) StatusCode() -> i32 {
+    return res.Code;
+}
+
+fn (res: &mut Response) Header(name: str, value: str) -> &mut Response {
+    if res.Sent {
+        return res;
+    }
+    if name == "Content-Type" || name == "content-type" {
+        res.HasContentType = true;
+    }
+    if name == "Connection" || name == "connection" {
+        res.HasConnection = true;
+    }
+    res.HeaderText = res.HeaderText + name + ": " + value + "\r\n";
+    return res;
+}
+
+fn (res: &mut Response) Send(body: str) {
+    if res.Sent {
+        return;
+    }
+    let bodyBytes := body as []byte;
+    res.Header("Content-Length", "" + len(&bodyBytes));
+    if !res.HasContentType {
+        res.Header("Content-Type", "text/plain; charset=utf-8");
+    }
+    res.sendRawBytes(bodyBytes);
+}
+
+fn (res: &mut Response) Json(body: str) {
+    if res.Sent {
+        return;
+    }
+    res.Header("Content-Type", "application/json; charset=utf-8");
+    res.Send(body);
+}
+
+fn (res: &mut Response) Redirect(url: str) {
+    if res.Sent {
+        return;
+    }
+    res.Status(302);
+    res.Header("Location", url);
+    res.Send("");
+}
+
+fn (res: &mut Response) End() {
+    if res.Sent {
+        return;
+    }
+    res.Header("Content-Length", "0");
+    if !res.HasContentType {
+        res.Header("Content-Type", "text/plain; charset=utf-8");
+    }
+    res.sendRawBytes([] as []byte);
+}
+
+fn (res: &mut Response) SendFile(path: str) -> str ! bool {
+    if res.Sent {
+        return "response already sent"!;
+    }
+    let size := fs::Size(path) catch err {
+        return err!;
+    };
+    let file := fs::Open(path, fs::FileMode::Read) catch err {
+        return err!;
+    };
+    defer file.Close();
+    if !res.HasContentType {
+        res.Header("Content-Type", guessContentType(path));
+    }
+    res.Header("Content-Length", "" + size);
+    if !res.HasConnection {
+        res.Header("Connection", "close");
+    }
+    res.writeHeaders() catch err {
+        return err!;
+    };
+    let bufSize: i32 = 32 * 1024;
+    while true {
+        let chunk := file.ReadBytes(bufSize) catch err {
+            return err!;
+        };
+        if len(&chunk) == 0 {
+            break;
+        }
+        res.Conn.Write(chunk) catch err {
+            return err!;
+        };
+    }
+    res.Sent = true;
+    return true;
+}
+
+fn (res: &mut Response) SseStart() -> str ! bool {
+    if res.Sent {
+        return "response already sent"!;
+    }
+    if !res.HasContentType {
+        res.Header("Content-Type", "text/event-stream");
+    }
+    res.Header("Cache-Control", "no-cache");
+    if !res.HasConnection {
+        res.Header("Connection", "keep-alive");
+    }
+    res.writeHeaders() catch err {
+        return err!;
+    };
+    res.Sent = true;
+    res.SseOpen = true;
+    return true;
+}
+
+fn (res: &mut Response) SseSend(data: str) -> str ! bool {
+    if !res.SseOpen {
+        return "sse stream is not open"!;
+    }
+    let payload := "data: " + data + "\n\n";
+    res.Conn.Write(payload as []byte) catch err {
+        return err!;
+    };
+    return true;
+}
+
+fn (res: &mut Response) SseEvent(event: str, data: str) -> str ! bool {
+    if !res.SseOpen {
+        return "sse stream is not open"!;
+    }
+    let payload := "event: " + event + "\n" + "data: " + data + "\n\n";
+    res.Conn.Write(payload as []byte) catch err {
+        return err!;
+    };
+    return true;
+}
+
+fn (res: &mut Response) SseComment(comment: str) -> str ! bool {
+    if !res.SseOpen {
+        return "sse stream is not open"!;
+    }
+    let payload := ": " + comment + "\n\n";
+    res.Conn.Write(payload as []byte) catch err {
+        return err!;
+    };
+    return true;
+}
+
+fn (res: &mut Response) SseClose() {
+    if !res.SseOpen {
+        return;
+    }
+    res.SseOpen = false;
+}
+
+// ============================================
+// Logging middleware (same API as std/http)
+// ============================================
+
+fn statusColor(status: i32) -> str {
+    if status >= 200 && status < 300 {
+        return color::Green;
+    }
+    if status >= 300 && status < 400 {
+        return color::Yellow;
+    }
+    if status >= 400 && status < 500 {
+        return color::Red;
+    }
+    if status >= 500 {
+        return color::BrightRed;
+    }
+    return color::Grey;
+}
+
+fn durationColor(us: i64) -> str {
+    if us < 1000 {
+        return color::Grey;
+    }
+    if us < 10000 {
+        return color::Cyan;
+    }
+    if us < 100000 {
+        return color::Yellow;
+    }
+    return color::Red;
+}
+
+fn Log(req: &Request, res: &mut Response, next: fn() -> void) {
+    let start := time::NowUnixUs();
+    let timeStr := color::Paint(color::Dim, time::Now());
+    next();
+    let us := time::NowUnixUs() - start;
+    let status := res.StatusCode();
+    let methodStr := color::Paint(color::Blue, req.Method);
+    let pathStr := color::Paint(color::Cyan, req.Path);
+    let sColor := statusColor(status);
+    let dColor := durationColor(us);
+    io::Printf("{} {}[{}]{} {} {} {}{}us{}\n",
+        timeStr,
+        sColor, status, color::Reset,
+        methodStr,
+        pathStr,
+        dColor, us, color::Reset);
+}
+
+// ============================================
+// Internal helpers
+// ============================================
+
+fn (app: &mut App) addRoute(method: str, pattern: str, handler: fn(req: &Request, res: &mut Response) -> void) {
+    let r: Route = { .Method = method, .Pattern = pattern, .Handler = handler } as Route;
+    append(&mut app.Routes, r);
+}
+
+fn handleConn(app: &App, conn: tcp::TcpConn) {
+    let c := @conn;
+    let req := readRequest(&mut c) catch err {
+        return;
+    };
+    let res := newResponse(@c);
+    let r := req;
+    runMiddleware(app, &mut r, &mut res);
+    if !res.Sent {
+        res.End();
+    }
+    res.Conn.Close();
+}
+
+fn noop() {
+}
+
+fn runMiddleware(app: &App, req: &mut Request, res: &mut Response) {
+    let i: i32 = 0;
+    while i < len(&app.Middleware) {
+        let mw := app.Middleware[i];
+        mw.Handler(req, res, noop);
+        if res.Sent {
+            return;
+        }
+        i += 1;
+    }
+    if dispatchRoute(app, req, res) {
+        return;
+    }
+    if serveStatic(app, req, res) {
+        return;
+    }
+    res.Status(404);
+    res.Send("Not Found");
+}
+
+fn dispatchRoute(app: &App, req: &mut Request, res: &mut Response) -> bool {
+    let i: i32 = 0;
+    while i < len(&app.Routes) {
+        let r := app.Routes[i];
+        if r.Method == "ANY" || r.Method == req.Method {
+            let matching := matchRoute(req.Path, r.Pattern);
+            if matching.Ok {
+                req.Params = matching.Params;
+                r.Handler(req, res);
+                return true;
+            }
+        }
+        i += 1;
+    }
+    return false;
+}
+
+fn serveStatic(app: &App, req: &Request, res: &mut Response) -> bool {
+    let i: i32 = 0;
+    while i < len(&app.Statics) {
+        let s := app.Statics[i];
+        let rel := stripPrefix(req.Path, s.Prefix);
+        if rel.Ok {
+            let path := joinPath(s.Dir, rel.Rest);
+            let ok := res.SendFile(path) catch err {
+                return false;
+            };
+            if ok {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    return false;
+}
+
+fn newResponse(conn: tcp::TcpConn) -> Response {
+    return { .Conn = @conn, .Code = 200, .HeaderText = "", .HasContentType = false, .HasConnection = false, .SseOpen = false, .Sent = false } as Response;
+}
+
+fn (res: &mut Response) writeHeaders() -> str ! bool {
+    let statusText := statusTextFor(res.Code);
+    let statusLine := "HTTP/1.1 " + res.Code + " " + statusText + "\r\n";
+    let headers := statusLine + res.HeaderText + "\r\n";
+    res.Conn.WriteStr(headers) catch err {
+        return err!;
+    };
+    return true;
+}
+
+fn (res: &mut Response) sendRawBytes(body: []byte) {
+    if !res.HasConnection {
+        res.Header("Connection", "close");
+    }
+    res.writeHeaders() catch err {
+        return;
+    };
+    if len(&body) > 0 {
+        res.Conn.Write(body) catch err {
+            return;
+        };
+    }
+    res.Sent = true;
+}
+
+fn statusTextFor(code: i32) -> str {
+    if code == 200 { return "OK"; }
+    if code == 201 { return "Created"; }
+    if code == 204 { return "No Content"; }
+    if code == 301 { return "Moved Permanently"; }
+    if code == 302 { return "Found"; }
+    if code == 304 { return "Not Modified"; }
+    if code == 400 { return "Bad Request"; }
+    if code == 401 { return "Unauthorized"; }
+    if code == 403 { return "Forbidden"; }
+    if code == 404 { return "Not Found"; }
+    if code == 405 { return "Method Not Allowed"; }
+    if code == 413 { return "Payload Too Large"; }
+    if code == 500 { return "Internal Server Error"; }
+    if code == 501 { return "Not Implemented"; }
+    if code == 503 { return "Service Unavailable"; }
+    return "OK";
+}
+
+// Request parsing
+
+fn readRequest(conn: &mut tcp::TcpConn) -> str ! Request {
+    let buf: []byte = [] as []byte;
+    let headerEnd: i32 = -1;
+    let maxHeader: i32 = 64 * 1024;
+    while headerEnd < 0 {
+        let chunk := conn.Read(4096) catch err {
+            return err!;
+        };
+        if len(&chunk) == 0 {
+            break;
+        }
+        if !appendBytes(&mut buf, chunk) {
+            return "out of memory"!;
+        }
+        if len(&buf) > maxHeader {
+            return "header too large"!;
+        }
+        headerEnd = indexOfBytes(buf, "\r\n\r\n" as []byte);
+    }
+    if headerEnd < 0 {
+        return "invalid request"!;
+    }
+
+    let headerBytes := sliceBytes(buf, 0, headerEnd);
+    let rest := sliceBytes(buf, headerEnd + 4, len(&buf));
+
+    let lineEnd := findCrlf(headerBytes, 0);
+    if lineEnd < 0 {
+        return "invalid request"!;
+    }
+    let line := sliceBytes(headerBytes, 0, lineEnd);
+    let method := parseMethod(line) catch err {
+        return err!;
+    };
+    let url := parseUrlFromLine(line) catch err {
+        return err!;
+    };
+
+    let headers := parseHeaders(headerBytes, lineEnd + 2);
+    let parts := parseUrl(url);
+
+    let contentLen := headerContentLength(headers);
+    let body := readBody(conn, rest, contentLen) catch err {
+        return err!;
+    };
+
+    let bodyStr := body as str;
+
+    let req: Request = {
+        .Method = method,
+        .Path = parts.Path,
+        .Url = url,
+        .Query = parts.Query,
+        .Params = {} as map[str]?str,
+        .Headers = headers,
+        .Body = bodyStr,
+        .BodyBytes = body,
+        .IP = ""
+    } as Request;
+    return req;
+}
+
+fn parseHeaders(data: []byte, start: i32) -> map[str]?str {
+    let headers: map[str]?str = {} as map[str]?str;
+    let i: i32 = start;
+    let n := len(&data);
+    while i < n {
+        let lineEnd := findCrlf(data, i);
+        if lineEnd < 0 {
+            break;
+        }
+        if lineEnd == i {
+            break;
+        }
+        let colon := findByteRange(data, i, lineEnd, 58);
+        if colon > i {
+            let name := bytesToStr(data, i, colon);
+            let rawVal := bytesToStr(data, colon + 1, lineEnd);
+            let val := trimSpaces(rawVal);
+            headers[lowerAscii(name)] = val;
+        }
+        i = lineEnd + 2;
+    }
+    return headers;
+}
+
+fn headerContentLength(headers: map[str]?str) -> i32 {
+    let val := headers["content-length"];
+    if val == none {
+        return 0;
+    }
+    return parseInt32Str(val ?? "");
+}
+
+fn readBody(conn: &mut tcp::TcpConn, initial: []byte, length: i32) -> str ! []byte {
+    if length <= 0 {
+        return [] as []byte;
+    }
+    let out := initial;
+    while len(&out) < length {
+        let chunk := conn.Read(4096) catch err {
+            return err!;
+        };
+        if len(&chunk) == 0 {
+            break;
+        }
+        if !appendBytes(&mut out, chunk) {
+            return "out of memory"!;
+        }
+    }
+    if len(&out) > length {
+        return sliceBytes(out, 0, length);
+    }
+    return out;
+}
+
+// Request line parsing
+
+fn parseMethod(line: []byte) -> str ! str {
+    let n := len(&line);
+    let i: i32 = 0;
+    while i < n {
+        if (line[i] as i32) == 32 {
+            return bytesToStr(line, 0, i);
+        }
+        i += 1;
+    }
+    return "invalid request line"!;
+}
+
+fn parseUrlFromLine(line: []byte) -> str ! str {
+    let n := len(&line);
+    let i: i32 = 0;
+    while i < n && line[i] != 32 {
+        i += 1;
+    }
+    if i >= n {
+        return "invalid request line"!;
+    }
+    i += 1;
+    let start := i;
+    while i < n && line[i] != 32 {
+        i += 1;
+    }
+    if start >= n {
+        return "invalid request line"!;
+    }
+    return bytesToStr(line, start, i);
+}
+
+// URL parsing
+
+type UrlParts struct {
+    .Path: str,
+    .Query: map[str]?str
+};
+
+fn parseUrl(url: str) -> UrlParts {
+    let bytes := url as []byte;
+    let qpos := findByteRange(bytes, 0, len(&bytes), 63);
+    if qpos < 0 {
+        return { .Path = url, .Query = {} as map[str]?str } as UrlParts;
+    }
+    let path := bytesToStr(bytes, 0, qpos);
+    let queryStr := bytesToStr(bytes, qpos + 1, len(&bytes));
+    let query := parseQuery(queryStr);
+    return { .Path = path, .Query = query } as UrlParts;
+}
+
+fn parseQuery(q: str) -> map[str]?str {
+    let out: map[str]?str = {} as map[str]?str;
+    let bytes := q as []byte;
+    let n := len(&bytes);
+    let start: i32 = 0;
+    while start <= n {
+        let end := findByteRange(bytes, start, n, 38); // '&'
+        let segEnd := end;
+        if segEnd < 0 {
+            segEnd = n;
+        }
+        if segEnd > start {
+            let eq := findByteRange(bytes, start, segEnd, 61); // '='
+            let keyEnd := segEnd;
+            if eq >= 0 {
+                keyEnd = eq;
+            }
+            let key := bytesToStr(bytes, start, keyEnd);
+            let val := "";
+            if eq >= 0 && eq + 1 <= segEnd {
+                val = bytesToStr(bytes, eq + 1, segEnd);
+            }
+            if key != "" {
+                out[key] = val;
+            }
+        }
+        if end < 0 {
+            break;
+        }
+        start = segEnd + 1;
+    }
+    return out;
+}
+
+// Route matching
+
+type RouteMatch struct {
+    .Ok: bool,
+    .Params: map[str]?str
+};
+
+fn matchRoute(path: str, pattern: str) -> RouteMatch {
+    let pathSegs := splitPath(path);
+    let patSegs := splitPath(pattern);
+    if len(&pathSegs) != len(&patSegs) {
+        return { .Ok = false, .Params = {} as map[str]?str } as RouteMatch;
+    }
+    let params: map[str]?str = {} as map[str]?str;
+    let i: i32 = 0;
+    while i < len(&patSegs) {
+        let p := patSegs[i];
+        let s := pathSegs[i];
+        let pbytes := p as []byte;
+        if len(&pbytes) > 0 && (pbytes[0] as i32) == 58 { // ':'
+            let name := bytesToStr(pbytes, 1, len(&pbytes));
+            params[name] = s;
+        } else if p != s {
+            return { .Ok = false, .Params = {} as map[str]?str } as RouteMatch;
+        }
+        i += 1;
+    }
+    return { .Ok = true, .Params = params } as RouteMatch;
+}
+
+fn splitPath(path: str) -> []str {
+    let out: []str = [] as []str;
+    let bytes := path as []byte;
+    let n := len(&bytes);
+    let i: i32 = 0;
+    let start: i32 = 0;
+    if n > 0 && (bytes[0] as i32) == 47 { // '/'
+        i = 1;
+        start = 1;
+    }
+    while i <= n {
+        if i == n || (bytes[i] as i32) == 47 {
+            if i > start {
+                append(&mut out, bytesToStr(bytes, start, i));
+            }
+            start = i + 1;
+        }
+        i += 1;
+    }
+    return out;
+}
+
+// Static file helpers
+
+type PrefixStrip struct {
+    .Ok: bool,
+    .Rest: str
+};
+
+fn stripPrefix(s: str, prefix: str) -> PrefixStrip {
+    if prefix == "/" {
+        return { .Ok = true, .Rest = s } as PrefixStrip;
+    }
+    if !startsWith(s, prefix) {
+        return { .Ok = false, .Rest = "" } as PrefixStrip;
+    }
+    let sbytes := s as []byte;
+    let pbytes := prefix as []byte;
+    let rest := bytesToStr(sbytes, len(&pbytes), len(&sbytes));
+    if rest == "" {
+        return { .Ok = true, .Rest = "/" } as PrefixStrip;
+    }
+    return { .Ok = true, .Rest = rest } as PrefixStrip;
+}
+
+fn joinPath(dir: str, rel: str) -> str {
+    let d := dir;
+    let r := rel;
+    let dSlash := endsWith(d, "/");
+    let rSlash := startsWith(r, "/");
+    if dSlash && rSlash {
+        let rbytes := r as []byte;
+        let rest := bytesToStr(rbytes, 1, len(&rbytes));
+        return d + rest;
+    }
+    if !dSlash && !rSlash {
+        return d + "/" + r;
+    }
+    return d + r;
+}
+
+fn guessContentType(path: str) -> str {
+    if endsWith(path, ".html") { return "text/html; charset=utf-8"; }
+    if endsWith(path, ".css") { return "text/css; charset=utf-8"; }
+    if endsWith(path, ".js") { return "text/javascript; charset=utf-8"; }
+    if endsWith(path, ".json") { return "application/json; charset=utf-8"; }
+    if endsWith(path, ".txt") { return "text/plain; charset=utf-8"; }
+    if endsWith(path, ".svg") { return "image/svg+xml"; }
+    if endsWith(path, ".png") { return "image/png"; }
+    if endsWith(path, ".jpg") { return "image/jpeg"; }
+    if endsWith(path, ".jpeg") { return "image/jpeg"; }
+    return "application/octet-stream";
+}
+
+// Byte helpers
+
+fn appendBytes(dst: &mut []byte, src: []byte) -> bool {
+    let i: i32 = 0;
+    while i < len(&src) {
+        if !append(dst, src[i]) {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+fn sliceBytes(data: []byte, start: i32, end: i32) -> []byte {
+    let out: []byte = [] as []byte;
+    let i: i32 = start;
+    let n := len(&data);
+    let stop := end;
+    while i < stop && i < n {
+        append(&mut out, data[i]);
+        i += 1;
+    }
+    return out;
+}
+
+fn bytesToStr(data: []byte, start: i32, end: i32) -> str {
+    let out := "";
+    let i: i32 = start;
+    let n := len(&data);
+    let stop := end;
+    while i < stop && i < n {
+        out = out + data[i];
+        i += 1;
+    }
+    return out;
+}
+
+fn indexOfBytes(data: []byte, pattern: []byte) -> i32 {
+    let n := len(&data);
+    let m := len(&pattern);
+    if m == 0 || n < m {
+        return -1;
+    }
+    let i: i32 = 0;
+    while i + m <= n {
+        let j: i32 = 0;
+        while j < m && data[i + j] == pattern[j] {
+            j += 1;
+        }
+        if j == m {
+            return i;
+        }
+        i += 1;
+    }
+    return -1;
+}
+
+fn findCrlf(data: []byte, start: i32) -> i32 {
+    let i: i32 = start;
+    let n := len(&data);
+    while i + 1 < n {
+        if (data[i] as i32) == 13 && (data[i + 1] as i32) == 10 {
+            return i;
+        }
+        i += 1;
+    }
+    return -1;
+}
+
+fn findByteRange(data: []byte, start: i32, end: i32, b: i32) -> i32 {
+    let i: i32 = start;
+    let stop := end;
+    let n := len(&data);
+    while i < stop && i < n {
+        if (data[i] as i32) == b {
+            return i;
+        }
+        i += 1;
+    }
+    return -1;
+}
+
+fn parseInt32Str(s: str) -> i32 {
+    let bytes := s as []byte;
+    let i: i32 = 0;
+    let n := len(&bytes);
+    let sign: i32 = 1;
+    if n > 0 && (bytes[0] as i32) == 45 {
+        i = 1;
+        sign = -1;
+    }
+    let out: i32 = 0;
+    while i < n {
+        let c := bytes[i] as i32;
+        if c < 48 || c > 57 {
+            break;
+        }
+        out = out * 10 + (c - 48);
+        i += 1;
+    }
+    return out * sign;
+}
+
+fn trimSpaces(s: str) -> str {
+    let bytes := s as []byte;
+    let n := len(&bytes);
+    let start: i32 = 0;
+    let end: i32 = n;
+    while start < n {
+        let c := bytes[start] as i32;
+        if c != 32 && c != 9 && c != 13 && c != 10 {
+            break;
+        }
+        start += 1;
+    }
+    while end > start {
+        let c := bytes[end - 1] as i32;
+        if c != 32 && c != 9 && c != 13 && c != 10 {
+            break;
+        }
+        end -= 1;
+    }
+    return bytesToStr(bytes, start, end);
+}
+
+fn lowerAscii(s: str) -> str {
+    return s;
+}
+
+fn startsWith(s: str, prefix: str) -> bool {
+    let sb := s as []byte;
+    let pb := prefix as []byte;
+    if len(&pb) > len(&sb) {
+        return false;
+    }
+    let i: i32 = 0;
+    while i < len(&pb) {
+        if sb[i] != pb[i] {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}
+
+fn endsWith(s: str, suffix: str) -> bool {
+    let sb := s as []byte;
+    let pb := suffix as []byte;
+    let sn := len(&sb);
+    let pn := len(&pb);
+    if pn > sn {
+        return false;
+    }
+    let i: i32 = 0;
+    while i < pn {
+        if sb[sn - pn + i] != pb[i] {
+            return false;
+        }
+        i += 1;
+    }
+    return true;
+}

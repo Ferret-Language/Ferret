@@ -1,0 +1,43 @@
+import "net/http_v2" as http;
+import "std/io";
+import "std/os";
+
+fn main() {
+    let app := http::Server();
+
+    app.Get("/", fn(req: &http::Request, res: &mut http::Response) {
+        res.Header("Content-Type", "text/html; charset=utf-8");
+        res.Send("<!doctype html><html><head><meta charset=\"utf-8\"><title>Ferret SSE</title></head><body><h1>Ferret SSE</h1><pre id=\"out\"></pre><script>const out=document.getElementById('out');const es=new EventSource('/events');es.addEventListener('tick',e=>{out.textContent+=e.data+'\\n';});</script></body></html>");
+    });
+
+    app.Get("/events", fn(req: &http::Request, res: &mut http::Response) {
+        res.SseStart() catch err {
+            io::Println("SSE start error:", err);
+            return;
+        };
+
+        let i: i32 = 1;
+        const MAX := 10;
+        while i <= MAX {
+            res.SseEvent("tick", "count=" + i) catch err {
+                io::Println("SSE send error:", err);
+                return;
+            };
+            os::Sleep(1000);
+            i = i + 1;
+            if i == MAX {
+                res.SseEvent("tick", "done") catch err {
+                    io::Println("SSE send error:", err);
+                    return;
+                };
+            }
+        }
+
+        res.SseClose();
+    });
+
+    app.Listen(3001) catch err {
+        io::Println("HTTP error:", err);
+        return;
+    };
+}

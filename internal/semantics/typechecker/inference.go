@@ -29,7 +29,13 @@ func inferLiteralType(lit *ast.BasicLit, expected types.SemType) types.SemType {
 		// Unwrap NamedType to check underlying type (e.g., type Integer i32)
 		expectedUnwrapped := types.UnwrapType(expected)
 		if !expected.Equals(types.TypeUnknown) && types.IsInteger(expectedUnwrapped) {
-			if _, ok := types.GetPrimitiveName(expectedUnwrapped); ok {
+			if primName, ok := types.GetPrimitiveName(expectedUnwrapped); ok {
+				// Keep plain integer literals as default int for byte/char contexts.
+				// This enforces explicit casts for `byte`/`char` (e.g., `97 as byte`).
+				if primName == types.TYPE_BYTE || primName == types.TYPE_CHAR {
+					defaultName := types.DEFAULT_INT_TYPE
+					return types.FromTypeName(defaultName)
+				}
 				if fitsInType(lit.Value, expectedUnwrapped) {
 					// Return the expected type (which may be a NamedType) to preserve the type name
 					return expected

@@ -1,0 +1,14 @@
+import "std/io";
+
+fn read(data: byte) -> str ! str {
+    io::Println(data);
+    return "ok";
+}
+
+fn main() {
+    let s := read(97) catch err {
+        io::Println("err", err);
+        return;
+    };
+    io::Println("s", s);
+}

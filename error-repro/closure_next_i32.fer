@@ -1,0 +1,20 @@
+import "std/io";
+
+type H struct {
+    .F: fn(x: i32, next: fn() -> void) -> void
+};
+
+fn run(x: i32) {
+    let next := fn() {
+        if x > 0 {
+            run(x - 1);
+        }
+    };
+    let h: H = { .F = fn(v: i32, n: fn() -> void) -> void { if v > 0 { n(); } } } as H;
+    h.F(x, next);
+}
+
+fn main() {
+    run(2);
+    io::Println("ok");
+}

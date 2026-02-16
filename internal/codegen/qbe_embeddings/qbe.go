@@ -1,5 +1,5 @@
-// defines the `Generator` type and top‑level `Emit()` pipeline 
-// that calls into the emit helpers. 
+// defines the `Generator` type and top‑level `Emit()` pipeline
+// that calls into the emit helpers.
 // This is the entry point for generating QBE IR.
 
 package qbe
@@ -17,6 +17,7 @@ type Generator struct {
 	ctx    *context_v2.CompilerContext
 	mod    *context_v2.Module
 	mirMod *mir.Module
+	fn     *mir.Function
 	layout *mir.DataLayout
 
 	data strings.Builder
@@ -176,6 +177,7 @@ func (g *Generator) emitFunction(fn *mir.Function) {
 	if fn == nil {
 		return
 	}
+	g.fn = fn
 
 	g.valueTypes = make(map[mir.ValueID]types.SemType)
 	g.tempID = 0
@@ -246,6 +248,136 @@ func (g *Generator) emitFunction(fn *mir.Function) {
 	}
 
 	g.buf.WriteString("}\n\n")
+	g.fn = nil
+}
+
+func (g *Generator) resolveValueType(id mir.ValueID) types.SemType {
+	if id == mir.InvalidValue {
+		return nil
+	}
+	if typ := g.valueTypes[id]; typ != nil {
+		return typ
+	}
+	if g == nil || g.fn == nil {
+		return nil
+	}
+
+	for _, param := range g.fn.Params {
+		if param.ID == id {
+			typ := normalizeLargeValueType(param.Type)
+			g.valueTypes[id] = typ
+			return typ
+		}
+	}
+
+	for _, block := range g.fn.Blocks {
+		for _, instr := range block.Instrs {
+			if typ := typeForResult(instr, id); typ != nil {
+				g.valueTypes[id] = typ
+				return typ
+			}
+		}
+	}
+
+	return nil
+}
+
+func typeForResult(instr mir.Instr, id mir.ValueID) types.SemType {
+	switch i := instr.(type) {
+	case *mir.Const:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.Binary:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.Unary:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.Cast:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.Alloca:
+		if i.Result == id {
+			return types.NewReference(i.Type)
+		}
+	case *mir.Load:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.PtrAdd:
+		if i.Result == id {
+			return types.NewReference(i.Elem)
+		}
+	case *mir.PtrOffset:
+		if i.Result == id {
+			return types.NewReference(i.Elem)
+		}
+	case *mir.Call:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.CallIndirect:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.Phi:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.ArrayGet:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.MapGet:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.OptionalNone:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.OptionalSome:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.OptionalIsSome:
+		if i.Result == id {
+			return types.TypeBool
+		}
+	case *mir.OptionalUnwrap:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.UnionVariantCheck:
+		if i.Result == id {
+			return types.TypeBool
+		}
+	case *mir.UnionExtract:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.ResultOk:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.ResultErr:
+		if i.Result == id {
+			return i.Type
+		}
+	case *mir.ResultIsOk:
+		if i.Result == id {
+			return types.TypeBool
+		}
+	case *mir.ResultUnwrap:
+		if i.Result == id {
+			return i.Type
+		}
+	}
+	return nil
 }
 
 func (g *Generator) emitBlock(block *mir.Block, mainReturnsInt bool) {

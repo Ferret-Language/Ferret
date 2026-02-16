@@ -326,6 +326,15 @@ func (g *Generator) inferFuncLitCaptures(lit *hir.FuncLit) []*hir.Ident {
 		return nil
 	}
 
+	paramNames := make(map[string]struct{})
+	if fnType, ok := types.UnwrapType(lit.Type).(*types.FunctionType); ok && fnType != nil {
+		for _, p := range fnType.Params {
+			if p.Name != "" {
+				paramNames[p.Name] = struct{}{}
+			}
+		}
+	}
+
 	locals := make(map[*symbols.Symbol]struct{})
 	seen := make(map[*symbols.Symbol]struct{})
 	captures := make([]*hir.Ident, 0)
@@ -383,8 +392,12 @@ func (g *Generator) inferFuncLitCaptures(lit *hir.FuncLit) []*hir.Ident {
 				return
 			}
 			switch sym.Kind {
-			case symbols.SymbolFunction, symbols.SymbolType, symbols.SymbolParameter, symbols.SymbolReceiver:
+			case symbols.SymbolFunction, symbols.SymbolType:
 				return
+			case symbols.SymbolParameter, symbols.SymbolReceiver:
+				if _, ok := paramNames[e.Name]; ok {
+					return
+				}
 			}
 			if _, ok := locals[sym]; ok {
 				return
@@ -422,6 +435,8 @@ func (g *Generator) inferFuncLitCaptures(lit *hir.FuncLit) []*hir.Ident {
 				visitExpr(e.Catch.Fallback)
 			}
 		case *hir.SelectorExpr:
+			visitExpr(e.X)
+		case *hir.DerefExpr:
 			visitExpr(e.X)
 		case *hir.ScopeResolutionExpr:
 			visitExpr(e.X)

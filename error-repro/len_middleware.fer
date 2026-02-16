@@ -1,0 +1,14 @@
+import "std/io";
+
+type Middleware struct {
+    .Handler: fn() -> void
+};
+
+type App struct {
+    .M: []Middleware
+};
+
+fn main() {
+    let app: App = { .M = [] as []Middleware } as App;
+    io::Println(len(&app.M));
+}

@@ -1,0 +1,16 @@
+import "std/io";
+
+fn read() -> str ! str {
+    return "ok";
+}
+
+fn main() {
+    let s: str = "";
+    if 1 == 1 {
+        s = read() catch err {
+            io::Println("err", err);
+            return;
+        };
+    }
+    io::Println("s", s);
+}

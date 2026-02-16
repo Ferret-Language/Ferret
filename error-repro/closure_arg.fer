@@ -1,0 +1,26 @@
+import "std/io";
+
+type Req struct { .X: i32 };
+type Res struct { .Y: i32 };
+
+fn run(req: &Req, res: &mut Res) {
+    let next := fn() {
+        res.Y = res.Y + 1;
+    };
+
+    let handler := fn(r: &Req, s: &mut Res, n: fn() -> void) -> void {
+        if r.X > 0 {
+            s.Y = s.Y + 1;
+        }
+        n();
+    };
+
+    handler(req, res, next);
+}
+
+fn main() {
+    let req: Req = { .X = 1 } as Req;
+    let res: Res = { .Y = 2 } as Res;
+    run(&req, &mut res);
+    io::Println("done", res.Y);
+}

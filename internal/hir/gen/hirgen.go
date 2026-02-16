@@ -812,15 +812,22 @@ func (g *Generator) lowerFuncLit(expr *ast.FuncLit) *hir.FuncLit {
 	if expr == nil {
 		return nil
 	}
+	scope := expr.Scope
+	if scope == nil {
+		if g != nil && g.mod != nil {
+			scope = table.NewSymbolTable(g.mod.CurrentScope)
+			expr.Scope = scope
+		}
+	}
 	hirLit := &hir.FuncLit{
 		ID:       expr.ID.Name,
 		Type:     g.exprType(expr),
 		Location: locFromNode(expr),
 	}
-	g.withScope(expr.Scope, func() {
+	g.withScope(scope, func() {
 		hirLit.Body = g.lowerBlock(expr.Body)
 	})
-	hirLit.Captures = g.collectFuncLitCaptures(hirLit.Body, expr.Scope)
+	hirLit.Captures = g.collectFuncLitCaptures(hirLit.Body, scope)
 	return hirLit
 }
 
@@ -897,6 +904,8 @@ func (g *Generator) collectFuncLitCaptures(body *hir.Block, scope ast.SymbolTabl
 				visitExpr(e.Catch.Fallback)
 			}
 		case *hir.SelectorExpr:
+			visitExpr(e.X)
+		case *hir.DerefExpr:
 			visitExpr(e.X)
 		case *hir.ScopeResolutionExpr:
 			visitExpr(e.X)
