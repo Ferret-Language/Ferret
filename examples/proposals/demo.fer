@@ -1,0 +1,98 @@
+import "std/io";
+import "std/os";
+
+// ------------------------------------------------------------
+// Proposal file: panic recovery patterns
+// ------------------------------------------------------------
+// This file demonstrates syntax-level recovery ideas (no Try API).
+// It is intentionally a proposal sketch and may not compile today.
+//
+// Proposed syntax:
+//   recover { ... } catch panicMsg { ... }
+//
+// Semantics:
+//   - If block completes: catch is skipped
+//   - If panic occurs: panic is captured into panicMsg, catch runs
+//   - After catch: program continues
+
+// Pattern 1: local function boundary
+fn runWithRecovery(name: str, work: fn() -> void) {
+    recover {
+        work();
+        io::Println("[ok]", name);
+    } catch panicMsg {
+        io::Println("[recovered]", name, "panic:", panicMsg);
+    }
+}
+
+// Pattern 2: request guard (per-request recovery)
+fn serveRequest(reqId: i32, handler: fn() -> void) {
+    recover {
+        handler();
+        io::Println("req", reqId, "status=200");
+    } catch panicMsg {
+        io::Println("req", reqId, "status=500 panic=", panicMsg);
+    }
+}
+
+// Pattern 3: supervisor loop (restart worker after panic)
+fn superviseWorker(name: str, worker: fn(iteration: i32) -> void, maxRestarts: i32) {
+    let i: i32 = 0;
+    while i < maxRestarts {
+        let crashed := false;
+        recover {
+            worker(i);
+        } catch panicMsg {
+            crashed = true;
+            io::Println("worker", name, "panic on run", i, ":", panicMsg);
+            io::Println("worker", name, "restarting...");
+        }
+        if !crashed {
+            io::Println("worker", name, "finished cleanly");
+            return;
+        }
+        os::Sleep(250);
+        i = i + 1;
+    }
+    io::Println("worker", name, "stopped after max restarts");
+}
+
+// ------------------------------------------------------------
+// Demo workloads
+// ------------------------------------------------------------
+fn okTask() {
+    io::Println("okTask running");
+}
+
+fn panicTask() {
+    panic("panicTask exploded");
+}
+
+fn flakyWorker(iteration: i32) {
+    io::Println("flakyWorker run", iteration);
+    if iteration < 2 {
+        panic("temporary worker failure");
+    }
+    io::Println("flakyWorker stabilized");
+}
+
+fn requestOk() {
+    io::Println("request handler success");
+}
+
+fn requestBoom() {
+    panic("request nil pointer style bug");
+}
+
+fn main() {
+    io::Println("=== Proposal: local boundary ===");
+    runWithRecovery("okTask", okTask);
+    runWithRecovery("panicTask", panicTask);
+
+    io::Println("=== Proposal: per-request guard ===");
+    serveRequest(101, requestOk);
+    serveRequest(102, requestBoom);
+
+    io::Println("=== Proposal: worker supervisor ===");
+    superviseWorker("email-sender", flakyWorker, 5);
+}

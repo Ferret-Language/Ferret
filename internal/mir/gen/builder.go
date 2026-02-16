@@ -4011,15 +4011,101 @@ func (b *functionBuilder) emitPanic(msg mir.ValueID, loc source.Location) {
 		msg = b.emitConst(types.TypeString, "", loc)
 	}
 
-	// Run function defers exactly once for this panic emission path.
-	if !b.inPanicEmission {
-		prev := b.inPanicEmission
-		b.inPanicEmission = true
-		b.emitDeferredCalls()
-		b.emitHeapCleanup(loc)
-		b.inPanicEmission = prev
+	// Panic inside panic-defer execution is fatal (no second recovery pass).
+	if b.inPanicEmission {
+		b.emitInstr(&mir.Call{
+			Result:   mir.InvalidValue,
+			Target:   "ferret_global_panic",
+			Args:     []mir.ValueID{msg},
+			Type:     types.TypeVoid,
+			Location: loc,
+		})
+		b.current.Term = &mir.Unreachable{Location: loc}
+		return
 	}
 
+	// Run function defers exactly once for this panic emission path.
+	prev := b.inPanicEmission
+	b.inPanicEmission = true
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   "ferret_global_panic_begin",
+		Args:     []mir.ValueID{msg},
+		Type:     types.TypeVoid,
+		Location: loc,
+	})
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   "ferret_global_panic_enter_defer",
+		Args:     nil,
+		Type:     types.TypeVoid,
+		Location: loc,
+	})
+	b.emitDeferredCalls()
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   "ferret_global_panic_leave_defer",
+		Args:     nil,
+		Type:     types.TypeVoid,
+		Location: loc,
+	})
+	b.emitHeapCleanup(loc)
+	b.inPanicEmission = prev
+
+	isRecovered := b.gen.nextValueID()
+	b.emitInstr(&mir.Call{
+		Result:   isRecovered,
+		Target:   "ferret_global_panic_is_recovered",
+		Args:     nil,
+		Type:     types.TypeBool,
+		Location: loc,
+	})
+
+	recoveredBlock := b.newBlock("panic.recovered", loc)
+	fatalBlock := b.newBlock("panic.fatal", loc)
+	b.current.Term = &mir.CondBr{
+		Cond:     isRecovered,
+		Then:     recoveredBlock.ID,
+		Else:     fatalBlock.ID,
+		Location: loc,
+	}
+
+	b.setBlock(recoveredBlock)
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   "ferret_global_panic_clear",
+		Args:     nil,
+		Type:     types.TypeVoid,
+		Location: loc,
+	})
+	b.emitRecoveredPanicReturn(loc)
+
+	b.setBlock(fatalBlock)
+	b.emitInstr(&mir.Call{
+		Result:   mir.InvalidValue,
+		Target:   "ferret_global_panic_abort",
+		Args:     nil,
+		Type:     types.TypeVoid,
+		Location: loc,
+	})
+	if b.current != nil && b.current.Term == nil {
+		b.current.Term = &mir.Unreachable{Location: loc}
+	}
+}
+
+func (b *functionBuilder) emitRecoveredPanicReturn(loc source.Location) {
+	if b.current == nil || b.current.Term != nil {
+		return
+	}
+
+	if b.fn == nil || b.fn.Return == nil || b.fn.Return.Equals(types.TypeVoid) {
+		b.current.Term = &mir.Return{HasValue: false, Location: loc}
+		return
+	}
+
+	// Non-void recovery needs deterministic zero-value synthesis for all return layouts.
+	// Keep this strict for now and fail fast instead of returning uninitialized data.
+	msg := b.emitConst(types.TypeString, "recover in non-void function is not supported yet", loc)
 	b.emitInstr(&mir.Call{
 		Result:   mir.InvalidValue,
 		Target:   "ferret_global_panic",
@@ -4027,9 +4113,7 @@ func (b *functionBuilder) emitPanic(msg mir.ValueID, loc source.Location) {
 		Type:     types.TypeVoid,
 		Location: loc,
 	})
-	if b.current != nil && b.current.Term == nil {
-		b.current.Term = &mir.Unreachable{Location: loc}
-	}
+	b.current.Term = &mir.Unreachable{Location: loc}
 }
 
 func (b *functionBuilder) emitCallIndirect(callee mir.ValueID, args []mir.ValueID, expr *hir.CallExpr) mir.ValueID {

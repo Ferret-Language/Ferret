@@ -1,0 +1,25 @@
+import "std/io";
+
+
+fn recoverNow() {
+    let msg := panic_recover();
+    if msg != none {
+        io::Println("Recovering from panic:", msg);
+    }
+}
+
+fn main() {
+    io::Println("Main start");
+
+    defer fn() {
+        io::Println("Defer started");
+        recoverNow();
+        io::Println("Defer finished");
+    }();
+
+
+    let a := 10;
+    let b := a / 0;
+    io::Println("This line should not run:", b);
+    io::Println("Main end");
+}
