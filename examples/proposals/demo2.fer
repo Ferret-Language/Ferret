@@ -2,7 +2,7 @@ import "std/io";
 
 
 fn recoverNow() {
-    let msg := panic_recover();
+    let msg := recover();
     if msg != none {
         io::Println("Recovering from panic:", msg);
     }

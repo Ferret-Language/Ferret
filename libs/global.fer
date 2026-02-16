@@ -50,7 +50,7 @@ fn heap_addr(value: &Type) -> u64;
 // @extern
 fn panic(msg: str) -> void;
 // @extern
-fn panic_recover() -> ?str;
+fn recover() -> ?str;
 // @extern
 fn real(value: &Type) -> f256;
 // @extern

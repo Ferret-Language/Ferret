@@ -60,7 +60,7 @@ void FERRET_FUNC(panic_abort)(void) {
     exit(1);
 }
 
-void FERRET_FUNC(panic_recover)(void* out) {
+void FERRET_FUNC(recover)(void* out) {
     if (out == NULL) {
         return;
     }
