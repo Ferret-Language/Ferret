@@ -53,6 +53,19 @@ rt.bind(instance);
 instance.exports.main();
 ```
 
+Run WASM in terminal (no browser):
+
+```bash
+# Compile + run
+node scripts/run-wasm-terminal.mjs --entry examples/proposals/demo2.fer
+
+# Run existing wasm
+node scripts/run-wasm-terminal.mjs --wasm /tmp/program.wasm
+
+# Provide stdin lines for std/io::Read*
+node scripts/run-wasm-terminal.mjs --entry examples/basic.fer --input "hello\n42"
+```
+
 Notes:
 - `ferret_alloc`, `ferret_array_*`, and `ferret_std_io_Print*` are implemented in JS.
 - `__data_end` is exported by the compiler to seed the JS heap pointer.
