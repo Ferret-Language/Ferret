@@ -134,8 +134,8 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 		functionIndex[name] = baseIndex + uint32(i)
 	}
 
-	// Populate function table with closures and function wrappers BEFORE emitting functions
-	// These are functions that need to be callable via call_indirect
+	// Populate function table with closures and function wrappers BEFORE emitting functions.
+	// These are functions that need to be callable via call_indirect.
 	tableNames := make([]string, 0)
 	for _, name := range funcOrder {
 		// Add closures (__func_lit__*) and function wrappers (__func_wrap__*) to table
@@ -143,16 +143,19 @@ func EmitProgram(ctx *context_v2.CompilerContext, units []Unit) ([]byte, error) 
 			tableNames = append(tableNames, name)
 		}
 	}
-	if len(tableNames) > 0 {
-		mod.setTableSize(uint32(len(tableNames)))
-		for _, name := range tableNames {
-			if idx, ok := functionIndex[name]; ok {
-				tableIdx := mod.addTableElement(idx)
-				gen.tableIndex[name] = tableIdx
-			}
-		}
-		mod.addExport("__indirect_function_table", exportKindTable, 0)
+	tableSize := uint32(len(tableNames))
+	if tableSize == 0 {
+		// Keep table 0 present unconditionally so any indirect call path validates.
+		tableSize = 1
 	}
+	mod.setTableSize(tableSize)
+	for _, name := range tableNames {
+		if idx, ok := functionIndex[name]; ok {
+			tableIdx := mod.addTableElement(idx)
+			gen.tableIndex[name] = tableIdx
+		}
+	}
+	mod.addExport("__indirect_function_table", exportKindTable, 0)
 
 	if err := gen.emitGlobals(); err != nil {
 		return nil, err
@@ -366,13 +369,15 @@ func (g *Generator) emitFunction(info *funcInfo, functionIndex map[string]uint32
 	if info == nil || info.fn == nil {
 		return nil, nil, fmt.Errorf("wasm: missing function")
 	}
-
 	paramCount := len(info.fn.Params)
 	localIndex := make(map[mir.ValueID]uint32)
 	locals := make([]ValType, 0, 8)
 
 	for i, p := range info.fn.Params {
 		localIndex[p.ID] = uint32(i)
+		if _, err := wasmValueType(p.Type); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	blockLocal := uint32(paramCount)
@@ -386,12 +391,12 @@ func (g *Generator) emitFunction(info *funcInfo, functionIndex map[string]uint32
 		if id == mir.InvalidValue {
 			return nil
 		}
-		if _, ok := localIndex[id]; ok {
-			return nil
-		}
 		valType, err := wasmValueType(typ)
 		if err != nil {
 			return err
+		}
+		if _, ok := localIndex[id]; ok {
+			return nil
 		}
 		localIndex[id] = nextLocal
 		locals = append(locals, valType)
@@ -407,7 +412,11 @@ func (g *Generator) emitFunction(info *funcInfo, functionIndex map[string]uint32
 					return nil, nil, err
 				}
 			case *mir.Binary:
-				if err := allocLocal(v.Result, v.Type); err != nil {
+				localType := v.Type
+				if isCompareToken(v.Op) {
+					localType = types.TypeBool
+				}
+				if err := allocLocal(v.Result, localType); err != nil {
 					return nil, nil, err
 				}
 			case *mir.Unary:
@@ -728,23 +737,17 @@ func (g *Generator) emitConst(c *mir.Const, locals map[mir.ValueID]uint32) ([]by
 			}
 			return nil, fmt.Errorf("wasm: unknown data symbol %s", c.Value)
 		}
-		// Try to resolve as function name first (for closures with FunctionType)
-		found := false
-		for fullName, idx := range g.tableIndex {
-			// Match by suffix - the const has the unqualified name, table has qualified
-			// e.g., const: "__func_lit__1", table: "examples_closure_capture___func_lit__1"
-			if fullName == c.Value || strings.HasSuffix(fullName, c.Value) {
-				// WASM table indices are i32
-				out = append(out, opcodeI32Const)
-				out = append(out, encodeS32(int32(idx))...)
-				out = append(out, opcodeLocalSet)
-				out = append(out, encodeU32(locals[c.Result])...)
-				found = true
-				break
+		if isFunctionConstType(c.Type) {
+			for fullName, idx := range g.tableIndex {
+				// Match by suffix: const has unqualified name, table has module-qualified name.
+				if fullName == c.Value || strings.HasSuffix(fullName, "_"+c.Value) {
+					out = append(out, opcodeI32Const)
+					out = append(out, encodeS32(int32(idx))...)
+					out = append(out, opcodeLocalSet)
+					out = append(out, encodeU32(locals[c.Result])...)
+					return out, nil
+				}
 			}
-		}
-		if found {
-			return out, nil
 		}
 		// Fall back to normal i32 const parsing
 		value, err := parseI32Const(c.Type, c.Value, g.stringPtr)
@@ -754,14 +757,15 @@ func (g *Generator) emitConst(c *mir.Const, locals map[mir.ValueID]uint32) ([]by
 		out = append(out, opcodeI32Const)
 		out = append(out, encodeS32(value)...)
 	case valTypeI64:
-		// Try to resolve as function name first (for closures)
-		for fullName, idx := range g.tableIndex {
-			if fullName == c.Value || strings.HasSuffix(fullName, "_"+c.Value) {
-				out = append(out, opcodeI64Const)
-				out = append(out, encodeS64(int64(idx))...)
-				out = append(out, opcodeLocalSet)
-				out = append(out, encodeU32(locals[c.Result])...)
-				return out, nil
+		if isFunctionConstType(c.Type) {
+			for fullName, idx := range g.tableIndex {
+				if fullName == c.Value || strings.HasSuffix(fullName, "_"+c.Value) {
+					out = append(out, opcodeI64Const)
+					out = append(out, encodeS64(int64(idx))...)
+					out = append(out, opcodeLocalSet)
+					out = append(out, encodeU32(locals[c.Result])...)
+					return out, nil
+				}
 			}
 		}
 		// Fall back to numeric parsing
@@ -2917,6 +2921,21 @@ func isUnsignedType(typ types.SemType) bool {
 		}
 	}
 	return false
+}
+
+func isFunctionConstType(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	typ = types.UnwrapType(typ)
+	if named, ok := typ.(*types.NamedType); ok {
+		typ = types.UnwrapType(named.Underlying)
+	}
+	if ref, ok := typ.(*types.ReferenceType); ok {
+		typ = types.UnwrapType(ref.Inner)
+	}
+	_, ok := typ.(*types.FunctionType)
+	return ok
 }
 
 func parseI32Const(typ types.SemType, value string, stringPtr func(string) int32) (int32, error) {

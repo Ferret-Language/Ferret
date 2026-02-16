@@ -1,0 +1,4 @@
+import "std/io";
+fn main() {
+  io::Println("Hi");
+}

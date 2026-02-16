@@ -1,0 +1,185 @@
+module proposals/demo2
+
+globals
+  __ferret_init_done_proposals_demo2: bool
+
+fn recoverNow() -> void {
+  block b1 entry:
+    %t1 = alloca ?str
+    %t2 = call recover() : ?str
+    store %t1, %t2
+    %t3 = load ?str %t1
+    %t4 = optional_is_some %t3
+    br_if %t4, b2, b3
+  block b2 if.then:
+    %t5 = const i32 68
+    %t6 = const i32 2
+    %t7 = const &void $typedesc1
+    %t8 = cast &u8 %t7
+    %t9 = call ferret_array_new(%t5, %t6, %t8) : []Printable
+    %t10 = const str Recovering from panic:
+    %t11 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool, complex, complex64, complex256, complex512}
+    %t12 = ptr_add i32 %t11, 0
+    %t13 = const i32 16
+    store %t12, %t13
+    %t14 = ptr_add str %t11, 4
+    store %t14, %t10
+    call ferret_array_append(%t9, %t11) : bool
+    %t15 = load ?str %t1
+    %t16 = optional_unwrap str %t15
+    %t17 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool, complex, complex64, complex256, complex512}
+    %t18 = ptr_add i32 %t17, 0
+    %t19 = const i32 16
+    store %t18, %t19
+    %t20 = ptr_add str %t17, 4
+    store %t20, %t16
+    call ferret_array_append(%t9, %t17) : bool
+    call io::Println(%t9) : void
+    br b3
+  block b3 if.end:
+    ret
+}
+
+fn main() -> void {
+  block b4 entry:
+    call __ferret_init() : void
+    %t21 = const i32 68
+    %t22 = const i32 1
+    %t23 = const &void $typedesc1
+    %t24 = cast &u8 %t23
+    %t25 = call ferret_array_new(%t21, %t22, %t24) : []Printable
+    %t26 = const str Main start
+    %t27 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool, complex, complex64, complex256, complex512}
+    %t28 = ptr_add i32 %t27, 0
+    %t29 = const i32 16
+    store %t28, %t29
+    %t30 = ptr_add str %t27, 4
+    store %t30, %t26
+    call ferret_array_append(%t25, %t27) : bool
+    call io::Println(%t25) : void
+    %t31 = alloca i32
+    %t32 = const i32 10
+    store %t31, %t32
+    %t33 = alloca f32
+    %t34 = load i32 %t31
+    %t35 = const i32 0
+    %t36 = cast f32 %t34
+    %t37 = cast f32 %t35
+    %t38 = const f32 0.0
+    %t39 = == f32 %t37, %t38
+    br_if %t39, b5, b6
+  block b5 arith.zero:
+    %t40 = const str division by zero
+    call ferret_global_panic_begin(%t40) : void
+    call ferret_global_panic_enter_defer() : void
+    %t62 = const u64 8
+    %t63 = call ferret_alloc(%t62) : fn() -> void
+    %t64 = const fn() -> void __func_lit__1
+    %t65 = ptr_add u64 %t63, 0
+    store %t65, %t64
+    call_indirect void %t63(%t63)
+    call ferret_global_panic_leave_defer() : void
+    %t66 = call ferret_global_panic_is_recovered() : bool
+    br_if %t66, b8, b9
+  block b6 arith.ok:
+    %t67 = / f32 %t36, %t37
+    store %t33, %t67
+    %t68 = const i32 68
+    %t69 = const i32 2
+    %t70 = const &void $typedesc1
+    %t71 = cast &u8 %t70
+    %t72 = call ferret_array_new(%t68, %t69, %t71) : []Printable
+    %t73 = const str This line should not run:
+    %t74 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool, complex, complex64, complex256, complex512}
+    %t75 = ptr_add i32 %t74, 0
+    %t76 = const i32 16
+    store %t75, %t76
+    %t77 = ptr_add str %t74, 4
+    store %t77, %t73
+    call ferret_array_append(%t72, %t74) : bool
+    %t78 = load f32 %t33
+    %t79 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool, complex, complex64, complex256, complex512}
+    %t80 = ptr_add i32 %t79, 0
+    %t81 = const i32 12
+    store %t80, %t81
+    %t82 = ptr_add f32 %t79, 4
+    store %t82, %t78
+    call ferret_array_append(%t72, %t79) : bool
+    call io::Println(%t72) : void
+    %t83 = const i32 68
+    %t84 = const i32 1
+    %t85 = const &void $typedesc1
+    %t86 = cast &u8 %t85
+    %t87 = call ferret_array_new(%t83, %t84, %t86) : []Printable
+    %t88 = const str Main end
+    %t89 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool, complex, complex64, complex256, complex512}
+    %t90 = ptr_add i32 %t89, 0
+    %t91 = const i32 16
+    store %t90, %t91
+    %t92 = ptr_add str %t89, 4
+    store %t92, %t88
+    call ferret_array_append(%t87, %t89) : bool
+    call io::Println(%t87) : void
+    %t93 = const u64 8
+    %t94 = call ferret_alloc(%t93) : fn() -> void
+    %t95 = const fn() -> void __func_lit__1
+    %t96 = ptr_add u64 %t94, 0
+    store %t96, %t95
+    call_indirect void %t94(%t94)
+    ret
+  block b8 panic.recovered:
+    call ferret_global_panic_clear() : void
+    ret
+  block b9 panic.fatal:
+    call ferret_global_panic_abort() : void
+    unreachable
+}
+
+fn __ferret_init() -> void {
+  block b11 init_guard:
+    %t99 = const &bool $__ferret_init_done_proposals_demo2
+    %t100 = load bool %t99
+    br_if %t100, b12, b10
+  block b10 entry:
+    %t97 = const &bool $__ferret_init_done_proposals_demo2
+    %t98 = const bool 1
+    store %t97, %t98
+    call io::__ferret_init() : void
+    ret
+  block b12 init_done:
+    ret
+}
+
+fn __func_lit__1(__env: &struct { .__fn: u64 }) -> void {
+  block b7 entry:
+    %t42 = const i32 68
+    %t43 = const i32 1
+    %t44 = const &void $typedesc1
+    %t45 = cast &u8 %t44
+    %t46 = call ferret_array_new(%t42, %t43, %t45) : []Printable
+    %t47 = const str Defer started
+    %t48 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool, complex, complex64, complex256, complex512}
+    %t49 = ptr_add i32 %t48, 0
+    %t50 = const i32 16
+    store %t49, %t50
+    %t51 = ptr_add str %t48, 4
+    store %t51, %t47
+    call ferret_array_append(%t46, %t48) : bool
+    call io::Println(%t46) : void
+    call recoverNow() : void
+    %t52 = const i32 68
+    %t53 = const i32 1
+    %t54 = const &void $typedesc1
+    %t55 = cast &u8 %t54
+    %t56 = call ferret_array_new(%t52, %t53, %t55) : []Printable
+    %t57 = const str Defer finished
+    %t58 = alloca union {i8, i16, i32, i64, i128, i256, u8, u16, u32, u64, u128, u256, f32, f64, f128, f256, str, byte, char, bool, complex, complex64, complex256, complex512}
+    %t59 = ptr_add i32 %t58, 0
+    %t60 = const i32 16
+    store %t59, %t60
+    %t61 = ptr_add str %t58, 4
+    store %t61, %t57
+    call ferret_array_append(%t56, %t58) : bool
+    call io::Println(%t56) : void
+    ret
+}

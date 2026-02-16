@@ -129,6 +129,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     rawInput.length > 0 ? rawInput.replace(/\r\n/g, "\n").split("\n") : [];
   let inputIndex = 0;
   const ferretStringAllocs = new Set<number>();
+  let ferretPanicMsgPtr = 0;
+  let ferretPanicActive = false;
+  let ferretPanicRecovered = false;
+  let ferretPanicInDefer = false;
 
   function align(value: number, alignment: number): number {
     const mask = alignment - 1;
@@ -192,7 +196,7 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const dv = view();
     const payload = okValue ?? errValue ?? "";
     dv.setUint32(ptr + 0, writeCString(payload), true);
-    dv.setUint8(ptr + 4, okValue === null ? 1 : 0);
+    dv.setUint8(ptr + 4, okValue === null ? 0 : 1);
     return ptr >>> 0;
   }
 
@@ -204,10 +208,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const dv = view();
     if (okValue === null) {
       dv.setUint32(ptr + 0, writeCString(errValue ?? ""), true);
-      dv.setUint8(ptr + 4, 1);
+      dv.setUint8(ptr + 4, 0);
     } else {
       dv.setInt32(ptr + 0, okValue | 0, true);
-      dv.setUint8(ptr + 4, 0);
+      dv.setUint8(ptr + 4, 1);
     }
     return ptr >>> 0;
   }
@@ -220,10 +224,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const dv = view();
     if (okValue === null) {
       dv.setUint32(ptr + 0, writeCString(errValue ?? ""), true);
-      dv.setUint8(ptr + 8, 1);
+      dv.setUint8(ptr + 8, 0);
     } else {
       dv.setFloat64(ptr + 0, okValue, true);
-      dv.setUint8(ptr + 8, 0);
+      dv.setUint8(ptr + 8, 1);
     }
     return ptr >>> 0;
   }
@@ -236,10 +240,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const dv = view();
     if (okValue === null) {
       dv.setUint32(ptr + 0, writeCString(errValue ?? ""), true);
-      dv.setUint8(ptr + 4, 1);
+      dv.setUint8(ptr + 4, 0);
     } else {
       dv.setUint32(ptr + 0, okValue >>> 0, true);
-      dv.setUint8(ptr + 4, 0);
+      dv.setUint8(ptr + 4, 1);
     }
     return ptr >>> 0;
   }
@@ -252,10 +256,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     const dv = view();
     if (okValue === null) {
       dv.setUint32(ptr + 0, writeCString(errValue ?? ""), true);
-      dv.setUint8(ptr + 4, 1);
+      dv.setUint8(ptr + 4, 0);
     } else {
       dv.setUint8(ptr + 0, okValue ? 1 : 0);
-      dv.setUint8(ptr + 4, 0);
+      dv.setUint8(ptr + 4, 1);
     }
     return ptr >>> 0;
   }
@@ -989,10 +993,70 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     return normalizeU64(heap);
   }
 
-  function ferret_global_panic(msgPtr: number) {
+  function panicTextFromPtr(msgPtr: number): string {
     const msg = msgPtr ? readCString(msgPtr) : "";
-    const text = msg ? `panic: ${msg}` : "panic";
+    return msg ? `panic: ${msg}` : "panic";
+  }
+
+  function panicThrow(msgPtr: number): never {
+    const text = panicTextFromPtr(msgPtr);
+    emit(`${text}\n`);
+    if (emitEvent) {
+      emitEvent({ type: "output", text: `${text}\n` });
+    }
     throw new Error(text);
+  }
+
+  function ferret_global_panic(msgPtr: number): never {
+    panicThrow(msgPtr);
+  }
+
+  function ferret_global_panic_begin(msgPtr: number): void {
+    ferretPanicActive = true;
+    ferretPanicRecovered = false;
+    ferretPanicInDefer = false;
+    ferretPanicMsgPtr = msgPtr >>> 0;
+  }
+
+  function ferret_global_panic_enter_defer(): void {
+    if (ferretPanicActive) {
+      ferretPanicInDefer = true;
+    }
+  }
+
+  function ferret_global_panic_leave_defer(): void {
+    ferretPanicInDefer = false;
+  }
+
+  function ferret_global_panic_is_recovered(): number {
+    return ferretPanicActive && ferretPanicRecovered ? 1 : 0;
+  }
+
+  function ferret_global_panic_clear(): void {
+    ferretPanicMsgPtr = 0;
+    ferretPanicActive = false;
+    ferretPanicRecovered = false;
+    ferretPanicInDefer = false;
+  }
+
+  function ferret_global_panic_abort(): never {
+    const msgPtr = ferretPanicMsgPtr;
+    ferret_global_panic_clear();
+    panicThrow(msgPtr);
+  }
+
+  function ferret_global_recover(): number {
+    const OPTIONAL_STR_VALUE_SIZE = 4;
+    const outPtr = optionalAllocNone(OPTIONAL_STR_VALUE_SIZE, 4);
+    const dv = view();
+    const mem = new Uint8Array(memory!.buffer);
+    if (ferretPanicActive && ferretPanicInDefer && !ferretPanicRecovered) {
+      const msgPtr = ferretPanicMsgPtr || writeCString("");
+      dv.setUint32(outPtr, msgPtr >>> 0, true);
+      mem[outPtr + OPTIONAL_STR_VALUE_SIZE] = 1;
+      ferretPanicRecovered = true;
+    }
+    return outPtr >>> 0;
   }
 
   const STREAM_STDIN = 0;
@@ -1165,6 +1229,856 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
 
   function ferret_pow(base: number, exp: number) {
     return Math.pow(Number(base), Number(exp));
+  }
+
+  function ferret_complex64_add(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const dv = view();
+    const aRe = dv.getFloat32(aPtr, true);
+    const aIm = dv.getFloat32(aPtr + 4, true);
+    const bRe = dv.getFloat32(bPtr, true);
+    const bIm = dv.getFloat32(bPtr + 4, true);
+    dv.setFloat32(outPtr, aRe + bRe, true);
+    dv.setFloat32(outPtr + 4, aIm + bIm, true);
+  }
+
+  function ferret_complex64_sub(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const dv = view();
+    const aRe = dv.getFloat32(aPtr, true);
+    const aIm = dv.getFloat32(aPtr + 4, true);
+    const bRe = dv.getFloat32(bPtr, true);
+    const bIm = dv.getFloat32(bPtr + 4, true);
+    dv.setFloat32(outPtr, aRe - bRe, true);
+    dv.setFloat32(outPtr + 4, aIm - bIm, true);
+  }
+
+  function ferret_complex64_mul(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const dv = view();
+    const aRe = dv.getFloat32(aPtr, true);
+    const aIm = dv.getFloat32(aPtr + 4, true);
+    const bRe = dv.getFloat32(bPtr, true);
+    const bIm = dv.getFloat32(bPtr + 4, true);
+    dv.setFloat32(outPtr, aRe * bRe - aIm * bIm, true);
+    dv.setFloat32(outPtr + 4, aRe * bIm + aIm * bRe, true);
+  }
+
+  function ferret_complex64_div(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const dv = view();
+    const aRe = dv.getFloat32(aPtr, true);
+    const aIm = dv.getFloat32(aPtr + 4, true);
+    const bRe = dv.getFloat32(bPtr, true);
+    const bIm = dv.getFloat32(bPtr + 4, true);
+    const denom = bRe * bRe + bIm * bIm;
+    if (denom === 0) {
+      ferret_global_panic(writeCString("division by zero"));
+      return;
+    }
+    dv.setFloat32(outPtr, (aRe * bRe + aIm * bIm) / denom, true);
+    dv.setFloat32(outPtr + 4, (aIm * bRe - aRe * bIm) / denom, true);
+  }
+
+  function ferret_complex_add(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const dv = view();
+    const aRe = dv.getFloat64(aPtr, true);
+    const aIm = dv.getFloat64(aPtr + 8, true);
+    const bRe = dv.getFloat64(bPtr, true);
+    const bIm = dv.getFloat64(bPtr + 8, true);
+    dv.setFloat64(outPtr, aRe + bRe, true);
+    dv.setFloat64(outPtr + 8, aIm + bIm, true);
+  }
+
+  function ferret_complex_sub(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const dv = view();
+    const aRe = dv.getFloat64(aPtr, true);
+    const aIm = dv.getFloat64(aPtr + 8, true);
+    const bRe = dv.getFloat64(bPtr, true);
+    const bIm = dv.getFloat64(bPtr + 8, true);
+    dv.setFloat64(outPtr, aRe - bRe, true);
+    dv.setFloat64(outPtr + 8, aIm - bIm, true);
+  }
+
+  function ferret_complex_mul(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const dv = view();
+    const aRe = dv.getFloat64(aPtr, true);
+    const aIm = dv.getFloat64(aPtr + 8, true);
+    const bRe = dv.getFloat64(bPtr, true);
+    const bIm = dv.getFloat64(bPtr + 8, true);
+    dv.setFloat64(outPtr, aRe * bRe - aIm * bIm, true);
+    dv.setFloat64(outPtr + 8, aRe * bIm + aIm * bRe, true);
+  }
+
+  function ferret_complex_div(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const dv = view();
+    const aRe = dv.getFloat64(aPtr, true);
+    const aIm = dv.getFloat64(aPtr + 8, true);
+    const bRe = dv.getFloat64(bPtr, true);
+    const bIm = dv.getFloat64(bPtr + 8, true);
+    const denom = bRe * bRe + bIm * bIm;
+    if (denom === 0) {
+      ferret_global_panic(writeCString("division by zero"));
+      return;
+    }
+    dv.setFloat64(outPtr, (aRe * bRe + aIm * bIm) / denom, true);
+    dv.setFloat64(outPtr + 8, (aIm * bRe - aRe * bIm) / denom, true);
+  }
+
+  function ferret_complex256_add(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const bits = 128;
+    const partSize = bits >> 3;
+    const spec = getSoftFloatSpec(bits);
+    const aRe = readBigFloatBits(aPtr, bits);
+    const aIm = readBigFloatBits(aPtr + partSize, bits);
+    const bRe = readBigFloatBits(bPtr, bits);
+    const bIm = readBigFloatBits(bPtr + partSize, bits);
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      softAdd(
+        aRe,
+        bRe,
+        false,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+    writeBigFloatBits(
+      outPtr + partSize,
+      bits,
+      softAdd(
+        aIm,
+        bIm,
+        false,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+  }
+
+  function ferret_complex256_sub(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const bits = 128;
+    const partSize = bits >> 3;
+    const spec = getSoftFloatSpec(bits);
+    const aRe = readBigFloatBits(aPtr, bits);
+    const aIm = readBigFloatBits(aPtr + partSize, bits);
+    const bRe = readBigFloatBits(bPtr, bits);
+    const bIm = readBigFloatBits(bPtr + partSize, bits);
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      softAdd(
+        aRe,
+        bRe,
+        true,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+    writeBigFloatBits(
+      outPtr + partSize,
+      bits,
+      softAdd(
+        aIm,
+        bIm,
+        true,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+  }
+
+  function ferret_complex256_mul(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const bits = 128;
+    const partSize = bits >> 3;
+    const spec = getSoftFloatSpec(bits);
+    const aRe = readBigFloatBits(aPtr, bits);
+    const aIm = readBigFloatBits(aPtr + partSize, bits);
+    const bRe = readBigFloatBits(bPtr, bits);
+    const bIm = readBigFloatBits(bPtr + partSize, bits);
+    const reRe = softMul(
+      aRe,
+      bRe,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const imIm = softMul(
+      aIm,
+      bIm,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const reIm = softMul(
+      aRe,
+      bIm,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const imRe = softMul(
+      aIm,
+      bRe,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      softAdd(
+        reRe,
+        imIm,
+        true,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+    writeBigFloatBits(
+      outPtr + partSize,
+      bits,
+      softAdd(
+        reIm,
+        imRe,
+        false,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+  }
+
+  function ferret_complex256_div(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const bits = 128;
+    const partSize = bits >> 3;
+    const spec = getSoftFloatSpec(bits);
+    const aRe = readBigFloatBits(aPtr, bits);
+    const aIm = readBigFloatBits(aPtr + partSize, bits);
+    const bRe = readBigFloatBits(bPtr, bits);
+    const bIm = readBigFloatBits(bPtr + partSize, bits);
+    const bReSq = softMul(
+      bRe,
+      bRe,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const bImSq = softMul(
+      bIm,
+      bIm,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const denom = softAdd(
+      bReSq,
+      bImSq,
+      false,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    if (denom === 0n) {
+      ferret_global_panic(writeCString("division by zero"));
+      return;
+    }
+    const aReBRe = softMul(
+      aRe,
+      bRe,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const aImBIm = softMul(
+      aIm,
+      bIm,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const aImBRe = softMul(
+      aIm,
+      bRe,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const aReBIm = softMul(
+      aRe,
+      bIm,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const reNum = softAdd(
+      aReBRe,
+      aImBIm,
+      false,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const imNum = softAdd(
+      aImBRe,
+      aReBIm,
+      true,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      softDiv(
+        reNum,
+        denom,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+    writeBigFloatBits(
+      outPtr + partSize,
+      bits,
+      softDiv(
+        imNum,
+        denom,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+  }
+
+  function ferret_complex512_add(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const bits = 256;
+    const partSize = bits >> 3;
+    const spec = getSoftFloatSpec(bits);
+    const aRe = readBigFloatBits(aPtr, bits);
+    const aIm = readBigFloatBits(aPtr + partSize, bits);
+    const bRe = readBigFloatBits(bPtr, bits);
+    const bIm = readBigFloatBits(bPtr + partSize, bits);
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      softAdd(
+        aRe,
+        bRe,
+        false,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+    writeBigFloatBits(
+      outPtr + partSize,
+      bits,
+      softAdd(
+        aIm,
+        bIm,
+        false,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+  }
+
+  function ferret_complex512_sub(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const bits = 256;
+    const partSize = bits >> 3;
+    const spec = getSoftFloatSpec(bits);
+    const aRe = readBigFloatBits(aPtr, bits);
+    const aIm = readBigFloatBits(aPtr + partSize, bits);
+    const bRe = readBigFloatBits(bPtr, bits);
+    const bIm = readBigFloatBits(bPtr + partSize, bits);
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      softAdd(
+        aRe,
+        bRe,
+        true,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+    writeBigFloatBits(
+      outPtr + partSize,
+      bits,
+      softAdd(
+        aIm,
+        bIm,
+        true,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+  }
+
+  function ferret_complex512_mul(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const bits = 256;
+    const partSize = bits >> 3;
+    const spec = getSoftFloatSpec(bits);
+    const aRe = readBigFloatBits(aPtr, bits);
+    const aIm = readBigFloatBits(aPtr + partSize, bits);
+    const bRe = readBigFloatBits(bPtr, bits);
+    const bIm = readBigFloatBits(bPtr + partSize, bits);
+    const reRe = softMul(
+      aRe,
+      bRe,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const imIm = softMul(
+      aIm,
+      bIm,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const reIm = softMul(
+      aRe,
+      bIm,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const imRe = softMul(
+      aIm,
+      bRe,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      softAdd(
+        reRe,
+        imIm,
+        true,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+    writeBigFloatBits(
+      outPtr + partSize,
+      bits,
+      softAdd(
+        reIm,
+        imRe,
+        false,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+  }
+
+  function ferret_complex512_div(
+    aPtr: number,
+    bPtr: number,
+    outPtr: number,
+  ): void {
+    if (!aPtr || !bPtr || !outPtr) return;
+    const bits = 256;
+    const partSize = bits >> 3;
+    const spec = getSoftFloatSpec(bits);
+    const aRe = readBigFloatBits(aPtr, bits);
+    const aIm = readBigFloatBits(aPtr + partSize, bits);
+    const bRe = readBigFloatBits(bPtr, bits);
+    const bIm = readBigFloatBits(bPtr + partSize, bits);
+    const bReSq = softMul(
+      bRe,
+      bRe,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const bImSq = softMul(
+      bIm,
+      bIm,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const denom = softAdd(
+      bReSq,
+      bImSq,
+      false,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    if (denom === 0n) {
+      ferret_global_panic(writeCString("division by zero"));
+      return;
+    }
+    const aReBRe = softMul(
+      aRe,
+      bRe,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const aImBIm = softMul(
+      aIm,
+      bIm,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const aImBRe = softMul(
+      aIm,
+      bRe,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const aReBIm = softMul(
+      aRe,
+      bIm,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const reNum = softAdd(
+      aReBRe,
+      aImBIm,
+      false,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    const imNum = softAdd(
+      aImBRe,
+      aReBIm,
+      true,
+      spec.fracBits,
+      spec.expBits,
+      spec.expBias,
+      spec.expMax,
+      spec.minExp,
+      spec.maxExp,
+    );
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      softDiv(
+        reNum,
+        denom,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+    writeBigFloatBits(
+      outPtr + partSize,
+      bits,
+      softDiv(
+        imNum,
+        denom,
+        spec.fracBits,
+        spec.expBits,
+        spec.expBias,
+        spec.expMax,
+        spec.minExp,
+        spec.maxExp,
+      ),
+    );
+  }
+
+  function ferret_global_real_complex64(
+    valuePtr: number,
+    _heap: number | bigint,
+  ): number {
+    if (!valuePtr) return 0;
+    return view().getFloat32(valuePtr, true);
+  }
+
+  function ferret_global_imag_complex64(
+    valuePtr: number,
+    _heap: number | bigint,
+  ): number {
+    if (!valuePtr) return 0;
+    return view().getFloat32(valuePtr + 4, true);
+  }
+
+  function ferret_global_real_complex(
+    valuePtr: number,
+    _heap: number | bigint,
+  ): number {
+    if (!valuePtr) return 0;
+    return view().getFloat64(valuePtr, true);
+  }
+
+  function ferret_global_imag_complex(
+    valuePtr: number,
+    _heap: number | bigint,
+  ): number {
+    if (!valuePtr) return 0;
+    return view().getFloat64(valuePtr + 8, true);
+  }
+
+  function ferret_global_real_complex256(
+    outPtr: number,
+    valuePtr: number,
+    _heap: number | bigint,
+  ): void {
+    if (!outPtr) return;
+    const bits = 128;
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      valuePtr ? readBigFloatBits(valuePtr, bits) : 0n,
+    );
+  }
+
+  function ferret_global_imag_complex256(
+    outPtr: number,
+    valuePtr: number,
+    _heap: number | bigint,
+  ): void {
+    if (!outPtr) return;
+    const bits = 128;
+    const partSize = bits >> 3;
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      valuePtr ? readBigFloatBits(valuePtr + partSize, bits) : 0n,
+    );
+  }
+
+  function ferret_global_real_complex512(
+    outPtr: number,
+    valuePtr: number,
+    _heap: number | bigint,
+  ): void {
+    if (!outPtr) return;
+    const bits = 256;
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      valuePtr ? readBigFloatBits(valuePtr, bits) : 0n,
+    );
+  }
+
+  function ferret_global_imag_complex512(
+    outPtr: number,
+    valuePtr: number,
+    _heap: number | bigint,
+  ): void {
+    if (!outPtr) return;
+    const bits = 256;
+    const partSize = bits >> 3;
+    writeBigFloatBits(
+      outPtr,
+      bits,
+      valuePtr ? readBigFloatBits(valuePtr + partSize, bits) : 0n,
+    );
   }
 
   // UTF-8 decoding helper: decode one UTF-8 character from bytes
@@ -4266,6 +5180,10 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     ferretMapStore.clear();
     ferretMapIterStore.clear();
     ferretStringAllocs.clear();
+    ferretPanicMsgPtr = 0;
+    ferretPanicActive = false;
+    ferretPanicRecovered = false;
+    ferretPanicInDefer = false;
     inputLines.length = 0;
     inputIndex = 0;
   }
@@ -4308,6 +5226,37 @@ export function createFerretRuntime(options: FerretRuntimeOptions = {}) {
     ferret_global_read,
     ferret_global_flush,
     [WASM_IMPORT_FERRET_GLOBAL_PANIC]: ferret_global_panic,
+    ferret_global_panic_begin,
+    ferret_global_panic_enter_defer,
+    ferret_global_panic_leave_defer,
+    ferret_global_panic_is_recovered,
+    ferret_global_panic_clear,
+    ferret_global_panic_abort,
+    ferret_global_recover,
+    ferret_complex64_add,
+    ferret_complex64_sub,
+    ferret_complex64_mul,
+    ferret_complex64_div,
+    ferret_complex_add,
+    ferret_complex_sub,
+    ferret_complex_mul,
+    ferret_complex_div,
+    ferret_complex256_add,
+    ferret_complex256_sub,
+    ferret_complex256_mul,
+    ferret_complex256_div,
+    ferret_complex512_add,
+    ferret_complex512_sub,
+    ferret_complex512_mul,
+    ferret_complex512_div,
+    ferret_global_real_complex64,
+    ferret_global_imag_complex64,
+    ferret_global_real_complex,
+    ferret_global_imag_complex,
+    ferret_global_real_complex256,
+    ferret_global_imag_complex256,
+    ferret_global_real_complex512,
+    ferret_global_imag_complex512,
     ferret_string_len,
     ferret_io_ConcatStrings,
     ferret_string_concat_i64,
