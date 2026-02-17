@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"compiler/colors"
 	"compiler/internal/utils/numeric"
 	str "compiler/internal/utils/strings"
 	"fmt"
@@ -1107,7 +1108,7 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 
 			sym.Type = rhsType
 			sym.IsHeap = types.IsHeapType(sym.Type)
-			if reportImplicitResourceCopy(ctx, rhsType, rhsType, item.Value, "variable initialization") {
+			if reportImplicitCopyMethodRequirement(ctx, mod, rhsType, item.Value, "variable initialization") {
 				continue
 			}
 
@@ -3520,6 +3521,149 @@ func moveExpr(expr ast.Expression) bool {
 	return false
 }
 
+func implicitCopySourceExpr(expr ast.Expression) bool {
+	expr = unwrapParenExprAST(expr)
+	switch e := expr.(type) {
+	case *ast.IdentifierExpr, *ast.SelectorExpr, *ast.IndexExpr, *ast.DerefExpr:
+		return true
+	case *ast.CastExpr:
+		return implicitCopySourceExpr(e.X)
+	case *ast.UnaryExpr:
+		// @x is explicit move; #x allocates a fresh owner; borrows are non-owning.
+		switch e.Op.Kind {
+		case tokens.AT_TOKEN, tokens.HASH_TOKEN, tokens.BIT_AND_TOKEN, tokens.MUT_TOKEN:
+			return false
+		default:
+			return implicitCopySourceExpr(e.X)
+		}
+	default:
+		return false
+	}
+}
+
+func implicitCopyNamedType(sourceType types.SemType) (*types.NamedType, bool) {
+	if sourceType == nil {
+		return nil, false
+	}
+	if sourceType.Equals(types.TypeUnknown) {
+		return nil, false
+	}
+	named, ok := sourceType.(*types.NamedType)
+	if !ok || named == nil {
+		return nil, false
+	}
+
+	underlying := types.UnwrapType(named.Underlying)
+	switch underlying.(type) {
+	case *types.InterfaceType, *types.FunctionType:
+		return nil, false
+	case *types.PrimitiveType, *types.ComplexType:
+		// Named primitive/complex aliases are copyable unless the compiler marks
+		// them as runtime resource handles.
+		if !named.Resource {
+			return nil, false
+		}
+	}
+	return named, true
+}
+
+func invalidCopyMethodReason(method *symbols.MethodInfo, typ *types.NamedType) string {
+	if method == nil || method.FuncType == nil {
+		return "missing required signature `fn (v: &T) copy() -> T`"
+	}
+	if method.ReceiverIsMove {
+		return "`copy()` receiver cannot be move-qualified"
+	}
+	ref, isRef := types.UnwrapType(method.Receiver).(*types.ReferenceType)
+	if !isRef {
+		return "`copy()` receiver must be an immutable reference '&T'"
+	}
+	if ref.Mutable {
+		return "`copy()` receiver must be an immutable reference '&T'"
+	}
+	receiver := types.DereferenceType(method.Receiver)
+	if receiver == nil || !receiver.Equals(typ) {
+		return fmt.Sprintf("`copy()` receiver must be '&%s'", typ.String())
+	}
+	if len(method.FuncType.Params) != 0 {
+		return "`copy()` must not take parameters"
+	}
+	if method.FuncType.Return == nil || !method.FuncType.Return.Equals(typ) {
+		return fmt.Sprintf("`copy()` must return `%s`", typ.String())
+	}
+	return ""
+}
+
+func hasValidCopyMethod(ctx *context_v2.CompilerContext, mod *context_v2.Module, typ *types.NamedType) (bool, string) {
+	if typ == nil || typ.Name == "" {
+		return false, ""
+	}
+	typeSym, found := lookupTypeSymbol(ctx, mod, typ.Name)
+	if !found || typeSym == nil || typeSym.Methods == nil {
+		return false, "missing required signature `fn (v: &T) copy() -> T`"
+	}
+	method, ok := typeSym.Methods["copy"]
+	if !ok || method == nil {
+		return false, "missing required signature `fn (v: &T) copy() -> T`"
+	}
+	if reason := invalidCopyMethodReason(method, typ); reason != "" {
+		return false, reason
+	}
+	return true, ""
+}
+
+func reportImplicitCopyMethodRequirement(ctx *context_v2.CompilerContext, mod *context_v2.Module, sourceType types.SemType, sourceExpr ast.Expression, op string) bool {
+	if sourceExpr == nil {
+		return false
+	}
+	if moveExpr(sourceExpr) {
+		return false
+	}
+	if !implicitCopySourceExpr(sourceExpr) {
+		return false
+	}
+
+	typ, requiresMethod := implicitCopyNamedType(sourceType)
+	if !requiresMethod {
+		return false
+	}
+	ok, reason := hasValidCopyMethod(ctx, mod, typ)
+	if ok {
+		return false
+	}
+
+	old := exprText(ctx, sourceExpr)
+	moveSuggestion := "@value"
+	if old != "" {
+		moveSuggestion = "@" + old
+	}
+
+	fnsig := fmt.Sprintf("fn (v: &%s) copy() -> %s { \n // code here \n}", typ.String(), typ.String())
+
+	diag := diagnostics.NewError("implicit copy requires a valid `copy()` method").
+		WithCode(diagnostics.ErrInvalidOperation).
+		WithPrimaryLabel(sourceExpr.Loc(), fmt.Sprintf("cannot implicitly copy value of type `%s` in %s", typ.String(), op)).
+		WithHelp(fmt.Sprintf("use '%s' to move ownership", moveSuggestion))
+	if reason != "" {
+		diag = diag.WithNote(reason)
+	}
+	if old != "" {
+		diag = diag.WithCodeReplacement(sourceExpr.Loc(), old, moveSuggestion)
+	}
+
+	diag = diag.WithText("or implement copy method", " ", colors.GREEN).
+		WithCodeHint(sourceExpr.Loc(), fnsig, diagnostics.CodeHintLabel{
+			Line:    1,
+			Column:  1,
+			Length:  4,
+			Message: "Add this method",
+			Style:   diagnostics.Secondary,
+		})
+
+	ctx.Diagnostics.Add(diag)
+	return true
+}
+
 func resourceCopySourceExpr(expr ast.Expression) bool {
 	expr = unwrapParenExprAST(expr)
 	switch e := expr.(type) {
@@ -4318,7 +4462,7 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 	// Pass leftType as expected type so composite literals can be contextualized
 	rhsType := checkExpr(ctx, mod, rightNode, leftType)
 
-	if reportImplicitResourceCopy(ctx, leftType, rhsType, rightNode, "assignment") {
+	if reportImplicitCopyMethodRequirement(ctx, mod, rhsType, rightNode, "assignment") {
 		return
 	}
 
@@ -4480,9 +4624,6 @@ func addExplicitCastHint(ctx *context_v2.CompilerContext, diag *diagnostics.Diag
 	if hint == "" {
 		return diag
 	}
-	if diag.Help != "" {
-		hint = fmt.Sprintf("%s; %s", diag.Help, hint)
-	}
 	return diag.WithHelp(hint)
 }
 
@@ -4514,9 +4655,6 @@ func addDerefHintIfNeeded(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 	hint := "dereference: *value"
 	if exprText != "" {
 		hint = fmt.Sprintf("dereference: *%s", exprText)
-	}
-	if diag.Help != "" {
-		hint = fmt.Sprintf("%s; %s", diag.Help, hint)
 	}
 	return diag.WithHelp(hint)
 }
@@ -5321,8 +5459,9 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 					returnType = TypeFromTypeNodeWithContext(ctx, mod, funcType.Result)
 				}
 				methods = append(methods, types.InterfaceMethod{
-					Name:     m.Name.Name,
-					FuncType: types.NewFunction(params, returnType),
+					Name:         m.Name.Name,
+					FuncType:     types.NewFunction(params, returnType),
+					ReceiverMode: interfaceReceiverModeFromAST(m.ReceiverMode),
 				})
 			}
 		}
@@ -5347,6 +5486,21 @@ func typeFromTypeNode(typeNode ast.TypeNode) types.SemType {
 	// Use context version with nil - it will handle primitives correctly
 	// but won't resolve user-defined types (which is fine for this use case)
 	return TypeFromTypeNodeWithContext(nil, nil, typeNode)
+}
+
+func interfaceReceiverModeFromAST(mode ast.InterfaceReceiverMode) types.MethodReceiverMode {
+	switch mode {
+	case ast.InterfaceReceiverRef:
+		return types.ReceiverModeRef
+	case ast.InterfaceReceiverMutRef:
+		return types.ReceiverModeMutRef
+	case ast.InterfaceReceiverMove:
+		return types.ReceiverModeMove
+	case ast.InterfaceReceiverAny:
+		return types.ReceiverModeAny
+	default:
+		return types.ReceiverModeValue
+	}
 }
 
 // checkCallExpr validates function call expressions

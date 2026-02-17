@@ -101,7 +101,10 @@ type Field struct {
 	Value      Expression      // initial value (for struct literals), nil otherwise
 	IsVariadic bool            // true if this is a variadic parameter (...type)
 	IsMove     bool            // true if parameter is move-qualified (@T)
-	Default    Expression      // default parameter value (functions only), nil otherwise
+	// ReceiverMode is used by interface methods to constrain required method receiver kind.
+	// Value is the default when no prefix is provided.
+	ReceiverMode InterfaceReceiverMode
+	Default      Expression // default parameter value (functions only), nil otherwise
 	source.Location
 }
 
@@ -126,6 +129,17 @@ type InterfaceType struct {
 	ID      string  // Unique ID for anonymous interface
 	source.Location
 }
+
+// InterfaceReceiverMode defines the receiver category required by an interface method.
+type InterfaceReceiverMode uint8
+
+const (
+	InterfaceReceiverValue  InterfaceReceiverMode = iota // Method value receiver: `Method(...)`
+	InterfaceReceiverRef                                 // Shared ref receiver: `&Method(...)`
+	InterfaceReceiverMutRef                              // Mutable ref receiver: `&mut Method(...)`
+	InterfaceReceiverMove                                // Move receiver: `@Method(...)`
+	InterfaceReceiverAny                                 // Any receiver mode: `~Method(...)`
+)
 
 func (i *InterfaceType) INode()                {} // Implements Node interface
 func (i *InterfaceType) TypeExpr()             {} // Type nodes implement TypeExpr

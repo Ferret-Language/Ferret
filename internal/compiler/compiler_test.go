@@ -375,8 +375,8 @@ fn main() {
 	if result.Success {
 		t.Fatalf("expected compilation failure for implicit resource copy")
 	}
-	if !strings.Contains(result.Output, "resource values are non-copyable") {
-		t.Fatalf("expected resource copy diagnostic, got: %s", result.Output)
+	if !strings.Contains(result.Output, "implicit copy requires a valid `copy()` method") {
+		t.Fatalf("expected copy() requirement diagnostic, got: %s", result.Output)
 	}
 }
 
@@ -426,8 +426,144 @@ fn main() {
 	if result.Success {
 		t.Fatalf("expected compilation failure for implicit tcp resource copy")
 	}
-	if !strings.Contains(result.Output, "resource values are non-copyable") {
-		t.Fatalf("expected resource copy diagnostic, got: %s", result.Output)
+	if !strings.Contains(result.Output, "implicit copy requires a valid `copy()` method") {
+		t.Fatalf("expected copy() requirement diagnostic, got: %s", result.Output)
+	}
+}
+
+func TestCompile_UserTypeImplicitCopyRequiresCopyMethod(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Vec2 struct {
+	.x: i32,
+	.y: i32
+};
+
+fn main() {
+	let a: Vec2 = { .x = 1, .y = 2 };
+	let b := a;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure for implicit Vec2 copy without copy() method")
+	}
+	if !strings.Contains(result.Output, "implicit copy requires a valid `copy()` method") {
+		t.Fatalf("expected copy() requirement diagnostic, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "Vec2") {
+		t.Fatalf("expected diagnostic to mention Vec2, got: %s", result.Output)
+	}
+}
+
+func TestCompile_UserTypeImplicitCopyWithCopyMethodAllowed(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Vec2 struct {
+	.x: i32,
+	.y: i32
+};
+
+fn (v: &Vec2) copy() -> Vec2 {
+	return { .x = v.x, .y = v.y } as Vec2;
+}
+
+fn main() {
+	let a: Vec2 = { .x = 1, .y = 2 };
+	let b := a;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success with valid copy() method, got: %s", result.Output)
+	}
+}
+
+func TestCompile_InterfaceReceiverModePrefixes(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type MutWriter interface {
+	&mut Write(v: i32) -> i32
+};
+
+type AnyWriter interface {
+	~Write(v: i32) -> i32
+};
+
+type S struct {
+	.x: i32
+};
+
+fn (s: &S) copy() -> S {
+	return { .x = s.x } as S;
+}
+
+fn (s: &mut S) Write(v: i32) -> i32 {
+	return v;
+}
+
+fn main() {
+	let s: S = { .x = 0 };
+	let a: MutWriter = s;
+	let b: AnyWriter = s;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success for &mut/~ receiver mode interface methods, got: %s", result.Output)
+	}
+}
+
+func TestCompile_InterfaceValueReceiverRequirementRejected(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type ValueWriter interface {
+	Write(v: i32) -> i32
+};
+
+type S struct {
+	.x: i32
+};
+
+fn (s: &S) copy() -> S {
+	return { .x = s.x } as S;
+}
+
+fn (s: &mut S) Write(v: i32) -> i32 {
+	return v;
+}
+
+fn main() {
+	let s: S = { .x = 0 };
+	let w: ValueWriter = s;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected compilation failure for value receiver interface requirement")
+	}
+	if !strings.Contains(result.Output, "receiver mismatch") && !strings.Contains(result.Output, "missing methods") {
+		t.Fatalf("expected receiver mismatch diagnostic, got: %s", result.Output)
 	}
 }
 

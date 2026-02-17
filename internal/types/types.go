@@ -622,10 +622,52 @@ func (e *EnumType) Equals(other SemType) bool {
 	return false
 }
 
-// InterfaceMethod represents a method signature in an interface
+// MethodReceiverMode constrains which receiver mode can satisfy an interface method.
+type MethodReceiverMode uint8
+
+const (
+	ReceiverModeValue MethodReceiverMode = iota
+	ReceiverModeRef
+	ReceiverModeMutRef
+	ReceiverModeMove
+	ReceiverModeAny
+)
+
+func (m MethodReceiverMode) Prefix() string {
+	switch m {
+	case ReceiverModeRef:
+		return "&"
+	case ReceiverModeMutRef:
+		return "&mut "
+	case ReceiverModeMove:
+		return "@"
+	case ReceiverModeAny:
+		return "~"
+	default:
+		return ""
+	}
+}
+
+func (m MethodReceiverMode) String() string {
+	switch m {
+	case ReceiverModeRef:
+		return "ref"
+	case ReceiverModeMutRef:
+		return "mut ref"
+	case ReceiverModeMove:
+		return "move"
+	case ReceiverModeAny:
+		return "any"
+	default:
+		return "value"
+	}
+}
+
+// InterfaceMethod represents a method signature in an interface.
 type InterfaceMethod struct {
-	Name     string        // Method name
-	FuncType *FunctionType // Method signature
+	Name         string             // Method name
+	FuncType     *FunctionType      // Method signature
+	ReceiverMode MethodReceiverMode // Required receiver mode for implementers
 }
 
 // InterfaceType represents interface types: interface { method1(...), method2(...) }
@@ -645,7 +687,7 @@ func (i *InterfaceType) String() string {
 	}
 	methodStrs := make([]string, len(i.Methods))
 	for j, m := range i.Methods {
-		methodStrs[j] = fmt.Sprintf("%s%s", m.Name, m.FuncType.String()[2:]) // Remove "fn" prefix
+		methodStrs[j] = fmt.Sprintf("%s%s%s", m.ReceiverMode.Prefix(), m.Name, m.FuncType.String()[2:]) // Remove "fn" prefix
 	}
 	return fmt.Sprintf("interface { %s }", strings.Join(methodStrs, ", "))
 }
@@ -663,17 +705,27 @@ func (i *InterfaceType) Equals(other SemType) bool {
 			return false
 		}
 		// Build method maps for comparison
-		thisMethods := make(map[string]*FunctionType)
-		thatMethods := make(map[string]*FunctionType)
+		thisMethods := make(map[string]InterfaceMethod)
+		thatMethods := make(map[string]InterfaceMethod)
 		for _, m := range i.Methods {
-			thisMethods[m.Name] = m.FuncType
+			thisMethods[m.Name] = m
 		}
 		for _, m := range it.Methods {
-			thatMethods[m.Name] = m.FuncType
+			thatMethods[m.Name] = m
 		}
 		// Check all methods match
-		for name, funcType := range thisMethods {
-			if otherFuncType, ok := thatMethods[name]; !ok || !funcType.Equals(otherFuncType) {
+		for name, method := range thisMethods {
+			otherMethod, ok := thatMethods[name]
+			if !ok {
+				return false
+			}
+			if method.ReceiverMode != otherMethod.ReceiverMode {
+				return false
+			}
+			if method.FuncType == nil || otherMethod.FuncType == nil {
+				return false
+			}
+			if !method.FuncType.Equals(otherMethod.FuncType) {
 				return false
 			}
 		}

@@ -412,6 +412,26 @@ func (p *Parser) parseInterfaceType() *ast.InterfaceType {
 	for !(p.match(tokens.CLOSE_CURLY) || p.isAtEnd()) {
 
 		// funcname (...) -> ...
+		receiverMode := ast.InterfaceReceiverValue
+		var methodStart *source.Position
+		if p.match(tokens.BIT_AND_TOKEN) {
+			amp := p.advance()
+			methodStart = &amp.Start
+			if p.match(tokens.MUT_TOKEN) {
+				p.advance()
+				receiverMode = ast.InterfaceReceiverMutRef
+			} else {
+				receiverMode = ast.InterfaceReceiverRef
+			}
+		} else if p.match(tokens.AT_TOKEN) {
+			at := p.advance()
+			methodStart = &at.Start
+			receiverMode = ast.InterfaceReceiverMove
+		} else if p.match(tokens.BIT_NOT_TOKEN) {
+			any := p.advance()
+			methodStart = &any.Start
+			receiverMode = ast.InterfaceReceiverAny
+		}
 
 		name := p.parseIdentifier()
 
@@ -430,11 +450,15 @@ func (p *Parser) parseInterfaceType() *ast.InterfaceType {
 		}
 
 		functype := p.parseFuncType(*name.Start)
+		if methodStart == nil {
+			methodStart = name.Start
+		}
 
 		methods = append(methods, ast.Field{
-			Name:     name,
-			Type:     functype,
-			Location: *source.NewLocation(&p.filepath, name.Start, functype.End),
+			Name:         name,
+			Type:         functype,
+			ReceiverMode: receiverMode,
+			Location:     *source.NewLocation(&p.filepath, methodStart, functype.End),
 		})
 
 		if p.match(tokens.CLOSE_CURLY) {

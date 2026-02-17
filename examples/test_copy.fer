@@ -1,0 +1,34 @@
+import "std/fs";
+import "std/io";
+
+type P struct {
+    .A: i32
+};
+
+type Vec2 struct {
+    .X: i32,
+    .Y: i32,
+    .Dt: &mut P
+};
+
+fn (v: &Vec2) copy() -> Vec2 {
+    io::Println("Copy method:", heap_addr(v));
+    return *v;
+}
+
+fn main() {
+    let p := { .A = 100 };
+    let a: Vec2 = { .X = 1, .Y = 2, .Dt = &mut p };
+    io::Println("a:", heap_addr(&a));
+    let b := a;
+    b.Dt.A++;
+    io::Println("b:", heap_addr(&b));
+    io::Println(a.Dt.A);
+    let f1 := fs::Create("examples/test_copy_f1.txt") catch err {
+        io::Println(err);
+        return;
+    };
+    //let x := a;
+    
+    //let f2 := f1;
+}

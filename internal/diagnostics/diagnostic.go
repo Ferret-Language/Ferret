@@ -49,16 +49,39 @@ type Note struct {
 	Message string
 }
 
+type DiagnosticExtraKind int
+
+const (
+	ExtraText DiagnosticExtraKind = iota
+	ExtraCodeHint
+)
+
+// DiagnosticText represents an ordered text entry (e.g. help/note) rendered with custom color.
+type DiagnosticText struct {
+	Kind    string
+	Message string
+	Color   colors.COLOR
+}
+
+// DiagnosticExtra preserves user-facing diagnostic output order across text and code hints.
+type DiagnosticExtra struct {
+	Kind     DiagnosticExtraKind
+	Text     DiagnosticText
+	CodeHint CodeHint
+}
+
 // Diagnostic represents a compiler diagnostic (error, warning, etc.)
 type Diagnostic struct {
-	Severity Severity
-	Message  string
-	Code     string // Error code like "E0001"
-	FilePath string // Source file for this diagnostic
-	Labels   []Label
-	Notes    []Note
-	Help     string // Suggestion for fixing the error
-	CodeHint *CodeHint
+	Severity  Severity
+	Message   string
+	Code      string // Error code like "E0001"
+	FilePath  string // Source file for this diagnostic
+	Labels    []Label
+	Extras    []DiagnosticExtra
+	Texts     []DiagnosticText
+	Notes     []Note
+	Help      string // Suggestion for fixing the error
+	CodeHints []CodeHint
 }
 
 // CodeHintLine represents one rendered hint line with an optional diff prefix.
@@ -77,6 +100,7 @@ type CodeHint struct {
 	Code        string
 	Lines       []CodeHintLine
 	Labels      []CodeHintLabel
+	Location    *source.Location
 	BaseColor   colors.COLOR
 	GutterColor colors.COLOR
 }
@@ -96,6 +120,8 @@ func NewError(message string) *Diagnostic {
 		Severity: Error,
 		Message:  message,
 		Labels:   make([]Label, 0),
+		Extras:   make([]DiagnosticExtra, 0),
+		Texts:    make([]DiagnosticText, 0),
 		Notes:    make([]Note, 0),
 	}
 }
@@ -106,6 +132,8 @@ func NewWarning(message string) *Diagnostic {
 		Severity: Warning,
 		Message:  message,
 		Labels:   make([]Label, 0),
+		Extras:   make([]DiagnosticExtra, 0),
+		Texts:    make([]DiagnosticText, 0),
 		Notes:    make([]Note, 0),
 	}
 }
@@ -116,6 +144,8 @@ func NewInfo(message string) *Diagnostic {
 		Severity: Info,
 		Message:  message,
 		Labels:   make([]Label, 0),
+		Extras:   make([]DiagnosticExtra, 0),
+		Texts:    make([]DiagnosticText, 0),
 		Notes:    make([]Note, 0),
 	}
 }
@@ -200,11 +230,17 @@ func (d *Diagnostic) WithCodeHint(loc *source.Location, code string, labels ...C
 	}
 
 	d.WithPrimaryLabel(loc, "")
-	d.CodeHint = &CodeHint{
+	hint := CodeHint{
 		Code:        code,
 		Labels:      labels,
+		Location:    loc,
 		GutterColor: colors.GREEN,
 	}
+	d.CodeHints = append(d.CodeHints, hint)
+	d.Extras = append(d.Extras, DiagnosticExtra{
+		Kind:     ExtraCodeHint,
+		CodeHint: hint,
+	})
 	return d
 }
 
@@ -215,11 +251,17 @@ func (d *Diagnostic) WithCodeHintLines(loc *source.Location, lines []CodeHintLin
 	}
 
 	d.WithPrimaryLabel(loc, "")
-	d.CodeHint = &CodeHint{
+	hint := CodeHint{
 		Lines:       append([]CodeHintLine(nil), lines...),
 		Labels:      labels,
+		Location:    loc,
 		GutterColor: colors.GREEN,
 	}
+	d.CodeHints = append(d.CodeHints, hint)
+	d.Extras = append(d.Extras, DiagnosticExtra{
+		Kind:     ExtraCodeHint,
+		CodeHint: hint,
+	})
 	return d
 }
 
@@ -245,14 +287,39 @@ func (d *Diagnostic) WithCodeReplacement(loc *source.Location, oldCode, newCode 
 	}, labels...)
 }
 
+// WithText appends an ordered diagnostic text entry.
+// kind controls the label after '=' (e.g. "help", "note", "suggestion").
+func (d *Diagnostic) WithText(kind, message string, color colors.COLOR) *Diagnostic {
+	if message == "" {
+		return d
+	}
+	if color == "" {
+		color = colors.WHITE
+	}
+	d.Texts = append(d.Texts, DiagnosticText{
+		Kind:    kind,
+		Message: message,
+		Color:   color,
+	})
+	d.Extras = append(d.Extras, DiagnosticExtra{
+		Kind: ExtraText,
+		Text: DiagnosticText{
+			Kind:    kind,
+			Message: message,
+			Color:   color,
+		},
+	})
+	return d
+}
+
 // WithNote adds a note to the diagnostic
 func (d *Diagnostic) WithNote(message string) *Diagnostic {
 	d.Notes = append(d.Notes, Note{Message: message})
-	return d
+	return d.WithText("note", message, colors.CYAN)
 }
 
 // WithHelp sets helpful suggestion for fixing the error
 func (d *Diagnostic) WithHelp(help string) *Diagnostic {
 	d.Help = help
-	return d
+	return d.WithText("help", help, colors.GREEN)
 }

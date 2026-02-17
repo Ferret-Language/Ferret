@@ -1,6 +1,7 @@
 package diagnostics
 
 import (
+	"compiler/colors"
 	"compiler/internal/source"
 	"testing"
 )
@@ -45,6 +46,14 @@ func TestNewError(t *testing.T) {
 
 	if diag.Notes == nil {
 		t.Error("Notes should be initialized, not nil")
+	}
+
+	if diag.Texts == nil {
+		t.Error("Texts should be initialized, not nil")
+	}
+
+	if diag.Extras == nil {
+		t.Error("Extras should be initialized, not nil")
 	}
 }
 
@@ -228,6 +237,13 @@ func TestDiagnostic_WithNote(t *testing.T) {
 	if diag.Notes[1].Message != "This is another note" {
 		t.Errorf("Expected second note 'This is another note', got %q", diag.Notes[1].Message)
 	}
+
+	if len(diag.Texts) != 2 {
+		t.Fatalf("Expected 2 text entries, got %d", len(diag.Texts))
+	}
+	if diag.Texts[0].Kind != "note" || diag.Texts[1].Kind != "note" {
+		t.Fatalf("Expected note kinds in text entries, got %q and %q", diag.Texts[0].Kind, diag.Texts[1].Kind)
+	}
 }
 
 func TestDiagnostic_WithHelp(t *testing.T) {
@@ -236,6 +252,13 @@ func TestDiagnostic_WithHelp(t *testing.T) {
 
 	if diag.Help != "Try adding a semicolon at the end of the statement" {
 		t.Errorf("Expected help message to be set, got %q", diag.Help)
+	}
+
+	if len(diag.Texts) != 1 {
+		t.Fatalf("Expected 1 text entry, got %d", len(diag.Texts))
+	}
+	if diag.Texts[0].Kind != "help" {
+		t.Fatalf("Expected help kind for text entry, got %q", diag.Texts[0].Kind)
 	}
 }
 
@@ -337,6 +360,10 @@ func TestDiagnostic_EmptyLabelsAndNotes(t *testing.T) {
 	if diag.Help != "" {
 		t.Errorf("New diagnostic should have empty help, got %q", diag.Help)
 	}
+
+	if len(diag.Texts) != 0 {
+		t.Errorf("New diagnostic should have empty texts, got %d", len(diag.Texts))
+	}
 }
 
 func TestDiagnostic_WithCodeHintLines(t *testing.T) {
@@ -353,14 +380,14 @@ func TestDiagnostic_WithCodeHintLines(t *testing.T) {
 			{Prefix: "+", Code: "old_call(@data);"},
 		})
 
-	if diag.CodeHint == nil {
-		t.Fatal("expected code hint to be set")
+	if len(diag.CodeHints) != 1 {
+		t.Fatalf("expected 1 code hint, got %d", len(diag.CodeHints))
 	}
-	if len(diag.CodeHint.Lines) != 2 {
-		t.Fatalf("expected 2 code hint lines, got %d", len(diag.CodeHint.Lines))
+	if len(diag.CodeHints[0].Lines) != 2 {
+		t.Fatalf("expected 2 code hint lines, got %d", len(diag.CodeHints[0].Lines))
 	}
-	if diag.CodeHint.Lines[0].Prefix != "-" || diag.CodeHint.Lines[1].Prefix != "+" {
-		t.Fatalf("unexpected prefixes: %#v", diag.CodeHint.Lines)
+	if diag.CodeHints[0].Lines[0].Prefix != "-" || diag.CodeHints[0].Lines[1].Prefix != "+" {
+		t.Fatalf("unexpected prefixes: %#v", diag.CodeHints[0].Lines)
 	}
 }
 
@@ -375,16 +402,70 @@ func TestDiagnostic_WithCodeReplacement(t *testing.T) {
 	diag := NewError("replace this").
 		WithCodeReplacement(loc, "@&x", "@x")
 
-	if diag.CodeHint == nil {
-		t.Fatal("expected code hint to be set")
+	if len(diag.CodeHints) != 1 {
+		t.Fatalf("expected 1 code hint, got %d", len(diag.CodeHints))
 	}
-	if len(diag.CodeHint.Lines) != 2 {
-		t.Fatalf("expected 2 code hint lines, got %d", len(diag.CodeHint.Lines))
+	if len(diag.CodeHints[0].Lines) != 2 {
+		t.Fatalf("expected 2 code hint lines, got %d", len(diag.CodeHints[0].Lines))
 	}
-	if diag.CodeHint.Lines[0].Prefix != "-" {
-		t.Fatalf("expected first replacement line to be '-', got %q", diag.CodeHint.Lines[0].Prefix)
+	if diag.CodeHints[0].Lines[0].Prefix != "-" {
+		t.Fatalf("expected first replacement line to be '-', got %q", diag.CodeHints[0].Lines[0].Prefix)
 	}
-	if diag.CodeHint.Lines[1].Prefix != "+" {
-		t.Fatalf("expected second replacement line to be '+', got %q", diag.CodeHint.Lines[1].Prefix)
+	if diag.CodeHints[0].Lines[1].Prefix != "+" {
+		t.Fatalf("expected second replacement line to be '+', got %q", diag.CodeHints[0].Lines[1].Prefix)
+	}
+}
+
+func TestDiagnostic_WithCodeHints_Appends(t *testing.T) {
+	file := "test.fer"
+	loc := source.NewLocation(
+		&file,
+		&source.Position{Line: 1, Column: 1},
+		&source.Position{Line: 1, Column: 2},
+	)
+
+	diag := NewError("test").
+		WithCodeReplacement(loc, "@&x", "@x").
+		WithCodeHint(loc, "fn (v: &Vec2) copy() -> Vec2")
+
+	if len(diag.CodeHints) != 2 {
+		t.Fatalf("expected 2 code hints, got %d", len(diag.CodeHints))
+	}
+	if len(diag.Extras) != 2 {
+		t.Fatalf("expected 2 extras, got %d", len(diag.Extras))
+	}
+	if len(diag.CodeHints[0].Lines) != 2 {
+		t.Fatalf("expected first hint to be replacement, got %#v", diag.CodeHints[0].Lines)
+	}
+	if diag.CodeHints[1].Code == "" {
+		t.Fatal("expected second hint code to be set")
+	}
+}
+
+func TestDiagnostic_WithText_PreservesOrder(t *testing.T) {
+	diag := NewError("ordered text").
+		WithHelp("h1").
+		WithHelp("h2").
+		WithNote("n1").
+		WithText("custom", "x1", colors.BLUE).
+		WithHelp("h3").
+		WithNote("n2")
+
+	if len(diag.Texts) != 6 {
+		t.Fatalf("expected 6 text entries, got %d", len(diag.Texts))
+	}
+	if len(diag.Extras) != 6 {
+		t.Fatalf("expected 6 extras, got %d", len(diag.Extras))
+	}
+
+	expectedKinds := []string{"help", "help", "note", "custom", "help", "note"}
+	expectedMessages := []string{"h1", "h2", "n1", "x1", "h3", "n2"}
+	for i := range expectedKinds {
+		if diag.Texts[i].Kind != expectedKinds[i] {
+			t.Fatalf("entry %d kind = %q, want %q", i, diag.Texts[i].Kind, expectedKinds[i])
+		}
+		if diag.Texts[i].Message != expectedMessages[i] {
+			t.Fatalf("entry %d message = %q, want %q", i, diag.Texts[i].Message, expectedMessages[i])
+		}
 	}
 }

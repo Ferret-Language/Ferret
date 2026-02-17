@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"compiler/internal/context_v2"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/types"
 	"compiler/internal/utils/numeric"
 
@@ -64,13 +65,38 @@ func isEmptyInterfaceType(typ types.SemType) bool {
 	return false
 }
 
-// methodSignaturesMatch checks if two function types match
-// This is used to compare method signatures with interface method signatures
-// Note: Methods don't include the receiver in their FuncType - the receiver is separate
-// So we can directly compare the FuncTypes
-func methodSignaturesMatch(methodType, interfaceType *types.FunctionType) bool {
-	// Direct comparison - methods don't have receiver in FuncType
-	return methodType.Equals(interfaceType)
+func methodReceiverMode(methodInfo *symbols.MethodInfo) types.MethodReceiverMode {
+	if methodInfo == nil {
+		return types.ReceiverModeValue
+	}
+	if methodInfo.ReceiverIsMove {
+		return types.ReceiverModeMove
+	}
+	if ref, ok := types.UnwrapType(methodInfo.Receiver).(*types.ReferenceType); ok {
+		if ref.Mutable {
+			return types.ReceiverModeMutRef
+		}
+		return types.ReceiverModeRef
+	}
+	return types.ReceiverModeValue
+}
+
+func receiverModeCompatible(actual, required types.MethodReceiverMode) bool {
+	if required == types.ReceiverModeAny {
+		return true
+	}
+	return actual == required
+}
+
+// methodSignaturesMatch checks if a concrete method can satisfy the interface requirement.
+func methodSignaturesMatch(methodInfo *symbols.MethodInfo, requiredMethod types.InterfaceMethod) bool {
+	if methodInfo == nil || methodInfo.FuncType == nil || requiredMethod.FuncType == nil {
+		return false
+	}
+	if !receiverModeCompatible(methodReceiverMode(methodInfo), requiredMethod.ReceiverMode) {
+		return false
+	}
+	return methodInfo.FuncType.Equals(requiredMethod.FuncType)
 }
 
 // implementsInterface checks if a type implements an interface
@@ -108,12 +134,14 @@ func implementsInterface(ctx *context_v2.CompilerContext, mod *context_v2.Module
 
 		// Check method signature matches
 		// Methods don't include receiver in FuncType, so direct comparison works
-		if !methodSignaturesMatch(methodInfo.FuncType, requiredMethod.FuncType) {
+		if !methodSignaturesMatch(methodInfo, requiredMethod) {
 			// Debug: check what's different
 			if ctx != nil && ctx.Config.Debug {
 				fmt.Printf("      [Interface check: method %s signature mismatch]\n", requiredMethod.Name)
 				fmt.Printf("        Method: %s\n", methodInfo.FuncType.String())
 				fmt.Printf("        Interface: %s\n", requiredMethod.FuncType.String())
+				fmt.Printf("        Method receiver: %s, Interface receiver: %s\n",
+					methodReceiverMode(methodInfo), requiredMethod.ReceiverMode)
 				fmt.Printf("        Method return: %s, Interface return: %s\n",
 					methodInfo.FuncType.Return.String(), requiredMethod.FuncType.Return.String())
 				fmt.Printf("        Method params: %d, Interface params: %d\n",
@@ -157,13 +185,19 @@ func analyzeInterfaceCompatibility(ctx *context_v2.CompilerContext, mod *context
 		methodInfo, hasMethod := typeSym.Methods[requiredMethod.Name]
 		if !hasMethod {
 			missingMethods = append(missingMethods, requiredMethod.Name)
-		} else if !methodSignaturesMatch(methodInfo.FuncType, requiredMethod.FuncType) {
+		} else if !methodSignaturesMatch(methodInfo, requiredMethod) {
 			if ctx.Config.Debug {
 				fmt.Printf("      [Interface compatibility: method %s signature mismatch]\n", requiredMethod.Name)
 				fmt.Printf("        Method: %s\n", methodInfo.FuncType.String())
 				fmt.Printf("        Interface: %s\n", requiredMethod.FuncType.String())
+				fmt.Printf("        Method receiver: %s, Interface receiver: %s\n",
+					methodReceiverMode(methodInfo), requiredMethod.ReceiverMode)
 			}
-			missingMethods = append(missingMethods, fmt.Sprintf("%s (signature mismatch)", requiredMethod.Name))
+			reason := "signature mismatch"
+			if !receiverModeCompatible(methodReceiverMode(methodInfo), requiredMethod.ReceiverMode) {
+				reason = "receiver mismatch"
+			}
+			missingMethods = append(missingMethods, fmt.Sprintf("%s (%s)", requiredMethod.Name, reason))
 		}
 	}
 

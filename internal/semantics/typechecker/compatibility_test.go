@@ -267,7 +267,7 @@ func TestCheckTypeCompatibilityWithContextReferenceToInterface(t *testing.T) {
 	}, types.NewResult(types.TypeI32, types.TypeString))
 
 	writerIface := types.NewInterface([]types.InterfaceMethod{
-		{Name: "Write", FuncType: writeFn},
+		{Name: "Write", FuncType: writeFn, ReceiverMode: types.ReceiverModeAny},
 	})
 	writerNamed := types.NewNamed("Writer", writerIface)
 
@@ -354,7 +354,7 @@ func TestCheckTypeCompatibilityWithContextReferenceToInterface(t *testing.T) {
 		ctx2.AddModule(mainMod.ImportPath, mainMod)
 
 		ioWriterIface := types.NewInterface([]types.InterfaceMethod{
-			{Name: "Write", FuncType: writeFn},
+			{Name: "Write", FuncType: writeFn, ReceiverMode: types.ReceiverModeAny},
 		})
 		ioWriterNamed := types.NewNamed("Writer", ioWriterIface)
 		ioStreamWriter := types.NewNamed("StreamWriter", types.NewStruct("StreamWriter", nil))
@@ -392,6 +392,63 @@ func TestCheckTypeCompatibilityWithContextReferenceToInterface(t *testing.T) {
 			t.Fatalf("imported ref/interface compatibility = %s, want %s", got, ImplicitCastable)
 		}
 	})
+}
+
+func TestImplementsInterfaceReceiverMode(t *testing.T) {
+	ctx := context_v2.New(&context_v2.Config{Extension: ".fer"}, false)
+	modScope := table.NewSymbolTable(ctx.Universe)
+	mod := &context_v2.Module{
+		ImportPath:     "test",
+		FilePath:       "/test/main.fer",
+		Type:           context_v2.ModuleLocal,
+		ModuleScope:    modScope,
+		CurrentScope:   modScope,
+		Imports:        make(map[string]*context_v2.Import),
+		ImportAliasMap: make(map[string]string),
+	}
+	ctx.AddModule(mod.ImportPath, mod)
+
+	writeFn := types.NewFunction([]types.ParamType{
+		{Name: "buf", Type: types.NewArray(types.TypeByte, -1)},
+	}, types.NewResult(types.TypeI32, types.TypeString))
+
+	streamWriter := types.NewNamed("StreamWriter", types.NewStruct("StreamWriter", nil))
+	streamWriterSym := &symbols.Symbol{
+		Name: "StreamWriter",
+		Kind: symbols.SymbolType,
+		Type: streamWriter,
+		Methods: map[string]*symbols.MethodInfo{
+			"Write": {
+				Name:     "Write",
+				FuncType: writeFn,
+				Receiver: types.NewMutableReference(streamWriter),
+			},
+		},
+	}
+	if err := mod.ModuleScope.Declare("StreamWriter", streamWriterSym); err != nil {
+		t.Fatalf("failed to declare StreamWriter: %v", err)
+	}
+
+	mutIface := types.NewInterface([]types.InterfaceMethod{
+		{Name: "Write", FuncType: writeFn, ReceiverMode: types.ReceiverModeMutRef},
+	})
+	if !implementsInterface(ctx, mod, streamWriter, mutIface) {
+		t.Fatalf("expected &mut receiver method to satisfy &mut interface requirement")
+	}
+
+	valueIface := types.NewInterface([]types.InterfaceMethod{
+		{Name: "Write", FuncType: writeFn, ReceiverMode: types.ReceiverModeValue},
+	})
+	if implementsInterface(ctx, mod, streamWriter, valueIface) {
+		t.Fatalf("expected &mut receiver method not to satisfy value receiver requirement")
+	}
+
+	anyIface := types.NewInterface([]types.InterfaceMethod{
+		{Name: "Write", FuncType: writeFn, ReceiverMode: types.ReceiverModeAny},
+	})
+	if !implementsInterface(ctx, mod, streamWriter, anyIface) {
+		t.Fatalf("expected &mut receiver method to satisfy ~ receiver requirement")
+	}
 }
 
 func TestIsLosslessNumericConversion(t *testing.T) {

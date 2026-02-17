@@ -248,7 +248,7 @@ func (e *Emitter) calculateLineNumWidthForDiagnostic(diag *Diagnostic) int {
 
 func (e *Emitter) Emit(diag *Diagnostic) {
 	e.currentLineNumWidth = e.calculateLineNumWidthForDiagnostic(diag)
-	deferredHints := make([]labelContext, 0, 1)
+	fallbackHintCtx := e.fallbackCodeHintContext(diag)
 
 	// Print severity/message first (before file locations)
 	e.printDiagnosticHeader(diag)
@@ -305,21 +305,6 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 				}
 				panic("INTERNAL COMPILER ERROR: Multiple primary labels in diagnostic!: " + strings.Join(labelStrs, ", "))
 			} else {
-				if diag.CodeHint != nil && primaryLabel.Location != nil && primaryLabel.Location.Start != nil {
-					primaryStart := primaryLabel.Location.Start
-					primaryEnd := primaryLabel.Location.End
-					if primaryEnd == nil {
-						primaryEnd = primaryStart
-					}
-					deferredHints = append(deferredHints, labelContext{
-						filepath: filepath,
-						line:     primaryStart.Line,
-						startCol: primaryStart.Column,
-						endCol:   primaryEnd.Column,
-						codeHint: diag.CodeHint,
-						severity: diag.Severity,
-					})
-				}
 				if len(secondaryLabels) == 0 {
 					e.printLabel(filepath, primaryLabel, diag.Severity, nil)
 				} else if len(secondaryLabels) == 1 &&
@@ -339,26 +324,141 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 		e.printSimpleArrowHeader(diag)
 	}
 
-	for _, note := range diag.Notes {
-		e.printNote(note)
-	}
-
-	if diag.Help != "" {
-		e.printHelp(diag.Help)
-	}
-
-	if len(deferredHints) > 0 {
-		e.printSuggestionHeader()
-	}
-
-	for _, hintCtx := range deferredHints {
-		if e.hasRenderableCodeHint(hintCtx.codeHint) {
-			e.printCodeHint(hintCtx)
+	if len(diag.Extras) > 0 {
+		// Preferred ordered rendering path.
+		suggestionHeaderPrinted := false
+		for _, extra := range diag.Extras {
+			switch extra.Kind {
+			case ExtraText:
+				e.printText(extra.Text)
+			case ExtraCodeHint:
+				hint := extra.CodeHint
+				if !e.hasRenderableCodeHint(&hint) {
+					continue
+				}
+				if !suggestionHeaderPrinted {
+					e.printSuggestionHeader()
+					suggestionHeaderPrinted = true
+				}
+				ctx := e.codeHintContext(diag, &hint, fallbackHintCtx)
+				e.printCodeHint(ctx)
+				e.printPipeOnly()
+			}
+		}
+	} else {
+		// Backward compatibility for diagnostics built without ordered extras.
+		if len(diag.Texts) > 0 {
+			for _, text := range diag.Texts {
+				e.printText(text)
+			}
+		} else {
+			for _, note := range diag.Notes {
+				e.printNote(note)
+			}
+			if diag.Help != "" {
+				e.printHelp(diag.Help)
+			}
+		}
+		if e.hasRenderableCodeHints(diag.CodeHints) {
+			e.printSuggestionHeader()
+		}
+		for i := range diag.CodeHints {
+			hint := &diag.CodeHints[i]
+			if !e.hasRenderableCodeHint(hint) {
+				continue
+			}
+			ctx := e.codeHintContext(diag, hint, fallbackHintCtx)
+			e.printCodeHint(ctx)
 			e.printPipeOnly()
 		}
 	}
 
 	fmt.Fprintln(e.writer)
+}
+
+func (e *Emitter) fallbackCodeHintContext(diag *Diagnostic) labelContext {
+	ctx := labelContext{
+		filepath: diag.FilePath,
+		line:     1,
+		startCol: 1,
+		endCol:   1,
+		severity: diag.Severity,
+	}
+
+	for _, label := range diag.Labels {
+		if label.Style != Primary || label.Location == nil || label.Location.Start == nil {
+			continue
+		}
+		start := label.Location.Start
+		end := label.Location.End
+		if end == nil {
+			end = start
+		}
+		ctx.filepath = diag.FilePath
+		if label.Location.Filename != nil && *label.Location.Filename != "" {
+			ctx.filepath = *label.Location.Filename
+		}
+		ctx.line = start.Line
+		ctx.startCol = start.Column
+		ctx.endCol = end.Column
+		return ctx
+	}
+
+	for _, label := range diag.Labels {
+		if label.Location == nil || label.Location.Start == nil {
+			continue
+		}
+		start := label.Location.Start
+		end := label.Location.End
+		if end == nil {
+			end = start
+		}
+		ctx.filepath = diag.FilePath
+		if label.Location.Filename != nil && *label.Location.Filename != "" {
+			ctx.filepath = *label.Location.Filename
+		}
+		ctx.line = start.Line
+		ctx.startCol = start.Column
+		ctx.endCol = end.Column
+		return ctx
+	}
+
+	return ctx
+}
+
+func (e *Emitter) codeHintContext(diag *Diagnostic, hint *CodeHint, fallback labelContext) labelContext {
+	ctx := fallback
+	ctx.severity = diag.Severity
+	ctx.codeHint = hint
+
+	if hint == nil || hint.Location == nil || hint.Location.Start == nil {
+		return ctx
+	}
+
+	start := hint.Location.Start
+	end := hint.Location.End
+	if end == nil {
+		end = start
+	}
+
+	ctx.filepath = diag.FilePath
+	if hint.Location.Filename != nil && *hint.Location.Filename != "" {
+		ctx.filepath = *hint.Location.Filename
+	}
+	ctx.line = start.Line
+	ctx.startCol = start.Column
+	ctx.endCol = end.Column
+	if ctx.line <= 0 {
+		ctx.line = 1
+	}
+	if ctx.startCol <= 0 {
+		ctx.startCol = 1
+	}
+	if ctx.endCol < ctx.startCol {
+		ctx.endCol = ctx.startCol
+	}
+
+	return ctx
 }
 
 // headerPosition picks the best position to show in the header.
@@ -795,6 +895,15 @@ func (e *Emitter) hasRenderableCodeHint(hint *CodeHint) bool {
 	return len(e.codeHintRenderableLines(hint)) > 0
 }
 
+func (e *Emitter) hasRenderableCodeHints(hints []CodeHint) bool {
+	for i := range hints {
+		if e.hasRenderableCodeHint(&hints[i]) {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *Emitter) codeHintRenderableLines(hint *CodeHint) []CodeHintLine {
 	if hint == nil {
 		return nil
@@ -850,7 +959,6 @@ func (e *Emitter) printCodeHintLabelLine(label CodeHintLabel, severity Severity)
 	if label.Message != "" {
 		color.Fprintf(e.writer, " %s", label.Message)
 	}
-	fmt.Fprintln(e.writer)
 }
 
 func (e *Emitter) printMultiLineLabel(ctx labelContext) {
@@ -938,17 +1046,38 @@ func (e *Emitter) printMultiLineLabel(ctx labelContext) {
 }
 
 func (e *Emitter) printNote(note Note) {
-	padding := e.currentLineNumWidth + 1
-	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
-	colors.CYAN.Fprint(e.writer, "= note: ")
-	fmt.Fprintln(e.writer, note.Message)
+	e.printText(DiagnosticText{
+		Kind:    "note",
+		Message: note.Message,
+		Color:   colors.CYAN,
+	})
 }
 
 func (e *Emitter) printHelp(help string) {
+	e.printText(DiagnosticText{
+		Kind:    "help",
+		Message: help,
+		Color:   colors.GREEN,
+	})
+}
+
+func (e *Emitter) printText(text DiagnosticText) {
+	if text.Message == "" {
+		return
+	}
+	color := text.Color
+	if color == "" {
+		color = colors.WHITE
+	}
+
 	padding := e.currentLineNumWidth + 1
 	fmt.Fprint(e.writer, strings.Repeat(" ", padding))
-	colors.GREEN.Fprint(e.writer, "= help: ")
-	fmt.Fprintln(e.writer, help)
+	if text.Kind != "" {
+		color.Fprintf(e.writer, "= %s: ", text.Kind)
+	} else {
+		color.Fprintf(e.writer, "= ")
+	}
+	fmt.Fprintln(e.writer, text.Message)
 }
 
 func (e *Emitter) printSuggestionHeader() {

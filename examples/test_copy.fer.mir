@@ -1,0 +1,40 @@
+module examples/test_copy
+
+globals
+  __ferret_init_done_examples_test_copy: bool
+
+fn main() -> void {
+  block b1 entry:
+    call __ferret_init() : void
+    %t1 = alloca i32
+    %t2 = const i32 10
+    store %t1, %t2
+    br b2
+  block b2 while.cond:
+    %t3 = load i32 %t1
+    %t4 = const i32 16
+    %t5 = < bool %t3, %t4
+    br_if %t5, b3, b4
+  block b3 while.body:
+    %t6 = load i32 %t1
+    %t7 = const i32 1
+    %t8 = + i32 %t6, %t7
+    store %t1, %t8
+    br b2
+  block b4 while.end:
+    ret
+}
+
+fn __ferret_init() -> void {
+  block b6 init_guard:
+    %t11 = const &bool $__ferret_init_done_examples_test_copy
+    %t12 = load bool %t11
+    br_if %t12, b7, b5
+  block b5 entry:
+    %t9 = const &bool $__ferret_init_done_examples_test_copy
+    %t10 = const bool 1
+    store %t9, %t10
+    ret
+  block b7 init_done:
+    ret
+}

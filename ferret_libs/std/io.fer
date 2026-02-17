@@ -31,20 +31,20 @@ type Printable union {
 
 // Streaming interfaces
 type Reader interface {
-    Read(maxBytes: i32) -> str ! []byte
+    ~Read(maxBytes: i32) -> str ! []byte
 };
 
 type Writer interface {
-    Write(buf: []byte) -> str ! i32
+    ~Write(buf: []byte) -> str ! i32
 };
 
 type Closer interface {
-    Close()
+    ~Close()
 };
 
 type ReadWriter interface {
-    Read(maxBytes: i32) -> str ! []byte,
-    Write(buf: []byte) -> str ! i32
+    ~Read(maxBytes: i32) -> str ! []byte,
+    ~Write(buf: []byte) -> str ! i32
 };
 
 type StreamWriter struct {

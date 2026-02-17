@@ -1,0 +1,378 @@
+{
+  "FullPath": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer",
+  "ImportPath": "",
+  "Alias": "",
+  "Nodes": [
+    {
+      "Name": {
+        "Name": "Vec2",
+        "Start": {
+          "Line": 4,
+          "Column": 6,
+          "Index": 46
+        },
+        "End": {
+          "Line": 4,
+          "Column": 10,
+          "Index": 50
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+      },
+      "Type": {
+        "Fields": [
+          {
+            "Name": {
+              "Name": "X",
+              "Start": {
+                "Line": 5,
+                "Column": 6,
+                "Index": 65
+              },
+              "End": {
+                "Line": 5,
+                "Column": 7,
+                "Index": 66
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+            },
+            "Type": {
+              "Name": "i32",
+              "Start": {
+                "Line": 5,
+                "Column": 9,
+                "Index": 68
+              },
+              "End": {
+                "Line": 5,
+                "Column": 12,
+                "Index": 71
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+            },
+            "Value": null,
+            "IsVariadic": false,
+            "IsMove": false,
+            "ReceiverMode": 0,
+            "Default": null,
+            "Start": null,
+            "End": null,
+            "Filename": null
+          },
+          {
+            "Name": {
+              "Name": "Y",
+              "Start": {
+                "Line": 6,
+                "Column": 6,
+                "Index": 78
+              },
+              "End": {
+                "Line": 6,
+                "Column": 7,
+                "Index": 79
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+            },
+            "Type": {
+              "Name": "i32",
+              "Start": {
+                "Line": 6,
+                "Column": 9,
+                "Index": 81
+              },
+              "End": {
+                "Line": 6,
+                "Column": 12,
+                "Index": 84
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+            },
+            "Value": null,
+            "IsVariadic": false,
+            "IsMove": false,
+            "ReceiverMode": 0,
+            "Default": null,
+            "Start": null,
+            "End": null,
+            "Filename": null
+          }
+        ],
+        "ID": "__struct_lit__1",
+        "Start": {
+          "Line": 4,
+          "Column": 11,
+          "Index": 51
+        },
+        "End": {
+          "Line": 7,
+          "Column": 2,
+          "Index": 86
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+      },
+      "Doc": null,
+      "Start": {
+        "Line": 4,
+        "Column": 1,
+        "Index": 41
+      },
+      "End": {
+        "Line": 7,
+        "Column": 2,
+        "Index": 86
+      },
+      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+    },
+    {
+      "Name": {
+        "Name": "main",
+        "Start": {
+          "Line": 13,
+          "Column": 4,
+          "Index": 150
+        },
+        "End": {
+          "Line": 13,
+          "Column": 8,
+          "Index": 154
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+      },
+      "Type": {
+        "Params": null,
+        "Result": null,
+        "Start": {
+          "Line": 13,
+          "Column": 1,
+          "Index": 147
+        },
+        "End": {
+          "Line": 13,
+          "Column": 10,
+          "Index": 156
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+      },
+      "Body": {
+        "Nodes": [
+          {
+            "Decls": [
+              {
+                "Name": {
+                  "Name": "a",
+                  "Start": {
+                    "Line": 26,
+                    "Column": 9,
+                    "Index": 419
+                  },
+                  "End": {
+                    "Line": 26,
+                    "Column": 10,
+                    "Index": 420
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+                },
+                "Type": null,
+                "Value": {
+                  "Kind": 0,
+                  "Value": "10",
+                  "Start": {
+                    "Line": 26,
+                    "Column": 14,
+                    "Index": 424
+                  },
+                  "End": {
+                    "Line": 26,
+                    "Column": 16,
+                    "Index": 426
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+                }
+              }
+            ],
+            "Doc": null,
+            "Start": {
+              "Line": 26,
+              "Column": 5,
+              "Index": 415
+            },
+            "End": {
+              "Line": 26,
+              "Column": 17,
+              "Index": 427
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+          },
+          {
+            "Cond": {
+              "X": {
+                "Name": "a",
+                "Start": {
+                  "Line": 28,
+                  "Column": 11,
+                  "Index": 443
+                },
+                "End": {
+                  "Line": 28,
+                  "Column": 12,
+                  "Index": 444
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+              },
+              "Op": {
+                "Kind": "\u003c",
+                "Value": "\u003c",
+                "Start": {
+                  "Line": 28,
+                  "Column": 13,
+                  "Index": 445
+                },
+                "End": {
+                  "Line": 28,
+                  "Column": 14,
+                  "Index": 446
+                }
+              },
+              "Y": {
+                "Kind": 0,
+                "Value": "16",
+                "Start": {
+                  "Line": 28,
+                  "Column": 15,
+                  "Index": 447
+                },
+                "End": {
+                  "Line": 28,
+                  "Column": 17,
+                  "Index": 449
+                },
+                "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+              },
+              "Start": {
+                "Line": 28,
+                "Column": 11,
+                "Index": 443
+              },
+              "End": {
+                "Line": 28,
+                "Column": 17,
+                "Index": 449
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+            },
+            "Body": {
+              "Nodes": [
+                {
+                  "X": {
+                    "X": {
+                      "Name": "a",
+                      "Start": {
+                        "Line": 30,
+                        "Column": 8,
+                        "Index": 476
+                      },
+                      "End": {
+                        "Line": 30,
+                        "Column": 9,
+                        "Index": 477
+                      },
+                      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+                    },
+                    "Op": {
+                      "Kind": "++",
+                      "Value": "++",
+                      "Start": {
+                        "Line": 30,
+                        "Column": 9,
+                        "Index": 477
+                      },
+                      "End": {
+                        "Line": 30,
+                        "Column": 11,
+                        "Index": 479
+                      }
+                    },
+                    "Start": {
+                      "Line": 30,
+                      "Column": 8,
+                      "Index": 476
+                    },
+                    "End": {
+                      "Line": 30,
+                      "Column": 11,
+                      "Index": 479
+                    },
+                    "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+                  },
+                  "Start": {
+                    "Line": 30,
+                    "Column": 8,
+                    "Index": 476
+                  },
+                  "End": {
+                    "Line": 30,
+                    "Column": 12,
+                    "Index": 480
+                  },
+                  "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+                }
+              ],
+              "Scope": null,
+              "Start": {
+                "Line": 28,
+                "Column": 18,
+                "Index": 450
+              },
+              "End": {
+                "Line": 31,
+                "Column": 6,
+                "Index": 486
+              },
+              "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+            },
+            "Scope": null,
+            "Start": {
+              "Line": 28,
+              "Column": 5,
+              "Index": 437
+            },
+            "End": {
+              "Line": 31,
+              "Column": 6,
+              "Index": 486
+            },
+            "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+          }
+        ],
+        "Scope": null,
+        "Start": {
+          "Line": 13,
+          "Column": 11,
+          "Index": 157
+        },
+        "End": {
+          "Line": 33,
+          "Column": 2,
+          "Index": 493
+        },
+        "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+      },
+      "Scope": null,
+      "Doc": null,
+      "Start": {
+        "Line": 13,
+        "Column": 1,
+        "Index": 147
+      },
+      "End": {
+        "Line": 33,
+        "Column": 2,
+        "Index": 493
+      },
+      "Filename": "/home/fuad/Dev/Ferret-Language/Ferret/examples/test_copy.fer"
+    }
+  ],
+  "Start": null,
+  "End": null,
+  "Filename": null
+}
