@@ -19,17 +19,17 @@ Ferret has two ownership-bearing value kinds:
 
 ## 3. Copy vs Move
 
-Ferret is copy-by-default for all value categories. Move is explicit.
+Ferret uses a mixed ownership rule:
 
-- `x` in assignment/call/return performs copy semantics.
-- `@x` moves ownership out of `x`.
-- After move, `x` is unusable until reinitialized.
+- **Implicit copy** for implicitly-copyable types (primitives, complex scalars, fixed arrays/aggregates of copyable fields, shared refs `&T`).
+- **Implicit move** for non-copyable owned values (`#T`, dynamic arrays/maps, resources, `&mut T`, and aggregates containing them).
+- After move, a binding is unusable until reinitialized.
 
 Rules:
 
-- Move is allowed only from movable bindings (locals/params/receiver), not constants/module globals.
-- Move from references is invalid.
-- `return @x` transfers ownership.
+- Moves are allowed only from movable bindings (locals/params/receiver), not constants/module globals.
+- Move from references is invalid when the reference itself is the source of ownership transfer.
+- `return x` moves or copies according to the source type category above.
 
 ## 4. Borrow
 
@@ -50,27 +50,24 @@ Rules:
 
 ### Stack values (`T`)
 
-- Plain assignment/call/return copy the value.
-- Explicit move uses `@`.
+- Copyable `T` values are copied on assignment/call/return.
+- Non-copyable `T` values are moved on assignment/call/return.
 
 ### Heap values (`#T`)
 
 - `x: #T = #v` creates/rebinds heap ownership.
-- `x = @y` (both `#T`) transfers heap ownership from `y` to `x`.
-- `x = y` (both `#T`, no `@`) clones the heap payload into a new owner.
-- `return y` where `y: #T` clones; `return @y` moves.
+- `x = y` (both `#T`) transfers heap ownership from `y` to `x` (move by default).
+- No implicit deep clone of heap ownership is performed.
 
 ## 6. References to Heap Values
 
 - Borrowing a `#T` value borrows its payload (`T`), not ownership.
-- `@` is the ownership transfer operation for `#T`.
 
 ## 7. Function Boundaries
 
 - `T` return: returns stack/value semantics.
 - `#T` return: returns heap ownership.
-- `return v` is copy semantics.
-- `return @v` is move semantics.
+- `return v` copies copyable types and moves non-copyable types.
 
 ## 8. Safety Invariants
 
@@ -80,3 +77,8 @@ Ferret must enforce:
 - No aliasing violation (`&mut` vs `&`)
 - No escaping references to dead stack locals
 - Ownership state driven by type (`#T`), not by ad-hoc symbol flags
+
+## 9. Migration Notes (v0.0.6 -> current)
+
+- Non-copyable values move implicitly at assignment/call/return boundaries.
+- To avoid consumption, pass references (`&T` / `&mut T`) in APIs that only need borrowing.

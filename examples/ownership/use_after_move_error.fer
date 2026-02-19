@@ -1,0 +1,7 @@
+fn main() {
+    let arr := [1, 2, 3];
+    let moved := arr;
+    let ok := moved[0];
+
+    let bad := arr[0];
+}

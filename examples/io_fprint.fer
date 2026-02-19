@@ -9,6 +9,8 @@ fn writeToFile(path: str) -> str ! bool {
         return err!;
     };
     file.Close();
+    // let f2 := file;
+    // file.Rewind() catch 0;
     return true;
 }
 

@@ -1,0 +1,15 @@
+fn first(values: []i32) -> i32 {
+    return values[0];
+}
+
+fn main() {
+    let nums := [10, 20, 30];
+    let moved := nums;
+
+    let before := moved[0];
+    let after := first(moved);
+
+    let sum := before + after;
+    let sink := sum;
+    sink++;
+}

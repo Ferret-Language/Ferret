@@ -226,8 +226,9 @@ func (g *Generator) lowerExpr(expr ast.Expression) hir.Expr {
 		return g.lowerCompositeLit(e)
 	case *ast.KeyValueExpr:
 		return &hir.KeyValueExpr{
+			// Keys are labels (struct fields) or map-key expressions; do not auto-move here.
 			Key:      g.lowerExpr(e.Key),
-			Value:    g.lowerExpr(e.Value),
+			Value:    g.lowerOwnedTransferExpr(e.Value, nil, false),
 			Location: locFromNode(e),
 		}
 	case *ast.FuncLit:
@@ -358,7 +359,7 @@ func (g *Generator) lowerDeclItem(item ast.DeclItem) hir.DeclItem {
 	return hir.DeclItem{
 		Name:  ident,
 		Type:  declType,
-		Value: g.lowerExpr(item.Value),
+		Value: g.lowerOwnedTransferExpr(item.Value, declType, false),
 	}
 }
 
@@ -451,9 +452,10 @@ func (g *Generator) lowerAssignStmt(stmt *ast.AssignStmt) *hir.AssignStmt {
 	if stmt == nil {
 		return nil
 	}
+	lhsType := g.exprType(stmt.Lhs)
 	return &hir.AssignStmt{
 		Lhs:      g.lowerExpr(stmt.Lhs),
-		Rhs:      g.lowerExpr(stmt.Rhs),
+		Rhs:      g.lowerOwnedTransferExpr(stmt.Rhs, lhsType, false),
 		Op:       stmt.Op,
 		Location: locFromNode(stmt),
 	}
@@ -464,7 +466,7 @@ func (g *Generator) lowerReturnStmt(stmt *ast.ReturnStmt) *hir.ReturnStmt {
 		return nil
 	}
 	return &hir.ReturnStmt{
-		Result:   g.lowerExpr(stmt.Result),
+		Result:   g.lowerOwnedTransferExpr(stmt.Result, nil, false),
 		IsError:  stmt.IsError,
 		Location: locFromNode(stmt),
 	}
@@ -620,8 +622,10 @@ func (g *Generator) lowerCallExpr(expr *ast.CallExpr) *hir.CallExpr {
 		}
 	}
 	args := make([]hir.Expr, 0, len(callArgs))
+	fnType := g.callExprFuncType(expr.Fun)
 	for _, arg := range callArgs {
-		args = append(args, g.lowerExpr(arg))
+		paramType, isMove := g.callArgExpectedType(fnType, len(args))
+		args = append(args, g.lowerOwnedTransferExpr(arg, paramType, isMove))
 	}
 	return &hir.CallExpr{
 		Fun:      g.lowerExpr(expr.Fun),
@@ -632,6 +636,182 @@ func (g *Generator) lowerCallExpr(expr *ast.CallExpr) *hir.CallExpr {
 	}
 }
 
+func (g *Generator) callExprFuncType(fun ast.Expression) *types.FunctionType {
+	if fun == nil {
+		return nil
+	}
+	if fn := unwrapFunctionType(g.exprType(fun)); fn != nil {
+		return fn
+	}
+	if ident, ok := unwrapMoveSourceExpr(fun).(*ast.IdentifierExpr); ok {
+		if sym := g.lookupSymbol(ident.Name); sym != nil {
+			return unwrapFunctionType(sym.Type)
+		}
+	}
+	return nil
+}
+
+func unwrapFunctionType(t types.SemType) *types.FunctionType {
+	if t == nil || t.Equals(types.TypeUnknown) {
+		return nil
+	}
+	if fn, ok := types.UnwrapType(t).(*types.FunctionType); ok {
+		return fn
+	}
+	return nil
+}
+
+func (g *Generator) callArgExpectedType(fnType *types.FunctionType, index int) (types.SemType, bool) {
+	if fnType == nil || index < 0 || len(fnType.Params) == 0 {
+		return nil, false
+	}
+	if index < len(fnType.Params) {
+		param := fnType.Params[index]
+		return param.Type, param.IsMove
+	}
+	last := fnType.Params[len(fnType.Params)-1]
+	if last.IsVariadic {
+		return last.Type, last.IsMove
+	}
+	return nil, false
+}
+
+func isReferenceSemType(t types.SemType) bool {
+	if t == nil {
+		return false
+	}
+	_, ok := types.UnwrapType(t).(*types.ReferenceType)
+	return ok
+}
+
+func moveSourceBaseExpr(expr ast.Expression) ast.Expression {
+	expr = unwrapMoveSourceExpr(expr)
+	for expr != nil {
+		switch e := expr.(type) {
+		case *ast.SelectorExpr:
+			expr = unwrapMoveSourceExpr(e.X)
+		case *ast.IndexExpr:
+			expr = unwrapMoveSourceExpr(e.X)
+		case *ast.DerefExpr:
+			expr = unwrapMoveSourceExpr(e.X)
+		default:
+			return expr
+		}
+	}
+	return nil
+}
+
+func (g *Generator) lowerOwnedTransferExpr(expr ast.Expression, expected types.SemType, forceMove bool) hir.Expr {
+	if expr == nil {
+		return nil
+	}
+	lowered := g.lowerExpr(expr)
+	if lowered == nil {
+		return nil
+	}
+	if !g.shouldImplicitMove(expr, expected, forceMove) {
+		return lowered
+	}
+
+	loc := locFromNode(expr)
+	start := source.Position{}
+	end := source.Position{}
+	if loc.Start != nil {
+		start = *loc.Start
+		end = *loc.Start
+	}
+
+	return &hir.UnaryExpr{
+		Op:       tokens.NewToken(tokens.AT_TOKEN, "@", start, end),
+		X:        lowered,
+		Type:     g.exprType(expr),
+		Location: loc,
+	}
+}
+
+func (g *Generator) shouldImplicitMove(expr ast.Expression, expected types.SemType, forceMove bool) bool {
+	if expr == nil {
+		return false
+	}
+	if expected != nil {
+		if _, isRef := types.UnwrapType(expected).(*types.ReferenceType); isRef {
+			return false
+		}
+	}
+
+	root := moveSourceBaseExpr(expr)
+	if unary, ok := root.(*ast.UnaryExpr); ok && unary.Op.Kind == tokens.AT_TOKEN {
+		return false
+	}
+
+	srcType := g.exprType(expr)
+	if srcType == nil || srcType.Equals(types.TypeUnknown) {
+		return false
+	}
+	if !forceMove && types.IsImplicitlyCopyableType(srcType) {
+		return false
+	}
+
+	sym, ok := g.implicitMoveSourceSymbol(root)
+	if !ok || sym == nil {
+		return false
+	}
+	if sym.Kind != symbols.SymbolVariable && sym.Kind != symbols.SymbolParameter && sym.Kind != symbols.SymbolReceiver {
+		return false
+	}
+	if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
+		return false
+	}
+	if isReferenceSemType(sym.Type) {
+		return false
+	}
+	if g != nil && g.mod != nil && g.mod.ModuleScope != nil && sym.DeclaredScope == g.mod.ModuleScope {
+		return false
+	}
+	return true
+}
+
+func unwrapMoveSourceExpr(expr ast.Expression) ast.Expression {
+	for expr != nil {
+		switch e := expr.(type) {
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.CastExpr:
+			expr = e.X
+		default:
+			return expr
+		}
+	}
+	return nil
+}
+
+func (g *Generator) implicitMoveSourceSymbol(expr ast.Expression) (*symbols.Symbol, bool) {
+	if expr == nil {
+		return nil, false
+	}
+	switch e := expr.(type) {
+	case *ast.IdentifierExpr:
+		sym := g.lookupSymbol(e.Name)
+		if sym == nil {
+			return nil, false
+		}
+		return sym, true
+	case *ast.SelectorExpr:
+		return g.implicitMoveSourceSymbol(e.X)
+	case *ast.IndexExpr:
+		return g.implicitMoveSourceSymbol(e.X)
+	case *ast.DerefExpr:
+		return g.implicitMoveSourceSymbol(e.X)
+	case *ast.UnaryExpr:
+		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_TOKEN {
+			return nil, false
+		}
+		return g.implicitMoveSourceSymbol(e.X)
+	default:
+		return nil, false
+	}
+}
+
 // lowerPipeExpr transforms a pipe expression into a call expression
 // value |> func(...) becomes func(..., value) or func(..., value, ...) with _ replaced
 func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
@@ -639,16 +819,18 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 		return nil
 	}
 
-	// Lower the piped value
-	pipedValue := g.lowerExpr(expr.Value)
+	// Keep AST value form for ownership-aware lowering in argument positions.
+	pipedValueExpr := expr.Value
 
 	// If the right side is a call expression, apply placeholder semantics.
 	if callExpr, ok := expr.Call.(*ast.CallExpr); ok {
+		fnType := g.callExprFuncType(callExpr.Fun)
 		if g != nil && g.mod != nil {
 			if resolved, ok := g.mod.CallArgs(callExpr); ok && len(resolved) > 0 {
 				args := make([]hir.Expr, 0, len(resolved))
-				for _, arg := range resolved {
-					args = append(args, g.lowerExpr(arg))
+				for i, arg := range resolved {
+					paramType, isMove := g.callArgExpectedType(fnType, i)
+					args = append(args, g.lowerOwnedTransferExpr(arg, paramType, isMove))
 				}
 				return &hir.CallExpr{
 					Fun:      g.lowerExpr(callExpr.Fun),
@@ -660,23 +842,29 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 			}
 		}
 
-		// Transform the arguments
-		transformedArgs := make([]hir.Expr, 0, len(callExpr.Args)+1)
+		// Transform arguments in AST form first, then lower with parameter-aware ownership rules.
+		resolvedArgs := make([]ast.Expression, 0, len(callExpr.Args)+1)
 		placeholderFound := false
 
 		for _, arg := range callExpr.Args {
 			// Check if this is a placeholder
 			if ident, ok := arg.(*ast.IdentifierExpr); ok && ident.Name == "_" {
-				transformedArgs = append(transformedArgs, pipedValue)
+				resolvedArgs = append(resolvedArgs, pipedValueExpr)
 				placeholderFound = true
 			} else {
-				transformedArgs = append(transformedArgs, g.lowerExpr(arg))
+				resolvedArgs = append(resolvedArgs, arg)
 			}
 		}
 
 		// If no placeholder, prepend the piped value as the first argument
 		if !placeholderFound {
-			transformedArgs = append([]hir.Expr{pipedValue}, transformedArgs...)
+			resolvedArgs = append([]ast.Expression{pipedValueExpr}, resolvedArgs...)
+		}
+
+		transformedArgs := make([]hir.Expr, 0, len(resolvedArgs))
+		for i, arg := range resolvedArgs {
+			paramType, isMove := g.callArgExpectedType(fnType, i)
+			transformedArgs = append(transformedArgs, g.lowerOwnedTransferExpr(arg, paramType, isMove))
 		}
 
 		// Create the transformed call expression
@@ -690,11 +878,13 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 	}
 
 	// Otherwise, treat the right side as a callable expression with a single argument.
+	fnType := g.callExprFuncType(expr.Call)
 	if g != nil && g.mod != nil {
 		if resolved, ok := g.mod.PipeArgs(expr); ok && len(resolved) > 0 {
 			args := make([]hir.Expr, 0, len(resolved))
-			for _, arg := range resolved {
-				args = append(args, g.lowerExpr(arg))
+			for i, arg := range resolved {
+				paramType, isMove := g.callArgExpectedType(fnType, i)
+				args = append(args, g.lowerOwnedTransferExpr(arg, paramType, isMove))
 			}
 			return &hir.CallExpr{
 				Fun:      g.lowerExpr(expr.Call),
@@ -705,9 +895,10 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 		}
 	}
 
+	firstParamType, firstParamMove := g.callArgExpectedType(fnType, 0)
 	return &hir.CallExpr{
 		Fun:      g.lowerExpr(expr.Call),
-		Args:     []hir.Expr{pipedValue},
+		Args:     []hir.Expr{g.lowerOwnedTransferExpr(pipedValueExpr, firstParamType, firstParamMove)},
 		Type:     g.exprType(expr),
 		Location: locFromNode(expr),
 	}
@@ -797,12 +988,51 @@ func (g *Generator) lowerCompositeLit(expr *ast.CompositeLit) *hir.CompositeLit 
 	if expr == nil {
 		return nil
 	}
+	litType := g.exprType(expr)
+	unwrapped := types.UnwrapType(litType)
 	elts := make([]hir.Expr, 0, len(expr.Elts))
+
+	structFieldType := func(name string) types.SemType {
+		st, ok := unwrapped.(*types.StructType)
+		if !ok || st == nil {
+			return nil
+		}
+		for _, field := range st.Fields {
+			if field.Name == name {
+				return field.Type
+			}
+		}
+		return nil
+	}
+
 	for _, elt := range expr.Elts {
-		elts = append(elts, g.lowerExpr(elt))
+		switch e := elt.(type) {
+		case *ast.KeyValueExpr:
+			var valueExpected types.SemType
+			switch t := unwrapped.(type) {
+			case *types.MapType:
+				valueExpected = t.Value
+			case *types.StructType:
+				if keyIdent, ok := e.Key.(*ast.IdentifierExpr); ok {
+					valueExpected = structFieldType(keyIdent.Name)
+				}
+			}
+			elts = append(elts, &hir.KeyValueExpr{
+				// Never treat key position as an ownership-transfer site.
+				Key:      g.lowerExpr(e.Key),
+				Value:    g.lowerOwnedTransferExpr(e.Value, valueExpected, false),
+				Location: locFromNode(e),
+			})
+		default:
+			if arr, ok := unwrapped.(*types.ArrayType); ok && arr != nil {
+				elts = append(elts, g.lowerOwnedTransferExpr(elt, arr.Element, false))
+			} else {
+				elts = append(elts, g.lowerOwnedTransferExpr(elt, nil, false))
+			}
+		}
 	}
 	return &hir.CompositeLit{
-		Type:     g.exprType(expr),
+		Type:     litType,
 		Elts:     elts,
 		Location: locFromNode(expr),
 	}

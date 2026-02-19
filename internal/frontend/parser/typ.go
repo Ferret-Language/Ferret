@@ -339,12 +339,7 @@ func parseParams(p *Parser) []ast.Field {
 			p.advance() // consume '...'
 		}
 
-		// Move-qualified parameter (@T): argument must be moved at call site.
 		isMove := false
-		if p.match(tokens.AT_TOKEN) {
-			isMove = true
-			p.advance() // consume '@'
-		}
 
 		typ := p.parseType()
 
@@ -423,10 +418,6 @@ func (p *Parser) parseInterfaceType() *ast.InterfaceType {
 			} else {
 				receiverMode = ast.InterfaceReceiverRef
 			}
-		} else if p.match(tokens.AT_TOKEN) {
-			at := p.advance()
-			methodStart = &at.Start
-			receiverMode = ast.InterfaceReceiverMove
 		} else if p.match(tokens.BIT_NOT_TOKEN) {
 			any := p.advance()
 			methodStart = &any.Start

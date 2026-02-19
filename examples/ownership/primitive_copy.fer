@@ -1,0 +1,14 @@
+fn twice(v: i32) -> i32 {
+    let a := v;
+    let b := v;
+    return a + b;
+}
+
+fn main() {
+    let x := 41;
+    let y := twice(x);
+
+    if y == 82 {
+        return;
+    }
+}

@@ -235,7 +235,7 @@ type ParamType struct {
 	Name       string
 	Type       SemType
 	IsVariadic bool // true if this is a variadic parameter (...type)
-	IsMove     bool // true if argument must be passed via explicit move (@arg) for lvalues
+	IsMove     bool // true if argument is move-qualified (@T) at declaration site
 	HasDefault bool // true if parameter has a default value in declaration syntax
 }
 

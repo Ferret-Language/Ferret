@@ -181,12 +181,7 @@ func (p *Parser) parseFunctionParams() []ast.Field {
 			p.advance() // consume '...'
 		}
 
-		// Move-qualified parameter (@T): argument must be moved at call site.
 		isMove := false
-		if p.match(tokens.AT_TOKEN) {
-			isMove = true
-			p.advance() // consume '@'
-		}
 
 		// Parse parameter type
 		paramType := p.parseType()

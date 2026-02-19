@@ -224,7 +224,7 @@ func TestParserValidPrograms(t *testing.T) {
 		"fn test() { while true { let x := 1; } }",
 		"let p := { .x = 1, .y = 2 } as Point;",
 		"fn (p: Point) distance() -> f64 { return 0.0; }",
-		"type Handle struct { .id: i32 }; fn (h: @Handle) Close();",
+		"type Handle struct { .id: i32 }; fn (h: Handle) Close();",
 		"fn test() { let x := 0; x = x + 1; }",
 	}
 

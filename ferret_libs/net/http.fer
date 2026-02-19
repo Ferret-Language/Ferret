@@ -169,7 +169,7 @@ fn (app: &App) ListenAddr(addr: str) -> str ! bool {
     let listener := tcp::ListenTcp(addr) catch err {
         return err!;
     };
-    return app.Serve(@listener) catch err {
+    return app.Serve(listener) catch err {
         return err!;
     };
 }

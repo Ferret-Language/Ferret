@@ -180,13 +180,13 @@ fn WriteString(w: &mut Writer, s: str) -> str ! i32 {
     };
 }
 
-fn _sliceBytes(data: []byte, start: i32, end: i32) -> []byte {
+fn _sliceBytes(data: &[]byte, start: i32, end: i32) -> []byte {
     let out: []byte = [] as []byte;
     let i: i32 = start;
-    let n := len(&data);
+    let n := len(data);
     let stop := end;
     while i < stop && i < n {
-        append(&mut out, data[i]);
+        append(&mut out, (*data)[i]);
         i += 1;
     }
     return out;
@@ -194,24 +194,22 @@ fn _sliceBytes(data: []byte, start: i32, end: i32) -> []byte {
 
 fn WriteAll(dst: Writer, buf: []byte) -> str ! i32 {
     let total: i32 = 0;
-    let pending := buf;
-    while len(&pending) > 0 {
-        let n := dst.Write(pending) catch err {
+    let offset: i32 = 0;
+    let plen := len(&buf);
+    while offset < plen {
+        let current := _sliceBytes(&buf, offset, plen);
+        let n := dst.Write(current) catch err {
             return err!;
         };
         if n <= 0 {
             return "short write"!;
         }
-        if n > len(&pending) {
+        let remain := plen - offset;
+        if n > remain {
             return "invalid write count"!;
         }
         total += n;
-        if n == len(&pending) {
-            break;
-        }
-        let current := pending;
-        let plen := len(&current);
-        pending = _sliceBytes(current, n, plen);
+        offset += n;
     }
     return total;
 }

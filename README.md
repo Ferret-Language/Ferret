@@ -54,25 +54,22 @@ Windows (PowerShell):
 .\scripts\install-toolchain.ps1
 ```
 
-### Run the compiler
-
-```batch
-./scripts/run.bat test/simple.fer
+## Compiling ferret
+builds the compiler, toolchains and copies libraries `from ferret_libs` to `libs`
+```
+./scripts/build.sh
 ```
 
-That's it! The script uses `go run` to compile and run directly.
-
-### Build
-To build the compiler binary, run:
-
-```batch
-./scripts/build.bat
+## Running ferret program
+Building with output name `-o`
 ```
-Or to build for both wasm and native:
-
-```batch
-./scripts/build-all.bat
+./bin/ferret -o app_name filename.fer
 ```
+Without `-o` flag, output will be the projectname (or parent folder name is projectname is not set)
+
+- use `-d` to show the build steps
+- use `-k` to keep the intermediate files (.mir, .ssa, .s, .o)
+- use `-t` to typecheck only
 
 ### Testing
 
@@ -91,6 +88,17 @@ let y: i32 = 20;          // Explicit type
 const pi := 3.14;         // Constant
 ```
 There is nothing like truethy or falsy values in Ferret. Only `bool` type is used for boolean logic.
+
+### Ownership and Move Semantics
+
+- Assignment/call/return are **copy-by-default** for implicitly copyable values (primitives and structurally copyable aggregates).
+- Assignment/call/return are **move-by-default** for non-copyable owned values (resource handles, heap owners `#T`, dynamic containers, and aggregates containing them).
+- `&x` / `&mut x` are borrow operations, and nested references are allowed (no auto-deref).
+
+### Ownership Migration (post-v0.0.6)
+
+- Non-copyable values now move implicitly in assignment, call, and return positions.
+- If you need to keep using a value after passing it, pass a borrow (`&` / `&mut`) or redesign the API to borrow.
 
 ### Types
 

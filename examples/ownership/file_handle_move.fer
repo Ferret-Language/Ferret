@@ -1,0 +1,12 @@
+import "std/fs";
+
+fn main() {
+    let path := "examples/ownership/tmp_handle.txt";
+
+    let f1 := fs::CreateRW(path) catch err {
+        return;
+    };
+
+    let f2 := f1;
+    f2.Close();
+}

@@ -415,3 +415,85 @@ func containsResourceType(t SemType, seen map[SemType]struct{}) bool {
 		return false
 	}
 }
+
+// IsImplicitlyCopyableType reports whether values of type t are duplicated by default
+// in ownership-transfer contexts (assignment, call-by-value, return).
+//
+// Ferret semantic rule:
+//   - Primitive and complex scalar values are copy-by-default.
+//   - Shared references (&T) are copy-by-default (non-owning views).
+//   - Mutable references (&mut T), heap owners (#T), dynamic arrays/maps, interfaces,
+//     and any aggregate containing a non-copyable member are move-by-default.
+//   - Resource handles are never implicitly copyable.
+func IsImplicitlyCopyableType(t SemType) bool {
+	seen := make(map[SemType]struct{})
+	return isImplicitlyCopyableType(t, seen)
+}
+
+func isImplicitlyCopyableType(t SemType, seen map[SemType]struct{}) bool {
+	if t == nil {
+		return false
+	}
+	if _, ok := seen[t]; ok {
+		return true
+	}
+	seen[t] = struct{}{}
+
+	switch tt := t.(type) {
+	case *NamedType:
+		if tt.Resource {
+			return false
+		}
+		return isImplicitlyCopyableType(tt.Underlying, seen)
+	case *PrimitiveType:
+		return true
+	case *ComplexType:
+		return true
+	case *ReferenceType:
+		// Shared references are duplicable; mutable references remain move-only.
+		return !tt.Mutable
+	case *HeapType:
+		return false
+	case *ArrayType:
+		if tt.Length < 0 {
+			return false
+		}
+		return isImplicitlyCopyableType(tt.Element, seen)
+	case *MapType:
+		return false
+	case *StructType:
+		for _, f := range tt.Fields {
+			if !isImplicitlyCopyableType(f.Type, seen) {
+				return false
+			}
+		}
+		return true
+	case *OptionalType:
+		return isImplicitlyCopyableType(tt.Inner, seen)
+	case *ResultType:
+		return isImplicitlyCopyableType(tt.Ok, seen) && isImplicitlyCopyableType(tt.Err, seen)
+	case *UnionType:
+		for _, v := range tt.Variants {
+			if !isImplicitlyCopyableType(v, seen) {
+				return false
+			}
+		}
+		return true
+	case *EnumType:
+		for _, v := range tt.Variants {
+			if v.Type == nil {
+				continue
+			}
+			if !isImplicitlyCopyableType(v.Type, seen) {
+				return false
+			}
+		}
+		return true
+	case *FunctionType:
+		return true
+	case *InterfaceType:
+		return false
+	default:
+		return false
+	}
+}

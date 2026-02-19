@@ -294,6 +294,53 @@ func TestResourceTypeHelpers(t *testing.T) {
 	}
 }
 
+func TestIsImplicitlyCopyableType(t *testing.T) {
+	fileHandle := NewResourceNamed("__file", TypeI64)
+
+	primitiveStruct := NewStruct("", []StructField{
+		{Name: "X", Type: TypeI32},
+		{Name: "Y", Type: TypeBool},
+	})
+	resourceStruct := NewStruct("", []StructField{
+		{Name: "H", Type: fileHandle},
+	})
+
+	tests := []struct {
+		name string
+		typ  SemType
+		want bool
+	}{
+		{name: "primitive", typ: TypeI32, want: true},
+		{name: "string primitive", typ: TypeString, want: true},
+		{name: "shared ref", typ: NewReference(TypeI32), want: true},
+		{name: "mutable ref", typ: NewMutableReference(TypeI32), want: false},
+		{name: "heap owner", typ: NewHeap(TypeI32), want: false},
+		{name: "fixed array of copyable", typ: NewArray(TypeI32, 4), want: true},
+		{name: "fixed array of non-copyable", typ: NewArray(NewHeap(TypeI32), 4), want: false},
+		{name: "dynamic array", typ: NewArray(TypeI32, -1), want: false},
+		{name: "map", typ: NewMap(TypeI32, TypeI32), want: false},
+		{name: "copyable struct", typ: primitiveStruct, want: true},
+		{name: "resource struct", typ: resourceStruct, want: false},
+		{name: "named primitive alias", typ: NewNamed("UserId", TypeI64), want: true},
+		{name: "resource named", typ: fileHandle, want: false},
+		{name: "function type", typ: NewFunction([]ParamType{{Name: "x", Type: TypeI32}}, TypeI32), want: true},
+		{name: "interface type", typ: NewInterface(nil), want: false},
+		{name: "optional copyable", typ: NewOptional(TypeI32), want: true},
+		{name: "optional non-copyable", typ: NewOptional(NewHeap(TypeI32)), want: false},
+		{name: "result copyable", typ: NewResult(TypeI32, TypeBool), want: true},
+		{name: "result non-copyable", typ: NewResult(NewHeap(TypeI32), TypeBool), want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := IsImplicitlyCopyableType(tc.typ)
+			if got != tc.want {
+				t.Fatalf("IsImplicitlyCopyableType(%s) = %v, want %v", tc.typ.String(), got, tc.want)
+			}
+		})
+	}
+}
+
 func TestResultTypeEquals(t *testing.T) {
 	res1 := NewResult(TypeI32, TypeString)
 	res2 := NewResult(TypeI32, TypeString)

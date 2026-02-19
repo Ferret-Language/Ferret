@@ -134,7 +134,7 @@ fn OpenAppend(path: str) -> str ! File {
 // Close file handle
 // Example: file.Close();
 // @extern
-fn (f: @File) Close();
+fn (f: File) Close();
 
 // Read a line from file
 // Example: let line := file.ReadLine() catch err { break; };

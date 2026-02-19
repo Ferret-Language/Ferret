@@ -104,7 +104,7 @@ fn (app: &mut App) Serve(listener: &mut tcp::TcpListener) -> str ! bool {
         let conn := listener.Accept() catch err {
             return err!;
         };
-        handleConn(app, @conn);
+        handleConn(app, conn);
     }
     return true;
 }
@@ -178,18 +178,17 @@ fn (req: &Request) Param(name: str) -> ?str {
 // Response helpers
 // ============================================
 
-fn (res: &mut Response) Status(code: i32) -> &mut Response {
+fn (res: &mut Response) Status(code: i32) {
     res.Code = code;
-    return res;
 }
 
 fn (res: &mut Response) StatusCode() -> i32 {
     return res.Code;
 }
 
-fn (res: &mut Response) Header(name: str, value: str) -> &mut Response {
+fn (res: &mut Response) Header(name: str, value: str) {
     if res.Sent {
-        return res;
+        return;
     }
     if name == "Content-Type" || name == "content-type" {
         res.HasContentType = true;
@@ -198,7 +197,6 @@ fn (res: &mut Response) Header(name: str, value: str) -> &mut Response {
         res.HasConnection = true;
     }
     res.HeaderText = res.HeaderText + name + ": " + value + "\r\n";
-    return res;
 }
 
 fn (res: &mut Response) Send(body: str) {
@@ -398,11 +396,11 @@ fn (app: &mut App) addRoute(method: str, pattern: str, handler: fn(req: &Request
 }
 
 fn handleConn(app: &App, conn: tcp::TcpConn) {
-    let c := @conn;
+    let c := conn;
     let req := readRequest(&mut c) catch err {
         return;
     };
-    let res := newResponse(@c);
+    let res := newResponse(c);
     let r := req;
     runMiddleware(app, &mut r, &mut res);
     if !res.Sent {
@@ -471,7 +469,7 @@ fn serveStatic(app: &App, req: &Request, res: &mut Response) -> bool {
 }
 
 fn newResponse(conn: tcp::TcpConn) -> Response {
-    return { .Conn = @conn, .Code = 200, .HeaderText = "", .HasContentType = false, .HasConnection = false, .SseOpen = false, .Sent = false } as Response;
+    return { .Conn = conn, .Code = 200, .HeaderText = "", .HasContentType = false, .HasConnection = false, .SseOpen = false, .Sent = false } as Response;
 }
 
 fn (res: &mut Response) writeHeaders() -> str ! bool {
@@ -537,31 +535,31 @@ fn readRequest(conn: &mut tcp::TcpConn) -> str ! Request {
         if len(&buf) > maxHeader {
             return "header too large"!;
         }
-        headerEnd = indexOfBytes(buf, "\r\n\r\n" as []byte);
+        headerEnd = indexOfBytes(&buf, "\r\n\r\n" as []byte);
     }
     if headerEnd < 0 {
         return "invalid request"!;
     }
 
-    let headerBytes := sliceBytes(buf, 0, headerEnd);
-    let rest := sliceBytes(buf, headerEnd + 4, len(&buf));
+    let headerBytes := sliceBytes(&buf, 0, headerEnd);
+    let rest := sliceBytes(&buf, headerEnd + 4, len(&buf));
 
-    let lineEnd := findCrlf(headerBytes, 0);
+    let lineEnd := findCrlf(&headerBytes, 0);
     if lineEnd < 0 {
         return "invalid request"!;
     }
-    let line := sliceBytes(headerBytes, 0, lineEnd);
-    let method := parseMethod(line) catch err {
+    let line := sliceBytes(&headerBytes, 0, lineEnd);
+    let method := parseMethod(&line) catch err {
         return err!;
     };
-    let url := parseUrlFromLine(line) catch err {
+    let url := parseUrlFromLine(&line) catch err {
         return err!;
     };
 
-    let headers := parseHeaders(headerBytes, lineEnd + 2);
+    let headers := parseHeaders(&headerBytes, lineEnd + 2);
     let parts := parseUrl(url);
 
-    let contentLen := headerContentLength(headers);
+    let contentLen := headerContentLength(&headers);
     let body := readBody(conn, rest, contentLen) catch err {
         return err!;
     };
@@ -582,10 +580,10 @@ fn readRequest(conn: &mut tcp::TcpConn) -> str ! Request {
     return req;
 }
 
-fn parseHeaders(data: []byte, start: i32) -> map[str]?str {
+fn parseHeaders(data: &[]byte, start: i32) -> map[str]?str {
     let headers: map[str]?str = {} as map[str]?str;
     let i: i32 = start;
-    let n := len(&data);
+    let n := len(data);
     while i < n {
         let lineEnd := findCrlf(data, i);
         if lineEnd < 0 {
@@ -606,8 +604,8 @@ fn parseHeaders(data: []byte, start: i32) -> map[str]?str {
     return headers;
 }
 
-fn headerContentLength(headers: map[str]?str) -> i32 {
-    let val := headers["content-length"];
+fn headerContentLength(headers: &map[str]?str) -> i32 {
+    let val := (*headers)["content-length"];
     if val == none {
         return 0;
     }
@@ -631,18 +629,18 @@ fn readBody(conn: &mut tcp::TcpConn, initial: []byte, length: i32) -> str ! []by
         }
     }
     if len(&out) > length {
-        return sliceBytes(out, 0, length);
+        return sliceBytes(&out, 0, length);
     }
     return out;
 }
 
 // Request line parsing
 
-fn parseMethod(line: []byte) -> str ! str {
-    let n := len(&line);
+fn parseMethod(line: &[]byte) -> str ! str {
+    let n := len(line);
     let i: i32 = 0;
     while i < n {
-        if (line[i] as i32) == 32 {
+        if ((*line)[i] as i32) == 32 {
             return bytesToStr(line, 0, i);
         }
         i += 1;
@@ -650,10 +648,10 @@ fn parseMethod(line: []byte) -> str ! str {
     return "invalid request line"!;
 }
 
-fn parseUrlFromLine(line: []byte) -> str ! str {
-    let n := len(&line);
+fn parseUrlFromLine(line: &[]byte) -> str ! str {
+    let n := len(line);
     let i: i32 = 0;
-    while i < n && line[i] != 32 {
+    while i < n && (*line)[i] != 32 {
         i += 1;
     }
     if i >= n {
@@ -661,7 +659,7 @@ fn parseUrlFromLine(line: []byte) -> str ! str {
     }
     i += 1;
     let start := i;
-    while i < n && line[i] != 32 {
+    while i < n && (*line)[i] != 32 {
         i += 1;
     }
     if start >= n {
@@ -679,12 +677,12 @@ type UrlParts struct {
 
 fn parseUrl(url: str) -> UrlParts {
     let bytes := url as []byte;
-    let qpos := findByteRange(bytes, 0, len(&bytes), 63);
+    let qpos := findByteRange(&bytes, 0, len(&bytes), 63);
     if qpos < 0 {
         return { .Path = url, .Query = {} as map[str]?str } as UrlParts;
     }
-    let path := bytesToStr(bytes, 0, qpos);
-    let queryStr := bytesToStr(bytes, qpos + 1, len(&bytes));
+    let path := bytesToStr(&bytes, 0, qpos);
+    let queryStr := bytesToStr(&bytes, qpos + 1, len(&bytes));
     let query := parseQuery(queryStr);
     return { .Path = path, .Query = query } as UrlParts;
 }
@@ -695,21 +693,21 @@ fn parseQuery(q: str) -> map[str]?str {
     let n := len(&bytes);
     let start: i32 = 0;
     while start <= n {
-        let end := findByteRange(bytes, start, n, 38); // '&'
+        let end := findByteRange(&bytes, start, n, 38); // '&'
         let segEnd := end;
         if segEnd < 0 {
             segEnd = n;
         }
         if segEnd > start {
-            let eq := findByteRange(bytes, start, segEnd, 61); // '='
+            let eq := findByteRange(&bytes, start, segEnd, 61); // '='
             let keyEnd := segEnd;
             if eq >= 0 {
                 keyEnd = eq;
             }
-            let key := bytesToStr(bytes, start, keyEnd);
+            let key := bytesToStr(&bytes, start, keyEnd);
             let val := "";
             if eq >= 0 && eq + 1 <= segEnd {
-                val = bytesToStr(bytes, eq + 1, segEnd);
+                val = bytesToStr(&bytes, eq + 1, segEnd);
             }
             if key != "" {
                 out[key] = val;
@@ -743,7 +741,7 @@ fn matchRoute(path: str, pattern: str) -> RouteMatch {
         let s := pathSegs[i];
         let pbytes := p as []byte;
         if len(&pbytes) > 0 && (pbytes[0] as i32) == 58 { // ':'
-            let name := bytesToStr(pbytes, 1, len(&pbytes));
+            let name := bytesToStr(&pbytes, 1, len(&pbytes));
             params[name] = s;
         } else if p != s {
             return { .Ok = false, .Params = {} as map[str]?str } as RouteMatch;
@@ -766,7 +764,7 @@ fn splitPath(path: str) -> []str {
     while i <= n {
         if i == n || (bytes[i] as i32) == 47 {
             if i > start {
-                append(&mut out, bytesToStr(bytes, start, i));
+                append(&mut out, bytesToStr(&bytes, start, i));
             }
             start = i + 1;
         }
@@ -791,7 +789,7 @@ fn stripPrefix(s: str, prefix: str) -> PrefixStrip {
     }
     let sbytes := s as []byte;
     let pbytes := prefix as []byte;
-    let rest := bytesToStr(sbytes, len(&pbytes), len(&sbytes));
+    let rest := bytesToStr(&sbytes, len(&pbytes), len(&sbytes));
     if rest == "" {
         return { .Ok = true, .Rest = "/" } as PrefixStrip;
     }
@@ -805,7 +803,7 @@ fn joinPath(dir: str, rel: str) -> str {
     let rSlash := startsWith(r, "/");
     if dSlash && rSlash {
         let rbytes := r as []byte;
-        let rest := bytesToStr(rbytes, 1, len(&rbytes));
+        let rest := bytesToStr(&rbytes, 1, len(&rbytes));
         return d + rest;
     }
     if !dSlash && !rSlash {
@@ -840,32 +838,32 @@ fn appendBytes(dst: &mut []byte, src: []byte) -> bool {
     return true;
 }
 
-fn sliceBytes(data: []byte, start: i32, end: i32) -> []byte {
+fn sliceBytes(data: &[]byte, start: i32, end: i32) -> []byte {
     let out: []byte = [] as []byte;
     let i: i32 = start;
-    let n := len(&data);
+    let n := len(data);
     let stop := end;
     while i < stop && i < n {
-        append(&mut out, data[i]);
+        append(&mut out, (*data)[i]);
         i += 1;
     }
     return out;
 }
 
-fn bytesToStr(data: []byte, start: i32, end: i32) -> str {
+fn bytesToStr(data: &[]byte, start: i32, end: i32) -> str {
     let out := "";
     let i: i32 = start;
-    let n := len(&data);
+    let n := len(data);
     let stop := end;
     while i < stop && i < n {
-        out = out + data[i];
+        out = out + (*data)[i];
         i += 1;
     }
     return out;
 }
 
-fn indexOfBytes(data: []byte, pattern: []byte) -> i32 {
-    let n := len(&data);
+fn indexOfBytes(data: &[]byte, pattern: []byte) -> i32 {
+    let n := len(data);
     let m := len(&pattern);
     if m == 0 || n < m {
         return -1;
@@ -873,7 +871,7 @@ fn indexOfBytes(data: []byte, pattern: []byte) -> i32 {
     let i: i32 = 0;
     while i + m <= n {
         let j: i32 = 0;
-        while j < m && data[i + j] == pattern[j] {
+        while j < m && (*data)[i + j] == pattern[j] {
             j += 1;
         }
         if j == m {
@@ -884,11 +882,11 @@ fn indexOfBytes(data: []byte, pattern: []byte) -> i32 {
     return -1;
 }
 
-fn findCrlf(data: []byte, start: i32) -> i32 {
+fn findCrlf(data: &[]byte, start: i32) -> i32 {
     let i: i32 = start;
-    let n := len(&data);
+    let n := len(data);
     while i + 1 < n {
-        if (data[i] as i32) == 13 && (data[i + 1] as i32) == 10 {
+        if ((*data)[i] as i32) == 13 && ((*data)[i + 1] as i32) == 10 {
             return i;
         }
         i += 1;
@@ -896,12 +894,12 @@ fn findCrlf(data: []byte, start: i32) -> i32 {
     return -1;
 }
 
-fn findByteRange(data: []byte, start: i32, end: i32, b: i32) -> i32 {
+fn findByteRange(data: &[]byte, start: i32, end: i32, b: i32) -> i32 {
     let i: i32 = start;
     let stop := end;
-    let n := len(&data);
+    let n := len(data);
     while i < stop && i < n {
-        if (data[i] as i32) == b {
+        if ((*data)[i] as i32) == b {
             return i;
         }
         i += 1;
@@ -949,7 +947,7 @@ fn trimSpaces(s: str) -> str {
         }
         end -= 1;
     }
-    return bytesToStr(bytes, start, end);
+    return bytesToStr(&bytes, start, end);
 }
 
 fn lowerAscii(s: str) -> str {

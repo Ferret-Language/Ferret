@@ -1,7 +1,6 @@
 package typechecker
 
 import (
-	"compiler/colors"
 	"compiler/internal/utils/numeric"
 	str "compiler/internal/utils/strings"
 	"fmt"
@@ -155,7 +154,7 @@ func checkDefaultParameterValues(ctx *context_v2.CompilerContext, mod *context_v
 			continue
 		}
 
-		if reportImplicitResourceCopy(ctx, paramType, defaultType, param.Default, "default parameter") {
+		if reportIllegalImplicitMove(ctx, mod, defaultType, param.Default, "default parameter") {
 			continue
 		}
 
@@ -494,7 +493,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 				if n.IsError {
 					// Returning error: return "error message"!
 					returnedType := checkExpr(ctx, mod, n.Result, resultType.Err)
-					if reportImplicitResourceCopy(ctx, resultType.Err, returnedType, n.Result, "return") {
+					if reportIllegalImplicitMove(ctx, mod, returnedType, n.Result, "return") {
 						return
 					}
 
@@ -527,7 +526,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 				} else {
 					// Returning success: return value
 					returnedType := checkExpr(ctx, mod, n.Result, resultType.Ok)
-					if reportImplicitResourceCopy(ctx, resultType.Ok, returnedType, n.Result, "return") {
+					if reportIllegalImplicitMove(ctx, mod, returnedType, n.Result, "return") {
 						return
 					}
 
@@ -567,7 +566,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 				} else {
 					// Normal return type checking
 					returnedType := checkExpr(ctx, mod, n.Result, expectedReturnType)
-					if reportImplicitResourceCopy(ctx, expectedReturnType, returnedType, n.Result, "return") {
+					if reportIllegalImplicitMove(ctx, mod, returnedType, n.Result, "return") {
 						return
 					}
 					if ok := checkFitness(ctx, expectedReturnType, n.Result, nil); !ok {
@@ -1108,7 +1107,7 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 
 			sym.Type = rhsType
 			sym.IsHeap = types.IsHeapType(sym.Type)
-			if reportImplicitCopyMethodRequirement(ctx, mod, rhsType, item.Value, "variable initialization") {
+			if reportIllegalImplicitMove(ctx, mod, rhsType, item.Value, "variable initialization") {
 				continue
 			}
 
@@ -2850,29 +2849,20 @@ func checkAssignStmt(ctx *context_v2.CompilerContext, mod *context_v2.Module, st
 	}
 
 	if stmt.Op == nil || stmt.Op.Kind == tokens.EQUALS_TOKEN {
-		if ident, ok := stmt.Lhs.(*ast.IdentifierExpr); ok && mod != nil && mod.CurrentScope != nil {
+		if ident, ok := stmt.Lhs.(*ast.IdentifierExpr); ok && stmt.Rhs != nil && mod != nil && mod.CurrentScope != nil {
 			if sym, ok := mod.CurrentScope.Lookup(ident.Name); ok && sym != nil {
 				if heapType, ok := types.UnwrapType(sym.Type).(*types.HeapType); ok {
-					if moveExpr(stmt.Rhs) || heapUnaryExpr(stmt.Rhs) != nil {
+					rhsInferred := inferExprType(ctx, mod, stmt.Rhs)
+					ownershipTransfer := moveExpr(stmt.Rhs) ||
+						heapUnaryExpr(stmt.Rhs) != nil ||
+						referencesHeapOwnerValue(ctx, mod, stmt.Rhs) ||
+						types.IsHeapType(rhsInferred)
+
+					if ownershipTransfer {
 						checkAssignLike(ctx, mod, sym.Type, stmt.Lhs, stmt.Rhs)
 						return
 					}
-					if referencesHeapOwnerValue(ctx, mod, stmt.Rhs) {
-						old := exprText(ctx, stmt.Rhs)
-						new := "@" + old
-						if old == "" {
-							new = "@value"
-						}
-						diag := diagnostics.NewError("heap ownership assignment requires an explicit move").
-							WithCode(diagnostics.ErrInvalidAssignment).
-							WithPrimaryLabel(stmt.Rhs.Loc(), "this value is a heap owner").
-							WithHelp(fmt.Sprintf("use '%s' to transfer ownership, or assign a payload value of type 'T'", new))
-						if old != "" {
-							diag = diag.WithCodeReplacement(stmt.Rhs.Loc(), old, new)
-						}
-						ctx.Diagnostics.Add(diag)
-						return
-					}
+
 					checkAssignLike(ctx, mod, heapType.Inner, stmt.Lhs, stmt.Rhs)
 					return
 				}
@@ -3224,6 +3214,12 @@ func isBorrowableTarget(ctx *context_v2.CompilerContext, mod *context_v2.Module,
 		return isBorrowableTarget(ctx, mod, e.X)
 	case *ast.SelectorExpr:
 		return isBorrowableTarget(ctx, mod, e.X)
+	case *ast.UnaryExpr:
+		if e.Op.Kind != tokens.BIT_AND_TOKEN && e.Op.Kind != tokens.MUT_TOKEN {
+			return false
+		}
+		refType := inferExprType(ctx, mod, e)
+		return isReferenceType(refType)
 	case *ast.DerefExpr:
 		baseType := inferExprType(ctx, mod, e.X)
 		if baseType == nil || baseType.Equals(types.TypeUnknown) {
@@ -3265,14 +3261,6 @@ func checkBorrowExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, ex
 		return
 	}
 	if operandType == nil || operandType.Equals(types.TypeUnknown) {
-		return
-	}
-	if isReferenceType(operandType) {
-		ctx.Diagnostics.Add(
-			diagnostics.NewError("cannot take reference of a reference").
-				WithCode(diagnostics.ErrInvalidOperation).
-				WithPrimaryLabel(expr.Loc(), "nested references are not allowed"),
-		)
 		return
 	}
 	if expr.Op.Kind == tokens.MUT_TOKEN {
@@ -3389,7 +3377,8 @@ func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		symName       string
 		isModuleScope bool
 	)
-	switch target := expr.X.(type) {
+	targetExpr := moveSourceBaseExpr(expr.X)
+	switch target := targetExpr.(type) {
 	case *ast.IdentifierExpr:
 		symName = target.Name
 		sym, found = mod.CurrentScope.Lookup(target.Name)
@@ -3407,8 +3396,8 @@ func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		ctx.Diagnostics.Add(
 			diagnostics.NewError("cannot move non-lvalue").
 				WithCode(diagnostics.ErrInvalidOperation).
-				WithPrimaryLabel(expr.X.Loc(), "expected a variable name").
-				WithHelp("use '@name' to move from a binding"),
+				WithPrimaryLabel(expr.X.Loc(), "expected a movable binding").
+				WithHelp("move from a local binding, field/index place, or parameter"),
 		)
 		return
 	}
@@ -3417,6 +3406,14 @@ func checkMoveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 			diagnostics.NewError(fmt.Sprintf("cannot move from %s '%s'", sym.Kind.String(), symName)).
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(expr.X.Loc(), "value is read-only"),
+		)
+		return
+	}
+	if isReferenceType(sym.Type) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("cannot move from reference").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(expr.X.Loc(), "reference values are not movable"),
 		)
 		return
 	}
@@ -3521,147 +3518,128 @@ func moveExpr(expr ast.Expression) bool {
 	return false
 }
 
-func implicitCopySourceExpr(expr ast.Expression) bool {
-	expr = unwrapParenExprAST(expr)
-	switch e := expr.(type) {
-	case *ast.IdentifierExpr, *ast.SelectorExpr, *ast.IndexExpr, *ast.DerefExpr:
-		return true
-	case *ast.CastExpr:
-		return implicitCopySourceExpr(e.X)
-	case *ast.UnaryExpr:
-		// @x is explicit move; #x allocates a fresh owner; borrows are non-owning.
-		switch e.Op.Kind {
-		case tokens.AT_TOKEN, tokens.HASH_TOKEN, tokens.BIT_AND_TOKEN, tokens.MUT_TOKEN:
-			return false
-		default:
-			return implicitCopySourceExpr(e.X)
-		}
-	default:
-		return false
-	}
-}
-
-func implicitCopyNamedType(sourceType types.SemType) (*types.NamedType, bool) {
-	if sourceType == nil {
-		return nil, false
-	}
-	if sourceType.Equals(types.TypeUnknown) {
-		return nil, false
-	}
-	named, ok := sourceType.(*types.NamedType)
-	if !ok || named == nil {
-		return nil, false
-	}
-
-	underlying := types.UnwrapType(named.Underlying)
-	switch underlying.(type) {
-	case *types.InterfaceType, *types.FunctionType:
-		return nil, false
-	case *types.PrimitiveType, *types.ComplexType:
-		// Named primitive/complex aliases are copyable unless the compiler marks
-		// them as runtime resource handles.
-		if !named.Resource {
-			return nil, false
-		}
-	}
-	return named, true
-}
-
-func invalidCopyMethodReason(method *symbols.MethodInfo, typ *types.NamedType) string {
-	if method == nil || method.FuncType == nil {
-		return "missing required signature `fn (v: &T) copy() -> T`"
-	}
-	if method.ReceiverIsMove {
-		return "`copy()` receiver cannot be move-qualified"
-	}
-	ref, isRef := types.UnwrapType(method.Receiver).(*types.ReferenceType)
-	if !isRef {
-		return "`copy()` receiver must be an immutable reference '&T'"
-	}
-	if ref.Mutable {
-		return "`copy()` receiver must be an immutable reference '&T'"
-	}
-	receiver := types.DereferenceType(method.Receiver)
-	if receiver == nil || !receiver.Equals(typ) {
-		return fmt.Sprintf("`copy()` receiver must be '&%s'", typ.String())
-	}
-	if len(method.FuncType.Params) != 0 {
-		return "`copy()` must not take parameters"
-	}
-	if method.FuncType.Return == nil || !method.FuncType.Return.Equals(typ) {
-		return fmt.Sprintf("`copy()` must return `%s`", typ.String())
-	}
-	return ""
-}
-
-func hasValidCopyMethod(ctx *context_v2.CompilerContext, mod *context_v2.Module, typ *types.NamedType) (bool, string) {
-	if typ == nil || typ.Name == "" {
-		return false, ""
-	}
-	typeSym, found := lookupTypeSymbol(ctx, mod, typ.Name)
-	if !found || typeSym == nil || typeSym.Methods == nil {
-		return false, "missing required signature `fn (v: &T) copy() -> T`"
-	}
-	method, ok := typeSym.Methods["copy"]
-	if !ok || method == nil {
-		return false, "missing required signature `fn (v: &T) copy() -> T`"
-	}
-	if reason := invalidCopyMethodReason(method, typ); reason != "" {
-		return false, reason
-	}
-	return true, ""
-}
-
-func reportImplicitCopyMethodRequirement(ctx *context_v2.CompilerContext, mod *context_v2.Module, sourceType types.SemType, sourceExpr ast.Expression, op string) bool {
-	if sourceExpr == nil {
+func reportIllegalImplicitMove(ctx *context_v2.CompilerContext, mod *context_v2.Module, sourceType types.SemType, sourceExpr ast.Expression, op string) bool {
+	if sourceExpr == nil || sourceType == nil || sourceType.Equals(types.TypeUnknown) {
 		return false
 	}
 	if moveExpr(sourceExpr) {
 		return false
 	}
-	if !implicitCopySourceExpr(sourceExpr) {
+	if types.IsImplicitlyCopyableType(sourceType) {
+		return false
+	}
+	if !resourceCopySourceExpr(sourceExpr) {
 		return false
 	}
 
-	typ, requiresMethod := implicitCopyNamedType(sourceType)
-	if !requiresMethod {
-		return false
-	}
-	ok, reason := hasValidCopyMethod(ctx, mod, typ)
-	if ok {
-		return false
-	}
-
-	old := exprText(ctx, sourceExpr)
-	moveSuggestion := "@value"
-	if old != "" {
-		moveSuggestion = "@" + old
+	inner := moveSourceBaseExpr(sourceExpr)
+	sym, isModuleScope, resolved := implicitMoveSourceSymbol(ctx, mod, inner)
+	if !resolved || sym == nil {
+		diag := diagnostics.NewError("cannot implicitly move from this expression").
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(sourceExpr.Loc(), fmt.Sprintf("this %s source is not a direct movable binding", op)).
+			WithHelp("bind the value to a local variable first, then move that variable")
+		ctx.Diagnostics.Add(diag)
+		return true
 	}
 
-	fnsig := fmt.Sprintf("fn (v: &%s) copy() -> %s { \n // code here \n}", typ.String(), typ.String())
-
-	diag := diagnostics.NewError("implicit copy requires a valid `copy()` method").
-		WithCode(diagnostics.ErrInvalidOperation).
-		WithPrimaryLabel(sourceExpr.Loc(), fmt.Sprintf("cannot implicitly copy value of type `%s` in %s", typ.String(), op)).
-		WithHelp(fmt.Sprintf("use '%s' to move ownership", moveSuggestion))
-	if reason != "" {
-		diag = diag.WithNote(reason)
+	if sym.Kind == symbols.SymbolConstant || sym.IsReadonly {
+		diag := diagnostics.NewError(fmt.Sprintf("cannot implicitly move from read-only value '%s'", sym.Name)).
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(sourceExpr.Loc(), "value is read-only")
+		ctx.Diagnostics.Add(diag)
+		return true
 	}
-	if old != "" {
-		diag = diag.WithCodeReplacement(sourceExpr.Loc(), old, moveSuggestion)
+	if isReferenceType(sym.Type) {
+		diag := diagnostics.NewError(fmt.Sprintf("cannot implicitly move from reference '%s'", sym.Name)).
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(sourceExpr.Loc(), "reference values are not movable")
+		ctx.Diagnostics.Add(diag)
+		return true
 	}
 
-	diag = diag.WithText("or implement copy method", " ", colors.GREEN).
-		WithCodeHint(sourceExpr.Loc(), fnsig, diagnostics.CodeHintLabel{
-			Line:    1,
-			Column:  1,
-			Length:  4,
-			Message: "Add this method",
-			Style:   diagnostics.Secondary,
-		})
+	if sym.Kind != symbols.SymbolVariable && sym.Kind != symbols.SymbolParameter && sym.Kind != symbols.SymbolReceiver {
+		diag := diagnostics.NewError(fmt.Sprintf("cannot implicitly move from %s '%s'", sym.Kind.String(), sym.Name)).
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(sourceExpr.Loc(), "not a movable binding").
+			WithHelp("move only local variables, parameters, or receivers")
+		ctx.Diagnostics.Add(diag)
+		return true
+	}
 
-	ctx.Diagnostics.Add(diag)
-	return true
+	if isModuleScope || (mod != nil && mod.ModuleScope != nil && sym.DeclaredScope == mod.ModuleScope) {
+		diag := diagnostics.NewError(fmt.Sprintf("cannot implicitly move from module-level binding '%s'", sym.Name)).
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(sourceExpr.Loc(), "module scope values cannot be moved")
+		ctx.Diagnostics.Add(diag)
+		return true
+	}
+
+	return false
+}
+
+func unwrapMoveSourceExpr(expr ast.Expression) ast.Expression {
+	for expr != nil {
+		switch e := expr.(type) {
+		case *ast.ParenExpr:
+			expr = e.X
+		case *ast.CastExpr:
+			expr = e.X
+		default:
+			return expr
+		}
+	}
+	return nil
+}
+
+func moveSourceBaseExpr(expr ast.Expression) ast.Expression {
+	expr = unwrapMoveSourceExpr(expr)
+	for expr != nil {
+		switch e := expr.(type) {
+		case *ast.SelectorExpr:
+			expr = unwrapMoveSourceExpr(e.X)
+		case *ast.IndexExpr:
+			expr = unwrapMoveSourceExpr(e.X)
+		case *ast.DerefExpr:
+			expr = unwrapMoveSourceExpr(e.X)
+		default:
+			return expr
+		}
+	}
+	return nil
+}
+
+func implicitMoveSourceSymbol(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression) (*symbols.Symbol, bool, bool) {
+	switch e := expr.(type) {
+	case *ast.IdentifierExpr:
+		if mod == nil || mod.CurrentScope == nil {
+			return nil, false, false
+		}
+		sym, found := mod.CurrentScope.Lookup(e.Name)
+		if !found || sym == nil {
+			return nil, false, false
+		}
+		return sym, false, true
+	case *ast.ScopeResolutionExpr:
+		sym, found := resolveScopeResolutionSymbol(ctx, mod, e)
+		if !found || sym == nil {
+			return nil, false, false
+		}
+		return sym, true, true
+	case *ast.SelectorExpr:
+		return implicitMoveSourceSymbol(ctx, mod, e.X)
+	case *ast.IndexExpr:
+		return implicitMoveSourceSymbol(ctx, mod, e.X)
+	case *ast.DerefExpr:
+		return implicitMoveSourceSymbol(ctx, mod, e.X)
+	case *ast.UnaryExpr:
+		if e.Op.Kind == tokens.BIT_AND_TOKEN || e.Op.Kind == tokens.MUT_TOKEN {
+			return nil, false, false
+		}
+		return implicitMoveSourceSymbol(ctx, mod, e.X)
+	default:
+		return nil, false, false
+	}
 }
 
 func resourceCopySourceExpr(expr ast.Expression) bool {
@@ -3684,28 +3662,6 @@ func resourceCopySourceExpr(expr ast.Expression) bool {
 	}
 }
 
-func reportImplicitResourceCopy(ctx *context_v2.CompilerContext, targetType, sourceType types.SemType, sourceExpr ast.Expression, op string) bool {
-	if sourceExpr == nil {
-		return false
-	}
-	if moveExpr(sourceExpr) {
-		return false
-	}
-	if !types.ContainsResourceType(targetType) || !types.ContainsResourceType(sourceType) {
-		return false
-	}
-	if !resourceCopySourceExpr(sourceExpr) {
-		return false
-	}
-
-	diag := diagnostics.NewError("resource values are non-copyable; explicit move required").
-		WithCode(diagnostics.ErrInvalidOperation).
-		WithPrimaryLabel(sourceExpr.Loc(), fmt.Sprintf("implicit resource copy in %s", op)).
-		WithHelp("use '@value' to move ownership, or pass a reference with '&'/'&mut'")
-	ctx.Diagnostics.Add(diag)
-	return true
-}
-
 func unwrapParenExprAST(expr ast.Expression) ast.Expression {
 	for expr != nil {
 		p, ok := expr.(*ast.ParenExpr)
@@ -3715,18 +3671,6 @@ func unwrapParenExprAST(expr ast.Expression) ast.Expression {
 		expr = p.X
 	}
 	return nil
-}
-
-func producesHeapOwnership(expr ast.Expression) bool {
-	expr = unwrapParenExprAST(expr)
-	switch e := expr.(type) {
-	case *ast.UnaryExpr:
-		return e.Op.Kind == tokens.AT_TOKEN || e.Op.Kind == tokens.HASH_TOKEN
-	case *ast.CallExpr:
-		return true
-	default:
-		return false
-	}
 }
 
 func referencesHeapOwnerValue(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.Expression) bool {
@@ -4462,32 +4406,8 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 	// Pass leftType as expected type so composite literals can be contextualized
 	rhsType := checkExpr(ctx, mod, rightNode, leftType)
 
-	if reportImplicitCopyMethodRequirement(ctx, mod, rhsType, rightNode, "assignment") {
+	if reportIllegalImplicitMove(ctx, mod, rhsType, rightNode, "assignment") {
 		return
-	}
-
-	if _, lhsHeap := types.UnwrapType(leftType).(*types.HeapType); lhsHeap {
-		if _, rhsHeap := types.UnwrapType(rhsType).(*types.HeapType); rhsHeap && !producesHeapOwnership(rightNode) {
-			old := exprText(ctx, rightNode)
-			moveSuggestion := "@" + old
-			if old == "" {
-				moveSuggestion = "@value"
-			}
-
-			diag := diagnostics.NewError("heap ownership assignment requires an explicit move or allocation")
-			if rightNode != nil {
-				diag = diag.WithPrimaryLabel(rightNode.Loc(), "this expression does not transfer ownership")
-			}
-			if leftNode != nil {
-				diag = diag.WithSecondaryLabel(leftNode.Loc(), "target expects '#T'")
-			}
-			diag = diag.WithHelp(fmt.Sprintf("use '%s' to move ownership or '#expr' to allocate a new heap value", moveSuggestion))
-			if rightNode != nil && old != "" {
-				diag = diag.WithCodeReplacement(rightNode.Loc(), old, moveSuggestion)
-			}
-			ctx.Diagnostics.Add(diag)
-			return
-		}
 	}
 
 	// Special check for integer literals: ensure they fit in the target type
@@ -5334,16 +5254,6 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 	case *ast.ReferenceType:
 		// Reference type: &T
 		innerType := TypeFromTypeNodeWithContext(ctx, mod, t.Base)
-		if isReferenceType(innerType) {
-			if ctx != nil {
-				ctx.Diagnostics.Add(
-					diagnostics.NewError("nested references are not supported").
-						WithCode(diagnostics.ErrInvalidType).
-						WithPrimaryLabel(t.Base.Loc(), "use a single '&' reference"),
-				)
-			}
-			return types.TypeUnknown
-		}
 		if t.Mutable {
 			return types.NewMutableReference(innerType)
 		}
@@ -5959,25 +5869,12 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 				continue
 			}
 		}
-		if !isDefaultArg && reportImplicitResourceCopy(ctx, param.Type, argType, arg, "function argument") {
-			continue
-		}
-		if !isDefaultArg && param.IsMove && !moveExpr(arg) && resourceCopySourceExpr(arg) {
-
-			// get the text
-			old := exprText(ctx, arg)
-			new := "@" + old
-			diag := diagnostics.NewError(fmt.Sprintf("argument '%s' must be moved", param.Name)).
-				WithCode(diagnostics.ErrInvalidOperation).
-				WithPrimaryLabel(argLoc, "expected explicit move").
-				WithHelp(fmt.Sprintf("use '%s' for move-qualified parameters", new))
-
-			if old != "" {
-				diag = diag.WithCodeReplacement(argLoc, old, new)
+		if !isDefaultArg {
+			if _, isRefParam := types.UnwrapType(param.Type).(*types.ReferenceType); !isRefParam {
+				if reportIllegalImplicitMove(ctx, mod, argType, arg, "function argument") {
+					continue
+				}
 			}
-
-			ctx.Diagnostics.Add(diag)
-			continue
 		}
 
 		if !isDefaultArg {
@@ -6078,24 +5975,10 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 					continue
 				}
 			}
-			if reportImplicitResourceCopy(ctx, variadicElemType, argType, arg, "variadic argument") {
-				continue
-			}
-			if variadicParam.IsMove && !moveExpr(arg) && resourceCopySourceExpr(arg) {
-
-				old := exprText(ctx, arg)
-				new := "@" + old
-
-				diag := diagnostics.NewError(fmt.Sprintf("argument '%s' must be moved", variadicParam.Name)).
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(argLoc, "expected explicit move").
-					WithHelp(fmt.Sprintf("use '%s' for move-qualified parameters", new))
-
-				if old != "" {
-					diag = diag.WithCodeReplacement(argLoc, old, new)
+			if _, isRefParam := types.UnwrapType(variadicElemType).(*types.ReferenceType); !isRefParam {
+				if reportIllegalImplicitMove(ctx, mod, argType, arg, "variadic argument") {
+					continue
 				}
-				ctx.Diagnostics.Add(diag)
-				continue
 			}
 
 			if ok := checkFitness(ctx, variadicElemType, arg, nil); !ok {

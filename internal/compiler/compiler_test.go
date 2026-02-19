@@ -353,13 +353,13 @@ let x := 42;`,
 	}
 }
 
-func TestCompile_ResourceImplicitCopyRejected(t *testing.T) {
+func TestCompile_ResourceImplicitMoveAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
 			"main.fer": `import "std/fs";
 
 fn main() {
-	let f := fs::CreateRW("/tmp/resource_copy_reject.txt") catch err {
+	let f := fs::CreateRW("/tmp/resource_move_implicit_ok.txt") catch err {
 		return;
 	};
 	let g := f;
@@ -372,11 +372,8 @@ fn main() {
 	}
 
 	result := Compile(opts)
-	if result.Success {
-		t.Fatalf("expected compilation failure for implicit resource copy")
-	}
-	if !strings.Contains(result.Output, "implicit copy requires a valid `copy()` method") {
-		t.Fatalf("expected copy() requirement diagnostic, got: %s", result.Output)
+	if !result.Success {
+		t.Fatalf("expected compilation success for implicit resource move, got: %s", result.Output)
 	}
 }
 
@@ -389,7 +386,7 @@ fn main() {
 	let f := fs::CreateRW("/tmp/resource_move_ok.txt") catch err {
 		return;
 	};
-	let g := @f;
+	let g := f;
 	g.Close();
 }`,
 		},
@@ -404,7 +401,7 @@ fn main() {
 	}
 }
 
-func TestCompile_NetResourceImplicitCopyRejected(t *testing.T) {
+func TestCompile_NetResourceImplicitMoveAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
 			"main.fer": `import "net/tcp";
@@ -423,15 +420,12 @@ fn main() {
 	}
 
 	result := Compile(opts)
-	if result.Success {
-		t.Fatalf("expected compilation failure for implicit tcp resource copy")
-	}
-	if !strings.Contains(result.Output, "implicit copy requires a valid `copy()` method") {
-		t.Fatalf("expected copy() requirement diagnostic, got: %s", result.Output)
+	if !result.Success {
+		t.Fatalf("expected compilation success for implicit tcp resource move, got: %s", result.Output)
 	}
 }
 
-func TestCompile_UserTypeImplicitCopyRequiresCopyMethod(t *testing.T) {
+func TestCompile_UserCopyableStructImplicitCopyAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
 			"main.fer": `type Vec2 struct {
@@ -450,14 +444,8 @@ fn main() {
 	}
 
 	result := Compile(opts)
-	if result.Success {
-		t.Fatalf("expected compilation failure for implicit Vec2 copy without copy() method")
-	}
-	if !strings.Contains(result.Output, "implicit copy requires a valid `copy()` method") {
-		t.Fatalf("expected copy() requirement diagnostic, got: %s", result.Output)
-	}
-	if !strings.Contains(result.Output, "Vec2") {
-		t.Fatalf("expected diagnostic to mention Vec2, got: %s", result.Output)
+	if !result.Success {
+		t.Fatalf("expected compilation success for implicit copy of copyable struct, got: %s", result.Output)
 	}
 }
 
@@ -567,7 +555,7 @@ fn main() {
 	}
 }
 
-func TestCompile_HttpServeResourceMoveRequired(t *testing.T) {
+func TestCompile_HttpServeResourceImplicitMoveAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
 			"main.fer": `import "net/http";
@@ -589,11 +577,8 @@ fn main() {
 	}
 
 	result := Compile(opts)
-	if result.Success {
-		t.Fatalf("expected compilation failure when passing listener without move")
-	}
-	if !strings.Contains(result.Output, "resource values are non-copyable") {
-		t.Fatalf("expected resource copy diagnostic, got: %s", result.Output)
+	if !result.Success {
+		t.Fatalf("expected compilation success when passing listener with implicit move, got: %s", result.Output)
 	}
 }
 
@@ -608,7 +593,7 @@ fn main() {
 	let listener := tcp::ListenTcp("127.0.0.1:0") catch err {
 		return;
 	};
-	app.Serve(@listener) catch err {
+	app.Serve(listener) catch err {
 		return;
 	};
 }`,
@@ -721,16 +706,37 @@ func TestCompile_HeapAssignmentTypeMismatchRejected(t *testing.T) {
 	}
 }
 
-func TestCompile_MoveQualifiedParam_RequiresMove(t *testing.T) {
+func TestCompile_HeapAssignmentImplicitMoveAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
-			"main.fer": `fn consume(v: @i32) {
+			"main.fer": `fn main() {
+	let a: #i32 = #1;
+	let b: #i32 = #2;
+	a = b;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success for implicit heap ownership move, got: %s", result.Output)
+	}
+}
+
+func TestCompile_ValueParamCopyableAllowed(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn consume(v: i32) {
 	let x := v;
 }
 
 fn main() {
 	let n := 10;
 	consume(n);
+	let again := n;
 }`,
 		},
 		Debug:         false,
@@ -739,18 +745,37 @@ fn main() {
 	}
 
 	result := Compile(opts)
-	if result.Success {
-		t.Fatalf("expected compilation failure for move-qualified parameter without @")
-	}
-	if !strings.Contains(result.Output, "must be moved") {
-		t.Fatalf("expected move-qualified argument diagnostic, got: %s", result.Output)
+	if !result.Success {
+		t.Fatalf("expected compilation success for copyable value parameter, got: %s", result.Output)
 	}
 }
 
-func TestCompile_MoveQualifiedParam_WithMoveAllowed(t *testing.T) {
+func TestCompile_ValueParamNonCopyableAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
-			"main.fer": `fn consume(v: @i32) {
+			"main.fer": `fn consume(v: #i32) {
+}
+
+fn main() {
+	let n := #42;
+	consume(n);
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success for non-copyable value parameter, got: %s", result.Output)
+	}
+}
+
+func TestCompile_ExplicitMoveSyntaxRejected(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn consume(v: i32) {
 	let x := v;
 }
 
@@ -765,23 +790,23 @@ fn main() {
 	}
 
 	result := Compile(opts)
-	if !result.Success {
-		t.Fatalf("expected compilation success for explicit move argument, got: %s", result.Output)
+	if result.Success {
+		t.Fatalf("expected compilation failure for explicit '@' syntax")
 	}
 }
 
-func TestCompile_MoveQualifiedReceiver_ConsumesValue(t *testing.T) {
+func TestCompile_ValueReceiverNonCopyableAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
 			"main.fer": `type Box struct {
-	.v: i32
+	.v: #i32
 };
 
-fn (b: @Box) Consume() {
+fn (b: Box) Consume() {
 }
 
 fn main() {
-	let a := { .v = 1 } as Box;
+	let a := { .v = #1 } as Box;
 	a.Consume();
 }`,
 		},
@@ -792,18 +817,18 @@ fn main() {
 
 	result := Compile(opts)
 	if !result.Success {
-		t.Fatalf("expected compilation success for move-qualified receiver call, got: %s", result.Output)
+		t.Fatalf("expected compilation success for non-copyable value receiver, got: %s", result.Output)
 	}
 }
 
-func TestCompile_MoveQualifiedReceiver_ReferenceRejected(t *testing.T) {
+func TestCompile_MoveQualifiedReceiverSyntaxRejected(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
 			"main.fer": `type Box struct {
 	.v: i32
 };
 
-fn (b: @&mut Box) Consume() {
+fn (b: @Box) Consume() {
 }
 `,
 		},
@@ -814,14 +839,11 @@ fn (b: @&mut Box) Consume() {
 
 	result := Compile(opts)
 	if result.Success {
-		t.Fatalf("expected compilation failure for move-qualified reference receiver")
-	}
-	if !strings.Contains(result.Output, "move-qualified receiver cannot be a reference") {
-		t.Fatalf("expected move-qualified receiver reference diagnostic, got: %s", result.Output)
+		t.Fatalf("expected compilation failure for move-qualified receiver syntax")
 	}
 }
 
-func TestCompile_MoveBorrowMix_Rejected(t *testing.T) {
+func TestCompile_ExplicitMoveBorrowSyntaxRejected(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
 			"main.fer": `fn main() {
@@ -836,9 +858,77 @@ func TestCompile_MoveBorrowMix_Rejected(t *testing.T) {
 
 	result := Compile(opts)
 	if result.Success {
-		t.Fatalf("expected compilation failure for move+borrow mix")
+		t.Fatalf("expected compilation failure for explicit '@' syntax")
 	}
-	if !strings.Contains(result.Output, "cannot combine move with borrow") {
-		t.Fatalf("expected move+borrow diagnostic, got: %s", result.Output)
+}
+
+func TestCompile_NestedReferencesAllowed(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn main() {
+	let x := 10;
+	let r1 := &x;
+	let r2 := &r1;
+	let y := *r2;
+	let z := *y;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success for nested references, got: %s", result.Output)
+	}
+}
+
+func TestCompile_NestedReferenceTypeAnnotationAllowed(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn read(r: & &i32) -> i32 {
+	let p := *r;
+	return *p;
+}
+
+fn main() {
+	let x := 10;
+	let r1 := &x;
+	let r2: & &i32 = &r1;
+	let y := read(r2);
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected compilation success for nested reference type annotation, got: %s", result.Output)
+	}
+}
+
+func TestCompile_StructLiteralFieldKeyDoesNotConsumeMatchingBinding(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Wrap struct {
+	.conn: []i32,
+};
+
+fn main() {
+	let conn := [1, 2, 3];
+	let w: Wrap = { .conn = conn };
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected struct literal field key to not consume matching binding, got: %s", result.Output)
 	}
 }

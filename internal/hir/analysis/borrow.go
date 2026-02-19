@@ -1,7 +1,6 @@
 package analysis
 
 import (
-	"maps"
 	"compiler/internal/context_v2"
 	"compiler/internal/diagnostics"
 	"compiler/internal/hir"
@@ -10,6 +9,7 @@ import (
 	"compiler/internal/tokens"
 	"compiler/internal/types"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 )
@@ -301,7 +301,6 @@ func (b *borrowChecker) checkReturnStmt(stmt *hir.ReturnStmt) {
 		b.checkExpr(stmt.Result)
 	})
 	b.checkReturnLifetime(stmt)
-	b.checkReturnMove(stmt.Result)
 }
 
 func (b *borrowChecker) checkIfStmt(stmt *hir.IfStmt) {
@@ -779,22 +778,27 @@ func (b *borrowChecker) checkMoveExpr(expr *hir.UnaryExpr) {
 	if expr == nil {
 		return
 	}
-	ident, ok := expr.X.(*hir.Ident)
-	if !ok || ident.Symbol == nil {
+	place, via := b.borrowAccessPlace(expr.X)
+	if place.base == nil {
 		b.checkExpr(expr.X)
 		return
 	}
-	if isReferenceSymbol(ident.Symbol) {
-		b.checkRefValueUse(ident)
+	if via != nil || isReferenceSymbol(place.base) {
+		diag := diagnostics.NewError("cannot move from reference").
+			WithCode(diagnostics.ErrInvalidOperation)
+		if expr.X != nil && expr.X.Loc() != nil {
+			diag = diag.WithPrimaryLabel(expr.X.Loc(), "reference values are not movable")
+		}
+		b.ctx.Diagnostics.Add(diag)
 		return
 	}
-	if !b.checkNotMoved(ident.Symbol, expr.Loc()) {
+	if !b.checkNotMoved(place.base, expr.Loc()) {
 		return
 	}
-	entries := b.borrows[ident.Symbol]
-	if entry, ok := b.findBorrow(entries, ident.Symbol, nil, nil, nil); ok {
-		releaseLoc := b.borrowReleaseLoc(ident.Symbol, entry)
-		diag := diagnostics.NewError(fmt.Sprintf("cannot move '%s' because it is borrowed", ident.Symbol.Name)).
+	entries := b.borrows[place.base]
+	if entry, ok := b.findBorrow(entries, place.base, nil, nil, nil); ok {
+		releaseLoc := b.borrowReleaseLoc(place.base, entry)
+		diag := diagnostics.NewError(fmt.Sprintf("cannot move '%s' because it is borrowed", place.base.Name)).
 			WithCode(diagnostics.ErrInvalidOperation)
 		if expr.Loc() != nil {
 			diag = diag.WithPrimaryLabel(expr.Loc(), "move here")
@@ -808,7 +812,7 @@ func (b *borrowChecker) checkMoveExpr(expr *hir.UnaryExpr) {
 		b.ctx.Diagnostics.Add(diag)
 		return
 	}
-	b.markMoved(ident.Symbol, expr.Loc())
+	b.markMoved(place.base, expr.Loc())
 }
 
 func (b *borrowChecker) markMoved(sym *symbols.Symbol, loc *source.Location) {

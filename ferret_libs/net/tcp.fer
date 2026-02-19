@@ -39,7 +39,7 @@ fn (l: &mut TcpListener) Accept() -> str ! TcpConn;
 
 // Close a TCP listener.
 // @extern
-fn (l: @TcpListener) Close();
+fn (l: TcpListener) Close();
 
 // Read up to maxBytes into a byte slice.
 // @extern
@@ -59,7 +59,7 @@ fn (c: &mut TcpConn) WriteStr(data: str) -> str ! i32;
 
 // Close a TCP connection.
 // @extern
-fn (c: @TcpConn) Close();
+fn (c: TcpConn) Close();
 
 // Socket options.
 // @extern

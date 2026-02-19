@@ -697,19 +697,6 @@ func (p *Parser) parseUnaryNoPostfix(depth int) ast.Expression {
 		}
 	}
 
-	if p.match(tokens.AT_TOKEN) {
-		op := p.advance()
-		expr := p.parseUnaryNoPostfix(depth + 1)
-		if expr == nil {
-			expr = p.invalidExpr()
-		}
-		return &ast.UnaryExpr{
-			Op:       op,
-			X:        expr,
-			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
-		}
-	}
-
 	if p.match(tokens.HASH_TOKEN) {
 		op := p.advance()
 		expr := p.parseUnaryNoPostfix(depth + 1)
@@ -785,19 +772,6 @@ func (p *Parser) parseUnaryDepth(depth int) ast.Expression {
 	}
 
 	if p.match(tokens.NOT_TOKEN, tokens.MINUS_TOKEN, tokens.BIT_NOT_TOKEN) {
-		op := p.advance()
-		expr := p.parseUnaryDepth(depth + 1)
-		if expr == nil {
-			expr = p.invalidExpr()
-		}
-		return &ast.UnaryExpr{
-			Op:       op,
-			X:        expr,
-			Location: *source.NewLocation(&p.filepath, &op.Start, p.safeLoc(expr).End),
-		}
-	}
-
-	if p.match(tokens.AT_TOKEN) {
 		op := p.advance()
 		expr := p.parseUnaryDepth(depth + 1)
 		if expr == nil {
