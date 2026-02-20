@@ -353,6 +353,53 @@ let x := 42;`,
 	}
 }
 
+func TestCompile_ConstraintDeclarations(t *testing.T) {
+	good := &Options{
+		Files: map[string]string{
+			"main.fer": `constraint numeric = union {
+	i32, i64
+};
+
+constraint signed_like = union {
+	~i32, ~i64
+};
+
+constraint writer = interface {
+	Write(buf: []byte) -> i32
+};
+
+constraint numeric_writer = numeric & writer;
+
+fn main() {}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	resGood := Compile(good)
+	if !resGood.Success {
+		t.Fatalf("expected successful compilation for valid constraints, got: %s", resGood.Output)
+	}
+
+	bad := &Options{
+		Files: map[string]string{
+			"main.fer": `constraint invalid = ~numeric;
+constraint numeric = union { i32, i64 };
+
+fn main() {}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	resBad := Compile(bad)
+	if resBad.Success {
+		t.Fatalf("expected compilation failure for invalid constraint '~' usage")
+	}
+}
+
 func TestCompile_ResourceImplicitMoveAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{

@@ -90,6 +90,11 @@ func (p *Parser) parseTopLevel() ast.Node {
 		decl := p.parseTypeDecl()
 		p.attachDoc(decl, doc)
 		return decl
+	case tokens.CONSTRAINT_TOKEN:
+		p.seenNonImport = true
+		decl := p.parseConstraintDecl()
+		p.attachDoc(decl, doc)
+		return decl
 	case tokens.IF_TOKEN:
 		p.seenNonImport = true
 		return p.parseIfStmt()
@@ -209,6 +214,8 @@ func (p *Parser) attachDoc(node ast.Node, doc *ast.CommentGroup) {
 	case *ast.ConstDecl:
 		n.Doc = doc
 	case *ast.TypeDecl:
+		n.Doc = doc
+	case *ast.ConstraintDecl:
 		n.Doc = doc
 	case *ast.FuncDecl:
 		n.Doc = doc

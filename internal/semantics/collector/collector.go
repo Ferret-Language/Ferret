@@ -101,7 +101,7 @@ func collectFunctionBodies(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 		case *ast.MethodDecl:
 			// Methods are collected separately in collectMethodBodies
 			continue
-		case *ast.VarDecl, *ast.ConstDecl, *ast.TypeDecl, *ast.ImportStmt:
+		case *ast.VarDecl, *ast.ConstDecl, *ast.TypeDecl, *ast.ConstraintDecl, *ast.ImportStmt:
 			// These are declarations, already processed in collectDeclarations
 			// Skip them here
 		default:
@@ -150,6 +150,8 @@ func collectDeclarationOnly(ctx *context_v2.CompilerContext, mod *context_v2.Mod
 		collectMethodDeclSignature(ctx, mod, n)
 	case *ast.TypeDecl:
 		collectTypeDecl(ctx, mod, n)
+	case *ast.ConstraintDecl:
+		collectConstraintDecl(ctx, mod, n)
 	case *ast.ImportStmt:
 		collectImport(ctx, mod, n)
 	case *ast.DeclStmt:
@@ -212,6 +214,15 @@ func collectNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node a
 			)
 		}
 		collectTypeDecl(ctx, mod, n)
+	case *ast.ConstraintDecl:
+		if mod.CurrentScope != mod.ModuleScope {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("constraint declarations are only allowed at top level").
+					WithCode(diagnostics.ErrInvalidDeclaration).
+					WithPrimaryLabel(n.Loc(), "move this declaration to module scope"),
+			)
+		}
+		collectConstraintDecl(ctx, mod, n)
 	case *ast.ImportStmt:
 		collectImport(ctx, mod, n)
 	case *ast.DeclStmt:
@@ -936,6 +947,45 @@ func collectTypeDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, de
 			mod.ModuleScope.Declare(qualifiedName, variantSym)
 		}
 	}
+}
+
+// collectConstraintDecl handles constraint declarations.
+func collectConstraintDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl *ast.ConstraintDecl) {
+	name := decl.Name.Name
+
+	// Check for conflict with import alias
+	if importPath, isImport := mod.ImportAliasMap[name]; isImport {
+		imp := mod.Imports[importPath]
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("'%s' is already used as an import alias", name)).
+				WithCode(diagnostics.ErrRedeclaredSymbol).
+				WithPrimaryLabel(decl.Loc(), fmt.Sprintf("cannot declare constraint '%s' here", name)).
+				WithSecondaryLabel(imp.Location, fmt.Sprintf("'%s' is the alias for this import", name)).
+				WithHelp("rename this constraint or use a different import alias"),
+		)
+		return
+	}
+
+	// Check for duplicate declaration
+	if existing, ok := mod.CurrentScope.GetSymbol(name); ok {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("redeclaration of '%s'", name)).
+				WithCode(diagnostics.ErrRedeclaredSymbol).
+				WithPrimaryLabel(decl.Loc(), fmt.Sprintf("'%s' already declared", name)).
+				WithSecondaryLabel(existing.Decl.Loc(), "previous declaration here"),
+		)
+		return
+	}
+
+	sym := &symbols.Symbol{
+		Name:     name,
+		Kind:     symbols.SymbolConstraint,
+		Type:     types.TypeUnknown,
+		Exported: utils.IsExported(name),
+		Decl:     decl,
+	}
+
+	mod.CurrentScope.Declare(name, sym)
 }
 
 // collectImport handles import statements

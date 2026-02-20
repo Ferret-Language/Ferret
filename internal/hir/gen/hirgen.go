@@ -64,6 +64,9 @@ func (g *Generator) lowerNode(node ast.Node) hir.Node {
 		return g.lowerConstDecl(n)
 	case *ast.TypeDecl:
 		return g.lowerTypeDecl(n)
+	case *ast.ConstraintDecl:
+		// Constraints are compile-time only and do not lower to HIR values yet.
+		return nil
 	case *ast.FuncDecl:
 		return g.lowerFuncDecl(n)
 	case *ast.MethodDecl:
@@ -307,6 +310,8 @@ func (g *Generator) lowerDecl(decl ast.Decl) hir.Decl {
 		return g.lowerConstDecl(d)
 	case *ast.TypeDecl:
 		return g.lowerTypeDecl(d)
+	case *ast.ConstraintDecl:
+		return nil
 	case *ast.FuncDecl:
 		return g.lowerFuncDecl(d)
 	case *ast.MethodDecl:

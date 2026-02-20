@@ -69,6 +69,7 @@ const (
 	SymbolConstant
 	SymbolFunction
 	SymbolType
+	SymbolConstraint
 	SymbolParameter
 	SymbolReceiver
 )
@@ -83,6 +84,8 @@ func (s SymbolKind) String() string {
 		return "function"
 	case SymbolType:
 		return "type"
+	case SymbolConstraint:
+		return "constraint"
 	case SymbolParameter:
 		return "parameter"
 	case SymbolReceiver:

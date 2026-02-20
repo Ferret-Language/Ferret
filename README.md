@@ -130,6 +130,33 @@ fn get_data() -> str ! i32 { // Error type first, success type second
 }
 ```
 
+### Constraints (Experimental)
+
+Ferret now supports top-level constraint declarations for upcoming generics work:
+
+```ferret
+constraint numeric = union {
+    i32, i64, i128, i256
+};
+
+constraint signed_like = union {
+    ~i32, ~i64, ~i128, ~i256
+};
+
+constraint writer = interface {
+    Write(buf: []byte) -> i32
+};
+
+constraint numeric_writer = numeric & writer;
+```
+
+Rules:
+- Use one declaration form: `constraint Name = <expr>;`
+- `&` combines constraints (intersection)
+- `~` enables underlying-type matching for named/primitive type terms
+
+Generics and generic bounds usage (`T: Constraint`) are still in progress.
+
 ### Structs
 
 ```ferret

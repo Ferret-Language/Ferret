@@ -248,6 +248,13 @@ func TypeCheckTopLevelSignatures(ctx *context_v2.CompilerContext, mod *context_v
 		}
 	}
 
+	// Resolve constraint declarations after types so type references are available.
+	for _, node := range mod.AST.Nodes {
+		if constraintDecl, ok := node.(*ast.ConstraintDecl); ok {
+			checkConstraintDecl(ctx, mod, constraintDecl)
+		}
+	}
+
 	// Now process method declarations - attach them to types
 	methodCount := 0
 	for _, node := range mod.AST.Nodes {
@@ -446,9 +453,13 @@ func CheckModule(ctx *context_v2.CompilerContext, mod *context_v2.Module) {
 	if mod.AST != nil {
 		// Check everything EXCEPT type declarations (already done in phase 4a)
 		for _, node := range mod.AST.Nodes {
-			if _, ok := node.(*ast.TypeDecl); !ok {
-				checkNode(ctx, mod, node)
+			if _, ok := node.(*ast.TypeDecl); ok {
+				continue
 			}
+			if _, ok := node.(*ast.ConstraintDecl); ok {
+				continue
+			}
+			checkNode(ctx, mod, node)
 		}
 	}
 }
@@ -470,6 +481,8 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 		checkMethodDecl(ctx, mod, n)
 	case *ast.TypeDecl:
 		checkTypeDecl(ctx, mod, n)
+	case *ast.ConstraintDecl:
+		checkConstraintDecl(ctx, mod, n)
 	case *ast.AssignStmt:
 		checkAssignStmt(ctx, mod, n)
 	case *ast.BreakStmt:
@@ -2694,6 +2707,147 @@ func checkTypeDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 			// Increment for next variant (sequential numbering)
 			currentValue++
 		}
+	}
+}
+
+func checkConstraintDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl *ast.ConstraintDecl) {
+	if decl == nil || decl.Name == nil || decl.Expr == nil {
+		return
+	}
+
+	sym, ok := mod.CurrentScope.Lookup(decl.Name.Name)
+	if !ok || sym == nil {
+		ctx.ReportError(fmt.Sprintf("internal error: constraint symbol '%s' not found", decl.Name.Name), decl.Loc())
+		return
+	}
+
+	if sym.Kind != symbols.SymbolConstraint {
+		ctx.ReportError(fmt.Sprintf("internal error: symbol '%s' is not a constraint", decl.Name.Name), decl.Loc())
+		return
+	}
+
+	checkConstraintExpr(ctx, mod, decl.Expr)
+}
+
+func checkConstraintExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.ConstraintExpr) {
+	if expr == nil {
+		return
+	}
+
+	switch c := expr.(type) {
+	case *ast.ConstraintBinaryExpr:
+		if c.Op != tokens.BIT_AND_TOKEN {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("unsupported constraint operator '%s'", c.Op)).
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(c.Loc(), "only '&' is supported for combining constraints"),
+			)
+		}
+		checkConstraintExpr(ctx, mod, c.Left)
+		checkConstraintExpr(ctx, mod, c.Right)
+	case *ast.ConstraintUnionExpr:
+		for _, term := range c.Terms {
+			checkConstraintExpr(ctx, mod, term)
+		}
+	case *ast.ConstraintTypeTerm:
+		checkConstraintTypeTerm(ctx, mod, c)
+	}
+}
+
+func checkConstraintTypeTerm(ctx *context_v2.CompilerContext, mod *context_v2.Module, term *ast.ConstraintTypeTerm) {
+	if term == nil || term.Type == nil {
+		return
+	}
+
+	if sym, ok := resolveConstraintNamedSymbol(ctx, mod, term.Type); ok {
+		if sym.Kind == symbols.SymbolConstraint {
+			if term.Approx {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError("underlying-type marker '~' cannot be applied to a constraint name").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(term.Loc(), "remove '~' before the constraint name"),
+				)
+			}
+			return
+		}
+		if sym.Kind != symbols.SymbolType {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("constraint term must reference a type or another constraint").
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(term.Loc(), fmt.Sprintf("'%s' is a %s", symbolNameForConstraintTerm(term.Type), sym.Kind.String())),
+			)
+			return
+		}
+	}
+
+	semType := TypeFromTypeNodeWithContext(ctx, mod, term.Type)
+	if semType == nil || semType.Equals(types.TypeUnknown) {
+		return
+	}
+
+	if term.Approx && !isApproxConstraintBase(semType) {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("underlying-type marker '~' requires a named or primitive type").
+				WithCode(diagnostics.ErrInvalidType).
+				WithPrimaryLabel(term.Loc(), "invalid use of '~'").
+				WithHelp("use '~' with primitive or named types (e.g., ~i32, ~MyInt)"),
+		)
+	}
+}
+
+func resolveConstraintNamedSymbol(ctx *context_v2.CompilerContext, mod *context_v2.Module, typeNode ast.TypeNode) (*symbols.Symbol, bool) {
+	switch t := typeNode.(type) {
+	case *ast.IdentifierExpr:
+		if mod == nil || mod.CurrentScope == nil {
+			return nil, false
+		}
+		sym, ok := mod.CurrentScope.Lookup(t.Name)
+		return sym, ok
+	case *ast.ScopeResolutionExpr:
+		if ctx == nil || mod == nil || t.Selector == nil {
+			return nil, false
+		}
+		moduleIdent, ok := t.X.(*ast.IdentifierExpr)
+		if !ok || moduleIdent == nil {
+			return nil, false
+		}
+		importPath, ok := mod.ImportAliasMap[moduleIdent.Name]
+		if !ok {
+			return nil, false
+		}
+		importedMod, ok := ctx.GetModule(importPath)
+		if !ok || importedMod == nil || importedMod.ModuleScope == nil {
+			return nil, false
+		}
+		sym, ok := importedMod.ModuleScope.GetSymbol(t.Selector.Name)
+		return sym, ok
+	default:
+		return nil, false
+	}
+}
+
+func symbolNameForConstraintTerm(typeNode ast.TypeNode) string {
+	switch t := typeNode.(type) {
+	case *ast.IdentifierExpr:
+		return t.Name
+	case *ast.ScopeResolutionExpr:
+		if moduleIdent, ok := t.X.(*ast.IdentifierExpr); ok {
+			return moduleIdent.Name + "::" + t.Selector.Name
+		}
+	}
+	return "<constraint term>"
+}
+
+func isApproxConstraintBase(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	typ = types.UnwrapType(typ)
+	switch typ.(type) {
+	case *types.PrimitiveType, *types.NamedType:
+		return true
+	default:
+		return false
 	}
 }
 

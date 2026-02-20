@@ -17,6 +17,7 @@ const (
 	LET_TOKEN        TOKEN = "let"
 	CONST_TOKEN      TOKEN = "const"
 	TYPE_TOKEN       TOKEN = "type"
+	CONSTRAINT_TOKEN TOKEN = "constraint"
 	IF_TOKEN         TOKEN = "if"
 	ELSE_TOKEN       TOKEN = "else"
 	FOR_TOKEN        TOKEN = "for"
@@ -119,31 +120,32 @@ const (
 )
 
 var keyWordsMap map[TOKEN]bool = map[TOKEN]bool{
-	LET_TOKEN:       true,
-	CONST_TOKEN:     true,
-	IF_TOKEN:        true,
-	ELSE_TOKEN:      true,
-	FOR_TOKEN:       true,
-	IN_TOKEN:        true,
-	WHILE_TOKEN:     true,
-	MATCH_TOKEN:     true,
-	TYPE_TOKEN:      true,
-	STRUCT_TOKEN:    true,
-	PRIVATE_TOKEN:   true,
-	INTERFACE_TOKEN: true,
-	UNION_TOKEN:     true,
-	IS_TOKEN:        true,
-	ENUM_TOKEN:      true,
-	MAP_TOKEN:       true,
-	CATCH_TOKEN:     true,
-	FUNCTION_TOKEN:  true,
-	RETURN_TOKEN:    true,
-	DEFER_TOKEN:     true,
-	BREAK_TOKEN:     true,
-	CONTINUE_TOKEN:  true,
-	IMPORT_TOKEN:    true,
-	AS_TOKEN:        true,
-	MUT_TOKEN:       true,
+	LET_TOKEN:        true,
+	CONST_TOKEN:      true,
+	IF_TOKEN:         true,
+	ELSE_TOKEN:       true,
+	FOR_TOKEN:        true,
+	IN_TOKEN:         true,
+	WHILE_TOKEN:      true,
+	MATCH_TOKEN:      true,
+	TYPE_TOKEN:       true,
+	CONSTRAINT_TOKEN: true,
+	STRUCT_TOKEN:     true,
+	PRIVATE_TOKEN:    true,
+	INTERFACE_TOKEN:  true,
+	UNION_TOKEN:      true,
+	IS_TOKEN:         true,
+	ENUM_TOKEN:       true,
+	MAP_TOKEN:        true,
+	CATCH_TOKEN:      true,
+	FUNCTION_TOKEN:   true,
+	RETURN_TOKEN:     true,
+	DEFER_TOKEN:      true,
+	BREAK_TOKEN:      true,
+	CONTINUE_TOKEN:   true,
+	IMPORT_TOKEN:     true,
+	AS_TOKEN:         true,
+	MUT_TOKEN:        true,
 }
 
 func IsKeyword(token string) bool {

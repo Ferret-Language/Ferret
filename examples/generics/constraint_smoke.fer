@@ -1,0 +1,19 @@
+import "std/io";
+
+constraint numeric = union {
+    i32, i64, i128, i256
+};
+
+constraint signed_like = union {
+    ~i32, ~i64, ~i128, ~i256
+};
+
+constraint writer = interface {
+    Write(buf: []byte) -> i32
+};
+
+constraint numeric_writer = numeric & writer;
+
+fn main() {
+    io::Println("constraint smoke test: parsed and compiled");
+}

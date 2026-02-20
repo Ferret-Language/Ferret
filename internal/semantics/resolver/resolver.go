@@ -46,6 +46,8 @@ func resolveNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node a
 				resolveExpr(ctx, mod, decl.Value)
 			}
 		}
+	case *ast.ConstraintDecl:
+		resolveConstraintExpr(ctx, mod, n.Expr)
 
 	case *ast.FuncDecl:
 		// switch to function scope
@@ -196,6 +198,26 @@ func resolveNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node a
 
 	case *ast.ExprStmt:
 		resolveExpr(ctx, mod, n.X)
+	}
+}
+
+func resolveConstraintExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr ast.ConstraintExpr) {
+	if expr == nil {
+		return
+	}
+
+	switch c := expr.(type) {
+	case *ast.ConstraintBinaryExpr:
+		resolveConstraintExpr(ctx, mod, c.Left)
+		resolveConstraintExpr(ctx, mod, c.Right)
+	case *ast.ConstraintUnionExpr:
+		for _, term := range c.Terms {
+			resolveConstraintExpr(ctx, mod, term)
+		}
+	case *ast.ConstraintTypeTerm:
+		if c.Type != nil {
+			resolveTypeNode(ctx, mod, c.Type)
+		}
 	}
 }
 
