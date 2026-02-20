@@ -1028,15 +1028,6 @@ func mapKeyTypeSatisfiesComparable(ctx *context_v2.CompilerContext, mod *context
 	if keyType == nil || keyType.Equals(types.TypeUnknown) {
 		return true
 	}
-	if named, ok := keyType.(*types.NamedType); ok && named != nil && named.Name == "Type1" {
-		if iface, ok := types.UnwrapType(named.Underlying).(*types.InterfaceType); ok && len(iface.Methods) == 0 {
-			// Runtime-erased map helpers in the builtin global module intentionally use Type1
-			// as an "any key" bridge type.
-			if mod != nil && mod.Type == context_v2.ModuleBuiltin && mod.ImportPath == "global" {
-				return true
-			}
-		}
-	}
 	if types.IsMapKeyComparable(keyType) {
 		return true
 	}

@@ -43,6 +43,20 @@ typedef struct {
     ferret_f256 im;
 } ferret_complex512_t;
 
+static ferret_map_t* ferret_global_map_from_view(const void* map_view) {
+    if (map_view == NULL) {
+        return NULL;
+    }
+    int32_t tag = ferret_union_tag(map_view);
+    if (tag == 0) {
+        return (ferret_map_t*)ferret_union_load_ptr_deref(map_view);
+    }
+    if (tag == 1) {
+        return (ferret_map_t*)ferret_union_load_ptr(map_view);
+    }
+    return NULL;
+}
+
 int32_t FERRET_FUNC(len)(const void* seq) {
     if (seq == NULL) {
         return 0;
@@ -147,16 +161,15 @@ void FERRET_FUNC(at)(void* out, const void* seq, int32_t index) {
 }
 
 int32_t FERRET_FUNC(size)(const void* map_view) {
-    if (map_view == NULL) {
+    ferret_map_t* map = ferret_global_map_from_view(map_view);
+    if (map == NULL) {
         return 0;
     }
-    int32_t tag = ferret_union_tag(map_view);
-    ferret_map_t* map = NULL;
-    if (tag == 0) {
-        map = (ferret_map_t*)ferret_union_load_ptr_deref(map_view);
-    } else if (tag == 1) {
-        map = (ferret_map_t*)ferret_union_load_ptr(map_view);
-    }
+    return (int32_t)ferret_map_size(map);
+}
+
+int32_t FERRET_FUNC(size_raw)(const void* map_view) {
+    ferret_map_t* map = ferret_global_map_from_view(map_view);
     if (map == NULL) {
         return 0;
     }
@@ -256,6 +269,60 @@ bool FERRET_FUNC(set)(ferret_map_t** map_ref, uint64_t heap, const void* key, co
         value_ptr = value_iface->data;
     }
     return ferret_map_set(map, key_ptr, value_ptr);
+}
+
+void FERRET_FUNC(get_raw)(void* out, const void* map_view, const void* key, uint64_t key_heap) {
+    (void)key_heap;
+    if (out == NULL) {
+        return;
+    }
+    void** out_ptr = (void**)out;
+    *out_ptr = NULL;
+
+    ferret_map_t* map = ferret_global_map_from_view(map_view);
+    if (map == NULL || key == NULL) {
+        *out_ptr = ferret_optional_alloc_none(sizeof(void*), sizeof(void*));
+        return;
+    }
+
+    void* opt = ferret_optional_alloc_none(map->value_size, sizeof(void*));
+    if (opt == NULL) {
+        return;
+    }
+
+    void* value = ferret_map_get(map, key);
+    if (value == NULL) {
+        *out_ptr = opt;
+        return;
+    }
+
+    if (map->value_size > 0) {
+        memcpy(opt, value, map->value_size);
+    }
+    uint8_t* flag = (uint8_t*)opt + map->value_size;
+    *flag = 1;
+    *out_ptr = opt;
+}
+
+bool FERRET_FUNC(set_raw)(
+    ferret_map_t** map_ref,
+    uint64_t source_heap,
+    const void* key,
+    uint64_t key_heap,
+    const void* value,
+    uint64_t value_heap
+) {
+    (void)source_heap;
+    (void)key_heap;
+    (void)value_heap;
+    if (map_ref == NULL || key == NULL || value == NULL) {
+        return false;
+    }
+    ferret_map_t* map = *map_ref;
+    if (map == NULL) {
+        return false;
+    }
+    return ferret_map_set(map, key, value);
 }
 
 uint64_t FERRET_FUNC(addr)(const void* value, uint64_t heap) {

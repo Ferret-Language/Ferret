@@ -1,0 +1,17 @@
+// EXPECT: PASS (generic map helper ABI for primitive key/value)
+fn main() -> i32 {
+    let m: map[i32]i32 = {} as map[i32]i32;
+    set(&mut m, 7, 99);
+    let n := size(&m);
+    let v := get(&m, 7);
+    if n != 1 {
+        return 3;
+    }
+    if v == none {
+        return 1;
+    }
+    if (v ?? 0) == 99 {
+        return 0;
+    }
+    return 2;
+}
