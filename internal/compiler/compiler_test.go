@@ -503,6 +503,39 @@ fn main() {
 	}
 }
 
+func TestCompile_GenericNamedTypeNominalMismatchReadableDiagnostic(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Box<T> struct {
+	.Value: T
+};
+
+fn takeIntBox(b: Box<i32>) -> i32 {
+	return b.Value;
+}
+
+fn main() -> i32 {
+	let s := { .Value = "x" } as Box<str>;
+	return takeIntBox(s);
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected type mismatch between generic named type instantiations")
+	}
+	if strings.Contains(result.Output, "__gentype_") {
+		t.Fatalf("expected readable generic type names in diagnostics, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "Box&lt;i32&gt;") || !strings.Contains(result.Output, "Box&lt;str&gt;") {
+		t.Fatalf("expected readable expected/found generic names, got: %s", result.Output)
+	}
+}
+
 func TestCompile_GenericMethodInferenceAndExplicitTypeArgs(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{

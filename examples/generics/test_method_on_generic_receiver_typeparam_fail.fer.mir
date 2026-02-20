@@ -1,0 +1,43 @@
+module generics/test_method_on_generic_receiver_typeparam_fail
+
+globals
+  __ferret_init_done_generics_test_method_on__e5a2f8ad3cd6c871: bool
+
+fn main() -> i32 {
+  block b1 entry:
+    call __ferret_init() : void
+    %t1 = alloca __gentype_Box_59d30848f10f9442
+    %t2 = alloca __gentype_Box_59d30848f10f9442
+    %t3 = const i32 7
+    %t4 = ptr_add i32 %t2, 0
+    store %t4, %t3
+    %t5 = const u64 4
+    call ferret_memcpy(%t1, %t2, %t5) : void
+    %t6 = alloca __gentype_Box_46123773fe834448
+    %t7 = call __gentype_Box_59d30848f10f9442___genm_get_8cbd16c457447c21(%t6) : i32
+    ret %t7
+}
+
+fn __gentype_Box_59d30848f10f9442___genm_get_8cbd16c457447c21(receiver b: &__gentype_Box_59d30848f10f9442) -> i32 {
+  block b2 entry:
+    %t9 = alloca &__gentype_Box_59d30848f10f9442
+    store %t9, %t8
+    %t10 = load &__gentype_Box_59d30848f10f9442 %t9
+    %t11 = ptr_add i32 %t10, 0
+    %t12 = load i32 %t11
+    ret %t12
+}
+
+fn __ferret_init() -> void {
+  block b4 init_guard:
+    %t15 = const &bool $__ferret_init_done_generics_test_method_on__e5a2f8ad3cd6c871
+    %t16 = load bool %t15
+    br_if %t16, b5, b3
+  block b3 entry:
+    %t13 = const &bool $__ferret_init_done_generics_test_method_on__e5a2f8ad3cd6c871
+    %t14 = const bool 1
+    store %t13, %t14
+    ret
+  block b5 init_done:
+    ret
+}

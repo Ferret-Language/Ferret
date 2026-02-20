@@ -1,0 +1,12 @@
+// EXPECT: FAIL (error triggered when generic body is checked at concrete instantiation)
+fn broken<T>(x: T) -> T {
+    return x + 1;
+}
+
+fn main() -> i32 {
+    let b := broken(true);
+    if b {
+        return 0;
+    }
+    return 1;
+}

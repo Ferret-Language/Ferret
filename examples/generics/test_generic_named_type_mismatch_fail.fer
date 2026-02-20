@@ -1,0 +1,13 @@
+// EXPECT: FAIL (different generic named type instantiations are incompatible)
+type Box<T> struct {
+    .Value: T
+};
+
+fn takeIntBox(b: Box<i32>) -> i32 {
+    return b.Value;
+}
+
+fn main() -> i32 {
+    let s := { .Value = "x" } as Box<str>;
+    return takeIntBox(s);
+}

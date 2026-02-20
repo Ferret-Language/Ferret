@@ -2,10 +2,14 @@ package typechecker
 
 import (
 	"compiler/internal/context_v2"
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
+	"compiler/internal/source"
 	"compiler/internal/types"
+	"fmt"
+	"strings"
 )
 
 // PrepareGenericFunctionInstantiation re-checks a generic function body with
@@ -39,9 +43,17 @@ func PrepareGenericFunctionInstantiation(
 	addParamsToScope(ctx, mod, funcScope, decl.Type.Params)
 	checkDefaultParameterValues(ctx, mod, decl.Type.Params)
 
+	before := snapshotDiagnostics(ctx)
 	if decl.Body != nil {
 		checkBlock(ctx, mod, decl.Body)
 	}
+	annotateGenericInstantiationDiagnostics(
+		ctx,
+		before,
+		inst.CallSite,
+		"instantiated from this call",
+		formatTypeArgBindings(decl.TypeParams, inst.TypeArgs),
+	)
 
 	return true
 }
@@ -87,11 +99,140 @@ func PrepareGenericMethodInstantiation(
 	addParamsToScope(ctx, mod, methodScope, decl.Type.Params)
 	checkDefaultParameterValues(ctx, mod, decl.Type.Params)
 
+	before := snapshotDiagnostics(ctx)
 	if decl.Body != nil {
 		checkBlock(ctx, mod, decl.Body)
 	}
+	annotateGenericInstantiationDiagnostics(
+		ctx,
+		before,
+		inst.CallSite,
+		"instantiated from this call",
+		formatTypeArgBindings(decl.TypeParams, inst.TypeArgs),
+	)
 
 	return true
+}
+
+func snapshotDiagnostics(ctx *context_v2.CompilerContext) map[*diagnostics.Diagnostic]struct{} {
+	seen := make(map[*diagnostics.Diagnostic]struct{})
+	if ctx == nil || ctx.Diagnostics == nil {
+		return seen
+	}
+	for _, diag := range ctx.Diagnostics.Diagnostics() {
+		if diag == nil {
+			continue
+		}
+		seen[diag] = struct{}{}
+	}
+	return seen
+}
+
+func annotateGenericInstantiationDiagnostics(
+	ctx *context_v2.CompilerContext,
+	before map[*diagnostics.Diagnostic]struct{},
+	callSite *source.Location,
+	callSiteLabel string,
+	typeArgSummary string,
+) {
+	if ctx == nil || ctx.Diagnostics == nil || callSite == nil {
+		return
+	}
+	for _, diag := range ctx.Diagnostics.Diagnostics() {
+		if diag == nil {
+			continue
+		}
+		if _, existed := before[diag]; existed {
+			continue
+		}
+		if diag.Severity != diagnostics.Error {
+			continue
+		}
+		if !hasPrimaryLabel(diag) {
+			continue
+		}
+		if !hasSecondaryLabel(diag, callSite, callSiteLabel) {
+			diag.WithSecondaryLabel(callSite, callSiteLabel)
+		}
+		if typeArgSummary != "" {
+			diag.WithNote(fmt.Sprintf("generic instantiation: %s", typeArgSummary))
+		}
+	}
+}
+
+func hasPrimaryLabel(diag *diagnostics.Diagnostic) bool {
+	if diag == nil {
+		return false
+	}
+	for _, label := range diag.Labels {
+		if label.Style == diagnostics.Primary {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSecondaryLabel(diag *diagnostics.Diagnostic, loc *source.Location, msg string) bool {
+	if diag == nil || loc == nil {
+		return false
+	}
+	for _, label := range diag.Labels {
+		if label.Style != diagnostics.Secondary {
+			continue
+		}
+		if label.Message != msg {
+			continue
+		}
+		if sameLocation(label.Location, loc) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameLocation(a, b *source.Location) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Start == nil || a.End == nil || b.Start == nil || b.End == nil {
+		return false
+	}
+	aFile := ""
+	if a.Filename != nil {
+		aFile = *a.Filename
+	}
+	bFile := ""
+	if b.Filename != nil {
+		bFile = *b.Filename
+	}
+	return aFile == bFile &&
+		a.Start.Line == b.Start.Line &&
+		a.Start.Column == b.Start.Column &&
+		a.End.Line == b.End.Line &&
+		a.End.Column == b.End.Column
+}
+
+func formatTypeArgBindings(typeParams []*ast.TypeParam, typeArgs []types.SemType) string {
+	if len(typeParams) == 0 || len(typeArgs) == 0 {
+		return ""
+	}
+	limit := len(typeParams)
+	if len(typeArgs) < limit {
+		limit = len(typeArgs)
+	}
+	parts := make([]string, 0, limit)
+	for i := 0; i < limit; i++ {
+		name := "?"
+		if tp := typeParams[i]; tp != nil && tp.Name != nil && tp.Name.Name != "" {
+			name = tp.Name.Name
+		}
+		arg := "unknown"
+		if typeArgs[i] != nil {
+			arg = typeArgs[i].String()
+		}
+		parts = append(parts, fmt.Sprintf("%s = %s", name, arg))
+	}
+	return strings.Join(parts, ", ")
 }
 
 func bindReceiverInstantiatedTypeParams(

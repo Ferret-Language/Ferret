@@ -765,6 +765,44 @@ func getConversionError(source, target types.SemType, compatibility TypeCompatib
 	}
 }
 
+func getConversionErrorWithContext(
+	ctx *context_v2.CompilerContext,
+	mod *context_v2.Module,
+	source, target types.SemType,
+	compatibility TypeCompatibility,
+) string {
+	sourceStr := diagnosticTypeString(ctx, mod, source)
+	targetStr := diagnosticTypeString(ctx, mod, target)
+
+	switch compatibility {
+	case Incompatible:
+		return fmt.Sprintf("cannot use type '%s' as type '%s'", sourceStr, targetStr)
+	case ExplicitCastable:
+		// Check if target has smaller bit size than source
+		srcName, srcOk := types.GetPrimitiveName(source)
+		tgtName, tgtOk := types.GetPrimitiveName(target)
+
+		msg := fmt.Sprintf("cannot implicitly convert '%s' to '%s'", sourceStr, targetStr)
+
+		if srcOk && tgtOk {
+			srcBits := types.GetNumberBitSize(srcName)
+			tgtBits := types.GetNumberBitSize(tgtName)
+			if tgtBits < srcBits {
+				return fmt.Sprintf("%s (possible data loss)", msg)
+			}
+		}
+		// Same size but different types (e.g., byte vs u8, or named types)
+		return msg
+
+	case Identical, ImplicitCastable:
+		// These are not errors
+		return ""
+
+	default:
+		return fmt.Sprintf("type mismatch: '%s' and '%s'", sourceStr, targetStr)
+	}
+}
+
 // countSignificantDigits counts the number of significant digits in a float literal string
 // Ignores leading zeros before first non-zero digit and trailing zeros after decimal point
 func countSignificantDigits(floatStr string) int {

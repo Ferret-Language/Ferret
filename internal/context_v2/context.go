@@ -115,6 +115,7 @@ type GenericFunctionInstantiation struct {
 	Decl     *ast.FuncDecl
 	TypeArgs []types.SemType
 	FuncType *types.FunctionType
+	CallSite *source.Location
 }
 
 // GenericMethodInstantiation describes one concrete method specialization to emit.
@@ -124,6 +125,7 @@ type GenericMethodInstantiation struct {
 	ReceiverTypeName string
 	TypeArgs         []types.SemType
 	FuncType         *types.FunctionType
+	CallSite         *source.Location
 }
 
 // GenericNamedTypeInstantiation tracks one concrete generic named type instance
@@ -364,7 +366,10 @@ func (mod *Module) RegisterGenericFunctionInstantiation(inst *GenericFunctionIns
 	if mod.GenericFuncInsts == nil {
 		mod.GenericFuncInsts = make(map[string]*GenericFunctionInstantiation)
 	}
-	if _, exists := mod.GenericFuncInsts[inst.Name]; exists {
+	if existing, exists := mod.GenericFuncInsts[inst.Name]; exists {
+		if existing != nil && existing.CallSite == nil && inst.CallSite != nil {
+			existing.CallSite = inst.CallSite
+		}
 		return
 	}
 	cp := *inst
@@ -392,7 +397,10 @@ func (mod *Module) RegisterGenericMethodInstantiation(inst *GenericMethodInstant
 	if mod.GenericMethodInsts == nil {
 		mod.GenericMethodInsts = make(map[string]*GenericMethodInstantiation)
 	}
-	if _, exists := mod.GenericMethodInsts[key]; exists {
+	if existing, exists := mod.GenericMethodInsts[key]; exists {
+		if existing != nil && existing.CallSite == nil && inst.CallSite != nil {
+			existing.CallSite = inst.CallSite
+		}
 		return
 	}
 

@@ -16,13 +16,14 @@ fn test<K: comparable, V>(v: MapView<K, V>) {
 fn main() -> i32 {
     let m: map[str]i32 = {} as map[str]i32;
     //put(m, "a", 1);
+    m["a"] = 1;
     set(&mut m, "b", 2);
 
     let total := size(&m);
     let value := get(&m, "a");
 
     if total > 0 && value is ?i32 {
-        return 0;
+        return 1;
     }
     return 0;
 }

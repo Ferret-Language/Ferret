@@ -1,9 +1,17 @@
+import "std/io";
 // EXPECT: PASS
 type Box<T> struct {
     .Value: T
 };
 
-fn main() -> i32 {
+type Point struct {
+    .X: i32,
+    .Y: i32
+};
+
+fn main() {
     let b := { .Value = 41 } as Box<i32>;
-    return b.Value + 1;
+    io::Println(b.Value + 1);
+    let p : Box<Point>  = { .Value = { .X = 10, .Y = 12 } };
+    io::Println(p.Value.X);
 }

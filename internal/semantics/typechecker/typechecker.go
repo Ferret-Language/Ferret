@@ -307,8 +307,8 @@ func checkDefaultParameterValues(ctx *context_v2.CompilerContext, mod *context_v
 				mod.FilePath,
 				param.Default.Loc(),
 				paramName,
-				paramType.String(),
-				types.ResolveUntypedType(defaultType, paramType).String(),
+				diagnosticTypeString(ctx, mod, paramType),
+				diagnosticTypeString(ctx, mod, types.ResolveUntypedType(defaultType, paramType)),
 			)
 			diag = addExplicitCastHint(ctx, diag, paramType, compatibility, param.Default)
 			ctx.Diagnostics.Add(diag)
@@ -691,7 +691,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 							diag := diagnostics.NewError("error return type mismatch").
 								WithCode(diagnostics.ErrTypeMismatch).
 								WithPrimaryLabel(n.Result.Loc(),
-									fmt.Sprintf("expected error type %s, found %s", resultType.Err.String(), returnedDesc))
+									fmt.Sprintf("expected error type %s, found %s", diagnosticTypeString(ctx, mod, resultType.Err), diagnosticTypeString(ctx, mod, returnedDesc)))
 							diag = addExplicitCastHint(ctx, diag, resultType.Err, compatibility, n.Result)
 							diag = addDerefHintIfNeeded(ctx, mod, diag, resultType.Err, returnedType, n.Result)
 							ctx.Diagnostics.Add(diag)
@@ -723,7 +723,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 							diag := diagnostics.NewError("return type mismatch").
 								WithCode(diagnostics.ErrTypeMismatch).
 								WithPrimaryLabel(n.Result.Loc(),
-									fmt.Sprintf("expected %s, found %s", resultType.Ok.String(), returnedType.String()))
+									fmt.Sprintf("expected %s, found %s", diagnosticTypeString(ctx, mod, resultType.Ok), diagnosticTypeString(ctx, mod, returnedType)))
 							diag = addExplicitCastHint(ctx, diag, resultType.Ok, compatibility, n.Result)
 							diag = addDerefHintIfNeeded(ctx, mod, diag, resultType.Ok, returnedType, n.Result)
 							ctx.Diagnostics.Add(diag)
@@ -735,7 +735,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 				if n.IsError {
 					// Cannot use error return syntax in non-Result function
 					ctx.Diagnostics.Add(
-						diagnostics.InvalidErrorReturn(mod.FilePath, n.Loc(), expectedReturnType.String()),
+						diagnostics.InvalidErrorReturn(mod.FilePath, n.Loc(), diagnosticTypeString(ctx, mod, expectedReturnType)),
 					)
 				} else {
 					// Normal return type checking
@@ -752,7 +752,7 @@ func checkNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, node ast
 							diag := diagnostics.NewError("type mismatch in return statement").
 								WithCode(diagnostics.ErrTypeMismatch).
 								WithPrimaryLabel(n.Result.Loc(),
-									fmt.Sprintf("expected %s, found %s", expectedReturnType.String(), returnedType.String()))
+									fmt.Sprintf("expected %s, found %s", diagnosticTypeString(ctx, mod, expectedReturnType), diagnosticTypeString(ctx, mod, returnedType)))
 							diag = addExplicitCastHint(ctx, diag, expectedReturnType, compatibility, n.Result)
 							diag = addDerefHintIfNeeded(ctx, mod, diag, expectedReturnType, returnedType, n.Result)
 							ctx.Diagnostics.Add(diag)
@@ -2440,9 +2440,9 @@ func validateStructLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 			}
 			valueType := inferExprType(ctx, mod, expr)
 			compat := checkTypeCompatibility(valueType, expectedType)
-			diag := diagnostics.NewError(fmt.Sprintf("cannot use type '%s' as type '%s' in field '.%s'", valueType.String(), expectedType.String(), fieldName)).
+			diag := diagnostics.NewError(fmt.Sprintf("cannot use type '%s' as type '%s' in field '.%s'", diagnosticTypeString(ctx, mod, valueType), diagnosticTypeString(ctx, mod, expectedType), fieldName)).
 				WithCode(diagnostics.ErrTypeMismatch).
-				WithPrimaryLabel(expr.Loc(), fmt.Sprintf("type '%s'", valueType.String()))
+				WithPrimaryLabel(expr.Loc(), fmt.Sprintf("type '%s'", diagnosticTypeString(ctx, mod, valueType)))
 			diag = addExplicitCastHint(ctx, diag, expectedType, compat, expr)
 			diag = addDerefHintIfNeeded(ctx, mod, diag, expectedType, valueType, expr)
 			ctx.Diagnostics.Add(diag)
@@ -2451,7 +2451,7 @@ func validateStructLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 
 	// Report missing fields with note for details
 	if note := formatStructCompatibilityNote(missingFields, nil, true); note != "" {
-		typeName := originalType.String()
+		typeName := diagnosticTypeString(ctx, mod, originalType)
 		ctx.Diagnostics.Add(
 			diagnostics.NewError(fmt.Sprintf("struct literal has missing %s", str.Pluralize("field", "fields", len(missingFields)))).
 				WithCode(diagnostics.ErrMissingField).
@@ -5039,9 +5039,9 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 			return
 		}
 		// Requires explicit cast - use centralized hint system
-		diag := diagnostics.NewError(getConversionError(rhsType, leftType, compatibility)).
-			WithPrimaryLabel(rightNode.Loc(), fmt.Sprintf("type '%s'", rhsType.String())).
-			WithSecondaryLabel(leftNode.Loc(), fmt.Sprintf("type '%s'", leftType.String()))
+		diag := diagnostics.NewError(getConversionErrorWithContext(ctx, mod, rhsType, leftType, compatibility)).
+			WithPrimaryLabel(rightNode.Loc(), fmt.Sprintf("type '%s'", diagnosticTypeString(ctx, mod, rhsType))).
+			WithSecondaryLabel(leftNode.Loc(), fmt.Sprintf("type '%s'", diagnosticTypeString(ctx, mod, leftType)))
 		diag = addExplicitCastHint(ctx, diag, leftType, compatibility, rightNode)
 		diag = addDerefHintIfNeeded(ctx, mod, diag, leftType, rhsType, rightNode)
 		ctx.Diagnostics.Add(diag)
@@ -5055,16 +5055,16 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 		if leftIface, isIface := leftUnwrapped.(*types.InterfaceType); isIface {
 			_, missingMethods := analyzeInterfaceCompatibility(ctx, mod, rhsType, leftIface)
 			if len(missingMethods) > 0 {
-				errorMsg := getConversionError(rhsType, leftType, compatibility)
+				errorMsg := getConversionErrorWithContext(ctx, mod, rhsType, leftType, compatibility)
 				diag := diagnostics.NewError(errorMsg).
 					WithHelp(fmt.Sprintf("missing methods: %s", strings.Join(missingMethods, ", ")))
 
 				if leftNode != nil {
 					valueDesc := formatValueDescription(rhsType, rightNode)
 					diag = diag.WithPrimaryLabel(rightNode.Loc(), valueDesc).
-						WithSecondaryLabel(leftNode.Loc(), fmt.Sprintf("type '%s'", leftType.String()))
+						WithSecondaryLabel(leftNode.Loc(), fmt.Sprintf("type '%s'", diagnosticTypeString(ctx, mod, leftType)))
 				} else {
-					diag = diag.WithPrimaryLabel(rightNode.Loc(), fmt.Sprintf("expected '%s', got '%s'", leftType.String(), rhsType.String()))
+					diag = diag.WithPrimaryLabel(rightNode.Loc(), fmt.Sprintf("expected '%s', got '%s'", diagnosticTypeString(ctx, mod, leftType), diagnosticTypeString(ctx, mod, rhsType)))
 				}
 
 				diag = addDerefHintIfNeeded(ctx, mod, diag, leftType, rhsType, rightNode)
@@ -5089,14 +5089,14 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 		if types.IsUntyped(rhsType) {
 			// For untyped literals, use more intuitive message
 			if types.IsUntypedInt(rhsType) {
-				errorMsg = fmt.Sprintf("cannot use integer literal as type '%s'", leftType.String())
+				errorMsg = fmt.Sprintf("cannot use integer literal as type '%s'", diagnosticTypeString(ctx, mod, leftType))
 			} else if types.IsUntypedFloat(rhsType) {
-				errorMsg = fmt.Sprintf("cannot use float literal as type '%s'", leftType.String())
+				errorMsg = fmt.Sprintf("cannot use float literal as type '%s'", diagnosticTypeString(ctx, mod, leftType))
 			} else {
-				errorMsg = getConversionError(rhsType, leftType, compatibility)
+				errorMsg = getConversionErrorWithContext(ctx, mod, rhsType, leftType, compatibility)
 			}
 		} else {
-			errorMsg = getConversionError(rhsType, leftType, compatibility)
+			errorMsg = getConversionErrorWithContext(ctx, mod, rhsType, leftType, compatibility)
 		}
 
 		diag := diagnostics.NewError(errorMsg)
@@ -5106,9 +5106,9 @@ func checkAssignLike(ctx *context_v2.CompilerContext, mod *context_v2.Module, le
 			// Format value description (special handling for untyped literals)
 			valueDesc := formatValueDescription(rhsType, rightNode)
 			diag = diag.WithPrimaryLabel(rightNode.Loc(), valueDesc).
-				WithSecondaryLabel(leftNode.Loc(), fmt.Sprintf("type '%s'", leftType.String()))
+				WithSecondaryLabel(leftNode.Loc(), fmt.Sprintf("type '%s'", diagnosticTypeString(ctx, mod, leftType)))
 		} else {
-			diag = diag.WithPrimaryLabel(rightNode.Loc(), fmt.Sprintf("expected '%s', got '%s'", leftType.String(), rhsType.String()))
+			diag = diag.WithPrimaryLabel(rightNode.Loc(), fmt.Sprintf("expected '%s', got '%s'", diagnosticTypeString(ctx, mod, leftType), diagnosticTypeString(ctx, mod, rhsType)))
 		}
 
 		// Add helpful note for struct compatibility issues
@@ -5188,15 +5188,15 @@ func pipeArgTypeMismatchDiag(ctx *context_v2.CompilerContext, mod *context_v2.Mo
 		WithCode(diagnostics.ErrTypeMismatch)
 
 	if stageLoc != nil {
-		diag = diag.WithPrimaryLabel(stageLoc, fmt.Sprintf("this stage returns %s", actualDesc.String()))
+		diag = diag.WithPrimaryLabel(stageLoc, fmt.Sprintf("this stage returns %s", diagnosticTypeString(ctx, mod, actualDesc)))
 	} else if arg != nil && arg.Loc() != nil {
-		diag = diag.WithPrimaryLabel(arg.Loc(), fmt.Sprintf("this value has type %s", actualDesc.String()))
+		diag = diag.WithPrimaryLabel(arg.Loc(), fmt.Sprintf("this value has type %s", diagnosticTypeString(ctx, mod, actualDesc)))
 	}
 
 	if targetLoc != nil {
-		diag = diag.WithSecondaryLabel(targetLoc, fmt.Sprintf("%s expects %s", paramLabel, expected.String()))
+		diag = diag.WithSecondaryLabel(targetLoc, fmt.Sprintf("%s expects %s", paramLabel, diagnosticTypeString(ctx, mod, expected)))
 	} else if arg != nil && arg.Loc() != nil {
-		diag = diag.WithSecondaryLabel(arg.Loc(), fmt.Sprintf("%s expects %s", paramLabel, expected.String()))
+		diag = diag.WithSecondaryLabel(arg.Loc(), fmt.Sprintf("%s expects %s", paramLabel, diagnosticTypeString(ctx, mod, expected)))
 	}
 
 	diag = addExplicitCastHint(ctx, diag, expected, compatibility, arg)
@@ -6216,6 +6216,7 @@ func registerGenericCallInstantiation(
 			ReceiverTypeName: info.ReceiverTypeName,
 			TypeArgs:         inst.TypeArgs,
 			FuncType:         inst.FuncType,
+			CallSite:         expr.Loc(),
 		})
 		return
 	}
@@ -6255,6 +6256,7 @@ func registerGenericCallInstantiation(
 		Decl:     info.Decl,
 		TypeArgs: inst.TypeArgs,
 		FuncType: inst.FuncType,
+		CallSite: expr.Loc(),
 	})
 }
 
@@ -6648,8 +6650,8 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 				mod.FilePath,
 				arg.Loc(),
 				param.Name,
-				param.Type.String(),
-				argTypeDesc.String(),
+				diagnosticTypeString(ctx, mod, param.Type),
+				diagnosticTypeString(ctx, mod, argTypeDesc),
 			)
 			diag = addExplicitCastHint(ctx, diag, param.Type, compatibility, arg)
 			diag = addDerefHintIfNeeded(ctx, mod, diag, param.Type, argType, arg)
@@ -6691,8 +6693,8 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 						mod.FilePath,
 						spread.Loc(),
 						variadicParam.Name,
-						sliceType.String(),
-						argTypeDesc.String(),
+						diagnosticTypeString(ctx, mod, sliceType),
+						diagnosticTypeString(ctx, mod, argTypeDesc),
 					)
 					diag = addExplicitCastHint(ctx, diag, sliceType, compatibility, spread.X)
 					ctx.Diagnostics.Add(diag)
@@ -6750,8 +6752,8 @@ func validateCallArgumentTypes(ctx *context_v2.CompilerContext, mod *context_v2.
 					mod.FilePath,
 					arg.Loc(),
 					variadicParam.Name,
-					variadicElemType.String(),
-					argTypeDesc.String(),
+					diagnosticTypeString(ctx, mod, variadicElemType),
+					diagnosticTypeString(ctx, mod, argTypeDesc),
 				)
 				diag = addExplicitCastHint(ctx, diag, variadicElemType, compatibility, arg)
 				diag = addDerefHintIfNeeded(ctx, mod, diag, variadicElemType, argType, arg)

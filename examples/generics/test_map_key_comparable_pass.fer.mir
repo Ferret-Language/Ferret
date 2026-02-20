@@ -1,0 +1,81 @@
+module generics/test_map_key_comparable_pass
+
+globals
+  __ferret_init_done_generics_test_map_key_co_429516b0c8f1345a: bool
+
+fn main() -> i32 {
+  block b1 entry:
+    call __ferret_init() : void
+    %t1 = alloca map[str]i32
+    %t2 = const u64 0
+    %t3 = cast map[str]i32 %t2
+    %t4 = call ferret_map_clone(%t3) : map[str]i32
+    store %t1, %t4
+    %t5 = const i64 8
+    %t6 = const i64 4
+    %t7 = const &void $typedesc1
+    %t8 = cast &u8 %t7
+    %t9 = const &void $typedesc2
+    %t10 = cast &u8 %t9
+    %t11 = call ferret_map_new_str(%t5, %t6, %t8, %t10) : map[str]i32
+    call ferret_map_assign(%t1, %t11) : void
+    %t12 = load map[str]i32 %t1
+    %t13 = cast u64 %t12
+    %t14 = const str b
+    %t15 = const i32 2
+    %t16 = call set(%t1, %t13, %t14, %t15) : bool
+    %t17 = alloca i32
+    %t18 = alloca union {&map[str]i32, map[str]i32}
+    %t19 = ptr_add i32 %t18, 0
+    %t20 = const i32 0
+    store %t19, %t20
+    %t21 = ptr_add &map[str]i32 %t18, 4
+    store %t21, %t1
+    %t22 = call size(%t18) : i32
+    store %t17, %t22
+    %t23 = alloca ?i32
+    %t24 = alloca union {&map[str]i32, map[str]i32}
+    %t25 = ptr_add i32 %t24, 0
+    %t26 = const i32 0
+    store %t25, %t26
+    %t27 = ptr_add &map[str]i32 %t24, 4
+    store %t27, %t1
+    %t28 = const str a
+    %t29 = call get(%t24, %t28) : ?i32
+    store %t23, %t29
+    %t30 = alloca bool
+    %t31 = load i32 %t17
+    %t32 = const i32 0
+    %t33 = > bool %t31, %t32
+    %t34 = const bool 0
+    store %t30, %t34
+    br_if %t33, b2, b3
+  block b2 and_or.right:
+    %t35 = load ?i32 %t23
+    %t36 = const bool 1
+    store %t30, %t36
+    br b3
+  block b3 and_or.merge:
+    %t37 = load bool %t30
+    br_if %t37, b4, b5
+  block b4 if.then:
+    %t38 = const i32 0
+    ret %t38
+  block b5 if.end:
+    %t39 = const i32 0
+    ret %t39
+}
+
+fn __ferret_init() -> void {
+  block b7 init_guard:
+    %t42 = const &bool $__ferret_init_done_generics_test_map_key_co_429516b0c8f1345a
+    %t43 = load bool %t42
+    br_if %t43, b8, b6
+  block b6 entry:
+    %t40 = const &bool $__ferret_init_done_generics_test_map_key_co_429516b0c8f1345a
+    %t41 = const bool 1
+    store %t40, %t41
+    ret
+  block b8 init_done:
+    ret
+}
