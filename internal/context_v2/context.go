@@ -81,15 +81,16 @@ type Module struct {
 	InDeferContext            bool             // True when type-checking a defer statement (skip Result validation)
 	InErrorPropagate          bool             // True when type-checking inner expr of !! (skip UncaughtError)
 
-	Imports           map[string]*Import               // Resolved imports
-	ImportAliasMap    map[string]string                // alias/name -> import path mapping for module access
-	ExprTypes         map[ast.Expression]types.SemType // Type of each expression (filled during type checking)
-	NarrowedExprTypes map[string]types.SemType         // Narrowed type for expression keys during type checking
-	CallResolvedArgs  map[*ast.CallExpr][]ast.Expression
-	PipeResolvedArgs  map[*ast.PipeExpr][]ast.Expression
-	GenericCallInfo   map[*ast.CallExpr]*GenericCallInfo
-	PipeGenericCalls  map[*ast.PipeExpr]*GenericCallInfo
-	GenericFuncInsts  map[string]*GenericFunctionInstantiation
+	Imports            map[string]*Import               // Resolved imports
+	ImportAliasMap     map[string]string                // alias/name -> import path mapping for module access
+	ExprTypes          map[ast.Expression]types.SemType // Type of each expression (filled during type checking)
+	NarrowedExprTypes  map[string]types.SemType         // Narrowed type for expression keys during type checking
+	CallResolvedArgs   map[*ast.CallExpr][]ast.Expression
+	PipeResolvedArgs   map[*ast.PipeExpr][]ast.Expression
+	GenericCallInfo    map[*ast.CallExpr]*GenericCallInfo
+	PipeGenericCalls   map[*ast.PipeExpr]*GenericCallInfo
+	GenericFuncInsts   map[string]*GenericFunctionInstantiation
+	GenericMethodInsts map[string]*GenericMethodInstantiation
 
 	// Source metadata
 	Content string // Raw source code (for diagnostics)
@@ -113,6 +114,15 @@ type GenericFunctionInstantiation struct {
 	Decl     *ast.FuncDecl
 	TypeArgs []types.SemType
 	FuncType *types.FunctionType
+}
+
+// GenericMethodInstantiation describes one concrete method specialization to emit.
+type GenericMethodInstantiation struct {
+	Name             string
+	Decl             *ast.MethodDecl
+	ReceiverTypeName string
+	TypeArgs         []types.SemType
+	FuncType         *types.FunctionType
 }
 
 // EnterScope switches to a new scope and returns a function to restore the old scope.
@@ -356,6 +366,35 @@ func (mod *Module) RegisterGenericFunctionInstantiation(inst *GenericFunctionIns
 	mod.GenericFuncInsts[inst.Name] = &cp
 }
 
+// RegisterGenericMethodInstantiation records one concrete method specialization to emit.
+func (mod *Module) RegisterGenericMethodInstantiation(inst *GenericMethodInstantiation) {
+	if mod == nil || inst == nil || inst.Name == "" || inst.Decl == nil {
+		return
+	}
+
+	key := inst.Name
+	if inst.ReceiverTypeName != "" {
+		key = inst.ReceiverTypeName + "::" + inst.Name
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.GenericMethodInsts == nil {
+		mod.GenericMethodInsts = make(map[string]*GenericMethodInstantiation)
+	}
+	if _, exists := mod.GenericMethodInsts[key]; exists {
+		return
+	}
+
+	cp := *inst
+	if inst.TypeArgs != nil {
+		cp.TypeArgs = make([]types.SemType, len(inst.TypeArgs))
+		copy(cp.TypeArgs, inst.TypeArgs)
+	}
+	mod.GenericMethodInsts[key] = &cp
+}
+
 // GenericFunctionInstantiations returns all concrete specializations for this module.
 func (mod *Module) GenericFunctionInstantiations() []*GenericFunctionInstantiation {
 	if mod == nil {
@@ -378,6 +417,42 @@ func (mod *Module) GenericFunctionInstantiations() []*GenericFunctionInstantiati
 	out := make([]*GenericFunctionInstantiation, 0, len(keys))
 	for _, name := range keys {
 		inst := mod.GenericFuncInsts[name]
+		if inst == nil {
+			continue
+		}
+		cp := *inst
+		if inst.TypeArgs != nil {
+			cp.TypeArgs = make([]types.SemType, len(inst.TypeArgs))
+			copy(cp.TypeArgs, inst.TypeArgs)
+		}
+		out = append(out, &cp)
+	}
+
+	return out
+}
+
+// GenericMethodInstantiations returns all concrete method specializations for this module.
+func (mod *Module) GenericMethodInstantiations() []*GenericMethodInstantiation {
+	if mod == nil {
+		return nil
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if len(mod.GenericMethodInsts) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(mod.GenericMethodInsts))
+	for name := range mod.GenericMethodInsts {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+
+	out := make([]*GenericMethodInstantiation, 0, len(keys))
+	for _, key := range keys {
+		inst := mod.GenericMethodInsts[key]
 		if inst == nil {
 			continue
 		}

@@ -13,11 +13,14 @@ import (
 )
 
 type genericCallableInfo struct {
-	TypeParams []*ast.TypeParam
-	FuncType   *types.FunctionType
-	Decl       *ast.FuncDecl
-	DefModule  *context_v2.Module
-	IsMethod   bool
+	TypeParams       []*ast.TypeParam
+	FuncType         *types.FunctionType
+	Decl             *ast.FuncDecl
+	DefModule        *context_v2.Module
+	IsMethod         bool
+	MethodInfo       *symbols.MethodInfo
+	TypeSym          *symbols.Symbol
+	ReceiverTypeName string
 }
 
 func resolveGenericCallable(ctx *context_v2.CompilerContext, mod *context_v2.Module, fun ast.Expression) (genericCallableInfo, bool) {
@@ -65,7 +68,7 @@ func resolveGenericCallable(ctx *context_v2.CompilerContext, mod *context_v2.Mod
 		if !ok {
 			return genericCallableInfo{}, false
 		}
-		typeSym, found := lookupTypeSymbol(ctx, mod, named.Name)
+		typeSym, defMod, found := lookupTypeSymbolWithModule(ctx, mod, named.Name)
 		if !found || typeSym == nil || typeSym.Methods == nil {
 			return genericCallableInfo{}, false
 		}
@@ -74,9 +77,13 @@ func resolveGenericCallable(ctx *context_v2.CompilerContext, mod *context_v2.Mod
 			return genericCallableInfo{}, false
 		}
 		return genericCallableInfo{
-			TypeParams: method.Decl.TypeParams,
-			FuncType:   method.FuncType,
-			IsMethod:   true,
+			TypeParams:       method.Decl.TypeParams,
+			FuncType:         method.FuncType,
+			IsMethod:         true,
+			MethodInfo:       method,
+			TypeSym:          typeSym,
+			DefModule:        defMod,
+			ReceiverTypeName: named.Name,
 		}, true
 	}
 
@@ -100,6 +107,28 @@ func resolveScopeResolutionModule(ctx *context_v2.CompilerContext, mod *context_
 		return nil
 	}
 	return importedMod
+}
+
+func lookupTypeSymbolWithModule(ctx *context_v2.CompilerContext, mod *context_v2.Module, typeName string) (*symbols.Symbol, *context_v2.Module, bool) {
+	if mod == nil || typeName == "" {
+		return nil, nil, false
+	}
+	if sym, found := mod.ModuleScope.Lookup(typeName); found {
+		return sym, mod, true
+	}
+	if ctx == nil {
+		return nil, nil, false
+	}
+	for _, importPath := range mod.ImportAliasMap {
+		importedMod, exists := ctx.GetModule(importPath)
+		if !exists || importedMod == nil || importedMod.ModuleScope == nil {
+			continue
+		}
+		if sym, ok := importedMod.ModuleScope.GetSymbol(typeName); ok && sym.Kind == symbols.SymbolType {
+			return sym, importedMod, true
+		}
+	}
+	return nil, nil, false
 }
 
 func functionTypeFromSemType(typ types.SemType) *types.FunctionType {
@@ -256,6 +285,27 @@ func mangleGenericFunctionName(baseName string, typeArgs []types.SemType) string
 		_, _ = h.Write([]byte(arg.String()))
 	}
 	return fmt.Sprintf("__gen_%s_%x", baseName, h.Sum64())
+}
+
+func mangleGenericMethodName(receiverTypeName, methodName string, typeArgs []types.SemType) string {
+	if methodName == "" {
+		return ""
+	}
+	h := fnv.New64a()
+	if receiverTypeName != "" {
+		_, _ = h.Write([]byte(receiverTypeName))
+		_, _ = h.Write([]byte("|"))
+	}
+	_, _ = h.Write([]byte(methodName))
+	for _, arg := range typeArgs {
+		_, _ = h.Write([]byte("|"))
+		if arg == nil {
+			_, _ = h.Write([]byte("<nil>"))
+			continue
+		}
+		_, _ = h.Write([]byte(arg.String()))
+	}
+	return fmt.Sprintf("__genm_%s_%x", methodName, h.Sum64())
 }
 
 func genericParamTypeAt(funcType *types.FunctionType, index int) types.SemType {

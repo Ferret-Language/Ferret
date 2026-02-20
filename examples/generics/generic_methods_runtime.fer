@@ -1,0 +1,25 @@
+import "std/io";
+
+constraint numeric = union {
+    i32, i64
+};
+
+type Counter struct {
+    .Value: i32
+};
+
+fn (c: Counter) add<T: numeric>(x: T, y: T) -> T {
+    return x + y;
+}
+
+fn (c: Counter) id<T>(x: T) -> T {
+    return x;
+}
+
+fn main() -> i32 {
+    let c := { .Value = 1 } as Counter;
+    let a := c.add(10, 20);
+    let b := c.id<i64>(2 as i64);
+    io::Println("generic method runtime ok");
+    return a + (b as i32);
+}

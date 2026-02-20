@@ -44,6 +44,10 @@ func (g *Generator) GenerateModule() *hir.Module {
 			// Generic function templates are lowered as concrete instantiations only.
 			continue
 		}
+		if m, ok := node.(*ast.MethodDecl); ok && m != nil && len(m.TypeParams) > 0 {
+			// Generic method templates are lowered as concrete instantiations only.
+			continue
+		}
 		if lowered := g.lowerNode(node); lowered != nil {
 			items = append(items, lowered)
 		}
@@ -61,18 +65,37 @@ func (g *Generator) appendGenericFunctionInstantiations(items []hir.Node) []hir.
 	if g == nil || g.mod == nil {
 		return items
 	}
-	processed := make(map[string]bool)
+	processedFuncs := make(map[string]bool)
+	processedMethods := make(map[string]bool)
 
 	for {
 		insts := g.mod.GenericFunctionInstantiations()
+		methodInsts := g.mod.GenericMethodInstantiations()
 		added := false
 		for _, inst := range insts {
-			if inst == nil || inst.Name == "" || processed[inst.Name] {
+			if inst == nil || inst.Name == "" || processedFuncs[inst.Name] {
 				continue
 			}
-			processed[inst.Name] = true
+			processedFuncs[inst.Name] = true
 			added = true
 			if lowered := g.lowerGenericFunctionInstantiation(inst); lowered != nil {
+				items = append(items, lowered)
+			}
+		}
+		for _, inst := range methodInsts {
+			if inst == nil || inst.Name == "" || inst.Decl == nil {
+				continue
+			}
+			key := inst.Name
+			if inst.ReceiverTypeName != "" {
+				key = inst.ReceiverTypeName + "::" + inst.Name
+			}
+			if processedMethods[key] {
+				continue
+			}
+			processedMethods[key] = true
+			added = true
+			if lowered := g.lowerGenericMethodInstantiation(inst); lowered != nil {
 				items = append(items, lowered)
 			}
 		}
@@ -473,8 +496,50 @@ func (g *Generator) lowerGenericFunctionInstantiation(inst *context_v2.GenericFu
 	}
 }
 
+func (g *Generator) lowerGenericMethodInstantiation(inst *context_v2.GenericMethodInstantiation) *hir.MethodDecl {
+	if g == nil || g.ctx == nil || g.mod == nil || inst == nil || inst.Decl == nil || inst.Decl.Name == nil {
+		return nil
+	}
+	if !typechecker.PrepareGenericMethodInstantiation(g.ctx, g.mod, inst) {
+		return nil
+	}
+
+	fnType := inst.FuncType
+	if fnType == nil {
+		fnType = g.resolveFuncType(inst.Decl.Name, inst.Decl.Type)
+	}
+
+	var receiver *hir.Param
+	if inst.Decl.Receiver != nil {
+		receiver = g.lowerParam(inst.Decl.Receiver)
+	}
+
+	ident := &hir.Ident{
+		Name:     inst.Name,
+		Symbol:   g.lookupSymbol(inst.Decl.Name.Name),
+		Type:     fnType,
+		Location: locFromNode(inst.Decl.Name),
+	}
+
+	var body *hir.Block
+	g.withScope(inst.Decl.Scope, func() {
+		body = g.lowerBlock(inst.Decl.Body)
+	})
+
+	return &hir.MethodDecl{
+		Receiver: receiver,
+		Name:     ident,
+		Type:     fnType,
+		Body:     body,
+		Location: locFromNode(inst.Decl),
+	}
+}
+
 func (g *Generator) lowerMethodDecl(decl *ast.MethodDecl) *hir.MethodDecl {
 	if decl == nil {
+		return nil
+	}
+	if len(decl.TypeParams) > 0 {
 		return nil
 	}
 
@@ -744,6 +809,21 @@ func (g *Generator) lowerGenericCallTarget(fun ast.Expression, info *context_v2.
 				Name:     info.TargetName,
 				Type:     info.FuncType,
 				Location: selectorLoc,
+			},
+			Type:     info.FuncType,
+			Location: locFromNode(target),
+		}
+	case *ast.SelectorExpr:
+		fieldLoc := source.Location{}
+		if target.Field != nil {
+			fieldLoc = locFromNode(target.Field)
+		}
+		return &hir.SelectorExpr{
+			X: g.autoDerefExpr(target, target.X),
+			Field: &hir.Ident{
+				Name:     info.TargetName,
+				Type:     info.FuncType,
+				Location: fieldLoc,
 			},
 			Type:     info.FuncType,
 			Location: locFromNode(target),

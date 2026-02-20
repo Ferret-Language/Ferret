@@ -46,6 +46,52 @@ func PrepareGenericFunctionInstantiation(
 	return true
 }
 
+// PrepareGenericMethodInstantiation re-checks a generic method body with concrete
+// type arguments so downstream lowering sees concrete expression types.
+func PrepareGenericMethodInstantiation(
+	ctx *context_v2.CompilerContext,
+	mod *context_v2.Module,
+	inst *context_v2.GenericMethodInstantiation,
+) bool {
+	if ctx == nil || mod == nil || inst == nil || inst.Decl == nil {
+		return false
+	}
+	decl := inst.Decl
+	if decl.Scope == nil || decl.Type == nil {
+		return false
+	}
+	methodScope, ok := decl.Scope.(*table.SymbolTable)
+	if !ok || methodScope == nil {
+		return false
+	}
+	if len(decl.TypeParams) != len(inst.TypeArgs) {
+		return false
+	}
+
+	if !bindInstantiatedTypeParams(methodScope, decl.TypeParams, inst.TypeArgs) {
+		return false
+	}
+
+	defer setupFunctionContext(ctx, mod, methodScope, decl.Type)()
+
+	if decl.Receiver != nil && decl.Receiver.Name != nil {
+		receiverSym, ok := methodScope.GetSymbol(decl.Receiver.Name.Name)
+		if ok && decl.Receiver.Type != nil {
+			receiverType := TypeFromTypeNodeWithContext(ctx, mod, decl.Receiver.Type)
+			receiverSym.Type = receiverType
+		}
+	}
+
+	addParamsToScope(ctx, mod, methodScope, decl.Type.Params)
+	checkDefaultParameterValues(ctx, mod, decl.Type.Params)
+
+	if decl.Body != nil {
+		checkBlock(ctx, mod, decl.Body)
+	}
+
+	return true
+}
+
 func bindInstantiatedTypeParams(scope *table.SymbolTable, typeParams []*ast.TypeParam, typeArgs []types.SemType) bool {
 	if scope == nil {
 		return false

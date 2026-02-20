@@ -2691,13 +2691,7 @@ func checkMethodDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, de
 	}
 
 	if len(decl.TypeParams) > 0 {
-		if ctx != nil && ctx.Config != nil && !ctx.Config.TypeCheckOnly {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError("generic method code generation is not implemented yet").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(decl.Loc(), "compile with -t for type-checking generic methods"),
-			)
-		}
+		// Generic method bodies are checked at concrete instantiation sites.
 		return
 	}
 
@@ -5787,26 +5781,7 @@ func checkCallExprWithPipe(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 		}
 		funcType = instantiated.FuncType
 
-		if mod != nil && !genericInfo.IsMethod && genericInfo.Decl != nil && genericInfo.Decl.Name != nil {
-			targetName := mangleGenericFunctionName(genericInfo.Decl.Name.Name, instantiated.TypeArgs)
-			if targetName != "" {
-				mod.SetGenericCallInfo(expr, &context_v2.GenericCallInfo{
-					TargetName: targetName,
-					FuncType:   instantiated.FuncType,
-				})
-
-				defMod := genericInfo.DefModule
-				if defMod == nil {
-					defMod = mod
-				}
-				defMod.RegisterGenericFunctionInstantiation(&context_v2.GenericFunctionInstantiation{
-					Name:     targetName,
-					Decl:     genericInfo.Decl,
-					TypeArgs: instantiated.TypeArgs,
-					FuncType: instantiated.FuncType,
-				})
-			}
-		}
+		registerGenericCallInstantiation(mod, expr, genericInfo, instantiated)
 	}
 
 	// 4. Validate argument count
@@ -5814,6 +5789,76 @@ func checkCallExprWithPipe(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 
 	// 5. Validate argument types
 	validateCallArgumentTypes(ctx, mod, expr, resolvedArgs, explicitArgCount, funcType, pipeInfo)
+}
+
+func registerGenericCallInstantiation(
+	mod *context_v2.Module,
+	expr *ast.CallExpr,
+	info genericCallableInfo,
+	inst genericCallInstantiation,
+) {
+	if mod == nil || expr == nil || inst.FuncType == nil {
+		return
+	}
+
+	if info.IsMethod {
+		if info.MethodInfo == nil || info.TypeSym == nil || info.MethodInfo.Decl == nil {
+			return
+		}
+		targetName := mangleGenericMethodName(info.ReceiverTypeName, info.MethodInfo.Name, inst.TypeArgs)
+		if targetName == "" {
+			return
+		}
+		mod.SetGenericCallInfo(expr, &context_v2.GenericCallInfo{
+			TargetName: targetName,
+			FuncType:   inst.FuncType,
+		})
+
+		if info.TypeSym.Methods != nil {
+			if _, exists := info.TypeSym.Methods[targetName]; !exists {
+				methodCopy := *info.MethodInfo
+				methodCopy.Name = targetName
+				methodCopy.FuncType = inst.FuncType
+				info.TypeSym.Methods[targetName] = &methodCopy
+			}
+		}
+
+		defMod := info.DefModule
+		if defMod == nil {
+			defMod = mod
+		}
+		defMod.RegisterGenericMethodInstantiation(&context_v2.GenericMethodInstantiation{
+			Name:             targetName,
+			Decl:             info.MethodInfo.Decl,
+			ReceiverTypeName: info.ReceiverTypeName,
+			TypeArgs:         inst.TypeArgs,
+			FuncType:         inst.FuncType,
+		})
+		return
+	}
+
+	if info.Decl == nil || info.Decl.Name == nil {
+		return
+	}
+	targetName := mangleGenericFunctionName(info.Decl.Name.Name, inst.TypeArgs)
+	if targetName == "" {
+		return
+	}
+	mod.SetGenericCallInfo(expr, &context_v2.GenericCallInfo{
+		TargetName: targetName,
+		FuncType:   inst.FuncType,
+	})
+
+	defMod := info.DefModule
+	if defMod == nil {
+		defMod = mod
+	}
+	defMod.RegisterGenericFunctionInstantiation(&context_v2.GenericFunctionInstantiation{
+		Name:     targetName,
+		Decl:     info.Decl,
+		TypeArgs: inst.TypeArgs,
+		FuncType: inst.FuncType,
+	})
 }
 
 type callableDeclInfo struct {

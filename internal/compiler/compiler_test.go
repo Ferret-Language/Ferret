@@ -503,6 +503,64 @@ fn main() {
 	}
 }
 
+func TestCompile_GenericMethodInferenceAndExplicitTypeArgs(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Box struct {
+	.Value: i32
+};
+
+fn (b: Box) id<T>(x: T) -> T {
+	return x;
+}
+
+fn main() -> i32 {
+	let b := { .Value = 1 } as Box;
+	let inferred := b.id(10);
+	let explicit := b.id<i64>(20 as i64);
+	return inferred + (explicit as i32);
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected successful generic method inference/type-arg checking, got: %s", result.Output)
+	}
+}
+
+func TestCompile_GenericMethodConstraintViolation(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `constraint numeric = union { i32, i64 };
+
+type Box struct {
+	.Value: i32
+};
+
+fn (b: Box) add<T: numeric>(x: T, y: T) -> T {
+	return x + y;
+}
+
+fn main() {
+	let b := { .Value = 1 } as Box;
+	let bad := b.add("a", "b");
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected constraint failure for generic method call with str arguments")
+	}
+}
+
 func TestCompile_ResourceImplicitMoveAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
