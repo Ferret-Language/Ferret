@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/mir"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typechecker"
 	"compiler/internal/source"
 	"compiler/internal/types"
 	ustrings "compiler/internal/utils/strings"
@@ -123,29 +124,45 @@ func (g *Generator) ensureInterfaceVTable(concreteType, ifaceType types.SemType,
 		return table.Name, true
 	}
 
-	typeSym, alias, ok := g.lookupTypeSymbol(concreteName)
-	if !ok || typeSym == nil || typeSym.Methods == nil {
-		if g.ctx != nil {
-			g.ctx.ReportError("mir: interface value missing methods for type", &loc)
-		}
-		return "", false
-	}
-
 	g.vtableSeq++
 	vtableName := fmt.Sprintf("__vtable_%d", g.vtableSeq)
 	table := &mir.VTable{Name: vtableName}
 
 	for i, method := range iface.Methods {
-		methodInfo, ok := typeSym.Methods[method.Name]
-		if !ok || methodInfo == nil {
+		methodRes, ok := typechecker.ResolveMethodForReceiverType(g.ctx, g.mod, concreteType, method.Name)
+		if !ok || methodRes.Method == nil {
 			if g.ctx != nil {
 				g.ctx.ReportError("mir: interface method missing on concrete type", &loc)
 			}
 			return "", false
 		}
+		methodInfo := methodRes.Method
+		if methodRes.FuncType != nil || methodRes.ReceiverType != nil {
+			methodCopy := *methodRes.Method
+			if methodRes.FuncType != nil {
+				methodCopy.FuncType = methodRes.FuncType
+			}
+			if methodRes.ReceiverType != nil {
+				methodCopy.Receiver = methodRes.ReceiverType
+			}
+			methodInfo = &methodCopy
+		}
 
 		wrapperName := ustrings.ToIdentifier(fmt.Sprintf("__iface_%d_%d", g.vtableSeq, i))
-		target := concreteName + "_" + method.Name
+		targetTypeName := concreteName
+		if methodRes.ReceiverTypeName != "" {
+			targetTypeName = methodRes.ReceiverTypeName
+		}
+		target := targetTypeName + "_" + methodInfo.Name
+		alias := ""
+		if g.mod != nil && methodRes.DefModule != nil && methodRes.DefModule != g.mod {
+			for importedAlias, importPath := range g.mod.ImportAliasMap {
+				if importPath == methodRes.DefModule.ImportPath {
+					alias = importedAlias
+					break
+				}
+			}
+		}
 		if alias != "" {
 			target = alias + "::" + target
 		}

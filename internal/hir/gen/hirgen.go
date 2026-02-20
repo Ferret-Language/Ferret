@@ -44,8 +44,9 @@ func (g *Generator) GenerateModule() *hir.Module {
 			// Generic function templates are lowered as concrete instantiations only.
 			continue
 		}
-		if m, ok := node.(*ast.MethodDecl); ok && m != nil && len(m.TypeParams) > 0 {
-			// Generic method templates are lowered as concrete instantiations only.
+		if m, ok := node.(*ast.MethodDecl); ok && m != nil && (len(m.TypeParams) > 0 || g.methodUsesReceiverTypeParams(m)) {
+			// Generic method templates (method params or receiver type params)
+			// are lowered as concrete instantiations only.
 			continue
 		}
 		if lowered := g.lowerNode(node); lowered != nil {
@@ -505,15 +506,7 @@ func (g *Generator) lowerGenericMethodInstantiation(inst *context_v2.GenericMeth
 	}
 
 	fnType := inst.FuncType
-	if fnType == nil {
-		fnType = g.resolveFuncType(inst.Decl.Name, inst.Decl.Type)
-	}
-
 	var receiver *hir.Param
-	if inst.Decl.Receiver != nil {
-		receiver = g.lowerParam(inst.Decl.Receiver)
-	}
-
 	ident := &hir.Ident{
 		Name:     inst.Name,
 		Symbol:   g.lookupSymbol(inst.Decl.Name.Name),
@@ -523,6 +516,13 @@ func (g *Generator) lowerGenericMethodInstantiation(inst *context_v2.GenericMeth
 
 	var body *hir.Block
 	g.withScope(inst.Decl.Scope, func() {
+		if fnType == nil {
+			fnType = g.resolveFuncType(inst.Decl.Name, inst.Decl.Type)
+		}
+		ident.Type = fnType
+		if inst.Decl.Receiver != nil {
+			receiver = g.lowerParam(inst.Decl.Receiver)
+		}
 		body = g.lowerBlock(inst.Decl.Body)
 	})
 
@@ -544,14 +544,18 @@ func (g *Generator) lowerMethodDecl(decl *ast.MethodDecl) *hir.MethodDecl {
 	}
 
 	var receiver *hir.Param
-	if decl.Receiver != nil {
-		receiver = g.lowerParam(decl.Receiver)
-	}
 
 	var ident *hir.Ident
-	if decl.Name != nil {
-		ident = g.identForDecl(decl.Name, g.resolveDeclType(decl.Name.Name, nil, nil))
-	}
+	var fnType *types.FunctionType
+	g.withScope(decl.Scope, func() {
+		if decl.Receiver != nil {
+			receiver = g.lowerParam(decl.Receiver)
+		}
+		if decl.Name != nil {
+			ident = g.identForDecl(decl.Name, g.resolveDeclType(decl.Name.Name, nil, nil))
+		}
+		fnType = g.resolveFuncType(decl.Name, decl.Type)
+	})
 
 	var body *hir.Block
 	g.withScope(decl.Scope, func() {
@@ -561,10 +565,39 @@ func (g *Generator) lowerMethodDecl(decl *ast.MethodDecl) *hir.MethodDecl {
 	return &hir.MethodDecl{
 		Receiver: receiver,
 		Name:     ident,
-		Type:     g.resolveFuncType(decl.Name, decl.Type),
+		Type:     fnType,
 		Body:     body,
 		Location: locFromNode(decl),
 	}
+}
+
+func (g *Generator) methodUsesReceiverTypeParams(decl *ast.MethodDecl) bool {
+	if g == nil || decl == nil || decl.Receiver == nil || decl.Receiver.Type == nil {
+		return false
+	}
+	var applied *ast.AppliedType
+	switch t := decl.Receiver.Type.(type) {
+	case *ast.AppliedType:
+		applied = t
+	case *ast.ReferenceType:
+		if inner, ok := t.Base.(*ast.AppliedType); ok {
+			applied = inner
+		}
+	}
+	if applied == nil || len(applied.Args) == 0 {
+		return false
+	}
+
+	usesTypeParam := false
+	g.withScope(decl.Scope, func() {
+		for _, arg := range applied.Args {
+			if _, ok := g.typeFromNode(arg).(*types.TypeParam); ok {
+				usesTypeParam = true
+				return
+			}
+		}
+	})
+	return usesTypeParam
 }
 
 func (g *Generator) lowerParam(field *ast.Field) *hir.Param {

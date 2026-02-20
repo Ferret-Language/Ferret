@@ -548,7 +548,12 @@ func extractReceiverTypeName(ctx *context_v2.CompilerContext, receiverType ast.T
 				WithHelp("define a named type first: type Mytype interface { ... }").
 				WithNote("methods can only be defined on named types"),
 		)
+		return "<anonymous interface>", "", false
+	}
 
+	// Applied named type receiver (e.g., Box<T>, Box<i32>).
+	if applied, ok := receiverType.(*ast.AppliedType); ok {
+		return extractReceiverTypeName(ctx, applied.Base, receiverLoc)
 	}
 
 	// Handle direct identifier (most common case: fn (p: Point) ...)
@@ -570,6 +575,9 @@ func extractReceiverTypeName(ctx *context_v2.CompilerContext, receiverType ast.T
 	if refType, ok := receiverType.(*ast.ReferenceType); ok {
 		if ident, ok := refType.Base.(*ast.IdentifierExpr); ok {
 			return ident.Name, "", true
+		}
+		if applied, ok := refType.Base.(*ast.AppliedType); ok {
+			return extractReceiverTypeName(ctx, applied.Base, receiverLoc)
 		}
 	}
 

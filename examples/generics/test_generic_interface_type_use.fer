@@ -1,0 +1,18 @@
+// EXPECT: SHOULD PASS in a complete generics implementation
+type Reader<T> interface {
+    Read() -> T
+};
+
+type IntReader struct {
+    .V: i32
+};
+
+fn (r: IntReader) Read() -> i32 {
+    return r.V;
+}
+
+fn main() -> i32 {
+    let r := { .V = 3 } as IntReader;
+    let any := r as Reader<i32>;
+    return any.Read();
+}

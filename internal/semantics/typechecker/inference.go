@@ -601,18 +601,10 @@ func inferSelectorExprType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 		return types.TypeUnknown
 	}
 
-	// If baseType is a NamedType, we might have methods attached to the type symbol
-	// We need to check both fields (on the underlying struct) and methods (on the named type)
-	var typeSym *symbols.Symbol
+	// If baseType is a NamedType, we still need field checks on the underlying struct.
 	var structType *types.StructType
 
 	if namedType, ok := baseType.(*types.NamedType); ok {
-		// It's a named type - look up the type symbol for method resolution
-		typeName := namedType.Name
-		if sym, found := lookupTypeSymbol(ctx, mod, typeName); found {
-			typeSym = sym
-		}
-
 		// Get the underlying struct for field access
 		underlying := types.UnwrapType(namedType)
 		structType, _ = underlying.(*types.StructType)
@@ -630,11 +622,9 @@ func inferSelectorExprType(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 		}
 	}
 
-	// Check for methods on named types
-	if typeSym != nil && typeSym.Methods != nil {
-		if method, ok := typeSym.Methods[fieldName]; ok {
-			return method.FuncType
-		}
+	// Check for methods on named types (including generic receiver specializations).
+	if methodRes, ok := resolveMethodForReceiverType(ctx, mod, baseType, fieldName); ok && methodRes.FuncType != nil {
+		return methodRes.FuncType
 	}
 
 	// Field/method not found - error will be reported by type checker

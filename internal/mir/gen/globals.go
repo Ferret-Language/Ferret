@@ -1,6 +1,8 @@
 package gen
 
 import (
+	"fmt"
+	"hash/fnv"
 	"sort"
 
 	"compiler/internal/context_v2"
@@ -14,16 +16,35 @@ import (
 
 const initFuncName = "__ferret_init"
 
+func shortenIdentPart(part string, keep int) string {
+	if part == "" {
+		return ""
+	}
+	if len(part) <= keep {
+		return part
+	}
+	if keep < 3 {
+		keep = 3
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(part))
+	return fmt.Sprintf("%s_%x", part[:keep], h.Sum64())
+}
+
+func moduleSymbolPrefix(importPath string) string {
+	return shortenIdentPart(ustrings.ToIdentifier(importPath), 24)
+}
+
 func globalSymbolName(importPath, name string) string {
-	prefix := ustrings.ToIdentifier(importPath)
+	prefix := moduleSymbolPrefix(importPath)
 	if prefix == "" {
 		return "g_" + name
 	}
-	return "g_" + prefix + "_" + name
+	return "g_" + prefix + "_" + shortenIdentPart(name, 20)
 }
 
 func initFlagName(importPath string) string {
-	prefix := ustrings.ToIdentifier(importPath)
+	prefix := moduleSymbolPrefix(importPath)
 	if prefix == "" {
 		return "__ferret_init_done"
 	}

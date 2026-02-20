@@ -76,4 +76,5 @@ const (
 	WarnConstantConditionFalse = "W0003"
 	WarnDeadCode               = "W0004"
 	WarnValueReceiverMutation  = "W0005"
+	WarnGenericEnumTypeParams  = "W0006"
 )

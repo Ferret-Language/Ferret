@@ -561,6 +561,144 @@ fn main() {
 	}
 }
 
+func TestCompile_GenericReceiverMethodSpecializationAndTemplateCoexist(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Box<T> struct {
+	.Value: T
+};
+
+fn (b: Box<T>) tag() -> i32 {
+	return 1;
+}
+
+fn (b: Box<i32>) tag() -> i64 {
+	return 2;
+}
+
+fn main() -> i32 {
+	let bi := { .Value = 7 } as Box<i32>;
+	let x: i64 = bi.tag();
+	let bs := { .Value = 9 as i64 } as Box<i64>;
+	let y: i32 = bs.tag();
+	return (x as i32) + y;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected specialization + template method resolution to type-check, got: %s", result.Output)
+	}
+}
+
+func TestCompile_GenericReceiverMethodSpecializationDuplicateRejected(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Box<T> struct {
+	.Value: T
+};
+
+fn (b: Box<i32>) tag() -> i32 {
+	return 1;
+}
+
+fn (b: Box<i32>) tag() -> i32 {
+	return 2;
+}
+
+fn main() -> i32 { return 0; }`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected duplicate receiver specialization to fail")
+	}
+}
+
+func TestCompile_GenericReceiverMethodRequiresExplicitReceiverArgs(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Box<T> struct {
+	.Value: T
+};
+
+fn (b: Box) get() -> i32 {
+	return 0;
+}
+
+fn main() -> i32 { return 0; }`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected method receiver on generic type without type arguments to fail")
+	}
+}
+
+func TestCompile_GenericReceiverMethodRejectsMixedPattern(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Pair<T, U> struct {
+	.A: T,
+	.B: U
+};
+
+fn (p: Pair<T, i32>) bad() -> i32 {
+	return 0;
+}
+
+fn main() -> i32 { return 0; }`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected mixed generic receiver pattern to fail")
+	}
+}
+
+func TestCompile_GenericReceiverReferenceTemplateTypechecks(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Box<T> struct {
+	.Value: T
+};
+
+fn (b: &Box<T>) one() -> i32 {
+	return 1;
+}
+
+fn main() -> i32 {
+	let b := { .Value = 5 } as Box<i32>;
+	return b.one();
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected generic reference receiver method to type-check, got: %s", result.Output)
+	}
+}
+
 func TestCompile_GenericFunctionInterfaceConstraintSatisfied(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{
@@ -618,6 +756,31 @@ fn main() -> i32 {
 	result := Compile(opts)
 	if result.Success {
 		t.Fatalf("expected constraint failure when type is not explicitly in union type-set")
+	}
+}
+
+func TestCompile_GenericEnumTypeParamsWarn(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Tag<T> enum {
+	A, B
+};
+
+fn main() -> i32 {
+	return 0;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     HTML,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected successful compilation for generic enum declaration, got: %s", result.Output)
+	}
+	if !strings.Contains(result.Output, "W0006") {
+		t.Fatalf("expected warning code W0006 for generic enum type params, got: %s", result.Output)
 	}
 }
 

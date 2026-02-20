@@ -1,0 +1,20 @@
+// EXPECT: PASS (exact specialization wins, generic receiver template is fallback)
+type Box<T> struct {
+    .Value: T
+};
+
+fn (b: Box<T>) tag() -> i32 {
+    return 1;
+}
+
+fn (b: Box<i32>) tag() -> i64 {
+    return 2;
+}
+
+fn main() -> i32 {
+    let a := { .Value = 11 } as Box<i32>;
+    let b := { .Value = 12 as i64 } as Box<i64>;
+    let x: i64 = a.tag();
+    let y: i32 = b.tag();
+    return (x as i32) + y;
+}

@@ -16,6 +16,6 @@ fn main() -> i32 {
     let inferred := add(10, 20);
     let explicit := add<i64>(1 as i64, 2 as i64);
     let echoed := identity(inferred);
-    io::Println("generic runtime ok");
+    io::Println("generic runtime ok", echoed);
     return echoed + (explicit as i32);
 }

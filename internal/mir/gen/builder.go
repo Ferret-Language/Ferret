@@ -6531,21 +6531,47 @@ func (b *functionBuilder) methodCallTarget(expr *hir.SelectorExpr) (string, *sym
 		}
 	}
 
-	typeSym, alias, ok := b.lookupTypeSymbol(named.Name)
-	if !ok || typeSym == nil || typeSym.Methods == nil {
+	methodRes, ok := typechecker.ResolveMethodForReceiverType(b.gen.ctx, b.gen.mod, named, expr.Field.Name)
+	if !ok || methodRes.Method == nil {
 		return "", nil, false
 	}
-
-	method, ok := typeSym.Methods[expr.Field.Name]
-	if !ok || method == nil {
-		return "", nil, false
+	method := methodRes.Method
+	if methodRes.FuncType != nil || methodRes.ReceiverType != nil {
+		methodCopy := *methodRes.Method
+		if methodRes.FuncType != nil {
+			methodCopy.FuncType = methodRes.FuncType
+		}
+		if methodRes.ReceiverType != nil {
+			methodCopy.Receiver = methodRes.ReceiverType
+		}
+		method = &methodCopy
 	}
 
-	target := named.Name + "_" + expr.Field.Name
+	receiverTypeName := named.Name
+	if methodRes.ReceiverTypeName != "" {
+		receiverTypeName = methodRes.ReceiverTypeName
+	}
+	target := receiverTypeName + "_" + method.Name
+	alias := ""
+	if b.gen != nil && b.gen.mod != nil && methodRes.DefModule != nil && methodRes.DefModule != b.gen.mod {
+		alias = b.moduleAliasForImportPath(methodRes.DefModule.ImportPath)
+	}
 	if alias != "" {
 		target = alias + "::" + target
 	}
 	return target, method, true
+}
+
+func (b *functionBuilder) moduleAliasForImportPath(importPath string) string {
+	if b == nil || b.gen == nil || b.gen.mod == nil || importPath == "" {
+		return ""
+	}
+	for alias, path := range b.gen.mod.ImportAliasMap {
+		if path == importPath {
+			return alias
+		}
+	}
+	return ""
 }
 
 func (b *functionBuilder) methodReceiverArg(expr *hir.SelectorExpr, method *symbols.MethodInfo) mir.ValueID {
@@ -6677,6 +6703,23 @@ func (b *functionBuilder) lookupTypeSymbol(name string) (*symbols.Symbol, string
 	}
 
 	return nil, "", false
+}
+
+func genericBaseNameFromMangled(name string) (string, bool) {
+	const prefix = "__gentype_"
+	if !strings.HasPrefix(name, prefix) {
+		return "", false
+	}
+	rest := strings.TrimPrefix(name, prefix)
+	lastUnderscore := strings.LastIndex(rest, "_")
+	if lastUnderscore <= 0 {
+		return "", false
+	}
+	base := rest[:lastUnderscore]
+	if base == "" {
+		return "", false
+	}
+	return base, true
 }
 
 func dereferenceType(typ types.SemType) types.SemType {

@@ -1,0 +1,13 @@
+// EXPECT: SHOULD PASS in a complete generics implementation
+type Tag<T> enum {
+    A,
+    B
+};
+
+fn main() -> i32 {
+    let v: Tag<i32> = Tag::A;
+    if v is Tag<i32> {
+        return 1;
+    }
+    return 0;
+}

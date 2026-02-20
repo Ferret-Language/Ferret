@@ -68,6 +68,8 @@ func PrepareGenericMethodInstantiation(
 		return false
 	}
 
+	declareReceiverGenericTypeParams(ctx, mod, methodScope, decl.Receiver.Type)
+	bindReceiverInstantiatedTypeParams(ctx, mod, methodScope, decl.Receiver.Type, inst.ReceiverTypeName)
 	if !bindInstantiatedTypeParams(methodScope, decl.TypeParams, inst.TypeArgs) {
 		return false
 	}
@@ -90,6 +92,48 @@ func PrepareGenericMethodInstantiation(
 	}
 
 	return true
+}
+
+func bindReceiverInstantiatedTypeParams(
+	ctx *context_v2.CompilerContext,
+	mod *context_v2.Module,
+	scope *table.SymbolTable,
+	receiverType ast.TypeNode,
+	receiverTypeName string,
+) {
+	if scope == nil || receiverType == nil || receiverTypeName == "" || mod == nil {
+		return
+	}
+	applied := unwrapAppliedReceiverTypeNode(receiverType)
+	if applied == nil {
+		return
+	}
+	info, ok := resolveGenericNamedType(ctx, mod, applied.Base)
+	if !ok || info.Decl == nil || len(info.Decl.TypeParams) == 0 {
+		return
+	}
+	inst, ok := mod.GenericNamedTypeInstantiation(receiverTypeName)
+	if !ok || inst == nil || len(inst.TypeArgs) == 0 {
+		return
+	}
+	if len(inst.TypeArgs) < len(info.Decl.TypeParams) {
+		return
+	}
+
+	for i, typeParam := range info.Decl.TypeParams {
+		if typeParam == nil || typeParam.Name == nil || typeParam.Name.Name == "" {
+			continue
+		}
+		sym, ok := scope.GetSymbol(typeParam.Name.Name)
+		if !ok || sym == nil || sym.Kind != symbols.SymbolTypeParameter {
+			continue
+		}
+		concrete := inst.TypeArgs[i]
+		if concrete == nil {
+			concrete = types.TypeUnknown
+		}
+		sym.Type = concrete
+	}
 }
 
 func bindInstantiatedTypeParams(scope *table.SymbolTable, typeParams []*ast.TypeParam, typeArgs []types.SemType) bool {

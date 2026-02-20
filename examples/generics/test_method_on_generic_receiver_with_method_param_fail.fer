@@ -1,0 +1,14 @@
+// EXPECT: PASS (generic receiver + generic method)
+type Box<T> struct {
+    .Value: T
+};
+
+fn (b: Box<T>) lift<U>(x: U) -> U {
+    return x;
+}
+
+fn main() -> i32 {
+    let b := { .Value = 7 } as Box<i32>;
+    let y := b.lift(5);
+    return y;
+}

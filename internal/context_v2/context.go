@@ -91,6 +91,7 @@ type Module struct {
 	PipeGenericCalls   map[*ast.PipeExpr]*GenericCallInfo
 	GenericFuncInsts   map[string]*GenericFunctionInstantiation
 	GenericMethodInsts map[string]*GenericMethodInstantiation
+	GenericTypeInsts   map[string]*GenericNamedTypeInstantiation
 
 	// Source metadata
 	Content string // Raw source code (for diagnostics)
@@ -123,6 +124,14 @@ type GenericMethodInstantiation struct {
 	ReceiverTypeName string
 	TypeArgs         []types.SemType
 	FuncType         *types.FunctionType
+}
+
+// GenericNamedTypeInstantiation tracks one concrete generic named type instance
+// (e.g., __gentype_Box_<hash> for Box<i32>) for later semantic lookups.
+type GenericNamedTypeInstantiation struct {
+	Name     string
+	BaseName string
+	TypeArgs []types.SemType
 }
 
 // EnterScope switches to a new scope and returns a function to restore the old scope.
@@ -465,6 +474,54 @@ func (mod *Module) GenericMethodInstantiations() []*GenericMethodInstantiation {
 	}
 
 	return out
+}
+
+// RegisterGenericNamedTypeInstantiation records one concrete generic named type instance.
+func (mod *Module) RegisterGenericNamedTypeInstantiation(inst *GenericNamedTypeInstantiation) {
+	if mod == nil || inst == nil || inst.Name == "" || inst.BaseName == "" {
+		return
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.GenericTypeInsts == nil {
+		mod.GenericTypeInsts = make(map[string]*GenericNamedTypeInstantiation)
+	}
+	if _, exists := mod.GenericTypeInsts[inst.Name]; exists {
+		return
+	}
+
+	cp := *inst
+	if inst.TypeArgs != nil {
+		cp.TypeArgs = make([]types.SemType, len(inst.TypeArgs))
+		copy(cp.TypeArgs, inst.TypeArgs)
+	}
+	mod.GenericTypeInsts[inst.Name] = &cp
+}
+
+// GenericNamedTypeInstantiation returns concrete generic type info for a mangled type name.
+func (mod *Module) GenericNamedTypeInstantiation(name string) (*GenericNamedTypeInstantiation, bool) {
+	if mod == nil || name == "" {
+		return nil, false
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.GenericTypeInsts == nil {
+		return nil, false
+	}
+	inst, ok := mod.GenericTypeInsts[name]
+	if !ok || inst == nil {
+		return nil, false
+	}
+	cp := *inst
+	if inst.TypeArgs != nil {
+		cp.TypeArgs = make([]types.SemType, len(inst.TypeArgs))
+		copy(cp.TypeArgs, inst.TypeArgs)
+	}
+	return &cp, true
 }
 
 // Import represents a resolved import statement

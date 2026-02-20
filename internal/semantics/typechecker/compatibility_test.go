@@ -394,6 +394,23 @@ func TestCheckTypeCompatibilityWithContextReferenceToInterface(t *testing.T) {
 	})
 }
 
+func TestCheckTypeCompatibility_GenericEnumBaseAndInstantiation(t *testing.T) {
+	variants := []types.EnumVariant{
+		{Name: "A", Value: 0},
+		{Name: "B", Value: 1},
+	}
+
+	base := types.NewNamed("Tag", types.NewEnum("", variants))
+	inst := types.NewNamed("__gentype_Tag_deadbeef", types.NewEnum("", variants))
+
+	if got := checkTypeCompatibility(base, inst); got != ImplicitCastable {
+		t.Fatalf("base->inst enum compatibility = %s, want %s", got, ImplicitCastable)
+	}
+	if got := checkTypeCompatibility(inst, base); got != ImplicitCastable {
+		t.Fatalf("inst->base enum compatibility = %s, want %s", got, ImplicitCastable)
+	}
+}
+
 func TestImplementsInterfaceReceiverMode(t *testing.T) {
 	ctx := context_v2.New(&context_v2.Config{Extension: ".fer"}, false)
 	modScope := table.NewSymbolTable(ctx.Universe)

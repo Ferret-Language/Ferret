@@ -1,0 +1,12 @@
+// EXPECT: FAIL (generic receiver must use Box<T> template or Box<Concrete> specialization)
+type Box<T> struct {
+    .Value: T
+};
+
+fn (b: Box) get() -> i32 {
+    return 0;
+}
+
+fn main() -> i32 {
+    return 0;
+}

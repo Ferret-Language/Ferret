@@ -105,6 +105,19 @@ func instantiateAppliedNamedType(
 	if instName == "" {
 		instName = info.Name
 	}
+
+	instInfo := &context_v2.GenericNamedTypeInstantiation{
+		Name:     instName,
+		BaseName: info.Name,
+		TypeArgs: orderedTypeArgs,
+	}
+	if mod != nil {
+		mod.RegisterGenericNamedTypeInstantiation(instInfo)
+	}
+	if info.DefModule != nil && info.DefModule != mod {
+		info.DefModule.RegisterGenericNamedTypeInstantiation(instInfo)
+	}
+
 	if info.Named.Resource {
 		return types.NewResourceNamed(instName, underlying)
 	}

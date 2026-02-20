@@ -29,7 +29,7 @@ type Symbol struct {
 	Exported      bool                   // Whether symbol is accessible from other modules
 	Decl          ast.Node               // AST node that declared this symbol
 	DeclaredScope SymbolTable            // Scope where this symbol was declared
-	Methods       map[string]*MethodInfo // Methods attached to this named type (only for SymbolType)
+	Methods       map[string]*MethodInfo // Methods attached to this named type (storage key -> method info)
 	ConstValue    ConstValue             // Compile-time known value (for constants and const variables)
 	IsReadonly    bool                   // True for read-only variables (loop index, catch error, etc.)
 	IsHeap        bool                   // True if storage is heap-allocated via '#'
@@ -57,8 +57,14 @@ type MethodInfo struct {
 	FuncType       *types.FunctionType
 	Receiver       types.SemType
 	ReceiverIsMove bool
-	Decl           *ast.MethodDecl
-	Exported       bool // Whether method is accessible from other modules
+	// ReceiverBaseTypeName tracks the declared named receiver base (e.g., "Box").
+	ReceiverBaseTypeName string
+	// ReceiverTypeParamNames follows the receiver base declaration order (e.g., ["T"] for Box<T>).
+	ReceiverTypeParamNames []string
+	// ReceiverTypeArgPatterns stores declared receiver args (e.g., [T] for Box<T>, [i32] for Box<i32>).
+	ReceiverTypeArgPatterns []types.SemType
+	Decl                    *ast.MethodDecl
+	Exported                bool // Whether method is accessible from other modules
 }
 
 // SymbolKind categorizes symbols

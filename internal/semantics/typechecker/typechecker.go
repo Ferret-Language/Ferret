@@ -110,6 +110,125 @@ func addTypeParamsToScope(scope *table.SymbolTable, typeParams []*ast.TypeParam)
 	}
 }
 
+func unwrapAppliedReceiverTypeNode(receiverType ast.TypeNode) *ast.AppliedType {
+	switch t := receiverType.(type) {
+	case *ast.AppliedType:
+		return t
+	case *ast.ReferenceType:
+		if applied, ok := t.Base.(*ast.AppliedType); ok {
+			return applied
+		}
+	}
+	return nil
+}
+
+func declareReceiverGenericTypeParams(
+	ctx *context_v2.CompilerContext,
+	mod *context_v2.Module,
+	scope *table.SymbolTable,
+	receiverType ast.TypeNode,
+) {
+	if scope == nil || receiverType == nil {
+		return
+	}
+	applied := unwrapAppliedReceiverTypeNode(receiverType)
+	if applied == nil {
+		return
+	}
+	info, ok := resolveGenericNamedType(ctx, mod, applied.Base)
+	if !ok || info.Decl == nil {
+		return
+	}
+	for _, typeParam := range info.Decl.TypeParams {
+		if typeParam == nil || typeParam.Name == nil || typeParam.Name.Name == "" {
+			continue
+		}
+		name := typeParam.Name.Name
+		if _, exists := scope.GetSymbol(name); exists {
+			continue
+		}
+		_ = scope.Declare(name, &symbols.Symbol{
+			Name:     name,
+			Kind:     symbols.SymbolTypeParameter,
+			Type:     types.NewTypeParam(name, types.TypeUnknown),
+			Decl:     typeParam,
+			Exported: false,
+		})
+	}
+}
+
+func receiverGenericMeta(
+	ctx *context_v2.CompilerContext,
+	mod *context_v2.Module,
+	receiverType ast.TypeNode,
+) (baseName string, paramNames []string, argPatterns []types.SemType) {
+	applied := unwrapAppliedReceiverTypeNode(receiverType)
+	if applied == nil {
+		return "", nil, nil
+	}
+	info, ok := resolveGenericNamedType(ctx, mod, applied.Base)
+	if !ok || info.Decl == nil {
+		return "", nil, nil
+	}
+
+	paramNames = make([]string, 0, len(info.Decl.TypeParams))
+	for _, typeParam := range info.Decl.TypeParams {
+		if typeParam == nil || typeParam.Name == nil || typeParam.Name.Name == "" {
+			continue
+		}
+		paramNames = append(paramNames, typeParam.Name.Name)
+	}
+
+	argPatterns = make([]types.SemType, 0, len(applied.Args))
+	for _, arg := range applied.Args {
+		argType := TypeFromTypeNodeWithContext(ctx, mod, arg)
+		argPatterns = append(argPatterns, argType)
+	}
+
+	return info.Name, paramNames, argPatterns
+}
+
+type receiverMethodDeclKind int
+
+const (
+	receiverMethodDeclPlain receiverMethodDeclKind = iota
+	receiverMethodDeclTemplate
+	receiverMethodDeclSpecialization
+	receiverMethodDeclInvalid
+)
+
+func classifyReceiverMethodDecl(paramNames []string, argPatterns []types.SemType) receiverMethodDeclKind {
+	if len(paramNames) == 0 {
+		return receiverMethodDeclPlain
+	}
+	if len(argPatterns) == 0 || len(argPatterns) != len(paramNames) {
+		return receiverMethodDeclInvalid
+	}
+
+	allDeclaredParams := true
+	containsTypeParam := false
+	for i, arg := range argPatterns {
+		if arg == nil || arg.Equals(types.TypeUnknown) {
+			return receiverMethodDeclInvalid
+		}
+		tp, ok := arg.(*types.TypeParam)
+		if ok {
+			containsTypeParam = true
+		}
+		if !ok || tp.Name != paramNames[i] {
+			allDeclaredParams = false
+		}
+	}
+
+	if allDeclaredParams {
+		return receiverMethodDeclTemplate
+	}
+	if containsTypeParam {
+		return receiverMethodDeclInvalid
+	}
+	return receiverMethodDeclSpecialization
+}
+
 // addParamsToScope adds function/method parameters to the given scope with their types
 func addParamsToScope(ctx *context_v2.CompilerContext, mod *context_v2.Module, scope *table.SymbolTable, params []ast.Field) {
 	if params == nil {
@@ -232,10 +351,26 @@ func lookupTypeSymbol(ctx *context_v2.CompilerContext, mod *context_v2.Module, t
 		return sym, true
 	}
 
+	lookupName := typeName
+	if mod != nil {
+		if inst, ok := mod.GenericNamedTypeInstantiation(typeName); ok && inst != nil && inst.BaseName != "" {
+			lookupName = inst.BaseName
+			if sym, found := mod.ModuleScope.Lookup(lookupName); found {
+				return sym, true
+			}
+		}
+	}
+	if baseName, ok := genericBaseNameFromMangled(typeName); ok && baseName != "" {
+		lookupName = baseName
+		if sym, found := mod.ModuleScope.Lookup(lookupName); found {
+			return sym, true
+		}
+	}
+
 	// Not in current module, search imported modules
 	for _, importPath := range mod.ImportAliasMap {
 		if importedMod, exists := ctx.GetModule(importPath); exists {
-			if sym, ok := importedMod.ModuleScope.GetSymbol(typeName); ok && sym.Kind == symbols.SymbolType {
+			if sym, ok := importedMod.ModuleScope.GetSymbol(lookupName); ok && sym.Kind == symbols.SymbolType {
 				return sym, true
 			}
 		}
@@ -2487,17 +2622,11 @@ func checkSelectorExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 	}
 
 	// Handle NamedType and anonymous StructType
-	var typeSym *symbols.Symbol
 	var structType *types.StructType
 	var typeName string
 
 	if namedType, ok := baseType.(*types.NamedType); ok {
-		// It's a named type - look up the type symbol for method resolution
 		typeName = namedType.Name
-		if sym, found := lookupTypeSymbol(ctx, mod, typeName); found {
-			typeSym = sym
-		}
-
 		// Get the underlying struct for field access
 		underlying := types.UnwrapType(namedType)
 		structType, _ = underlying.(*types.StructType)
@@ -2555,11 +2684,9 @@ func checkSelectorExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 		}
 	}
 
-	// Check if it's a method on the named type
-	if typeSym != nil && typeSym.Methods != nil {
-		if _, ok := typeSym.Methods[fieldName]; ok {
-			return // Method exists
-		}
+	// Check if it's a method on the named type (including generic receiver specializations).
+	if _, ok := resolveMethodForReceiverType(ctx, mod, baseType, fieldName); ok {
+		return
 	}
 
 	// Field/method not found
@@ -2589,6 +2716,7 @@ func checkMethodSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.M
 	if decl.Scope != nil {
 		scope := decl.Scope.(*table.SymbolTable)
 		restoreScope = mod.EnterScope(scope)
+		declareReceiverGenericTypeParams(ctx, mod, scope, decl.Receiver.Type)
 		addTypeParamsToScope(scope, decl.TypeParams)
 	}
 	if restoreScope != nil {
@@ -2637,11 +2765,60 @@ func checkMethodSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.M
 		return
 	}
 
+	receiverBaseName, receiverTypeParamNames, receiverTypeArgPatterns := receiverGenericMeta(ctx, mod, decl.Receiver.Type)
+	lookupTypeName := typeName
+	if receiverBaseName != "" {
+		lookupTypeName = receiverBaseName
+	}
+
 	// Find the type symbol - could be in current module or imported module
-	typeSym, found := lookupTypeSymbol(ctx, mod, typeName)
+	typeSym, found := lookupTypeSymbol(ctx, mod, lookupTypeName)
 
 	// Type check the method signature and attach to type symbol
 	if found && typeSym.Kind == symbols.SymbolType && decl.Type != nil {
+		declaredTypeParamNames := make([]string, 0)
+		if typeDecl, ok := typeSym.Decl.(*ast.TypeDecl); ok && typeDecl != nil {
+			for _, tp := range typeDecl.TypeParams {
+				if tp == nil || tp.Name == nil || tp.Name.Name == "" {
+					continue
+				}
+				declaredTypeParamNames = append(declaredTypeParamNames, tp.Name.Name)
+			}
+		}
+
+		if len(declaredTypeParamNames) > 0 && receiverBaseName == "" {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(
+					fmt.Sprintf("methods on generic type '%s' must declare receiver type arguments", lookupTypeName),
+				).
+					WithCode(diagnostics.ErrInvalidMethodReceiver).
+					WithPrimaryLabel(decl.Receiver.Loc(), "use the generic receiver form").
+					WithHelp(fmt.Sprintf("write receiver as %s<%s> (template) or %s<...> (specialization)", lookupTypeName, strings.Join(declaredTypeParamNames, ", "), lookupTypeName)),
+			)
+			return
+		}
+
+		receiverKind := receiverMethodDeclPlain
+		if len(declaredTypeParamNames) > 0 {
+			receiverKind = classifyReceiverMethodDecl(declaredTypeParamNames, receiverTypeArgPatterns)
+			switch receiverKind {
+			case receiverMethodDeclTemplate:
+				receiverTypeParamNames = declaredTypeParamNames
+			case receiverMethodDeclSpecialization:
+				receiverTypeParamNames = declaredTypeParamNames
+			default:
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(
+						fmt.Sprintf("invalid receiver generic form for method '%s' on type '%s'", decl.Name.Name, lookupTypeName),
+					).
+						WithCode(diagnostics.ErrInvalidMethodReceiver).
+						WithPrimaryLabel(decl.Receiver.Loc(), "receiver must be either full template form or concrete specialization").
+						WithHelp(fmt.Sprintf("use %s<%s> for templates or %s<Concrete...> for specializations", lookupTypeName, strings.Join(declaredTypeParamNames, ", "), lookupTypeName)),
+				)
+				return
+			}
+		}
+
 		funcType := TypeFromTypeNodeWithContext(ctx, mod, decl.Type).(*types.FunctionType)
 
 		// Attach method to the type symbol's Methods map
@@ -2649,14 +2826,65 @@ func checkMethodSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.M
 			typeSym.Methods = make(map[string]*symbols.MethodInfo)
 		}
 
+		methodStorageKey := decl.Name.Name
+		if receiverKind == receiverMethodDeclSpecialization {
+			methodStorageKey = methodSpecializationStorageKey(decl.Name.Name, receiverTypeArgPatterns)
+		}
+
+		existingVariants := methodVariantsByName(typeSym, decl.Name.Name)
+		if receiverKind == receiverMethodDeclSpecialization {
+			for _, existing := range existingVariants {
+				if existing == nil || !methodIsReceiverSpecialization(existing) {
+					continue
+				}
+				if receiverTypePatternsEqual(existing.ReceiverTypeArgPatterns, receiverTypeArgPatterns) {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError(
+							fmt.Sprintf("method '%s' specialization redeclared on type '%s'", decl.Name.Name, lookupTypeName),
+						).
+							WithCode(diagnostics.ErrRedeclaredSymbol).
+							WithPrimaryLabel(decl.Name.Loc(), "specialized method redeclared here"),
+					)
+					return
+				}
+			}
+		} else {
+			for _, existing := range existingVariants {
+				if existing == nil || methodIsReceiverSpecialization(existing) {
+					continue
+				}
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(
+						fmt.Sprintf("method '%s' redeclared on type '%s'", decl.Name.Name, lookupTypeName),
+					).
+						WithCode(diagnostics.ErrRedeclaredSymbol).
+						WithPrimaryLabel(decl.Name.Loc(), "method redeclared here"),
+				)
+				return
+			}
+		}
+		if _, exists := typeSym.Methods[methodStorageKey]; exists {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(
+					fmt.Sprintf("method '%s' redeclared on type '%s'", decl.Name.Name, lookupTypeName),
+				).
+					WithCode(diagnostics.ErrRedeclaredSymbol).
+					WithPrimaryLabel(decl.Name.Loc(), "method redeclared here"),
+			)
+			return
+		}
+
 		// Create method info and attach to type symbol
-		typeSym.Methods[decl.Name.Name] = &symbols.MethodInfo{
-			Name:           decl.Name.Name,
-			FuncType:       funcType,
-			Receiver:       receiverTypeRaw,
-			ReceiverIsMove: decl.Receiver.IsMove,
-			Decl:           decl,
-			Exported:       utils.IsExported(decl.Name.Name),
+		typeSym.Methods[methodStorageKey] = &symbols.MethodInfo{
+			Name:                    decl.Name.Name,
+			FuncType:                funcType,
+			Receiver:                receiverTypeRaw,
+			ReceiverIsMove:          decl.Receiver.IsMove,
+			ReceiverBaseTypeName:    lookupTypeName,
+			ReceiverTypeParamNames:  receiverTypeParamNames,
+			ReceiverTypeArgPatterns: receiverTypeArgPatterns,
+			Decl:                    decl,
+			Exported:                utils.IsExported(decl.Name.Name),
 		}
 	}
 }
@@ -2670,6 +2898,7 @@ func checkMethodDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, de
 	}
 
 	methodScope := decl.Scope.(*table.SymbolTable)
+	declareReceiverGenericTypeParams(ctx, mod, methodScope, decl.Receiver.Type)
 	addTypeParamsToScope(methodScope, decl.TypeParams)
 
 	// Set up method context (scope and return type)
@@ -2709,6 +2938,17 @@ func checkTypeDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 	}
 
 	typeName := decl.Name.Name
+
+	if _, isEnum := decl.Type.(*ast.EnumType); isEnum && len(decl.TypeParams) > 0 {
+		ctx.Diagnostics.Add(
+			diagnostics.NewWarning(
+				fmt.Sprintf("generic type parameters on enum '%s' are currently unused", typeName),
+			).
+				WithCode(diagnostics.WarnGenericEnumTypeParams).
+				WithPrimaryLabel(decl.Name.Loc(), "type parameters are accepted for syntax consistency").
+				WithHelp("enum variants are numeric discriminants today; generic parameters have no effect yet"),
+		)
+	}
 
 	// Look up the type symbol (created during collection)
 	sym, ok := mod.CurrentScope.Lookup(typeName)
@@ -5819,6 +6059,9 @@ func registerGenericCallInstantiation(
 				methodCopy := *info.MethodInfo
 				methodCopy.Name = targetName
 				methodCopy.FuncType = inst.FuncType
+				if info.ReceiverType != nil {
+					methodCopy.Receiver = info.ReceiverType
+				}
 				info.TypeSym.Methods[targetName] = &methodCopy
 			}
 		}
@@ -5826,6 +6069,15 @@ func registerGenericCallInstantiation(
 		defMod := info.DefModule
 		if defMod == nil {
 			defMod = mod
+		}
+		if defMod != nil && mod != nil && info.ReceiverTypeName != "" {
+			if typeInst, ok := mod.GenericNamedTypeInstantiation(info.ReceiverTypeName); ok && typeInst != nil {
+				defMod.RegisterGenericNamedTypeInstantiation(&context_v2.GenericNamedTypeInstantiation{
+					Name:     typeInst.Name,
+					BaseName: typeInst.BaseName,
+					TypeArgs: typeInst.TypeArgs,
+				})
+			}
 		}
 		defMod.RegisterGenericMethodInstantiation(&context_v2.GenericMethodInstantiation{
 			Name:             targetName,
@@ -5884,24 +6136,16 @@ func callableDeclForCall(ctx *context_v2.CompilerContext, mod *context_v2.Module
 	case *ast.SelectorExpr:
 		baseType := inferExprType(ctx, mod, target.X)
 		baseType = autoDerefBaseType(target, baseType)
-		named, ok := baseType.(*types.NamedType)
-		if !ok {
-			return callableDeclInfo{}
-		}
-		typeSym, found := lookupTypeSymbol(ctx, mod, named.Name)
-		if !found || typeSym == nil || typeSym.Methods == nil {
-			return callableDeclInfo{}
-		}
-		method, ok := typeSym.Methods[target.Field.Name]
-		if !ok || method == nil || method.Decl == nil || method.Decl.Type == nil {
+		methodRes, ok := resolveMethodForReceiverType(ctx, mod, baseType, target.Field.Name)
+		if !ok || methodRes.Method == nil || methodRes.Method.Decl == nil || methodRes.Method.Decl.Type == nil {
 			return callableDeclInfo{}
 		}
 		info := callableDeclInfo{
-			Params:       method.Decl.Type.Params,
+			Params:       methodRes.Method.Decl.Type.Params,
 			ReceiverExpr: target.X,
 		}
-		if method.Decl.Receiver != nil && method.Decl.Receiver.Name != nil {
-			info.ReceiverName = method.Decl.Receiver.Name.Name
+		if methodRes.Method.Decl.Receiver != nil && methodRes.Method.Decl.Receiver.Name != nil {
+			info.ReceiverName = methodRes.Method.Decl.Receiver.Name.Name
 		}
 		return info
 	}

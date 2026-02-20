@@ -1,0 +1,15 @@
+// EXPECT: PASS
+type Counter struct {
+    .Value: i32
+};
+
+fn (c: Counter) id<T>(x: T) -> T {
+    return x;
+}
+
+fn main() -> i32 {
+    let c := { .Value = 1 } as Counter;
+    let a := c.id(7);
+    let b := c.id<i64>(2 as i64);
+    return a + (b as i32);
+}

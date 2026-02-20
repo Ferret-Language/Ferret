@@ -5,6 +5,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/hir"
 	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/typechecker"
 	"compiler/internal/source"
 	"compiler/internal/tokens"
 	"compiler/internal/types"
@@ -635,14 +636,20 @@ func (b *borrowChecker) methodInfoForSelector(selector *hir.SelectorExpr) *symbo
 		return nil
 	}
 
-	typeSym, found := b.lookupTypeSymbol(named.Name)
-	if !found || typeSym == nil || typeSym.Methods == nil {
+	methodRes, ok := typechecker.ResolveMethodForReceiverType(b.ctx, b.mod, named, selector.Field.Name)
+	if !ok || methodRes.Method == nil {
 		return nil
 	}
-
-	method, ok := typeSym.Methods[selector.Field.Name]
-	if !ok || method == nil {
-		return nil
+	method := methodRes.Method
+	if methodRes.FuncType != nil || methodRes.ReceiverType != nil {
+		methodCopy := *methodRes.Method
+		if methodRes.FuncType != nil {
+			methodCopy.FuncType = methodRes.FuncType
+		}
+		if methodRes.ReceiverType != nil {
+			methodCopy.Receiver = methodRes.ReceiverType
+		}
+		method = &methodCopy
 	}
 	return method
 }

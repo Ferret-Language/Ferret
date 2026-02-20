@@ -65,6 +65,40 @@ func isEmptyInterfaceType(typ types.SemType) bool {
 	return false
 }
 
+func isGenericEnumCompatibility(mod *context_v2.Module, source, target types.SemType) bool {
+	sourceNamed, ok := source.(*types.NamedType)
+	if !ok || sourceNamed == nil {
+		return false
+	}
+	targetNamed, ok := target.(*types.NamedType)
+	if !ok || targetNamed == nil {
+		return false
+	}
+
+	if _, srcEnum := sourceNamed.Underlying.(*types.EnumType); !srcEnum {
+		return false
+	}
+	if _, tgtEnum := targetNamed.Underlying.(*types.EnumType); !tgtEnum {
+		return false
+	}
+
+	if mod != nil {
+		if inst, ok := mod.GenericNamedTypeInstantiation(targetNamed.Name); ok && inst != nil && inst.BaseName == sourceNamed.Name {
+			return true
+		}
+		if inst, ok := mod.GenericNamedTypeInstantiation(sourceNamed.Name); ok && inst != nil && inst.BaseName == targetNamed.Name {
+			return true
+		}
+	}
+	if baseName, ok := genericBaseNameFromMangled(targetNamed.Name); ok && baseName == sourceNamed.Name {
+		return true
+	}
+	if baseName, ok := genericBaseNameFromMangled(sourceNamed.Name); ok && baseName == targetNamed.Name {
+		return true
+	}
+	return false
+}
+
 func methodReceiverMode(methodInfo *symbols.MethodInfo) types.MethodReceiverMode {
 	if methodInfo == nil {
 		return types.ReceiverModeValue
@@ -107,41 +141,35 @@ func implementsInterface(ctx *context_v2.CompilerContext, mod *context_v2.Module
 		return true
 	}
 
-	// Unwrap NamedType to get underlying type, but keep name for method lookup
-	var typeName string
-	if named, ok := implType.(*types.NamedType); ok {
-		typeName = named.Name
-		implType = named.Underlying
-	}
-
-	// Only named types can implement interfaces (they have methods)
-	if typeName == "" {
-		return false
-	}
-
-	// Look up the type symbol to get its methods
-	typeSym, found := lookupTypeSymbol(ctx, mod, typeName)
-	if !found || typeSym.Methods == nil {
+	implNamed, ok := implType.(*types.NamedType)
+	if !ok || implNamed == nil || implNamed.Name == "" {
 		return false
 	}
 
 	// Check that all interface methods are implemented
 	for _, requiredMethod := range ifaceType.Methods {
-		methodInfo, hasMethod := typeSym.Methods[requiredMethod.Name]
-		if !hasMethod {
+		methodRes, hasMethod := resolveMethodForReceiverType(ctx, mod, implNamed, requiredMethod.Name)
+		if !hasMethod || methodRes.Method == nil {
 			return false
+		}
+		methodInfo := *methodRes.Method
+		if methodRes.FuncType != nil {
+			methodInfo.FuncType = methodRes.FuncType
+		}
+		if methodRes.ReceiverType != nil {
+			methodInfo.Receiver = methodRes.ReceiverType
 		}
 
 		// Check method signature matches
 		// Methods don't include receiver in FuncType, so direct comparison works
-		if !methodSignaturesMatch(methodInfo, requiredMethod) {
+		if !methodSignaturesMatch(&methodInfo, requiredMethod) {
 			// Debug: check what's different
 			if ctx != nil && ctx.Config.Debug {
 				fmt.Printf("      [Interface check: method %s signature mismatch]\n", requiredMethod.Name)
 				fmt.Printf("        Method: %s\n", methodInfo.FuncType.String())
 				fmt.Printf("        Interface: %s\n", requiredMethod.FuncType.String())
 				fmt.Printf("        Method receiver: %s, Interface receiver: %s\n",
-					methodReceiverMode(methodInfo), requiredMethod.ReceiverMode)
+					methodReceiverMode(&methodInfo), requiredMethod.ReceiverMode)
 				fmt.Printf("        Method return: %s, Interface return: %s\n",
 					methodInfo.FuncType.Return.String(), requiredMethod.FuncType.Return.String())
 				fmt.Printf("        Method params: %d, Interface params: %d\n",
@@ -168,33 +196,38 @@ func analyzeInterfaceCompatibility(ctx *context_v2.CompilerContext, mod *context
 	// Type doesn't implement interface - build detailed missing method list
 	missingMethods = []string{}
 
-	// Get the type symbol to check its methods
-	var typeName string
-	if namedType, isNamed := sourceType.(*types.NamedType); isNamed {
-		typeName = namedType.Name
-	}
-
-	typeSym, _ := lookupTypeSymbol(ctx, mod, typeName)
+	namedType, _ := sourceType.(*types.NamedType)
 
 	// Check each required method
 	for _, requiredMethod := range targetIface.Methods {
-		if typeSym == nil || typeSym.Methods == nil {
+		if namedType == nil {
 			missingMethods = append(missingMethods, requiredMethod.Name)
 			continue
 		}
-		methodInfo, hasMethod := typeSym.Methods[requiredMethod.Name]
-		if !hasMethod {
+		methodRes, hasMethod := resolveMethodForReceiverType(ctx, mod, namedType, requiredMethod.Name)
+		if !hasMethod || methodRes.Method == nil {
 			missingMethods = append(missingMethods, requiredMethod.Name)
-		} else if !methodSignaturesMatch(methodInfo, requiredMethod) {
+			continue
+		}
+
+		methodInfo := *methodRes.Method
+		if methodRes.FuncType != nil {
+			methodInfo.FuncType = methodRes.FuncType
+		}
+		if methodRes.ReceiverType != nil {
+			methodInfo.Receiver = methodRes.ReceiverType
+		}
+
+		if !methodSignaturesMatch(&methodInfo, requiredMethod) {
 			if ctx.Config.Debug {
 				fmt.Printf("      [Interface compatibility: method %s signature mismatch]\n", requiredMethod.Name)
 				fmt.Printf("        Method: %s\n", methodInfo.FuncType.String())
 				fmt.Printf("        Interface: %s\n", requiredMethod.FuncType.String())
 				fmt.Printf("        Method receiver: %s, Interface receiver: %s\n",
-					methodReceiverMode(methodInfo), requiredMethod.ReceiverMode)
+					methodReceiverMode(&methodInfo), requiredMethod.ReceiverMode)
 			}
 			reason := "signature mismatch"
-			if !receiverModeCompatible(methodReceiverMode(methodInfo), requiredMethod.ReceiverMode) {
+			if !receiverModeCompatible(methodReceiverMode(&methodInfo), requiredMethod.ReceiverMode) {
 				reason = "receiver mismatch"
 			}
 			missingMethods = append(missingMethods, fmt.Sprintf("%s (%s)", requiredMethod.Name, reason))
@@ -287,7 +320,16 @@ func checkTypeCompatibilityWithContext(ctx *context_v2.CompilerContext, mod *con
 	// First try the basic compatibility
 	compatibility := checkTypeCompatibility(source, target)
 	if compatibility != Incompatible {
+		if compatibility == ExplicitCastable && isGenericEnumCompatibility(mod, source, target) {
+			return ImplicitCastable
+		}
 		return compatibility
+	}
+
+	// Special-case generic enums: variants are shared discriminants today, so allow
+	// implicit compatibility between a generic enum base type and its instantiations.
+	if isGenericEnumCompatibility(mod, source, target) {
+		return ImplicitCastable
 	}
 
 	// Reference-to-reference compatibility needs context-aware inner checks so
@@ -361,6 +403,12 @@ func checkTypeCompatibility(source, target types.SemType) TypeCompatibility {
 	// Identical types (check early for performance)
 	if source.Equals(target) {
 		return Identical
+	}
+
+	// Generic enum compatibility: variants are shared discriminants today, so allow
+	// implicit compatibility between enum base names and mangled instantiations.
+	if isGenericEnumCompatibility(nil, source, target) {
+		return ImplicitCastable
 	}
 
 	// Check if target is union (direct or unwrapped) and source matches one of the variants

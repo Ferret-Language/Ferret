@@ -1,0 +1,17 @@
+// EXPECT: FAIL (duplicate specialization for same receiver instantiation)
+type Box<T> struct {
+    .Value: T
+};
+
+fn (b: Box<i32>) tag() -> i32 {
+    return 1;
+}
+
+fn (b: Box<i32>) tag() -> i32 {
+    return 2;
+}
+
+fn main() -> i32 {
+    let b := { .Value = 3 } as Box<i32>;
+    return b.tag();
+}

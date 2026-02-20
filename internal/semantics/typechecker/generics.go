@@ -21,6 +21,293 @@ type genericCallableInfo struct {
 	MethodInfo       *symbols.MethodInfo
 	TypeSym          *symbols.Symbol
 	ReceiverTypeName string
+	ReceiverType     types.SemType
+}
+
+type ResolvedMethodInfo struct {
+	Method           *symbols.MethodInfo
+	TypeSym          *symbols.Symbol
+	DefModule        *context_v2.Module
+	FuncType         *types.FunctionType
+	ReceiverTypeName string
+	ReceiverType     types.SemType
+}
+
+func semTypeContainsTypeParam(typ types.SemType) bool {
+	if typ == nil {
+		return false
+	}
+	if _, ok := typ.(*types.TypeParam); ok {
+		return true
+	}
+	switch t := typ.(type) {
+	case *types.NamedType:
+		return semTypeContainsTypeParam(t.Underlying)
+	case *types.ArrayType:
+		return semTypeContainsTypeParam(t.Element)
+	case *types.OptionalType:
+		return semTypeContainsTypeParam(t.Inner)
+	case *types.ReferenceType:
+		return semTypeContainsTypeParam(t.Inner)
+	case *types.HeapType:
+		return semTypeContainsTypeParam(t.Inner)
+	case *types.ResultType:
+		return semTypeContainsTypeParam(t.Ok) || semTypeContainsTypeParam(t.Err)
+	case *types.MapType:
+		return semTypeContainsTypeParam(t.Key) || semTypeContainsTypeParam(t.Value)
+	case *types.UnionType:
+		for _, v := range t.Variants {
+			if semTypeContainsTypeParam(v) {
+				return true
+			}
+		}
+	case *types.StructType:
+		for _, f := range t.Fields {
+			if semTypeContainsTypeParam(f.Type) {
+				return true
+			}
+		}
+	case *types.FunctionType:
+		for _, p := range t.Params {
+			if semTypeContainsTypeParam(p.Type) {
+				return true
+			}
+		}
+		return semTypeContainsTypeParam(t.Return)
+	case *types.InterfaceType:
+		for _, m := range t.Methods {
+			if m.FuncType != nil && semTypeContainsTypeParam(m.FuncType) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func methodVariantsByName(typeSym *symbols.Symbol, methodName string) []*symbols.MethodInfo {
+	if typeSym == nil || typeSym.Methods == nil || methodName == "" {
+		return nil
+	}
+
+	out := make([]*symbols.MethodInfo, 0, 2)
+	seen := make(map[*symbols.MethodInfo]bool)
+	for _, method := range typeSym.Methods {
+		if method == nil || method.Name != methodName {
+			continue
+		}
+		if seen[method] {
+			continue
+		}
+		seen[method] = true
+		out = append(out, method)
+	}
+	return out
+}
+
+func methodHasReceiverTypeParams(method *symbols.MethodInfo) bool {
+	if method == nil {
+		return false
+	}
+	for _, pattern := range method.ReceiverTypeArgPatterns {
+		if semTypeContainsTypeParam(pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+func methodIsReceiverSpecialization(method *symbols.MethodInfo) bool {
+	if method == nil || len(method.ReceiverTypeArgPatterns) == 0 {
+		return false
+	}
+	return !methodHasReceiverTypeParams(method)
+}
+
+func receiverTypePatternsEqual(a, b []types.SemType) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] == nil || b[i] == nil {
+			if a[i] != b[i] {
+				return false
+			}
+			continue
+		}
+		if !a[i].Equals(b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func methodSpecializationStorageKey(methodName string, receiverArgs []types.SemType) string {
+	if methodName == "" {
+		return ""
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(methodName))
+	for _, arg := range receiverArgs {
+		_, _ = h.Write([]byte("|"))
+		if arg == nil {
+			_, _ = h.Write([]byte("<nil>"))
+			continue
+		}
+		_, _ = h.Write([]byte(arg.String()))
+	}
+	return fmt.Sprintf("__msp_%s_%x", methodName, h.Sum64())
+}
+
+func resolveMethodForReceiverType(
+	ctx *context_v2.CompilerContext,
+	mod *context_v2.Module,
+	receiverType types.SemType,
+	methodName string,
+) (ResolvedMethodInfo, bool) {
+	if mod == nil || receiverType == nil || receiverType.Equals(types.TypeUnknown) || methodName == "" {
+		return ResolvedMethodInfo{}, false
+	}
+
+	named, ok := receiverType.(*types.NamedType)
+	if !ok || named == nil {
+		return ResolvedMethodInfo{}, false
+	}
+
+	type candidate struct {
+		baseName string
+		typeArgs []types.SemType
+	}
+	candidates := make([]candidate, 0, 2)
+	seen := make(map[string]bool)
+	addCandidate := func(baseName string, typeArgs []types.SemType) {
+		if baseName == "" || seen[baseName] {
+			return
+		}
+		seen[baseName] = true
+		cpArgs := make([]types.SemType, len(typeArgs))
+		copy(cpArgs, typeArgs)
+		candidates = append(candidates, candidate{baseName: baseName, typeArgs: cpArgs})
+	}
+
+	addCandidate(named.Name, nil)
+
+	if inst, ok := mod.GenericNamedTypeInstantiation(named.Name); ok && inst != nil {
+		addCandidate(inst.BaseName, inst.TypeArgs)
+	} else if baseName, ok := genericBaseNameFromMangled(named.Name); ok {
+		addCandidate(baseName, nil)
+	}
+
+	for _, cand := range candidates {
+		typeSym, defMod, found := lookupTypeSymbolWithModule(ctx, mod, cand.baseName)
+		if !found || typeSym == nil || typeSym.Methods == nil {
+			continue
+		}
+		variants := methodVariantsByName(typeSym, methodName)
+		if len(variants) == 0 {
+			continue
+		}
+
+		bestScore := -1
+		var bestMethod *symbols.MethodInfo
+		var bestFuncType *types.FunctionType
+		var bestReceiver types.SemType
+
+		for _, method := range variants {
+			if method == nil || method.FuncType == nil || method.Receiver == nil {
+				continue
+			}
+
+			typeMap := make(map[string]types.SemType)
+			explicitMap := make(map[string]bool)
+			score := 1
+			if len(method.ReceiverTypeArgPatterns) > 0 {
+				if len(cand.typeArgs) != len(method.ReceiverTypeArgPatterns) {
+					continue
+				}
+				compatible := true
+				for i, pattern := range method.ReceiverTypeArgPatterns {
+					if pattern == nil || pattern.Equals(types.TypeUnknown) {
+						compatible = false
+						break
+					}
+					if !bindTypeParamFromTypes(pattern, cand.typeArgs[i], typeMap, explicitMap) {
+						compatible = false
+						break
+					}
+					// Receiver type-argument patterns must match exactly after substitution.
+					resolvedPattern := instantiateSemType(pattern, typeMap)
+					if resolvedPattern == nil || !resolvedPattern.Equals(cand.typeArgs[i]) {
+						compatible = false
+						break
+					}
+				}
+				if !compatible {
+					continue
+				}
+
+				// Prefer fully concrete receiver specializations over generic receiver templates.
+				score = 2
+				if methodIsReceiverSpecialization(method) {
+					score = 3
+				}
+			}
+
+			resolvedReceiver := method.Receiver
+			resolvedFuncType := method.FuncType
+			if len(typeMap) > 0 {
+				resolvedReceiver = instantiateSemType(resolvedReceiver, typeMap)
+				resolvedFuncType = instantiateFunctionType(resolvedFuncType, typeMap)
+			}
+
+			if score > bestScore {
+				bestScore = score
+				bestMethod = method
+				bestFuncType = resolvedFuncType
+				bestReceiver = resolvedReceiver
+			}
+		}
+
+		if bestMethod != nil {
+			return ResolvedMethodInfo{
+				Method:           bestMethod,
+				TypeSym:          typeSym,
+				DefModule:        defMod,
+				FuncType:         bestFuncType,
+				ReceiverTypeName: named.Name,
+				ReceiverType:     bestReceiver,
+			}, true
+		}
+	}
+
+	return ResolvedMethodInfo{}, false
+}
+
+// ResolveMethodForReceiverType resolves one method variant for a concrete receiver type.
+// It prefers concrete receiver specializations over generic receiver templates.
+func ResolveMethodForReceiverType(
+	ctx *context_v2.CompilerContext,
+	mod *context_v2.Module,
+	receiverType types.SemType,
+	methodName string,
+) (ResolvedMethodInfo, bool) {
+	return resolveMethodForReceiverType(ctx, mod, receiverType, methodName)
+}
+
+func genericBaseNameFromMangled(name string) (string, bool) {
+	const prefix = "__gentype_"
+	if !strings.HasPrefix(name, prefix) {
+		return "", false
+	}
+	rest := strings.TrimPrefix(name, prefix)
+	lastUnderscore := strings.LastIndex(rest, "_")
+	if lastUnderscore <= 0 {
+		return "", false
+	}
+	base := rest[:lastUnderscore]
+	if base == "" {
+		return "", false
+	}
+	return base, true
 }
 
 func resolveGenericCallable(ctx *context_v2.CompilerContext, mod *context_v2.Module, fun ast.Expression) (genericCallableInfo, bool) {
@@ -64,26 +351,44 @@ func resolveGenericCallable(ctx *context_v2.CompilerContext, mod *context_v2.Mod
 	case *ast.SelectorExpr:
 		baseType := inferExprType(ctx, mod, target.X)
 		baseType = autoDerefBaseType(target, baseType)
-		named, ok := baseType.(*types.NamedType)
-		if !ok {
+		methodRes, ok := resolveMethodForReceiverType(ctx, mod, baseType, target.Field.Name)
+		if !ok || methodRes.Method == nil {
 			return genericCallableInfo{}, false
 		}
-		typeSym, defMod, found := lookupTypeSymbolWithModule(ctx, mod, named.Name)
-		if !found || typeSym == nil || typeSym.Methods == nil {
+		method := methodRes.Method
+		if method.Decl == nil {
 			return genericCallableInfo{}, false
 		}
-		method, ok := typeSym.Methods[target.Field.Name]
-		if !ok || method == nil || method.Decl == nil || len(method.Decl.TypeParams) == 0 {
-			return genericCallableInfo{}, false
+		if len(method.Decl.TypeParams) == 0 {
+			needsReceiverInstantiation := false
+			for _, pattern := range method.ReceiverTypeArgPatterns {
+				if semTypeContainsTypeParam(pattern) {
+					needsReceiverInstantiation = true
+					break
+				}
+			}
+			if !needsReceiverInstantiation {
+				return genericCallableInfo{}, false
+			}
+			return genericCallableInfo{
+				FuncType:         methodRes.FuncType,
+				IsMethod:         true,
+				MethodInfo:       method,
+				TypeSym:          methodRes.TypeSym,
+				DefModule:        methodRes.DefModule,
+				ReceiverTypeName: methodRes.ReceiverTypeName,
+				ReceiverType:     methodRes.ReceiverType,
+			}, true
 		}
 		return genericCallableInfo{
 			TypeParams:       method.Decl.TypeParams,
-			FuncType:         method.FuncType,
+			FuncType:         methodRes.FuncType,
 			IsMethod:         true,
 			MethodInfo:       method,
-			TypeSym:          typeSym,
-			DefModule:        defMod,
-			ReceiverTypeName: named.Name,
+			TypeSym:          methodRes.TypeSym,
+			DefModule:        methodRes.DefModule,
+			ReceiverTypeName: methodRes.ReceiverTypeName,
+			ReceiverType:     methodRes.ReceiverType,
 		}, true
 	}
 
@@ -116,6 +421,20 @@ func lookupTypeSymbolWithModule(ctx *context_v2.CompilerContext, mod *context_v2
 	if sym, found := mod.ModuleScope.Lookup(typeName); found {
 		return sym, mod, true
 	}
+
+	lookupName := typeName
+	if inst, ok := mod.GenericNamedTypeInstantiation(typeName); ok && inst != nil && inst.BaseName != "" {
+		lookupName = inst.BaseName
+		if sym, found := mod.ModuleScope.Lookup(lookupName); found {
+			return sym, mod, true
+		}
+	} else if baseName, ok := genericBaseNameFromMangled(typeName); ok {
+		lookupName = baseName
+		if sym, found := mod.ModuleScope.Lookup(lookupName); found {
+			return sym, mod, true
+		}
+	}
+
 	if ctx == nil {
 		return nil, nil, false
 	}
@@ -124,7 +443,7 @@ func lookupTypeSymbolWithModule(ctx *context_v2.CompilerContext, mod *context_v2
 		if !exists || importedMod == nil || importedMod.ModuleScope == nil {
 			continue
 		}
-		if sym, ok := importedMod.ModuleScope.GetSymbol(typeName); ok && sym.Kind == symbols.SymbolType {
+		if sym, ok := importedMod.ModuleScope.GetSymbol(lookupName); ok && sym.Kind == symbols.SymbolType {
 			return sym, importedMod, true
 		}
 	}
@@ -155,8 +474,24 @@ func instantiateGenericCallFuncType(
 	typeParams []*ast.TypeParam,
 	reportErrors bool,
 ) (genericCallInstantiation, bool) {
-	if call == nil || baseFuncType == nil || len(typeParams) == 0 {
+	if call == nil || baseFuncType == nil {
 		return genericCallInstantiation{}, false
+	}
+	if len(typeParams) == 0 {
+		if len(call.TypeArgs) > 0 {
+			if reportErrors && ctx != nil {
+				ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("generic call expects %d type argument(s), got %d", 0, len(call.TypeArgs))).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(call.Loc(), "remove the explicit type arguments"),
+				)
+			}
+			return genericCallInstantiation{}, false
+		}
+		return genericCallInstantiation{
+			FuncType: baseFuncType,
+			TypeArgs: nil,
+		}, true
 	}
 
 	typeMap := make(map[string]types.SemType, len(typeParams))
@@ -384,6 +719,37 @@ func bindTypeParamFromTypes(
 		}
 		return bindTypeParamFromTypes(p.Key, a.Key, typeMap, explicitMap) &&
 			bindTypeParamFromTypes(p.Value, a.Value, typeMap, explicitMap)
+	case *types.StructType:
+		a, ok := argUnwrapped.(*types.StructType)
+		if !ok {
+			return true
+		}
+		if len(p.Fields) != len(a.Fields) {
+			return true
+		}
+		for i := range p.Fields {
+			if p.Fields[i].Name != a.Fields[i].Name {
+				return true
+			}
+			if !bindTypeParamFromTypes(p.Fields[i].Type, a.Fields[i].Type, typeMap, explicitMap) {
+				return false
+			}
+		}
+		return true
+	case *types.UnionType:
+		a, ok := argUnwrapped.(*types.UnionType)
+		if !ok {
+			return true
+		}
+		if len(p.Variants) != len(a.Variants) {
+			return true
+		}
+		for i := range p.Variants {
+			if !bindTypeParamFromTypes(p.Variants[i], a.Variants[i], typeMap, explicitMap) {
+				return false
+			}
+		}
+		return true
 	case *types.FunctionType:
 		a, ok := argUnwrapped.(*types.FunctionType)
 		if !ok {
@@ -488,6 +854,34 @@ func instantiateSemType(typ types.SemType, typeMap map[string]types.SemType) typ
 		st := types.NewStruct("", fields)
 		st.ID = t.ID
 		return st
+	case *types.EnumType:
+		variants := make([]types.EnumVariant, len(t.Variants))
+		for i, v := range t.Variants {
+			variantType := v.Type
+			if variantType != nil {
+				variantType = instantiateSemType(variantType, typeMap)
+			}
+			variants[i] = types.EnumVariant{
+				Name:  v.Name,
+				Value: v.Value,
+				Type:  variantType,
+			}
+		}
+		et := types.NewEnum("", variants)
+		et.ID = t.ID
+		return et
+	case *types.InterfaceType:
+		methods := make([]types.InterfaceMethod, len(t.Methods))
+		for i, m := range t.Methods {
+			methods[i] = types.InterfaceMethod{
+				Name:         m.Name,
+				FuncType:     instantiateFunctionType(m.FuncType, typeMap),
+				ReceiverMode: m.ReceiverMode,
+			}
+		}
+		it := types.NewInterface(methods)
+		it.ID = t.ID
+		return it
 	case *types.FunctionType:
 		return instantiateFunctionType(t, typeMap)
 	case *types.NamedType:

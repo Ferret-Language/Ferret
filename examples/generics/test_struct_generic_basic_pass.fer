@@ -1,0 +1,9 @@
+// EXPECT: PASS
+type Box<T> struct {
+    .Value: T
+};
+
+fn main() -> i32 {
+    let b := { .Value = 41 } as Box<i32>;
+    return b.Value + 1;
+}

@@ -1,0 +1,13 @@
+// EXPECT: PASS (specialized receiver method is callable on matching instantiation)
+type Box<T> struct {
+    .Value: T
+};
+
+fn (b: Box<i32>) twice() -> i32 {
+    return b.Value * 2;
+}
+
+fn main() -> i32 {
+    let b := { .Value = 10 } as Box<i32>;
+    return b.twice();
+}

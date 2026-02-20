@@ -1,0 +1,13 @@
+// EXPECT: PASS (method on generic receiver type parameter)
+type Box<T> struct {
+    .Value: T
+};
+
+fn (b: Box<T>) get() -> T {
+    return b.Value;
+}
+
+fn main() -> i32 {
+    let b := { .Value = 7 } as Box<i32>;
+    return b.get();
+}

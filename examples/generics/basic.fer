@@ -1,0 +1,12 @@
+import "std/io";
+
+fn add<T>(a: T, b: T) -> T {
+    return a + b;
+}
+
+fn main() {
+    let sum1 : str = add(1, 4);
+    let sum2 : str = add(1.2, 4.5);
+
+    io::Println(sum1, sum2);
+}
