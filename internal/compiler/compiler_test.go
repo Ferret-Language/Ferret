@@ -450,6 +450,59 @@ fn main() {
 	}
 }
 
+func TestCompile_GenericNamedTypeInstantiation(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Pair<T, U> struct {
+	.A: T,
+	.B: U
+};
+
+fn sumPair(p: Pair<i32, i32>) -> i32 {
+	return p.A + p.B;
+}
+
+fn main() -> i32 {
+	let p := { .A = 10, .B = 20 } as Pair<i32, i32>;
+	return sumPair(p);
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected successful generic named type instantiation, got: %s", result.Output)
+	}
+}
+
+func TestCompile_GenericNamedTypeNominalMismatch(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Pair<T, U> struct {
+	.A: T,
+	.B: U
+};
+
+fn main() {
+	let a := { .A = 1, .B = 2 } as Pair<i32, i32>;
+	let b := { .A = 1 as i64, .B = 2 as i64 } as Pair<i64, i64>;
+	a = b;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected type mismatch between different generic named type instantiations")
+	}
+}
+
 func TestCompile_ResourceImplicitMoveAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{

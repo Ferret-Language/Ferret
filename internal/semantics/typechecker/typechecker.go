@@ -2716,14 +2716,6 @@ func checkTypeDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 
 	typeName := decl.Name.Name
 
-	if len(decl.TypeParams) > 0 && ctx != nil && ctx.Config != nil && !ctx.Config.TypeCheckOnly {
-		ctx.Diagnostics.Add(
-			diagnostics.NewError("generic named type code generation is not implemented yet").
-				WithCode(diagnostics.ErrInvalidOperation).
-				WithPrimaryLabel(decl.Loc(), "compile with -t for type-checking generic named types"),
-		)
-	}
-
 	// Look up the type symbol (created during collection)
 	sym, ok := mod.CurrentScope.Lookup(typeName)
 	if !ok {
@@ -5409,16 +5401,7 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 
 	switch t := typeNode.(type) {
 	case *ast.AppliedType:
-		// Generic named type instantiation (e.g., Box<i32>) is parsed but
-		// semantic instantiation is not lowered yet.
-		if ctx != nil {
-			ctx.Diagnostics.Add(
-				diagnostics.NewError("generic named type instantiation is not implemented yet").
-					WithCode(diagnostics.ErrInvalidType).
-					WithPrimaryLabel(t.Loc(), "cannot instantiate this generic type yet"),
-			)
-		}
-		return types.TypeUnknown
+		return instantiateAppliedNamedType(ctx, mod, t)
 
 	case *ast.ScopeResolutionExpr:
 		// Handle module::Type references (requires context)
