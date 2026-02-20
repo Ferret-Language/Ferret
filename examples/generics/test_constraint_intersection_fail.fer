@@ -1,0 +1,18 @@
+// EXPECT: FAIL (i32 does not satisfy numeric & writer)
+constraint numeric = union {
+    i32, i64, i128, i256
+};
+
+constraint writer = interface {
+    Write(buf: []byte) -> i32
+};
+
+constraint numeric_writer = numeric & writer;
+
+fn useBoth<T: numeric_writer>(x: T) -> i32 {
+    return 0;
+}
+
+fn main() -> i32 {
+    return useBoth(10);
+}

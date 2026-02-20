@@ -554,8 +554,14 @@ func satisfiesConstraintExpr(
 			return approxConstraintMatch(actualType, targetType)
 		}
 
-		return checkTypeCompatibility(actualType, targetType) != Incompatible ||
-			checkTypeCompatibility(targetType, actualType) != Incompatible
+		// Non-approximate constraint terms are exact type-set membership checks,
+		// except interfaces which use implementation compatibility.
+		targetUnwrapped := types.UnwrapType(targetType)
+		if _, isIface := targetUnwrapped.(*types.InterfaceType); isIface {
+			return checkTypeCompatibilityWithContext(ctx, mod, actualType, targetType) != Incompatible
+		}
+
+		return actualType.Equals(targetType)
 	}
 
 	return false

@@ -561,6 +561,66 @@ fn main() {
 	}
 }
 
+func TestCompile_GenericFunctionInterfaceConstraintSatisfied(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `constraint writer = interface {
+	Write(buf: []byte) -> i32
+};
+
+type File struct {
+	.Id: i32
+};
+
+fn (f: File) Write(buf: []byte) -> i32 {
+	return f.Id;
+}
+
+fn useWriter<T: writer>(w: T) -> i32 {
+	return 0;
+}
+
+fn main() -> i32 {
+	let f := { .Id = 7 } as File;
+	return useWriter(f);
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected interface constraint satisfaction for generic call, got: %s", result.Output)
+	}
+}
+
+func TestCompile_GenericFunctionConstraintRejectsImplicitNumericConversion(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `constraint numeric = union { i32, i64 };
+
+fn id<T: numeric>(x: T) -> T {
+	return x;
+}
+
+fn main() -> i32 {
+	let v := id(1 as i8);
+	return v as i32;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected constraint failure when type is not explicitly in union type-set")
+	}
+}
+
 func TestCompile_ResourceImplicitMoveAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{

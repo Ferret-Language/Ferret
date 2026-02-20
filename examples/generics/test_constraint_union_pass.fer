@@ -1,0 +1,14 @@
+// EXPECT: PASS
+constraint numeric = union {
+    i32, i64, i128, i256
+};
+
+fn add<T: numeric>(a: T, b: T) -> T {
+    return a + b;
+}
+
+fn main() -> i32 {
+    let inferred := add(10, 20);
+    let explicit := add<i64>(1 as i64, 2 as i64);
+    return inferred + (explicit as i32);
+}

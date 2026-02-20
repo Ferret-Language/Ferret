@@ -1,0 +1,13 @@
+// EXPECT: FAIL (i8 is not explicitly in numeric union)
+constraint numeric = union {
+    i32, i64, i128, i256
+};
+
+fn idNum<T: numeric>(x: T) -> T {
+    return x;
+}
+
+fn main() -> i32 {
+    let v := idNum(1 as i8);
+    return v as i32;
+}

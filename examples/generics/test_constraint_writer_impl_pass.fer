@@ -1,0 +1,21 @@
+// EXPECT: PASS
+constraint writer = interface {
+    Write(buf: []byte) -> i32
+};
+
+type File struct {
+    .id: i32
+};
+
+fn (f: File) Write(buf: []byte) -> i32 {
+    return f.id;
+}
+
+fn useWriter<T: writer>(w: T) -> i32 {
+    return 0;
+}
+
+fn main() -> i32 {
+    let f := { .id = 7 } as File;
+    return useWriter(f);
+}

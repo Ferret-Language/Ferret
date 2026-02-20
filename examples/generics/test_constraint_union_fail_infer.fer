@@ -1,0 +1,13 @@
+// EXPECT: FAIL (inferred T=str does not satisfy numeric)
+constraint numeric = union {
+    i32, i64, i128, i256
+};
+
+fn idNum<T: numeric>(x: T) -> T {
+    return x;
+}
+
+fn main() -> i32 {
+    let s := idNum("nope");
+    return 0;
+}

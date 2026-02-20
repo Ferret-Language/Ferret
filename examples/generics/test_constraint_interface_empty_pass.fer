@@ -1,0 +1,10 @@
+// EXPECT: PASS
+constraint any = interface {};
+
+fn idAny<T: any>(x: T) -> T {
+    return x;
+}
+
+fn main() -> i32 {
+    return idAny(10);
+}
