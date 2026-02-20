@@ -1,0 +1,21 @@
+import "std/io";
+
+constraint numeric = union {
+    i32, i64
+};
+
+fn add<T: numeric>(a: T, b: T) -> T {
+    return a + b;
+}
+
+fn identity<T>(x: T) -> T {
+    return x;
+}
+
+fn main() -> i32 {
+    let inferred := add(10, 20);
+    let explicit := add<i64>(1 as i64, 2 as i64);
+    let echoed := identity(inferred);
+    io::Println("generic runtime ok");
+    return echoed + (explicit as i32);
+}

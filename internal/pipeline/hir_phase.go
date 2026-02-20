@@ -12,7 +12,9 @@ import (
 
 // runHIRGenerationPhase lowers typed AST to HIR for each module.
 func (p *Pipeline) runHIRGenerationPhase() error {
-	for _, importPath := range p.ctx.GetModuleNames() {
+	moduleNames := p.ctx.GetModuleNames()
+	for i := len(moduleNames) - 1; i >= 0; i-- {
+		importPath := moduleNames[i]
 		module, exists := p.ctx.GetModule(importPath)
 		if !exists {
 			continue

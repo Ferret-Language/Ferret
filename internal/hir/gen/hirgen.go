@@ -40,16 +40,48 @@ func (g *Generator) GenerateModule() *hir.Module {
 
 	items := make([]hir.Node, 0, len(g.mod.AST.Nodes))
 	for _, node := range g.mod.AST.Nodes {
+		if fn, ok := node.(*ast.FuncDecl); ok && fn != nil && len(fn.TypeParams) > 0 {
+			// Generic function templates are lowered as concrete instantiations only.
+			continue
+		}
 		if lowered := g.lowerNode(node); lowered != nil {
 			items = append(items, lowered)
 		}
 	}
+	items = g.appendGenericFunctionInstantiations(items)
 
 	return &hir.Module{
 		ImportPath: g.mod.ImportPath,
 		Items:      items,
 		Location:   locFromNode(g.mod.AST),
 	}
+}
+
+func (g *Generator) appendGenericFunctionInstantiations(items []hir.Node) []hir.Node {
+	if g == nil || g.mod == nil {
+		return items
+	}
+	processed := make(map[string]bool)
+
+	for {
+		insts := g.mod.GenericFunctionInstantiations()
+		added := false
+		for _, inst := range insts {
+			if inst == nil || inst.Name == "" || processed[inst.Name] {
+				continue
+			}
+			processed[inst.Name] = true
+			added = true
+			if lowered := g.lowerGenericFunctionInstantiation(inst); lowered != nil {
+				items = append(items, lowered)
+			}
+		}
+		if !added {
+			break
+		}
+	}
+
+	return items
 }
 
 func (g *Generator) lowerNode(node ast.Node) hir.Node {
@@ -387,6 +419,9 @@ func (g *Generator) lowerFuncDecl(decl *ast.FuncDecl) *hir.FuncDecl {
 	if decl == nil {
 		return nil
 	}
+	if len(decl.TypeParams) > 0 {
+		return nil
+	}
 	var ident *hir.Ident
 	if decl.Name != nil {
 		ident = g.identForDecl(decl.Name, g.resolveDeclType(decl.Name.Name, nil, nil))
@@ -402,6 +437,39 @@ func (g *Generator) lowerFuncDecl(decl *ast.FuncDecl) *hir.FuncDecl {
 		Type:     g.resolveFuncType(decl.Name, decl.Type),
 		Body:     body,
 		Location: locFromNode(decl),
+	}
+}
+
+func (g *Generator) lowerGenericFunctionInstantiation(inst *context_v2.GenericFunctionInstantiation) *hir.FuncDecl {
+	if g == nil || g.ctx == nil || g.mod == nil || inst == nil || inst.Decl == nil || inst.Decl.Name == nil {
+		return nil
+	}
+	if !typechecker.PrepareGenericFunctionInstantiation(g.ctx, g.mod, inst) {
+		return nil
+	}
+
+	fnType := inst.FuncType
+	if fnType == nil {
+		fnType = g.resolveFuncType(inst.Decl.Name, inst.Decl.Type)
+	}
+
+	ident := &hir.Ident{
+		Name:     inst.Name,
+		Symbol:   g.lookupSymbol(inst.Decl.Name.Name),
+		Type:     fnType,
+		Location: locFromNode(inst.Decl.Name),
+	}
+
+	var body *hir.Block
+	g.withScope(inst.Decl.Scope, func() {
+		body = g.lowerBlock(inst.Decl.Body)
+	})
+
+	return &hir.FuncDecl{
+		Name:     ident,
+		Type:     fnType,
+		Body:     body,
+		Location: locFromNode(inst.Decl),
 	}
 }
 
@@ -620,24 +688,68 @@ func (g *Generator) lowerCallExpr(expr *ast.CallExpr) *hir.CallExpr {
 	if expr == nil {
 		return nil
 	}
+
+	loweredFun := g.lowerExpr(expr.Fun)
 	callArgs := expr.Args
 	if g != nil && g.mod != nil {
 		if resolved, ok := g.mod.CallArgs(expr); ok && len(resolved) > 0 {
 			callArgs = resolved
 		}
 	}
-	args := make([]hir.Expr, 0, len(callArgs))
 	fnType := g.callExprFuncType(expr.Fun)
+	if g != nil && g.mod != nil {
+		if callInfo, ok := g.mod.GenericCall(expr); ok && callInfo != nil {
+			if callInfo.FuncType != nil {
+				fnType = callInfo.FuncType
+			}
+			loweredFun = g.lowerGenericCallTarget(expr.Fun, callInfo)
+		}
+	}
+
+	args := make([]hir.Expr, 0, len(callArgs))
 	for _, arg := range callArgs {
 		paramType, isMove := g.callArgExpectedType(fnType, len(args))
 		args = append(args, g.lowerOwnedTransferExpr(arg, paramType, isMove))
 	}
 	return &hir.CallExpr{
-		Fun:      g.lowerExpr(expr.Fun),
+		Fun:      loweredFun,
 		Args:     args,
 		Catch:    g.lowerCatchClause(expr.Catch),
 		Type:     g.exprType(expr),
 		Location: locFromNode(expr),
+	}
+}
+
+func (g *Generator) lowerGenericCallTarget(fun ast.Expression, info *context_v2.GenericCallInfo) hir.Expr {
+	if g == nil || info == nil || info.TargetName == "" || fun == nil {
+		return g.lowerExpr(fun)
+	}
+
+	switch target := fun.(type) {
+	case *ast.IdentifierExpr:
+		return &hir.Ident{
+			Name:     info.TargetName,
+			Symbol:   g.lookupSymbol(target.Name),
+			Type:     info.FuncType,
+			Location: locFromNode(target),
+		}
+	case *ast.ScopeResolutionExpr:
+		selectorLoc := source.Location{}
+		if target.Selector != nil {
+			selectorLoc = locFromNode(target.Selector)
+		}
+		return &hir.ScopeResolutionExpr{
+			X: g.lowerExpr(target.X),
+			Selector: &hir.Ident{
+				Name:     info.TargetName,
+				Type:     info.FuncType,
+				Location: selectorLoc,
+			},
+			Type:     info.FuncType,
+			Location: locFromNode(target),
+		}
+	default:
+		return g.lowerExpr(fun)
 	}
 }
 
@@ -830,6 +942,15 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 	// If the right side is a call expression, apply placeholder semantics.
 	if callExpr, ok := expr.Call.(*ast.CallExpr); ok {
 		fnType := g.callExprFuncType(callExpr.Fun)
+		callFun := g.lowerExpr(callExpr.Fun)
+		if g != nil && g.mod != nil {
+			if callInfo, ok := g.mod.GenericCall(callExpr); ok && callInfo != nil {
+				if callInfo.FuncType != nil {
+					fnType = callInfo.FuncType
+				}
+				callFun = g.lowerGenericCallTarget(callExpr.Fun, callInfo)
+			}
+		}
 		if g != nil && g.mod != nil {
 			if resolved, ok := g.mod.CallArgs(callExpr); ok && len(resolved) > 0 {
 				args := make([]hir.Expr, 0, len(resolved))
@@ -838,7 +959,7 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 					args = append(args, g.lowerOwnedTransferExpr(arg, paramType, isMove))
 				}
 				return &hir.CallExpr{
-					Fun:      g.lowerExpr(callExpr.Fun),
+					Fun:      callFun,
 					Args:     args,
 					Catch:    g.lowerCatchClause(callExpr.Catch),
 					Type:     g.exprType(expr),
@@ -874,7 +995,7 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 
 		// Create the transformed call expression
 		return &hir.CallExpr{
-			Fun:      g.lowerExpr(callExpr.Fun),
+			Fun:      callFun,
 			Args:     transformedArgs,
 			Catch:    g.lowerCatchClause(callExpr.Catch),
 			Type:     g.exprType(expr),
@@ -884,6 +1005,15 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 
 	// Otherwise, treat the right side as a callable expression with a single argument.
 	fnType := g.callExprFuncType(expr.Call)
+	callFun := g.lowerExpr(expr.Call)
+	if g != nil && g.mod != nil {
+		if callInfo, ok := g.mod.PipeGenericCall(expr); ok && callInfo != nil {
+			if callInfo.FuncType != nil {
+				fnType = callInfo.FuncType
+			}
+			callFun = g.lowerGenericCallTarget(expr.Call, callInfo)
+		}
+	}
 	if g != nil && g.mod != nil {
 		if resolved, ok := g.mod.PipeArgs(expr); ok && len(resolved) > 0 {
 			args := make([]hir.Expr, 0, len(resolved))
@@ -892,7 +1022,7 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 				args = append(args, g.lowerOwnedTransferExpr(arg, paramType, isMove))
 			}
 			return &hir.CallExpr{
-				Fun:      g.lowerExpr(expr.Call),
+				Fun:      callFun,
 				Args:     args,
 				Type:     g.exprType(expr),
 				Location: locFromNode(expr),
@@ -902,7 +1032,7 @@ func (g *Generator) lowerPipeExpr(expr *ast.PipeExpr) *hir.CallExpr {
 
 	firstParamType, firstParamMove := g.callArgExpectedType(fnType, 0)
 	return &hir.CallExpr{
-		Fun:      g.lowerExpr(expr.Call),
+		Fun:      callFun,
 		Args:     []hir.Expr{g.lowerOwnedTransferExpr(pipedValueExpr, firstParamType, firstParamMove)},
 		Type:     g.exprType(expr),
 		Location: locFromNode(expr),

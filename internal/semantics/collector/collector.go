@@ -460,7 +460,7 @@ func collectFuncDeclSignature(ctx *context_v2.CompilerContext, mod *context_v2.M
 	mod.CurrentScope.Declare(name, sym)
 
 	// Create function scope and declare parameters, but do NOT collect body
-	collectFunctionSignatureOnly(ctx, mod, decl.Type, &decl.Scope, nil)
+	collectFunctionSignatureOnly(ctx, mod, decl.Type, decl.TypeParams, &decl.Scope, nil)
 }
 
 // collectFunctionBody collects the function body in the second pass.
@@ -717,7 +717,7 @@ func collectMethodDeclSignature(ctx *context_v2.CompilerContext, mod *context_v2
 		}
 	}
 
-	collectFunctionSignatureOnly(ctx, mod, decl.Type, &decl.Scope, receiverSym)
+	collectFunctionSignatureOnly(ctx, mod, decl.Type, decl.TypeParams, &decl.Scope, receiverSym)
 }
 
 // collectMethodBody collects the method body in the second pass.
@@ -1300,7 +1300,7 @@ func collectFuncLit(ctx *context_v2.CompilerContext, mod *context_v2.Module, lit
 
 // collectFunctionSignatureOnly creates a new scope for a function and declares parameters,
 // but does NOT collect the function body. Used in first pass for top-level functions.
-func collectFunctionSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.Module, funcType *ast.FuncType, scopePtr *ast.SymbolTable, receiverSym *symbols.Symbol) {
+func collectFunctionSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.Module, funcType *ast.FuncType, typeParams []*ast.TypeParam, scopePtr *ast.SymbolTable, receiverSym *symbols.Symbol) {
 	// Create new scope with current scope as parent
 	newScope := table.NewSymbolTable(mod.CurrentScope)
 
@@ -1310,9 +1310,16 @@ func collectFunctionSignatureOnly(ctx *context_v2.CompilerContext, mod *context_
 	// Enter function scope and ensure it's restored on exit
 	defer mod.EnterScope(newScope)()
 
+	declareTypeParamsInScope(ctx, mod, typeParams)
+
 	if receiverSym != nil {
 		// just like parameters, declare the receiver in the scope
-		mod.CurrentScope.Declare(receiverSym.Name, receiverSym)
+		if err := mod.CurrentScope.Declare(receiverSym.Name, receiverSym); err != nil {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("receiver name '%s' conflicts with another symbol", receiverSym.Name)).
+					WithPrimaryLabel(receiverSym.Decl.Loc(), "rename receiver"),
+			)
+		}
 	}
 
 	// Validate and declare parameters
@@ -1356,6 +1363,43 @@ func collectFunctionSignatureOnly(ctx *context_v2.CompilerContext, mod *context_
 	}
 }
 
+func declareTypeParamsInScope(ctx *context_v2.CompilerContext, mod *context_v2.Module, typeParams []*ast.TypeParam) {
+	for _, typeParam := range typeParams {
+		if typeParam == nil || typeParam.Name == nil {
+			continue
+		}
+
+		name := typeParam.Name.Name
+		if name == "_" {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("type parameter cannot be '_'").
+					WithCode(diagnostics.ErrInvalidDeclaration).
+					WithPrimaryLabel(typeParam.Name.Loc(), "use a valid type parameter name"),
+			)
+			continue
+		}
+
+		existing, exists := mod.CurrentScope.GetSymbol(name)
+		if exists {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("duplicate type parameter '%s'", name)).
+					WithCode(diagnostics.ErrRedeclaredSymbol).
+					WithPrimaryLabel(typeParam.Name.Loc(), "type parameter already declared").
+					WithSecondaryLabel(existing.Decl.Loc(), "previous declaration here"),
+			)
+			continue
+		}
+
+		mod.CurrentScope.Declare(name, &symbols.Symbol{
+			Name:     name,
+			Kind:     symbols.SymbolTypeParameter,
+			Type:     types.TypeUnknown,
+			Decl:     typeParam,
+			Exported: false,
+		})
+	}
+}
+
 // collectFunctionScope creates a new scope for a function (named or literal),
 // validates and declares parameters, and collects the function body.
 // This is used for function literals and method bodies (which are collected in their respective phases).
@@ -1372,7 +1416,12 @@ func collectFunctionScope(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 
 	if receiverSym != nil {
 		// just like parameters, declare the receiver in the scope
-		mod.CurrentScope.Declare(receiverSym.Name, receiverSym)
+		if err := mod.CurrentScope.Declare(receiverSym.Name, receiverSym); err != nil {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("receiver name '%s' conflicts with another symbol", receiverSym.Name)).
+					WithPrimaryLabel(receiverSym.Decl.Loc(), "rename receiver"),
+			)
+		}
 	}
 
 	// Validate and declare parameters

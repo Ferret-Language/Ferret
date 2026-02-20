@@ -111,9 +111,11 @@ func (c *CatchClause) Loc() *source.Location { return &c.Location }
 
 // CallExpr represents a function call expression
 type CallExpr struct {
-	Fun   Expression   // function expression
-	Args  []Expression // function arguments
-	Catch *CatchClause // Optional: error handling (nil if no catch)
+	Fun Expression // function expression
+	// Optional explicit generic type arguments at call-site, e.g. add<i32>(1, 2).
+	TypeArgs []TypeNode
+	Args     []Expression // function arguments
+	Catch    *CatchClause // Optional: error handling (nil if no catch)
 	source.Location
 }
 

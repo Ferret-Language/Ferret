@@ -95,7 +95,9 @@ func (a *AssignStmt) Loc() *source.Location { return &a.Location }
 type TypeDecl struct {
 	Name *IdentifierExpr // type name
 	Type TypeNode        // the type being defined
-	Doc  *CommentGroup
+	// Type parameters for generic named types (e.g., type Box<T> struct { ... };).
+	TypeParams []*TypeParam
+	Doc        *CommentGroup
 	source.Location
 }
 

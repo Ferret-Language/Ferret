@@ -275,6 +275,9 @@ func resolveExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr a
 
 	case *ast.CallExpr:
 		resolveExpr(ctx, mod, e.Fun)
+		for _, typeArg := range e.TypeArgs {
+			resolveTypeNode(ctx, mod, typeArg)
+		}
 		for _, arg := range e.Args {
 			resolveExpr(ctx, mod, arg)
 		}
@@ -455,12 +458,18 @@ func resolveTypeNode(ctx *context_v2.CompilerContext, mod *context_v2.Module, ty
 					diagnostics.NewError(fmt.Sprintf("undefined type '%s'", ident.Name)).
 						WithPrimaryLabel(ident.Loc(), fmt.Sprintf("'%s' not declared", ident.Name)),
 				)
-			} else if sym.Kind != symbols.SymbolType {
+			} else if sym.Kind != symbols.SymbolType && sym.Kind != symbols.SymbolTypeParameter {
 				ctx.Diagnostics.Add(
 					diagnostics.NewError(fmt.Sprintf("'%s' is not a type", ident.Name)).
 						WithPrimaryLabel(ident.Loc(), fmt.Sprintf("'%s' is a %v", ident.Name, sym.Kind)),
 				)
 			}
+		}
+
+	case *ast.AppliedType:
+		resolveTypeNode(ctx, mod, t.Base)
+		for _, arg := range t.Args {
+			resolveTypeNode(ctx, mod, arg)
 		}
 
 	case *ast.HeapType:

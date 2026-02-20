@@ -17,11 +17,13 @@ func (b *Block) Loc() *source.Location { return &b.Location }
 
 // FuncDecl represents both named and anonymous function declarations
 type FuncDecl struct {
-	Name  *IdentifierExpr
-	Type  *FuncType // Function signature
-	Body  *Block    // Function body
-	Scope SymbolTable
-	Doc   *CommentGroup
+	Name *IdentifierExpr
+	Type *FuncType // Function signature
+	Body *Block    // Function body
+	// Type parameters for generic functions (e.g., fn add<T>(...) -> T { ... }).
+	TypeParams []*TypeParam
+	Scope      SymbolTable
+	Doc        *CommentGroup
 	source.Location
 }
 
@@ -37,8 +39,10 @@ type MethodDecl struct {
 	Name     *IdentifierExpr // method name
 	Type     *FuncType       // function signature (parameters and return type)
 	Body     *Block          // method body
-	Scope    SymbolTable
-	Doc      *CommentGroup
+	// Type parameters for generic methods.
+	TypeParams []*TypeParam
+	Scope      SymbolTable
+	Doc        *CommentGroup
 	source.Location
 }
 

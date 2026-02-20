@@ -94,6 +94,38 @@ func (p *PrimitiveType) GetUntypedKind() UntypedKind {
 	return p.untypedKind
 }
 
+// TypeParam represents a generic type parameter (e.g., T in fn id<T>(x: T) -> T).
+type TypeParam struct {
+	Name       string
+	Constraint SemType
+}
+
+func NewTypeParam(name string, constraint SemType) *TypeParam {
+	if constraint == nil {
+		constraint = TypeUnknown
+	}
+	return &TypeParam{Name: name, Constraint: constraint}
+}
+
+func (t *TypeParam) String() string {
+	if t.Name == "" {
+		return "T"
+	}
+	return t.Name
+}
+
+func (t *TypeParam) Size() int { return -1 }
+
+func (t *TypeParam) isType() {}
+
+func (t *TypeParam) Equals(other SemType) bool {
+	o, ok := other.(*TypeParam)
+	if !ok {
+		return false
+	}
+	return t.Name == o.Name
+}
+
 func getPrimitiveSize(name TYPE_NAME) int {
 	switch name {
 	case TYPE_I8, TYPE_U8, TYPE_BYTE:

@@ -70,12 +70,24 @@ func (p *Parser) parseTypeWithOptional() ast.TypeNode {
 		case tokens.IDENTIFIER_TOKEN:
 			// Type identifier - convert IdentifierExpr to support both Expr() and TypeExpr()
 			ident := p.parseIdentifier()
-			t = ident
+			var base ast.TypeNode = ident
 			// Check for scope resolution (module::Type)
 			if p.match(tokens.SCOPE_TOKEN) {
 				// IdentifierExpr implements both Expression and TypeNode
-				t = p.parseScopeResolutionExpr(ident)
+				base = p.parseScopeResolutionExpr(ident)
 			}
+
+			// Generic type application: Name<T1, T2>
+			if p.match(tokens.LESS_TOKEN) {
+				typeArgs := p.parseTypeArgs()
+				end := p.previous().End
+				base = &ast.AppliedType{
+					Base:     base,
+					Args:     typeArgs,
+					Location: *source.NewLocation(&p.filepath, base.Loc().Start, &end),
+				}
+			}
+			t = base
 
 		case tokens.OPEN_BRACKET:
 			t = p.parseArrayType()

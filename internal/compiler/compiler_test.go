@@ -400,6 +400,56 @@ fn main() {}`,
 	}
 }
 
+func TestCompile_GenericFunctionInferenceAndExplicitTypeArgs(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `constraint numeric = union { i32, i64 };
+
+fn add<T: numeric>(a: T, b: T) -> T {
+	return a + b;
+}
+
+fn main() -> i32 {
+	let inferred := add(1, 2);
+	let explicit := add<i64>(1 as i64, 2 as i64);
+	return inferred;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected successful generic call inference/type-arg checking, got: %s", result.Output)
+	}
+}
+
+func TestCompile_GenericFunctionConstraintViolation(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `constraint numeric = union { i32, i64 };
+
+fn add<T: numeric>(a: T, b: T) -> T {
+	return a;
+}
+
+fn main() {
+	let bad := add("a", "b");
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected constraint failure for generic call with str arguments")
+	}
+}
+
 func TestCompile_ResourceImplicitMoveAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{

@@ -94,6 +94,22 @@ func autoDerefBaseType(expr ast.Expression, typ types.SemType) types.SemType {
 
 // Helper functions
 
+func addTypeParamsToScope(scope *table.SymbolTable, typeParams []*ast.TypeParam) {
+	if scope == nil {
+		return
+	}
+	for _, typeParam := range typeParams {
+		if typeParam == nil || typeParam.Name == nil {
+			continue
+		}
+		sym, ok := scope.GetSymbol(typeParam.Name.Name)
+		if !ok || sym == nil || sym.Kind != symbols.SymbolTypeParameter {
+			continue
+		}
+		sym.Type = types.NewTypeParam(typeParam.Name.Name, types.TypeUnknown)
+	}
+}
+
 // addParamsToScope adds function/method parameters to the given scope with their types
 func addParamsToScope(ctx *context_v2.CompilerContext, mod *context_v2.Module, scope *table.SymbolTable, params []ast.Field) {
 	if params == nil {
@@ -287,6 +303,16 @@ func TypeCheckMethodSignatures(ctx *context_v2.CompilerContext, mod *context_v2.
 func checkFuncSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl *ast.FuncDecl) {
 	if decl == nil || decl.Name == nil || decl.Type == nil {
 		return
+	}
+
+	var restoreScope func()
+	if decl.Scope != nil {
+		scope := decl.Scope.(*table.SymbolTable)
+		restoreScope = mod.EnterScope(scope)
+		addTypeParamsToScope(scope, decl.TypeParams)
+	}
+	if restoreScope != nil {
+		defer restoreScope()
 	}
 
 	funcType := TypeFromTypeNodeWithContext(ctx, mod, decl.Type)
@@ -1173,12 +1199,17 @@ func checkFuncDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 	}
 
 	funcScope := decl.Scope.(*table.SymbolTable)
+	addTypeParamsToScope(funcScope, decl.TypeParams)
 
 	// Update the function symbol's type with actual function signature
 	if decl.Name != nil && decl.Type != nil {
-		funcType := TypeFromTypeNodeWithContext(ctx, mod, decl.Type).(*types.FunctionType)
-		if sym, ok := mod.CurrentScope.Lookup(decl.Name.Name); ok {
-			sym.Type = funcType
+		restore := mod.EnterScope(funcScope)
+		resolvedType := TypeFromTypeNodeWithContext(ctx, mod, decl.Type)
+		restore()
+		if funcType, ok := resolvedType.(*types.FunctionType); ok {
+			if sym, ok := mod.ModuleScope.Lookup(decl.Name.Name); ok {
+				sym.Type = funcType
+			}
 		}
 	}
 
@@ -1189,6 +1220,11 @@ func checkFuncDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 	if decl.Type != nil {
 		addParamsToScope(ctx, mod, funcScope, decl.Type.Params)
 		checkDefaultParameterValues(ctx, mod, decl.Type.Params)
+	}
+
+	if len(decl.TypeParams) > 0 {
+		// Generic function bodies are checked at concrete instantiation sites.
+		return
 	}
 
 	// Check the body with the function scope
@@ -1811,6 +1847,10 @@ func checkCastExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 }
 
 func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.PipeExpr) {
+	if mod != nil {
+		mod.SetPipeGenericCallInfo(expr, nil)
+	}
+
 	stageExpr := lastPipeStageExpr(expr.Value)
 	stageLoc := expr.Value.Loc()
 	if stageExpr != nil {
@@ -1849,7 +1889,11 @@ func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 			if resolved, ok := mod.CallArgs(temp); ok {
 				mod.SetPipeResolvedArgs(expr, resolved)
 			}
+			if callInfo, ok := mod.GenericCall(temp); ok {
+				mod.SetPipeGenericCallInfo(expr, callInfo)
+			}
 			mod.SetCallResolvedArgs(temp, nil)
+			mod.SetGenericCallInfo(temp, nil)
 		}
 		return
 	}
@@ -1907,7 +1951,11 @@ func checkPipeExpr(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr
 		if resolved, ok := mod.CallArgs(&temp); ok {
 			mod.SetCallResolvedArgs(callExpr, resolved)
 		}
+		if callInfo, ok := mod.GenericCall(&temp); ok {
+			mod.SetGenericCallInfo(callExpr, callInfo)
+		}
 		mod.SetCallResolvedArgs(&temp, nil)
+		mod.SetGenericCallInfo(&temp, nil)
 	}
 	if temp.Catch != nil {
 		checkCatchClause(ctx, mod, &temp)
@@ -2537,6 +2585,16 @@ func checkMethodSignatureOnly(ctx *context_v2.CompilerContext, mod *context_v2.M
 		fmt.Printf("        [checkMethodSignatureOnly: %s]\n", decl.Name.Name)
 	}
 
+	var restoreScope func()
+	if decl.Scope != nil {
+		scope := decl.Scope.(*table.SymbolTable)
+		restoreScope = mod.EnterScope(scope)
+		addTypeParamsToScope(scope, decl.TypeParams)
+	}
+	if restoreScope != nil {
+		defer restoreScope()
+	}
+
 	// Get receiver type
 	if decl.Receiver == nil || decl.Receiver.Type == nil {
 		if ctx.Config.Debug {
@@ -2612,6 +2670,7 @@ func checkMethodDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, de
 	}
 
 	methodScope := decl.Scope.(*table.SymbolTable)
+	addTypeParamsToScope(methodScope, decl.TypeParams)
 
 	// Set up method context (scope and return type)
 	defer setupFunctionContext(ctx, mod, methodScope, decl.Type)()
@@ -2631,6 +2690,17 @@ func checkMethodDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, de
 		checkDefaultParameterValues(ctx, mod, decl.Type.Params)
 	}
 
+	if len(decl.TypeParams) > 0 {
+		if ctx != nil && ctx.Config != nil && !ctx.Config.TypeCheckOnly {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("generic method code generation is not implemented yet").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(decl.Loc(), "compile with -t for type-checking generic methods"),
+			)
+		}
+		return
+	}
+
 	// Check the body with the method scope
 	if decl.Body != nil {
 		checkBlock(ctx, mod, decl.Body)
@@ -2645,6 +2715,14 @@ func checkTypeDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 	}
 
 	typeName := decl.Name.Name
+
+	if len(decl.TypeParams) > 0 && ctx != nil && ctx.Config != nil && !ctx.Config.TypeCheckOnly {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("generic named type code generation is not implemented yet").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(decl.Loc(), "compile with -t for type-checking generic named types"),
+		)
+	}
 
 	// Look up the type symbol (created during collection)
 	sym, ok := mod.CurrentScope.Lookup(typeName)
@@ -2661,6 +2739,28 @@ func checkTypeDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 
 	// Update the symbol's type
 	sym.Type = namedType
+
+	var restoreScope func()
+	if len(decl.TypeParams) > 0 {
+		typeScope := table.NewSymbolTable(mod.CurrentScope)
+		for _, typeParam := range decl.TypeParams {
+			if typeParam == nil || typeParam.Name == nil {
+				continue
+			}
+			name := typeParam.Name.Name
+			_ = typeScope.Declare(name, &symbols.Symbol{
+				Name:     name,
+				Kind:     symbols.SymbolTypeParameter,
+				Type:     types.NewTypeParam(name, types.TypeUnknown),
+				Decl:     typeParam,
+				Exported: false,
+			})
+		}
+		restoreScope = mod.EnterScope(typeScope)
+	}
+	if restoreScope != nil {
+		defer restoreScope()
+	}
 
 	// Convert the AST type node to a semantic type
 	semType := TypeFromTypeNodeWithContext(ctx, mod, decl.Type)
@@ -5308,6 +5408,18 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 	}
 
 	switch t := typeNode.(type) {
+	case *ast.AppliedType:
+		// Generic named type instantiation (e.g., Box<i32>) is parsed but
+		// semantic instantiation is not lowered yet.
+		if ctx != nil {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("generic named type instantiation is not implemented yet").
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(t.Loc(), "cannot instantiate this generic type yet"),
+			)
+		}
+		return types.TypeUnknown
+
 	case *ast.ScopeResolutionExpr:
 		// Handle module::Type references (requires context)
 		if ctx == nil || mod == nil {
@@ -5347,17 +5459,25 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 		// If we have context, try to look up user-defined type in symbol table first
 		if ctx != nil && mod != nil {
 			sym, ok := mod.CurrentScope.Lookup(t.Name)
-			if ok && sym.Kind == symbols.SymbolType {
-				if mod.Type != context_v2.ModuleBuiltin && context_v2.IsCompilerBuiltinHandleTypeName(t.Name) {
-					ctx.Diagnostics.Add(
-						diagnostics.NewError(fmt.Sprintf("type '%s' is compiler-internal", t.Name)).
-							WithCode(diagnostics.ErrInvalidType).
-							WithPrimaryLabel(t.Loc(), "this type is only available inside builtin modules"),
-					)
-					return types.TypeUnknown
+			if ok {
+				switch sym.Kind {
+				case symbols.SymbolType:
+					if mod.Type != context_v2.ModuleBuiltin && context_v2.IsCompilerBuiltinHandleTypeName(t.Name) {
+						ctx.Diagnostics.Add(
+							diagnostics.NewError(fmt.Sprintf("type '%s' is compiler-internal", t.Name)).
+								WithCode(diagnostics.ErrInvalidType).
+								WithPrimaryLabel(t.Loc(), "this type is only available inside builtin modules"),
+						)
+						return types.TypeUnknown
+					}
+					// Return the resolved user-defined type
+					return sym.Type
+				case symbols.SymbolTypeParameter:
+					if sym.Type == nil || sym.Type.Equals(types.TypeUnknown) {
+						return types.NewTypeParam(t.Name, types.TypeUnknown)
+					}
+					return sym.Type
 				}
-				// Return the resolved user-defined type
-				return sym.Type
 			}
 		}
 
@@ -5616,6 +5736,10 @@ func checkRealImagCall(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 }
 
 func checkCallExprWithPipe(ctx *context_v2.CompilerContext, mod *context_v2.Module, expr *ast.CallExpr, pipeInfo *pipeArgInfo) {
+	if mod != nil {
+		mod.SetGenericCallInfo(expr, nil)
+	}
+
 	// 0. Validate the callee expression (ordering rules, selectors, nested calls, etc.)
 	checkExpr(ctx, mod, expr.Fun, types.TypeUnknown)
 
@@ -5644,9 +5768,62 @@ func checkCallExprWithPipe(ctx *context_v2.CompilerContext, mod *context_v2.Modu
 		return
 	}
 
+	genericInfo, isGenericCall := resolveGenericCallable(ctx, mod, expr.Fun)
+	if len(expr.TypeArgs) > 0 && !isGenericCall {
+		ctx.Diagnostics.Add(
+			diagnostics.NewError("type arguments are only valid for generic functions/methods").
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(expr.Loc(), "remove `<...>` or call a generic declaration"),
+		)
+	}
+
+	if isGenericCall && genericInfo.FuncType != nil {
+		funcType = genericInfo.FuncType
+	}
+
 	resolvedArgs, explicitArgCount := resolveCallArgs(ctx, mod, expr, funcType)
 	if mod != nil {
 		mod.SetCallResolvedArgs(expr, resolvedArgs)
+	}
+
+	if isGenericCall {
+		instantiated, ok := instantiateGenericCallFuncType(
+			ctx,
+			mod,
+			expr,
+			resolvedArgs,
+			funcType,
+			genericInfo.TypeParams,
+			true,
+		)
+		if !ok || instantiated.FuncType == nil {
+			for _, arg := range resolvedArgs {
+				checkExpr(ctx, mod, arg, types.TypeUnknown)
+			}
+			return
+		}
+		funcType = instantiated.FuncType
+
+		if mod != nil && !genericInfo.IsMethod && genericInfo.Decl != nil && genericInfo.Decl.Name != nil {
+			targetName := mangleGenericFunctionName(genericInfo.Decl.Name.Name, instantiated.TypeArgs)
+			if targetName != "" {
+				mod.SetGenericCallInfo(expr, &context_v2.GenericCallInfo{
+					TargetName: targetName,
+					FuncType:   instantiated.FuncType,
+				})
+
+				defMod := genericInfo.DefModule
+				if defMod == nil {
+					defMod = mod
+				}
+				defMod.RegisterGenericFunctionInstantiation(&context_v2.GenericFunctionInstantiation{
+					Name:     targetName,
+					Decl:     genericInfo.Decl,
+					TypeArgs: instantiated.TypeArgs,
+					FuncType: instantiated.FuncType,
+				})
+			}
+		}
 	}
 
 	// 4. Validate argument count

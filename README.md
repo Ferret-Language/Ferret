@@ -290,6 +290,31 @@ fn add(a: i32, b: i32) -> i32 {
 }
 ```
 
+### Generics (Current Status)
+
+Ferret now supports generic syntax and type-checking with `<>`:
+
+```ferret
+constraint numeric = union { i32, i64 };
+
+fn add<T: numeric>(a: T, b: T) -> T {
+    return a + b;
+}
+
+fn main() -> i32 {
+    let x := add(1, 2);                 // inferred T = i32
+    let y := add<i64>(1 as i64, 2 as i64); // explicit type args
+    let ignored := y;
+    return x;
+}
+```
+
+Current limitation: generic code generation is not implemented yet. Use `-t` to type-check generic code:
+
+```bash
+./bin/ferret -t file.fer
+```
+
 ### Optional Types & Coalescing Operator
 
 ```ferret

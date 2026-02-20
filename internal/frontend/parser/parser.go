@@ -833,8 +833,11 @@ func (p *Parser) parsePostfixAfter(expr ast.Expression) ast.Expression {
 	}
 
 	for !p.isAtEnd() {
-		if p.match(tokens.OPEN_PAREN) {
-			expr = p.parseCallExpr(expr)
+		if p.canStartGenericCall(expr) {
+			typeArgs := p.parseTypeArgs()
+			expr = p.parseCallExpr(expr, typeArgs)
+		} else if p.match(tokens.OPEN_PAREN) {
+			expr = p.parseCallExpr(expr, nil)
 		} else if p.match(tokens.OPEN_BRACKET) {
 			expr = p.parseIndexExpr(expr)
 		} else if p.match(tokens.DOT_TOKEN) {
@@ -867,7 +870,7 @@ func (p *Parser) parsePostfixAfter(expr ast.Expression) ast.Expression {
 	return expr
 }
 
-func (p *Parser) parseCallExpr(fun ast.Expression) *ast.CallExpr {
+func (p *Parser) parseCallExpr(fun ast.Expression, typeArgs []ast.TypeNode) *ast.CallExpr {
 
 	p.advance() // consume '('
 	args := []ast.Expression{}
@@ -890,6 +893,7 @@ func (p *Parser) parseCallExpr(fun ast.Expression) *ast.CallExpr {
 
 	return &ast.CallExpr{
 		Fun:      fun,
+		TypeArgs: typeArgs,
 		Args:     args,
 		Catch:    catchClause,
 		Location: *source.NewLocation(&p.filepath, p.safeLoc(fun).Start, &end),

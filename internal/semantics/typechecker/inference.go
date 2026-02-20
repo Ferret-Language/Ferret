@@ -465,6 +465,32 @@ func inferCallExprType(ctx *context_v2.CompilerContext, mod *context_v2.Module, 
 		}
 	}
 
+	if genericInfo, isGeneric := resolveGenericCallable(ctx, mod, expr.Fun); isGeneric && genericInfo.FuncType != nil {
+		callArgs := expr.Args
+		if mod != nil {
+			if resolved, ok := mod.CallArgs(expr); ok && len(resolved) > 0 {
+				callArgs = resolved
+			}
+		}
+		instantiated, ok := instantiateGenericCallFuncType(
+			ctx,
+			mod,
+			expr,
+			callArgs,
+			genericInfo.FuncType,
+			genericInfo.TypeParams,
+			false,
+		)
+		if ok && instantiated.FuncType != nil {
+			returnType := instantiated.FuncType.Return
+			if resultType, isResult := returnType.(*types.ResultType); isResult && expr.Catch != nil {
+				return resultType.Ok
+			}
+			return returnType
+		}
+		return types.TypeUnknown
+	}
+
 	// Get the type of the called expression (function or method)
 	funType := inferExprType(ctx, mod, expr.Fun)
 

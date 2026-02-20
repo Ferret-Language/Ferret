@@ -87,6 +87,9 @@ type Module struct {
 	NarrowedExprTypes map[string]types.SemType         // Narrowed type for expression keys during type checking
 	CallResolvedArgs  map[*ast.CallExpr][]ast.Expression
 	PipeResolvedArgs  map[*ast.PipeExpr][]ast.Expression
+	GenericCallInfo   map[*ast.CallExpr]*GenericCallInfo
+	PipeGenericCalls  map[*ast.PipeExpr]*GenericCallInfo
+	GenericFuncInsts  map[string]*GenericFunctionInstantiation
 
 	// Source metadata
 	Content string // Raw source code (for diagnostics)
@@ -96,6 +99,20 @@ type Module struct {
 
 	// Concurrency control
 	Mu sync.Mutex // Protects field updates during parallel parsing
+}
+
+// GenericCallInfo describes how a generic call was instantiated at type-check time.
+type GenericCallInfo struct {
+	TargetName string
+	FuncType   *types.FunctionType
+}
+
+// GenericFunctionInstantiation describes one concrete specialization that must be emitted.
+type GenericFunctionInstantiation struct {
+	Name     string
+	Decl     *ast.FuncDecl
+	TypeArgs []types.SemType
+	FuncType *types.FunctionType
 }
 
 // EnterScope switches to a new scope and returns a function to restore the old scope.
@@ -233,6 +250,146 @@ func (mod *Module) PipeArgs(pipe *ast.PipeExpr) ([]ast.Expression, bool) {
 	copied := make([]ast.Expression, len(args))
 	copy(copied, args)
 	return copied, true
+}
+
+// SetPipeGenericCallInfo records generic call rewrite/type info for pipe expressions
+// that lower through a synthesized call shape.
+func (mod *Module) SetPipeGenericCallInfo(pipe *ast.PipeExpr, info *GenericCallInfo) {
+	if mod == nil || pipe == nil {
+		return
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.PipeGenericCalls == nil {
+		mod.PipeGenericCalls = make(map[*ast.PipeExpr]*GenericCallInfo)
+	}
+	if info == nil {
+		delete(mod.PipeGenericCalls, pipe)
+		return
+	}
+	cp := *info
+	mod.PipeGenericCalls[pipe] = &cp
+}
+
+// PipeGenericCall returns generic call rewrite/type info for a pipe expression, if any.
+func (mod *Module) PipeGenericCall(pipe *ast.PipeExpr) (*GenericCallInfo, bool) {
+	if mod == nil || pipe == nil {
+		return nil, false
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.PipeGenericCalls == nil {
+		return nil, false
+	}
+	info, ok := mod.PipeGenericCalls[pipe]
+	if !ok || info == nil {
+		return nil, false
+	}
+	cp := *info
+	return &cp, true
+}
+
+// SetGenericCallInfo records call-site rewrite/type info for a generic call.
+func (mod *Module) SetGenericCallInfo(call *ast.CallExpr, info *GenericCallInfo) {
+	if mod == nil || call == nil {
+		return
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.GenericCallInfo == nil {
+		mod.GenericCallInfo = make(map[*ast.CallExpr]*GenericCallInfo)
+	}
+	if info == nil {
+		delete(mod.GenericCallInfo, call)
+		return
+	}
+	cp := *info
+	mod.GenericCallInfo[call] = &cp
+}
+
+// GenericCall returns generic call-site info, if present.
+func (mod *Module) GenericCall(call *ast.CallExpr) (*GenericCallInfo, bool) {
+	if mod == nil || call == nil {
+		return nil, false
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.GenericCallInfo == nil {
+		return nil, false
+	}
+	info, ok := mod.GenericCallInfo[call]
+	if !ok || info == nil {
+		return nil, false
+	}
+	cp := *info
+	return &cp, true
+}
+
+// RegisterGenericFunctionInstantiation records one concrete specialization to emit.
+func (mod *Module) RegisterGenericFunctionInstantiation(inst *GenericFunctionInstantiation) {
+	if mod == nil || inst == nil || inst.Name == "" {
+		return
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if mod.GenericFuncInsts == nil {
+		mod.GenericFuncInsts = make(map[string]*GenericFunctionInstantiation)
+	}
+	if _, exists := mod.GenericFuncInsts[inst.Name]; exists {
+		return
+	}
+	cp := *inst
+	if inst.TypeArgs != nil {
+		cp.TypeArgs = make([]types.SemType, len(inst.TypeArgs))
+		copy(cp.TypeArgs, inst.TypeArgs)
+	}
+	mod.GenericFuncInsts[inst.Name] = &cp
+}
+
+// GenericFunctionInstantiations returns all concrete specializations for this module.
+func (mod *Module) GenericFunctionInstantiations() []*GenericFunctionInstantiation {
+	if mod == nil {
+		return nil
+	}
+
+	mod.Mu.Lock()
+	defer mod.Mu.Unlock()
+
+	if len(mod.GenericFuncInsts) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(mod.GenericFuncInsts))
+	for name := range mod.GenericFuncInsts {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+
+	out := make([]*GenericFunctionInstantiation, 0, len(keys))
+	for _, name := range keys {
+		inst := mod.GenericFuncInsts[name]
+		if inst == nil {
+			continue
+		}
+		cp := *inst
+		if inst.TypeArgs != nil {
+			cp.TypeArgs = make([]types.SemType, len(inst.TypeArgs))
+			copy(cp.TypeArgs, inst.TypeArgs)
+		}
+		out = append(out, &cp)
+	}
+
+	return out
 }
 
 // Import represents a resolved import statement

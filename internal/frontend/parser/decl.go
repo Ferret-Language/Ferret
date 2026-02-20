@@ -105,14 +105,16 @@ func (p *Parser) parseTypeDecl() *ast.TypeDecl {
 	start := p.expect(tokens.TYPE_TOKEN).Start
 
 	name := p.parseIdentifier()
+	typeParams := p.parseTypeParams()
 	typ := p.parseType()
 
 	p.expect(tokens.SEMICOLON_TOKEN)
 
 	return &ast.TypeDecl{
-		Name:     name,
-		Type:     typ,
-		Location: *source.NewLocation(&p.filepath, &start, typ.Loc().End),
+		Name:       name,
+		Type:       typ,
+		TypeParams: typeParams,
+		Location:   *source.NewLocation(&p.filepath, &start, typ.Loc().End),
 	}
 }
 
@@ -235,6 +237,7 @@ func (p *Parser) parseFunctionParams() []ast.Field {
 // parseNamedFuncDecl parses a named function declaration: fn name(params) -> return { body }
 func (p *Parser) parseNamedFuncDecl(start source.Position) *ast.FuncDecl {
 	name := p.parseIdentifier()
+	typeParams := p.parseTypeParams()
 
 	// Parse function type (parameters and return type)
 	funcType := p.parseFuncType(start)
@@ -264,10 +267,11 @@ func (p *Parser) parseNamedFuncDecl(start source.Position) *ast.FuncDecl {
 	}
 
 	return &ast.FuncDecl{
-		Name:     name,
-		Type:     funcType,
-		Body:     body,
-		Location: *source.NewLocation(&p.filepath, &start, endPos),
+		Name:       name,
+		Type:       funcType,
+		Body:       body,
+		TypeParams: typeParams,
+		Location:   *source.NewLocation(&p.filepath, &start, endPos),
 	}
 }
 
@@ -309,6 +313,7 @@ func (p *Parser) parseFuncLit(start source.Position, params []ast.Field) *ast.Fu
 func (p *Parser) parseMethodDecl(start source.Position, receivers []ast.Field) *ast.MethodDecl {
 	// Method name
 	methodName := p.parseIdentifier()
+	typeParams := p.parseTypeParams()
 
 	// Validate receiver count
 	if len(receivers) == 0 {
@@ -374,10 +379,11 @@ func (p *Parser) parseMethodDecl(start source.Position, receivers []ast.Field) *
 	}
 
 	return &ast.MethodDecl{
-		Receiver: &receivers[0],
-		Name:     methodName,
-		Type:     funcType,
-		Body:     body,
-		Location: *source.NewLocation(&p.filepath, &start, endPos),
+		Receiver:   &receivers[0],
+		Name:       methodName,
+		Type:       funcType,
+		Body:       body,
+		TypeParams: typeParams,
+		Location:   *source.NewLocation(&p.filepath, &start, endPos),
 	}
 }
