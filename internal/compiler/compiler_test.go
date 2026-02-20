@@ -784,6 +784,195 @@ fn main() -> i32 {
 	}
 }
 
+func TestCompile_GenericMapKeyBuiltinComparablePass(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn put<K: comparable, V>(m: map[K]V, k: K, v: V) {
+	m[k] = v;
+}
+
+fn main() -> i32 {
+	let m: map[i32]str = {} as map[i32]str;
+	put(m, 1, "x");
+	return 0;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected comparable-constrained generic map key to type-check, got: %s", result.Output)
+	}
+}
+
+func TestCompile_GenericMapKeyUnconstrainedFails(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn put<K, V>(m: map[K]V, k: K, v: V) {
+	m[k] = v;
+}
+
+fn main() {}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected unconstrained generic map key to fail")
+	}
+}
+
+func TestCompile_InterfaceMapKeyFails(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type Any interface {};
+
+fn main() {
+	let m: map[Any]i32 = {} as map[Any]i32;
+	let ok := m is map[Any]i32;
+	if ok {
+		return;
+	}
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected map with interface key type to fail")
+	}
+}
+
+func TestCompile_GenericMapKeyViaNamedComparableConstraintPass(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `constraint keylike = comparable;
+
+fn put<K: keylike, V>(m: map[K]V, k: K, v: V) {
+	m[k] = v;
+}
+
+fn main() -> i32 {
+	let m: map[str]i32 = {} as map[str]i32;
+	put(m, "a", 1);
+	return 0;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected named comparable constraint to type-check as map key bound, got: %s", result.Output)
+	}
+}
+
+func TestCompile_GenericInferenceThroughUnionMapViewPass(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type MapView<K: comparable, V> union {
+	&map[K]V,
+	map[K]V
+};
+
+type MapRef<K: comparable, V> &mut map[K]V;
+
+fn size<K: comparable, V>(value: MapView<K, V>) -> i32 {
+	return 0;
+}
+
+fn get<K: comparable, V>(value: MapView<K, V>, key: K) -> ?V {
+	return none;
+}
+
+fn set<K: comparable, V>(source: MapRef<K, V>, key: K, value: V) -> bool {
+	return true;
+}
+
+fn main() -> i32 {
+	let m: map[str]i32 = {} as map[str]i32;
+	let ok := set(&mut m, "a", 1);
+	if !ok {
+		return 1;
+	}
+	let total := size(m);
+	let value := get(m, "a");
+	if total >= 0 && value is ?i32 {
+		return 0;
+	}
+	return 1;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if !result.Success {
+		t.Fatalf("expected type argument inference through union wrapper parameters, got: %s", result.Output)
+	}
+}
+
+func TestCompile_GenericTypeWithoutTypeArgsFails(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `type View<T> struct {
+	.Value: T
+};
+
+fn bad(v: View) -> i32 {
+	return 0;
+}
+
+fn main() -> i32 {
+	return 0;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected bare generic type use without `<...>` to fail")
+	}
+}
+
+func TestCompile_GenericFunctionUnusedTypeParamFails(t *testing.T) {
+	opts := &Options{
+		Files: map[string]string{
+			"main.fer": `fn bad<K, V>(x: K) -> K {
+	return x;
+}
+
+fn main() -> i32 {
+	return 0;
+}`,
+		},
+		Debug:         false,
+		LogFormat:     ANSI,
+		TypecheckOnly: true,
+	}
+
+	result := Compile(opts)
+	if result.Success {
+		t.Fatalf("expected unused generic type parameter to fail")
+	}
+}
+
 func TestCompile_ResourceImplicitMoveAllowed(t *testing.T) {
 	opts := &Options{
 		Files: map[string]string{

@@ -1,0 +1,6 @@
+// EXPECT: FAIL (unconstrained generic key is not guaranteed comparable)
+fn put<K, V>(m: map[K]V, k: K, v: V) {
+    m[k] = v;
+}
+
+fn main() {}

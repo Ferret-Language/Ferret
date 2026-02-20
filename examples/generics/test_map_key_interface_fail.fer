@@ -1,0 +1,9 @@
+// EXPECT: FAIL (interfaces are not comparable map keys)
+type Any interface {};
+
+fn main() {
+    let m: map[Any]i32 = {} as map[Any]i32;
+    if m is map[Any]i32 {
+        return;
+    }
+}

@@ -12,6 +12,8 @@ import (
 	"strings"
 )
 
+const builtinComparableConstraintName = "comparable"
+
 type genericCallableInfo struct {
 	TypeParams       []*ast.TypeParam
 	FuncType         *types.FunctionType
@@ -695,7 +697,8 @@ func bindTypeParamFromTypes(
 		if !ok {
 			return true
 		}
-		if p.Mutable != a.Mutable {
+		// Allow &mut T arguments to bind against &T parameters (read-only view coercion).
+		if p.Mutable && !a.Mutable {
 			return true
 		}
 		return bindTypeParamFromTypes(p.Inner, a.Inner, typeMap, explicitMap)
@@ -738,15 +741,43 @@ func bindTypeParamFromTypes(
 		return true
 	case *types.UnionType:
 		a, ok := argUnwrapped.(*types.UnionType)
-		if !ok {
+		if ok {
+			if len(p.Variants) != len(a.Variants) {
+				return true
+			}
+			for i := range p.Variants {
+				if !bindTypeParamFromTypes(p.Variants[i], a.Variants[i], typeMap, explicitMap) {
+					return false
+				}
+			}
 			return true
 		}
-		if len(p.Variants) != len(a.Variants) {
-			return true
+
+		// Inference through union wrappers (e.g. MapView<K, V> = union{map[K]V, &map[K]V}):
+		// try each variant, keep the candidate that binds the most type parameters.
+		var bestBindings map[string]types.SemType
+		bestScore := -1
+		for _, variant := range p.Variants {
+			candidate := cloneTypeBindingMap(typeMap)
+			if !bindTypeParamFromTypes(variant, argType, candidate, explicitMap) {
+				continue
+			}
+
+			instantiatedVariant := instantiateSemType(variant, candidate)
+			if checkTypeCompatibility(argType, instantiatedVariant) == Incompatible {
+				continue
+			}
+
+			score := len(candidate)
+			if score > bestScore {
+				bestScore = score
+				bestBindings = candidate
+			}
 		}
-		for i := range p.Variants {
-			if !bindTypeParamFromTypes(p.Variants[i], a.Variants[i], typeMap, explicitMap) {
-				return false
+
+		if bestBindings != nil {
+			for name, concrete := range bestBindings {
+				typeMap[name] = concrete
 			}
 		}
 		return true
@@ -767,6 +798,14 @@ func bindTypeParamFromTypes(
 	}
 
 	return true
+}
+
+func cloneTypeBindingMap(src map[string]types.SemType) map[string]types.SemType {
+	out := make(map[string]types.SemType, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
 }
 
 func bindTypeParam(
@@ -938,6 +977,9 @@ func satisfiesConstraintExpr(
 			}
 			return satisfiesConstraintExpr(ctx, mod, actualType, constraintDecl.Expr, visited)
 		}
+		if isBuiltinComparableConstraintTypeNode(c.Type) {
+			return mapKeyTypeSatisfiesComparable(ctx, mod, actualType)
+		}
 
 		targetType := TypeFromTypeNodeWithContext(ctx, mod, c.Type)
 		if targetType == nil || targetType.Equals(types.TypeUnknown) {
@@ -975,4 +1017,112 @@ func approxConstraintMatch(actual, target types.SemType) bool {
 		target = types.UnwrapType(named.Underlying)
 	}
 	return actual.Equals(target)
+}
+
+func isBuiltinComparableConstraintTypeNode(typeNode ast.TypeNode) bool {
+	ident, ok := typeNode.(*ast.IdentifierExpr)
+	return ok && ident != nil && ident.Name == builtinComparableConstraintName
+}
+
+func mapKeyTypeSatisfiesComparable(ctx *context_v2.CompilerContext, mod *context_v2.Module, keyType types.SemType) bool {
+	if keyType == nil || keyType.Equals(types.TypeUnknown) {
+		return true
+	}
+	if named, ok := keyType.(*types.NamedType); ok && named != nil && named.Name == "Type1" {
+		if iface, ok := types.UnwrapType(named.Underlying).(*types.InterfaceType); ok && len(iface.Methods) == 0 {
+			// Runtime-erased map helpers in the builtin global module intentionally use Type1
+			// as an "any key" bridge type.
+			if mod != nil && mod.Type == context_v2.ModuleBuiltin && mod.ImportPath == "global" {
+				return true
+			}
+		}
+	}
+	if types.IsMapKeyComparable(keyType) {
+		return true
+	}
+
+	tp, ok := types.UnwrapType(keyType).(*types.TypeParam)
+	if !ok || tp == nil || mod == nil || mod.CurrentScope == nil {
+		return false
+	}
+
+	sym, ok := mod.CurrentScope.Lookup(tp.Name)
+	if !ok || sym == nil || sym.Kind != symbols.SymbolTypeParameter {
+		return false
+	}
+	typeParamDecl, ok := sym.Decl.(*ast.TypeParam)
+	if !ok || typeParamDecl == nil || typeParamDecl.Constraint == nil {
+		return false
+	}
+
+	return constraintExprImpliesComparable(ctx, mod, typeParamDecl.Constraint, map[string]bool{})
+}
+
+func constraintExprImpliesComparable(
+	ctx *context_v2.CompilerContext,
+	mod *context_v2.Module,
+	expr ast.ConstraintExpr,
+	visited map[string]bool,
+) bool {
+	if expr == nil {
+		return false
+	}
+
+	switch c := expr.(type) {
+	case *ast.ConstraintBinaryExpr:
+		if c.Op != tokens.BIT_AND_TOKEN {
+			return false
+		}
+		// A & B guarantees comparability if either side already guarantees it.
+		return constraintExprImpliesComparable(ctx, mod, c.Left, visited) ||
+			constraintExprImpliesComparable(ctx, mod, c.Right, visited)
+	case *ast.ConstraintUnionExpr:
+		if len(c.Terms) == 0 {
+			return false
+		}
+		// A union guarantees comparability only if every alternative is comparable.
+		for _, term := range c.Terms {
+			if !constraintTypeTermImpliesComparable(ctx, mod, term, visited) {
+				return false
+			}
+		}
+		return true
+	case *ast.ConstraintTypeTerm:
+		return constraintTypeTermImpliesComparable(ctx, mod, c, visited)
+	default:
+		return false
+	}
+}
+
+func constraintTypeTermImpliesComparable(
+	ctx *context_v2.CompilerContext,
+	mod *context_v2.Module,
+	term *ast.ConstraintTypeTerm,
+	visited map[string]bool,
+) bool {
+	if term == nil || term.Type == nil {
+		return false
+	}
+
+	if sym, ok := resolveConstraintNamedSymbol(ctx, mod, term.Type); ok && sym != nil && sym.Kind == symbols.SymbolConstraint {
+		if visited[sym.Name] {
+			return false
+		}
+		visited[sym.Name] = true
+		constraintDecl, ok := sym.Decl.(*ast.ConstraintDecl)
+		if !ok || constraintDecl == nil {
+			return false
+		}
+		return constraintExprImpliesComparable(ctx, mod, constraintDecl.Expr, visited)
+	}
+
+	if isBuiltinComparableConstraintTypeNode(term.Type) {
+		return true
+	}
+
+	targetType := TypeFromTypeNodeWithContext(ctx, mod, term.Type)
+	if targetType == nil || targetType.Equals(types.TypeUnknown) {
+		return false
+	}
+	return types.IsMapKeyComparable(targetType)
 }

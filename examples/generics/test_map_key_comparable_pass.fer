@@ -1,0 +1,28 @@
+// EXPECT: PASS (comparable-constrained generic map keys and global map helpers)
+// fn put<K: comparable, V>(m: map[K]V, k: K, v: V) {
+//     m[k] = v;
+// }
+
+
+type MapView<K: comparable, V> union {
+  &map[K]V,
+  map[K]V
+};
+
+fn test<K: comparable, V>(v: MapView<K, V>) {
+    // do nothing
+}
+
+fn main() -> i32 {
+    let m: map[str]i32 = {} as map[str]i32;
+    //put(m, "a", 1);
+    set(&mut m, "b", 2);
+
+    let total := size(&m);
+    let value := get(&m, "a");
+
+    if total > 0 && value is ?i32 {
+        return 0;
+    }
+    return 0;
+}

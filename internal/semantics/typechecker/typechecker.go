@@ -1325,6 +1325,104 @@ func checkVarDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl 
 	}
 }
 
+func collectTypeParamMentionsInTypeNode(typeNode ast.TypeNode, declared map[string]struct{}, used map[string]bool) {
+	if typeNode == nil {
+		return
+	}
+
+	switch t := typeNode.(type) {
+	case *ast.IdentifierExpr:
+		if _, ok := declared[t.Name]; ok {
+			used[t.Name] = true
+		}
+	case *ast.UserDefinedType:
+		if _, ok := declared[t.Name]; ok {
+			used[t.Name] = true
+		}
+	case *ast.AppliedType:
+		collectTypeParamMentionsInTypeNode(t.Base, declared, used)
+		for _, arg := range t.Args {
+			collectTypeParamMentionsInTypeNode(arg, declared, used)
+		}
+	case *ast.ArrayType:
+		collectTypeParamMentionsInTypeNode(t.ElType, declared, used)
+	case *ast.OptionalType:
+		collectTypeParamMentionsInTypeNode(t.Base, declared, used)
+	case *ast.UnionType:
+		for _, variant := range t.Variants {
+			collectTypeParamMentionsInTypeNode(variant, declared, used)
+		}
+	case *ast.ReferenceType:
+		collectTypeParamMentionsInTypeNode(t.Base, declared, used)
+	case *ast.HeapType:
+		collectTypeParamMentionsInTypeNode(t.Base, declared, used)
+	case *ast.ResultType:
+		collectTypeParamMentionsInTypeNode(t.Value, declared, used)
+		collectTypeParamMentionsInTypeNode(t.Error, declared, used)
+	case *ast.StructType:
+		for _, field := range t.Fields {
+			collectTypeParamMentionsInTypeNode(field.Type, declared, used)
+		}
+	case *ast.InterfaceType:
+		for _, method := range t.Methods {
+			collectTypeParamMentionsInTypeNode(method.Type, declared, used)
+		}
+	case *ast.FuncType:
+		for _, param := range t.Params {
+			collectTypeParamMentionsInTypeNode(param.Type, declared, used)
+		}
+		collectTypeParamMentionsInTypeNode(t.Result, declared, used)
+	case *ast.MapType:
+		collectTypeParamMentionsInTypeNode(t.Key, declared, used)
+		collectTypeParamMentionsInTypeNode(t.Value, declared, used)
+	}
+}
+
+func checkGenericTypeParamUsageInSignature(
+	ctx *context_v2.CompilerContext,
+	kind string,
+	typeParams []*ast.TypeParam,
+	funcType *ast.FuncType,
+) {
+	if ctx == nil || len(typeParams) == 0 || funcType == nil {
+		return
+	}
+
+	declared := make(map[string]struct{}, len(typeParams))
+	for _, typeParam := range typeParams {
+		if typeParam == nil || typeParam.Name == nil || typeParam.Name.Name == "" {
+			continue
+		}
+		declared[typeParam.Name.Name] = struct{}{}
+	}
+	if len(declared) == 0 {
+		return
+	}
+
+	used := make(map[string]bool, len(declared))
+	for _, param := range funcType.Params {
+		collectTypeParamMentionsInTypeNode(param.Type, declared, used)
+	}
+	collectTypeParamMentionsInTypeNode(funcType.Result, declared, used)
+
+	for _, typeParam := range typeParams {
+		if typeParam == nil || typeParam.Name == nil {
+			continue
+		}
+		name := typeParam.Name.Name
+		if name == "" || used[name] {
+			continue
+		}
+		ctx.Diagnostics.Add(
+			diagnostics.NewError(
+				fmt.Sprintf("generic type parameter '%s' is not used in %s signature", name, kind),
+			).
+				WithCode(diagnostics.ErrInvalidType).
+				WithPrimaryLabel(typeParam.Name.Loc(), "remove this type parameter or use it in parameter/return types"),
+		)
+	}
+}
+
 // checkFuncDecl type checks a function declaration
 func checkFuncDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl *ast.FuncDecl) {
 	// Safety check: Scope should be set during collection phase
@@ -1335,6 +1433,7 @@ func checkFuncDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, decl
 
 	funcScope := decl.Scope.(*table.SymbolTable)
 	addTypeParamsToScope(funcScope, decl.TypeParams)
+	checkGenericTypeParamUsageInSignature(ctx, "function", decl.TypeParams, decl.Type)
 
 	// Update the function symbol's type with actual function signature
 	if decl.Name != nil && decl.Type != nil {
@@ -2421,12 +2520,12 @@ func validateArrayLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Modul
 // checkMapLiteral validates map literal key/value types
 func checkMapLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, lit *ast.CompositeLit, mapType *types.MapType) {
 	// Validate that the key type is comparable
-	if !types.IsMapKeyComparable(mapType.Key) {
+	if !mapKeyTypeSatisfiesComparable(ctx, mod, mapType.Key) {
 		ctx.Diagnostics.Add(
 			diagnostics.NewError(fmt.Sprintf("map key type '%s' is not comparable", mapType.Key.String())).
 				WithCode(diagnostics.ErrInvalidType).
 				WithPrimaryLabel(lit.Loc(), "map keys must be comparable").
-				WithHelp("Comparable types: primitives (i32, f64, str, bool, etc.), structs with comparable fields, fixed arrays [N]T where T is comparable, pointers, and enums.\nNon-comparable: slices []T, maps, functions, interfaces, unions, optionals, results."),
+				WithHelp("Comparable types: primitives (i32, f64, str, bool, etc.), structs with comparable fields, fixed arrays [N]T where T is comparable, pointers, enums, or generic type parameters constrained to comparable key types.\nNon-comparable: slices []T, maps, functions, interfaces, unions, optionals, results."),
 		)
 	}
 
@@ -2441,7 +2540,7 @@ func checkMapLiteral(ctx *context_v2.CompilerContext, mod *context_v2.Module, li
 
 		// Check key type compatibility - with contextualization
 		keyType := checkExpr(ctx, mod, kv.Key, mapType.Key)
-		if isInterfaceType(mapType.Key) && !keyType.Equals(types.TypeUnknown) && !isInterfaceType(keyType) && !types.IsMapKeyComparable(keyType) {
+		if isInterfaceType(mapType.Key) && !keyType.Equals(types.TypeUnknown) && !isInterfaceType(keyType) && !mapKeyTypeSatisfiesComparable(ctx, mod, keyType) {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("map key type '%s' is not comparable", keyType.String())).
 					WithCode(diagnostics.ErrInvalidType).
@@ -2900,6 +2999,7 @@ func checkMethodDecl(ctx *context_v2.CompilerContext, mod *context_v2.Module, de
 	methodScope := decl.Scope.(*table.SymbolTable)
 	declareReceiverGenericTypeParams(ctx, mod, methodScope, decl.Receiver.Type)
 	addTypeParamsToScope(methodScope, decl.TypeParams)
+	checkGenericTypeParamUsageInSignature(ctx, "method", decl.TypeParams, decl.Type)
 
 	// Set up method context (scope and return type)
 	defer setupFunctionContext(ctx, mod, methodScope, decl.Type)()
@@ -3104,6 +3204,17 @@ func checkConstraintTypeTerm(ctx *context_v2.CompilerContext, mod *context_v2.Mo
 			)
 			return
 		}
+	}
+
+	if isBuiltinComparableConstraintTypeNode(term.Type) {
+		if term.Approx {
+			ctx.Diagnostics.Add(
+				diagnostics.NewError("underlying-type marker '~' cannot be applied to the builtin comparable constraint").
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(term.Loc(), "remove '~' before comparable"),
+			)
+		}
+		return
 	}
 
 	semType := TypeFromTypeNodeWithContext(ctx, mod, term.Type)
@@ -5666,6 +5777,17 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 				// Type not found - error should have been reported in resolver
 				return types.TypeUnknown
 			}
+			if typeDecl, ok := sym.Decl.(*ast.TypeDecl); ok && typeDecl != nil && len(typeDecl.TypeParams) > 0 {
+				if ctx != nil {
+					ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("generic type '%s' requires type argument(s)", typeName)).
+							WithCode(diagnostics.ErrTypeMismatch).
+							WithPrimaryLabel(t.Loc(), "provide `<...>` type arguments").
+							WithHelp(fmt.Sprintf("use `%s::%s<...>`", moduleAlias, typeName)),
+					)
+				}
+				return types.TypeUnknown
+			}
 
 			// Return the resolved type
 			return sym.Type
@@ -5679,6 +5801,15 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 			if ok {
 				switch sym.Kind {
 				case symbols.SymbolType:
+					if typeDecl, ok := sym.Decl.(*ast.TypeDecl); ok && typeDecl != nil && len(typeDecl.TypeParams) > 0 {
+						ctx.Diagnostics.Add(
+							diagnostics.NewError(fmt.Sprintf("generic type '%s' requires type argument(s)", t.Name)).
+								WithCode(diagnostics.ErrTypeMismatch).
+								WithPrimaryLabel(t.Loc(), "provide `<...>` type arguments").
+								WithHelp(fmt.Sprintf("use `%s<...>`", t.Name)),
+						)
+						return types.TypeUnknown
+					}
 					if mod.Type != context_v2.ModuleBuiltin && context_v2.IsCompilerBuiltinHandleTypeName(t.Name) {
 						ctx.Diagnostics.Add(
 							diagnostics.NewError(fmt.Sprintf("type '%s' is compiler-internal", t.Name)).
@@ -5826,12 +5957,12 @@ func TypeFromTypeNodeWithContext(ctx *context_v2.CompilerContext, mod *context_v
 		// Map type: map[K]V
 		keyType := TypeFromTypeNodeWithContext(ctx, mod, t.Key)
 		valueType := TypeFromTypeNodeWithContext(ctx, mod, t.Value)
-		if ctx != nil && mod != nil && !keyType.Equals(types.TypeUnknown) && !types.IsMapKeyComparable(keyType) {
+		if ctx != nil && mod != nil && !keyType.Equals(types.TypeUnknown) && !mapKeyTypeSatisfiesComparable(ctx, mod, keyType) {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("map key type '%s' is not comparable", keyType.String())).
 					WithCode(diagnostics.ErrInvalidType).
 					WithPrimaryLabel(t.Key.Loc(), "map keys must be comparable").
-					WithHelp("Comparable types: primitives (i32, f64, str, bool, byte, char), structs with comparable fields, fixed arrays [N]T (not slices), pointers, and enums.\nNon-comparable: slices []T, maps, functions, interfaces, unions, optionals, results."),
+					WithHelp("Comparable types: primitives (i32, f64, str, bool, byte, char), structs with comparable fields, fixed arrays [N]T (not slices), pointers, enums, or generic type parameters constrained to comparable key types.\nNon-comparable: slices []T, maps, functions, interfaces, unions, optionals, results."),
 			)
 		}
 		return types.NewMap(keyType, valueType)
@@ -6092,6 +6223,24 @@ func registerGenericCallInstantiation(
 	if info.Decl == nil || info.Decl.Name == nil {
 		return
 	}
+
+	defMod := info.DefModule
+	if defMod == nil {
+		defMod = mod
+	}
+
+	// Generic extern/native functions use monomorphic runtime symbols.
+	// Keep call target unmangled and skip synthetic generic instantiation emission.
+	if defMod != nil && defMod.ModuleScope != nil {
+		if sym, ok := defMod.ModuleScope.Lookup(info.Decl.Name.Name); ok && sym != nil && sym.IsNative {
+			mod.SetGenericCallInfo(expr, &context_v2.GenericCallInfo{
+				TargetName: info.Decl.Name.Name,
+				FuncType:   inst.FuncType,
+			})
+			return
+		}
+	}
+
 	targetName := mangleGenericFunctionName(info.Decl.Name.Name, inst.TypeArgs)
 	if targetName == "" {
 		return
@@ -6101,10 +6250,6 @@ func registerGenericCallInstantiation(
 		FuncType:   inst.FuncType,
 	})
 
-	defMod := info.DefModule
-	if defMod == nil {
-		defMod = mod
-	}
 	defMod.RegisterGenericFunctionInstantiation(&context_v2.GenericFunctionInstantiation{
 		Name:     targetName,
 		Decl:     info.Decl,
