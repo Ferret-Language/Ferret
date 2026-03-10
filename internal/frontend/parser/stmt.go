@@ -186,7 +186,7 @@ func (p *Parser) parseDeferStmt() ast.Stmt {
 
 func (p *Parser) parseLockStmt() ast.Stmt {
 	start := p.advance().Start
-	value := p.parseExpr(precLowest)
+	value := p.parseExprUntil(precLowest, tokens.AS)
 	p.expect(tokens.AS, "expected 'as' in lock statement")
 	name := p.expectIdent("expected lock guard name").Literal
 	body := p.parseBlock()

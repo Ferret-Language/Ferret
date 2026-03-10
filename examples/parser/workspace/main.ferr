@@ -4,7 +4,7 @@ import "util/build" as build
 fn main() i32 {
     let p = .{ .x = 1, .y = 2 }
     if p == .{ .x = 1, .y = 2 } {
-        return math::vec2::len2(p)
+        return vec2::Len2(p)
     }
-    return build::origin().x
+    return build::Origin().x
 }

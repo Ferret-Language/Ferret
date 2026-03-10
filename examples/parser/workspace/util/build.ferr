@@ -1,9 +1,9 @@
 type Point struct {
     x i32 = 0
     y i32 = 0
-    static origin Point = .{}
+    static Origin Point = .{}
 }
 
-fn origin() Point {
-    return Point::origin
+fn Origin() Point {
+    return Point::Origin
 }

@@ -1,8 +1,5 @@
-type Point struct {
-    X i32 = 0
-    Y i32 = 0
-}
+import "math/vec2"
 
-fn origin() Point {
+fn Origin() vec2::Vec2 {
     return .{}
 }

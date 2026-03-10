@@ -19,13 +19,13 @@ json = "../deps/json"
 	mustWrite(t, filepath.Join(root, "app", "main.ferr"), `import "json/parser"
 
 fn main() i32 {
-    return json::value()
+    return parser::Value()
 }
 `)
 	mustWrite(t, filepath.Join(depRoot, "fer.ret"), `[package]
 name = "json"
 `)
-	mustWrite(t, filepath.Join(depRoot, "parser.ferr"), `fn value() i32 {
+	mustWrite(t, filepath.Join(depRoot, "parser.ferr"), `fn Value() i32 {
     return 1
 }
 `)

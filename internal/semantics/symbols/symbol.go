@@ -18,6 +18,9 @@ const (
 	SymbolFunc    Kind = "func"
 	SymbolMethod  Kind = "method"
 	SymbolField   Kind = "field"
+	SymbolStatic  Kind = "static"
+	SymbolVariant Kind = "variant"
+	SymbolError   Kind = "error_member"
 	SymbolUnknown Kind = "unknown"
 )
 

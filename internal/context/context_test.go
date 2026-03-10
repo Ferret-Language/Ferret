@@ -51,3 +51,14 @@ func TestResolveLocalModuleRejectsReservedPrefix(t *testing.T) {
 		t.Fatal("expected reserved std prefix to be rejected")
 	}
 }
+
+func TestUniverseRegistersBuiltInConstants(t *testing.T) {
+	ctx := New(t.TempDir(), ".ferr", nil)
+
+	for _, name := range []string{"true", "false", "none", "undefined"} {
+		sym, ok := ctx.Universe.Lookup(name)
+		if !ok || sym == nil {
+			t.Fatalf("expected builtin constant %q to be registered", name)
+		}
+	}
+}

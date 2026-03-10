@@ -16,8 +16,9 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 		return
 	}
 
-	scope := table.New(nil)
+	scope := table.New(ctx.Universe)
 	methodSets := make(map[string]map[string]*symbols.Symbol)
+	typeMembers := make(map[string]map[string]*symbols.Symbol)
 
 	for _, decl := range mod.AST.Decls {
 		switch d := decl.(type) {
@@ -27,6 +28,7 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 			declare(ctx, scope, symbols.New(d.Name, symbols.SymbolConst, d))
 		case *ast.TypeDecl:
 			declare(ctx, scope, symbols.New(d.Name, symbols.SymbolType, d))
+			collectTypeMembers(ctx, typeMembers, d)
 		case *ast.FuncDecl:
 			if d.Receiver == nil {
 				declare(ctx, scope, symbols.New(d.Name, symbols.SymbolFunc, d))
@@ -41,7 +43,43 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 
 	mod.ModuleScope = scope
 	mod.MethodSets = methodSets
+	mod.TypeMembers = typeMembers
 	mod.Phase = phase.PhaseCollected
+}
+
+func collectTypeMembers(ctx *context.CompilerContext, typeMembers map[string]map[string]*symbols.Symbol, decl *ast.TypeDecl) {
+	if decl == nil {
+		return
+	}
+	members := typeMembers[decl.Name]
+	if members == nil {
+		members = make(map[string]*symbols.Symbol)
+		typeMembers[decl.Name] = members
+	}
+
+	switch t := decl.Type.(type) {
+	case *ast.StructType:
+		for _, field := range t.StaticFields {
+			if field == nil {
+				continue
+			}
+			declareTypeMember(ctx, decl.Name, members, symbols.New(field.Name, symbols.SymbolStatic, field))
+		}
+	case *ast.EnumType:
+		for _, variant := range t.Variants {
+			if variant == nil {
+				continue
+			}
+			declareTypeMember(ctx, decl.Name, members, symbols.New(variant.Name, symbols.SymbolVariant, variant))
+		}
+	case *ast.ErrorType:
+		for _, member := range t.Members {
+			if member == nil {
+				continue
+			}
+			declareTypeMember(ctx, decl.Name, members, symbols.New(member.Name, symbols.SymbolError, member))
+		}
+	}
 }
 
 func declare(ctx *context.CompilerContext, scope *table.Scope, sym *symbols.Symbol) {
@@ -61,6 +99,23 @@ func declareMethod(ctx *context.CompilerContext, methodSets map[string]map[strin
 		return
 	}
 	methodSets[recv][sym.Name] = sym
+}
+
+func declareTypeMember(ctx *context.CompilerContext, typeName string, members map[string]*symbols.Symbol, sym *symbols.Symbol) {
+	if members == nil || sym == nil {
+		return
+	}
+	if prev, exists := members[sym.Name]; exists {
+		diag := diagnostics.NewError(fmt.Sprintf("duplicate member %q for type %q", sym.Name, typeName)).
+			WithCode(diagnostics.ErrRedeclaredSymbol).
+			WithPrimaryLabel(&sym.Location, "duplicate member declaration")
+		if prev != nil {
+			diag.WithSecondaryLabel(&prev.Location, "previous member is here")
+		}
+		ctx.Diagnostics.Add(diag)
+		return
+	}
+	members[sym.Name] = sym
 }
 
 func reportDuplicate(ctx *context.CompilerContext, sym, prev *symbols.Symbol) {

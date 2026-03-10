@@ -22,8 +22,12 @@ const (
 )
 
 func (p *Parser) parseExpr(precedence int) ast.Expr {
+	return p.parseExprUntil(precedence)
+}
+
+func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Expr {
 	left := p.parsePrefix()
-	for !p.at(tokens.SEMICOLON) && !p.at(tokens.RBRACE) && !p.at(tokens.EOF) && precedence < p.currentPrecedence() {
+	for !p.at(tokens.SEMICOLON) && !p.at(tokens.RBRACE) && !p.at(tokens.EOF) && !p.atAny(stopKinds...) && precedence < p.currentPrecedence() {
 		if p.compositeValueDepth > 0 && precedence == precLowest && p.atCompositeFieldBoundary() {
 			return left
 		}
@@ -41,6 +45,8 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 		case tokens.BB:
 			tok := p.advance()
 			left = &ast.PostfixExpr{Left: left, Op: tok.Literal, Location: p.makeExprLoc(*left.Loc().Start)}
+		case tokens.AS:
+			left = p.parseCast(left)
 		default:
 			return left
 		}
@@ -196,6 +202,13 @@ func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
 	return &ast.SelectorExpr{Left: left, Name: name, Location: p.makeExprLoc(start)}
 }
 
+func (p *Parser) parseCast(left ast.Expr) ast.Expr {
+	start := *left.Loc().Start
+	p.expect(tokens.AS, "expected 'as'")
+	typ := p.parseType()
+	return &ast.CastExpr{Left: left, Type: typ, Location: p.makeExprLoc(start)}
+}
+
 func (p *Parser) currentPrecedence() int {
 	return precedence(p.current().Kind)
 }
@@ -219,6 +232,8 @@ func precedence(kind tokens.Kind) int {
 	case tokens.ASTERISK, tokens.SLASH, tokens.PERCENT:
 		return precProduct
 	case tokens.LPAREN, tokens.LBRACK, tokens.DOT, tokens.BB:
+		return precPostfix
+	case tokens.AS:
 		return precPostfix
 	default:
 		return precLowest

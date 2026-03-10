@@ -84,6 +84,8 @@ type EnumVariant struct {
 	Location source.Location
 }
 
+func (v *EnumVariant) Loc() source.Location { return v.Location }
+
 type EnumType struct {
 	Variants []*EnumVariant
 	Location source.Location
@@ -104,6 +106,8 @@ type ErrorMember struct {
 	Name     string
 	Location source.Location
 }
+
+func (m *ErrorMember) Loc() source.Location { return m.Location }
 
 type ErrorType struct {
 	Members  []*ErrorMember

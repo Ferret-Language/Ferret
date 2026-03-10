@@ -109,6 +109,9 @@ func (p *Parser) validateExpr(expr ast.Expr) {
 		}
 	case *ast.SelectorExpr:
 		p.validateExpr(e.Left)
+	case *ast.CastExpr:
+		p.validateExpr(e.Left)
+		p.validateType(e.Type)
 	case *ast.CompositeLit:
 		p.validateCompositeLit(e)
 	}

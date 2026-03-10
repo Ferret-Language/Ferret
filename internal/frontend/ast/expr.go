@@ -95,6 +95,15 @@ type SelectorExpr struct {
 func (*SelectorExpr) exprNode()              {}
 func (e *SelectorExpr) Loc() source.Location { return e.Location }
 
+type CastExpr struct {
+	Left     Expr
+	Type     TypeExpr
+	Location source.Location
+}
+
+func (*CastExpr) exprNode()              {}
+func (e *CastExpr) Loc() source.Location { return e.Location }
+
 type CompositeItem struct {
 	Name  string
 	Value Expr

@@ -19,6 +19,11 @@ const BuildMode = "debug"
 
 type Point struct {
     X i32 = 0
+    static Origin Point = .{}
+}
+
+type Color enum {
+    Red
 }
 
 fn Build() i32 {
@@ -36,8 +41,8 @@ fn (p *mut Point) Shift(dx i32) {
 	if result.Entry == nil {
 		t.Fatal("expected entry module")
 	}
-	if result.Entry.Phase != phase.PhaseCollected {
-		t.Fatalf("expected collected phase, got %s", result.Entry.Phase)
+	if result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership-analyzed phase, got %s", result.Entry.Phase)
 	}
 	scope := result.Entry.ModuleScope
 	if scope == nil {
@@ -64,6 +69,12 @@ fn (p *mut Point) Shift(dx i32) {
 	}
 	if methods["Shift"].Kind != symbols.SymbolMethod {
 		t.Fatalf("expected method symbol, got %#v", methods["Shift"])
+	}
+	if result.Entry.TypeMembers["Point"]["Origin"].Kind != symbols.SymbolStatic {
+		t.Fatalf("expected static member symbol, got %#v", result.Entry.TypeMembers["Point"]["Origin"])
+	}
+	if result.Entry.TypeMembers["Color"]["Red"].Kind != symbols.SymbolVariant {
+		t.Fatalf("expected enum variant symbol, got %#v", result.Entry.TypeMembers["Color"]["Red"])
 	}
 }
 

@@ -114,6 +114,15 @@ func (p *Parser) at(kind tokens.Kind) bool {
 	return p.current().Kind == kind
 }
 
+func (p *Parser) atAny(kinds ...tokens.Kind) bool {
+	for _, kind := range kinds {
+		if p.at(kind) {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Parser) match(kinds ...tokens.Kind) bool {
 	for _, kind := range kinds {
 		if p.at(kind) {

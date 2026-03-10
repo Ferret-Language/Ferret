@@ -58,6 +58,10 @@ const (
 	ErrInvalidDefer            = "T0031"
 	ErrExtraField              = "T0032"
 	ErrInvalidErrorPropagate   = "T0033"
+	ErrUseAfterMove            = "T0034"
+	ErrInvalidCopy             = "T0035"
+	ErrBorrowEscape            = "T0036"
+	ErrBorrowConflict          = "T0037"
 
 	// Module/Import errors (M prefix)
 	ErrModuleNotFound    = "M0001"

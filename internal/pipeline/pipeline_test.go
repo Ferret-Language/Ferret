@@ -14,10 +14,10 @@ func TestPipelineParsesImportsAndReusesCachedModules(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "main.ferr"), `import "util";
 
 fn build() i32 {
-    return util::value()
+    return util::Value()
 }
 `)
-	mustWrite(t, filepath.Join(root, "util.ferr"), `fn value() i32 {
+	mustWrite(t, filepath.Join(root, "util.ferr"), `fn Value() i32 {
     return 1
 }
 `)
@@ -75,10 +75,10 @@ func TestPipelineParsesWholeWorkspace(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "main.ferr"), `import "util"
 
 fn build() i32 {
-    return util::value()
+    return util::Value()
 }
 `)
-	mustWrite(t, filepath.Join(root, "util.ferr"), `fn value() i32 {
+	mustWrite(t, filepath.Join(root, "util.ferr"), `fn Value() i32 {
     return 1
 }
 `)

@@ -186,6 +186,8 @@ func debugExpr(expr Expr) any {
 		return map[string]any{"kind": "CallExpr", "callee": debugExpr(e.Callee), "type_args": typeArgs, "args": args, "loc": debugLoc(e.Location)}
 	case *SelectorExpr:
 		return map[string]any{"kind": "SelectorExpr", "left": debugExpr(e.Left), "name": e.Name, "loc": debugLoc(e.Location)}
+	case *CastExpr:
+		return map[string]any{"kind": "CastExpr", "left": debugExpr(e.Left), "type": debugType(e.Type), "loc": debugLoc(e.Location)}
 	case *CompositeLit:
 		items := make([]any, 0, len(e.Items))
 		for _, item := range e.Items {

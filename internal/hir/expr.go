@@ -1,0 +1,97 @@
+package hir
+
+type Ident struct {
+	baseExpr
+	Path []string
+}
+
+func (*Ident) exprNode() {}
+
+type BadExpr struct{ baseExpr }
+
+func (*BadExpr) exprNode() {}
+
+type NumberLit struct {
+	baseExpr
+	Value string
+}
+
+func (*NumberLit) exprNode() {}
+
+type StringLit struct {
+	baseExpr
+	Value string
+}
+
+func (*StringLit) exprNode() {}
+
+type NoneLit struct{ baseExpr }
+
+func (*NoneLit) exprNode() {}
+
+type PrefixExpr struct {
+	baseExpr
+	Op    string
+	Right Expr
+}
+
+func (*PrefixExpr) exprNode() {}
+
+type UnsafeExpr struct {
+	baseExpr
+	Value Expr
+}
+
+func (*UnsafeExpr) exprNode() {}
+
+type BinaryExpr struct {
+	baseExpr
+	Left  Expr
+	Op    string
+	Right Expr
+}
+
+func (*BinaryExpr) exprNode() {}
+
+type PostfixExpr struct {
+	baseExpr
+	Left Expr
+	Op   string
+}
+
+func (*PostfixExpr) exprNode() {}
+
+type CallExpr struct {
+	baseExpr
+	Callee Expr
+	Args   []Expr
+}
+
+func (*CallExpr) exprNode() {}
+
+type SelectorExpr struct {
+	baseExpr
+	Left Expr
+	Name string
+}
+
+func (*SelectorExpr) exprNode() {}
+
+type CastExpr struct {
+	baseExpr
+	Left Expr
+}
+
+func (*CastExpr) exprNode() {}
+
+type CompositeItem struct {
+	Name  string
+	Value Expr
+}
+
+type CompositeLit struct {
+	baseExpr
+	Items []CompositeItem
+}
+
+func (*CompositeLit) exprNode() {}

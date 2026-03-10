@@ -47,6 +47,8 @@ type Receiver struct {
 	Location source.Location
 }
 
+func (r *Receiver) Loc() source.Location { return r.Location }
+
 type Param struct {
 	Name       string
 	IsComptime bool
@@ -75,9 +77,13 @@ type FieldDecl struct {
 	Location source.Location
 }
 
+func (d *FieldDecl) Loc() source.Location { return d.Location }
+
 type StaticFieldDecl struct {
 	Name     string
 	Type     TypeExpr
 	Default  Expr
 	Location source.Location
 }
+
+func (d *StaticFieldDecl) Loc() source.Location { return d.Location }

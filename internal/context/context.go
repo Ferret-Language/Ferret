@@ -13,9 +13,12 @@ import (
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/hir"
 	"compiler/internal/phase"
+	"compiler/internal/semantics/binding"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/table"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/tokens"
 )
 
@@ -52,15 +55,20 @@ type Module struct {
 	ContentHash  string
 	Tokens       []tokens.Token
 	AST          *ast.Module
+	HIR          *hir.Module
 	Phase        phase.ModulePhase
 	Dependencies []string
 	ModuleScope  *table.Scope
 	MethodSets   map[string]map[string]*symbols.Symbol
+	TypeMembers  map[string]map[string]*symbols.Symbol
+	Bindings     *binding.ModuleInfo
+	Types        *typeinfo.ModuleInfo
 }
 
 type CompilerContext struct {
 	Config      Config
 	Diagnostics *diagnostics.Bag
+	Universe    *table.Scope
 
 	mu           sync.RWMutex
 	modules      map[string]*Module
@@ -90,13 +98,33 @@ func NewWithConfig(cfg Config, diag *diagnostics.Bag) *CompilerContext {
 	if cfg.DependencyRoots == nil {
 		cfg.DependencyRoots = make(map[string]string)
 	}
+	universe := predeclaredScope()
 	return &CompilerContext{
 		Config:       cfg,
 		Diagnostics:  diag,
+		Universe:     universe,
 		modules:      make(map[string]*Module),
 		fileIndex:    make(map[string]string),
 		dependencies: make(map[string]map[string]struct{}),
 	}
+}
+
+func predeclaredScope() *table.Scope {
+	scope := table.New(nil)
+	declarePredeclaredConst(scope, "true")
+	declarePredeclaredConst(scope, "false")
+	declarePredeclaredConst(scope, "none")
+	declarePredeclaredConst(scope, "undefined")
+	return scope
+}
+
+func declarePredeclaredConst(scope *table.Scope, name string) {
+	if scope == nil || name == "" {
+		return
+	}
+	sym := symbols.New(name, symbols.SymbolConst, nil)
+	sym.Exported = true
+	_ = scope.Declare(sym)
 }
 
 func (ctx *CompilerContext) ImportPathForFile(filePath string) (string, error) {

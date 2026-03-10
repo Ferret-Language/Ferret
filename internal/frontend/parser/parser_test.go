@@ -173,6 +173,31 @@ fn ClonePoint(p Point) Point {
 	}
 }
 
+func TestParseCastExpression(t *testing.T) {
+	src := `
+fn CastIt(x i32) i8 {
+    return x as i8
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	cast, ok := ret.Value.(*ast.CastExpr)
+	if !ok {
+		t.Fatalf("expected cast expr, got %T", ret.Value)
+	}
+	if _, ok := cast.Left.(*ast.Ident); !ok {
+		t.Fatalf("expected cast lhs ident, got %T", cast.Left)
+	}
+	if typ, ok := cast.Type.(*ast.NamedType); !ok || len(typ.Path) != 1 || typ.Path[0] != "i8" {
+		t.Fatalf("expected cast target i8, got %#v", cast.Type)
+	}
+}
+
 func TestParseAssignmentAndWhileLoop(t *testing.T) {
 	src := `
 fn run() i32 {
