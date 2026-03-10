@@ -444,14 +444,11 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.NoneLit:
-	
-		if expected != nil {
-			
-			if _, ok := expected.(*typeinfo.OptionalType); ok {
-				c.info.BindNode(e, expected)
-				return expected
-			}
+		if _, ok := expected.(*typeinfo.OptionalType); ok {
+			c.info.BindNode(e, expected)
+			return expected
 		}
+
 		loc := e.Location
 		c.ctx.Diagnostics.Add(
 			diagnostics.NewError("`none` requires an optional context").
