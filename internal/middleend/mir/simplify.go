@@ -80,11 +80,44 @@ func simplifyFunction(fn *Function) {
 		}
 		block.Instructions = out
 		block.Terminator = simplifyTerminator(block.Terminator, consts)
+		propagateTempCopies(fn, block)
 		eliminateDeadTempAssigns(fn, block)
 	}
 	removeUnreachableBlocks(fn)
 	renumberBlocks(fn)
 	pruneUnusedTempLocals(fn)
+}
+
+func propagateTempCopies(fn *Function, block *Block) {
+	if fn == nil || block == nil || len(block.Instructions) == 0 {
+		return
+	}
+	assignCount := make(map[int]int)
+	useCount := make(map[int]int)
+	for _, instr := range block.Instructions {
+		countAssignedLocals(assignCount, instr)
+		countUsedLocalsInInstr(useCount, instr)
+	}
+	countUsedLocalsInTerminator(useCount, block.Terminator)
+
+	out := make([]Instr, 0, len(block.Instructions))
+	for idx, instr := range block.Instructions {
+		assign, ok := instr.(*AssignInstr)
+		if !ok {
+			out = append(out, instr)
+			continue
+		}
+		local := lookupLocal(fn, assign.TargetID)
+		if local == nil || !local.IsTemp || assignCount[assign.TargetID] != 1 || useCount[assign.TargetID] == 0 || !isSimpleValue(assign.Value) {
+			out = append(out, instr)
+			continue
+		}
+		for j := idx + 1; j < len(block.Instructions); j++ {
+			replaceLocalInInstr(block.Instructions[j], assign.TargetID, assign.Value)
+		}
+		replaceLocalInTerminator(block.Terminator, assign.TargetID, assign.Value)
+	}
+	block.Instructions = out
 }
 
 func eliminateDeadTempAssigns(fn *Function, block *Block) {
@@ -282,15 +315,6 @@ func boolConstant(value Value) (bool, bool) {
 	switch v := value.(type) {
 	case *BoolValue:
 		return v.Value, true
-	case *NameValue:
-		if len(v.Path) == 1 {
-			if v.Path[0] == "true" {
-				return true, true
-			}
-			if v.Path[0] == "false" {
-				return false, true
-			}
-		}
 	}
 	return false, false
 }
@@ -699,6 +723,17 @@ func lookupLocal(fn *Function, id int) *Local {
 	return fn.Locals[id]
 }
 
+func countAssignedLocals(dst map[int]int, instr Instr) {
+	switch i := instr.(type) {
+	case *AssignInstr:
+		dst[i.TargetID]++
+	case *ComputeInstr:
+		dst[i.TargetID]++
+	case *LockInstr:
+		dst[i.LocalID]++
+	}
+}
+
 func usedLocalsInTerminator(term Terminator) map[int]bool {
 	out := make(map[int]bool)
 	switch t := term.(type) {
@@ -715,6 +750,47 @@ func usedLocalsInTerminator(term Terminator) map[int]bool {
 		addUsedLocalsFromValue(out, t.Value)
 	}
 	return out
+}
+
+func countUsedLocalsInInstr(dst map[int]int, instr Instr) {
+	switch i := instr.(type) {
+	case *AssignInstr:
+		countUsedLocalsInValue(dst, i.Value)
+	case *ComputeInstr:
+		countUsedLocalsInValue(dst, i.Value)
+	case *StoreInstr:
+		countUsedLocalsInPlace(dst, i.Target)
+		countUsedLocalsInValue(dst, i.Value)
+	case *StoreFieldInstr:
+		countUsedLocalsInValue(dst, i.Base)
+		countUsedLocalsInValue(dst, i.Value)
+	case *EvalInstr:
+		countUsedLocalsInValue(dst, i.Value)
+	case *BindInstr:
+		countUsedLocalsInValue(dst, i.Value)
+	case *LockInstr:
+		countUsedLocalsInValue(dst, i.Value)
+	case *DeferInstr:
+		for _, child := range i.Body {
+			countUsedLocalsInInstr(dst, child)
+		}
+	}
+}
+
+func countUsedLocalsInTerminator(dst map[int]int, term Terminator) {
+	switch t := term.(type) {
+	case *BranchTerm:
+		countUsedLocalsInValue(dst, t.Cond)
+	case *SwitchTerm:
+		countUsedLocalsInValue(dst, t.Value)
+		for _, kase := range t.Cases {
+			countUsedLocalsInValue(dst, kase.Expr)
+		}
+	case *ReturnTerm:
+		countUsedLocalsInValue(dst, t.Value)
+	case *PanicTerm:
+		countUsedLocalsInValue(dst, t.Value)
+	}
 }
 
 func addUsedLocalsFromInstr(dst map[int]bool, instr Instr) {
@@ -751,6 +827,15 @@ func addUsedLocalsFromPlace(dst map[int]bool, place Place) {
 	}
 }
 
+func countUsedLocalsInPlace(dst map[int]int, place Place) {
+	switch p := place.(type) {
+	case *LocalPlace:
+		dst[p.LocalID]++
+	case *FieldPlace:
+		countUsedLocalsInPlace(dst, p.Base)
+	}
+}
+
 func addUsedLocalsFromValue(dst map[int]bool, value Value) {
 	switch v := value.(type) {
 	case nil:
@@ -783,5 +868,174 @@ func addUsedLocalsFromValue(dst map[int]bool, value Value) {
 		for _, item := range v.Items {
 			addUsedLocalsFromValue(dst, item.Value)
 		}
+	}
+}
+
+func countUsedLocalsInValue(dst map[int]int, value Value) {
+	switch v := value.(type) {
+	case nil:
+		return
+	case *LocalValue:
+		dst[v.LocalID]++
+	case *UnaryValue:
+		countUsedLocalsInValue(dst, v.Right)
+	case *BinaryValue:
+		countUsedLocalsInValue(dst, v.Left)
+		countUsedLocalsInValue(dst, v.Right)
+	case *PostfixValue:
+		countUsedLocalsInValue(dst, v.Left)
+	case *AddrOfValue:
+		countUsedLocalsInValue(dst, v.Source)
+	case *LoadValue:
+		countUsedLocalsInValue(dst, v.Pointer)
+	case *CallValue:
+		countUsedLocalsInValue(dst, v.Callee)
+		for _, arg := range v.Args {
+			countUsedLocalsInValue(dst, arg)
+		}
+	case *FieldLoadValue:
+		countUsedLocalsInValue(dst, v.Base)
+	case *FieldValue:
+		countUsedLocalsInValue(dst, v.Base)
+	case *CastValue:
+		countUsedLocalsInValue(dst, v.Left)
+	case *CompositeValue:
+		for _, item := range v.Items {
+			countUsedLocalsInValue(dst, item.Value)
+		}
+	}
+}
+
+func replaceLocalInInstr(instr Instr, localID int, replacement Value) {
+	switch i := instr.(type) {
+	case *AssignInstr:
+		i.Value = replaceLocalInValue(i.Value, localID, replacement)
+	case *ComputeInstr:
+		i.Value = replaceLocalInValue(i.Value, localID, replacement)
+	case *StoreInstr:
+		i.Target = replaceLocalInPlace(i.Target, localID, replacement)
+		i.Value = replaceLocalInValue(i.Value, localID, replacement)
+	case *StoreFieldInstr:
+		i.Base = replaceLocalInValue(i.Base, localID, replacement)
+		i.Value = replaceLocalInValue(i.Value, localID, replacement)
+	case *EvalInstr:
+		i.Value = replaceLocalInValue(i.Value, localID, replacement)
+	case *BindInstr:
+		i.Value = replaceLocalInValue(i.Value, localID, replacement)
+	case *LockInstr:
+		i.Value = replaceLocalInValue(i.Value, localID, replacement)
+	case *DeferInstr:
+		for _, child := range i.Body {
+			replaceLocalInInstr(child, localID, replacement)
+		}
+	}
+}
+
+func replaceLocalInTerminator(term Terminator, localID int, replacement Value) {
+	switch t := term.(type) {
+	case *BranchTerm:
+		t.Cond = replaceLocalInValue(t.Cond, localID, replacement)
+	case *SwitchTerm:
+		t.Value = replaceLocalInValue(t.Value, localID, replacement)
+		for i := range t.Cases {
+			t.Cases[i].Expr = replaceLocalInValue(t.Cases[i].Expr, localID, replacement)
+		}
+	case *ReturnTerm:
+		t.Value = replaceLocalInValue(t.Value, localID, replacement)
+	case *PanicTerm:
+		t.Value = replaceLocalInValue(t.Value, localID, replacement)
+	}
+}
+
+func replaceLocalInPlace(place Place, localID int, replacement Value) Place {
+	switch p := place.(type) {
+	case *LocalPlace:
+		if p.LocalID == localID {
+			if repl, ok := replacement.(*LocalValue); ok {
+				return &LocalPlace{basePlace: p.basePlace, LocalID: repl.LocalID}
+			}
+		}
+		return p
+	case *FieldPlace:
+		p.Base = replaceLocalInPlace(p.Base, localID, replacement)
+		return p
+	default:
+		return place
+	}
+}
+
+func replaceLocalInValue(value Value, localID int, replacement Value) Value {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case *LocalValue:
+		if v.LocalID == localID {
+			return cloneSimpleValue(replacement)
+		}
+		return v
+	case *UnaryValue:
+		v.Right = replaceLocalInValue(v.Right, localID, replacement)
+		return v
+	case *BinaryValue:
+		v.Left = replaceLocalInValue(v.Left, localID, replacement)
+		v.Right = replaceLocalInValue(v.Right, localID, replacement)
+		return v
+	case *PostfixValue:
+		v.Left = replaceLocalInValue(v.Left, localID, replacement)
+		return v
+	case *AddrOfValue:
+		v.Source = replaceLocalInValue(v.Source, localID, replacement)
+		return v
+	case *LoadValue:
+		v.Pointer = replaceLocalInValue(v.Pointer, localID, replacement)
+		return v
+	case *CallValue:
+		v.Callee = replaceLocalInValue(v.Callee, localID, replacement)
+		for i, arg := range v.Args {
+			v.Args[i] = replaceLocalInValue(arg, localID, replacement)
+		}
+		return v
+	case *FieldLoadValue:
+		v.Base = replaceLocalInValue(v.Base, localID, replacement)
+		return v
+	case *FieldValue:
+		v.Base = replaceLocalInValue(v.Base, localID, replacement)
+		return v
+	case *CastValue:
+		v.Left = replaceLocalInValue(v.Left, localID, replacement)
+		return v
+	case *CompositeValue:
+		for i, item := range v.Items {
+			v.Items[i].Value = replaceLocalInValue(item.Value, localID, replacement)
+		}
+		return v
+	default:
+		return value
+	}
+}
+
+func cloneSimpleValue(value Value) Value {
+	switch v := value.(type) {
+	case *LocalValue:
+		copy := *v
+		return &copy
+	case *NameValue:
+		copy := *v
+		copy.Path = append([]string(nil), v.Path...)
+		return &copy
+	case *NumberValue:
+		copy := *v
+		return &copy
+	case *BoolValue:
+		copy := *v
+		return &copy
+	case *StringValue:
+		copy := *v
+		return &copy
+	case *NoneValue:
+		copy := *v
+		return &copy
+	default:
+		return value
 	}
 }
