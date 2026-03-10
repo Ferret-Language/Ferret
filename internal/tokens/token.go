@@ -12,9 +12,10 @@ const (
 	ILLEGAL Kind = "ILLEGAL"
 	EOF     Kind = "EOF"
 
-	IDENT  Kind = "IDENT"
-	NUMBER Kind = "NUMBER"
-	STRING Kind = "STRING"
+	IDENT       Kind = "IDENT"
+	NUMBER      Kind = "NUMBER"
+	STRING      Kind = "STRING"
+	DOC_COMMENT Kind = "DOC_COMMENT"
 
 	ASSIGN    Kind = "="
 	PLUS      Kind = "+"
@@ -34,12 +35,14 @@ const (
 	GE        Kind = ">="
 	ANDAND    Kind = "&&"
 	OROR      Kind = "||"
+	BAR       Kind = "|"
 	QQ        Kind = "??"
 	BB        Kind = "!!"
 	COLON     Kind = ":"
 	DCOLON    Kind = "::"
 	COMMA     Kind = ","
 	DOT       Kind = "."
+	HASH      Kind = "#"
 	SEMICOLON Kind = ";"
 
 	LPAREN Kind = "("
@@ -78,7 +81,7 @@ const (
 	LOCK      Kind = "LOCK"
 	DEFER     Kind = "DEFER"
 	PANIC     Kind = "PANIC"
-	RECOVER   Kind = "RECOVER"
+	RELEASE   Kind = "RELEASE"
 	CATCH     Kind = "CATCH"
 	NONE      Kind = "NONE"
 	UNSAFE    Kind = "UNSAFE"
@@ -114,7 +117,7 @@ var keywords = map[string]Kind{
 	"lock":      LOCK,
 	"defer":     DEFER,
 	"panic":     PANIC,
-	"recover":   RECOVER,
+	"release":   RELEASE,
 	"catch":     CATCH,
 	"none":      NONE,
 	"unsafe":    UNSAFE,

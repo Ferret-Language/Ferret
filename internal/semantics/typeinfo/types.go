@@ -62,14 +62,17 @@ func (t *PointerType) String() string {
 		return "<nil>"
 	}
 	prefix := "*"
+	suffix := ""
 	if t.IsOwn {
-		prefix = "own *"
-	} else if t.IsRaw {
-		prefix = "raw *"
-	} else if t.IsMut {
-		prefix = "*mut "
+		suffix += "own "
 	}
-	return prefix + typeString(t.Inner)
+	if t.IsRaw {
+		suffix += "raw "
+	}
+	if t.IsMut {
+		suffix += "mut "
+	}
+	return prefix + suffix + typeString(t.Inner)
 }
 
 type OptionalType struct {
@@ -147,6 +150,7 @@ type InterfaceType struct {
 func (t *InterfaceType) String() string { return "interface" }
 
 type FuncType struct {
+	IsUnsafe       bool
 	Params         []Type
 	ComptimeParams []bool
 	Result         Type
@@ -157,7 +161,11 @@ func (t *FuncType) String() string {
 	for _, param := range t.Params {
 		parts = append(parts, typeString(param))
 	}
-	return fmt.Sprintf("fn(%s) %s", strings.Join(parts, ", "), typeString(t.Result))
+	prefix := "fn"
+	if t.IsUnsafe {
+		prefix = "unsafe fn"
+	}
+	return fmt.Sprintf("%s(%s) %s", prefix, strings.Join(parts, ", "), typeString(t.Result))
 }
 
 func typeString(t Type) string {
@@ -244,7 +252,7 @@ func Equal(a, b Type) bool {
 		return true
 	case *FuncType:
 		bt, ok := b.(*FuncType)
-		if !ok || len(at.Params) != len(bt.Params) || len(at.ComptimeParams) != len(bt.ComptimeParams) || !Equal(at.Result, bt.Result) {
+		if !ok || at.IsUnsafe != bt.IsUnsafe || len(at.Params) != len(bt.Params) || len(at.ComptimeParams) != len(bt.ComptimeParams) || !Equal(at.Result, bt.Result) {
 			return false
 		}
 		for i := range at.Params {

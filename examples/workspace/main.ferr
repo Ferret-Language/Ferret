@@ -1,5 +1,6 @@
 import "math/vec2"
 import "util/build"
+import "std/math"
 
 fn run() i32 {
     let mut x: i32 = 0
@@ -31,10 +32,11 @@ fn main() i32 {
     }
     
     let point: Point = .{ .X = 1, .Y = 2 }
-    point.nothing()
+    point.nothing(23)
 
     let boolean = true
     //num2 = boolean
+    let val = math::ClampToZeros(-34);
     
     return 1
 }

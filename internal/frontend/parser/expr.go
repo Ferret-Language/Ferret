@@ -34,8 +34,10 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 		switch p.current().Kind {
 		case tokens.PLUS, tokens.MINUS, tokens.ASTERISK, tokens.SLASH, tokens.PERCENT,
 			tokens.EQ, tokens.NEQ, tokens.LT, tokens.LE, tokens.GT, tokens.GE,
-			tokens.ANDAND, tokens.OROR, tokens.QQ, tokens.CATCH:
+			tokens.ANDAND, tokens.OROR, tokens.QQ:
 			left = p.parseBinary(left)
+		case tokens.CATCH:
+			left = p.parseCatch(left)
 		case tokens.LPAREN:
 			left = p.parseCall(left)
 		case tokens.LBRACK:
@@ -63,9 +65,6 @@ func (p *Parser) parsePrefix() ast.Expr {
 			return &ast.PrefixExpr{Op: "copy", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
 		}
 		return &ast.Ident{Path: p.parseNamePath(), Location: p.locFrom(start)}
-	case tokens.PANIC, tokens.RECOVER:
-		tok := p.advance()
-		return &ast.Ident{Path: []string{tok.Literal}, Location: p.locFrom(start)}
 	case tokens.NUMBER:
 		tok := p.advance()
 		return &ast.NumberLit{Value: tok.Literal, Location: p.locFrom(start)}
@@ -98,9 +97,6 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case tokens.COMPTIME:
 		p.advance()
 		return &ast.PrefixExpr{Op: "comptime", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
-	case tokens.UNSAFE:
-		p.advance()
-		return &ast.UnsafeExpr{Value: p.parseExpr(precPrefix), Location: p.locFrom(start)}
 	default:
 		loc := source.NewLocation(p.file, start, p.current().End)
 		p.errorAt(loc, "expected expression")
@@ -244,11 +240,32 @@ func (p *Parser) startsExpr() bool {
 	switch p.current().Kind {
 	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.NONE,
 		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
-		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME,
-		tokens.PANIC, tokens.RECOVER, tokens.UNSAFE:
+		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME:
 		return true
 	default:
 		return false
+	}
+}
+
+func (p *Parser) parseCatch(left ast.Expr) ast.Expr {
+	start := *left.Loc().Start
+	p.expect(tokens.CATCH, "expected 'catch'")
+	if p.match(tokens.BAR) {
+		name := p.expectIdent("expected catch payload name").Literal
+		p.expect(tokens.BAR, "expected closing '|' after catch payload")
+		handler := p.parseBlock()
+		return &ast.CatchExpr{
+			Left:        left,
+			PayloadName: name,
+			Handler:     handler,
+			Location:    p.makeExprLoc(start),
+		}
+	}
+	fallback := p.parseExpr(precCatch)
+	return &ast.CatchExpr{
+		Left:     left,
+		Fallback: fallback,
+		Location: p.makeExprLoc(start),
 	}
 }
 

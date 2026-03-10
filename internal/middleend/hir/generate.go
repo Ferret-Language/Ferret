@@ -192,11 +192,15 @@ func generateFunc(types *typeinfo.ModuleInfo, d *ast.FuncDecl) *Func {
 		return nil
 	}
 	fn := &Func{
-		Name:     d.Name,
-		Result:   syntaxType(types, d.Result),
-		Body:     generateBlock(types, d.Body),
-		Location: d.Location,
-		Source:   d,
+		Name:       d.Name,
+		IsUnsafe:   d.IsUnsafe,
+		IsBuiltin:  d.IsBuiltin,
+		IsExtern:   d.IsExtern,
+		ExternName: d.ExternName,
+		Result:     syntaxType(types, d.Result),
+		Body:       generateBlock(types, d.Body),
+		Location:   d.Location,
+		Source:     d,
 	}
 	if fn.Result == nil {
 		fn.Result = &typeinfo.BuiltinType{Name: "void"}
@@ -256,6 +260,10 @@ func generateStmt(types *typeinfo.ModuleInfo, stmt ast.Stmt) Stmt {
 		out := &ExprStmt{Value: generateExpr(types, s.Value)}
 		out.Location = s.Location
 		return out
+	case *ast.PanicStmt:
+		out := &PanicStmt{Value: generateExpr(types, s.Value)}
+		out.Location = s.Location
+		return out
 	case *ast.AssignStmt:
 		out := &AssignStmt{Left: generateExpr(types, s.Left), Right: generateExpr(types, s.Right)}
 		out.Location = s.Location
@@ -279,7 +287,7 @@ func generateStmt(types *typeinfo.ModuleInfo, stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.ForStmt:
-		out := &ForStmt{Init: generateStmt(types, s.Init), Cond: generateExpr(types, s.Cond), Post: generateStmt(types, s.Post), Body: generateBlock(types, s.Body)}
+		out := &ForStmt{Iterable: generateExpr(types, s.Iterable), IndexName: s.IndexName, ValueName: s.ValueName, Body: generateBlock(types, s.Body)}
 		out.Location = s.Location
 		return out
 	case *ast.LabelStmt:
@@ -296,6 +304,10 @@ func generateStmt(types *typeinfo.ModuleInfo, stmt ast.Stmt) Stmt {
 		return out
 	case *ast.DeferStmt:
 		out := &DeferStmt{Body: generateStmt(types, s.Body)}
+		out.Location = s.Location
+		return out
+	case *ast.ReleaseStmt:
+		out := &ReleaseStmt{Value: generateExpr(types, s.Value)}
 		out.Location = s.Location
 		return out
 	case *ast.LockStmt:
@@ -340,10 +352,6 @@ func generateExpr(types *typeinfo.ModuleInfo, expr ast.Expr) Expr {
 		out := &PrefixExpr{Op: e.Op, Right: generateExpr(types, e.Right)}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
-	case *ast.UnsafeExpr:
-		out := &UnsafeExpr{Value: generateExpr(types, e.Value)}
-		out.ExprType, out.Location, out.Source = typ, e.Location, e
-		return out
 	case *ast.BinaryExpr:
 		out := &BinaryExpr{Left: generateExpr(types, e.Left), Op: e.Op, Right: generateExpr(types, e.Right)}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
@@ -365,6 +373,15 @@ func generateExpr(types *typeinfo.ModuleInfo, expr ast.Expr) Expr {
 		return out
 	case *ast.CastExpr:
 		out := &CastExpr{Left: generateExpr(types, e.Left)}
+		out.ExprType, out.Location, out.Source = typ, e.Location, e
+		return out
+	case *ast.CatchExpr:
+		out := &CatchExpr{
+			Left:        generateExpr(types, e.Left),
+			Fallback:    generateExpr(types, e.Fallback),
+			PayloadName: e.PayloadName,
+			Handler:     generateBlock(types, e.Handler),
+		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
 	case *ast.CompositeLit:

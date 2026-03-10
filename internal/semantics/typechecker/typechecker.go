@@ -57,6 +57,8 @@ type checker struct {
 	mod           *context.Module
 	info          *typeinfo.ModuleInfo
 	currentResult typeinfo.Type
+	unsafeDepth   int
+	deferDepth    int
 }
 
 func CheckModule(ctx *context.CompilerContext, mod *context.Module) {
@@ -232,7 +234,9 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 	if d.Result != nil {
 		c.info.BindNode(d.Result, c.currentResult)
 	}
-	c.checkStmt(funcScope, d.Body)
+	if d.Body != nil {
+		c.checkStmt(funcScope, d.Body)
+	}
 	c.currentResult = prevResult
 }
 
@@ -317,24 +321,41 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		c.checkStmt(newValueScope(scope), s.Body)
 	case *ast.ForStmt:
 		loopScope := newValueScope(scope)
-		c.checkStmt(loopScope, s.Init)
-		if s.Cond != nil {
-			condType := c.typeOfExpr(loopScope, s.Cond, nil)
-			c.requireBool(s.Cond.Loc(), condType)
+		iterType := c.typeOfExpr(loopScope, s.Iterable, nil)
+		indexType, valueType := c.forBindingTypes(iterType)
+		if s.IndexName != "" {
+			loopScope.Declare(s.IndexName, valueInfo{typ: indexType, mutable: false})
 		}
-		c.checkStmt(loopScope, s.Post)
+		loopScope.Declare(s.ValueName, valueInfo{typ: valueType, mutable: false})
 		c.checkStmt(loopScope, s.Body)
 	case *ast.LabelStmt:
 		c.checkStmt(scope, s.Stmt)
 	case *ast.DeferStmt:
+		c.deferDepth++
 		c.checkStmt(scope, s.Body)
+		c.deferDepth--
+	case *ast.ReleaseStmt:
+		c.typeOfExpr(scope, s.Value, nil)
+	case *ast.PanicStmt:
+		if s.Value == nil {
+			loc := s.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("panic requires a payload").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "provide a panic payload"),
+			)
+			return
+		}
+		c.typeOfExpr(scope, s.Value, nil)
 	case *ast.LockStmt:
 		valueType := c.typeOfExpr(scope, s.Value, nil)
 		lockScope := newValueScope(scope)
 		lockScope.Declare(s.Name, valueInfo{typ: valueType, mutable: true})
 		c.checkStmt(lockScope, s.Body)
 	case *ast.UnsafeStmt:
+		c.unsafeDepth++
 		c.checkStmt(scope, s.Body)
+		c.unsafeDepth--
 	}
 }
 
@@ -440,12 +461,10 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		return c.typeOfIdent(scope, e, expected)
 	case *ast.PrefixExpr:
 		return c.typeOfPrefix(scope, e, expected)
-	case *ast.UnsafeExpr:
-		typ := c.typeOfExpr(scope, e.Value, expected)
-		c.info.BindNode(e, typ)
-		return typ
 	case *ast.BinaryExpr:
 		return c.typeOfBinary(scope, e)
+	case *ast.CatchExpr:
+		return c.typeOfCatch(scope, e)
 	case *ast.PostfixExpr:
 		return c.typeOfPostfix(scope, e)
 	case *ast.CallExpr:
@@ -469,11 +488,6 @@ func (c *checker) typeOfIdent(scope *valueScope, ident *ast.Ident, expected type
 		if localType, ok := c.typeOfLocalIdent(scope, ident); ok {
 			c.info.BindNode(ident, localType)
 			return localType
-		}
-		if ident.Path[0] == "panic" || ident.Path[0] == "recover" {
-			ft := &typeinfo.FuncType{Result: &typeinfo.BuiltinType{Name: "void"}}
-			c.info.BindNode(ident, ft)
-			return ft
 		}
 	}
 	res := c.lookupResolution(ident)
@@ -537,6 +551,14 @@ func (c *checker) typeOfPrefix(scope *valueScope, expr *ast.PrefixExpr, expected
 		return typ
 	case "*":
 		if ptr, ok := right.(*typeinfo.PointerType); ok {
+			if ptr.IsRaw && c.unsafeDepth == 0 {
+				loc := expr.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("raw pointer dereference requires unsafe block").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(&loc, "wrap this dereference in `unsafe { ... }`"),
+				)
+			}
 			c.info.BindNode(expr, ptr.Inner)
 			return ptr.Inner
 		}
@@ -597,14 +619,6 @@ func (c *checker) typeOfBinary(scope *valueScope, expr *ast.BinaryExpr) typeinfo
 			}
 			c.info.BindNode(expr, opt.Inner)
 			return opt.Inner
-		}
-	case "catch":
-		if errUnion, ok := left.(*typeinfo.ErrorUnionType); ok {
-			if !typeinfo.Assignable(errUnion.Value, right) {
-				c.reportTypeMismatch(expr.Right.Loc(), errUnion.Value, right)
-			}
-			c.info.BindNode(expr, errUnion.Value)
-			return errUnion.Value
 		}
 	}
 	loc := expr.Location
@@ -682,28 +696,6 @@ func (c *checker) typeOfPostfix(scope *valueScope, expr *ast.PostfixExpr) typein
 }
 
 func (c *checker) typeOfCall(scope *valueScope, expr *ast.CallExpr) typeinfo.Type {
-	if ident, ok := expr.Callee.(*ast.Ident); ok && len(ident.Path) == 1 {
-		switch ident.Path[0] {
-		case "panic":
-			if len(expr.Args) > 1 {
-				c.reportWrongArgCount(expr.Location, 1, len(expr.Args))
-			}
-			for _, arg := range expr.Args {
-				c.typeOfExpr(scope, arg, nil)
-			}
-			typ := &typeinfo.BuiltinType{Name: "void"}
-			c.info.BindNode(expr, typ)
-			return typ
-		case "recover":
-			if len(expr.Args) != 0 {
-				c.reportWrongArgCount(expr.Location, 0, len(expr.Args))
-			}
-			typ := &typeinfo.BuiltinType{Name: "void"}
-			c.info.BindNode(expr, typ)
-			return typ
-		}
-	}
-
 	if selector, ok := expr.Callee.(*ast.SelectorExpr); ok {
 		if typ, handled := c.typeOfMethodCall(scope, expr, selector); handled {
 			return typ
@@ -711,6 +703,9 @@ func (c *checker) typeOfCall(scope *valueScope, expr *ast.CallExpr) typeinfo.Typ
 	}
 
 	calleeType := c.typeOfExpr(scope, expr.Callee, nil)
+	if typeinfo.IsInvalid(calleeType) || typeinfo.IsUnknown(calleeType) {
+		return typeinfo.InvalidType{}
+	}
 	fnType, ok := calleeType.(*typeinfo.FuncType)
 	if !ok {
 		loc := expr.Callee.Loc()
@@ -721,9 +716,53 @@ func (c *checker) typeOfCall(scope *valueScope, expr *ast.CallExpr) typeinfo.Typ
 		)
 		return typeinfo.InvalidType{}
 	}
+	if fnType.IsUnsafe && c.unsafeDepth == 0 {
+		loc := expr.Callee.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("unsafe function call requires unsafe block").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "wrap this call in `unsafe { ... }`"),
+		)
+	}
 	c.typecheckCallArgs(scope, expr, fnType)
 	c.info.BindNode(expr, fnType.Result)
 	return fnType.Result
+}
+
+func (c *checker) typeOfCatch(scope *valueScope, expr *ast.CatchExpr) typeinfo.Type {
+	left := c.typeOfExpr(scope, expr.Left, nil)
+	errUnion, ok := left.(*typeinfo.ErrorUnionType)
+	if !ok {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("catch requires an error union value").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "this expression is not an error union"),
+		)
+		return typeinfo.InvalidType{}
+	}
+	if expr.Handler != nil {
+		handlerScope := newValueScope(scope)
+		handlerScope.Declare(expr.PayloadName, valueInfo{typ: errUnion.Error, mutable: false})
+		c.checkStmt(handlerScope, expr.Handler)
+		if !stmtDefinitelyExits(expr.Handler) {
+			loc := expr.Handler.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("catch handler block must exit early").
+					WithCode(diagnostics.ErrInvalidReturn).
+					WithPrimaryLabel(&loc, "this catch handler can continue without producing a value").
+					WithHelp("return, panic, break, or continue from every path, or use `catch <fallback>`"),
+			)
+		}
+		c.info.BindNode(expr, errUnion.Value)
+		return errUnion.Value
+	}
+	fallbackType := c.typeOfExpr(scope, expr.Fallback, errUnion.Value)
+	if !typeinfo.Assignable(errUnion.Value, fallbackType) {
+		c.reportTypeMismatch(expr.Fallback.Loc(), errUnion.Value, fallbackType)
+	}
+	c.info.BindNode(expr, errUnion.Value)
+	return errUnion.Value
 }
 
 func (c *checker) typeOfMethodCall(scope *valueScope, call *ast.CallExpr, selector *ast.SelectorExpr) (typeinfo.Type, bool) {
@@ -994,6 +1033,7 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 		comptimeParams = append(comptimeParams, param.IsComptime)
 	}
 	return &typeinfo.FuncType{
+		IsUnsafe:       fn.IsUnsafe,
 		Params:         params,
 		ComptimeParams: comptimeParams,
 		Result:         c.funcResultType(mod, fn),
@@ -1139,6 +1179,9 @@ func (c *checker) findModuleForType(typ *typeinfo.NamedType) *context.Module {
 	if typ == nil {
 		return nil
 	}
+	if c.ctx.Prelude != nil && typ.ModuleKey == c.ctx.Prelude.Key {
+		return c.ctx.Prelude
+	}
 	if mod, ok := c.ctx.GetModule(typ.ModuleKey); ok {
 		return mod
 	}
@@ -1266,16 +1309,17 @@ func (c *checker) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		switch {
-		case t.IsOwn:
-			return "own *" + named.Name, true
-		case t.IsRaw:
-			return "raw *" + named.Name, true
-		case t.IsMut:
-			return "*mut " + named.Name, true
-		default:
-			return "*" + named.Name, true
+		prefix := "*"
+		if t.IsOwn {
+			prefix += "own "
 		}
+		if t.IsRaw {
+			prefix += "raw "
+		}
+		if t.IsMut {
+			prefix += "mut "
+		}
+		return prefix + named.Name, true
 	default:
 		return "", false
 	}
@@ -1313,6 +1357,29 @@ func (c *checker) exprAccess(scope *valueScope, expr ast.Expr) (addressable bool
 func (c *checker) findModuleForSymbol(sym *symbols.Symbol) *context.Module {
 	if sym == nil {
 		return nil
+	}
+	if mod := c.ctx.Prelude; mod != nil {
+		if mod.ModuleScope != nil {
+			for _, candidate := range mod.ModuleScope.Symbols() {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
+		for _, methods := range mod.MethodSets {
+			for _, candidate := range methods {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
+		for _, members := range mod.TypeMembers {
+			for _, candidate := range members {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
 	}
 	for _, mod := range c.ctx.Modules() {
 		if mod == nil {
@@ -1518,4 +1585,45 @@ func numericMismatchMessage(expected, got typeinfo.Type) (string, bool) {
 		return fmt.Sprintf("cannot implicitly convert %s to %s", got.String(), expected.String()), true
 	}
 	return "", false
+}
+
+func (c *checker) forBindingTypes(iterable typeinfo.Type) (typeinfo.Type, typeinfo.Type) {
+	indexType := &typeinfo.BuiltinType{Name: "usize"}
+	switch t := iterable.(type) {
+	case *typeinfo.ArrayType:
+		return indexType, t.Inner
+	case *typeinfo.BuiltinType:
+		if t.Name == "string" {
+			return indexType, &typeinfo.BuiltinType{Name: "char"}
+		}
+	}
+	return indexType, typeinfo.UnknownType{}
+}
+
+func stmtDefinitelyExits(stmt ast.Stmt) bool {
+	switch s := stmt.(type) {
+	case nil:
+		return false
+	case *ast.BlockStmt:
+		if len(s.Stmts) == 0 {
+			return false
+		}
+		return stmtDefinitelyExits(s.Stmts[len(s.Stmts)-1])
+	case *ast.ReturnStmt, *ast.PanicStmt, *ast.BreakStmt, *ast.ContinueStmt:
+		return true
+	case *ast.IfStmt:
+		return stmtDefinitelyExits(s.Then) && stmtDefinitelyExits(s.Else)
+	case *ast.SwitchStmt:
+		if len(s.Cases) == 0 {
+			return false
+		}
+		for _, kase := range s.Cases {
+			if kase == nil || !stmtDefinitelyExits(kase.Body) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }

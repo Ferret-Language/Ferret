@@ -134,8 +134,8 @@ type Color enum {
 func TestResolverBindsLabels(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
-fn run() void {
-    outer: for {
+fn run(items [3]i32) void {
+    outer: for items |v| {
         inner: while 1 < 2 {
             break outer
         }
@@ -188,6 +188,40 @@ fn run() i32 {
 	}
 }
 
+func TestResolverReportsMissingSymbolInImportedModule(t *testing.T) {
+	root := t.TempDir()
+	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+import "std/math"
+
+fn main() i32 {
+    return math::ClampToZeros(-34)
+}
+`)
+	mustWriteResolver(t, filepath.Join(root, "ferret_libs_dev", "std", "math.ferr"), `
+fn ClampToZero(value i32) i32 {
+    return value
+}
+`)
+
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected module-member undefined diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUndefinedSymbol && diag.Message == `symbol "ClampToZeros" not found in module "std/math"` {
+			if len(diag.Labels) == 0 || diag.Labels[0].Message != "symbol is not defined in this module" {
+				t.Fatalf("expected precise module-missing label, got %#v", diag.Labels)
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected module-specific undefined diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestResolverRejectsUnexportedImportedSymbol(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
@@ -210,6 +244,9 @@ fn hidden() i32 {
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag.Code == diagnostics.ErrSymbolNotExported {
+			if len(diag.Labels) == 0 || diag.Labels[0].Message != "symbol is not exported by this module" {
+				t.Fatalf("expected module-export label, got %#v", diag.Labels)
+			}
 			found = true
 			break
 		}
@@ -241,6 +278,9 @@ type Point struct {
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag.Code == diagnostics.ErrSymbolNotExported {
+			if len(diag.Labels) == 0 || diag.Labels[0].Message != "symbol is not exported by this type" {
+				t.Fatalf("expected type-export label, got %#v", diag.Labels)
+			}
 			found = true
 			break
 		}

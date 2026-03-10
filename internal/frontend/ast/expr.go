@@ -49,14 +49,6 @@ type PrefixExpr struct {
 func (*PrefixExpr) exprNode()              {}
 func (e *PrefixExpr) Loc() source.Location { return e.Location }
 
-type UnsafeExpr struct {
-	Value    Expr
-	Location source.Location
-}
-
-func (*UnsafeExpr) exprNode()              {}
-func (e *UnsafeExpr) Loc() source.Location { return e.Location }
-
 type BinaryExpr struct {
 	Left     Expr
 	Op       string
@@ -103,6 +95,17 @@ type CastExpr struct {
 
 func (*CastExpr) exprNode()              {}
 func (e *CastExpr) Loc() source.Location { return e.Location }
+
+type CatchExpr struct {
+	Left        Expr
+	Fallback    Expr
+	PayloadName string
+	Handler     *BlockStmt
+	Location    source.Location
+}
+
+func (*CatchExpr) exprNode()              {}
+func (e *CatchExpr) Loc() source.Location { return e.Location }
 
 type CompositeItem struct {
 	Name  string

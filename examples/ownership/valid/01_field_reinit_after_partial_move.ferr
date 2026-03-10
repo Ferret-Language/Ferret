@@ -1,9 +1,9 @@
 type Node struct {
-    Child own *Node
+    Child *own Node
     Value i32 = 0
 }
 
-fn rebuild(n Node, replacement own *Node) i32 {
+fn rebuild(n Node, replacement *own Node) i32 {
     let mut current = n
     let child = current.Child
     current.Child = replacement

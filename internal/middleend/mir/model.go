@@ -71,15 +71,19 @@ type Global struct {
 }
 
 type Function struct {
-	Name     string
-	Receiver *Param
-	Params   []*Param
-	Result   typeinfo.Type
-	EntryID  int
-	ExitID   int
-	Locals   []*Local
-	Blocks   []*Block
-	Location source.Location
+	Name       string
+	IsUnsafe   bool
+	IsBuiltin  bool
+	IsExtern   bool
+	ExternName string
+	Receiver   *Param
+	Params     []*Param
+	Result     typeinfo.Type
+	EntryID    int
+	ExitID     int
+	Locals     []*Local
+	Blocks     []*Block
+	Location   source.Location
 }
 
 type Param struct {
@@ -398,10 +402,19 @@ func (*SwitchTerm) termNode() {}
 
 type ReturnTerm struct {
 	baseTerm
-	Value Value
+	Value     Value
+	CleanupID int
 }
 
 func (*ReturnTerm) termNode() {}
+
+type PanicTerm struct {
+	baseTerm
+	Value     Value
+	CleanupID int
+}
+
+func (*PanicTerm) termNode() {}
 
 type ExitTerm struct{ baseTerm }
 

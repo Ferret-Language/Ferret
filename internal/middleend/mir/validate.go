@@ -25,6 +25,9 @@ func validateFunction(bag *diagnostics.Bag, fn *Function) bool {
 	if fn == nil {
 		return true
 	}
+	if fn.Blocks == nil && fn.EntryID < 0 && fn.ExitID < 0 {
+		return true
+	}
 	ok := true
 	ids := make(map[int]*Block, len(fn.Blocks))
 	for _, block := range fn.Blocks {
@@ -123,6 +126,8 @@ func validateTerminatorValueShape(bag *diagnostics.Bag, term Terminator) bool {
 		return ok
 	case *ReturnTerm:
 		return requireSimpleValue(bag, t.Loc(), t.Value, "return")
+	case *PanicTerm:
+		return requireSimpleValue(bag, t.Loc(), t.Value, "panic")
 	default:
 		return true
 	}
@@ -213,6 +218,16 @@ func terminatorTargets(term Terminator) []int {
 		out = append(out, t.DefaultID)
 		sort.Ints(out)
 		return out
+	case *PanicTerm:
+		if t.CleanupID >= 0 {
+			return []int{t.CleanupID}
+		}
+		return nil
+	case *ReturnTerm:
+		if t.CleanupID >= 0 {
+			return []int{t.CleanupID}
+		}
+		return nil
 	default:
 		return nil
 	}

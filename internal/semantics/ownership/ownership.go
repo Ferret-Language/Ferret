@@ -507,6 +507,10 @@ func (a *analyzer) checkMIRTerm(scope *valueScope, term mir.Terminator) {
 			a.reportBorrowEscapeIfNeeded(scope, t.Value, "borrow cannot be returned")
 			a.consumeMoveValue(scope, t.Value, valueType(t.Value))
 		}
+	case *mir.PanicTerm:
+		if t.Value != nil {
+			a.checkValue(scope, t.Value)
+		}
 	}
 }
 
@@ -643,15 +647,6 @@ func (a *analyzer) checkLoadValue(scope *valueScope, value *mir.LoadValue) {
 func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
 	if call == nil {
 		return
-	}
-	if ident, ok := call.Callee.(*mir.NameValue); ok && len(ident.Path) == 1 {
-		switch ident.Path[0] {
-		case "panic", "recover":
-			for _, arg := range call.Args {
-				a.checkValue(scope, arg)
-			}
-			return
-		}
 	}
 	if field, ok := call.Callee.(*mir.FieldValue); ok {
 		if handled := a.checkMethodCall(scope, call, field); handled {
@@ -1466,16 +1461,17 @@ func (a *analyzer) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		switch {
-		case t.IsOwn:
-			return "own *" + named.Name, true
-		case t.IsRaw:
-			return "raw *" + named.Name, true
-		case t.IsMut:
-			return "*mut " + named.Name, true
-		default:
-			return "*" + named.Name, true
+		prefix := "*"
+		if t.IsOwn {
+			prefix += "own "
 		}
+		if t.IsRaw {
+			prefix += "raw "
+		}
+		if t.IsMut {
+			prefix += "mut "
+		}
+		return prefix + named.Name, true
 	default:
 		return "", false
 	}

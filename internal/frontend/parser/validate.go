@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"reflect"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -37,6 +38,9 @@ func (p *Parser) validateDecl(decl ast.Decl) {
 }
 
 func (p *Parser) validateStmt(stmt ast.Stmt) {
+	if stmt == nil || (reflect.ValueOf(stmt).Kind() == reflect.Pointer && reflect.ValueOf(stmt).IsNil()) {
+		return
+	}
 	switch s := stmt.(type) {
 	case *ast.BlockStmt:
 		for _, child := range s.Stmts {
@@ -72,14 +76,19 @@ func (p *Parser) validateStmt(stmt ast.Stmt) {
 		p.validateExpr(s.Cond)
 		p.validateStmt(s.Body)
 	case *ast.ForStmt:
-		p.validateStmt(s.Init)
-		p.validateExpr(s.Cond)
-		p.validateStmt(s.Post)
+		p.validateExpr(s.Iterable)
 		p.validateStmt(s.Body)
 	case *ast.LabelStmt:
 		p.validateStmt(s.Stmt)
 	case *ast.DeferStmt:
 		p.validateStmt(s.Body)
+	case *ast.ReleaseStmt:
+		p.validateExpr(s.Value)
+	case *ast.PanicStmt:
+		if s.Value == nil {
+			p.errorAt(s.Location, "panic requires a payload")
+		}
+		p.validateExpr(s.Value)
 	case *ast.LockStmt:
 		p.validateExpr(s.Value)
 		p.validateStmt(s.Body)
@@ -89,11 +98,12 @@ func (p *Parser) validateStmt(stmt ast.Stmt) {
 }
 
 func (p *Parser) validateExpr(expr ast.Expr) {
+	if expr == nil || (reflect.ValueOf(expr).Kind() == reflect.Pointer && reflect.ValueOf(expr).IsNil()) {
+		return
+	}
 	switch e := expr.(type) {
 	case *ast.PrefixExpr:
 		p.validateExpr(e.Right)
-	case *ast.UnsafeExpr:
-		p.validateExpr(e.Value)
 	case *ast.BinaryExpr:
 		p.validateExpr(e.Left)
 		p.validateExpr(e.Right)
@@ -112,6 +122,10 @@ func (p *Parser) validateExpr(expr ast.Expr) {
 	case *ast.CastExpr:
 		p.validateExpr(e.Left)
 		p.validateType(e.Type)
+	case *ast.CatchExpr:
+		p.validateExpr(e.Left)
+		p.validateExpr(e.Fallback)
+		p.validateStmt(e.Handler)
 	case *ast.CompositeLit:
 		p.validateCompositeLit(e)
 	}

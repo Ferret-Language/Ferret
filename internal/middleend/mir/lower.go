@@ -149,13 +149,23 @@ func lowerFunction(fn *cfg.Function) *Function {
 	}
 	lowerCtx := newLowerContext(fn.Source)
 	out := &Function{
-		Name:     fn.Name,
-		Result:   fn.Source.Result,
-		EntryID:  blockID(fn.Entry),
-		ExitID:   blockID(fn.Exit),
-		Locals:   lowerCtx.locals,
-		Blocks:   make([]*Block, 0, len(fn.Blocks)),
-		Location: fn.Source.Location,
+		Name:       fn.Name,
+		IsUnsafe:   fn.Source.IsUnsafe,
+		IsBuiltin:  fn.Source.IsBuiltin,
+		IsExtern:   fn.Source.IsExtern,
+		ExternName: fn.Source.ExternName,
+		Result:     fn.Source.Result,
+		EntryID:    blockID(fn.Entry),
+		ExitID:     blockID(fn.Exit),
+		Locals:     lowerCtx.locals,
+		Blocks:     make([]*Block, 0, len(fn.Blocks)),
+		Location:   fn.Source.Location,
+	}
+	if fn.Source.Body == nil {
+		out.EntryID = -1
+		out.ExitID = -1
+		out.Blocks = nil
+		return out
 	}
 	if fn.Source.Receiver != nil {
 		out.Receiver = &Param{
@@ -188,19 +198,12 @@ func lowerBlock(lowerCtx *lowerContext, block *cfg.Block) *Block {
 		return nil
 	}
 	out := &Block{ID: block.ID, Instructions: make([]Instr, 0, len(block.Stmts)), Location: block.Location}
-	returnValue := hir.Expr(nil)
 	for _, stmt := range block.Stmts {
-		if _, ok := block.Terminator.(*cfg.ReturnTerm); ok {
-			if ret, ok := stmt.(*hir.ReturnStmt); ok {
-				returnValue = ret.Value
-				continue
-			}
-		}
 		if instr := lowerInstr(lowerCtx, stmt); instr != nil {
 			out.Instructions = append(out.Instructions, instr)
 		}
 	}
-	out.Terminator = lowerTerminator(lowerCtx, block.Terminator, returnValue, block.Location)
+	out.Terminator = lowerTerminator(lowerCtx, block.Terminator, block.Location)
 	if out.Terminator == nil && block.Terminator == nil {
 		out.Terminator = &ExitTerm{baseTerm: baseTerm{Location: block.Location}}
 	}
@@ -260,7 +263,7 @@ func lowerDeferredBody(lowerCtx *lowerContext, stmt hir.Stmt) []Instr {
 	return out
 }
 
-func lowerTerminator(lowerCtx *lowerContext, term cfg.Terminator, returnValue hir.Expr, loc source.Location) Terminator {
+func lowerTerminator(lowerCtx *lowerContext, term cfg.Terminator, loc source.Location) Terminator {
 	switch t := term.(type) {
 	case nil:
 		return nil
@@ -275,7 +278,17 @@ func lowerTerminator(lowerCtx *lowerContext, term cfg.Terminator, returnValue hi
 		}
 		return out
 	case *cfg.ReturnTerm:
-		return &ReturnTerm{baseTerm: baseTerm{Location: loc}, Value: lowerValue(lowerCtx, returnValue)}
+		cleanupID := -1
+		if t.Cleanup != nil {
+			cleanupID = blockID(t.Cleanup)
+		}
+		return &ReturnTerm{baseTerm: baseTerm{Location: loc}, Value: lowerValue(lowerCtx, t.Value), CleanupID: cleanupID}
+	case *cfg.PanicTerm:
+		cleanupID := -1
+		if t.Cleanup != nil {
+			cleanupID = blockID(t.Cleanup)
+		}
+		return &PanicTerm{baseTerm: baseTerm{Location: loc}, Value: lowerValue(lowerCtx, t.Value), CleanupID: cleanupID}
 	default:
 		return nil
 	}
@@ -309,8 +322,6 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		default:
 			return &UnaryValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Op: e.Op, Right: lowerValue(lowerCtx, e.Right)}
 		}
-	case *hir.UnsafeExpr:
-		return &UnaryValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Op: "unsafe", Right: lowerValue(lowerCtx, e.Value)}
 	case *hir.BinaryExpr:
 		return &BinaryValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left), Op: e.Op, Right: lowerValue(lowerCtx, e.Right)}
 	case *hir.PostfixExpr:
@@ -391,8 +402,12 @@ func collectLocals(fn *hir.Func) ([]*Local, map[string]int) {
 		case *hir.WhileStmt:
 			walkStmt(s.Body)
 		case *hir.ForStmt:
-			walkStmt(s.Init)
-			walkStmt(s.Post)
+			if s.IndexName != "" {
+				add(s.IndexName, &typeinfo.BuiltinType{Name: "usize"}, false, false, s.Loc())
+			}
+			if s.ValueName != "" {
+				add(s.ValueName, typeinfo.UnknownType{}, false, false, s.Loc())
+			}
 			walkStmt(s.Body)
 		case *hir.LoopStmt:
 			walkStmt(s.Init)

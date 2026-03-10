@@ -2,6 +2,7 @@ package resolver
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"compiler/internal/context"
@@ -117,9 +118,10 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 }
 
 func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
-	switch s := stmt.(type) {
-	case nil:
+	if isNilStmt(stmt) {
 		return
+	}
+	switch s := stmt.(type) {
 	case *ast.BlockStmt:
 		blockScope := table.New(scope)
 		for _, child := range s.Stmts {
@@ -160,9 +162,13 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.loopDepth--
 	case *ast.ForStmt:
 		loopScope := table.New(scope)
-		r.resolveStmt(loopScope, s.Init)
-		r.resolveExpr(loopScope, s.Cond)
-		r.resolveStmt(loopScope, s.Post)
+		r.resolveExpr(loopScope, s.Iterable)
+		if s.IndexName != "" {
+			loopScope.Declare(symbols.New(s.IndexName, symbols.SymbolVar, nil))
+		}
+		if s.ValueName != "" {
+			loopScope.Declare(symbols.New(s.ValueName, symbols.SymbolVar, nil))
+		}
 		r.loopDepth++
 		r.resolveStmt(loopScope, s.Body)
 		r.loopDepth--
@@ -177,6 +183,10 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.resolveBreakLike(s.Label, stmt, diagnostics.ErrInvalidContinue, "continue")
 	case *ast.DeferStmt:
 		r.resolveStmt(scope, s.Body)
+	case *ast.ReleaseStmt:
+		r.resolveExpr(scope, s.Value)
+	case *ast.PanicStmt:
+		r.resolveExpr(scope, s.Value)
 	case *ast.LockStmt:
 		r.resolveExpr(scope, s.Value)
 		lockScope := table.New(scope)
@@ -185,6 +195,14 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.UnsafeStmt:
 		r.resolveStmt(scope, s.Body)
 	}
+}
+
+func isNilStmt(stmt ast.Stmt) bool {
+	if stmt == nil {
+		return true
+	}
+	v := reflect.ValueOf(stmt)
+	return v.Kind() == reflect.Pointer && v.IsNil()
 }
 
 func (r *resolver) resolveBreakLike(labelName string, node ast.Node, code string, keyword string) {
@@ -241,8 +259,6 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		r.resolveExprPath(scope, e)
 	case *ast.PrefixExpr:
 		r.resolveExpr(scope, e.Right)
-	case *ast.UnsafeExpr:
-		r.resolveExpr(scope, e.Value)
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, e.Left)
 		r.resolveExpr(scope, e.Right)
@@ -417,11 +433,11 @@ func (r *resolver) resolveModulePath(imp *binding.ImportBinding, remaining []str
 
 	sym, ok := target.ModuleScope.LookupLocal(remaining[0])
 	if !ok {
-		r.reportUndefined(node.Loc(), remaining[0])
+		r.reportMissingInModule(node.Loc(), remaining[0], target.ImportPath)
 		return nil, false
 	}
 	if !sym.Exported {
-		r.reportNotExported(node.Loc(), sym.Name, target.ImportPath)
+		r.reportNotExportedFromModule(node.Loc(), sym.Name, target.ImportPath)
 		return nil, false
 	}
 	return r.resolveSymbolPath(target, sym, remaining[1:], node, typeOnly, true)
@@ -436,7 +452,7 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 		if mod != nil {
 			modulePath = mod.ImportPath
 		}
-		r.reportNotExported(node.Loc(), sym.Name, modulePath)
+		r.reportNotExportedFromModule(node.Loc(), sym.Name, modulePath)
 		return nil, false
 	}
 	if len(remaining) == 0 {
@@ -456,7 +472,7 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 
 	member, ok := r.lookupTypeMember(mod, sym.Name, remaining[0])
 	if !ok {
-		r.reportUndefined(node.Loc(), remaining[0])
+		r.reportMissingInType(node.Loc(), remaining[0], sym.Name)
 		return nil, false
 	}
 	if requireExported && !member.Exported {
@@ -464,7 +480,7 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 		if mod != nil && mod.ImportPath != "" {
 			owner = mod.ImportPath + "::" + owner
 		}
-		r.reportNotExported(node.Loc(), member.Name, owner)
+		r.reportNotExportedFromType(node.Loc(), member.Name, owner)
 		return nil, false
 	}
 	if len(remaining) > 1 {
@@ -523,7 +539,37 @@ func (r *resolver) reportUndefined(loc source.Location, name string) {
 	)
 }
 
-func (r *resolver) reportNotExported(loc source.Location, name string, owner string) {
+func (r *resolver) reportMissingInModule(loc source.Location, name, modulePath string) {
+	msg := fmt.Sprintf("symbol %q not found in module %q", name, modulePath)
+	r.ctx.Diagnostics.Add(
+		diagnostics.NewError(msg).
+			WithCode(diagnostics.ErrUndefinedSymbol).
+			WithPrimaryLabel(&loc, "symbol is not defined in this module"),
+	)
+}
+
+func (r *resolver) reportMissingInType(loc source.Location, name, typeName string) {
+	msg := fmt.Sprintf("symbol %q not found in type %q", name, typeName)
+	r.ctx.Diagnostics.Add(
+		diagnostics.NewError(msg).
+			WithCode(diagnostics.ErrUndefinedSymbol).
+			WithPrimaryLabel(&loc, "type member does not exist"),
+	)
+}
+
+func (r *resolver) reportNotExportedFromModule(loc source.Location, name, modulePath string) {
+	msg := fmt.Sprintf("symbol %q is not exported", name)
+	if modulePath != "" {
+		msg = fmt.Sprintf("symbol %q is not exported from %q", name, modulePath)
+	}
+	r.ctx.Diagnostics.Add(
+		diagnostics.NewError(msg).
+			WithCode(diagnostics.ErrSymbolNotExported).
+			WithPrimaryLabel(&loc, "symbol is not exported by this module"),
+	)
+}
+
+func (r *resolver) reportNotExportedFromType(loc source.Location, name, owner string) {
 	msg := fmt.Sprintf("symbol %q is not exported", name)
 	if owner != "" {
 		msg = fmt.Sprintf("symbol %q is not exported from %q", name, owner)
@@ -531,7 +577,7 @@ func (r *resolver) reportNotExported(loc source.Location, name string, owner str
 	r.ctx.Diagnostics.Add(
 		diagnostics.NewError(msg).
 			WithCode(diagnostics.ErrSymbolNotExported).
-			WithPrimaryLabel(&loc, "this name is not visible here"),
+			WithPrimaryLabel(&loc, "symbol is not exported by this type"),
 	)
 }
 

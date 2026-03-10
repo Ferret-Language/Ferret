@@ -37,6 +37,7 @@ func New(file, input string, diag *diagnostics.Bag) *Lexer {
 	}
 	l.patterns = []pattern{
 		{regexp.MustCompile(`^\s+`), (*Lexer).skip},
+		{regexp.MustCompile(`^///[^\n\r]*`), (*Lexer).docComment},
 		{regexp.MustCompile(`^//[^\n\r]*`), (*Lexer).skip},
 		{regexp.MustCompile(`(?s)^/\*.*?\*/`), (*Lexer).skip},
 		{regexp.MustCompile(`^` + numeric.NumberPattern), (*Lexer).number},
@@ -48,6 +49,7 @@ func New(file, input string, diag *diagnostics.Bag) *Lexer {
 		{regexp.MustCompile(`^>=`), emit(tokens.GE)},
 		{regexp.MustCompile(`^&&`), emit(tokens.ANDAND)},
 		{regexp.MustCompile(`^\|\|`), emit(tokens.OROR)},
+		{regexp.MustCompile(`^\|`), emit(tokens.BAR)},
 		{regexp.MustCompile(`^\?\?`), emit(tokens.QQ)},
 		{regexp.MustCompile(`^!!`), emit(tokens.BB)},
 		{regexp.MustCompile(`^=`), emit(tokens.ASSIGN)},
@@ -65,6 +67,7 @@ func New(file, input string, diag *diagnostics.Bag) *Lexer {
 		{regexp.MustCompile(`^:`), emit(tokens.COLON)},
 		{regexp.MustCompile(`^,`), emit(tokens.COMMA)},
 		{regexp.MustCompile(`^\.`), emit(tokens.DOT)},
+		{regexp.MustCompile(`^#`), emit(tokens.HASH)},
 		{regexp.MustCompile(`^;`), emit(tokens.SEMICOLON)},
 		{regexp.MustCompile(`^\(`), emit(tokens.LPAREN)},
 		{regexp.MustCompile(`^\)`), emit(tokens.RPAREN)},
@@ -138,6 +141,18 @@ func (l *Lexer) identifier(match string) {
 	l.tokens = append(l.tokens, tokens.Token{
 		Kind:    tokens.LookupIdent(match),
 		Literal: match,
+		Start:   start,
+		End:     l.pos,
+	})
+}
+
+func (l *Lexer) docComment(match string) {
+	start := l.pos
+	l.advance(match)
+	text := strings.TrimSpace(strings.TrimPrefix(match, "///"))
+	l.tokens = append(l.tokens, tokens.Token{
+		Kind:    tokens.DOC_COMMENT,
+		Literal: text,
 		Start:   start,
 		End:     l.pos,
 	})

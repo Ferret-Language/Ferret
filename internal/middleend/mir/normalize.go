@@ -162,6 +162,10 @@ func (n *normalizer) normalizeTerminator(fn *Function, term Terminator) (Termina
 		temps, value := n.normalizeValue(fn, t.Value)
 		t.Value = value
 		return t, temps
+	case *PanicTerm:
+		temps, value := n.normalizeValue(fn, t.Value)
+		t.Value = value
+		return t, temps
 	default:
 		return term, nil
 	}

@@ -103,8 +103,12 @@ func collectStmtLocals(locals cfg.NameSet, stmt hir.Stmt) {
 	case *hir.WhileStmt:
 		collectBlockLocals(locals, s.Body)
 	case *hir.ForStmt:
-		collectStmtLocals(locals, s.Init)
-		collectStmtLocals(locals, s.Post)
+		if s.IndexName != "" {
+			locals.Add(s.IndexName)
+		}
+		if s.ValueName != "" {
+			locals.Add(s.ValueName)
+		}
 		collectBlockLocals(locals, s.Body)
 	case *hir.LoopStmt:
 		collectStmtLocals(locals, s.Init)
@@ -149,6 +153,8 @@ func accumulateStmtUseDef(use, def, locals cfg.NameSet, stmt hir.Stmt) {
 		def.Add(s.Name)
 	case *hir.ReturnStmt:
 		accumulateExprUses(use, def, locals, s.Value)
+	case *hir.PanicStmt:
+		accumulateExprUses(use, def, locals, s.Value)
 	case *hir.ExprStmt:
 		accumulateExprUses(use, def, locals, s.Value)
 	case *hir.AssignStmt:
@@ -191,6 +197,8 @@ func accumulateDeferredUses(use, def, locals cfg.NameSet, stmt hir.Stmt) {
 		accumulateExprUses(use, def, locals, s.Value)
 	case *hir.ReturnStmt:
 		accumulateExprUses(use, def, locals, s.Value)
+	case *hir.PanicStmt:
+		accumulateExprUses(use, def, locals, s.Value)
 	case *hir.ExprStmt:
 		accumulateExprUses(use, def, locals, s.Value)
 	case *hir.AssignStmt:
@@ -213,9 +221,13 @@ func accumulateDeferredUses(use, def, locals cfg.NameSet, stmt hir.Stmt) {
 		accumulateExprUses(use, def, locals, s.Cond)
 		accumulateDeferredUses(use, def, locals, s.Body)
 	case *hir.ForStmt:
-		accumulateDeferredUses(use, def, locals, s.Init)
-		accumulateExprUses(use, def, locals, s.Cond)
-		accumulateDeferredUses(use, def, locals, s.Post)
+		accumulateExprUses(use, def, locals, s.Iterable)
+		if s.IndexName != "" {
+			def.Add(s.IndexName)
+		}
+		if s.ValueName != "" {
+			def.Add(s.ValueName)
+		}
 		accumulateDeferredUses(use, def, locals, s.Body)
 	case *hir.LoopStmt:
 		accumulateDeferredUses(use, def, locals, s.Init)
@@ -242,8 +254,6 @@ func accumulateExprUses(use, def, locals cfg.NameSet, expr hir.Expr) {
 		}
 	case *hir.PrefixExpr:
 		accumulateExprUses(use, def, locals, e.Right)
-	case *hir.UnsafeExpr:
-		accumulateExprUses(use, def, locals, e.Value)
 	case *hir.BinaryExpr:
 		accumulateExprUses(use, def, locals, e.Left)
 		accumulateExprUses(use, def, locals, e.Right)

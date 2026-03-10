@@ -77,6 +77,12 @@ func debugDecl(decl Decl) any {
 		return map[string]any{
 			"kind":           "FuncDecl",
 			"name":           d.Name,
+			"doc":            debugDoc(d.Doc),
+			"attrs":          debugAttrs(d.Attrs),
+			"is_unsafe":      d.IsUnsafe,
+			"is_builtin":     d.IsBuiltin,
+			"is_extern":      d.IsExtern,
+			"extern_name":    d.ExternName,
 			"receiver":       recv,
 			"is_constructor": d.IsConstructor,
 			"is_destructor":  d.IsDestructor,
@@ -88,6 +94,24 @@ func debugDecl(decl Decl) any {
 	default:
 		return map[string]any{"kind": "<unknown-decl>"}
 	}
+}
+
+func debugDoc(doc *CommentGroup) any {
+	if doc == nil {
+		return nil
+	}
+	return map[string]any{"text": doc.Text, "loc": debugLoc(doc.Location)}
+}
+
+func debugAttrs(attrs []Attribute) []any {
+	if len(attrs) == 0 {
+		return nil
+	}
+	out := make([]any, 0, len(attrs))
+	for _, attr := range attrs {
+		out = append(out, map[string]any{"name": attr.Name, "args": attr.Args, "loc": debugLoc(attr.Location)})
+	}
+	return out
 }
 
 func debugParam(p Param) any {
@@ -134,7 +158,7 @@ func debugStmt(stmt Stmt) any {
 	case *WhileStmt:
 		return map[string]any{"kind": "WhileStmt", "cond": debugExpr(s.Cond), "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
 	case *ForStmt:
-		return map[string]any{"kind": "ForStmt", "init": debugStmt(s.Init), "cond": debugExpr(s.Cond), "post": debugStmt(s.Post), "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "ForStmt", "iterable": debugExpr(s.Iterable), "index_name": s.IndexName, "value_name": s.ValueName, "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
 	case *LabelStmt:
 		return map[string]any{"kind": "LabelStmt", "name": s.Name, "stmt": debugStmt(s.Stmt), "loc": debugLoc(s.Location)}
 	case *BreakStmt:
@@ -143,6 +167,8 @@ func debugStmt(stmt Stmt) any {
 		return map[string]any{"kind": "ContinueStmt", "label": s.Label, "loc": debugLoc(s.Location)}
 	case *DeferStmt:
 		return map[string]any{"kind": "DeferStmt", "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
+	case *ReleaseStmt:
+		return map[string]any{"kind": "ReleaseStmt", "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
 	case *LockStmt:
 		return map[string]any{"kind": "LockStmt", "value": debugExpr(s.Value), "name": s.Name, "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
 	case *UnsafeStmt:
@@ -168,8 +194,6 @@ func debugExpr(expr Expr) any {
 		return map[string]any{"kind": "NoneLit", "loc": debugLoc(e.Location)}
 	case *PrefixExpr:
 		return map[string]any{"kind": "PrefixExpr", "op": e.Op, "right": debugExpr(e.Right), "loc": debugLoc(e.Location)}
-	case *UnsafeExpr:
-		return map[string]any{"kind": "UnsafeExpr", "value": debugExpr(e.Value), "loc": debugLoc(e.Location)}
 	case *BinaryExpr:
 		return map[string]any{"kind": "BinaryExpr", "left": debugExpr(e.Left), "op": e.Op, "right": debugExpr(e.Right), "loc": debugLoc(e.Location)}
 	case *PostfixExpr:

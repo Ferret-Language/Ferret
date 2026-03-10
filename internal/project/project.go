@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"compiler/internal/context"
 	"compiler/internal/manifest"
@@ -33,11 +34,16 @@ func Load(startPath string, extension string) (*Workspace, error) {
 		if filepath.Ext(absStart) != "" {
 			root = filepath.Dir(absStart)
 		}
+		stdlibRoot, stdErr := resolveStdlibRoot(root)
+		if stdErr != nil {
+			return nil, stdErr
+		}
 		return &Workspace{
 			RootDir: root,
 			Context: context.Config{
 				RootDir:         root,
 				Extension:       extension,
+				StdlibRoot:      stdlibRoot,
 				DependencyRoots: map[string]string{},
 			},
 		}, nil
@@ -137,11 +143,13 @@ func resolveStdlibRoot(projectRoot string) (string, error) {
 	}
 
 	candidates := []string{
+		filepath.Join(projectRoot, "ferret_libs_dev", "std"),
 		filepath.Join(projectRoot, "libs", "std"),
 		filepath.Join(projectRoot, "ferret_libs", "std"),
 	}
 	for current := projectRoot; ; current = filepath.Dir(current) {
 		candidates = append(candidates,
+			filepath.Join(current, "ferret_libs_dev", "std"),
 			filepath.Join(current, "libs", "std"),
 			filepath.Join(current, "ferret_libs", "std"),
 		)
@@ -154,8 +162,17 @@ func resolveStdlibRoot(projectRoot string) (string, error) {
 	if execPath, err := os.Executable(); err == nil {
 		execDir := filepath.Dir(execPath)
 		candidates = append(candidates,
+			filepath.Join(execDir, "..", "ferret_libs_dev", "std"),
 			filepath.Join(execDir, "..", "libs", "std"),
 			filepath.Join(execDir, "..", "ferret_libs", "std"),
+		)
+	}
+	if _, file, _, ok := runtime.Caller(0); ok {
+		root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+		candidates = append(candidates,
+			filepath.Join(root, "ferret_libs_dev", "std"),
+			filepath.Join(root, "libs", "std"),
+			filepath.Join(root, "ferret_libs", "std"),
 		)
 	}
 

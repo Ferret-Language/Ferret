@@ -1,15 +1,16 @@
-fn Run(limit i32) i32 {
+fn Run(items [8]i32, limit i32) i32 {
     let mut sum: i32 = 0
 
-    outer: for let mut i: i32 = 0; i < limit; i = i + 1 {
-        inner: while i < 10 {
+    outer: for items |i, v| {
+        inner: while v < limit {
             if i == 3 {
                 break outer
-            } else if i == 2 {
+            } else if v == 2 {
                 break inner
             }
 
             sum = sum + i
+            sum = sum + v
             continue outer
         }
     }

@@ -37,13 +37,6 @@ type PrefixExpr struct {
 
 func (*PrefixExpr) exprNode() {}
 
-type UnsafeExpr struct {
-	baseExpr
-	Value Expr
-}
-
-func (*UnsafeExpr) exprNode() {}
-
 type BinaryExpr struct {
 	baseExpr
 	Left  Expr
@@ -83,6 +76,16 @@ type CastExpr struct {
 }
 
 func (*CastExpr) exprNode() {}
+
+type CatchExpr struct {
+	baseExpr
+	Left        Expr
+	Fallback    Expr
+	PayloadName string
+	Handler     *BlockStmt
+}
+
+func (*CatchExpr) exprNode() {}
 
 type CompositeItem struct {
 	Name  string

@@ -91,11 +91,11 @@ func (*WhileStmt) stmtNode()              {}
 func (s *WhileStmt) Loc() source.Location { return s.Location }
 
 type ForStmt struct {
-	Init     Stmt
-	Cond     Expr
-	Post     Stmt
-	Body     *BlockStmt
-	Location source.Location
+	Iterable  Expr
+	IndexName string
+	ValueName string
+	Body      *BlockStmt
+	Location  source.Location
 }
 
 func (*ForStmt) stmtNode()              {}
@@ -133,6 +133,22 @@ type DeferStmt struct {
 
 func (*DeferStmt) stmtNode()              {}
 func (s *DeferStmt) Loc() source.Location { return s.Location }
+
+type ReleaseStmt struct {
+	Value    Expr
+	Location source.Location
+}
+
+func (*ReleaseStmt) stmtNode()              {}
+func (s *ReleaseStmt) Loc() source.Location { return s.Location }
+
+type PanicStmt struct {
+	Value    Expr
+	Location source.Location
+}
+
+func (*PanicStmt) stmtNode()              {}
+func (s *PanicStmt) Loc() source.Location { return s.Location }
 
 type LockStmt struct {
 	Value    Expr

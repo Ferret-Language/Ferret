@@ -54,6 +54,15 @@ func formatFunction(b *strings.Builder, fn *Function) {
 	defer func() { currentFnForFormat = nil }()
 	currentBlockLabels = blockLabels(fn)
 	defer func() { currentBlockLabels = nil }()
+	if fn.IsBuiltin {
+		b.WriteString("#[builtin]\n")
+	}
+	if fn.IsExtern {
+		fmt.Fprintf(b, "#[extern(%q)]\n", fn.ExternName)
+	}
+	if fn.IsUnsafe {
+		b.WriteString("unsafe ")
+	}
 	fmt.Fprintf(b, "fn %s%s", formatReceiver(fn.Receiver), fn.Name)
 	b.WriteByte('(')
 	for i, param := range fn.Params {
@@ -63,6 +72,10 @@ func formatFunction(b *strings.Builder, fn *Function) {
 		b.WriteString(formatParam(param))
 	}
 	b.WriteByte(')')
+	if fn.Blocks == nil {
+		fmt.Fprintf(b, " %s;\n", renderType(fn.Result))
+		return
+	}
 	fmt.Fprintf(b, " %s {\n", renderType(fn.Result))
 	if len(fn.Locals) > 0 {
 		b.WriteString("locals:\n")
@@ -141,9 +154,28 @@ func formatInstr(instr Instr) string {
 	case *EvalInstr:
 		return fmt.Sprintf("eval %s", formatValue(i.Value))
 	case *DeferInstr:
+		if len(i.Body) == 1 {
+			if eval, ok := i.Body[0].(*EvalInstr); ok {
+				return fmt.Sprintf("defer %s", formatValue(eval.Value))
+			}
+		}
+		if len(i.Body) == 2 {
+			compute, ok0 := i.Body[0].(*ComputeInstr)
+			eval, ok1 := i.Body[1].(*EvalInstr)
+			if ok0 && ok1 {
+				if local, ok := eval.Value.(*LocalValue); ok && local.LocalID == compute.TargetID {
+					if _, ok := compute.Value.(*CallValue); ok {
+						return fmt.Sprintf("defer %s", formatValue(compute.Value))
+					}
+				}
+			}
+		}
 		parts := make([]string, 0, len(i.Body))
 		for _, child := range i.Body {
 			parts = append(parts, formatInstr(child))
+		}
+		if len(parts) == 1 {
+			return fmt.Sprintf("defer %s", parts[0])
 		}
 		return fmt.Sprintf("defer { %s }", strings.Join(parts, "; "))
 	case *LockInstr:
@@ -172,9 +204,20 @@ func formatTerminator(term Terminator) string {
 		return fmt.Sprintf("switch %s { %s }", formatValue(t.Value), strings.Join(parts, ", "))
 	case *ReturnTerm:
 		if t.Value == nil {
+			if t.CleanupID >= 0 {
+				return fmt.Sprintf("return unwind %s", blockLabel(t.CleanupID))
+			}
 			return "return"
 		}
+		if t.CleanupID >= 0 {
+			return fmt.Sprintf("return %s unwind %s", formatValue(t.Value), blockLabel(t.CleanupID))
+		}
 		return fmt.Sprintf("return %s", formatValue(t.Value))
+	case *PanicTerm:
+		if t.CleanupID >= 0 {
+			return fmt.Sprintf("panic %s unwind %s", formatValue(t.Value), blockLabel(t.CleanupID))
+		}
+		return fmt.Sprintf("panic %s", formatValue(t.Value))
 	case *ExitTerm:
 		return "exit"
 	default:

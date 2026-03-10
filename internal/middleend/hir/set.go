@@ -14,6 +14,8 @@ func SetStmtLocation(stmt Stmt, loc source.Location) {
 		s.Location = loc
 	case *ExprStmt:
 		s.Location = loc
+	case *PanicStmt:
+		s.Location = loc
 	case *AssignStmt:
 		s.Location = loc
 	case *IfStmt:
@@ -33,6 +35,8 @@ func SetStmtLocation(stmt Stmt, loc source.Location) {
 	case *ContinueStmt:
 		s.Location = loc
 	case *DeferStmt:
+		s.Location = loc
+	case *ReleaseStmt:
 		s.Location = loc
 	case *LockStmt:
 		s.Location = loc

@@ -16,14 +16,16 @@ type loopContext struct {
 	label        string
 	breakTarget  *cfg.Block
 	continueTerm *cfg.Block
+	deferDepth   int
 }
 
 type builder struct {
-	ctx       *context.CompilerContext
-	mod       *context.Module
-	fn        *cfg.Function
-	nextID    int
-	loopStack []loopContext
+	ctx        *context.CompilerContext
+	mod        *context.Module
+	fn         *cfg.Function
+	nextID     int
+	loopStack  []loopContext
+	deferStack []hir.Stmt
 }
 
 func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
@@ -46,6 +48,9 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 func buildFunction(ctx *context.CompilerContext, mod *context.Module, sourceFn *hir.Func) *cfg.Function {
 	if sourceFn == nil {
 		return nil
+	}
+	if sourceFn.Body == nil {
+		return &cfg.Function{Name: sourceFn.Name, Source: sourceFn}
 	}
 	b := &builder{ctx: ctx, mod: mod}
 	fn := &cfg.Function{Name: sourceFn.Name, Source: sourceFn}
@@ -70,6 +75,10 @@ func (b *builder) buildBlock(block *hir.BlockStmt, current *cfg.Block) *cfg.Bloc
 	if block == nil {
 		return current
 	}
+	baseDepth := len(b.deferStack)
+	defer func() {
+		b.deferStack = b.deferStack[:baseDepth]
+	}()
 	nextBlock := current
 	var dead *cfg.Block
 	for _, stmt := range block.Stmts {
@@ -82,6 +91,11 @@ func (b *builder) buildBlock(block *hir.BlockStmt, current *cfg.Block) *cfg.Bloc
 		}
 		nextBlock = b.buildStmt(stmt, nextBlock, "")
 	}
+	if nextBlock != nil && len(b.deferStack) > baseDepth {
+		cont := b.newBlock()
+		nextBlock.Terminator = b.jumpWithCleanups(cont, baseDepth, nextBlock.Location)
+		return cont
+	}
 	return nextBlock
 }
 
@@ -91,12 +105,25 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *cfg.Block, label string) *cf
 		return current
 	case *hir.BlockStmt:
 		return b.buildBlock(s, current)
-	case *hir.LetStmt, *hir.ConstStmt, *hir.ExprStmt, *hir.AssignStmt, *hir.DeferStmt:
+	case *hir.LetStmt, *hir.ConstStmt, *hir.AssignStmt:
 		current.Stmts = append(current.Stmts, stmt)
 		return current
+	case *hir.DeferStmt:
+		current.Stmts = append(current.Stmts, stmt)
+		if s.Body != nil {
+			b.deferStack = append(b.deferStack, s.Body)
+		}
+		return current
+	case *hir.ExprStmt:
+		current.Stmts = append(current.Stmts, s)
+		return current
+	case *hir.PanicStmt:
+		current.Stmts = append(current.Stmts, s)
+		current.Terminator = b.panicWithCleanups(s.Value, 0, s.Loc())
+		return nil
 	case *hir.ReturnStmt:
 		current.Stmts = append(current.Stmts, s)
-		current.Terminator = &cfg.ReturnTerm{}
+		current.Terminator = b.returnWithCleanups(s.Value, 0, s.Loc())
 		current.Returns = true
 		return nil
 	case *hir.IfStmt:
@@ -145,7 +172,18 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *cfg.Block, label string) *cf
 	case *hir.WhileStmt:
 		return b.buildStmt(&hir.LoopStmt{Cond: s.Cond, Body: s.Body}, current, label)
 	case *hir.ForStmt:
-		return b.buildStmt(&hir.LoopStmt{Init: s.Init, Cond: s.Cond, Post: s.Post, Body: s.Body}, current, label)
+		condBlock := b.newBlock()
+		bodyBlock := b.newBlock()
+		exitBlock := b.newBlock()
+		current.Terminator = &cfg.JumpTerm{Target: condBlock}
+		b.loopStack = append(b.loopStack, loopContext{label: label, breakTarget: exitBlock, continueTerm: condBlock, deferDepth: len(b.deferStack)})
+		condBlock.Terminator = &cfg.BranchTerm{Cond: s.Iterable, True: bodyBlock, False: exitBlock}
+		bodyEnd := b.buildBlock(s.Body, bodyBlock)
+		if bodyEnd != nil && bodyEnd.Terminator == nil {
+			bodyEnd.Terminator = &cfg.JumpTerm{Target: condBlock}
+		}
+		b.loopStack = b.loopStack[:len(b.loopStack)-1]
+		return exitBlock
 	case *hir.LoopStmt:
 		loopEntry := current
 		if s.Init != nil {
@@ -162,7 +200,7 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *cfg.Block, label string) *cf
 		if s.Post != nil {
 			continueTarget = b.newBlock()
 		}
-		b.loopStack = append(b.loopStack, loopContext{label: label, breakTarget: exitBlock, continueTerm: continueTarget})
+		b.loopStack = append(b.loopStack, loopContext{label: label, breakTarget: exitBlock, continueTerm: continueTarget, deferDepth: len(b.deferStack)})
 		if s.Cond != nil {
 			condBlock.Terminator = &cfg.BranchTerm{Cond: s.Cond, True: bodyBlock, False: exitBlock}
 		} else {
@@ -184,14 +222,14 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *cfg.Block, label string) *cf
 		return b.buildStmt(s.Stmt, current, s.Name)
 	case *hir.BreakStmt:
 		current.Stmts = append(current.Stmts, s)
-		if target := b.loopTarget(s.Label, true); target != nil {
-			current.Terminator = &cfg.JumpTerm{Target: target}
+		if target, depth := b.loopTarget(s.Label, true); target != nil {
+			current.Terminator = b.jumpWithCleanups(target, depth, s.Loc())
 		}
 		return nil
 	case *hir.ContinueStmt:
 		current.Stmts = append(current.Stmts, s)
-		if target := b.loopTarget(s.Label, false); target != nil {
-			current.Terminator = &cfg.JumpTerm{Target: target}
+		if target, depth := b.loopTarget(s.Label, false); target != nil {
+			current.Terminator = b.jumpWithCleanups(target, depth, s.Loc())
 		}
 		return nil
 	case *hir.LockStmt:
@@ -206,18 +244,73 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *cfg.Block, label string) *cf
 	}
 }
 
-func (b *builder) loopTarget(label string, breakTarget bool) *cfg.Block {
+func (b *builder) loopTarget(label string, breakTarget bool) (*cfg.Block, int) {
 	for i := len(b.loopStack) - 1; i >= 0; i-- {
 		entry := b.loopStack[i]
 		if label != "" && entry.label != label {
 			continue
 		}
 		if breakTarget {
-			return entry.breakTarget
+			return entry.breakTarget, entry.deferDepth
 		}
-		return entry.continueTerm
+		return entry.continueTerm, entry.deferDepth
 	}
-	return nil
+	return nil, len(b.deferStack)
+}
+
+func (b *builder) jumpWithCleanups(target *cfg.Block, minDepth int, loc source.Location) cfg.Terminator {
+	first := b.buildCleanupChain(minDepth, target, nil, loc)
+	if first != nil && first != target {
+		return &cfg.JumpTerm{Target: first}
+	}
+	return &cfg.JumpTerm{Target: target}
+}
+
+func (b *builder) returnWithCleanups(value hir.Expr, minDepth int, loc source.Location) cfg.Terminator {
+	if len(b.deferStack) <= minDepth {
+		return &cfg.ReturnTerm{Value: value}
+	}
+	final := b.newBlock()
+	final.Location = loc
+	final.BranchKind = "cleanup-final-return"
+	final.Terminator = &cfg.ReturnTerm{Value: value}
+	first := b.buildCleanupChain(minDepth, final, value, loc)
+	return &cfg.ReturnTerm{Value: value, Cleanup: first}
+}
+
+func (b *builder) panicWithCleanups(value hir.Expr, minDepth int, loc source.Location) cfg.Terminator {
+	if len(b.deferStack) <= minDepth {
+		return &cfg.PanicTerm{Value: value}
+	}
+	final := b.newBlock()
+	final.Location = loc
+	final.BranchKind = "cleanup-final-panic"
+	final.Terminator = &cfg.PanicTerm{Value: value}
+	first := b.buildCleanupChain(minDepth, final, value, loc)
+	return &cfg.PanicTerm{Value: value, Cleanup: first}
+}
+
+func (b *builder) buildCleanupChain(minDepth int, tail *cfg.Block, panicValue hir.Expr, loc source.Location) *cfg.Block {
+	next := tail
+	for i := len(b.deferStack) - 1; i >= minDepth; i-- {
+		body := b.deferStack[i]
+		cleanup := b.newBlock()
+		cleanup.Location = body.Loc()
+		cleanup.BranchKind = "cleanup"
+		end := b.buildStmt(body, cleanup, "")
+		if end != nil && end.Terminator == nil {
+			end.Terminator = &cfg.JumpTerm{Target: next}
+		}
+		if end == nil && cleanup.Terminator == nil {
+			if panicValue != nil {
+				cleanup.Terminator = &cfg.PanicTerm{Value: panicValue}
+			} else {
+				cleanup.Terminator = &cfg.JumpTerm{Target: next}
+			}
+		}
+		next = cleanup
+	}
+	return next
 }
 
 func analyzeFunction(ctx *context.CompilerContext, fn *cfg.Function) {

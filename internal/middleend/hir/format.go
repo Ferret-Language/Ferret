@@ -44,6 +44,15 @@ func FormatModule(mod *Module) string {
 }
 
 func formatFunc(b *strings.Builder, fn *Func) {
+	if fn.IsBuiltin {
+		b.WriteString("#[builtin]\n")
+	}
+	if fn.IsExtern {
+		fmt.Fprintf(b, "#[extern(%q)]\n", fn.ExternName)
+	}
+	if fn.IsUnsafe {
+		b.WriteString("unsafe ")
+	}
 	fmt.Fprintf(b, "fn %s%s", formatReceiver(fn.Receiver), fn.Name)
 	b.WriteByte('(')
 	for i, param := range fn.Params {
@@ -55,6 +64,10 @@ func formatFunc(b *strings.Builder, fn *Func) {
 	b.WriteByte(')')
 	if fn.Result != nil {
 		fmt.Fprintf(b, " %s", typeString(fn.Result))
+	}
+	if fn.Body == nil {
+		b.WriteString(";\n")
+		return
 	}
 	b.WriteString(" ")
 	formatBlock(b, fn.Body, 0)
@@ -163,19 +176,13 @@ func formatStmt(b *strings.Builder, stmt Stmt, indent int) {
 		fmt.Fprintf(b, "while %s ", formatExpr(s.Cond))
 		formatBlock(b, s.Body, indent)
 	case *ForStmt:
-		b.WriteString("for ")
-		if s.Init != nil {
-			b.WriteString(strings.TrimSpace(stmtInline(s.Init)))
+		fmt.Fprintf(b, "for %s |", formatExpr(s.Iterable))
+		if s.IndexName != "" {
+			b.WriteString(s.IndexName)
+			b.WriteString(", ")
 		}
-		b.WriteString("; ")
-		if s.Cond != nil {
-			b.WriteString(formatExpr(s.Cond))
-		}
-		b.WriteString("; ")
-		if s.Post != nil {
-			b.WriteString(strings.TrimSpace(stmtInline(s.Post)))
-		}
-		b.WriteByte(' ')
+		b.WriteString(s.ValueName)
+		b.WriteString("| ")
 		formatBlock(b, s.Body, indent)
 	case *LoopStmt:
 		b.WriteString("loop ")
@@ -198,12 +205,11 @@ func formatStmt(b *strings.Builder, stmt Stmt, indent int) {
 		}
 	case *DeferStmt:
 		b.WriteString("defer ")
-		switch body := s.Body.(type) {
-		case *BlockStmt:
-			formatBlock(b, body, indent)
-		default:
-			b.WriteString(strings.TrimSpace(stmtInline(body)))
-		}
+		b.WriteString(strings.TrimSpace(stmtInline(s.Body)))
+	case *ReleaseStmt:
+		fmt.Fprintf(b, "release %s", formatExpr(s.Value))
+	case *PanicStmt:
+		fmt.Fprintf(b, "panic %s", formatExpr(s.Value))
 	case *LockStmt:
 		fmt.Fprintf(b, "lock %s as %s ", formatExpr(s.Value), s.Name)
 		formatBlock(b, s.Body, indent)
@@ -238,8 +244,6 @@ func formatExpr(expr Expr) string {
 		return "none"
 	case *PrefixExpr:
 		return formatPrefix(e.Op, wrapExpr(e.Right))
-	case *UnsafeExpr:
-		return fmt.Sprintf("unsafe %s", wrapExpr(e.Value))
 	case *BinaryExpr:
 		return fmt.Sprintf("%s %s %s", wrapExpr(e.Left), e.Op, wrapExpr(e.Right))
 	case *PostfixExpr:
@@ -254,6 +258,14 @@ func formatExpr(expr Expr) string {
 		return fmt.Sprintf("%s.%s", wrapExpr(e.Left), e.Name)
 	case *CastExpr:
 		return fmt.Sprintf("%s as %s", wrapExpr(e.Left), typeString(e.Type()))
+	case *CatchExpr:
+		if e.Handler != nil {
+			var b strings.Builder
+			fmt.Fprintf(&b, "%s catch |%s| ", wrapExpr(e.Left), e.PayloadName)
+			formatBlock(&b, e.Handler, 0)
+			return b.String()
+		}
+		return fmt.Sprintf("%s catch %s", wrapExpr(e.Left), formatExpr(e.Fallback))
 	case *CompositeLit:
 		parts := make([]string, 0, len(e.Items))
 		for _, item := range e.Items {

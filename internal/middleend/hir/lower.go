@@ -72,7 +72,7 @@ func lowerStmt(stmt Stmt) Stmt {
 		SetStmtLocation(out, s.Loc())
 		return out
 	case *ForStmt:
-		out := &LoopStmt{Init: lowerStmt(s.Init), Cond: s.Cond, Post: lowerStmt(s.Post), Body: lowerBlock(s.Body)}
+		out := &ForStmt{Iterable: s.Iterable, IndexName: s.IndexName, ValueName: s.ValueName, Body: lowerBlock(s.Body)}
 		SetStmtLocation(out, s.Loc())
 		return out
 	case *LabelStmt:
@@ -81,6 +81,14 @@ func lowerStmt(stmt Stmt) Stmt {
 		return out
 	case *DeferStmt:
 		out := &DeferStmt{Body: lowerStmt(s.Body)}
+		SetStmtLocation(out, s.Loc())
+		return out
+	case *ReleaseStmt:
+		out := &ReleaseStmt{Value: s.Value}
+		SetStmtLocation(out, s.Loc())
+		return out
+	case *PanicStmt:
+		out := &PanicStmt{Value: s.Value}
 		SetStmtLocation(out, s.Loc())
 		return out
 	case *LockStmt:

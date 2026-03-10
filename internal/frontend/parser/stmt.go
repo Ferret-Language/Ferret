@@ -46,6 +46,10 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseForStmt()
 	case tokens.DEFER:
 		return p.parseDeferStmt()
+	case tokens.RELEASE:
+		return p.parseReleaseStmt()
+	case tokens.PANIC:
+		return p.parsePanicStmt()
 	case tokens.LOCK:
 		return p.parseLockStmt()
 	case tokens.UNSAFE:
@@ -148,40 +152,56 @@ func (p *Parser) parseWhileStmt() ast.Stmt {
 
 func (p *Parser) parseForStmt() ast.Stmt {
 	start := p.advance().Start
-	if p.at(tokens.LBRACE) {
-		return &ast.ForStmt{Body: p.parseBlock(), Location: p.locFrom(start)}
+	iterable := p.parseExprUntil(precLowest, tokens.BAR)
+	p.expect(tokens.BAR, "expected '|' after for iterable")
+	first := p.expectIdent("expected loop binding name").Literal
+	indexName := ""
+	valueName := first
+	if p.match(tokens.COMMA) {
+		indexName = first
+		valueName = p.expectIdent("expected loop value binding name").Literal
 	}
-
-	first := p.parseForHeaderStmt()
-	if p.match(tokens.SEMICOLON) {
-		var cond ast.Expr
-		if !p.at(tokens.SEMICOLON) && !p.at(tokens.LBRACE) && !p.at(tokens.EOF) {
-			cond = p.parseExpr(precLowest)
-		}
-		p.expect(tokens.SEMICOLON, "expected ';' after for condition")
-		var post ast.Stmt
-		if !p.at(tokens.LBRACE) && !p.at(tokens.EOF) {
-			post = p.parseForHeaderStmt()
-		}
-		body := p.parseBlock()
-		return &ast.ForStmt{Init: first, Cond: cond, Post: post, Body: body, Location: p.locFrom(start)}
-	}
-
-	condExpr := p.extractForCondition(first)
+	p.expect(tokens.BAR, "expected closing '|' after loop bindings")
 	body := p.parseBlock()
-	return &ast.ForStmt{Cond: condExpr, Body: body, Location: p.locFrom(start)}
+	return &ast.ForStmt{Iterable: iterable, IndexName: indexName, ValueName: valueName, Body: body, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseDeferStmt() ast.Stmt {
 	start := p.advance().Start
+	var body ast.Stmt
 	if p.at(tokens.LBRACE) {
-		return &ast.DeferStmt{Body: p.parseBlock(), Location: p.locFrom(start)}
+		body = p.parseBlock()
+	} else {
+		body = p.parseStmt()
 	}
-	expr := p.parseExpr(precLowest)
 	return &ast.DeferStmt{
-		Body:     &ast.ExprStmt{Value: expr, Location: expr.Loc()},
+		Body:     body,
 		Location: p.locFrom(start),
 	}
+}
+
+func (p *Parser) parseReleaseStmt() ast.Stmt {
+	start := p.advance().Start
+	value := p.parseExpr(precLowest)
+	return &ast.ReleaseStmt{Value: value, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parsePanicStmt() ast.Stmt {
+	start := p.advance().Start
+	var value ast.Expr
+	if p.match(tokens.LPAREN) {
+		p.errorAt(p.locFrom(start), "panic payload must not use parentheses")
+		if !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+			value = p.parseExpr(precLowest)
+		}
+		p.expect(tokens.RPAREN, "expected ')' after panic payload")
+	} else {
+		value = p.parseExpr(precLowest)
+	}
+	if value == nil {
+		p.errorAt(p.locFrom(start), "panic requires a payload")
+	}
+	return &ast.PanicStmt{Value: value, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseLockStmt() ast.Stmt {
@@ -217,38 +237,10 @@ func (p *Parser) parseContinueStmt() ast.Stmt {
 	return &ast.ContinueStmt{Label: label, Location: p.locFrom(start)}
 }
 
-func (p *Parser) parseForHeaderStmt() ast.Stmt {
-	switch p.current().Kind {
-	case tokens.LET:
-		return p.parseLetStmt()
-	case tokens.CONST:
-		return p.parseConstStmt()
-	default:
-		left := p.parseExpr(precLowest)
-		if p.match(tokens.ASSIGN) {
-			right := p.parseExpr(precLowest)
-			return &ast.AssignStmt{Left: left, Right: right, Location: sourceSpan(left.Loc(), right.Loc())}
-		}
-		return &ast.ExprStmt{Value: left, Location: left.Loc()}
-	}
-}
-
 func (p *Parser) parseLabelStmt() ast.Stmt {
 	start := p.current().Start
 	name := p.expectIdent("expected label name").Literal
 	p.expect(tokens.COLON, "expected ':' after label")
 	stmt := p.parseStmt()
 	return &ast.LabelStmt{Name: name, Stmt: stmt, Location: p.locFrom(start)}
-}
-
-func (p *Parser) extractForCondition(stmt ast.Stmt) ast.Expr {
-	switch s := stmt.(type) {
-	case nil:
-		return nil
-	case *ast.ExprStmt:
-		return s.Value
-	default:
-		p.errorAt(s.Loc(), "expected for condition or ';' after for initializer")
-		return &ast.BadExpr{Location: s.Loc()}
-	}
 }

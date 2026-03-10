@@ -53,6 +53,22 @@ name = "app"
 	}
 }
 
+func TestLoadFindsStdlibRootWithoutManifest(t *testing.T) {
+	root := t.TempDir()
+	stdRoot := filepath.Join(root, "ferret_libs_dev", "std")
+	if err := os.MkdirAll(stdRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := Load(root, ".ferr")
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if ws.Context.StdlibRoot != stdRoot {
+		t.Fatalf("expected stdlib root %q, got %q", stdRoot, ws.Context.StdlibRoot)
+	}
+}
+
 func TestLoadRejectsUnlockedRemoteDependency(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "fer.ret"), `[package]

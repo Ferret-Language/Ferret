@@ -250,6 +250,131 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerAllowsCatchFallbackValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Io error { denied }
+
+fn main(x Io!i32) i32 {
+    return x catch -1
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerTreatsRecoverAsBuiltinFunction(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() string {
+    return recover()
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	ret := mainFn.Body.Stmts[0].(*ast.ReturnStmt)
+	call, ok := ret.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected recover call, got %T", ret.Value)
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[call], "string") {
+		t.Fatalf("expected recover() to typecheck as string, got %#v", result.Entry.Types.Nodes[call])
+	}
+}
+
+func TestTypecheckerRejectsRecoverArguments(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() string {
+    return recover("x")
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected wrong argument count diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrWrongArgumentCount {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrWrongArgumentCount, result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerDoesNotCascadeNotCallableAfterMissingImportedSymbol(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "ferret_libs_dev", "std", "math.ferr"), `
+fn ClampToZero(value i32) i32 {
+    return value
+}
+`)
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+import "std/math"
+
+fn main() i32 {
+    return math::ClampToZeros(-34)
+}
+`)
+
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected missing imported symbol diagnostic")
+	}
+	notCallable := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrNotCallable {
+			notCallable = true
+			break
+		}
+	}
+	if notCallable {
+		t.Fatalf("did not expect %s cascade, got %#v", diagnostics.ErrNotCallable, result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRequiresCatchHandlerToExit(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Io error { denied }
+
+fn log(x Io) void {}
+
+fn main(x Io!i32) i32 {
+    let file = x catch |err| {
+        log(err)
+    }
+    return file
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected catch early-exit diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Message == "catch handler block must exit early" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected catch early-exit diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerReportsNumericNarrowingMessage(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
@@ -406,7 +531,7 @@ func TestTypecheckerRejectsCopyOfOwnPointer(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn bad(c own *Conn) void {
+fn bad(c *own Conn) void {
     let d = copy c
 }
 `)

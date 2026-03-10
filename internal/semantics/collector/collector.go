@@ -148,11 +148,13 @@ func receiverTypeName(typ ast.TypeExpr) string {
 	case *ast.PointerType:
 		prefix := "*"
 		if t.IsOwn {
-			prefix = "own *"
-		} else if t.IsRaw {
-			prefix = "raw *"
-		} else if t.IsMut {
-			prefix = "*mut "
+			prefix += "own "
+		}
+		if t.IsRaw {
+			prefix += "raw "
+		}
+		if t.IsMut {
+			prefix += "mut "
 		}
 		return prefix + receiverTypeName(t.Inner)
 	default:

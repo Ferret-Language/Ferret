@@ -82,10 +82,10 @@ func (*WhileStmt) stmtNode() {}
 
 type ForStmt struct {
 	baseStmt
-	Init Stmt
-	Cond Expr
-	Post Stmt
-	Body *BlockStmt
+	Iterable  Expr
+	IndexName string
+	ValueName string
+	Body      *BlockStmt
 }
 
 func (*ForStmt) stmtNode() {}
@@ -128,6 +128,20 @@ type DeferStmt struct {
 }
 
 func (*DeferStmt) stmtNode() {}
+
+type ReleaseStmt struct {
+	baseStmt
+	Value Expr
+}
+
+func (*ReleaseStmt) stmtNode() {}
+
+type PanicStmt struct {
+	baseStmt
+	Value Expr
+}
+
+func (*PanicStmt) stmtNode() {}
 
 type LockStmt struct {
 	baseStmt

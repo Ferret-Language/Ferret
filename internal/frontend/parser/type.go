@@ -11,19 +11,25 @@ func (p *Parser) parseType() ast.TypeExpr {
 	case tokens.QUESTION:
 		p.advance()
 		return &ast.OptionalType{Inner: p.parseType(), Location: p.locFrom(start)}
-	case tokens.OWN:
-		p.advance()
-		p.expect(tokens.ASTERISK, "expected '*' after 'own'")
-		return &ast.PointerType{IsOwn: true, Inner: p.parseType(), Location: p.locFrom(start)}
-	case tokens.RAW:
-		p.advance()
-		p.expect(tokens.ASTERISK, "expected '*' after 'raw'")
-		isMut := p.match(tokens.MUT)
-		return &ast.PointerType{IsRaw: true, IsMut: isMut, Inner: p.parseType(), Location: p.locFrom(start)}
 	case tokens.ASTERISK:
 		p.advance()
-		isMut := p.match(tokens.MUT)
-		return &ast.PointerType{IsMut: isMut, Inner: p.parseType(), Location: p.locFrom(start)}
+		ptr := &ast.PointerType{Location: p.locFrom(start)}
+		for {
+			switch p.current().Kind {
+			case tokens.OWN:
+				ptr.IsOwn = true
+				p.advance()
+			case tokens.RAW:
+				ptr.IsRaw = true
+				p.advance()
+			case tokens.MUT:
+				ptr.IsMut = true
+				p.advance()
+			default:
+				ptr.Inner = p.parseType()
+				return ptr
+			}
+		}
 	case tokens.LBRACK:
 		p.advance()
 		size := p.parseExpr(precLowest)

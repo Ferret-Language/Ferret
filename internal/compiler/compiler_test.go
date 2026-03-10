@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"compiler/internal/diagnostics"
 )
 
 func TestParsePathResolvesDependencyAliasFromManifest(t *testing.T) {
@@ -39,6 +41,68 @@ name = "json"
 	}
 	if result.Modules[0].Key != "dependency:json/parser" || result.Modules[1].Key != "local:main" {
 		t.Fatalf("unexpected modules: %#v", []string{result.Modules[0].Key, result.Modules[1].Key})
+	}
+}
+
+func TestParsePathResolvesStdlibWithoutManifest(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
+fn Println(text string) void;
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/io"
+
+fn main() void {
+    io::Println("hello")
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
+	}
+	if len(result.Modules) != 2 {
+		t.Fatalf("expected 2 modules, got %d", len(result.Modules))
+	}
+	foundMain := false
+	foundStd := false
+	for _, mod := range result.Modules {
+		switch mod.Key {
+		case "local:main":
+			foundMain = true
+		case "stdlib:std/io":
+			foundStd = true
+		}
+	}
+	if !foundMain || !foundStd {
+		t.Fatalf("expected main and std/io modules, got %#v", []string{result.Modules[0].Key, result.Modules[1].Key})
+	}
+}
+
+func TestParsePathTypechecksExternStdlibSignature(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
+fn Println(text string) void;
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/io"
+
+fn main() void {
+    io::Println(1)
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected stdlib signature type error")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected type mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

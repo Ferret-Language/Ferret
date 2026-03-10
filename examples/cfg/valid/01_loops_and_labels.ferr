@@ -1,8 +1,8 @@
-fn run() i32 {
+fn run(items [10]i32) i32 {
     let mut x: i32 = 0
-outer: for x = 0; x < 10; x = x + 1 {
-        while x < 3 {
-            x = x + 1
+outer: for items |i, v| {
+        while x < v {
+            x = x + i
             continue outer
         }
         if x == 7 {

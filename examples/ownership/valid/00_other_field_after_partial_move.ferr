@@ -1,5 +1,5 @@
 type Node struct {
-    Child own *Node
+    Child *own Node
     Value i32 = 0
 }
 

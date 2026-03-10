@@ -91,6 +91,99 @@ fn main() i32 {
 	}
 }
 
+func TestCFGTreatsPanicAsTerminator(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+fn fail() void {
+    panic "bad"
+    let x = 1
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	if result.Entry.CFG == nil || len(result.Entry.CFG.Functions) != 1 {
+		t.Fatalf("expected CFG functions, got %#v", result.Entry)
+	}
+	var fn *cfg.Function
+	for _, candidate := range result.Entry.CFG.Functions {
+		if candidate.Name == "fail" {
+			fn = candidate
+			break
+		}
+	}
+	if fn == nil {
+		t.Fatalf("expected CFG function fail, got %#v", result.Entry.CFG.Functions)
+	}
+	foundPanic := false
+	for _, block := range fn.Blocks {
+		if _, ok := block.Terminator.(*cfg.PanicTerm); ok {
+			foundPanic = true
+			break
+		}
+	}
+	if !foundPanic {
+		t.Fatalf("expected panic terminator in CFG, got %#v", fn.Blocks)
+	}
+	foundUnreachable := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnreachableCode {
+			foundUnreachable = true
+			break
+		}
+	}
+	if !foundUnreachable {
+		t.Fatalf("expected %s warning, got %#v", diagnostics.WarnUnreachableCode, result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestCFGBuildsCleanupEdgeForDeferredPanic(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+fn close() void {}
+
+fn fail() void {
+    defer close()
+    panic "bad"
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	var fn *cfg.Function
+	for _, candidate := range result.Entry.CFG.Functions {
+		if candidate.Name == "fail" {
+			fn = candidate
+			break
+		}
+	}
+	if fn == nil {
+		t.Fatalf("expected CFG function fail, got %#v", result.Entry.CFG.Functions)
+	}
+	foundCleanup := false
+	for _, block := range fn.Blocks {
+		term, ok := block.Terminator.(*cfg.PanicTerm)
+		if !ok {
+			continue
+		}
+		if term.Cleanup == nil {
+			t.Fatalf("expected panic cleanup edge, got %#v", term)
+		}
+		if term.Cleanup.BranchKind != "cleanup" {
+			t.Fatalf("expected cleanup block, got %#v", term.Cleanup)
+		}
+		foundCleanup = true
+		break
+	}
+	if !foundCleanup {
+		t.Fatalf("expected panic terminator in CFG, got %#v", fn.Blocks)
+	}
+}
+
 func TestCFGReportsMissingReturnInSwitchFallback(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `

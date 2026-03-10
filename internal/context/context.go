@@ -74,6 +74,7 @@ type CompilerContext struct {
 	Config      Config
 	Diagnostics *diagnostics.Bag
 	Universe    *table.Scope
+	Prelude     *Module
 
 	mu           sync.RWMutex
 	modules      map[string]*Module

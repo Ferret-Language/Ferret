@@ -75,13 +75,17 @@ type Global struct {
 }
 
 type Func struct {
-	Name     string
-	Receiver *Param
-	Params   []*Param
-	Result   typeinfo.Type
-	Body     *BlockStmt
-	Location source.Location
-	Source   *ast.FuncDecl
+	Name       string
+	IsUnsafe   bool
+	IsBuiltin  bool
+	IsExtern   bool
+	ExternName string
+	Receiver   *Param
+	Params     []*Param
+	Result     typeinfo.Type
+	Body       *BlockStmt
+	Location   source.Location
+	Source     *ast.FuncDecl
 }
 
 type Param struct {

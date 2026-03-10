@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strings"
 
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -36,6 +37,7 @@ func (p *Parser) ParseModule() *ast.Module {
 	}
 	seenDecl := false
 	for !p.at(tokens.EOF) {
+		p.skipDocCommentsBeforeImports()
 		if p.at(tokens.IMPORT) {
 			if seenDecl {
 				p.errorHere("imports must appear before declarations")
@@ -58,20 +60,88 @@ func (p *Parser) ParseModule() *ast.Module {
 }
 
 func (p *Parser) parseDecl() ast.Decl {
+	doc := p.parseDocComment()
+	attrs := p.parseAttributes()
 	switch p.current().Kind {
 	case tokens.LET:
+		if len(attrs) > 0 {
+			p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
+		}
 		return p.parseLetDecl()
 	case tokens.CONST:
+		if len(attrs) > 0 {
+			p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
+		}
 		return p.parseConstDecl()
 	case tokens.TYPE:
+		if len(attrs) > 0 {
+			p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
+		}
 		return p.parseTypeDecl()
+	case tokens.UNSAFE:
+		if p.peekN(1).Kind == tokens.FN {
+			return p.parseFuncDecl(doc, attrs)
+		}
 	case tokens.FN:
-		return p.parseFuncDecl()
-	default:
-		p.errorHere("expected top-level declaration")
+		return p.parseFuncDecl(doc, attrs)
+	}
+	if len(attrs) > 0 {
+		p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
+	}
+	p.errorHere("expected top-level declaration")
+	p.advance()
+	return nil
+}
+
+func (p *Parser) skipDocCommentsBeforeImports() {
+	for p.at(tokens.DOC_COMMENT) && p.peekN(1).Kind == tokens.IMPORT {
 		p.advance()
+	}
+}
+
+func (p *Parser) parseDocComment() *ast.CommentGroup {
+	if !p.at(tokens.DOC_COMMENT) {
 		return nil
 	}
+	start := p.current().Start
+	parts := make([]string, 0, 1)
+	for p.at(tokens.DOC_COMMENT) {
+		parts = append(parts, p.advance().Literal)
+	}
+	return &ast.CommentGroup{
+		Text:     strings.Join(parts, "\n"),
+		Location: p.locFrom(start),
+	}
+}
+
+func (p *Parser) parseAttributes() []ast.Attribute {
+	attrs := make([]ast.Attribute, 0)
+	for p.at(tokens.HASH) {
+		start := p.advance().Start
+		p.expect(tokens.LBRACK, "expected '[' after '#'")
+		name := p.expectIdent("expected attribute name").Literal
+		args := make([]string, 0)
+		if p.match(tokens.LPAREN) {
+			for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+				switch p.current().Kind {
+				case tokens.STRING, tokens.IDENT:
+					args = append(args, p.advance().Literal)
+				default:
+					p.errorHere("expected attribute argument")
+					p.advanceUntil(tokens.COMMA, tokens.RPAREN)
+				}
+				if p.at(tokens.COMMA) {
+					p.advance()
+					continue
+				}
+				break
+			}
+			p.expect(tokens.RPAREN, "expected ')' after attribute arguments")
+		}
+		p.expect(tokens.RBRACK, "expected ']' after attribute")
+		attrs = append(attrs, ast.Attribute{Name: name, Args: args, Location: p.locFrom(start)})
+	}
+	return attrs
 }
 
 func (p *Parser) current() tokens.Token {

@@ -84,7 +84,8 @@ func (p *Parser) parseConstDecl() ast.Decl {
 	}
 }
 
-func (p *Parser) parseFuncDecl() ast.Decl {
+func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
+	isUnsafe := p.match(tokens.UNSAFE)
 	start := p.expect(tokens.FN, "expected 'fn'").Start
 	var recv *ast.Receiver
 	if p.match(tokens.LPAREN) {
@@ -99,10 +100,26 @@ func (p *Parser) parseFuncDecl() ast.Decl {
 	if p.startsType() {
 		result = p.parseType()
 	}
-	body := p.parseBlock()
+	isBuiltin := hasAttr(attrs, "builtin")
+	externName := externAttrName(attrs, nameTok.Literal)
+	isExtern := externName != ""
+	var body *ast.BlockStmt
+	if p.at(tokens.LBRACE) {
+		body = p.parseBlock()
+	} else if isBuiltin || isExtern {
+		p.match(tokens.SEMICOLON)
+	} else {
+		p.errorHere("expected function body")
+	}
 	return &ast.FuncDecl{
 		Receiver:      recv,
 		Name:          nameTok.Literal,
+		Doc:           doc,
+		Attrs:         attrs,
+		IsUnsafe:      isUnsafe,
+		IsBuiltin:     isBuiltin,
+		IsExtern:      isExtern,
+		ExternName:    externName,
 		IsConstructor: isConstructor,
 		IsDestructor:  isDestructor,
 		Params:        params,
@@ -110,6 +127,28 @@ func (p *Parser) parseFuncDecl() ast.Decl {
 		Body:          body,
 		Location:      p.locFrom(start),
 	}
+}
+
+func hasAttr(attrs []ast.Attribute, name string) bool {
+	for _, attr := range attrs {
+		if attr.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func externAttrName(attrs []ast.Attribute, fallback string) string {
+	for _, attr := range attrs {
+		if attr.Name != "extern" {
+			continue
+		}
+		if len(attr.Args) > 0 && attr.Args[0] != "" {
+			return attr.Args[0]
+		}
+		return fallback
+	}
+	return ""
 }
 
 func receiverNamedType(typ ast.TypeExpr) string {

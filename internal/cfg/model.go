@@ -96,7 +96,28 @@ func (t *SwitchTerm) Successors() []*Block {
 	return out
 }
 
-type ReturnTerm struct{}
+type ReturnTerm struct {
+	Value   hir.Expr
+	Cleanup *Block
+}
 
-func (*ReturnTerm) terminatorNode()      {}
-func (*ReturnTerm) Successors() []*Block { return nil }
+func (*ReturnTerm) terminatorNode() {}
+func (t *ReturnTerm) Successors() []*Block {
+	if t == nil || t.Cleanup == nil {
+		return nil
+	}
+	return []*Block{t.Cleanup}
+}
+
+type PanicTerm struct {
+	Value   hir.Expr
+	Cleanup *Block
+}
+
+func (*PanicTerm) terminatorNode() {}
+func (t *PanicTerm) Successors() []*Block {
+	if t == nil || t.Cleanup == nil {
+		return nil
+	}
+	return []*Block{t.Cleanup}
+}

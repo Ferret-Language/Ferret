@@ -108,7 +108,7 @@ type Point struct {
     X i32 = 0
 }
 
-fn probe(p own *Point) void {
+fn probe(p *own Point) void {
     let q = &*p
     q
 }
@@ -127,6 +127,150 @@ fn probe(p own *Point) void {
 	}
 	if !strings.Contains(text, "addr_of") {
 		t.Fatalf("expected explicit addr_of in MIR dump, got %q", text)
+	}
+}
+
+func TestPipelineLowersPanicToMIRTerminator(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn fail() void {
+    panic "bad"
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil || len(result.Entry.MIR.Functions) != 1 {
+		t.Fatalf("expected MIR functions, got %#v", result.Entry)
+	}
+	var fn *midmir.Function
+	for _, candidate := range result.Entry.MIR.Functions {
+		if candidate.Name == "fail" {
+			fn = candidate
+			break
+		}
+	}
+	if fn == nil {
+		t.Fatalf("expected MIR function fail, got %#v", result.Entry.MIR.Functions)
+	}
+	if len(fn.Blocks) == 0 {
+		t.Fatalf("expected MIR blocks, got %#v", fn)
+	}
+	found := false
+	for _, block := range fn.Blocks {
+		term, ok := block.Terminator.(*midmir.PanicTerm)
+		if !ok {
+			continue
+		}
+		found = true
+		if _, ok := term.Value.(*midmir.StringValue); !ok {
+			t.Fatalf("expected panic payload string, got %T", term.Value)
+		}
+		break
+	}
+	if !found {
+		t.Fatalf("expected panic terminator in MIR, got %#v", fn.Blocks)
+	}
+	text := midmir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "panic \"bad\"") {
+		t.Fatalf("expected panic terminator in MIR dump, got %q", text)
+	}
+}
+
+func TestPipelineLowersDeferredPanicCleanupToMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn close() void {}
+
+fn fail() void {
+    defer close()
+    panic "bad"
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	var fn *midmir.Function
+	for _, candidate := range result.Entry.MIR.Functions {
+		if candidate.Name == "fail" {
+			fn = candidate
+			break
+		}
+	}
+	if fn == nil {
+		t.Fatalf("expected MIR function fail, got %#v", result.Entry.MIR.Functions)
+	}
+	found := false
+	for _, block := range fn.Blocks {
+		term, ok := block.Terminator.(*midmir.PanicTerm)
+		if !ok {
+			continue
+		}
+		found = true
+		if term.CleanupID < 0 {
+			t.Fatalf("expected panic cleanup id, got %#v", term)
+		}
+		break
+	}
+	if !found {
+		t.Fatalf("expected panic terminator in MIR, got %#v", fn.Blocks)
+	}
+	text := midmir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "panic \"bad\" unwind") {
+		t.Fatalf("expected panic unwind in MIR dump, got %q", text)
+	}
+	if !strings.Contains(text, "defer close()") {
+		t.Fatalf("expected deferred close cleanup in MIR dump, got %q", text)
+	}
+}
+
+func TestPipelineLowersDeferredReturnCleanupToMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn close() void {}
+
+fn run() i32 {
+    defer close()
+    return 1
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	var fn *midmir.Function
+	for _, candidate := range result.Entry.MIR.Functions {
+		if candidate.Name == "run" {
+			fn = candidate
+			break
+		}
+	}
+	if fn == nil {
+		t.Fatalf("expected MIR function run, got %#v", result.Entry.MIR.Functions)
+	}
+	found := false
+	for _, block := range fn.Blocks {
+		term, ok := block.Terminator.(*midmir.ReturnTerm)
+		if !ok {
+			continue
+		}
+		found = true
+		if term.CleanupID < 0 {
+			t.Fatalf("expected return cleanup id, got %#v", term)
+		}
+		break
+	}
+	if !found {
+		t.Fatalf("expected return terminator in MIR, got %#v", fn.Blocks)
+	}
+	text := midmir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "return 1 unwind") {
+		t.Fatalf("expected return unwind in MIR dump, got %q", text)
 	}
 }
 

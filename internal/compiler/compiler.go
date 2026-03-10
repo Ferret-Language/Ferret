@@ -8,6 +8,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/pipeline"
+	"compiler/internal/prelude"
 	"compiler/internal/project"
 )
 
@@ -26,11 +27,17 @@ type Compiler struct {
 
 func New(rootDir, extension string, diag *diagnostics.Bag) *Compiler {
 	ctx := context.New(rootDir, extension, diag)
+	if err := prelude.Load(ctx); err != nil {
+		ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
+	}
 	return &Compiler{ctx: ctx, pipeline: pipeline.New(ctx)}
 }
 
 func NewWithConfig(cfg context.Config, diag *diagnostics.Bag) *Compiler {
 	ctx := context.NewWithConfig(cfg, diag)
+	if err := prelude.Load(ctx); err != nil {
+		ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
+	}
 	return &Compiler{ctx: ctx, pipeline: pipeline.New(ctx)}
 }
 

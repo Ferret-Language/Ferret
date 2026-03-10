@@ -59,6 +59,12 @@ type Param struct {
 type FuncDecl struct {
 	Receiver      *Receiver
 	Name          string
+	Doc           *CommentGroup
+	Attrs         []Attribute
+	IsUnsafe      bool
+	IsBuiltin     bool
+	IsExtern      bool
+	ExternName    string
 	IsConstructor bool
 	IsDestructor  bool
 	Params        []Param

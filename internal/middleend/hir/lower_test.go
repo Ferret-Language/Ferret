@@ -14,13 +14,14 @@ import (
 func TestLoweringNormalizesLoops(t *testing.T) {
 	root := t.TempDir()
 	mustWriteLower(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main(items [3]i32) i32 {
     let mut x: i32 = 0
     while x < 5 {
         x = x + 1
     }
-    for x = 0; x < 3; x = x + 1 {
+    for items |v| {
         x = x + 1
+        x = x + v
     }
     return x
 }
@@ -43,8 +44,8 @@ fn main() i32 {
 	if _, ok := fn.Body.Stmts[1].(*hir.LoopStmt); !ok {
 		t.Fatalf("expected while to lower to loop, got %T", fn.Body.Stmts[1])
 	}
-	if _, ok := fn.Body.Stmts[2].(*hir.LoopStmt); !ok {
-		t.Fatalf("expected for to lower to loop, got %T", fn.Body.Stmts[2])
+	if _, ok := fn.Body.Stmts[2].(*hir.ForStmt); !ok {
+		t.Fatalf("expected for to keep iterator form, got %T", fn.Body.Stmts[2])
 	}
 }
 

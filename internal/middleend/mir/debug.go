@@ -101,7 +101,9 @@ func debugTerm(term Terminator) any {
 		}
 		return map[string]any{"kind": "switch", "value": debugValue(t.Value), "cases": cases, "default": t.DefaultID}
 	case *ReturnTerm:
-		return map[string]any{"kind": "return", "value": debugValue(t.Value)}
+		return map[string]any{"kind": "return", "value": debugValue(t.Value), "cleanup": t.CleanupID}
+	case *PanicTerm:
+		return map[string]any{"kind": "panic", "value": debugValue(t.Value), "cleanup": t.CleanupID}
 	case *ExitTerm:
 		return map[string]any{"kind": "exit"}
 	default:
