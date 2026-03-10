@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"slices"
 	"fmt"
 
 	"compiler/internal/context"
@@ -1380,10 +1381,8 @@ func (c *checker) findModuleForSymbol(sym *symbols.Symbol) *context.Module {
 	}
 	if mod := c.ctx.Prelude; mod != nil {
 		if mod.ModuleScope != nil {
-			for _, candidate := range mod.ModuleScope.Symbols() {
-				if candidate == sym {
-					return mod
-				}
+			if slices.Contains(mod.ModuleScope.Symbols(), sym) {
+				return mod
 			}
 		}
 		for _, methods := range mod.MethodSets {
@@ -1406,10 +1405,8 @@ func (c *checker) findModuleForSymbol(sym *symbols.Symbol) *context.Module {
 			continue
 		}
 		if mod.ModuleScope != nil {
-			for _, candidate := range mod.ModuleScope.Symbols() {
-				if candidate == sym {
-					return mod
-				}
+			if slices.Contains(mod.ModuleScope.Symbols(), sym) {
+				return mod
 			}
 		}
 		for _, methods := range mod.MethodSets {
