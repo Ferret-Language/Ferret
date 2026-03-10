@@ -1,0 +1,14 @@
+module 01_const_fold
+fn main() i32 {
+locals:
+    value: i32
+    _t1: i32 [temp]
+    _t2: bool [temp]
+entry:
+    _t1 = 6
+    value = 7
+    _t2 = true
+    jump bb1
+bb1:
+    return value
+}
