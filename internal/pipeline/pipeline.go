@@ -145,7 +145,7 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 	mod.MIR = midmir.LowerModule(mod.CFG, mod.HIR, mod.Bindings, p.buildGlobalConstMap())
 	midmir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseMIRGenerated
-	midmir.SimplifyModule(mod.MIR)
+	midmir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)
 	midmir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseConstEvaluated
 	ownership.AnalyzeModule(p.ctx, mod)

@@ -4,10 +4,11 @@ import (
 	"math/big"
 	"slices"
 
+	"compiler/internal/diagnostics"
 	"compiler/internal/utils/numeric"
 )
 
-func SimplifyModule(mod *Module) *Module {
+func SimplifyModule(diag *diagnostics.Bag, mod *Module) *Module {
 	if mod == nil {
 		return nil
 	}
@@ -18,12 +19,12 @@ func SimplifyModule(mod *Module) *Module {
 		global.Init = simplifyValue(global.Init, nil)
 	}
 	for _, fn := range mod.Functions {
-		simplifyFunction(fn)
+		simplifyFunction(diag, fn)
 	}
 	return mod
 }
 
-func simplifyFunction(fn *Function) {
+func simplifyFunction(diag *diagnostics.Bag, fn *Function) {
 	if fn == nil {
 		return
 	}
@@ -79,7 +80,7 @@ func simplifyFunction(fn *Function) {
 			}
 		}
 		block.Instructions = out
-		block.Terminator = simplifyTerminator(block.Terminator, consts)
+		block.Terminator = simplifyTerminator(diag, block.Terminator, consts)
 		propagateTempCopies(fn, block)
 		eliminateDeadTempAssigns(fn, block)
 	}
@@ -197,13 +198,14 @@ func simplifyDeferredInstr(instr Instr) Instr {
 	return instr
 }
 
-func simplifyTerminator(term Terminator, consts map[int]Value) Terminator {
+func simplifyTerminator(diag *diagnostics.Bag, term Terminator, consts map[int]Value) Terminator {
 	switch t := term.(type) {
 	case nil:
 		return nil
 	case *BranchTerm:
 		t.Cond = simplifyValue(t.Cond, consts)
 		if b, ok := boolConstant(t.Cond); ok {
+			reportConstantCondition(diag, t.Cond, b)
 			target := t.FalseID
 			if b {
 				target = t.TrueID
@@ -231,6 +233,26 @@ func simplifyTerminator(term Terminator, consts map[int]Value) Terminator {
 	default:
 		return term
 	}
+}
+
+func reportConstantCondition(diag *diagnostics.Bag, value Value, truth bool) {
+	if diag == nil || value == nil {
+		return
+	}
+	loc := value.Loc()
+	msg := "condition is always false"
+	code := diagnostics.WarnConstantConditionFalse
+	label := "this condition always evaluates to false"
+	if truth {
+		msg = "condition is always true"
+		code = diagnostics.WarnConstantConditionTrue
+		label = "this condition always evaluates to true"
+	}
+	diag.Add(
+		diagnostics.NewWarning(msg).
+			WithCode(code).
+			WithPrimaryLabel(&loc, label),
+	)
 }
 
 func simplifyValue(value Value, consts map[int]Value) Value {

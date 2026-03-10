@@ -122,3 +122,65 @@ fn main() i32 {
 		t.Fatalf("expected inlined/folded imported const in MIR, got %q", text)
 	}
 }
+
+func TestPipelineWarnsOnConstantTrueCondition(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    if 1 < 2 {
+        return 1
+    }
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	found := false
+	for _, diag := range result.Diagnostics.All() {
+		if diag == nil {
+			continue
+		}
+		if diag.Code == diagnostics.WarnConstantConditionTrue && diag.Message == "condition is always true" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected constant true warning, got %#v", result.Diagnostics.All())
+	}
+}
+
+func TestPipelineWarnsOnConstDrivenConstantFalseCondition(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+const Flag = false
+
+fn main() i32 {
+    if Flag {
+        return 1
+    }
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	found := false
+	for _, diag := range result.Diagnostics.All() {
+		if diag == nil {
+			continue
+		}
+		if diag.Code == diagnostics.WarnConstantConditionFalse && diag.Message == "condition is always false" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected constant false warning, got %#v", result.Diagnostics.All())
+	}
+}

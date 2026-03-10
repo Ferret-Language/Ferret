@@ -313,11 +313,11 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 				return &BoolValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: false}
 			}
 			if value, ok := lowerCtx.lookupConstExpr(e.Path[0], e.SourceExpr()); ok {
-				return lowerValue(lowerCtx, value)
+				return withValueContext(lowerValue(lowerCtx, value), e.Loc(), e.Type())
 			}
 		}
 		if value, ok := lowerCtx.lookupResolvedConstExpr(e.SourceExpr()); ok {
-			return lowerValue(lowerCtx, value)
+			return withValueContext(lowerValue(lowerCtx, value), e.Loc(), e.Type())
 		}
 		if len(e.Path) == 1 {
 			if id, ok := lowerCtx.localID(e.Path[0]); ok {
@@ -558,6 +558,98 @@ func lowerStructView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 		return t, true
 	default:
 		return nil, false
+	}
+}
+
+func withValueContext(value Value, loc source.Location, typ typeinfo.Type) Value {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case *NameValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		copy.Path = append([]string(nil), v.Path...)
+		return &copy
+	case *LocalValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *NumberValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *BoolValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *StringValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *NoneValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *UnaryValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *AddrOfValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *LoadValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *BinaryValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *PostfixValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *CallValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		copy.Args = append([]Value(nil), v.Args...)
+		return &copy
+	case *FieldLoadValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *FieldValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *CastValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		return &copy
+	case *CompositeValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		copy.Items = append([]CompositeItem(nil), v.Items...)
+		return &copy
+	default:
+		return value
 	}
 }
 
