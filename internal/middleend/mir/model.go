@@ -204,6 +204,21 @@ type UnaryValue struct {
 
 func (*UnaryValue) valueNode() {}
 
+type AddrOfValue struct {
+	baseValue
+	Source  Value
+	Mutable bool
+}
+
+func (*AddrOfValue) valueNode() {}
+
+type LoadValue struct {
+	baseValue
+	Pointer Value
+}
+
+func (*LoadValue) valueNode() {}
+
 type BinaryValue struct {
 	baseValue
 	Left  Value

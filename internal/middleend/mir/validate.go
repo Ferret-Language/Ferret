@@ -163,6 +163,10 @@ func childrenAreSimple(value Value) bool {
 	switch v := value.(type) {
 	case *UnaryValue:
 		return isSimpleValue(v.Right)
+	case *AddrOfValue:
+		return isSimpleValue(v.Source)
+	case *LoadValue:
+		return isSimpleValue(v.Pointer)
 	case *BinaryValue:
 		return isSimpleValue(v.Left) && isSimpleValue(v.Right)
 	case *PostfixValue:

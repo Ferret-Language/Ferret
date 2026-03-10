@@ -299,7 +299,16 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.NoneLit:
 		return &NoneValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}}
 	case *hir.PrefixExpr:
-		return &UnaryValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Op: e.Op, Right: lowerValue(lowerCtx, e.Right)}
+		switch e.Op {
+		case "&":
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: false}
+		case "&mut":
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: true}
+		case "*":
+			return &LoadValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Pointer: lowerValue(lowerCtx, e.Right)}
+		default:
+			return &UnaryValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Op: e.Op, Right: lowerValue(lowerCtx, e.Right)}
+		}
 	case *hir.UnsafeExpr:
 		return &UnaryValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Op: "unsafe", Right: lowerValue(lowerCtx, e.Value)}
 	case *hir.BinaryExpr:

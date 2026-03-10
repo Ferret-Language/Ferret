@@ -31,6 +31,12 @@ func (n *normalizer) normalizeGlobalValue(value Value) Value {
 	case *UnaryValue:
 		v.Right = n.normalizeGlobalValue(v.Right)
 		return v
+	case *AddrOfValue:
+		v.Source = n.normalizeGlobalValue(v.Source)
+		return v
+	case *LoadValue:
+		v.Pointer = n.normalizeGlobalValue(v.Pointer)
+		return v
 	case *BinaryValue:
 		v.Left = n.normalizeGlobalValue(v.Left)
 		v.Right = n.normalizeGlobalValue(v.Right)
@@ -170,6 +176,16 @@ func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) 
 		copy := *v
 		copy.Right = right
 		return n.wrapComputed(fn, &copy, temps)
+	case *AddrOfValue:
+		temps, source := n.normalizeValue(fn, v.Source)
+		copy := *v
+		copy.Source = source
+		return n.wrapComputed(fn, &copy, temps)
+	case *LoadValue:
+		temps, ptr := n.normalizeValue(fn, v.Pointer)
+		copy := *v
+		copy.Pointer = ptr
+		return n.wrapComputed(fn, &copy, temps)
 	case *BinaryValue:
 		leftTemps, left := n.normalizeValue(fn, v.Left)
 		rightTemps, right := n.normalizeValue(fn, v.Right)
@@ -234,6 +250,16 @@ func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, V
 		temps, right := n.normalizeValue(fn, v.Right)
 		copy := *v
 		copy.Right = right
+		return temps, &copy
+	case *AddrOfValue:
+		temps, source := n.normalizeValue(fn, v.Source)
+		copy := *v
+		copy.Source = source
+		return temps, &copy
+	case *LoadValue:
+		temps, ptr := n.normalizeValue(fn, v.Pointer)
+		copy := *v
+		copy.Pointer = ptr
 		return temps, &copy
 	case *BinaryValue:
 		leftTemps, left := n.normalizeValue(fn, v.Left)

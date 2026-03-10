@@ -530,6 +530,10 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 		a.requireActiveValue(scope, v)
 	case *mir.FieldLoadValue:
 		a.checkFieldLoadValue(scope, v)
+	case *mir.AddrOfValue:
+		a.checkAddrOfValue(scope, v)
+	case *mir.LoadValue:
+		a.checkLoadValue(scope, v)
 	case *mir.UnaryValue:
 		switch v.Op {
 		case "copy":
@@ -620,6 +624,20 @@ func (a *analyzer) checkFieldLoadValue(scope *valueScope, value *mir.FieldLoadVa
 		return
 	}
 	a.checkValue(scope, value.Base)
+}
+
+func (a *analyzer) checkAddrOfValue(scope *valueScope, value *mir.AddrOfValue) {
+	if value == nil {
+		return
+	}
+	a.checkValue(scope, value.Source)
+}
+
+func (a *analyzer) checkLoadValue(scope *valueScope, value *mir.LoadValue) {
+	if value == nil {
+		return
+	}
+	a.checkValue(scope, value.Pointer)
 }
 
 func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
@@ -788,16 +806,21 @@ func (a *analyzer) consumeLocalPath(scope *valueScope, root, path string, loc so
 
 func (a *analyzer) tempInfoForValue(value mir.Value) (tempInfo, bool) {
 	switch v := value.(type) {
-	case *mir.UnaryValue:
-		if v.Op == "&" || v.Op == "&mut" {
-			root, path, ok := a.borrowSourcePath(v.Right)
-			if !ok {
-				return tempInfo{}, false
-			}
-			info := tempInfo{root: root, path: path, value: value}
-			info.borrow = &borrowInfo{owner: root, loc: v.Loc()}
-			return info, true
+	case *mir.AddrOfValue:
+		root, path, ok := a.borrowSourcePath(v.Source)
+		if !ok {
+			return tempInfo{}, false
 		}
+		info := tempInfo{root: root, path: path, value: value}
+		info.borrow = &borrowInfo{owner: root, loc: v.Loc()}
+		return info, true
+	case *mir.LoadValue:
+		root, path, ok := a.borrowSourcePath(v.Pointer)
+		if !ok {
+			return tempInfo{}, false
+		}
+		return tempInfo{root: root, path: path, value: value}, true
+	case *mir.UnaryValue:
 		if v.Op == "*" {
 			root, path, ok := a.borrowSourcePath(v.Right)
 			if !ok {
@@ -828,6 +851,10 @@ func (a *analyzer) borrowSourcePath(value mir.Value) (string, string, bool) {
 		if name := a.localName(v.LocalID); name != "" {
 			return name, "", true
 		}
+	case *mir.AddrOfValue:
+		return a.borrowSourcePath(v.Source)
+	case *mir.LoadValue:
+		return a.borrowSourcePath(v.Pointer)
 	case *mir.UnaryValue:
 		if v.Op == "*" {
 			return a.borrowSourcePath(v.Right)
@@ -1187,6 +1214,12 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowIn
 				return borrowInfo{owner: slot.borrowOf, loc: slot.borrowLoc}, true
 			}
 		}
+	case *mir.AddrOfValue:
+		root, _, ok := a.borrowSourcePath(v.Source)
+		if !ok {
+			return borrowInfo{}, false
+		}
+		return borrowInfo{owner: root, loc: v.Loc()}, true
 	case *mir.UnaryValue:
 		if v.Op == "&" || v.Op == "&mut" {
 			root, _, ok := a.borrowSourcePath(v.Right)
@@ -1469,6 +1502,13 @@ func (a *analyzer) valueAccess(scope *valueScope, value mir.Value) (addressable 
 		return false, false
 	case *mir.FieldLoadValue:
 		return a.valueAccess(scope, v.Base)
+	case *mir.LoadValue:
+		switch t := valueType(v).(type) {
+		case *typeinfo.PointerType:
+			return true, t.IsMut || t.IsOwn
+		default:
+			return true, false
+		}
 	case *mir.FieldValue:
 		return a.valueAccess(scope, v.Base)
 	case *mir.UnaryValue:

@@ -203,6 +203,14 @@ func formatValue(value Value) string {
 			return fmt.Sprintf("unsafe %s", wrapValue(v.Right))
 		}
 		return formatPrefix(v.Op, wrapValue(v.Right))
+	case *AddrOfValue:
+		kw := "addr_of"
+		if v.Mutable {
+			kw = "addr_of_mut"
+		}
+		return fmt.Sprintf("%s %s", kw, wrapValue(v.Source))
+	case *LoadValue:
+		return fmt.Sprintf("load %s", wrapValue(v.Pointer))
 	case *BinaryValue:
 		return fmt.Sprintf("%s %s %s", binaryOpcode(v.Op), wrapValue(v.Left), wrapValue(v.Right))
 	case *PostfixValue:

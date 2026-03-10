@@ -101,6 +101,35 @@ fn main() i32 {
 	}
 }
 
+func TestPipelineGeneratesExplicitAddrOfAndLoadInMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn probe(p own *Point) void {
+    let q = &*p
+    q
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil || len(result.Entry.MIR.Functions) != 1 {
+		t.Fatalf("expected one MIR function, got %#v", result.Entry)
+	}
+	text := midmir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "load p") {
+		t.Fatalf("expected explicit load in MIR dump, got %q", text)
+	}
+	if !strings.Contains(text, "addr_of") {
+		t.Fatalf("expected explicit addr_of in MIR dump, got %q", text)
+	}
+}
+
 func mustWriteIR(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
