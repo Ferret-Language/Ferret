@@ -18,13 +18,34 @@ import (
 )
 
 type Config struct {
-	RootDir   string
-	Extension string
+	RootDir         string
+	Extension       string
+	StdlibRoot      string
+	DependencyRoots map[string]string
+}
+
+type ModuleOrigin string
+
+const (
+	ModuleOriginLocal      ModuleOrigin = "local"
+	ModuleOriginStdlib     ModuleOrigin = "stdlib"
+	ModuleOriginDependency ModuleOrigin = "dependency"
+)
+
+type ResolvedImport struct {
+	Key             string
+	ImportPath      string
+	FilePath        string
+	Origin          ModuleOrigin
+	DependencyAlias string
 }
 
 type Module struct {
+	Key          string
 	ImportPath   string
 	FilePath     string
+	Origin       ModuleOrigin
+	Dependency   string
 	Content      string
 	ContentHash  string
 	Tokens       []tokens.Token
@@ -44,17 +65,29 @@ type CompilerContext struct {
 }
 
 func New(rootDir, extension string, diag *diagnostics.Bag) *CompilerContext {
+	return NewWithConfig(Config{
+		RootDir:         filepath.Clean(rootDir),
+		Extension:       extension,
+		DependencyRoots: make(map[string]string),
+	}, diag)
+}
+
+func NewWithConfig(cfg Config, diag *diagnostics.Bag) *CompilerContext {
 	if diag == nil {
 		diag = diagnostics.NewBag()
 	}
-	if extension == "" {
-		extension = ".ferr"
+	if cfg.Extension == "" {
+		cfg.Extension = ".ferr"
+	}
+	if cfg.RootDir == "" {
+		cfg.RootDir = "."
+	}
+	cfg.RootDir = filepath.Clean(cfg.RootDir)
+	if cfg.DependencyRoots == nil {
+		cfg.DependencyRoots = make(map[string]string)
 	}
 	return &CompilerContext{
-		Config: Config{
-			RootDir:   filepath.Clean(rootDir),
-			Extension: extension,
-		},
+		Config:       cfg,
 		Diagnostics:  diag,
 		modules:      make(map[string]*Module),
 		fileIndex:    make(map[string]string),
@@ -82,31 +115,54 @@ func (ctx *CompilerContext) ImportPathForFile(filePath string) (string, error) {
 	return ctx.NormalizeImportPath(strings.TrimSuffix(rel, ctx.Config.Extension)), nil
 }
 
-func (ctx *CompilerContext) FilePathForImport(importPath string) string {
-	clean := ctx.NormalizeImportPath(importPath)
-	if clean == "" {
-		return filepath.Clean(ctx.Config.RootDir)
+func (ctx *CompilerContext) ResolveLocalModule(filePath string) (ResolvedImport, error) {
+	importPath, err := ctx.ImportPathForFile(filePath)
+	if err != nil {
+		return ResolvedImport{}, err
 	}
-	return filepath.Join(ctx.Config.RootDir, filepath.FromSlash(clean)+ctx.Config.Extension)
+	if err := ctx.validateLocalImportPath(importPath); err != nil {
+		return ResolvedImport{}, err
+	}
+	return ResolvedImport{
+		Key:        moduleKey(ModuleOriginLocal, importPath),
+		ImportPath: importPath,
+		FilePath:   filepath.Clean(filePath),
+		Origin:     ModuleOriginLocal,
+	}, nil
 }
 
-func (ctx *CompilerContext) ResolveImport(from *Module, spec string) (string, error) {
+func (ctx *CompilerContext) ResolveImport(from *Module, spec string) (ResolvedImport, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
-		return "", fmt.Errorf("empty import path")
+		return ResolvedImport{}, fmt.Errorf("empty import path")
 	}
 
 	if strings.HasPrefix(spec, "./") || strings.HasPrefix(spec, "../") {
-		if from == nil || from.FilePath == "" {
-			return "", fmt.Errorf("relative import %q requires a source module", spec)
-		}
-		base := filepath.Dir(from.FilePath)
-		target := filepath.Clean(filepath.Join(base, filepath.FromSlash(spec)))
-		return ctx.ImportPathForFile(target + ctx.Config.Extension)
+		return ResolvedImport{}, fmt.Errorf("relative imports are not allowed; use package-root-relative paths")
 	}
 
 	spec = strings.ReplaceAll(spec, "::", "/")
-	return ctx.NormalizeImportPath(spec), nil
+	importPath, err := ctx.NormalizeSourceImportPath(spec)
+	if err != nil {
+		return ResolvedImport{}, err
+	}
+
+	origin, depAlias, err := ctx.classifyImportPath(importPath)
+	if err != nil {
+		return ResolvedImport{}, err
+	}
+	filePath, err := ctx.filePathForResolvedImport(origin, depAlias, importPath)
+	if err != nil {
+		return ResolvedImport{}, err
+	}
+
+	return ResolvedImport{
+		Key:             moduleKey(origin, importPath),
+		ImportPath:      importPath,
+		FilePath:        filePath,
+		Origin:          origin,
+		DependencyAlias: depAlias,
+	}, nil
 }
 
 func (ctx *CompilerContext) NormalizeImportPath(importPath string) string {
@@ -132,22 +188,50 @@ func (ctx *CompilerContext) NormalizeImportPath(importPath string) string {
 	return strings.Join(clean, "/")
 }
 
-func (ctx *CompilerContext) UpsertModule(importPath string) *Module {
+func (ctx *CompilerContext) NormalizeSourceImportPath(importPath string) (string, error) {
+	importPath = strings.TrimSpace(importPath)
+	importPath = strings.TrimSuffix(importPath, ctx.Config.Extension)
+	importPath = strings.ReplaceAll(importPath, "\\", "/")
+	importPath = strings.Trim(importPath, "/")
+	if importPath == "" {
+		return "", fmt.Errorf("empty import path")
+	}
+	parts := strings.Split(importPath, "/")
+	for _, part := range parts {
+		switch part {
+		case "", ".", "..":
+			return "", fmt.Errorf("invalid import path %q", importPath)
+		}
+	}
+	return strings.Join(parts, "/"), nil
+}
+
+func (ctx *CompilerContext) UpsertModule(resolved ResolvedImport) *Module {
 	ctx.mu.Lock()
 	defer ctx.mu.Unlock()
-	if mod, ok := ctx.modules[importPath]; ok {
+	if mod, ok := ctx.modules[resolved.Key]; ok {
+		mod.ImportPath = resolved.ImportPath
+		mod.FilePath = filepath.Clean(resolved.FilePath)
+		mod.Origin = resolved.Origin
+		mod.Dependency = resolved.DependencyAlias
 		return mod
 	}
-	mod := &Module{ImportPath: importPath, FilePath: ctx.FilePathForImport(importPath)}
-	ctx.modules[importPath] = mod
-	ctx.fileIndex[filepath.Clean(mod.FilePath)] = importPath
+	mod := &Module{
+		Key:        resolved.Key,
+		ImportPath: resolved.ImportPath,
+		FilePath:   filepath.Clean(resolved.FilePath),
+		Origin:     resolved.Origin,
+		Dependency: resolved.DependencyAlias,
+	}
+	ctx.modules[resolved.Key] = mod
+	ctx.fileIndex[filepath.Clean(mod.FilePath)] = resolved.Key
 	return mod
 }
 
-func (ctx *CompilerContext) GetModule(importPath string) (*Module, bool) {
+func (ctx *CompilerContext) GetModule(key string) (*Module, bool) {
 	ctx.mu.RLock()
 	defer ctx.mu.RUnlock()
-	mod, ok := ctx.modules[importPath]
+	mod, ok := ctx.modules[key]
 	return mod, ok
 }
 
@@ -158,7 +242,7 @@ func (ctx *CompilerContext) Modules() []*Module {
 	for _, mod := range ctx.modules {
 		mods = append(mods, mod)
 	}
-	sort.Slice(mods, func(i, j int) bool { return mods[i].ImportPath < mods[j].ImportPath })
+	sort.Slice(mods, func(i, j int) bool { return mods[i].Key < mods[j].Key })
 	return mods
 }
 
@@ -241,8 +325,71 @@ func (ctx *CompilerContext) StoreModuleContent(mod *Module, content string) bool
 	mod.Content = content
 	mod.ContentHash = hash
 	mod.FilePath = filepath.Clean(mod.FilePath)
-	ctx.fileIndex[mod.FilePath] = mod.ImportPath
+	ctx.fileIndex[mod.FilePath] = mod.Key
 	return changed
+}
+
+func (ctx *CompilerContext) classifyImportPath(importPath string) (ModuleOrigin, string, error) {
+	if importPath == "std" || strings.HasPrefix(importPath, "std/") {
+		if importPath == "std" {
+			return "", "", fmt.Errorf("stdlib imports must include a module path")
+		}
+		return ModuleOriginStdlib, "", nil
+	}
+
+	first, _, _ := strings.Cut(importPath, "/")
+	if root, ok := ctx.Config.DependencyRoots[first]; ok {
+		if root == "" {
+			return "", "", fmt.Errorf("dependency alias %q has no configured root", first)
+		}
+		if importPath == first {
+			return "", "", fmt.Errorf("dependency imports must include a module path after alias %q", first)
+		}
+		return ModuleOriginDependency, first, nil
+	}
+
+	return ModuleOriginLocal, "", nil
+}
+
+func (ctx *CompilerContext) filePathForResolvedImport(origin ModuleOrigin, depAlias, importPath string) (string, error) {
+	switch origin {
+	case ModuleOriginLocal:
+		return filepath.Join(ctx.Config.RootDir, filepath.FromSlash(importPath)+ctx.Config.Extension), nil
+	case ModuleOriginStdlib:
+		if ctx.Config.StdlibRoot == "" {
+			return "", fmt.Errorf("stdlib root is not configured")
+		}
+		subpath := strings.TrimPrefix(importPath, "std/")
+		return filepath.Join(ctx.Config.StdlibRoot, filepath.FromSlash(subpath)+ctx.Config.Extension), nil
+	case ModuleOriginDependency:
+		root := ctx.Config.DependencyRoots[depAlias]
+		if root == "" {
+			return "", fmt.Errorf("dependency alias %q has no configured root", depAlias)
+		}
+		_, subpath, _ := strings.Cut(importPath, "/")
+		if subpath == "" {
+			return "", fmt.Errorf("dependency imports must include a module path after alias %q", depAlias)
+		}
+		return filepath.Join(root, filepath.FromSlash(subpath)+ctx.Config.Extension), nil
+	default:
+		return "", fmt.Errorf("unknown module origin %q", origin)
+	}
+}
+
+func moduleKey(origin ModuleOrigin, importPath string) string {
+	return string(origin) + ":" + importPath
+}
+
+func (ctx *CompilerContext) validateLocalImportPath(importPath string) error {
+	first, _, _ := strings.Cut(importPath, "/")
+	switch first {
+	case "std":
+		return fmt.Errorf("local module path %q uses reserved top-level name %q", importPath, first)
+	}
+	if _, ok := ctx.Config.DependencyRoots[first]; ok {
+		return fmt.Errorf("local module path %q conflicts with dependency alias %q", importPath, first)
+	}
+	return nil
 }
 
 func hashContent(content string) string {

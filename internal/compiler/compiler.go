@@ -8,6 +8,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/pipeline"
+	"compiler/internal/project"
 )
 
 type Result struct {
@@ -28,16 +29,13 @@ func New(rootDir, extension string, diag *diagnostics.Bag) *Compiler {
 	return &Compiler{ctx: ctx, pipeline: pipeline.New(ctx)}
 }
 
+func NewWithConfig(cfg context.Config, diag *diagnostics.Bag) *Compiler {
+	ctx := context.NewWithConfig(cfg, diag)
+	return &Compiler{ctx: ctx, pipeline: pipeline.New(ctx)}
+}
+
 func ParseFile(path string) Result {
-	absPath, err := filepath.Abs(path)
-	diag := diagnostics.NewDiagnosticBag(absPath)
-	if err != nil {
-		diag.Add(diagnostics.NewError(err.Error()))
-		return Result{Diagnostics: diag}
-	}
-	root := filepath.Dir(absPath)
-	compiler := New(root, filepath.Ext(absPath), diag)
-	return compiler.ParseEntry(absPath)
+	return ParsePath(path)
 }
 
 func ParsePath(path string) Result {
@@ -53,10 +51,20 @@ func ParsePath(path string) Result {
 		return Result{Diagnostics: diag}
 	}
 	if info.IsDir() {
-		compiler := New(absPath, ".ferr", diag)
+		ws, err := project.Load(absPath, ".ferr")
+		if err != nil {
+			diag.Add(diagnostics.NewError(err.Error()))
+			return Result{Diagnostics: diag}
+		}
+		compiler := NewWithConfig(ws.Context, diag)
 		return compiler.ParseWorkspace()
 	}
-	compiler := New(filepath.Dir(absPath), filepath.Ext(absPath), diag)
+	ws, err := project.Load(absPath, filepath.Ext(absPath))
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return Result{Diagnostics: diag}
+	}
+	compiler := NewWithConfig(ws.Context, diag)
 	return compiler.ParseEntry(absPath)
 }
 

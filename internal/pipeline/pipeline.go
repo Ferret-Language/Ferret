@@ -3,7 +3,6 @@ package pipeline
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"compiler/internal/context"
@@ -23,14 +22,14 @@ func New(ctx *context.CompilerContext) *Pipeline {
 }
 
 func (p *Pipeline) ParseEntry(entryFile string) (*context.Module, error) {
-	importPath, err := p.ctx.ImportPathForFile(entryFile)
+	resolved, err := p.ctx.ResolveLocalModule(entryFile)
 	if err != nil {
 		return nil, err
 	}
-	if err := p.parseModule(importPath, nil); err != nil {
+	if err := p.parseModule(resolved, nil); err != nil {
 		return nil, err
 	}
-	mod, _ := p.ctx.GetModule(importPath)
+	mod, _ := p.ctx.GetModule(resolved.Key)
 	return mod, nil
 }
 
@@ -40,32 +39,32 @@ func (p *Pipeline) ParseWorkspace() ([]*context.Module, error) {
 		return nil, err
 	}
 	for _, file := range files {
-		importPath, err := p.ctx.ImportPathForFile(file)
+		resolved, err := p.ctx.ResolveLocalModule(file)
 		if err != nil {
 			return nil, err
 		}
-		if err := p.parseModule(importPath, nil); err != nil {
+		if err := p.parseModule(resolved, nil); err != nil {
 			return nil, err
 		}
 	}
-	return p.sortedModules(files)
+	return p.ctx.Modules(), nil
 }
 
-func (p *Pipeline) parseModule(importPath string, stack []string) error {
+func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) error {
 	for idx, item := range stack {
-		if item == importPath {
-			cycle := append(append([]string{}, stack[idx:]...), importPath)
+		if item == resolved.Key {
+			cycle := append(append([]string{}, stack[idx:]...), resolved.Key)
 			p.reportCycle(cycle)
 			return nil
 		}
 	}
 
-	mod := p.ctx.UpsertModule(importPath)
+	mod := p.ctx.UpsertModule(resolved)
 	content, err := os.ReadFile(mod.FilePath)
 	if err != nil {
 		loc := importLocation(mod, stack)
 		p.ctx.Diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("cannot read module %s", importPath)).
+			diagnostics.NewError(fmt.Sprintf("cannot read module %s", mod.ImportPath)).
 				WithCode(diagnostics.ErrModuleNotFound).
 				WithPrimaryLabel(loc, err.Error()),
 		)
@@ -75,8 +74,12 @@ func (p *Pipeline) parseModule(importPath string, stack []string) error {
 	changed := p.ctx.StoreModuleContent(mod, string(content))
 	p.ctx.Diagnostics.AddSourceContent(mod.FilePath, mod.Content)
 	if mod.Phase >= phase.PhaseParsed && !changed {
-		for _, dep := range p.ctx.DependencyList(importPath) {
-			if err := p.parseModule(dep, append(stack, importPath)); err != nil {
+		for _, depKey := range p.ctx.DependencyList(mod.Key) {
+			dep, ok := p.ctx.GetModule(depKey)
+			if !ok {
+				continue
+			}
+			if err := p.parseModule(moduleRef(dep), append(stack, mod.Key)); err != nil {
 				return err
 			}
 		}
@@ -90,9 +93,9 @@ func (p *Pipeline) parseModule(importPath string, stack []string) error {
 	mod.AST = parser.Parse(mod.FilePath, mod.Tokens, p.ctx.Diagnostics)
 	mod.Phase = phase.PhaseParsed
 
-	p.ctx.ResetDependencies(importPath)
+	p.ctx.ResetDependencies(mod.Key)
 	for _, imp := range mod.AST.Imports {
-		resolved, err := p.ctx.ResolveImport(mod, imp.Path)
+		dep, err := p.ctx.ResolveImport(mod, imp.Path)
 		if err != nil {
 			loc := imp.Location
 			p.ctx.Diagnostics.Add(
@@ -102,8 +105,8 @@ func (p *Pipeline) parseModule(importPath string, stack []string) error {
 			)
 			continue
 		}
-		p.ctx.AddDependency(importPath, resolved)
-		if err := p.parseModule(resolved, append(stack, importPath)); err != nil {
+		p.ctx.AddDependency(mod.Key, dep.Key)
+		if err := p.parseModule(dep, append(stack, mod.Key)); err != nil {
 			return err
 		}
 	}
@@ -111,38 +114,19 @@ func (p *Pipeline) parseModule(importPath string, stack []string) error {
 }
 
 func (p *Pipeline) reportCycle(cycle []string) {
-	message := "cyclic import: " + strings.Join(cycle, " -> ")
+	parts := make([]string, 0, len(cycle))
+	for _, key := range cycle {
+		if mod, ok := p.ctx.GetModule(key); ok && mod != nil {
+			parts = append(parts, mod.ImportPath)
+			continue
+		}
+		parts = append(parts, key)
+	}
+	message := "cyclic import: " + strings.Join(parts, " -> ")
 	p.ctx.Diagnostics.Add(
 		diagnostics.NewError(message).
 			WithCode(diagnostics.ErrCyclicImport),
 	)
-}
-
-func (p *Pipeline) sortedModules(files []string) ([]*context.Module, error) {
-	seen := make(map[string]struct{}, len(files))
-	imports := make([]string, 0, len(files))
-	for _, file := range files {
-		importPath, err := p.ctx.ImportPathForFile(file)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := seen[importPath]; ok {
-			continue
-		}
-		seen[importPath] = struct{}{}
-		imports = append(imports, importPath)
-	}
-	sort.Strings(imports)
-
-	mods := make([]*context.Module, 0, len(imports))
-	for _, importPath := range imports {
-		mod, ok := p.ctx.GetModule(importPath)
-		if !ok {
-			continue
-		}
-		mods = append(mods, mod)
-	}
-	return mods, nil
 }
 
 func importLocation(mod *context.Module, stack []string) *source.Location {
@@ -153,6 +137,17 @@ func importLocation(mod *context.Module, stack []string) *source.Location {
 	if len(stack) == 0 {
 		return nil
 	}
-	loc := source.NewLocation(stack[len(stack)-1], source.NewPosition(), source.NewPosition())
+	label := stack[len(stack)-1]
+	loc := source.NewLocation(label, source.NewPosition(), source.NewPosition())
 	return &loc
+}
+
+func moduleRef(mod *context.Module) context.ResolvedImport {
+	return context.ResolvedImport{
+		Key:             mod.Key,
+		ImportPath:      mod.ImportPath,
+		FilePath:        mod.FilePath,
+		Origin:          mod.Origin,
+		DependencyAlias: mod.Dependency,
+	}
 }
