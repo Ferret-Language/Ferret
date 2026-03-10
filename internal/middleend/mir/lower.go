@@ -4,6 +4,8 @@ import (
 	"compiler/internal/cfg"
 	fast "compiler/internal/frontend/ast"
 	"compiler/internal/middleend/hir"
+	"compiler/internal/semantics/binding"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
 )
@@ -11,9 +13,12 @@ import (
 type lowerContext struct {
 	localsByName map[string]int
 	locals       []*Local
+	bindings     *binding.ModuleInfo
+	globalConsts map[fast.Node]hir.Expr
+	localConsts  map[string]hir.Expr
 }
 
-func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module) *Module {
+func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *Module {
 	if cfgMod == nil || hirMod == nil {
 		return nil
 	}
@@ -29,10 +34,10 @@ func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module) *Module {
 		out.Types = append(out.Types, lowerTypeDecl(decl))
 	}
 	for _, global := range hirMod.Globals {
-		out.Globals = append(out.Globals, lowerGlobal(global))
+		out.Globals = append(out.Globals, lowerGlobal(global, bindings, globalConsts))
 	}
 	for _, fn := range cfgMod.Functions {
-		out.Functions = append(out.Functions, lowerFunction(fn))
+		out.Functions = append(out.Functions, lowerFunction(fn, bindings, globalConsts))
 	}
 	return NormalizeModule(out)
 }
@@ -129,25 +134,26 @@ func lowerInterfaceTypeDecl(decl *hir.InterfaceTypeDecl) *InterfaceTypeDecl {
 	return out
 }
 
-func lowerGlobal(global *hir.Global) *Global {
+func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *Global {
 	if global == nil {
 		return nil
 	}
+	lowerCtx := &lowerContext{bindings: bindings, globalConsts: globalConsts}
 	return &Global{
 		Name:     global.Name,
 		Mutable:  global.Mutable,
 		Constant: global.Constant,
 		Type:     global.Type,
-		Init:     lowerValue(nil, global.Value),
+		Init:     lowerValue(lowerCtx, global.Value),
 		Location: global.Location,
 	}
 }
 
-func lowerFunction(fn *cfg.Function) *Function {
+func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *Function {
 	if fn == nil || fn.Source == nil {
 		return nil
 	}
-	lowerCtx := newLowerContext(fn.Source)
+	lowerCtx := newLowerContext(fn.Source, bindings, globalConsts)
 	out := &Function{
 		Name:       fn.Name,
 		IsUnsafe:   fn.Source.IsUnsafe,
@@ -217,7 +223,7 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 	case *hir.LetStmt:
 		return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: lowerCtx.lookupLocalID(s.Name), Value: lowerValue(lowerCtx, s.Value)}
 	case *hir.ConstStmt:
-		return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: lowerCtx.lookupLocalID(s.Name), Value: lowerValue(lowerCtx, s.Value)}
+		return nil
 	case *hir.ExprStmt:
 		return &EvalInstr{baseInstr: baseInstr{Location: s.Loc()}, Value: lowerValue(lowerCtx, s.Value)}
 	case *hir.AssignStmt:
@@ -300,6 +306,20 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		return nil
 	case *hir.Ident:
 		if len(e.Path) == 1 {
+			switch e.Path[0] {
+			case "true":
+				return &BoolValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: true}
+			case "false":
+				return &BoolValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: false}
+			}
+			if value, ok := lowerCtx.lookupConstExpr(e.Path[0], e.SourceExpr()); ok {
+				return lowerValue(lowerCtx, value)
+			}
+		}
+		if value, ok := lowerCtx.lookupResolvedConstExpr(e.SourceExpr()); ok {
+			return lowerValue(lowerCtx, value)
+		}
+		if len(e.Path) == 1 {
 			if id, ok := lowerCtx.localID(e.Path[0]); ok {
 				return &LocalValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, LocalID: id}
 			}
@@ -351,12 +371,13 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	}
 }
 
-func collectLocals(fn *hir.Func) ([]*Local, map[string]int) {
+func collectLocals(fn *hir.Func) ([]*Local, map[string]int, map[string]hir.Expr) {
 	if fn == nil || fn.Body == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	locals := make([]*Local, 0)
 	byName := make(map[string]int)
+	consts := make(map[string]hir.Expr)
 	add := func(name string, typ typeinfo.Type, mutable, constant bool, loc source.Location) {
 		if name == "" {
 			return
@@ -389,7 +410,7 @@ func collectLocals(fn *hir.Func) ([]*Local, map[string]int) {
 		case *hir.LetStmt:
 			add(s.Name, s.Type, s.Mutable, false, s.Loc())
 		case *hir.ConstStmt:
-			add(s.Name, s.Type, false, true, s.Loc())
+			consts[s.Name] = s.Value
 		case *hir.IfStmt:
 			walkStmt(s.Then)
 			walkStmt(s.Else)
@@ -425,7 +446,7 @@ func collectLocals(fn *hir.Func) ([]*Local, map[string]int) {
 		}
 	}
 	walkStmt(fn.Body)
-	return locals, byName
+	return locals, byName, consts
 }
 
 func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
@@ -444,9 +465,15 @@ func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
 	}
 }
 
-func newLowerContext(fn *hir.Func) *lowerContext {
-	locals, byName := collectLocals(fn)
-	return &lowerContext{locals: locals, localsByName: byName}
+func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *lowerContext {
+	locals, byName, consts := collectLocals(fn)
+	return &lowerContext{
+		locals:       locals,
+		localsByName: byName,
+		bindings:     bindings,
+		globalConsts: globalConsts,
+		localConsts:  consts,
+	}
 }
 
 func (c *lowerContext) localID(name string) (int, bool) {
@@ -475,6 +502,33 @@ func (c *lowerContext) fieldIndex(typ typeinfo.Type, name string) int {
 		}
 	}
 	return -1
+}
+
+func (c *lowerContext) lookupConstExpr(name string, source fast.Expr) (hir.Expr, bool) {
+	if c == nil {
+		return nil, false
+	}
+	if expr, ok := c.localConsts[name]; ok && expr != nil {
+		return expr, true
+	}
+	return c.lookupResolvedConstExpr(source)
+}
+
+func (c *lowerContext) lookupResolvedConstExpr(source fast.Expr) (hir.Expr, bool) {
+	if c == nil || c.bindings == nil || source == nil {
+		return nil, false
+	}
+	resolution, ok := c.bindings.Nodes[source]
+	if !ok || resolution == nil || resolution.Kind != binding.ResolutionSymbol || resolution.Symbol == nil {
+		return nil, false
+	}
+	if resolution.Symbol.Kind != symbols.SymbolConst {
+		return nil, false
+	}
+	if expr, ok := c.globalConsts[resolution.Symbol.Node]; ok && expr != nil {
+		return expr, true
+	}
+	return nil, false
 }
 
 func lowerStructView(typ typeinfo.Type) (*typeinfo.StructType, bool) {

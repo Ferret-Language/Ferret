@@ -346,7 +346,7 @@ func (n *normalizer) newTemp(fn *Function, value Value) *LocalValue {
 
 func isSimpleValue(value Value) bool {
 	switch value.(type) {
-	case nil, *NameValue, *LocalValue, *NumberValue, *StringValue, *NoneValue:
+	case nil, *NameValue, *LocalValue, *NumberValue, *BoolValue, *StringValue, *NoneValue:
 		return true
 	default:
 		return false

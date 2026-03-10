@@ -237,6 +237,11 @@ func formatValue(value Value) string {
 		return v.Name
 	case *NumberValue:
 		return v.Value
+	case *BoolValue:
+		if v.Value {
+			return "true"
+		}
+		return "false"
 	case *StringValue:
 		return fmt.Sprintf("%q", v.Value)
 	case *NoneValue:
@@ -380,7 +385,7 @@ func formatLocalRef(fn *Function, id int) string {
 
 func wrapValue(value Value) string {
 	switch value.(type) {
-	case *NameValue, *LocalValue, *NumberValue, *StringValue, *NoneValue, *FieldLoadValue, *FieldValue, *CallValue, *CompositeValue:
+	case *NameValue, *LocalValue, *NumberValue, *BoolValue, *StringValue, *NoneValue, *FieldLoadValue, *FieldValue, *CallValue, *CompositeValue:
 		return formatValue(value)
 	default:
 		return "(" + formatValue(value) + ")"

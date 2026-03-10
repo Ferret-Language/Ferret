@@ -142,12 +142,34 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 	mod.LoweredHIR = hir.Lower(mod.HIR)
 	mod.Phase = phase.PhaseHIRLowered
 	cfganalysis.AnalyzeModule(p.ctx, mod)
-	mod.MIR = midmir.LowerModule(mod.CFG, mod.HIR)
+	mod.MIR = midmir.LowerModule(mod.CFG, mod.HIR, mod.Bindings, p.buildGlobalConstMap())
 	midmir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseMIRGenerated
+	midmir.SimplifyModule(mod.MIR)
+	midmir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
+	mod.Phase = phase.PhaseConstEvaluated
 	ownership.AnalyzeModule(p.ctx, mod)
 	mod.Phase = phase.PhaseOwnershipAnalyzed
 	return nil
+}
+
+func (p *Pipeline) buildGlobalConstMap() map[ast.Node]hir.Expr {
+	if p == nil || p.ctx == nil {
+		return nil
+	}
+	out := make(map[ast.Node]hir.Expr)
+	for _, mod := range p.ctx.Modules() {
+		if mod == nil || mod.HIR == nil {
+			continue
+		}
+		for _, global := range mod.HIR.Globals {
+			if global == nil || !global.Constant || global.Source == nil || global.Value == nil {
+				continue
+			}
+			out[global.Source] = global.Value
+		}
+	}
+	return out
 }
 
 func (p *Pipeline) reportCycle(cycle []string) {

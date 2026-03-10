@@ -189,6 +189,13 @@ type NumberValue struct {
 
 func (*NumberValue) valueNode() {}
 
+type BoolValue struct {
+	baseValue
+	Value bool
+}
+
+func (*BoolValue) valueNode() {}
+
 type StringValue struct {
 	baseValue
 	Value string

@@ -121,6 +121,8 @@ func debugValue(value Value) any {
 		return map[string]any{"kind": "temp", "name": v.Name, "type": typeString(v.Type())}
 	case *NumberValue:
 		return map[string]any{"kind": "number", "value": v.Value, "type": typeString(v.Type())}
+	case *BoolValue:
+		return map[string]any{"kind": "bool", "value": v.Value, "type": typeString(v.Type())}
 	case *StringValue:
 		return map[string]any{"kind": "string", "value": v.Value, "type": typeString(v.Type())}
 	case *NoneValue:
