@@ -41,7 +41,7 @@ fn (p *mut Point) Shift(dx i32) {
 	if result.Entry == nil {
 		t.Fatal("expected entry module")
 	}
-	if result.Entry.Phase != phase.PhaseCFGAnalyzed {
+	if result.Entry.Phase != phase.PhaseIRGenerated {
 		t.Fatalf("expected CFG-analyzed phase, got %s", result.Entry.Phase)
 	}
 	scope := result.Entry.ModuleScope

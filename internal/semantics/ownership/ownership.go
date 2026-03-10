@@ -3,6 +3,7 @@ package ownership
 import (
 	"fmt"
 
+	"compiler/internal/cfg"
 	"compiler/internal/context"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
@@ -20,18 +21,19 @@ type valueInfo struct {
 	constant  bool
 	moved     bool
 	moveLoc   source.Location
+	movedPath string
+	movedSubs map[string]source.Location
 	frozen    int
 	borrowOf  string
 	borrowLoc source.Location
 }
 
 type valueScope struct {
-	parent *valueScope
 	values map[string]*valueInfo
 }
 
-func newValueScope(parent *valueScope) *valueScope {
-	return &valueScope{parent: parent, values: make(map[string]*valueInfo)}
+func newValueScope() *valueScope {
+	return &valueScope{values: make(map[string]*valueInfo)}
 }
 
 func (s *valueScope) Declare(name string, info valueInfo) *valueInfo {
@@ -43,17 +45,188 @@ func (s *valueScope) Declare(name string, info valueInfo) *valueInfo {
 		mutable:  info.mutable,
 		constant: info.constant,
 	}
+	if len(info.movedSubs) > 0 {
+		slot.movedSubs = cloneMovedSubs(info.movedSubs)
+	}
 	s.values[name] = slot
 	return slot
 }
 
 func (s *valueScope) Lookup(name string) (*valueInfo, bool) {
-	for scope := s; scope != nil; scope = scope.parent {
-		if info, ok := scope.values[name]; ok {
-			return info, true
+	if s == nil {
+		return nil, false
+	}
+	info, ok := s.values[name]
+	return info, ok
+}
+
+func (s *valueScope) Clone() *valueScope {
+	if s == nil {
+		return nil
+	}
+	out := newValueScope()
+	for name, info := range s.values {
+		if info == nil {
+			continue
+		}
+		clone := *info
+		if len(info.movedSubs) > 0 {
+			clone.movedSubs = cloneMovedSubs(info.movedSubs)
+		}
+		out.values[name] = &clone
+	}
+	return out
+}
+
+func (s *valueScope) TrimToLiveOut(live cfg.NameSet) {
+	if s == nil {
+		return
+	}
+	for name, info := range s.values {
+		if info == nil || live.Has(name) {
+			continue
+		}
+		if info.borrowOf != "" {
+			if owner, ok := s.values[info.borrowOf]; ok && owner != nil && owner.frozen > 0 {
+				owner.frozen--
+			}
+		}
+		info.moved = false
+		info.moveLoc = source.Location{}
+		info.movedPath = ""
+		info.movedSubs = nil
+		info.frozen = 0
+		info.borrowOf = ""
+		info.borrowLoc = source.Location{}
+	}
+}
+
+func (s *valueScope) MergeFrom(other *valueScope, live cfg.NameSet) bool {
+	if s == nil || other == nil {
+		return false
+	}
+	changed := false
+	for name, incoming := range other.values {
+		if incoming == nil || (len(live) > 0 && !live.Has(name)) {
+			continue
+		}
+		current, ok := s.values[name]
+		if !ok || current == nil {
+			clone := *incoming
+			s.values[name] = &clone
+			changed = true
+			continue
+		}
+		merged := mergeValueInfo(current, incoming)
+		if !equalValueInfo(current, merged) {
+			s.values[name] = merged
+			changed = true
 		}
 	}
-	return nil, false
+	return changed
+}
+
+func equalValueInfo(a, b *valueInfo) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.typ == b.typ &&
+		a.mutable == b.mutable &&
+		a.constant == b.constant &&
+		a.moved == b.moved &&
+		a.moveLoc == b.moveLoc &&
+		a.movedPath == b.movedPath &&
+		equalMovedSubs(a.movedSubs, b.movedSubs) &&
+		a.frozen == b.frozen &&
+		a.borrowOf == b.borrowOf &&
+		a.borrowLoc == b.borrowLoc
+}
+
+func mergeValueInfo(a, b *valueInfo) *valueInfo {
+	if a == nil && b == nil {
+		return nil
+	}
+	if a == nil {
+		clone := *b
+		return &clone
+	}
+	if b == nil {
+		clone := *a
+		return &clone
+	}
+	out := *a
+	out.mutable = a.mutable || b.mutable
+	out.constant = a.constant && b.constant
+	out.moved = a.moved || b.moved
+	if out.moved {
+		if a.moveLoc.Start != nil {
+			out.moveLoc = a.moveLoc
+			out.movedPath = a.movedPath
+		} else {
+			out.moveLoc = b.moveLoc
+			out.movedPath = b.movedPath
+		}
+	}
+	if !out.moved {
+		out.movedSubs = mergeMovedSubs(a.movedSubs, b.movedSubs)
+	} else {
+		out.movedSubs = nil
+	}
+	if b.frozen > out.frozen {
+		out.frozen = b.frozen
+	}
+	if a.borrowOf == b.borrowOf {
+		out.borrowOf = a.borrowOf
+		if a.borrowLoc.Start != nil {
+			out.borrowLoc = a.borrowLoc
+		} else {
+			out.borrowLoc = b.borrowLoc
+		}
+	} else {
+		out.borrowOf = ""
+		out.borrowLoc = source.Location{}
+	}
+	return &out
+}
+
+func cloneMovedSubs(in map[string]source.Location) map[string]source.Location {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]source.Location, len(in))
+	for key, loc := range in {
+		out[key] = loc
+	}
+	return out
+}
+
+func equalMovedSubs(a, b map[string]source.Location) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, loc := range a {
+		other, ok := b[key]
+		if !ok || other != loc {
+			return false
+		}
+	}
+	return true
+}
+
+func mergeMovedSubs(a, b map[string]source.Location) map[string]source.Location {
+	if len(a) == 0 && len(b) == 0 {
+		return nil
+	}
+	out := cloneMovedSubs(a)
+	if out == nil {
+		out = make(map[string]source.Location, len(b))
+	}
+	for key, loc := range b {
+		if _, ok := out[key]; !ok {
+			out[key] = loc
+		}
+	}
+	return out
 }
 
 type borrowInfo struct {
@@ -62,26 +235,28 @@ type borrowInfo struct {
 }
 
 type analyzer struct {
-	ctx     *context.CompilerContext
-	mod     *context.Module
-	module  *hir.Module
-	borrows map[hir.Expr]borrowInfo
+	ctx      *context.CompilerContext
+	mod      *context.Module
+	module   *hir.Module
+	borrows  map[hir.Expr]borrowInfo
+	reported map[string]struct{}
 }
 
 func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
-	if ctx == nil || mod == nil || mod.HIR == nil {
+	if ctx == nil || mod == nil || mod.HIR == nil || mod.CFG == nil {
 		return
 	}
 	a := &analyzer{
-		ctx:     ctx,
-		mod:     mod,
-		module:  mod.HIR,
-		borrows: make(map[hir.Expr]borrowInfo),
+		ctx:      ctx,
+		mod:      mod,
+		module:   mod.HIR,
+		borrows:  make(map[hir.Expr]borrowInfo),
+		reported: make(map[string]struct{}),
 	}
 	for _, global := range mod.HIR.Globals {
 		a.checkGlobal(global)
 	}
-	for _, fn := range mod.HIR.Functions {
+	for _, fn := range mod.CFG.Functions {
 		a.checkFunc(fn)
 	}
 	mod.Phase = phase.PhaseOwnershipAnalyzed
@@ -91,20 +266,60 @@ func (a *analyzer) checkGlobal(global *hir.Global) {
 	if global == nil || global.Value == nil {
 		return
 	}
-	a.checkExpr(nil, global.Value)
+	scope := newValueScope()
+	a.checkExpr(scope, global.Value)
 	if global.Constant {
-		a.reportBorrowEscapeIfNeeded(nil, global.Value, "borrow cannot escape into a module-level constant")
+		a.reportBorrowEscapeIfNeeded(scope, global.Value, "borrow cannot escape into a module-level constant")
 	} else {
-		a.reportBorrowEscapeIfNeeded(nil, global.Value, "borrow cannot escape into a module-level binding")
+		a.reportBorrowEscapeIfNeeded(scope, global.Value, "borrow cannot escape into a module-level binding")
 	}
-	a.consumeMoveValue(nil, global.Value, global.Type)
+	a.consumeMoveValue(scope, global.Value, global.Type)
 }
 
-func (a *analyzer) checkFunc(fn *hir.Func) {
-	if fn == nil || fn.Body == nil {
+func (a *analyzer) checkFunc(fn *cfg.Function) {
+	if fn == nil || fn.Source == nil || fn.Entry == nil {
 		return
 	}
-	scope := newValueScope(nil)
+	inStates := map[*cfg.Block]*valueScope{}
+	outStates := map[*cfg.Block]*valueScope{}
+	queue := []*cfg.Block{fn.Entry}
+	inStates[fn.Entry] = a.seedFunctionState(fn.Source)
+	for len(queue) > 0 {
+		block := queue[0]
+		queue = queue[1:]
+		in := inStates[block]
+		if in == nil {
+			continue
+		}
+		out := a.transferBlock(in, block)
+		outStates[block] = out
+		if block.Terminator == nil {
+			continue
+		}
+		for _, succ := range block.Terminator.Successors() {
+			if succ == nil || !succ.Reachable {
+				continue
+			}
+			if current, ok := inStates[succ]; ok {
+				if current.MergeFrom(out, succ.LiveIn) {
+					queue = append(queue, succ)
+				}
+				continue
+			}
+			clone := out.Clone()
+			clone.TrimToLiveOut(succ.LiveIn)
+			inStates[succ] = clone
+			queue = append(queue, succ)
+		}
+	}
+	_ = outStates
+}
+
+func (a *analyzer) seedFunctionState(fn *hir.Func) *valueScope {
+	scope := newValueScope()
+	if fn == nil {
+		return scope
+	}
 	if fn.Receiver != nil {
 		scope.Declare(fn.Receiver.Name, valueInfo{typ: fn.Receiver.Type, mutable: true})
 	}
@@ -114,38 +329,110 @@ func (a *analyzer) checkFunc(fn *hir.Func) {
 		}
 		scope.Declare(param.Name, valueInfo{typ: param.Type})
 	}
-	a.checkStmt(scope, fn.Result, fn.Body)
+	declareFunctionLocals(scope, fn.Body)
+	return scope
 }
 
-func (a *analyzer) checkStmt(scope *valueScope, result typeinfo.Type, stmt hir.Stmt) {
+func declareFunctionLocals(scope *valueScope, block *hir.BlockStmt) {
+	if scope == nil || block == nil {
+		return
+	}
+	for _, stmt := range block.Stmts {
+		declareStmtLocals(scope, stmt)
+	}
+}
+
+func declareStmtLocals(scope *valueScope, stmt hir.Stmt) {
 	switch s := stmt.(type) {
 	case nil:
 		return
 	case *hir.BlockStmt:
-		block := newValueScope(scope)
-		for _, child := range s.Stmts {
-			a.checkStmt(block, result, child)
+		declareFunctionLocals(scope, s)
+	case *hir.LetStmt:
+		scope.Declare(s.Name, valueInfo{typ: s.Type, mutable: s.Mutable})
+	case *hir.ConstStmt:
+		scope.Declare(s.Name, valueInfo{typ: s.Type, constant: true})
+	case *hir.IfStmt:
+		declareFunctionLocals(scope, s.Then)
+		declareStmtLocals(scope, s.Else)
+	case *hir.SwitchStmt:
+		for _, kase := range s.Cases {
+			if kase != nil {
+				declareFunctionLocals(scope, kase.Body)
+			}
 		}
-		a.releaseScopeBorrows(block)
+	case *hir.WhileStmt:
+		declareFunctionLocals(scope, s.Body)
+	case *hir.ForStmt:
+		declareStmtLocals(scope, s.Init)
+		declareStmtLocals(scope, s.Post)
+		declareFunctionLocals(scope, s.Body)
+	case *hir.LoopStmt:
+		declareStmtLocals(scope, s.Init)
+		declareStmtLocals(scope, s.Post)
+		declareFunctionLocals(scope, s.Body)
+	case *hir.LabelStmt:
+		declareStmtLocals(scope, s.Stmt)
+	case *hir.DeferStmt:
+		declareStmtLocals(scope, s.Body)
+	case *hir.LockStmt:
+		scope.Declare(s.Name, valueInfo{typ: exprType(s.Value), mutable: true})
+		declareFunctionLocals(scope, s.Body)
+	case *hir.UnsafeStmt:
+		declareFunctionLocals(scope, s.Body)
+	}
+}
+
+func (a *analyzer) transferBlock(in *valueScope, block *cfg.Block) *valueScope {
+	state := in.Clone()
+	if state == nil {
+		state = newValueScope()
+	}
+	for _, stmt := range block.Stmts {
+		a.checkCFGStmt(state, block, stmt)
+	}
+	switch term := block.Terminator.(type) {
+	case *cfg.BranchTerm:
+		a.checkExpr(state, term.Cond)
+	case *cfg.SwitchTerm:
+		a.checkExpr(state, term.Value)
+		for _, edge := range term.Cases {
+			a.checkExpr(state, edge.Expr)
+		}
+	}
+	state.TrimToLiveOut(block.LiveOut)
+	return state
+}
+
+func (a *analyzer) checkCFGStmt(scope *valueScope, block *cfg.Block, stmt hir.Stmt) {
+	switch s := stmt.(type) {
+	case nil:
+		return
 	case *hir.LetStmt:
 		if s.Value != nil {
 			a.checkExpr(scope, s.Value)
 			a.consumeMoveValue(scope, s.Value, s.Type)
 		}
-		slot := scope.Declare(s.Name, valueInfo{typ: s.Type, mutable: s.Mutable})
-		a.bindBorrowValue(scope, slot, s.Value)
+		if slot, ok := scope.Lookup(s.Name); ok {
+			slot.moved = false
+			slot.moveLoc = source.Location{}
+			a.bindBorrowValue(scope, slot, s.Value)
+		}
 	case *hir.ConstStmt:
 		if s.Value != nil {
 			a.checkExpr(scope, s.Value)
 			a.consumeMoveValue(scope, s.Value, s.Type)
 		}
-		slot := scope.Declare(s.Name, valueInfo{typ: s.Type, constant: true})
-		a.bindBorrowValue(scope, slot, s.Value)
+		if slot, ok := scope.Lookup(s.Name); ok {
+			slot.moved = false
+			slot.moveLoc = source.Location{}
+			a.bindBorrowValue(scope, slot, s.Value)
+		}
 	case *hir.ReturnStmt:
 		if s.Value != nil {
 			a.checkExpr(scope, s.Value)
 			a.reportBorrowEscapeIfNeeded(scope, s.Value, "borrow cannot be returned")
-			a.consumeMoveValue(scope, s.Value, result)
+			a.consumeMoveValue(scope, s.Value, exprType(s.Value))
 		}
 	case *hir.ExprStmt:
 		a.checkExpr(scope, s.Value)
@@ -154,10 +441,43 @@ func (a *analyzer) checkStmt(scope *valueScope, result typeinfo.Type, stmt hir.S
 		a.checkExpr(scope, s.Right)
 		a.consumeMoveValue(scope, s.Right, exprType(s.Left))
 		a.rebindBorrowAssignment(scope, s.Left, s.Right)
+	case *hir.DeferStmt:
+		a.checkDeferredStmt(scope, s.Body)
+	case *hir.LockStmt:
+		a.checkExpr(scope, s.Value)
+		if slot, ok := scope.Lookup(s.Name); ok {
+			slot.moved = false
+			slot.moveLoc = source.Location{}
+		}
+	case *hir.UnsafeStmt, *hir.BreakStmt, *hir.ContinueStmt:
+		return
+	}
+	_ = block
+}
+
+func (a *analyzer) checkDeferredStmt(scope *valueScope, stmt hir.Stmt) {
+	switch s := stmt.(type) {
+	case nil:
+		return
+	case *hir.BlockStmt:
+		for _, child := range s.Stmts {
+			a.checkDeferredStmt(scope, child)
+		}
+	case *hir.LetStmt:
+		a.checkExpr(scope, s.Value)
+	case *hir.ConstStmt:
+		a.checkExpr(scope, s.Value)
+	case *hir.ReturnStmt:
+		a.checkExpr(scope, s.Value)
+	case *hir.ExprStmt:
+		a.checkExpr(scope, s.Value)
+	case *hir.AssignStmt:
+		a.checkExpr(scope, s.Left)
+		a.checkExpr(scope, s.Right)
 	case *hir.IfStmt:
 		a.checkExpr(scope, s.Cond)
-		a.checkStmt(scope, result, s.Then)
-		a.checkStmt(scope, result, s.Else)
+		a.checkDeferredStmt(scope, s.Then)
+		a.checkDeferredStmt(scope, s.Else)
 	case *hir.SwitchStmt:
 		a.checkExpr(scope, s.Value)
 		for _, kase := range s.Cases {
@@ -165,28 +485,27 @@ func (a *analyzer) checkStmt(scope *valueScope, result typeinfo.Type, stmt hir.S
 				continue
 			}
 			a.checkExpr(scope, kase.Expr)
-			a.checkStmt(scope, result, kase.Body)
+			a.checkDeferredStmt(scope, kase.Body)
 		}
 	case *hir.WhileStmt:
 		a.checkExpr(scope, s.Cond)
-		a.checkStmt(newValueScope(scope), result, s.Body)
+		a.checkDeferredStmt(scope, s.Body)
 	case *hir.ForStmt:
-		loop := newValueScope(scope)
-		a.checkStmt(loop, result, s.Init)
-		a.checkExpr(loop, s.Cond)
-		a.checkStmt(loop, result, s.Post)
-		a.checkStmt(loop, result, s.Body)
+		a.checkDeferredStmt(scope, s.Init)
+		a.checkExpr(scope, s.Cond)
+		a.checkDeferredStmt(scope, s.Post)
+		a.checkDeferredStmt(scope, s.Body)
+	case *hir.LoopStmt:
+		a.checkDeferredStmt(scope, s.Init)
+		a.checkExpr(scope, s.Cond)
+		a.checkDeferredStmt(scope, s.Post)
+		a.checkDeferredStmt(scope, s.Body)
 	case *hir.LabelStmt:
-		a.checkStmt(scope, result, s.Stmt)
-	case *hir.DeferStmt:
-		a.checkStmt(scope, result, s.Body)
+		a.checkDeferredStmt(scope, s.Stmt)
 	case *hir.LockStmt:
 		a.checkExpr(scope, s.Value)
-		lockScope := newValueScope(scope)
-		lockScope.Declare(s.Name, valueInfo{typ: exprType(s.Value), mutable: true})
-		a.checkStmt(lockScope, result, s.Body)
 	case *hir.UnsafeStmt:
-		a.checkStmt(scope, result, s.Body)
+		return
 	}
 }
 
@@ -202,7 +521,7 @@ func (a *analyzer) checkExpr(scope *valueScope, expr hir.Expr) {
 			a.checkExpr(scope, e.Right)
 			if !a.isCopyableType(exprType(e.Right)) {
 				loc := e.Loc()
-				a.ctx.Diagnostics.Add(
+				a.addDiagnostic(
 					diagnostics.NewError(fmt.Sprintf("cannot copy value of type %s", exprType(e.Right).String())).
 						WithCode(diagnostics.ErrInvalidCopy).
 						WithPrimaryLabel(&loc, "this value does not support copying"),
@@ -212,7 +531,7 @@ func (a *analyzer) checkExpr(scope *valueScope, expr hir.Expr) {
 			a.checkExpr(scope, e.Right)
 			if !a.isMoveType(exprType(e.Right)) {
 				loc := e.Loc()
-				a.ctx.Diagnostics.Add(
+				a.addDiagnostic(
 					diagnostics.NewError(fmt.Sprintf("cannot take value of type %s", exprType(e.Right).String())).
 						WithCode(diagnostics.ErrInvalidOperation).
 						WithPrimaryLabel(&loc, "`take` requires a move value"),
@@ -236,7 +555,7 @@ func (a *analyzer) checkExpr(scope *valueScope, expr hir.Expr) {
 	case *hir.CallExpr:
 		a.checkCall(scope, e)
 	case *hir.SelectorExpr:
-		a.checkExpr(scope, e.Left)
+		a.checkSelectorExpr(scope, e)
 	case *hir.CastExpr:
 		a.checkExpr(scope, e.Left)
 	case *hir.CompositeLit:
@@ -244,6 +563,17 @@ func (a *analyzer) checkExpr(scope *valueScope, expr hir.Expr) {
 			a.checkExpr(scope, item.Value)
 		}
 	}
+}
+
+func (a *analyzer) checkSelectorExpr(scope *valueScope, expr *hir.SelectorExpr) {
+	if expr == nil {
+		return
+	}
+	if root, path, ok := localExprPath(expr); ok {
+		a.requireActivePath(scope, root, path, expr.Loc())
+		return
+	}
+	a.checkExpr(scope, expr.Left)
 }
 
 func (a *analyzer) checkCall(scope *valueScope, call *hir.CallExpr) {
@@ -324,21 +654,10 @@ func (a *analyzer) checkMethodCall(scope *valueScope, call *hir.CallExpr, select
 }
 
 func (a *analyzer) requireActiveValue(scope *valueScope, ident *hir.Ident) {
-	if ident == nil || len(ident.Path) != 1 || scope == nil {
+	if ident == nil || len(ident.Path) != 1 {
 		return
 	}
-	info, ok := scope.Lookup(ident.Path[0])
-	if !ok || info == nil || !info.moved {
-		return
-	}
-	loc := ident.Loc()
-	diag := diagnostics.NewError(fmt.Sprintf("use of moved value %q", ident.Path[0])).
-		WithCode(diagnostics.ErrUseAfterMove).
-		WithPrimaryLabel(&loc, "this value was already moved")
-	if info.moveLoc.Start != nil {
-		diag.WithSecondaryLabel(&info.moveLoc, "value moved here")
-	}
-	a.ctx.Diagnostics.Add(diag)
+	a.requireActivePath(scope, ident.Path[0], "", ident.Loc())
 }
 
 func (a *analyzer) consumeMoveValue(scope *valueScope, expr hir.Expr, typ typeinfo.Type) {
@@ -350,21 +669,35 @@ func (a *analyzer) consumeMoveValue(scope *valueScope, expr hir.Expr, typ typein
 		if e.Op == "copy" || e.Op == "take" {
 			return
 		}
-	case *hir.Ident:
-		if len(e.Path) != 1 || scope == nil {
-			return
-		}
-		info, ok := scope.Lookup(e.Path[0])
-		if !ok || info == nil {
-			return
-		}
-		if info.frozen > 0 {
-			a.reportBorrowConflict(e.Loc(), e.Path[0], "cannot move a value while a borrow is live")
-			return
-		}
-		info.moved = true
-		info.moveLoc = e.Loc()
 	}
+	root, path, ok := localExprPath(expr)
+	if !ok || scope == nil {
+		return
+	}
+	info, ok := scope.Lookup(root)
+	if !ok || info == nil {
+		return
+	}
+	if info.frozen > 0 {
+		a.reportBorrowConflict(expr.Loc(), root, "cannot move a value while a borrow is live")
+		return
+	}
+	if path == "" && len(info.movedSubs) > 0 {
+		a.reportPartialMoveUse(root, expr.Loc(), info)
+		return
+	}
+	if path != "" {
+		if movedLoc, movedPath, ok := movedPathConflict(info, path); ok {
+			a.reportMovedPathUse(root, path, expr.Loc(), movedLoc, movedPath)
+			return
+		}
+		markMovedPath(info, path, expr.Loc())
+		return
+	}
+	info.moved = true
+	info.moveLoc = expr.Loc()
+	info.movedPath = ""
+	info.movedSubs = nil
 }
 
 func (a *analyzer) recordBorrowExpr(expr hir.Expr, sourceExpr hir.Expr) {
@@ -428,24 +761,15 @@ func (a *analyzer) releaseBorrowValue(scope *valueScope, slot *valueInfo) {
 	slot.borrowLoc = source.Location{}
 }
 
-func (a *analyzer) releaseScopeBorrows(scope *valueScope) {
-	if scope == nil {
-		return
-	}
-	for _, slot := range scope.values {
-		a.releaseBorrowValue(scope.parent, slot)
-	}
-}
-
 func (a *analyzer) rebindBorrowAssignment(scope *valueScope, left hir.Expr, right hir.Expr) {
 	if scope == nil {
 		return
 	}
-	ident, ok := left.(*hir.Ident)
-	if !ok || len(ident.Path) != 1 {
+	root, path, ok := localExprPath(left)
+	if !ok || path != "" {
 		return
 	}
-	slot, ok := scope.Lookup(ident.Path[0])
+	slot, ok := scope.Lookup(root)
 	if !ok || slot == nil {
 		return
 	}
@@ -453,20 +777,164 @@ func (a *analyzer) rebindBorrowAssignment(scope *valueScope, left hir.Expr, righ
 }
 
 func (a *analyzer) checkAssignmentTarget(scope *valueScope, left hir.Expr) {
-	ident, ok := left.(*hir.Ident)
-	if !ok || len(ident.Path) != 1 || scope == nil {
+	root, path, ok := localExprPath(left)
+	if !ok || scope == nil {
 		return
 	}
-	info, ok := scope.Lookup(ident.Path[0])
+	info, ok := scope.Lookup(root)
 	if !ok || info == nil {
 		return
 	}
 	if info.frozen > 0 {
-		a.reportBorrowConflict(ident.Loc(), ident.Path[0], "this value is currently borrowed")
+		a.reportBorrowConflict(left.Loc(), root, "this value is currently borrowed")
 	}
-	a.releaseBorrowValue(scope, info)
-	info.moved = false
-	info.moveLoc = source.Location{}
+	if path == "" {
+		a.releaseBorrowValue(scope, info)
+		info.moved = false
+		info.moveLoc = source.Location{}
+		info.movedPath = ""
+		info.movedSubs = nil
+		return
+	}
+	clearMovedPath(info, path)
+}
+
+func localExprPath(expr hir.Expr) (root string, path string, ok bool) {
+	switch e := expr.(type) {
+	case *hir.Ident:
+		if len(e.Path) == 1 {
+			return e.Path[0], "", true
+		}
+	case *hir.SelectorExpr:
+		root, path, ok := localExprPath(e.Left)
+		if !ok {
+			return "", "", false
+		}
+		if path == "" {
+			return root, e.Name, true
+		}
+		return root, path + "." + e.Name, true
+	}
+	return "", "", false
+}
+
+func movedPathConflict(info *valueInfo, path string) (source.Location, string, bool) {
+	if info == nil {
+		return source.Location{}, "", false
+	}
+	if info.moved {
+		return info.moveLoc, info.movedPath, true
+	}
+	if loc, ok := info.movedSubs[path]; ok {
+		return loc, path, true
+	}
+	prefix := path + "."
+	for movedPath, loc := range info.movedSubs {
+		if len(movedPath) > len(prefix) && movedPath[:len(prefix)] == prefix {
+			return loc, movedPath, true
+		}
+	}
+	for ancestor := parentPath(path); ancestor != ""; ancestor = parentPath(ancestor) {
+		if loc, ok := info.movedSubs[ancestor]; ok {
+			return loc, ancestor, true
+		}
+	}
+	return source.Location{}, "", false
+}
+
+func markMovedPath(info *valueInfo, path string, loc source.Location) {
+	if info == nil || path == "" {
+		return
+	}
+	if info.movedSubs == nil {
+		info.movedSubs = make(map[string]source.Location)
+	}
+	info.movedSubs[path] = loc
+}
+
+func clearMovedPath(info *valueInfo, path string) {
+	if info == nil || path == "" || len(info.movedSubs) == 0 {
+		return
+	}
+	delete(info.movedSubs, path)
+	prefix := path + "."
+	for movedPath := range info.movedSubs {
+		if len(movedPath) > len(prefix) && movedPath[:len(prefix)] == prefix {
+			delete(info.movedSubs, movedPath)
+		}
+	}
+	if len(info.movedSubs) == 0 {
+		info.movedSubs = nil
+	}
+}
+
+func parentPath(path string) string {
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i] == '.' {
+			return path[:i]
+		}
+	}
+	return ""
+}
+
+func (a *analyzer) requireActivePath(scope *valueScope, root, path string, loc source.Location) {
+	if scope == nil || root == "" {
+		return
+	}
+	info, ok := scope.Lookup(root)
+	if !ok || info == nil {
+		return
+	}
+	if info.moved {
+		a.reportMovedPathUse(root, path, loc, info.moveLoc, info.movedPath)
+		return
+	}
+	if path == "" {
+		if len(info.movedSubs) > 0 {
+			a.reportPartialMoveUse(root, loc, info)
+		}
+		return
+	}
+	if movedLoc, movedPath, ok := movedPathConflict(info, path); ok {
+		a.reportMovedPathUse(root, path, loc, movedLoc, movedPath)
+	}
+}
+
+func (a *analyzer) reportPartialMoveUse(root string, loc source.Location, info *valueInfo) {
+	if info == nil || len(info.movedSubs) == 0 {
+		return
+	}
+	var movedPath string
+	var movedLoc source.Location
+	for path, current := range info.movedSubs {
+		movedPath, movedLoc = path, current
+		break
+	}
+	diag := diagnostics.NewError(fmt.Sprintf("use of partially moved value %q", root)).
+		WithCode(diagnostics.ErrUseAfterMove).
+		WithPrimaryLabel(&loc, "some fields of this value were already moved")
+	if movedLoc.Start != nil {
+		diag.WithSecondaryLabel(&movedLoc, fmt.Sprintf("field %q moved here", movedPath))
+	}
+	a.addDiagnostic(diag)
+}
+
+func (a *analyzer) reportMovedPathUse(root, path string, loc source.Location, movedLoc source.Location, movedPath string) {
+	display := root
+	if path != "" {
+		display += "." + path
+	}
+	diag := diagnostics.NewError(fmt.Sprintf("use of moved value %q", display)).
+		WithCode(diagnostics.ErrUseAfterMove).
+		WithPrimaryLabel(&loc, "this value was already moved")
+	if movedLoc.Start != nil {
+		label := "value moved here"
+		if movedPath != "" {
+			label = fmt.Sprintf("path %q moved here", movedPath)
+		}
+		diag.WithSecondaryLabel(&movedLoc, label)
+	}
+	a.addDiagnostic(diag)
 }
 
 func (a *analyzer) isMoveType(typ typeinfo.Type) bool {
@@ -547,7 +1015,7 @@ func (a *analyzer) reportBorrowEscapeIfNeeded(scope *valueScope, expr hir.Expr, 
 	if info.loc.Start != nil {
 		diag.WithSecondaryLabel(&info.loc, "borrow created here")
 	}
-	a.ctx.Diagnostics.Add(diag)
+	a.addDiagnostic(diag)
 }
 
 func (a *analyzer) borrowValueInfo(scope *valueScope, expr hir.Expr) (borrowInfo, bool) {
@@ -569,11 +1037,33 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, expr hir.Expr) (borrowInfo
 }
 
 func (a *analyzer) reportBorrowConflict(loc source.Location, name string, message string) {
-	a.ctx.Diagnostics.Add(
+	a.addDiagnostic(
 		diagnostics.NewError(fmt.Sprintf("cannot use %q here", name)).
 			WithCode(diagnostics.ErrBorrowConflict).
 			WithPrimaryLabel(&loc, message),
 	)
+}
+
+func (a *analyzer) addDiagnostic(diag *diagnostics.Diagnostic) {
+	if diag == nil {
+		return
+	}
+	key := diag.Code + ":" + diag.Message
+	for _, label := range diag.Labels {
+		if label.Location == nil || label.Location.Start == nil {
+			continue
+		}
+		file := ""
+		if label.Location.Filename != nil {
+			file = *label.Location.Filename
+		}
+		key += fmt.Sprintf(":%s:%d:%d:%s", file, label.Location.Start.Line, label.Location.Start.Column, label.Message)
+	}
+	if _, ok := a.reported[key]; ok {
+		return
+	}
+	a.reported[key] = struct{}{}
+	a.ctx.Diagnostics.Add(diag)
 }
 
 func (a *analyzer) underlying(typ typeinfo.Type) typeinfo.Type {

@@ -11,9 +11,10 @@ const (
 	PhaseResolved
 	PhaseTypeChecked
 	PhaseHIRGenerated
-	PhaseOwnershipAnalyzed
 	PhaseHIRLowered
 	PhaseCFGAnalyzed
+	PhaseOwnershipAnalyzed
+	PhaseIRGenerated
 	PhaseConstEvaluated
 	PhaseMIRGenerated
 	PhaseLLVMGenerated
@@ -38,12 +39,14 @@ func (p ModulePhase) String() string {
 		return "type_checked"
 	case PhaseHIRGenerated:
 		return "hir_generated"
-	case PhaseOwnershipAnalyzed:
-		return "ownership_analyzed"
 	case PhaseHIRLowered:
 		return "hir_lowered"
 	case PhaseCFGAnalyzed:
 		return "cfg_analyzed"
+	case PhaseOwnershipAnalyzed:
+		return "ownership_analyzed"
+	case PhaseIRGenerated:
+		return "ir_generated"
 	case PhaseConstEvaluated:
 		return "const_evaluated"
 	case PhaseMIRGenerated:

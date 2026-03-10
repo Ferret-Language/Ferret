@@ -233,6 +233,7 @@ func analyzeFunction(ctx *context.CompilerContext, fn *cfg.Function) {
 		block.Reachable = reachable[block.ID]
 	}
 	rebuildPredecessors(fn)
+	computeLiveness(fn)
 	for _, block := range fn.Blocks {
 		if block == nil || block.Reachable || len(block.Stmts) == 0 {
 			continue

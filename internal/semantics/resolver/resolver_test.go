@@ -42,7 +42,7 @@ fn Origin() Point {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseCFGAnalyzed {
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseIRGenerated {
 		t.Fatalf("expected CFG-analyzed entry phase, got %#v", result.Entry)
 	}
 

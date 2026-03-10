@@ -30,8 +30,8 @@ fn main() i32 {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseCFGAnalyzed {
-		t.Fatalf("expected CFG analyzed phase, got %#v", result.Entry)
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseIRGenerated {
+		t.Fatalf("expected ir generated phase, got %#v", result.Entry)
 	}
 	if result.Entry.HIR == nil {
 		t.Fatal("expected HIR module")
