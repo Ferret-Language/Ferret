@@ -11,9 +11,10 @@ import (
 	"strings"
 	"sync"
 
+	"compiler/internal/cfg"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/hir"
+	"compiler/internal/middleend/hir"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/binding"
 	"compiler/internal/semantics/symbols"
@@ -57,6 +58,7 @@ type Module struct {
 	AST          *ast.Module
 	HIR          *hir.Module
 	LoweredHIR   *hir.Module
+	CFG          *cfg.Module
 	Phase        phase.ModulePhase
 	Dependencies []string
 	ModuleScope  *table.Scope

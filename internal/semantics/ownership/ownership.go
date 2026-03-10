@@ -6,7 +6,7 @@ import (
 	"compiler/internal/context"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/hir"
+	"compiler/internal/middleend/hir"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/binding"
 	"compiler/internal/semantics/symbols"

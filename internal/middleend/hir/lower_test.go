@@ -1,4 +1,4 @@
-package hirlower_test
+package hir_test
 
 import (
 	"os"
@@ -7,7 +7,7 @@ import (
 
 	compilerapi "compiler/internal/compiler"
 	"compiler/internal/diagnostics"
-	"compiler/internal/hir"
+	"compiler/internal/middleend/hir"
 	"compiler/internal/phase"
 )
 
@@ -30,11 +30,14 @@ fn main() i32 {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseHIRLowered {
-		t.Fatalf("expected HIR lowered phase, got %#v", result.Entry)
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseCFGAnalyzed {
+		t.Fatalf("expected CFG analyzed phase, got %#v", result.Entry)
 	}
 	if result.Entry.LoweredHIR == nil {
 		t.Fatal("expected lowered HIR")
+	}
+	if result.Entry.CFG == nil {
+		t.Fatal("expected CFG")
 	}
 	fn := result.Entry.LoweredHIR.Functions[0]
 	if _, ok := fn.Body.Stmts[1].(*hir.LoopStmt); !ok {

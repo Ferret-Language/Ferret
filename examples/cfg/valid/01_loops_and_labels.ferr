@@ -1,0 +1,13 @@
+fn run() i32 {
+    let mut x: i32 = 0
+outer: for x = 0; x < 10; x = x + 1 {
+        while x < 3 {
+            x = x + 1
+            continue outer
+        }
+        if x == 7 {
+            break outer
+        }
+    }
+    return x
+}

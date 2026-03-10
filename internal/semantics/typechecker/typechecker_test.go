@@ -48,8 +48,8 @@ fn Origin() vec2::Vec2 {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseHIRLowered {
-		t.Fatalf("expected HIR-lowered entry, got %#v", result.Entry)
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseCFGAnalyzed {
+		t.Fatalf("expected CFG-analyzed entry, got %#v", result.Entry)
 	}
 	if result.Entry.Types == nil {
 		t.Fatal("expected module type info")

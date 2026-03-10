@@ -1,4 +1,4 @@
-package hirgen_test
+package hir_test
 
 import (
 	"os"
@@ -7,7 +7,7 @@ import (
 
 	compilerapi "compiler/internal/compiler"
 	"compiler/internal/diagnostics"
-	"compiler/internal/hir"
+	"compiler/internal/middleend/hir"
 	"compiler/internal/phase"
 )
 
@@ -30,14 +30,17 @@ fn main() i32 {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseHIRLowered {
-		t.Fatalf("expected HIR lowered phase, got %#v", result.Entry)
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseCFGAnalyzed {
+		t.Fatalf("expected CFG analyzed phase, got %#v", result.Entry)
 	}
 	if result.Entry.HIR == nil {
 		t.Fatal("expected HIR module")
 	}
 	if result.Entry.LoweredHIR == nil {
 		t.Fatal("expected lowered HIR module")
+	}
+	if result.Entry.CFG == nil {
+		t.Fatal("expected CFG module")
 	}
 	if len(result.Entry.HIR.Globals) != 1 {
 		t.Fatalf("expected one lowered global, got %#v", result.Entry.HIR.Globals)
