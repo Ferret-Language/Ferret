@@ -4,6 +4,7 @@ import "compiler/internal/source"
 
 type ImportDecl struct {
 	Path     string
+	Alias    string
 	Location source.Location
 }
 
@@ -19,6 +20,17 @@ type ConstDecl struct {
 
 func (*ConstDecl) declNode()              {}
 func (d *ConstDecl) Loc() source.Location { return d.Location }
+
+type LetDecl struct {
+	Name     string
+	IsMut    bool
+	Type     TypeExpr
+	Value    Expr
+	Location source.Location
+}
+
+func (*LetDecl) declNode()              {}
+func (d *LetDecl) Loc() source.Location { return d.Location }
 
 type TypeDecl struct {
 	Name     string
@@ -43,12 +55,14 @@ type Param struct {
 }
 
 type FuncDecl struct {
-	Receiver *Receiver
-	Name     string
-	Params   []Param
-	Result   TypeExpr
-	Body     *BlockStmt
-	Location source.Location
+	Receiver      *Receiver
+	Name          string
+	IsConstructor bool
+	IsDestructor  bool
+	Params        []Param
+	Result        TypeExpr
+	Body          *BlockStmt
+	Location      source.Location
 }
 
 func (*FuncDecl) declNode()              {}
@@ -58,6 +72,12 @@ type FieldDecl struct {
 	Name     string
 	Type     TypeExpr
 	Default  Expr
-	IsStatic bool
+	Location source.Location
+}
+
+type StaticFieldDecl struct {
+	Name     string
+	Type     TypeExpr
+	Default  Expr
 	Location source.Location
 }

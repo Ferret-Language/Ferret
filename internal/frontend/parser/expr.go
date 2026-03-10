@@ -2,6 +2,7 @@ package parser
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/source"
 	"compiler/internal/tokens"
 )
 
@@ -23,6 +24,9 @@ const (
 func (p *Parser) parseExpr(precedence int) ast.Expr {
 	left := p.parsePrefix()
 	for !p.at(tokens.SEMICOLON) && !p.at(tokens.RBRACE) && !p.at(tokens.EOF) && precedence < p.currentPrecedence() {
+		if p.compositeValueDepth > 0 && precedence == precLowest && p.atCompositeFieldBoundary() {
+			return left
+		}
 		switch p.current().Kind {
 		case tokens.PLUS, tokens.MINUS, tokens.ASTERISK, tokens.SLASH, tokens.PERCENT,
 			tokens.EQ, tokens.NEQ, tokens.LT, tokens.LE, tokens.GT, tokens.GE,
@@ -53,6 +57,9 @@ func (p *Parser) parsePrefix() ast.Expr {
 			return &ast.PrefixExpr{Op: "copy", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
 		}
 		return &ast.Ident{Path: p.parseNamePath(), Location: p.locFrom(start)}
+	case tokens.PANIC, tokens.RECOVER:
+		tok := p.advance()
+		return &ast.Ident{Path: []string{tok.Literal}, Location: p.locFrom(start)}
 	case tokens.NUMBER:
 		tok := p.advance()
 		return &ast.NumberLit{Value: tok.Literal, Location: p.locFrom(start)}
@@ -85,10 +92,17 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case tokens.COMPTIME:
 		p.advance()
 		return &ast.PrefixExpr{Op: "comptime", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
-	default:
-		p.errorHere("expected expression")
+	case tokens.UNSAFE:
 		p.advance()
-		return &ast.Ident{Path: []string{"<error>"}, Location: p.locFrom(start)}
+		return &ast.UnsafeExpr{Value: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+	default:
+		loc := source.NewLocation(p.file, start, p.current().End)
+		p.errorAt(loc, "expected expression")
+		if p.recoveryBoundaryForExpr() {
+			return &ast.BadExpr{Location: loc}
+		}
+		p.advance()
+		return &ast.BadExpr{Location: p.locFrom(start)}
 	}
 }
 
@@ -100,11 +114,17 @@ func (p *Parser) parseCompositeLit() ast.Expr {
 		if p.match(tokens.DOT) {
 			name := p.expectIdent("expected field name").Literal
 			p.expect(tokens.ASSIGN, "expected '='")
-			items = append(items, ast.CompositeItem{Name: name, Value: p.parseExpr(precLowest)})
+			p.compositeValueDepth++
+			value := p.parseExpr(precLowest)
+			p.compositeValueDepth--
+			items = append(items, ast.CompositeItem{Name: name, Value: value})
 		} else {
-			items = append(items, ast.CompositeItem{Value: p.parseExpr(precLowest)})
+			p.compositeValueDepth++
+			value := p.parseExpr(precLowest)
+			p.compositeValueDepth--
+			items = append(items, ast.CompositeItem{Value: value})
 		}
-		if !p.match(tokens.COMMA) {
+		if !p.consumeExprListSeparator(tokens.RBRACE, "composite literal element") {
 			break
 		}
 	}
@@ -112,8 +132,22 @@ func (p *Parser) parseCompositeLit() ast.Expr {
 	return &ast.CompositeLit{Items: items, Location: p.locFrom(start)}
 }
 
+func (p *Parser) atCompositeFieldBoundary() bool {
+	return p.at(tokens.DOT) && p.peekN(1).Kind == tokens.IDENT && p.peekN(2).Kind == tokens.ASSIGN
+}
+
 func (p *Parser) parseBinary(left ast.Expr) ast.Expr {
 	tok := p.advance()
+	if !p.startsExpr() {
+		loc := source.NewLocation(p.file, tok.Start, tok.End)
+		p.errorAt(loc, "expected expression after '"+tok.Literal+"'")
+		return &ast.BinaryExpr{
+			Left:     left,
+			Op:       tok.Literal,
+			Right:    &ast.BadExpr{Location: loc},
+			Location: p.makeExprLoc(*left.Loc().Start),
+		}
+	}
 	prec := precedence(tok.Kind)
 	right := p.parseExpr(prec)
 	return &ast.BinaryExpr{Left: left, Op: tok.Literal, Right: right, Location: p.makeExprLoc(*left.Loc().Start)}
@@ -131,7 +165,7 @@ func (p *Parser) parseCallWithTypeArgs(left ast.Expr) ast.Expr {
 	typeArgs := make([]ast.TypeExpr, 0)
 	for !p.at(tokens.RBRACK) && !p.at(tokens.EOF) {
 		typeArgs = append(typeArgs, p.parseType())
-		if !p.match(tokens.COMMA) {
+		if !p.consumeTypeListSeparator(tokens.RBRACK, "type argument") {
 			break
 		}
 	}
@@ -147,7 +181,7 @@ func (p *Parser) parseArgList() []ast.Expr {
 	args := make([]ast.Expr, 0)
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
 		args = append(args, p.parseExpr(precLowest))
-		if !p.match(tokens.COMMA) {
+		if !p.consumeExprListSeparator(tokens.RPAREN, "argument") {
 			break
 		}
 	}
@@ -188,5 +222,29 @@ func precedence(kind tokens.Kind) int {
 		return precPostfix
 	default:
 		return precLowest
+	}
+}
+
+func (p *Parser) startsExpr() bool {
+	switch p.current().Kind {
+	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.NONE,
+		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
+		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME,
+		tokens.PANIC, tokens.RECOVER, tokens.UNSAFE:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) recoveryBoundaryForExpr() bool {
+	switch p.current().Kind {
+	case tokens.EOF, tokens.SEMICOLON, tokens.RBRACE,
+		tokens.LET, tokens.CONST, tokens.RETURN, tokens.IF, tokens.ELSE,
+		tokens.SWITCH, tokens.CASE, tokens.WHILE, tokens.FOR,
+		tokens.BREAK, tokens.CONTINUE:
+		return true
+	default:
+		return false
 	}
 }

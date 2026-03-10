@@ -59,6 +59,7 @@ func New(file, input string, diag *diagnostics.Bag) *Lexer {
 		{regexp.MustCompile(`^!`), emit(tokens.BANG)},
 		{regexp.MustCompile(`^\?`), emit(tokens.QUESTION)},
 		{regexp.MustCompile(`^&`), emit(tokens.AMP)},
+		{regexp.MustCompile(`^~`), emit(tokens.TILDE)},
 		{regexp.MustCompile(`^<`), emit(tokens.LT)},
 		{regexp.MustCompile(`^>`), emit(tokens.GT)},
 		{regexp.MustCompile(`^:`), emit(tokens.COLON)},

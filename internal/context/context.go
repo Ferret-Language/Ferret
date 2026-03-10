@@ -14,6 +14,8 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/phase"
+	"compiler/internal/semantics/symbols"
+	"compiler/internal/semantics/table"
 	"compiler/internal/tokens"
 )
 
@@ -52,6 +54,8 @@ type Module struct {
 	AST          *ast.Module
 	Phase        phase.ModulePhase
 	Dependencies []string
+	ModuleScope  *table.Scope
+	MethodSets   map[string]map[string]*symbols.Symbol
 }
 
 type CompilerContext struct {

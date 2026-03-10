@@ -1,0 +1,8 @@
+type Point struct {
+    x i32 = 0
+    y i32 = 0
+}
+
+fn len2(p Point) i32 {
+    return p.x * p.x + p.y * p.y
+}

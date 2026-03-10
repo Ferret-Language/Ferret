@@ -52,7 +52,7 @@ func (p *Parser) parseTupleType() ast.TypeExpr {
 	elems := make([]ast.TypeExpr, 0)
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
 		elems = append(elems, p.parseType())
-		if !p.match(tokens.COMMA) {
+		if !p.consumeTypeListSeparator(tokens.RPAREN, "tuple element") {
 			break
 		}
 	}

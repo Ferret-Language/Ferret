@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/phase"
+	"compiler/internal/semantics/collector"
 	"compiler/internal/source"
 )
 
@@ -73,7 +74,7 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 
 	changed := p.ctx.StoreModuleContent(mod, string(content))
 	p.ctx.Diagnostics.AddSourceContent(mod.FilePath, mod.Content)
-	if mod.Phase >= phase.PhaseParsed && !changed {
+	if mod.Phase >= phase.PhaseCollected && !changed {
 		for _, depKey := range p.ctx.DependencyList(mod.Key) {
 			dep, ok := p.ctx.GetModule(depKey)
 			if !ok {
@@ -92,6 +93,7 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 	mod.Phase = phase.PhaseTokenized
 	mod.AST = parser.Parse(mod.FilePath, mod.Tokens, p.ctx.Diagnostics)
 	mod.Phase = phase.PhaseParsed
+	collector.CollectModule(p.ctx, mod)
 
 	p.ctx.ResetDependencies(mod.Key)
 	for _, imp := range mod.AST.Imports {

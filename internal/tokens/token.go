@@ -25,6 +25,7 @@ const (
 	BANG      Kind = "!"
 	QUESTION  Kind = "?"
 	AMP       Kind = "&"
+	TILDE     Kind = "~"
 	LT        Kind = "<"
 	GT        Kind = ">"
 	EQ        Kind = "=="
@@ -63,7 +64,11 @@ const (
 	SWITCH    Kind = "SWITCH"
 	CASE      Kind = "CASE"
 	FOR       Kind = "FOR"
+	WHILE     Kind = "WHILE"
+	BREAK     Kind = "BREAK"
+	CONTINUE  Kind = "CONTINUE"
 	RETURN    Kind = "RETURN"
+	AS        Kind = "AS"
 	TAKE      Kind = "TAKE"
 	OWN       Kind = "OWN"
 	RAW       Kind = "RAW"
@@ -95,7 +100,11 @@ var keywords = map[string]Kind{
 	"switch":    SWITCH,
 	"case":      CASE,
 	"for":       FOR,
+	"while":     WHILE,
+	"break":     BREAK,
+	"continue":  CONTINUE,
 	"return":    RETURN,
+	"as":        AS,
 	"take":      TAKE,
 	"own":       OWN,
 	"raw":       RAW,

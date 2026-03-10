@@ -2,8 +2,13 @@ package parser
 
 import (
 	"compiler/internal/frontend/ast"
+	"compiler/internal/source"
 	"compiler/internal/tokens"
 )
+
+func sourceSpan(left, right source.Location) source.Location {
+	return source.NewLocation(left.File, *left.Start, *right.End)
+}
 
 func (p *Parser) parseBlock() *ast.BlockStmt {
 	start := p.current().Start
@@ -21,6 +26,9 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 }
 
 func (p *Parser) parseStmt() ast.Stmt {
+	if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.COLON {
+		return p.parseLabelStmt()
+	}
 	switch p.current().Kind {
 	case tokens.LET:
 		return p.parseLetStmt()
@@ -32,10 +40,35 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseIfStmt()
 	case tokens.SWITCH:
 		return p.parseSwitchStmt()
-	default:
-		expr := p.parseExpr(precLowest)
-		return &ast.ExprStmt{Value: expr, Location: expr.Loc()}
+	case tokens.WHILE:
+		return p.parseWhileStmt()
+	case tokens.FOR:
+		return p.parseForStmt()
+	case tokens.DEFER:
+		return p.parseDeferStmt()
+	case tokens.LOCK:
+		return p.parseLockStmt()
+	case tokens.UNSAFE:
+		if p.peekN(1).Kind == tokens.LBRACE {
+			return p.parseUnsafeStmt()
+		}
+	case tokens.BREAK:
+		return p.parseBreakStmt()
+	case tokens.CONTINUE:
+		return p.parseContinueStmt()
 	}
+
+	startPos := p.pos
+	left := p.parseExpr(precLowest)
+	if p.match(tokens.ASSIGN) {
+		right := p.parseExpr(precLowest)
+		return &ast.AssignStmt{Left: left, Right: right, Location: sourceSpan(left.Loc(), right.Loc())}
+	}
+	if _, ok := left.(*ast.BadExpr); ok && p.pos == startPos {
+		p.synchronizeStmt()
+		return nil
+	}
+	return &ast.ExprStmt{Value: left, Location: left.Loc()}
 }
 
 func (p *Parser) parseLetStmt() ast.Stmt {
@@ -80,11 +113,15 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 	start := p.advance().Start
 	cond := p.parseExpr(precLowest)
 	thenBlock := p.parseBlock()
-	var elseBlock *ast.BlockStmt
+	var elseStmt ast.Stmt
 	if p.match(tokens.ELSE) {
-		elseBlock = p.parseBlock()
+		if p.at(tokens.IF) {
+			elseStmt = p.parseIfStmt()
+		} else {
+			elseStmt = p.parseBlock()
+		}
 	}
-	return &ast.IfStmt{Cond: cond, Then: thenBlock, Else: elseBlock, Location: p.locFrom(start)}
+	return &ast.IfStmt{Cond: cond, Then: thenBlock, Else: elseStmt, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseSwitchStmt() ast.Stmt {
@@ -100,4 +137,118 @@ func (p *Parser) parseSwitchStmt() ast.Stmt {
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
 	return &ast.SwitchStmt{Value: value, Cases: cases, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseWhileStmt() ast.Stmt {
+	start := p.advance().Start
+	cond := p.parseExpr(precLowest)
+	body := p.parseBlock()
+	return &ast.WhileStmt{Cond: cond, Body: body, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseForStmt() ast.Stmt {
+	start := p.advance().Start
+	if p.at(tokens.LBRACE) {
+		return &ast.ForStmt{Body: p.parseBlock(), Location: p.locFrom(start)}
+	}
+
+	first := p.parseForHeaderStmt()
+	if p.match(tokens.SEMICOLON) {
+		var cond ast.Expr
+		if !p.at(tokens.SEMICOLON) && !p.at(tokens.LBRACE) && !p.at(tokens.EOF) {
+			cond = p.parseExpr(precLowest)
+		}
+		p.expect(tokens.SEMICOLON, "expected ';' after for condition")
+		var post ast.Stmt
+		if !p.at(tokens.LBRACE) && !p.at(tokens.EOF) {
+			post = p.parseForHeaderStmt()
+		}
+		body := p.parseBlock()
+		return &ast.ForStmt{Init: first, Cond: cond, Post: post, Body: body, Location: p.locFrom(start)}
+	}
+
+	condExpr := p.extractForCondition(first)
+	body := p.parseBlock()
+	return &ast.ForStmt{Cond: condExpr, Body: body, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseDeferStmt() ast.Stmt {
+	start := p.advance().Start
+	if p.at(tokens.LBRACE) {
+		return &ast.DeferStmt{Body: p.parseBlock(), Location: p.locFrom(start)}
+	}
+	expr := p.parseExpr(precLowest)
+	return &ast.DeferStmt{
+		Body:     &ast.ExprStmt{Value: expr, Location: expr.Loc()},
+		Location: p.locFrom(start),
+	}
+}
+
+func (p *Parser) parseLockStmt() ast.Stmt {
+	start := p.advance().Start
+	value := p.parseExpr(precLowest)
+	p.expect(tokens.AS, "expected 'as' in lock statement")
+	name := p.expectIdent("expected lock guard name").Literal
+	body := p.parseBlock()
+	return &ast.LockStmt{Value: value, Name: name, Body: body, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseUnsafeStmt() ast.Stmt {
+	start := p.advance().Start
+	body := p.parseBlock()
+	return &ast.UnsafeStmt{Body: body, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseBreakStmt() ast.Stmt {
+	start := p.advance().Start
+	label := ""
+	if p.at(tokens.IDENT) {
+		label = p.advance().Literal
+	}
+	return &ast.BreakStmt{Label: label, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseContinueStmt() ast.Stmt {
+	start := p.advance().Start
+	label := ""
+	if p.at(tokens.IDENT) {
+		label = p.advance().Literal
+	}
+	return &ast.ContinueStmt{Label: label, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseForHeaderStmt() ast.Stmt {
+	switch p.current().Kind {
+	case tokens.LET:
+		return p.parseLetStmt()
+	case tokens.CONST:
+		return p.parseConstStmt()
+	default:
+		left := p.parseExpr(precLowest)
+		if p.match(tokens.ASSIGN) {
+			right := p.parseExpr(precLowest)
+			return &ast.AssignStmt{Left: left, Right: right, Location: sourceSpan(left.Loc(), right.Loc())}
+		}
+		return &ast.ExprStmt{Value: left, Location: left.Loc()}
+	}
+}
+
+func (p *Parser) parseLabelStmt() ast.Stmt {
+	start := p.current().Start
+	name := p.expectIdent("expected label name").Literal
+	p.expect(tokens.COLON, "expected ':' after label")
+	stmt := p.parseStmt()
+	return &ast.LabelStmt{Name: name, Stmt: stmt, Location: p.locFrom(start)}
+}
+
+func (p *Parser) extractForCondition(stmt ast.Stmt) ast.Expr {
+	switch s := stmt.(type) {
+	case nil:
+		return nil
+	case *ast.ExprStmt:
+		return s.Value
+	default:
+		p.errorAt(s.Loc(), "expected for condition or ';' after for initializer")
+		return &ast.BadExpr{Location: s.Loc()}
+	}
 }

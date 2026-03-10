@@ -1,6 +1,18 @@
 import "math/vec2"
 import "util/build"
 
+fn run() i32 {
+    let mut x: i32 = 0
+    while x < 10 {
+        x = x + 1
+        if x == 5 {
+            break
+        }
+        continue
+    }
+    return x
+}
+
 fn main() i32 {
     let p = build::origin()
     if p == .{ .X = 0, .Y = 0 } {

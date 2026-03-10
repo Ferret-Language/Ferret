@@ -23,8 +23,12 @@ func (p *Parser) parseImportDecl() *ast.ImportDecl {
 	default:
 		p.errorHere("expected import path")
 	}
+	alias := ""
+	if p.match(tokens.AS) {
+		alias = p.expectIdent("expected import alias").Literal
+	}
 	p.match(tokens.SEMICOLON)
-	return &ast.ImportDecl{Path: path, Location: p.locFrom(start)}
+	return &ast.ImportDecl{Path: path, Alias: alias, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseTypeDecl() ast.Decl {
@@ -34,6 +38,28 @@ func (p *Parser) parseTypeDecl() ast.Decl {
 	return &ast.TypeDecl{
 		Name:     name,
 		Type:     spec,
+		Location: p.locFrom(start),
+	}
+}
+
+func (p *Parser) parseLetDecl() ast.Decl {
+	start := p.expect(tokens.LET, "expected 'let'").Start
+	isMut := p.match(tokens.MUT)
+	name := p.expectIdent("expected variable name").Literal
+	var typ ast.TypeExpr
+	if p.match(tokens.COLON) {
+		typ = p.parseType()
+	}
+	var value ast.Expr
+	if p.match(tokens.ASSIGN) {
+		value = p.parseExpr(precLowest)
+	}
+	p.match(tokens.SEMICOLON)
+	return &ast.LetDecl{
+		Name:     name,
+		IsMut:    isMut,
+		Type:     typ,
+		Value:    value,
 		Location: p.locFrom(start),
 	}
 }
@@ -65,7 +91,9 @@ func (p *Parser) parseFuncDecl() ast.Decl {
 		recv = p.parseReceiver()
 		p.expect(tokens.RPAREN, "expected ')' after receiver")
 	}
+	isDestructor := p.match(tokens.TILDE)
 	nameTok := p.expectIdent("expected function or method name")
+	isConstructor := recv != nil && !isDestructor && receiverNamedType(recv.Type) == nameTok.Literal
 	params := p.parseParams()
 	var result ast.TypeExpr
 	if p.startsType() {
@@ -73,12 +101,28 @@ func (p *Parser) parseFuncDecl() ast.Decl {
 	}
 	body := p.parseBlock()
 	return &ast.FuncDecl{
-		Receiver: recv,
-		Name:     nameTok.Literal,
-		Params:   params,
-		Result:   result,
-		Body:     body,
-		Location: p.locFrom(start),
+		Receiver:      recv,
+		Name:          nameTok.Literal,
+		IsConstructor: isConstructor,
+		IsDestructor:  isDestructor,
+		Params:        params,
+		Result:        result,
+		Body:          body,
+		Location:      p.locFrom(start),
+	}
+}
+
+func receiverNamedType(typ ast.TypeExpr) string {
+	switch t := typ.(type) {
+	case *ast.NamedType:
+		if len(t.Path) == 0 {
+			return ""
+		}
+		return t.Path[len(t.Path)-1]
+	case *ast.PointerType:
+		return receiverNamedType(t.Inner)
+	default:
+		return ""
 	}
 }
 
@@ -107,7 +151,7 @@ func (p *Parser) parseParams() []ast.Param {
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
 		})
-		if !p.match(tokens.COMMA) {
+		if !p.consumeExprListSeparator(tokens.RPAREN, "parameter") {
 			break
 		}
 	}
@@ -136,7 +180,13 @@ func (p *Parser) parseStructType() ast.TypeExpr {
 	start := p.advance().Start
 	p.expect(tokens.LBRACE, "expected '{'")
 	fields := make([]*ast.FieldDecl, 0)
+	staticFields := make([]*ast.StaticFieldDecl, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		if !p.at(tokens.STATIC) && !p.at(tokens.IDENT) {
+			p.errorHere("expected struct field")
+			p.synchronizeTypeBody(tokens.RBRACE)
+			continue
+		}
 		fieldStart := p.current().Start
 		isStatic := p.match(tokens.STATIC)
 		nameTok := p.expectIdent("expected field name")
@@ -146,16 +196,24 @@ func (p *Parser) parseStructType() ast.TypeExpr {
 			def = p.parseExpr(precLowest)
 		}
 		p.match(tokens.SEMICOLON)
+		if isStatic {
+			staticFields = append(staticFields, &ast.StaticFieldDecl{
+				Name:     nameTok.Literal,
+				Type:     fieldType,
+				Default:  def,
+				Location: p.locFrom(fieldStart),
+			})
+			continue
+		}
 		fields = append(fields, &ast.FieldDecl{
 			Name:     nameTok.Literal,
 			Type:     fieldType,
 			Default:  def,
-			IsStatic: isStatic,
 			Location: p.locFrom(fieldStart),
 		})
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
-	return &ast.StructType{Fields: fields, Location: p.locFrom(start)}
+	return &ast.StructType{Fields: fields, StaticFields: staticFields, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseInterfaceType() ast.TypeExpr {
@@ -163,6 +221,11 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 	p.expect(tokens.LBRACE, "expected '{'")
 	methods := make([]*ast.InterfaceMethod, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		if !p.at(tokens.IDENT) {
+			p.errorHere("expected interface method")
+			p.synchronizeTypeBody(tokens.RBRACE)
+			continue
+		}
 		methodStart := p.current().Start
 		nameTok := p.expectIdent("expected interface method name")
 		params := p.parseParams()
@@ -182,13 +245,30 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 	return &ast.InterfaceType{Methods: methods, Location: p.locFrom(start)}
 }
 
+func (p *Parser) synchronizeTypeBody(end tokens.Kind) {
+	for !p.at(tokens.EOF) {
+		if p.at(tokens.SEMICOLON) {
+			p.advance()
+			return
+		}
+		if p.at(end) {
+			return
+		}
+		p.advance()
+	}
+}
+
 func (p *Parser) parseEnumType() ast.TypeExpr {
 	start := p.advance().Start
 	p.expect(tokens.LBRACE, "expected '{'")
-	variants := make([]string, 0)
+	variants := make([]*ast.EnumVariant, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
-		variants = append(variants, p.expectIdent("expected enum variant").Literal)
-		p.match(tokens.COMMA)
+		variantStart := p.current().Start
+		name := p.expectIdent("expected enum variant").Literal
+		variants = append(variants, &ast.EnumVariant{Name: name, Location: p.locFrom(variantStart)})
+		if !p.consumeExprListSeparator(tokens.RBRACE, "enum variant") {
+			break
+		}
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
 	return &ast.EnumType{Variants: variants, Location: p.locFrom(start)}
@@ -200,7 +280,9 @@ func (p *Parser) parseUnionType() ast.TypeExpr {
 	members := make([]ast.TypeExpr, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
 		members = append(members, p.parseType())
-		p.match(tokens.COMMA)
+		if !p.consumeTypeListSeparator(tokens.RBRACE, "union member") {
+			break
+		}
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
 	return &ast.UnionType{Members: members, Location: p.locFrom(start)}
@@ -209,10 +291,14 @@ func (p *Parser) parseUnionType() ast.TypeExpr {
 func (p *Parser) parseErrorType() ast.TypeExpr {
 	start := p.advance().Start
 	p.expect(tokens.LBRACE, "expected '{'")
-	members := make([]string, 0)
+	members := make([]*ast.ErrorMember, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
-		members = append(members, p.expectIdent("expected error member").Literal)
-		p.match(tokens.COMMA)
+		memberStart := p.current().Start
+		name := p.expectIdent("expected error member").Literal
+		members = append(members, &ast.ErrorMember{Name: name, Location: p.locFrom(memberStart)})
+		if !p.consumeExprListSeparator(tokens.RBRACE, "error member") {
+			break
+		}
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
 	return &ast.ErrorType{Members: members, Location: p.locFrom(start)}

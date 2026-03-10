@@ -56,8 +56,9 @@ func (*TupleType) typeNode()              {}
 func (t *TupleType) Loc() source.Location { return t.Location }
 
 type StructType struct {
-	Fields   []*FieldDecl
-	Location source.Location
+	Fields       []*FieldDecl
+	StaticFields []*StaticFieldDecl
+	Location     source.Location
 }
 
 func (*StructType) typeNode()              {}
@@ -78,8 +79,13 @@ type InterfaceType struct {
 func (*InterfaceType) typeNode()              {}
 func (t *InterfaceType) Loc() source.Location { return t.Location }
 
+type EnumVariant struct {
+	Name     string
+	Location source.Location
+}
+
 type EnumType struct {
-	Variants []string
+	Variants []*EnumVariant
 	Location source.Location
 }
 
@@ -94,8 +100,13 @@ type UnionType struct {
 func (*UnionType) typeNode()              {}
 func (t *UnionType) Loc() source.Location { return t.Location }
 
+type ErrorMember struct {
+	Name     string
+	Location source.Location
+}
+
 type ErrorType struct {
-	Members  []string
+	Members  []*ErrorMember
 	Location source.Location
 }
 

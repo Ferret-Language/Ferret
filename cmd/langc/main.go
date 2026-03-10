@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 
@@ -9,17 +11,34 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintf(os.Stderr, "usage: %s <source-file-or-directory>\n", os.Args[0])
+	astFlag := flag.Bool("ast", false, "dump AST as JSON")
+	astOut := flag.String("ast-out", "", "write AST JSON to file")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "usage: %s [-ast] [-ast-out file] <source-file-or-directory>\n", os.Args[0])
+		flag.PrintDefaults()
+	}
+	flag.Parse()
+
+	if flag.NArg() != 1 {
+		flag.Usage()
 		os.Exit(2)
 	}
 
-	result := compilerapi.ParsePath(os.Args[1])
+	result := compilerapi.ParsePath(flag.Arg(0))
+	if *astFlag || *astOut != "" {
+		if err := emitASTDump(result, *astOut); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
 		result.Diagnostics.EmitAll()
 	}
 	if result.Diagnostics.HasErrors() {
 		os.Exit(1)
+	}
+	if *astFlag || *astOut != "" {
+		return
 	}
 
 	if result.Module != nil {
@@ -37,5 +56,49 @@ func main() {
 		for _, decl := range mod.AST.Decls {
 			fmt.Printf("  %s\n", ast.DeclSummary(decl))
 		}
+	}
+}
+
+func emitASTDump(result compilerapi.Result, outPath string) error {
+	payload := debugPayload(result)
+	data, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal ast dump: %w", err)
+	}
+	if outPath == "" {
+		_, err = os.Stdout.Write(append(data, '\n'))
+		return err
+	}
+	return os.WriteFile(outPath, append(data, '\n'), 0o644)
+}
+
+func debugPayload(result compilerapi.Result) any {
+	if result.Entry != nil {
+		return map[string]any{
+			"kind":        "entry",
+			"import_path": result.Entry.ImportPath,
+			"file_path":   result.Entry.FilePath,
+			"origin":      string(result.Entry.Origin),
+			"phase":       result.Entry.Phase.String(),
+			"ast":         ast.DebugModule(result.Entry.AST),
+		}
+	}
+	modules := make([]any, 0, len(result.Modules))
+	for _, mod := range result.Modules {
+		if mod == nil {
+			continue
+		}
+		modules = append(modules, map[string]any{
+			"import_path":  mod.ImportPath,
+			"file_path":    mod.FilePath,
+			"origin":       string(mod.Origin),
+			"phase":        mod.Phase.String(),
+			"dependencies": append([]string(nil), mod.Dependencies...),
+			"ast":          ast.DebugModule(mod.AST),
+		})
+	}
+	return map[string]any{
+		"kind":    "workspace",
+		"modules": modules,
 	}
 }

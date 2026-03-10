@@ -54,3 +54,24 @@ func TestLexAllNumberForms(t *testing.T) {
 		}
 	}
 }
+
+func TestLexLoopControlKeywords(t *testing.T) {
+	src := `while cond { break; continue; }`
+	diag := diagnostics.NewBag()
+	out := New("test.ferr", src, diag).Lex()
+	if len(diag.All()) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", diag.All())
+	}
+	if len(out) < 6 {
+		t.Fatalf("expected several tokens, got %d", len(out))
+	}
+	if out[0].Kind != tokens.WHILE {
+		t.Fatalf("expected WHILE token, got %s", out[0].Kind)
+	}
+	if out[3].Kind != tokens.BREAK {
+		t.Fatalf("expected BREAK token, got %s", out[3].Kind)
+	}
+	if out[5].Kind != tokens.CONTINUE {
+		t.Fatalf("expected CONTINUE token, got %s", out[5].Kind)
+	}
+}

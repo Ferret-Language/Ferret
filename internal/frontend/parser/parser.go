@@ -10,10 +10,11 @@ import (
 )
 
 type Parser struct {
-	file string
-	toks []tokens.Token
-	pos  int
-	diag *diagnostics.Bag
+	file                string
+	toks                []tokens.Token
+	pos                 int
+	compositeValueDepth int
+	diag                *diagnostics.Bag
 }
 
 func Parse(file string, toks []tokens.Token, diag *diagnostics.Bag) *ast.Module {
@@ -52,11 +53,14 @@ func (p *Parser) ParseModule() *ast.Module {
 			p.synchronizeTopLevel()
 		}
 	}
+	p.validateModule(mod)
 	return mod
 }
 
 func (p *Parser) parseDecl() ast.Decl {
 	switch p.current().Kind {
+	case tokens.LET:
+		return p.parseLetDecl()
 	case tokens.CONST:
 		return p.parseConstDecl()
 	case tokens.TYPE:
@@ -85,6 +89,17 @@ func (p *Parser) previous() tokens.Token {
 		return tokens.Token{Kind: tokens.EOF}
 	}
 	return p.toks[p.pos-1]
+}
+
+func (p *Parser) peekN(n int) tokens.Token {
+	idx := p.pos + n
+	if len(p.toks) == 0 {
+		return tokens.Token{Kind: tokens.EOF}
+	}
+	if idx >= len(p.toks) {
+		return p.toks[len(p.toks)-1]
+	}
+	return p.toks[idx]
 }
 
 func (p *Parser) advance() tokens.Token {
@@ -136,6 +151,10 @@ func (p *Parser) makeExprLoc(start source.Position) source.Location {
 func (p *Parser) errorHere(message string) {
 	tok := p.current()
 	loc := source.NewLocation(p.file, tok.Start, tok.End)
+	p.errorAt(loc, message)
+}
+
+func (p *Parser) errorAt(loc source.Location, message string) {
 	p.diag.Add(
 		diagnostics.NewError(message).
 			WithCode(diagnostics.ErrUnexpectedToken).
@@ -146,12 +165,62 @@ func (p *Parser) errorHere(message string) {
 func (p *Parser) synchronizeTopLevel() {
 	for !p.at(tokens.EOF) {
 		switch p.current().Kind {
-		case tokens.IMPORT, tokens.CONST, tokens.TYPE, tokens.FN:
+		case tokens.IMPORT, tokens.LET, tokens.CONST, tokens.TYPE, tokens.FN:
 			return
 		default:
 			p.advance()
 		}
 	}
+}
+
+func (p *Parser) synchronizeStmt() {
+	for !p.at(tokens.EOF) {
+		switch p.current().Kind {
+		case tokens.SEMICOLON:
+			p.advance()
+			return
+		case tokens.RBRACE, tokens.LET, tokens.CONST, tokens.RETURN, tokens.IF, tokens.SWITCH, tokens.WHILE, tokens.FOR, tokens.DEFER, tokens.LOCK, tokens.UNSAFE, tokens.BREAK, tokens.CONTINUE:
+			return
+		default:
+			p.advance()
+		}
+	}
+}
+
+func (p *Parser) advanceUntil(kinds ...tokens.Kind) {
+	for !p.at(tokens.EOF) {
+		for _, kind := range kinds {
+			if p.at(kind) {
+				return
+			}
+		}
+		p.advance()
+	}
+}
+
+func (p *Parser) consumeExprListSeparator(end tokens.Kind, itemName string) bool {
+	return p.consumeListSeparator(end, itemName, p.startsExpr())
+}
+
+func (p *Parser) consumeTypeListSeparator(end tokens.Kind, itemName string) bool {
+	return p.consumeListSeparator(end, itemName, p.startsType())
+}
+
+func (p *Parser) consumeListSeparator(end tokens.Kind, itemName string, canStartNext bool) bool {
+	if p.match(tokens.COMMA) {
+		return true
+	}
+	if p.at(end) || p.at(tokens.EOF) {
+		return false
+	}
+	tok := p.current()
+	loc := source.NewLocation(p.file, tok.Start, tok.End)
+	p.errorAt(loc, "expected ',' or '"+string(end)+"' after "+itemName)
+	if !canStartNext {
+		p.advanceUntil(tokens.COMMA, end)
+		p.match(tokens.COMMA)
+	}
+	return !p.at(end) && !p.at(tokens.EOF)
 }
 
 func (p *Parser) parseNamePath() []string {

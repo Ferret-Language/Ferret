@@ -10,6 +10,13 @@ type Ident struct {
 func (*Ident) exprNode()              {}
 func (e *Ident) Loc() source.Location { return e.Location }
 
+type BadExpr struct {
+	Location source.Location
+}
+
+func (*BadExpr) exprNode()              {}
+func (e *BadExpr) Loc() source.Location { return e.Location }
+
 type NumberLit struct {
 	Value    string
 	Location source.Location
@@ -41,6 +48,14 @@ type PrefixExpr struct {
 
 func (*PrefixExpr) exprNode()              {}
 func (e *PrefixExpr) Loc() source.Location { return e.Location }
+
+type UnsafeExpr struct {
+	Value    Expr
+	Location source.Location
+}
+
+func (*UnsafeExpr) exprNode()              {}
+func (e *UnsafeExpr) Loc() source.Location { return e.Location }
 
 type BinaryExpr struct {
 	Left     Expr

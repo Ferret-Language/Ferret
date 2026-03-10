@@ -1,0 +1,10 @@
+import "math/vec2"
+import "util/build" as build
+
+fn main() i32 {
+    let p = .{ .x = 1, .y = 2 }
+    if p == .{ .x = 1, .y = 2 } {
+        return math::vec2::len2(p)
+    }
+    return build::origin().x
+}
