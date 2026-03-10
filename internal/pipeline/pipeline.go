@@ -8,6 +8,7 @@ import (
 	"compiler/internal/cfganalysis"
 	"compiler/internal/context"
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/layoutanalysis"
@@ -119,7 +120,7 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 
 	p.ctx.ResetDependencies(mod.Key)
 	for _, imp := range mod.AST.Imports {
-		dep, err := p.ctx.ResolveImport(mod, imp.Path)
+		dep, err := p.ctx.ResolveImport(mod, ast.ExprText(imp.Path))
 		if err != nil {
 			loc := imp.Location
 			p.ctx.Diagnostics.Add(

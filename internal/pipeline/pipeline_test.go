@@ -7,6 +7,7 @@ import (
 
 	compilerapi "compiler/internal/compiler"
 	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
 )
 
 func TestPipelineParsesImportsAndReusesCachedModules(t *testing.T) {
@@ -31,7 +32,7 @@ fn build() i32 {
 	if len(first.Modules) != 2 {
 		t.Fatalf("expected 2 modules, got %d", len(first.Modules))
 	}
-	if len(first.Module.Imports) != 1 || first.Module.Imports[0].Path != "util" {
+	if len(first.Module.Imports) != 1 || ast.ExprText(first.Module.Imports[0].Path) != "util" {
 		t.Fatalf("unexpected imports: %#v", first.Module.Imports)
 	}
 

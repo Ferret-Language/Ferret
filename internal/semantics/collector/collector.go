@@ -23,28 +23,28 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 	for _, decl := range mod.AST.Decls {
 		switch d := decl.(type) {
 		case *ast.LetDecl:
-			sym := symbols.New(d.Name, symbols.SymbolVar, d)
-			sym.Location = d.NameLocation
+			sym := symbols.New(d.Name.Text(), symbols.SymbolVar, d)
+			sym.Location = d.Name.Loc()
 			declare(ctx, scope, sym)
 		case *ast.ConstDecl:
-			sym := symbols.New(d.Name, symbols.SymbolConst, d)
-			sym.Location = d.NameLocation
+			sym := symbols.New(d.Name.Text(), symbols.SymbolConst, d)
+			sym.Location = d.Name.Loc()
 			declare(ctx, scope, sym)
 		case *ast.TypeDecl:
-			sym := symbols.New(d.Name, symbols.SymbolType, d)
-			sym.Location = d.NameLocation
+			sym := symbols.New(d.Name.Text(), symbols.SymbolType, d)
+			sym.Location = d.Name.Loc()
 			declare(ctx, scope, sym)
 			collectTypeMembers(ctx, typeMembers, d)
 		case *ast.FuncDecl:
 			if d.Receiver == nil {
-				sym := symbols.New(d.Name, symbols.SymbolFunc, d)
-				sym.Location = d.NameLocation
+				sym := symbols.New(d.Name.Text(), symbols.SymbolFunc, d)
+				sym.Location = d.Name.Loc()
 				declare(ctx, scope, sym)
 				continue
 			}
 			recvName := receiverTypeName(d.Receiver.Type)
-			sym := symbols.New(d.Name, symbols.SymbolMethod, d)
-			sym.Location = d.NameLocation
+			sym := symbols.New(d.Name.Text(), symbols.SymbolMethod, d)
+			sym.Location = d.Name.Loc()
 			sym.ReceiverType = recvName
 			declareMethod(ctx, methodSets, recvName, sym)
 		}
@@ -60,10 +60,11 @@ func collectTypeMembers(ctx *context.CompilerContext, typeMembers map[string]map
 	if decl == nil {
 		return
 	}
-	members := typeMembers[decl.Name]
+	typeName := decl.Name.Text()
+	members := typeMembers[typeName]
 	if members == nil {
 		members = make(map[string]*symbols.Symbol)
-		typeMembers[decl.Name] = members
+		typeMembers[typeName] = members
 	}
 
 	switch t := decl.Type.(type) {
@@ -72,21 +73,27 @@ func collectTypeMembers(ctx *context.CompilerContext, typeMembers map[string]map
 			if field == nil {
 				continue
 			}
-			declareTypeMember(ctx, decl.Name, members, symbols.New(field.Name, symbols.SymbolStatic, field))
+			sym := symbols.New(field.Name.Text(), symbols.SymbolStatic, field)
+			sym.Location = field.Name.Loc()
+			declareTypeMember(ctx, typeName, members, sym)
 		}
 	case *ast.EnumType:
 		for _, variant := range t.Variants {
 			if variant == nil {
 				continue
 			}
-			declareTypeMember(ctx, decl.Name, members, symbols.New(variant.Name, symbols.SymbolVariant, variant))
+			sym := symbols.New(variant.Name.Text(), symbols.SymbolVariant, variant)
+			sym.Location = variant.Name.Loc()
+			declareTypeMember(ctx, typeName, members, sym)
 		}
 	case *ast.ErrorType:
 		for _, member := range t.Members {
 			if member == nil {
 				continue
 			}
-			declareTypeMember(ctx, decl.Name, members, symbols.New(member.Name, symbols.SymbolError, member))
+			sym := symbols.New(member.Name.Text(), symbols.SymbolError, member)
+			sym.Location = member.Name.Loc()
+			declareTypeMember(ctx, typeName, members, sym)
 		}
 	}
 }

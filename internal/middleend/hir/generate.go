@@ -38,8 +38,8 @@ func generateTypeDecl(key string, types *typeinfo.ModuleInfo, d *ast.TypeDecl) *
 		return nil
 	}
 	out := &TypeDecl{
-		Name:       d.Name,
-		Named:      &typeinfo.NamedType{ModuleKey: key, Name: d.Name, Decl: d},
+		Name:       d.Name.Text(),
+		Named:      &typeinfo.NamedType{ModuleKey: key, Name: d.Name.Text(), Decl: d},
 		Underlying: syntaxType(types, d.Type),
 		Location:   d.Location,
 		Source:     d,
@@ -72,7 +72,7 @@ func generateStructTypeDecl(types *typeinfo.ModuleInfo, t *ast.StructType) *Stru
 			continue
 		}
 		out.Fields = append(out.Fields, &StructFieldDecl{
-			Name:     field.Name,
+			Name:     field.Name.Text(),
 			Type:     syntaxType(types, field.Type),
 			Default:  generateExpr(types, field.Default),
 			Location: field.Location,
@@ -83,7 +83,7 @@ func generateStructTypeDecl(types *typeinfo.ModuleInfo, t *ast.StructType) *Stru
 			continue
 		}
 		out.StaticFields = append(out.StaticFields, &StructFieldDecl{
-			Name:     field.Name,
+			Name:     field.Name.Text(),
 			Type:     syntaxType(types, field.Type),
 			Default:  generateExpr(types, field.Default),
 			Location: field.Location,
@@ -102,14 +102,14 @@ func generateInterfaceTypeDecl(types *typeinfo.ModuleInfo, t *ast.InterfaceType)
 			continue
 		}
 		entry := &InterfaceMethodDecl{
-			Name:     method.Name,
+			Name:     method.Name.Text(),
 			Result:   syntaxType(types, method.Result),
 			Location: method.Location,
 			Params:   make([]*Param, 0, len(method.Params)),
 		}
 		for _, param := range method.Params {
 			entry.Params = append(entry.Params, &Param{
-				Name:       param.Name,
+				Name:       param.Name.Text(),
 				Type:       syntaxType(types, param.Type),
 				IsComptime: param.IsComptime,
 				Location:   param.Location,
@@ -127,7 +127,7 @@ func generateEnumTypeDecl(t *ast.EnumType) *EnumTypeDecl {
 	out := &EnumTypeDecl{Variants: make([]string, 0, len(t.Variants))}
 	for _, variant := range t.Variants {
 		if variant != nil {
-			out.Variants = append(out.Variants, variant.Name)
+			out.Variants = append(out.Variants, variant.Name.Text())
 		}
 	}
 	return out
@@ -151,7 +151,7 @@ func generateErrorTypeDecl(t *ast.ErrorType) *ErrorTypeDecl {
 	out := &ErrorTypeDecl{Members: make([]string, 0, len(t.Members))}
 	for _, member := range t.Members {
 		if member != nil {
-			out.Members = append(out.Members, member.Name)
+			out.Members = append(out.Members, member.Name.Text())
 		}
 	}
 	return out
@@ -162,7 +162,7 @@ func generateLetDecl(types *typeinfo.ModuleInfo, d *ast.LetDecl) *Global {
 		return nil
 	}
 	return &Global{
-		Name:     d.Name,
+		Name:     d.Name.Text(),
 		Mutable:  d.IsMut,
 		Constant: false,
 		Type:     effectiveType(types, d.Type, d.Value),
@@ -177,7 +177,7 @@ func generateConstDecl(types *typeinfo.ModuleInfo, d *ast.ConstDecl) *Global {
 		return nil
 	}
 	return &Global{
-		Name:     d.Name,
+		Name:     d.Name.Text(),
 		Mutable:  false,
 		Constant: true,
 		Type:     effectiveType(types, d.Type, d.Value),
@@ -192,7 +192,7 @@ func generateFunc(types *typeinfo.ModuleInfo, d *ast.FuncDecl) *Func {
 		return nil
 	}
 	fn := &Func{
-		Name:       d.Name,
+		Name:       d.Name.Text(),
 		IsUnsafe:   d.IsUnsafe,
 		IsBuiltin:  d.IsBuiltin,
 		IsExtern:   d.IsExtern,
@@ -207,7 +207,7 @@ func generateFunc(types *typeinfo.ModuleInfo, d *ast.FuncDecl) *Func {
 	}
 	if d.Receiver != nil {
 		fn.Receiver = &Param{
-			Name:     d.Receiver.Name,
+			Name:     d.Receiver.Name.Text(),
 			Type:     syntaxType(types, d.Receiver.Type),
 			Location: d.Receiver.Location,
 		}
@@ -215,7 +215,7 @@ func generateFunc(types *typeinfo.ModuleInfo, d *ast.FuncDecl) *Func {
 	fn.Params = make([]*Param, 0, len(d.Params))
 	for _, param := range d.Params {
 		fn.Params = append(fn.Params, &Param{
-			Name:       param.Name,
+			Name:       param.Name.Text(),
 			Type:       syntaxType(types, param.Type),
 			IsComptime: param.IsComptime,
 			Location:   param.Location,
@@ -245,11 +245,11 @@ func generateStmt(types *typeinfo.ModuleInfo, stmt ast.Stmt) Stmt {
 	case *ast.BlockStmt:
 		return generateBlock(types, s)
 	case *ast.LetStmt:
-		out := &LetStmt{Name: s.Name, Mutable: s.IsMut, Type: effectiveType(types, s.Type, s.Value), Value: generateExpr(types, s.Value)}
+		out := &LetStmt{Name: s.Name.Text(), Mutable: s.IsMut, Type: effectiveType(types, s.Type, s.Value), Value: generateExpr(types, s.Value)}
 		out.Location = s.Location
 		return out
 	case *ast.ConstStmt:
-		out := &ConstStmt{Name: s.Name, Type: effectiveType(types, s.Type, s.Value), Value: generateExpr(types, s.Value)}
+		out := &ConstStmt{Name: s.Name.Text(), Type: effectiveType(types, s.Type, s.Value), Value: generateExpr(types, s.Value)}
 		out.Location = s.Location
 		return out
 	case *ast.ReturnStmt:
@@ -287,19 +287,31 @@ func generateStmt(types *typeinfo.ModuleInfo, stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.ForStmt:
-		out := &ForStmt{Iterable: generateExpr(types, s.Iterable), IndexName: s.IndexName, ValueName: s.ValueName, Body: generateBlock(types, s.Body)}
+		out := &ForStmt{Iterable: generateExpr(types, s.Iterable), Body: generateBlock(types, s.Body)}
+		if s.Index != nil {
+			out.IndexName = s.Index.Text()
+		}
+		if s.Value != nil {
+			out.ValueName = s.Value.Text()
+		}
 		out.Location = s.Location
 		return out
 	case *ast.LabelStmt:
-		out := &LabelStmt{Name: s.Name, Stmt: generateStmt(types, s.Stmt)}
+		out := &LabelStmt{Name: s.Name.Text(), Stmt: generateStmt(types, s.Stmt)}
 		out.Location = s.Location
 		return out
 	case *ast.BreakStmt:
-		out := &BreakStmt{Label: s.Label}
+		out := &BreakStmt{}
+		if s.Label != nil {
+			out.Label = s.Label.Text()
+		}
 		out.Location = s.Location
 		return out
 	case *ast.ContinueStmt:
-		out := &ContinueStmt{Label: s.Label}
+		out := &ContinueStmt{}
+		if s.Label != nil {
+			out.Label = s.Label.Text()
+		}
 		out.Location = s.Location
 		return out
 	case *ast.DeferStmt:
@@ -311,7 +323,7 @@ func generateStmt(types *typeinfo.ModuleInfo, stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.LockStmt:
-		out := &LockStmt{Value: generateExpr(types, s.Value), Name: s.Name, Body: generateBlock(types, s.Body)}
+		out := &LockStmt{Value: generateExpr(types, s.Value), Name: s.Name.Text(), Body: generateBlock(types, s.Body)}
 		out.Location = s.Location
 		return out
 	case *ast.UnsafeStmt:
@@ -368,7 +380,7 @@ func generateExpr(types *typeinfo.ModuleInfo, expr ast.Expr) Expr {
 		}
 		return out
 	case *ast.SelectorExpr:
-		out := &SelectorExpr{Left: generateExpr(types, e.Left), Name: e.Name}
+		out := &SelectorExpr{Left: generateExpr(types, e.Left), Name: e.Name.Text()}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
 	case *ast.CastExpr:
@@ -377,10 +389,12 @@ func generateExpr(types *typeinfo.ModuleInfo, expr ast.Expr) Expr {
 		return out
 	case *ast.CatchExpr:
 		out := &CatchExpr{
-			Left:        generateExpr(types, e.Left),
-			Fallback:    generateExpr(types, e.Fallback),
-			PayloadName: e.PayloadName,
-			Handler:     generateBlock(types, e.Handler),
+			Left:     generateExpr(types, e.Left),
+			Fallback: generateExpr(types, e.Fallback),
+			Handler:  generateBlock(types, e.Handler),
+		}
+		if e.Payload != nil {
+			out.PayloadName = e.Payload.Text()
 		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
@@ -388,7 +402,7 @@ func generateExpr(types *typeinfo.ModuleInfo, expr ast.Expr) Expr {
 		out := &CompositeLit{Items: make([]CompositeItem, 0, len(e.Items))}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		for _, item := range e.Items {
-			out.Items = append(out.Items, CompositeItem{Name: item.Name, Value: generateExpr(types, item.Value)})
+			out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: generateExpr(types, item.Value)})
 		}
 		return out
 	default:

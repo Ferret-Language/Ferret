@@ -65,7 +65,7 @@ func (*StructType) typeNode()              {}
 func (t *StructType) Loc() source.Location { return t.Location }
 
 type InterfaceMethod struct {
-	Name     string
+	Name     *Ident
 	Params   []Param
 	Result   TypeExpr
 	Location source.Location
@@ -80,7 +80,7 @@ func (*InterfaceType) typeNode()              {}
 func (t *InterfaceType) Loc() source.Location { return t.Location }
 
 type EnumVariant struct {
-	Name     string
+	Name     *Ident
 	Location source.Location
 }
 
@@ -103,7 +103,7 @@ func (*UnionType) typeNode()              {}
 func (t *UnionType) Loc() source.Location { return t.Location }
 
 type ErrorMember struct {
-	Name     string
+	Name     *Ident
 	Location source.Location
 }
 

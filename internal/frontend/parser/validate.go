@@ -153,14 +153,15 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 			if field == nil {
 				continue
 			}
-			if prev, ok := seenFields[field.Name]; ok {
+			name := field.Name.Text()
+			if prev, ok := seenFields[name]; ok {
 				p.reportDuplicateDeclName(
-					fmt.Sprintf("duplicate field %q", field.Name),
+					fmt.Sprintf("duplicate field %q", name),
 					field.Location,
 					prev,
 				)
 			} else {
-				seenFields[field.Name] = field.Location
+				seenFields[name] = field.Location
 			}
 			p.validateType(field.Type)
 			p.validateExpr(field.Default)
@@ -169,14 +170,15 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 			if field == nil {
 				continue
 			}
-			if prev, ok := seenFields[field.Name]; ok {
+			name := field.Name.Text()
+			if prev, ok := seenFields[name]; ok {
 				p.reportDuplicateDeclName(
-					fmt.Sprintf("duplicate field %q", field.Name),
+					fmt.Sprintf("duplicate field %q", name),
 					field.Location,
 					prev,
 				)
 			} else {
-				seenFields[field.Name] = field.Location
+				seenFields[name] = field.Location
 			}
 			p.validateType(field.Type)
 			p.validateExpr(field.Default)
@@ -187,14 +189,15 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 			if method == nil {
 				continue
 			}
-			if prev, ok := seen[method.Name]; ok {
+			name := method.Name.Text()
+			if prev, ok := seen[name]; ok {
 				p.reportDuplicateDeclName(
-					fmt.Sprintf("duplicate interface method %q", method.Name),
+					fmt.Sprintf("duplicate interface method %q", name),
 					method.Location,
 					prev.Location,
 				)
 			} else {
-				seen[method.Name] = method
+				seen[name] = method
 			}
 			for _, param := range method.Params {
 				p.validateType(param.Type)
@@ -207,14 +210,15 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 			if variant == nil {
 				continue
 			}
-			if prev, ok := seen[variant.Name]; ok {
+			name := variant.Name.Text()
+			if prev, ok := seen[name]; ok {
 				p.reportDuplicateDeclName(
-					fmt.Sprintf("duplicate enum variant %q", variant.Name),
+					fmt.Sprintf("duplicate enum variant %q", name),
 					variant.Location,
 					prev.Location,
 				)
 			} else {
-				seen[variant.Name] = variant
+				seen[name] = variant
 			}
 		}
 	case *ast.ErrorType:
@@ -223,14 +227,15 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 			if member == nil {
 				continue
 			}
-			if prev, ok := seen[member.Name]; ok {
+			name := member.Name.Text()
+			if prev, ok := seen[name]; ok {
 				p.reportDuplicateDeclName(
-					fmt.Sprintf("duplicate error member %q", member.Name),
+					fmt.Sprintf("duplicate error member %q", name),
 					member.Location,
 					prev.Location,
 				)
 			} else {
-				seen[member.Name] = member
+				seen[name] = member
 			}
 		}
 	case *ast.UnionType:
@@ -260,19 +265,20 @@ func (p *Parser) validateCompositeLit(lit *ast.CompositeLit) {
 	seenFields := make(map[string]ast.CompositeItem)
 	for _, item := range lit.Items {
 		p.validateExpr(item.Value)
-		if item.Name == "" {
+		if item.Name == nil {
 			seenPositional = true
 			continue
 		}
 		seenNamed = true
-		if prev, ok := seenFields[item.Name]; ok {
+		name := item.Name.Text()
+		if prev, ok := seenFields[name]; ok {
 			p.reportDuplicateDeclName(
-				fmt.Sprintf("duplicate composite field %q", item.Name),
+				fmt.Sprintf("duplicate composite field %q", name),
 				item.Value.Loc(),
 				prev.Value.Loc(),
 			)
 		} else {
-			seenFields[item.Name] = item
+			seenFields[name] = item
 		}
 	}
 	if seenNamed && seenPositional {

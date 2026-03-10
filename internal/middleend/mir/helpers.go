@@ -51,7 +51,7 @@ func FieldName(typ typeinfo.Type, index int) string {
 		if st, ok := named.Decl.Type.(*ast.StructType); ok && index >= 0 && index < len(st.Fields) {
 			field := st.Fields[index]
 			if field != nil {
-				return field.Name
+				return field.Name.Text()
 			}
 		}
 	}

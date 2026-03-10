@@ -64,7 +64,7 @@ fn (p Point) len2() i32 {
 	if !ok {
 		t.Fatalf("expected func decl, got %T", mod.Decls[1])
 	}
-	if fn.Receiver == nil || fn.Receiver.Name != "p" {
+	if fn.Receiver == nil || fn.Receiver.Name.Text() != "p" {
 		t.Fatalf("expected receiver p, got %#v", fn.Receiver)
 	}
 }
@@ -109,11 +109,11 @@ fn add(comptime T Type, x T) T {
 		t.Fatalf("expected 3 decls, got %d", len(mod.Decls))
 	}
 	ldecl, ok := mod.Decls[0].(*ast.LetDecl)
-	if !ok || ldecl.Name != "GlobalCount" || !ldecl.IsMut {
+	if !ok || ldecl.Name.Text() != "GlobalCount" || !ldecl.IsMut {
 		t.Fatalf("expected top-level let decl, got %#v", mod.Decls[0])
 	}
 	cdecl, ok := mod.Decls[1].(*ast.ConstDecl)
-	if !ok || cdecl.Name != "BuildMode" {
+	if !ok || cdecl.Name.Text() != "BuildMode" {
 		t.Fatalf("expected top-level const decl, got %#v", mod.Decls[1])
 	}
 	fn, ok := mod.Decls[2].(*ast.FuncDecl)
@@ -143,7 +143,7 @@ fn add(comptime T Type, x T) T {
 		t.Fatalf("expected comptime prefix on left side, got %#v", exprLet.Value)
 	}
 	localConst, ok := fn.Body.Stmts[2].(*ast.ConstStmt)
-	if !ok || localConst.Name != "local" {
+	if !ok || localConst.Name.Text() != "local" {
 		t.Fatalf("expected local const stmt, got %#v", fn.Body.Stmts[2])
 	}
 }
@@ -349,7 +349,7 @@ fn run() i32 {
 	if !ok {
 		t.Fatalf("expected first loop to be for, got %T", fn.Body.Stmts[1])
 	}
-	if loop0.IndexName != "" || loop0.ValueName != "v" || loop0.Iterable == nil {
+	if loop0.Index != nil || loop0.Value.Text() != "v" || loop0.Iterable == nil {
 		t.Fatalf("expected value-only loop, got %#v", loop0)
 	}
 
@@ -357,7 +357,7 @@ fn run() i32 {
 	if !ok {
 		t.Fatalf("expected second loop to be for, got %T", fn.Body.Stmts[2])
 	}
-	if loop1.IndexName != "i" || loop1.ValueName != "v" || loop1.Iterable == nil {
+	if loop1.Index.Text() != "i" || loop1.Value.Text() != "v" || loop1.Iterable == nil {
 		t.Fatalf("expected index+value loop, got %#v", loop1)
 	}
 }
@@ -401,7 +401,7 @@ fn run() void {
 		t.Fatalf("expected function decl, got %T", mod.Decls[0])
 	}
 	outer, ok := fn.Body.Stmts[0].(*ast.LabelStmt)
-	if !ok || outer.Name != "outer" {
+	if !ok || outer.Name.Text() != "outer" {
 		t.Fatalf("expected outer label stmt, got %#v", fn.Body.Stmts[0])
 	}
 	outerLoop, ok := outer.Stmt.(*ast.ForStmt)
@@ -409,7 +409,7 @@ fn run() void {
 		t.Fatalf("expected labeled for stmt, got %T", outer.Stmt)
 	}
 	inner, ok := outerLoop.Body.Stmts[0].(*ast.LabelStmt)
-	if !ok || inner.Name != "inner" {
+	if !ok || inner.Name.Text() != "inner" {
 		t.Fatalf("expected inner label stmt, got %#v", outerLoop.Body.Stmts[0])
 	}
 	innerLoop, ok := inner.Stmt.(*ast.WhileStmt)
@@ -417,11 +417,11 @@ fn run() void {
 		t.Fatalf("expected labeled while stmt, got %T", inner.Stmt)
 	}
 	breakStmt, ok := innerLoop.Body.Stmts[0].(*ast.BreakStmt)
-	if !ok || breakStmt.Label != "outer" {
+	if !ok || breakStmt.Label.Text() != "outer" {
 		t.Fatalf("expected labeled break outer, got %#v", innerLoop.Body.Stmts[0])
 	}
 	continueStmt, ok := outerLoop.Body.Stmts[1].(*ast.ContinueStmt)
-	if !ok || continueStmt.Label != "outer" {
+	if !ok || continueStmt.Label.Text() != "outer" {
 		t.Fatalf("expected labeled continue outer, got %#v", outerLoop.Body.Stmts[1])
 	}
 }
@@ -446,7 +446,7 @@ fn run() void {
 		t.Fatalf("expected 2 statements after recovery, got %d", len(fn.Body.Stmts))
 	}
 	labelStmt, ok := fn.Body.Stmts[0].(*ast.LabelStmt)
-	if !ok || labelStmt.Name != "outer" {
+	if !ok || labelStmt.Name.Text() != "outer" {
 		t.Fatalf("expected labeled stmt, got %#v", fn.Body.Stmts[0])
 	}
 	assign, ok := labelStmt.Stmt.(*ast.AssignStmt)
@@ -519,15 +519,15 @@ fn (c *own Conn) ~Conn() {
 	if got := diag.All(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
-	if len(mod.Imports) != 1 || mod.Imports[0].Alias != "json" {
+	if len(mod.Imports) != 1 || mod.Imports[0].Alias.Text() != "json" {
 		t.Fatalf("expected aliased import, got %#v", mod.Imports)
 	}
 	ctor, ok := mod.Decls[1].(*ast.FuncDecl)
-	if !ok || !ctor.IsConstructor || ctor.Name != "Conn" {
+	if !ok || !ctor.IsConstructor || ctor.Name.Text() != "Conn" {
 		t.Fatalf("expected constructor method, got %#v", mod.Decls[1])
 	}
 	fn, ok := mod.Decls[2].(*ast.FuncDecl)
-	if !ok || !fn.IsDestructor || fn.Name != "Conn" {
+	if !ok || !fn.IsDestructor || fn.Name.Text() != "Conn" {
 		t.Fatalf("expected destructor method, got %#v", mod.Decls[2])
 	}
 }
@@ -567,7 +567,7 @@ fn run(m Mutex, cond bool) void {
 		t.Fatalf("expected else-if stmt, got %T", ifStmt.Else)
 	}
 	lockStmt, ok := elseIf.Then.Stmts[0].(*ast.LockStmt)
-	if !ok || lockStmt.Name != "g" {
+	if !ok || lockStmt.Name.Text() != "g" {
 		t.Fatalf("expected lock stmt with guard g, got %#v", elseIf.Then.Stmts[0])
 	}
 	deferStmt, ok := lockStmt.Body.Stmts[0].(*ast.DeferStmt)
@@ -663,7 +663,7 @@ fn run(path string) i32 {
 	fn := mod.Decls[0].(*ast.FuncDecl)
 	letStmt := fn.Body.Stmts[0].(*ast.LetStmt)
 	blockCatch, ok := letStmt.Value.(*ast.CatchExpr)
-	if !ok || blockCatch.PayloadName != "err" || blockCatch.Handler == nil {
+	if !ok || blockCatch.Payload.Text() != "err" || blockCatch.Handler == nil {
 		t.Fatalf("expected block catch expr, got %#v", letStmt.Value)
 	}
 	ret := fn.Body.Stmts[1].(*ast.ReturnStmt)
@@ -763,7 +763,7 @@ fn build() i32 {
 	if len(st.Fields) != 2 {
 		t.Fatalf("expected struct recovery to keep both fields, got %d", len(st.Fields))
 	}
-	if st.Fields[1].Name != "y" {
+	if st.Fields[1].Name.Text() != "y" {
 		t.Fatalf("expected second recovered field y, got %#v", st.Fields[1])
 	}
 	if len(mod.Decls) != 2 {

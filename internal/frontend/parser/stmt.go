@@ -87,7 +87,13 @@ func (p *Parser) parseLetStmt() ast.Stmt {
 	if p.match(tokens.ASSIGN) {
 		value = p.parseExpr(precLowest)
 	}
-	return &ast.LetStmt{Name: nameTok.Literal, NameLocation: p.locOfToken(nameTok), IsMut: isMut, Type: typ, Value: value, Location: p.locFrom(start)}
+	return &ast.LetStmt{
+		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		IsMut:    isMut,
+		Type:     typ,
+		Value:    value,
+		Location: p.locFrom(start),
+	}
 }
 
 func (p *Parser) parseConstStmt() ast.Stmt {
@@ -101,7 +107,12 @@ func (p *Parser) parseConstStmt() ast.Stmt {
 	if p.match(tokens.ASSIGN) {
 		value = p.parseExpr(precLowest)
 	}
-	return &ast.ConstStmt{Name: nameTok.Literal, NameLocation: p.locOfToken(nameTok), Type: typ, Value: value, Location: p.locFrom(start)}
+	return &ast.ConstStmt{
+		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		Type:     typ,
+		Value:    value,
+		Location: p.locFrom(start),
+	}
 }
 
 func (p *Parser) parseReturnStmt() ast.Stmt {
@@ -155,24 +166,16 @@ func (p *Parser) parseForStmt() ast.Stmt {
 	iterable := p.parseExprUntil(precLowest, tokens.BAR)
 	p.expect(tokens.BAR, "expected '|' after for iterable")
 	firstTok := p.expectIdent("expected loop binding name")
-	first := firstTok.Literal
-	indexName := ""
-	indexLoc := source.Location{}
-	valueName := first
-	valueLoc := source.Location{}
+	valueIdent := &ast.Ident{Path: []string{firstTok.Literal}, Location: p.locOfToken(firstTok)}
+	var indexIdent *ast.Ident
 	if p.match(tokens.COMMA) {
-		indexName = first
-		indexLoc = p.locOfToken(firstTok)
+		indexIdent = valueIdent
 		valueTok := p.expectIdent("expected loop value binding name")
-		valueName = valueTok.Literal
-		valueLoc = p.locOfToken(valueTok)
-	}
-	if indexName == "" {
-		valueLoc = p.locOfToken(firstTok)
+		valueIdent = &ast.Ident{Path: []string{valueTok.Literal}, Location: p.locOfToken(valueTok)}
 	}
 	p.expect(tokens.BAR, "expected closing '|' after loop bindings")
 	body := p.parseBlock()
-	return &ast.ForStmt{Iterable: iterable, IndexName: indexName, IndexLocation: indexLoc, ValueName: valueName, ValueLocation: valueLoc, Body: body, Location: p.locFrom(start)}
+	return &ast.ForStmt{Iterable: iterable, Index: indexIdent, Value: valueIdent, Body: body, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseDeferStmt() ast.Stmt {
@@ -218,9 +221,13 @@ func (p *Parser) parseLockStmt() ast.Stmt {
 	value := p.parseExprUntil(precLowest, tokens.AS)
 	p.expect(tokens.AS, "expected 'as' in lock statement")
 	nameTok := p.expectIdent("expected lock guard name")
-	name := nameTok.Literal
 	body := p.parseBlock()
-	return &ast.LockStmt{Value: value, Name: name, NameLocation: p.locOfToken(nameTok), Body: body, Location: p.locFrom(start)}
+	return &ast.LockStmt{
+		Value:    value,
+		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		Body:     body,
+		Location: p.locFrom(start),
+	}
 }
 
 func (p *Parser) parseUnsafeStmt() ast.Stmt {
@@ -231,26 +238,32 @@ func (p *Parser) parseUnsafeStmt() ast.Stmt {
 
 func (p *Parser) parseBreakStmt() ast.Stmt {
 	start := p.advance().Start
-	label := ""
+	var label *ast.Ident
 	if p.at(tokens.IDENT) {
-		label = p.advance().Literal
+		labelTok := p.advance()
+		label = &ast.Ident{Path: []string{labelTok.Literal}, Location: p.locOfToken(labelTok)}
 	}
 	return &ast.BreakStmt{Label: label, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseContinueStmt() ast.Stmt {
 	start := p.advance().Start
-	label := ""
+	var label *ast.Ident
 	if p.at(tokens.IDENT) {
-		label = p.advance().Literal
+		labelTok := p.advance()
+		label = &ast.Ident{Path: []string{labelTok.Literal}, Location: p.locOfToken(labelTok)}
 	}
 	return &ast.ContinueStmt{Label: label, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseLabelStmt() ast.Stmt {
 	start := p.current().Start
-	name := p.expectIdent("expected label name").Literal
+	nameTok := p.expectIdent("expected label name")
 	p.expect(tokens.COLON, "expected ':' after label")
 	stmt := p.parseStmt()
-	return &ast.LabelStmt{Name: name, Stmt: stmt, Location: p.locFrom(start)}
+	return &ast.LabelStmt{
+		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		Stmt:     stmt,
+		Location: p.locFrom(start),
+	}
 }

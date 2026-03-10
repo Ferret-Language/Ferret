@@ -18,8 +18,8 @@ func DebugModule(mod *Module) map[string]any {
 	for _, imp := range mod.Imports {
 		imports = append(imports, map[string]any{
 			"kind":  "ImportDecl",
-			"path":  imp.Path,
-			"alias": imp.Alias,
+			"path":  debugExpr(imp.Path),
+			"alias": debugExpr(imp.Alias),
 			"loc":   debugLoc(imp.Location),
 		})
 	}
@@ -38,29 +38,11 @@ func DebugModule(mod *Module) map[string]any {
 func debugDecl(decl Decl) any {
 	switch d := decl.(type) {
 	case *LetDecl:
-		return map[string]any{
-			"kind":   "LetDecl",
-			"name":   d.Name,
-			"is_mut": d.IsMut,
-			"type":   debugType(d.Type),
-			"value":  debugExpr(d.Value),
-			"loc":    debugLoc(d.Location),
-		}
+		return map[string]any{"kind": "LetDecl", "name": debugExpr(d.Name), "is_mut": d.IsMut, "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
 	case *ConstDecl:
-		return map[string]any{
-			"kind":  "ConstDecl",
-			"name":  d.Name,
-			"type":  debugType(d.Type),
-			"value": debugExpr(d.Value),
-			"loc":   debugLoc(d.Location),
-		}
+		return map[string]any{"kind": "ConstDecl", "name": debugExpr(d.Name), "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
 	case *TypeDecl:
-		return map[string]any{
-			"kind": "TypeDecl",
-			"name": d.Name,
-			"type": debugType(d.Type),
-			"loc":  debugLoc(d.Location),
-		}
+		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "type": debugType(d.Type), "loc": debugLoc(d.Location)}
 	case *FuncDecl:
 		params := make([]any, 0, len(d.Params))
 		for _, param := range d.Params {
@@ -68,15 +50,11 @@ func debugDecl(decl Decl) any {
 		}
 		var recv any
 		if d.Receiver != nil {
-			recv = map[string]any{
-				"name": d.Receiver.Name,
-				"type": debugType(d.Receiver.Type),
-				"loc":  debugLoc(d.Receiver.Location),
-			}
+			recv = map[string]any{"name": debugExpr(d.Receiver.Name), "type": debugType(d.Receiver.Type), "loc": debugLoc(d.Receiver.Location)}
 		}
 		return map[string]any{
 			"kind":           "FuncDecl",
-			"name":           d.Name,
+			"name":           debugExpr(d.Name),
 			"doc":            debugDoc(d.Doc),
 			"attrs":          debugAttrs(d.Attrs),
 			"is_unsafe":      d.IsUnsafe,
@@ -115,12 +93,7 @@ func debugAttrs(attrs []Attribute) []any {
 }
 
 func debugParam(p Param) any {
-	return map[string]any{
-		"name":        p.Name,
-		"is_comptime": p.IsComptime,
-		"type":        debugType(p.Type),
-		"loc":         debugLoc(p.Location),
-	}
+	return map[string]any{"name": debugExpr(p.Name), "is_comptime": p.IsComptime, "type": debugType(p.Type), "loc": debugLoc(p.Location)}
 }
 
 func debugStmt(stmt Stmt) any {
@@ -134,9 +107,9 @@ func debugStmt(stmt Stmt) any {
 		}
 		return map[string]any{"kind": "BlockStmt", "stmts": stmts, "loc": debugLoc(s.Location)}
 	case *LetStmt:
-		return map[string]any{"kind": "LetStmt", "name": s.Name, "is_mut": s.IsMut, "type": debugType(s.Type), "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "LetStmt", "name": debugExpr(s.Name), "is_mut": s.IsMut, "type": debugType(s.Type), "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
 	case *ConstStmt:
-		return map[string]any{"kind": "ConstStmt", "name": s.Name, "type": debugType(s.Type), "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "ConstStmt", "name": debugExpr(s.Name), "type": debugType(s.Type), "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
 	case *ReturnStmt:
 		return map[string]any{"kind": "ReturnStmt", "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
 	case *ExprStmt:
@@ -158,19 +131,21 @@ func debugStmt(stmt Stmt) any {
 	case *WhileStmt:
 		return map[string]any{"kind": "WhileStmt", "cond": debugExpr(s.Cond), "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
 	case *ForStmt:
-		return map[string]any{"kind": "ForStmt", "iterable": debugExpr(s.Iterable), "index_name": s.IndexName, "value_name": s.ValueName, "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "ForStmt", "iterable": debugExpr(s.Iterable), "index_name": debugExpr(s.Index), "value_name": debugExpr(s.Value), "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
 	case *LabelStmt:
-		return map[string]any{"kind": "LabelStmt", "name": s.Name, "stmt": debugStmt(s.Stmt), "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "LabelStmt", "name": debugExpr(s.Name), "stmt": debugStmt(s.Stmt), "loc": debugLoc(s.Location)}
 	case *BreakStmt:
-		return map[string]any{"kind": "BreakStmt", "label": s.Label, "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "BreakStmt", "label": debugExpr(s.Label), "loc": debugLoc(s.Location)}
 	case *ContinueStmt:
-		return map[string]any{"kind": "ContinueStmt", "label": s.Label, "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "ContinueStmt", "label": debugExpr(s.Label), "loc": debugLoc(s.Location)}
 	case *DeferStmt:
 		return map[string]any{"kind": "DeferStmt", "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
 	case *ReleaseStmt:
 		return map[string]any{"kind": "ReleaseStmt", "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
+	case *PanicStmt:
+		return map[string]any{"kind": "PanicStmt", "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
 	case *LockStmt:
-		return map[string]any{"kind": "LockStmt", "value": debugExpr(s.Value), "name": s.Name, "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "LockStmt", "value": debugExpr(s.Value), "name": debugExpr(s.Name), "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
 	case *UnsafeStmt:
 		return map[string]any{"kind": "UnsafeStmt", "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
 	default:
@@ -209,13 +184,15 @@ func debugExpr(expr Expr) any {
 		}
 		return map[string]any{"kind": "CallExpr", "callee": debugExpr(e.Callee), "type_args": typeArgs, "args": args, "loc": debugLoc(e.Location)}
 	case *SelectorExpr:
-		return map[string]any{"kind": "SelectorExpr", "left": debugExpr(e.Left), "name": e.Name, "loc": debugLoc(e.Location)}
+		return map[string]any{"kind": "SelectorExpr", "left": debugExpr(e.Left), "name": debugExpr(e.Name), "loc": debugLoc(e.Location)}
 	case *CastExpr:
 		return map[string]any{"kind": "CastExpr", "left": debugExpr(e.Left), "type": debugType(e.Type), "loc": debugLoc(e.Location)}
+	case *CatchExpr:
+		return map[string]any{"kind": "CatchExpr", "left": debugExpr(e.Left), "fallback": debugExpr(e.Fallback), "payload": debugExpr(e.Payload), "handler": debugStmt(e.Handler), "loc": debugLoc(e.Location)}
 	case *CompositeLit:
 		items := make([]any, 0, len(e.Items))
 		for _, item := range e.Items {
-			items = append(items, map[string]any{"name": item.Name, "value": debugExpr(item.Value)})
+			items = append(items, map[string]any{"name": debugExpr(item.Name), "value": debugExpr(item.Value)})
 		}
 		return map[string]any{"kind": "CompositeLit", "items": items, "loc": debugLoc(e.Location)}
 	default:
@@ -264,7 +241,7 @@ func debugType(typ TypeExpr) any {
 			for _, param := range method.Params {
 				params = append(params, debugParam(param))
 			}
-			methods = append(methods, map[string]any{"name": method.Name, "params": params, "result": debugType(method.Result), "loc": debugLoc(method.Location)})
+			methods = append(methods, map[string]any{"name": debugExpr(method.Name), "params": params, "result": debugType(method.Result), "loc": debugLoc(method.Location)})
 		}
 		return map[string]any{"kind": "InterfaceType", "methods": methods, "loc": debugLoc(t.Location)}
 	case *EnumType:
@@ -274,7 +251,7 @@ func debugType(typ TypeExpr) any {
 				variants = append(variants, nil)
 				continue
 			}
-			variants = append(variants, map[string]any{"name": v.Name, "loc": debugLoc(v.Location)})
+			variants = append(variants, map[string]any{"name": debugExpr(v.Name), "loc": debugLoc(v.Location)})
 		}
 		return map[string]any{"kind": "EnumType", "variants": variants, "loc": debugLoc(t.Location)}
 	case *UnionType:
@@ -290,7 +267,7 @@ func debugType(typ TypeExpr) any {
 				members = append(members, nil)
 				continue
 			}
-			members = append(members, map[string]any{"name": m.Name, "loc": debugLoc(m.Location)})
+			members = append(members, map[string]any{"name": debugExpr(m.Name), "loc": debugLoc(m.Location)})
 		}
 		return map[string]any{"kind": "ErrorType", "members": members, "loc": debugLoc(t.Location)}
 	default:
@@ -302,14 +279,14 @@ func debugField(field *FieldDecl) any {
 	if field == nil {
 		return nil
 	}
-	return map[string]any{"name": field.Name, "type": debugType(field.Type), "default": debugExpr(field.Default), "loc": debugLoc(field.Location)}
+	return map[string]any{"name": debugExpr(field.Name), "type": debugType(field.Type), "default": debugExpr(field.Default), "loc": debugLoc(field.Location)}
 }
 
 func debugStaticField(field *StaticFieldDecl) any {
 	if field == nil {
 		return nil
 	}
-	return map[string]any{"name": field.Name, "type": debugType(field.Type), "default": debugExpr(field.Default), "loc": debugLoc(field.Location)}
+	return map[string]any{"name": debugExpr(field.Name), "type": debugType(field.Type), "default": debugExpr(field.Default), "loc": debugLoc(field.Location)}
 }
 
 func debugLoc(loc source.Location) any {

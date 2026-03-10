@@ -3,8 +3,8 @@ package ast
 import "compiler/internal/source"
 
 type ImportDecl struct {
-	Path     string
-	Alias    string
+	Path     Expr
+	Alias    *Ident
 	Location source.Location
 }
 
@@ -12,59 +12,53 @@ func (*ImportDecl) declNode()              {}
 func (d *ImportDecl) Loc() source.Location { return d.Location }
 
 type ConstDecl struct {
-	Name         string
-	NameLocation source.Location
-	Type         TypeExpr
-	Value        Expr
-	Location     source.Location
+	Name     *Ident
+	Type     TypeExpr
+	Value    Expr
+	Location source.Location
 }
 
 func (*ConstDecl) declNode()              {}
 func (d *ConstDecl) Loc() source.Location { return d.Location }
 
 type LetDecl struct {
-	Name         string
-	NameLocation source.Location
-	IsMut        bool
-	Type         TypeExpr
-	Value        Expr
-	Location     source.Location
+	Name     *Ident
+	IsMut    bool
+	Type     TypeExpr
+	Value    Expr
+	Location source.Location
 }
 
 func (*LetDecl) declNode()              {}
 func (d *LetDecl) Loc() source.Location { return d.Location }
 
 type TypeDecl struct {
-	Name         string
-	NameLocation source.Location
-	Type         TypeExpr
-	Location     source.Location
+	Name     *Ident
+	Type     TypeExpr
+	Location source.Location
 }
 
 func (*TypeDecl) declNode()              {}
 func (d *TypeDecl) Loc() source.Location { return d.Location }
 
 type Receiver struct {
-	Name         string
-	NameLocation source.Location
-	Type         TypeExpr
-	Location     source.Location
+	Name     *Ident
+	Type     TypeExpr
+	Location source.Location
 }
 
 func (r *Receiver) Loc() source.Location { return r.Location }
 
 type Param struct {
-	Name         string
-	NameLocation source.Location
-	IsComptime   bool
-	Type         TypeExpr
-	Location     source.Location
+	Name       *Ident
+	IsComptime bool
+	Type       TypeExpr
+	Location   source.Location
 }
 
 type FuncDecl struct {
 	Receiver      *Receiver
-	Name          string
-	NameLocation  source.Location
+	Name          *Ident
 	Doc           *CommentGroup
 	Attrs         []Attribute
 	IsUnsafe      bool
@@ -83,7 +77,7 @@ func (*FuncDecl) declNode()              {}
 func (d *FuncDecl) Loc() source.Location { return d.Location }
 
 type FieldDecl struct {
-	Name     string
+	Name     *Ident
 	Type     TypeExpr
 	Default  Expr
 	Location source.Location
@@ -92,7 +86,7 @@ type FieldDecl struct {
 func (d *FieldDecl) Loc() source.Location { return d.Location }
 
 type StaticFieldDecl struct {
-	Name     string
+	Name     *Ident
 	Type     TypeExpr
 	Default  Expr
 	Location source.Location

@@ -110,7 +110,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if declared != nil && d.Value != nil && !typeinfo.Assignable(declared, value) {
 			c.reportTypeMismatch(d.Value.Loc(), declared, value)
 		}
-		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name); ok {
+		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
 			c.info.BindSymbol(sym, finalType)
 		}
 	case *ast.ConstDecl:
@@ -134,7 +134,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 			c.reportTypeMismatch(d.Value.Loc(), declared, value)
 		}
 		c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
-		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name); ok {
+		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
 			c.info.BindSymbol(sym, finalType)
 		}
 	case *ast.TypeDecl:
@@ -219,7 +219,7 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		if d.Receiver.Type != nil {
 			c.info.BindNode(d.Receiver.Type, recvType)
 		}
-		funcScope.Declare(d.Receiver.Name, valueInfo{typ: recvType, mutable: true})
+		funcScope.Declare(d.Receiver.Name.Text(), valueInfo{typ: recvType, mutable: true})
 		c.info.BindNode(d.Receiver, recvType)
 	}
 	for _, param := range d.Params {
@@ -227,7 +227,7 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		if param.Type != nil {
 			c.info.BindNode(param.Type, paramType)
 		}
-		funcScope.Declare(param.Name, valueInfo{typ: paramType, mutable: false})
+		funcScope.Declare(param.Name.Text(), valueInfo{typ: paramType, mutable: false})
 	}
 	prevResult := c.currentResult
 	c.currentResult = c.funcResultType(c.mod, d)
@@ -268,7 +268,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		if declared != nil && s.Value != nil && !typeinfo.Assignable(declared, value) {
 			c.reportTypeMismatch(s.Value.Loc(), declared, value)
 		}
-		scope.Declare(s.Name, valueInfo{typ: finalType, mutable: s.IsMut})
+		scope.Declare(s.Name.Text(), valueInfo{typ: finalType, mutable: s.IsMut})
 	case *ast.ConstStmt:
 		var declared typeinfo.Type
 		if s.Type != nil {
@@ -286,7 +286,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 			c.reportTypeMismatch(s.Value.Loc(), declared, value)
 		}
 		c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
-		scope.Declare(s.Name, valueInfo{typ: finalType, constant: true})
+		scope.Declare(s.Name.Text(), valueInfo{typ: finalType, constant: true})
 	case *ast.ReturnStmt:
 		c.checkReturn(scope, s)
 	case *ast.ExprStmt:
@@ -323,10 +323,10 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		loopScope := newValueScope(scope)
 		iterType := c.typeOfExpr(loopScope, s.Iterable, nil)
 		indexType, valueType := c.forBindingTypes(iterType)
-		if s.IndexName != "" {
-			loopScope.Declare(s.IndexName, valueInfo{typ: indexType, mutable: false})
+		if s.Index != nil {
+			loopScope.Declare(s.Index.Text(), valueInfo{typ: indexType, mutable: false})
 		}
-		loopScope.Declare(s.ValueName, valueInfo{typ: valueType, mutable: false})
+		loopScope.Declare(s.Value.Text(), valueInfo{typ: valueType, mutable: false})
 		c.checkStmt(loopScope, s.Body)
 	case *ast.LabelStmt:
 		c.checkStmt(scope, s.Stmt)
@@ -350,7 +350,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 	case *ast.LockStmt:
 		valueType := c.typeOfExpr(scope, s.Value, nil)
 		lockScope := newValueScope(scope)
-		lockScope.Declare(s.Name, valueInfo{typ: valueType, mutable: true})
+		lockScope.Declare(s.Name.Text(), valueInfo{typ: valueType, mutable: true})
 		c.checkStmt(lockScope, s.Body)
 	case *ast.UnsafeStmt:
 		c.unsafeDepth++
@@ -743,7 +743,7 @@ func (c *checker) typeOfCatch(scope *valueScope, expr *ast.CatchExpr) typeinfo.T
 	}
 	if expr.Handler != nil {
 		handlerScope := newValueScope(scope)
-		handlerScope.Declare(expr.PayloadName, valueInfo{typ: errUnion.Error, mutable: false})
+		handlerScope.Declare(expr.Payload.Text(), valueInfo{typ: errUnion.Error, mutable: false})
 		c.checkStmt(handlerScope, expr.Handler)
 		if !stmtDefinitelyExits(expr.Handler) {
 			loc := expr.Handler.Location
@@ -771,14 +771,14 @@ func (c *checker) typeOfMethodCall(scope *valueScope, call *ast.CallExpr, select
 		return typeinfo.InvalidType{}, true
 	}
 
-	if field := c.lookupStructField(receiverType, selector.Name); field != nil {
+	if field := c.lookupStructField(receiverType, selector.Name.Text()); field != nil {
 		return nil, false
 	}
 
 	if iface, ok := c.underlying(receiverType).(*typeinfo.InterfaceType); ok {
-		method := iface.Methods[selector.Name]
+		method := iface.Methods[selector.Name.Text()]
 		if method == nil {
-			c.reportMethodNotFound(selector.Location, receiverType, selector.Name)
+			c.reportMethodNotFound(selector.Location, receiverType, selector.Name.Text())
 			return typeinfo.InvalidType{}, true
 		}
 		c.info.BindNode(selector, method)
@@ -788,10 +788,10 @@ func (c *checker) typeOfMethodCall(scope *valueScope, call *ast.CallExpr, select
 	}
 
 	addressable, mutable := c.exprAccess(scope, selector.Left)
-	_, methodType := c.lookupMethod(receiverType, selector.Name, addressable, mutable)
+	_, methodType := c.lookupMethod(receiverType, selector.Name.Text(), addressable, mutable)
 	if methodType == nil {
 		if c.canHaveMethods(receiverType) {
-			c.reportMethodNotFound(selector.Location, receiverType, selector.Name)
+			c.reportMethodNotFound(selector.Location, receiverType, selector.Name.Text())
 			return typeinfo.InvalidType{}, true
 		}
 		return nil, false
@@ -832,17 +832,17 @@ func (c *checker) typeOfSelector(scope *valueScope, expr *ast.SelectorExpr) type
 	if !ok {
 		loc := expr.Location
 		c.ctx.Diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("type %s has no field %q", left.String(), expr.Name)).
+			diagnostics.NewError(fmt.Sprintf("type %s has no field %q", left.String(), expr.Name.Text())).
 				WithCode(diagnostics.ErrFieldNotFound).
 				WithPrimaryLabel(&loc, "invalid field access"),
 		)
 		return typeinfo.InvalidType{}
 	}
-	field := structType.Fields[expr.Name]
+	field := structType.Fields[expr.Name.Text()]
 	if field == nil {
 		loc := expr.Location
 		c.ctx.Diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("unknown field %q", expr.Name)).
+			diagnostics.NewError(fmt.Sprintf("unknown field %q", expr.Name.Text())).
 				WithCode(diagnostics.ErrFieldNotFound).
 				WithPrimaryLabel(&loc, "field does not exist on this type"),
 		)
@@ -890,12 +890,13 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 	}
 	var positional int
 	for _, item := range expr.Items {
-		if item.Name != "" {
-			field := structType.Fields[item.Name]
+		if item.Name != nil {
+			fieldName := item.Name.Text()
+			field := structType.Fields[fieldName]
 			if field == nil {
 				loc := expr.Location
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError(fmt.Sprintf("unknown field %q", item.Name)).
+					diagnostics.NewError(fmt.Sprintf("unknown field %q", fieldName)).
 						WithCode(diagnostics.ErrUnknownField).
 						WithPrimaryLabel(&loc, "field does not exist on this type"),
 				)
@@ -1088,16 +1089,18 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			if field == nil {
 				continue
 			}
-			structField := &typeinfo.StructField{Name: field.Name, Type: c.typeFromSyntax(mod, field.Type)}
-			fields[field.Name] = structField
+			fieldName := field.Name.Text()
+			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type)}
+			fields[fieldName] = structField
 			orderedFields = append(orderedFields, structField)
 		}
 		for _, field := range t.StaticFields {
 			if field == nil {
 				continue
 			}
-			structField := &typeinfo.StructField{Name: field.Name, Type: c.typeFromSyntax(mod, field.Type)}
-			staticFields[field.Name] = structField
+			fieldName := field.Name.Text()
+			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type)}
+			staticFields[fieldName] = structField
 			orderedStaticFields = append(orderedStaticFields, structField)
 		}
 		return &typeinfo.StructType{Fields: fields, OrderedFields: orderedFields, StaticFields: staticFields, OrderedStaticFields: orderedStaticFields}
@@ -1106,8 +1109,9 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		orderedVariants := make([]string, 0, len(t.Variants))
 		for _, variant := range t.Variants {
 			if variant != nil {
-				variants[variant.Name] = struct{}{}
-				orderedVariants = append(orderedVariants, variant.Name)
+				name := variant.Name.Text()
+				variants[name] = struct{}{}
+				orderedVariants = append(orderedVariants, name)
 			}
 		}
 		return &typeinfo.EnumType{Variants: variants, OrderedVariants: orderedVariants}
@@ -1116,8 +1120,9 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		orderedMembers := make([]string, 0, len(t.Members))
 		for _, member := range t.Members {
 			if member != nil {
-				members[member.Name] = struct{}{}
-				orderedMembers = append(orderedMembers, member.Name)
+				name := member.Name.Text()
+				members[name] = struct{}{}
+				orderedMembers = append(orderedMembers, name)
 			}
 		}
 		return &typeinfo.ErrorSetType{Members: members, OrderedMembers: orderedMembers}
@@ -1141,8 +1146,9 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				comptimeParams = append(comptimeParams, param.IsComptime)
 			}
 			fnType := &typeinfo.FuncType{Params: params, ComptimeParams: comptimeParams, Result: c.typeFromSyntax(mod, method.Result)}
-			methods[method.Name] = fnType
-			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: method.Name, Type: fnType})
+			name := method.Name.Text()
+			methods[name] = fnType
+			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Type: fnType})
 		}
 		return &typeinfo.InterfaceType{Methods: methods, OrderedMethods: orderedMethods}
 	default:
@@ -1445,7 +1451,7 @@ func (c *checker) findTypeDecl(mod *context.Module, name string) *ast.TypeDecl {
 	}
 	for _, decl := range mod.AST.Decls {
 		typeDecl, ok := decl.(*ast.TypeDecl)
-		if ok && typeDecl.Name == name {
+		if ok && typeDecl.Name.Text() == name {
 			return typeDecl
 		}
 	}

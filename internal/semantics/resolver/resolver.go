@@ -53,11 +53,11 @@ func (r *resolver) resolveImports() {
 		if imp == nil {
 			continue
 		}
-		resolved, err := r.ctx.ResolveImport(r.mod, imp.Path)
+		resolved, err := r.ctx.ResolveImport(r.mod, ast.ExprText(imp.Path))
 		if err != nil {
 			continue
 		}
-		name := imp.Alias
+		name := ast.ExprText(imp.Alias)
 		segments := []string{lastImportSegment(resolved.ImportPath)}
 		if name != "" {
 			segments = []string{name}
@@ -67,7 +67,7 @@ func (r *resolver) resolveImports() {
 			ImportPath: resolved.ImportPath,
 			ModuleKey:  resolved.Key,
 			Segments:   segments,
-			Location:   imp.Location,
+			Location:   importBindingLocation(imp),
 		}
 		key := b.Key()
 		if prev, ok := seen[key]; ok {
@@ -113,15 +113,15 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 		defer func() { r.currentFn = prevFn }()
 		funcScope := table.New(scope)
 		if d.Receiver != nil {
-			sym := symbols.New(d.Receiver.Name, symbols.SymbolParam, nil)
-			sym.Location = d.Receiver.NameLocation
+			sym := symbols.New(d.Receiver.Name.Text(), symbols.SymbolParam, nil)
+			sym.Location = d.Receiver.Name.Loc()
 			funcScope.Declare(sym)
 			r.info.AddFunctionLocal(d, sym)
 		}
 		for _, param := range d.Params {
 			r.resolveType(scope, param.Type)
-			sym := symbols.New(param.Name, symbols.SymbolParam, nil)
-			sym.Location = param.NameLocation
+			sym := symbols.New(param.Name.Text(), symbols.SymbolParam, nil)
+			sym.Location = param.Name.Loc()
 			funcScope.Declare(sym)
 			r.info.AddFunctionLocal(d, sym)
 		}
@@ -143,15 +143,15 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.LetStmt:
 		r.resolveType(scope, s.Type)
 		r.resolveExpr(scope, s.Value)
-		sym := symbols.New(s.Name, symbols.SymbolVar, s)
-		sym.Location = s.NameLocation
+		sym := symbols.New(s.Name.Text(), symbols.SymbolVar, s)
+		sym.Location = s.Name.Loc()
 		scope.Declare(sym)
 		r.addFunctionLocal(sym)
 	case *ast.ConstStmt:
 		r.resolveType(scope, s.Type)
 		r.resolveExpr(scope, s.Value)
-		sym := symbols.New(s.Name, symbols.SymbolConst, s)
-		sym.Location = s.NameLocation
+		sym := symbols.New(s.Name.Text(), symbols.SymbolConst, s)
+		sym.Location = s.Name.Loc()
 		scope.Declare(sym)
 		r.addFunctionLocal(sym)
 	case *ast.ReturnStmt:
@@ -182,15 +182,15 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.ForStmt:
 		loopScope := table.New(scope)
 		r.resolveExpr(loopScope, s.Iterable)
-		if s.IndexName != "" {
-			sym := symbols.New(s.IndexName, symbols.SymbolVar, nil)
-			sym.Location = s.IndexLocation
+		if s.Index != nil {
+			sym := symbols.New(s.Index.Text(), symbols.SymbolVar, nil)
+			sym.Location = s.Index.Loc()
 			loopScope.Declare(sym)
 			r.addFunctionLocal(sym)
 		}
-		if s.ValueName != "" {
-			sym := symbols.New(s.ValueName, symbols.SymbolVar, nil)
-			sym.Location = s.ValueLocation
+		if s.Value != nil {
+			sym := symbols.New(s.Value.Text(), symbols.SymbolVar, nil)
+			sym.Location = s.Value.Loc()
 			loopScope.Declare(sym)
 			r.addFunctionLocal(sym)
 		}
@@ -198,14 +198,14 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.resolveStmt(loopScope, s.Body)
 		r.loopDepth--
 	case *ast.LabelStmt:
-		label := &binding.LabelBinding{Name: s.Name, Stmt: s.Stmt, Location: s.Location}
+		label := &binding.LabelBinding{Name: s.Name.Text(), Stmt: s.Stmt, Location: s.Name.Loc()}
 		r.labels = append(r.labels, label)
 		r.resolveStmt(scope, s.Stmt)
 		r.labels = r.labels[:len(r.labels)-1]
 	case *ast.BreakStmt:
-		r.resolveBreakLike(s.Label, stmt, diagnostics.ErrInvalidBreak, "break")
+		r.resolveBreakLike(ast.ExprText(s.Label), stmt, diagnostics.ErrInvalidBreak, "break")
 	case *ast.ContinueStmt:
-		r.resolveBreakLike(s.Label, stmt, diagnostics.ErrInvalidContinue, "continue")
+		r.resolveBreakLike(ast.ExprText(s.Label), stmt, diagnostics.ErrInvalidContinue, "continue")
 	case *ast.DeferStmt:
 		r.resolveStmt(scope, s.Body)
 	case *ast.ReleaseStmt:
@@ -215,8 +215,8 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.LockStmt:
 		r.resolveExpr(scope, s.Value)
 		lockScope := table.New(scope)
-		sym := symbols.New(s.Name, symbols.SymbolVar, s)
-		sym.Location = s.NameLocation
+		sym := symbols.New(s.Name.Text(), symbols.SymbolVar, s)
+		sym.Location = s.Name.Loc()
 		lockScope.Declare(sym)
 		r.addFunctionLocal(sym)
 		r.resolveStmt(lockScope, s.Body)
@@ -237,7 +237,7 @@ func (r *resolver) lookupFunctionSymbol(fn *ast.FuncDecl) (*symbols.Symbol, bool
 		return nil, false
 	}
 	if fn.Receiver == nil && r.mod.ModuleScope != nil {
-		if sym, ok := r.mod.ModuleScope.LookupLocal(fn.Name); ok {
+		if sym, ok := r.mod.ModuleScope.LookupLocal(fn.Name.Text()); ok {
 			return sym, true
 		}
 	}
@@ -262,7 +262,7 @@ func isNilStmt(stmt ast.Stmt) bool {
 func (r *resolver) resolveBreakLike(labelName string, node ast.Node, code string, keyword string) {
 	if labelName == "" {
 		if r.loopDepth == 0 {
-			loc := node.Loc()
+			loc := breakLikeLocation(node)
 			r.ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("%s is not inside a loop", keyword)).
 					WithCode(code).
@@ -277,7 +277,7 @@ func (r *resolver) resolveBreakLike(labelName string, node ast.Node, code string
 			continue
 		}
 		if !isLoopStmt(label.Stmt) {
-			loc := node.Loc()
+			loc := breakLikeLocation(node)
 			r.ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("%s label %q does not name a loop", keyword, labelName)).
 					WithCode(code).
@@ -288,12 +288,42 @@ func (r *resolver) resolveBreakLike(labelName string, node ast.Node, code string
 		r.info.BindLabel(node, label)
 		return
 	}
-	loc := node.Loc()
+	loc := breakLikeLocation(node)
 	r.ctx.Diagnostics.Add(
 		diagnostics.NewError(fmt.Sprintf("unknown label %q", labelName)).
 			WithCode(code).
 			WithPrimaryLabel(&loc, "unknown labeled control-flow target"),
 	)
+}
+
+func importBindingLocation(imp *ast.ImportDecl) source.Location {
+	if imp == nil {
+		return source.Location{}
+	}
+	if imp.Alias != nil {
+		return imp.Alias.Loc()
+	}
+	if imp.Path != nil {
+		return imp.Path.Loc()
+	}
+	return imp.Location
+}
+
+func breakLikeLocation(node ast.Node) source.Location {
+	switch n := node.(type) {
+	case *ast.BreakStmt:
+		if n.Label != nil {
+			return n.Label.Loc()
+		}
+		return n.Location
+	case *ast.ContinueStmt:
+		if n.Label != nil {
+			return n.Label.Loc()
+		}
+		return n.Location
+	default:
+		return node.Loc()
+	}
 }
 
 func isLoopStmt(stmt ast.Stmt) bool {

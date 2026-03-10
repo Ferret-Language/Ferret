@@ -495,9 +495,9 @@ func lowerStructView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 			if field == nil {
 				continue
 			}
-			entry := &typeinfo.StructField{Name: field.Name}
+			entry := &typeinfo.StructField{Name: field.Name.Text()}
 			fields = append(fields, entry)
-			fieldMap[field.Name] = entry
+			fieldMap[field.Name.Text()] = entry
 		}
 		return &typeinfo.StructType{Fields: fieldMap, OrderedFields: fields}, true
 	case *typeinfo.StructType:

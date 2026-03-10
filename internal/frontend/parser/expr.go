@@ -114,12 +114,15 @@ func (p *Parser) parseCompositeLit() ast.Expr {
 	items := make([]ast.CompositeItem, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
 		if p.match(tokens.DOT) {
-			name := p.expectIdent("expected field name").Literal
+			nameTok := p.expectIdent("expected field name")
 			p.expect(tokens.ASSIGN, "expected '='")
 			p.compositeValueDepth++
 			value := p.parseExpr(precLowest)
 			p.compositeValueDepth--
-			items = append(items, ast.CompositeItem{Name: name, Value: value})
+			items = append(items, ast.CompositeItem{
+				Name:  &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+				Value: value,
+			})
 		} else {
 			p.compositeValueDepth++
 			value := p.parseExpr(precLowest)
@@ -194,8 +197,12 @@ func (p *Parser) parseArgList() []ast.Expr {
 func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
 	p.expect(tokens.DOT, "expected '.'")
-	name := p.expectIdent("expected selector name").Literal
-	return &ast.SelectorExpr{Left: left, Name: name, Location: p.makeExprLoc(start)}
+	nameTok := p.expectIdent("expected selector name")
+	return &ast.SelectorExpr{
+		Left:     left,
+		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		Location: p.makeExprLoc(start),
+	}
 }
 
 func (p *Parser) parseCast(left ast.Expr) ast.Expr {
@@ -251,14 +258,14 @@ func (p *Parser) parseCatch(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
 	p.expect(tokens.CATCH, "expected 'catch'")
 	if p.match(tokens.BAR) {
-		name := p.expectIdent("expected catch payload name").Literal
+		nameTok := p.expectIdent("expected catch payload name")
 		p.expect(tokens.BAR, "expected closing '|' after catch payload")
 		handler := p.parseBlock()
 		return &ast.CatchExpr{
-			Left:        left,
-			PayloadName: name,
-			Handler:     handler,
-			Location:    p.makeExprLoc(start),
+			Left:     left,
+			Payload:  &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+			Handler:  handler,
+			Location: p.makeExprLoc(start),
 		}
 	}
 	fallback := p.parseExpr(precCatch)

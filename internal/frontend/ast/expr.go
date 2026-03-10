@@ -1,6 +1,9 @@
 package ast
 
-import "compiler/internal/source"
+import (
+	"compiler/internal/source"
+	"strings"
+)
 
 type Ident struct {
 	Path     []string
@@ -9,6 +12,18 @@ type Ident struct {
 
 func (*Ident) exprNode()              {}
 func (e *Ident) Loc() source.Location { return e.Location }
+func (e *Ident) Text() string {
+	if e == nil {
+		return ""
+	}
+	return strings.Join(e.Path, "::")
+}
+func (e *Ident) Last() string {
+	if e == nil || len(e.Path) == 0 {
+		return ""
+	}
+	return e.Path[len(e.Path)-1]
+}
 
 type BadExpr struct {
 	Location source.Location
@@ -80,7 +95,7 @@ func (e *CallExpr) Loc() source.Location { return e.Location }
 
 type SelectorExpr struct {
 	Left     Expr
-	Name     string
+	Name     *Ident
 	Location source.Location
 }
 
@@ -97,18 +112,18 @@ func (*CastExpr) exprNode()              {}
 func (e *CastExpr) Loc() source.Location { return e.Location }
 
 type CatchExpr struct {
-	Left        Expr
-	Fallback    Expr
-	PayloadName string
-	Handler     *BlockStmt
-	Location    source.Location
+	Left     Expr
+	Fallback Expr
+	Payload  *Ident
+	Handler  *BlockStmt
+	Location source.Location
 }
 
 func (*CatchExpr) exprNode()              {}
 func (e *CatchExpr) Loc() source.Location { return e.Location }
 
 type CompositeItem struct {
-	Name  string
+	Name  *Ident
 	Value Expr
 }
 
@@ -119,3 +134,16 @@ type CompositeLit struct {
 
 func (*CompositeLit) exprNode()              {}
 func (e *CompositeLit) Loc() source.Location { return e.Location }
+
+func ExprText(expr Expr) string {
+	switch e := expr.(type) {
+	case nil:
+		return ""
+	case *Ident:
+		return e.Text()
+	case *StringLit:
+		return e.Value
+	default:
+		return ""
+	}
+}

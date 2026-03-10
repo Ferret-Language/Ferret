@@ -331,7 +331,7 @@ func findFunc(t *testing.T, mod *ast.Module, name string) *ast.FuncDecl {
 	t.Helper()
 	for _, decl := range mod.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
-		if ok && fn.Name == name {
+		if ok && fn.Name.Text() == name {
 			return fn
 		}
 	}
