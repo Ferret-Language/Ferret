@@ -11,7 +11,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/middleend/hir"
-	midir "compiler/internal/middleend/ir"
+	midmir "compiler/internal/middleend/mir"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/ownership"
@@ -80,7 +80,7 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 
 	changed := p.ctx.StoreModuleContent(mod, string(content))
 	p.ctx.Diagnostics.AddSourceContent(mod.FilePath, mod.Content)
-	if mod.Phase >= phase.PhaseIRGenerated && !changed {
+	if mod.Phase >= phase.PhaseOwnershipAnalyzed && !changed {
 		for _, depKey := range p.ctx.DependencyList(mod.Key) {
 			dep, ok := p.ctx.GetModule(depKey)
 			if !ok {
@@ -125,9 +125,11 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 	mod.LoweredHIR = hir.Lower(mod.HIR)
 	mod.Phase = phase.PhaseHIRLowered
 	cfganalysis.AnalyzeModule(p.ctx, mod)
+	mod.MIR = midmir.LowerModule(mod.CFG, mod.HIR)
+	midmir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
+	mod.Phase = phase.PhaseMIRGenerated
 	ownership.AnalyzeModule(p.ctx, mod)
-	mod.IR = midir.LowerModule(mod.CFG, mod.HIR)
-	mod.Phase = phase.PhaseIRGenerated
+	mod.Phase = phase.PhaseOwnershipAnalyzed
 	return nil
 }
 

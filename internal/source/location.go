@@ -1,10 +1,10 @@
 package source
 
 import (
-	"strings"
 	"bufio"
 	"fmt"
 	"os"
+	"strings"
 )
 
 type Location struct {
@@ -61,14 +61,14 @@ func (l *Location) GetText(cache SourceCache) string {
 		switch lineNum {
 		case l.Start.Line:
 			if l.Start.Column >= 1 && l.Start.Column <= len(line)+1 {
-				result .WriteString(line[l.Start.Column-1:])
+				result.WriteString(line[l.Start.Column-1:])
 			}
 		case l.End.Line:
 			if l.End.Column >= 1 && l.End.Column <= len(line)+1 {
-				result .WriteString("\n" + line[:l.End.Column-1])
+				result.WriteString("\n" + line[:l.End.Column-1])
 			}
 		default:
-			result .WriteString("\n" + line)
+			result.WriteString("\n" + line)
 		}
 	}
 	return result.String()

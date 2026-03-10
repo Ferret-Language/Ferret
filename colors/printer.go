@@ -81,7 +81,7 @@ func StripANSI(s string) string {
 			}
 			continue
 		}
-		result .WriteString(string(s[i]))
+		result.WriteString(string(s[i]))
 	}
 	return result.String()
 }

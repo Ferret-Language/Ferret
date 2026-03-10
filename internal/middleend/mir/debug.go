@@ -1,4 +1,4 @@
-package ir
+package mir
 
 func DebugModule(mod *Module) any {
 	if mod == nil {
@@ -16,6 +16,20 @@ func DebugModule(mod *Module) any {
 	}
 	funcs := make([]any, 0, len(mod.Functions))
 	for _, fn := range mod.Functions {
+		locals := make([]any, 0, len(fn.Locals))
+		for _, local := range fn.Locals {
+			if local == nil {
+				continue
+			}
+			locals = append(locals, map[string]any{
+				"id":       local.ID,
+				"name":     local.Name,
+				"type":     typeString(local.Type),
+				"mutable":  local.Mutable,
+				"constant": local.Constant,
+				"temp":     local.IsTemp,
+			})
+		}
 		blocks := make([]any, 0, len(fn.Blocks))
 		for _, block := range fn.Blocks {
 			instrs := make([]any, 0, len(block.Instructions))
@@ -33,6 +47,7 @@ func DebugModule(mod *Module) any {
 			"entry":  fn.EntryID,
 			"exit":   fn.ExitID,
 			"result": typeString(fn.Result),
+			"locals": locals,
 			"blocks": blocks,
 		})
 	}
@@ -48,8 +63,14 @@ func debugInstr(instr Instr) any {
 	switch i := instr.(type) {
 	case *BindInstr:
 		return map[string]any{"kind": "bind", "name": i.Name, "mutable": i.Mutable, "constant": i.Constant, "type": typeString(i.Type), "value": debugValue(i.Value)}
+	case *AssignInstr:
+		return map[string]any{"kind": "assign", "target": i.TargetID, "value": debugValue(i.Value)}
+	case *ComputeInstr:
+		return map[string]any{"kind": "compute", "target": i.TargetID, "type": typeString(i.Type), "value": debugValue(i.Value)}
 	case *StoreInstr:
 		return map[string]any{"kind": "store", "target": debugPlace(i.Target), "value": debugValue(i.Value)}
+	case *StoreFieldInstr:
+		return map[string]any{"kind": "store_field", "base": debugValue(i.Base), "field_index": i.FieldIndex, "value": debugValue(i.Value)}
 	case *EvalInstr:
 		return map[string]any{"kind": "eval", "value": debugValue(i.Value)}
 	case *DeferInstr:
@@ -59,7 +80,7 @@ func debugInstr(instr Instr) any {
 		}
 		return map[string]any{"kind": "defer", "body": body}
 	case *LockInstr:
-		return map[string]any{"kind": "lock", "name": i.Name, "value": debugValue(i.Value)}
+		return map[string]any{"kind": "lock", "local": i.LocalID, "value": debugValue(i.Value)}
 	case *UnsafeInstr:
 		return map[string]any{"kind": "unsafe"}
 	default:
@@ -92,6 +113,10 @@ func debugValue(value Value) any {
 	switch v := value.(type) {
 	case *NameValue:
 		return map[string]any{"kind": "name", "path": append([]string(nil), v.Path...), "type": typeString(v.Type())}
+	case *LocalValue:
+		return map[string]any{"kind": "local", "id": v.LocalID, "type": typeString(v.Type())}
+	case *TempValue:
+		return map[string]any{"kind": "temp", "name": v.Name, "type": typeString(v.Type())}
 	case *NumberValue:
 		return map[string]any{"kind": "number", "value": v.Value, "type": typeString(v.Type())}
 	case *StringValue:
@@ -110,8 +135,10 @@ func debugValue(value Value) any {
 			args = append(args, debugValue(arg))
 		}
 		return map[string]any{"kind": "call", "callee": debugValue(v.Callee), "args": args, "type": typeString(v.Type())}
+	case *FieldLoadValue:
+		return map[string]any{"kind": "field_load", "base": debugValue(v.Base), "field_index": v.FieldIndex, "type": typeString(v.Type())}
 	case *FieldValue:
-		return map[string]any{"kind": "field", "base": debugValue(v.Base), "name": v.Name, "type": typeString(v.Type())}
+		return map[string]any{"kind": "member", "base": debugValue(v.Base), "field_index": v.FieldIndex, "member_name": v.MemberName, "type": typeString(v.Type())}
 	case *CastValue:
 		return map[string]any{"kind": "cast", "left": debugValue(v.Left), "type": typeString(v.Type())}
 	case *CompositeValue:
@@ -128,9 +155,9 @@ func debugValue(value Value) any {
 func debugPlace(place Place) any {
 	switch p := place.(type) {
 	case *LocalPlace:
-		return map[string]any{"kind": "local", "name": p.Name}
+		return map[string]any{"kind": "local", "id": p.LocalID}
 	case *FieldPlace:
-		return map[string]any{"kind": "field", "base": debugPlace(p.Base), "name": p.Name}
+		return map[string]any{"kind": "field", "base": debugPlace(p.Base), "field_index": p.FieldIndex}
 	default:
 		return nil
 	}

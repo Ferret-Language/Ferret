@@ -157,6 +157,9 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 				continue
 			}
 			fieldType := c.typeFromSyntax(c.mod, field.Type)
+			if field.Type != nil {
+				c.info.BindNode(field.Type, fieldType)
+			}
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
 				if !typeinfo.Assignable(fieldType, valueType) {
@@ -169,12 +172,36 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 				continue
 			}
 			fieldType := c.typeFromSyntax(c.mod, field.Type)
+			if field.Type != nil {
+				c.info.BindNode(field.Type, fieldType)
+			}
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
 				if !typeinfo.Assignable(fieldType, valueType) {
 					c.reportTypeMismatch(field.Default.Loc(), fieldType, valueType)
 				}
 				c.requireConstExpr(nil, field.Default, "static field initializer must be compile-time evaluable")
+			}
+		}
+	case *ast.InterfaceType:
+		for _, method := range t.Methods {
+			if method == nil {
+				continue
+			}
+			for _, param := range method.Params {
+				paramType := c.typeFromSyntax(c.mod, param.Type)
+				if param.Type != nil {
+					c.info.BindNode(param.Type, paramType)
+				}
+			}
+			if method.Result != nil {
+				c.info.BindNode(method.Result, c.typeFromSyntax(c.mod, method.Result))
+			}
+		}
+	case *ast.UnionType:
+		for _, member := range t.Members {
+			if member != nil {
+				c.info.BindNode(member, c.typeFromSyntax(c.mod, member))
 			}
 		}
 	}
@@ -1016,6 +1043,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		fields := make(map[string]*typeinfo.StructField)
 		orderedFields := make([]*typeinfo.StructField, 0, len(t.Fields))
 		staticFields := make(map[string]*typeinfo.StructField)
+		orderedStaticFields := make([]*typeinfo.StructField, 0, len(t.StaticFields))
 		for _, field := range t.Fields {
 			if field == nil {
 				continue
@@ -1028,25 +1056,31 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			if field == nil {
 				continue
 			}
-			staticFields[field.Name] = &typeinfo.StructField{Name: field.Name, Type: c.typeFromSyntax(mod, field.Type)}
+			structField := &typeinfo.StructField{Name: field.Name, Type: c.typeFromSyntax(mod, field.Type)}
+			staticFields[field.Name] = structField
+			orderedStaticFields = append(orderedStaticFields, structField)
 		}
-		return &typeinfo.StructType{Fields: fields, OrderedFields: orderedFields, StaticFields: staticFields}
+		return &typeinfo.StructType{Fields: fields, OrderedFields: orderedFields, StaticFields: staticFields, OrderedStaticFields: orderedStaticFields}
 	case *ast.EnumType:
 		variants := make(map[string]struct{}, len(t.Variants))
+		orderedVariants := make([]string, 0, len(t.Variants))
 		for _, variant := range t.Variants {
 			if variant != nil {
 				variants[variant.Name] = struct{}{}
+				orderedVariants = append(orderedVariants, variant.Name)
 			}
 		}
-		return &typeinfo.EnumType{Variants: variants}
+		return &typeinfo.EnumType{Variants: variants, OrderedVariants: orderedVariants}
 	case *ast.ErrorType:
 		members := make(map[string]struct{}, len(t.Members))
+		orderedMembers := make([]string, 0, len(t.Members))
 		for _, member := range t.Members {
 			if member != nil {
 				members[member.Name] = struct{}{}
+				orderedMembers = append(orderedMembers, member.Name)
 			}
 		}
-		return &typeinfo.ErrorSetType{Members: members}
+		return &typeinfo.ErrorSetType{Members: members, OrderedMembers: orderedMembers}
 	case *ast.UnionType:
 		members := make([]typeinfo.Type, 0, len(t.Members))
 		for _, member := range t.Members {
@@ -1055,6 +1089,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		return &typeinfo.UnionType{Members: members}
 	case *ast.InterfaceType:
 		methods := make(map[string]*typeinfo.FuncType)
+		orderedMethods := make([]*typeinfo.InterfaceMethod, 0, len(t.Methods))
 		for _, method := range t.Methods {
 			if method == nil {
 				continue
@@ -1065,9 +1100,11 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				params = append(params, c.typeFromSyntax(mod, param.Type))
 				comptimeParams = append(comptimeParams, param.IsComptime)
 			}
-			methods[method.Name] = &typeinfo.FuncType{Params: params, ComptimeParams: comptimeParams, Result: c.typeFromSyntax(mod, method.Result)}
+			fnType := &typeinfo.FuncType{Params: params, ComptimeParams: comptimeParams, Result: c.typeFromSyntax(mod, method.Result)}
+			methods[method.Name] = fnType
+			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: method.Name, Type: fnType})
 		}
-		return &typeinfo.InterfaceType{Methods: methods}
+		return &typeinfo.InterfaceType{Methods: methods, OrderedMethods: orderedMethods}
 	default:
 		return typeinfo.UnknownType{}
 	}

@@ -15,7 +15,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/middleend/hir"
-	midir "compiler/internal/middleend/ir"
+	midmir "compiler/internal/middleend/mir"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/binding"
 	"compiler/internal/semantics/symbols"
@@ -60,7 +60,7 @@ type Module struct {
 	HIR          *hir.Module
 	LoweredHIR   *hir.Module
 	CFG          *cfg.Module
-	IR           *midir.Module
+	MIR          *midmir.Module
 	Phase        phase.ModulePhase
 	Dependencies []string
 	ModuleScope  *table.Scope

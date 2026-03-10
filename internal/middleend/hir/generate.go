@@ -14,17 +14,144 @@ func Generate(key, importPath, filePath string, astMod *ast.Module, types *typei
 		ImportPath: importPath,
 		FilePath:   filePath,
 		Source:     astMod,
+		Types:      make([]*TypeDecl, 0),
 		Globals:    make([]*Global, 0),
 		Functions:  make([]*Func, 0),
 	}
 	for _, decl := range astMod.Decls {
 		switch d := decl.(type) {
+		case *ast.TypeDecl:
+			out.Types = append(out.Types, generateTypeDecl(key, types, d))
 		case *ast.LetDecl:
 			out.Globals = append(out.Globals, generateLetDecl(types, d))
 		case *ast.ConstDecl:
 			out.Globals = append(out.Globals, generateConstDecl(types, d))
 		case *ast.FuncDecl:
 			out.Functions = append(out.Functions, generateFunc(types, d))
+		}
+	}
+	return out
+}
+
+func generateTypeDecl(key string, types *typeinfo.ModuleInfo, d *ast.TypeDecl) *TypeDecl {
+	if d == nil {
+		return nil
+	}
+	out := &TypeDecl{
+		Name:       d.Name,
+		Named:      &typeinfo.NamedType{ModuleKey: key, Name: d.Name, Decl: d},
+		Underlying: syntaxType(types, d.Type),
+		Location:   d.Location,
+		Source:     d,
+	}
+	switch t := d.Type.(type) {
+	case *ast.StructType:
+		out.Struct = generateStructTypeDecl(types, t)
+	case *ast.InterfaceType:
+		out.Interface = generateInterfaceTypeDecl(types, t)
+	case *ast.EnumType:
+		out.Enum = generateEnumTypeDecl(t)
+	case *ast.UnionType:
+		out.Union = generateUnionTypeDecl(types, t)
+	case *ast.ErrorType:
+		out.Error = generateErrorTypeDecl(t)
+	}
+	return out
+}
+
+func generateStructTypeDecl(types *typeinfo.ModuleInfo, t *ast.StructType) *StructTypeDecl {
+	if t == nil {
+		return nil
+	}
+	out := &StructTypeDecl{
+		Fields:       make([]*StructFieldDecl, 0, len(t.Fields)),
+		StaticFields: make([]*StructFieldDecl, 0, len(t.StaticFields)),
+	}
+	for _, field := range t.Fields {
+		if field == nil {
+			continue
+		}
+		out.Fields = append(out.Fields, &StructFieldDecl{
+			Name:     field.Name,
+			Type:     syntaxType(types, field.Type),
+			Default:  generateExpr(types, field.Default),
+			Location: field.Location,
+		})
+	}
+	for _, field := range t.StaticFields {
+		if field == nil {
+			continue
+		}
+		out.StaticFields = append(out.StaticFields, &StructFieldDecl{
+			Name:     field.Name,
+			Type:     syntaxType(types, field.Type),
+			Default:  generateExpr(types, field.Default),
+			Location: field.Location,
+		})
+	}
+	return out
+}
+
+func generateInterfaceTypeDecl(types *typeinfo.ModuleInfo, t *ast.InterfaceType) *InterfaceTypeDecl {
+	if t == nil {
+		return nil
+	}
+	out := &InterfaceTypeDecl{Methods: make([]*InterfaceMethodDecl, 0, len(t.Methods))}
+	for _, method := range t.Methods {
+		if method == nil {
+			continue
+		}
+		entry := &InterfaceMethodDecl{
+			Name:     method.Name,
+			Result:   syntaxType(types, method.Result),
+			Location: method.Location,
+			Params:   make([]*Param, 0, len(method.Params)),
+		}
+		for _, param := range method.Params {
+			entry.Params = append(entry.Params, &Param{
+				Name:       param.Name,
+				Type:       syntaxType(types, param.Type),
+				IsComptime: param.IsComptime,
+				Location:   param.Location,
+			})
+		}
+		out.Methods = append(out.Methods, entry)
+	}
+	return out
+}
+
+func generateEnumTypeDecl(t *ast.EnumType) *EnumTypeDecl {
+	if t == nil {
+		return nil
+	}
+	out := &EnumTypeDecl{Variants: make([]string, 0, len(t.Variants))}
+	for _, variant := range t.Variants {
+		if variant != nil {
+			out.Variants = append(out.Variants, variant.Name)
+		}
+	}
+	return out
+}
+
+func generateUnionTypeDecl(types *typeinfo.ModuleInfo, t *ast.UnionType) *UnionTypeDecl {
+	if t == nil {
+		return nil
+	}
+	out := &UnionTypeDecl{Members: make([]typeinfo.Type, 0, len(t.Members))}
+	for _, member := range t.Members {
+		out.Members = append(out.Members, syntaxType(types, member))
+	}
+	return out
+}
+
+func generateErrorTypeDecl(t *ast.ErrorType) *ErrorTypeDecl {
+	if t == nil {
+		return nil
+	}
+	out := &ErrorTypeDecl{Members: make([]string, 0, len(t.Members))}
+	for _, member := range t.Members {
+		if member != nil {
+			out.Members = append(out.Members, member.Name)
 		}
 	}
 	return out

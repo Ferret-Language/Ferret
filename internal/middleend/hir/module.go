@@ -11,8 +11,57 @@ type Module struct {
 	ImportPath string
 	FilePath   string
 	Source     *ast.Module
+	Types      []*TypeDecl
 	Globals    []*Global
 	Functions  []*Func
+}
+
+type TypeDecl struct {
+	Name       string
+	Named      *typeinfo.NamedType
+	Underlying typeinfo.Type
+	Struct     *StructTypeDecl
+	Interface  *InterfaceTypeDecl
+	Enum       *EnumTypeDecl
+	Union      *UnionTypeDecl
+	Error      *ErrorTypeDecl
+	Location   source.Location
+	Source     *ast.TypeDecl
+}
+
+type StructTypeDecl struct {
+	Fields       []*StructFieldDecl
+	StaticFields []*StructFieldDecl
+}
+
+type StructFieldDecl struct {
+	Name     string
+	Type     typeinfo.Type
+	Default  Expr
+	Location source.Location
+}
+
+type InterfaceTypeDecl struct {
+	Methods []*InterfaceMethodDecl
+}
+
+type InterfaceMethodDecl struct {
+	Name     string
+	Params   []*Param
+	Result   typeinfo.Type
+	Location source.Location
+}
+
+type EnumTypeDecl struct {
+	Variants []string
+}
+
+type UnionTypeDecl struct {
+	Members []typeinfo.Type
+}
+
+type ErrorTypeDecl struct {
+	Members []string
 }
 
 type Global struct {

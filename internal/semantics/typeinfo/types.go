@@ -111,21 +111,24 @@ type StructField struct {
 }
 
 type StructType struct {
-	Fields        map[string]*StructField
-	OrderedFields []*StructField
-	StaticFields  map[string]*StructField
+	Fields              map[string]*StructField
+	OrderedFields       []*StructField
+	StaticFields        map[string]*StructField
+	OrderedStaticFields []*StructField
 }
 
 func (t *StructType) String() string { return "struct" }
 
 type EnumType struct {
-	Variants map[string]struct{}
+	Variants        map[string]struct{}
+	OrderedVariants []string
 }
 
 func (t *EnumType) String() string { return "enum" }
 
 type ErrorSetType struct {
-	Members map[string]struct{}
+	Members        map[string]struct{}
+	OrderedMembers []string
 }
 
 func (t *ErrorSetType) String() string { return "error" }
@@ -137,7 +140,8 @@ type UnionType struct {
 func (t *UnionType) String() string { return "union" }
 
 type InterfaceType struct {
-	Methods map[string]*FuncType
+	Methods        map[string]*FuncType
+	OrderedMethods []*InterfaceMethod
 }
 
 func (t *InterfaceType) String() string { return "interface" }

@@ -7,9 +7,8 @@ import (
 	"compiler/internal/context"
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/middleend/hir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/phase"
-	"compiler/internal/semantics/binding"
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
@@ -234,56 +233,89 @@ type borrowInfo struct {
 	loc   source.Location
 }
 
+type tempInfo struct {
+	root   string
+	path   string
+	borrow *borrowInfo
+	value  mir.Value
+}
+
 type analyzer struct {
-	ctx      *context.CompilerContext
-	mod      *context.Module
-	module   *hir.Module
-	borrows  map[hir.Expr]borrowInfo
-	reported map[string]struct{}
+	ctx       *context.CompilerContext
+	mod       *context.Module
+	module    *mir.Module
+	currentFn *mir.Function
+	temps     map[int]tempInfo
+	reported  map[string]struct{}
 }
 
 func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
-	if ctx == nil || mod == nil || mod.HIR == nil || mod.CFG == nil {
+	if ctx == nil || mod == nil || mod.MIR == nil || mod.CFG == nil {
 		return
 	}
 	a := &analyzer{
 		ctx:      ctx,
 		mod:      mod,
-		module:   mod.HIR,
-		borrows:  make(map[hir.Expr]borrowInfo),
+		module:   mod.MIR,
+		temps:    make(map[int]tempInfo),
 		reported: make(map[string]struct{}),
 	}
-	for _, global := range mod.HIR.Globals {
+	for _, global := range mod.MIR.Globals {
 		a.checkGlobal(global)
 	}
-	for _, fn := range mod.CFG.Functions {
-		a.checkFunc(fn)
+	for i, fn := range mod.CFG.Functions {
+		if i >= len(mod.MIR.Functions) {
+			break
+		}
+		a.checkFunc(fn, mod.MIR.Functions[i])
 	}
 	mod.Phase = phase.PhaseOwnershipAnalyzed
 }
 
-func (a *analyzer) checkGlobal(global *hir.Global) {
-	if global == nil || global.Value == nil {
+func (a *analyzer) localName(id int) string {
+	if a == nil || a.currentFn == nil {
+		return ""
+	}
+	return a.currentFn.LocalName(id)
+}
+
+func (a *analyzer) localType(id int) typeinfo.Type {
+	if a == nil || a.currentFn == nil {
+		return typeinfo.UnknownType{}
+	}
+	return a.currentFn.LocalType(id)
+}
+
+func (a *analyzer) checkGlobal(global *mir.Global) {
+	if global == nil || global.Init == nil {
 		return
 	}
 	scope := newValueScope()
-	a.checkExpr(scope, global.Value)
+	a.checkValue(scope, global.Init)
 	if global.Constant {
-		a.reportBorrowEscapeIfNeeded(scope, global.Value, "borrow cannot escape into a module-level constant")
+		a.reportBorrowEscapeIfNeeded(scope, global.Init, "borrow cannot escape into a module-level constant")
 	} else {
-		a.reportBorrowEscapeIfNeeded(scope, global.Value, "borrow cannot escape into a module-level binding")
+		a.reportBorrowEscapeIfNeeded(scope, global.Init, "borrow cannot escape into a module-level binding")
 	}
-	a.consumeMoveValue(scope, global.Value, global.Type)
+	a.consumeMoveValue(scope, global.Init, global.Type)
 }
 
-func (a *analyzer) checkFunc(fn *cfg.Function) {
-	if fn == nil || fn.Source == nil || fn.Entry == nil {
+func (a *analyzer) checkFunc(cfgFn *cfg.Function, mirFn *mir.Function) {
+	if cfgFn == nil || mirFn == nil || cfgFn.Entry == nil {
 		return
+	}
+	a.currentFn = mirFn
+	defer func() { a.currentFn = nil }()
+	blocks := make(map[int]*mir.Block, len(mirFn.Blocks))
+	for _, block := range mirFn.Blocks {
+		if block != nil {
+			blocks[block.ID] = block
+		}
 	}
 	inStates := map[*cfg.Block]*valueScope{}
 	outStates := map[*cfg.Block]*valueScope{}
-	queue := []*cfg.Block{fn.Entry}
-	inStates[fn.Entry] = a.seedFunctionState(fn.Source)
+	queue := []*cfg.Block{cfgFn.Entry}
+	inStates[cfgFn.Entry] = a.seedFunctionState(mirFn)
 	for len(queue) > 0 {
 		block := queue[0]
 		queue = queue[1:]
@@ -291,7 +323,7 @@ func (a *analyzer) checkFunc(fn *cfg.Function) {
 		if in == nil {
 			continue
 		}
-		out := a.transferBlock(in, block)
+		out := a.transferBlock(in, block, blocks[block.ID])
 		outStates[block] = out
 		if block.Terminator == nil {
 			continue
@@ -315,7 +347,7 @@ func (a *analyzer) checkFunc(fn *cfg.Function) {
 	_ = outStates
 }
 
-func (a *analyzer) seedFunctionState(fn *hir.Func) *valueScope {
+func (a *analyzer) seedFunctionState(fn *mir.Function) *valueScope {
 	scope := newValueScope()
 	if fn == nil {
 		return scope
@@ -329,349 +361,403 @@ func (a *analyzer) seedFunctionState(fn *hir.Func) *valueScope {
 		}
 		scope.Declare(param.Name, valueInfo{typ: param.Type})
 	}
-	declareFunctionLocals(scope, fn.Body)
+	declareFunctionLocals(scope, fn)
 	return scope
 }
 
-func declareFunctionLocals(scope *valueScope, block *hir.BlockStmt) {
-	if scope == nil || block == nil {
+func declareFunctionLocals(scope *valueScope, fn *mir.Function) {
+	if scope == nil || fn == nil {
 		return
 	}
-	for _, stmt := range block.Stmts {
-		declareStmtLocals(scope, stmt)
-	}
-}
-
-func declareStmtLocals(scope *valueScope, stmt hir.Stmt) {
-	switch s := stmt.(type) {
-	case nil:
-		return
-	case *hir.BlockStmt:
-		declareFunctionLocals(scope, s)
-	case *hir.LetStmt:
-		scope.Declare(s.Name, valueInfo{typ: s.Type, mutable: s.Mutable})
-	case *hir.ConstStmt:
-		scope.Declare(s.Name, valueInfo{typ: s.Type, constant: true})
-	case *hir.IfStmt:
-		declareFunctionLocals(scope, s.Then)
-		declareStmtLocals(scope, s.Else)
-	case *hir.SwitchStmt:
-		for _, kase := range s.Cases {
-			if kase != nil {
-				declareFunctionLocals(scope, kase.Body)
-			}
+	for _, local := range fn.Locals {
+		if local == nil || local.Name == "" {
+			continue
 		}
-	case *hir.WhileStmt:
-		declareFunctionLocals(scope, s.Body)
-	case *hir.ForStmt:
-		declareStmtLocals(scope, s.Init)
-		declareStmtLocals(scope, s.Post)
-		declareFunctionLocals(scope, s.Body)
-	case *hir.LoopStmt:
-		declareStmtLocals(scope, s.Init)
-		declareStmtLocals(scope, s.Post)
-		declareFunctionLocals(scope, s.Body)
-	case *hir.LabelStmt:
-		declareStmtLocals(scope, s.Stmt)
-	case *hir.DeferStmt:
-		declareStmtLocals(scope, s.Body)
-	case *hir.LockStmt:
-		scope.Declare(s.Name, valueInfo{typ: exprType(s.Value), mutable: true})
-		declareFunctionLocals(scope, s.Body)
-	case *hir.UnsafeStmt:
-		declareFunctionLocals(scope, s.Body)
+		scope.Declare(local.Name, valueInfo{typ: local.Type, mutable: local.Mutable, constant: local.Constant})
 	}
 }
 
-func (a *analyzer) transferBlock(in *valueScope, block *cfg.Block) *valueScope {
+func (a *analyzer) transferBlock(in *valueScope, cfgBlock *cfg.Block, mirBlock *mir.Block) *valueScope {
 	state := in.Clone()
 	if state == nil {
 		state = newValueScope()
 	}
-	for _, stmt := range block.Stmts {
-		a.checkCFGStmt(state, block, stmt)
+	for _, info := range a.temps {
+		_ = info
 	}
-	switch term := block.Terminator.(type) {
-	case *cfg.BranchTerm:
-		a.checkExpr(state, term.Cond)
-	case *cfg.SwitchTerm:
-		a.checkExpr(state, term.Value)
-		for _, edge := range term.Cases {
-			a.checkExpr(state, edge.Expr)
+	a.temps = make(map[int]tempInfo)
+	if mirBlock != nil {
+		for _, instr := range mirBlock.Instructions {
+			a.checkMIRInstr(state, instr)
+		}
+		a.checkMIRTerm(state, mirBlock.Terminator)
+	} else {
+		switch term := cfgBlock.Terminator.(type) {
+		case *cfg.BranchTerm:
+			_ = term
+		case *cfg.SwitchTerm:
+			_ = term
 		}
 	}
-	state.TrimToLiveOut(block.LiveOut)
+	state.TrimToLiveOut(cfgBlock.LiveOut)
 	return state
 }
 
-func (a *analyzer) checkCFGStmt(scope *valueScope, block *cfg.Block, stmt hir.Stmt) {
-	switch s := stmt.(type) {
+func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
+	switch inst := instr.(type) {
 	case nil:
 		return
-	case *hir.LetStmt:
-		if s.Value != nil {
-			a.checkExpr(scope, s.Value)
-			a.consumeMoveValue(scope, s.Value, s.Type)
+	case *mir.ComputeInstr:
+		a.checkComputedValue(scope, inst)
+	case *mir.BindInstr:
+		if inst.Value != nil {
+			a.checkValue(scope, inst.Value)
+			a.consumeMoveValue(scope, inst.Value, inst.Type)
 		}
-		if slot, ok := scope.Lookup(s.Name); ok {
+		if slot, ok := scope.Lookup(inst.Name); ok {
 			slot.moved = false
 			slot.moveLoc = source.Location{}
-			a.bindBorrowValue(scope, slot, s.Value)
+			slot.movedPath = ""
+			slot.movedSubs = nil
+			a.bindBorrowValue(scope, slot, inst.Value)
 		}
-	case *hir.ConstStmt:
-		if s.Value != nil {
-			a.checkExpr(scope, s.Value)
-			a.consumeMoveValue(scope, s.Value, s.Type)
+	case *mir.StoreInstr:
+		a.checkAssignmentTarget(scope, inst.Target)
+		a.checkValue(scope, inst.Value)
+		a.consumeMoveValue(scope, inst.Value, a.placeType(scope, inst.Target))
+		a.rebindBorrowAssignment(scope, inst.Target, inst.Value)
+	case *mir.StoreFieldInstr:
+		target := a.fieldStorePlace(inst)
+		a.checkAssignmentTarget(scope, target)
+		a.checkValue(scope, inst.Base)
+		a.checkValue(scope, inst.Value)
+		a.consumeMoveValue(scope, inst.Value, mir.FieldType(valueType(inst.Base), inst.FieldIndex))
+	case *mir.AssignInstr:
+		targetName := a.localName(inst.TargetID)
+		if targetName == "" {
+			return
 		}
-		if slot, ok := scope.Lookup(s.Name); ok {
+		target := &mir.LocalPlace{LocalID: inst.TargetID}
+		a.checkAssignmentTarget(scope, target)
+		a.checkValue(scope, inst.Value)
+		a.consumeMoveValue(scope, inst.Value, a.localType(inst.TargetID))
+		a.rebindBorrowAssignment(scope, target, inst.Value)
+	case *mir.EvalInstr:
+		a.checkValue(scope, inst.Value)
+	case *mir.DeferInstr:
+		for _, child := range inst.Body {
+			a.checkDeferredInstr(scope, child)
+		}
+	case *mir.LockInstr:
+		a.checkValue(scope, inst.Value)
+		if slot, ok := scope.Lookup(a.localName(inst.LocalID)); ok {
 			slot.moved = false
 			slot.moveLoc = source.Location{}
-			a.bindBorrowValue(scope, slot, s.Value)
+			slot.movedPath = ""
+			slot.movedSubs = nil
 		}
-	case *hir.ReturnStmt:
-		if s.Value != nil {
-			a.checkExpr(scope, s.Value)
-			a.reportBorrowEscapeIfNeeded(scope, s.Value, "borrow cannot be returned")
-			a.consumeMoveValue(scope, s.Value, exprType(s.Value))
-		}
-	case *hir.ExprStmt:
-		a.checkExpr(scope, s.Value)
-	case *hir.AssignStmt:
-		a.checkAssignmentTarget(scope, s.Left)
-		a.checkExpr(scope, s.Right)
-		a.consumeMoveValue(scope, s.Right, exprType(s.Left))
-		a.rebindBorrowAssignment(scope, s.Left, s.Right)
-	case *hir.DeferStmt:
-		a.checkDeferredStmt(scope, s.Body)
-	case *hir.LockStmt:
-		a.checkExpr(scope, s.Value)
-		if slot, ok := scope.Lookup(s.Name); ok {
-			slot.moved = false
-			slot.moveLoc = source.Location{}
-		}
-	case *hir.UnsafeStmt, *hir.BreakStmt, *hir.ContinueStmt:
-		return
-	}
-	_ = block
-}
-
-func (a *analyzer) checkDeferredStmt(scope *valueScope, stmt hir.Stmt) {
-	switch s := stmt.(type) {
-	case nil:
-		return
-	case *hir.BlockStmt:
-		for _, child := range s.Stmts {
-			a.checkDeferredStmt(scope, child)
-		}
-	case *hir.LetStmt:
-		a.checkExpr(scope, s.Value)
-	case *hir.ConstStmt:
-		a.checkExpr(scope, s.Value)
-	case *hir.ReturnStmt:
-		a.checkExpr(scope, s.Value)
-	case *hir.ExprStmt:
-		a.checkExpr(scope, s.Value)
-	case *hir.AssignStmt:
-		a.checkExpr(scope, s.Left)
-		a.checkExpr(scope, s.Right)
-	case *hir.IfStmt:
-		a.checkExpr(scope, s.Cond)
-		a.checkDeferredStmt(scope, s.Then)
-		a.checkDeferredStmt(scope, s.Else)
-	case *hir.SwitchStmt:
-		a.checkExpr(scope, s.Value)
-		for _, kase := range s.Cases {
-			if kase == nil {
-				continue
-			}
-			a.checkExpr(scope, kase.Expr)
-			a.checkDeferredStmt(scope, kase.Body)
-		}
-	case *hir.WhileStmt:
-		a.checkExpr(scope, s.Cond)
-		a.checkDeferredStmt(scope, s.Body)
-	case *hir.ForStmt:
-		a.checkDeferredStmt(scope, s.Init)
-		a.checkExpr(scope, s.Cond)
-		a.checkDeferredStmt(scope, s.Post)
-		a.checkDeferredStmt(scope, s.Body)
-	case *hir.LoopStmt:
-		a.checkDeferredStmt(scope, s.Init)
-		a.checkExpr(scope, s.Cond)
-		a.checkDeferredStmt(scope, s.Post)
-		a.checkDeferredStmt(scope, s.Body)
-	case *hir.LabelStmt:
-		a.checkDeferredStmt(scope, s.Stmt)
-	case *hir.LockStmt:
-		a.checkExpr(scope, s.Value)
-	case *hir.UnsafeStmt:
+	case *mir.UnsafeInstr:
 		return
 	}
 }
 
-func (a *analyzer) checkExpr(scope *valueScope, expr hir.Expr) {
-	switch e := expr.(type) {
-	case nil, *hir.BadExpr, *hir.NumberLit, *hir.StringLit, *hir.NoneLit:
+func (a *analyzer) checkDeferredInstr(scope *valueScope, instr mir.Instr) {
+	switch inst := instr.(type) {
+	case nil:
 		return
-	case *hir.Ident:
-		a.requireActiveValue(scope, e)
-	case *hir.PrefixExpr:
-		switch e.Op {
+	case *mir.ComputeInstr:
+		a.checkComputedValue(scope, inst)
+	case *mir.BindInstr:
+		a.checkValue(scope, inst.Value)
+	case *mir.StoreInstr:
+		a.checkPlaceValue(scope, inst.Target)
+		a.checkValue(scope, inst.Value)
+	case *mir.AssignInstr:
+		a.checkValue(scope, inst.Value)
+	case *mir.StoreFieldInstr:
+		a.checkValue(scope, inst.Base)
+		a.checkValue(scope, inst.Value)
+	case *mir.EvalInstr:
+		a.checkValue(scope, inst.Value)
+	case *mir.DeferInstr:
+		for _, child := range inst.Body {
+			a.checkDeferredInstr(scope, child)
+		}
+	case *mir.LockInstr:
+		a.checkValue(scope, inst.Value)
+	case *mir.UnsafeInstr:
+		return
+	}
+}
+
+func (a *analyzer) checkMIRTerm(scope *valueScope, term mir.Terminator) {
+	switch t := term.(type) {
+	case nil, *mir.JumpTerm, *mir.ExitTerm:
+		return
+	case *mir.BranchTerm:
+		a.checkValue(scope, t.Cond)
+	case *mir.SwitchTerm:
+		a.checkValue(scope, t.Value)
+		for _, kase := range t.Cases {
+			a.checkValue(scope, kase.Expr)
+		}
+	case *mir.ReturnTerm:
+		if t.Value != nil {
+			a.checkValue(scope, t.Value)
+			a.reportBorrowEscapeIfNeeded(scope, t.Value, "borrow cannot be returned")
+			a.consumeMoveValue(scope, t.Value, valueType(t.Value))
+		}
+	}
+}
+
+func (a *analyzer) checkComputedValue(scope *valueScope, instr *mir.ComputeInstr) {
+	if instr == nil {
+		return
+	}
+	a.checkValue(scope, instr.Value)
+	if info, ok := a.tempInfoForValue(instr.Value); ok {
+		a.temps[instr.TargetID] = info
+	}
+}
+
+func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
+	switch v := value.(type) {
+	case nil, *mir.NumberValue, *mir.StringValue, *mir.NoneValue:
+		return
+	case *mir.LocalValue:
+		a.requireActiveLocal(scope, v)
+	case *mir.NameValue:
+		a.requireActiveValue(scope, v)
+	case *mir.FieldLoadValue:
+		a.checkFieldLoadValue(scope, v)
+	case *mir.UnaryValue:
+		switch v.Op {
 		case "copy":
-			a.checkExpr(scope, e.Right)
-			if !a.isCopyableType(exprType(e.Right)) {
-				loc := e.Loc()
+			a.checkValue(scope, v.Right)
+			if !a.isCopyableType(valueType(v.Right)) {
+				loc := v.Loc()
 				a.addDiagnostic(
-					diagnostics.NewError(fmt.Sprintf("cannot copy value of type %s", exprType(e.Right).String())).
+					diagnostics.NewError(fmt.Sprintf("cannot copy value of type %s", valueType(v.Right).String())).
 						WithCode(diagnostics.ErrInvalidCopy).
 						WithPrimaryLabel(&loc, "this value does not support copying"),
 				)
 			}
 		case "take":
-			a.checkExpr(scope, e.Right)
-			if !a.isMoveType(exprType(e.Right)) {
-				loc := e.Loc()
+			a.checkValue(scope, v.Right)
+			if !a.isMoveType(valueType(v.Right)) {
+				loc := v.Loc()
 				a.addDiagnostic(
-					diagnostics.NewError(fmt.Sprintf("cannot take value of type %s", exprType(e.Right).String())).
+					diagnostics.NewError(fmt.Sprintf("cannot take value of type %s", valueType(v.Right).String())).
 						WithCode(diagnostics.ErrInvalidOperation).
 						WithPrimaryLabel(&loc, "`take` requires a move value"),
 				)
 				return
 			}
-			a.consumeMoveValue(scope, e.Right, exprType(e.Right))
+			a.consumeMoveValue(scope, v.Right, valueType(v.Right))
 		case "&", "&mut":
-			a.checkExpr(scope, e.Right)
-			a.recordBorrowExpr(e, e.Right)
+			a.checkValue(scope, v.Right)
 		default:
-			a.checkExpr(scope, e.Right)
+			a.checkValue(scope, v.Right)
 		}
-	case *hir.UnsafeExpr:
-		a.checkExpr(scope, e.Value)
-	case *hir.BinaryExpr:
-		a.checkExpr(scope, e.Left)
-		a.checkExpr(scope, e.Right)
-	case *hir.PostfixExpr:
-		a.checkExpr(scope, e.Left)
-	case *hir.CallExpr:
-		a.checkCall(scope, e)
-	case *hir.SelectorExpr:
-		a.checkSelectorExpr(scope, e)
-	case *hir.CastExpr:
-		a.checkExpr(scope, e.Left)
-	case *hir.CompositeLit:
-		for _, item := range e.Items {
-			a.checkExpr(scope, item.Value)
+	case *mir.BinaryValue:
+		a.checkValue(scope, v.Left)
+		a.checkValue(scope, v.Right)
+	case *mir.PostfixValue:
+		a.checkValue(scope, v.Left)
+	case *mir.CallValue:
+		a.checkCall(scope, v)
+	case *mir.FieldValue:
+		a.checkFieldValue(scope, v)
+	case *mir.CastValue:
+		a.checkValue(scope, v.Left)
+	case *mir.CompositeValue:
+		for _, item := range v.Items {
+			a.checkValue(scope, item.Value)
 		}
 	}
 }
 
-func (a *analyzer) checkSelectorExpr(scope *valueScope, expr *hir.SelectorExpr) {
-	if expr == nil {
+func (a *analyzer) checkPlaceValue(scope *valueScope, place mir.Place) {
+	switch p := place.(type) {
+	case nil:
 		return
+	case *mir.LocalPlace:
+		if name := a.localName(p.LocalID); name != "" {
+			a.requireActivePath(scope, name, "", p.Loc())
+		}
+	case *mir.FieldPlace:
+		if root, path, ok := a.localPlacePath(p); ok {
+			a.requireActivePath(scope, root, path, p.Loc())
+			return
+		}
+		a.checkPlaceValue(scope, p.Base)
 	}
-	if root, path, ok := localExprPath(expr); ok {
-		a.requireActivePath(scope, root, path, expr.Loc())
-		return
-	}
-	a.checkExpr(scope, expr.Left)
 }
 
-func (a *analyzer) checkCall(scope *valueScope, call *hir.CallExpr) {
+func (a *analyzer) checkFieldValue(scope *valueScope, value *mir.FieldValue) {
+	if value == nil {
+		return
+	}
+	receiverType := valueType(value.Base)
+	name := a.fieldSelectorName(value)
+	if a.lookupStructField(receiverType, name) == nil && a.canHaveMethods(receiverType) {
+		a.checkValue(scope, value.Base)
+		return
+	}
+	if root, path, ok := a.localValuePath(value); ok {
+		a.requireActivePath(scope, root, path, value.Loc())
+		return
+	}
+	a.checkValue(scope, value.Base)
+}
+
+func (a *analyzer) checkFieldLoadValue(scope *valueScope, value *mir.FieldLoadValue) {
+	if value == nil {
+		return
+	}
+	if root, path, ok := a.localValuePath(value); ok {
+		a.requireActivePath(scope, root, path, value.Loc())
+		return
+	}
+	a.checkValue(scope, value.Base)
+}
+
+func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
 	if call == nil {
 		return
 	}
-	if ident, ok := call.Callee.(*hir.Ident); ok && len(ident.Path) == 1 {
+	if ident, ok := call.Callee.(*mir.NameValue); ok && len(ident.Path) == 1 {
 		switch ident.Path[0] {
 		case "panic", "recover":
 			for _, arg := range call.Args {
-				a.checkExpr(scope, arg)
+				a.checkValue(scope, arg)
 			}
 			return
 		}
 	}
-
-	if selector, ok := call.Callee.(*hir.SelectorExpr); ok {
-		if handled := a.checkMethodCall(scope, call, selector); handled {
+	if field, ok := call.Callee.(*mir.FieldValue); ok {
+		if handled := a.checkMethodCall(scope, call, field); handled {
 			return
 		}
 	}
-
-	a.checkExpr(scope, call.Callee)
-	fnType, ok := exprType(call.Callee).(*typeinfo.FuncType)
+	if local, ok := call.Callee.(*mir.LocalValue); ok {
+		if info, ok := a.temps[local.LocalID]; ok {
+			if field, ok := info.value.(*mir.FieldValue); ok {
+				if handled := a.checkMethodCall(scope, call, field); handled {
+					return
+				}
+			}
+		}
+	}
+	a.checkValue(scope, call.Callee)
+	fnType, ok := valueType(call.Callee).(*typeinfo.FuncType)
 	if !ok {
 		for _, arg := range call.Args {
-			a.checkExpr(scope, arg)
+			a.checkValue(scope, arg)
 		}
 		return
 	}
 	for i, arg := range call.Args {
-		a.checkExpr(scope, arg)
+		a.checkValue(scope, arg)
 		if i < len(fnType.Params) {
 			a.consumeMoveValue(scope, arg, fnType.Params[i])
 		}
 	}
 }
 
-func (a *analyzer) checkMethodCall(scope *valueScope, call *hir.CallExpr, selector *hir.SelectorExpr) bool {
-	a.checkExpr(scope, selector.Left)
-	receiverType := exprType(selector.Left)
+func (a *analyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field *mir.FieldValue) bool {
+	a.checkValue(scope, field.Base)
+	receiverType := valueType(field.Base)
 	if typeinfo.IsInvalid(receiverType) || typeinfo.IsUnknown(receiverType) {
 		return true
 	}
-	if field := a.lookupStructField(receiverType, selector.Name); field != nil {
+	name := a.fieldSelectorName(field)
+	if structField := a.lookupStructField(receiverType, name); structField != nil {
 		return false
 	}
 	if iface, ok := a.underlying(receiverType).(*typeinfo.InterfaceType); ok {
-		method := iface.Methods[selector.Name]
+		method := iface.Methods[name]
 		if method == nil {
 			return true
 		}
 		for i, arg := range call.Args {
-			a.checkExpr(scope, arg)
+			a.checkValue(scope, arg)
 			if i < len(method.Params) {
 				a.consumeMoveValue(scope, arg, method.Params[i])
 			}
 		}
 		return true
 	}
-	addressable, mutable := a.exprAccess(scope, selector.Left)
-	methodSym, methodType := a.lookupMethod(receiverType, selector.Name, addressable, mutable)
+	addressable, mutable := a.valueAccess(scope, field.Base)
+	methodSym, methodType := a.lookupMethod(receiverType, name, addressable, mutable)
 	if methodType == nil {
 		return a.canHaveMethods(receiverType)
 	}
 	for i, arg := range call.Args {
-		a.checkExpr(scope, arg)
+		a.checkValue(scope, arg)
 		if i < len(methodType.Params) {
 			a.consumeMoveValue(scope, arg, methodType.Params[i])
 		}
 	}
 	if methodSym != nil {
 		if fn, ok := methodSym.Node.(*ast.FuncDecl); ok && a.receiverConsumes(a.findModuleForSymbol(methodSym), fn) {
-			a.consumeMoveValue(scope, selector.Left, receiverType)
+			a.consumeMoveValue(scope, field.Base, receiverType)
 		}
 	}
 	return true
 }
 
-func (a *analyzer) requireActiveValue(scope *valueScope, ident *hir.Ident) {
-	if ident == nil || len(ident.Path) != 1 {
+func (a *analyzer) requireActiveValue(scope *valueScope, value *mir.NameValue) {
+	if value == nil || len(value.Path) != 1 {
 		return
 	}
-	a.requireActivePath(scope, ident.Path[0], "", ident.Loc())
+	a.requireActivePath(scope, value.Path[0], "", value.Loc())
 }
 
-func (a *analyzer) consumeMoveValue(scope *valueScope, expr hir.Expr, typ typeinfo.Type) {
-	if expr == nil || typ == nil || !a.isMoveType(typ) {
+func (a *analyzer) requireActiveLocal(scope *valueScope, value *mir.LocalValue) {
+	if value == nil {
 		return
 	}
-	switch e := expr.(type) {
-	case *hir.PrefixExpr:
-		if e.Op == "copy" || e.Op == "take" {
+	if info, ok := a.temps[value.LocalID]; ok && info.root != "" {
+		a.requireActivePath(scope, info.root, info.path, value.Loc())
+		return
+	}
+	if name := a.localName(value.LocalID); name != "" {
+		a.requireActivePath(scope, name, "", value.Loc())
+	}
+}
+
+func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ typeinfo.Type) {
+	if value == nil || typ == nil || !a.isMoveType(typ) {
+		return
+	}
+	switch v := value.(type) {
+	case *mir.UnaryValue:
+		if v.Op == "copy" || v.Op == "take" {
 			return
 		}
+	case *mir.LocalValue:
+		if info, ok := a.temps[v.LocalID]; ok {
+			if info.root == "" {
+				return
+			}
+			a.consumeLocalPath(scope, info.root, info.path, value.Loc())
+			return
+		}
+		if name := a.localName(v.LocalID); name != "" {
+			a.consumeLocalPath(scope, name, "", value.Loc())
+		}
+		return
 	}
-	root, path, ok := localExprPath(expr)
+	root, path, ok := a.localValuePath(value)
 	if !ok || scope == nil {
+		return
+	}
+	a.consumeLocalPath(scope, root, path, value.Loc())
+}
+
+func (a *analyzer) consumeLocalPath(scope *valueScope, root, path string, loc source.Location) {
+	if scope == nil || root == "" {
 		return
 	}
 	info, ok := scope.Lookup(root)
@@ -679,55 +765,82 @@ func (a *analyzer) consumeMoveValue(scope *valueScope, expr hir.Expr, typ typein
 		return
 	}
 	if info.frozen > 0 {
-		a.reportBorrowConflict(expr.Loc(), root, "cannot move a value while a borrow is live")
+		a.reportBorrowConflict(loc, root, "cannot move a value while a borrow is live")
 		return
 	}
 	if path == "" && len(info.movedSubs) > 0 {
-		a.reportPartialMoveUse(root, expr.Loc(), info)
+		a.reportPartialMoveUse(root, loc, info)
 		return
 	}
 	if path != "" {
 		if movedLoc, movedPath, ok := movedPathConflict(info, path); ok {
-			a.reportMovedPathUse(root, path, expr.Loc(), movedLoc, movedPath)
+			a.reportMovedPathUse(root, path, loc, movedLoc, movedPath)
 			return
 		}
-		markMovedPath(info, path, expr.Loc())
+		markMovedPath(info, path, loc)
 		return
 	}
 	info.moved = true
-	info.moveLoc = expr.Loc()
+	info.moveLoc = loc
 	info.movedPath = ""
 	info.movedSubs = nil
 }
 
-func (a *analyzer) recordBorrowExpr(expr hir.Expr, sourceExpr hir.Expr) {
-	if expr == nil || sourceExpr == nil {
-		return
+func (a *analyzer) tempInfoForValue(value mir.Value) (tempInfo, bool) {
+	switch v := value.(type) {
+	case *mir.UnaryValue:
+		if v.Op == "&" || v.Op == "&mut" {
+			root, path, ok := a.borrowSourcePath(v.Right)
+			if !ok {
+				return tempInfo{}, false
+			}
+			info := tempInfo{root: root, path: path, value: value}
+			info.borrow = &borrowInfo{owner: root, loc: v.Loc()}
+			return info, true
+		}
+		if v.Op == "*" {
+			root, path, ok := a.borrowSourcePath(v.Right)
+			if !ok {
+				return tempInfo{}, false
+			}
+			return tempInfo{root: root, path: path, value: value}, true
+		}
+	case *mir.FieldLoadValue, *mir.FieldValue, *mir.NameValue, *mir.LocalValue:
+		root, path, ok := a.localValuePath(value)
+		if !ok {
+			return tempInfo{}, false
+		}
+		return tempInfo{root: root, path: path, value: value}, true
 	}
-	name, ok := a.borrowSourceName(sourceExpr)
-	if !ok {
-		return
-	}
-	a.borrows[expr] = borrowInfo{owner: name, loc: expr.Loc()}
+	return tempInfo{}, false
 }
 
-func (a *analyzer) borrowSourceName(expr hir.Expr) (string, bool) {
-	switch e := expr.(type) {
-	case *hir.Ident:
-		if len(e.Path) == 1 {
-			return e.Path[0], true
+func (a *analyzer) borrowSourcePath(value mir.Value) (string, string, bool) {
+	switch v := value.(type) {
+	case *mir.NameValue:
+		if len(v.Path) == 1 {
+			return v.Path[0], "", true
 		}
-	case *hir.PrefixExpr:
-		if e.Op == "*" {
-			return a.borrowSourceName(e.Right)
+	case *mir.LocalValue:
+		if info, ok := a.temps[v.LocalID]; ok && info.root != "" {
+			return info.root, info.path, true
 		}
-	case *hir.SelectorExpr:
-		return a.borrowSourceName(e.Left)
+		if name := a.localName(v.LocalID); name != "" {
+			return name, "", true
+		}
+	case *mir.UnaryValue:
+		if v.Op == "*" {
+			return a.borrowSourcePath(v.Right)
+		}
+	case *mir.FieldLoadValue:
+		return a.localValuePath(v)
+	case *mir.FieldValue:
+		return a.localValuePath(v)
 	}
-	return "", false
+	return "", "", false
 }
 
-func (a *analyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, value hir.Expr) {
+func (a *analyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, value mir.Value) {
 	if scope == nil || slot == nil {
 		return
 	}
@@ -761,11 +874,11 @@ func (a *analyzer) releaseBorrowValue(scope *valueScope, slot *valueInfo) {
 	slot.borrowLoc = source.Location{}
 }
 
-func (a *analyzer) rebindBorrowAssignment(scope *valueScope, left hir.Expr, right hir.Expr) {
+func (a *analyzer) rebindBorrowAssignment(scope *valueScope, left mir.Place, right mir.Value) {
 	if scope == nil {
 		return
 	}
-	root, path, ok := localExprPath(left)
+	root, path, ok := a.localPlacePath(left)
 	if !ok || path != "" {
 		return
 	}
@@ -776,8 +889,8 @@ func (a *analyzer) rebindBorrowAssignment(scope *valueScope, left hir.Expr, righ
 	a.bindBorrowValue(scope, slot, right)
 }
 
-func (a *analyzer) checkAssignmentTarget(scope *valueScope, left hir.Expr) {
-	root, path, ok := localExprPath(left)
+func (a *analyzer) checkAssignmentTarget(scope *valueScope, left mir.Place) {
+	root, path, ok := a.localPlacePath(left)
 	if !ok || scope == nil {
 		return
 	}
@@ -799,21 +912,62 @@ func (a *analyzer) checkAssignmentTarget(scope *valueScope, left hir.Expr) {
 	clearMovedPath(info, path)
 }
 
-func localExprPath(expr hir.Expr) (root string, path string, ok bool) {
-	switch e := expr.(type) {
-	case *hir.Ident:
-		if len(e.Path) == 1 {
-			return e.Path[0], "", true
+func (a *analyzer) localValuePath(value mir.Value) (root string, path string, ok bool) {
+	switch v := value.(type) {
+	case *mir.NameValue:
+		if len(v.Path) == 1 {
+			return v.Path[0], "", true
 		}
-	case *hir.SelectorExpr:
-		root, path, ok := localExprPath(e.Left)
+	case *mir.LocalValue:
+		if info, ok := a.temps[v.LocalID]; ok && info.root != "" {
+			return info.root, info.path, true
+		}
+		if name := a.localName(v.LocalID); name != "" {
+			return name, "", true
+		}
+	case *mir.FieldLoadValue:
+		root, path, ok := a.localValuePath(v.Base)
 		if !ok {
 			return "", "", false
 		}
+		segment := a.fieldPathSegment(v.Base, v.FieldIndex)
 		if path == "" {
-			return root, e.Name, true
+			return root, segment, true
 		}
-		return root, path + "." + e.Name, true
+		return root, path + "." + segment, true
+	case *mir.FieldValue:
+		root, path, ok := a.localValuePath(v.Base)
+		if !ok {
+			return "", "", false
+		}
+		segment := a.fieldPathSegment(v.Base, v.FieldIndex)
+		if segment == "" {
+			return root, path, true
+		}
+		if path == "" {
+			return root, segment, true
+		}
+		return root, path + "." + segment, true
+	}
+	return "", "", false
+}
+
+func (a *analyzer) localPlacePath(place mir.Place) (root string, path string, ok bool) {
+	switch p := place.(type) {
+	case *mir.LocalPlace:
+		if name := a.localName(p.LocalID); name != "" {
+			return name, "", true
+		}
+	case *mir.FieldPlace:
+		root, path, ok := a.localPlacePath(p.Base)
+		if !ok {
+			return "", "", false
+		}
+		segment := a.fieldPathSegmentFromPlace(p.Base, p.FieldIndex)
+		if path == "" {
+			return root, segment, true
+		}
+		return root, path + "." + segment, true
 	}
 	return "", "", false
 }
@@ -1000,15 +1154,15 @@ func (a *analyzer) isCopyableType(typ typeinfo.Type) bool {
 	}
 }
 
-func (a *analyzer) reportBorrowEscapeIfNeeded(scope *valueScope, expr hir.Expr, message string) {
-	if expr == nil {
+func (a *analyzer) reportBorrowEscapeIfNeeded(scope *valueScope, value mir.Value, message string) {
+	if value == nil {
 		return
 	}
-	info, ok := a.borrowValueInfo(scope, expr)
+	info, ok := a.borrowValueInfo(scope, value)
 	if !ok {
 		return
 	}
-	loc := expr.Loc()
+	loc := value.Loc()
 	diag := diagnostics.NewError(message).
 		WithCode(diagnostics.ErrBorrowEscape).
 		WithPrimaryLabel(&loc, "this borrow escapes its allowed scope")
@@ -1018,22 +1172,40 @@ func (a *analyzer) reportBorrowEscapeIfNeeded(scope *valueScope, expr hir.Expr, 
 	a.addDiagnostic(diag)
 }
 
-func (a *analyzer) borrowValueInfo(scope *valueScope, expr hir.Expr) (borrowInfo, bool) {
-	if expr == nil {
+func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowInfo, bool) {
+	if value == nil {
 		return borrowInfo{}, false
 	}
-	if info, ok := a.borrows[expr]; ok {
-		return info, true
+	switch v := value.(type) {
+	case *mir.LocalValue:
+		if info, ok := a.temps[v.LocalID]; ok && info.borrow != nil {
+			return *info.borrow, true
+		}
+		if name := a.localName(v.LocalID); name != "" && scope != nil {
+			slot, ok := scope.Lookup(name)
+			if ok && slot != nil && slot.borrowOf != "" {
+				return borrowInfo{owner: slot.borrowOf, loc: slot.borrowLoc}, true
+			}
+		}
+	case *mir.UnaryValue:
+		if v.Op == "&" || v.Op == "&mut" {
+			root, _, ok := a.borrowSourcePath(v.Right)
+			if !ok {
+				return borrowInfo{}, false
+			}
+			return borrowInfo{owner: root, loc: v.Loc()}, true
+		}
+	case *mir.NameValue:
+		if len(v.Path) != 1 || scope == nil {
+			return borrowInfo{}, false
+		}
+		slot, ok := scope.Lookup(v.Path[0])
+		if !ok || slot == nil || slot.borrowOf == "" {
+			return borrowInfo{}, false
+		}
+		return borrowInfo{owner: slot.borrowOf, loc: slot.borrowLoc}, true
 	}
-	ident, ok := expr.(*hir.Ident)
-	if !ok || len(ident.Path) != 1 || scope == nil {
-		return borrowInfo{}, false
-	}
-	slot, ok := scope.Lookup(ident.Path[0])
-	if !ok || slot == nil || slot.borrowOf == "" {
-		return borrowInfo{}, false
-	}
-	return borrowInfo{owner: slot.borrowOf, loc: slot.borrowLoc}, true
+	return borrowInfo{}, false
 }
 
 func (a *analyzer) reportBorrowConflict(loc source.Location, name string, message string) {
@@ -1042,6 +1214,53 @@ func (a *analyzer) reportBorrowConflict(loc source.Location, name string, messag
 			WithCode(diagnostics.ErrBorrowConflict).
 			WithPrimaryLabel(&loc, message),
 	)
+}
+
+func (a *analyzer) fieldSelectorName(value *mir.FieldValue) string {
+	if value == nil {
+		return ""
+	}
+	if value.MemberName != "" {
+		return value.MemberName
+	}
+	return mir.FieldName(valueType(value.Base), value.FieldIndex)
+}
+
+func (a *analyzer) fieldPathSegment(base mir.Value, index int) string {
+	if name := mir.FieldName(valueType(base), index); name != "" {
+		return name
+	}
+	return fmt.Sprintf("#%d", index)
+}
+
+func (a *analyzer) fieldPathSegmentFromPlace(base mir.Place, index int) string {
+	if local, ok := base.(*mir.LocalPlace); ok {
+		if name := mir.FieldName(a.localType(local.LocalID), index); name != "" {
+			return name
+		}
+	}
+	return fmt.Sprintf("#%d", index)
+}
+
+func (a *analyzer) fieldStorePlace(inst *mir.StoreFieldInstr) mir.Place {
+	if inst == nil {
+		return nil
+	}
+	return &mir.FieldPlace{
+		Base:       a.placeFromValue(inst.Base),
+		FieldIndex: inst.FieldIndex,
+	}
+}
+
+func (a *analyzer) placeFromValue(value mir.Value) mir.Place {
+	switch v := value.(type) {
+	case *mir.LocalValue:
+		return &mir.LocalPlace{LocalID: v.LocalID}
+	case *mir.FieldLoadValue:
+		return &mir.FieldPlace{Base: a.placeFromValue(v.Base), FieldIndex: v.FieldIndex}
+	default:
+		return nil
+	}
 }
 
 func (a *analyzer) addDiagnostic(diag *diagnostics.Diagnostic) {
@@ -1229,45 +1448,42 @@ func (a *analyzer) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
 	}
 }
 
-func (a *analyzer) exprAccess(scope *valueScope, expr hir.Expr) (addressable bool, mutable bool) {
-	switch e := expr.(type) {
-	case *hir.Ident:
-		if len(e.Path) == 1 {
-			if info, ok := scope.Lookup(e.Path[0]); ok {
-				return true, info.mutable && !info.constant
+func (a *analyzer) valueAccess(scope *valueScope, value mir.Value) (addressable bool, mutable bool) {
+	switch v := value.(type) {
+	case *mir.NameValue:
+		if len(v.Path) != 1 {
+			return false, false
+		}
+		if info, ok := scope.Lookup(v.Path[0]); ok && info != nil {
+			return true, info.mutable && !info.constant
+		}
+		return false, false
+	case *mir.LocalValue:
+		name := a.localName(v.LocalID)
+		if name == "" {
+			return false, false
+		}
+		if info, ok := scope.Lookup(name); ok && info != nil {
+			return true, info.mutable && !info.constant
+		}
+		return false, false
+	case *mir.FieldLoadValue:
+		return a.valueAccess(scope, v.Base)
+	case *mir.FieldValue:
+		return a.valueAccess(scope, v.Base)
+	case *mir.UnaryValue:
+		if v.Op == "*" {
+			switch t := valueType(v).(type) {
+			case *typeinfo.PointerType:
+				return true, t.IsMut || t.IsOwn
+			default:
+				return true, false
 			}
 		}
-		src := e.SourceExpr()
-		ident, ok := src.(*ast.Ident)
-		if !ok {
-			return false, false
-		}
-		res := a.lookupResolution(ident)
-		if res == nil || res.Symbol == nil {
-			return false, false
-		}
-		switch node := res.Symbol.Node.(type) {
-		case *ast.LetDecl:
-			return true, node.IsMut
-		case *ast.LetStmt:
-			return true, node.IsMut
-		case *ast.ConstDecl, *ast.ConstStmt:
-			return true, false
-		default:
-			return true, res.Symbol.Kind == symbols.SymbolVar
-		}
-	case *hir.SelectorExpr:
-		return a.exprAccess(scope, e.Left)
+		return false, false
 	default:
 		return false, false
 	}
-}
-
-func (a *analyzer) lookupResolution(node ast.Node) *binding.Resolution {
-	if a.mod == nil || a.mod.Bindings == nil || node == nil {
-		return nil
-	}
-	return a.mod.Bindings.Nodes[node]
 }
 
 func (a *analyzer) findModuleForSymbol(sym *symbols.Symbol) *context.Module {
@@ -1303,12 +1519,57 @@ func syntaxType(mod *context.Module, expr ast.TypeExpr) typeinfo.Type {
 	return mod.Types.Nodes[expr]
 }
 
-func exprType(expr hir.Expr) typeinfo.Type {
-	if expr == nil {
+func valueType(value mir.Value) typeinfo.Type {
+	if value == nil {
 		return typeinfo.UnknownType{}
 	}
-	if typ := expr.Type(); typ != nil {
+	if typ := value.Type(); typ != nil {
 		return typ
 	}
 	return typeinfo.UnknownType{}
+}
+
+func (a *analyzer) placeType(scope *valueScope, place mir.Place) typeinfo.Type {
+	if place == nil {
+		return typeinfo.UnknownType{}
+	}
+	root, path, ok := a.localPlacePath(place)
+	if !ok || scope == nil {
+		return typeinfo.UnknownType{}
+	}
+	info, ok := scope.Lookup(root)
+	if !ok || info == nil || info.typ == nil {
+		return typeinfo.UnknownType{}
+	}
+	typ := info.typ
+	if path == "" {
+		return typ
+	}
+	for _, name := range splitPath(path) {
+		field := a.lookupStructField(typ, name)
+		if field == nil {
+			return typeinfo.UnknownType{}
+		}
+		typ = field.Type
+	}
+	if typ == nil {
+		return typeinfo.UnknownType{}
+	}
+	return typ
+}
+
+func splitPath(path string) []string {
+	if path == "" {
+		return nil
+	}
+	parts := make([]string, 0, 4)
+	start := 0
+	for i := 0; i <= len(path); i++ {
+		if i != len(path) && path[i] != '.' {
+			continue
+		}
+		parts = append(parts, path[start:i])
+		start = i + 1
+	}
+	return parts
 }

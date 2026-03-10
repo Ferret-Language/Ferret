@@ -1,4 +1,4 @@
-package ir
+package mir
 
 import (
 	"compiler/internal/semantics/typeinfo"
@@ -9,8 +9,56 @@ type Module struct {
 	Key        string
 	ImportPath string
 	FilePath   string
+	Types      []*TypeDecl
 	Globals    []*Global
 	Functions  []*Function
+}
+
+type TypeDecl struct {
+	Name       string
+	Named      *typeinfo.NamedType
+	Underlying typeinfo.Type
+	Struct     *StructTypeDecl
+	Interface  *InterfaceTypeDecl
+	Enum       *EnumTypeDecl
+	Union      *UnionTypeDecl
+	Error      *ErrorTypeDecl
+	Location   source.Location
+}
+
+type StructTypeDecl struct {
+	Fields       []*StructFieldDecl
+	StaticFields []*StructFieldDecl
+}
+
+type StructFieldDecl struct {
+	Name     string
+	Type     typeinfo.Type
+	Default  Value
+	Location source.Location
+}
+
+type InterfaceTypeDecl struct {
+	Methods []*InterfaceMethodDecl
+}
+
+type InterfaceMethodDecl struct {
+	Name     string
+	Params   []*Param
+	Result   typeinfo.Type
+	Location source.Location
+}
+
+type EnumTypeDecl struct {
+	Variants []string
+}
+
+type UnionTypeDecl struct {
+	Members []typeinfo.Type
+}
+
+type ErrorTypeDecl struct {
+	Members []string
 }
 
 type Global struct {
@@ -29,15 +77,27 @@ type Function struct {
 	Result   typeinfo.Type
 	EntryID  int
 	ExitID   int
+	Locals   []*Local
 	Blocks   []*Block
 	Location source.Location
 }
 
 type Param struct {
 	Name       string
+	LocalID    int
 	Type       typeinfo.Type
 	IsComptime bool
 	Location   source.Location
+}
+
+type Local struct {
+	ID       int
+	Name     string
+	Type     typeinfo.Type
+	Mutable  bool
+	Constant bool
+	IsTemp   bool
+	Location source.Location
 }
 
 type Block struct {
@@ -104,6 +164,20 @@ type NameValue struct {
 
 func (*NameValue) valueNode() {}
 
+type LocalValue struct {
+	baseValue
+	LocalID int
+}
+
+func (*LocalValue) valueNode() {}
+
+type TempValue struct {
+	baseValue
+	Name string
+}
+
+func (*TempValue) valueNode() {}
+
 type NumberValue struct {
 	baseValue
 	Value string
@@ -155,10 +229,19 @@ type CallValue struct {
 
 func (*CallValue) valueNode() {}
 
+type FieldLoadValue struct {
+	baseValue
+	Base       Value
+	FieldIndex int
+}
+
+func (*FieldLoadValue) valueNode() {}
+
 type FieldValue struct {
 	baseValue
-	Base Value
-	Name string
+	Base       Value
+	FieldIndex int
+	MemberName string
 }
 
 func (*FieldValue) valueNode() {}
@@ -184,15 +267,15 @@ func (*CompositeValue) valueNode() {}
 
 type LocalPlace struct {
 	basePlace
-	Name string
+	LocalID int
 }
 
 func (*LocalPlace) placeNode() {}
 
 type FieldPlace struct {
 	basePlace
-	Base Place
-	Name string
+	Base       Place
+	FieldIndex int
 }
 
 func (*FieldPlace) placeNode() {}
@@ -208,6 +291,23 @@ type BindInstr struct {
 
 func (*BindInstr) instrNode() {}
 
+type ComputeInstr struct {
+	baseInstr
+	TargetID int
+	Type     typeinfo.Type
+	Value    Value
+}
+
+func (*ComputeInstr) instrNode() {}
+
+type AssignInstr struct {
+	baseInstr
+	TargetID int
+	Value    Value
+}
+
+func (*AssignInstr) instrNode() {}
+
 type StoreInstr struct {
 	baseInstr
 	Target Place
@@ -215,6 +315,15 @@ type StoreInstr struct {
 }
 
 func (*StoreInstr) instrNode() {}
+
+type StoreFieldInstr struct {
+	baseInstr
+	Base       Value
+	FieldIndex int
+	Value      Value
+}
+
+func (*StoreFieldInstr) instrNode() {}
 
 type EvalInstr struct {
 	baseInstr
@@ -232,8 +341,8 @@ func (*DeferInstr) instrNode() {}
 
 type LockInstr struct {
 	baseInstr
-	Value Value
-	Name  string
+	Value   Value
+	LocalID int
 }
 
 func (*LockInstr) instrNode() {}

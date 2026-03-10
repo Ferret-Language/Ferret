@@ -22,8 +22,8 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseIRGenerated {
-		t.Fatalf("expected ir generated phase, got %#v", result.Entry)
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	if result.Entry.CFG == nil {
 		t.Fatal("expected CFG")
@@ -49,8 +49,8 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseIRGenerated {
-		t.Fatalf("expected ir generated phase, got %#v", result.Entry)
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -81,8 +81,8 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseIRGenerated {
-		t.Fatalf("expected ir generated phase, got %#v", result.Entry)
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag.Code == diagnostics.ErrMissingReturn || diag.Code == diagnostics.WarnUnreachableCode {
@@ -107,8 +107,8 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseIRGenerated {
-		t.Fatalf("expected ir generated phase, got %#v", result.Entry)
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag.Code == diagnostics.ErrMissingReturn {

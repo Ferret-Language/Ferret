@@ -9,6 +9,7 @@ func Lower(input *Module) *Module {
 		ImportPath: input.ImportPath,
 		FilePath:   input.FilePath,
 		Source:     input.Source,
+		Types:      append([]*TypeDecl(nil), input.Types...),
 		Globals:    append([]*Global(nil), input.Globals...),
 		Functions:  make([]*Func, 0, len(input.Functions)),
 	}

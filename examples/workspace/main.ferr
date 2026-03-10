@@ -18,7 +18,7 @@ type Point struct {
     Y i32
 }
 
-fn (p Point) nothing() {
+fn (p Point) nothing(comptime a i32) {
     
 }
 
