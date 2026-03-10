@@ -87,7 +87,7 @@ func (p *Parser) parseLetStmt() ast.Stmt {
 	if p.match(tokens.ASSIGN) {
 		value = p.parseExpr(precLowest)
 	}
-	return &ast.LetStmt{Name: nameTok.Literal, IsMut: isMut, Type: typ, Value: value, Location: p.locFrom(start)}
+	return &ast.LetStmt{Name: nameTok.Literal, NameLocation: p.locOfToken(nameTok), IsMut: isMut, Type: typ, Value: value, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseConstStmt() ast.Stmt {
@@ -101,7 +101,7 @@ func (p *Parser) parseConstStmt() ast.Stmt {
 	if p.match(tokens.ASSIGN) {
 		value = p.parseExpr(precLowest)
 	}
-	return &ast.ConstStmt{Name: nameTok.Literal, Type: typ, Value: value, Location: p.locFrom(start)}
+	return &ast.ConstStmt{Name: nameTok.Literal, NameLocation: p.locOfToken(nameTok), Type: typ, Value: value, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseReturnStmt() ast.Stmt {
@@ -154,16 +154,25 @@ func (p *Parser) parseForStmt() ast.Stmt {
 	start := p.advance().Start
 	iterable := p.parseExprUntil(precLowest, tokens.BAR)
 	p.expect(tokens.BAR, "expected '|' after for iterable")
-	first := p.expectIdent("expected loop binding name").Literal
+	firstTok := p.expectIdent("expected loop binding name")
+	first := firstTok.Literal
 	indexName := ""
+	indexLoc := source.Location{}
 	valueName := first
+	valueLoc := source.Location{}
 	if p.match(tokens.COMMA) {
 		indexName = first
-		valueName = p.expectIdent("expected loop value binding name").Literal
+		indexLoc = p.locOfToken(firstTok)
+		valueTok := p.expectIdent("expected loop value binding name")
+		valueName = valueTok.Literal
+		valueLoc = p.locOfToken(valueTok)
+	}
+	if indexName == "" {
+		valueLoc = p.locOfToken(firstTok)
 	}
 	p.expect(tokens.BAR, "expected closing '|' after loop bindings")
 	body := p.parseBlock()
-	return &ast.ForStmt{Iterable: iterable, IndexName: indexName, ValueName: valueName, Body: body, Location: p.locFrom(start)}
+	return &ast.ForStmt{Iterable: iterable, IndexName: indexName, IndexLocation: indexLoc, ValueName: valueName, ValueLocation: valueLoc, Body: body, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseDeferStmt() ast.Stmt {
@@ -208,9 +217,10 @@ func (p *Parser) parseLockStmt() ast.Stmt {
 	start := p.advance().Start
 	value := p.parseExprUntil(precLowest, tokens.AS)
 	p.expect(tokens.AS, "expected 'as' in lock statement")
-	name := p.expectIdent("expected lock guard name").Literal
+	nameTok := p.expectIdent("expected lock guard name")
+	name := nameTok.Literal
 	body := p.parseBlock()
-	return &ast.LockStmt{Value: value, Name: name, Body: body, Location: p.locFrom(start)}
+	return &ast.LockStmt{Value: value, Name: name, NameLocation: p.locOfToken(nameTok), Body: body, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseUnsafeStmt() ast.Stmt {

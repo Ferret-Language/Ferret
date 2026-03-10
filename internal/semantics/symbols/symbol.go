@@ -17,6 +17,7 @@ const (
 	SymbolType    Kind = "type"
 	SymbolFunc    Kind = "func"
 	SymbolMethod  Kind = "method"
+	SymbolParam   Kind = "param"
 	SymbolField   Kind = "field"
 	SymbolStatic  Kind = "static"
 	SymbolVariant Kind = "variant"

@@ -22,6 +22,7 @@ type resolver struct {
 	info      *binding.ModuleInfo
 	labels    []*binding.LabelBinding
 	loopDepth int
+	currentFn *ast.FuncDecl
 }
 
 func ResolveModule(ctx *context.CompilerContext, mod *context.Module) {
@@ -104,13 +105,25 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 		if d.Receiver != nil {
 			r.resolveType(scope, d.Receiver.Type)
 		}
+		if sym, ok := r.lookupFunctionSymbol(d); ok {
+			r.info.BindFunctionSymbol(d, sym)
+		}
+		prevFn := r.currentFn
+		r.currentFn = d
+		defer func() { r.currentFn = prevFn }()
 		funcScope := table.New(scope)
 		if d.Receiver != nil {
-			funcScope.Declare(symbols.New(d.Receiver.Name, symbols.SymbolVar, d.Receiver))
+			sym := symbols.New(d.Receiver.Name, symbols.SymbolParam, nil)
+			sym.Location = d.Receiver.NameLocation
+			funcScope.Declare(sym)
+			r.info.AddFunctionLocal(d, sym)
 		}
 		for _, param := range d.Params {
 			r.resolveType(scope, param.Type)
-			funcScope.Declare(symbols.New(param.Name, symbols.SymbolVar, nil))
+			sym := symbols.New(param.Name, symbols.SymbolParam, nil)
+			sym.Location = param.NameLocation
+			funcScope.Declare(sym)
+			r.info.AddFunctionLocal(d, sym)
 		}
 		r.resolveType(scope, d.Result)
 		r.resolveStmt(funcScope, d.Body)
@@ -130,11 +143,17 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.LetStmt:
 		r.resolveType(scope, s.Type)
 		r.resolveExpr(scope, s.Value)
-		scope.Declare(symbols.New(s.Name, symbols.SymbolVar, s))
+		sym := symbols.New(s.Name, symbols.SymbolVar, s)
+		sym.Location = s.NameLocation
+		scope.Declare(sym)
+		r.addFunctionLocal(sym)
 	case *ast.ConstStmt:
 		r.resolveType(scope, s.Type)
 		r.resolveExpr(scope, s.Value)
-		scope.Declare(symbols.New(s.Name, symbols.SymbolConst, s))
+		sym := symbols.New(s.Name, symbols.SymbolConst, s)
+		sym.Location = s.NameLocation
+		scope.Declare(sym)
+		r.addFunctionLocal(sym)
 	case *ast.ReturnStmt:
 		r.resolveExpr(scope, s.Value)
 	case *ast.ExprStmt:
@@ -164,10 +183,16 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		loopScope := table.New(scope)
 		r.resolveExpr(loopScope, s.Iterable)
 		if s.IndexName != "" {
-			loopScope.Declare(symbols.New(s.IndexName, symbols.SymbolVar, nil))
+			sym := symbols.New(s.IndexName, symbols.SymbolVar, nil)
+			sym.Location = s.IndexLocation
+			loopScope.Declare(sym)
+			r.addFunctionLocal(sym)
 		}
 		if s.ValueName != "" {
-			loopScope.Declare(symbols.New(s.ValueName, symbols.SymbolVar, nil))
+			sym := symbols.New(s.ValueName, symbols.SymbolVar, nil)
+			sym.Location = s.ValueLocation
+			loopScope.Declare(sym)
+			r.addFunctionLocal(sym)
 		}
 		r.loopDepth++
 		r.resolveStmt(loopScope, s.Body)
@@ -190,11 +215,40 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.LockStmt:
 		r.resolveExpr(scope, s.Value)
 		lockScope := table.New(scope)
-		lockScope.Declare(symbols.New(s.Name, symbols.SymbolVar, s))
+		sym := symbols.New(s.Name, symbols.SymbolVar, s)
+		sym.Location = s.NameLocation
+		lockScope.Declare(sym)
+		r.addFunctionLocal(sym)
 		r.resolveStmt(lockScope, s.Body)
 	case *ast.UnsafeStmt:
 		r.resolveStmt(scope, s.Body)
 	}
+}
+
+func (r *resolver) addFunctionLocal(sym *symbols.Symbol) {
+	if r == nil || r.currentFn == nil || sym == nil {
+		return
+	}
+	r.info.AddFunctionLocal(r.currentFn, sym)
+}
+
+func (r *resolver) lookupFunctionSymbol(fn *ast.FuncDecl) (*symbols.Symbol, bool) {
+	if r == nil || r.mod == nil || fn == nil {
+		return nil, false
+	}
+	if fn.Receiver == nil && r.mod.ModuleScope != nil {
+		if sym, ok := r.mod.ModuleScope.LookupLocal(fn.Name); ok {
+			return sym, true
+		}
+	}
+	for _, methods := range r.mod.MethodSets {
+		for _, sym := range methods {
+			if sym != nil && sym.Node == fn {
+				return sym, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func isNilStmt(stmt ast.Stmt) bool {

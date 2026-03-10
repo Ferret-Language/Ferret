@@ -1072,7 +1072,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.ErrorUnionType:
 		return &typeinfo.ErrorUnionType{Error: c.typeFromSyntax(mod, t.Error), Value: c.typeFromSyntax(mod, t.Value)}
 	case *ast.ArrayType:
-		return &typeinfo.ArrayType{Inner: c.typeFromSyntax(mod, t.Inner)}
+		return &typeinfo.ArrayType{Inner: c.typeFromSyntax(mod, t.Inner), Len: c.arrayLength(t.Size)}
 	case *ast.TupleType:
 		elems := make([]typeinfo.Type, 0, len(t.Elems))
 		for _, elem := range t.Elems {
@@ -1148,6 +1148,21 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	default:
 		return typeinfo.UnknownType{}
 	}
+}
+
+func (c *checker) arrayLength(expr ast.Expr) int64 {
+	if expr == nil {
+		return -1
+	}
+	lit, ok := expr.(*ast.NumberLit)
+	if !ok {
+		return -1
+	}
+	value, err := numeric.StringToBigInt(lit.Value)
+	if err != nil || value.Sign() < 0 || !value.IsInt64() {
+		return -1
+	}
+	return value.Int64()
 }
 
 func (c *checker) lookupResolution(node ast.Node) *binding.Resolution {

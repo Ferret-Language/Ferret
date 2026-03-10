@@ -45,16 +45,20 @@ type LabelBinding struct {
 }
 
 type ModuleInfo struct {
-	Imports []*ImportBinding
-	Nodes   map[ast.Node]*Resolution
-	Labels  map[ast.Node]*LabelBinding
+	Imports         []*ImportBinding
+	Nodes           map[ast.Node]*Resolution
+	Labels          map[ast.Node]*LabelBinding
+	FunctionSymbols map[*ast.FuncDecl]*symbols.Symbol
+	FunctionLocals  map[*ast.FuncDecl][]*symbols.Symbol
 }
 
 func NewModuleInfo() *ModuleInfo {
 	return &ModuleInfo{
-		Imports: make([]*ImportBinding, 0),
-		Nodes:   make(map[ast.Node]*Resolution),
-		Labels:  make(map[ast.Node]*LabelBinding),
+		Imports:         make([]*ImportBinding, 0),
+		Nodes:           make(map[ast.Node]*Resolution),
+		Labels:          make(map[ast.Node]*LabelBinding),
+		FunctionSymbols: make(map[*ast.FuncDecl]*symbols.Symbol),
+		FunctionLocals:  make(map[*ast.FuncDecl][]*symbols.Symbol),
 	}
 }
 
@@ -70,4 +74,18 @@ func (m *ModuleInfo) BindLabel(node ast.Node, label *LabelBinding) {
 		return
 	}
 	m.Labels[node] = label
+}
+
+func (m *ModuleInfo) BindFunctionSymbol(fn *ast.FuncDecl, sym *symbols.Symbol) {
+	if m == nil || fn == nil || sym == nil {
+		return
+	}
+	m.FunctionSymbols[fn] = sym
+}
+
+func (m *ModuleInfo) AddFunctionLocal(fn *ast.FuncDecl, sym *symbols.Symbol) {
+	if m == nil || fn == nil || sym == nil {
+		return
+	}
+	m.FunctionLocals[fn] = append(m.FunctionLocals[fn], sym)
 }

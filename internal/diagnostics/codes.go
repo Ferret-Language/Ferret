@@ -81,4 +81,10 @@ const (
 	WarnDeadCode               = "W0004"
 	WarnValueReceiverMutation  = "W0005"
 	WarnGenericEnumTypeParams  = "W0006"
+	WarnUnusedImport           = "W0007"
+	WarnUnusedPrivateFunction  = "W0008"
+	WarnUnusedPrivateType      = "W0009"
+	WarnUnusedPrivateBinding   = "W0010"
+	WarnUnusedParameter        = "W0011"
+	WarnUnusedLocal            = "W0012"
 )

@@ -10,6 +10,7 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/layoutanalysis"
 	"compiler/internal/middleend/hir"
 	midmir "compiler/internal/middleend/mir"
 	"compiler/internal/phase"
@@ -17,6 +18,7 @@ import (
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
+	"compiler/internal/semantics/usage"
 	"compiler/internal/source"
 )
 
@@ -36,6 +38,7 @@ func (p *Pipeline) ParseEntry(entryFile string) (*context.Module, error) {
 	if err := p.parseModule(resolved, nil); err != nil {
 		return nil, err
 	}
+	p.finalizeFinalPasses()
 	mod, _ := p.ctx.GetModule(resolved.Key)
 	return mod, nil
 }
@@ -54,7 +57,20 @@ func (p *Pipeline) ParseWorkspace() ([]*context.Module, error) {
 			return nil, err
 		}
 	}
+	p.finalizeFinalPasses()
 	return p.ctx.Modules(), nil
+}
+
+func (p *Pipeline) finalizeFinalPasses() {
+	if p == nil || p.ctx == nil || p.ctx.Diagnostics == nil {
+		return
+	}
+	if p.ctx.Diagnostics.HasErrors() {
+		return
+	}
+	mods := p.ctx.Modules()
+	usage.AnalyzeModules(p.ctx, mods)
+	layoutanalysis.AnalyzeModules(p.ctx, mods)
 }
 
 func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) error {
@@ -80,7 +96,7 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 
 	changed := p.ctx.StoreModuleContent(mod, string(content))
 	p.ctx.Diagnostics.AddSourceContent(mod.FilePath, mod.Content)
-	if mod.Phase >= phase.PhaseOwnershipAnalyzed && !changed {
+	if mod.Phase >= phase.PhaseLayoutComputed && !changed {
 		for _, depKey := range p.ctx.DependencyList(mod.Key) {
 			dep, ok := p.ctx.GetModule(depKey)
 			if !ok {

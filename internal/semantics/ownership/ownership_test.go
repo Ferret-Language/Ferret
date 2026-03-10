@@ -25,7 +25,7 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	if result.Entry.HIR == nil {
@@ -63,7 +63,7 @@ fn run(c *own Conn) void {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -92,7 +92,7 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -123,7 +123,7 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -151,7 +151,7 @@ fn run(c *own Conn) void {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -173,7 +173,7 @@ fn borrow(c *own Conn) *Conn {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -196,7 +196,7 @@ fn borrow(c *own Conn) *Conn {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -223,7 +223,7 @@ fn main(n Node) i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -249,7 +249,7 @@ fn main(n Node) i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -277,7 +277,7 @@ fn main(n Node, replacement *own Node) i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {

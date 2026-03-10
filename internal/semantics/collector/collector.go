@@ -23,19 +23,28 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 	for _, decl := range mod.AST.Decls {
 		switch d := decl.(type) {
 		case *ast.LetDecl:
-			declare(ctx, scope, symbols.New(d.Name, symbols.SymbolVar, d))
+			sym := symbols.New(d.Name, symbols.SymbolVar, d)
+			sym.Location = d.NameLocation
+			declare(ctx, scope, sym)
 		case *ast.ConstDecl:
-			declare(ctx, scope, symbols.New(d.Name, symbols.SymbolConst, d))
+			sym := symbols.New(d.Name, symbols.SymbolConst, d)
+			sym.Location = d.NameLocation
+			declare(ctx, scope, sym)
 		case *ast.TypeDecl:
-			declare(ctx, scope, symbols.New(d.Name, symbols.SymbolType, d))
+			sym := symbols.New(d.Name, symbols.SymbolType, d)
+			sym.Location = d.NameLocation
+			declare(ctx, scope, sym)
 			collectTypeMembers(ctx, typeMembers, d)
 		case *ast.FuncDecl:
 			if d.Receiver == nil {
-				declare(ctx, scope, symbols.New(d.Name, symbols.SymbolFunc, d))
+				sym := symbols.New(d.Name, symbols.SymbolFunc, d)
+				sym.Location = d.NameLocation
+				declare(ctx, scope, sym)
 				continue
 			}
 			recvName := receiverTypeName(d.Receiver.Type)
 			sym := symbols.New(d.Name, symbols.SymbolMethod, d)
+			sym.Location = d.NameLocation
 			sym.ReceiverType = recvName
 			declareMethod(ctx, methodSets, recvName, sym)
 		}

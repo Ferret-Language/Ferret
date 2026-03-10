@@ -15,6 +15,8 @@ const (
 	PhaseCFGAnalyzed
 	PhaseMIRGenerated
 	PhaseOwnershipAnalyzed
+	PhaseUsageAnalyzed
+	PhaseLayoutComputed
 	PhaseConstEvaluated
 	PhaseLLVMGenerated
 	PhaseCodeGenerated
@@ -46,6 +48,10 @@ func (p ModulePhase) String() string {
 		return "mir_generated"
 	case PhaseOwnershipAnalyzed:
 		return "ownership_analyzed"
+	case PhaseUsageAnalyzed:
+		return "usage_analyzed"
+	case PhaseLayoutComputed:
+		return "layout_computed"
 	case PhaseConstEvaluated:
 		return "const_evaluated"
 	case PhaseLLVMGenerated:

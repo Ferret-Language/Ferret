@@ -48,7 +48,7 @@ fn Origin() vec2::Vec2 {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected CFG-analyzed entry, got %#v", result.Entry)
 	}
 	if result.Entry.Types == nil {

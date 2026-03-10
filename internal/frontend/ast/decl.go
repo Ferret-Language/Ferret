@@ -12,53 +12,59 @@ func (*ImportDecl) declNode()              {}
 func (d *ImportDecl) Loc() source.Location { return d.Location }
 
 type ConstDecl struct {
-	Name     string
-	Type     TypeExpr
-	Value    Expr
-	Location source.Location
+	Name         string
+	NameLocation source.Location
+	Type         TypeExpr
+	Value        Expr
+	Location     source.Location
 }
 
 func (*ConstDecl) declNode()              {}
 func (d *ConstDecl) Loc() source.Location { return d.Location }
 
 type LetDecl struct {
-	Name     string
-	IsMut    bool
-	Type     TypeExpr
-	Value    Expr
-	Location source.Location
+	Name         string
+	NameLocation source.Location
+	IsMut        bool
+	Type         TypeExpr
+	Value        Expr
+	Location     source.Location
 }
 
 func (*LetDecl) declNode()              {}
 func (d *LetDecl) Loc() source.Location { return d.Location }
 
 type TypeDecl struct {
-	Name     string
-	Type     TypeExpr
-	Location source.Location
+	Name         string
+	NameLocation source.Location
+	Type         TypeExpr
+	Location     source.Location
 }
 
 func (*TypeDecl) declNode()              {}
 func (d *TypeDecl) Loc() source.Location { return d.Location }
 
 type Receiver struct {
-	Name     string
-	Type     TypeExpr
-	Location source.Location
+	Name         string
+	NameLocation source.Location
+	Type         TypeExpr
+	Location     source.Location
 }
 
 func (r *Receiver) Loc() source.Location { return r.Location }
 
 type Param struct {
-	Name       string
-	IsComptime bool
-	Type       TypeExpr
-	Location   source.Location
+	Name         string
+	NameLocation source.Location
+	IsComptime   bool
+	Type         TypeExpr
+	Location     source.Location
 }
 
 type FuncDecl struct {
 	Receiver      *Receiver
 	Name          string
+	NameLocation  source.Location
 	Doc           *CommentGroup
 	Attrs         []Attribute
 	IsUnsafe      bool

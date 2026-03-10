@@ -11,21 +11,23 @@ func (*BlockStmt) stmtNode()              {}
 func (s *BlockStmt) Loc() source.Location { return s.Location }
 
 type LetStmt struct {
-	Name     string
-	IsMut    bool
-	Type     TypeExpr
-	Value    Expr
-	Location source.Location
+	Name         string
+	NameLocation source.Location
+	IsMut        bool
+	Type         TypeExpr
+	Value        Expr
+	Location     source.Location
 }
 
 func (*LetStmt) stmtNode()              {}
 func (s *LetStmt) Loc() source.Location { return s.Location }
 
 type ConstStmt struct {
-	Name     string
-	Type     TypeExpr
-	Value    Expr
-	Location source.Location
+	Name         string
+	NameLocation source.Location
+	Type         TypeExpr
+	Value        Expr
+	Location     source.Location
 }
 
 func (*ConstStmt) stmtNode()              {}
@@ -91,11 +93,13 @@ func (*WhileStmt) stmtNode()              {}
 func (s *WhileStmt) Loc() source.Location { return s.Location }
 
 type ForStmt struct {
-	Iterable  Expr
-	IndexName string
-	ValueName string
-	Body      *BlockStmt
-	Location  source.Location
+	Iterable      Expr
+	IndexName     string
+	IndexLocation source.Location
+	ValueName     string
+	ValueLocation source.Location
+	Body          *BlockStmt
+	Location      source.Location
 }
 
 func (*ForStmt) stmtNode()              {}
@@ -151,10 +155,11 @@ func (*PanicStmt) stmtNode()              {}
 func (s *PanicStmt) Loc() source.Location { return s.Location }
 
 type LockStmt struct {
-	Value    Expr
-	Name     string
-	Body     *BlockStmt
-	Location source.Location
+	Value        Expr
+	Name         string
+	NameLocation source.Location
+	Body         *BlockStmt
+	Location     source.Location
 }
 
 func (*LockStmt) stmtNode()              {}

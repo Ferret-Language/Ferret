@@ -22,7 +22,7 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	if result.Entry.CFG == nil {
@@ -49,7 +49,7 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	found := false
@@ -81,7 +81,7 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -101,7 +101,7 @@ fn fail() void {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	if result.Entry.CFG == nil || len(result.Entry.CFG.Functions) != 1 {
@@ -200,7 +200,7 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {

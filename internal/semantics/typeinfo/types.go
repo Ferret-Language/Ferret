@@ -92,9 +92,18 @@ func (t *ErrorUnionType) String() string {
 
 type ArrayType struct {
 	Inner Type
+	Len   int64
 }
 
-func (t *ArrayType) String() string { return "[]" + typeString(t.Inner) }
+func (t *ArrayType) String() string {
+	if t == nil {
+		return "[?]<nil>"
+	}
+	if t.Len < 0 {
+		return "[?]" + typeString(t.Inner)
+	}
+	return fmt.Sprintf("[%d]%s", t.Len, typeString(t.Inner))
+}
 
 type TupleType struct {
 	Elems []Type
@@ -238,7 +247,7 @@ func Equal(a, b Type) bool {
 		return ok && Equal(at.Error, bt.Error) && Equal(at.Value, bt.Value)
 	case *ArrayType:
 		bt, ok := b.(*ArrayType)
-		return ok && Equal(at.Inner, bt.Inner)
+		return ok && at.Len == bt.Len && Equal(at.Inner, bt.Inner)
 	case *TupleType:
 		bt, ok := b.(*TupleType)
 		if !ok || len(at.Elems) != len(bt.Elems) {

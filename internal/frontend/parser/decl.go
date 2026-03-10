@@ -33,19 +33,21 @@ func (p *Parser) parseImportDecl() *ast.ImportDecl {
 
 func (p *Parser) parseTypeDecl() ast.Decl {
 	start := p.expect(tokens.TYPE, "expected 'type'").Start
-	name := p.expectIdent("expected type name").Literal
+	nameTok := p.expectIdent("expected type name")
 	spec := p.parseTypeSpec()
 	return &ast.TypeDecl{
-		Name:     name,
-		Type:     spec,
-		Location: p.locFrom(start),
+		Name:         nameTok.Literal,
+		NameLocation: p.locOfToken(nameTok),
+		Type:         spec,
+		Location:     p.locFrom(start),
 	}
 }
 
 func (p *Parser) parseLetDecl() ast.Decl {
 	start := p.expect(tokens.LET, "expected 'let'").Start
 	isMut := p.match(tokens.MUT)
-	name := p.expectIdent("expected variable name").Literal
+	nameTok := p.expectIdent("expected variable name")
+	name := nameTok.Literal
 	var typ ast.TypeExpr
 	if p.match(tokens.COLON) {
 		typ = p.parseType()
@@ -56,17 +58,19 @@ func (p *Parser) parseLetDecl() ast.Decl {
 	}
 	p.match(tokens.SEMICOLON)
 	return &ast.LetDecl{
-		Name:     name,
-		IsMut:    isMut,
-		Type:     typ,
-		Value:    value,
-		Location: p.locFrom(start),
+		Name:         name,
+		NameLocation: p.locOfToken(nameTok),
+		IsMut:        isMut,
+		Type:         typ,
+		Value:        value,
+		Location:     p.locFrom(start),
 	}
 }
 
 func (p *Parser) parseConstDecl() ast.Decl {
 	start := p.expect(tokens.CONST, "expected 'const'").Start
-	name := p.expectIdent("expected constant name").Literal
+	nameTok := p.expectIdent("expected constant name")
+	name := nameTok.Literal
 	var typ ast.TypeExpr
 	if p.match(tokens.COLON) {
 		typ = p.parseType()
@@ -77,10 +81,11 @@ func (p *Parser) parseConstDecl() ast.Decl {
 	}
 	p.match(tokens.SEMICOLON)
 	return &ast.ConstDecl{
-		Name:     name,
-		Type:     typ,
-		Value:    value,
-		Location: p.locFrom(start),
+		Name:         name,
+		NameLocation: p.locOfToken(nameTok),
+		Type:         typ,
+		Value:        value,
+		Location:     p.locFrom(start),
 	}
 }
 
@@ -114,6 +119,7 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 	return &ast.FuncDecl{
 		Receiver:      recv,
 		Name:          nameTok.Literal,
+		NameLocation:  p.locOfToken(nameTok),
 		Doc:           doc,
 		Attrs:         attrs,
 		IsUnsafe:      isUnsafe,
@@ -170,9 +176,10 @@ func (p *Parser) parseReceiver() *ast.Receiver {
 	nameTok := p.expectIdent("expected receiver name")
 	recvType := p.parseType()
 	return &ast.Receiver{
-		Name:     nameTok.Literal,
-		Type:     recvType,
-		Location: p.locFrom(start),
+		Name:         nameTok.Literal,
+		NameLocation: p.locOfToken(nameTok),
+		Type:         recvType,
+		Location:     p.locFrom(start),
 	}
 }
 
@@ -185,10 +192,11 @@ func (p *Parser) parseParams() []ast.Param {
 		nameTok := p.expectIdent("expected parameter name")
 		paramType := p.parseType()
 		params = append(params, ast.Param{
-			Name:       nameTok.Literal,
-			IsComptime: isComptime,
-			Type:       paramType,
-			Location:   p.locFrom(paramStart),
+			Name:         nameTok.Literal,
+			NameLocation: p.locOfToken(nameTok),
+			IsComptime:   isComptime,
+			Type:         paramType,
+			Location:     p.locFrom(paramStart),
 		})
 		if !p.consumeExprListSeparator(tokens.RPAREN, "parameter") {
 			break
