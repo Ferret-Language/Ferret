@@ -90,6 +90,16 @@ type ForStmt struct {
 
 func (*ForStmt) stmtNode() {}
 
+type LoopStmt struct {
+	baseStmt
+	Init Stmt
+	Cond Expr
+	Post Stmt
+	Body *BlockStmt
+}
+
+func (*LoopStmt) stmtNode() {}
+
 type LabelStmt struct {
 	baseStmt
 	Name string

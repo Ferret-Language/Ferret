@@ -30,11 +30,14 @@ fn main() i32 {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
-		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseHIRLowered {
+		t.Fatalf("expected HIR lowered phase, got %#v", result.Entry)
 	}
 	if result.Entry.HIR == nil {
 		t.Fatal("expected HIR module")
+	}
+	if result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
 	}
 	if len(result.Entry.HIR.Globals) != 1 {
 		t.Fatalf("expected one lowered global, got %#v", result.Entry.HIR.Globals)

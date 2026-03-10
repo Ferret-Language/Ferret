@@ -56,6 +56,7 @@ type Module struct {
 	Tokens       []tokens.Token
 	AST          *ast.Module
 	HIR          *hir.Module
+	LoweredHIR   *hir.Module
 	Phase        phase.ModulePhase
 	Dependencies []string
 	ModuleScope  *table.Scope

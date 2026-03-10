@@ -10,6 +10,7 @@ import (
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/hirgen"
+	"compiler/internal/hirlower"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/ownership"
@@ -78,7 +79,7 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 
 	changed := p.ctx.StoreModuleContent(mod, string(content))
 	p.ctx.Diagnostics.AddSourceContent(mod.FilePath, mod.Content)
-	if mod.Phase >= phase.PhaseOwnershipAnalyzed && !changed {
+	if mod.Phase >= phase.PhaseHIRLowered && !changed {
 		for _, depKey := range p.ctx.DependencyList(mod.Key) {
 			dep, ok := p.ctx.GetModule(depKey)
 			if !ok {
@@ -120,6 +121,7 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 	typechecker.CheckModule(p.ctx, mod)
 	hirgen.Generate(mod)
 	ownership.AnalyzeModule(p.ctx, mod)
+	hirlower.Lower(mod)
 	return nil
 }
 

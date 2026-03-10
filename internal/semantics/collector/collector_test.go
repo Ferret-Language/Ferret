@@ -41,8 +41,8 @@ fn (p *mut Point) Shift(dx i32) {
 	if result.Entry == nil {
 		t.Fatal("expected entry module")
 	}
-	if result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
-		t.Fatalf("expected ownership-analyzed phase, got %s", result.Entry.Phase)
+	if result.Entry.Phase != phase.PhaseHIRLowered {
+		t.Fatalf("expected HIR-lowered phase, got %s", result.Entry.Phase)
 	}
 	scope := result.Entry.ModuleScope
 	if scope == nil {

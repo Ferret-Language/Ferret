@@ -25,11 +25,14 @@ fn main() i32 {
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Entry == nil || result.Entry.Phase != phase.PhaseOwnershipAnalyzed {
-		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	if result.Entry == nil || result.Entry.Phase != phase.PhaseHIRLowered {
+		t.Fatalf("expected HIR lowered phase, got %#v", result.Entry)
 	}
 	if result.Entry.HIR == nil {
 		t.Fatal("expected lowered HIR")
+	}
+	if result.Entry.LoweredHIR == nil {
+		t.Fatal("expected normalized lowered HIR")
 	}
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected ownership diagnostic")
