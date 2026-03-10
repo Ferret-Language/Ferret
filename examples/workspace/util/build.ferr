@@ -1,0 +1,8 @@
+type Point struct {
+    X i32 = 0
+    Y i32 = 0
+}
+
+fn origin() Point {
+    return .{}
+}

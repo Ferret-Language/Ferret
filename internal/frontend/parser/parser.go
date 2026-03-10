@@ -1,0 +1,178 @@
+package parser
+
+import (
+	"fmt"
+
+	"compiler/internal/diagnostics"
+	"compiler/internal/frontend/ast"
+	"compiler/internal/source"
+	"compiler/internal/tokens"
+)
+
+type Parser struct {
+	file string
+	toks []tokens.Token
+	pos  int
+	diag *diagnostics.Bag
+}
+
+func Parse(file string, toks []tokens.Token, diag *diagnostics.Bag) *ast.Module {
+	return New(file, toks, diag).ParseModule()
+}
+
+func New(file string, toks []tokens.Token, diag *diagnostics.Bag) *Parser {
+	if diag == nil {
+		diag = diagnostics.NewBag()
+	}
+	return &Parser{file: file, toks: toks, diag: diag}
+}
+
+func (p *Parser) ParseModule() *ast.Module {
+	mod := &ast.Module{
+		FilePath: p.file,
+		Imports:  make([]*ast.ImportDecl, 0),
+		Decls:    make([]ast.Decl, 0),
+	}
+	seenDecl := false
+	for !p.at(tokens.EOF) {
+		if p.at(tokens.IMPORT) {
+			if seenDecl {
+				p.errorHere("imports must appear before declarations")
+			}
+			if imp := p.parseImportDecl(); imp != nil {
+				mod.Imports = append(mod.Imports, imp)
+			}
+			continue
+		}
+		seenDecl = true
+		decl := p.parseDecl()
+		if decl != nil {
+			mod.Decls = append(mod.Decls, decl)
+		} else {
+			p.synchronizeTopLevel()
+		}
+	}
+	return mod
+}
+
+func (p *Parser) parseDecl() ast.Decl {
+	switch p.current().Kind {
+	case tokens.CONST:
+		return p.parseConstDecl()
+	case tokens.TYPE:
+		return p.parseTypeDecl()
+	case tokens.FN:
+		return p.parseFuncDecl()
+	default:
+		p.errorHere("expected top-level declaration")
+		p.advance()
+		return nil
+	}
+}
+
+func (p *Parser) current() tokens.Token {
+	if len(p.toks) == 0 {
+		return tokens.Token{Kind: tokens.EOF}
+	}
+	if p.pos >= len(p.toks) {
+		return p.toks[len(p.toks)-1]
+	}
+	return p.toks[p.pos]
+}
+
+func (p *Parser) previous() tokens.Token {
+	if p.pos == 0 || len(p.toks) == 0 {
+		return tokens.Token{Kind: tokens.EOF}
+	}
+	return p.toks[p.pos-1]
+}
+
+func (p *Parser) advance() tokens.Token {
+	tok := p.current()
+	if p.pos < len(p.toks) {
+		p.pos++
+	}
+	return tok
+}
+
+func (p *Parser) at(kind tokens.Kind) bool {
+	return p.current().Kind == kind
+}
+
+func (p *Parser) match(kinds ...tokens.Kind) bool {
+	for _, kind := range kinds {
+		if p.at(kind) {
+			p.advance()
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Parser) expect(kind tokens.Kind, message string) tokens.Token {
+	if p.at(kind) {
+		return p.advance()
+	}
+	p.errorHere(message)
+	return p.current()
+}
+
+func (p *Parser) expectIdent(message string) tokens.Token {
+	return p.expect(tokens.IDENT, message)
+}
+
+func (p *Parser) locFrom(start source.Position) source.Location {
+	end := start
+	if p.pos > 0 {
+		end = p.previous().End
+	}
+	return source.NewLocation(p.file, start, end)
+}
+
+func (p *Parser) makeExprLoc(start source.Position) source.Location {
+	return source.NewLocation(p.file, start, p.previous().End)
+}
+
+func (p *Parser) errorHere(message string) {
+	tok := p.current()
+	loc := source.NewLocation(p.file, tok.Start, tok.End)
+	p.diag.Add(
+		diagnostics.NewError(message).
+			WithCode(diagnostics.ErrUnexpectedToken).
+			WithPrimaryLabel(&loc, message),
+	)
+}
+
+func (p *Parser) synchronizeTopLevel() {
+	for !p.at(tokens.EOF) {
+		switch p.current().Kind {
+		case tokens.IMPORT, tokens.CONST, tokens.TYPE, tokens.FN:
+			return
+		default:
+			p.advance()
+		}
+	}
+}
+
+func (p *Parser) parseNamePath() []string {
+	path := []string{p.expectIdent("expected identifier").Literal}
+	for p.match(tokens.DCOLON) {
+		path = append(path, p.expectIdent("expected identifier after ::").Literal)
+	}
+	return path
+}
+
+func (p *Parser) startsType() bool {
+	switch p.current().Kind {
+	case tokens.IDENT, tokens.QUESTION, tokens.OWN, tokens.RAW, tokens.ASTERISK,
+		tokens.LBRACK, tokens.LPAREN, tokens.STRUCT, tokens.INTERFACE, tokens.ENUM,
+		tokens.UNION, tokens.ERROR:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) unexpected(kind tokens.Kind) string {
+	return fmt.Sprintf("unexpected token %s", kind)
+}

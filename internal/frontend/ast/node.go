@@ -1,0 +1,33 @@
+package ast
+
+import "compiler/internal/source"
+
+type Node interface {
+	Loc() source.Location
+}
+
+type Decl interface {
+	Node
+	declNode()
+}
+
+type Stmt interface {
+	Node
+	stmtNode()
+}
+
+type Expr interface {
+	Node
+	exprNode()
+}
+
+type TypeExpr interface {
+	Node
+	typeNode()
+}
+
+type Module struct {
+	FilePath string
+	Imports  []*ImportDecl
+	Decls    []Decl
+}

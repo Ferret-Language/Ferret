@@ -1,0 +1,144 @@
+package tokens
+
+import (
+	"fmt"
+
+	"compiler/internal/source"
+)
+
+type Kind string
+
+const (
+	ILLEGAL Kind = "ILLEGAL"
+	EOF     Kind = "EOF"
+
+	IDENT  Kind = "IDENT"
+	NUMBER Kind = "NUMBER"
+	STRING Kind = "STRING"
+
+	ASSIGN    Kind = "="
+	PLUS      Kind = "+"
+	MINUS     Kind = "-"
+	ASTERISK  Kind = "*"
+	SLASH     Kind = "/"
+	PERCENT   Kind = "%"
+	BANG      Kind = "!"
+	QUESTION  Kind = "?"
+	AMP       Kind = "&"
+	LT        Kind = "<"
+	GT        Kind = ">"
+	EQ        Kind = "=="
+	NEQ       Kind = "!="
+	LE        Kind = "<="
+	GE        Kind = ">="
+	ANDAND    Kind = "&&"
+	OROR      Kind = "||"
+	QQ        Kind = "??"
+	BB        Kind = "!!"
+	COLON     Kind = ":"
+	DCOLON    Kind = "::"
+	COMMA     Kind = ","
+	DOT       Kind = "."
+	SEMICOLON Kind = ";"
+
+	LPAREN Kind = "("
+	RPAREN Kind = ")"
+	LBRACE Kind = "{"
+	RBRACE Kind = "}"
+	LBRACK Kind = "["
+	RBRACK Kind = "]"
+
+	IMPORT    Kind = "IMPORT"
+	CONST     Kind = "CONST"
+	TYPE      Kind = "TYPE"
+	STRUCT    Kind = "STRUCT"
+	INTERFACE Kind = "INTERFACE"
+	ENUM      Kind = "ENUM"
+	UNION     Kind = "UNION"
+	ERROR     Kind = "ERROR"
+	FN        Kind = "FN"
+	LET       Kind = "LET"
+	IF        Kind = "IF"
+	ELSE      Kind = "ELSE"
+	SWITCH    Kind = "SWITCH"
+	CASE      Kind = "CASE"
+	FOR       Kind = "FOR"
+	RETURN    Kind = "RETURN"
+	TAKE      Kind = "TAKE"
+	OWN       Kind = "OWN"
+	RAW       Kind = "RAW"
+	MUT       Kind = "MUT"
+	STATIC    Kind = "STATIC"
+	COMPTIME  Kind = "COMPTIME"
+	LOCK      Kind = "LOCK"
+	DEFER     Kind = "DEFER"
+	PANIC     Kind = "PANIC"
+	RECOVER   Kind = "RECOVER"
+	CATCH     Kind = "CATCH"
+	NONE      Kind = "NONE"
+	UNSAFE    Kind = "UNSAFE"
+)
+
+var keywords = map[string]Kind{
+	"import":    IMPORT,
+	"const":     CONST,
+	"type":      TYPE,
+	"struct":    STRUCT,
+	"interface": INTERFACE,
+	"enum":      ENUM,
+	"union":     UNION,
+	"error":     ERROR,
+	"fn":        FN,
+	"let":       LET,
+	"if":        IF,
+	"else":      ELSE,
+	"switch":    SWITCH,
+	"case":      CASE,
+	"for":       FOR,
+	"return":    RETURN,
+	"take":      TAKE,
+	"own":       OWN,
+	"raw":       RAW,
+	"mut":       MUT,
+	"static":    STATIC,
+	"comptime":  COMPTIME,
+	"lock":      LOCK,
+	"defer":     DEFER,
+	"panic":     PANIC,
+	"recover":   RECOVER,
+	"catch":     CATCH,
+	"none":      NONE,
+	"unsafe":    UNSAFE,
+}
+
+func LookupIdent(ident string) Kind {
+	if kind, ok := keywords[ident]; ok {
+		return kind
+	}
+	return IDENT
+}
+
+func IsKeyword(ident string) bool {
+	_, ok := keywords[ident]
+	return ok
+}
+
+func IsBuiltinType(name string) bool {
+	switch name {
+	case "bool", "char", "string", "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64", "void":
+		return true
+	default:
+		return false
+	}
+}
+
+type Token struct {
+	Kind    Kind
+	Literal string
+	Start   source.Position
+	End     source.Position
+}
+
+func (t Token) String() string {
+	return fmt.Sprintf("%s(%q)", t.Kind, t.Literal)
+}

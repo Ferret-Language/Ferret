@@ -1,0 +1,219 @@
+package parser
+
+import (
+	"compiler/internal/frontend/ast"
+	"compiler/internal/tokens"
+)
+
+func (p *Parser) parseImportDecl() *ast.ImportDecl {
+	start := p.expect(tokens.IMPORT, "expected 'import'").Start
+	pathTok := p.current()
+	path := ""
+	switch pathTok.Kind {
+	case tokens.STRING:
+		path = p.advance().Literal
+	case tokens.IDENT:
+		pathParts := p.parseNamePath()
+		for i, part := range pathParts {
+			if i > 0 {
+				path += "::"
+			}
+			path += part
+		}
+	default:
+		p.errorHere("expected import path")
+	}
+	p.match(tokens.SEMICOLON)
+	return &ast.ImportDecl{Path: path, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseTypeDecl() ast.Decl {
+	start := p.expect(tokens.TYPE, "expected 'type'").Start
+	name := p.expectIdent("expected type name").Literal
+	spec := p.parseTypeSpec()
+	return &ast.TypeDecl{
+		Name:     name,
+		Type:     spec,
+		Location: p.locFrom(start),
+	}
+}
+
+func (p *Parser) parseConstDecl() ast.Decl {
+	start := p.expect(tokens.CONST, "expected 'const'").Start
+	name := p.expectIdent("expected constant name").Literal
+	var typ ast.TypeExpr
+	if p.match(tokens.COLON) {
+		typ = p.parseType()
+	}
+	var value ast.Expr
+	if p.match(tokens.ASSIGN) {
+		value = p.parseExpr(precLowest)
+	}
+	p.match(tokens.SEMICOLON)
+	return &ast.ConstDecl{
+		Name:     name,
+		Type:     typ,
+		Value:    value,
+		Location: p.locFrom(start),
+	}
+}
+
+func (p *Parser) parseFuncDecl() ast.Decl {
+	start := p.expect(tokens.FN, "expected 'fn'").Start
+	var recv *ast.Receiver
+	if p.match(tokens.LPAREN) {
+		recv = p.parseReceiver()
+		p.expect(tokens.RPAREN, "expected ')' after receiver")
+	}
+	nameTok := p.expectIdent("expected function or method name")
+	params := p.parseParams()
+	var result ast.TypeExpr
+	if p.startsType() {
+		result = p.parseType()
+	}
+	body := p.parseBlock()
+	return &ast.FuncDecl{
+		Receiver: recv,
+		Name:     nameTok.Literal,
+		Params:   params,
+		Result:   result,
+		Body:     body,
+		Location: p.locFrom(start),
+	}
+}
+
+func (p *Parser) parseReceiver() *ast.Receiver {
+	start := p.current().Start
+	nameTok := p.expectIdent("expected receiver name")
+	recvType := p.parseType()
+	return &ast.Receiver{
+		Name:     nameTok.Literal,
+		Type:     recvType,
+		Location: p.locFrom(start),
+	}
+}
+
+func (p *Parser) parseParams() []ast.Param {
+	p.expect(tokens.LPAREN, "expected '('")
+	params := make([]ast.Param, 0)
+	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+		paramStart := p.current().Start
+		isComptime := p.match(tokens.COMPTIME)
+		nameTok := p.expectIdent("expected parameter name")
+		paramType := p.parseType()
+		params = append(params, ast.Param{
+			Name:       nameTok.Literal,
+			IsComptime: isComptime,
+			Type:       paramType,
+			Location:   p.locFrom(paramStart),
+		})
+		if !p.match(tokens.COMMA) {
+			break
+		}
+	}
+	p.expect(tokens.RPAREN, "expected ')'")
+	return params
+}
+
+func (p *Parser) parseTypeSpec() ast.TypeExpr {
+	switch p.current().Kind {
+	case tokens.STRUCT:
+		return p.parseStructType()
+	case tokens.INTERFACE:
+		return p.parseInterfaceType()
+	case tokens.ENUM:
+		return p.parseEnumType()
+	case tokens.UNION:
+		return p.parseUnionType()
+	case tokens.ERROR:
+		return p.parseErrorType()
+	default:
+		return p.parseType()
+	}
+}
+
+func (p *Parser) parseStructType() ast.TypeExpr {
+	start := p.advance().Start
+	p.expect(tokens.LBRACE, "expected '{'")
+	fields := make([]*ast.FieldDecl, 0)
+	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		fieldStart := p.current().Start
+		isStatic := p.match(tokens.STATIC)
+		nameTok := p.expectIdent("expected field name")
+		fieldType := p.parseType()
+		var def ast.Expr
+		if p.match(tokens.ASSIGN) {
+			def = p.parseExpr(precLowest)
+		}
+		p.match(tokens.SEMICOLON)
+		fields = append(fields, &ast.FieldDecl{
+			Name:     nameTok.Literal,
+			Type:     fieldType,
+			Default:  def,
+			IsStatic: isStatic,
+			Location: p.locFrom(fieldStart),
+		})
+	}
+	p.expect(tokens.RBRACE, "expected '}'")
+	return &ast.StructType{Fields: fields, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseInterfaceType() ast.TypeExpr {
+	start := p.advance().Start
+	p.expect(tokens.LBRACE, "expected '{'")
+	methods := make([]*ast.InterfaceMethod, 0)
+	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		methodStart := p.current().Start
+		nameTok := p.expectIdent("expected interface method name")
+		params := p.parseParams()
+		var result ast.TypeExpr
+		if p.startsType() {
+			result = p.parseType()
+		}
+		p.match(tokens.SEMICOLON)
+		methods = append(methods, &ast.InterfaceMethod{
+			Name:     nameTok.Literal,
+			Params:   params,
+			Result:   result,
+			Location: p.locFrom(methodStart),
+		})
+	}
+	p.expect(tokens.RBRACE, "expected '}'")
+	return &ast.InterfaceType{Methods: methods, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseEnumType() ast.TypeExpr {
+	start := p.advance().Start
+	p.expect(tokens.LBRACE, "expected '{'")
+	variants := make([]string, 0)
+	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		variants = append(variants, p.expectIdent("expected enum variant").Literal)
+		p.match(tokens.COMMA)
+	}
+	p.expect(tokens.RBRACE, "expected '}'")
+	return &ast.EnumType{Variants: variants, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseUnionType() ast.TypeExpr {
+	start := p.advance().Start
+	p.expect(tokens.LBRACE, "expected '{'")
+	members := make([]ast.TypeExpr, 0)
+	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		members = append(members, p.parseType())
+		p.match(tokens.COMMA)
+	}
+	p.expect(tokens.RBRACE, "expected '}'")
+	return &ast.UnionType{Members: members, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseErrorType() ast.TypeExpr {
+	start := p.advance().Start
+	p.expect(tokens.LBRACE, "expected '{'")
+	members := make([]string, 0)
+	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		members = append(members, p.expectIdent("expected error member").Literal)
+		p.match(tokens.COMMA)
+	}
+	p.expect(tokens.RBRACE, "expected '}'")
+	return &ast.ErrorType{Members: members, Location: p.locFrom(start)}
+}

@@ -1,0 +1,103 @@
+package ast
+
+import "compiler/internal/source"
+
+type NamedType struct {
+	Path     []string
+	Location source.Location
+}
+
+func (*NamedType) typeNode()              {}
+func (t *NamedType) Loc() source.Location { return t.Location }
+
+type PointerType struct {
+	IsOwn    bool
+	IsRaw    bool
+	IsMut    bool
+	Inner    TypeExpr
+	Location source.Location
+}
+
+func (*PointerType) typeNode()              {}
+func (t *PointerType) Loc() source.Location { return t.Location }
+
+type OptionalType struct {
+	Inner    TypeExpr
+	Location source.Location
+}
+
+func (*OptionalType) typeNode()              {}
+func (t *OptionalType) Loc() source.Location { return t.Location }
+
+type ErrorUnionType struct {
+	Error    TypeExpr
+	Value    TypeExpr
+	Location source.Location
+}
+
+func (*ErrorUnionType) typeNode()              {}
+func (t *ErrorUnionType) Loc() source.Location { return t.Location }
+
+type ArrayType struct {
+	Size     Expr
+	Inner    TypeExpr
+	Location source.Location
+}
+
+func (*ArrayType) typeNode()              {}
+func (t *ArrayType) Loc() source.Location { return t.Location }
+
+type TupleType struct {
+	Elems    []TypeExpr
+	Location source.Location
+}
+
+func (*TupleType) typeNode()              {}
+func (t *TupleType) Loc() source.Location { return t.Location }
+
+type StructType struct {
+	Fields   []*FieldDecl
+	Location source.Location
+}
+
+func (*StructType) typeNode()              {}
+func (t *StructType) Loc() source.Location { return t.Location }
+
+type InterfaceMethod struct {
+	Name     string
+	Params   []Param
+	Result   TypeExpr
+	Location source.Location
+}
+
+type InterfaceType struct {
+	Methods  []*InterfaceMethod
+	Location source.Location
+}
+
+func (*InterfaceType) typeNode()              {}
+func (t *InterfaceType) Loc() source.Location { return t.Location }
+
+type EnumType struct {
+	Variants []string
+	Location source.Location
+}
+
+func (*EnumType) typeNode()              {}
+func (t *EnumType) Loc() source.Location { return t.Location }
+
+type UnionType struct {
+	Members  []TypeExpr
+	Location source.Location
+}
+
+func (*UnionType) typeNode()              {}
+func (t *UnionType) Loc() source.Location { return t.Location }
+
+type ErrorType struct {
+	Members  []string
+	Location source.Location
+}
+
+func (*ErrorType) typeNode()              {}
+func (t *ErrorType) Loc() source.Location { return t.Location }

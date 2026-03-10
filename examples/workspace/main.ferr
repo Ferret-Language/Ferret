@@ -1,0 +1,10 @@
+import "math/vec2"
+import "util/build"
+
+fn main() i32 {
+    let p = build::origin()
+    if p == .{ .X = 0, .Y = 0 } {
+        return vec2::len2(copy p)
+    }
+    return 1
+}
