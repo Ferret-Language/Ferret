@@ -220,6 +220,13 @@ func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) 
 		copy := *v
 		copy.Base = base
 		return n.wrapComputed(fn, &copy, temps)
+	case *IndexValue:
+		baseTemps, base := n.normalizeValue(fn, v.Base)
+		indexTemps, index := n.normalizeValue(fn, v.Index)
+		copy := *v
+		copy.Base = base
+		copy.Index = index
+		return n.wrapComputed(fn, &copy, append(baseTemps, indexTemps...))
 	case *FieldValue:
 		temps, base := n.normalizeValue(fn, v.Base)
 		copy := *v
@@ -295,6 +302,13 @@ func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, V
 		copy := *v
 		copy.Base = base
 		return temps, &copy
+	case *IndexValue:
+		baseTemps, base := n.normalizeValue(fn, v.Base)
+		indexTemps, index := n.normalizeValue(fn, v.Index)
+		copy := *v
+		copy.Base = base
+		copy.Index = index
+		return append(baseTemps, indexTemps...), &copy
 	case *FieldValue:
 		temps, base := n.normalizeValue(fn, v.Base)
 		copy := *v

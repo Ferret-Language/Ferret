@@ -293,6 +293,15 @@ type CompositeValue struct {
 
 func (*CompositeValue) valueNode() {}
 
+// IndexValue represents arr[index] loaded as an rvalue.
+type IndexValue struct {
+	baseValue
+	Base  Value
+	Index Value
+}
+
+func (*IndexValue) valueNode() {}
+
 type LocalPlace struct {
 	basePlace
 	LocalID int
@@ -307,6 +316,15 @@ type FieldPlace struct {
 }
 
 func (*FieldPlace) placeNode() {}
+
+// IndexPlace represents the lvalue arr[index].
+type IndexPlace struct {
+	basePlace
+	Base  Place
+	Index Value
+}
+
+func (*IndexPlace) placeNode() {}
 
 type BindInstr struct {
 	baseInstr

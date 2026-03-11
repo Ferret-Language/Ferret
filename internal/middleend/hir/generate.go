@@ -405,6 +405,10 @@ func generateExpr(types *typeinfo.ModuleInfo, expr ast.Expr) Expr {
 			out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: generateExpr(types, item.Value)})
 		}
 		return out
+	case *ast.IndexExpr:
+		out := &IndexExpr{Left: generateExpr(types, e.Left), Index: generateExpr(types, e.Index)}
+		out.ExprType, out.Location, out.Source = typ, e.Location, e
+		return out
 	default:
 		return nil
 	}

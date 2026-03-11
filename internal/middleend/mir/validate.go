@@ -190,6 +190,8 @@ func childrenAreSimple(value Value) bool {
 		return isSimpleValue(v.Base)
 	case *FieldValue:
 		return isSimpleValue(v.Base)
+	case *IndexValue:
+		return isSimpleValue(v.Base) && isSimpleValue(v.Index)
 	case *CastValue:
 		return isSimpleValue(v.Left)
 	case *CompositeValue:

@@ -449,7 +449,8 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.StringLit:
-		typ := &typeinfo.BuiltinType{Name: "string"}
+		// String literals are *i8 — a pointer to a null-terminated const byte array.
+		typ := &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "i8"}}
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.NoneLit:
@@ -483,6 +484,8 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		return c.typeOfCast(scope, e)
 	case *ast.CompositeLit:
 		return c.typeOfComposite(scope, e, expected)
+	case *ast.IndexExpr:
+		return c.typeOfIndex(scope, e)
 	default:
 		return typeinfo.UnknownType{}
 	}
@@ -880,6 +883,30 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 	return typeinfo.InvalidType{}
 }
 
+func (c *checker) typeOfIndex(scope *valueScope, expr *ast.IndexExpr) typeinfo.Type {
+	baseTyp := c.typeOfExpr(scope, expr.Left, nil)
+	// typecheck the index as usize
+	usize := &typeinfo.BuiltinType{Name: "usize"}
+	c.typeOfExpr(scope, expr.Index, usize)
+	base := c.underlying(baseTyp)
+	if arr, ok := base.(*typeinfo.ArrayType); ok {
+		c.info.BindNode(expr, arr.Inner)
+		return arr.Inner
+	}
+	// Pointer indexing: *T[i] → T
+	if ptr, ok := base.(*typeinfo.PointerType); ok {
+		c.info.BindNode(expr, ptr.Inner)
+		return ptr.Inner
+	}
+	loc := expr.Location
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError(fmt.Sprintf("cannot index into %s", baseTyp.String())).
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(&loc, "not an array or pointer type"),
+	)
+	return typeinfo.InvalidType{}
+}
+
 func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, expected typeinfo.Type) typeinfo.Type {
 	if expected == nil {
 		loc := expr.Location
@@ -891,6 +918,35 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 		return typeinfo.InvalidType{}
 	}
 	base := c.underlying(expected)
+	// Array literal: positional elements matching element type.
+	if arrType, ok := base.(*typeinfo.ArrayType); ok {
+		for i, item := range expr.Items {
+			if item.Name != nil {
+				loc := item.Name.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("array literal does not support named elements").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(&loc, "use positional elements"),
+				)
+				continue
+			}
+			if arrType.Len >= 0 && int64(i) >= arrType.Len {
+				loc := expr.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("too many elements in array literal").
+						WithCode(diagnostics.ErrExtraField).
+						WithPrimaryLabel(&loc, "excess element"),
+				)
+				break
+			}
+			got := c.typeOfExpr(scope, item.Value, arrType.Inner)
+			if !typeinfo.Assignable(arrType.Inner, got) {
+				c.reportTypeMismatch(item.Value.Loc(), arrType.Inner, got)
+			}
+		}
+		c.info.BindNode(expr, expected)
+		return expected
+	}
 	structType, ok := base.(*typeinfo.StructType)
 	if !ok {
 		c.info.BindNode(expr, expected)
@@ -1617,10 +1673,6 @@ func (c *checker) forBindingTypes(iterable typeinfo.Type) (typeinfo.Type, typein
 	switch t := iterable.(type) {
 	case *typeinfo.ArrayType:
 		return indexType, t.Inner
-	case *typeinfo.BuiltinType:
-		if t.Name == "string" {
-			return indexType, &typeinfo.BuiltinType{Name: "char"}
-		}
 	}
 	return indexType, typeinfo.UnknownType{}
 }

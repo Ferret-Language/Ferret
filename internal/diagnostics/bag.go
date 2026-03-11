@@ -123,6 +123,9 @@ func sortDiagnostics(diagnostics []*Diagnostic) {
 		}
 
 		// Same file, compare by line
+		if iLoc.Start == nil || jLoc.Start == nil {
+			return false
+		}
 		if iLoc.Start.Line != jLoc.Start.Line {
 			return iLoc.Start.Line < jLoc.Start.Line
 		}

@@ -284,6 +284,8 @@ func formatValue(value Value) string {
 			}
 		}
 		return fmt.Sprintf(".{ %s }", strings.Join(parts, ", "))
+	case *IndexValue:
+		return fmt.Sprintf("%s[%s]", wrapValue(v.Base), formatValue(v.Index))
 	default:
 		return "<value>"
 	}
@@ -396,6 +398,8 @@ func formatPlace(place Place) string {
 		return formatLocalRef(currentFnForFormat, p.LocalID)
 	case *FieldPlace:
 		return fmt.Sprintf("field %s %d", formatPlace(p.Base), p.FieldIndex)
+	case *IndexPlace:
+		return fmt.Sprintf("index %s [%s]", formatPlace(p.Base), formatValue(p.Index))
 	default:
 		return "<place>"
 	}

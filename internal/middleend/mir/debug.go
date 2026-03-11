@@ -155,6 +155,8 @@ func debugValue(value Value) any {
 			items = append(items, map[string]any{"name": item.Name, "value": debugValue(item.Value)})
 		}
 		return map[string]any{"kind": "composite", "items": items, "type": typeString(v.Type())}
+	case *IndexValue:
+		return map[string]any{"kind": "index", "base": debugValue(v.Base), "index": debugValue(v.Index), "type": typeString(v.Type())}
 	default:
 		return nil
 	}
@@ -166,6 +168,8 @@ func debugPlace(place Place) any {
 		return map[string]any{"kind": "local", "id": p.LocalID}
 	case *FieldPlace:
 		return map[string]any{"kind": "field", "base": debugPlace(p.Base), "field_index": p.FieldIndex}
+	case *IndexPlace:
+		return map[string]any{"kind": "index_place", "base": debugPlace(p.Base), "index": debugValue(p.Index)}
 	default:
 		return nil
 	}

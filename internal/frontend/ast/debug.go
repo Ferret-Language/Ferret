@@ -195,6 +195,8 @@ func debugExpr(expr Expr) any {
 			items = append(items, map[string]any{"name": debugExpr(item.Name), "value": debugExpr(item.Value)})
 		}
 		return map[string]any{"kind": "CompositeLit", "items": items, "loc": debugLoc(e.Location)}
+	case *IndexExpr:
+		return map[string]any{"kind": "IndexExpr", "left": debugExpr(e.Left), "index": debugExpr(e.Index), "loc": debugLoc(e.Location)}
 	default:
 		return map[string]any{"kind": "<unknown-expr>"}
 	}

@@ -136,7 +136,7 @@ func IsKeyword(ident string) bool {
 
 func IsBuiltinType(name string) bool {
 	switch name {
-	case "bool", "char", "string", "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64", "void":
+	case "bool", "char", "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64", "void":
 		return true
 	default:
 		return false

@@ -367,6 +367,9 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		for _, item := range e.Items {
 			r.resolveExpr(scope, item.Value)
 		}
+	case *ast.IndexExpr:
+		r.resolveExpr(scope, e.Left)
+		r.resolveExpr(scope, e.Index)
 	}
 }
 

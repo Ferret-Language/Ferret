@@ -276,6 +276,8 @@ func formatExpr(expr Expr) string {
 			}
 		}
 		return fmt.Sprintf(".{ %s }", strings.Join(parts, ", "))
+	case *IndexExpr:
+		return fmt.Sprintf("%s[%s]", wrapExpr(e.Left), formatExpr(e.Index))
 	default:
 		return "<expr>"
 	}

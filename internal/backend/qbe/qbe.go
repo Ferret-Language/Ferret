@@ -31,6 +31,8 @@ type moduleState struct {
 	aggLocals    map[int]*aggregateLocal
 	aggParams    map[int]struct{}
 	nextTemp     int
+	nextStrConst int              // counter for unnamed string constant globals
+	deferredB    *strings.Builder // deferred data sections (string literals used in functions)
 }
 
 type aggregateLocal struct {
@@ -57,6 +59,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		functions:    make(map[string]struct{}),
 		globals:      make(map[string]struct{}),
 		modulePrefix: sanitizePath(unit.Module.ImportPath),
+		deferredB:    &strings.Builder{},
 	}
 	for _, fn := range unit.Module.Functions {
 		if fn != nil {
@@ -96,6 +99,11 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 			return nil, err
 		}
 		written++
+	}
+	// Flush any string-literal data sections emitted during function lowering.
+	if state.deferredB.Len() > 0 {
+		b.WriteByte('\n')
+		b.WriteString(state.deferredB.String())
 	}
 	return &backend.Artifact{
 		Target:    backend.TargetQBE,
@@ -284,6 +292,8 @@ func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
 		return lowerAssignLike(state, name, i.Type, i.Value)
 	case *midmir.StoreFieldInstr:
 		return lowerStoreField(state, i)
+	case *midmir.StoreInstr:
+		return lowerStorePlace(state, i)
 	case *midmir.EvalInstr:
 		if call, ok := i.Value.(*midmir.CallValue); ok {
 			return lowerCall(state, "", nil, call)
@@ -305,6 +315,9 @@ func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value m
 	}
 	if field, ok := value.(*midmir.FieldLoadValue); ok {
 		return lowerFieldLoad(state, name, typ, field)
+	}
+	if idx, ok := value.(*midmir.IndexValue); ok {
+		return lowerIndexLoad(state, name, typ, idx)
 	}
 	if load, ok := value.(*midmir.LoadValue); ok {
 		return lowerLoadValue(state, name, typ, load)
@@ -496,6 +509,187 @@ func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.T
 	return strings.Join(lines, "\n\t"), nil
 }
 
+// lowerIndexLoad lowers arr[index] as an rvalue via QBE load.
+func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *midmir.IndexValue) (string, error) {
+	lines, addr, err := lowerQBEIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())
+	if err != nil {
+		return "", err
+	}
+	op, resultType, err := qbeLoadOp(targetType)
+	if err != nil {
+		return "", err
+	}
+	lines = append(lines, fmt.Sprintf("%s =%s %s %s", qbeLocalName(targetName), resultType, op, addr))
+	return strings.Join(lines, "\n\t"), nil
+}
+
+// lowerQBEIndexAddress computes ptr = base + index * elemSize.
+func lowerQBEIndexAddress(state *moduleState, base midmir.Value, index midmir.Value, baseType typeinfo.Type) ([]string, string, error) {
+	var elemType typeinfo.Type
+	switch bt := baseType.(type) {
+	case *typeinfo.ArrayType:
+		elemType = bt.Inner
+	case *typeinfo.PointerType:
+		elemType = bt.Inner
+	default:
+		return nil, "", fmt.Errorf("cannot index into %T", baseType)
+	}
+	elemSize, _, err := qbeScalarSizeAlign(elemType)
+	if err != nil {
+		// try aggregate size
+		elemSize, _, err = aggregateSizeAlign(state, elemType)
+		if err != nil {
+			return nil, "", fmt.Errorf("cannot compute size of array element %s", elemType)
+		}
+	}
+	baseExpr, err := lowerValue(state, base)
+	if err != nil {
+		return nil, "", err
+	}
+	indexExpr, err := lowerValue(state, index)
+	if err != nil {
+		return nil, "", err
+	}
+	var lines []string
+	scaled := indexExpr
+	if elemSize != 1 {
+		scl := freshTemp(state, "idx")
+		lines = append(lines, fmt.Sprintf("%s =l mul %s, %d", scl, indexExpr, elemSize))
+		scaled = scl
+	}
+	addr := freshTemp(state, "elem")
+	lines = append(lines, fmt.Sprintf("%s =l add %s, %s", addr, baseExpr, scaled))
+	return lines, addr, nil
+}
+
+// lowerStorePlace lowers a StoreInstr (write to an lvalue place).
+func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, error) {
+	if instr == nil {
+		return "", nil
+	}
+	lines, addr, err := lowerQBEPlaceAddr(state, instr.Target)
+	if err != nil {
+		return "", err
+	}
+	val, err := lowerValue(state, instr.Value)
+	if err != nil {
+		return "", err
+	}
+	op, err := qbeStoreOp(instr.Value.Type())
+	if err != nil {
+		return "", err
+	}
+	lines = append(lines, fmt.Sprintf("%s %s, %s", op, val, addr))
+	return strings.Join(lines, "\n\t"), nil
+}
+
+// lowerQBEPlaceAddr computes the QBE address for a place.
+func lowerQBEPlaceAddr(state *moduleState, place midmir.Place) ([]string, string, error) {
+	switch p := place.(type) {
+	case nil:
+		return nil, "", fmt.Errorf("nil place")
+	case *midmir.LocalPlace:
+		if agg, ok := state.aggLocals[p.LocalID]; ok {
+			return nil, qbeLocalName(agg.PtrName), nil
+		}
+		return nil, qbeLocalName(localNameByID(state.fn, p.LocalID)), nil
+	case *midmir.FieldPlace:
+		baseLines, basePtr, err := lowerQBEPlaceAddr(state, p.Base)
+		if err != nil {
+			return nil, "", err
+		}
+		baseType := qbePlaceType(state, p.Base)
+		sl, err := lookupStructLayout(state, baseType)
+		if err != nil {
+			return nil, "", err
+		}
+		if p.FieldIndex < 0 || p.FieldIndex >= len(sl.Fields) {
+			return nil, "", fmt.Errorf("invalid field index %d", p.FieldIndex)
+		}
+		field := sl.Fields[p.FieldIndex]
+		if field.Offset == 0 {
+			return baseLines, basePtr, nil
+		}
+		addrTmp := freshTemp(state, "addr")
+		gepLine := fmt.Sprintf("%s =l add %s, %d", addrTmp, basePtr, field.Offset)
+		return append(baseLines, gepLine), addrTmp, nil
+	case *midmir.IndexPlace:
+		baseLines, basePtr, err := lowerQBEPlaceAddr(state, p.Base)
+		if err != nil {
+			return nil, "", err
+		}
+		baseType := qbePlaceType(state, p.Base)
+		// Compute address using a fake LocalValue that returns basePtr
+		var elemType typeinfo.Type
+		if arr, ok := baseType.(*typeinfo.ArrayType); ok {
+			elemType = arr.Inner
+		} else {
+			return nil, "", fmt.Errorf("IndexPlace base is not an array: %T", baseType)
+		}
+		elemSize, _, err := qbeScalarSizeAlign(elemType)
+		if err != nil {
+			elemSize, _, err = aggregateSizeAlign(state, elemType)
+			if err != nil {
+				return nil, "", fmt.Errorf("cannot compute size of indexed element type %s", elemType)
+			}
+		}
+		idxVal, err := lowerValue(state, p.Index)
+		if err != nil {
+			return nil, "", err
+		}
+		var idxLines []string
+		scaled := idxVal
+		if elemSize != 1 {
+			scl := freshTemp(state, "idx")
+			idxLines = append(idxLines, fmt.Sprintf("%s =l mul %s, %d", scl, idxVal, elemSize))
+			scaled = scl
+		}
+		addrTmp := freshTemp(state, "elem")
+		idxLines = append(idxLines, fmt.Sprintf("%s =l add %s, %s", addrTmp, basePtr, scaled))
+		return append(baseLines, idxLines...), addrTmp, nil
+	default:
+		return nil, "", fmt.Errorf("unsupported place %T for lowerQBEPlaceAddr", place)
+	}
+}
+
+// qbePlaceType returns the type of variable at the root of a place.
+func qbePlaceType(state *moduleState, place midmir.Place) typeinfo.Type {
+	if lp, ok := place.(*midmir.LocalPlace); ok {
+		if state.fn != nil && lp.LocalID >= 0 && lp.LocalID < len(state.fn.Locals) {
+			return state.fn.Locals[lp.LocalID].Type
+		}
+	}
+	return nil
+}
+
+// qbeScalarSizeAlign returns the size and alignment for scalar/pointer types.
+func qbeScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
+	switch t := typ.(type) {
+	case *typeinfo.BuiltinType:
+		switch t.Name {
+		case "bool", "u8", "i8":
+			return 1, 1, nil
+		case "u16", "i16":
+			return 2, 2, nil
+		case "u32", "i32", "char", "f32":
+			return 4, 4, nil
+		case "u64", "i64", "usize", "isize", "f64":
+			return 8, 8, nil
+		}
+	case *typeinfo.PointerType:
+		return 8, 8, nil
+	}
+	return 0, 0, fmt.Errorf("not a scalar type: %s", typ)
+}
+
+// alignUpInt64 rounds size up to alignment.
+func alignUpInt64(size, align int64) int64 {
+	if align <= 1 {
+		return size
+	}
+	return (size + align - 1) &^ (align - 1)
+}
+
 func lowerStoreField(state *moduleState, instr *midmir.StoreFieldInstr) (string, error) {
 	lines, addr, fieldType, err := lowerFieldAddress(state, instr.Base, instr.FieldIndex)
 	if err != nil {
@@ -556,6 +750,17 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 	return "", fmt.Errorf("unsupported aggregate assignment %T", value)
 }
 
+// emitQBEStringConstant appends a QBE data section for a string literal to
+// state.deferredB and returns the generated global symbol name.
+func emitQBEStringConstant(state *moduleState, s string) string {
+	idx := state.nextStrConst
+	state.nextStrConst++
+	sym := fmt.Sprintf("__ferret_str%d", idx)
+	// QBE data: bytes of the string followed by a NUL terminator.
+	fmt.Fprintf(state.deferredB, "data $%s = { b %q, b 0 }\n", sym, s)
+	return sym
+}
+
 func lowerAggregateCall(state *moduleState, agg *aggregateLocal, call *midmir.CallValue) (string, error) {
 	if agg == nil || call == nil {
 		return "", fmt.Errorf("invalid aggregate call lowering")
@@ -591,6 +796,41 @@ func lowerAggregateCall(state *moduleState, agg *aggregateLocal, call *midmir.Ca
 }
 
 func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp *midmir.CompositeValue) (string, error) {
+	// Array literal: positional items stored at successive element offsets.
+	if arrType, ok := agg.Type.(*typeinfo.ArrayType); ok {
+		elemSize, elemAlign, err := qbeScalarSizeAlign(arrType.Inner)
+		if err != nil {
+			// try inner as aggregate
+			innerSz, innerAl, err2 := aggregateSizeAlign(state, arrType.Inner)
+			if err2 != nil {
+				return "", fmt.Errorf("unsupported array element type in composite literal: %s", arrType.Inner)
+			}
+			elemSize = innerSz
+			elemAlign = innerAl
+		}
+		stride := alignUpInt64(elemSize, elemAlign)
+		op, err := qbeStoreOp(arrType.Inner)
+		if err != nil {
+			return "", err
+		}
+		lines := make([]string, 0, len(comp.Items)*2)
+		for i, item := range comp.Items {
+			lowered, err := lowerValue(state, item.Value)
+			if err != nil {
+				return "", err
+			}
+			addr := qbeLocalName(agg.PtrName)
+			offset := int64(i) * stride
+			if offset != 0 {
+				tmp := freshTemp(state, "addr")
+				lines = append(lines, fmt.Sprintf("%s =l add %s, %d", tmp, qbeLocalName(agg.PtrName), offset))
+				addr = tmp
+			}
+			lines = append(lines, fmt.Sprintf("%s %s, %s", op, lowered, addr))
+		}
+		return strings.Join(lines, "\n\t"), nil
+	}
+
 	structLayout, err := lookupStructLayout(state, agg.Type)
 	if err != nil {
 		return "", err
@@ -776,7 +1016,9 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 		}
 		return "0", nil
 	case *midmir.StringValue:
-		return "", fmt.Errorf("string literal values are only supported in global data")
+		// String literals are *i8 — emit a data section and return its address.
+		sym := emitQBEStringConstant(state, v.Value)
+		return "$" + sym, nil
 	case *midmir.NoneValue:
 		return "0", nil
 	case *midmir.UnaryValue:
@@ -793,6 +1035,8 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
 	case *midmir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
+	case *midmir.IndexValue:
+		return "", fmt.Errorf("index value must be lowered in assignment context")
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
@@ -954,6 +1198,24 @@ func isAggregateType(state *moduleState, typ typeinfo.Type) bool {
 
 func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, error) {
 	switch t := typ.(type) {
+	case *typeinfo.BuiltinType:
+		return 0, 0, fmt.Errorf("unsupported aggregate builtin %s", t.Name)
+	case *typeinfo.ArrayType:
+		if t.Len < 0 {
+			return 0, 0, fmt.Errorf("array with unknown length")
+		}
+		elemSize, elemAlign, err := qbeScalarSizeAlign(t.Inner)
+		if err != nil {
+			// try inner as aggregate
+			inner, innerAl, err2 := aggregateSizeAlign(state, t.Inner)
+			if err2 != nil {
+				return 0, 0, fmt.Errorf("unsupported array element type %s", t.Inner)
+			}
+			stride := alignUpInt64(inner, innerAl)
+			return stride * t.Len, innerAl, nil
+		}
+		stride := alignUpInt64(elemSize, elemAlign)
+		return stride * t.Len, elemAlign, nil
 	case *typeinfo.NamedType:
 		info, err := lookupNamedLayout(state, t)
 		if err != nil {
@@ -991,6 +1253,8 @@ func lookupNamedLayout(state *moduleState, named *typeinfo.NamedType) (*layout.T
 
 func lookupStructLayout(state *moduleState, typ typeinfo.Type) (*layout.StructLayout, error) {
 	switch t := typ.(type) {
+	case *typeinfo.BuiltinType:
+		return nil, fmt.Errorf("builtin %s is not a struct layout", t.Name)
 	case *typeinfo.NamedType:
 		info, err := lookupNamedLayout(state, t)
 		if err != nil {

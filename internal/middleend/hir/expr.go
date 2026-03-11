@@ -98,3 +98,12 @@ type CompositeLit struct {
 }
 
 func (*CompositeLit) exprNode() {}
+
+// IndexExpr represents arr[index].
+type IndexExpr struct {
+	baseExpr
+	Left  Expr
+	Index Expr
+}
+
+func (*IndexExpr) exprNode() {}

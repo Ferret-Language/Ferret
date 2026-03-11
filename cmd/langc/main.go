@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"compiler/internal/backend"
+	"compiler/internal/backend/llvm"
 	"compiler/internal/backend/qbe"
 	"compiler/internal/backend/registry"
 	compilerapi "compiler/internal/compiler"
@@ -28,7 +29,8 @@ func main() {
 	mirOut := flag.String("mir-out", "", "write MIR dump to file or directory")
 	backendTarget := flag.String("backend", "", "lower to backend IR target (qbe|llvm)")
 	backendOut := flag.String("backend-out", "", "write backend IR to file or directory")
-	outputPath := flag.String("o", "", "compile and link to executable using the QBE backend")
+	outputPath := flag.String("o", "", "compile and link to executable (see -build-backend)")
+	buildBackend := flag.String("build-backend", "qbe", "backend to use for -o compilation (qbe|llvm)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [-o output] [-ast] [-ast-out file] [-hir] [-hir-out path] [-mir] [-mir-out path] [-backend target] [-backend-out path] <source-file-or-directory>\n", os.Args[0])
 		flag.PrintDefaults()
@@ -70,7 +72,7 @@ func main() {
 		os.Exit(1)
 	}
 	if *outputPath != "" {
-		if err := buildExecutable(result, *outputPath); err != nil {
+		if err := buildExecutable(result, *outputPath, backend.Target(*buildBackend)); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -275,49 +277,92 @@ func backendLayouts(result compilerapi.Result) map[string]*layout.Module {
 	return layouts
 }
 
-// buildExecutable lowers all modules to QBE IR, concatenates them,
-// appends a C-compatible main entry wrapper, then compiles and links
-// the result into a native executable at outputPath.
-func buildExecutable(result compilerapi.Result, outputPath string) error {
+// buildExecutable lowers all modules to IR, concatenates them,
+// appends an entry wrapper, then compiles and links into a native executable.
+func buildExecutable(result compilerapi.Result, outputPath string, target backend.Target) error {
+	// For workspace builds, Entry may be nil. Find the module that contains
+	// a "main" function and use it as the entry point.
+	if result.Entry == nil {
+		for _, mod := range result.Modules {
+			if mod == nil || mod.MIR == nil {
+				continue
+			}
+			for _, fn := range mod.MIR.Functions {
+				if fn != nil && fn.Name == "main" {
+					result.Entry = mod
+					break
+				}
+			}
+			if result.Entry != nil {
+				break
+			}
+		}
+	}
 	if result.Entry == nil {
 		return fmt.Errorf("build: no entry module")
 	}
 
-	lowerer, err := registry.New(backend.TargetQBE)
-	if err != nil {
-		return fmt.Errorf("build: %w", err)
-	}
-
 	layouts := backendLayouts(result)
-	var combined strings.Builder
-
-	for _, mod := range allModulesForBuild(result) {
-		if mod == nil || mod.MIR == nil || mod.Layout == nil {
-			continue
-		}
-		artifact, err := lowerer.LowerModule(&backend.Unit{
-			Module:  mod.MIR,
-			Layout:  mod.Layout,
-			Layouts: layouts,
-		})
-		if err != nil {
-			return fmt.Errorf("build: lower %s: %w", mod.ImportPath, err)
-		}
-		combined.WriteString(artifact.Text)
-		combined.WriteByte('\n')
-	}
-
-	wrapper, err := qbeMainWrapper(result.Entry)
-	if err != nil {
-		return fmt.Errorf("build: %w", err)
-	}
-	combined.WriteString(wrapper)
 
 	absOut, err := filepath.Abs(outputPath)
 	if err != nil {
 		return fmt.Errorf("build: output path: %w", err)
 	}
-	return qbe.CompileIR(combined.String(), absOut)
+
+	switch target {
+	case backend.TargetLLVM:
+		// Build units for all modules and lower them in one program-wide pass.
+		// LowerProgram emits all type declarations before any function bodies,
+		// producing a single self-contained LLVM IR file without the need for
+		// any post-processing.
+		var units []*backend.Unit
+		for _, mod := range allModulesForBuild(result) {
+			if mod == nil || mod.MIR == nil || mod.Layout == nil {
+				continue
+			}
+			units = append(units, &backend.Unit{
+				Module:  mod.MIR,
+				Layout:  mod.Layout,
+				Layouts: layouts,
+			})
+		}
+		ir, err := llvm.LowerProgram(units)
+		if err != nil {
+			return fmt.Errorf("build: %w", err)
+		}
+		wrapper, err := llvmMainWrapper(result.Entry)
+		if err != nil {
+			return fmt.Errorf("build: %w", err)
+		}
+		return llvm.CompileIR(ir+wrapper, absOut)
+	default:
+		lowerer, err := registry.New(target)
+		if err != nil {
+			return fmt.Errorf("build: %w", err)
+		}
+		var combined strings.Builder
+		for _, mod := range allModulesForBuild(result) {
+			if mod == nil || mod.MIR == nil || mod.Layout == nil {
+				continue
+			}
+			artifact, err := lowerer.LowerModule(&backend.Unit{
+				Module:  mod.MIR,
+				Layout:  mod.Layout,
+				Layouts: layouts,
+			})
+			if err != nil {
+				return fmt.Errorf("build: lower %s: %w", mod.ImportPath, err)
+			}
+			combined.WriteString(artifact.Text)
+			combined.WriteByte('\n')
+		}
+		wrapper, err := qbeMainWrapper(result.Entry)
+		if err != nil {
+			return fmt.Errorf("build: %w", err)
+		}
+		combined.WriteString(wrapper)
+		return qbe.CompileIR(combined.String(), absOut)
+	}
 }
 
 // allModulesForBuild returns all modules ordered so imports come before the
@@ -387,6 +432,60 @@ func qbeMainWrapper(entry *context.Module) (string, error) {
 	} else {
 		fmt.Fprintf(&b, "\tcall $%s()\n", symbol)
 		fmt.Fprintf(&b, "\tret\n")
+	}
+	fmt.Fprintf(&b, "}\n")
+	return b.String(), nil
+}
+
+// llvmMainWrapper emits an LLVM IR snippet that bridges the C runtime entry
+// point to the Ferret main function:
+//
+//	define [rettype|void] @main() {
+//	entry:
+//	  [%r = call rettype @module__main()]
+//	  [ret rettype %r | ret void]
+//	}
+func llvmMainWrapper(entry *context.Module) (string, error) {
+	if entry == nil || entry.MIR == nil {
+		return "", fmt.Errorf("entry wrapper: nil entry module")
+	}
+
+	var mainFunc *midmir.Function
+	for _, fn := range entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFunc = fn
+			break
+		}
+	}
+	if mainFunc == nil {
+		return "", fmt.Errorf("entry wrapper: module %q has no 'main' function", entry.ImportPath)
+	}
+
+	prefix := llvm.SanitizePath(entry.MIR.ImportPath)
+	symbol := prefix + "__main"
+	retType := llvm.FunctionReturnLLVMType(mainFunc)
+	isScalar := llvm.FunctionReturnIsScalar(mainFunc)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "; entry wrapper\n")
+	if retType != "" && retType != "void" && isScalar {
+		fmt.Fprintf(&b, "define %s @main() {\n", retType)
+	} else {
+		fmt.Fprintf(&b, "define i32 @main() {\n")
+	}
+	fmt.Fprintf(&b, "entry:\n")
+	if retType != "" && retType != "void" && isScalar {
+		fmt.Fprintf(&b, "  %%r = call %s @%s()\n", retType, symbol)
+		// Ferret main may return i32 or other int; cast to i32 for C main.
+		if retType == "i32" {
+			fmt.Fprintf(&b, "  ret i32 %%r\n")
+		} else {
+			fmt.Fprintf(&b, "  %%r32 = sext %s %%r to i32\n", retType)
+			fmt.Fprintf(&b, "  ret i32 %%r32\n")
+		}
+	} else {
+		fmt.Fprintf(&b, "  call void @%s()\n", symbol)
+		fmt.Fprintf(&b, "  ret i32 0\n")
 	}
 	fmt.Fprintf(&b, "}\n")
 	return b.String(), nil

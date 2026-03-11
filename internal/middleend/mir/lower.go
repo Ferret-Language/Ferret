@@ -391,6 +391,10 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		return &FieldValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Base: base, FieldIndex: -1, MemberName: e.Name}
 	case *hir.CastExpr:
 		return &CastValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left)}
+	case *hir.IndexExpr:
+		base := lowerValue(lowerCtx, e.Left)
+		index := lowerValue(lowerCtx, e.Index)
+		return &IndexValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Base: base, Index: index}
 	case *hir.CompositeLit:
 		out := &CompositeValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Items: make([]CompositeItem, 0, len(e.Items))}
 		for _, item := range e.Items {
@@ -491,6 +495,9 @@ func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
 		return nil
 	case *hir.SelectorExpr:
 		return &FieldPlace{basePlace: basePlace{Location: e.Loc()}, Base: lowerPlace(lowerCtx, e.Left), FieldIndex: lowerCtx.fieldIndex(e.Left.Type(), e.Name)}
+	case *hir.IndexExpr:
+		index := lowerValue(lowerCtx, e.Index)
+		return &IndexPlace{basePlace: basePlace{Location: e.Loc()}, Base: lowerPlace(lowerCtx, e.Left), Index: index}
 	default:
 		return nil
 	}

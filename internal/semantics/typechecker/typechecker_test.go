@@ -284,8 +284,9 @@ fn main() string {
 	if !ok {
 		t.Fatalf("expected recover call, got %T", ret.Value)
 	}
-	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[call], "string") {
-		t.Fatalf("expected recover() to typecheck as string, got %#v", result.Entry.Types.Nodes[call])
+	nt, ok := result.Entry.Types.Nodes[call].(*typeinfo.NamedType)
+	if !ok || nt.Name != "string" {
+		t.Fatalf("expected recover() to typecheck as string (NamedType), got %#v", result.Entry.Types.Nodes[call])
 	}
 }
 

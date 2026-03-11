@@ -130,6 +130,9 @@ func (p *Parser) validateExpr(expr ast.Expr) {
 		p.validateStmt(e.Handler)
 	case *ast.CompositeLit:
 		p.validateCompositeLit(e)
+	case *ast.IndexExpr:
+		p.validateExpr(e.Left)
+		p.validateExpr(e.Index)
 	}
 }
 

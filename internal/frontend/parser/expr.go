@@ -41,7 +41,11 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 		case tokens.LPAREN:
 			left = p.parseCall(left)
 		case tokens.LBRACK:
-			left = p.parseCallWithTypeArgs(left)
+			if p.hasGenericCallAhead() {
+				left = p.parseCallWithTypeArgs(left)
+			} else {
+				left = p.parseIndexExpr(left)
+			}
 		case tokens.DOT:
 			left = p.parseSelector(left)
 		case tokens.BB:
@@ -81,6 +85,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return expr
 	case tokens.DOT:
 		return p.parseCompositeLit()
+	case tokens.LBRACK:
+		return p.parseArrayLit()
 	case tokens.AMP:
 		p.advance()
 		op := "&"
@@ -106,6 +112,21 @@ func (p *Parser) parsePrefix() ast.Expr {
 		p.advance()
 		return &ast.BadExpr{Location: p.locFrom(start)}
 	}
+}
+
+// parseArrayLit parses [expr, expr, ...] as a positional CompositeLit.
+func (p *Parser) parseArrayLit() ast.Expr {
+	start := p.expect(tokens.LBRACK, "expected '['").Start
+	items := make([]ast.CompositeItem, 0)
+	for !p.at(tokens.RBRACK) && !p.at(tokens.EOF) {
+		value := p.parseExpr(precLowest)
+		items = append(items, ast.CompositeItem{Value: value})
+		if !p.consumeExprListSeparator(tokens.RBRACK, "array literal element") {
+			break
+		}
+	}
+	p.expect(tokens.RBRACK, "expected ']'")
+	return &ast.CompositeLit{Items: items, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseCompositeLit() ast.Expr {
@@ -162,6 +183,14 @@ func (p *Parser) parseCall(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
 	args := p.parseArgList()
 	return &ast.CallExpr{Callee: left, Args: args, Location: p.makeExprLoc(start)}
+}
+
+func (p *Parser) parseIndexExpr(left ast.Expr) ast.Expr {
+	start := *left.Loc().Start
+	p.expect(tokens.LBRACK, "expected '[' for index expression")
+	index := p.parseExpr(precLowest)
+	p.expect(tokens.RBRACK, "expected ']' after index")
+	return &ast.IndexExpr{Left: left, Index: index, Location: p.makeExprLoc(start)}
 }
 
 func (p *Parser) parseCallWithTypeArgs(left ast.Expr) ast.Expr {

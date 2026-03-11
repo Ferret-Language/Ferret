@@ -191,6 +191,33 @@ func (p *Parser) atAny(kinds ...tokens.Kind) bool {
 	return slices.ContainsFunc(kinds, p.at)
 }
 
+// hasGenericCallAhead reports whether the '[' at the current position begins a
+// generic-call type-argument list, i.e. whether the matching ']' is
+// immediately followed by '('.  If it is NOT followed by '(', the '[...]' is
+// an array index expression instead.
+func (p *Parser) hasGenericCallAhead() bool {
+	depth := 0
+	for i := p.pos; i < len(p.toks); i++ {
+		switch p.toks[i].Kind {
+		case tokens.LBRACK:
+			depth++
+		case tokens.RBRACK:
+			depth--
+			if depth == 0 {
+				// token right after the matching ']'
+				next := i + 1
+				if next < len(p.toks) {
+					return p.toks[next].Kind == tokens.LPAREN
+				}
+				return false
+			}
+		case tokens.EOF:
+			return false
+		}
+	}
+	return false
+}
+
 func (p *Parser) match(kinds ...tokens.Kind) bool {
 	if slices.ContainsFunc(kinds, p.at) {
 		p.advance()

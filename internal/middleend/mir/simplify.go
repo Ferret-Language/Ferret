@@ -694,6 +694,9 @@ func remapPlaceLocals(place Place, idMap map[int]int) {
 		p.LocalID = idMap[p.LocalID]
 	case *FieldPlace:
 		remapPlaceLocals(p.Base, idMap)
+	case *IndexPlace:
+		remapPlaceLocals(p.Base, idMap)
+		remapValueLocals(p.Index, idMap)
 	}
 }
 
@@ -729,6 +732,9 @@ func remapValueLocals(value Value, idMap map[int]int) {
 		for _, item := range v.Items {
 			remapValueLocals(item.Value, idMap)
 		}
+	case *IndexValue:
+		remapValueLocals(v.Base, idMap)
+		remapValueLocals(v.Index, idMap)
 	}
 }
 
@@ -840,6 +846,9 @@ func addUsedLocalsFromPlace(dst map[int]bool, place Place) {
 		dst[p.LocalID] = true
 	case *FieldPlace:
 		addUsedLocalsFromPlace(dst, p.Base)
+	case *IndexPlace:
+		addUsedLocalsFromPlace(dst, p.Base)
+		addUsedLocalsFromValue(dst, p.Index)
 	}
 }
 
@@ -849,6 +858,9 @@ func countUsedLocalsInPlace(dst map[int]int, place Place) {
 		dst[p.LocalID]++
 	case *FieldPlace:
 		countUsedLocalsInPlace(dst, p.Base)
+	case *IndexPlace:
+		countUsedLocalsInPlace(dst, p.Base)
+		countUsedLocalsInValue(dst, p.Index)
 	}
 }
 
@@ -884,6 +896,9 @@ func addUsedLocalsFromValue(dst map[int]bool, value Value) {
 		for _, item := range v.Items {
 			addUsedLocalsFromValue(dst, item.Value)
 		}
+	case *IndexValue:
+		addUsedLocalsFromValue(dst, v.Base)
+		addUsedLocalsFromValue(dst, v.Index)
 	}
 }
 
@@ -919,6 +934,9 @@ func countUsedLocalsInValue(dst map[int]int, value Value) {
 		for _, item := range v.Items {
 			countUsedLocalsInValue(dst, item.Value)
 		}
+	case *IndexValue:
+		countUsedLocalsInValue(dst, v.Base)
+		countUsedLocalsInValue(dst, v.Index)
 	}
 }
 
@@ -975,6 +993,10 @@ func replaceLocalInPlace(place Place, localID int, replacement Value) Place {
 	case *FieldPlace:
 		p.Base = replaceLocalInPlace(p.Base, localID, replacement)
 		return p
+	case *IndexPlace:
+		p.Base = replaceLocalInPlace(p.Base, localID, replacement)
+		p.Index = replaceLocalInValue(p.Index, localID, replacement)
+		return p
 	default:
 		return place
 	}
@@ -1024,6 +1046,10 @@ func replaceLocalInValue(value Value, localID int, replacement Value) Value {
 		for i, item := range v.Items {
 			v.Items[i].Value = replaceLocalInValue(item.Value, localID, replacement)
 		}
+		return v
+	case *IndexValue:
+		v.Base = replaceLocalInValue(v.Base, localID, replacement)
+		v.Index = replaceLocalInValue(v.Index, localID, replacement)
 		return v
 	default:
 		return value

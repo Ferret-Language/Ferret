@@ -262,8 +262,6 @@ func builtinLayout(name string) (int64, int64, bool, *layout.StructLayout) {
 		return 4, 4, true, nil
 	case "u64", "i64", "usize", "isize", "f64":
 		return 8, 8, true, nil
-	case "string":
-		return 16, 8, true, nil
 	default:
 		return 0, 1, false, nil
 	}

@@ -596,6 +596,8 @@ func (a *analyzer) checkPlaceValue(scope *valueScope, place mir.Place) {
 			return
 		}
 		a.checkPlaceValue(scope, p.Base)
+	case *mir.IndexPlace:
+		a.checkPlaceValue(scope, p.Base)
 	}
 }
 
