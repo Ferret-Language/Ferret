@@ -2331,6 +2331,13 @@ func llvmSymbol(state *moduleState, path []string) string {
 	if len(path) == 1 {
 		name := sanitizeIdent(path[0])
 		if state != nil {
+			// The entry point: main() in the main module is always @main
+			// so the C runtime can call it directly without a wrapper.
+			if name == "main" && state.modulePrefix == "main" {
+				if _, ok := state.functions["main"]; ok {
+					return "main"
+				}
+			}
 			if _, ok := state.functions[path[0]]; ok {
 				return state.modulePrefix + "__" + name
 			}
