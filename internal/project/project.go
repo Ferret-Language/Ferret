@@ -168,7 +168,7 @@ func resolveStdlibRoot(projectRoot string) (string, error) {
 		)
 	}
 	if _, file, _, ok := runtime.Caller(0); ok {
-		root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+		root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 		candidates = append(candidates,
 			filepath.Join(root, "ferret_libs_dev", "std"),
 			filepath.Join(root, "libs", "std"),
