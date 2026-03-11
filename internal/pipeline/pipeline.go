@@ -3,7 +3,9 @@ package pipeline
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"sync"
 
 	"compiler/internal/cfganalysis"
 	"compiler/internal/context"
@@ -23,20 +25,31 @@ import (
 	"compiler/internal/source"
 )
 
+// Pipeline coordinates the compilation process.
+//
+// Parsing is parallelised: every reachable module is lexed, parsed, and
+// symbol-collected concurrently.  Once all files are ready the semantic
+// passes (resolve → type-check → HIR → MIR → ownership) run sequentially
+// in topological (dependency-first) order.
 type Pipeline struct {
-	ctx *context.CompilerContext
+	ctx  *context.CompilerContext
+	seen sync.Map // map[string]struct{} — parse-phase dedup
+	wg   sync.WaitGroup
 }
 
 func New(ctx *context.CompilerContext) *Pipeline {
 	return &Pipeline{ctx: ctx}
 }
 
+// ParseEntry parses a single entry file and all its transitive imports.
 func (p *Pipeline) ParseEntry(entryFile string) (*context.Module, error) {
 	resolved, err := p.ctx.ResolveLocalModule(entryFile)
 	if err != nil {
 		return nil, err
 	}
-	if err := p.parseModule(resolved, nil); err != nil {
+	p.scheduleParseFile(resolved, nil)
+	p.wg.Wait()
+	if err := p.runAllSemanticPasses(); err != nil {
 		return nil, err
 	}
 	p.finalizeFinalPasses()
@@ -44,6 +57,7 @@ func (p *Pipeline) ParseEntry(entryFile string) (*context.Module, error) {
 	return mod, nil
 }
 
+// ParseWorkspace parses all source files in the workspace root.
 func (p *Pipeline) ParseWorkspace() ([]*context.Module, error) {
 	files, err := p.ctx.DiscoverModules()
 	if err != nil {
@@ -54,60 +68,57 @@ func (p *Pipeline) ParseWorkspace() ([]*context.Module, error) {
 		if err != nil {
 			return nil, err
 		}
-		if err := p.parseModule(resolved, nil); err != nil {
-			return nil, err
-		}
+		p.scheduleParseFile(resolved, nil)
+	}
+	p.wg.Wait()
+	if err := p.runAllSemanticPasses(); err != nil {
+		return nil, err
 	}
 	p.finalizeFinalPasses()
 	return p.ctx.Modules(), nil
 }
 
-func (p *Pipeline) finalizeFinalPasses() {
-	if p == nil || p.ctx == nil || p.ctx.Diagnostics == nil {
+// scheduleParseFile enqueues a module for parallel lex+parse if not already
+// scheduled.  Safe to call from multiple goroutines simultaneously.
+func (p *Pipeline) scheduleParseFile(resolved context.ResolvedImport, loc *source.Location) {
+	if _, loaded := p.seen.LoadOrStore(resolved.Key, struct{}{}); loaded {
 		return
 	}
-	if p.ctx.Diagnostics.HasErrors() {
-		return
-	}
-	mods := p.ctx.Modules()
-	usage.AnalyzeModules(p.ctx, mods)
-	layoutanalysis.AnalyzeModules(p.ctx, mods)
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		p.parseFile(resolved, loc)
+	}()
 }
 
-func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) error {
-	for idx, item := range stack {
-		if item == resolved.Key {
-			cycle := append(append([]string{}, stack[idx:]...), resolved.Key)
-			p.reportCycle(cycle)
-			return nil
-		}
-	}
-
+// parseFile lexes, parses, and symbol-collects one module, then schedules its
+// imports as additional goroutines.  Runs concurrently for every reachable module.
+func (p *Pipeline) parseFile(resolved context.ResolvedImport, loc *source.Location) {
 	mod := p.ctx.UpsertModule(resolved)
 	content, err := os.ReadFile(mod.FilePath)
 	if err != nil {
-		loc := importLocation(mod, stack)
 		p.ctx.Diagnostics.Add(
 			diagnostics.NewError(fmt.Sprintf("cannot read module %s", mod.ImportPath)).
 				WithCode(diagnostics.ErrModuleNotFound).
 				WithPrimaryLabel(loc, err.Error()),
 		)
-		return nil
+		return
 	}
 
 	changed := p.ctx.StoreModuleContent(mod, string(content))
 	p.ctx.Diagnostics.AddSourceContent(mod.FilePath, mod.Content)
+
 	if mod.Phase >= phase.PhaseLayoutComputed && !changed {
+		// Already fully compiled and unchanged — re-schedule known deps so they
+		// also get the up-to-date check and are added to seen.
 		for _, depKey := range p.ctx.DependencyList(mod.Key) {
 			dep, ok := p.ctx.GetModule(depKey)
 			if !ok {
 				continue
 			}
-			if err := p.parseModule(moduleRef(dep), append(stack, mod.Key)); err != nil {
-				return err
-			}
+			p.scheduleParseFile(moduleRef(dep), nil)
 		}
-		return nil
+		return
 	}
 
 	mod.Phase = phase.PhaseLoaded
@@ -122,19 +133,38 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 	for _, imp := range mod.AST.Imports {
 		dep, err := p.ctx.ResolveImport(mod, ast.ExprText(imp.Path))
 		if err != nil {
-			loc := imp.Location
+			impLoc := imp.Location
 			p.ctx.Diagnostics.Add(
 				diagnostics.NewError("invalid import path").
 					WithCode(diagnostics.ErrInvalidImportPath).
-					WithPrimaryLabel(&loc, err.Error()),
+					WithPrimaryLabel(&impLoc, err.Error()),
 			)
 			continue
 		}
 		p.ctx.AddDependency(mod.Key, dep.Key)
-		if err := p.parseModule(dep, append(stack, mod.Key)); err != nil {
-			return err
-		}
+		p.scheduleParseFile(dep, &imp.Location)
 	}
+}
+
+// runAllSemanticPasses runs resolver → type-checker → HIR → MIR → ownership
+// for every parsed module in topological (dependency-first) order.
+func (p *Pipeline) runAllSemanticPasses() error {
+	mods := p.ctx.Modules()
+	sorted, cycles := topoSort(mods, p.ctx.DependencyList)
+	for _, cycle := range cycles {
+		p.reportCycle(cycle)
+	}
+	for _, mod := range sorted {
+		if mod == nil || mod.Phase < phase.PhaseParsed {
+			continue
+		}
+		p.runSemanticPasses(mod)
+	}
+	return nil
+}
+
+// runSemanticPasses runs all post-parse compilation passes for a single module.
+func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	resolver.ResolveModule(p.ctx, mod)
 	typechecker.CheckModule(p.ctx, mod)
 	mod.HIR = hir.Generate(mod.Key, mod.ImportPath, mod.FilePath, mod.AST, mod.Types)
@@ -150,7 +180,18 @@ func (p *Pipeline) parseModule(resolved context.ResolvedImport, stack []string) 
 	mod.Phase = phase.PhaseConstEvaluated
 	ownership.AnalyzeModule(p.ctx, mod)
 	mod.Phase = phase.PhaseOwnershipAnalyzed
-	return nil
+}
+
+func (p *Pipeline) finalizeFinalPasses() {
+	if p == nil || p.ctx == nil || p.ctx.Diagnostics == nil {
+		return
+	}
+	if p.ctx.Diagnostics.HasErrors() {
+		return
+	}
+	mods := p.ctx.Modules()
+	usage.AnalyzeModules(p.ctx, mods)
+	layoutanalysis.AnalyzeModules(p.ctx, mods)
 }
 
 func (p *Pipeline) buildGlobalConstMap() map[ast.Node]hir.Expr {
@@ -188,17 +229,71 @@ func (p *Pipeline) reportCycle(cycle []string) {
 	)
 }
 
-func importLocation(mod *context.Module, stack []string) *source.Location {
-	if mod != nil && mod.FilePath != "" {
-		loc := source.NewLocation(mod.FilePath, source.NewPosition(), source.NewPosition())
-		return &loc
+// topoSort returns modules in dependency-first order using DFS post-order.
+// Any detected import cycles are returned separately as slices of module keys.
+func topoSort(mods []*context.Module, deps func(key string) []string) ([]*context.Module, [][]string) {
+	byKey := make(map[string]*context.Module, len(mods))
+	for _, mod := range mods {
+		if mod != nil {
+			byKey[mod.Key] = mod
+		}
 	}
-	if len(stack) == 0 {
-		return nil
+
+	const (
+		unvisited = 0
+		visiting  = 1
+		done      = 2
+	)
+	state := make(map[string]int, len(mods))
+	result := make([]*context.Module, 0, len(mods))
+	var cycles [][]string
+	cycleKeys := make(map[string]struct{})
+
+	var visit func(key string, path []string)
+	visit = func(key string, path []string) {
+		switch state[key] {
+		case done:
+			return
+		case visiting:
+			if _, already := cycleKeys[key]; already {
+				return
+			}
+			for i, k := range path {
+				if k == key {
+					cycle := append(append([]string{}, path[i:]...), key)
+					cycles = append(cycles, cycle)
+					for _, ck := range cycle {
+						cycleKeys[ck] = struct{}{}
+					}
+					return
+				}
+			}
+			return
+		}
+		state[key] = visiting
+		for _, dep := range deps(key) {
+			if _, ok := byKey[dep]; ok {
+				visit(dep, append(path, key))
+			}
+		}
+		state[key] = done
+		if mod, ok := byKey[key]; ok {
+			result = append(result, mod)
+		}
 	}
-	label := stack[len(stack)-1]
-	loc := source.NewLocation(label, source.NewPosition(), source.NewPosition())
-	return &loc
+
+	keys := make([]string, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if state[key] == unvisited {
+			visit(key, nil)
+		}
+	}
+
+	return result, cycles
 }
 
 func moduleRef(mod *context.Module) context.ResolvedImport {

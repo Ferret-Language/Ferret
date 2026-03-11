@@ -42,6 +42,8 @@ func (p *Parser) ParseModule() *ast.Module {
 		if p.at(tokens.IMPORT) {
 			if seenDecl {
 				p.errorHere("imports must appear before declarations")
+				p.parseImportDecl() // consume tokens but discard
+				continue
 			}
 			if imp := p.parseImportDecl(); imp != nil {
 				mod.Imports = append(mod.Imports, imp)
