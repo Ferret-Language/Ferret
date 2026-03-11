@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"compiler/internal/diagnostics"
@@ -185,20 +186,13 @@ func (p *Parser) at(kind tokens.Kind) bool {
 }
 
 func (p *Parser) atAny(kinds ...tokens.Kind) bool {
-	for _, kind := range kinds {
-		if p.at(kind) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(kinds, p.at)
 }
 
 func (p *Parser) match(kinds ...tokens.Kind) bool {
-	for _, kind := range kinds {
-		if p.at(kind) {
-			p.advance()
-			return true
-		}
+	if slices.ContainsFunc(kinds, p.at) {
+		p.advance()
+		return true
 	}
 	return false
 }
@@ -262,7 +256,7 @@ func (p *Parser) synchronizeStmt() {
 		case tokens.SEMICOLON:
 			p.advance()
 			return
-		case tokens.RBRACE, tokens.LET, tokens.CONST, tokens.RETURN, tokens.IF, tokens.SWITCH, tokens.WHILE, tokens.FOR, tokens.DEFER, tokens.LOCK, tokens.UNSAFE, tokens.BREAK, tokens.CONTINUE:
+		case tokens.RBRACE, tokens.LET, tokens.CONST, tokens.RETURN, tokens.IF, tokens.MATCH, tokens.WHILE, tokens.FOR, tokens.DEFER, tokens.LOCK, tokens.UNSAFE, tokens.BREAK, tokens.CONTINUE:
 			return
 		default:
 			p.advance()
@@ -272,10 +266,8 @@ func (p *Parser) synchronizeStmt() {
 
 func (p *Parser) advanceUntil(kinds ...tokens.Kind) {
 	for !p.at(tokens.EOF) {
-		for _, kind := range kinds {
-			if p.at(kind) {
-				return
-			}
+		if slices.ContainsFunc(kinds, p.at) {
+			return
 		}
 		p.advance()
 	}

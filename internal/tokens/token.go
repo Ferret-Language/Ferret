@@ -38,6 +38,7 @@ const (
 	BAR       Kind = "|"
 	QQ        Kind = "??"
 	BB        Kind = "!!"
+	FATARROW  Kind = "=>"
 	COLON     Kind = ":"
 	DCOLON    Kind = "::"
 	COMMA     Kind = ","
@@ -64,8 +65,7 @@ const (
 	LET       Kind = "LET"
 	IF        Kind = "IF"
 	ELSE      Kind = "ELSE"
-	SWITCH    Kind = "SWITCH"
-	CASE      Kind = "CASE"
+	MATCH     Kind = "MATCH"
 	FOR       Kind = "FOR"
 	WHILE     Kind = "WHILE"
 	BREAK     Kind = "BREAK"
@@ -100,8 +100,7 @@ var keywords = map[string]Kind{
 	"let":       LET,
 	"if":        IF,
 	"else":      ELSE,
-	"switch":    SWITCH,
-	"case":      CASE,
+	"match":     MATCH,
 	"for":       FOR,
 	"while":     WHILE,
 	"break":     BREAK,

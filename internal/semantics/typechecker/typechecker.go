@@ -1,8 +1,8 @@
 package typechecker
 
 import (
-	"slices"
 	"fmt"
+	"slices"
 
 	"compiler/internal/context"
 	"compiler/internal/diagnostics"
@@ -304,17 +304,25 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		c.requireBool(s.Cond.Loc(), condType)
 		c.checkStmt(scope, s.Then)
 		c.checkStmt(scope, s.Else)
-	case *ast.SwitchStmt:
+	case *ast.MatchStmt:
 		valueType := c.typeOfExpr(scope, s.Value, nil)
-		for _, kase := range s.Cases {
-			if kase == nil {
+		hasWildcard := false
+		for _, arm := range s.Arms {
+			if arm == nil {
 				continue
 			}
-			caseType := c.typeOfExpr(scope, kase.Expr, valueType)
-			if !typeinfo.Assignable(valueType, caseType) && !typeinfo.Assignable(caseType, valueType) {
-				c.reportTypeMismatch(kase.Expr.Loc(), valueType, caseType)
+			if arm.Wildcard {
+				hasWildcard = true
+			} else {
+				patternType := c.typeOfExpr(scope, arm.Pattern, valueType)
+				if !typeinfo.Assignable(valueType, patternType) && !typeinfo.Assignable(patternType, valueType) {
+					c.reportTypeMismatch(arm.Pattern.Loc(), valueType, patternType)
+				}
 			}
-			c.checkStmt(scope, kase.Body)
+			c.checkStmt(scope, arm.Body)
+		}
+		if !hasWildcard && len(s.Arms) > 0 {
+			// fallback remains possible; CFG handles missing-return paths later
 		}
 	case *ast.WhileStmt:
 		condType := c.typeOfExpr(scope, s.Cond, nil)
@@ -1630,16 +1638,20 @@ func stmtDefinitelyExits(stmt ast.Stmt) bool {
 		return true
 	case *ast.IfStmt:
 		return stmtDefinitelyExits(s.Then) && stmtDefinitelyExits(s.Else)
-	case *ast.SwitchStmt:
-		if len(s.Cases) == 0 {
+	case *ast.MatchStmt:
+		if len(s.Arms) == 0 {
 			return false
 		}
-		for _, kase := range s.Cases {
-			if kase == nil || !stmtDefinitelyExits(kase.Body) {
+		hasWildcard := false
+		for _, arm := range s.Arms {
+			if arm == nil || !stmtDefinitelyExits(arm.Body) {
 				return false
 			}
+			if arm.Wildcard {
+				hasWildcard = true
+			}
 		}
-		return true
+		return hasWildcard
 	default:
 		return false
 	}

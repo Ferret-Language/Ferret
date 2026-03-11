@@ -272,14 +272,14 @@ func generateStmt(types *typeinfo.ModuleInfo, stmt ast.Stmt) Stmt {
 		out := &IfStmt{Cond: generateExpr(types, s.Cond), Then: generateBlock(types, s.Then), Else: generateStmt(types, s.Else)}
 		out.Location = s.Location
 		return out
-	case *ast.SwitchStmt:
-		out := &SwitchStmt{Value: generateExpr(types, s.Value), Cases: make([]*SwitchCase, 0, len(s.Cases))}
+	case *ast.MatchStmt:
+		out := &MatchStmt{Value: generateExpr(types, s.Value), Arms: make([]*MatchArm, 0, len(s.Arms))}
 		out.Location = s.Location
-		for _, kase := range s.Cases {
-			if kase == nil {
+		for _, arm := range s.Arms {
+			if arm == nil {
 				continue
 			}
-			out.Cases = append(out.Cases, &SwitchCase{Expr: generateExpr(types, kase.Expr), Body: generateBlock(types, kase.Body)})
+			out.Arms = append(out.Arms, &MatchArm{Wildcard: arm.Wildcard, Pattern: generateExpr(types, arm.Pattern), Body: generateBlock(types, arm.Body)})
 		}
 		return out
 	case *ast.WhileStmt:

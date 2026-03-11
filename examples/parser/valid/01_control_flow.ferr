@@ -9,20 +9,21 @@ fn Run(items [8]i32, limit i32) i32 {
                 break inner
             }
 
-            sum = sum + i
+            sum = sum + (i as i32)
             sum = sum + v
             continue outer
         }
     }
 
-    switch sum {
-    case 0 {
+    match sum {
+    0 => {
         return 1
     }
-    case 1 {
+    1 => {
         return 2
     }
+    _ => {
+        return sum
     }
-
-    return sum
+    }
 }

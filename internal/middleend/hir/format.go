@@ -155,19 +155,19 @@ func formatStmt(b *strings.Builder, stmt Stmt, indent int) {
 				formatStmt(b, elseNode, indent+1)
 			}
 		}
-	case *SwitchStmt:
-		fmt.Fprintf(b, "switch %s {\n", formatExpr(s.Value))
-		for _, kase := range s.Cases {
-			if kase == nil {
+	case *MatchStmt:
+		fmt.Fprintf(b, "match %s {\n", formatExpr(s.Value))
+		for _, arm := range s.Arms {
+			if arm == nil {
 				continue
 			}
 			indentLine(b, indent+1)
-			if kase.Expr != nil {
-				fmt.Fprintf(b, "case %s ", formatExpr(kase.Expr))
+			if arm.Wildcard {
+				b.WriteString("_ => ")
 			} else {
-				b.WriteString("default ")
+				fmt.Fprintf(b, "%s => ", formatExpr(arm.Pattern))
 			}
-			formatBlock(b, kase.Body, indent+1)
+			formatBlock(b, arm.Body, indent+1)
 			b.WriteByte('\n')
 		}
 		indentLine(b, indent)

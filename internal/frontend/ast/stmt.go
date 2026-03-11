@@ -66,20 +66,21 @@ type IfStmt struct {
 func (*IfStmt) stmtNode()              {}
 func (s *IfStmt) Loc() source.Location { return s.Location }
 
-type SwitchCase struct {
-	Expr     Expr
+type MatchArm struct {
+	Pattern  Expr
+	Wildcard bool
 	Body     *BlockStmt
 	Location source.Location
 }
 
-type SwitchStmt struct {
+type MatchStmt struct {
 	Value    Expr
-	Cases    []*SwitchCase
+	Arms     []*MatchArm
 	Location source.Location
 }
 
-func (*SwitchStmt) stmtNode()              {}
-func (s *SwitchStmt) Loc() source.Location { return s.Location }
+func (*MatchStmt) stmtNode()              {}
+func (s *MatchStmt) Loc() source.Location { return s.Location }
 
 type WhileStmt struct {
 	Cond     Expr

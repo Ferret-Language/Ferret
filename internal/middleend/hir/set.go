@@ -20,7 +20,7 @@ func SetStmtLocation(stmt Stmt, loc source.Location) {
 		s.Location = loc
 	case *IfStmt:
 		s.Location = loc
-	case *SwitchStmt:
+	case *MatchStmt:
 		s.Location = loc
 	case *WhileStmt:
 		s.Location = loc

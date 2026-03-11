@@ -118,16 +118,16 @@ func debugStmt(stmt Stmt) any {
 		return map[string]any{"kind": "AssignStmt", "left": debugExpr(s.Left), "right": debugExpr(s.Right), "loc": debugLoc(s.Location)}
 	case *IfStmt:
 		return map[string]any{"kind": "IfStmt", "cond": debugExpr(s.Cond), "then": debugStmt(s.Then), "else": debugStmt(s.Else), "loc": debugLoc(s.Location)}
-	case *SwitchStmt:
-		cases := make([]any, 0, len(s.Cases))
-		for _, c := range s.Cases {
-			if c == nil {
-				cases = append(cases, nil)
+	case *MatchStmt:
+		arms := make([]any, 0, len(s.Arms))
+		for _, arm := range s.Arms {
+			if arm == nil {
+				arms = append(arms, nil)
 				continue
 			}
-			cases = append(cases, map[string]any{"expr": debugExpr(c.Expr), "body": debugStmt(c.Body), "loc": debugLoc(c.Location)})
+			arms = append(arms, map[string]any{"pattern": debugExpr(arm.Pattern), "wildcard": arm.Wildcard, "body": debugStmt(arm.Body), "loc": debugLoc(arm.Location)})
 		}
-		return map[string]any{"kind": "SwitchStmt", "value": debugExpr(s.Value), "cases": cases, "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "MatchStmt", "value": debugExpr(s.Value), "arms": arms, "loc": debugLoc(s.Location)}
 	case *WhileStmt:
 		return map[string]any{"kind": "WhileStmt", "cond": debugExpr(s.Cond), "body": debugStmt(s.Body), "loc": debugLoc(s.Location)}
 	case *ForStmt:

@@ -414,10 +414,10 @@ func collectLocals(fn *hir.Func) ([]*Local, map[string]int, map[string]hir.Expr)
 		case *hir.IfStmt:
 			walkStmt(s.Then)
 			walkStmt(s.Else)
-		case *hir.SwitchStmt:
-			for _, kase := range s.Cases {
-				if kase != nil {
-					walkStmt(kase.Body)
+		case *hir.MatchStmt:
+			for _, arm := range s.Arms {
+				if arm != nil {
+					walkStmt(arm.Body)
 				}
 			}
 		case *hir.WhileStmt:

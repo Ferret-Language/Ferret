@@ -165,14 +165,16 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.resolveExpr(scope, s.Cond)
 		r.resolveStmt(scope, s.Then)
 		r.resolveStmt(scope, s.Else)
-	case *ast.SwitchStmt:
+	case *ast.MatchStmt:
 		r.resolveExpr(scope, s.Value)
-		for _, c := range s.Cases {
-			if c == nil {
+		for _, arm := range s.Arms {
+			if arm == nil {
 				continue
 			}
-			r.resolveExpr(scope, c.Expr)
-			r.resolveStmt(scope, c.Body)
+			if !arm.Wildcard {
+				r.resolveExpr(scope, arm.Pattern)
+			}
+			r.resolveStmt(scope, arm.Body)
 		}
 	case *ast.WhileStmt:
 		r.resolveExpr(scope, s.Cond)

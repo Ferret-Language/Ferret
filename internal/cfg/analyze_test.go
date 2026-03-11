@@ -64,15 +64,15 @@ fn main() i32 {
 	}
 }
 
-func TestCFGAllowsSwitchFallbackReturn(t *testing.T) {
+func TestCFGAllowsMatchFallbackReturn(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
 fn main() i32 {
-    switch 1 {
-    case 0 {
+    match 1 {
+    0 => {
         return 10
     }
-    case 1 {
+    1 => {
         return 20
     }
     }
@@ -184,15 +184,15 @@ fn fail() void {
 	}
 }
 
-func TestCFGReportsMissingReturnInSwitchFallback(t *testing.T) {
+func TestCFGReportsMissingReturnInMatchFallback(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
 fn main() i32 {
-    switch 1 {
-    case 0 {
+    match 1 {
+    0 => {
         return 10
     }
-    case 1 {
+    1 => {
         return 20
     }
     }
@@ -206,7 +206,7 @@ fn main() i32 {
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag.Code == diagnostics.ErrMissingReturn {
 			if len(diag.Labels) < 2 {
-				t.Fatalf("expected switch fallback secondary label, got %#v", diag.Labels)
+				t.Fatalf("expected match fallback secondary label, got %#v", diag.Labels)
 			}
 			return
 		}

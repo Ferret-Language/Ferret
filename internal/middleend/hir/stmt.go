@@ -59,18 +59,19 @@ type IfStmt struct {
 
 func (*IfStmt) stmtNode() {}
 
-type SwitchCase struct {
-	Expr Expr
-	Body *BlockStmt
+type MatchArm struct {
+	Pattern  Expr
+	Wildcard bool
+	Body     *BlockStmt
 }
 
-type SwitchStmt struct {
+type MatchStmt struct {
 	baseStmt
 	Value Expr
-	Cases []*SwitchCase
+	Arms  []*MatchArm
 }
 
-func (*SwitchStmt) stmtNode() {}
+func (*MatchStmt) stmtNode() {}
 
 type WhileStmt struct {
 	baseStmt

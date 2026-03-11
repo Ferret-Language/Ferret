@@ -57,14 +57,14 @@ func lowerStmt(stmt Stmt) Stmt {
 			out.Else = empty
 		}
 		return out
-	case *SwitchStmt:
-		out := &SwitchStmt{Value: s.Value, Cases: make([]*SwitchCase, 0, len(s.Cases))}
+	case *MatchStmt:
+		out := &MatchStmt{Value: s.Value, Arms: make([]*MatchArm, 0, len(s.Arms))}
 		SetStmtLocation(out, s.Loc())
-		for _, kase := range s.Cases {
-			if kase == nil {
+		for _, arm := range s.Arms {
+			if arm == nil {
 				continue
 			}
-			out.Cases = append(out.Cases, &SwitchCase{Expr: kase.Expr, Body: lowerBlock(kase.Body)})
+			out.Arms = append(out.Arms, &MatchArm{Pattern: arm.Pattern, Wildcard: arm.Wildcard, Body: lowerBlock(arm.Body)})
 		}
 		return out
 	case *WhileStmt:

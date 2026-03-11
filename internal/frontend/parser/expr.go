@@ -280,7 +280,7 @@ func (p *Parser) recoveryBoundaryForExpr() bool {
 	switch p.current().Kind {
 	case tokens.EOF, tokens.SEMICOLON, tokens.RBRACE,
 		tokens.LET, tokens.CONST, tokens.RETURN, tokens.IF, tokens.ELSE,
-		tokens.SWITCH, tokens.CASE, tokens.WHILE, tokens.FOR,
+		tokens.MATCH, tokens.WHILE, tokens.FOR,
 		tokens.BREAK, tokens.CONTINUE:
 		return true
 	default:

@@ -38,8 +38,8 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseReturnStmt()
 	case tokens.IF:
 		return p.parseIfStmt()
-	case tokens.SWITCH:
-		return p.parseSwitchStmt()
+	case tokens.MATCH:
+		return p.parseMatchStmt()
 	case tokens.WHILE:
 		return p.parseWhileStmt()
 	case tokens.FOR:
@@ -139,19 +139,27 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 	return &ast.IfStmt{Cond: cond, Then: thenBlock, Else: elseStmt, Location: p.locFrom(start)}
 }
 
-func (p *Parser) parseSwitchStmt() ast.Stmt {
+func (p *Parser) parseMatchStmt() ast.Stmt {
 	start := p.advance().Start
 	value := p.parseExpr(precLowest)
 	p.expect(tokens.LBRACE, "expected '{'")
-	cases := make([]*ast.SwitchCase, 0)
+	arms := make([]*ast.MatchArm, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
-		caseStart := p.expect(tokens.CASE, "expected 'case'").Start
-		expr := p.parseExpr(precLowest)
+		armStart := p.current().Start
+		var pattern ast.Expr
+		wildcard := false
+		if p.at(tokens.IDENT) && p.current().Literal == "_" {
+			wildcard = true
+			p.advance()
+		} else {
+			pattern = p.parseExprUntil(precLowest, tokens.FATARROW)
+		}
+		p.expect(tokens.FATARROW, "expected '=>' after match pattern")
 		body := p.parseBlock()
-		cases = append(cases, &ast.SwitchCase{Expr: expr, Body: body, Location: p.locFrom(caseStart)})
+		arms = append(arms, &ast.MatchArm{Pattern: pattern, Wildcard: wildcard, Body: body, Location: p.locFrom(armStart)})
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
-	return &ast.SwitchStmt{Value: value, Cases: cases, Location: p.locFrom(start)}
+	return &ast.MatchStmt{Value: value, Arms: arms, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseWhileStmt() ast.Stmt {

@@ -63,14 +63,16 @@ func (p *Parser) validateStmt(stmt ast.Stmt) {
 		p.validateExpr(s.Cond)
 		p.validateStmt(s.Then)
 		p.validateStmt(s.Else)
-	case *ast.SwitchStmt:
+	case *ast.MatchStmt:
 		p.validateExpr(s.Value)
-		for _, c := range s.Cases {
-			if c == nil {
+		for _, arm := range s.Arms {
+			if arm == nil {
 				continue
 			}
-			p.validateExpr(c.Expr)
-			p.validateStmt(c.Body)
+			if !arm.Wildcard {
+				p.validateExpr(arm.Pattern)
+			}
+			p.validateStmt(arm.Body)
 		}
 	case *ast.WhileStmt:
 		p.validateExpr(s.Cond)

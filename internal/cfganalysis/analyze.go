@@ -149,25 +149,30 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *cfg.Block, label string) *cf
 			return nil
 		}
 		return join
-	case *hir.SwitchStmt:
+	case *hir.MatchStmt:
 		join := b.newBlock()
 		join.Location = s.Loc()
-		join.BranchKind = "switch-fallback"
-		edges := make([]cfg.SwitchEdge, 0, len(s.Cases))
-		for _, kase := range s.Cases {
-			if kase == nil {
+		join.BranchKind = "match-fallback"
+		edges := make([]cfg.SwitchEdge, 0, len(s.Arms))
+		defaultTarget := join
+		for _, arm := range s.Arms {
+			if arm == nil {
 				continue
 			}
-			caseBlock := b.newBlock()
-			caseBlock.Location = kase.Body.Loc()
-			caseBlock.BranchKind = "case"
-			edges = append(edges, cfg.SwitchEdge{Expr: kase.Expr, Target: caseBlock})
-			caseEnd := b.buildBlock(kase.Body, caseBlock)
-			if caseEnd != nil && caseEnd.Terminator == nil {
-				caseEnd.Terminator = &cfg.JumpTerm{Target: join}
+			armBlock := b.newBlock()
+			armBlock.Location = arm.Body.Loc()
+			armBlock.BranchKind = "match-arm"
+			if arm.Wildcard {
+				defaultTarget = armBlock
+			} else {
+				edges = append(edges, cfg.SwitchEdge{Expr: arm.Pattern, Target: armBlock})
+			}
+			armEnd := b.buildBlock(arm.Body, armBlock)
+			if armEnd != nil && armEnd.Terminator == nil {
+				armEnd.Terminator = &cfg.JumpTerm{Target: join}
 			}
 		}
-		current.Terminator = &cfg.SwitchTerm{Value: s.Value, Cases: edges, Default: join}
+		current.Terminator = &cfg.SwitchTerm{Value: s.Value, Cases: edges, Default: defaultTarget}
 		return join
 	case *hir.WhileStmt:
 		return b.buildStmt(&hir.LoopStmt{Cond: s.Cond, Body: s.Body}, current, label)
@@ -354,10 +359,10 @@ func analyzeFunction(ctx *context.CompilerContext, fn *cfg.Function) {
 				msg = fmt.Sprintf("missing return in else branch at line %d", branch.Location.Start.Line)
 			case "if":
 				msg = fmt.Sprintf("missing return in if branch at line %d", branch.Location.Start.Line)
-			case "case":
-				msg = fmt.Sprintf("missing return in case branch at line %d", branch.Location.Start.Line)
-			case "switch-fallback":
-				msg = fmt.Sprintf("missing return in switch fallback path at line %d", branch.Location.Start.Line)
+			case "match-arm":
+				msg = fmt.Sprintf("missing return in match arm at line %d", branch.Location.Start.Line)
+			case "match-fallback":
+				msg = fmt.Sprintf("missing return in match fallback path at line %d", branch.Location.Start.Line)
 			}
 			diag.WithSecondaryLabel(&branch.Location, msg)
 		}

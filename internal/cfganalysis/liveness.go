@@ -94,10 +94,10 @@ func collectStmtLocals(locals cfg.NameSet, stmt hir.Stmt) {
 	case *hir.IfStmt:
 		collectBlockLocals(locals, s.Then)
 		collectStmtLocals(locals, s.Else)
-	case *hir.SwitchStmt:
-		for _, kase := range s.Cases {
-			if kase != nil {
-				collectBlockLocals(locals, kase.Body)
+	case *hir.MatchStmt:
+		for _, arm := range s.Arms {
+			if arm != nil {
+				collectBlockLocals(locals, arm.Body)
 			}
 		}
 	case *hir.WhileStmt:
@@ -208,14 +208,16 @@ func accumulateDeferredUses(use, def, locals cfg.NameSet, stmt hir.Stmt) {
 		accumulateExprUses(use, def, locals, s.Cond)
 		accumulateDeferredUses(use, def, locals, s.Then)
 		accumulateDeferredUses(use, def, locals, s.Else)
-	case *hir.SwitchStmt:
+	case *hir.MatchStmt:
 		accumulateExprUses(use, def, locals, s.Value)
-		for _, kase := range s.Cases {
-			if kase == nil {
+		for _, arm := range s.Arms {
+			if arm == nil {
 				continue
 			}
-			accumulateExprUses(use, def, locals, kase.Expr)
-			accumulateDeferredUses(use, def, locals, kase.Body)
+			if !arm.Wildcard {
+				accumulateExprUses(use, def, locals, arm.Pattern)
+			}
+			accumulateDeferredUses(use, def, locals, arm.Body)
 		}
 	case *hir.WhileStmt:
 		accumulateExprUses(use, def, locals, s.Cond)
