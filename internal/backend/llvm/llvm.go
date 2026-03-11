@@ -1431,7 +1431,9 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 	case nil:
 		return "unreachable", nil
 	case *midmir.ExitTerm:
-		return "unreachable", nil
+		// ExitTerm is emitted for void functions that have no explicit return.
+		// Emit ret void so the function terminates correctly.
+		return "ret void", nil
 	case *midmir.JumpTerm:
 		return fmt.Sprintf("br label %%%s", llvmBlockLabel(state.fn, t.TargetID)), nil
 	case *midmir.BranchTerm:

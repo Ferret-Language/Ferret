@@ -159,10 +159,14 @@ type InterfaceType struct {
 func (t *InterfaceType) String() string { return "interface" }
 
 type FuncType struct {
-	IsUnsafe       bool
-	Params         []Type
-	ComptimeParams []bool
-	Result         Type
+	IsUnsafe         bool
+	Params           []Type
+	ComptimeParams   []bool
+	Result           Type
+	// ImplicitReceiver is set when a method call is resolved against a pointer
+	// receiver (*T or *mut T) but the call-site expression is a plain value.
+	// MIR lowering uses this to emit an automatic address-of for the receiver.
+	ImplicitReceiver Type
 }
 
 func (t *FuncType) String() string {

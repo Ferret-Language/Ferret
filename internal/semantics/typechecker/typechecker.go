@@ -805,13 +805,44 @@ func (c *checker) typeOfMethodCall(scope *valueScope, call *ast.CallExpr, select
 	}
 
 	addressable, mutable := c.exprAccess(scope, selector.Left)
-	_, methodType := c.lookupMethod(receiverType, selector.Name.Text(), addressable, mutable)
+	sym, methodType := c.lookupMethod(receiverType, selector.Name.Text(), addressable, mutable)
 	if methodType == nil {
 		if c.canHaveMethods(receiverType) {
+			// If the method exists but only on a *mut receiver and the variable
+			// is immutable, emit a more helpful diagnostic instead of the
+			// generic "has no method" message.
+			if !mutable && addressable {
+				if _, mutMethodType := c.lookupMethod(receiverType, selector.Name.Text(), true, true); mutMethodType != nil {
+					loc := selector.Location
+					c.ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("cannot call method %q on immutable %s", selector.Name.Text(), receiverType.String())).
+							WithCode(diagnostics.ErrMethodNotFound).
+							WithPrimaryLabel(&loc, "this method requires a mutable receiver (*mut)").
+							WithNote("declare the variable with `let mut` to allow mutable method calls"),
+					)
+					return typeinfo.InvalidType{}, true
+				}
+			}
 			c.reportMethodNotFound(selector.Location, receiverType, selector.Name.Text())
 			return typeinfo.InvalidType{}, true
 		}
 		return nil, false
+	}
+
+	// If the call-site has a plain value type but the method was found via a
+	// pointer-receiver key ("*T" or "*mut T"), record the pointer type on a
+	// per-call-site copy of the FuncType so MIR lowering can emit auto-borrow.
+	if sym != nil {
+		if _, callerIsValue := receiverType.(*typeinfo.NamedType); callerIsValue {
+			rt := sym.ReceiverType // e.g. "*mut Point" or "*Point"
+			if len(rt) > 0 && rt[0] == '*' {
+				isMut := len(rt) > 4 && rt[:5] == "*mut "
+				recvPtrType := &typeinfo.PointerType{IsMut: isMut, Inner: receiverType}
+				copy := *methodType
+				copy.ImplicitReceiver = recvPtrType
+				methodType = &copy
+			}
+		}
 	}
 
 	c.info.BindNode(selector, methodType)
