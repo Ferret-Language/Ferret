@@ -65,8 +65,8 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 
 - [x] module-level `let` declarations
 - [x] assignment statements
-- [ ] compound assignment
-- [ ] increment / decrement
+- [x] compound assignment
+- [x] increment / decrement
 - [x] Zig-style `for value |v| { }`
 - [x] Zig-style `for value |i, v| { }`
 - [x] `while`
