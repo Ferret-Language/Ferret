@@ -468,6 +468,18 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	return fmt.Sprintf("%s =%s %s", qbeLocalName(targetName), qtype, callText), nil
 }
 
+// lowerPanicTerm emits a call to the Ferret runtime ferret__panic(ptr, len)
+// followed by hlt.  ferret__panic never returns.
+func lowerPanicTerm(state *moduleState, t *midmir.PanicTerm) (string, error) {
+	switch v := t.Value.(type) {
+	case *midmir.StringValue:
+		sym := emitQBEStringConstant(state, v.Value)
+		return fmt.Sprintf("call $ferret__panic(l $%s, l %d)\n\thlt", sym, len(v.Value)), nil
+	default:
+		return "", fmt.Errorf("panic: non-literal message not yet supported (%T)", t.Value)
+	}
+}
+
 func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 	switch t := term.(type) {
 	case nil:
@@ -495,7 +507,7 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 		}
 		return fmt.Sprintf("ret %s", val), nil
 	case *midmir.PanicTerm:
-		return "", fmt.Errorf("panic lowering is not implemented yet")
+		return lowerPanicTerm(state, t)
 	case *midmir.SwitchTerm:
 		return "", fmt.Errorf("match lowering is not implemented yet")
 	default:

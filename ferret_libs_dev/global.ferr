@@ -12,3 +12,50 @@ type string struct {
 /// When there is no active panic, it returns an empty string.
 #[builtin]
 fn recover() string;
+
+// ---------------------------------------------------------------------------
+// Memory management (libc)
+// ---------------------------------------------------------------------------
+
+/// Allocates size uninitialized bytes. Returns a nil pointer on failure.
+#[extern("malloc")]
+fn malloc(size usize) *mut u8;
+
+/// Frees memory previously obtained from malloc, calloc, or realloc.
+#[extern("free")]
+fn free(ptr *mut u8) void;
+
+/// Resizes a previously allocated block to size bytes.
+/// Returns the (possibly moved) new pointer, or nil on failure.
+/// The original block is left unchanged on failure.
+#[extern("realloc")]
+fn realloc(ptr *mut u8, size usize) *mut u8;
+
+/// Allocates count * size zero-initialised bytes. Returns nil on failure.
+#[extern("calloc")]
+fn calloc(count usize, size usize) *mut u8;
+
+/// Copies n bytes from src to dst. The regions must not overlap.
+#[extern("memcpy")]
+fn memcpy(dst *mut u8, src *u8, n usize) *mut u8;
+
+/// Copies n bytes from src to dst, handling overlapping regions correctly.
+#[extern("memmove")]
+fn memmove(dst *mut u8, src *u8, n usize) *mut u8;
+
+/// Fills the first n bytes at ptr with the byte value c (low 8 bits used).
+#[extern("memset")]
+fn memset(ptr *mut u8, c i32, n usize) *mut u8;
+
+/// Compares n bytes of a and b.
+/// Returns 0 if equal, negative if a < b, positive if a > b.
+#[extern("memcmp")]
+fn memcmp(a *u8, b *u8, n usize) i32;
+
+// ---------------------------------------------------------------------------
+// Process
+// ---------------------------------------------------------------------------
+
+/// Terminates the process immediately with the given exit code.
+#[extern("exit")]
+fn exit(code i32) void;

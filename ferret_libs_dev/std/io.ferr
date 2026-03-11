@@ -13,6 +13,20 @@ fn write(fd i32, buf *i8, count usize) isize;
 #[extern("read")]
 fn read(fd i32, buf *mut i8, count usize) isize;
 
+/// Opens or creates a file. flags: O_RDONLY=0, O_WRONLY=1, O_RDWR=2, O_CREAT=64, O_TRUNC=512.
+/// Returns the new file descriptor, or -1 on error.
+#[extern("open")]
+fn open(path *i8, flags i32, mode u32) i32;
+
+/// Closes a file descriptor. Returns 0 on success or -1 on error.
+#[extern("close")]
+fn close(fd i32) i32;
+
+/// Repositions the file offset. whence: SEEK_SET=0, SEEK_CUR=1, SEEK_END=2.
+/// Returns the resulting offset from the beginning, or -1 on error.
+#[extern("lseek")]
+fn lseek(fd i32, offset isize, whence i32) isize;
+
 // ---------------------------------------------------------------------------
 // Writer
 // ---------------------------------------------------------------------------

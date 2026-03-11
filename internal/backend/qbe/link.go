@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"compiler/internal/backend"
 )
 
 // CompileIR compiles QBE IL text into a native executable at outputPath.
@@ -37,8 +39,14 @@ func CompileIR(qbeIR, outputPath string) error {
 		return fmt.Errorf("compile ir: qbe: %w\n%s", err, out)
 	}
 
+	// Locate the Ferret runtime support file and link it in.
+	runtimeC, err := backend.RuntimeCFile()
+	if err != nil {
+		return fmt.Errorf("compile ir: %w", err)
+	}
+
 	// Use cc for linking so we pick up the C runtime (crt1.o, libc, etc.).
-	ccCmd := exec.Command("cc", asmFile, "-o", outputPath)
+	ccCmd := exec.Command("cc", asmFile, runtimeC, "-o", outputPath)
 	if out, err := ccCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compile ir: link: %w\n%s", err, out)
 	}

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"compiler/internal/backend"
 	midmir "compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -35,8 +36,14 @@ func CompileIR(llvmIR, outputPath string) error {
 		return fmt.Errorf("compile ir: write ir: %w", err)
 	}
 
+	// Locate the Ferret runtime support file and link it in.
+	runtimeC, err := backend.RuntimeCFile()
+	if err != nil {
+		return fmt.Errorf("compile ir: %w", err)
+	}
+
 	// clang compiles + links in one pass.
-	cmd := exec.Command("clang", "-Wno-override-module", irFile, "-o", outputPath)
+	cmd := exec.Command("clang", "-Wno-override-module", irFile, runtimeC, "-o", outputPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compile ir: clang: %w\n%s", err, out)
 	}
