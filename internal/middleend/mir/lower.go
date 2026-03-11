@@ -8,6 +8,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
+	"strings"
 )
 
 type lowerContext struct {
@@ -16,6 +17,7 @@ type lowerContext struct {
 	bindings     *binding.ModuleInfo
 	globalConsts map[fast.Node]hir.Expr
 	localConsts  map[string]hir.Expr
+	importPath   string
 }
 
 func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *Module {
@@ -34,10 +36,10 @@ func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.Modul
 		out.Types = append(out.Types, lowerTypeDecl(decl))
 	}
 	for _, global := range hirMod.Globals {
-		out.Globals = append(out.Globals, lowerGlobal(global, bindings, globalConsts))
+		out.Globals = append(out.Globals, lowerGlobal(global, bindings, globalConsts, hirMod.ImportPath))
 	}
 	for _, fn := range cfgMod.Functions {
-		out.Functions = append(out.Functions, lowerFunction(fn, bindings, globalConsts))
+		out.Functions = append(out.Functions, lowerFunction(fn, bindings, globalConsts, hirMod.ImportPath))
 	}
 	return NormalizeModule(out)
 }
@@ -134,11 +136,11 @@ func lowerInterfaceTypeDecl(decl *hir.InterfaceTypeDecl) *InterfaceTypeDecl {
 	return out
 }
 
-func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *Global {
+func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, importPath string) *Global {
 	if global == nil {
 		return nil
 	}
-	lowerCtx := &lowerContext{bindings: bindings, globalConsts: globalConsts}
+	lowerCtx := &lowerContext{bindings: bindings, globalConsts: globalConsts, importPath: importPath}
 	return &Global{
 		Name:     global.Name,
 		Mutable:  global.Mutable,
@@ -149,11 +151,11 @@ func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts 
 	}
 }
 
-func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *Function {
+func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, importPath string) *Function {
 	if fn == nil || fn.Source == nil {
 		return nil
 	}
-	lowerCtx := newLowerContext(fn.Source, bindings, globalConsts)
+	lowerCtx := newLowerContext(fn.Source, bindings, globalConsts, importPath)
 	out := &Function{
 		Name:       fn.Name,
 		IsUnsafe:   fn.Source.IsUnsafe,
@@ -324,7 +326,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 				return &LocalValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, LocalID: id}
 			}
 		}
-		return &NameValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Path: append([]string(nil), e.Path...)}
+		return lowerNameValue(lowerCtx, e.SourceExpr(), e.Loc(), e.Type(), e.Path)
 	case *hir.NumberLit:
 		return &NumberValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: e.Value}
 	case *hir.StringLit:
@@ -353,6 +355,9 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		}
 		return out
 	case *hir.SelectorExpr:
+		if resolved := lowerResolvedName(lowerCtx, e.SourceExpr(), e.Loc(), e.Type()); resolved != nil {
+			return resolved
+		}
 		base := lowerValue(lowerCtx, e.Left)
 		if index := lowerCtx.fieldIndex(e.Left.Type(), e.Name); index >= 0 {
 			return &FieldLoadValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Base: base, FieldIndex: index}
@@ -465,7 +470,7 @@ func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
 	}
 }
 
-func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *lowerContext {
+func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, importPath string) *lowerContext {
 	locals, byName, consts := collectLocals(fn)
 	return &lowerContext{
 		locals:       locals,
@@ -473,6 +478,7 @@ func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts ma
 		bindings:     bindings,
 		globalConsts: globalConsts,
 		localConsts:  consts,
+		importPath:   importPath,
 	}
 }
 
@@ -529,6 +535,54 @@ func (c *lowerContext) lookupResolvedConstExpr(source fast.Expr) (hir.Expr, bool
 		return expr, true
 	}
 	return nil, false
+}
+
+func (c *lowerContext) lookupResolution(source fast.Expr) (*binding.Resolution, bool) {
+	if c == nil || c.bindings == nil || source == nil {
+		return nil, false
+	}
+	resolution, ok := c.bindings.Nodes[source]
+	if !ok || resolution == nil {
+		return nil, false
+	}
+	return resolution, true
+}
+
+func lowerResolvedName(c *lowerContext, source fast.Expr, loc source.Location, typ typeinfo.Type) Value {
+	if c == nil || source == nil {
+		return nil
+	}
+	resolution, ok := c.lookupResolution(source)
+	if !ok || resolution.Kind != binding.ResolutionSymbol || resolution.Symbol == nil {
+		return nil
+	}
+	out := &NameValue{
+		baseValue: baseValue{Location: loc, ExprType: typ},
+		Path:      canonicalResolvedPath(c, resolution),
+	}
+	if fn, ok := resolution.Symbol.Node.(*fast.FuncDecl); ok && fn.IsExtern && fn.ExternName != "" {
+		out.LinkName = fn.ExternName
+	}
+	return out
+}
+
+func lowerNameValue(c *lowerContext, source fast.Expr, loc source.Location, typ typeinfo.Type, fallback []string) Value {
+	if resolved := lowerResolvedName(c, source, loc, typ); resolved != nil {
+		return resolved
+	}
+	return &NameValue{baseValue: baseValue{Location: loc, ExprType: typ}, Path: append([]string(nil), fallback...)}
+}
+
+func canonicalResolvedPath(c *lowerContext, resolution *binding.Resolution) []string {
+	if resolution == nil || resolution.Symbol == nil {
+		return nil
+	}
+	if resolution.ImportPath == "" || resolution.ImportPath == c.importPath {
+		return []string{resolution.Symbol.Name}
+	}
+	parts := strings.Split(resolution.ImportPath, "/")
+	parts = append(parts, resolution.Symbol.Name)
+	return parts
 }
 
 func lowerStructView(typ typeinfo.Type) (*typeinfo.StructType, bool) {

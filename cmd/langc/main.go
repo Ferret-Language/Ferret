@@ -8,9 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"compiler/internal/backend"
+	"compiler/internal/backend/registry"
 	compilerapi "compiler/internal/compiler"
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/layout"
 	midhir "compiler/internal/middleend/hir"
 	midmir "compiler/internal/middleend/mir"
 )
@@ -22,8 +25,10 @@ func main() {
 	hirOut := flag.String("hir-out", "", "write HIR dump to file or directory")
 	mirFlag := flag.Bool("mir", false, "write MIR dump as .mir text")
 	mirOut := flag.String("mir-out", "", "write MIR dump to file or directory")
+	backendTarget := flag.String("backend", "", "lower to backend IR target (qbe|llvm)")
+	backendOut := flag.String("backend-out", "", "write backend IR to file or directory")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [-ast] [-ast-out file] [-hir] [-hir-out path] [-mir] [-mir-out path] <source-file-or-directory>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [-ast] [-ast-out file] [-hir] [-hir-out path] [-mir] [-mir-out path] [-backend target] [-backend-out path] <source-file-or-directory>\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -62,7 +67,19 @@ func main() {
 	if result.Diagnostics.HasErrors() {
 		os.Exit(1)
 	}
+	if *backendTarget != "" {
+		if err := emitBackend(result, *backendTarget, *backendOut); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
 	if *astFlag || *astOut != "" || *hirFlag || *hirOut != "" || *mirFlag || *mirOut != "" {
+		if *backendTarget != "" {
+			return
+		}
+		return
+	}
+	if *backendTarget != "" {
 		return
 	}
 
@@ -187,6 +204,66 @@ func writeTextFile(path, content string) error {
 		content += "\n"
 	}
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+func emitBackend(result compilerapi.Result, targetText, outPath string) error {
+	target := backend.Target(strings.ToLower(strings.TrimSpace(targetText)))
+	lowerer, err := registry.New(target)
+	if err != nil {
+		return err
+	}
+	mods := dumpModules(result)
+	for _, mod := range mods {
+		if mod == nil || mod.MIR == nil || mod.Layout == nil {
+			continue
+		}
+		artifact, err := lowerer.LowerModule(&backend.Unit{
+			Module:  mod.MIR,
+			Layout:  mod.Layout,
+			Layouts: backendLayouts(result),
+		})
+		if err != nil {
+			return fmt.Errorf("backend %s lower %s: %w", target, mod.ImportPath, err)
+		}
+		targetPath, err := backendTargetPath(result, mod, outPath, artifact.FileExt)
+		if err != nil {
+			return err
+		}
+		if err := writeTextFile(targetPath, artifact.Text); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func backendTargetPath(result compilerapi.Result, mod *context.Module, outPath, ext string) (string, error) {
+	if mod == nil {
+		return "", fmt.Errorf("nil module")
+	}
+	if outPath == "" {
+		return replaceExt(mod.FilePath, ext), nil
+	}
+	if result.Entry != nil {
+		if pathLooksLikeDir(outPath) {
+			return filepath.Join(outPath, filepath.Base(replaceExt(mod.FilePath, ext))), nil
+		}
+		return ensureExt(outPath, ext), nil
+	}
+	rel := filepath.FromSlash(mod.ImportPath) + ext
+	return filepath.Join(outPath, rel), nil
+}
+
+func backendLayouts(result compilerapi.Result) map[string]*layout.Module {
+	layouts := make(map[string]*layout.Module)
+	for _, mod := range result.Modules {
+		if mod != nil && mod.Layout != nil {
+			layouts[mod.Key] = mod.Layout
+		}
+	}
+	if len(layouts) == 0 && result.Entry != nil && result.Entry.Layout != nil {
+		layouts[result.Entry.Key] = result.Entry.Layout
+	}
+	return layouts
 }
 
 func debugPayload(result compilerapi.Result) any {

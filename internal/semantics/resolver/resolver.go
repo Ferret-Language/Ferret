@@ -428,7 +428,7 @@ func (r *resolver) resolveExprPath(scope *table.Scope, ident *ast.Ident) {
 	}
 	if len(ident.Path) == 1 {
 		if sym, ok := scope.Lookup(ident.Path[0]); ok {
-			r.info.BindNode(ident, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym})
+			r.info.BindNode(ident, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym, ModuleKey: r.mod.Key, ImportPath: r.mod.ImportPath})
 			return
 		}
 		r.reportUndefined(ident.Location, ident.Path[0])
@@ -447,7 +447,7 @@ func (r *resolver) resolveTypePath(scope *table.Scope, typ *ast.NamedType) {
 			return
 		}
 		if sym, ok := scope.Lookup(typ.Path[0]); ok && sym.Kind == symbols.SymbolType {
-			r.info.BindNode(typ, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym})
+			r.info.BindNode(typ, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym, ModuleKey: r.mod.Key, ImportPath: r.mod.ImportPath})
 			return
 		}
 		r.reportUndefined(typ.Location, typ.Path[0])
@@ -546,9 +546,17 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 			r.reportInvalidType(node.Loc(), sym.Name)
 			return nil, false
 		}
+		moduleKey := ""
+		importPath := ""
+		if mod != nil {
+			moduleKey = mod.Key
+			importPath = mod.ImportPath
+		}
 		return &binding.Resolution{
-			Kind:   binding.ResolutionSymbol,
-			Symbol: sym,
+			Kind:       binding.ResolutionSymbol,
+			Symbol:     sym,
+			ModuleKey:  moduleKey,
+			ImportPath: importPath,
 		}, true
 	}
 	if sym.Kind != symbols.SymbolType {
@@ -577,9 +585,17 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 		r.reportInvalidType(node.Loc(), remaining[0])
 		return nil, false
 	}
+	moduleKey := ""
+	importPath := ""
+	if mod != nil {
+		moduleKey = mod.Key
+		importPath = mod.ImportPath
+	}
 	return &binding.Resolution{
-		Kind:   binding.ResolutionSymbol,
-		Symbol: member,
+		Kind:       binding.ResolutionSymbol,
+		Symbol:     member,
+		ModuleKey:  moduleKey,
+		ImportPath: importPath,
 	}, true
 }
 

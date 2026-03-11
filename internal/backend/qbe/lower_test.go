@@ -1,0 +1,283 @@
+package qbe_test
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"compiler/internal/backend"
+	"compiler/internal/backend/registry"
+	compilerapi "compiler/internal/compiler"
+	"compiler/internal/layout"
+)
+
+func TestLowerScalarFunctionToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn add(a i32, b i32) i32 {
+    let sum = a + b
+    return sum
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"function w $main__add(w %a, w %b)",
+		"@entry",
+		"%sum =w add %a, %b",
+		"ret %sum",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerBranchAndGlobalToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+let GlobalFlag: bool = true
+
+fn main() i32 {
+    if GlobalFlag {
+        return 1
+    }
+    return 0
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"data $main__GlobalFlag = { b 1 }",
+		"function w $main__main()",
+		"jnz $main__GlobalFlag",
+		"ret 1",
+		"ret 0",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestRejectUnsupportedMatchLowering(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main(x i32) i32 {
+    match x {
+        0 => { return 1 }
+        _ => { return 2 }
+    }
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	_, err = lowerer.LowerModule(testUnit(result))
+	if err == nil || !strings.Contains(err.Error(), "match lowering is not implemented yet") {
+		t.Fatalf("expected unsupported match error, got %v", err)
+	}
+}
+
+func TestLowerStructFieldAccessToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+    Y i32 = 0
+}
+
+let mut GlobalPoint: Point = .{ .X = 1, .Y = 2 }
+
+fn main() i32 {
+    let mut p = copy GlobalPoint
+    if p.X > 0 {
+        p.X = p.X + 1
+    }
+    return p.X
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"type :local__main__Point = { w, w }",
+		"data $main__GlobalPoint = { w 1, w 2 }",
+		"%p =l alloc4 8",
+		"blit $main__GlobalPoint, %p, 8",
+		"%_t1 =w loadw %p",
+		"storew %_t4, %p",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerImportedFunctionCallToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "util", "build.ferr"), `
+fn Origin() i32 {
+    return 7
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+import "util/build"
+
+fn main() i32 {
+    return build::Origin()
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	if !strings.Contains(artifact.Text, "call $util__build__Origin()") {
+		t.Fatalf("expected imported call symbol in qbe output:\n%s", artifact.Text)
+	}
+}
+
+func TestLowerExternFunctionCallToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+#[extern("ferret_math_abs_i32")]
+fn AbsI32(value i32) i32;
+
+fn main() i32 {
+    return AbsI32(-1)
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	if !strings.Contains(artifact.Text, "call $ferret_math_abs_i32(w -1)") {
+		t.Fatalf("expected extern link symbol in qbe output:\n%s", artifact.Text)
+	}
+}
+
+func TestLowerImportedStructTypeToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "math", "vec2.ferr"), `
+type Vec2 struct {
+    X i32 = 0
+    Y i32 = 0
+}
+
+fn Origin() Vec2 {
+    return .{ .X = 1, .Y = 2 }
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+import "math/vec2"
+
+fn main() i32 {
+    let p = vec2::Origin()
+    return p.X
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"type :local__math__vec2__Vec2 = { w, w }",
+		"%p =l alloc4 8",
+		"call $math__vec2__Origin()",
+		"%_t1 =w loadw %p",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func mustWrite(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(content)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func testUnit(result compilerapi.Result) *backend.Unit {
+	layouts := make(map[string]*layout.Module)
+	for _, mod := range result.Modules {
+		if mod != nil && mod.Layout != nil {
+			layouts[mod.Key] = mod.Layout
+		}
+	}
+	if result.Entry != nil && result.Entry.Layout != nil {
+		layouts[result.Entry.Key] = result.Entry.Layout
+	}
+	return &backend.Unit{
+		Module:  result.Entry.MIR,
+		Layout:  result.Entry.Layout,
+		Layouts: layouts,
+	}
+}

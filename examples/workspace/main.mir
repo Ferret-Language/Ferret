@@ -1,0 +1,77 @@
+module main
+type Point struct {
+    X i32
+    Y i32
+}
+
+fn run() i32 {
+locals:
+    x: i32 [mut]
+    _t1: bool [temp]
+    _t2: bool [temp]
+entry:
+    x = 0
+    jump bb1
+bb1:
+    _t1 = lt x 10
+    branch _t1 -> bb2, bb3
+bb2:
+    x = add x 1
+    _t2 = eq x 5
+    branch _t2 -> bb4, bb5
+bb3:
+    return x
+bb4:
+    jump bb3
+bb5:
+    jump bb6
+bb6:
+    jump bb1
+}
+
+fn (p Point) nothing(comptime a i32) void {
+locals:
+    p: Point [mut]
+    a: i32
+entry:
+    jump bb1
+bb1:
+    exit
+}
+
+fn main() i32 {
+locals:
+    num1: i32
+    num2: i8
+    p: local:math/vec2::Vec2
+    point: Point
+    boolean: bool
+    val: i32
+    _t6: local:math/vec2::Vec2 [temp]
+    _t7: bool [temp]
+    _t8: local:math/vec2::Vec2 [temp]
+    _t9: i32 [temp]
+    _t10: fn(i32) void [temp]
+    _t11: void [temp]
+entry:
+    num1 = 1023554363
+    num2 = 1023554363 as i8
+    p = util::build::Origin()
+    _t6 = .{ .X = 0, .Y = 0 }
+    _t7 = eq p _t6
+    branch _t7 -> bb1, bb2
+bb1:
+    _t8 = copy p
+    _t9 = math::vec2::Len2(_t8)
+    return _t9
+bb2:
+    jump bb3
+bb3:
+    point = .{ .X = 1, .Y = 2 }
+    _t10 = point.nothing
+    _t11 = _t10(23)
+    eval _t11
+    boolean = true
+    val = std::math::ClampToZero(-34)
+    return 1
+}

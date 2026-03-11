@@ -163,7 +163,8 @@ func (p *basePlace) node()                {}
 
 type NameValue struct {
 	baseValue
-	Path []string
+	Path     []string
+	LinkName string
 }
 
 func (*NameValue) valueNode() {}
