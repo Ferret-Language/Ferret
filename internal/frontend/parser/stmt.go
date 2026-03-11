@@ -48,8 +48,7 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseDeferStmt()
 	case tokens.RELEASE:
 		return p.parseReleaseStmt()
-	case tokens.PANIC:
-		return p.parsePanicStmt()
+	// tokens.PANIC removed — panic() is now an ordinary function call.
 	case tokens.LOCK:
 		return p.parseLockStmt()
 	case tokens.UNSAFE:

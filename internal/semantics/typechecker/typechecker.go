@@ -449,8 +449,8 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.StringLit:
-		// String literals are *i8 — a pointer to a null-terminated const byte array.
-		typ := &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "i8"}}
+		// String literals are str — a slice of u8 bytes.
+		typ := &typeinfo.SliceType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.NoneLit:
@@ -911,6 +911,27 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 		c.info.BindNode(expr, target)
 		return target
 	}
+	// Raw-pointer reinterpretation: *raw T → *raw S (including *raw void).
+	// Any cast where either side is a raw pointer requires an unsafe block.
+	srcUnderlying := c.underlying(sourceType)
+	dstUnderlying := c.underlying(target)
+	srcPtr, srcIsRawPtr := srcUnderlying.(*typeinfo.PointerType)
+	dstPtr, dstIsRawPtr := dstUnderlying.(*typeinfo.PointerType)
+	srcIsRawPtr = srcIsRawPtr && srcPtr.IsRaw
+	dstIsRawPtr = dstIsRawPtr && dstPtr.IsRaw
+	if srcIsRawPtr || dstIsRawPtr {
+		if c.unsafeDepth > 0 {
+			c.info.BindNode(expr, target)
+			return target
+		}
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot cast %s to %s outside unsafe block", sourceType.String(), target.String())).
+				WithCode(diagnostics.ErrInvalidCast).
+				WithPrimaryLabel(&loc, "raw pointer cast requires 'unsafe'"),
+		)
+		return typeinfo.InvalidType{}
+	}
 	loc := expr.Location
 	c.ctx.Diagnostics.Add(
 		diagnostics.NewError(fmt.Sprintf("cannot cast %s to %s", sourceType.String(), target.String())).
@@ -1155,6 +1176,9 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		return nil
 	case *ast.NamedType:
 		if len(t.Path) == 1 && tokens.IsBuiltinType(t.Path[0]) {
+			if t.Path[0] == "str" {
+				return &typeinfo.SliceType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
+			}
 			return &typeinfo.BuiltinType{Name: t.Path[0]}
 		}
 		resolution := c.lookupTypeResolution(mod, t)
@@ -1175,6 +1199,8 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		return &typeinfo.ErrorUnionType{Error: c.typeFromSyntax(mod, t.Error), Value: c.typeFromSyntax(mod, t.Value)}
 	case *ast.ArrayType:
 		return &typeinfo.ArrayType{Inner: c.typeFromSyntax(mod, t.Inner), Len: c.arrayLength(t.Size)}
+	case *ast.SliceType:
+		return &typeinfo.SliceType{Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.TupleType:
 		elems := make([]typeinfo.Type, 0, len(t.Elems))
 		for _, elem := range t.Elems {

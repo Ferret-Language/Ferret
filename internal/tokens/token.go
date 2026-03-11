@@ -129,11 +129,12 @@ var keywords = map[string]Kind{
 	"comptime":  COMPTIME,
 	"lock":      LOCK,
 	"defer":     DEFER,
-	"panic":     PANIC,
-	"release":   RELEASE,
-	"catch":     CATCH,
-	"none":      NONE,
-	"unsafe":    UNSAFE,
+	// "panic" is no longer a keyword — it is declared as #[extern("ferret_global_panic")]
+	// fn panic(msg *i8) void in global.ferr and called as a normal function.
+	"release": RELEASE,
+	"catch":   CATCH,
+	"none":    NONE,
+	"unsafe":  UNSAFE,
 }
 
 func LookupIdent(ident string) Kind {
@@ -150,7 +151,7 @@ func IsKeyword(ident string) bool {
 
 func IsBuiltinType(name string) bool {
 	switch name {
-	case "bool", "char", "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64", "void":
+	case "bool", "char", "str", "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64", "void":
 		return true
 	default:
 		return false

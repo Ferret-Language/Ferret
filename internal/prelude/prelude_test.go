@@ -30,6 +30,7 @@ func TestLoadRegistersGlobalBuiltinsFromPrelude(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected recover node to be *ast.FuncDecl, got %T", sym.Node)
 	}
+	// recover is declared #[builtin] — IsBuiltin, not IsExtern.
 	if !fn.IsBuiltin || fn.Body != nil {
 		t.Fatalf("expected builtin declaration without body, got %#v", fn)
 	}

@@ -32,6 +32,10 @@ func (p *Parser) parseType() ast.TypeExpr {
 		}
 	case tokens.LBRACK:
 		p.advance()
+		if p.at(tokens.RBRACK) {
+			p.advance()
+			return &ast.SliceType{Inner: p.parseType(), Location: p.locFrom(start)}
+		}
 		size := p.parseExpr(precLowest)
 		p.expect(tokens.RBRACK, "expected ']' after array size")
 		return &ast.ArrayType{Size: size, Inner: p.parseType(), Location: p.locFrom(start)}

@@ -142,6 +142,9 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 		return builtinLayout(t.Name)
 	case *typeinfo.PointerType:
 		return pointerSize, pointerAlign, true, nil
+	case *typeinfo.SliceType:
+		// str / []T: { ptr *T, len usize } — always 16 bytes, 8-byte aligned.
+		return 16, 8, true, nil
 	case *typeinfo.ArrayType:
 		if t.Len < 0 {
 			return 0, 1, false, nil

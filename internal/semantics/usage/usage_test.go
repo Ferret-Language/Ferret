@@ -13,7 +13,7 @@ import (
 func TestUsageWarnsUnusedImport(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
-fn Println(text string) void;
+fn Println(text str) void;
 `)
 	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `import "std/io"
 
@@ -81,7 +81,7 @@ fn main() i32 {
 func TestUsageDoesNotWarnUsedOrExportedSymbols(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
-fn Println(text *i8) void;
+fn Println(text str) void;
 `)
 	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `import "std/io"
 

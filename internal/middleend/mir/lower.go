@@ -8,6 +8,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
+	"strconv"
 	"strings"
 )
 
@@ -331,6 +332,19 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.NumberLit:
 		return &NumberValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: e.Value}
 	case *hir.StringLit:
+		if _, isSlice := e.Type().(*typeinfo.SliceType); isSlice {
+			// String literal as str: produce a { ptr, len } composite.
+			ptrType := &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
+			ptrVal := &StringValue{baseValue: baseValue{Location: e.Loc(), ExprType: ptrType}, Value: e.Value}
+			lenVal := &NumberValue{baseValue: baseValue{ExprType: &typeinfo.BuiltinType{Name: "usize"}}, Value: strconv.FormatUint(uint64(len(e.Value)), 10)}
+			return &CompositeValue{
+				baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()},
+				Items: []CompositeItem{
+					{Name: "ptr", Value: ptrVal},
+					{Name: "len", Value: lenVal},
+				},
+			}
+		}
 		return &StringValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: e.Value}
 	case *hir.NoneLit:
 		return &NoneValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}}
@@ -610,8 +624,14 @@ func lowerResolvedName(c *lowerContext, source fast.Expr, loc source.Location, t
 		baseValue: baseValue{Location: loc, ExprType: typ},
 		Path:      canonicalResolvedPath(c, resolution),
 	}
-	if fn, ok := resolution.Symbol.Node.(*fast.FuncDecl); ok && fn.IsExtern && fn.ExternName != "" {
-		out.LinkName = fn.ExternName
+	if fn, ok := resolution.Symbol.Node.(*fast.FuncDecl); ok {
+		if fn.IsExtern && fn.ExternName != "" {
+			out.LinkName = fn.ExternName
+		} else if fn.IsBuiltin {
+			// Builtin functions always live in the global module and are
+			// mangled as global__<name> on the C/link side.
+			out.LinkName = "global__" + resolution.Symbol.Name
+		}
 	}
 	return out
 }

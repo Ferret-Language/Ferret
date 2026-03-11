@@ -20,6 +20,13 @@ import (
 // clang handles both compilation and linking, picking up the C runtime
 // automatically.
 func CompileIR(llvmIR, outputPath string) error {
+	// Locate the pre-compiled runtime archive before touching the temp dir so
+	// a missing archive is reported cleanly before any work is done.
+	runtimeLib, err := backend.RuntimeStaticLib()
+	if err != nil {
+		return fmt.Errorf("compile ir: %w", err)
+	}
+
 	tmp, err := os.MkdirTemp("", "ferret-build-*")
 	if err != nil {
 		return fmt.Errorf("compile ir: temp dir: %w", err)
@@ -36,14 +43,17 @@ func CompileIR(llvmIR, outputPath string) error {
 		return fmt.Errorf("compile ir: write ir: %w", err)
 	}
 
-	// Locate the Ferret runtime support file and link it in.
-	runtimeC, err := backend.RuntimeCFile()
-	if err != nil {
-		return fmt.Errorf("compile ir: %w", err)
-	}
-
 	// clang compiles + links in one pass.
-	cmd := exec.Command("clang", "-Wno-override-module", irFile, runtimeC, "-o", outputPath)
+	// -L<dir> adds the archive directory to the search path;
+	// -l:ferret_runtime.a links by exact filename (no lib prefix stripping).
+	runtimeDir := filepath.Dir(runtimeLib)
+	cmd := exec.Command("clang",
+		"-Wno-override-module",
+		irFile,
+		"-L", runtimeDir,
+		"-l:ferret_runtime.a",
+		"-o", outputPath,
+	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compile ir: clang: %w\n%s", err, out)
 	}

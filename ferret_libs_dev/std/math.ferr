@@ -2,8 +2,8 @@
 /// Implementations will be linked from runtime/static libraries later.
 
 /// Returns the absolute value of an i32.
-#[extern("ferret_math_abs_i32")]
-fn AbsI32(value i32) i32;
+#[extern("f_random")]
+fn Rand() f32;
 
 /// Pure Ferret helper kept here to validate std imports with real bodies too.
 fn ClampToZero(value i32) i32 {

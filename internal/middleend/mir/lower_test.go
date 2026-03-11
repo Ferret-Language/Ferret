@@ -134,7 +134,7 @@ func TestPipelineLowersPanicToMIRTerminator(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 fn fail() void {
-    panic "bad"
+    panic("bad")
 }
 `)
 
@@ -165,8 +165,8 @@ fn fail() void {
 			continue
 		}
 		found = true
-		if _, ok := term.Value.(*midmir.StringValue); !ok {
-			t.Fatalf("expected panic payload string, got %T", term.Value)
+		if _, ok := term.Value.(*midmir.CompositeValue); !ok {
+			t.Fatalf("expected panic payload composite (str), got %T", term.Value)
 		}
 		break
 	}
@@ -174,8 +174,8 @@ fn fail() void {
 		t.Fatalf("expected panic terminator in MIR, got %#v", fn.Blocks)
 	}
 	text := midmir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "panic \"bad\"") {
-		t.Fatalf("expected panic terminator in MIR dump, got %q", text)
+	if !strings.Contains(text, "panic .{") {
+		t.Fatalf("expected panic composite terminator in MIR dump, got %q", text)
 	}
 }
 
@@ -186,7 +186,7 @@ fn close() void {}
 
 fn fail() void {
     defer close()
-    panic "bad"
+    panic("bad")
 }
 `)
 
@@ -220,8 +220,8 @@ fn fail() void {
 		t.Fatalf("expected panic terminator in MIR, got %#v", fn.Blocks)
 	}
 	text := midmir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "panic \"bad\" unwind") {
-		t.Fatalf("expected panic unwind in MIR dump, got %q", text)
+	if !strings.Contains(text, "panic .{") || !strings.Contains(text, "unwind") {
+		t.Fatalf("expected panic composite unwind in MIR dump, got %q", text)
 	}
 	if !strings.Contains(text, "defer close()") {
 		t.Fatalf("expected deferred close cleanup in MIR dump, got %q", text)

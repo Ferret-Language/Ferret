@@ -4,7 +4,9 @@
  * Compiled and linked with every Ferret program.  Provides the small set of
  * primitives that cannot be written in pure Ferret:
  *
- *   ferret__panic           — abort with a message
+ *   global__panic          — `#[builtin] fn panic(msg str)` implementation
+ *   ferret__panic          — abort with a message (`panic <msg>` keyword)
+ *   global__recover        — return current panic message as str, or empty str
  *   ferret__interface_panic — abort on a bad interface downcast (stub)
  *
  * Everything else (malloc/free, I/O, string building) is accessed through
@@ -17,17 +19,37 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
+
+int f_random() {
+    // time seed
+    srand((unsigned)time(NULL));
+    return rand();
+}
+
+/* -------------------------------------------------------------------------
+ * global__panic
+ *
+ * Called by Ferret source via `panic(msg)` where msg is a str (FerretStr).
+ * -------------------------------------------------------------------------*/
+__attribute__((noreturn))
+void global__panic(const FerretStr *msg) {
+    fputs("panic: ", stderr);
+    if (msg && msg->ptr && msg->len > 0)
+        fwrite(msg->ptr, 1, (size_t)msg->len, stderr);
+    fputc('\n', stderr);
+    fflush(stderr);
+    abort();
+}
 
 /* -------------------------------------------------------------------------
  * ferret__panic
  * -------------------------------------------------------------------------*/
 __attribute__((noreturn))
-void ferret__panic(const char *ptr, ferret_usize len) {
-    fwrite("panic: ", 1, 7, stderr);
-    if (ptr != 0 && len > 0) {
-        fwrite(ptr, 1, (size_t)len, stderr);
-    }
-    fwrite("\n", 1, 1, stderr);
+void ferret__panic(const ferret_i8 *msg) {
+    fputs("panic: ", stderr);
+    if (msg) fputs((const char *)msg, stderr);
+    fputc('\n', stderr);
     fflush(stderr);
     abort();
 }
@@ -39,17 +61,37 @@ void ferret__panic(const char *ptr, ferret_usize len) {
  * frozen before interface lowering lands.
  * -------------------------------------------------------------------------*/
 __attribute__((noreturn))
-void ferret__interface_panic(const char *iface, ferret_usize iface_len,
-                              const char *got,   ferret_usize got_len) {
-    fwrite("interface error: expected ", 1, 25, stderr);
-    if (iface != 0 && iface_len > 0) {
-        fwrite(iface, 1, (size_t)iface_len, stderr);
-    }
-    fwrite(", got ", 1, 6, stderr);
-    if (got != 0 && got_len > 0) {
-        fwrite(got, 1, (size_t)got_len, stderr);
-    }
-    fwrite("\n", 1, 1, stderr);
+void ferret__interface_panic(const ferret_i8 *expected_iface, const ferret_i8 *got_type) {
+    fputs("interface error: expected ", stderr);
+    if (expected_iface) fputs((const char *)expected_iface, stderr);
+    fputs(", got ", stderr);
+    if (got_type) fputs((const char *)got_type, stderr);
+    fputc('\n', stderr);
     fflush(stderr);
     abort();
+}
+
+/* -------------------------------------------------------------------------
+ * global__recover
+ *
+ * Stub — real implementation requires per-thread panic state storage, which
+ * lands alongside the defer/recover pass.  For now returns an empty FerretStr.
+ * -------------------------------------------------------------------------*/
+FerretStr global__recover(void) {
+    FerretStr empty = { (const ferret_u8 *)0, 0 };
+    return empty;
+}
+
+/* -------------------------------------------------------------------------
+ * global__str_data / global__str_len
+ *
+ * Field accessors for the str fat-pointer.
+ * The caller retains ownership of the str; these functions never free it.
+ * -------------------------------------------------------------------------*/
+const void *global__str_data(const FerretStr *s) {
+    return s ? (const void *)s->ptr : (const void *)0;
+}
+
+ferret_usize global__str_len(const FerretStr *s) {
+    return s ? s->len : 0;
 }

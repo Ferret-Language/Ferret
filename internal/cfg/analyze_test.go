@@ -95,7 +95,7 @@ func TestCFGTreatsPanicAsTerminator(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
 fn fail() void {
-    panic "bad"
+    panic("bad")
     let x = 1
 }
 `)
@@ -146,7 +146,7 @@ fn close() void {}
 
 fn fail() void {
     defer close()
-    panic "bad"
+    panic("bad")
 }
 `)
 

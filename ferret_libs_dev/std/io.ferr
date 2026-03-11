@@ -1,28 +1,41 @@
 /// Standard IO library for Ferret.
 /// Provides Go-style Writer and Reader types backed by libc file descriptors.
+///
+/// Type conventions at the libc boundary:
+///   *raw u8      — pointer to immutable bytes (C: const unsigned char *)
+///   *raw mut u8  — pointer to mutable bytes   (C: unsigned char *)
+///   *raw void    — untyped C void*, used for write/read (POSIX: const void *)
+///
+/// `str` is opaque inside Ferret. At the C boundary, use str_data(s) to get
+/// the byte pointer and str_len(s) to get the byte count.
 
 // ---------------------------------------------------------------------------
-// Libc bindings
+// Libc bindings — raw byte-pointer FFI surface
 // ---------------------------------------------------------------------------
 
-/// Write bytes to a file descriptor. Returns bytes written or -1 on error.
+/// Write up to count bytes from buf to file descriptor fd.
+/// Returns the number of bytes written, or -1 on error.
 #[extern("write")]
-fn write(fd i32, buf *i8, count usize) isize;
+fn write(fd i32, buf *raw void, count usize) isize;
 
-/// Read bytes from a file descriptor. Returns bytes read or -1 on error.
+/// Read up to count bytes from fd into buf.
+/// Returns bytes read, 0 on EOF, or -1 on error.
 #[extern("read")]
-fn read(fd i32, buf *mut i8, count usize) isize;
+fn read(fd i32, buf *raw void, count usize) isize;
 
-/// Opens or creates a file. flags: O_RDONLY=0, O_WRONLY=1, O_RDWR=2, O_CREAT=64, O_TRUNC=512.
+/// Open or create a file.
+/// flags: O_RDONLY=0, O_WRONLY=1, O_RDWR=2, O_CREAT=64, O_TRUNC=512.
+/// path must be a NUL-terminated C string; pass str_data(path_str).
 /// Returns the new file descriptor, or -1 on error.
 #[extern("open")]
-fn open(path *i8, flags i32, mode u32) i32;
+fn open(path *raw u8, flags i32, mode u32) i32;
 
-/// Closes a file descriptor. Returns 0 on success or -1 on error.
+/// Close a file descriptor. Returns 0 on success or -1 on error.
 #[extern("close")]
 fn close(fd i32) i32;
 
-/// Repositions the file offset. whence: SEEK_SET=0, SEEK_CUR=1, SEEK_END=2.
+/// Reposition the file offset.
+/// whence: SEEK_SET=0, SEEK_CUR=1, SEEK_END=2.
 /// Returns the resulting offset from the beginning, or -1 on error.
 #[extern("lseek")]
 fn lseek(fd i32, offset isize, whence i32) isize;
@@ -32,14 +45,22 @@ fn lseek(fd i32, offset isize, whence i32) isize;
 // ---------------------------------------------------------------------------
 
 /// Writer wraps a file descriptor for sequential byte output.
-/// Use Stdout(), Stderr(), or OpenWriter() to obtain one.
+/// Obtain one via Stdout(), Stderr(), or construct .{ .fd = n } directly.
 type Writer struct {
     fd i32
 }
 
-/// WriteBytes writes raw bytes from buf to the writer.
+/// WriteStr writes the UTF-8 bytes of s to the writer.
+/// This is the idiomatic way to write a Ferret string.
 /// Returns the number of bytes written, or a negative value on error.
-fn (w Writer) WriteBytes(buf *i8, count usize) isize {
+fn (w Writer) WriteStr(s *str) isize {
+    return write(w.fd, str_data(s), str_len(s))
+}
+
+/// WriteBytes writes count raw bytes from buf to the writer.
+/// Use this when you already have a raw pointer (e.g. from a C library).
+/// Returns the number of bytes written, or a negative value on error.
+fn (w Writer) WriteBytes(buf *raw void, count usize) isize {
     return write(w.fd, buf, count)
 }
 
@@ -48,14 +69,14 @@ fn (w Writer) WriteBytes(buf *i8, count usize) isize {
 // ---------------------------------------------------------------------------
 
 /// Reader wraps a file descriptor for sequential byte input.
-/// Use Stdin() or OpenReader() to obtain one.
+/// Obtain one via Stdin() or construct .{ .fd = n } directly.
 type Reader struct {
     fd i32
 }
 
 /// ReadBytes reads up to count bytes from the reader into buf.
 /// Returns the number of bytes read, 0 on EOF, or a negative value on error.
-fn (r Reader) ReadBytes(buf *mut i8, count usize) isize {
+fn (r Reader) ReadBytes(buf *raw void, count usize) isize {
     return read(r.fd, buf, count)
 }
 
@@ -63,17 +84,24 @@ fn (r Reader) ReadBytes(buf *mut i8, count usize) isize {
 // Standard file descriptors
 // ---------------------------------------------------------------------------
 
-/// Stdout returns a Writer connected to the process standard output (fd 1).
+/// Stdout returns a Writer connected to process standard output (fd 1).
 fn Stdout() Writer {
     return .{ .fd = 1 }
 }
 
-/// Stderr returns a Writer connected to the process standard error (fd 2).
+/// Stderr returns a Writer connected to process standard error (fd 2).
 fn Stderr() Writer {
     return .{ .fd = 2 }
 }
 
-/// Stdin returns a Reader connected to the process standard input (fd 0).
+/// Stdin returns a Reader connected to process standard input (fd 0).
 fn Stdin() Reader {
     return .{ .fd = 0 }
+}
+
+/// Println writes s followed by a newline to stdout.
+fn Println(s str) {
+    write(1, str_data(&s), str_len(&s))
+    let newline = "\n"
+    write(1, str_data(&newline), 1)
 }

@@ -105,6 +105,17 @@ func (t *ArrayType) String() string {
 	return fmt.Sprintf("[%d]%s", t.Len, typeString(t.Inner))
 }
 
+type SliceType struct {
+	Inner Type
+}
+
+func (t *SliceType) String() string {
+	if t == nil {
+		return "[]<nil>"
+	}
+	return "[]" + typeString(t.Inner)
+}
+
 type TupleType struct {
 	Elems []Type
 }
@@ -159,10 +170,10 @@ type InterfaceType struct {
 func (t *InterfaceType) String() string { return "interface" }
 
 type FuncType struct {
-	IsUnsafe         bool
-	Params           []Type
-	ComptimeParams   []bool
-	Result           Type
+	IsUnsafe       bool
+	Params         []Type
+	ComptimeParams []bool
+	Result         Type
 	// ImplicitReceiver is set when a method call is resolved against a pointer
 	// receiver (*T or *mut T) but the call-site expression is a plain value.
 	// MIR lowering uses this to emit an automatic address-of for the receiver.
@@ -252,6 +263,9 @@ func Equal(a, b Type) bool {
 	case *ArrayType:
 		bt, ok := b.(*ArrayType)
 		return ok && at.Len == bt.Len && Equal(at.Inner, bt.Inner)
+	case *SliceType:
+		bt, ok := b.(*SliceType)
+		return ok && Equal(at.Inner, bt.Inner)
 	case *TupleType:
 		bt, ok := b.(*TupleType)
 		if !ok || len(at.Elems) != len(bt.Elems) {

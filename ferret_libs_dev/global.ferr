@@ -1,56 +1,83 @@
 // Global builtins implicitly available in every module.
+//
+// `str` is the built-in string type: an opaque fat pointer { data *u8, len usize }.
+// `str` is a MOVE type — assigning or passing by value transfers ownership.
+// Pass `*str` (immutable reference) when you only need to read the string.
+// String literals have type `str`. Use str_data(s) and str_len(s) to extract
+// the raw fields at C FFI boundaries.
+//
+// `*raw void` is the Ferret spelling of C's `void *`: an untyped raw pointer.
+// Use it at FFI boundaries where C expects `void *`. Use an unsafe cast to
+// convert to a typed pointer: `unsafe raw_ptr as *raw u8`.
+//
+// `panic` and `recover` are builtin functions; implementations live in
+// ferret_runtime.c (mangled names: global__panic / global__recover).
 
-/// The built-in string type: a fat pointer holding a data pointer and byte length.
-/// String literals have type *i8 — a pointer to a null-terminated const byte array.
-/// Construct a string from a literal with: string{ .ptr = "hello", .len = 5 }
-type string struct {
-    ptr *i8
-    len usize
-}
-
-/// Returns the current panic payload as a string.
-/// When there is no active panic, it returns an empty string.
+/// Prints msg to stderr and aborts the process.
 #[builtin]
-fn recover() string;
+fn panic(msg *str) void;
+
+/// Returns the panic message of the current panic as a str.
+/// When there is no active panic, returns an empty str (data=nil, len=0).
+#[builtin]
+fn recover() str;
+
+// ---------------------------------------------------------------------------
+// str field accessors
+//
+// `str` is opaque — you cannot directly access its fields.
+// Use these builtins at `#[extern]` call sites to cross the C FFI boundary.
+// ---------------------------------------------------------------------------
+
+/// Returns the raw byte pointer that backs s.
+/// Valid only as long as s is live. Do not store without care.
+#[builtin]
+fn str_data(s *str) *raw void;
+
+/// Returns the byte length of s (number of UTF-8 code units / bytes).
+#[builtin]
+fn str_len(s *str) usize;
 
 // ---------------------------------------------------------------------------
 // Memory management (libc)
+//
+// All functions use *raw void (C's void *) matching actual libc signatures.
+// Cast to a typed pointer with unsafe: `unsafe malloc(n) as *raw u8`
 // ---------------------------------------------------------------------------
 
 /// Allocates size uninitialized bytes. Returns a nil pointer on failure.
 #[extern("malloc")]
-fn malloc(size usize) *mut u8;
+fn malloc(size usize) *raw void;
 
 /// Frees memory previously obtained from malloc, calloc, or realloc.
 #[extern("free")]
-fn free(ptr *mut u8) void;
+fn free(ptr *raw void) void;
 
 /// Resizes a previously allocated block to size bytes.
 /// Returns the (possibly moved) new pointer, or nil on failure.
-/// The original block is left unchanged on failure.
 #[extern("realloc")]
-fn realloc(ptr *mut u8, size usize) *mut u8;
+fn realloc(ptr *raw void, size usize) *raw void;
 
 /// Allocates count * size zero-initialised bytes. Returns nil on failure.
 #[extern("calloc")]
-fn calloc(count usize, size usize) *mut u8;
+fn calloc(count usize, size usize) *raw void;
 
-/// Copies n bytes from src to dst. The regions must not overlap.
+/// Copies n bytes from src to dst. Regions must not overlap.
 #[extern("memcpy")]
-fn memcpy(dst *mut u8, src *u8, n usize) *mut u8;
+fn memcpy(dst *raw void, src *raw void, n usize) *raw void;
 
-/// Copies n bytes from src to dst, handling overlapping regions correctly.
+/// Copies n bytes from src to dst, handling overlap correctly.
 #[extern("memmove")]
-fn memmove(dst *mut u8, src *u8, n usize) *mut u8;
+fn memmove(dst *raw void, src *raw void, n usize) *raw void;
 
 /// Fills the first n bytes at ptr with the byte value c (low 8 bits used).
 #[extern("memset")]
-fn memset(ptr *mut u8, c i32, n usize) *mut u8;
+fn memset(ptr *raw void, c i32, n usize) *raw void;
 
 /// Compares n bytes of a and b.
 /// Returns 0 if equal, negative if a < b, positive if a > b.
 #[extern("memcmp")]
-fn memcmp(a *u8, b *u8, n usize) i32;
+fn memcmp(a *raw void, b *raw void, n usize) i32;
 
 // ---------------------------------------------------------------------------
 // Process

@@ -269,7 +269,7 @@ fn main(x Io!i32) i32 {
 func TestTypecheckerTreatsRecoverAsBuiltinFunction(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() string {
+fn main() str {
     return recover()
 }
 `)
@@ -284,9 +284,12 @@ fn main() string {
 	if !ok {
 		t.Fatalf("expected recover call, got %T", ret.Value)
 	}
-	nt, ok := result.Entry.Types.Nodes[call].(*typeinfo.NamedType)
-	if !ok || nt.Name != "string" {
-		t.Fatalf("expected recover() to typecheck as string (NamedType), got %#v", result.Entry.Types.Nodes[call])
+	st, ok := result.Entry.Types.Nodes[call].(*typeinfo.SliceType)
+	if !ok {
+		t.Fatalf("expected recover() to typecheck as str (SliceType), got %#v", result.Entry.Types.Nodes[call])
+	}
+	if bt, ok := st.Inner.(*typeinfo.BuiltinType); !ok || bt.Name != "u8" {
+		t.Fatalf("expected recover() inner type u8, got %#v", st.Inner)
 	}
 }
 

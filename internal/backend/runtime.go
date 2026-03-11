@@ -6,28 +6,34 @@ import (
 	"path/filepath"
 )
 
-// RuntimeCFile locates ferret_runtime.c.
+// RuntimeStaticLib locates the pre-compiled ferret_runtime.a static archive.
+//
+// The archive is produced by build.sh and placed in the libs/ directory that
+// sits alongside the bin/ directory containing the ferret executable:
+//
+//	<root>/
+//	  bin/ferret
+//	  libs/ferret_runtime.a
 //
 // Search order:
-//  1. Executable-relative: the ferret binary lives in bin/, so the runtime is
-//     at <execDir>/../runtime/ferret_runtime.c  (canonical installed layout).
-//  2. Walk up from the working directory — covers development checkouts where
-//     the repo contains both compiler/ and runtime/.
-func RuntimeCFile() (string, error) {
+//  1. Executable-relative: <execDir>/../libs/ferret_runtime.a
+//  2. Walk up from the working directory looking for libs/ferret_runtime.a
+//     (covers running the compiler directly from a development checkout).
+func RuntimeStaticLib() (string, error) {
 	var candidates []string
 
 	if execPath, err := os.Executable(); err == nil {
 		execDir := filepath.Dir(execPath)
 		candidates = append(candidates,
-			filepath.Join(execDir, "..", "runtime", "ferret_runtime.c"),
-			filepath.Join(execDir, "runtime", "ferret_runtime.c"),
+			filepath.Join(execDir, "..", "libs", "ferret_runtime.a"),
+			filepath.Join(execDir, "libs", "ferret_runtime.a"),
 		)
 	}
 
 	if wd, err := os.Getwd(); err == nil {
 		for current := wd; ; current = filepath.Dir(current) {
 			candidates = append(candidates,
-				filepath.Join(current, "runtime", "ferret_runtime.c"),
+				filepath.Join(current, "libs", "ferret_runtime.a"),
 			)
 			parent := filepath.Dir(current)
 			if parent == current {
@@ -50,5 +56,8 @@ func RuntimeCFile() (string, error) {
 			return clean, nil
 		}
 	}
-	return "", fmt.Errorf("ferret runtime: ferret_runtime.c not found; looked relative to executable and working directory")
+	return "", fmt.Errorf(
+		"ferret runtime: ferret_runtime.a not found; " +
+			"run build.sh to compile the runtime before linking",
+	)
 }

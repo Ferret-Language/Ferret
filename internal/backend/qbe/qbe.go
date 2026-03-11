@@ -122,6 +122,8 @@ func SourceFS() fs.FS {
 }
 
 func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl) error {
+	// Always emit the built-in slice aggregate type used for str.
+	b.WriteString("type :__ferret_slice = { l, l }\n")
 	seen := make(map[string]struct{})
 	lines := make([]string, 0)
 	for _, decl := range types {
@@ -468,13 +470,13 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	return fmt.Sprintf("%s =%s %s", qbeLocalName(targetName), qtype, callText), nil
 }
 
-// lowerPanicTerm emits a call to the Ferret runtime ferret__panic(ptr, len)
-// followed by hlt.  ferret__panic never returns.
+// lowerPanicTerm emits a call to ferret__panic(l ptr) followed by hlt.
+// String literals are null-terminated *i8 constants; we pass the pointer directly.
 func lowerPanicTerm(state *moduleState, t *midmir.PanicTerm) (string, error) {
 	switch v := t.Value.(type) {
 	case *midmir.StringValue:
 		sym := emitQBEStringConstant(state, v.Value)
-		return fmt.Sprintf("call $ferret__panic(l $%s, l %d)\n\thlt", sym, len(v.Value)), nil
+		return fmt.Sprintf("call $ferret__panic(l $%s)\n\thlt", sym), nil
 	default:
 		return "", fmt.Errorf("panic: non-literal message not yet supported (%T)", t.Value)
 	}
@@ -855,6 +857,26 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 			lines = append(lines, fmt.Sprintf("%s %s, %s", op, lowered, addr))
 		}
 		return strings.Join(lines, "\n\t"), nil
+	}
+
+	// Slice literal: items "ptr" and "len" stored at offsets 0 and 8.
+	if _, ok := agg.Type.(*typeinfo.SliceType); ok {
+		items := make(map[string]midmir.Value, len(comp.Items))
+		for _, item := range comp.Items {
+			items[item.Name] = item.Value
+		}
+		ptrLowered, err := lowerValue(state, items["ptr"])
+		if err != nil {
+			return "", err
+		}
+		lenLowered, err := lowerValue(state, items["len"])
+		if err != nil {
+			return "", err
+		}
+		base := qbeLocalName(agg.PtrName)
+		tmp := freshTemp(state, "len_addr")
+		return fmt.Sprintf("storel %s, %s\n\t%s =l add %s, 8\n\tstorel %s, %s",
+			ptrLowered, base, tmp, base, lenLowered, tmp), nil
 	}
 
 	structLayout, err := lookupStructLayout(state, agg.Type)
@@ -1242,6 +1264,9 @@ func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, er
 		}
 		stride := alignUpInt64(elemSize, elemAlign)
 		return stride * t.Len, elemAlign, nil
+	case *typeinfo.SliceType:
+		// str / []T: { ptr *T, len usize } — 16 bytes, 8-byte aligned.
+		return 16, 8, nil
 	case *typeinfo.NamedType:
 		info, err := lookupNamedLayout(state, t)
 		if err != nil {
@@ -1376,10 +1401,14 @@ func qbeBaseType(typ typeinfo.Type) (string, error) {
 }
 
 func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
-	if named, ok := typ.(*typeinfo.NamedType); ok {
-		if info, err := lookupNamedLayout(state, named); err == nil && info != nil && info.Struct != nil && info.Known {
-			return ":" + qbeTypeName(state, named), nil
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		if info, err := lookupNamedLayout(state, t); err == nil && info != nil && info.Struct != nil && info.Known {
+			return ":" + qbeTypeName(state, t), nil
 		}
+	case *typeinfo.SliceType:
+		_ = t
+		return ":__ferret_slice", nil
 	}
 	return qbeBaseType(typ)
 }

@@ -16,8 +16,16 @@ import (
 //	QBE IL text  →  qbe binary  →  assembly (.s)  →  cc  →  executable
 //
 // The embedded QBE binary is built and cached on first call via QBEBinary().
+// The Ferret runtime is pre-compiled to a static archive and linked with -l.
 func CompileIR(qbeIR, outputPath string) error {
 	qbeBin, err := QBEBinary()
+	if err != nil {
+		return fmt.Errorf("compile ir: %w", err)
+	}
+
+	// Ensure the runtime static archive is built before we start the
+	// temporary directory so a build failure is reported cleanly.
+	runtimeLib, err := backend.RuntimeStaticLib()
 	if err != nil {
 		return fmt.Errorf("compile ir: %w", err)
 	}
@@ -39,14 +47,15 @@ func CompileIR(qbeIR, outputPath string) error {
 		return fmt.Errorf("compile ir: qbe: %w\n%s", err, out)
 	}
 
-	// Locate the Ferret runtime support file and link it in.
-	runtimeC, err := backend.RuntimeCFile()
-	if err != nil {
-		return fmt.Errorf("compile ir: %w", err)
-	}
-
-	// Use cc for linking so we pick up the C runtime (crt1.o, libc, etc.).
-	ccCmd := exec.Command("cc", asmFile, runtimeC, "-o", outputPath)
+	// Link: assembly + runtime archive → executable.
+	// Pass the archive as a plain positional argument so it works with any
+	// cc/ld combination — -l:name is GNU ld only and not reliable through
+	// the clang driver on all platforms.
+	ccCmd := exec.Command("cc",
+		asmFile,
+		runtimeLib,
+		"-o", outputPath,
+	)
 	if out, err := ccCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compile ir: link: %w\n%s", err, out)
 	}
