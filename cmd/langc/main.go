@@ -415,6 +415,12 @@ func qbeMainWrapper(entry *context.Module) (string, error) {
 	}
 
 	prefix := qbe.SanitizePath(entry.MIR.ImportPath)
+	// If the entry module is "main", the Ferret main() is already emitted as
+	// $main by qbeSymbol.  No wrapper is needed – the C runtime calls $main
+	// directly.
+	if prefix == "main" {
+		return "", nil
+	}
 	symbol := prefix + "__main"
 	retType := qbe.FunctionReturnQBEType(mainFunc)
 

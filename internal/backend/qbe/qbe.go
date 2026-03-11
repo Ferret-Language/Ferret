@@ -230,6 +230,10 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 		return fmt.Errorf("function %s result: %w", fn.Name, err)
 	}
 	name := qbeSymbol(state, []string{fn.Name})
+	// Export the entry point so the C runtime linker can find $main.
+	if name == "main" {
+		fmt.Fprintf(b, "export ")
+	}
 	fmt.Fprintf(b, "function")
 	if ret != "" {
 		fmt.Fprintf(b, " %s", ret)
@@ -1649,6 +1653,11 @@ func qbeSymbol(state *moduleState, path []string) string {
 		name := sanitizeIdent(path[0])
 		if state != nil {
 			if _, ok := state.functions[path[0]]; ok {
+				// Entry module: emit $main directly so the C runtime can call it
+				// without an additional wrapper.
+				if name == "main" && state.modulePrefix == "main" {
+					return "main"
+				}
 				return state.modulePrefix + "__" + name
 			}
 			if _, ok := state.globals[path[0]]; ok {

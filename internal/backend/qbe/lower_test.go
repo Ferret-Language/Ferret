@@ -72,7 +72,7 @@ fn main() i32 {
 	text := artifact.Text
 	for _, want := range []string{
 		"data $main__GlobalFlag = { b 1 }",
-		"function w $main__main()",
+		"export function w $main()",
 		"jnz $main__GlobalFlag",
 		"ret 1",
 		"ret 0",
