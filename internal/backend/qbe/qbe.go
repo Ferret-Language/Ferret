@@ -134,42 +134,6 @@ func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl)
 		seen[key] = struct{}{}
 		lines = append(lines, line)
 	}
-	if state.layouts != nil {
-		moduleKeys := make([]string, 0, len(state.layouts))
-		for key := range state.layouts {
-			moduleKeys = append(moduleKeys, key)
-		}
-		sort.Strings(moduleKeys)
-		for _, key := range moduleKeys {
-			lm := state.layouts[key]
-			if lm == nil {
-				continue
-			}
-			typeNames := make([]string, 0, len(lm.Types))
-			byName := make(map[string]*layout.TypeLayout, len(lm.Types))
-			for _, tl := range lm.Types {
-				if tl == nil || tl.NamedType == nil || tl.Struct == nil || !tl.Known {
-					continue
-				}
-				typeNames = append(typeNames, tl.Name)
-				byName[tl.Name] = tl
-			}
-			sort.Strings(typeNames)
-			for _, name := range typeNames {
-				tl := byName[name]
-				key := tl.NamedType.ModuleKey + "::" + tl.Name
-				if _, ok := seen[key]; ok {
-					continue
-				}
-				body, err := qbeStructBody(state, tl.Struct)
-				if err != nil {
-					return err
-				}
-				lines = append(lines, fmt.Sprintf("type :%s = { %s }", qbeTypeName(state, tl.NamedType), body))
-				seen[key] = struct{}{}
-			}
-		}
-	}
 	for i, line := range lines {
 		if i > 0 {
 			b.WriteByte('\n')
@@ -262,21 +226,18 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 	if ret != "" {
 		fmt.Fprintf(b, " %s", ret)
 	}
-	fmt.Fprintf(b, " $%s(", name)
-	for i, param := range fn.Params {
+	paramParts := make([]string, 0, len(fn.Params))
+	for _, param := range fn.Params {
 		if param == nil {
 			continue
-		}
-		if i > 0 {
-			b.WriteString(", ")
 		}
 		pty, err := qbeABIType(state, param.Type)
 		if err != nil {
 			return fmt.Errorf("function %s param %s: %w", fn.Name, param.Name, err)
 		}
-		fmt.Fprintf(b, "%s %s", pty, qbeLocalName(param.Name))
+		paramParts = append(paramParts, fmt.Sprintf("%s %s", pty, qbeLocalName(param.Name)))
 	}
-	b.WriteString(") {\n")
+	fmt.Fprintf(b, " $%s(%s) {\n", name, strings.Join(paramParts, ", "))
 	blocks := append([]*midmir.Block(nil), fn.Blocks...)
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i].ID < blocks[j].ID })
 	for _, block := range blocks {
@@ -360,6 +321,11 @@ func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value m
 	expr, err := lowerValue(state, value)
 	if err != nil {
 		return "", err
+	}
+	// QBE assignment RHS must be an instruction, not a bare value.
+	// Raw values (constants, registers, globals) require the 'copy' opcode.
+	if qbeValueNeedsCopy(value) {
+		return fmt.Sprintf("%s =%s copy %s", qbeLocalName(name), qtype, expr), nil
 	}
 	return fmt.Sprintf("%s =%s %s", qbeLocalName(name), qtype, expr), nil
 }
@@ -475,13 +441,19 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if err != nil {
 		return "", err
 	}
+	if qtype == "" {
+		// void return: no assignment
+		return callText, nil
+	}
 	return fmt.Sprintf("%s =%s %s", qbeLocalName(targetName), qtype, callText), nil
 }
 
 func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 	switch t := term.(type) {
-	case nil, *midmir.ExitTerm:
+	case nil:
 		return "hlt", nil
+	case *midmir.ExitTerm:
+		return "ret", nil
 	case *midmir.JumpTerm:
 		return fmt.Sprintf("jmp %s", qbeBlockLabel(state.fn, t.TargetID)), nil
 	case *midmir.BranchTerm:
@@ -735,9 +707,6 @@ func prepareFunctionState(state *moduleState, fn *midmir.Function) error {
 		if isAggregateType(state, param.Type) {
 			state.aggParams[param.LocalID] = struct{}{}
 		}
-	}
-	if fn.Receiver != nil && isAggregateType(state, fn.Receiver.Type) {
-		state.aggParams[fn.Receiver.LocalID] = struct{}{}
 	}
 	for _, local := range fn.Locals {
 		if local == nil || !isAggregateType(state, local.Type) {
@@ -1383,6 +1352,21 @@ func qbeFloatCastOp(src, dst string) (string, bool) {
 	return "", false
 }
 
+// qbeValueNeedsCopy reports whether a MIR value produces a bare operand
+// (register, constant, or global reference) when lowered. In QBE the RHS of
+// an assignment must be an instruction, so bare operands require "copy".
+// Instructions like add/sub/call already carry their opcode and must not be
+// wrapped.
+func qbeValueNeedsCopy(v midmir.Value) bool {
+	switch v.(type) {
+	case *midmir.LocalValue, *midmir.NameValue,
+		*midmir.NumberValue, *midmir.BoolValue,
+		*midmir.NoneValue, *midmir.AddrOfValue:
+		return true
+	}
+	return false
+}
+
 func qbeSymbol(state *moduleState, path []string) string {
 	if len(path) == 0 {
 		return ""
@@ -1449,6 +1433,25 @@ func normalizeQBEAlign(align int64) int64 {
 	default:
 		return 16
 	}
+}
+
+// SanitizePath converts a module import path into the module prefix used in
+// QBE symbol names, e.g. "math/vec2" → "math__vec2".
+func SanitizePath(path string) string {
+	return sanitizePath(path)
+}
+
+// FunctionReturnQBEType returns the QBE base type letter for the function's
+// return type ("w", "l", "s", "d") or "" for void/unknown.
+func FunctionReturnQBEType(fn *midmir.Function) string {
+	if fn == nil || fn.Result == nil {
+		return ""
+	}
+	base, err := qbeBaseType(fn.Result)
+	if err != nil {
+		return ""
+	}
+	return base
 }
 
 func sanitizePath(path string) string {

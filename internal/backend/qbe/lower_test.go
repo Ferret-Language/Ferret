@@ -244,7 +244,6 @@ fn main() i32 {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"type :local__math__vec2__Vec2 = { w, w }",
 		"%p =l alloc4 8",
 		"call $math__vec2__Origin()",
 		"%_t1 =w loadw %p",
@@ -279,5 +278,45 @@ func testUnit(result compilerapi.Result) *backend.Unit {
 		Module:  result.Entry.MIR,
 		Layout:  result.Entry.Layout,
 		Layouts: layouts,
+	}
+}
+
+func TestLowerMethodCallToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+    Y i32 = 0
+}
+
+fn (p Point) Len2() i32 {
+    return p.X * p.X + p.Y * p.Y
+}
+
+fn main() i32 {
+    let p: Point = .{ .X = 3, .Y = 4 }
+    return p.Len2()
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	// Method should be emitted with receiver as first parameter.
+	if !strings.Contains(text, ":local__main__Point %p)") {
+		t.Fatalf("expected receiver parameter in Len2 signature, got:\n%s", text)
+	}
+	// Call site should pass receiver as first argument.
+	if !strings.Contains(text, "call $main__Len2(") {
+		t.Fatalf("expected direct method call in main, got:\n%s", text)
 	}
 }

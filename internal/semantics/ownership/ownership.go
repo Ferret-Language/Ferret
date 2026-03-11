@@ -352,14 +352,11 @@ func (a *analyzer) seedFunctionState(fn *mir.Function) *valueScope {
 	if fn == nil {
 		return scope
 	}
-	if fn.Receiver != nil {
-		scope.Declare(fn.Receiver.Name, valueInfo{typ: fn.Receiver.Type, mutable: true})
-	}
 	for _, param := range fn.Params {
 		if param == nil {
 			continue
 		}
-		scope.Declare(param.Name, valueInfo{typ: param.Type})
+		scope.Declare(param.Name, valueInfo{typ: param.Type, mutable: param.IsMutable})
 	}
 	declareFunctionLocals(scope, fn)
 	return scope
@@ -648,6 +645,11 @@ func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
 	if call == nil {
 		return
 	}
+	// Handle normalized method calls: receiver is Args[0], ReceiverType is set.
+	if call.ReceiverType != nil && len(call.Args) > 0 {
+		a.checkNormalizedMethodCall(scope, call)
+		return
+	}
 	if field, ok := call.Callee.(*mir.FieldValue); ok {
 		if handled := a.checkMethodCall(scope, call, field); handled {
 			return
@@ -675,6 +677,42 @@ func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
 		if i < len(fnType.Params) {
 			a.consumeMoveValue(scope, arg, fnType.Params[i])
 		}
+	}
+}
+
+// checkNormalizedMethodCall handles method calls that have been normalized in MIR so
+// that the receiver is Args[0] and ReceiverType is set on the CallValue.
+func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallValue) {
+	receiver := call.Args[0]
+	receiverType := call.ReceiverType
+	a.checkValue(scope, receiver)
+
+	// Look up the method symbol so we can check if it consumes the receiver.
+	methodName := ""
+	if name, ok := call.Callee.(*mir.NameValue); ok && len(name.Path) > 0 {
+		methodName = name.Path[len(name.Path)-1]
+	}
+	if methodName != "" && !typeinfo.IsInvalid(receiverType) && !typeinfo.IsUnknown(receiverType) {
+		addressable, mutable := a.valueAccess(scope, receiver)
+		methodSym, methodType := a.lookupMethod(receiverType, methodName, addressable, mutable)
+		if methodType != nil {
+			for i, arg := range call.Args[1:] {
+				a.checkValue(scope, arg)
+				if i < len(methodType.Params) {
+					a.consumeMoveValue(scope, arg, methodType.Params[i])
+				}
+			}
+			if methodSym != nil {
+				if fn, ok := methodSym.Node.(*ast.FuncDecl); ok && a.receiverConsumes(a.findModuleForSymbol(methodSym), fn) {
+					a.consumeMoveValue(scope, receiver, receiverType)
+				}
+			}
+			return
+		}
+	}
+	// Fallback: just check all args normally.
+	for _, arg := range call.Args[1:] {
+		a.checkValue(scope, arg)
 	}
 }
 

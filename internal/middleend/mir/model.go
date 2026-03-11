@@ -76,7 +76,6 @@ type Function struct {
 	IsBuiltin  bool
 	IsExtern   bool
 	ExternName string
-	Receiver   *Param
 	Params     []*Param
 	Result     typeinfo.Type
 	EntryID    int
@@ -91,6 +90,7 @@ type Param struct {
 	LocalID    int
 	Type       typeinfo.Type
 	IsComptime bool
+	IsMutable  bool
 	Location   source.Location
 }
 
@@ -250,8 +250,9 @@ func (*PostfixValue) valueNode() {}
 
 type CallValue struct {
 	baseValue
-	Callee Value
-	Args   []Value
+	Callee       Value
+	Args         []Value
+	ReceiverType typeinfo.Type // non-nil when this is a normalized method call; Args[0] is the receiver
 }
 
 func (*CallValue) valueNode() {}

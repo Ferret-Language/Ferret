@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"compiler/internal/backend"
+	"compiler/internal/backend/qbe"
 	"compiler/internal/backend/registry"
 	compilerapi "compiler/internal/compiler"
 	"compiler/internal/context"
@@ -27,8 +28,9 @@ func main() {
 	mirOut := flag.String("mir-out", "", "write MIR dump to file or directory")
 	backendTarget := flag.String("backend", "", "lower to backend IR target (qbe|llvm)")
 	backendOut := flag.String("backend-out", "", "write backend IR to file or directory")
+	outputPath := flag.String("o", "", "compile and link to executable using the QBE backend")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [-ast] [-ast-out file] [-hir] [-hir-out path] [-mir] [-mir-out path] [-backend target] [-backend-out path] <source-file-or-directory>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [-o output] [-ast] [-ast-out file] [-hir] [-hir-out path] [-mir] [-mir-out path] [-backend target] [-backend-out path] <source-file-or-directory>\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -66,6 +68,13 @@ func main() {
 	}
 	if result.Diagnostics.HasErrors() {
 		os.Exit(1)
+	}
+	if *outputPath != "" {
+		if err := buildExecutable(result, *outputPath); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 	if *backendTarget != "" {
 		if err := emitBackend(result, *backendTarget, *backendOut); err != nil {
@@ -264,6 +273,123 @@ func backendLayouts(result compilerapi.Result) map[string]*layout.Module {
 		layouts[result.Entry.Key] = result.Entry.Layout
 	}
 	return layouts
+}
+
+// buildExecutable lowers all modules to QBE IR, concatenates them,
+// appends a C-compatible main entry wrapper, then compiles and links
+// the result into a native executable at outputPath.
+func buildExecutable(result compilerapi.Result, outputPath string) error {
+	if result.Entry == nil {
+		return fmt.Errorf("build: no entry module")
+	}
+
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		return fmt.Errorf("build: %w", err)
+	}
+
+	layouts := backendLayouts(result)
+	var combined strings.Builder
+
+	for _, mod := range allModulesForBuild(result) {
+		if mod == nil || mod.MIR == nil || mod.Layout == nil {
+			continue
+		}
+		artifact, err := lowerer.LowerModule(&backend.Unit{
+			Module:  mod.MIR,
+			Layout:  mod.Layout,
+			Layouts: layouts,
+		})
+		if err != nil {
+			return fmt.Errorf("build: lower %s: %w", mod.ImportPath, err)
+		}
+		combined.WriteString(artifact.Text)
+		combined.WriteByte('\n')
+	}
+
+	wrapper, err := qbeMainWrapper(result.Entry)
+	if err != nil {
+		return fmt.Errorf("build: %w", err)
+	}
+	combined.WriteString(wrapper)
+
+	absOut, err := filepath.Abs(outputPath)
+	if err != nil {
+		return fmt.Errorf("build: output path: %w", err)
+	}
+	return qbe.CompileIR(combined.String(), absOut)
+}
+
+// allModulesForBuild returns all modules ordered so imports come before the
+// entry module. Avoids duplicates.
+func allModulesForBuild(result compilerapi.Result) []*context.Module {
+	seen := make(map[string]struct{})
+	all := make([]*context.Module, 0, len(result.Modules)+1)
+	for _, mod := range result.Modules {
+		if mod == nil {
+			continue
+		}
+		if result.Entry != nil && mod.Key == result.Entry.Key {
+			continue
+		}
+		if _, ok := seen[mod.Key]; ok {
+			continue
+		}
+		seen[mod.Key] = struct{}{}
+		all = append(all, mod)
+	}
+	if result.Entry != nil {
+		all = append(all, result.Entry)
+	}
+	return all
+}
+
+// qbeMainWrapper emits a QBE IL snippet:
+//
+//	function [rettype] $main() {
+//	@start
+//	    [%r =rettype] call $<prefix>__main()
+//	    ret [%r]
+//	}
+//
+// This bridges the C runtime entry point to the Ferret main function.
+func qbeMainWrapper(entry *context.Module) (string, error) {
+	if entry == nil || entry.MIR == nil {
+		return "", fmt.Errorf("entry wrapper: nil entry module")
+	}
+
+	var mainFunc *midmir.Function
+	for _, fn := range entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFunc = fn
+			break
+		}
+	}
+	if mainFunc == nil {
+		return "", fmt.Errorf("entry wrapper: module %q has no 'main' function", entry.ImportPath)
+	}
+
+	prefix := qbe.SanitizePath(entry.MIR.ImportPath)
+	symbol := prefix + "__main"
+	retType := qbe.FunctionReturnQBEType(mainFunc)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "# entry wrapper\n")
+	if retType != "" {
+		fmt.Fprintf(&b, "export function %s $main() {\n", retType)
+	} else {
+		fmt.Fprintf(&b, "export function $main() {\n")
+	}
+	fmt.Fprintf(&b, "@start\n")
+	if retType != "" {
+		fmt.Fprintf(&b, "\t%%r =%s call $%s()\n", retType, symbol)
+		fmt.Fprintf(&b, "\tret %%r\n")
+	} else {
+		fmt.Fprintf(&b, "\tcall $%s()\n", symbol)
+		fmt.Fprintf(&b, "\tret\n")
+	}
+	fmt.Fprintf(&b, "}\n")
+	return b.String(), nil
 }
 
 func debugPayload(result compilerapi.Result) any {

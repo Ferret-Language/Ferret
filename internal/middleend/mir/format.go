@@ -63,7 +63,7 @@ func formatFunction(b *strings.Builder, fn *Function) {
 	if fn.IsUnsafe {
 		b.WriteString("unsafe ")
 	}
-	fmt.Fprintf(b, "fn %s%s", formatReceiver(fn.Receiver), fn.Name)
+	fmt.Fprintf(b, "fn %s", fn.Name)
 	b.WriteByte('(')
 	for i, param := range fn.Params {
 		if i > 0 {
@@ -113,20 +113,16 @@ func formatFunction(b *strings.Builder, fn *Function) {
 	b.WriteString("}\n")
 }
 
-func formatReceiver(param *Param) string {
-	if param == nil {
-		return ""
-	}
-	return fmt.Sprintf("(%s) ", formatParam(param))
-}
-
 func formatParam(param *Param) string {
 	if param == nil {
 		return ""
 	}
 	prefix := ""
+	if param.IsMutable {
+		prefix = "mut "
+	}
 	if param.IsComptime {
-		prefix = "comptime "
+		prefix += "comptime "
 	}
 	return fmt.Sprintf("%s%s %s", prefix, param.Name, renderType(param.Type))
 }

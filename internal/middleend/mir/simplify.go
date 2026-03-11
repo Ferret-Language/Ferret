@@ -562,9 +562,6 @@ func pruneUnusedTempLocals(fn *Function) {
 		return
 	}
 	used := make(map[int]bool)
-	if fn.Receiver != nil && fn.Receiver.LocalID >= 0 {
-		used[fn.Receiver.LocalID] = true
-	}
 	for _, param := range fn.Params {
 		if param != nil && param.LocalID >= 0 {
 			used[param.LocalID] = true
@@ -597,9 +594,6 @@ func pruneUnusedTempLocals(fn *Function) {
 		return
 	}
 	fn.Locals = locals
-	if fn.Receiver != nil && fn.Receiver.LocalID >= 0 {
-		fn.Receiver.LocalID = oldToNew[fn.Receiver.LocalID]
-	}
 	for _, param := range fn.Params {
 		if param != nil && param.LocalID >= 0 {
 			param.LocalID = oldToNew[param.LocalID]

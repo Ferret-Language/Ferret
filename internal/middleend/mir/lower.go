@@ -176,12 +176,13 @@ func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts 
 		return out
 	}
 	if fn.Source.Receiver != nil {
-		out.Receiver = &Param{
-			Name:     fn.Source.Receiver.Name,
-			LocalID:  lowerCtx.lookupLocalID(fn.Source.Receiver.Name),
-			Type:     fn.Source.Receiver.Type,
-			Location: fn.Source.Receiver.Location,
-		}
+		out.Params = append(out.Params, &Param{
+			Name:      fn.Source.Receiver.Name,
+			LocalID:   lowerCtx.lookupLocalID(fn.Source.Receiver.Name),
+			Type:      fn.Source.Receiver.Type,
+			IsMutable: true,
+			Location:  fn.Source.Receiver.Location,
+		})
 	}
 	for _, param := range fn.Source.Params {
 		if param == nil {
@@ -349,6 +350,31 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.PostfixExpr:
 		return &PostfixValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left), Op: e.Op}
 	case *hir.CallExpr:
+		// Normalize method calls (instance.Method(...)) to direct function calls
+		// by prepending the receiver as the first argument, e.g. p.Len2() → Len2(p).
+		if sel, ok := e.Callee.(*hir.SelectorExpr); ok {
+			if lowerCtx.fieldIndex(sel.Left.Type(), sel.Name) < 0 {
+				if named := lowerReceiverNamed(sel.Left.Type()); named != nil {
+					receiver := lowerValue(lowerCtx, sel.Left)
+					path := lowerMethodSymbolPath(lowerCtx, named, sel.Name)
+					callee := &NameValue{
+						baseValue: baseValue{Location: sel.Loc(), ExprType: sel.Type()},
+						Path:      path,
+					}
+					out := &CallValue{
+						baseValue:    baseValue{Location: e.Loc(), ExprType: e.Type()},
+						Callee:       callee,
+						Args:         make([]Value, 0, 1+len(e.Args)),
+						ReceiverType: sel.Left.Type(),
+					}
+					out.Args = append(out.Args, receiver)
+					for _, arg := range e.Args {
+						out.Args = append(out.Args, lowerValue(lowerCtx, arg))
+					}
+					return out
+				}
+			}
+		}
 		out := &CallValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Callee: lowerValue(lowerCtx, e.Callee), Args: make([]Value, 0, len(e.Args))}
 		for _, arg := range e.Args {
 			out.Args = append(out.Args, lowerValue(lowerCtx, arg))
@@ -712,4 +738,33 @@ func blockID(block *cfg.Block) int {
 		return -1
 	}
 	return block.ID
+}
+
+// lowerReceiverNamed unwraps pointer types to get the underlying NamedType for a method receiver.
+func lowerReceiverNamed(typ typeinfo.Type) *typeinfo.NamedType {
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		return t
+	case *typeinfo.PointerType:
+		return lowerReceiverNamed(t.Inner)
+	}
+	return nil
+}
+
+// lowerMethodSymbolPath builds the NameValue.Path for a method call.
+// ModuleKey format is "origin:importPath" (e.g. "local:math/vec2").
+// Same-module methods get a single-element path so qbeSymbol can add the module prefix.
+func lowerMethodSymbolPath(c *lowerContext, named *typeinfo.NamedType, methodName string) []string {
+	if named == nil {
+		return []string{methodName}
+	}
+	importPath := named.ModuleKey
+	if _, after, ok := strings.Cut(named.ModuleKey, ":"); ok {
+		importPath = after
+	}
+	if importPath == "" || importPath == c.importPath {
+		return []string{methodName}
+	}
+	parts := strings.Split(importPath, "/")
+	return append(parts, methodName)
 }

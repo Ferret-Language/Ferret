@@ -29,7 +29,7 @@ bb6:
     jump bb1
 }
 
-fn (p Point) nothing(comptime a i32) void {
+fn nothing(mut p Point, comptime a i32) void {
 locals:
     p: Point [mut]
     a: i32
@@ -51,8 +51,7 @@ locals:
     _t7: bool [temp]
     _t8: local:math/vec2::Vec2 [temp]
     _t9: i32 [temp]
-    _t10: fn(i32) void [temp]
-    _t11: void [temp]
+    _t10: void [temp]
 entry:
     num1 = 1023554363
     num2 = 1023554363 as i8
@@ -68,9 +67,8 @@ bb2:
     jump bb3
 bb3:
     point = .{ .X = 1, .Y = 2 }
-    _t10 = point.nothing
-    _t11 = _t10(23)
-    eval _t11
+    _t10 = nothing(point, 23)
+    eval _t10
     boolean = true
     val = std::math::ClampToZero(-34)
     return 1
