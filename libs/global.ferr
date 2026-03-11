@@ -1,0 +1,14 @@
+// Global builtins implicitly available in every module.
+
+/// The built-in string type: a fat pointer holding a data pointer and byte length.
+/// String literals have type *i8 — a pointer to a null-terminated const byte array.
+/// Construct a string from a literal with: string{ .ptr = "hello", .len = 5 }
+type string struct {
+    ptr *i8
+    len usize
+}
+
+/// Returns the current panic payload as a string.
+/// When there is no active panic, it returns an empty string.
+#[builtin]
+fn recover() string;

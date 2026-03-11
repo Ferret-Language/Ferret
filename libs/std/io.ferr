@@ -1,0 +1,65 @@
+/// Standard IO library for Ferret.
+/// Provides Go-style Writer and Reader types backed by libc file descriptors.
+
+// ---------------------------------------------------------------------------
+// Libc bindings
+// ---------------------------------------------------------------------------
+
+/// Write bytes to a file descriptor. Returns bytes written or -1 on error.
+#[extern("write")]
+fn write(fd i32, buf *i8, count usize) isize;
+
+/// Read bytes from a file descriptor. Returns bytes read or -1 on error.
+#[extern("read")]
+fn read(fd i32, buf *mut i8, count usize) isize;
+
+// ---------------------------------------------------------------------------
+// Writer
+// ---------------------------------------------------------------------------
+
+/// Writer wraps a file descriptor for sequential byte output.
+/// Use Stdout(), Stderr(), or OpenWriter() to obtain one.
+type Writer struct {
+    fd i32
+}
+
+/// WriteBytes writes raw bytes from buf to the writer.
+/// Returns the number of bytes written, or a negative value on error.
+fn (w Writer) WriteBytes(buf *i8, count usize) isize {
+    return write(w.fd, buf, count)
+}
+
+// ---------------------------------------------------------------------------
+// Reader
+// ---------------------------------------------------------------------------
+
+/// Reader wraps a file descriptor for sequential byte input.
+/// Use Stdin() or OpenReader() to obtain one.
+type Reader struct {
+    fd i32
+}
+
+/// ReadBytes reads up to count bytes from the reader into buf.
+/// Returns the number of bytes read, 0 on EOF, or a negative value on error.
+fn (r Reader) ReadBytes(buf *mut i8, count usize) isize {
+    return read(r.fd, buf, count)
+}
+
+// ---------------------------------------------------------------------------
+// Standard file descriptors
+// ---------------------------------------------------------------------------
+
+/// Stdout returns a Writer connected to the process standard output (fd 1).
+fn Stdout() Writer {
+    return .{ .fd = 1 }
+}
+
+/// Stderr returns a Writer connected to the process standard error (fd 2).
+fn Stderr() Writer {
+    return .{ .fd = 2 }
+}
+
+/// Stdin returns a Reader connected to the process standard input (fd 0).
+fn Stdin() Reader {
+    return .{ .fd = 0 }
+}

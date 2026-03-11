@@ -1,0 +1,14 @@
+/// Basic std/math declarations used by the compiler test suite.
+/// Implementations will be linked from runtime/static libraries later.
+
+/// Returns the absolute value of an i32.
+#[extern("ferret_math_abs_i32")]
+fn AbsI32(value i32) i32;
+
+/// Pure Ferret helper kept here to validate std imports with real bodies too.
+fn ClampToZero(value i32) i32 {
+    if value < 0 {
+        return 0
+    }
+    return value
+}
