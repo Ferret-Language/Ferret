@@ -299,6 +299,9 @@ func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
 			return lowerCall(state, "", nil, call)
 		}
 		return "", nil
+	case *midmir.UnsafeInstr:
+		// Unsafe marker: safety is enforced at type-check time; no code to emit.
+		return "", nil
 	default:
 		return "", fmt.Errorf("unsupported MIR instruction %T", instr)
 	}
@@ -647,6 +650,13 @@ func lowerQBEPlaceAddr(state *moduleState, place midmir.Place) ([]string, string
 		addrTmp := freshTemp(state, "elem")
 		idxLines = append(idxLines, fmt.Sprintf("%s =l add %s, %s", addrTmp, basePtr, scaled))
 		return append(baseLines, idxLines...), addrTmp, nil
+	case *midmir.DerefPlace:
+		// *ptr: the address to write to is the pointer value itself.
+		ptrVal, err := lowerValue(state, p.Pointer)
+		if err != nil {
+			return nil, "", err
+		}
+		return nil, ptrVal, nil
 	default:
 		return nil, "", fmt.Errorf("unsupported place %T for lowerQBEPlaceAddr", place)
 	}

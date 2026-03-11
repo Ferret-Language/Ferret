@@ -400,6 +400,8 @@ func formatPlace(place Place) string {
 		return fmt.Sprintf("field %s %d", formatPlace(p.Base), p.FieldIndex)
 	case *IndexPlace:
 		return fmt.Sprintf("index %s [%s]", formatPlace(p.Base), formatValue(p.Index))
+	case *DerefPlace:
+		return fmt.Sprintf("deref %s", formatValue(p.Pointer))
 	default:
 		return "<place>"
 	}

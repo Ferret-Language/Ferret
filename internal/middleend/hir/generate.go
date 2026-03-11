@@ -409,6 +409,9 @@ func generateExpr(types *typeinfo.ModuleInfo, expr ast.Expr) Expr {
 		out := &IndexExpr{Left: generateExpr(types, e.Left), Index: generateExpr(types, e.Index)}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
+	case *ast.UnsafeExpr:
+		// Unsafe context is validated at type-check time; lower transparently.
+		return generateExpr(types, e.Inner)
 	default:
 		return nil
 	}

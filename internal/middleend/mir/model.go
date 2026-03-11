@@ -326,6 +326,14 @@ type IndexPlace struct {
 
 func (*IndexPlace) placeNode() {}
 
+// DerefPlace represents the lvalue *ptr (pointer dereference).
+type DerefPlace struct {
+	basePlace
+	Pointer Value // address to write through
+}
+
+func (*DerefPlace) placeNode() {}
+
 type BindInstr struct {
 	baseInstr
 	Name     string

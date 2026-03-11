@@ -697,6 +697,8 @@ func remapPlaceLocals(place Place, idMap map[int]int) {
 	case *IndexPlace:
 		remapPlaceLocals(p.Base, idMap)
 		remapValueLocals(p.Index, idMap)
+	case *DerefPlace:
+		remapValueLocals(p.Pointer, idMap)
 	}
 }
 
@@ -849,6 +851,8 @@ func addUsedLocalsFromPlace(dst map[int]bool, place Place) {
 	case *IndexPlace:
 		addUsedLocalsFromPlace(dst, p.Base)
 		addUsedLocalsFromValue(dst, p.Index)
+	case *DerefPlace:
+		addUsedLocalsFromValue(dst, p.Pointer)
 	}
 }
 
@@ -861,6 +865,8 @@ func countUsedLocalsInPlace(dst map[int]int, place Place) {
 	case *IndexPlace:
 		countUsedLocalsInPlace(dst, p.Base)
 		countUsedLocalsInValue(dst, p.Index)
+	case *DerefPlace:
+		countUsedLocalsInValue(dst, p.Pointer)
 	}
 }
 
@@ -996,6 +1002,9 @@ func replaceLocalInPlace(place Place, localID int, replacement Value) Place {
 	case *IndexPlace:
 		p.Base = replaceLocalInPlace(p.Base, localID, replacement)
 		p.Index = replaceLocalInValue(p.Index, localID, replacement)
+		return p
+	case *DerefPlace:
+		p.Pointer = replaceLocalInValue(p.Pointer, localID, replacement)
 		return p
 	default:
 		return place

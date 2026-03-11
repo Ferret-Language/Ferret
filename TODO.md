@@ -81,7 +81,7 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 - [x] `catch` handler block with mandatory early exit
 - [x] `lock`
 - [x] `unsafe` blocks
-- [ ] `unsafe` expressions
+- [x] `unsafe` expressions
 - [x] `#[builtin]` function declarations without body
 - [x] `#[extern("...")]` function declarations without body
 - [ ] function literals

@@ -103,6 +103,10 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case tokens.COMPTIME:
 		p.advance()
 		return &ast.PrefixExpr{Op: "comptime", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+	case tokens.UNSAFE:
+		p.advance()
+		inner := p.parseExpr(precPrefix)
+		return &ast.UnsafeExpr{Inner: inner, Location: p.locFrom(start)}
 	default:
 		loc := source.NewLocation(p.file, start, p.current().End)
 		p.errorAt(loc, "expected expression")
@@ -276,7 +280,7 @@ func (p *Parser) startsExpr() bool {
 	switch p.current().Kind {
 	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.NONE,
 		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
-		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME:
+		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME, tokens.UNSAFE:
 		return true
 	default:
 		return false

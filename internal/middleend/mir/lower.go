@@ -498,6 +498,11 @@ func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
 	case *hir.IndexExpr:
 		index := lowerValue(lowerCtx, e.Index)
 		return &IndexPlace{basePlace: basePlace{Location: e.Loc()}, Base: lowerPlace(lowerCtx, e.Left), Index: index}
+	case *hir.PrefixExpr:
+		if e.Op == "*" {
+			return &DerefPlace{basePlace: basePlace{Location: e.Loc()}, Pointer: lowerValue(lowerCtx, e.Right)}
+		}
+		return nil
 	default:
 		return nil
 	}

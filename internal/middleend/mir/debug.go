@@ -170,6 +170,8 @@ func debugPlace(place Place) any {
 		return map[string]any{"kind": "field", "base": debugPlace(p.Base), "field_index": p.FieldIndex}
 	case *IndexPlace:
 		return map[string]any{"kind": "index_place", "base": debugPlace(p.Base), "index": debugValue(p.Index)}
+	case *DerefPlace:
+		return map[string]any{"kind": "deref_place", "pointer": debugValue(p.Pointer)}
 	default:
 		return nil
 	}

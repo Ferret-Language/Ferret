@@ -486,6 +486,12 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		return c.typeOfComposite(scope, e, expected)
 	case *ast.IndexExpr:
 		return c.typeOfIndex(scope, e)
+	case *ast.UnsafeExpr:
+		c.unsafeDepth++
+		t := c.typeOfExpr(scope, e.Inner, expected)
+		c.unsafeDepth--
+		c.info.BindNode(e, t)
+		return t
 	default:
 		return typeinfo.UnknownType{}
 	}
