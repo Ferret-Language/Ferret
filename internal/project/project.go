@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"compiler/internal/context"
 	"compiler/internal/manifest"
@@ -137,43 +136,36 @@ func resolveRemotePackage(cachePath string, lock *manifest.Lockfile, repoName, v
 	return modulePath, nil
 }
 
+// resolveStdlibRoot finds the stdlib root directory.
+//
+// Search order:
+//  1. Executable-relative: the ferret binary lives in bin/, so stdlib is at
+//     <execDir>/../libs/std  (the canonical installed layout).
+//  2. Walk up from projectRoot looking for libs/std or ferret_libs_dev/std,
+//     which covers development checkouts where the repo contains the stdlib.
 func resolveStdlibRoot(projectRoot string) (string, error) {
-	if path := os.Getenv("FERRET_STDLIB"); path != "" {
-		return validateStdlibRoot(path)
+	var candidates []string
+
+	// 1. Relative to the ferret executable.
+	//    Layout: <root>/bin/ferret  →  <root>/libs/std
+	if execPath, err := os.Executable(); err == nil {
+		execDir := filepath.Dir(execPath)
+		candidates = append(candidates,
+			filepath.Join(execDir, "..", "libs", "std"),
+			filepath.Join(execDir, "libs", "std"),
+		)
 	}
 
-	candidates := []string{
-		filepath.Join(projectRoot, "ferret_libs_dev", "std"),
-		filepath.Join(projectRoot, "libs", "std"),
-		filepath.Join(projectRoot, "ferret_libs", "std"),
-	}
+	// 2. Walk up from the project root (development / monorepo layout).
+	stdNames := []string{"libs", "ferret_libs_dev", "ferret_libs"}
 	for current := projectRoot; ; current = filepath.Dir(current) {
-		candidates = append(candidates,
-			filepath.Join(current, "ferret_libs_dev", "std"),
-			filepath.Join(current, "libs", "std"),
-			filepath.Join(current, "ferret_libs", "std"),
-		)
+		for _, name := range stdNames {
+			candidates = append(candidates, filepath.Join(current, name, "std"))
+		}
 		parent := filepath.Dir(current)
 		if parent == current {
 			break
 		}
-	}
-
-	if execPath, err := os.Executable(); err == nil {
-		execDir := filepath.Dir(execPath)
-		candidates = append(candidates,
-			filepath.Join(execDir, "..", "ferret_libs_dev", "std"),
-			filepath.Join(execDir, "..", "libs", "std"),
-			filepath.Join(execDir, "..", "ferret_libs", "std"),
-		)
-	}
-	if _, file, _, ok := runtime.Caller(0); ok {
-		root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-		candidates = append(candidates,
-			filepath.Join(root, "ferret_libs_dev", "std"),
-			filepath.Join(root, "libs", "std"),
-			filepath.Join(root, "ferret_libs", "std"),
-		)
 	}
 
 	seen := make(map[string]struct{}, len(candidates))
@@ -191,16 +183,4 @@ func resolveStdlibRoot(projectRoot string) (string, error) {
 		}
 	}
 	return "", nil
-}
-
-func validateStdlibRoot(path string) (string, error) {
-	clean := filepath.Clean(path)
-	info, err := os.Stat(clean)
-	if err != nil {
-		return "", fmt.Errorf("stdlib root %q is not accessible: %w", clean, err)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("stdlib root %q is not a directory", clean)
-	}
-	return clean, nil
 }

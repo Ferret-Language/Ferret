@@ -330,7 +330,7 @@ func buildExecutable(result compilerapi.Result, outputPath string, target backen
 		if err != nil {
 			return fmt.Errorf("build: %w", err)
 		}
-		wrapper, err := llvmMainWrapper(result.Entry)
+		wrapper, err := llvm.MainWrapper(result.Entry.MIR)
 		if err != nil {
 			return fmt.Errorf("build: %w", err)
 		}
@@ -356,7 +356,7 @@ func buildExecutable(result compilerapi.Result, outputPath string, target backen
 			combined.WriteString(artifact.Text)
 			combined.WriteByte('\n')
 		}
-		wrapper, err := qbeMainWrapper(result.Entry)
+		wrapper, err := qbe.MainWrapper(result.Entry.MIR)
 		if err != nil {
 			return fmt.Errorf("build: %w", err)
 		}
@@ -387,120 +387,6 @@ func allModulesForBuild(result compilerapi.Result) []*context.Module {
 		all = append(all, result.Entry)
 	}
 	return all
-}
-
-// qbeMainWrapper emits a QBE IL snippet:
-//
-//	function [rettype] $main() {
-//	@start
-//	    [%r =rettype] call $<prefix>__main()
-//	    ret [%r]
-//	}
-//
-// This bridges the C runtime entry point to the Ferret main function.
-func qbeMainWrapper(entry *context.Module) (string, error) {
-	if entry == nil || entry.MIR == nil {
-		return "", fmt.Errorf("entry wrapper: nil entry module")
-	}
-
-	var mainFunc *midmir.Function
-	for _, fn := range entry.MIR.Functions {
-		if fn != nil && fn.Name == "main" {
-			mainFunc = fn
-			break
-		}
-	}
-	if mainFunc == nil {
-		return "", fmt.Errorf("entry wrapper: module %q has no 'main' function", entry.ImportPath)
-	}
-
-	prefix := qbe.SanitizePath(entry.MIR.ImportPath)
-	// If the entry module is "main", the Ferret main() is already emitted as
-	// $main by qbeSymbol.  No wrapper is needed – the C runtime calls $main
-	// directly.
-	if prefix == "main" {
-		return "", nil
-	}
-	symbol := prefix + "__main"
-	retType := qbe.FunctionReturnQBEType(mainFunc)
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "# entry wrapper\n")
-	if retType != "" {
-		fmt.Fprintf(&b, "export function %s $main() {\n", retType)
-	} else {
-		fmt.Fprintf(&b, "export function $main() {\n")
-	}
-	fmt.Fprintf(&b, "@start\n")
-	if retType != "" {
-		fmt.Fprintf(&b, "\t%%r =%s call $%s()\n", retType, symbol)
-		fmt.Fprintf(&b, "\tret %%r\n")
-	} else {
-		fmt.Fprintf(&b, "\tcall $%s()\n", symbol)
-		fmt.Fprintf(&b, "\tret\n")
-	}
-	fmt.Fprintf(&b, "}\n")
-	return b.String(), nil
-}
-
-// llvmMainWrapper emits an LLVM IR snippet that bridges the C runtime entry
-// point to the Ferret main function:
-//
-//	define [rettype|void] @main() {
-//	entry:
-//	  [%r = call rettype @module__main()]
-//	  [ret rettype %r | ret void]
-//	}
-func llvmMainWrapper(entry *context.Module) (string, error) {
-	if entry == nil || entry.MIR == nil {
-		return "", fmt.Errorf("entry wrapper: nil entry module")
-	}
-
-	var mainFunc *midmir.Function
-	for _, fn := range entry.MIR.Functions {
-		if fn != nil && fn.Name == "main" {
-			mainFunc = fn
-			break
-		}
-	}
-	if mainFunc == nil {
-		return "", fmt.Errorf("entry wrapper: module %q has no 'main' function", entry.ImportPath)
-	}
-
-	prefix := llvm.SanitizePath(entry.MIR.ImportPath)
-	// If the entry module is "main", the Ferret main() is already emitted as
-	// @main by llvmSymbol.  No wrapper is needed – the C runtime calls @main
-	// directly.
-	if prefix == "main" {
-		return "", nil
-	}
-	symbol := prefix + "__main"
-	retType := llvm.FunctionReturnLLVMType(mainFunc)
-	isScalar := llvm.FunctionReturnIsScalar(mainFunc)
-
-	var b strings.Builder
-	fmt.Fprintf(&b, "; entry wrapper\n")
-	if retType != "" && retType != "void" && isScalar {
-		fmt.Fprintf(&b, "define %s @main() {\n", retType)
-	} else {
-		fmt.Fprintf(&b, "define i32 @main() {\n")
-	}
-	fmt.Fprintf(&b, "entry:\n")
-	if retType != "" && retType != "void" && isScalar {
-		fmt.Fprintf(&b, "  %%r = call %s @%s()\n", retType, symbol)
-		// Ferret main may return i32 or other int; cast to i32 for C main.
-		if retType == "i32" {
-			fmt.Fprintf(&b, "  ret i32 %%r\n")
-		} else {
-			fmt.Fprintf(&b, "  %%r32 = sext %s %%r to i32\n", retType)
-			fmt.Fprintf(&b, "  ret i32 %%r32\n")
-		}
-	} else {
-		fmt.Fprintf(&b, "  call void @%s()\n", symbol)
-		fmt.Fprintf(&b, "  ret i32 0\n")
-	}
-	fmt.Fprintf(&b, "}\n")
-	return b.String(), nil
 }
 
 func debugPayload(result compilerapi.Result) any {
