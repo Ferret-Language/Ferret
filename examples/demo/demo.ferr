@@ -1,0 +1,104 @@
+import "std/io"
+import "std/os"
+import "std/math"
+
+#[if(target_os, "linux")]
+fn LinuxOnly() i32 {
+    return 1
+}
+
+#[if(target_arch, "amd64")]
+fn Amd64Only() i32 {
+    return 1
+}
+
+#[if(target_os, "windows")]
+const IsWindows = true
+
+#[if(not, target_os, "windows")]
+const IsWindows = false
+
+#[if(target_arch, "amd64")]
+const IsAmd64 = true
+
+#[if(not, target_arch, "amd64")]
+const IsAmd64 = false
+
+type Mode enum {
+    debug,
+    run,
+}
+
+type Handle move enum {
+    stdin,
+    stdout,
+}
+
+fn ChooseMode(sum i32) Mode {
+    if sum > 10 {
+        return Mode::run
+    }
+    return Mode::debug
+}
+
+fn main() i32 {
+    io::Println("Ferret demo")
+    io::Println(os::Platform())
+    io::Println(os::Arch())
+    io::Println(os::OSName())
+
+    let mut i: i32 = 0
+    let mut sum: i32 = 0
+
+    while i < 4 {
+        i++
+        sum = sum + i
+    }
+
+    let mode = ChooseMode(sum)
+    let clamped = math::ClampToZero(-12)
+    let narrowed = sum as i8
+    let widened = narrowed as i32
+    let mut modeScore: i32 = 0
+
+    if mode == Mode::debug {
+        modeScore = 1
+    } else {
+        modeScore = 2
+    }
+
+    if clamped != 0 {
+        return 10
+    }
+
+    if sum != 10 {
+        return 11
+    }
+
+    if widened != 10 {
+        return 12
+    }
+
+    if modeScore != 1 {
+        return 13
+    }
+
+    if os::CPUCount() == 0 {
+        return 14
+    }
+
+    if IsWindows {
+        io::Println("Is win")
+    } else {
+        io::Println("Not win")
+    }
+
+    if IsAmd64 {
+        io::Println("Is AMD")
+    } else {
+        io::Println("Not AMD")
+    }
+
+
+    return 0
+}

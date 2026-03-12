@@ -108,8 +108,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if declared != nil && d.Value != nil && !typeinfo.Assignable(declared, value) {
-			c.reportTypeMismatch(d.Value.Loc(), declared, value)
+		if declared != nil && d.Value != nil && !c.checkAssignable(d.Value.Loc(), declared, value) {
 		}
 		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
 			c.info.BindSymbol(sym, finalType)
@@ -131,8 +130,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if declared != nil && d.Value != nil && !typeinfo.Assignable(declared, value) {
-			c.reportTypeMismatch(d.Value.Loc(), declared, value)
+		if declared != nil && d.Value != nil && !c.checkAssignable(d.Value.Loc(), declared, value) {
 		}
 		c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
 		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
@@ -165,8 +163,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			}
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
-				if !typeinfo.Assignable(fieldType, valueType) {
-					c.reportTypeMismatch(field.Default.Loc(), fieldType, valueType)
+				if !c.checkAssignable(field.Default.Loc(), fieldType, valueType) {
 				}
 			}
 		}
@@ -180,8 +177,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			}
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
-				if !typeinfo.Assignable(fieldType, valueType) {
-					c.reportTypeMismatch(field.Default.Loc(), fieldType, valueType)
+				if !c.checkAssignable(field.Default.Loc(), fieldType, valueType) {
 				}
 				c.requireConstExpr(nil, field.Default, "static field initializer must be compile-time evaluable")
 			}
@@ -284,8 +280,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if declared != nil && s.Value != nil && !typeinfo.Assignable(declared, value) {
-			c.reportTypeMismatch(s.Value.Loc(), declared, value)
+		if declared != nil && s.Value != nil && !c.checkAssignable(s.Value.Loc(), declared, value) {
 		}
 		scope.Declare(s.Name.Text(), valueInfo{typ: finalType, mutable: s.IsMut})
 	case *ast.ConstStmt:
@@ -301,8 +296,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if declared != nil && s.Value != nil && !typeinfo.Assignable(declared, value) {
-			c.reportTypeMismatch(s.Value.Loc(), declared, value)
+		if declared != nil && s.Value != nil && !c.checkAssignable(s.Value.Loc(), declared, value) {
 		}
 		c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
 		scope.Declare(s.Name.Text(), valueInfo{typ: finalType, constant: true})
@@ -313,8 +307,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 	case *ast.AssignStmt:
 		leftType := c.typeOfAssignmentTargetExpr(scope, s.Left)
 		rightType := c.typeOfExpr(scope, s.Right, leftType)
-		if !typeinfo.Assignable(leftType, rightType) {
-			c.reportTypeMismatch(s.Right.Loc(), leftType, rightType)
+		if !c.checkAssignable(s.Right.Loc(), leftType, rightType) {
 		}
 		c.checkAssignmentTarget(scope, s.Left)
 	case *ast.IfStmt:
@@ -408,8 +401,7 @@ func (c *checker) checkReturn(scope *valueScope, stmt *ast.ReturnStmt) {
 		return
 	}
 	got := c.typeOfExpr(scope, stmt.Value, expected)
-	if !typeinfo.Assignable(expected, got) {
-		c.reportTypeMismatch(stmt.Value.Loc(), expected, got)
+	if !c.checkAssignable(stmt.Value.Loc(), expected, got) {
 	}
 }
 
@@ -936,8 +928,7 @@ func (c *checker) typecheckCallArgs(scope *valueScope, call *ast.CallExpr, fnTyp
 			expected = fnType.Params[i]
 		}
 		argType := c.typeOfExpr(scope, arg, expected)
-		if expected != nil && !typeinfo.Assignable(expected, argType) {
-			c.reportTypeMismatch(arg.Loc(), expected, argType)
+		if expected != nil && !c.checkAssignable(arg.Loc(), expected, argType) {
 		}
 		if i < len(fnType.ComptimeParams) && fnType.ComptimeParams[i] {
 			c.requireConstExpr(scope, arg, "argument to comptime parameter must be compile-time evaluable")
@@ -973,6 +964,15 @@ func (c *checker) typeOfSelector(scope *valueScope, expr *ast.SelectorExpr) type
 }
 
 func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Type {
+	if unionTarget, memberTarget, ok := c.selectedUnionMemberTarget(c.mod, expr.Type); ok {
+		sourceType := c.typeOfExpr(scope, expr.Left, memberTarget)
+		if c.checkAssignable(expr.Left.Loc(), memberTarget, sourceType) {
+			c.info.BindNode(expr, unionTarget)
+			return unionTarget
+		}
+		return typeinfo.InvalidType{}
+	}
+
 	target := c.typeFromSyntax(c.mod, expr.Type)
 	sourceType := c.typeOfExpr(scope, expr.Left, nil)
 	if typeinfo.Equal(target, sourceType) {
@@ -984,6 +984,10 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 		return target
 	}
 	if c.isExplicitEnumCast(target, sourceType) {
+		c.info.BindNode(expr, target)
+		return target
+	}
+	if opt, ok := c.underlying(target).(*typeinfo.OptionalType); ok && opt != nil && typeinfo.Assignable(opt.Inner, sourceType) {
 		c.info.BindNode(expr, target)
 		return target
 	}
@@ -1087,8 +1091,7 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 				break
 			}
 			got := c.typeOfExpr(scope, item.Value, arrType.Inner)
-			if !typeinfo.Assignable(arrType.Inner, got) {
-				c.reportTypeMismatch(item.Value.Loc(), arrType.Inner, got)
+			if !c.checkAssignable(item.Value.Loc(), arrType.Inner, got) {
 			}
 		}
 		c.info.BindNode(expr, expected)
@@ -1114,8 +1117,7 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 				continue
 			}
 			got := c.typeOfExpr(scope, item.Value, field.Type)
-			if !typeinfo.Assignable(field.Type, got) {
-				c.reportTypeMismatch(item.Value.Loc(), field.Type, got)
+			if !c.checkAssignable(item.Value.Loc(), field.Type, got) {
 			}
 			continue
 		}
@@ -1131,8 +1133,7 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 		}
 		field := fields[positional]
 		got := c.typeOfExpr(scope, item.Value, field.Type)
-		if !typeinfo.Assignable(field.Type, got) {
-			c.reportTypeMismatch(item.Value.Loc(), field.Type, got)
+		if !c.checkAssignable(item.Value.Loc(), field.Type, got) {
 		}
 		positional++
 	}
@@ -1391,7 +1392,7 @@ func (c *checker) isExplicitEnumCast(target, source typeinfo.Type) bool {
 }
 
 func (c *checker) isExplicitStringCast(target, source typeinfo.Type) bool {
-	if c.isStringType(target) && (c.isByteSliceType(source) || c.isCharSliceType(source)) {
+	if c.isStringType(target) && (c.isByteSliceType(source) || c.isCharSliceType(source) || typeinfo.IsNumeric(source)) {
 		return true
 	}
 	if c.isStringType(source) && (c.isByteSliceType(target) || c.isCharSliceType(target)) {
@@ -1534,6 +1535,51 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	default:
 		return typeinfo.UnknownType{}
 	}
+}
+
+func (c *checker) selectedUnionMemberTarget(mod *context.Module, expr ast.TypeExpr) (typeinfo.Type, typeinfo.Type, bool) {
+	named, ok := expr.(*ast.NamedType)
+	if !ok || named == nil {
+		return nil, nil, false
+	}
+	resolution := c.lookupTypeResolution(mod, named)
+	if resolution == nil || resolution.Symbol == nil || len(resolution.Remaining) != 1 {
+		return nil, nil, false
+	}
+	decl, ok := resolution.Symbol.Node.(*ast.TypeDecl)
+	if !ok || decl == nil {
+		return nil, nil, false
+	}
+	unionDecl, ok := decl.Type.(*ast.UnionType)
+	if !ok || unionDecl == nil {
+		return nil, nil, false
+	}
+	owner := c.findModuleForSymbol(resolution.Symbol)
+	if owner == nil {
+		owner = mod
+	}
+	memberName := resolution.Remaining[0]
+	memberType, ok := c.lookupNamedUnionMemberType(owner, unionDecl, memberName)
+	if !ok {
+		return nil, nil, false
+	}
+	return &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}, memberType, true
+}
+
+func (c *checker) lookupNamedUnionMemberType(mod *context.Module, unionDecl *ast.UnionType, name string) (typeinfo.Type, bool) {
+	if unionDecl == nil {
+		return nil, false
+	}
+	for _, member := range unionDecl.Members {
+		named, ok := member.(*ast.NamedType)
+		if !ok || named == nil || len(named.Path) != 1 {
+			continue
+		}
+		if named.Path[0] == name {
+			return c.typeFromSyntax(mod, member), true
+		}
+	}
+	return nil, false
 }
 
 func (c *checker) arrayLength(expr ast.Expr) int64 {
@@ -1943,6 +1989,63 @@ func (c *checker) reportTypeMismatch(loc source.Location, expected, got typeinfo
 			WithCode(diagnostics.ErrTypeMismatch).
 			WithPrimaryLabel(&loc, "type mismatch"),
 	)
+}
+
+func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Type) bool {
+	if c.assignable(expected, got) {
+		return true
+	}
+	if members, matches := c.unionAssignableMembers(expected, got); members != nil {
+		if matches == 0 {
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("type %s is not a valid member of %s", got.String(), expected.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, "value does not match any union member"),
+			)
+			return false
+		}
+		if matches > 1 {
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("type %s matches multiple members of %s", got.String(), expected.String())).
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "add an explicit cast to choose the target union member"),
+			)
+			return false
+		}
+		_ = members
+	}
+	c.reportTypeMismatch(loc, expected, got)
+	return false
+}
+
+func (c *checker) assignable(expected, got typeinfo.Type) bool {
+	if typeinfo.Assignable(expected, got) {
+		return true
+	}
+	_, matches := c.unionAssignableMembers(expected, got)
+	return matches == 1
+}
+
+func (c *checker) unionAssignableMembers(expected, got typeinfo.Type) ([]typeinfo.Type, int) {
+	unionType, ok := c.underlying(expected).(*typeinfo.UnionType)
+	if !ok || unionType == nil {
+		return nil, 0
+	}
+	exactMatches := 0
+	assignableMatches := 0
+	for _, member := range unionType.Members {
+		if typeinfo.Equal(member, got) {
+			exactMatches++
+			continue
+		}
+		if typeinfo.Assignable(member, got) {
+			assignableMatches++
+		}
+	}
+	if exactMatches > 0 {
+		return unionType.Members, exactMatches
+	}
+	return unionType.Members, assignableMatches
 }
 
 func (c *checker) reportWrongArgCount(loc source.Location, expected, got int) {

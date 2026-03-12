@@ -550,7 +550,13 @@ func isBuiltinPrintCall(call *midmir.CallValue) bool {
 		return false
 	}
 	callee, ok := call.Callee.(*midmir.NameValue)
-	return ok && callee != nil && callee.LinkName == "global__print"
+	if !ok || callee == nil {
+		return false
+	}
+	if callee.LinkName == "global__print" {
+		return true
+	}
+	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "print"
 }
 
 func lowerBuiltinPrintCall(state *moduleState, call *midmir.CallValue) (string, error) {
@@ -1054,7 +1060,22 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 			return lowerAggregateAssign(state, agg, v.Right)
 		}
 	case *midmir.CastValue:
-		return lowerAggregateAssign(state, agg, v.Left)
+		expr, err := lowerCast(state, v)
+		if err != nil {
+			return "", err
+		}
+		abiType, err := qbeABIType(state, agg.Type)
+		if err != nil {
+			return "", err
+		}
+		temp := freshTemp(state, "aggcast")
+		lines := []string{
+			fmt.Sprintf("%s =%s %s", temp, abiType, expr),
+		}
+		if temp != qbeLocalName(agg.PtrName) {
+			lines = append(lines, fmt.Sprintf("blit %s, %s, %d", temp, qbeLocalName(agg.PtrName), agg.Size))
+		}
+		return strings.Join(lines, "\n\t"), nil
 	case *midmir.CallValue:
 		return lowerAggregateCall(state, agg, v)
 	case *midmir.LocalValue, *midmir.NameValue:
@@ -1593,6 +1614,9 @@ func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 	if v == nil || v.Left == nil {
 		return "", fmt.Errorf("invalid cast")
 	}
+	if _, ok := unwrapNamed(v.Type()).(*typeinfo.StringType); ok {
+		return lowerStringCast(state, v.Left)
+	}
 	if isAggregateType(state, v.Left.Type()) && isAggregateType(state, v.Type()) {
 		return lowerValue(state, v.Left)
 	}
@@ -1620,6 +1644,61 @@ func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 		return "copy " + srcVal, nil
 	}
 	return "", fmt.Errorf("unsupported cast from %s to %s", typeinfo.FormatType(typeStringer{v.Left.Type()}), typeinfo.FormatType(typeStringer{v.Type()}))
+}
+
+func lowerStringCast(state *moduleState, value midmir.Value) (string, error) {
+	srcVal, err := lowerValue(state, value)
+	if err != nil {
+		return "", err
+	}
+	src := unwrapNamed(value.Type())
+	srcBuiltin, ok := src.(*typeinfo.BuiltinType)
+	if !ok {
+		return "", fmt.Errorf("unsupported string cast source %s", typeinfo.FormatType(typeStringer{value.Type()}))
+	}
+	switch srcBuiltin.Name {
+	case "i8", "i16", "i32":
+		op, _ := qbeIntCastOp(srcBuiltin.Name, "i64")
+		return fmt.Sprintf("call $global__i64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
+	case "i64", "isize":
+		if srcBuiltin.Name == "isize" {
+			op, _ := qbeIntCastOp(srcBuiltin.Name, "i64")
+			return fmt.Sprintf("call $global__i64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
+		}
+		return fmt.Sprintf("call $global__i64_str(l %s)", srcVal), nil
+	case "u8", "u16", "u32", "bool", "char":
+		op, _ := qbeIntCastOp(srcBuiltin.Name, "u64")
+		return fmt.Sprintf("call $global__u64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
+	case "u64", "usize":
+		if srcBuiltin.Name == "usize" {
+			op, _ := qbeIntCastOp(srcBuiltin.Name, "u64")
+			return fmt.Sprintf("call $global__u64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
+		}
+		return fmt.Sprintf("call $global__u64_str(l %s)", srcVal), nil
+	case "f32":
+		op, _ := qbeFloatCastOp("f32", "f64")
+		return fmt.Sprintf("call $global__f64_str(d %s)", qbeOperandWithTemp(state, "d", joinQBEValue(op, srcVal))), nil
+	case "f64":
+		return fmt.Sprintf("call $global__f64_str(d %s)", srcVal), nil
+	default:
+		return "", fmt.Errorf("unsupported string cast source %s", srcBuiltin.Name)
+	}
+}
+
+func joinQBEValue(op string, value string) string {
+	if op == "" || op == "copy" {
+		return value
+	}
+	return op + " " + value
+}
+
+func qbeOperandWithTemp(state *moduleState, qtype string, expr string) string {
+	if !strings.Contains(expr, " ") || strings.HasPrefix(expr, "%") || strings.HasPrefix(expr, "$") || expr == "0" || expr == "1" {
+		return expr
+	}
+	tmp := freshTemp(state, "cast")
+	state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s", tmp, qtype, expr))
+	return tmp
 }
 
 func lowerCallee(state *moduleState, value midmir.Value) (string, error) {

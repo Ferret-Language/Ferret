@@ -40,7 +40,7 @@ func includeDecl(ctx *context.CompilerContext, decl ast.Decl) (bool, bool) {
 			ctx.Diagnostics.Add(
 				diagnostics.NewError("invalid #[if(...)] attribute").
 					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "supported forms are #[if(debug)], #[if(not, debug)], #[if(target_os, \"...\")], #[if(target_arch, \"...\")]"),
+					WithPrimaryLabel(&loc, "supported forms are #[if(debug)], #[if(not, debug)], #[if(target_os, \"...\")], #[if(target_arch, \"...\")], #[if(not, target_os, \"...\")], and #[if(not, target_arch, \"...\")]"),
 			)
 			return false, false
 		}
@@ -88,6 +88,15 @@ func evalIfAttr(ctx *context.CompilerContext, attr ast.Attribute) (bool, bool) {
 			}
 		}
 		return matchTargetAttr(ctx, attr.Args[0], attr.Args[1])
+	case 3:
+		if attr.Args[0] != "not" {
+			return false, false
+		}
+		match, ok := matchTargetAttr(ctx, attr.Args[1], attr.Args[2])
+		if !ok {
+			return false, false
+		}
+		return !match, true
 	default:
 		return false, false
 	}

@@ -3,6 +3,7 @@ package typechecker_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	compilerapi "compiler/internal/compiler"
@@ -152,6 +153,146 @@ fn main() i64 {
     let a: i32 = 1
     let b: i64 = a
     return b
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsUnionMemberAssignment(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    bool,
+}
+
+fn main() i32 {
+    let a: Token = 1
+    let b: Token = true
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsInvalidUnionMemberAssignment(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    bool,
+}
+
+fn main() i32 {
+    let bad: Token = "text"
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected union member assignment diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "not a valid member") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected invalid union member diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerPrefersExactUnionMemberMatch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type MaybeInt union {
+    ?i32,
+    i32,
+}
+
+fn main() i32 {
+    let a: MaybeInt = 1
+    let b: MaybeInt = 1 as i32
+    let c: MaybeInt = 1 as ?i32
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsAmbiguousUnionMemberAssignment(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Both union {
+    i32,
+    i32,
+}
+
+fn main() i32 {
+    let bad: Both = 1
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected ambiguous union member diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "matches multiple members") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected ambiguous union member diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsExplicitUnionMemberCast(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type MaybeInt union {
+    ?i32,
+    i32,
+}
+
+fn main() i32 {
+    let picked: MaybeInt = 1 as MaybeInt::i32
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsNumericToStringCast(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() void {
+    let a = 42 as str
+    let b = 1.5 as str
+    print(a)
+    print(b)
 }
 `)
 

@@ -44,6 +44,25 @@ static FerretStr ferret__static_str(const char *s) {
     return out;
 }
 
+static FerretStr ferret__owned_str_from_cstr(const char *s) {
+    FerretStr out = { (const ferret_u8 *)0, 0 };
+    if (s == NULL) {
+        return out;
+    }
+    size_t len = strlen(s);
+    if (len == 0) {
+        return out;
+    }
+    ferret_u8 *buf = (ferret_u8 *)malloc(len);
+    if (buf == NULL) {
+        return out;
+    }
+    memcpy(buf, s, len);
+    out.ptr = buf;
+    out.len = (ferret_usize)len;
+    return out;
+}
+
 /* -------------------------------------------------------------------------
  * global__panic
  *
@@ -354,6 +373,24 @@ ferret_raw global__str_cstr(const FerretStr *s) {
     memcpy(buf, s->ptr, (size_t)s->len);
     buf[s->len] = 0;
     return (ferret_raw)buf;
+}
+
+FerretStr global__i64_str(ferret_i64 value) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lld", (long long)value);
+    return ferret__owned_str_from_cstr(buf);
+}
+
+FerretStr global__u64_str(ferret_u64 value) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%llu", (unsigned long long)value);
+    return ferret__owned_str_from_cstr(buf);
+}
+
+FerretStr global__f64_str(ferret_f64 value) {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%.17g", (double)value);
+    return ferret__owned_str_from_cstr(buf);
 }
 
 ferret_usize ferret_os_cpu_count(void) {

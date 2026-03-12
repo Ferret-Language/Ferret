@@ -142,6 +142,9 @@ FerretStr global__bytes_str(const FerretSliceU8 *bytes);
 FerretSliceChar global__str_chars(const FerretStr *s);
 FerretStr global__chars_str(const FerretSliceChar *chars);
 ferret_raw global__str_cstr(const FerretStr *s);
+FerretStr global__i64_str(ferret_i64 value);
+FerretStr global__u64_str(ferret_u64 value);
+FerretStr global__f64_str(ferret_f64 value);
 
 /* -------------------------------------------------------------------------
  * std/os helpers

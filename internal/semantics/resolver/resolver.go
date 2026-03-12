@@ -470,7 +470,92 @@ func (r *resolver) resolveTypePath(scope *table.Scope, typ *ast.NamedType) {
 		return
 	}
 
+	if resolution, ok := r.resolveUnionMemberTypePath(scope, typ); ok {
+		r.info.BindNode(typ, resolution)
+		return
+	}
+
 	r.resolveQualifiedPath(scope, typ.Path, typ, true)
+}
+
+func (r *resolver) resolveUnionMemberTypePath(scope *table.Scope, typ *ast.NamedType) (*binding.Resolution, bool) {
+	if typ == nil || len(typ.Path) < 2 {
+		return nil, false
+	}
+	prefix := typ.Path[:len(typ.Path)-1]
+	memberName := typ.Path[len(typ.Path)-1]
+	sym, owner, ok := r.lookupTypeSymbolPath(scope, prefix)
+	if !ok || sym == nil {
+		return nil, false
+	}
+	decl, _ := sym.Node.(*ast.TypeDecl)
+	unionDecl, ok := decl.Type.(*ast.UnionType)
+	if !ok || unionDecl == nil || !unionHasNamedMember(unionDecl, memberName) {
+		return nil, false
+	}
+	moduleKey := ""
+	importPath := ""
+	if owner != nil {
+		moduleKey = owner.Key
+		importPath = owner.ImportPath
+	}
+	return &binding.Resolution{
+		Kind:       binding.ResolutionSymbol,
+		Symbol:     sym,
+		ModuleKey:  moduleKey,
+		ImportPath: importPath,
+		Remaining:  []string{memberName},
+	}, true
+}
+
+func unionHasNamedMember(unionDecl *ast.UnionType, name string) bool {
+	if unionDecl == nil {
+		return false
+	}
+	for _, member := range unionDecl.Members {
+		named, ok := member.(*ast.NamedType)
+		if !ok || named == nil || len(named.Path) != 1 {
+			continue
+		}
+		if named.Path[0] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *resolver) lookupTypeSymbolPath(scope *table.Scope, path []string) (*symbols.Symbol, *context.Module, bool) {
+	if len(path) == 0 {
+		return nil, nil, false
+	}
+	if len(path) == 1 {
+		sym, ok := scope.Lookup(path[0])
+		if !ok || sym.Kind != symbols.SymbolType {
+			return nil, nil, false
+		}
+		owner := r.findModuleForSymbol(sym)
+		if owner == nil {
+			owner = r.mod
+		}
+		return sym, owner, true
+	}
+	imp, matched := r.matchImport(path)
+	if imp == nil {
+		return nil, nil, false
+	}
+	mod, ok := r.ctx.GetModule(imp.ModuleKey)
+	if !ok || mod == nil || mod.ModuleScope == nil {
+		return nil, nil, false
+	}
+	remaining := path[matched:]
+	if len(remaining) != 1 {
+		return nil, nil, false
+	}
+	sym, ok := mod.ModuleScope.LookupLocal(remaining[0])
+	if !ok || sym.Kind != symbols.SymbolType {
+		return nil, nil, false
+	}
+	return sym, mod, true
 }
 
 func (r *resolver) resolveQualifiedPath(scope *table.Scope, path []string, node ast.Node, typeOnly bool) {
