@@ -556,6 +556,9 @@ func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl)
 }
 
 func lowerTypeDecl(state *moduleState, decl *midmir.TypeDecl) (string, error) {
+	if decl == nil || decl.Named == nil || decl.Struct == nil {
+		return "", nil
+	}
 	layoutInfo, err := lookupNamedLayout(state, decl.Named)
 	if err != nil {
 		return "", err
@@ -1964,6 +1967,20 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 		}
 		return llvmLocalName(localNameByID(state.fn, v.LocalID)), nil
 	case *midmir.NameValue:
+		if len(v.Path) == 1 {
+			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
+				if agg, ok := state.aggLocals[local.ID]; ok {
+					return llvmLocalName(agg.PtrName), nil
+				}
+				if sc, ok := state.scalarLocals[local.ID]; ok {
+					tmp := freshTemp(state, "ld")
+					state.pendingLines = append(state.pendingLines,
+						fmt.Sprintf("%s = load %s, ptr %s", tmp, sc.IRType, sc.AllocaName))
+					return tmp, nil
+				}
+				return llvmLocalName(local.Name), nil
+			}
+		}
 		if _, ok := v.Type().(*typeinfo.FuncType); ok {
 			if v.LinkName != "" {
 				return "@" + sanitizeIdent(v.LinkName), nil
@@ -2026,8 +2043,22 @@ func lowerAddrOf(state *moduleState, v *midmir.AddrOfValue) (string, error) {
 		if agg, ok := state.aggLocals[src.LocalID]; ok {
 			return llvmLocalName(agg.PtrName), nil
 		}
-		return "", fmt.Errorf("addr_of on scalar local not supported by llvm lowerer yet")
+		if sc, ok := state.scalarLocals[src.LocalID]; ok {
+			return sc.AllocaName, nil
+		}
+		return "", fmt.Errorf("addr_of on scalar SSA local not supported by llvm lowerer yet")
 	case *midmir.NameValue:
+		if len(src.Path) == 1 {
+			if local := findLocalByName(state.fn, src.Path[0]); local != nil {
+				if agg, ok := state.aggLocals[local.ID]; ok {
+					return llvmLocalName(agg.PtrName), nil
+				}
+				if sc, ok := state.scalarLocals[local.ID]; ok {
+					return sc.AllocaName, nil
+				}
+				return "", fmt.Errorf("addr_of on scalar SSA local not supported by llvm lowerer yet")
+			}
+		}
 		if src.LinkName != "" {
 			return "@" + sanitizeIdent(src.LinkName), nil
 		}
@@ -2106,8 +2137,8 @@ func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	src := v.Left.Type()
-	dst := v.Type()
+	src := unwrapNamed(v.Left.Type())
+	dst := unwrapNamed(v.Type())
 
 	srcBuiltin, srcIsBuiltin := src.(*typeinfo.BuiltinType)
 	dstBuiltin, dstIsBuiltin := dst.(*typeinfo.BuiltinType)
@@ -2387,7 +2418,7 @@ func alignUpInt64(size, align int64) int64 {
 }
 
 func aggregateSizeAlignOfPrimitive(typ typeinfo.Type) (int64, int64, error) {
-	switch t := typ.(type) {
+	switch t := unwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch t.Name {
 		case "bool", "u8", "i8":
@@ -2650,7 +2681,7 @@ func llvmCompareOp(op string, typ typeinfo.Type) (string, string, error) {
 }
 
 func llvmIsSigned(typ typeinfo.Type) bool {
-	b, ok := typ.(*typeinfo.BuiltinType)
+	b, ok := unwrapNamed(typ).(*typeinfo.BuiltinType)
 	if !ok {
 		return false
 	}
@@ -2748,6 +2779,7 @@ func llvmTypeBits(name string) int {
 // ---------------------------------------------------------------------------
 
 func llvmNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
+	typ = unwrapNamed(typ)
 	if _, ok := typ.(*typeinfo.PointerType); ok {
 		return lit, nil
 	}

@@ -433,12 +433,8 @@ fn main() str {
 	if !ok {
 		t.Fatalf("expected recover call, got %T", ret.Value)
 	}
-	st, ok := result.Entry.Types.Nodes[call].(*typeinfo.SliceType)
-	if !ok {
-		t.Fatalf("expected recover() to typecheck as str (SliceType), got %#v", result.Entry.Types.Nodes[call])
-	}
-	if bt, ok := st.Inner.(*typeinfo.BuiltinType); !ok || bt.Name != "u8" {
-		t.Fatalf("expected recover() inner type u8, got %#v", st.Inner)
+	if _, ok := result.Entry.Types.Nodes[call].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected recover() to typecheck as str (StringType), got %#v", result.Entry.Types.Nodes[call])
 	}
 }
 

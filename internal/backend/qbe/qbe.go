@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"compiler/internal/backend"
+	ast "compiler/internal/frontend/ast"
 	"compiler/internal/layout"
 	midmir "compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
@@ -30,6 +31,7 @@ type moduleState struct {
 	modulePrefix string
 	aggLocals    map[int]*aggregateLocal
 	aggParams    map[int]struct{}
+	scalarLocals map[int]*scalarAllocaLocal
 	nextTemp     int
 	nextStrConst int              // counter for unnamed string constant globals
 	deferredB    *strings.Builder // deferred data sections (string literals used in functions)
@@ -43,6 +45,16 @@ type aggregateLocal struct {
 	Size    int64
 	Align   int64
 	PtrName string
+}
+
+type scalarAllocaLocal struct {
+	ID      int
+	Name    string
+	Type    typeinfo.Type
+	PtrName string
+	QType   string
+	Size    int64
+	Align   int64
 }
 
 func New() backend.Lowerer { return &lowerer{} }
@@ -331,7 +343,44 @@ func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value m
 		if agg, ok := state.aggLocals[local.ID]; ok {
 			return lowerAggregateAssign(state, agg, value)
 		}
+		if sc, ok := state.scalarLocals[local.ID]; ok {
+			return lowerScalarAllocaAssign(state, sc, value)
+		}
 	}
+	return lowerSSAAssign(state, name, typ, value)
+}
+
+func lowerScalarAllocaAssign(state *moduleState, sc *scalarAllocaLocal, value midmir.Value) (string, error) {
+	tmpName := strings.TrimPrefix(freshTemp(state, "asgn"), "%")
+	line, err := lowerSSAAssign(state, tmpName, sc.Type, value)
+	if err != nil {
+		return "", err
+	}
+	resultName := qbeLocalName(tmpName)
+	if line != "" {
+		parts := strings.Split(strings.TrimRight(line, "\n"), "\n")
+		for i := len(parts) - 1; i >= 0; i-- {
+			p := strings.TrimSpace(parts[i])
+			if strings.HasPrefix(p, "%") {
+				if idx := strings.Index(p, " ="); idx > 0 {
+					resultName = strings.TrimSpace(p[:idx])
+					break
+				}
+			}
+		}
+	}
+	storeOp, err := qbeStoreOp(sc.Type)
+	if err != nil {
+		return "", err
+	}
+	storeLine := fmt.Sprintf("%s %s, %s", storeOp, resultName, qbeLocalName(sc.PtrName))
+	if line == "" {
+		return storeLine, nil
+	}
+	return line + "\n\t" + storeLine, nil
+}
+
+func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value midmir.Value) (string, error) {
 	if call, ok := value.(*midmir.CallValue); ok {
 		return lowerCall(state, name, typ, call)
 	}
@@ -850,6 +899,9 @@ func lowerQBEPlaceAddr(state *moduleState, place midmir.Place) ([]string, string
 		if agg, ok := state.aggLocals[p.LocalID]; ok {
 			return nil, qbeLocalName(agg.PtrName), nil
 		}
+		if sc, ok := state.scalarLocals[p.LocalID]; ok {
+			return nil, qbeLocalName(sc.PtrName), nil
+		}
 		return nil, qbeLocalName(localNameByID(state.fn, p.LocalID)), nil
 	case *midmir.FieldPlace:
 		baseLines, basePtr, err := lowerQBEPlaceAddr(state, p.Base)
@@ -929,7 +981,7 @@ func qbePlaceType(state *moduleState, place midmir.Place) typeinfo.Type {
 
 // qbeScalarSizeAlign returns the size and alignment for scalar/pointer types.
 func qbeScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
-	switch t := typ.(type) {
+	switch t := unwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch t.Name {
 		case "bool", "u8", "i8":
@@ -1278,6 +1330,7 @@ func prepareFunctionState(state *moduleState, fn *midmir.Function) error {
 	state.fn = fn
 	state.aggLocals = make(map[int]*aggregateLocal)
 	state.aggParams = make(map[int]struct{})
+	state.scalarLocals = make(map[int]*scalarAllocaLocal)
 	state.nextTemp = 0
 	state.pendingLines = nil
 	for _, param := range fn.Params {
@@ -1289,24 +1342,46 @@ func prepareFunctionState(state *moduleState, fn *midmir.Function) error {
 		}
 	}
 	for _, local := range fn.Locals {
-		if local == nil || !isAggregateType(state, local.Type) {
+		if local == nil {
 			continue
 		}
-		agg := &aggregateLocal{
+		if isAggregateType(state, local.Type) {
+			agg := &aggregateLocal{
+				ID:      local.ID,
+				Name:    local.Name,
+				Type:    local.Type,
+				PtrName: local.Name,
+			}
+			if _, ok := state.aggParams[local.ID]; !ok {
+				size, align, err := aggregateSizeAlign(state, local.Type)
+				if err != nil {
+					return err
+				}
+				agg.Size = size
+				agg.Align = align
+			}
+			state.aggLocals[local.ID] = agg
+			continue
+		}
+		if !local.Mutable {
+			continue
+		}
+		qtype, err := qbeBaseType(local.Type)
+		if err != nil || qtype == "" {
+			continue
+		}
+		size, align, err := qbeScalarSizeAlign(local.Type)
+		if err != nil {
+			return err
+		}
+		state.scalarLocals[local.ID] = &scalarAllocaLocal{
 			ID:      local.ID,
 			Name:    local.Name,
 			Type:    local.Type,
-			PtrName: local.Name,
+			PtrName: local.Name + "_slot",
+			QType:   qtype,
+			Align:   alignUpInt64(size, align),
 		}
-		if _, ok := state.aggParams[local.ID]; !ok {
-			size, align, err := aggregateSizeAlign(state, local.Type)
-			if err != nil {
-				return err
-			}
-			agg.Size = size
-			agg.Align = align
-		}
-		state.aggLocals[local.ID] = agg
 	}
 	return nil
 }
@@ -1315,7 +1390,12 @@ func entryPrelude(state *moduleState) []string {
 	if state == nil || state.fn == nil {
 		return nil
 	}
-	ids := make([]int, 0, len(state.aggLocals))
+	scalarIDs := make([]int, 0, len(state.scalarLocals))
+	for id := range state.scalarLocals {
+		scalarIDs = append(scalarIDs, id)
+	}
+	sort.Ints(scalarIDs)
+	aggIDs := make([]int, 0, len(state.aggLocals))
 	for id, agg := range state.aggLocals {
 		if agg == nil || agg.Size == 0 {
 			continue
@@ -1323,11 +1403,15 @@ func entryPrelude(state *moduleState) []string {
 		if _, ok := state.aggParams[id]; ok {
 			continue
 		}
-		ids = append(ids, id)
+		aggIDs = append(aggIDs, id)
 	}
-	sort.Ints(ids)
-	lines := make([]string, 0, len(ids))
-	for _, id := range ids {
+	sort.Ints(aggIDs)
+	lines := make([]string, 0, len(scalarIDs)+len(aggIDs))
+	for _, id := range scalarIDs {
+		sc := state.scalarLocals[id]
+		lines = append(lines, fmt.Sprintf("%s =l alloc%d %d", qbeLocalName(sc.PtrName), normalizeQBEAlign(sc.Align), sc.Align))
+	}
+	for _, id := range aggIDs {
 		agg := state.aggLocals[id]
 		lines = append(lines, fmt.Sprintf("%s =l alloc%d %d", qbeLocalName(agg.PtrName), normalizeQBEAlign(agg.Align), agg.Size))
 	}
@@ -1342,8 +1426,34 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 		if agg, ok := state.aggLocals[v.LocalID]; ok {
 			return qbeLocalName(agg.PtrName), nil
 		}
+		if sc, ok := state.scalarLocals[v.LocalID]; ok {
+			op, qtype, err := qbeLoadOp(sc.Type)
+			if err != nil {
+				return "", err
+			}
+			tmp := freshTemp(state, "ld")
+			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, qbeLocalName(sc.PtrName)))
+			return tmp, nil
+		}
 		return qbeLocalName(localNameByID(state.fn, v.LocalID)), nil
 	case *midmir.NameValue:
+		if len(v.Path) == 1 {
+			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
+				if agg, ok := state.aggLocals[local.ID]; ok {
+					return qbeLocalName(agg.PtrName), nil
+				}
+				if sc, ok := state.scalarLocals[local.ID]; ok {
+					op, qtype, err := qbeLoadOp(sc.Type)
+					if err != nil {
+						return "", err
+					}
+					tmp := freshTemp(state, "ld")
+					state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, qbeLocalName(sc.PtrName)))
+					return tmp, nil
+				}
+				return qbeLocalName(local.Name), nil
+			}
+		}
 		if _, ok := v.Type().(*typeinfo.FuncType); ok {
 			if v.LinkName != "" {
 				return "$" + sanitizeIdent(v.LinkName), nil
@@ -1406,8 +1516,22 @@ func lowerAddrOf(state *moduleState, v *midmir.AddrOfValue) (string, error) {
 		if agg, ok := state.aggLocals[src.LocalID]; ok {
 			return qbeLocalName(agg.PtrName), nil
 		}
+		if sc, ok := state.scalarLocals[src.LocalID]; ok {
+			return qbeLocalName(sc.PtrName), nil
+		}
 		return "", fmt.Errorf("addr_of on scalar local is not supported by qbe lowerer yet")
 	case *midmir.NameValue:
+		if len(src.Path) == 1 {
+			if local := findLocalByName(state.fn, src.Path[0]); local != nil {
+				if agg, ok := state.aggLocals[local.ID]; ok {
+					return qbeLocalName(agg.PtrName), nil
+				}
+				if sc, ok := state.scalarLocals[local.ID]; ok {
+					return qbeLocalName(sc.PtrName), nil
+				}
+				return "", fmt.Errorf("addr_of on scalar SSA local is not supported by qbe lowerer yet")
+			}
+		}
 		if src.LinkName != "" {
 			return "$" + sanitizeIdent(src.LinkName), nil
 		}
@@ -2134,6 +2258,12 @@ func sanitizeIdent(s string) string {
 }
 
 func unwrapNamed(t typeinfo.Type) typeinfo.Type {
+	if named, ok := t.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
+		switch named.Decl.Type.(type) {
+		case *ast.EnumType, *ast.ErrorType:
+			return &typeinfo.BuiltinType{Name: "i32"}
+		}
+	}
 	return t
 }
 

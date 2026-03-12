@@ -73,7 +73,8 @@ fn main() i32 {
 	for _, want := range []string{
 		"data $main__GlobalFlag = { b 1 }",
 		"export function w $main()",
-		"jnz $main__GlobalFlag",
+		"%_ld1 =w loadub $main__GlobalFlag",
+		"jnz %_ld1",
 		"ret 1",
 		"ret 0",
 	} {
@@ -318,5 +319,57 @@ fn main() i32 {
 	// Call site should pass receiver as first argument.
 	if !strings.Contains(text, "call $main__Len2(") {
 		t.Fatalf("expected direct method call in main, got:\n%s", text)
+	}
+}
+
+func TestLowerEnumValuesToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Color enum {
+    Red,
+    Green,
+    Blue,
+}
+
+let mut RuntimeColor: Color = Color::Red
+const DefaultColor = Color::Green
+
+fn main(flag bool) i32 {
+    let mut value = Color::Blue
+    if flag {
+        value = RuntimeColor
+    }
+    if value == DefaultColor {
+        return 1
+    }
+    return 2
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"data $main__RuntimeColor = { w 0 }",
+		"data $main__DefaultColor = { w 1 }",
+		"%value_slot =l alloc4 4",
+		"storew %_asgn1, %value_slot",
+		"storew %_ld2, %value_slot",
+		"ceqw %_ld3, 1",
+		"ret 1",
+		"ret 2",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
 	}
 }

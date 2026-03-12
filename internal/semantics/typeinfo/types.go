@@ -152,6 +152,7 @@ func (t *StructType) String() string { return "struct" }
 type EnumType struct {
 	Variants        map[string]struct{}
 	OrderedVariants []string
+	VariantOrdinals map[string]int
 }
 
 func (t *EnumType) String() string { return "enum" }
@@ -159,6 +160,7 @@ func (t *EnumType) String() string { return "enum" }
 type ErrorSetType struct {
 	Members        map[string]struct{}
 	OrderedMembers []string
+	MemberOrdinals map[string]int
 }
 
 func (t *ErrorSetType) String() string { return "error" }

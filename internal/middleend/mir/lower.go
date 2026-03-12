@@ -654,6 +654,9 @@ func lowerResolvedName(c *lowerContext, source fast.Expr, loc source.Location, t
 	if !ok || resolution.Kind != binding.ResolutionSymbol || resolution.Symbol == nil {
 		return nil
 	}
+	if lit := lowerResolvedScalarValue(resolution, loc, typ); lit != nil {
+		return lit
+	}
 	out := &NameValue{
 		baseValue: baseValue{Location: loc, ExprType: typ},
 		Path:      canonicalResolvedPath(c, resolution),
@@ -661,13 +664,60 @@ func lowerResolvedName(c *lowerContext, source fast.Expr, loc source.Location, t
 	if fn, ok := resolution.Symbol.Node.(*fast.FuncDecl); ok {
 		if fn.IsExtern && fn.ExternName != "" {
 			out.LinkName = fn.ExternName
-		} else if fn.IsBuiltin {
-			// Builtin functions always live in the global module and are
-			// mangled as global__<name> on the C/link side.
-			out.LinkName = "global__" + resolution.Symbol.Name
 		}
 	}
 	return out
+}
+
+func lowerResolvedScalarValue(resolution *binding.Resolution, loc source.Location, typ typeinfo.Type) Value {
+	if resolution == nil || resolution.Symbol == nil {
+		return nil
+	}
+	switch resolution.Symbol.Kind {
+	case symbols.SymbolVariant:
+		if ordinal, ok := lookupEnumOrdinal(typ, resolution.Symbol.Name); ok {
+			return &NumberValue{baseValue: baseValue{Location: loc, ExprType: typ}, Value: strconv.Itoa(ordinal)}
+		}
+	case symbols.SymbolError:
+		if ordinal, ok := lookupErrorOrdinal(typ, resolution.Symbol.Name); ok {
+			return &NumberValue{baseValue: baseValue{Location: loc, ExprType: typ}, Value: strconv.Itoa(ordinal)}
+		}
+	}
+	return nil
+}
+
+func lookupEnumOrdinal(typ typeinfo.Type, name string) (int, bool) {
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
+		if decl, ok := named.Decl.Type.(*fast.EnumType); ok {
+			for i, variant := range decl.Variants {
+				if variant != nil && variant.Name != nil && variant.Name.Text() == name {
+					return i, true
+				}
+			}
+		}
+	}
+	if enumTyp, ok := typ.(*typeinfo.EnumType); ok && enumTyp != nil && enumTyp.VariantOrdinals != nil {
+		ordinal, ok := enumTyp.VariantOrdinals[name]
+		return ordinal, ok
+	}
+	return 0, false
+}
+
+func lookupErrorOrdinal(typ typeinfo.Type, name string) (int, bool) {
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
+		if decl, ok := named.Decl.Type.(*fast.ErrorType); ok {
+			for i, member := range decl.Members {
+				if member != nil && member.Name != nil && member.Name.Text() == name {
+					return i, true
+				}
+			}
+		}
+	}
+	if errTyp, ok := typ.(*typeinfo.ErrorSetType); ok && errTyp != nil && errTyp.MemberOrdinals != nil {
+		ordinal, ok := errTyp.MemberOrdinals[name]
+		return ordinal, ok
+	}
+	return 0, false
 }
 
 func lowerNameValue(c *lowerContext, source fast.Expr, loc source.Location, typ typeinfo.Type, fallback []string) Value {

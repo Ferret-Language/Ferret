@@ -15,6 +15,14 @@ fn (_ *own Point) ~Point() void {
     io::Println("dtor")
 }
 
+// fn (_ *Point) Show() {
+//     io::Println("I am a point")
+// }
+
+// type Shape interface{
+//     Show()
+// }
+
 fn main() i32 {
     let mut p: Point = .{}
     print(p.X)

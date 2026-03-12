@@ -989,6 +989,10 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 		c.info.BindNode(expr, target)
 		return target
 	}
+	if c.isExplicitEnumCast(target, sourceType) {
+		c.info.BindNode(expr, target)
+		return target
+	}
 	if c.isExplicitStringCast(target, sourceType) {
 		c.info.BindNode(expr, target)
 		return target
@@ -1371,6 +1375,27 @@ func (c *checker) lookupConstructorType(named *typeinfo.NamedType) *typeinfo.Fun
 	return c.funcType(owner, fn)
 }
 
+func (c *checker) isExplicitEnumCast(target, source typeinfo.Type) bool {
+	if target == nil || source == nil {
+		return false
+	}
+	targetBase := c.underlying(target)
+	sourceBase := c.underlying(source)
+	_, targetIsNumeric := targetBase.(*typeinfo.BuiltinType)
+	_, sourceIsNumeric := sourceBase.(*typeinfo.BuiltinType)
+	_, targetIsEnum := targetBase.(*typeinfo.EnumType)
+	_, sourceIsEnum := sourceBase.(*typeinfo.EnumType)
+	_, targetIsError := targetBase.(*typeinfo.ErrorSetType)
+	_, sourceIsError := sourceBase.(*typeinfo.ErrorSetType)
+	if targetIsNumeric && (sourceIsEnum || sourceIsError) {
+		return true
+	}
+	if sourceIsNumeric && (targetIsEnum || targetIsError) {
+		return true
+	}
+	return false
+}
+
 func (c *checker) isExplicitStringCast(target, source typeinfo.Type) bool {
 	if c.isStringType(target) && (c.isByteSliceType(source) || c.isCharSliceType(source)) {
 		return true
@@ -1464,25 +1489,29 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.EnumType:
 		variants := make(map[string]struct{}, len(t.Variants))
 		orderedVariants := make([]string, 0, len(t.Variants))
+		variantOrdinals := make(map[string]int, len(t.Variants))
 		for _, variant := range t.Variants {
 			if variant != nil {
 				name := variant.Name.Text()
 				variants[name] = struct{}{}
+				variantOrdinals[name] = len(orderedVariants)
 				orderedVariants = append(orderedVariants, name)
 			}
 		}
-		return &typeinfo.EnumType{Variants: variants, OrderedVariants: orderedVariants}
+		return &typeinfo.EnumType{Variants: variants, OrderedVariants: orderedVariants, VariantOrdinals: variantOrdinals}
 	case *ast.ErrorType:
 		members := make(map[string]struct{}, len(t.Members))
 		orderedMembers := make([]string, 0, len(t.Members))
+		memberOrdinals := make(map[string]int, len(t.Members))
 		for _, member := range t.Members {
 			if member != nil {
 				name := member.Name.Text()
 				members[name] = struct{}{}
+				memberOrdinals[name] = len(orderedMembers)
 				orderedMembers = append(orderedMembers, name)
 			}
 		}
-		return &typeinfo.ErrorSetType{Members: members, OrderedMembers: orderedMembers}
+		return &typeinfo.ErrorSetType{Members: members, OrderedMembers: orderedMembers, MemberOrdinals: memberOrdinals}
 	case *ast.UnionType:
 		members := make([]typeinfo.Type, 0, len(t.Members))
 		for _, member := range t.Members {
@@ -1897,7 +1926,7 @@ func (c *checker) isConstIdent(scope *valueScope, ident *ast.Ident) bool {
 	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 		return false
 	}
-	if res.Symbol.Kind != symbols.SymbolConst {
+	if res.Symbol.Kind != symbols.SymbolConst && res.Symbol.Kind != symbols.SymbolVariant && res.Symbol.Kind != symbols.SymbolError {
 		return false
 	}
 	if res.Symbol.Node == nil {

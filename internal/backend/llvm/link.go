@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"compiler/internal/backend"
+	ast "compiler/internal/frontend/ast"
 	midmir "compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
@@ -92,7 +93,7 @@ func FunctionReturnIsScalar(fn *midmir.Function) bool {
 // llvmBaseType returns the LLVM IR base type string for a Ferret type.
 // Returns an error for aggregate (named struct) types.
 func llvmBaseType(typ typeinfo.Type) (string, error) {
-	switch base := typ.(type) {
+	switch base := unwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch base.Name {
 		case "bool", "u8", "i8":
@@ -114,4 +115,14 @@ func llvmBaseType(typ typeinfo.Type) (string, error) {
 		return "ptr", nil
 	}
 	return "", fmt.Errorf("unsupported llvm base type %s", typ)
+}
+
+func unwrapNamed(typ typeinfo.Type) typeinfo.Type {
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
+		switch named.Decl.Type.(type) {
+		case *ast.EnumType, *ast.ErrorType:
+			return &typeinfo.BuiltinType{Name: "i32"}
+		}
+	}
+	return typ
 }

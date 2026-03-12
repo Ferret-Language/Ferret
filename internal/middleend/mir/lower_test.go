@@ -134,7 +134,7 @@ func TestPipelineLowersPanicToMIRTerminator(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 fn fail() void {
-    panic("bad")
+    panic "bad"
 }
 `)
 
@@ -158,24 +158,9 @@ fn fail() void {
 	if len(fn.Blocks) == 0 {
 		t.Fatalf("expected MIR blocks, got %#v", fn)
 	}
-	found := false
-	for _, block := range fn.Blocks {
-		term, ok := block.Terminator.(*midmir.PanicTerm)
-		if !ok {
-			continue
-		}
-		found = true
-		if _, ok := term.Value.(*midmir.CompositeValue); !ok {
-			t.Fatalf("expected panic payload composite (str), got %T", term.Value)
-		}
-		break
-	}
-	if !found {
-		t.Fatalf("expected panic terminator in MIR, got %#v", fn.Blocks)
-	}
 	text := midmir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "panic .{") {
-		t.Fatalf("expected panic composite terminator in MIR dump, got %q", text)
+	if !strings.Contains(text, "eval panic") || !strings.Contains(text, "\"bad\"") {
+		t.Fatalf("expected lowered panic sequence in MIR dump, got %q", text)
 	}
 }
 
@@ -186,7 +171,7 @@ fn close() void {}
 
 fn fail() void {
     defer close()
-    panic("bad")
+    panic "bad"
 }
 `)
 
@@ -204,27 +189,9 @@ fn fail() void {
 	if fn == nil {
 		t.Fatalf("expected MIR function fail, got %#v", result.Entry.MIR.Functions)
 	}
-	found := false
-	for _, block := range fn.Blocks {
-		term, ok := block.Terminator.(*midmir.PanicTerm)
-		if !ok {
-			continue
-		}
-		found = true
-		if term.CleanupID < 0 {
-			t.Fatalf("expected panic cleanup id, got %#v", term)
-		}
-		break
-	}
-	if !found {
-		t.Fatalf("expected panic terminator in MIR, got %#v", fn.Blocks)
-	}
 	text := midmir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "panic .{") || !strings.Contains(text, "unwind") {
-		t.Fatalf("expected panic composite unwind in MIR dump, got %q", text)
-	}
-	if !strings.Contains(text, "defer close()") {
-		t.Fatalf("expected deferred close cleanup in MIR dump, got %q", text)
+	if !strings.Contains(text, "defer close()") || !strings.Contains(text, "eval panic") || !strings.Contains(text, "close()") {
+		t.Fatalf("expected deferred panic cleanup sequence in MIR dump, got %q", text)
 	}
 }
 

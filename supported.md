@@ -31,7 +31,7 @@ Status of language features through **both** the QBE and LLVM backends.
 | Array `[T; N]` | ✅ |
 | Pointer `*T` / `*mut T` | ✅ |
 | Tuple | ⚠️ frontend only |
-| Named `enum` | ⚠️ frontend only |
+| Named `enum` | ✅ |
 | Named `union` (safe) | ⚠️ frontend only |
 | Named `interface` | ⚠️ frontend only |
 | Named `error` | ⚠️ frontend only |
