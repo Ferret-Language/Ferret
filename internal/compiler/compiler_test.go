@@ -3,8 +3,10 @@ package compiler
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
+	"compiler/internal/context"
 	"compiler/internal/diagnostics"
 )
 
@@ -175,6 +177,64 @@ fn main() void {
 	}
 	if !found {
 		t.Fatalf("expected wrong arg count diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestIfAttributeFiltersTopLevelDeclarations(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+#[if(target_os, "linux")]
+fn LinuxOnly() i32 { return 1 }
+
+#[if(target_os, "windows")]
+fn WindowsOnly() i32 { return 2 }
+
+fn main() i32 {
+    return LinuxOnly()
+}
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".ferr",
+		DependencyRoots: map[string]string{},
+		TargetOS:        "linux",
+		TargetArch:      runtime.GOARCH,
+	}
+	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if len(result.Entry.AST.Decls) != 2 {
+		t.Fatalf("expected 2 active declarations after filtering, got %d", len(result.Entry.AST.Decls))
+	}
+}
+
+func TestIfAttributeInvalidFormReportsDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+#[if(target_os, "linux", extra)]
+fn main() i32 { return 0 }
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".ferr",
+		DependencyRoots: map[string]string{},
+	}
+	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid #[if(...)] diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && diag.Message == "invalid #[if(...)] attribute" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected invalid #[if(...)] diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

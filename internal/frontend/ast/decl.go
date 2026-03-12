@@ -13,6 +13,7 @@ func (d *ImportDecl) Loc() source.Location { return d.Location }
 
 type ConstDecl struct {
 	Name     *Ident
+	Attrs    []Attribute
 	Type     TypeExpr
 	Value    Expr
 	Location source.Location
@@ -23,6 +24,7 @@ func (d *ConstDecl) Loc() source.Location { return d.Location }
 
 type LetDecl struct {
 	Name     *Ident
+	Attrs    []Attribute
 	IsMut    bool
 	Type     TypeExpr
 	Value    Expr
@@ -34,6 +36,7 @@ func (d *LetDecl) Loc() source.Location { return d.Location }
 
 type TypeDecl struct {
 	Name     *Ident
+	Attrs    []Attribute
 	IsMove   bool
 	Type     TypeExpr
 	Location source.Location

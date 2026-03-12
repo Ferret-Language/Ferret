@@ -264,7 +264,8 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 - [ ] lockfile writing and update flow
 - [ ] dependency version conflict handling
 - [ ] stdlib/toolchain root policy finalization
-- [ ] freeze source syntax for target-conditional attributes such as `#[if-arch(...)]`
+- [x] minimal `#[if(...)]` declaration filtering exists
+- [ ] widen `#[if(...)]` beyond the minimal forms `debug`, `not, debug`, `target_os`, and `target_arch`
 - [x] named types may be explicitly marked `move`
 
 ## Intended Order

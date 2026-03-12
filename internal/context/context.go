@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -30,6 +31,9 @@ type Config struct {
 	Extension       string
 	StdlibRoot      string
 	DependencyRoots map[string]string
+	TargetOS        string
+	TargetArch      string
+	BuildDebug      bool
 }
 
 type ModuleOrigin string
@@ -102,6 +106,12 @@ func NewWithConfig(cfg Config, diag *diagnostics.Bag) *CompilerContext {
 	}
 	if cfg.RootDir == "" {
 		cfg.RootDir = "."
+	}
+	if cfg.TargetOS == "" {
+		cfg.TargetOS = runtime.GOOS
+	}
+	if cfg.TargetArch == "" {
+		cfg.TargetArch = runtime.GOARCH
 	}
 	cfg.RootDir = filepath.Clean(cfg.RootDir)
 	if cfg.DependencyRoots == nil {

@@ -95,6 +95,28 @@ type Handle move enum {
 	}
 }
 
+func TestParseIfAttributeOnTypeDecl(t *testing.T) {
+	src := `
+#[if(target_os, "linux")]
+type Handle move enum {
+    stdin,
+    stdout,
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	typ, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok {
+		t.Fatalf("expected type decl, got %T", mod.Decls[0])
+	}
+	if len(typ.Attrs) != 1 || typ.Attrs[0].Name != "if" {
+		t.Fatalf("expected #[if(...)] attr on type decl, got %#v", typ.Attrs)
+	}
+}
+
 func TestParsePointerQualifiers(t *testing.T) {
 	src := `
 type Buf struct {

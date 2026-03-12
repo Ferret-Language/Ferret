@@ -67,29 +67,17 @@ func (p *Parser) parseDecl() ast.Decl {
 	attrs := p.parseAttributes()
 	switch p.current().Kind {
 	case tokens.LET:
-		if len(attrs) > 0 {
-			p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
-		}
-		return p.parseLetDecl()
+		return p.parseLetDecl(attrs)
 	case tokens.CONST:
-		if len(attrs) > 0 {
-			p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
-		}
-		return p.parseConstDecl()
+		return p.parseConstDecl(attrs)
 	case tokens.TYPE:
-		if len(attrs) > 0 {
-			p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
-		}
-		return p.parseTypeDecl()
+		return p.parseTypeDecl(attrs)
 	case tokens.UNSAFE:
 		if p.peekN(1).Kind == tokens.FN {
 			return p.parseFuncDecl(doc, attrs)
 		}
 	case tokens.FN:
 		return p.parseFuncDecl(doc, attrs)
-	}
-	if len(attrs) > 0 {
-		p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
 	}
 	p.errorHere("expected top-level declaration")
 	p.advance()
@@ -122,7 +110,7 @@ func (p *Parser) parseAttributes() []ast.Attribute {
 	for p.at(tokens.HASH) {
 		start := p.advance().Start
 		p.expect(tokens.LBRACK, "expected '[' after '#'")
-		name := p.expectIdent("expected attribute name").Literal
+		name := p.parseAttributeName()
 		args := make([]string, 0)
 		if p.match(tokens.LPAREN) {
 			for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
@@ -145,6 +133,16 @@ func (p *Parser) parseAttributes() []ast.Attribute {
 		attrs = append(attrs, ast.Attribute{Name: name, Args: args, Location: p.locFrom(start)})
 	}
 	return attrs
+}
+
+func (p *Parser) parseAttributeName() string {
+	switch p.current().Kind {
+	case tokens.IDENT, tokens.IF:
+		return p.advance().Literal
+	default:
+		p.errorHere("expected attribute name")
+		return p.current().Literal
+	}
 }
 
 func (p *Parser) current() tokens.Token {

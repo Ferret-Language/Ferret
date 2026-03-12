@@ -111,6 +111,26 @@ fn Build() i32 {}
 fn helper() i32 {}
 ```
 
+### Conditional Declarations
+
+Top-level declarations may be conditionally included with `#[if(...)]`.
+
+Current supported forms are intentionally small:
+
+```go
+#[if(debug)]
+#[if(not, debug)]
+#[if(target_os, "linux")]
+#[if(target_arch, "amd64")]
+```
+
+Rules:
+
+- `#[if(...)]` applies to the following top-level declaration
+- filtering happens after parsing and before collector/resolver/typechecking
+- excluded declarations are not semantically analyzed
+- the current implementation does not support `&&`, `||`, or arbitrary expressions
+
 ### Variables And Constants
 
 Local variables and constants use these forms:

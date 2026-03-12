@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"compiler/internal/attrfilter"
 	"compiler/internal/cfganalysis"
 	"compiler/internal/context"
 	"compiler/internal/diagnostics"
@@ -130,6 +131,7 @@ func (p *Pipeline) parseFile(resolved context.ResolvedImport, loc *source.Locati
 	mod.Tokens = stream.Tokenize()
 	mod.Phase = phase.PhaseTokenized
 	mod.AST = parser.Parse(mod.FilePath, mod.Tokens, p.ctx.Diagnostics)
+	attrfilter.FilterModule(p.ctx, mod)
 	mod.Phase = phase.PhaseParsed
 	collector.CollectModule(p.ctx, mod)
 

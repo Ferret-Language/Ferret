@@ -58,6 +58,7 @@ Status of language features through **both** the QBE and LLVM backends.
 | Module-level `let` (globals) | ✅ |
 | `#[extern("sym")] fn` | ✅ |
 | `#[builtin] fn` | ✅ |
+| `#[if(debug)]` / `#[if(target_os, "...")]` top-level filtering | ✅ |
 | Constructor `fn new(...)` syntax | ⚠️ frontend only |
 | Destructor syntax | ⚠️ frontend only |
 | Static fields | ⚠️ frontend only |
