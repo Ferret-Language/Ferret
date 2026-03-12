@@ -222,6 +222,13 @@ func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
 		return "", nil
 	}
 	name := qbeSymbol(state, []string{g.Name})
+	if isUnionAggregate(g.Type) {
+		body, err := lowerGlobalUnion(state, g.Type, g.Init)
+		if err != nil {
+			return "", fmt.Errorf("global %s: %w", g.Name, err)
+		}
+		return fmt.Sprintf("data $%s = { %s }", name, body), nil
+	}
 	switch v := g.Init.(type) {
 	case *midmir.CompositeValue:
 		body, err := lowerGlobalComposite(state, g.Type, v)
@@ -246,6 +253,26 @@ func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
 	default:
 		return "", fmt.Errorf("global %s: unsupported initializer %T", g.Name, g.Init)
 	}
+}
+
+func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init midmir.Value) (string, error) {
+	size, _, err := aggregateSizeAlign(state, typ)
+	if err != nil {
+		return "", err
+	}
+	tok, lit, err := qbeDataItem(state, init.Type(), init)
+	if err != nil {
+		return "", err
+	}
+	itemSize, _, err := qbeScalarSizeAlign(init.Type())
+	if err != nil {
+		return "", fmt.Errorf("unsupported union global initializer type %s", typeinfo.FormatType(typeStringer{init.Type()}))
+	}
+	parts := []string{fmt.Sprintf("%s %s", tok, lit)}
+	if size > itemSize {
+		parts = append(parts, fmt.Sprintf("z %d", size-itemSize))
+	}
+	return strings.Join(parts, ", "), nil
 }
 
 func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) error {

@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"math/big"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"compiler/internal/layout"
 	midmir "compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/utils/numeric"
 )
 
 type lowerer struct{}
@@ -621,6 +623,17 @@ func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
 		return "", nil
 	}
 	name := llvmSymbol(state, []string{g.Name})
+	if isUnionAggregate(g.Type) {
+		body, err := lowerGlobalUnion(state, g.Type, g.Init)
+		if err != nil {
+			return "", fmt.Errorf("global %s: %w", g.Name, err)
+		}
+		size, _, err := aggregateSizeAlign(state, g.Type)
+		if err != nil {
+			return "", fmt.Errorf("global %s: %w", g.Name, err)
+		}
+		return fmt.Sprintf("@%s = global [%d x i8] %s", name, size, body), nil
+	}
 	switch v := g.Init.(type) {
 	case *midmir.CompositeValue:
 		body, err := lowerGlobalComposite(state, g.Type, v)
@@ -655,6 +668,85 @@ func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
 	default:
 		return "", fmt.Errorf("global %s: unsupported initializer %T", g.Name, g.Init)
 	}
+}
+
+func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init midmir.Value) (string, error) {
+	size, _, err := aggregateSizeAlign(state, typ)
+	if err != nil {
+		return "", err
+	}
+	bytes, err := llvmUnionInitBytes(init)
+	if err != nil {
+		return "", err
+	}
+	if int64(len(bytes)) > size {
+		return "", fmt.Errorf("union initializer is larger than destination storage")
+	}
+	for int64(len(bytes)) < size {
+		bytes = append(bytes, 0)
+	}
+	parts := make([]string, 0, len(bytes))
+	for _, b := range bytes {
+		parts = append(parts, fmt.Sprintf("i8 %d", b))
+	}
+	return fmt.Sprintf("[%s]", strings.Join(parts, ", ")), nil
+}
+
+func llvmUnionInitBytes(init midmir.Value) ([]byte, error) {
+	switch v := init.(type) {
+	case *midmir.BoolValue:
+		if v.Value {
+			return []byte{1}, nil
+		}
+		return []byte{0}, nil
+	case *midmir.NumberValue:
+		builtin, ok := unwrapNamed(v.Type()).(*typeinfo.BuiltinType)
+		if !ok {
+			return nil, fmt.Errorf("unsupported union numeric initializer type %s", v.Type())
+		}
+		return llvmScalarBytesFromNumber(builtin.Name, v.Value)
+	default:
+		return nil, fmt.Errorf("unsupported union global initializer %T", init)
+	}
+}
+
+func llvmScalarBytesFromNumber(typeName, raw string) ([]byte, error) {
+	value, err := numeric.StringToBigInt(raw)
+	if err != nil {
+		return nil, err
+	}
+	width := 0
+	signed := false
+	switch typeName {
+	case "i8":
+		width, signed = 1, true
+	case "u8", "bool":
+		width = 1
+	case "i16":
+		width, signed = 2, true
+	case "u16":
+		width = 2
+	case "i32", "char":
+		width, signed = 4, true
+	case "u32":
+		width = 4
+	case "i64", "isize":
+		width, signed = 8, true
+	case "u64", "usize":
+		width = 8
+	default:
+		return nil, fmt.Errorf("unsupported union numeric initializer type %s", typeName)
+	}
+	mod := new(big.Int).Lsh(big.NewInt(1), uint(width*8))
+	if signed && value.Sign() < 0 {
+		value = new(big.Int).Add(value, mod)
+	}
+	bytes := make([]byte, width)
+	buf := value.Bytes()
+	for i := 0; i < len(buf) && i < width; i++ {
+		bytes[i] = buf[len(buf)-1-i]
+	}
+	return bytes, nil
 }
 
 // ---------------------------------------------------------------------------
