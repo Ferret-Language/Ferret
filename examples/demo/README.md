@@ -10,6 +10,8 @@ This example is kept inside the subset that currently builds and runs on **both*
 
 - stdlib imports: `std/io`, `std/os`, `std/math`
 - top-level conditional declarations with `#[if(...)]`
+- negated top-level conditionals with `#[ifnot(...)]`
+- backend-aware conditional declarations with `#[if(target_backend, "...")]`
 - named `enum`
 - `move`-marked named type
 - `while`
@@ -36,6 +38,9 @@ Ferret demo
 linux
 amd64
 Linux
+Not win
+Is AMD
+Backend: qbe
 ```
 
 Both binaries should exit with status `0`.

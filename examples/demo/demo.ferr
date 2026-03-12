@@ -15,14 +15,20 @@ fn Amd64Only() i32 {
 #[if(target_os, "windows")]
 const IsWindows = true
 
-#[if(not, target_os, "windows")]
+#[ifnot(target_os, "windows")]
 const IsWindows = false
 
 #[if(target_arch, "amd64")]
 const IsAmd64 = true
 
-#[if(not, target_arch, "amd64")]
+#[ifnot(target_arch, "amd64")]
 const IsAmd64 = false
+
+#[if(target_backend, "qbe")]
+const IsQBE = true
+
+#[ifnot(target_backend, "qbe")]
+const IsQBE = false
 
 type Mode enum {
     debug,
@@ -97,6 +103,12 @@ fn main() i32 {
         io::Println("Is AMD")
     } else {
         io::Println("Not AMD")
+    }
+
+    if IsQBE {
+        io::Println("Backend: qbe")
+    } else {
+        io::Println("Backend: llvm")
     }
 
 

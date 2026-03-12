@@ -113,15 +113,17 @@ fn helper() i32 {}
 
 ### Conditional Declarations
 
-Top-level declarations may be conditionally included with `#[if(...)]`.
+Top-level declarations may be conditionally included with `#[if(...)]` and `#[ifnot(...)]`.
 
 Current supported forms are intentionally small:
 
 ```go
 #[if(debug)]
-#[if(not, debug)]
 #[if(target_os, "linux")]
 #[if(target_arch, "amd64")]
+#[if(target_backend, "llvm")]
+#[ifnot(debug)]
+#[ifnot(target_os, "windows")]
 ```
 
 Rules:

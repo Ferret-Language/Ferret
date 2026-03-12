@@ -31,20 +31,24 @@ func includeDecl(ctx *context.CompilerContext, decl ast.Decl) (bool, bool) {
 		return true, true
 	}
 	for _, attr := range attrs {
-		if attr.Name != "if" {
+		if attr.Name != "if" && attr.Name != "ifnot" {
 			continue
 		}
 		ok, valid := evalIfAttr(ctx, attr)
 		if !valid {
 			loc := attr.Location
 			ctx.Diagnostics.Add(
-				diagnostics.NewError("invalid #[if(...)] attribute").
+				diagnostics.NewError(fmt.Sprintf("invalid #[%s(...)] attribute", attr.Name)).
 					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "supported forms are #[if(debug)], #[if(not, debug)], #[if(target_os, \"...\")], #[if(target_arch, \"...\")], #[if(not, target_os, \"...\")], and #[if(not, target_arch, \"...\")]"),
+					WithPrimaryLabel(&loc, "supported forms are #[if(debug)], #[if(target_os, \"...\")], #[if(target_arch, \"...\")], #[if(target_backend, \"...\")], and matching #[ifnot(...)] forms"),
 			)
 			return false, false
 		}
-		if !ok {
+		include := ok
+		if attr.Name == "ifnot" {
+			include = !include
+		}
+		if !include {
 			return false, true
 		}
 	}
@@ -79,24 +83,7 @@ func evalIfAttr(ctx *context.CompilerContext, attr ast.Attribute) (bool, bool) {
 			return false, false
 		}
 	case 2:
-		if attr.Args[0] == "not" {
-			switch attr.Args[1] {
-			case "debug":
-				return !ctx.Config.BuildDebug, true
-			default:
-				return false, false
-			}
-		}
 		return matchTargetAttr(ctx, attr.Args[0], attr.Args[1])
-	case 3:
-		if attr.Args[0] != "not" {
-			return false, false
-		}
-		match, ok := matchTargetAttr(ctx, attr.Args[1], attr.Args[2])
-		if !ok {
-			return false, false
-		}
-		return !match, true
 	default:
 		return false, false
 	}
@@ -108,6 +95,8 @@ func matchTargetAttr(ctx *context.CompilerContext, key, value string) (bool, boo
 		return ctx.Config.TargetOS == value, true
 	case "target_arch":
 		return ctx.Config.TargetArch == value, true
+	case "target_backend":
+		return ctx.Config.TargetBackend == value, true
 	default:
 		return false, false
 	}
@@ -117,5 +106,5 @@ func ExplainConfig(ctx *context.CompilerContext) string {
 	if ctx == nil {
 		return ""
 	}
-	return fmt.Sprintf("target_os=%q, target_arch=%q, debug=%t", ctx.Config.TargetOS, ctx.Config.TargetArch, ctx.Config.BuildDebug)
+	return fmt.Sprintf("target_os=%q, target_arch=%q, target_backend=%q, debug=%t", ctx.Config.TargetOS, ctx.Config.TargetArch, ctx.Config.TargetBackend, ctx.Config.BuildDebug)
 }

@@ -216,7 +216,7 @@ func TestIfAttributeSupportsNegatedTargetSelection(t *testing.T) {
 #[if(target_os, "linux")]
 const PlatformTag = 1
 
-#[if(not, target_os, "linux")]
+#[ifnot(target_os, "linux")]
 const PlatformTag = 2
 
 fn main() i32 {
@@ -237,6 +237,35 @@ fn main() i32 {
 	}
 	if len(result.Entry.AST.Decls) != 2 {
 		t.Fatalf("expected 2 active declarations after negated filtering, got %d", len(result.Entry.AST.Decls))
+	}
+}
+
+func TestIfAttributeSupportsBackendSelection(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+#[if(target_backend, "llvm")]
+const BackendTag = 1
+
+#[ifnot(target_backend, "llvm")]
+const BackendTag = 2
+
+fn main() i32 {
+    return BackendTag
+}
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".ferr",
+		DependencyRoots: map[string]string{},
+		TargetBackend:   "llvm",
+	}
+	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if len(result.Entry.AST.Decls) != 2 {
+		t.Fatalf("expected 2 active declarations after backend filtering, got %d", len(result.Entry.AST.Decls))
 	}
 }
 

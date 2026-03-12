@@ -33,6 +33,7 @@ type Config struct {
 	DependencyRoots map[string]string
 	TargetOS        string
 	TargetArch      string
+	TargetBackend   string
 	BuildDebug      bool
 }
 
@@ -112,6 +113,9 @@ func NewWithConfig(cfg Config, diag *diagnostics.Bag) *CompilerContext {
 	}
 	if cfg.TargetArch == "" {
 		cfg.TargetArch = runtime.GOARCH
+	}
+	if cfg.TargetBackend == "" {
+		cfg.TargetBackend = "qbe"
 	}
 	cfg.RootDir = filepath.Clean(cfg.RootDir)
 	if cfg.DependencyRoots == nil {

@@ -14,10 +14,12 @@ import (
 	"compiler/internal/backend/registry"
 	compilerapi "compiler/internal/compiler"
 	"compiler/internal/context"
+	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/layout"
 	midhir "compiler/internal/middleend/hir"
 	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/project"
 )
 
 func main() {
@@ -42,7 +44,14 @@ func main() {
 		os.Exit(2)
 	}
 
-	result := compilerapi.ParsePath(flag.Arg(0))
+	selectedBackend := *backendTarget
+	if selectedBackend == "" {
+		selectedBackend = *buildBackend
+	}
+	if selectedBackend == "" {
+		selectedBackend = "qbe"
+	}
+	result := parsePathWithBackend(flag.Arg(0), selectedBackend)
 	if *astFlag || *astOut != "" {
 		if err := emitASTDump(result, *astOut); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -110,6 +119,38 @@ func main() {
 			fmt.Printf("  %s\n", ast.DeclSummary(decl))
 		}
 	}
+}
+
+func parsePathWithBackend(path, targetBackend string) compilerapi.Result {
+	absPath, err := filepath.Abs(path)
+	diag := diagnostics.NewDiagnosticBag(absPath)
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return compilerapi.Result{Diagnostics: diag}
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return compilerapi.Result{Diagnostics: diag}
+	}
+	if info.IsDir() {
+		ws, err := project.Load(absPath, ".ferr")
+		if err != nil {
+			diag.Add(diagnostics.NewError(err.Error()))
+			return compilerapi.Result{Diagnostics: diag}
+		}
+		ws.Context.TargetBackend = targetBackend
+		compiler := compilerapi.NewWithConfig(ws.Context, diag)
+		return compiler.ParseWorkspace()
+	}
+	ws, err := project.Load(absPath, filepath.Ext(absPath))
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return compilerapi.Result{Diagnostics: diag}
+	}
+	ws.Context.TargetBackend = targetBackend
+	compiler := compilerapi.NewWithConfig(ws.Context, diag)
+	return compiler.ParseEntry(absPath)
 }
 
 func emitASTDump(result compilerapi.Result, outPath string) error {
