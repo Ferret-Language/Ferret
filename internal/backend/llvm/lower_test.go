@@ -61,6 +61,104 @@ fn main() str {
 	}
 }
 
+func TestLowerImportedInterfaceDispatchToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "util", "name.ferr"), `
+type Name struct {
+    value i32 = 0
+}
+
+fn Origin() Name {
+    return .{ .value = 7 }
+}
+
+fn (n Name) String() str {
+    return 1 as str
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+import "util/name"
+
+type Stringer interface {
+    String() str
+}
+
+fn main() str {
+    let n = name::Origin()
+    let s: Stringer = n
+    return s.String()
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"@vtable__local__main__Stringer__util__name__Name",
+		"@ifacewrap__local__main__Stringer__util__name__Name__String",
+		"@util__name__Name__String",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerGlobalInterfaceValueToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Stringer interface {
+    String() str
+}
+
+type Name struct {
+    value i32 = 0
+}
+
+fn (n Name) String() str {
+    return 1 as str
+}
+
+let GlobalName: Name = .{ .value = 1 }
+let GlobalStringer: Stringer = GlobalName
+
+fn main() str {
+    return GlobalStringer.String()
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"@main__GlobalName = global %local__main__Name",
+		"@main__GlobalStringer = global %local__main__Stringer",
+		"@vtable__local__main__Stringer__main__Name",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -21,6 +21,7 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 - [x] stdlib root discovery works for manifest and no-manifest workspaces
 - [x] lockfile-aware remote dependency resolution exists
 - [x] manifest validation is stricter than placeholder parsing
+- [ ] builtin unit test system
 
 ### Implemented syntax
 

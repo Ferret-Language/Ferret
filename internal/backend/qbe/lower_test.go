@@ -10,6 +10,7 @@ import (
 	"compiler/internal/backend/registry"
 	compilerapi "compiler/internal/compiler"
 	"compiler/internal/layout"
+	midmir "compiler/internal/middleend/mir"
 )
 
 func TestLowerScalarFunctionToQBE(t *testing.T) {
@@ -417,18 +418,26 @@ func mustWrite(t *testing.T, path, content string) {
 
 func testUnit(result compilerapi.Result) *backend.Unit {
 	layouts := make(map[string]*layout.Module)
+	modules := make(map[string]*midmir.Module)
 	for _, mod := range result.Modules {
 		if mod != nil && mod.Layout != nil {
 			layouts[mod.Key] = mod.Layout
+		}
+		if mod != nil && mod.MIR != nil {
+			modules[mod.Key] = mod.MIR
 		}
 	}
 	if result.Entry != nil && result.Entry.Layout != nil {
 		layouts[result.Entry.Key] = result.Entry.Layout
 	}
+	if result.Entry != nil && result.Entry.MIR != nil {
+		modules[result.Entry.Key] = result.Entry.MIR
+	}
 	return &backend.Unit{
 		Module:  result.Entry.MIR,
 		Layout:  result.Entry.Layout,
 		Layouts: layouts,
+		Modules: modules,
 	}
 }
 
@@ -467,12 +476,12 @@ fn main() i32 {
 		t.Fatalf("expected receiver parameter in Len2 signature, got:\n%s", text)
 	}
 	// Call site should pass receiver as first argument.
-	if !strings.Contains(text, "call $main__Len2(") {
+	if !strings.Contains(text, "call $Point__Len2(") {
 		t.Fatalf("expected direct method call in main, got:\n%s", text)
 	}
 }
 
-func TestRejectInterfaceDispatchInQBE(t *testing.T) {
+func TestLowerInterfaceDispatchToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
@@ -501,9 +510,118 @@ fn main() str {
 	if err != nil {
 		t.Fatalf("unexpected qbe error: %v", err)
 	}
-	_, err = lowerer.LowerModule(testUnit(result))
-	if err == nil || !strings.Contains(err.Error(), "qbe backend does not yet support interface values") {
-		t.Fatalf("expected explicit qbe interface rejection, got %v", err)
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"data $vtable__local__main__Stringer__main__Name = { l $ifacewrap__local__main__Stringer__main__Name__String }",
+		"function :__ferret_slice $ifacewrap__local__main__Stringer__main__Name__String(l %data)",
+		"%s =l alloc8 16",
+		"%_iface_fn",
+		"call %_iface_fn",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerImportedInterfaceDispatchToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "util", "name.ferr"), `
+type Name struct {
+    value i32 = 0
+}
+
+fn Origin() Name {
+    return .{ .value = 7 }
+}
+
+fn (n Name) String() str {
+    return 1 as str
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+import "util/name"
+
+type Stringer interface {
+    String() str
+}
+
+fn main() str {
+    let n = name::Origin()
+    let s: Stringer = n
+    return s.String()
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"type :local__main__Stringer = { l, l }",
+		"data $vtable__local__main__Stringer__util__name__Name = { l $ifacewrap__local__main__Stringer__util__name__Name__String }",
+		"call $util__name__Name__String(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerGlobalInterfaceValueToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Stringer interface {
+    String() str
+}
+
+type Name struct {
+    value i32 = 0
+}
+
+fn (n Name) String() str {
+    return 1 as str
+}
+
+let GlobalName: Name = .{ .value = 1 }
+let GlobalStringer: Stringer = GlobalName
+
+fn main() str {
+    return GlobalStringer.String()
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"data $main__GlobalName = { w 1 }",
+		"data $main__GlobalStringer = { l $main__GlobalName, l $vtable__local__main__Stringer__main__Name }",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
 	}
 }
 

@@ -3,6 +3,7 @@ package typechecker
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"compiler/internal/context"
 	"compiler/internal/diagnostics"
@@ -995,7 +996,7 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 	}
 
 	target := c.typeFromSyntax(c.mod, expr.Type)
-	sourceType := c.typeOfExpr(scope, expr.Left, nil)
+	sourceType := c.typeOfExpr(scope, expr.Left, target)
 	if c.unionContainsExactMember(sourceType, target) {
 		c.info.BindNode(expr, target)
 		return target
@@ -1176,6 +1177,7 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 		c.info.BindNode(expr, expected)
 		return expected
 	}
+	provided := make(map[string]struct{}, len(expr.Items))
 	var positional int
 	for _, item := range expr.Items {
 		if item.Name != nil {
@@ -1193,6 +1195,7 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 			got := c.typeOfExpr(scope, item.Value, field.Type)
 			if !c.checkAssignable(item.Value.Loc(), field.Type, got) {
 			}
+			provided[fieldName] = struct{}{}
 			continue
 		}
 		fields := c.orderedStructFields(structType)
@@ -1209,7 +1212,22 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 		got := c.typeOfExpr(scope, item.Value, field.Type)
 		if !c.checkAssignable(item.Value.Loc(), field.Type, got) {
 		}
+		provided[field.Name] = struct{}{}
 		positional++
+	}
+	for _, field := range c.orderedStructFields(structType) {
+		if field == nil || field.HasDefault {
+			continue
+		}
+		if _, ok := provided[field.Name]; ok {
+			continue
+		}
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("missing required field %q in composite literal", field.Name)).
+				WithCode(diagnostics.ErrMissingField).
+				WithPrimaryLabel(&loc, "provide a value for this field or give it a default"),
+		)
 	}
 	c.info.BindNode(expr, expected)
 	return expected
@@ -1541,7 +1559,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				continue
 			}
 			fieldName := field.Name.Text()
-			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type)}
+			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type), HasDefault: field.Default != nil}
 			fields[fieldName] = structField
 			orderedFields = append(orderedFields, structField)
 		}
@@ -1550,7 +1568,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				continue
 			}
 			fieldName := field.Name.Text()
-			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type)}
+			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type), HasDefault: field.Default != nil}
 			staticFields[fieldName] = structField
 			orderedStaticFields = append(orderedStaticFields, structField)
 		}
@@ -1600,7 +1618,11 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				params = append(params, c.typeFromSyntax(mod, param.Type))
 				comptimeParams = append(comptimeParams, param.IsComptime)
 			}
-			fnType := &typeinfo.FuncType{Params: params, ComptimeParams: comptimeParams, Result: c.typeFromSyntax(mod, method.Result)}
+			result := c.typeFromSyntax(mod, method.Result)
+			if result == nil {
+				result = &typeinfo.BuiltinType{Name: "void"}
+			}
+			fnType := &typeinfo.FuncType{Params: params, ComptimeParams: comptimeParams, Result: result}
 			name := method.Name.Text()
 			methods[name] = fnType
 			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Type: fnType})
@@ -2091,6 +2113,10 @@ func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Ty
 		}
 		_ = members
 	}
+	if iface, ok := c.underlying(expected).(*typeinfo.InterfaceType); ok {
+		c.reportInterfaceMismatch(loc, expected, got, iface)
+		return false
+	}
 	c.reportTypeMismatch(loc, expected, got)
 	return false
 }
@@ -2114,12 +2140,84 @@ func (c *checker) implementsInterface(src typeinfo.Type, iface *typeinfo.Interfa
 		if method == nil || method.Type == nil {
 			continue
 		}
-		_, got := c.lookupMethod(src, method.Name, false, false)
+		_, got := c.lookupMethod(src, method.Name, true, false)
 		if got == nil || !c.interfaceMethodCompatible(method.Type, got) {
 			return false
 		}
 	}
 	return true
+}
+
+func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typeinfo.Type, iface *typeinfo.InterfaceType) {
+	if iface == nil || got == nil {
+		c.reportTypeMismatch(loc, expected, got)
+		return
+	}
+	expectedName := expected.String()
+	gotName := got.String()
+	if srcIface, ok := c.underlying(got).(*typeinfo.InterfaceType); ok {
+		for _, method := range iface.OrderedMethods {
+			if method == nil || method.Type == nil {
+				continue
+			}
+			gotMethod := srcIface.Methods[method.Name]
+			if gotMethod == nil {
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Name, method.Type))).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(&loc, "this interface is missing a required method"),
+				)
+				return
+			}
+			if !c.interfaceMethodCompatible(method.Type, gotMethod) {
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: method %s has incompatible signature", gotName, expectedName, method.Name)).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Name, method.Type), interfaceMethodString(method.Name, gotMethod))),
+				)
+				return
+			}
+		}
+		c.reportTypeMismatch(loc, expected, got)
+		return
+	}
+	for _, method := range iface.OrderedMethods {
+		if method == nil || method.Type == nil {
+			continue
+		}
+		_, gotMethod := c.lookupMethod(got, method.Name, true, false)
+		if gotMethod == nil {
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Name, method.Type))).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, "this type is missing a required method"),
+			)
+			return
+		}
+		if !c.interfaceMethodCompatible(method.Type, gotMethod) {
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: method %s has incompatible signature", gotName, expectedName, method.Name)).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Name, method.Type), interfaceMethodString(method.Name, gotMethod))),
+			)
+			return
+		}
+	}
+	c.reportTypeMismatch(loc, expected, got)
+}
+
+func interfaceMethodString(name string, fn *typeinfo.FuncType) string {
+	if fn == nil {
+		return name + "()"
+	}
+	params := make([]string, 0, len(fn.Params))
+	for _, param := range fn.Params {
+		params = append(params, param.String())
+	}
+	if fn.Result == nil || typeinfo.IsBuiltinNamed(fn.Result, "void") {
+		return fmt.Sprintf("%s(%s)", name, strings.Join(params, ", "))
+	}
+	return fmt.Sprintf("%s(%s) %s", name, strings.Join(params, ", "), fn.Result.String())
 }
 
 func (c *checker) interfaceSatisfies(src, target *typeinfo.InterfaceType) bool {

@@ -162,6 +162,7 @@ func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts 
 	lowerCtx := newLowerContext(fn.Source, bindings, globalConsts, importPath, lookupMethod)
 	out := &Function{
 		Name:       fn.Name,
+		LinkName:   lowerFunctionLinkName(fn.Source),
 		IsUnsafe:   fn.Source.IsUnsafe,
 		IsBuiltin:  fn.Source.IsBuiltin,
 		IsExtern:   fn.Source.IsExtern,
@@ -1013,13 +1014,31 @@ func lowerMethodSymbolPath(c *lowerContext, named *typeinfo.NamedType, methodNam
 	if named == nil {
 		return []string{methodName}
 	}
+	leaf := lowerMethodLinkLeaf(named.Name, methodName)
 	importPath := named.ModuleKey
 	if _, after, ok := strings.Cut(named.ModuleKey, ":"); ok {
 		importPath = after
 	}
 	if importPath == "" || importPath == c.importPath {
-		return []string{methodName}
+		return []string{leaf}
 	}
 	parts := strings.Split(importPath, "/")
-	return append(parts, methodName)
+	return append(parts, leaf)
+}
+
+func lowerFunctionLinkName(fn *hir.Func) string {
+	if fn == nil || fn.Receiver == nil {
+		return ""
+	}
+	if named := lowerReceiverNamed(fn.Receiver.Type); named != nil {
+		return lowerMethodLinkLeaf(named.Name, fn.Name)
+	}
+	return ""
+}
+
+func lowerMethodLinkLeaf(typeName, methodName string) string {
+	if typeName == "" {
+		return methodName
+	}
+	return typeName + "__" + methodName
 }

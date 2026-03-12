@@ -1,0 +1,32 @@
+import "std/os"
+import "std/io"
+
+
+
+fn main() void {
+    io::Println(os::Platform())
+    io::Println(os::Arch())
+    io::Println(os::OSName())
+    let count = os::CPUCount()
+    if count == 0 {
+        io::Println("0")
+    } else if count == 1 {
+        io::Println("1")
+    } else if count == 2 {
+        io::Println("2")
+    } else if count == 3 {
+        io::Println("3")
+    } else if count == 4 {
+        io::Println("4")
+    } else if count == 5 {
+        io::Println("5")
+    } else if count == 6 {
+        io::Println("6")
+    } else if count == 7 {
+        io::Println("7")
+    } else if count == 8 {
+        io::Println("8")
+    } else {
+        io::Println("?")
+    }
+}

@@ -365,7 +365,8 @@ func hasConstructorPath(comp *midmir.CompositeValue, name string) bool {
 	if comp == nil || len(comp.ConstructorPath) == 0 {
 		return false
 	}
-	return comp.ConstructorPath[len(comp.ConstructorPath)-1] == name
+	last := comp.ConstructorPath[len(comp.ConstructorPath)-1]
+	return last == name || strings.HasSuffix(last, "__"+name)
 }
 
 func hasCallNamed(call *midmir.CallValue, name string) bool {
@@ -376,7 +377,8 @@ func hasCallNamed(call *midmir.CallValue, name string) bool {
 	if !ok || len(callee.Path) == 0 {
 		return false
 	}
-	return callee.Path[len(callee.Path)-1] == name
+	last := callee.Path[len(callee.Path)-1]
+	return last == name || strings.HasSuffix(last, "__"+name)
 }
 
 func deferContainsCallNamed(instr *midmir.DeferInstr, name string) bool {

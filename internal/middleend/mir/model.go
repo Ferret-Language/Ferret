@@ -73,6 +73,7 @@ type Global struct {
 
 type Function struct {
 	Name       string
+	LinkName   string
 	IsUnsafe   bool
 	IsBuiltin  bool
 	IsExtern   bool

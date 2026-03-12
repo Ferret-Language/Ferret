@@ -21,6 +21,7 @@ import (
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typechecker"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/usage"
@@ -210,14 +211,32 @@ func (p *Pipeline) lookupMethodPath(currentImportPath string) hir.MethodLookup {
 			if sym == nil {
 				continue
 			}
+			leaf := pipelineMethodLinkLeaf(sym)
 			if owner.ImportPath == "" || owner.ImportPath == currentImportPath {
-				return []string{sym.Name}, true
+				return []string{leaf}, true
 			}
 			parts := strings.Split(owner.ImportPath, "/")
-			return append(parts, sym.Name), true
+			return append(parts, leaf), true
 		}
 		return nil, false
 	}
+}
+
+func pipelineMethodLinkLeaf(sym *symbols.Symbol) string {
+	if sym == nil || sym.ReceiverType == "" {
+		if sym == nil {
+			return ""
+		}
+		return sym.Name
+	}
+	base := sym.ReceiverType
+	for _, prefix := range []string{"*mut ", "*own ", "*raw mut ", "*raw ", "*"} {
+		base = strings.TrimPrefix(base, prefix)
+	}
+	if base == "" {
+		return sym.Name
+	}
+	return base + "__" + sym.Name
 }
 
 func pipelineBaseNamed(typ typeinfo.Type) (*typeinfo.NamedType, bool) {

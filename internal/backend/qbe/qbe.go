@@ -147,23 +147,44 @@ func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl)
 	b.WriteString("type :__ferret_slice = { l, l }\n")
 	seen := make(map[string]struct{})
 	lines := make([]string, 0)
-	for _, decl := range types {
-		if decl == nil || decl.Named == nil || (decl.Struct == nil && decl.Union == nil) {
-			continue
+	emitDecls := func(decls []*midmir.TypeDecl) error {
+		for _, decl := range decls {
+			if decl == nil || decl.Named == nil || (decl.Struct == nil && decl.Union == nil && decl.Interface == nil) {
+				continue
+			}
+			key := decl.Named.ModuleKey + "::" + decl.Name
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			line, err := lowerTypeDecl(state, decl)
+			if err != nil {
+				return err
+			}
+			if line == "" {
+				continue
+			}
+			seen[key] = struct{}{}
+			lines = append(lines, line)
 		}
-		key := decl.Named.ModuleKey + "::" + decl.Name
-		if _, ok := seen[key]; ok {
-			continue
+		return nil
+	}
+	if err := emitDecls(types); err != nil {
+		return err
+	}
+	if state.modules != nil {
+		keys := make([]string, 0, len(state.modules))
+		for key := range state.modules {
+			if state.mod != nil && key == state.mod.Key {
+				continue
+			}
+			keys = append(keys, key)
 		}
-		line, err := lowerTypeDecl(state, decl)
-		if err != nil {
-			return err
+		sort.Strings(keys)
+		for _, key := range keys {
+			if err := emitDecls(state.modules[key].Types); err != nil {
+				return err
+			}
 		}
-		if line == "" {
-			continue
-		}
-		seen[key] = struct{}{}
-		lines = append(lines, line)
 	}
 	for i, line := range lines {
 		if i > 0 {
@@ -234,7 +255,10 @@ func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
 	}
 	name := qbeSymbol(state, []string{g.Name})
 	if isInterfaceAggregate(g.Type) {
-		return "", fmt.Errorf("qbe backend does not yet support interface globals")
+		if init, ok := g.Init.(*midmir.InterfaceValue); ok {
+			return lowerGlobalInterface(state, name, g.Type, init)
+		}
+		return "", fmt.Errorf("global %s: interface initializer must be an interface coercion", g.Name)
 	}
 	if isUnionAggregate(g.Type) {
 		body, err := lowerGlobalUnion(state, g.Type, g.Init)
@@ -292,15 +316,11 @@ func lowerGlobalInterface(state *moduleState, name string, target typeinfo.Type,
 	if err != nil {
 		return "", err
 	}
-	typeName, err := qbeABIType(state, target)
-	if err != nil {
-		return "", err
-	}
 	lines := []string{}
 	if body != "" {
 		lines = append(lines, body)
 	}
-	lines = append(lines, fmt.Sprintf("data $%s = { %s $%s, l $%s }", name, strings.TrimPrefix(typeName, ":"), dataSym, vtSym))
+	lines = append(lines, fmt.Sprintf("data $%s = { l $%s, l $%s }", name, dataSym, vtSym))
 	return strings.Join(lines, "\n"), nil
 }
 
@@ -379,7 +399,12 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 	if err != nil {
 		return fmt.Errorf("function %s result: %w", fn.Name, err)
 	}
-	name := qbeSymbol(state, []string{fn.Name})
+	name := fn.LinkName
+	if name == "" {
+		name = qbeSymbol(state, []string{fn.Name})
+	} else {
+		name = sanitizeIdent(name)
+	}
 	// Export the entry point so the C runtime linker can find $main.
 	if name == "main" {
 		fmt.Fprintf(b, "export ")
@@ -658,13 +683,11 @@ func lowerLoadValue(state *moduleState, targetName string, targetType typeinfo.T
 func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, call *midmir.CallValue) (string, error) {
 	if local, ok := call.Callee.(*midmir.LocalValue); ok {
 		if field, ok := state.tempValues[local.LocalID].(*midmir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
-			_ = field
-			return "", fmt.Errorf("qbe backend does not yet support interface dispatch")
+			return lowerInterfaceCall(state, targetName, targetType, call, field)
 		}
 	}
 	if field, ok := call.Callee.(*midmir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
-		_ = field
-		return "", fmt.Errorf("qbe backend does not yet support interface dispatch")
+		return lowerInterfaceCall(state, targetName, targetType, call, field)
 	}
 	callee, err := lowerCallee(state, call.Callee)
 	if err != nil {
@@ -1235,7 +1258,10 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 		return "", fmt.Errorf("nil aggregate local")
 	}
 	if isInterfaceAggregate(agg.Type) {
-		return "", fmt.Errorf("qbe backend does not yet support interface values")
+		if iface, ok := value.(*midmir.InterfaceValue); ok {
+			return lowerInterfaceAssign(state, qbeLocalName(agg.PtrName), agg.Type, iface)
+		}
+		return "", fmt.Errorf("unsupported interface assignment %T", value)
 	}
 	if isUnionAggregate(agg.Type) {
 		return lowerUnionAssign(state, agg, value)
@@ -1529,8 +1555,7 @@ func qbeInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type, link mi
 		return "", "", err
 	}
 	if isAggregateType(state, callee) {
-		tmp := "%recv"
-		return fmt.Sprintf("%s %s", abi, tmp), fmt.Sprintf("%s =%s load%s %%data", tmp, abi, abi), nil
+		return fmt.Sprintf("%s %%data", abi), "", nil
 	}
 	op, qtype, err := qbeLoadOp(callee)
 	if err != nil {
@@ -1651,13 +1676,11 @@ func lowerAggregateCall(state *moduleState, agg *aggregateLocal, call *midmir.Ca
 	}
 	if local, ok := call.Callee.(*midmir.LocalValue); ok {
 		if field, ok := state.tempValues[local.LocalID].(*midmir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
-			_ = field
-			return "", fmt.Errorf("qbe backend does not yet support interface dispatch")
+			return lowerInterfaceCall(state, agg.Name, agg.Type, call, field)
 		}
 	}
 	if field, ok := call.Callee.(*midmir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
-		_ = field
-		return "", fmt.Errorf("qbe backend does not yet support interface dispatch")
+		return lowerInterfaceCall(state, agg.Name, agg.Type, call, field)
 	}
 	callee, err := lowerCallee(state, call.Callee)
 	if err != nil {

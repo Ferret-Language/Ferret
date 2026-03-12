@@ -2,6 +2,7 @@ package ownership
 
 import (
 	"fmt"
+	"strings"
 
 	"compiler/internal/cfg"
 	"compiler/internal/context"
@@ -699,6 +700,10 @@ func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallVa
 		methodName = name.Path[len(name.Path)-1]
 	}
 	if methodName != "" && !typeinfo.IsInvalid(receiverType) && !typeinfo.IsUnknown(receiverType) {
+		if baseNamed, ok := a.receiverBaseNamedType(receiverType); ok && baseNamed != nil {
+			prefix := baseNamed.Name + "__"
+			methodName = strings.TrimPrefix(methodName, prefix)
+		}
 		addressable, mutable := a.valueAccess(scope, receiver)
 		methodSym, methodType := a.lookupMethod(receiverType, methodName, addressable, mutable)
 		if methodType != nil {

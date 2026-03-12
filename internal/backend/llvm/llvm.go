@@ -2,9 +2,11 @@ package llvm
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"compiler/internal/backend"
@@ -550,24 +552,45 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 
 func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl) error {
 	seen := make(map[string]struct{})
-	for _, decl := range types {
-		if decl == nil || decl.Named == nil || (decl.Struct == nil && decl.Union == nil && decl.Interface == nil) {
-			continue
+	emitDecls := func(decls []*midmir.TypeDecl) error {
+		for _, decl := range decls {
+			if decl == nil || decl.Named == nil || (decl.Struct == nil && decl.Union == nil && decl.Interface == nil) {
+				continue
+			}
+			key := decl.Named.ModuleKey + "::" + decl.Name
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			line, err := lowerTypeDecl(state, decl)
+			if err != nil {
+				return err
+			}
+			if line == "" {
+				continue
+			}
+			seen[key] = struct{}{}
+			b.WriteString(line)
+			b.WriteByte('\n')
 		}
-		key := decl.Named.ModuleKey + "::" + decl.Name
-		if _, ok := seen[key]; ok {
-			continue
+		return nil
+	}
+	if err := emitDecls(types); err != nil {
+		return err
+	}
+	if state.modules != nil {
+		keys := make([]string, 0, len(state.modules))
+		for key := range state.modules {
+			if state.mod != nil && key == state.mod.Key {
+				continue
+			}
+			keys = append(keys, key)
 		}
-		line, err := lowerTypeDecl(state, decl)
-		if err != nil {
-			return err
+		sort.Strings(keys)
+		for _, key := range keys {
+			if err := emitDecls(state.modules[key].Types); err != nil {
+				return err
+			}
 		}
-		if line == "" {
-			continue
-		}
-		seen[key] = struct{}{}
-		b.WriteString(line)
-		b.WriteByte('\n')
 	}
 	return nil
 }
@@ -824,7 +847,12 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 		return err
 	}
 
-	name := llvmSymbol(state, []string{fn.Name})
+	name := fn.LinkName
+	if name == "" {
+		name = llvmSymbol(state, []string{fn.Name})
+	} else {
+		name = sanitizeIdent(name)
+	}
 
 	// Build return type string.
 	var retStr string
@@ -1803,6 +1831,9 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 			return lowerAggregateAssign(state, agg, v.Right)
 		}
 	case *midmir.CastValue:
+		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) {
+			return lowerAggregateAssign(state, agg, v.Left)
+		}
 		expr, err := lowerCast(state, v)
 		if err != nil {
 			return "", err
@@ -3557,9 +3588,18 @@ func llvmNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
 		return "", fmt.Errorf("unsupported numeric literal type %s", typ)
 	}
 	switch b.Name {
-	case "f32", "f64":
-		// LLVM accepts decimal float literals; just pass through.
-		return lit, nil
+	case "f32":
+		v, err := strconv.ParseFloat(lit, 32)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("0x%016X", math.Float64bits(float64(float32(v)))), nil
+	case "f64":
+		v, err := strconv.ParseFloat(lit, 64)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("0x%016X", math.Float64bits(v)), nil
 	default:
 		return lit, nil
 	}

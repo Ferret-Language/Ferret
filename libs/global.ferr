@@ -10,12 +10,8 @@
 // Use it at FFI boundaries where C expects `void *`. Use an unsafe cast to
 // convert to a typed pointer: `unsafe raw_ptr as *u8`.
 //
-// `panic` and `recover` are builtin functions; implementations live in
-// ferret_runtime.c (mangled names: global__panic / global__recover).
-
-/// Prints msg to stderr and aborts the process.
-#[builtin]
-fn panic(msg *str) void;
+// `recover` is a builtin function. Panic lowering goes straight to the
+// runtime hook `global__panic` and is not callable from source.
 
 /// Returns the panic message of the current panic as a str.
 /// When there is no active panic, returns an empty str (data=nil, len=0).

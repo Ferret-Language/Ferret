@@ -235,6 +235,53 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerAllowsCompositeLiteralCastWithTargetType(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 1
+    Y i32 = 2
+}
+
+fn main() i32 {
+    let p = .{} as Point
+    return p.X
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsAddressableValueToSatisfyInterfacePointerMethod(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn (_ *Point) Show() {
+}
+
+type Shape interface {
+    Show()
+}
+
+fn main() i32 {
+    let p: Point = .{}
+    let s: Shape = p
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerRejectsAmbiguousUnionMemberAssignment(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
@@ -489,6 +536,54 @@ fn main() i32 {
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected interface assignment diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `missing method String() str`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected detailed missing-interface-method diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsConcreteTypeWithIncompatibleInterfaceMethod(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Stringer interface {
+    String() str
+}
+
+type Name struct {
+    value i32 = 0
+}
+
+fn (n Name) String() i32 {
+    return n.value
+}
+
+fn main() i32 {
+    let n: Name = .{ .value = 1 }
+    let s: Stringer = n
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected interface signature diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `method String has incompatible signature`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected detailed incompatible-interface-method diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

@@ -140,8 +140,9 @@ func (t *TupleType) String() string {
 }
 
 type StructField struct {
-	Name string
-	Type Type
+	Name       string
+	Type       Type
+	HasDefault bool
 }
 
 type StructType struct {
