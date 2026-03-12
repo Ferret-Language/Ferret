@@ -306,6 +306,40 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerRejectsBinaryOpsOnUnionValues(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    i64,
+}
+
+fn main() i32 {
+    let left: Token = 1
+    let right: Token = 2 as i64
+    if left == right {
+        return 1
+    }
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected union binary-operation diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "union values do not support direct binary operations") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected union binary-operation diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsNumericToStringCast(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

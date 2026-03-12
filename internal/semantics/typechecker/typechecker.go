@@ -620,6 +620,15 @@ func (c *checker) typeOfPrefix(scope *valueScope, expr *ast.PrefixExpr, expected
 func (c *checker) typeOfBinary(scope *valueScope, expr *ast.BinaryExpr) typeinfo.Type {
 	left := c.typeOfExpr(scope, expr.Left, nil)
 	right := c.typeOfExpr(scope, expr.Right, left)
+	if c.isUnionValue(left) || c.isUnionValue(right) {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("union values do not support direct binary operations").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "extract a concrete union member before using this operator"),
+		)
+		return typeinfo.InvalidType{}
+	}
 	switch expr.Op {
 	case "+", "-", "*", "/", "%":
 		if result := typeinfo.CommonNumericType(left, right); result != nil {
@@ -660,6 +669,14 @@ func (c *checker) typeOfBinary(scope *valueScope, expr *ast.BinaryExpr) typeinfo
 			WithPrimaryLabel(&loc, "invalid binary operation"),
 	)
 	return typeinfo.InvalidType{}
+}
+
+func (c *checker) isUnionValue(typ typeinfo.Type) bool {
+	if typ == nil {
+		return false
+	}
+	_, ok := c.underlying(typ).(*typeinfo.UnionType)
+	return ok
 }
 
 func (c *checker) inferNumberLiteralType(lit *ast.NumberLit, expected typeinfo.Type) typeinfo.Type {
@@ -1900,6 +1917,9 @@ func (c *checker) findTypeDecl(mod *context.Module, name string) *ast.TypeDecl {
 }
 
 func (c *checker) requireBool(loc source.Location, typ typeinfo.Type) bool {
+	if typeinfo.IsInvalid(typ) || typeinfo.IsUnknown(typ) {
+		return false
+	}
 	if typeinfo.IsBuiltinNamed(typ, "bool") {
 		return true
 	}
