@@ -159,7 +159,7 @@ fn fail() void {
 		t.Fatalf("expected MIR blocks, got %#v", fn)
 	}
 	text := midmir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "eval global::panic") || !strings.Contains(text, "\"bad\"") {
+	if !strings.Contains(text, "panic ") || !strings.Contains(text, "\"bad\"") {
 		t.Fatalf("expected lowered panic sequence in MIR dump, got %q", text)
 	}
 }
@@ -190,7 +190,7 @@ fn fail() void {
 		t.Fatalf("expected MIR function fail, got %#v", result.Entry.MIR.Functions)
 	}
 	text := midmir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "defer close()") || !strings.Contains(text, "eval global::panic") || !strings.Contains(text, "close()") {
+	if !strings.Contains(text, "defer close()") || !strings.Contains(text, "panic ") || !strings.Contains(text, "close()") {
 		t.Fatalf("expected deferred panic cleanup sequence in MIR dump, got %q", text)
 	}
 }

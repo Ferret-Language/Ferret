@@ -545,9 +545,6 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		out := &IndexExpr{Left: g.generateExpr(e.Left), Index: g.generateExpr(e.Index)}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
-	case *ast.UnsafeExpr:
-		// Unsafe context is validated at type-check time; lower transparently.
-		return g.generateExpr(e.Inner)
 	default:
 		return nil
 	}

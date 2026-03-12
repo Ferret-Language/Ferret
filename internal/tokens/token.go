@@ -131,12 +131,11 @@ var keywords = map[string]Kind{
 	"comptime":  COMPTIME,
 	"lock":      LOCK,
 	"defer":     DEFER,
-	// "panic" is no longer a keyword — it is declared as #[extern("ferret_global_panic")]
-	// fn panic(msg *i8) void in global.ferr and called as a normal function.
-	"release": RELEASE,
-	"catch":   CATCH,
-	"none":    NONE,
-	"unsafe":  UNSAFE,
+	"panic":     PANIC,
+	"release":   RELEASE,
+	"catch":     CATCH,
+	"none":      NONE,
+	"unsafe":    UNSAFE,
 }
 
 func LookupIdent(ident string) Kind {

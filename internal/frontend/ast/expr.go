@@ -145,15 +145,6 @@ type IndexExpr struct {
 func (*IndexExpr) exprNode()              {}
 func (e *IndexExpr) Loc() source.Location { return e.Location }
 
-// UnsafeExpr represents `unsafe <expr>` – evaluates Inner inside an unsafe context.
-type UnsafeExpr struct {
-	Inner    Expr
-	Location source.Location
-}
-
-func (*UnsafeExpr) exprNode()              {}
-func (e *UnsafeExpr) Loc() source.Location { return e.Location }
-
 func ExprText(expr Expr) string {
 	switch e := expr.(type) {
 	case nil:

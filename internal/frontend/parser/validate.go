@@ -133,8 +133,6 @@ func (p *Parser) validateExpr(expr ast.Expr) {
 	case *ast.IndexExpr:
 		p.validateExpr(e.Left)
 		p.validateExpr(e.Index)
-	case *ast.UnsafeExpr:
-		p.validateExpr(e.Inner)
 	}
 }
 

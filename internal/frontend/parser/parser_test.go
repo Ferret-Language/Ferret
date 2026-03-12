@@ -618,7 +618,7 @@ fn run(ptr *raw i32) i32 {
     let x: i32
     unsafe {
         x = Read(ptr)
-        panic("bad")
+        panic "bad"
     }
     return x
 }
@@ -662,23 +662,12 @@ fn run(ptr *raw i32) i32 {
 	if !ok || len(callee.Path) != 1 || callee.Path[0] != "Read" {
 		t.Fatalf("expected Read call, got %#v", call.Callee)
 	}
-	panicExpr, ok := unsafeStmt.Body.Stmts[1].(*ast.ExprStmt)
+	panicStmt, ok := unsafeStmt.Body.Stmts[1].(*ast.PanicStmt)
 	if !ok {
-		t.Fatalf("expected panic call expr stmt in unsafe block, got %T", unsafeStmt.Body.Stmts[1])
+		t.Fatalf("expected panic stmt in unsafe block, got %T", unsafeStmt.Body.Stmts[1])
 	}
-	panicCall, ok := panicExpr.Value.(*ast.CallExpr)
-	if !ok {
-		t.Fatalf("expected call expr for panic, got %T", panicExpr.Value)
-	}
-	callee, ok = panicCall.Callee.(*ast.Ident)
-	if !ok || len(callee.Path) != 1 || callee.Path[0] != "panic" {
-		t.Fatalf("expected panic callee, got %#v", panicCall.Callee)
-	}
-	if len(panicCall.Args) != 1 {
-		t.Fatalf("expected 1 panic arg, got %d", len(panicCall.Args))
-	}
-	if _, ok := panicCall.Args[0].(*ast.StringLit); !ok {
-		t.Fatalf("expected panic string arg, got %T", panicCall.Args[0])
+	if _, ok := panicStmt.Value.(*ast.StringLit); !ok {
+		t.Fatalf("expected panic string payload, got %T", panicStmt.Value)
 	}
 }
 

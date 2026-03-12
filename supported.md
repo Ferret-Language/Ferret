@@ -86,7 +86,7 @@ Status of language features through **both** the QBE and LLVM backends.
 | `expr.field` field access (read) | ✅ |
 | `arr[i]` array index (read) | ✅ |
 | `copy expr` | ✅ |
-| `unsafe expr` | ✅ |
+| `unsafe expr` | ❌ removed |
 | `comptime expr` | ⚠️ frontend / const-fold only |
 | `catch` fallback | ⚠️ frontend only |
 | `!!` force-unwrap | ⚠️ frontend only |

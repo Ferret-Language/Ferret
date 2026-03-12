@@ -371,8 +371,6 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.IndexExpr:
 		r.resolveExpr(scope, e.Left)
 		r.resolveExpr(scope, e.Index)
-	case *ast.UnsafeExpr:
-		r.resolveExpr(scope, e.Inner)
 	}
 }
 

@@ -197,8 +197,6 @@ func debugExpr(expr Expr) any {
 		return map[string]any{"kind": "CompositeLit", "items": items, "loc": debugLoc(e.Location)}
 	case *IndexExpr:
 		return map[string]any{"kind": "IndexExpr", "left": debugExpr(e.Left), "index": debugExpr(e.Index), "loc": debugLoc(e.Location)}
-	case *UnsafeExpr:
-		return map[string]any{"kind": "UnsafeExpr", "inner": debugExpr(e.Inner), "loc": debugLoc(e.Location)}
 	default:
 		return map[string]any{"kind": "<unknown-expr>"}
 	}

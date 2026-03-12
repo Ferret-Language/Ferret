@@ -6,7 +6,6 @@ import (
 	"compiler/internal/cfg"
 	"compiler/internal/context"
 	"compiler/internal/diagnostics"
-	ast "compiler/internal/frontend/ast"
 	"compiler/internal/middleend/hir"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/typeinfo"
@@ -117,18 +116,6 @@ func (b *builder) buildStmt(stmt hir.Stmt, current *cfg.Block, label string) *cf
 		return current
 	case *hir.ExprStmt:
 		current.Stmts = append(current.Stmts, s)
-		// Detect a call to the built-in `panic(msg str)` function and treat it
-		// as a terminating PanicTerm, just like the old `panic <msg>` statement.
-		if call, ok := s.Value.(*hir.CallExpr); ok {
-			if b.isPanicBuiltinCall(call) {
-				var arg hir.Expr
-				if len(call.Args) > 0 {
-					arg = call.Args[0]
-				}
-				current.Terminator = b.panicWithCleanups(arg, 0, s.Loc())
-				return nil
-			}
-		}
 		return current
 	case *hir.PanicStmt:
 		current.Stmts = append(current.Stmts, s)
@@ -402,37 +389,6 @@ func isVoidType(result typeinfo.Type) bool {
 		return true
 	}
 	return typeinfo.IsBuiltinNamed(result, "void")
-}
-
-// isPanicBuiltinCall returns true if call is a call to the builtin `panic`
-// function (the #[builtin] fn panic(msg str) void declared in global.ferr).
-// We detect this by checking that the callee is a single-name Ident "panic"
-// whose source AST node resolves to a builtin function declaration.
-func (b *builder) isPanicBuiltinCall(call *hir.CallExpr) bool {
-	ident, ok := call.Callee.(*hir.Ident)
-	if !ok || len(ident.Path) == 0 {
-		return false
-	}
-	name := ident.Path[len(ident.Path)-1]
-	if name != "panic" {
-		return false
-	}
-	// Check the source AST node to confirm it's a builtin declaration.
-	src := ident.SourceExpr()
-	if src == nil {
-		return false
-	}
-	if b.mod == nil || b.mod.Bindings == nil {
-		return false
-	}
-	res, ok := b.mod.Bindings.Nodes[src]
-	if !ok || res == nil || res.Symbol == nil {
-		return false
-	}
-	if fn, ok := res.Symbol.Node.(*ast.FuncDecl); ok {
-		return fn.IsBuiltin
-	}
-	return false
 }
 
 func rebuildPredecessors(fn *cfg.Function) {
