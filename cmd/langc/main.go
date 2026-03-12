@@ -273,6 +273,7 @@ func emitBackend(result compilerapi.Result, targetText, outPath string) error {
 			Module:  mod.MIR,
 			Layout:  mod.Layout,
 			Layouts: backendLayouts(result),
+			Modules: backendModules(result),
 		})
 		if err != nil {
 			return fmt.Errorf("backend %s lower %s: %w", target, mod.ImportPath, err)
@@ -316,6 +317,19 @@ func backendLayouts(result compilerapi.Result) map[string]*layout.Module {
 		layouts[result.Entry.Key] = result.Entry.Layout
 	}
 	return layouts
+}
+
+func backendModules(result compilerapi.Result) map[string]*midmir.Module {
+	modules := make(map[string]*midmir.Module)
+	for _, mod := range result.Modules {
+		if mod != nil && mod.MIR != nil {
+			modules[mod.Key] = mod.MIR
+		}
+	}
+	if len(modules) == 0 && result.Entry != nil && result.Entry.MIR != nil {
+		modules[result.Entry.Key] = result.Entry.MIR
+	}
+	return modules
 }
 
 // buildExecutable lowers all modules to IR, concatenates them,
@@ -365,6 +379,7 @@ func buildExecutable(result compilerapi.Result, outputPath string, target backen
 				Module:  mod.MIR,
 				Layout:  mod.Layout,
 				Layouts: layouts,
+				Modules: backendModules(result),
 			})
 		}
 		ir, err := llvm.LowerProgram(units)
@@ -390,6 +405,7 @@ func buildExecutable(result compilerapi.Result, outputPath string, target backen
 				Module:  mod.MIR,
 				Layout:  mod.Layout,
 				Layouts: layouts,
+				Modules: backendModules(result),
 			})
 			if err != nil {
 				return fmt.Errorf("build: lower %s: %w", mod.ImportPath, err)

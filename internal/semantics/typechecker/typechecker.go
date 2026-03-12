@@ -494,6 +494,8 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		return c.typeOfSelector(scope, e)
 	case *ast.CastExpr:
 		return c.typeOfCast(scope, e)
+	case *ast.IsExpr:
+		return c.typeOfIs(scope, e)
 	case *ast.CompositeLit:
 		return c.typeOfComposite(scope, e, expected)
 	case *ast.IndexExpr:
@@ -1048,6 +1050,23 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 	return typeinfo.InvalidType{}
 }
 
+func (c *checker) typeOfIs(scope *valueScope, expr *ast.IsExpr) typeinfo.Type {
+	left := c.typeOfExpr(scope, expr.Left, nil)
+	target := c.typeFromSyntax(c.mod, expr.Type)
+	if typeinfo.IsInvalid(left) || typeinfo.IsInvalid(target) || typeinfo.IsUnknown(left) || typeinfo.IsUnknown(target) {
+		return typeinfo.InvalidType{}
+	}
+	c.info.BindNode(expr.Type, target)
+	result, ok := c.staticTypeTest(expr.Location, left, target)
+	if !ok {
+		return typeinfo.InvalidType{}
+	}
+	typ := &typeinfo.BuiltinType{Name: "bool"}
+	c.info.BindBool(expr, result)
+	c.info.BindNode(expr, typ)
+	return typ
+}
+
 func (c *checker) unionContainsExactMember(source, target typeinfo.Type) bool {
 	unionType, ok := c.underlying(source).(*typeinfo.UnionType)
 	if !ok || unionType == nil {
@@ -1059,6 +1078,25 @@ func (c *checker) unionContainsExactMember(source, target typeinfo.Type) bool {
 		}
 	}
 	return false
+}
+
+func (c *checker) staticTypeTest(loc source.Location, left, target typeinfo.Type) (bool, bool) {
+	if typeinfo.Equal(left, target) {
+		return true, true
+	}
+	if _, ok := c.underlying(left).(*typeinfo.UnionType); ok {
+		return c.reportUnsupportedTypeTest(loc, "runtime union type tests are not implemented yet", "use an explicit cast or pattern match once tagged unions are implemented")
+	}
+	if targetIface, ok := c.underlying(target).(*typeinfo.InterfaceType); ok {
+		if srcIface, ok := c.underlying(left).(*typeinfo.InterfaceType); ok {
+			return c.interfaceSatisfies(srcIface, targetIface), true
+		}
+		return c.implementsInterface(left, targetIface), true
+	}
+	if _, ok := c.underlying(left).(*typeinfo.InterfaceType); ok {
+		return c.reportUnsupportedTypeTest(loc, "runtime interface type tests are not implemented yet", "only exact or interface-to-interface static checks work right now")
+	}
+	return false, true
 }
 
 func (c *checker) typeOfIndex(scope *valueScope, expr *ast.IndexExpr) typeinfo.Type {
@@ -2082,6 +2120,32 @@ func (c *checker) implementsInterface(src typeinfo.Type, iface *typeinfo.Interfa
 		}
 	}
 	return true
+}
+
+func (c *checker) interfaceSatisfies(src, target *typeinfo.InterfaceType) bool {
+	if src == nil || target == nil {
+		return false
+	}
+	for _, method := range target.OrderedMethods {
+		if method == nil || method.Type == nil {
+			continue
+		}
+		got := src.Methods[method.Name]
+		if got == nil || !c.interfaceMethodCompatible(method.Type, got) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *checker) reportUnsupportedTypeTest(loc source.Location, msg, help string) (bool, bool) {
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError(msg).
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(&loc, "this type test needs runtime type information").
+			WithHelp(help),
+	)
+	return false, false
 }
 
 func (c *checker) interfaceMethodCompatible(expected, got *typeinfo.FuncType) bool {

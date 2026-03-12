@@ -308,6 +308,9 @@ func simplifyValue(value Value, consts map[int]Value) Value {
 			v.Items[i].Value = simplifyValue(item.Value, consts)
 		}
 		return v
+	case *InterfaceValue:
+		v.Value = simplifyValue(v.Value, consts)
+		return v
 	default:
 		return value
 	}
@@ -902,6 +905,8 @@ func addUsedLocalsFromValue(dst map[int]bool, value Value) {
 		for _, item := range v.Items {
 			addUsedLocalsFromValue(dst, item.Value)
 		}
+	case *InterfaceValue:
+		addUsedLocalsFromValue(dst, v.Value)
 	case *IndexValue:
 		addUsedLocalsFromValue(dst, v.Base)
 		addUsedLocalsFromValue(dst, v.Index)
@@ -940,6 +945,8 @@ func countUsedLocalsInValue(dst map[int]int, value Value) {
 		for _, item := range v.Items {
 			countUsedLocalsInValue(dst, item.Value)
 		}
+	case *InterfaceValue:
+		countUsedLocalsInValue(dst, v.Value)
 	case *IndexValue:
 		countUsedLocalsInValue(dst, v.Base)
 		countUsedLocalsInValue(dst, v.Index)
@@ -1056,6 +1063,9 @@ func replaceLocalInValue(value Value, localID int, replacement Value) Value {
 			v.Items[i].Value = replaceLocalInValue(item.Value, localID, replacement)
 		}
 		return v
+	case *InterfaceValue:
+		v.Value = replaceLocalInValue(v.Value, localID, replacement)
+		return v
 	case *IndexValue:
 		v.Base = replaceLocalInValue(v.Base, localID, replacement)
 		v.Index = replaceLocalInValue(v.Index, localID, replacement)
@@ -1085,6 +1095,11 @@ func cloneSimpleValue(value Value) Value {
 		return &copy
 	case *NoneValue:
 		copy := *v
+		return &copy
+	case *InterfaceValue:
+		copy := *v
+		copy.Value = cloneSimpleValue(v.Value)
+		copy.Methods = append([]InterfaceMethodLink(nil), v.Methods...)
 		return &copy
 	default:
 		return value

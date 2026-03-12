@@ -124,6 +124,9 @@ func (p *Parser) validateExpr(expr ast.Expr) {
 	case *ast.CastExpr:
 		p.validateExpr(e.Left)
 		p.validateType(e.Type)
+	case *ast.IsExpr:
+		p.validateExpr(e.Left)
+		p.validateType(e.Type)
 	case *ast.CatchExpr:
 		p.validateExpr(e.Left)
 		p.validateExpr(e.Fallback)

@@ -721,6 +721,33 @@ fn run(path string) i32 {
 	}
 }
 
+func TestParseIsExpression(t *testing.T) {
+	src := `
+fn run(x i32) bool {
+    return x is i32
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	isExpr, ok := ret.Value.(*ast.IsExpr)
+	if !ok {
+		t.Fatalf("expected is expr, got %T", ret.Value)
+	}
+	left, ok := isExpr.Left.(*ast.Ident)
+	if !ok || left.Text() != "x" {
+		t.Fatalf("expected left ident x, got %#v", isExpr.Left)
+	}
+	target, ok := isExpr.Type.(*ast.NamedType)
+	if !ok || len(target.Path) != 1 || target.Path[0] != "i32" {
+		t.Fatalf("expected target type i32, got %#v", isExpr.Type)
+	}
+}
+
 func TestParserRejectsMixedCompositeLiteralForms(t *testing.T) {
 	src := `
 fn build() Point {

@@ -3,7 +3,9 @@ package hir
 import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/semantics/binding"
+	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/tokens"
 )
 
 type MethodLookup func(receiver typeinfo.Type, methodName string) ([]string, bool)
@@ -488,6 +490,18 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		out := &CastExpr{Left: g.generateExpr(e.Left)}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
+	case *ast.IsExpr:
+		out := &IsExpr{
+			Left:   g.generateExpr(e.Left),
+			Target: g.resolveTypeExpr(e.Type),
+		}
+		if value, ok := g.types.LookupBool(e); ok {
+			out.StaticValue = value
+		} else {
+			out.StaticValue = g.staticIsResult(exprType(g.types, e.Left), out.Target)
+		}
+		out.ExprType, out.Location, out.Source = typ, e.Location, e
+		return out
 	case *ast.CatchExpr:
 		out := &CatchExpr{
 			Left:     g.generateExpr(e.Left),
@@ -550,6 +564,66 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 	}
 }
 
+func (g *generator) staticIsResult(left, target typeinfo.Type) bool {
+	if left == nil || target == nil {
+		return false
+	}
+	if typeinfo.Equal(left, target) {
+		return true
+	}
+	targetIface, ok := unwrapNamed(g.types, target).(*typeinfo.InterfaceType)
+	if !ok {
+		return false
+	}
+	if srcIface, ok := unwrapNamed(g.types, left).(*typeinfo.InterfaceType); ok {
+		for _, method := range targetIface.OrderedMethods {
+			if method == nil || method.Type == nil {
+				continue
+			}
+			got := srcIface.Methods[method.Name]
+			if got == nil || !hirInterfaceMethodCompatible(method.Type, got) {
+				return false
+			}
+		}
+		return true
+	}
+	if g.lookupMethod == nil {
+		return false
+	}
+	for _, method := range targetIface.OrderedMethods {
+		if method == nil {
+			continue
+		}
+		if _, ok := g.lookupMethod(left, method.Name); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func hirInterfaceMethodCompatible(expected, got *typeinfo.FuncType) bool {
+	if expected == nil || got == nil {
+		return false
+	}
+	if expected.IsUnsafe != got.IsUnsafe {
+		return false
+	}
+	if len(expected.Params) != len(got.Params) || len(expected.ComptimeParams) != len(got.ComptimeParams) {
+		return false
+	}
+	for i := range expected.Params {
+		if !typeinfo.Equal(expected.Params[i], got.Params[i]) {
+			return false
+		}
+	}
+	for i := range expected.ComptimeParams {
+		if expected.ComptimeParams[i] != got.ComptimeParams[i] {
+			return false
+		}
+	}
+	return typeinfo.Equal(expected.Result, got.Result)
+}
+
 func (g *generator) constructorMethodPath(typ typeinfo.Type) ([]string, bool) {
 	if g == nil || g.lookupMethod == nil {
 		return nil, false
@@ -585,6 +659,38 @@ func syntaxType(types *typeinfo.ModuleInfo, expr ast.TypeExpr) typeinfo.Type {
 	return nil
 }
 
+func (g *generator) resolveTypeExpr(expr ast.TypeExpr) typeinfo.Type {
+	if typ := syntaxType(g.types, expr); typ != nil {
+		return typ
+	}
+	switch t := expr.(type) {
+	case nil:
+		return nil
+	case *ast.NamedType:
+		if len(t.Path) == 1 && t.Path[0] == "str" {
+			return &typeinfo.StringType{}
+		}
+		if len(t.Path) == 1 && tokens.IsBuiltinType(t.Path[0]) {
+			return &typeinfo.BuiltinType{Name: t.Path[0]}
+		}
+		if g.bindings == nil {
+			return nil
+		}
+		resolution := g.bindings.Nodes[t]
+		if resolution == nil || resolution.Symbol == nil || resolution.Symbol.Kind != symbols.SymbolType {
+			return nil
+		}
+		decl, _ := resolution.Symbol.Node.(*ast.TypeDecl)
+		return &typeinfo.NamedType{
+			ModuleKey: resolution.ModuleKey,
+			Name:      resolution.Symbol.Name,
+			Decl:      decl,
+		}
+	default:
+		return syntaxType(g.types, expr)
+	}
+}
+
 func effectiveType(types *typeinfo.ModuleInfo, syntax ast.TypeExpr, value ast.Expr) typeinfo.Type {
 	if typ := syntaxType(types, syntax); typ != nil {
 		return typ
@@ -617,4 +723,18 @@ func (g *generator) structLiteralFields(typ typeinfo.Type) ([]structLiteralField
 		fields = append(fields, structLiteralField{Name: field.Name.Text(), Default: field.Default})
 	}
 	return fields, true
+}
+
+func unwrapNamed(types *typeinfo.ModuleInfo, typ typeinfo.Type) typeinfo.Type {
+	named, ok := typ.(*typeinfo.NamedType)
+	if !ok || named == nil || named.Decl == nil {
+		return typ
+	}
+	if types == nil {
+		return typ
+	}
+	if underlying, ok := types.Nodes[named.Decl.Type]; ok && underlying != nil {
+		return underlying
+	}
+	return typ
 }

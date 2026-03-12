@@ -472,6 +472,41 @@ fn main() i32 {
 	}
 }
 
+func TestRejectInterfaceDispatchInQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Stringer interface {
+    String() str
+}
+
+type Name struct {
+    value i32 = 0
+}
+
+fn (n Name) String() str {
+    return 1 as str
+}
+
+fn main() str {
+    let n: Name = .{ .value = 1 }
+    let s: Stringer = n
+    return s.String()
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	_, err = lowerer.LowerModule(testUnit(result))
+	if err == nil || !strings.Contains(err.Error(), "qbe backend does not yet support interface values") {
+		t.Fatalf("expected explicit qbe interface rejection, got %v", err)
+	}
+}
+
 func TestLowerEnumValuesToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `

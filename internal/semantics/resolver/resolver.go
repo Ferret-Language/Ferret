@@ -364,6 +364,9 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.CastExpr:
 		r.resolveExpr(scope, e.Left)
 		r.resolveType(scope, e.Type)
+	case *ast.IsExpr:
+		r.resolveExpr(scope, e.Left)
+		r.resolveType(scope, e.Type)
 	case *ast.CompositeLit:
 		for _, item := range e.Items {
 			r.resolveExpr(scope, item.Value)

@@ -187,6 +187,8 @@ func debugExpr(expr Expr) any {
 		return map[string]any{"kind": "SelectorExpr", "left": debugExpr(e.Left), "name": debugExpr(e.Name), "loc": debugLoc(e.Location)}
 	case *CastExpr:
 		return map[string]any{"kind": "CastExpr", "left": debugExpr(e.Left), "type": debugType(e.Type), "loc": debugLoc(e.Location)}
+	case *IsExpr:
+		return map[string]any{"kind": "IsExpr", "left": debugExpr(e.Left), "type": debugType(e.Type), "loc": debugLoc(e.Location)}
 	case *CatchExpr:
 		return map[string]any{"kind": "CatchExpr", "left": debugExpr(e.Left), "fallback": debugExpr(e.Fallback), "payload": debugExpr(e.Payload), "handler": debugStmt(e.Handler), "loc": debugLoc(e.Location)}
 	case *CompositeLit:

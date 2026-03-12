@@ -178,7 +178,7 @@ func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	mod.LoweredHIR = hir.Lower(mod.HIR)
 	mod.Phase = phase.PhaseHIRLowered
 	cfganalysis.AnalyzeModule(p.ctx, mod)
-	mod.MIR = midmir.LowerModule(mod.CFG, mod.HIR, mod.Bindings, p.buildGlobalConstMap())
+	mod.MIR = midmir.LowerModule(mod.CFG, mod.HIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupMethodPath(mod.ImportPath))
 	midmir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseMIRGenerated
 	midmir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)

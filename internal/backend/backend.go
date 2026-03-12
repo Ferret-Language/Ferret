@@ -18,6 +18,7 @@ type Unit struct {
 	Module  *midmir.Module
 	Layout  *layout.Module
 	Layouts map[string]*layout.Module
+	Modules map[string]*midmir.Module
 }
 
 type Artifact struct {

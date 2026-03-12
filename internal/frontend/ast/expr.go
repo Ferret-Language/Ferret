@@ -111,6 +111,15 @@ type CastExpr struct {
 func (*CastExpr) exprNode()              {}
 func (e *CastExpr) Loc() source.Location { return e.Location }
 
+type IsExpr struct {
+	Left     Expr
+	Type     TypeExpr
+	Location source.Location
+}
+
+func (*IsExpr) exprNode()              {}
+func (e *IsExpr) Loc() source.Location { return e.Location }
+
 type CatchExpr struct {
 	Left     Expr
 	Fallback Expr

@@ -284,6 +284,8 @@ func formatValue(value Value) string {
 			}
 		}
 		return fmt.Sprintf(".{ %s }", strings.Join(parts, ", "))
+	case *InterfaceValue:
+		return fmt.Sprintf("interface(%s)", formatValue(v.Value))
 	case *IndexValue:
 		return fmt.Sprintf("%s[%s]", wrapValue(v.Base), formatValue(v.Index))
 	default:

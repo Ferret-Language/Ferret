@@ -523,7 +523,7 @@ func (a *analyzer) checkComputedValue(scope *valueScope, instr *mir.ComputeInstr
 
 func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 	switch v := value.(type) {
-	case nil, *mir.NumberValue, *mir.StringValue, *mir.NoneValue:
+	case nil, *mir.NumberValue, *mir.BoolValue, *mir.StringValue, *mir.NoneValue:
 		return
 	case *mir.LocalValue:
 		a.requireActiveLocal(scope, v)
@@ -579,6 +579,8 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 		for _, item := range v.Items {
 			a.checkValue(scope, item.Value)
 		}
+	case *mir.InterfaceValue:
+		a.checkValue(scope, v.Value)
 	}
 }
 
@@ -791,6 +793,9 @@ func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ type
 		if v.Op == "copy" || v.Op == "take" {
 			return
 		}
+	case *mir.InterfaceValue:
+		a.consumeMoveValue(scope, v.Value, v.ConcreteType)
+		return
 	case *mir.LocalValue:
 		if info, ok := a.temps[v.LocalID]; ok {
 			if info.root == "" {
@@ -871,6 +876,8 @@ func (a *analyzer) tempInfoForValue(value mir.Value) (tempInfo, bool) {
 			return tempInfo{}, false
 		}
 		return tempInfo{root: root, path: path, value: value}, true
+	case *mir.InterfaceValue:
+		return a.tempInfoForValue(v.Value)
 	}
 	return tempInfo{}, false
 }
@@ -900,6 +907,8 @@ func (a *analyzer) borrowSourcePath(value mir.Value) (string, string, bool) {
 		return a.localValuePath(v)
 	case *mir.FieldValue:
 		return a.localValuePath(v)
+	case *mir.InterfaceValue:
+		return a.borrowSourcePath(v.Value)
 	}
 	return "", "", false
 }
@@ -1012,6 +1021,8 @@ func (a *analyzer) localValuePath(value mir.Value) (root string, path string, ok
 			return root, segment, true
 		}
 		return root, path + "." + segment, true
+	case *mir.InterfaceValue:
+		return a.localValuePath(v.Value)
 	}
 	return "", "", false
 }
@@ -1280,6 +1291,8 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowIn
 			return borrowInfo{}, false
 		}
 		return borrowInfo{owner: slot.borrowOf, loc: slot.borrowLoc}, true
+	case *mir.InterfaceValue:
+		return a.borrowValueInfo(scope, v.Value)
 	}
 	return borrowInfo{}, false
 }

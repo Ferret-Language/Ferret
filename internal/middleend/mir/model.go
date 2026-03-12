@@ -288,6 +288,11 @@ type CompositeItem struct {
 	Value Value
 }
 
+type InterfaceMethodLink struct {
+	Name string
+	Path []string
+}
+
 type CompositeValue struct {
 	baseValue
 	Items           []CompositeItem
@@ -295,6 +300,15 @@ type CompositeValue struct {
 }
 
 func (*CompositeValue) valueNode() {}
+
+type InterfaceValue struct {
+	baseValue
+	Value        Value
+	ConcreteType typeinfo.Type
+	Methods      []InterfaceMethodLink
+}
+
+func (*InterfaceValue) valueNode() {}
 
 // IndexValue represents arr[index] loaded as an rvalue.
 type IndexValue struct {

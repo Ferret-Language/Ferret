@@ -86,6 +86,7 @@ const (
 	CONTINUE  Kind = "CONTINUE"
 	RETURN    Kind = "RETURN"
 	AS        Kind = "AS"
+	IS        Kind = "IS"
 	TAKE      Kind = "TAKE"
 	MOVE      Kind = "MOVE"
 	OWN       Kind = "OWN"
@@ -122,6 +123,7 @@ var keywords = map[string]Kind{
 	"continue":  CONTINUE,
 	"return":    RETURN,
 	"as":        AS,
+	"is":        IS,
 	"take":      TAKE,
 	"move":      MOVE,
 	"own":       OWN,

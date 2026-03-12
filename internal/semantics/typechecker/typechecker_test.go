@@ -385,6 +385,89 @@ fn main() str {
 	}
 }
 
+func TestTypecheckerAllowsStaticIsChecks(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Stringer interface {
+    String() str
+}
+
+type Name struct {
+    value i32 = 0
+}
+
+fn (n Name) String() str {
+    return 1 as str
+}
+
+fn main() i32 {
+    let n: Name = .{ .value = 1 }
+    if n is Stringer {
+        return 1
+    }
+    if n is i32 {
+        return 2
+    }
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsRuntimeUnionTypeTest(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    i64,
+}
+
+fn main() bool {
+    let value: Token = 1
+    return value is i32
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected runtime union type-test diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "runtime union type tests are not implemented yet") {
+			return
+		}
+	}
+	t.Fatalf("expected runtime union type-test diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
+func TestTypecheckerRejectsRuntimeInterfaceToConcreteTypeTest(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Stringer interface {
+    String() str
+}
+
+fn main(s Stringer) bool {
+    return s is str
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected runtime interface type-test diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "runtime interface type tests are not implemented yet") {
+			return
+		}
+	}
+	t.Fatalf("expected runtime interface type-test diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
 func TestTypecheckerRejectsConcreteTypeThatMissesInterfaceMethod(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

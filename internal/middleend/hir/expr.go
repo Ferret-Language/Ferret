@@ -1,5 +1,7 @@
 package hir
 
+import "compiler/internal/semantics/typeinfo"
+
 type Ident struct {
 	baseExpr
 	Path []string
@@ -84,6 +86,15 @@ type CastExpr struct {
 }
 
 func (*CastExpr) exprNode() {}
+
+type IsExpr struct {
+	baseExpr
+	Left        Expr
+	Target      typeinfo.Type
+	StaticValue bool
+}
+
+func (*IsExpr) exprNode() {}
 
 type CatchExpr struct {
 	baseExpr

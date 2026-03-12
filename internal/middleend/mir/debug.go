@@ -155,6 +155,18 @@ func debugValue(value Value) any {
 			items = append(items, map[string]any{"name": item.Name, "value": debugValue(item.Value)})
 		}
 		return map[string]any{"kind": "composite", "items": items, "type": typeString(v.Type())}
+	case *InterfaceValue:
+		methods := make([]any, 0, len(v.Methods))
+		for _, method := range v.Methods {
+			methods = append(methods, map[string]any{"name": method.Name, "path": append([]string(nil), method.Path...)})
+		}
+		return map[string]any{
+			"kind":          "interface",
+			"value":         debugValue(v.Value),
+			"concrete_type": typeString(v.ConcreteType),
+			"methods":       methods,
+			"type":          typeString(v.Type()),
+		}
 	case *IndexValue:
 		return map[string]any{"kind": "index", "base": debugValue(v.Base), "index": debugValue(v.Index), "type": typeString(v.Type())}
 	default:

@@ -201,6 +201,8 @@ func childrenAreSimple(value Value) bool {
 			}
 		}
 		return true
+	case *InterfaceValue:
+		return isSimpleValue(v.Value)
 	default:
 		return false
 	}

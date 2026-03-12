@@ -264,6 +264,8 @@ func formatExpr(expr Expr) string {
 		return fmt.Sprintf("%s.%s", wrapExpr(e.Left), e.Name)
 	case *CastExpr:
 		return fmt.Sprintf("%s as %s", wrapExpr(e.Left), typeString(e.Type()))
+	case *IsExpr:
+		return fmt.Sprintf("%s is %s", wrapExpr(e.Left), typeString(e.Target))
 	case *CatchExpr:
 		if e.Handler != nil {
 			var b strings.Builder

@@ -53,6 +53,8 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 			left = &ast.PostfixExpr{Left: left, Op: tok.Literal, Location: p.makeExprLoc(*left.Loc().Start)}
 		case tokens.AS:
 			left = p.parseCast(left)
+		case tokens.IS:
+			left = p.parseIs(left)
 		default:
 			return left
 		}
@@ -241,6 +243,13 @@ func (p *Parser) parseCast(left ast.Expr) ast.Expr {
 	return &ast.CastExpr{Left: left, Type: typ, Location: p.makeExprLoc(start)}
 }
 
+func (p *Parser) parseIs(left ast.Expr) ast.Expr {
+	start := *left.Loc().Start
+	p.expect(tokens.IS, "expected 'is'")
+	typ := p.parseType()
+	return &ast.IsExpr{Left: left, Type: typ, Location: p.makeExprLoc(start)}
+}
+
 func (p *Parser) currentPrecedence() int {
 	return precedence(p.current().Kind)
 }
@@ -267,6 +276,8 @@ func precedence(kind tokens.Kind) int {
 		return precPostfix
 	case tokens.AS:
 		return precPostfix
+	case tokens.IS:
+		return precCompare
 	default:
 		return precLowest
 	}
