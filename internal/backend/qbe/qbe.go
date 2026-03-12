@@ -33,6 +33,7 @@ type moduleState struct {
 	nextTemp     int
 	nextStrConst int              // counter for unnamed string constant globals
 	deferredB    *strings.Builder // deferred data sections (string literals used in functions)
+	pendingLines []string
 }
 
 type aggregateLocal struct {
@@ -265,18 +266,26 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 			}
 		}
 		for _, instr := range block.Instructions {
+			state.pendingLines = nil
 			line, err := lowerInstr(state, instr)
 			if err != nil {
 				return fmt.Errorf("function %s block %d: %w", fn.Name, block.ID, err)
+			}
+			for _, pl := range state.pendingLines {
+				fmt.Fprintf(b, "\t%s\n", pl)
 			}
 			if line == "" {
 				continue
 			}
 			fmt.Fprintf(b, "\t%s\n", line)
 		}
+		state.pendingLines = nil
 		term, err := lowerTerm(state, block.Terminator)
 		if err != nil {
 			return fmt.Errorf("function %s block %d: %w", fn.Name, block.ID, err)
+		}
+		for _, pl := range state.pendingLines {
+			fmt.Fprintf(b, "\t%s\n", pl)
 		}
 		fmt.Fprintf(b, "\t%s\n", term)
 	}
@@ -304,6 +313,10 @@ func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
 		if call, ok := i.Value.(*midmir.CallValue); ok {
 			return lowerCall(state, "", nil, call)
 		}
+		return "", nil
+	case *midmir.DeferInstr:
+		// Defers are only bookkeeping at the registration site. Cleanup blocks
+		// already contain the lowered deferred body, so nothing is emitted here.
 		return "", nil
 	case *midmir.UnsafeInstr:
 		// Unsafe marker: safety is enforced at type-check time; no code to emit.
@@ -443,6 +456,19 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if err != nil {
 		return "", err
 	}
+	if call.IsConstructor {
+		if targetName != "" {
+			if local := findLocalByName(state.fn, targetName); local != nil {
+				if agg, ok := state.aggLocals[local.ID]; ok {
+					return lowerConstructorCall(state, qbeLocalName(agg.PtrName), call, callee)
+				}
+			}
+		}
+		return lowerConstructorCallDiscard(state, targetType, call, callee)
+	}
+	if isBuiltinPrintCall(call) {
+		return lowerBuiltinPrintCall(state, call)
+	}
 	args := make([]string, 0, len(call.Args))
 	for _, arg := range call.Args {
 		atype, err := qbeABIType(state, arg.Type())
@@ -468,6 +494,184 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 		return callText, nil
 	}
 	return fmt.Sprintf("%s =%s %s", qbeLocalName(targetName), qtype, callText), nil
+}
+
+func isBuiltinPrintCall(call *midmir.CallValue) bool {
+	if call == nil {
+		return false
+	}
+	callee, ok := call.Callee.(*midmir.NameValue)
+	return ok && callee != nil && callee.LinkName == "global__print"
+}
+
+func lowerBuiltinPrintCall(state *moduleState, call *midmir.CallValue) (string, error) {
+	if call == nil || len(call.Args) != 1 {
+		return "", fmt.Errorf("builtin print expects exactly one argument")
+	}
+	arg := call.Args[0]
+	if arg == nil {
+		return "", fmt.Errorf("builtin print argument is nil")
+	}
+	if _, ok := arg.Type().(*typeinfo.StringType); ok {
+		prefix, ptr, err := lowerAggregateValuePointer(state, arg)
+		if err != nil {
+			return "", err
+		}
+		return joinQBELines(prefix, []string{fmt.Sprintf("call $global__print_str(l %s)", ptr)}), nil
+	}
+	if builtin, ok := arg.Type().(*typeinfo.BuiltinType); ok {
+		return lowerBuiltinPrintPrimitive(state, arg, builtin.Name)
+	}
+	if _, ok := arg.Type().(*typeinfo.PointerType); ok {
+		val, err := lowerValue(state, arg)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("call $global__print_ptr(l %s)", val), nil
+	}
+	sym := emitQBEStringConstant(state, arg.Type().String())
+	return fmt.Sprintf("call $global__print_type(l $%s)", sym), nil
+}
+
+func lowerBuiltinPrintPrimitive(state *moduleState, arg midmir.Value, name string) (string, error) {
+	val, err := lowerValue(state, arg)
+	if err != nil {
+		return "", err
+	}
+	switch name {
+	case "bool":
+		return fmt.Sprintf("call $global__print_bool(w %s)", val), nil
+	case "i8", "i16", "i32", "i64", "isize":
+		return lowerBuiltinPrintIntCast(state, val, name, "i64", "$global__print_i64")
+	case "u8", "u16", "u32", "u64", "usize":
+		return lowerBuiltinPrintIntCast(state, val, name, "u64", "$global__print_u64")
+	case "f32", "f64":
+		return lowerBuiltinPrintFloatCast(state, val, name)
+	case "char":
+		return fmt.Sprintf("call $global__print_char(w %s)", val), nil
+	default:
+		sym := emitQBEStringConstant(state, arg.Type().String())
+		return fmt.Sprintf("call $global__print_type(l $%s)", sym), nil
+	}
+}
+
+func lowerBuiltinPrintIntCast(state *moduleState, value, srcName, dstName, callee string) (string, error) {
+	dstType := "l"
+	if srcName == dstName {
+		return fmt.Sprintf("call %s(%s %s)", callee, dstType, value), nil
+	}
+	op, ok := qbeIntCastOp(srcName, dstName)
+	if !ok {
+		return "", fmt.Errorf("unsupported print integer cast from %s to %s", srcName, dstName)
+	}
+	tmp := freshTemp(state, "print")
+	return joinQBELines([]string{
+		fmt.Sprintf("%s =l %s %s", tmp, op, value),
+		fmt.Sprintf("call %s(l %s)", callee, tmp),
+	}), nil
+}
+
+func lowerBuiltinPrintFloatCast(state *moduleState, value, srcName string) (string, error) {
+	if srcName == "f64" {
+		return fmt.Sprintf("call $global__print_f64(d %s)", value), nil
+	}
+	op, ok := qbeFloatCastOp(srcName, "f64")
+	if !ok {
+		return "", fmt.Errorf("unsupported print float cast from %s to f64", srcName)
+	}
+	tmp := freshTemp(state, "print")
+	return joinQBELines([]string{
+		fmt.Sprintf("%s =d %s %s", tmp, op, value),
+		fmt.Sprintf("call $global__print_f64(d %s)", tmp),
+	}), nil
+}
+
+func lowerAggregateValuePointer(state *moduleState, value midmir.Value) ([]string, string, error) {
+	if value == nil {
+		return nil, "", fmt.Errorf("nil aggregate value")
+	}
+	switch v := value.(type) {
+	case *midmir.LocalValue:
+		if agg, ok := state.aggLocals[v.LocalID]; ok {
+			return nil, qbeLocalName(agg.PtrName), nil
+		}
+	case *midmir.NameValue:
+		if v.LinkName != "" {
+			return nil, "$" + sanitizeIdent(v.LinkName), nil
+		}
+		return nil, "$" + qbeSymbol(state, v.Path), nil
+	}
+	if !isAggregateType(state, value.Type()) {
+		return nil, "", fmt.Errorf("value %T is not aggregate", value)
+	}
+	size, align, err := aggregateSizeAlign(state, value.Type())
+	if err != nil {
+		return nil, "", err
+	}
+	tmp := freshTemp(state, "print_agg")
+	agg := &aggregateLocal{PtrName: strings.TrimPrefix(tmp, "%"), Type: value.Type(), Size: size, Align: align}
+	assign, err := lowerAggregateAssign(state, agg, value)
+	if err != nil {
+		return nil, "", err
+	}
+	lines := []string{fmt.Sprintf("%s =l alloc%d %d", tmp, normalizeQBEAlign(align), size)}
+	if assign != "" {
+		lines = append(lines, strings.Split(assign, "\n\t")...)
+	}
+	return lines, tmp, nil
+}
+
+func joinQBELines(lines ...[]string) string {
+	flat := make([]string, 0)
+	for _, group := range lines {
+		for _, line := range group {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			flat = append(flat, line)
+		}
+	}
+	return strings.Join(flat, "\n\t")
+}
+
+func lowerConstructorCall(state *moduleState, dstPtr string, call *midmir.CallValue, callee string) (string, error) {
+	args := make([]string, 0, len(call.Args)+1)
+	args = append(args, fmt.Sprintf("l %s", dstPtr))
+	for _, arg := range call.Args {
+		atype, err := qbeABIType(state, arg.Type())
+		if err != nil {
+			return "", err
+		}
+		aval, err := lowerValue(state, arg)
+		if err != nil {
+			return "", err
+		}
+		args = append(args, fmt.Sprintf("%s %s", atype, aval))
+	}
+	return fmt.Sprintf("call %s(%s)", callee, strings.Join(args, ", ")), nil
+}
+
+func lowerImplicitConstructorCall(state *moduleState, dstPtr string, path []string) (string, error) {
+	if len(path) == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("call $%s(l %s)", qbeSymbol(state, path), dstPtr), nil
+}
+
+func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, call *midmir.CallValue, callee string) (string, error) {
+	if targetType == nil || !isAggregateType(state, targetType) {
+		return "", fmt.Errorf("constructor call requires aggregate target")
+	}
+	size, align, err := aggregateSizeAlign(state, targetType)
+	if err != nil {
+		return "", err
+	}
+	tmp := freshTemp(state, "ctor_tmp")
+	callText, err := lowerConstructorCall(state, tmp, call, callee)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s =l alloc%d %d\n\t%s", tmp, normalizeQBEAlign(align), size, callText), nil
 }
 
 // lowerPanicTerm emits a call to ferret__panic(l ptr) followed by hlt.
@@ -498,10 +702,31 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 		return fmt.Sprintf("jnz %s, %s, %s", cond, qbeBlockLabel(state.fn, t.TrueID), qbeBlockLabel(state.fn, t.FalseID)), nil
 	case *midmir.ReturnTerm:
 		if t.CleanupID >= 0 {
-			return "", fmt.Errorf("return with cleanup is not supported by qbe lowerer yet")
+			return fmt.Sprintf("jmp %s", qbeBlockLabel(state.fn, t.CleanupID)), nil
 		}
 		if t.Value == nil {
 			return "ret", nil
+		}
+		if call, ok := t.Value.(*midmir.CallValue); ok && call.IsConstructor {
+			size, align, err := aggregateSizeAlign(state, call.Type())
+			if err != nil {
+				return "", err
+			}
+			callee, err := lowerCallee(state, call.Callee)
+			if err != nil {
+				return "", err
+			}
+			tmpPtr := freshTemp(state, "ctor_ret")
+			callText, err := lowerConstructorCall(state, tmpPtr, call, callee)
+			if err != nil {
+				return "", err
+			}
+			abiType, err := qbeABIType(state, call.Type())
+			if err != nil {
+				return "", err
+			}
+			tmpVal := freshTemp(state, "retval")
+			return fmt.Sprintf("%s =l alloc%d %d\n\t%s\n\t%s =%s load%s %s\n\tret %s", tmpPtr, normalizeQBEAlign(align), size, callText, tmpVal, abiType, abiType, tmpPtr, tmpVal), nil
 		}
 		val, err := lowerValue(state, t.Value)
 		if err != nil {
@@ -509,6 +734,9 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 		}
 		return fmt.Sprintf("ret %s", val), nil
 	case *midmir.PanicTerm:
+		if t.CleanupID >= 0 {
+			return fmt.Sprintf("jmp %s", qbeBlockLabel(state.fn, t.CleanupID)), nil
+		}
 		return lowerPanicTerm(state, t)
 	case *midmir.SwitchTerm:
 		return "", fmt.Errorf("match lowering is not implemented yet")
@@ -599,6 +827,15 @@ func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, erro
 	op, err := qbeStoreOp(instr.Value.Type())
 	if err != nil {
 		return "", err
+	}
+	if !qbeValueNeedsCopy(instr.Value) {
+		qtype, err := qbeBaseType(instr.Value.Type())
+		if err != nil {
+			return "", err
+		}
+		tmp := freshTemp(state, "store")
+		lines = append(lines, fmt.Sprintf("%s =%s %s", tmp, qtype, val))
+		val = tmp
 	}
 	lines = append(lines, fmt.Sprintf("%s %s, %s", op, val, addr))
 	return strings.Join(lines, "\n\t"), nil
@@ -764,6 +1001,8 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerAggregateAssign(state, agg, v.Right)
 		}
+	case *midmir.CastValue:
+		return lowerAggregateAssign(state, agg, v.Left)
 	case *midmir.CallValue:
 		return lowerAggregateCall(state, agg, v)
 	case *midmir.LocalValue, *midmir.NameValue:
@@ -783,7 +1022,7 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 func emitQBEStringConstant(state *moduleState, s string) string {
 	idx := state.nextStrConst
 	state.nextStrConst++
-	sym := fmt.Sprintf("__ferret_str%d", idx)
+	sym := fmt.Sprintf("__ferret_str%d_%s", idx, sanitizeIdent(state.modulePrefix))
 	// QBE data: bytes of the string followed by a NUL terminator.
 	fmt.Fprintf(state.deferredB, "data $%s = { b %q, b 0 }\n", sym, s)
 	return sym
@@ -796,6 +1035,9 @@ func lowerAggregateCall(state *moduleState, agg *aggregateLocal, call *midmir.Ca
 	callee, err := lowerCallee(state, call.Callee)
 	if err != nil {
 		return "", err
+	}
+	if call.IsConstructor {
+		return lowerConstructorCall(state, qbeLocalName(agg.PtrName), call, callee)
 	}
 	args := make([]string, 0, len(call.Args))
 	for _, arg := range call.Args {
@@ -859,8 +1101,26 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		return strings.Join(lines, "\n\t"), nil
 	}
 
-	// Slice literal: items "ptr" and "len" stored at offsets 0 and 8.
+	// String / slice literal: items "ptr" and "len" stored at offsets 0 and 8.
 	if _, ok := agg.Type.(*typeinfo.SliceType); ok {
+		items := make(map[string]midmir.Value, len(comp.Items))
+		for _, item := range comp.Items {
+			items[item.Name] = item.Value
+		}
+		ptrLowered, err := lowerValue(state, items["ptr"])
+		if err != nil {
+			return "", err
+		}
+		lenLowered, err := lowerValue(state, items["len"])
+		if err != nil {
+			return "", err
+		}
+		base := qbeLocalName(agg.PtrName)
+		tmp := freshTemp(state, "len_addr")
+		return fmt.Sprintf("storel %s, %s\n\t%s =l add %s, 8\n\tstorel %s, %s",
+			ptrLowered, base, tmp, base, lenLowered, tmp), nil
+	}
+	if _, ok := agg.Type.(*typeinfo.StringType); ok {
 		items := make(map[string]midmir.Value, len(comp.Items))
 		for _, item := range comp.Items {
 			items[item.Name] = item.Value
@@ -912,6 +1172,15 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		}
 		lines = append(lines, fmt.Sprintf("%s %s, %s", op, lowered, addr))
 	}
+	if len(comp.ConstructorPath) > 0 {
+		ctor, err := lowerImplicitConstructorCall(state, qbeLocalName(agg.PtrName), comp.ConstructorPath)
+		if err != nil {
+			return "", err
+		}
+		if ctor != "" {
+			lines = append(lines, ctor)
+		}
+	}
 	return strings.Join(lines, "\n\t"), nil
 }
 
@@ -927,6 +1196,12 @@ func lowerAggregateSource(state *moduleState, value midmir.Value) (string, error
 }
 
 func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *midmir.CompositeValue) (string, error) {
+	if _, ok := typ.(*typeinfo.StringType); ok {
+		return lowerGlobalStringLike(state, comp)
+	}
+	if _, ok := typ.(*typeinfo.SliceType); ok {
+		return lowerGlobalStringLike(state, comp)
+	}
 	structLayout, err := lookupStructLayout(state, typ)
 	if err != nil {
 		return "", err
@@ -964,6 +1239,22 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *midmir.Co
 	return strings.Join(parts, ", "), nil
 }
 
+func lowerGlobalStringLike(state *moduleState, comp *midmir.CompositeValue) (string, error) {
+	items := make(map[string]midmir.Value, len(comp.Items))
+	for _, item := range comp.Items {
+		items[item.Name] = item.Value
+	}
+	ptrTok, ptrLit, err := qbeDataItem(state, &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}, items["ptr"])
+	if err != nil {
+		return "", err
+	}
+	lenTok, lenLit, err := qbeDataItem(state, &typeinfo.BuiltinType{Name: "usize"}, items["len"])
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s %s, %s %s", ptrTok, ptrLit, lenTok, lenLit), nil
+}
+
 func qbeDataItem(state *moduleState, typ typeinfo.Type, value midmir.Value) (string, string, error) {
 	switch v := value.(type) {
 	case *midmir.NumberValue:
@@ -988,6 +1279,7 @@ func prepareFunctionState(state *moduleState, fn *midmir.Function) error {
 	state.aggLocals = make(map[int]*aggregateLocal)
 	state.aggParams = make(map[int]struct{})
 	state.nextTemp = 0
+	state.pendingLines = nil
 	for _, param := range fn.Params {
 		if param == nil {
 			continue
@@ -1052,6 +1344,24 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 		}
 		return qbeLocalName(localNameByID(state.fn, v.LocalID)), nil
 	case *midmir.NameValue:
+		if _, ok := v.Type().(*typeinfo.FuncType); ok {
+			if v.LinkName != "" {
+				return "$" + sanitizeIdent(v.LinkName), nil
+			}
+			return "$" + qbeSymbol(state, v.Path), nil
+		}
+		if !isAggregateType(state, v.Type()) {
+			op, qtype, err := qbeLoadOp(v.Type())
+			if err == nil && qtype != "" {
+				tmp := freshTemp(state, "ld")
+				sym := "$" + qbeSymbol(state, v.Path)
+				if v.LinkName != "" {
+					sym = "$" + sanitizeIdent(v.LinkName)
+				}
+				state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, sym))
+				return tmp, nil
+			}
+		}
 		if v.LinkName != "" {
 			return "$" + sanitizeIdent(v.LinkName), nil
 		}
@@ -1159,6 +1469,9 @@ func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 	if v == nil || v.Left == nil {
 		return "", fmt.Errorf("invalid cast")
 	}
+	if isAggregateType(state, v.Left.Type()) && isAggregateType(state, v.Type()) {
+		return lowerValue(state, v.Left)
+	}
 	srcVal, err := lowerValue(state, v.Left)
 	if err != nil {
 		return "", err
@@ -1264,6 +1577,8 @@ func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, er
 		}
 		stride := alignUpInt64(elemSize, elemAlign)
 		return stride * t.Len, elemAlign, nil
+	case *typeinfo.StringType:
+		return 16, 8, nil
 	case *typeinfo.SliceType:
 		// str / []T: { ptr *T, len usize } — 16 bytes, 8-byte aligned.
 		return 16, 8, nil
@@ -1406,6 +1721,8 @@ func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
 		if info, err := lookupNamedLayout(state, t); err == nil && info != nil && info.Struct != nil && info.Known {
 			return ":" + qbeTypeName(state, t), nil
 		}
+	case *typeinfo.StringType:
+		return ":__ferret_slice", nil
 	case *typeinfo.SliceType:
 		_ = t
 		return ":__ferret_slice", nil

@@ -134,7 +134,7 @@ func shouldWarnOnUnusedModuleSymbol(mod *context.Module, sym *symbols.Symbol) bo
 	if sym.Name == "_" {
 		return false
 	}
-	if sym.Kind == symbols.SymbolFunc && sym.Name == "main" && mod.ImportPath == "main" {
+	if sym.Kind == symbols.SymbolFunc && sym.Name == "main" && mod.IsEntry {
 		return false
 	}
 	switch node := sym.Node.(type) {
@@ -198,7 +198,10 @@ func (a *analyzer) shouldWarnInsideFunction(fn *ast.FuncDecl) bool {
 	if sym.Exported {
 		return true
 	}
-	if sym.Kind == symbols.SymbolFunc && sym.Name == "main" && a.mod.ImportPath == "main" {
+	if sym.Kind == symbols.SymbolFunc && sym.Name == "main" && a.mod.IsEntry {
+		return true
+	}
+	if fn.IsConstructor || fn.IsDestructor {
 		return true
 	}
 	return a.usedSymbols[sym] > 0

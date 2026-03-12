@@ -21,6 +21,7 @@ import (
 	"compiler/internal/semantics/ownership"
 	"compiler/internal/semantics/resolver"
 	"compiler/internal/semantics/typechecker"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/semantics/usage"
 	"compiler/internal/source"
 )
@@ -49,6 +50,9 @@ func (p *Pipeline) ParseEntry(entryFile string) (*context.Module, error) {
 	}
 	p.scheduleParseFile(resolved, nil)
 	p.wg.Wait()
+	if mod, ok := p.ctx.GetModule(resolved.Key); ok && mod != nil {
+		mod.IsEntry = true
+	}
 	if err := p.runAllSemanticPasses(); err != nil {
 		return nil, err
 	}
@@ -167,7 +171,7 @@ func (p *Pipeline) runAllSemanticPasses() error {
 func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	resolver.ResolveModule(p.ctx, mod)
 	typechecker.CheckModule(p.ctx, mod)
-	mod.HIR = hir.Generate(mod.Key, mod.ImportPath, mod.FilePath, mod.AST, mod.Types)
+	mod.HIR = hir.Generate(mod.Key, mod.ImportPath, mod.FilePath, mod.AST, mod.Types, mod.Bindings, p.lookupMethodPath(mod.ImportPath))
 	mod.Phase = phase.PhaseHIRGenerated
 	mod.LoweredHIR = hir.Lower(mod.HIR)
 	mod.Phase = phase.PhaseHIRLowered
@@ -180,6 +184,63 @@ func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	mod.Phase = phase.PhaseConstEvaluated
 	ownership.AnalyzeModule(p.ctx, mod)
 	mod.Phase = phase.PhaseOwnershipAnalyzed
+}
+
+func (p *Pipeline) lookupMethodPath(currentImportPath string) hir.MethodLookup {
+	return func(receiver typeinfo.Type, methodName string) ([]string, bool) {
+		if p == nil || p.ctx == nil || methodName == "" {
+			return nil, false
+		}
+		named, ok := pipelineBaseNamed(receiver)
+		if !ok || named == nil {
+			return nil, false
+		}
+		owner, ok := p.ctx.GetModule(named.ModuleKey)
+		if !ok || owner == nil || owner.MethodSets == nil {
+			return nil, false
+		}
+		for _, key := range pipelineMethodCandidateKeys(named.Name, methodName) {
+			methods := owner.MethodSets[key]
+			if methods == nil {
+				continue
+			}
+			sym := methods[methodName]
+			if sym == nil {
+				continue
+			}
+			if owner.ImportPath == "" || owner.ImportPath == currentImportPath {
+				return []string{sym.Name}, true
+			}
+			parts := strings.Split(owner.ImportPath, "/")
+			return append(parts, sym.Name), true
+		}
+		return nil, false
+	}
+}
+
+func pipelineBaseNamed(typ typeinfo.Type) (*typeinfo.NamedType, bool) {
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		return t, true
+	case *typeinfo.PointerType:
+		named, ok := t.Inner.(*typeinfo.NamedType)
+		return named, ok
+	default:
+		return nil, false
+	}
+}
+
+func pipelineMethodCandidateKeys(baseName, methodName string) []string {
+	if baseName == "" || methodName == "" {
+		return nil
+	}
+	if methodName == "~"+baseName {
+		return []string{"*own " + baseName}
+	}
+	if methodName == baseName {
+		return []string{"*mut " + baseName}
+	}
+	return []string{baseName, "*" + baseName, "*mut " + baseName, "*own " + baseName}
 }
 
 func (p *Pipeline) finalizeFinalPasses() {

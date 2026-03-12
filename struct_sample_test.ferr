@@ -1,0 +1,28 @@
+import "std/io"
+
+type Point struct {
+    X i32 = 1
+    Y i32 = 2
+    static Counter i32 = 0
+}
+
+fn (_ *mut Point) Point() {
+    io::Println("ctor")
+    Point::Counter = Point::Counter + 1
+}
+
+fn (_ *own Point) ~Point() void {
+    io::Println("dtor")
+}
+
+fn main() i32 {
+    let mut p: Point = .{}
+    print(p.X)
+    print(p.Y)
+    print(Point::Counter)
+    let p2: Point = .{}
+    print(p2.X)
+    print(p2.Y)
+    print(Point::Counter)
+    return p.X + p.Y + Point::Counter
+}

@@ -37,13 +37,21 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 			collectTypeMembers(ctx, typeMembers, d)
 		case *ast.FuncDecl:
 			if d.Receiver == nil {
-				sym := symbols.New(d.Name.Text(), symbols.SymbolFunc, d)
+				name := d.Name.Text()
+				if d.IsDestructor {
+					name = "~" + name
+				}
+				sym := symbols.New(name, symbols.SymbolFunc, d)
 				sym.Location = d.Name.Loc()
 				declare(ctx, scope, sym)
 				continue
 			}
 			recvName := receiverTypeName(d.Receiver.Type)
-			sym := symbols.New(d.Name.Text(), symbols.SymbolMethod, d)
+			name := d.Name.Text()
+			if d.IsDestructor {
+				name = "~" + name
+			}
+			sym := symbols.New(name, symbols.SymbolMethod, d)
 			sym.Location = d.Name.Loc()
 			sym.ReceiverType = recvName
 			declareMethod(ctx, methodSets, recvName, sym)
@@ -75,6 +83,7 @@ func collectTypeMembers(ctx *context.CompilerContext, typeMembers map[string]map
 			}
 			sym := symbols.New(field.Name.Text(), symbols.SymbolStatic, field)
 			sym.Location = field.Name.Loc()
+			sym.OwnerType = typeName
 			declareTypeMember(ctx, typeName, members, sym)
 		}
 	case *ast.EnumType:
@@ -84,6 +93,7 @@ func collectTypeMembers(ctx *context.CompilerContext, typeMembers map[string]map
 			}
 			sym := symbols.New(variant.Name.Text(), symbols.SymbolVariant, variant)
 			sym.Location = variant.Name.Loc()
+			sym.OwnerType = typeName
 			declareTypeMember(ctx, typeName, members, sym)
 		}
 	case *ast.ErrorType:
@@ -93,6 +103,7 @@ func collectTypeMembers(ctx *context.CompilerContext, typeMembers map[string]map
 			}
 			sym := symbols.New(member.Name.Text(), symbols.SymbolError, member)
 			sym.Location = member.Name.Loc()
+			sym.OwnerType = typeName
 			declareTypeMember(ctx, typeName, members, sym)
 		}
 	}

@@ -250,9 +250,10 @@ func (*PostfixValue) valueNode() {}
 
 type CallValue struct {
 	baseValue
-	Callee       Value
-	Args         []Value
-	ReceiverType typeinfo.Type // non-nil when this is a normalized method call; Args[0] is the receiver
+	Callee        Value
+	Args          []Value
+	ReceiverType  typeinfo.Type // non-nil when this is a normalized method call; Args[0] is the receiver
+	IsConstructor bool
 }
 
 func (*CallValue) valueNode() {}
@@ -288,7 +289,8 @@ type CompositeItem struct {
 
 type CompositeValue struct {
 	baseValue
-	Items []CompositeItem
+	Items           []CompositeItem
+	ConstructorPath []string
 }
 
 func (*CompositeValue) valueNode() {}

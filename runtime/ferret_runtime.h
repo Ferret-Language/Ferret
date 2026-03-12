@@ -89,23 +89,59 @@ void ferret__interface_panic(const ferret_i8 *expected_iface, const ferret_i8 *g
 FerretStr global__recover(void);
 
 /* -------------------------------------------------------------------------
+ * Temporary generic print helpers.
+ *
+ * Compiler-emitted `print(x)` calls lower to one of these concrete helpers
+ * based on the static type of `x`.
+ * -------------------------------------------------------------------------*/
+
+void global__print_str(const FerretStr *s);
+void global__print_bool(ferret_bool value);
+void global__print_i64(ferret_i64 value);
+void global__print_u64(ferret_u64 value);
+void global__print_f64(ferret_f64 value);
+void global__print_char(ferret_char value);
+void global__print_ptr(ferret_raw value);
+void global__print_type(const ferret_i8 *type_name);
+
+/* -------------------------------------------------------------------------
  * str_data / str_len  — extract fields from a str fat-pointer.
  *
- * These back the #[builtin] fn str_data(s *str) *raw void
+ * These back the #[builtin] fn str_data(s *str) *raw
  * and #[builtin] fn str_len(s *str) usize declarations in global.ferr.
  *
  * Using them via a function call is safe; the caller keeps the str alive
  * for the duration of any use of the returned pointer.
  * -------------------------------------------------------------------------*/
 
-/* global__str_data — returns the data pointer of a str as void*.
+/* global__str_data — returns the data pointer of a str as *raw.
  * Suitable for passing directly to POSIX write/read/memcpy etc.
  * Takes a reference (*str) so the fat-pointer is not copied. */
-const void *global__str_data(const FerretStr *s);
+ferret_raw global__str_data(const FerretStr *s);
 
 /* global__str_len — returns the byte-length field of a str value.
  * Takes a reference (*str) so the fat-pointer is not copied. */
 ferret_usize global__str_len(const FerretStr *s);
+
+/* -------------------------------------------------------------------------
+ * Explicit string conversion helpers.
+ *
+ * These provide the runtime side of dedicated string conversions:
+ *   str      -> []u8    (copies raw UTF-8 bytes)
+ *   []u8     -> str     (copies raw UTF-8 bytes)
+ *   str      -> []char  (UTF-8 decode)
+ *   []char   -> str     (UTF-8 encode)
+ *   str      -> *raw    (allocates a null-terminated C string)
+ *
+ * Returned buffers are heap allocated with libc malloc() so callers may free
+ * them with the ordinary `free` extern when appropriate.
+ * -------------------------------------------------------------------------*/
+
+FerretSliceU8 global__str_bytes(const FerretStr *s);
+FerretStr global__bytes_str(const FerretSliceU8 *bytes);
+FerretSliceChar global__str_chars(const FerretStr *s);
+FerretStr global__chars_str(const FerretSliceChar *chars);
+ferret_raw global__str_cstr(const FerretStr *s);
 
 #ifdef __cplusplus
 }

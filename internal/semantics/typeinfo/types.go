@@ -34,6 +34,10 @@ type BuiltinType struct {
 
 func (t *BuiltinType) String() string { return t.Name }
 
+type StringType struct{}
+
+func (*StringType) String() string { return "str" }
+
 type NamedType struct {
 	ModuleKey string
 	Name      string
@@ -71,6 +75,9 @@ func (t *PointerType) String() string {
 	}
 	if t.IsMut {
 		suffix += "mut "
+	}
+	if t.IsRaw && t.Inner == nil {
+		return strings.TrimSpace(prefix + suffix)
 	}
 	return prefix + suffix + typeString(t.Inner)
 }
@@ -218,6 +225,10 @@ func IsUnknown(t Type) bool {
 }
 
 func IsBuiltinNamed(t Type, name string) bool {
+	if name == "str" {
+		_, ok := t.(*StringType)
+		return ok
+	}
 	b, ok := t.(*BuiltinType)
 	return ok && b.Name == name
 }
@@ -248,6 +259,9 @@ func Equal(a, b Type) bool {
 	case *BuiltinType:
 		bt, ok := b.(*BuiltinType)
 		return ok && at.Name == bt.Name
+	case *StringType:
+		_, ok := b.(*StringType)
+		return ok
 	case *NamedType:
 		bt, ok := b.(*NamedType)
 		return ok && at.ModuleKey == bt.ModuleKey && at.Name == bt.Name

@@ -231,15 +231,20 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 	case *hir.ExprStmt:
 		return &EvalInstr{baseInstr: baseInstr{Location: s.Loc()}, Value: lowerValue(lowerCtx, s.Value)}
 	case *hir.AssignStmt:
+		if target := lowerAssignableTarget(lowerCtx, s.Left); target != nil {
+			return &StoreInstr{baseInstr: baseInstr{Location: s.Loc()}, Target: target, Value: lowerValue(lowerCtx, s.Right)}
+		}
 		if ident, ok := s.Left.(*hir.Ident); ok && len(ident.Path) == 1 {
 			return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: lowerCtx.lookupLocalID(ident.Path[0]), Value: lowerValue(lowerCtx, s.Right)}
 		}
 		if sel, ok := s.Left.(*hir.SelectorExpr); ok {
-			return &StoreFieldInstr{
-				baseInstr:  baseInstr{Location: s.Loc()},
-				Base:       lowerValue(lowerCtx, sel.Left),
-				FieldIndex: lowerCtx.fieldIndex(sel.Left.Type(), sel.Name),
-				Value:      lowerValue(lowerCtx, s.Right),
+			if fieldIndex := lowerCtx.fieldIndex(sel.Left.Type(), sel.Name); fieldIndex >= 0 {
+				return &StoreFieldInstr{
+					baseInstr:  baseInstr{Location: s.Loc()},
+					Base:       lowerValue(lowerCtx, sel.Left),
+					FieldIndex: fieldIndex,
+					Value:      lowerValue(lowerCtx, s.Right),
+				}
 			}
 		}
 		return &StoreInstr{baseInstr: baseInstr{Location: s.Loc()}, Target: lowerPlace(lowerCtx, s.Left), Value: lowerValue(lowerCtx, s.Right)}
@@ -252,6 +257,22 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 	default:
 		return nil
 	}
+}
+
+func lowerAssignableTarget(lowerCtx *lowerContext, expr hir.Expr) Place {
+	if expr == nil {
+		return nil
+	}
+	if resolved := lowerResolvedName(lowerCtx, expr.SourceExpr(), expr.Loc(), expr.Type()); resolved != nil {
+		return &DerefPlace{
+			basePlace: basePlace{Location: expr.Loc()},
+			Pointer: &AddrOfValue{
+				baseValue: baseValue{Location: expr.Loc(), ExprType: &typeinfo.PointerType{Inner: expr.Type()}},
+				Source:    resolved,
+			},
+		}
+	}
+	return nil
 }
 
 func lowerDeferredBody(lowerCtx *lowerContext, stmt hir.Stmt) []Instr {
@@ -332,7 +353,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.NumberLit:
 		return &NumberValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: e.Value}
 	case *hir.StringLit:
-		if _, isSlice := e.Type().(*typeinfo.SliceType); isSlice {
+		if _, isString := e.Type().(*typeinfo.StringType); isString {
 			// String literal as str: produce a { ptr, len } composite.
 			ptrType := &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
 			ptrVal := &StringValue{baseValue: baseValue{Location: e.Loc(), ExprType: ptrType}, Value: e.Value}
@@ -406,6 +427,16 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 			out.Args = append(out.Args, lowerValue(lowerCtx, arg))
 		}
 		return out
+	case *hir.ConstructorCallExpr:
+		callee := &NameValue{
+			baseValue: baseValue{Location: e.Loc(), ExprType: &typeinfo.FuncType{Result: &typeinfo.BuiltinType{Name: "void"}}},
+			Path:      append([]string(nil), e.Path...),
+		}
+		out := &CallValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Callee: callee, Args: make([]Value, 0, len(e.Args)), IsConstructor: true}
+		for _, arg := range e.Args {
+			out.Args = append(out.Args, lowerValue(lowerCtx, arg))
+		}
+		return out
 	case *hir.SelectorExpr:
 		if resolved := lowerResolvedName(lowerCtx, e.SourceExpr(), e.Loc(), e.Type()); resolved != nil {
 			return resolved
@@ -422,7 +453,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		index := lowerValue(lowerCtx, e.Index)
 		return &IndexValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Base: base, Index: index}
 	case *hir.CompositeLit:
-		out := &CompositeValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Items: make([]CompositeItem, 0, len(e.Items))}
+		out := &CompositeValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Items: make([]CompositeItem, 0, len(e.Items)), ConstructorPath: append([]string(nil), e.ConstructorPath...)}
 		for _, item := range e.Items {
 			out.Items = append(out.Items, CompositeItem{Name: item.Name, Value: lowerValue(lowerCtx, item.Value)})
 		}
@@ -511,6 +542,9 @@ func collectLocals(fn *hir.Func) ([]*Local, map[string]int, map[string]hir.Expr)
 }
 
 func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
+	if target := lowerAssignableTarget(lowerCtx, expr); target != nil {
+		return target
+	}
 	switch e := expr.(type) {
 	case nil:
 		return nil
@@ -647,11 +681,15 @@ func canonicalResolvedPath(c *lowerContext, resolution *binding.Resolution) []st
 	if resolution == nil || resolution.Symbol == nil {
 		return nil
 	}
+	name := resolution.Symbol.Name
+	if resolution.Symbol.Kind == symbols.SymbolStatic && resolution.Symbol.OwnerType != "" {
+		name = resolution.Symbol.OwnerType + "__" + name
+	}
 	if resolution.ImportPath == "" || resolution.ImportPath == c.importPath {
-		return []string{resolution.Symbol.Name}
+		return []string{name}
 	}
 	parts := strings.Split(resolution.ImportPath, "/")
-	parts = append(parts, resolution.Symbol.Name)
+	parts = append(parts, name)
 	return parts
 }
 

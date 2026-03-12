@@ -194,6 +194,14 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 	// the symbol to the correct C library function at link time.
 	seenExterns := make(map[string]struct{})
 	var declLines []string
+	for _, decl := range implicitExternDecls() {
+		sym := implicitExternSymbol(decl)
+		if sym == "" {
+			continue
+		}
+		seenExterns[sym] = struct{}{}
+		declLines = append(declLines, decl)
+	}
 	for _, unit := range units {
 		if unit == nil || unit.Module == nil {
 			continue
@@ -235,8 +243,21 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 		"declare void @ferret__interface_panic(ptr, ptr)",
 		"declare void @global__panic(ptr)",
 		"declare { ptr, i64 } @global__recover()",
+		"declare void @global__print_str(ptr)",
+		"declare void @global__print_bool(i8)",
+		"declare void @global__print_i64(i64)",
+		"declare void @global__print_u64(i64)",
+		"declare void @global__print_f64(double)",
+		"declare void @global__print_char(i32)",
+		"declare void @global__print_ptr(ptr)",
+		"declare void @global__print_type(ptr)",
 		"declare ptr @global__str_data(ptr)",
 		"declare i64 @global__str_len(ptr)",
+		"declare { ptr, i64 } @global__str_bytes(ptr)",
+		"declare { ptr, i64 } @global__bytes_str(ptr)",
+		"declare { ptr, i64 } @global__str_chars(ptr)",
+		"declare { ptr, i64 } @global__chars_str(ptr)",
+		"declare ptr @global__str_cstr(ptr)",
 	}, declLines...)
 
 	// Pass 2: lower globals and functions for every unit, now with debug info.
@@ -311,6 +332,33 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 	}
 
 	return b.String(), nil
+}
+
+func implicitExternDecls() []string {
+	return []string{
+		"declare ptr @malloc(i64)",
+		"declare void @free(ptr)",
+		"declare ptr @realloc(ptr, i64)",
+		"declare ptr @calloc(i64, i64)",
+		"declare ptr @memcpy(ptr, ptr, i64)",
+		"declare ptr @memmove(ptr, ptr, i64)",
+		"declare ptr @memset(ptr, i32, i64)",
+		"declare i32 @memcmp(ptr, ptr, i64)",
+		"declare void @exit(i32)",
+	}
+}
+
+func implicitExternSymbol(decl string) string {
+	start := strings.IndexByte(decl, '@')
+	if start < 0 {
+		return ""
+	}
+	start++
+	end := strings.IndexByte(decl[start:], '(')
+	if end < 0 {
+		return ""
+	}
+	return decl[start : start+end]
 }
 
 // llvmExternDecl builds a "declare" line for an extern function.
@@ -407,7 +455,34 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 	b.WriteString("declare void @global__panic(ptr)\n")
 	b.WriteString("declare { ptr, i64 } @global__recover()\n")
 	b.WriteString("declare ptr @global__str_data(ptr)\n")
-	b.WriteString("declare i64 @global__str_len(ptr)\n\n")
+	b.WriteString("declare i64 @global__str_len(ptr)\n")
+	b.WriteString("declare { ptr, i64 } @global__str_bytes(ptr)\n")
+	b.WriteString("declare { ptr, i64 } @global__bytes_str(ptr)\n")
+	b.WriteString("declare { ptr, i64 } @global__str_chars(ptr)\n")
+	b.WriteString("declare { ptr, i64 } @global__chars_str(ptr)\n")
+	b.WriteString("declare ptr @global__str_cstr(ptr)\n")
+	for _, decl := range implicitExternDecls() {
+		b.WriteString(decl)
+		b.WriteByte('\n')
+	}
+	seenExterns := make(map[string]struct{})
+	for _, fn := range unit.Module.Functions {
+		if fn == nil || !fn.IsExtern || fn.ExternName == "" {
+			continue
+		}
+		sym := sanitizeIdent(fn.ExternName)
+		if _, ok := seenExterns[sym]; ok {
+			continue
+		}
+		decl, err := llvmExternDecl(state, fn)
+		if err != nil {
+			return nil, err
+		}
+		seenExterns[sym] = struct{}{}
+		b.WriteString(decl)
+		b.WriteByte('\n')
+	}
+	b.WriteByte('\n')
 
 	if err := emitTypes(&b, state, unit.Module.Types); err != nil {
 		return nil, err
@@ -745,6 +820,11 @@ func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
 			return lowerCall(state, "", nil, call)
 		}
 		return "", nil
+	case *midmir.DeferInstr:
+		// Defers are compile-time cleanup markers. CFG cleanup edges already
+		// materialize their bodies in dedicated cleanup blocks, so there is no
+		// direct runtime instruction to emit at the registration site.
+		return "", nil
 	case *midmir.UnsafeInstr:
 		// Unsafe marker: safety is enforced at type-check time; no code to emit.
 		return "", nil
@@ -1068,6 +1148,11 @@ func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, erro
 	if err != nil {
 		return "", err
 	}
+	if !llvmValueNeedsCopy(instr.Value) {
+		tmp := freshTemp(state, "store")
+		lines = append(lines, fmt.Sprintf("%s = %s", tmp, val))
+		val = tmp
+	}
 	lines = append(lines, fmt.Sprintf("store %s %s, ptr %s", irType, val, addr))
 	return strings.Join(lines, "\n"), nil
 }
@@ -1197,6 +1282,19 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if err != nil {
 		return "", err
 	}
+	if call.IsConstructor {
+		if targetName != "" {
+			if local := findLocalByName(state.fn, targetName); local != nil {
+				if agg, ok := state.aggLocals[local.ID]; ok {
+					return lowerConstructorCall(state, llvmLocalName(agg.PtrName), call, callee)
+				}
+			}
+		}
+		return lowerConstructorCallDiscard(state, targetType, call, callee)
+	}
+	if isBuiltinPrintCall(call) {
+		return lowerBuiltinPrintCall(state, call)
+	}
 
 	// Inline builtins: string_ptr and string_len have been removed.
 	// String literals are now *i8 — no special callee interception needed.
@@ -1265,6 +1363,147 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	return fmt.Sprintf("%s = %s", llvmLocalName(targetName), callText), nil
 }
 
+func isBuiltinPrintCall(call *midmir.CallValue) bool {
+	if call == nil {
+		return false
+	}
+	callee, ok := call.Callee.(*midmir.NameValue)
+	return ok && callee != nil && callee.LinkName == "global__print"
+}
+
+func lowerBuiltinPrintCall(state *moduleState, call *midmir.CallValue) (string, error) {
+	if call == nil || len(call.Args) != 1 {
+		return "", fmt.Errorf("builtin print expects exactly one argument")
+	}
+	arg := call.Args[0]
+	if arg == nil {
+		return "", fmt.Errorf("builtin print argument is nil")
+	}
+	if _, ok := arg.Type().(*typeinfo.StringType); ok {
+		prefix, ptr, err := lowerAggregateValuePointer(state, arg)
+		if err != nil {
+			return "", err
+		}
+		return joinLLVMLines(prefix, []string{fmt.Sprintf("call void @global__print_str(ptr %s)", ptr)}), nil
+	}
+	if builtin, ok := arg.Type().(*typeinfo.BuiltinType); ok {
+		return lowerBuiltinPrintPrimitive(state, arg, builtin.Name)
+	}
+	if _, ok := arg.Type().(*typeinfo.PointerType); ok {
+		val, err := lowerValue(state, arg)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("call void @global__print_ptr(ptr %s)", val), nil
+	}
+	sym := emitStringConstant(state, arg.Type().String())
+	return fmt.Sprintf("call void @global__print_type(ptr @%s)", sym), nil
+}
+
+func lowerBuiltinPrintPrimitive(state *moduleState, arg midmir.Value, name string) (string, error) {
+	val, err := lowerValue(state, arg)
+	if err != nil {
+		return "", err
+	}
+	switch name {
+	case "bool":
+		return fmt.Sprintf("call void @global__print_bool(i8 %s)", val), nil
+	case "i8", "i16", "i32", "i64", "isize":
+		return lowerBuiltinPrintIntCast(state, val, name, "i64", "@global__print_i64")
+	case "u8", "u16", "u32", "u64", "usize":
+		return lowerBuiltinPrintIntCast(state, val, name, "u64", "@global__print_u64")
+	case "f32", "f64":
+		return lowerBuiltinPrintFloatCast(state, val, name)
+	case "char":
+		return fmt.Sprintf("call void @global__print_char(i32 %s)", val), nil
+	default:
+		sym := emitStringConstant(state, arg.Type().String())
+		return fmt.Sprintf("call void @global__print_type(ptr @%s)", sym), nil
+	}
+}
+
+func lowerBuiltinPrintIntCast(state *moduleState, value, srcName, dstName, callee string) (string, error) {
+	if srcName == dstName {
+		return fmt.Sprintf("call void %s(i64 %s)", callee, value), nil
+	}
+	castExpr, ok := llvmIntCastOp(state, srcName, dstName, value)
+	if !ok {
+		return "", fmt.Errorf("unsupported print integer cast from %s to %s", srcName, dstName)
+	}
+	tmp := freshTemp(state, "print")
+	return joinLLVMLines([]string{
+		fmt.Sprintf("%s = %s", tmp, castExpr),
+		fmt.Sprintf("call void %s(i64 %s)", callee, tmp),
+	}), nil
+}
+
+func lowerBuiltinPrintFloatCast(state *moduleState, value, srcName string) (string, error) {
+	if srcName == "f64" {
+		return fmt.Sprintf("call void @global__print_f64(double %s)", value), nil
+	}
+	castExpr, ok := llvmFloatCastOp(srcName, "f64", value)
+	if !ok {
+		return "", fmt.Errorf("unsupported print float cast from %s to f64", srcName)
+	}
+	tmp := freshTemp(state, "print")
+	return joinLLVMLines([]string{
+		fmt.Sprintf("%s = %s", tmp, castExpr),
+		fmt.Sprintf("call void @global__print_f64(double %s)", tmp),
+	}), nil
+}
+
+func lowerAggregateValuePointer(state *moduleState, value midmir.Value) ([]string, string, error) {
+	if value == nil {
+		return nil, "", fmt.Errorf("nil aggregate value")
+	}
+	switch v := value.(type) {
+	case *midmir.LocalValue:
+		if agg, ok := state.aggLocals[v.LocalID]; ok {
+			return nil, llvmLocalName(agg.PtrName), nil
+		}
+	case *midmir.NameValue:
+		if v.LinkName != "" {
+			return nil, "@" + sanitizeIdent(v.LinkName), nil
+		}
+		return nil, "@" + llvmSymbol(state, v.Path), nil
+	}
+	if !isAggregateType(state, value.Type()) {
+		return nil, "", fmt.Errorf("value %T is not aggregate", value)
+	}
+	typeName, err := llvmABITypeName(state, value.Type())
+	if err != nil {
+		return nil, "", err
+	}
+	_, align, err := aggregateSizeAlign(state, value.Type())
+	if err != nil {
+		return nil, "", err
+	}
+	tmp := freshTemp(state, "print_agg")
+	agg := &aggregateLocal{PtrName: strings.TrimPrefix(tmp, "%"), Type: value.Type(), Align: align}
+	assign, err := lowerAggregateAssign(state, agg, value)
+	if err != nil {
+		return nil, "", err
+	}
+	lines := []string{fmt.Sprintf("%s = alloca %s, align %d", tmp, typeName, align)}
+	if assign != "" {
+		lines = append(lines, strings.Split(assign, "\n")...)
+	}
+	return lines, tmp, nil
+}
+
+func joinLLVMLines(lines ...[]string) string {
+	flat := make([]string, 0)
+	for _, group := range lines {
+		for _, line := range group {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			flat = append(flat, line)
+		}
+	}
+	return strings.Join(flat, "\n")
+}
+
 func lowerAggregateCall(state *moduleState, agg *aggregateLocal, callee, argsStr string) (string, error) {
 	typeName, err := llvmABITypeName(state, agg.Type)
 	if err != nil {
@@ -1276,6 +1515,66 @@ func lowerAggregateCall(state *moduleState, agg *aggregateLocal, callee, argsStr
 		fmt.Sprintf("store %s %s, ptr %s", typeName, tmp, llvmLocalName(agg.PtrName)),
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+func lowerConstructorCall(state *moduleState, dstPtr string, call *midmir.CallValue, callee string) (string, error) {
+	args := make([]string, 0, len(call.Args)+1)
+	args = append(args, fmt.Sprintf("ptr %s", dstPtr))
+	for _, arg := range call.Args {
+		if isAggregateType(state, arg.Type()) {
+			typeName, err := llvmABITypeName(state, arg.Type())
+			if err != nil {
+				return "", err
+			}
+			_, align, err := aggregateSizeAlign(state, arg.Type())
+			if err != nil {
+				return "", err
+			}
+			aval, err := lowerValue(state, arg)
+			if err != nil {
+				return "", err
+			}
+			args = append(args, fmt.Sprintf("ptr byval(%s) align %d %s", typeName, align, aval))
+		} else {
+			atype, err := llvmBaseType(arg.Type())
+			if err != nil {
+				return "", err
+			}
+			aval, err := lowerValue(state, arg)
+			if err != nil {
+				return "", err
+			}
+			args = append(args, fmt.Sprintf("%s %s", atype, aval))
+		}
+	}
+	return fmt.Sprintf("call void @%s(%s)", callee, strings.Join(args, ", ")), nil
+}
+
+func lowerImplicitConstructorCall(state *moduleState, dstPtr string, path []string) (string, error) {
+	if len(path) == 0 {
+		return "", nil
+	}
+	return fmt.Sprintf("call void @%s(ptr %s)", llvmSymbol(state, path), dstPtr), nil
+}
+
+func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, call *midmir.CallValue, callee string) (string, error) {
+	if targetType == nil || !isAggregateType(state, targetType) {
+		return "", fmt.Errorf("constructor call requires aggregate target")
+	}
+	typeName, err := llvmABITypeName(state, targetType)
+	if err != nil {
+		return "", err
+	}
+	_, align, err := aggregateSizeAlign(state, targetType)
+	if err != nil {
+		return "", err
+	}
+	tmp := freshTemp(state, "ctor_tmp")
+	callText, err := lowerConstructorCall(state, tmp, call, callee)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s = alloca %s, align %d\n%s", tmp, typeName, align, callText), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1291,6 +1590,8 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerAggregateAssign(state, agg, v.Right)
 		}
+	case *midmir.CastValue:
+		return lowerAggregateAssign(state, agg, v.Left)
 	case *midmir.CallValue:
 		return lowerAggregateCallValue(state, agg, v)
 	case *midmir.LocalValue, *midmir.NameValue:
@@ -1324,6 +1625,9 @@ func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *midm
 	callee, err := lowerCallee(state, call.Callee)
 	if err != nil {
 		return "", err
+	}
+	if call.IsConstructor {
+		return lowerConstructorCall(state, llvmLocalName(agg.PtrName), call, callee)
 	}
 	args := make([]string, 0, len(call.Args))
 	for _, arg := range call.Args {
@@ -1401,8 +1705,30 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		return strings.Join(lines, "\n"), nil
 	}
 
-	// Slice literal: items "ptr" and "len" stored at byte offsets 0 and 8.
+	// String / slice literal: items "ptr" and "len" stored at byte offsets 0 and 8.
 	if _, ok := agg.Type.(*typeinfo.SliceType); ok {
+		items := make(map[string]midmir.Value, len(comp.Items))
+		for _, item := range comp.Items {
+			items[item.Name] = item.Value
+		}
+		ptrLowered, err := lowerValue(state, items["ptr"])
+		if err != nil {
+			return "", err
+		}
+		lenLowered, err := lowerValue(state, items["len"])
+		if err != nil {
+			return "", err
+		}
+		base := llvmLocalName(agg.PtrName)
+		lenAddr := freshTemp(state, "len_addr")
+		lines := []string{
+			fmt.Sprintf("store ptr %s, ptr %s", ptrLowered, base),
+			fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", lenAddr, base),
+			fmt.Sprintf("store i64 %s, ptr %s", lenLowered, lenAddr),
+		}
+		return strings.Join(lines, "\n"), nil
+	}
+	if _, ok := agg.Type.(*typeinfo.StringType); ok {
 		items := make(map[string]midmir.Value, len(comp.Items))
 		for _, item := range comp.Items {
 			items[item.Name] = item.Value
@@ -1458,6 +1784,15 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		}
 		lines = append(lines, fmt.Sprintf("store %s %s, ptr %s", irType, lowered, addr))
 	}
+	if len(comp.ConstructorPath) > 0 {
+		ctor, err := lowerImplicitConstructorCall(state, llvmLocalName(agg.PtrName), comp.ConstructorPath)
+		if err != nil {
+			return "", err
+		}
+		if ctor != "" {
+			lines = append(lines, ctor)
+		}
+	}
 	return strings.Join(lines, "\n"), nil
 }
 
@@ -1510,10 +1845,31 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 			llvmBlockLabel(state.fn, t.FalseID)), nil
 	case *midmir.ReturnTerm:
 		if t.CleanupID >= 0 {
-			return "", fmt.Errorf("return with cleanup is not supported by llvm lowerer yet")
+			return fmt.Sprintf("br label %%%s", llvmBlockLabel(state.fn, t.CleanupID)), nil
 		}
 		if t.Value == nil {
 			return "ret void", nil
+		}
+		if call, ok := t.Value.(*midmir.CallValue); ok && call.IsConstructor {
+			typeName, err := llvmABITypeName(state, call.Type())
+			if err != nil {
+				return "", err
+			}
+			_, align, err := aggregateSizeAlign(state, call.Type())
+			if err != nil {
+				return "", err
+			}
+			callee, err := lowerCallee(state, call.Callee)
+			if err != nil {
+				return "", err
+			}
+			tmpPtr := freshTemp(state, "ctor_ret")
+			callText, err := lowerConstructorCall(state, tmpPtr, call, callee)
+			if err != nil {
+				return "", err
+			}
+			tmpVal := freshTemp(state, "retval")
+			return fmt.Sprintf("%s = alloca %s, align %d\n%s\n%s = load %s, ptr %s\nret %s %s", tmpPtr, typeName, align, callText, tmpVal, typeName, tmpPtr, typeName, tmpVal), nil
 		}
 		// Aggregate return: load struct value then return by value.
 		if isAggregateType(state, t.Value.Type()) {
@@ -1541,6 +1897,9 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 		}
 		return fmt.Sprintf("ret %s %s", retIRType, val), nil
 	case *midmir.PanicTerm:
+		if t.CleanupID >= 0 {
+			return fmt.Sprintf("br label %%%s", llvmBlockLabel(state.fn, t.CleanupID)), nil
+		}
 		return lowerPanicTerm(state, t)
 	case *midmir.SwitchTerm:
 		return "", fmt.Errorf("match lowering is not implemented yet")
@@ -1605,6 +1964,24 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 		}
 		return llvmLocalName(localNameByID(state.fn, v.LocalID)), nil
 	case *midmir.NameValue:
+		if _, ok := v.Type().(*typeinfo.FuncType); ok {
+			if v.LinkName != "" {
+				return "@" + sanitizeIdent(v.LinkName), nil
+			}
+			return "@" + llvmSymbol(state, v.Path), nil
+		}
+		if !isAggregateType(state, v.Type()) {
+			irType, err := llvmBaseType(v.Type())
+			if err == nil && irType != "void" {
+				tmp := freshTemp(state, "ld")
+				sym := "@" + llvmSymbol(state, v.Path)
+				if v.LinkName != "" {
+					sym = "@" + sanitizeIdent(v.LinkName)
+				}
+				state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, sym))
+				return tmp, nil
+			}
+		}
 		if v.LinkName != "" {
 			return "@" + sanitizeIdent(v.LinkName), nil
 		}
@@ -1721,6 +2098,9 @@ func lowerBinary(state *moduleState, v *midmir.BinaryValue) (string, error) {
 func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 	if v == nil || v.Left == nil {
 		return "", fmt.Errorf("invalid cast")
+	}
+	if isAggregateType(state, v.Left.Type()) && isAggregateType(state, v.Type()) {
+		return lowerValue(state, v.Left)
 	}
 	srcVal, err := lowerValue(state, v.Left)
 	if err != nil {
@@ -1889,6 +2269,12 @@ func entryPrelude(state *moduleState) []string {
 // ---------------------------------------------------------------------------
 
 func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *midmir.CompositeValue) (string, error) {
+	if _, ok := typ.(*typeinfo.StringType); ok {
+		return lowerGlobalStringLike(state, comp)
+	}
+	if _, ok := typ.(*typeinfo.SliceType); ok {
+		return lowerGlobalStringLike(state, comp)
+	}
 	structLayout, err := lookupStructLayout(state, typ)
 	if err != nil {
 		return "", err
@@ -1930,6 +2316,22 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *midmir.Co
 		parts = append(parts, fmt.Sprintf("[%d x i8] zeroinitializer", pad))
 	}
 	return strings.Join(parts, ", "), nil
+}
+
+func lowerGlobalStringLike(state *moduleState, comp *midmir.CompositeValue) (string, error) {
+	items := make(map[string]midmir.Value, len(comp.Items))
+	for _, item := range comp.Items {
+		items[item.Name] = item.Value
+	}
+	ptrLit, err := lowerGlobalValue(state, &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}, items["ptr"])
+	if err != nil {
+		return "", err
+	}
+	lenLit, err := lowerGlobalValue(state, &typeinfo.BuiltinType{Name: "usize"}, items["len"])
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("{ ptr, i64 } { ptr %s, i64 %s }", ptrLit, lenLit), nil
 }
 
 func lowerGlobalValue(state *moduleState, typ typeinfo.Type, value midmir.Value) (string, error) {
@@ -2023,6 +2425,8 @@ func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, er
 		}
 		stride := alignUpInt64(elemSize, elemAlign)
 		return stride * t.Len, elemAlign, nil
+	case *typeinfo.StringType:
+		return 16, 8, nil
 	case *typeinfo.SliceType:
 		// str / []T: { ptr *T, len usize } — 16 bytes, 8-byte aligned.
 		return 16, 8, nil
@@ -2117,6 +2521,9 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 			return "%" + llvmTypeName(state, named), nil
 		}
 	}
+	if _, ok := typ.(*typeinfo.StringType); ok {
+		return "{ ptr, i64 }", nil
+	}
 	if _, ok := typ.(*typeinfo.SliceType); ok {
 		return "{ ptr, i64 }", nil
 	}
@@ -2133,6 +2540,9 @@ func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
 		if info, err := lookupNamedLayout(state, named); err == nil && info != nil && info.Struct != nil && info.Known {
 			return "%" + llvmTypeName(state, named), nil
 		}
+	}
+	if _, ok := typ.(*typeinfo.StringType); ok {
+		return "{ ptr, i64 }", nil
 	}
 	if _, ok := typ.(*typeinfo.SliceType); ok {
 		return "{ ptr, i64 }", nil

@@ -52,6 +52,7 @@ type Module struct {
 	Key          string
 	ImportPath   string
 	FilePath     string
+	IsEntry      bool
 	Origin       ModuleOrigin
 	Dependency   string
 	Content      string

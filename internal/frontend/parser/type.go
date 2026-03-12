@@ -26,6 +26,12 @@ func (p *Parser) parseType() ast.TypeExpr {
 				ptr.IsMut = true
 				p.advance()
 			default:
+				if ptr.IsRaw {
+					switch p.current().Kind {
+					case tokens.COMMA, tokens.RPAREN, tokens.SEMICOLON, tokens.EOF, tokens.RBRACE, tokens.RBRACK:
+						return ptr
+					}
+				}
 				ptr.Inner = p.parseType()
 				return ptr
 			}

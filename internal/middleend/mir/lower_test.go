@@ -274,6 +274,133 @@ fn run() i32 {
 	}
 }
 
+func TestPipelineLowersStaticFieldConstructorAndDestructorToMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+    Y i32 = 0
+    static Origin Point = .{}
+}
+
+fn (p *mut Point) Point() {
+	p.Y = p.Y + 1
+}
+
+fn (p *own Point) ~Point() void {
+    p.X = 0
+}
+
+fn main() i32 {
+	let p: Point = .{ .X = 3, .Y = 4 }
+    let q = Point::Origin
+    return p.X + q.X
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+
+	foundStaticGlobal := false
+	for _, global := range result.Entry.MIR.Globals {
+		if global != nil && global.Name == "Point__Origin" {
+			foundStaticGlobal = true
+			break
+		}
+	}
+	if !foundStaticGlobal {
+		t.Fatalf("expected synthesized static global Point__Origin, got %#v", result.Entry.MIR.Globals)
+	}
+
+	var mainFn *midmir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+
+	foundImplicitConstructor := false
+	foundDestructorDefer := false
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			switch ins := instr.(type) {
+			case *midmir.AssignInstr:
+				if comp, ok := ins.Value.(*midmir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
+					foundImplicitConstructor = true
+				}
+			case *midmir.ComputeInstr:
+				if comp, ok := ins.Value.(*midmir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
+					foundImplicitConstructor = true
+				}
+			case *midmir.EvalInstr:
+				if comp, ok := ins.Value.(*midmir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
+					foundImplicitConstructor = true
+				}
+			case *midmir.DeferInstr:
+				if deferContainsCallNamed(ins, "~Point") {
+					foundDestructorDefer = true
+				}
+			}
+		}
+	}
+	if !foundImplicitConstructor {
+		t.Fatal("expected implicit constructor metadata on lowered composite literal")
+	}
+	if !foundDestructorDefer {
+		t.Fatal("expected destructor defer in lowered MIR")
+	}
+}
+
+func hasConstructorPath(comp *midmir.CompositeValue, name string) bool {
+	if comp == nil || len(comp.ConstructorPath) == 0 {
+		return false
+	}
+	return comp.ConstructorPath[len(comp.ConstructorPath)-1] == name
+}
+
+func hasCallNamed(call *midmir.CallValue, name string) bool {
+	if call == nil {
+		return false
+	}
+	callee, ok := call.Callee.(*midmir.NameValue)
+	if !ok || len(callee.Path) == 0 {
+		return false
+	}
+	return callee.Path[len(callee.Path)-1] == name
+}
+
+func deferContainsCallNamed(instr *midmir.DeferInstr, name string) bool {
+	if instr == nil {
+		return false
+	}
+	for _, child := range instr.Body {
+		switch body := child.(type) {
+		case *midmir.EvalInstr:
+			if call, ok := body.Value.(*midmir.CallValue); ok && hasCallNamed(call, name) {
+				return true
+			}
+		case *midmir.ComputeInstr:
+			if call, ok := body.Value.(*midmir.CallValue); ok && hasCallNamed(call, name) {
+				return true
+			}
+		case *midmir.DeferInstr:
+			if deferContainsCallNamed(body, name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func mustWriteIR(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

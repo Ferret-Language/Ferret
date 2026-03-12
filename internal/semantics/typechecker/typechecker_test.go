@@ -161,6 +161,155 @@ fn main() i64 {
 	}
 }
 
+func TestTypecheckerRejectsConstructorParameters(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn (p *mut Point) Point(x i32) {
+    p.X = x
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid constructor diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrInvalidOperation, result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNonExactConstructorReceiver(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn (p *Point) Point() {
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid constructor receiver diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrInvalidOperation, result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsDestructorReceiverAndParameters(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn (p *mut Point) ~Point(x i32) i32 {
+    return x
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid destructor diagnostic")
+	}
+	count := 0
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation {
+			count++
+		}
+	}
+	if count < 2 {
+		t.Fatalf("expected multiple %s diagnostics, got %#v", diagnostics.ErrInvalidOperation, result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsExplicitConstructorCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn (p *mut Point) Point() {
+    p.X = 1
+}
+
+fn main() i32 {
+    let p = Point()
+    return p.X
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected explicit constructor call diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrNotCallable {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrNotCallable, result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsDirectConstructorMethodCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn (p *mut Point) Point() {
+    p.X = 1
+}
+
+fn main() i32 {
+    let mut p: Point = .{}
+    p.Point()
+    return p.X
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected direct constructor method call diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrNotCallable {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrNotCallable, result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerUsesBuiltInBoolConstants(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

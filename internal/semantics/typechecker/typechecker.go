@@ -214,6 +214,18 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 	if d == nil {
 		return
 	}
+	if (d.IsConstructor || d.IsDestructor) && d.Receiver == nil {
+		loc := d.Name.Loc()
+		kind := "constructor"
+		if d.IsDestructor {
+			kind = "destructor"
+		}
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("%ss must declare a receiver", kind)).
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, kind+"s are methods on their exact owning type"),
+		)
+	}
 	funcScope := newValueScope(nil)
 	if d.Receiver != nil {
 		recvType := c.typeFromSyntax(c.mod, d.Receiver.Type)
@@ -222,6 +234,12 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		}
 		funcScope.Declare(d.Receiver.Name.Text(), valueInfo{typ: recvType, mutable: true})
 		c.info.BindNode(d.Receiver, recvType)
+		if d.IsConstructor {
+			c.checkConstructorDecl(d, recvType)
+		}
+		if d.IsDestructor {
+			c.checkDestructorDecl(d, recvType)
+		}
 	}
 	for _, param := range d.Params {
 		paramType := c.typeFromSyntax(c.mod, param.Type)
@@ -449,8 +467,8 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.StringLit:
-		// String literals are str — a slice of u8 bytes.
-		typ := &typeinfo.SliceType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
+		// String literals have dedicated type `str`.
+		typ := &typeinfo.StringType{}
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.NoneLit:
@@ -575,6 +593,15 @@ func (c *checker) typeOfPrefix(scope *valueScope, expr *ast.PrefixExpr, expected
 						WithCode(diagnostics.ErrInvalidOperation).
 						WithPrimaryLabel(&loc, "wrap this dereference in `unsafe { ... }`"),
 				)
+			}
+			if ptr.Inner == nil {
+				loc := expr.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("cannot dereference untyped raw pointer").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(&loc, "cast this *raw pointer to a typed pointer first"),
+				)
+				return typeinfo.InvalidType{}
 			}
 			c.info.BindNode(expr, ptr.Inner)
 			return ptr.Inner
@@ -713,6 +740,10 @@ func (c *checker) typeOfPostfix(scope *valueScope, expr *ast.PostfixExpr) typein
 }
 
 func (c *checker) typeOfCall(scope *valueScope, expr *ast.CallExpr) typeinfo.Type {
+	if c.isBuiltinPrintCall(expr.Callee) {
+		return c.typeOfBuiltinPrint(scope, expr)
+	}
+
 	if selector, ok := expr.Callee.(*ast.SelectorExpr); ok {
 		if typ, handled := c.typeOfMethodCall(scope, expr, selector); handled {
 			return typ
@@ -744,6 +775,33 @@ func (c *checker) typeOfCall(scope *valueScope, expr *ast.CallExpr) typeinfo.Typ
 	c.typecheckCallArgs(scope, expr, fnType)
 	c.info.BindNode(expr, fnType.Result)
 	return fnType.Result
+}
+
+func (c *checker) typeOfBuiltinPrint(scope *valueScope, expr *ast.CallExpr) typeinfo.Type {
+	result := &typeinfo.BuiltinType{Name: "void"}
+	if expr == nil {
+		return result
+	}
+	if len(expr.Args) != 1 {
+		c.reportWrongArgCount(expr.Location, 1, len(expr.Args))
+	}
+	if len(expr.Args) > 0 {
+		_ = c.typeOfExpr(scope, expr.Args[0], nil)
+	}
+	c.info.BindNode(expr, result)
+	return result
+}
+
+func (c *checker) isBuiltinPrintCall(callee ast.Expr) bool {
+	res := c.lookupResolution(callee)
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+		return false
+	}
+	if res.Symbol.Name != "print" {
+		return false
+	}
+	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
+	return ok && fn != nil && fn.IsBuiltin
 }
 
 func (c *checker) typeOfCatch(scope *valueScope, expr *ast.CatchExpr) typeinfo.Type {
@@ -828,6 +886,26 @@ func (c *checker) typeOfMethodCall(scope *valueScope, call *ast.CallExpr, select
 		}
 		return nil, false
 	}
+	if decl, ok := sym.Node.(*ast.FuncDecl); ok && decl != nil {
+		if decl.IsConstructor {
+			loc := call.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("constructors are not directly callable").
+					WithCode(diagnostics.ErrNotCallable).
+					WithPrimaryLabel(&loc, "constructors run implicitly when creating a new instance"),
+			)
+			return typeinfo.InvalidType{}, true
+		}
+		if decl.IsDestructor {
+			loc := call.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("destructors are not directly callable").
+					WithCode(diagnostics.ErrNotCallable).
+					WithPrimaryLabel(&loc, "destructors are run automatically by the compiler"),
+			)
+			return typeinfo.InvalidType{}, true
+		}
+	}
 
 	// If the call-site has a plain value type but the method was found via a
 	// pointer-receiver key ("*T" or "*mut T"), record the pointer type on a
@@ -911,6 +989,10 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 		c.info.BindNode(expr, target)
 		return target
 	}
+	if c.isExplicitStringCast(target, sourceType) {
+		c.info.BindNode(expr, target)
+		return target
+	}
 	// Raw-pointer reinterpretation: *raw T → *raw S (including *raw void).
 	// Any cast where either side is a raw pointer requires an unsafe block.
 	srcUnderlying := c.underlying(sourceType)
@@ -953,6 +1035,15 @@ func (c *checker) typeOfIndex(scope *valueScope, expr *ast.IndexExpr) typeinfo.T
 	}
 	// Pointer indexing: *T[i] → T
 	if ptr, ok := base.(*typeinfo.PointerType); ok {
+		if ptr.Inner == nil {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot index into untyped raw pointer").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "cast this *raw pointer to a typed pointer first"),
+			)
+			return typeinfo.InvalidType{}
+		}
 		c.info.BindNode(expr, ptr.Inner)
 		return ptr.Inner
 	}
@@ -1170,6 +1261,141 @@ func (c *checker) funcResultType(mod *context.Module, fn *ast.FuncDecl) typeinfo
 	return c.typeFromSyntax(mod, fn.Result)
 }
 
+func (c *checker) checkConstructorDecl(fn *ast.FuncDecl, recvType typeinfo.Type) {
+	if c == nil || fn == nil {
+		return
+	}
+	if len(fn.Params) > 0 {
+		loc := fn.Name.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("constructors cannot declare parameters").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "new instances call the constructor implicitly with no arguments"),
+		)
+	}
+	if !c.isExactLifecycleReceiver(recvType, fn.Name.Text(), true) {
+		loc := fn.Receiver.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("constructor receiver must be exactly `*mut Type`").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "constructors initialize only their exact owning type in place"),
+		)
+	}
+	if result := c.funcResultType(c.mod, fn); !typeinfo.IsBuiltinNamed(result, "void") {
+		loc := fn.Name.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("constructors cannot return a value").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "the receiver is initialized in place"),
+		)
+	}
+}
+
+func (c *checker) checkDestructorDecl(fn *ast.FuncDecl, recvType typeinfo.Type) {
+	if c == nil || fn == nil {
+		return
+	}
+	if len(fn.Params) > 0 {
+		loc := fn.Name.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("destructors cannot declare parameters").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "destructors are invoked automatically with no arguments"),
+		)
+	}
+	if !c.isExactLifecycleReceiver(recvType, fn.Name.Text(), false) {
+		loc := fn.Receiver.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("destructor receiver must be exactly `*own Type`").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "destructors consume only their exact owning type"),
+		)
+	}
+	if result := c.funcResultType(c.mod, fn); !typeinfo.IsBuiltinNamed(result, "void") {
+		loc := fn.Name.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("destructors cannot return a value").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "destructors perform cleanup only"),
+		)
+	}
+}
+
+func (c *checker) isExactLifecycleReceiver(recvType typeinfo.Type, typeName string, constructor bool) bool {
+	ptr, ok := recvType.(*typeinfo.PointerType)
+	if !ok || ptr == nil || ptr.IsRaw {
+		return false
+	}
+	if constructor {
+		if !ptr.IsMut || ptr.IsOwn {
+			return false
+		}
+	} else {
+		if !ptr.IsOwn || ptr.IsMut {
+			return false
+		}
+	}
+	named, ok := ptr.Inner.(*typeinfo.NamedType)
+	if !ok || named == nil || named.Decl == nil {
+		return false
+	}
+	if named.Name != typeName {
+		return false
+	}
+	if c != nil && c.mod != nil && named.ModuleKey != "" && named.ModuleKey != c.mod.Key {
+		return false
+	}
+	return true
+}
+
+func (c *checker) lookupConstructorType(named *typeinfo.NamedType) *typeinfo.FuncType {
+	if c == nil || named == nil {
+		return nil
+	}
+	owner := c.findModuleForType(named)
+	if owner == nil || owner.MethodSets == nil {
+		return nil
+	}
+	methods := owner.MethodSets["*mut "+named.Name]
+	if methods == nil {
+		return nil
+	}
+	sym := methods[named.Name]
+	if sym == nil {
+		return nil
+	}
+	fn, ok := sym.Node.(*ast.FuncDecl)
+	if !ok || !fn.IsConstructor {
+		return nil
+	}
+	return c.funcType(owner, fn)
+}
+
+func (c *checker) isExplicitStringCast(target, source typeinfo.Type) bool {
+	if c.isStringType(target) && (c.isByteSliceType(source) || c.isCharSliceType(source)) {
+		return true
+	}
+	if c.isStringType(source) && (c.isByteSliceType(target) || c.isCharSliceType(target)) {
+		return true
+	}
+	return false
+}
+
+func (c *checker) isStringType(typ typeinfo.Type) bool {
+	_, ok := c.underlying(typ).(*typeinfo.StringType)
+	return ok
+}
+
+func (c *checker) isByteSliceType(typ typeinfo.Type) bool {
+	sl, ok := c.underlying(typ).(*typeinfo.SliceType)
+	return ok && typeinfo.IsBuiltinNamed(sl.Inner, "u8")
+}
+
+func (c *checker) isCharSliceType(typ typeinfo.Type) bool {
+	sl, ok := c.underlying(typ).(*typeinfo.SliceType)
+	return ok && typeinfo.IsBuiltinNamed(sl.Inner, "char")
+}
+
 func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinfo.Type {
 	switch t := expr.(type) {
 	case nil:
@@ -1177,7 +1403,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.NamedType:
 		if len(t.Path) == 1 && tokens.IsBuiltinType(t.Path[0]) {
 			if t.Path[0] == "str" {
-				return &typeinfo.SliceType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
+				return &typeinfo.StringType{}
 			}
 			return &typeinfo.BuiltinType{Name: t.Path[0]}
 		}
@@ -1192,7 +1418,11 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		decl, _ := resolution.Symbol.Node.(*ast.TypeDecl)
 		return &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}
 	case *ast.PointerType:
-		return &typeinfo.PointerType{IsOwn: t.IsOwn, IsRaw: t.IsRaw, IsMut: t.IsMut, Inner: c.typeFromSyntax(mod, t.Inner)}
+		inner := c.typeFromSyntax(mod, t.Inner)
+		if t.IsRaw && (t.Inner == nil || typeinfo.IsBuiltinNamed(inner, "void")) {
+			inner = nil
+		}
+		return &typeinfo.PointerType{IsOwn: t.IsOwn, IsRaw: t.IsRaw, IsMut: t.IsMut, Inner: inner}
 	case *ast.OptionalType:
 		return &typeinfo.OptionalType{Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.ErrorUnionType:

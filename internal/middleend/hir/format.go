@@ -254,6 +254,12 @@ func formatExpr(expr Expr) string {
 			parts = append(parts, formatExpr(arg))
 		}
 		return fmt.Sprintf("%s(%s)", wrapExpr(e.Callee), strings.Join(parts, ", "))
+	case *ConstructorCallExpr:
+		parts := make([]string, 0, len(e.Args))
+		for _, arg := range e.Args {
+			parts = append(parts, formatExpr(arg))
+		}
+		return fmt.Sprintf("ctor %s(%s)", strings.Join(e.Path, "::"), strings.Join(parts, ", "))
 	case *SelectorExpr:
 		return fmt.Sprintf("%s.%s", wrapExpr(e.Left), e.Name)
 	case *CastExpr:
@@ -361,7 +367,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 
 func wrapExpr(expr Expr) string {
 	switch expr.(type) {
-	case *Ident, *NumberLit, *StringLit, *NoneLit, *SelectorExpr, *CallExpr, *CompositeLit:
+	case *Ident, *NumberLit, *StringLit, *NoneLit, *SelectorExpr, *CallExpr, *ConstructorCallExpr, *CompositeLit:
 		return formatExpr(expr)
 	default:
 		return "(" + formatExpr(expr) + ")"

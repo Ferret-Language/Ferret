@@ -76,7 +76,7 @@ extern "C" {
  *   isize       │ ferret_isize   │ signed long    (pointer-sized)
  *   char        │ ferret_char    │ uint32_t       (Unicode scalar U+0000..U+10FFFF)
  *   bool        │ ferret_bool    │ uint8_t        (0 = false, 1 = true)
- *   *raw void   │ void *                          (C void*, erased pointer)
+ *   *raw        │ ferret_raw     │ void *         (C void*, erased pointer)
  * ========================================================================= */
 
 typedef uint8_t       ferret_u8;
@@ -93,6 +93,7 @@ typedef unsigned long ferret_usize;   /* Ferret `usize` — pointer-sized unsign
 typedef signed   long ferret_isize;   /* Ferret `isize` — pointer-sized signed integer   */
 typedef ferret_u32    ferret_char;    /* Ferret `char`  — Unicode scalar value           */
 typedef ferret_u8     ferret_bool;    /* Ferret `bool`  — 0 = false, 1 = true            */
+typedef void         *ferret_raw;     /* Ferret `*raw`  — erased / untyped pointer       */
 
 /* ferret_type_id — stable numeric identity assigned to every named Ferret type.
  * ID 0 is reserved (FERRET_TYPE_UNKNOWN).                                    */
@@ -109,8 +110,14 @@ typedef ferret_u32 ferret_type_id;
  *   str         │ FerretStr          { ferret_u8 *ptr; ferret_usize len; }
  *   []T         │ FERRET_SLICE_OF(T) { T *ptr;         ferret_usize len; }
  *
- * `str` is sugar for `[]u8`.  The ptr field points to the first byte and
- * does NOT need to be null-terminated.  Use the len field for bounds.
+ * `str` is a dedicated UTF-8 text type. It shares ABI layout with `[]u8`,
+ * but not semantics:
+ *   • `str` is immutable text
+ *   • `[]u8` is a mutable byte slice
+ *   • explicit conversions between them may copy at runtime
+ *
+ * The ptr field points to the first byte and does NOT need to be
+ * null-terminated. Use the len field for bounds.
  *
  * Pre-defined typed slices for common element types are in section 9.
  * ========================================================================= */
@@ -368,8 +375,8 @@ typedef struct {
  * 9. Generic slice macro  (FERRET_SLICE_OF)
  *
  * A Ferret slice []T is { T *ptr; ferret_usize len }.
- * FERRET_SLICE_OF(T) produces an anonymous struct identical to FerretStr
- * but with the correct element pointer type for type-safe C code.
+ * FERRET_SLICE_OF(T) produces an anonymous struct with the same ABI shape as
+ * FerretStr but with the correct element pointer type for type-safe C code.
  *
  * Example:
  *   // Ferret:  fn sum(vals []i32) i64
@@ -390,11 +397,12 @@ typedef struct { ferret_i16 *ptr; ferret_usize len; } FerretSliceI16;
 typedef struct { ferret_u16 *ptr; ferret_usize len; } FerretSliceU16;
 typedef struct { ferret_i32 *ptr; ferret_usize len; } FerretSliceI32;
 typedef struct { ferret_u32 *ptr; ferret_usize len; } FerretSliceU32;
+typedef struct { ferret_char *ptr; ferret_usize len; } FerretSliceChar;
 typedef struct { ferret_i64 *ptr; ferret_usize len; } FerretSliceI64;
 typedef struct { ferret_u64 *ptr; ferret_usize len; } FerretSliceU64;
 typedef struct { ferret_f32 *ptr; ferret_usize len; } FerretSliceF32;
 typedef struct { ferret_f64 *ptr; ferret_usize len; } FerretSliceF64;
-typedef struct { void       *ptr; ferret_usize len; } FerretSlicePtr;  /* [](*T) — erased element type */
+typedef struct { ferret_raw  ptr; ferret_usize len; } FerretSlicePtr;  /* [](*T) — erased element type */
 
 #ifdef __cplusplus
 }
