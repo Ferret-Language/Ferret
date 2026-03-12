@@ -166,7 +166,7 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 	case *typeinfo.InterfaceType:
 		return 16, 8, true, nil
 	case *typeinfo.OptionalType:
-		return a.layoutTaggedUnion([]typeinfo.Type{t.Inner})
+		return a.layoutOptional(t.Inner)
 	case *typeinfo.ErrorUnionType:
 		return a.layoutTaggedUnion([]typeinfo.Type{t.Error, t.Value})
 	case *typeinfo.UnionType:
@@ -179,6 +179,32 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 		_ = syntax
 		return 0, 1, false, nil
 	}
+}
+
+func (a *analyzer) layoutOptional(inner typeinfo.Type) (int64, int64, bool, *layout.StructLayout) {
+	if a.optionalUsesNiche(inner) {
+		return a.layoutUnderlying(nil, inner)
+	}
+	return a.layoutTaggedUnion([]typeinfo.Type{inner})
+}
+
+func (a *analyzer) optionalUsesNiche(typ typeinfo.Type) bool {
+	switch t := typ.(type) {
+	case nil:
+		return false
+	case *typeinfo.NamedType:
+		return a.optionalUsesNiche(a.findUnderlyingType(t))
+	case *typeinfo.PointerType:
+		return true
+	case *typeinfo.BuiltinType:
+		switch t.Name {
+		case "bool", "char":
+			return true
+		}
+	case *typeinfo.EnumType, *typeinfo.ErrorSetType:
+		return true
+	}
+	return false
 }
 
 func (a *analyzer) layoutSequential(elems []typeinfo.Type) (int64, int64, bool, *layout.StructLayout) {

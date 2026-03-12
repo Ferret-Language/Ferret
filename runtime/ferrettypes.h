@@ -186,10 +186,20 @@ typedef ferret_u32 FerretErrorCode;
  *
  * Layout rule (from layoutanalysis):
  *
- *   payloadAlign ≤ 4  →  { uint32_t tag; T value; }          (no padding)
- *   payloadAlign = 8  →  { uint32_t tag; uint32_t _pad; T value; }
+ *   If T has a stable invalid bit-pattern niche, ?T uses the same size and
+ *   alignment as T and encodes `none` in that niche.
  *
- * Tag values:
+ *   Current niche-optimized cases:
+ *     ?*T / ?*raw T      → null pointer means none
+ *     ?bool              → value 2 means none
+ *     ?char              → value 0xFFFFFFFF means none
+ *     ?enum / ?error     → value 0xFFFFFFFF means none
+ *
+ *   Otherwise ?T falls back to tagged storage:
+ *     payloadAlign ≤ 4  →  { uint32_t tag; T value; }
+ *     payloadAlign = 8  →  { uint32_t tag; uint32_t _pad; T value; }
+ *
+ * Tagged values use:
  *   FERRET_NONE (0) — no value
  *   FERRET_SOME (1) — value is valid
  *
@@ -214,22 +224,24 @@ typedef ferret_u32 FerretErrorCode;
 #define FERRET_SOME  1u
 
 /*
- * FERRET_OPTIONAL4(T) — ?T where T has alignment ≤ 4.
- * Applies to: bool, u8, i8, u16, i16, u32, i32, f32, char, enum, error.
+ * FERRET_OPTIONAL4(T) — tagged ?T where T has alignment ≤ 4 and no niche.
  * Total size: 8 bytes.
  */
 #define FERRET_OPTIONAL4(T) \
     struct { ferret_u32 tag; T value; }
 
 /*
- * FERRET_OPTIONAL8(T) — ?T where T has alignment 8.
- * Applies to: u64, i64, f64, usize, isize, any pointer, str, []T, interface.
+ * FERRET_OPTIONAL8(T) — tagged ?T where T has alignment 8 and no niche.
+ * Applies to: u64, i64, f64, usize, isize, str, []T, interface.
  * Total size: 8 + sizeof(T), rounded up to 8-byte alignment.
  */
 #define FERRET_OPTIONAL8(T) \
     struct { ferret_u32 tag; ferret_u32 _pad; T value; }
 
 /* Pre-defined concrete optional types for common Ferret types: */
+typedef void        *FerretOptPtr;   /* null => none */
+typedef ferret_u8    FerretOptBool;  /* 2 => none */
+typedef ferret_char  FerretOptChar;  /* 0xFFFFFFFF => none */
 typedef struct { ferret_u32 tag; ferret_i32   value; } FerretOptI32;
 typedef struct { ferret_u32 tag; ferret_u32   value; } FerretOptU32;
 typedef struct { ferret_u32 tag; ferret_f32   value; } FerretOptF32;
@@ -237,13 +249,15 @@ typedef struct { ferret_u32 tag; ferret_u32 _pad; ferret_i64   value; } FerretOp
 typedef struct { ferret_u32 tag; ferret_u32 _pad; ferret_u64   value; } FerretOptU64;
 typedef struct { ferret_u32 tag; ferret_u32 _pad; ferret_f64   value; } FerretOptF64;
 typedef struct { ferret_u32 tag; ferret_u32 _pad; ferret_usize value; } FerretOptUsize;
-typedef struct { ferret_u32 tag; ferret_u32 _pad; void        *value; } FerretOptPtr;
 typedef struct { ferret_u32 tag; ferret_u32 _pad; FerretStr    value; } FerretOptStr;
 
 /* Helpers */
 #define FERRET_OPT_IS_SOME(opt)  ((opt).tag == FERRET_SOME)
 #define FERRET_OPT_IS_NONE(opt)  ((opt).tag == FERRET_NONE)
 #define FERRET_OPT_VALUE(opt)    ((opt).value)
+#define FERRET_OPT_PTR_IS_NONE(opt)   ((opt) == NULL)
+#define FERRET_OPT_BOOL_NONE          2u
+#define FERRET_OPT_CHAR_NONE          0xFFFFFFFFu
 
 /* =========================================================================
  * 6. Error-union  (E!T  —  "either error E or value T")

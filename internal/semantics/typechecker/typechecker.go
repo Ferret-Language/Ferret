@@ -2041,8 +2041,50 @@ func (c *checker) assignable(expected, got typeinfo.Type) bool {
 	if typeinfo.Assignable(expected, got) {
 		return true
 	}
+	if iface, ok := c.underlying(expected).(*typeinfo.InterfaceType); ok && c.implementsInterface(got, iface) {
+		return true
+	}
 	_, matches := c.unionAssignableMembers(expected, got)
 	return matches == 1
+}
+
+func (c *checker) implementsInterface(src typeinfo.Type, iface *typeinfo.InterfaceType) bool {
+	if iface == nil || src == nil {
+		return false
+	}
+	for _, method := range iface.OrderedMethods {
+		if method == nil || method.Type == nil {
+			continue
+		}
+		_, got := c.lookupMethod(src, method.Name, false, false)
+		if got == nil || !c.interfaceMethodCompatible(method.Type, got) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *checker) interfaceMethodCompatible(expected, got *typeinfo.FuncType) bool {
+	if expected == nil || got == nil {
+		return false
+	}
+	if expected.IsUnsafe != got.IsUnsafe {
+		return false
+	}
+	if len(expected.Params) != len(got.Params) || len(expected.ComptimeParams) != len(got.ComptimeParams) {
+		return false
+	}
+	for i := range expected.Params {
+		if !typeinfo.Equal(expected.Params[i], got.Params[i]) {
+			return false
+		}
+	}
+	for i := range expected.ComptimeParams {
+		if expected.ComptimeParams[i] != got.ComptimeParams[i] {
+			return false
+		}
+	}
+	return typeinfo.Equal(expected.Result, got.Result)
 }
 
 func (c *checker) unionAssignableMembers(expected, got typeinfo.Type) ([]typeinfo.Type, int) {
