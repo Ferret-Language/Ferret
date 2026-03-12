@@ -76,6 +76,35 @@ fn main() i32 {
 	}
 }
 
+func TestLayoutComputesUnionAsMaxMemberSize(t *testing.T) {
+	root := t.TempDir()
+	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Token union {
+    i32,
+    i64,
+    bool,
+}
+
+fn main() i32 {
+    return 0
+}
+`)
+
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	token, ok := result.Entry.Layout.Lookup("Token")
+	if !ok || token == nil {
+		t.Fatalf("expected Token layout, got %#v", result.Entry.Layout)
+	}
+	if token.Size != 8 || token.Align != 8 {
+		t.Fatalf("expected Token size=8 align=8, got size=%d align=%d", token.Size, token.Align)
+	}
+	if token.Struct != nil {
+		t.Fatalf("expected union to have no struct layout, got %#v", token.Struct)
+	}
+}
+
 func mustWriteLayout(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

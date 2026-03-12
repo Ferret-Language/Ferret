@@ -26,7 +26,7 @@
  *
  * Layout rules (derived from layoutanalysis/analyze.go)
  * -------------------------------------------------------
- * • All tagged compound types (optional, error-union, union) share:
+ * • Tagged compound types (optional, error-union) share:
  *
  *     offset 0                      : uint32_t tag
  *     offset alignUp(4, payloadAlign): payload union
@@ -38,6 +38,11 @@
  *   Common cases:
  *     payload align ≤ 4  →  no gap:   { u32 tag; T value; }
  *     payload align = 8  →  4-byte gap: { u32 tag; u32 _pad; T value; }
+ *
+ * • Plain unions use:
+ *
+ *     size  = alignUp(max(member sizes), max(member aligns))
+ *     align = max(member aligns)
  *
  * • Enums and error-sets are a bare 4-byte tag with no payload.
  * • Slices are fat pointers { T *ptr; uintptr_t len }.
@@ -313,39 +318,30 @@ typedef struct { ferret_u32 tag; ferret_u32 _pad; FerretStr    value; } FerretRe
 /* =========================================================================
  * 7. Union  (Ferret `union { T1, T2, … }`)
  *
- * A discriminated union.  Layout:
+ * A plain storage union.  Layout:
  *
- *   offset 0                       : ferret_u32 tag  (0-based variant index)
- *   offset alignUp(4, payloadAlign): payload (C union of all variant types)
- *   total size                     : alignUp(payloadOffset + maxPayloadSize,
- *                                            max(4, payloadAlign))
+ *   size  = alignUp(max(member sizes), max(member aligns))
+ *   align = max(member aligns)
  *
- * Variant tags are assigned in declaration order: first listed type = 0.
+ * There is no implicit runtime tag in storage.  The active member is a
+ * compile-time / semantic notion tracked by the compiler, not encoded in
+ * the in-memory representation.
  *
- * Because the member types vary per union declaration, there is no
- * single pre-defined C type.  Use the macro helper below or write the
- * struct by hand following the layout rule.
+ * Because the member types vary per union declaration, there is no single
+ * pre-defined C type.  Write the C union by hand following the max-size /
+ * max-align rule.
  *
  * Example — Ferret:
  *   type Token union { i32, f64, str }
  *
- * C representation (payloadAlign=8 because of f64/str):
- *   typedef struct {
- *       ferret_u32 tag;    // 0 = i32 variant, 1 = f64 variant, 2 = str variant
- *       ferret_u32 _pad;
- *       union {
- *           ferret_i32 as_i32;
- *           ferret_f64 as_f64;
- *           FerretStr  as_str;
- *       } payload;
+ * C representation (size=16, align=8 because of str):
+ *   typedef union {
+ *       ferret_i32 as_i32;
+ *       ferret_f64 as_f64;
+ *       FerretStr  as_str;
  *   } Token;
- *
- * FERRET_UNION_TAG(variant_index) — helper to set the tag field.
- * FERRET_UNION_VARIANT(ptr, name) — access a payload member.
  * ========================================================================= */
-
-#define FERRET_UNION_TAG(index)           ((ferret_u32)(index))
-#define FERRET_UNION_VARIANT(ptr, member) ((ptr)->payload.member)
+#define FERRET_UNION_VARIANT(ptr, member) ((ptr)->member)
 
 /* =========================================================================
  * 8. Interface  (dynamic dispatch fat-pointer)

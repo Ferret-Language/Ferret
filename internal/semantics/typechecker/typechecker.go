@@ -268,6 +268,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		var declared typeinfo.Type
 		if s.Type != nil {
 			declared = c.typeFromSyntax(c.mod, s.Type)
+			c.info.BindNode(s.Type, declared)
 		}
 		var value typeinfo.Type
 		if s.Value != nil {
@@ -287,6 +288,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		var declared typeinfo.Type
 		if s.Type != nil {
 			declared = c.typeFromSyntax(c.mod, s.Type)
+			c.info.BindNode(s.Type, declared)
 		}
 		value := c.typeOfExpr(scope, s.Value, declared)
 		finalType := declared
@@ -975,6 +977,10 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 
 	target := c.typeFromSyntax(c.mod, expr.Type)
 	sourceType := c.typeOfExpr(scope, expr.Left, nil)
+	if c.unionContainsExactMember(sourceType, target) {
+		c.info.BindNode(expr, target)
+		return target
+	}
 	if typeinfo.Equal(target, sourceType) {
 		c.info.BindNode(expr, target)
 		return target
@@ -1023,6 +1029,19 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 			WithPrimaryLabel(&loc, "invalid explicit cast"),
 	)
 	return typeinfo.InvalidType{}
+}
+
+func (c *checker) unionContainsExactMember(source, target typeinfo.Type) bool {
+	unionType, ok := c.underlying(source).(*typeinfo.UnionType)
+	if !ok || unionType == nil {
+		return false
+	}
+	for _, member := range unionType.Members {
+		if typeinfo.Equal(member, target) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *checker) typeOfIndex(scope *valueScope, expr *ast.IndexExpr) typeinfo.Type {

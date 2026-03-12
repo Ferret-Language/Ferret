@@ -45,14 +45,12 @@ func CompileIR(llvmIR, outputPath string) error {
 	}
 
 	// clang compiles + links in one pass.
-	// -L<dir> adds the archive directory to the search path;
-	// -l:ferret_runtime.a links by exact filename (no lib prefix stripping).
-	runtimeDir := filepath.Dir(runtimeLib)
+	// Pass the runtime archive as a positional input so we do not depend on
+	// driver-specific -l:filename support.
 	cmd := exec.Command("clang",
 		"-Wno-override-module",
 		irFile,
-		"-L", runtimeDir,
-		"-l:ferret_runtime.a",
+		runtimeLib,
 		"-o", outputPath,
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {

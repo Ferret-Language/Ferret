@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"compiler/internal/backend"
+	ast "compiler/internal/frontend/ast"
 	"compiler/internal/layout"
 	midmir "compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
@@ -540,7 +541,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl) error {
 	seen := make(map[string]struct{})
 	for _, decl := range types {
-		if decl == nil || decl.Named == nil || decl.Struct == nil {
+		if decl == nil || decl.Named == nil || (decl.Struct == nil && decl.Union == nil) {
 			continue
 		}
 		key := decl.Named.ModuleKey + "::" + decl.Name
@@ -562,21 +563,30 @@ func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl)
 }
 
 func lowerTypeDecl(state *moduleState, decl *midmir.TypeDecl) (string, error) {
-	if decl == nil || decl.Named == nil || decl.Struct == nil {
+	if decl == nil || decl.Named == nil || (decl.Struct == nil && decl.Union == nil) {
 		return "", nil
 	}
 	layoutInfo, err := lookupNamedLayout(state, decl.Named)
 	if err != nil {
 		return "", err
 	}
-	if layoutInfo == nil || layoutInfo.Struct == nil || !layoutInfo.Known {
-		return "", fmt.Errorf("type %s: unknown struct layout", decl.Name)
+	if layoutInfo == nil || !layoutInfo.Known {
+		return "", fmt.Errorf("type %s: unknown layout", decl.Name)
 	}
-	body, err := llvmStructBody(state, layoutInfo.Struct)
-	if err != nil {
-		return "", fmt.Errorf("type %s: %w", decl.Name, err)
+	if decl.Struct != nil {
+		if layoutInfo.Struct == nil {
+			return "", fmt.Errorf("type %s: unknown struct layout", decl.Name)
+		}
+		body, err := llvmStructBody(state, layoutInfo.Struct)
+		if err != nil {
+			return "", fmt.Errorf("type %s: %w", decl.Name, err)
+		}
+		return fmt.Sprintf("%%%s = type { %s }", llvmTypeName(state, decl.Named), body), nil
 	}
-	return fmt.Sprintf("%%%s = type { %s }", llvmTypeName(state, decl.Named), body), nil
+	if decl.Union != nil {
+		return fmt.Sprintf("%%%s = type [%"+"d x i8]", llvmTypeName(state, decl.Named), layoutInfo.Size), nil
+	}
+	return "", nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1600,6 +1610,9 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 	if agg == nil {
 		return "", fmt.Errorf("nil aggregate local")
 	}
+	if isUnionAggregate(agg.Type) {
+		return lowerUnionAssign(state, agg, value)
+	}
 	switch v := value.(type) {
 	case *midmir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
@@ -1632,6 +1645,50 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 		return lowerAggregateCompositeAssign(state, agg, v)
 	}
 	return "", fmt.Errorf("unsupported aggregate assignment %T", value)
+}
+
+func isUnionAggregate(typ typeinfo.Type) bool {
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		return namedIsUnion(t)
+	case *typeinfo.UnionType:
+		return true
+	default:
+		return false
+	}
+}
+
+func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Value) (string, error) {
+	switch v := value.(type) {
+	case *midmir.UnaryValue:
+		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
+			return lowerUnionAssign(state, agg, v.Right)
+		}
+	case *midmir.CastValue:
+		if isUnionAggregate(v.Type()) {
+			return lowerUnionAssign(state, agg, v.Left)
+		}
+	}
+	if isAggregateType(state, value.Type()) {
+		src, err := lowerAggregateSource(state, value)
+		if err != nil {
+			return "", err
+		}
+		size, align, err := aggregateSizeAlign(state, value.Type())
+		if err != nil {
+			return "", err
+		}
+		return llvmMemcpy(llvmLocalName(agg.PtrName), src, size, align), nil
+	}
+	irType, err := llvmBaseType(value.Type())
+	if err != nil {
+		return "", err
+	}
+	val, err := lowerValue(state, value)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("store %s %s, ptr %s", irType, val, llvmLocalName(agg.PtrName)), nil
 }
 
 // emitStringConstant writes a private unnamed_addr constant to state.deferredB
@@ -2158,6 +2215,19 @@ func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 	if _, ok := unwrapNamed(v.Type()).(*typeinfo.StringType); ok {
 		return lowerStringCast(state, v.Left)
 	}
+	if isUnionAggregate(v.Left.Type()) && !isAggregateType(state, v.Type()) {
+		srcPtr, err := lowerUnionSource(state, v.Left)
+		if err != nil {
+			return "", err
+		}
+		irType, err := llvmBaseType(v.Type())
+		if err != nil {
+			return "", err
+		}
+		tmp := freshTemp(state, "unioncast")
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, srcPtr))
+		return llvmCopyExpr(irType, tmp)
+	}
 	if isAggregateType(state, v.Left.Type()) && isAggregateType(state, v.Type()) {
 		return lowerValue(state, v.Left)
 	}
@@ -2187,6 +2257,18 @@ func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 		return llvmCopyExpr("ptr", srcVal)
 	}
 	return "", fmt.Errorf("unsupported cast from %s to %s", src, dst)
+}
+
+func lowerUnionSource(state *moduleState, value midmir.Value) (string, error) {
+	switch v := value.(type) {
+	case *midmir.UnaryValue:
+		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
+			return lowerUnionSource(state, v.Right)
+		}
+	case *midmir.LocalValue, *midmir.NameValue:
+		return lowerAggregateSource(state, value)
+	}
+	return "", fmt.Errorf("unsupported union source %T", value)
 }
 
 func lowerStringCast(state *moduleState, value midmir.Value) (string, error) {
@@ -2644,7 +2726,7 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 // llvmABITypeName returns the LLVM type name for function signatures, calls, globals.
 func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
 	if named, ok := typ.(*typeinfo.NamedType); ok {
-		if info, err := lookupNamedLayout(state, named); err == nil && info != nil && info.Struct != nil && info.Known {
+		if info, err := lookupNamedLayout(state, named); err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named)) {
 			return "%" + llvmTypeName(state, named), nil
 		}
 	}
@@ -2655,6 +2737,14 @@ func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
 		return "{ ptr, i64 }", nil
 	}
 	return llvmBaseType(typ)
+}
+
+func namedIsUnion(named *typeinfo.NamedType) bool {
+	if named == nil || named.Decl == nil {
+		return false
+	}
+	_, ok := named.Decl.Type.(*ast.UnionType)
+	return ok
 }
 
 // ---------------------------------------------------------------------------

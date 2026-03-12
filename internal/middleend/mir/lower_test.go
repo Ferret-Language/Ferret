@@ -101,6 +101,40 @@ fn main() i32 {
 	}
 }
 
+func TestPipelinePreservesAnnotatedUnionLocalTypeInMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    i64,
+}
+
+fn main() i32 {
+    let value: Token = 1
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil || len(result.Entry.MIR.Functions) != 1 {
+		t.Fatalf("expected one MIR function, got %#v", result.Entry)
+	}
+	fn := result.Entry.MIR.Functions[0]
+	if len(fn.Locals) != 1 {
+		t.Fatalf("expected one MIR local, got %#v", fn.Locals)
+	}
+	if got := fn.Locals[0].Type.String(); got != "local:main::Token" {
+		t.Fatalf("expected MIR local type local:main::Token, got %q", got)
+	}
+	text := midmir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "value: Token") {
+		t.Fatalf("expected annotated union local in MIR dump, got %q", text)
+	}
+}
+
 func TestPipelineGeneratesExplicitAddrOfAndLoadInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `

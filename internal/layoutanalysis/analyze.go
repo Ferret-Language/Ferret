@@ -170,7 +170,7 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 	case *typeinfo.ErrorUnionType:
 		return a.layoutTaggedUnion([]typeinfo.Type{t.Error, t.Value})
 	case *typeinfo.UnionType:
-		return a.layoutTaggedUnion(t.Members)
+		return a.layoutPlainUnion(t.Members)
 	case typeinfo.UnknownType, typeinfo.InvalidType, typeinfo.UndefinedType:
 		return 0, 1, false, nil
 	case nil:
@@ -253,6 +253,19 @@ func (a *analyzer) layoutTaggedUnion(members []typeinfo.Type) (int64, int64, boo
 	payloadOffset := alignUp(tagSize, payloadAlign)
 	size := alignUp(payloadOffset+payloadSize, align)
 	return size, align, known, nil
+}
+
+func (a *analyzer) layoutPlainUnion(members []typeinfo.Type) (int64, int64, bool, *layout.StructLayout) {
+	size := int64(0)
+	align := int64(1)
+	known := true
+	for _, member := range members {
+		memberSize, memberAlign, memberKnown, _ := a.layoutUnderlying(nil, member)
+		size = maxInt64(size, memberSize)
+		align = maxInt64(align, memberAlign)
+		known = known && memberKnown
+	}
+	return alignUp(size, align), align, known, nil
 }
 
 func builtinLayout(name string) (int64, int64, bool, *layout.StructLayout) {

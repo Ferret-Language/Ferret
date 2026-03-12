@@ -140,7 +140,7 @@ func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl)
 	seen := make(map[string]struct{})
 	lines := make([]string, 0)
 	for _, decl := range types {
-		if decl == nil || decl.Named == nil || decl.Struct == nil {
+		if decl == nil || decl.Named == nil || (decl.Struct == nil && decl.Union == nil) {
 			continue
 		}
 		key := decl.Named.ModuleKey + "::" + decl.Name
@@ -172,14 +172,26 @@ func lowerTypeDecl(state *moduleState, decl *midmir.TypeDecl) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if layoutInfo == nil || layoutInfo.Struct == nil || !layoutInfo.Known {
-		return "", fmt.Errorf("type %s: unknown struct layout", decl.Name)
+	if layoutInfo == nil || !layoutInfo.Known {
+		return "", fmt.Errorf("type %s: unknown layout", decl.Name)
 	}
-	body, err := qbeStructBody(state, layoutInfo.Struct)
-	if err != nil {
-		return "", fmt.Errorf("type %s: %w", decl.Name, err)
+	if decl.Struct != nil {
+		if layoutInfo.Struct == nil {
+			return "", fmt.Errorf("type %s: unknown struct layout", decl.Name)
+		}
+		body, err := qbeStructBody(state, layoutInfo.Struct)
+		if err != nil {
+			return "", fmt.Errorf("type %s: %w", decl.Name, err)
+		}
+		return fmt.Sprintf("type :%s = { %s }", qbeTypeName(state, decl.Named), body), nil
 	}
-	return fmt.Sprintf("type :%s = { %s }", qbeTypeName(state, decl.Named), body), nil
+	if decl.Union != nil {
+		if layoutInfo.Align > 1 {
+			return fmt.Sprintf("type :%s = align %d { %d }", qbeTypeName(state, decl.Named), layoutInfo.Align, layoutInfo.Size), nil
+		}
+		return fmt.Sprintf("type :%s = { %d }", qbeTypeName(state, decl.Named), layoutInfo.Size), nil
+	}
+	return "", nil
 }
 
 func emitGlobals(b *strings.Builder, state *moduleState, globals []*midmir.Global) error {
@@ -1054,6 +1066,9 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 	if agg == nil {
 		return "", fmt.Errorf("nil aggregate local")
 	}
+	if isUnionAggregate(agg.Type) {
+		return lowerUnionAssign(state, agg, value)
+	}
 	switch v := value.(type) {
 	case *midmir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
@@ -1088,6 +1103,50 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 		return lowerAggregateCompositeAssign(state, agg, v)
 	}
 	return "", fmt.Errorf("unsupported aggregate assignment %T", value)
+}
+
+func isUnionAggregate(typ typeinfo.Type) bool {
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		return namedIsUnion(t)
+	case *typeinfo.UnionType:
+		return true
+	default:
+		return false
+	}
+}
+
+func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Value) (string, error) {
+	switch v := value.(type) {
+	case *midmir.UnaryValue:
+		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
+			return lowerUnionAssign(state, agg, v.Right)
+		}
+	case *midmir.CastValue:
+		if isUnionAggregate(v.Type()) {
+			return lowerUnionAssign(state, agg, v.Left)
+		}
+	}
+	if isAggregateType(state, value.Type()) {
+		src, err := lowerAggregateSource(state, value)
+		if err != nil {
+			return "", err
+		}
+		size, _, err := aggregateSizeAlign(state, value.Type())
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("blit %s, %s, %d", src, qbeLocalName(agg.PtrName), size), nil
+	}
+	val, err := lowerValue(state, value)
+	if err != nil {
+		return "", err
+	}
+	op, err := qbeStoreOp(value.Type())
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s %s, %s", op, val, qbeLocalName(agg.PtrName)), nil
 }
 
 // emitQBEStringConstant appends a QBE data section for a string literal to
@@ -1617,6 +1676,19 @@ func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 	if _, ok := unwrapNamed(v.Type()).(*typeinfo.StringType); ok {
 		return lowerStringCast(state, v.Left)
 	}
+	if isUnionAggregate(v.Left.Type()) && !isAggregateType(state, v.Type()) {
+		srcPtr, err := lowerUnionSource(state, v.Left)
+		if err != nil {
+			return "", err
+		}
+		op, qtype, err := qbeLoadOp(v.Type())
+		if err != nil {
+			return "", err
+		}
+		tmp := freshTemp(state, "unioncast")
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, srcPtr))
+		return "copy " + tmp, nil
+	}
 	if isAggregateType(state, v.Left.Type()) && isAggregateType(state, v.Type()) {
 		return lowerValue(state, v.Left)
 	}
@@ -1644,6 +1716,18 @@ func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 		return "copy " + srcVal, nil
 	}
 	return "", fmt.Errorf("unsupported cast from %s to %s", typeinfo.FormatType(typeStringer{v.Left.Type()}), typeinfo.FormatType(typeStringer{v.Type()}))
+}
+
+func lowerUnionSource(state *moduleState, value midmir.Value) (string, error) {
+	switch v := value.(type) {
+	case *midmir.UnaryValue:
+		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
+			return lowerUnionSource(state, v.Right)
+		}
+	case *midmir.LocalValue, *midmir.NameValue:
+		return lowerAggregateSource(state, value)
+	}
+	return "", fmt.Errorf("unsupported union source %T", value)
 }
 
 func lowerStringCast(state *moduleState, value midmir.Value) (string, error) {
@@ -1867,7 +1951,7 @@ func qbeStructBody(state *moduleState, st *layout.StructLayout) (string, error) 
 func qbeAggregateSubType(state *moduleState, typ typeinfo.Type) (string, error) {
 	if named, ok := typ.(*typeinfo.NamedType); ok {
 		info, err := lookupNamedLayout(state, named)
-		if err == nil && info != nil && info.Struct != nil {
+		if err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named)) {
 			return ":" + qbeTypeName(state, named), nil
 		}
 	}
@@ -1921,7 +2005,7 @@ func qbeBaseType(typ typeinfo.Type) (string, error) {
 func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
-		if info, err := lookupNamedLayout(state, t); err == nil && info != nil && info.Struct != nil && info.Known {
+		if info, err := lookupNamedLayout(state, t); err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(t)) {
 			return ":" + qbeTypeName(state, t), nil
 		}
 	case *typeinfo.StringType:
@@ -1931,6 +2015,14 @@ func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
 		return ":__ferret_slice", nil
 	}
 	return qbeBaseType(typ)
+}
+
+func namedIsUnion(named *typeinfo.NamedType) bool {
+	if named == nil || named.Decl == nil {
+		return false
+	}
+	_, ok := named.Decl.Type.(*ast.UnionType)
+	return ok
 }
 
 func qbeLoadOp(typ typeinfo.Type) (string, string, error) {
