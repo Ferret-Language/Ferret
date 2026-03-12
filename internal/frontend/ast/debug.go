@@ -42,7 +42,7 @@ func debugDecl(decl Decl) any {
 	case *ConstDecl:
 		return map[string]any{"kind": "ConstDecl", "name": debugExpr(d.Name), "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
 	case *TypeDecl:
-		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "type": debugType(d.Type), "loc": debugLoc(d.Location)}
+		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "is_move": d.IsMove, "type": debugType(d.Type), "loc": debugLoc(d.Location)}
 	case *FuncDecl:
 		params := make([]any, 0, len(d.Params))
 		for _, param := range d.Params {

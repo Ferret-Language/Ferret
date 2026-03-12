@@ -3,6 +3,7 @@ package resolver
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"compiler/internal/context"
@@ -433,7 +434,13 @@ func (r *resolver) resolveExprPath(scope *table.Scope, ident *ast.Ident) {
 	}
 	if len(ident.Path) == 1 {
 		if sym, ok := scope.Lookup(ident.Path[0]); ok {
-			r.info.BindNode(ident, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym, ModuleKey: r.mod.Key, ImportPath: r.mod.ImportPath})
+			moduleKey := r.mod.Key
+			importPath := r.mod.ImportPath
+			if owner := r.findModuleForSymbol(sym); owner != nil {
+				moduleKey = owner.Key
+				importPath = owner.ImportPath
+			}
+			r.info.BindNode(ident, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym, ModuleKey: moduleKey, ImportPath: importPath})
 			return
 		}
 		r.reportUndefined(ident.Location, ident.Path[0])
@@ -452,7 +459,13 @@ func (r *resolver) resolveTypePath(scope *table.Scope, typ *ast.NamedType) {
 			return
 		}
 		if sym, ok := scope.Lookup(typ.Path[0]); ok && sym.Kind == symbols.SymbolType {
-			r.info.BindNode(typ, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym, ModuleKey: r.mod.Key, ImportPath: r.mod.ImportPath})
+			moduleKey := r.mod.Key
+			importPath := r.mod.ImportPath
+			if owner := r.findModuleForSymbol(sym); owner != nil {
+				moduleKey = owner.Key
+				importPath = owner.ImportPath
+			}
+			r.info.BindNode(typ, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym, ModuleKey: moduleKey, ImportPath: importPath})
 			return
 		}
 		r.reportUndefined(typ.Location, typ.Path[0])
@@ -698,4 +711,52 @@ func (r *resolver) reportInvalidType(loc source.Location, name string) {
 
 func isPredeclaredType(name string) bool {
 	return tokens.IsBuiltinType(name) || name == "Type"
+}
+
+func (r *resolver) findModuleForSymbol(sym *symbols.Symbol) *context.Module {
+	if r == nil || r.ctx == nil || sym == nil {
+		return nil
+	}
+	if mod := r.ctx.Prelude; mod != nil {
+		if mod.ModuleScope != nil && slices.Contains(mod.ModuleScope.Symbols(), sym) {
+			return mod
+		}
+		for _, methods := range mod.MethodSets {
+			for _, candidate := range methods {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
+		for _, members := range mod.TypeMembers {
+			for _, candidate := range members {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
+	}
+	for _, mod := range r.ctx.Modules() {
+		if mod == nil {
+			continue
+		}
+		if mod.ModuleScope != nil && slices.Contains(mod.ModuleScope.Symbols(), sym) {
+			return mod
+		}
+		for _, methods := range mod.MethodSets {
+			for _, candidate := range methods {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
+		for _, members := range mod.TypeMembers {
+			for _, candidate := range members {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
+	}
+	return nil
 }

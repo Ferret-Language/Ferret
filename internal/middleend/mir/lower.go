@@ -51,6 +51,7 @@ func lowerTypeDecl(decl *hir.TypeDecl) *TypeDecl {
 	}
 	out := &TypeDecl{
 		Name:       decl.Name,
+		IsMove:     decl.IsMove,
 		Named:      decl.Named,
 		Underlying: decl.Underlying,
 		Location:   decl.Location,

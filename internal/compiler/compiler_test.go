@@ -89,7 +89,6 @@ fn main() void {
     io::Println(1)
 }
 `)
-
 	result := ParsePath(filepath.Join(root, "main.ferr"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected stdlib signature type error")
@@ -103,6 +102,79 @@ fn main() void {
 	}
 	if !found {
 		t.Fatalf("expected type mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestParsePathResolvesStdlibOSWithoutManifest(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.ferr"), `#[extern("ferret_os_cpu_count")]
+fn CPUCount() usize;
+
+#[extern("ferret_os_platform")]
+fn Platform() str;
+
+#[extern("ferret_os_debug")]
+fn Debug() bool;
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/os"
+
+fn main() void {
+    if os::CPUCount() > 0 {
+        print(os::Platform())
+    }
+    if os::Debug() {
+        print("debug")
+    }
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
+	}
+	if len(result.Modules) != 2 {
+		t.Fatalf("expected 2 modules, got %d", len(result.Modules))
+	}
+	foundMain := false
+	foundStd := false
+	for _, mod := range result.Modules {
+		switch mod.Key {
+		case "local:main":
+			foundMain = true
+		case "stdlib:std/os":
+			foundStd = true
+		}
+	}
+	if !foundMain || !foundStd {
+		t.Fatalf("expected main and std/os modules, got %#v", []string{result.Modules[0].Key, result.Modules[1].Key})
+	}
+}
+
+func TestParsePathTypechecksStdlibOSSignature(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.ferr"), `#[extern("ferret_os_cpu_count")]
+fn CPUCount() usize;
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/os"
+
+fn main() void {
+    os::CPUCount(1)
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected stdlib signature type error")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrWrongArgumentCount {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected wrong arg count diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

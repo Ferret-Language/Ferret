@@ -119,6 +119,8 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 - [x] pre-register `true`, `false`, `none`, and `undefined`
 - [x] load builtin function declarations from `ferret_libs_dev/global.ferr`
 - [x] load stdlib declarations from `ferret_libs_dev/std/*.ferr`
+- [x] basic `std/os` declarations and runtime bindings exist
+- [x] `std/os` is runtime-backed, not compiler-constant-backed
 - [x] collect top-level symbols
 - [x] collect named types
 - [x] collect functions and methods
@@ -262,6 +264,8 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 - [ ] lockfile writing and update flow
 - [ ] dependency version conflict handling
 - [ ] stdlib/toolchain root policy finalization
+- [ ] freeze source syntax for target-conditional attributes such as `#[if-arch(...)]`
+- [x] named types may be explicitly marked `move`
 
 ## Intended Order
 

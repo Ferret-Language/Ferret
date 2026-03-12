@@ -47,6 +47,7 @@ Status of language features through **both** the QBE and LLVM backends.
 | Top-level `fn` | ✅ |
 | `fn (recv T) method()` external methods | ✅ |
 | `type Name struct { ... }` | ✅ |
+| `type Name move ...` | ✅ |
 | `type Name enum { ... }` | ⚠️ frontend only |
 | `type Name union { ... }` | ⚠️ frontend only |
 | `type Name interface { ... }` | ⚠️ frontend only |
@@ -112,7 +113,7 @@ Status of language features through **both** the QBE and LLVM backends.
 | `for val \|v\| { }` / `for val \|i, v\| { }` | ✅ |
 | `break` / `continue` | ✅ |
 | `break 'label` / `continue 'label` | ✅ |
-| `switch expr { arm => { } ... }` | ✅ |
+| `match expr { pattern => { } ... }` | ✅ |
 | `panic expr` | ✅ |
 | `unsafe { }` block | ✅ |
 | `defer { }` | ⚠️ MIR modeled, not codegen'd |

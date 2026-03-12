@@ -214,6 +214,36 @@ Assignment rules:
 - assigning a move type moves
 - deep copy is explicit with the `copy` expression
 
+Current standard behaviour:
+
+- copy types:
+  - builtin scalars
+  - enum values
+  - error members / error-set values
+  - non-owning pointers
+- move types:
+  - `str`
+  - arrays and slices
+  - structs, unions, interfaces
+  - `*own T`
+  - user-defined resource types
+- `copy expr` is the only explicit duplication form in safe code
+- a named type may be explicitly marked `move` to force move-only behaviour
+  even if its underlying representation would otherwise be copyable
+
+Examples:
+
+```go
+type File move struct {
+    fd i32
+}
+
+type Handle move enum {
+    stdin
+    stdout
+}
+```
+
 ```go
 let a: i32 = 1
 let b = a

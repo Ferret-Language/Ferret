@@ -130,7 +130,7 @@ func buildRuntimeLib(runtimeDir, libsDir string) error {
 		obj := filepath.Join(objDir, strings.TrimSuffix(filepath.Base(src), ".c")+".o")
 		args := []string{"-std=c11", "-O2", "-Wall", "-Wextra", "-I", runtimeDir, "-c", src, "-o", obj}
 		if runtime.GOOS == "linux" {
-			args = append(args, "-fno-pie")
+			args = append(args, "-fPIC")
 		}
 		if err := runCmd("", cc, args...); err != nil {
 			return fmt.Errorf("compile runtime %s: %w", filepath.Base(src), err)

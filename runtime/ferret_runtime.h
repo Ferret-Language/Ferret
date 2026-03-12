@@ -143,6 +143,18 @@ FerretSliceChar global__str_chars(const FerretStr *s);
 FerretStr global__chars_str(const FerretSliceChar *chars);
 ferret_raw global__str_cstr(const FerretStr *s);
 
+/* -------------------------------------------------------------------------
+ * std/os helpers
+ *
+ * These back the declarations in std/os.ferr.
+ * -------------------------------------------------------------------------*/
+
+ferret_usize ferret_os_cpu_count(void);
+FerretStr ferret_os_platform(void);
+FerretStr ferret_os_arch(void);
+FerretStr ferret_os_name(void);
+ferret_bool ferret_os_debug(void);
+
 #ifdef __cplusplus
 }
 #endif

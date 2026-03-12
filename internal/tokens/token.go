@@ -87,6 +87,7 @@ const (
 	RETURN    Kind = "RETURN"
 	AS        Kind = "AS"
 	TAKE      Kind = "TAKE"
+	MOVE      Kind = "MOVE"
 	OWN       Kind = "OWN"
 	RAW       Kind = "RAW"
 	MUT       Kind = "MUT"
@@ -122,6 +123,7 @@ var keywords = map[string]Kind{
 	"return":    RETURN,
 	"as":        AS,
 	"take":      TAKE,
+	"move":      MOVE,
 	"own":       OWN,
 	"raw":       RAW,
 	"mut":       MUT,

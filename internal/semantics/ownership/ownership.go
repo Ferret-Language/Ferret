@@ -1167,6 +1167,9 @@ func (a *analyzer) isMoveType(typ typeinfo.Type) bool {
 	case *typeinfo.PointerType:
 		return t.IsOwn
 	case *typeinfo.NamedType:
+		if typeinfo.NamedTypeIsMove(t) {
+			return true
+		}
 		return a.isMoveType(a.underlying(t))
 	default:
 		return true
@@ -1185,6 +1188,9 @@ func (a *analyzer) isCopyableType(typ typeinfo.Type) bool {
 	case *typeinfo.PointerType:
 		return !t.IsOwn
 	case *typeinfo.NamedType:
+		if typeinfo.NamedTypeIsMove(t) {
+			return false
+		}
 		return a.isCopyableType(a.underlying(t))
 	case *typeinfo.OptionalType:
 		return a.isCopyableType(t.Inner)

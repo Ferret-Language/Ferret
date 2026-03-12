@@ -89,6 +89,7 @@ func (g *generator) generateTypeDecl(d *ast.TypeDecl) *TypeDecl {
 	}
 	out := &TypeDecl{
 		Name:       d.Name.Text(),
+		IsMove:     d.IsMove,
 		Named:      &typeinfo.NamedType{ModuleKey: g.key, Name: d.Name.Text(), Decl: d},
 		Underlying: syntaxType(g.types, d.Type),
 		Location:   d.Location,

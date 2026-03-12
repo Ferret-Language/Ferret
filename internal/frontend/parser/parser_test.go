@@ -33,7 +33,6 @@ type Point struct {
     y i32 = 0
     static origin Point = .{}
 }
-
 fn (p Point) len2() i32 {
     if p == .{ .x = 1, .y = 2 } {
         return 1
@@ -66,6 +65,33 @@ fn (p Point) len2() i32 {
 	}
 	if fn.Receiver == nil || fn.Receiver.Name.Text() != "p" {
 		t.Fatalf("expected receiver p, got %#v", fn.Receiver)
+	}
+}
+
+func TestParseMoveTypeDecl(t *testing.T) {
+	src := `
+type Handle move enum {
+    stdin,
+    stdout,
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	if len(mod.Decls) != 1 {
+		t.Fatalf("expected 1 decl, got %d", len(mod.Decls))
+	}
+	typ, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok {
+		t.Fatalf("expected type decl, got %T", mod.Decls[0])
+	}
+	if !typ.IsMove {
+		t.Fatal("expected move-marked type declaration")
+	}
+	if _, ok := typ.Type.(*ast.EnumType); !ok {
+		t.Fatalf("expected enum type, got %T", typ.Type)
 	}
 }
 
