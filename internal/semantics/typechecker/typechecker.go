@@ -1138,7 +1138,7 @@ func (c *checker) narrowedScopeForCondition(scope *valueScope, cond ast.Expr, tr
 }
 
 func (c *checker) narrowedScopeForIs(scope *valueScope, expr *ast.IsExpr, truth bool) *valueScope {
-	if !truth || expr == nil {
+	if expr == nil {
 		return scope
 	}
 	ident, ok := expr.Left.(*ast.Ident)
@@ -1154,12 +1154,55 @@ func (c *checker) narrowedScopeForIs(scope *valueScope, expr *ast.IsExpr, truth 
 		target = c.typeFromSyntax(c.mod, expr.Type)
 	}
 	unionType, ok := c.underlying(info.typ).(*typeinfo.UnionType)
-	if !ok || unionType == nil || !c.unionTypeMayMatch(unionType, target) {
+	if !ok || unionType == nil {
+		return scope
+	}
+	if truth {
+		if !c.unionTypeMayMatch(unionType, target) {
+			return scope
+		}
+		narrowed := newValueScope(scope)
+		narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+		return narrowed
+	}
+	remaining := c.unionMembersWithoutExactMatch(unionType, target)
+	if len(remaining) == 0 || len(remaining) == len(unionType.Members) {
 		return scope
 	}
 	narrowed := newValueScope(scope)
-	narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+	narrowed.Declare(ident.Path[0], valueInfo{
+		typ:      c.narrowedTypeFromMembers(remaining),
+		mutable:  info.mutable,
+		constant: info.constant,
+	})
 	return narrowed
+}
+
+func (c *checker) unionMembersWithoutExactMatch(unionType *typeinfo.UnionType, target typeinfo.Type) []typeinfo.Type {
+	if unionType == nil || target == nil {
+		return nil
+	}
+	remaining := make([]typeinfo.Type, 0, len(unionType.Members))
+	for _, member := range unionType.Members {
+		if typeinfo.Equal(member, target) {
+			continue
+		}
+		remaining = append(remaining, member)
+	}
+	return remaining
+}
+
+func (c *checker) narrowedTypeFromMembers(members []typeinfo.Type) typeinfo.Type {
+	switch len(members) {
+	case 0:
+		return typeinfo.UnknownType{}
+	case 1:
+		return members[0]
+	default:
+		out := &typeinfo.UnionType{Members: make([]typeinfo.Type, len(members))}
+		copy(out.Members, members)
+		return out
+	}
 }
 
 func (c *checker) narrowedMatchTypeArmScope(scope *valueScope, value ast.Expr, target typeinfo.Type) *valueScope {

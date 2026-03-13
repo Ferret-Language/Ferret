@@ -533,6 +533,55 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerNarrowsUnionTypeInElseBranch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    i64,
+}
+
+fn main() i64 {
+    let value: Token = 2 as i64
+    if value is i32 {
+        return 0 as i64
+    } else {
+        let narrowed: i64 = value
+        return narrowed
+    }
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerNarrowsUnionTypeInNegatedIfBranch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    i64,
+}
+
+fn main() i64 {
+    let value: Token = 2 as i64
+    if !(value is i32) {
+        let narrowed: i64 = value
+        return narrowed
+    }
+    return 0 as i64
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerNarrowsUnionTypeInMatchTypeArmAndBinding(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
