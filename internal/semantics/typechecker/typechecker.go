@@ -316,8 +316,10 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 	case *ast.IfStmt:
 		condType := c.typeOfExpr(scope, s.Cond, nil)
 		c.requireBool(s.Cond.Loc(), condType)
-		c.checkStmt(scope, s.Then)
-		c.checkStmt(scope, s.Else)
+		thenScope := c.narrowedScopeForCondition(scope, s.Cond, true)
+		elseScope := c.narrowedScopeForCondition(scope, s.Cond, false)
+		c.checkStmt(thenScope, s.Then)
+		c.checkStmt(elseScope, s.Else)
 	case *ast.MatchStmt:
 		valueType := c.typeOfExpr(scope, s.Value, nil)
 		hasWildcard := false
@@ -341,7 +343,8 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 	case *ast.WhileStmt:
 		condType := c.typeOfExpr(scope, s.Cond, nil)
 		c.requireBool(s.Cond.Loc(), condType)
-		c.checkStmt(newValueScope(scope), s.Body)
+		bodyScope := c.narrowedScopeForCondition(newValueScope(scope), s.Cond, true)
+		c.checkStmt(bodyScope, s.Body)
 	case *ast.ForStmt:
 		loopScope := newValueScope(scope)
 		iterType := c.typeOfExpr(loopScope, s.Iterable, nil)
@@ -1058,12 +1061,14 @@ func (c *checker) typeOfIs(scope *valueScope, expr *ast.IsExpr) typeinfo.Type {
 		return typeinfo.InvalidType{}
 	}
 	c.info.BindNode(expr.Type, target)
-	result, ok := c.staticTypeTest(expr.Location, left, target)
+	result, static, ok := c.classifyTypeTest(expr.Location, left, target)
 	if !ok {
 		return typeinfo.InvalidType{}
 	}
 	typ := &typeinfo.BuiltinType{Name: "bool"}
-	c.info.BindBool(expr, result)
+	if static {
+		c.info.BindBool(expr, result)
+	}
 	c.info.BindNode(expr, typ)
 	return typ
 }
@@ -1081,23 +1086,82 @@ func (c *checker) unionContainsExactMember(source, target typeinfo.Type) bool {
 	return false
 }
 
-func (c *checker) staticTypeTest(loc source.Location, left, target typeinfo.Type) (bool, bool) {
+func (c *checker) classifyTypeTest(loc source.Location, left, target typeinfo.Type) (bool, bool, bool) {
 	if typeinfo.Equal(left, target) {
-		return true, true
+		return true, true, true
 	}
-	if _, ok := c.underlying(left).(*typeinfo.UnionType); ok {
-		return c.reportUnsupportedTypeTest(loc, "runtime union type tests are not implemented yet", "use an explicit cast or pattern match once tagged unions are implemented")
+	if unionType, ok := c.underlying(left).(*typeinfo.UnionType); ok {
+		if unionType == nil {
+			return false, false, false
+		}
+		if c.unionTypeMayMatch(unionType, target) {
+			return false, false, true
+		}
+		return false, true, true
 	}
 	if targetIface, ok := c.underlying(target).(*typeinfo.InterfaceType); ok {
 		if srcIface, ok := c.underlying(left).(*typeinfo.InterfaceType); ok {
-			return c.interfaceSatisfies(srcIface, targetIface), true
+			return c.interfaceSatisfies(srcIface, targetIface), true, true
 		}
-		return c.implementsInterface(left, targetIface), true
+		return c.implementsInterface(left, targetIface), true, true
 	}
 	if _, ok := c.underlying(left).(*typeinfo.InterfaceType); ok {
-		return c.reportUnsupportedTypeTest(loc, "runtime interface type tests are not implemented yet", "only exact or interface-to-interface static checks work right now")
+		result, ok := c.reportUnsupportedTypeTest(loc, "runtime interface type tests are not implemented yet", "only exact or interface-to-interface static checks work right now")
+		return result, false, ok
 	}
-	return false, true
+	return false, true, true
+}
+
+func (c *checker) narrowedScopeForCondition(scope *valueScope, cond ast.Expr, truth bool) *valueScope {
+	if scope == nil || cond == nil {
+		return scope
+	}
+	switch e := cond.(type) {
+	case *ast.PrefixExpr:
+		if e.Op == "!" {
+			return c.narrowedScopeForCondition(scope, e.Right, !truth)
+		}
+	case *ast.IsExpr:
+		return c.narrowedScopeForIs(scope, e, truth)
+	}
+	return scope
+}
+
+func (c *checker) narrowedScopeForIs(scope *valueScope, expr *ast.IsExpr, truth bool) *valueScope {
+	if !truth || expr == nil {
+		return scope
+	}
+	ident, ok := expr.Left.(*ast.Ident)
+	if !ok || ident == nil || len(ident.Path) != 1 {
+		return scope
+	}
+	info, ok := scope.Lookup(ident.Path[0])
+	if !ok || info == nil || info.typ == nil {
+		return scope
+	}
+	target, ok := c.info.Nodes[expr.Type]
+	if !ok || target == nil {
+		target = c.typeFromSyntax(c.mod, expr.Type)
+	}
+	unionType, ok := c.underlying(info.typ).(*typeinfo.UnionType)
+	if !ok || unionType == nil || !c.unionTypeMayMatch(unionType, target) {
+		return scope
+	}
+	narrowed := newValueScope(scope)
+	narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+	return narrowed
+}
+
+func (c *checker) unionTypeMayMatch(unionType *typeinfo.UnionType, target typeinfo.Type) bool {
+	if unionType == nil || target == nil {
+		return false
+	}
+	for _, member := range unionType.Members {
+		if typeinfo.Equal(member, target) || typeinfo.Assignable(member, target) || typeinfo.Assignable(target, member) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *checker) typeOfIndex(scope *valueScope, expr *ast.IndexExpr) typeinfo.Type {

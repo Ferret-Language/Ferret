@@ -465,7 +465,7 @@ fn main() i32 {
 	}
 }
 
-func TestTypecheckerRejectsRuntimeUnionTypeTest(t *testing.T) {
+func TestTypecheckerAllowsRuntimeUnionTypeTest(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Token union {
@@ -473,22 +473,64 @@ type Token union {
     i64,
 }
 
-fn main() bool {
+	fn main() bool {
+	    let value: Token = 1
+	    return value is i32
+	}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerNarrowsUnionTypeInIfBranch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    i64,
+}
+
+fn main() i32 {
     let value: Token = 1
-    return value is i32
+    if value is i32 {
+        let narrowed: i32 = value
+        return narrowed
+    }
+    return 0
 }
 `)
 
 	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected runtime union type-test diagnostic")
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "runtime union type tests are not implemented yet") {
-			return
-		}
+}
+
+func TestTypecheckerNarrowsUnionTypeInWhileBody(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    i64,
+}
+
+fn main() i32 {
+    let value: Token = 1
+    while value is i32 {
+        let narrowed: i32 = value
+        return narrowed
+    }
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	t.Fatalf("expected runtime union type-test diagnostic, got %#v", result.Diagnostics.Diagnostics())
 }
 
 func TestTypecheckerRejectsRuntimeInterfaceToConcreteTypeTest(t *testing.T) {
