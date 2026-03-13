@@ -2859,6 +2859,11 @@ func lowerTypeTest(state *moduleState, v *midmir.TypeTestValue) (string, error) 
 	if v == nil {
 		return "", fmt.Errorf("nil type test")
 	}
+	if _, isNone := v.Left.(*midmir.NoneValue); isNone {
+		if _, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
+			return "0", nil
+		}
+	}
 	if !isUnionAggregate(v.Left.Type()) {
 		return "", fmt.Errorf("unsupported runtime type test on %s", typeinfo.FormatType(typeStringer{v.Left.Type()}))
 	}

@@ -118,6 +118,45 @@ fn main(x i32) i32 {
 	}
 }
 
+func TestLowerOptionalMatchNoneToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let value: ?i32 = none
+    let out: i32 = match value {
+        is i32 => value
+        _ => -1
+    }
+    return out
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%value =l alloc4 8",
+		"storew 0, %value",
+		"%_t5 =w copy 0",
+		"jnz %_t5, @bb1, @bb2",
+		"%__match1 =w copy -1",
+		"ret %out",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerStructFieldAccessToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `

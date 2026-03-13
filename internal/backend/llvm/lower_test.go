@@ -243,6 +243,45 @@ fn main(flag bool) i32 {
 	}
 }
 
+func TestLowerOptionalMatchNoneToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let value: ?i32 = none
+    let out: i32 = match value {
+        is i32 => value
+        _ => -1
+    }
+    return out
+}
+`)
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%value = alloca [8 x i8]",
+		"store i32 0, ptr %value",
+		"%_br3 = icmp ne i8",
+		"br i1 %_br3, label %bb1, label %bb2",
+		"store i32 %_asgn9, ptr %__match1_alloca",
+		"ret i32 %_ld12",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerUnionGlobalToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
