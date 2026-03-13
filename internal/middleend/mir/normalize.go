@@ -56,6 +56,9 @@ func (n *normalizer) normalizeGlobalValue(value Value) Value {
 	case *CastValue:
 		v.Left = n.normalizeGlobalValue(v.Left)
 		return v
+	case *TypeTestValue:
+		v.Left = n.normalizeGlobalValue(v.Left)
+		return v
 	case *CompositeValue:
 		for i, item := range v.Items {
 			v.Items[i].Value = n.normalizeGlobalValue(item.Value)
@@ -240,6 +243,11 @@ func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) 
 		copy := *v
 		copy.Left = left
 		return n.wrapComputed(fn, &copy, temps)
+	case *TypeTestValue:
+		temps, left := n.normalizeValue(fn, v.Left)
+		copy := *v
+		copy.Left = left
+		return n.wrapComputed(fn, &copy, temps)
 	case *CompositeValue:
 		temps := make([]Instr, 0, len(v.Items))
 		items := make([]CompositeItem, 0, len(v.Items))
@@ -324,6 +332,11 @@ func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, V
 		copy.Base = base
 		return temps, &copy
 	case *CastValue:
+		temps, left := n.normalizeValue(fn, v.Left)
+		copy := *v
+		copy.Left = left
+		return temps, &copy
+	case *TypeTestValue:
 		temps, left := n.normalizeValue(fn, v.Left)
 		copy := *v
 		copy.Left = left

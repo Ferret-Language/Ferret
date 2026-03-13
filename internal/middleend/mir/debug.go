@@ -149,6 +149,8 @@ func debugValue(value Value) any {
 		return map[string]any{"kind": "member", "base": debugValue(v.Base), "field_index": v.FieldIndex, "member_name": v.MemberName, "type": typeString(v.Type())}
 	case *CastValue:
 		return map[string]any{"kind": "cast", "left": debugValue(v.Left), "type": typeString(v.Type())}
+	case *TypeTestValue:
+		return map[string]any{"kind": "type_test", "left": debugValue(v.Left), "target": typeString(v.Target), "type": typeString(v.Type())}
 	case *CompositeValue:
 		items := make([]any, 0, len(v.Items))
 		for _, item := range v.Items {

@@ -496,9 +496,8 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 			Target: g.resolveTypeExpr(e.Type),
 		}
 		if value, ok := g.types.LookupBool(e); ok {
+			out.StaticKnown = true
 			out.StaticValue = value
-		} else {
-			out.StaticValue = g.staticIsResult(exprType(g.types, e.Left), out.Target)
 		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out

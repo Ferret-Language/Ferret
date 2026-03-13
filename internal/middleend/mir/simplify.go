@@ -303,6 +303,9 @@ func simplifyValue(value Value, consts map[int]Value) Value {
 	case *CastValue:
 		v.Left = simplifyValue(v.Left, consts)
 		return v
+	case *TypeTestValue:
+		v.Left = simplifyValue(v.Left, consts)
+		return v
 	case *CompositeValue:
 		for i, item := range v.Items {
 			v.Items[i].Value = simplifyValue(item.Value, consts)

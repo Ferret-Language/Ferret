@@ -194,6 +194,8 @@ func childrenAreSimple(value Value) bool {
 		return isSimpleValue(v.Base) && isSimpleValue(v.Index)
 	case *CastValue:
 		return isSimpleValue(v.Left)
+	case *TypeTestValue:
+		return isSimpleValue(v.Left)
 	case *CompositeValue:
 		for _, item := range v.Items {
 			if !isSimpleValue(item.Value) {

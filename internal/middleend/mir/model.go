@@ -284,6 +284,14 @@ type CastValue struct {
 
 func (*CastValue) valueNode() {}
 
+type TypeTestValue struct {
+	baseValue
+	Left   Value
+	Target typeinfo.Type
+}
+
+func (*TypeTestValue) valueNode() {}
+
 type CompositeItem struct {
 	Name  string
 	Value Value

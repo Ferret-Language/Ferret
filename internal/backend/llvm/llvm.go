@@ -2829,6 +2829,8 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 		return lowerBinary(state, v)
 	case *midmir.CastValue:
 		return lowerCast(state, v)
+	case *midmir.TypeTestValue:
+		return lowerTypeTest(state, v)
 	case *midmir.CallValue:
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
 	case *midmir.FieldLoadValue:
@@ -2838,6 +2840,34 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
+}
+
+func lowerTypeTest(state *moduleState, v *midmir.TypeTestValue) (string, error) {
+	if v == nil {
+		return "", fmt.Errorf("nil type test")
+	}
+	if !isUnionAggregate(v.Left.Type()) {
+		return "", fmt.Errorf("unsupported runtime type test on %s", typeinfo.FormatType(typeStringer{v.Left.Type()}))
+	}
+	info, err := llvmUnionLayoutInfo(state, v.Left.Type())
+	if err != nil {
+		return "", err
+	}
+	memberIndex, err := llvmUnionMemberIndex(info.Members, v.Target)
+	if err != nil {
+		return "", err
+	}
+	src, err := lowerAggregateSource(state, v.Left)
+	if err != nil {
+		return "", err
+	}
+	tag := freshTemp(state, "uniontag")
+	state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load i32, ptr %s", tag, src))
+	cmp := freshTemp(state, "istype")
+	state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = icmp eq i32 %s, %d", cmp, tag, memberIndex))
+	out := freshTemp(state, "istypev")
+	state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = zext i1 %s to i8", out, cmp))
+	return out, nil
 }
 
 func lowerAddrOf(state *moduleState, v *midmir.AddrOfValue) (string, error) {

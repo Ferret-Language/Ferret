@@ -91,6 +91,7 @@ type IsExpr struct {
 	baseExpr
 	Left        Expr
 	Target      typeinfo.Type
+	StaticKnown bool
 	StaticValue bool
 }
 

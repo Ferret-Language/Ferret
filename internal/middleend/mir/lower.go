@@ -496,7 +496,10 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.CastExpr:
 		return &CastValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left)}
 	case *hir.IsExpr:
-		return &BoolValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: e.StaticValue}
+		if e.StaticKnown {
+			return &BoolValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: e.StaticValue}
+		}
+		return &TypeTestValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left), Target: e.Target}
 	case *hir.IndexExpr:
 		base := lowerValue(lowerCtx, e.Left)
 		index := lowerValue(lowerCtx, e.Index)

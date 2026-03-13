@@ -274,6 +274,8 @@ func formatValue(value Value) string {
 		return fmt.Sprintf("%s.%s", wrapValue(v.Base), v.MemberName)
 	case *CastValue:
 		return fmt.Sprintf("%s as %s", wrapValue(v.Left), renderType(v.Type()))
+	case *TypeTestValue:
+		return fmt.Sprintf("%s is %s", wrapValue(v.Left), renderType(v.Target))
 	case *CompositeValue:
 		parts := make([]string, 0, len(v.Items))
 		for _, item := range v.Items {

@@ -2208,6 +2208,8 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 			return tmp, nil
 		}
 		return lowerCast(state, v)
+	case *midmir.TypeTestValue:
+		return lowerTypeTest(state, v)
 	case *midmir.CallValue:
 		if isAggregateType(state, v.Type()) {
 			abi, err := qbeABIType(state, v.Type())
@@ -2233,6 +2235,32 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
+}
+
+func lowerTypeTest(state *moduleState, v *midmir.TypeTestValue) (string, error) {
+	if v == nil {
+		return "", fmt.Errorf("nil type test")
+	}
+	if !isUnionAggregate(v.Left.Type()) {
+		return "", fmt.Errorf("unsupported runtime type test on %s", typeinfo.FormatType(typeStringer{v.Left.Type()}))
+	}
+	info, err := unionLayoutInfo(state, v.Left.Type())
+	if err != nil {
+		return "", err
+	}
+	memberIndex, err := unionMemberIndex(info.Members, v.Target)
+	if err != nil {
+		return "", err
+	}
+	src, err := lowerAggregateSource(state, v.Left)
+	if err != nil {
+		return "", err
+	}
+	tag := freshTemp(state, "uniontag")
+	state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =w loaduw %s", tag, src))
+	cmp := freshTemp(state, "istype")
+	state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =w ceqw %s, %d", cmp, tag, memberIndex))
+	return cmp, nil
 }
 
 func lowerAddrOf(state *moduleState, v *midmir.AddrOfValue) (string, error) {
