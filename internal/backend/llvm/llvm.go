@@ -40,6 +40,7 @@ type moduleState struct {
 	tempValues        map[int]midmir.Value
 	debug             *debugState // nil if debug info is disabled
 	fnScopeID         int         // DISubprogram metadata ID for the current function
+	debugLocalVarIDs  map[int]int // local ID -> DILocalVariable metadata ID (for dbg.value updates)
 }
 
 // debugState accumulates LLVM debug-info metadata nodes (DWARF) while
@@ -51,6 +52,15 @@ type debugState struct {
 	cuIDs          []int          // all DICompileUnit IDs (one per module)
 	fileIDs        map[string]int // abs file path → DIFile metadata ID
 	subroutineType int            // cached !DISubroutineType(types: !{null}) ID; -1 = not yet emitted
+	emptyExpr      int            // cached !DIExpression() ID; -1 = not yet emitted
+	emptyTuple     int            // cached !{} ID; -1 = not yet emitted
+	unknownType    int            // cached generic !DIBasicType for unknown locals; -1 = not yet emitted
+	stringType     int            // cached debug type for str; -1 = not yet emitted
+	sliceType      int            // cached debug type for []T-like ABI shape; -1 = not yet emitted
+	basicTypeIDs   map[string]int // builtin ferret type name -> DIBasicType metadata ID
+	pointerTypeIDs map[int]int    // base type metadata ID -> pointer debug type metadata ID
+	compositeIDs   map[string]int // logical composite key -> metadata ID
+	buildingTypes  map[string]bool
 }
 
 func newDebugState() *debugState {
@@ -58,6 +68,15 @@ func newDebugState() *debugState {
 		nextID:         0,
 		fileIDs:        make(map[string]int),
 		subroutineType: -1,
+		emptyExpr:      -1,
+		emptyTuple:     -1,
+		unknownType:    -1,
+		stringType:     -1,
+		sliceType:      -1,
+		basicTypeIDs:   make(map[string]int),
+		pointerTypeIDs: make(map[int]int),
+		compositeIDs:   make(map[string]int),
+		buildingTypes:  make(map[string]bool),
 	}
 }
 
@@ -114,6 +133,186 @@ func (d *debugState) addLocation(line, col, scopeID int) int {
 	return d.emit(fmt.Sprintf("!DILocation(line: %d, column: %d, scope: !%d)", line, col, scopeID))
 }
 
+// getEmptyExpression returns (creating once) the empty DIExpression metadata.
+func (d *debugState) getEmptyExpression() int {
+	if d.emptyExpr >= 0 {
+		return d.emptyExpr
+	}
+	d.emptyExpr = d.emit("!DIExpression()")
+	return d.emptyExpr
+}
+
+func (d *debugState) getEmptyTuple() int {
+	if d.emptyTuple >= 0 {
+		return d.emptyTuple
+	}
+	d.emptyTuple = d.emit("!{}")
+	return d.emptyTuple
+}
+
+// getUnknownType returns a generic fallback debug type for locals/params.
+func (d *debugState) getUnknownType() int {
+	if d.unknownType >= 0 {
+		return d.unknownType
+	}
+	d.unknownType = d.emit(`!DIBasicType(name: "unknown", size: 0, encoding: DW_ATE_unsigned)`)
+	return d.unknownType
+}
+
+func (d *debugState) getPointerType(baseTypeID int) int {
+	if baseTypeID < 0 {
+		baseTypeID = d.getUnknownType()
+	}
+	if id, ok := d.pointerTypeIDs[baseTypeID]; ok {
+		return id
+	}
+	id := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !%d, size: 64)", baseTypeID))
+	d.pointerTypeIDs[baseTypeID] = id
+	return id
+}
+
+func (d *debugState) getBasicType(name string, sizeBits int, encoding string) int {
+	if id, ok := d.basicTypeIDs[name]; ok {
+		return id
+	}
+	id := d.emit(fmt.Sprintf("!DIBasicType(name: %q, size: %d, encoding: %s)", name, sizeBits, encoding))
+	d.basicTypeIDs[name] = id
+	return id
+}
+
+func (d *debugState) getSliceLikeType(name string) int {
+	if name == "str" && d.stringType >= 0 {
+		return d.stringType
+	}
+	if name == "slice" && d.sliceType >= 0 {
+		return d.sliceType
+	}
+	ptrID := d.getPointerType(d.getUnknownType())
+	lenID := d.getBasicType("usize", 64, "DW_ATE_unsigned")
+	dataMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: %q, baseType: !%d, size: 64, align: 64, offset: 0)", "data", ptrID))
+	lenMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: %q, baseType: !%d, size: 64, align: 64, offset: 64)", "len", lenID))
+	elemsID := d.emit(fmt.Sprintf("!{!%d, !%d}", dataMember, lenMember))
+	id := d.emit(fmt.Sprintf("!DICompositeType(tag: DW_TAG_structure_type, name: %q, size: 128, align: 64, elements: !%d)", name, elemsID))
+	if name == "str" {
+		d.stringType = id
+	} else if name == "slice" {
+		d.sliceType = id
+	}
+	return id
+}
+
+func (d *debugState) getNamedType(state *moduleState, named *typeinfo.NamedType) int {
+	if named == nil {
+		return d.getUnknownType()
+	}
+	key := named.ModuleKey + "::" + named.Name
+	if id, ok := d.compositeIDs[key]; ok {
+		return id
+	}
+	if d.buildingTypes[key] {
+		return d.getUnknownType()
+	}
+	if state == nil {
+		return d.getUnknownType()
+	}
+	info, err := lookupNamedLayout(state, named)
+	if err != nil || info == nil || !info.Known {
+		return d.getUnknownType()
+	}
+	d.buildingTypes[key] = true
+	defer delete(d.buildingTypes, key)
+
+	name := named.Name
+	tag := "DW_TAG_structure_type"
+	if info.Union != nil || namedIsUnion(named) {
+		tag = "DW_TAG_union_type"
+	}
+	elemsID := d.getEmptyTuple()
+	if info.Struct != nil {
+		memberRefs := make([]string, 0, len(info.Struct.Fields))
+		for _, field := range info.Struct.Fields {
+			if field == nil {
+				continue
+			}
+			memberTypeID := d.getType(state, field.Type)
+			memberID := d.emit(fmt.Sprintf(
+				"!DIDerivedType(tag: DW_TAG_member, name: %q, baseType: !%d, size: %d, align: %d, offset: %d)",
+				field.Name, memberTypeID, field.Size*8, field.Align*8, field.Offset*8))
+			memberRefs = append(memberRefs, fmt.Sprintf("!%d", memberID))
+		}
+		if len(memberRefs) > 0 {
+			elemsID = d.emit(fmt.Sprintf("!{%s}", strings.Join(memberRefs, ", ")))
+		}
+	}
+	align := info.Align * 8
+	if align <= 0 {
+		align = 8
+	}
+	id := d.emit(fmt.Sprintf("!DICompositeType(tag: %s, name: %q, size: %d, align: %d, elements: !%d)", tag, name, info.Size*8, align, elemsID))
+	d.compositeIDs[key] = id
+	return id
+}
+
+func (d *debugState) getType(state *moduleState, typ typeinfo.Type) int {
+	if typ == nil {
+		return d.getUnknownType()
+	}
+	if named, ok := typ.(*typeinfo.NamedType); ok {
+		return d.getNamedType(state, named)
+	}
+	switch t := unwrapNamed(typ).(type) {
+	case *typeinfo.BuiltinType:
+		switch t.Name {
+		case "bool", "u8":
+			return d.getBasicType(t.Name, 8, "DW_ATE_unsigned")
+		case "i8":
+			return d.getBasicType(t.Name, 8, "DW_ATE_signed")
+		case "u16":
+			return d.getBasicType(t.Name, 16, "DW_ATE_unsigned")
+		case "i16":
+			return d.getBasicType(t.Name, 16, "DW_ATE_signed")
+		case "u32":
+			return d.getBasicType(t.Name, 32, "DW_ATE_unsigned")
+		case "i32":
+			return d.getBasicType(t.Name, 32, "DW_ATE_signed")
+		case "char":
+			return d.getBasicType(t.Name, 32, "DW_ATE_UTF")
+		case "u64", "usize":
+			return d.getBasicType(t.Name, 64, "DW_ATE_unsigned")
+		case "i64", "isize":
+			return d.getBasicType(t.Name, 64, "DW_ATE_signed")
+		case "f32":
+			return d.getBasicType(t.Name, 32, "DW_ATE_float")
+		case "f64":
+			return d.getBasicType(t.Name, 64, "DW_ATE_float")
+		case "void":
+			return d.getUnknownType()
+		}
+	case *typeinfo.PointerType:
+		innerID := d.getType(state, t.Inner)
+		return d.getPointerType(innerID)
+	case *typeinfo.StringType:
+		return d.getSliceLikeType("str")
+	case *typeinfo.SliceType:
+		return d.getSliceLikeType("slice")
+	}
+	return d.getUnknownType()
+}
+
+// addLocalVariable creates DILocalVariable metadata for a parameter/local.
+// Pass argIndex=0 for non-parameters.
+func (d *debugState) addLocalVariable(state *moduleState, name string, varType typeinfo.Type, fileID, scopeID, line, argIndex int) int {
+	typeID := d.getType(state, varType)
+	if argIndex > 0 {
+		return d.emit(fmt.Sprintf(
+			`!DILocalVariable(name: %q, arg: %d, scope: !%d, file: !%d, line: %d, type: !%d)`,
+			name, argIndex, scopeID, fileID, line, typeID))
+	}
+	return d.emit(fmt.Sprintf(
+		`!DILocalVariable(name: %q, scope: !%d, file: !%d, line: %d, type: !%d)`,
+		name, scopeID, fileID, line, typeID))
+}
+
 // appendDebugSuffix appends ", !dbg !N" to every non-empty, non-comment line
 // in a (possibly multi-line) LLVM IR instruction string.
 func appendDebugSuffix(ir string, suffix string) string {
@@ -155,7 +354,7 @@ func (*lowerer) Target() backend.Target { return backend.TargetLLVM }
 // All named type declarations are collected and deduplicated first so they
 // precede every function body — a hard requirement of the LLVM IR format.
 // Use this instead of calling LowerModule per-module and concatenating.
-func LowerProgram(units []*backend.Unit) (string, error) {
+func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 	// Build a merged layouts map so every unit can resolve cross-module types.
 	allLayouts := make(map[string]*layout.Module)
 	for _, u := range units {
@@ -164,7 +363,10 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 		}
 	}
 
-	dbg := newDebugState()
+	var dbg *debugState
+	if includeDebug {
+		dbg = newDebugState()
+	}
 
 	// Pass 1: collect all type declarations in dependency order (units are
 	// already ordered imports-before-entry by the caller).
@@ -210,6 +412,10 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 		}
 		seenExterns[sym] = struct{}{}
 		declLines = append(declLines, decl)
+	}
+	if includeDebug {
+		declLines = append(declLines, "declare void @llvm.dbg.declare(metadata, metadata, metadata)")
+		declLines = append(declLines, "declare void @llvm.dbg.value(metadata, metadata, metadata)")
 	}
 	for _, unit := range units {
 		if unit == nil || unit.Module == nil {
@@ -294,7 +500,7 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 		state := newModuleStateWithDebug(unit, allLayouts, dbg)
 
 		// Create one DICompileUnit per module source file.
-		if unit.Module.FilePath != "" {
+		if state.debug != nil && unit.Module.FilePath != "" {
 			fileID := dbg.getFile(unit.Module.FilePath)
 			state.debug.addCU(fileID)
 		}
@@ -324,7 +530,7 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 	}
 
 	// Emit DWARF debug metadata section.
-	if len(dbg.cuIDs) > 0 {
+	if dbg != nil && len(dbg.cuIDs) > 0 {
 		// Module flags required by LLVM for DWARF.
 		dwarfVerID := dbg.emit("!{i32 7, !\"Dwarf Version\", i32 4}")
 		dbgVerID := dbg.emit("!{i32 2, !\"Debug Info Version\", i32 3}")
@@ -959,6 +1165,9 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 			for _, line := range entryPrelude(state) {
 				fmt.Fprintf(b, "  %s\n", line)
 			}
+			for _, line := range entryDebugDecls(state) {
+				fmt.Fprintf(b, "  %s\n", line)
+			}
 		}
 
 		for _, instr := range block.Instructions {
@@ -1023,6 +1232,88 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 	return nil
 }
 
+func entryDebugDecls(state *moduleState) []string {
+	if state == nil || state.fn == nil || state.debug == nil || state.fnScopeID < 0 {
+		return nil
+	}
+
+	paramIDs := make(map[int]struct{}, len(state.fn.Params))
+	lines := make([]string, 0, len(state.fn.Params)+len(state.fn.Locals))
+	argIndex := 1
+
+	emitDecl := func(localID int, name string, varType typeinfo.Type, ptrName, filePath string, line, arg int) {
+		if name == "" || ptrName == "" || filePath == "" {
+			return
+		}
+		if line <= 0 {
+			line = 1
+		}
+		fileID := state.debug.getFile(filePath)
+		varID := state.debug.addLocalVariable(state, name, varType, fileID, state.fnScopeID, line, arg)
+		state.debugLocalVarIDs[localID] = varID
+		exprID := state.debug.getEmptyExpression()
+		locID := state.debug.addLocation(line, 1, state.fnScopeID)
+		lines = append(lines, fmt.Sprintf("call void @llvm.dbg.declare(metadata ptr %s, metadata !%d, metadata !%d), !dbg !%d", ptrName, varID, exprID, locID))
+	}
+
+	for _, param := range state.fn.Params {
+		if param == nil {
+			continue
+		}
+		paramIDs[param.LocalID] = struct{}{}
+		filePath := param.Location.File
+		if filePath == "" {
+			filePath = state.fn.Location.File
+		}
+		line := 1
+		if param.Location.Start != nil {
+			line = param.Location.Start.Line
+		} else if state.fn.Location.Start != nil {
+			line = state.fn.Location.Start.Line
+		}
+		if _, ok := state.aggParams[param.LocalID]; ok {
+			emitDecl(param.LocalID, param.Name, param.Type, llvmLocalName(param.Name), filePath, line, argIndex)
+			argIndex++
+			continue
+		}
+		if sc, ok := state.scalarLocals[param.LocalID]; ok {
+			emitDecl(param.LocalID, param.Name, param.Type, sc.AllocaName, filePath, line, argIndex)
+			argIndex++
+		}
+	}
+
+	for _, local := range state.fn.Locals {
+		if local == nil || local.IsTemp {
+			continue
+		}
+		if _, isParam := paramIDs[local.ID]; isParam {
+			continue
+		}
+		filePath := local.Location.File
+		if filePath == "" {
+			filePath = state.fn.Location.File
+		}
+		line := 1
+		if local.Location.Start != nil {
+			line = local.Location.Start.Line
+		} else if state.fn.Location.Start != nil {
+			line = state.fn.Location.Start.Line
+		}
+		if sc, ok := state.scalarLocals[local.ID]; ok {
+			emitDecl(local.ID, local.Name, local.Type, sc.AllocaName, filePath, line, 0)
+			continue
+		}
+		if agg, ok := state.aggLocals[local.ID]; ok {
+			if _, isParam := state.aggParams[local.ID]; isParam {
+				continue
+			}
+			emitDecl(local.ID, local.Name, local.Type, llvmLocalName(agg.PtrName), filePath, line, 0)
+		}
+	}
+
+	return lines
+}
+
 // ---------------------------------------------------------------------------
 // Instructions
 // ---------------------------------------------------------------------------
@@ -1075,12 +1366,43 @@ func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
 
 func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value midmir.Value) (string, error) {
 	// Route scalar alloca targets: compute to a fresh temp then store.
-	if local := findLocalByName(state.fn, name); local != nil {
+	local := findLocalByName(state.fn, name)
+	if local != nil {
 		if sc, ok := state.scalarLocals[local.ID]; ok {
 			return lowerScalarAllocaAssign(state, sc, typ, value)
 		}
 	}
-	return lowerSSAAssign(state, name, typ, value)
+	line, err := lowerSSAAssign(state, name, typ, value)
+	if err != nil {
+		return "", err
+	}
+	if local != nil {
+		line = appendDbgValueForLocal(state, line, local, typ)
+	}
+	return line, nil
+}
+
+func appendDbgValueForLocal(state *moduleState, line string, local *midmir.Local, typ typeinfo.Type) string {
+	if state == nil || state.debug == nil || state.fnScopeID < 0 || local == nil || local.IsTemp || line == "" {
+		return line
+	}
+	if _, allocaBacked := state.scalarLocals[local.ID]; allocaBacked {
+		return line
+	}
+	if _, aggregateBacked := state.aggLocals[local.ID]; aggregateBacked {
+		return line
+	}
+	varID, ok := state.debugLocalVarIDs[local.ID]
+	if !ok {
+		return line
+	}
+	irType, err := llvmBaseType(typ)
+	if err != nil || irType == "void" {
+		return line
+	}
+	valueExpr := fmt.Sprintf("%s %s", irType, llvmLocalName(local.Name))
+	exprID := state.debug.getEmptyExpression()
+	return line + "\n" + fmt.Sprintf("call void @llvm.dbg.value(metadata %s, metadata !%d, metadata !%d)", valueExpr, varID, exprID)
 }
 
 // lowerScalarAllocaAssign computes value to a fresh SSA temp then stores to alloca.
@@ -3242,6 +3564,7 @@ func prepareFunctionState(state *moduleState, fn *midmir.Function) error {
 	state.aggParams = make(map[int]struct{})
 	state.scalarLocals = make(map[int]*scalarAllocaLocal)
 	state.tempValues = make(map[int]midmir.Value)
+	state.debugLocalVarIDs = make(map[int]int)
 	state.pendingLines = nil
 	state.nextTemp = 0
 

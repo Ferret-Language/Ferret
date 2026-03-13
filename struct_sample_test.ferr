@@ -45,6 +45,11 @@ fn main() i32 {
     print(p2.Y)
     print(Point::Counter)
 
+    let mut maybe : ?i32 = none
+    maybe = 21
+    maybe = 66
+    maybe = none
+
     let p3 = .{} as Point
     let c1 = .{ .Rad = 2.3 } as Circle
     

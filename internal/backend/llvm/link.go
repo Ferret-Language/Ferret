@@ -5,12 +5,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"compiler/internal/backend"
 	ast "compiler/internal/frontend/ast"
 	midmir "compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
+
+type CompileOptions struct {
+	Debug bool
+}
 
 // CompileIR compiles LLVM IR text into a native executable at outputPath.
 //
@@ -20,7 +25,7 @@ import (
 //
 // clang handles both compilation and linking, picking up the C runtime
 // automatically.
-func CompileIR(llvmIR, outputPath string) error {
+func CompileIR(llvmIR, outputPath string, opts CompileOptions) error {
 	// Locate the pre-compiled runtime archive before touching the temp dir so
 	// a missing archive is reported cleanly before any work is done.
 	runtimeLib, err := backend.RuntimeStaticLib()
@@ -47,12 +52,18 @@ func CompileIR(llvmIR, outputPath string) error {
 	// clang compiles + links in one pass.
 	// Pass the runtime archive as a positional input so we do not depend on
 	// driver-specific -l:filename support.
-	cmd := exec.Command("clang",
-		"-Wno-override-module",
-		irFile,
-		runtimeLib,
-		"-o", outputPath,
-	)
+	args := []string{"-Wno-override-module"}
+	if opts.Debug {
+		if runtime.GOOS == "windows" {
+			args = append(args, "-gcodeview")
+		} else {
+			args = append(args, "-g")
+		}
+		args = append(args, "-O0", "-fno-omit-frame-pointer")
+	}
+	args = append(args, irFile, runtimeLib, "-o", outputPath)
+
+	cmd := exec.Command("clang", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compile ir: clang: %w\n%s", err, out)
 	}

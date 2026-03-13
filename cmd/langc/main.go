@@ -33,6 +33,7 @@ func main() {
 	backendOut := flag.String("backend-out", "", "write backend IR to file or directory")
 	outputPath := flag.String("o", "", "compile and link to executable (see -build-backend)")
 	buildBackend := flag.String("build-backend", "qbe", "backend to use for -o compilation (qbe|llvm)")
+	debugBuild := flag.Bool("debug", false, "enable debug build mode (emits debug info and debug-friendly codegen)")
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "usage: %s [-o output] [-ast] [-ast-out file] [-hir] [-hir-out path] [-mir] [-mir-out path] [-backend target] [-backend-out path] <source-file-or-directory>\n", os.Args[0])
 		flag.PrintDefaults()
@@ -51,7 +52,7 @@ func main() {
 	if selectedBackend == "" {
 		selectedBackend = "qbe"
 	}
-	result := parsePathWithBackend(flag.Arg(0), selectedBackend)
+	result := parsePathWithBackend(flag.Arg(0), selectedBackend, *debugBuild)
 	if *astFlag || *astOut != "" {
 		if err := emitASTDump(result, *astOut); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -121,7 +122,7 @@ func main() {
 	}
 }
 
-func parsePathWithBackend(path, targetBackend string) compilerapi.Result {
+func parsePathWithBackend(path, targetBackend string, buildDebug bool) compilerapi.Result {
 	absPath, err := filepath.Abs(path)
 	diag := diagnostics.NewDiagnosticBag(absPath)
 	if err != nil {
@@ -140,6 +141,7 @@ func parsePathWithBackend(path, targetBackend string) compilerapi.Result {
 			return compilerapi.Result{Diagnostics: diag}
 		}
 		ws.Context.TargetBackend = targetBackend
+		ws.Context.BuildDebug = buildDebug
 		compiler := compilerapi.NewWithConfig(ws.Context, diag)
 		return compiler.ParseWorkspace()
 	}
@@ -149,6 +151,7 @@ func parsePathWithBackend(path, targetBackend string) compilerapi.Result {
 		return compilerapi.Result{Diagnostics: diag}
 	}
 	ws.Context.TargetBackend = targetBackend
+	ws.Context.BuildDebug = buildDebug
 	compiler := compilerapi.NewWithConfig(ws.Context, diag)
 	return compiler.ParseEntry(absPath)
 }
@@ -363,6 +366,7 @@ func buildExecutable(result compilerapi.Result, outputPath string, target backen
 	if err != nil {
 		return fmt.Errorf("build: output path: %w", err)
 	}
+	debugBuild := result.CompilerState != nil && result.CompilerState.Config.BuildDebug
 
 	switch target {
 	case backend.TargetLLVM:
@@ -382,7 +386,7 @@ func buildExecutable(result compilerapi.Result, outputPath string, target backen
 				Modules: backendModules(result),
 			})
 		}
-		ir, err := llvm.LowerProgram(units)
+		ir, err := llvm.LowerProgram(units, debugBuild)
 		if err != nil {
 			return fmt.Errorf("build: %w", err)
 		}
@@ -390,7 +394,7 @@ func buildExecutable(result compilerapi.Result, outputPath string, target backen
 		if err != nil {
 			return fmt.Errorf("build: %w", err)
 		}
-		return llvm.CompileIR(ir+wrapper, absOut)
+		return llvm.CompileIR(ir+wrapper, absOut, llvm.CompileOptions{Debug: debugBuild})
 	default:
 		lowerer, err := registry.New(target)
 		if err != nil {
