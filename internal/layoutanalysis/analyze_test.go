@@ -76,7 +76,7 @@ fn main() i32 {
 	}
 }
 
-func TestLayoutComputesUnionAsMaxMemberSize(t *testing.T) {
+func TestLayoutComputesTaggedUnionLayout(t *testing.T) {
 	root := t.TempDir()
 	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Token union {
     i32,
@@ -97,11 +97,20 @@ fn main() i32 {
 	if !ok || token == nil {
 		t.Fatalf("expected Token layout, got %#v", result.Entry.Layout)
 	}
-	if token.Size != 8 || token.Align != 8 {
-		t.Fatalf("expected Token size=8 align=8, got size=%d align=%d", token.Size, token.Align)
+	if token.Size != 16 || token.Align != 8 {
+		t.Fatalf("expected Token size=16 align=8, got size=%d align=%d", token.Size, token.Align)
 	}
 	if token.Struct != nil {
-		t.Fatalf("expected union to have no struct layout, got %#v", token.Struct)
+		t.Fatalf("expected named union to expose dedicated union layout, got struct %#v", token.Struct)
+	}
+	if token.Union == nil {
+		t.Fatalf("expected union layout, got %#v", token)
+	}
+	if token.Union.TagOffset != 0 || token.Union.PayloadOffset != 8 {
+		t.Fatalf("expected tag@0 payload@8, got %#v", token.Union)
+	}
+	if len(token.Union.Members) != 3 {
+		t.Fatalf("expected 3 union members, got %#v", token.Union.Members)
 	}
 }
 

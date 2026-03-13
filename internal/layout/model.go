@@ -21,6 +21,7 @@ type TypeLayout struct {
 	Align     int64
 	Known     bool
 	Struct    *StructLayout
+	Union     *UnionLayout
 	Location  source.Location
 }
 
@@ -40,6 +41,28 @@ type FieldLayout struct {
 	Size          int64
 	Align         int64
 	Location      source.Location
+}
+
+type UnionLayout struct {
+	TagType       typeinfo.Type
+	TagSize       int64
+	TagAlign      int64
+	TagOffset     int64
+	PayloadSize   int64
+	PayloadAlign  int64
+	PayloadOffset int64
+	Members       []*UnionMemberLayout
+	Size          int64
+	Align         int64
+}
+
+type UnionMemberLayout struct {
+	Index    int
+	Type     typeinfo.Type
+	Size     int64
+	Align    int64
+	Offset   int64
+	TagValue int64
 }
 
 func (m *Module) Lookup(name string) (*TypeLayout, bool) {

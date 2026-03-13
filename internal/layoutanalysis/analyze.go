@@ -99,7 +99,18 @@ func (a *analyzer) layoutNamedType(named *typeinfo.NamedType) *typeLayoutResult 
 	a.cache[key] = result
 
 	underlying := a.findUnderlyingType(named)
-	size, align, known, structLayout := a.layoutUnderlying(nil, underlying)
+	var (
+		size         int64
+		align        int64
+		known        bool
+		structLayout *layout.StructLayout
+		unionLayout  *layout.UnionLayout
+	)
+	if unionType, ok := underlying.(*typeinfo.UnionType); ok {
+		size, align, known, unionLayout = a.layoutTaggedUnionDetail(unionType.Members)
+	} else {
+		size, align, known, structLayout = a.layoutUnderlying(nil, underlying)
+	}
 	result.size = size
 	result.align = align
 	result.known = known
@@ -107,6 +118,7 @@ func (a *analyzer) layoutNamedType(named *typeinfo.NamedType) *typeLayoutResult 
 	result.layout.Align = align
 	result.layout.Known = known
 	result.layout.Struct = structLayout
+	result.layout.Union = unionLayout
 	result.layout.Type = underlying
 	return result
 }
@@ -170,7 +182,7 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 	case *typeinfo.ErrorUnionType:
 		return a.layoutTaggedUnion([]typeinfo.Type{t.Error, t.Value})
 	case *typeinfo.UnionType:
-		return a.layoutPlainUnion(t.Members)
+		return a.layoutTaggedUnion(t.Members)
 	case typeinfo.UnknownType, typeinfo.InvalidType, typeinfo.UndefinedType:
 		return 0, 1, false, nil
 	case nil:
@@ -266,32 +278,46 @@ func (a *analyzer) layoutStruct(st *typeinfo.StructType) (int64, int64, bool, *l
 }
 
 func (a *analyzer) layoutTaggedUnion(members []typeinfo.Type) (int64, int64, bool, *layout.StructLayout) {
+	size, align, known, u := a.layoutTaggedUnionDetail(members)
+	return size, align, known, unionStructLayout(u)
+}
+
+func (a *analyzer) layoutTaggedUnionDetail(members []typeinfo.Type) (int64, int64, bool, *layout.UnionLayout) {
 	payloadSize := int64(0)
 	payloadAlign := int64(1)
 	known := true
+	memberLayouts := make([]*layout.UnionMemberLayout, 0, len(members))
 	for _, member := range members {
 		size, align, memberKnown, _ := a.layoutUnderlying(nil, member)
 		payloadSize = maxInt64(payloadSize, size)
 		payloadAlign = maxInt64(payloadAlign, align)
 		known = known && memberKnown
+		memberLayouts = append(memberLayouts, &layout.UnionMemberLayout{
+			Index: len(memberLayouts),
+			Type:  member,
+			Size:  size,
+			Align: align,
+		})
 	}
 	align := maxInt64(tagAlign, payloadAlign)
 	payloadOffset := alignUp(tagSize, payloadAlign)
 	size := alignUp(payloadOffset+payloadSize, align)
-	return size, align, known, nil
-}
-
-func (a *analyzer) layoutPlainUnion(members []typeinfo.Type) (int64, int64, bool, *layout.StructLayout) {
-	size := int64(0)
-	align := int64(1)
-	known := true
-	for _, member := range members {
-		memberSize, memberAlign, memberKnown, _ := a.layoutUnderlying(nil, member)
-		size = maxInt64(size, memberSize)
-		align = maxInt64(align, memberAlign)
-		known = known && memberKnown
+	for _, member := range memberLayouts {
+		member.Offset = payloadOffset
+		member.TagValue = int64(member.Index)
 	}
-	return alignUp(size, align), align, known, nil
+	return size, align, known, &layout.UnionLayout{
+		TagType:       &typeinfo.BuiltinType{Name: "i32"},
+		TagSize:       tagSize,
+		TagAlign:      tagAlign,
+		TagOffset:     0,
+		PayloadSize:   payloadSize,
+		PayloadAlign:  payloadAlign,
+		PayloadOffset: payloadOffset,
+		Members:       memberLayouts,
+		Size:          size,
+		Align:         align,
+	}
 }
 
 func builtinLayout(name string) (int64, int64, bool, *layout.StructLayout) {
@@ -331,6 +357,37 @@ func maxInt64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+func unionStructLayout(u *layout.UnionLayout) *layout.StructLayout {
+	if u == nil {
+		return nil
+	}
+	return &layout.StructLayout{
+		Fields: []*layout.FieldLayout{
+			{
+				Name:          "$tag",
+				Type:          u.TagType,
+				SemanticIndex: 0,
+				PhysicalIndex: 0,
+				Offset:        u.TagOffset,
+				Size:          u.TagSize,
+				Align:         u.TagAlign,
+			},
+			{
+				Name:          "$payload",
+				Type:          nil,
+				SemanticIndex: 1,
+				PhysicalIndex: 1,
+				Offset:        u.PayloadOffset,
+				Size:          u.PayloadSize,
+				Align:         u.PayloadAlign,
+			},
+		},
+		PhysicalOrder: []int{0, 1},
+		Size:          u.Size,
+		Align:         u.Align,
+	}
 }
 
 func DebugModule(mod *layout.Module) string {

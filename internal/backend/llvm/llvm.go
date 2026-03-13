@@ -760,18 +760,18 @@ func lowerGlobalInterfaceData(state *moduleState, ownerName string, init *midmir
 }
 
 func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init midmir.Value) (string, error) {
-	size, _, err := aggregateSizeAlign(state, typ)
+	info, err := llvmUnionLayoutInfo(state, typ)
 	if err != nil {
 		return "", err
 	}
-	bytes, err := llvmUnionInitBytes(init)
+	bytes, err := llvmUnionInitBytes(info, init)
 	if err != nil {
 		return "", err
 	}
-	if int64(len(bytes)) > size {
+	if int64(len(bytes)) > info.Size {
 		return "", fmt.Errorf("union initializer is larger than destination storage")
 	}
-	for int64(len(bytes)) < size {
+	for int64(len(bytes)) < info.Size {
 		bytes = append(bytes, 0)
 	}
 	parts := make([]string, 0, len(bytes))
@@ -781,19 +781,42 @@ func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init midmir.Value) 
 	return fmt.Sprintf("[%s]", strings.Join(parts, ", ")), nil
 }
 
-func llvmUnionInitBytes(init midmir.Value) ([]byte, error) {
+func llvmUnionInitBytes(info *backendUnionLayout, init midmir.Value) ([]byte, error) {
+	if info == nil {
+		return nil, fmt.Errorf("nil union layout")
+	}
+	memberIndex, err := llvmUnionMemberIndex(info.Members, init.Type())
+	if err != nil {
+		return nil, err
+	}
+	tagBytes, err := llvmScalarBytesFromNumber("u32", strconv.Itoa(memberIndex))
+	if err != nil {
+		return nil, err
+	}
+	bytes := make([]byte, 0, info.Size)
+	bytes = append(bytes, tagBytes...)
+	for int64(len(bytes)) < info.PayloadOffset {
+		bytes = append(bytes, 0)
+	}
 	switch v := init.(type) {
 	case *midmir.BoolValue:
 		if v.Value {
-			return []byte{1}, nil
+			bytes = append(bytes, 1)
+			return bytes, nil
 		}
-		return []byte{0}, nil
+		bytes = append(bytes, 0)
+		return bytes, nil
 	case *midmir.NumberValue:
 		builtin, ok := unwrapNamed(v.Type()).(*typeinfo.BuiltinType)
 		if !ok {
 			return nil, fmt.Errorf("unsupported union numeric initializer type %s", v.Type())
 		}
-		return llvmScalarBytesFromNumber(builtin.Name, v.Value)
+		payload, err := llvmScalarBytesFromNumber(builtin.Name, v.Value)
+		if err != nil {
+			return nil, err
+		}
+		bytes = append(bytes, payload...)
+		return bytes, nil
 	default:
 		return nil, fmt.Errorf("unsupported union global initializer %T", init)
 	}
@@ -1353,6 +1376,9 @@ func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, erro
 	if instr == nil {
 		return "", nil
 	}
+	if agg := unionAggregateLocalForPlace(state, instr.Target); agg != nil {
+		return lowerUnionAssign(state, agg, instr.Value)
+	}
 	lines, addr, err := lowerPlaceAddr(state, instr.Target)
 	if err != nil {
 		return "", err
@@ -1372,6 +1398,33 @@ func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, erro
 	}
 	lines = append(lines, fmt.Sprintf("store %s %s, ptr %s", irType, val, addr))
 	return strings.Join(lines, "\n"), nil
+}
+
+func unionAggregateLocalForPlace(state *moduleState, place midmir.Place) *aggregateLocal {
+	switch p := place.(type) {
+	case *midmir.LocalPlace:
+		if agg, ok := state.aggLocals[p.LocalID]; ok && isUnionAggregate(agg.Type) {
+			return agg
+		}
+	case *midmir.DerefPlace:
+		if addr, ok := p.Pointer.(*midmir.AddrOfValue); ok {
+			switch src := addr.Source.(type) {
+			case *midmir.LocalValue:
+				if agg, ok := state.aggLocals[src.LocalID]; ok && isUnionAggregate(agg.Type) {
+					return agg
+				}
+			case *midmir.NameValue:
+				if len(src.Path) == 1 {
+					if local := findLocalByName(state.fn, src.Path[0]); local != nil {
+						if agg, ok := state.aggLocals[local.ID]; ok && isUnionAggregate(agg.Type) {
+							return agg
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // lowerPlaceAddr returns the LLVM ptr value for a MIR place.
@@ -1895,6 +1948,17 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 			return lowerUnionAssign(state, agg, v.Left)
 		}
 	}
+	if isUnionAggregate(value.Type()) {
+		src, err := lowerAggregateSource(state, value)
+		if err != nil {
+			return "", err
+		}
+		size, align, err := aggregateSizeAlign(state, agg.Type)
+		if err != nil {
+			return "", err
+		}
+		return llvmMemcpy(llvmLocalName(agg.PtrName), src, size, align), nil
+	}
 	if isAggregateType(state, value.Type()) {
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
@@ -1904,7 +1968,31 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 		if err != nil {
 			return "", err
 		}
-		return llvmMemcpy(llvmLocalName(agg.PtrName), src, size, align), nil
+		info, err := llvmUnionLayoutInfo(state, agg.Type)
+		if err != nil {
+			return "", err
+		}
+		memberIndex, err := llvmUnionMemberIndex(info.Members, value.Type())
+		if err != nil {
+			return "", err
+		}
+		lines := []string{fmt.Sprintf("store i32 %d, ptr %s", memberIndex, llvmLocalName(agg.PtrName))}
+		dst := llvmLocalName(agg.PtrName)
+		if info.PayloadOffset != 0 {
+			tmp := freshTemp(state, "unionpayload")
+			lines = append(lines, fmt.Sprintf("%s = getelementptr i8, ptr %s, i64 %d", tmp, llvmLocalName(agg.PtrName), info.PayloadOffset))
+			dst = tmp
+		}
+		lines = append(lines, llvmMemcpy(dst, src, size, align))
+		return strings.Join(lines, "\n"), nil
+	}
+	info, err := llvmUnionLayoutInfo(state, agg.Type)
+	if err != nil {
+		return "", err
+	}
+	memberIndex, err := llvmUnionMemberIndex(info.Members, value.Type())
+	if err != nil {
+		return "", err
 	}
 	irType, err := llvmBaseType(value.Type())
 	if err != nil {
@@ -1914,7 +2002,15 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("store %s %s, ptr %s", irType, val, llvmLocalName(agg.PtrName)), nil
+	lines := []string{fmt.Sprintf("store i32 %d, ptr %s", memberIndex, llvmLocalName(agg.PtrName))}
+	dst := llvmLocalName(agg.PtrName)
+	if info.PayloadOffset != 0 {
+		tmp := freshTemp(state, "unionpayload")
+		lines = append(lines, fmt.Sprintf("%s = getelementptr i8, ptr %s, i64 %d", tmp, llvmLocalName(agg.PtrName), info.PayloadOffset))
+		dst = tmp
+	}
+	lines = append(lines, fmt.Sprintf("store %s, ptr %s", operandWithTemp(state, irType, val), dst))
+	return strings.Join(lines, "\n"), nil
 }
 
 // emitStringConstant writes a private unnamed_addr constant to state.deferredB
@@ -2891,9 +2987,113 @@ func lowerUnionSource(state *moduleState, value midmir.Value) (string, error) {
 			return lowerUnionSource(state, v.Right)
 		}
 	case *midmir.LocalValue, *midmir.NameValue:
-		return lowerAggregateSource(state, value)
+		src, err := lowerAggregateSource(state, value)
+		if err != nil {
+			return "", err
+		}
+		info, err := llvmUnionLayoutInfo(state, value.Type())
+		if err != nil {
+			return "", err
+		}
+		if info.PayloadOffset == 0 {
+			return src, nil
+		}
+		tmp := freshTemp(state, "unionpayload")
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = getelementptr i8, ptr %s, i64 %d", tmp, src, info.PayloadOffset))
+		return tmp, nil
 	}
 	return "", fmt.Errorf("unsupported union source %T", value)
+}
+
+type backendUnionLayout struct {
+	Size          int64
+	Align         int64
+	PayloadOffset int64
+	Members       []typeinfo.Type
+}
+
+func llvmUnionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLayout, error) {
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		info, err := lookupNamedLayout(state, t)
+		if err != nil {
+			return nil, err
+		}
+		if info == nil || info.Union == nil {
+			return nil, fmt.Errorf("type %s has no union layout", t)
+		}
+		return &backendUnionLayout{
+			Size:          info.Size,
+			Align:         info.Align,
+			PayloadOffset: info.Union.PayloadOffset,
+			Members:       llvmUnionMemberTypes(info.Union),
+		}, nil
+	case *typeinfo.UnionType:
+		payloadSize := int64(0)
+		payloadAlign := int64(1)
+		for _, member := range t.Members {
+			size, align, err := aggregateSizeAlign(state, member)
+			if err != nil {
+				return nil, err
+			}
+			if size > payloadSize {
+				payloadSize = size
+			}
+			if align > payloadAlign {
+				payloadAlign = align
+			}
+		}
+		payloadOffset := alignUpInt64(4, payloadAlign)
+		align := payloadAlign
+		if align < 4 {
+			align = 4
+		}
+		size := alignUpInt64(payloadOffset+payloadSize, align)
+		return &backendUnionLayout{Size: size, Align: align, PayloadOffset: payloadOffset, Members: t.Members}, nil
+	default:
+		return nil, fmt.Errorf("type %s has no union layout", typeinfo.FormatType(typeStringer{typ}))
+	}
+}
+
+func llvmUnionMemberIndex(members []typeinfo.Type, memberType typeinfo.Type) (int, error) {
+	exact := -1
+	assignable := -1
+	for i, member := range members {
+		if typeinfo.Equal(member, memberType) {
+			if exact >= 0 {
+				return -1, fmt.Errorf("ambiguous union member for %s", typeinfo.FormatType(typeStringer{memberType}))
+			}
+			exact = i
+			continue
+		}
+		if typeinfo.Assignable(member, memberType) {
+			if assignable >= 0 {
+				assignable = -2
+			} else {
+				assignable = i
+			}
+		}
+	}
+	if exact >= 0 {
+		return exact, nil
+	}
+	if assignable >= 0 {
+		return assignable, nil
+	}
+	return -1, fmt.Errorf("no union member for %s", typeinfo.FormatType(typeStringer{memberType}))
+}
+
+func llvmUnionMemberTypes(info *layout.UnionLayout) []typeinfo.Type {
+	if info == nil {
+		return nil
+	}
+	out := make([]typeinfo.Type, 0, len(info.Members))
+	for _, member := range info.Members {
+		if member != nil {
+			out = append(out, member.Type)
+		}
+	}
+	return out
 }
 
 func lowerStringCast(state *moduleState, value midmir.Value) (string, error) {
@@ -3874,4 +4074,15 @@ func sanitizeIdent(s string) string {
 		return "_"
 	}
 	return out
+}
+
+type typeStringer struct {
+	t typeinfo.Type
+}
+
+func (s typeStringer) String() string {
+	if s.t == nil {
+		return "void"
+	}
+	return s.t.String()
 }

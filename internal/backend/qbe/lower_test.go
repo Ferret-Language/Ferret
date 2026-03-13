@@ -315,9 +315,11 @@ fn main() i32 {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"type :local__main__Token = align 8 { 8 }",
-		"%value =l alloc8 8",
-		"storew 1, %value",
+		"type :local__main__Token = align 8 { 16 }",
+		"%value =l alloc8 16",
+		"storew 0, %value",
+		"%_unionpayload",
+		"storew 1, %_unionpayload",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)
@@ -356,10 +358,13 @@ fn main(flag bool) i32 {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"%value =l alloc8 8",
+		"%value =l alloc8 16",
 		"%_unioncast",
-		"loadw %value",
-		"storel %_store1, %value",
+		"%_unionpayload2 =l add %value, 8",
+		"storew 1, %value",
+		"%_store",
+		"storel %_store",
+		"loadw %_unionpayload",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)
@@ -396,9 +401,10 @@ fn main() i32 {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"type :local__main__Token = align 8 { 8 }",
-		"data $main__Global = { w 1, z 4 }",
-		"loadw $main__Global",
+		"type :local__main__Token = align 8 { 16 }",
+		"data $main__Global = { w 0, z 4, w 1, z 4 }",
+		"%_unionpayload1 =l add $main__Global, 8",
+		"loadw %_unionpayload1",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)

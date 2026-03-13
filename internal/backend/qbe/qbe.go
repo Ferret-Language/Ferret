@@ -372,10 +372,11 @@ func bodyForTypedQBEGlobal(typeName, body string) string {
 }
 
 func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init midmir.Value) (string, error) {
-	size, _, err := aggregateSizeAlign(state, typ)
+	info, err := unionLayoutInfo(state, typ)
 	if err != nil {
 		return "", err
 	}
+	size := info.Size
 	tok, lit, err := qbeDataItem(state, init.Type(), init)
 	if err != nil {
 		return "", err
@@ -384,9 +385,17 @@ func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init midmir.Value) 
 	if err != nil {
 		return "", fmt.Errorf("unsupported union global initializer type %s", typeinfo.FormatType(typeStringer{init.Type()}))
 	}
-	parts := []string{fmt.Sprintf("%s %s", tok, lit)}
-	if size > itemSize {
-		parts = append(parts, fmt.Sprintf("z %d", size-itemSize))
+	memberIndex, err := unionMemberIndex(info.Members, init.Type())
+	if err != nil {
+		return "", err
+	}
+	parts := []string{"w " + fmt.Sprintf("%d", memberIndex)}
+	if info.PayloadOffset > 4 {
+		parts = append(parts, fmt.Sprintf("z %d", info.PayloadOffset-4))
+	}
+	parts = append(parts, fmt.Sprintf("%s %s", tok, lit))
+	if size > info.PayloadOffset+itemSize {
+		parts = append(parts, fmt.Sprintf("z %d", size-(info.PayloadOffset+itemSize)))
 	}
 	return strings.Join(parts, ", "), nil
 }
@@ -1074,6 +1083,9 @@ func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, erro
 	if instr == nil {
 		return "", nil
 	}
+	if agg := unionAggregateLocalForPlace(state, instr.Target); agg != nil {
+		return lowerUnionAssign(state, agg, instr.Value)
+	}
 	lines, addr, err := lowerQBEPlaceAddr(state, instr.Target)
 	if err != nil {
 		return "", err
@@ -1097,6 +1109,33 @@ func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, erro
 	}
 	lines = append(lines, fmt.Sprintf("%s %s, %s", op, val, addr))
 	return strings.Join(lines, "\n\t"), nil
+}
+
+func unionAggregateLocalForPlace(state *moduleState, place midmir.Place) *aggregateLocal {
+	switch p := place.(type) {
+	case *midmir.LocalPlace:
+		if agg, ok := state.aggLocals[p.LocalID]; ok && isUnionAggregate(agg.Type) {
+			return agg
+		}
+	case *midmir.DerefPlace:
+		if addr, ok := p.Pointer.(*midmir.AddrOfValue); ok {
+			switch src := addr.Source.(type) {
+			case *midmir.LocalValue:
+				if agg, ok := state.aggLocals[src.LocalID]; ok && isUnionAggregate(agg.Type) {
+					return agg
+				}
+			case *midmir.NameValue:
+				if len(src.Path) == 1 {
+					if local := findLocalByName(state.fn, src.Path[0]); local != nil {
+						if agg, ok := state.aggLocals[local.ID]; ok && isUnionAggregate(agg.Type) {
+							return agg
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // lowerQBEPlaceAddr computes the QBE address for a place.
@@ -1637,6 +1676,17 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 			return lowerUnionAssign(state, agg, v.Left)
 		}
 	}
+	if isUnionAggregate(value.Type()) {
+		src, err := lowerAggregateSource(state, value)
+		if err != nil {
+			return "", err
+		}
+		size, align, err := aggregateSizeAlign(state, agg.Type)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("blit %s, %s, %d", src, qbeLocalName(agg.PtrName), alignUpInt64(size, align)), nil
+	}
 	if isAggregateType(state, value.Type()) {
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
@@ -1646,7 +1696,23 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("blit %s, %s, %d", src, qbeLocalName(agg.PtrName), size), nil
+		info, err := unionLayoutInfo(state, agg.Type)
+		if err != nil {
+			return "", err
+		}
+		memberIndex, err := unionMemberIndex(info.Members, value.Type())
+		if err != nil {
+			return "", err
+		}
+		lines := []string{fmt.Sprintf("storew %d, %s", memberIndex, qbeLocalName(agg.PtrName))}
+		dst := qbeLocalName(agg.PtrName)
+		if info.PayloadOffset != 0 {
+			tmp := freshTemp(state, "unionpayload")
+			lines = append(lines, fmt.Sprintf("%s =l add %s, %d", tmp, qbeLocalName(agg.PtrName), info.PayloadOffset))
+			dst = tmp
+		}
+		lines = append(lines, fmt.Sprintf("blit %s, %s, %d", src, dst, size))
+		return strings.Join(lines, "\n"), nil
 	}
 	val, err := lowerValue(state, value)
 	if err != nil {
@@ -1656,7 +1722,32 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s %s, %s", op, val, qbeLocalName(agg.PtrName)), nil
+	info, err := unionLayoutInfo(state, agg.Type)
+	if err != nil {
+		return "", err
+	}
+	memberIndex, err := unionMemberIndex(info.Members, value.Type())
+	if err != nil {
+		return "", err
+	}
+	lines := []string{fmt.Sprintf("storew %d, %s", memberIndex, qbeLocalName(agg.PtrName))}
+	dst := qbeLocalName(agg.PtrName)
+	if info.PayloadOffset != 0 {
+		tmp := freshTemp(state, "unionpayload")
+		lines = append(lines, fmt.Sprintf("%s =l add %s, %d", tmp, qbeLocalName(agg.PtrName), info.PayloadOffset))
+		dst = tmp
+	}
+	if !qbeValueNeedsCopy(value) {
+		qtype, err := qbeBaseType(value.Type())
+		if err != nil {
+			return "", err
+		}
+		tmp := freshTemp(state, "store")
+		lines = append(lines, fmt.Sprintf("%s =%s %s", tmp, qtype, val))
+		val = tmp
+	}
+	lines = append(lines, fmt.Sprintf("%s %s, %s", op, val, dst))
+	return strings.Join(lines, "\n"), nil
 }
 
 // emitQBEStringConstant appends a QBE data section for a string literal to
@@ -2279,9 +2370,113 @@ func lowerUnionSource(state *moduleState, value midmir.Value) (string, error) {
 			return lowerUnionSource(state, v.Right)
 		}
 	case *midmir.LocalValue, *midmir.NameValue:
-		return lowerAggregateSource(state, value)
+		src, err := lowerAggregateSource(state, value)
+		if err != nil {
+			return "", err
+		}
+		info, err := unionLayoutInfo(state, value.Type())
+		if err != nil {
+			return "", err
+		}
+		if info.PayloadOffset == 0 {
+			return src, nil
+		}
+		tmp := freshTemp(state, "unionpayload")
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =l add %s, %d", tmp, src, info.PayloadOffset))
+		return tmp, nil
 	}
 	return "", fmt.Errorf("unsupported union source %T", value)
+}
+
+type backendUnionLayout struct {
+	Size          int64
+	Align         int64
+	PayloadOffset int64
+	Members       []typeinfo.Type
+}
+
+func unionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLayout, error) {
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		info, err := lookupNamedLayout(state, t)
+		if err != nil {
+			return nil, err
+		}
+		if info == nil || info.Union == nil {
+			return nil, fmt.Errorf("type %s has no union layout", t)
+		}
+		return &backendUnionLayout{
+			Size:          info.Size,
+			Align:         info.Align,
+			PayloadOffset: info.Union.PayloadOffset,
+			Members:       unionMemberTypes(info.Union),
+		}, nil
+	case *typeinfo.UnionType:
+		payloadSize := int64(0)
+		payloadAlign := int64(1)
+		for _, member := range t.Members {
+			size, align, err := aggregateSizeAlign(state, member)
+			if err != nil {
+				return nil, err
+			}
+			if size > payloadSize {
+				payloadSize = size
+			}
+			if align > payloadAlign {
+				payloadAlign = align
+			}
+		}
+		payloadOffset := alignUpInt64(4, payloadAlign)
+		align := payloadAlign
+		if align < 4 {
+			align = 4
+		}
+		size := alignUpInt64(payloadOffset+payloadSize, align)
+		return &backendUnionLayout{Size: size, Align: align, PayloadOffset: payloadOffset, Members: t.Members}, nil
+	default:
+		return nil, fmt.Errorf("type %s has no union layout", typeinfo.FormatType(typeStringer{typ}))
+	}
+}
+
+func unionMemberIndex(members []typeinfo.Type, memberType typeinfo.Type) (int, error) {
+	exact := -1
+	assignable := -1
+	for i, member := range members {
+		if typeinfo.Equal(member, memberType) {
+			if exact >= 0 {
+				return -1, fmt.Errorf("ambiguous union member for %s", typeinfo.FormatType(typeStringer{memberType}))
+			}
+			exact = i
+			continue
+		}
+		if typeinfo.Assignable(member, memberType) {
+			if assignable >= 0 {
+				assignable = -2
+			} else {
+				assignable = i
+			}
+		}
+	}
+	if exact >= 0 {
+		return exact, nil
+	}
+	if assignable >= 0 {
+		return assignable, nil
+	}
+	return -1, fmt.Errorf("no union member for %s", typeinfo.FormatType(typeStringer{memberType}))
+}
+
+func unionMemberTypes(info *layout.UnionLayout) []typeinfo.Type {
+	if info == nil {
+		return nil
+	}
+	out := make([]typeinfo.Type, 0, len(info.Members))
+	for _, member := range info.Members {
+		if member != nil {
+			out = append(out, member.Type)
+		}
+	}
+	return out
 }
 
 func lowerStringCast(state *moduleState, value midmir.Value) (string, error) {
