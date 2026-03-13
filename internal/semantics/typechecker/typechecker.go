@@ -510,6 +510,8 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		return c.typeOfCast(scope, e)
 	case *ast.IsExpr:
 		return c.typeOfIs(scope, e)
+	case *ast.MatchExpr:
+		return c.typeOfMatchExpr(scope, e, expected)
 	case *ast.CompositeLit:
 		return c.typeOfComposite(scope, e, expected)
 	case *ast.IndexExpr:
@@ -631,6 +633,139 @@ func (c *checker) typeOfPrefix(scope *valueScope, expr *ast.PrefixExpr, expected
 			WithPrimaryLabel(&loc, "invalid unary operation"),
 	)
 	return typeinfo.InvalidType{}
+}
+
+func (c *checker) typeOfMatchExpr(scope *valueScope, expr *ast.MatchExpr, expected typeinfo.Type) typeinfo.Type {
+	if expr == nil {
+		return typeinfo.UnknownType{}
+	}
+	valueType := c.typeOfExpr(scope, expr.Value, nil)
+	hasWildcard := false
+	var resultType typeinfo.Type
+	seenValueArm := false
+
+	for _, arm := range expr.Arms {
+		if arm == nil {
+			continue
+		}
+		armScope := newValueScope(scope)
+		if arm.Wildcard {
+			hasWildcard = true
+		} else if arm.TypePattern != nil {
+			target := c.typeFromSyntax(c.mod, arm.TypePattern)
+			c.info.BindNode(arm.TypePattern, target)
+			_ = c.typeOfIs(scope, &ast.IsExpr{Left: expr.Value, Type: arm.TypePattern, Location: arm.Location})
+			armScope = c.narrowedMatchTypeArmScope(scope, expr.Value, target)
+			if arm.Binding != nil {
+				armScope = newValueScope(armScope)
+				armScope.Declare(arm.Binding.Text(), valueInfo{typ: target, mutable: false})
+			}
+		} else {
+			patternType := c.typeOfExpr(scope, arm.Pattern, valueType)
+			if !typeinfo.Assignable(valueType, patternType) && !typeinfo.Assignable(patternType, valueType) {
+				c.reportTypeMismatch(arm.Pattern.Loc(), valueType, patternType)
+			}
+		}
+		armType, diverges := c.blockValueType(armScope, arm.Body, expected)
+		if diverges || typeinfo.IsInvalid(armType) || typeinfo.IsUnknown(armType) {
+			continue
+		}
+		if expected != nil {
+			if c.checkAssignable(arm.Body.Loc(), expected, armType) {
+				resultType = expected
+				seenValueArm = true
+			}
+			continue
+		}
+		if !seenValueArm {
+			resultType = armType
+			seenValueArm = true
+			continue
+		}
+		if unified := c.unifyMatchArmTypes(resultType, armType); unified != nil {
+			resultType = unified
+			continue
+		}
+		c.reportTypeMismatch(arm.Body.Loc(), resultType, armType)
+		resultType = typeinfo.InvalidType{}
+	}
+
+	if !hasWildcard {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("match expression requires a wildcard arm for now").
+				WithCode(diagnostics.ErrNonExhaustiveMatch).
+				WithPrimaryLabel(&loc, "add `_ => { ... }` to handle the remaining cases"),
+		)
+		if !seenValueArm {
+			return typeinfo.InvalidType{}
+		}
+	}
+	if seenValueArm {
+		c.info.BindNode(expr, resultType)
+		return resultType
+	}
+	if expected != nil {
+		c.info.BindNode(expr, expected)
+		return expected
+	}
+	return typeinfo.UnknownType{}
+}
+
+func (c *checker) blockValueType(scope *valueScope, block *ast.BlockStmt, expected typeinfo.Type) (typeinfo.Type, bool) {
+	if block == nil || len(block.Stmts) == 0 {
+		loc := source.Location{}
+		if block != nil {
+			loc = block.Location
+		}
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("match arm must yield a value or exit").
+				WithCode(diagnostics.ErrInvalidExpression).
+				WithPrimaryLabel(&loc, "add a final expression or terminate this arm"),
+		)
+		return typeinfo.InvalidType{}, false
+	}
+	for i := 0; i < len(block.Stmts)-1; i++ {
+		c.checkStmt(scope, block.Stmts[i])
+	}
+	last := block.Stmts[len(block.Stmts)-1]
+	if stmtDefinitelyExits(last) {
+		c.checkStmt(scope, last)
+		return nil, true
+	}
+	if exprStmt, ok := last.(*ast.ExprStmt); ok {
+		return c.typeOfExpr(scope, exprStmt.Value, expected), false
+	}
+	c.checkStmt(scope, last)
+	loc := last.Loc()
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError("match arm must end with a value expression or exit").
+			WithCode(diagnostics.ErrInvalidExpression).
+			WithPrimaryLabel(&loc, "this arm does not produce a value"),
+	)
+	return typeinfo.InvalidType{}, false
+}
+
+func (c *checker) unifyMatchArmTypes(left, right typeinfo.Type) typeinfo.Type {
+	if left == nil {
+		return right
+	}
+	if right == nil {
+		return left
+	}
+	if typeinfo.Equal(left, right) {
+		return left
+	}
+	if common := typeinfo.CommonNumericType(left, right); common != nil {
+		return common
+	}
+	if typeinfo.Assignable(left, right) {
+		return left
+	}
+	if typeinfo.Assignable(right, left) {
+		return right
+	}
+	return nil
 }
 
 func (c *checker) typeOfBinary(scope *valueScope, expr *ast.BinaryExpr) typeinfo.Type {

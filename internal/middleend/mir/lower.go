@@ -229,6 +229,9 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 	case nil, *hir.ReturnStmt, *hir.BreakStmt, *hir.ContinueStmt:
 		return nil
 	case *hir.LetStmt:
+		if s.Value == nil {
+			return nil
+		}
 		return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: lowerCtx.lookupLocalID(s.Name), Value: lowerCoercedValue(lowerCtx, s.Value, s.Type)}
 	case *hir.ConstStmt:
 		return nil

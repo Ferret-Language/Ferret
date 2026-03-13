@@ -511,6 +511,26 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
+	case *ast.MatchExpr:
+		out := &MatchExpr{Value: g.generateExpr(e.Value), Arms: make([]*MatchArm, 0, len(e.Arms))}
+		out.ExprType, out.Location, out.Source = typ, e.Location, e
+		for _, arm := range e.Arms {
+			if arm == nil {
+				continue
+			}
+			hirArm := &MatchArm{Wildcard: arm.Wildcard, Body: g.generateBlock(arm.Body)}
+			if arm.Pattern != nil {
+				hirArm.Pattern = g.generateExpr(arm.Pattern)
+			}
+			if arm.TypePattern != nil {
+				hirArm.TypePattern = g.resolveTypeExpr(arm.TypePattern)
+			}
+			if arm.Binding != nil {
+				hirArm.BindingName = arm.Binding.Text()
+			}
+			out.Arms = append(out.Arms, hirArm)
+		}
+		return out
 	case *ast.CatchExpr:
 		out := &CatchExpr{
 			Left:     g.generateExpr(e.Left),

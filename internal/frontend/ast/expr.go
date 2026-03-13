@@ -120,6 +120,15 @@ type IsExpr struct {
 func (*IsExpr) exprNode()              {}
 func (e *IsExpr) Loc() source.Location { return e.Location }
 
+type MatchExpr struct {
+	Value    Expr
+	Arms     []*MatchArm
+	Location source.Location
+}
+
+func (*MatchExpr) exprNode()              {}
+func (e *MatchExpr) Loc() source.Location { return e.Location }
+
 type CatchExpr struct {
 	Left     Expr
 	Fallback Expr

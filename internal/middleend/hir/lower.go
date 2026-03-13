@@ -1,6 +1,9 @@
 package hir
 
-import "compiler/internal/semantics/typeinfo"
+import (
+	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/source"
+)
 
 func Lower(input *Module) *Module {
 	if input == nil {
@@ -47,82 +50,336 @@ func (l *lowerer) lowerBlock(block *BlockStmt) *BlockStmt {
 	out := &BlockStmt{Stmts: make([]Stmt, 0, len(block.Stmts))}
 	SetStmtLocation(out, block.Loc())
 	for _, stmt := range block.Stmts {
-		if lowered := l.lowerStmt(stmt); lowered != nil {
-			out.Stmts = append(out.Stmts, lowered)
-		}
+		out.Stmts = append(out.Stmts, l.lowerStmtList(stmt)...)
 	}
 	return out
 }
 
 func (l *lowerer) lowerStmt(stmt Stmt) Stmt {
+	lowered := l.lowerStmtList(stmt)
+	switch len(lowered) {
+	case 0:
+		return nil
+	case 1:
+		return lowered[0]
+	default:
+		out := &BlockStmt{Stmts: lowered}
+		SetStmtLocation(out, stmt.Loc())
+		return out
+	}
+}
+
+func (l *lowerer) lowerStmtList(stmt Stmt) []Stmt {
 	switch s := stmt.(type) {
 	case nil:
 		return nil
 	case *BlockStmt:
-		return l.lowerBlock(s)
+		return []Stmt{l.lowerBlock(s)}
+	case *LetStmt:
+		prelude, value := l.lowerExpr(s.Value)
+		out := &LetStmt{Name: s.Name, Mutable: s.Mutable, Type: s.Type, Value: value}
+		SetStmtLocation(out, s.Loc())
+		return append(prelude, out)
+	case *ConstStmt:
+		prelude, value := l.lowerExpr(s.Value)
+		out := &ConstStmt{Name: s.Name, Type: s.Type, Value: value}
+		SetStmtLocation(out, s.Loc())
+		return append(prelude, out)
+	case *ReturnStmt:
+		prelude, value := l.lowerExpr(s.Value)
+		out := &ReturnStmt{Value: value}
+		SetStmtLocation(out, s.Loc())
+		return append(prelude, out)
+	case *ExprStmt:
+		prelude, value := l.lowerExpr(s.Value)
+		out := &ExprStmt{Value: value}
+		SetStmtLocation(out, s.Loc())
+		return append(prelude, out)
+	case *AssignStmt:
+		leftPrelude, left := l.lowerExpr(s.Left)
+		rightPrelude, right := l.lowerExpr(s.Right)
+		out := &AssignStmt{Left: left, Right: right}
+		SetStmtLocation(out, s.Loc())
+		stmts := append([]Stmt{}, leftPrelude...)
+		stmts = append(stmts, rightPrelude...)
+		return append(stmts, out)
 	case *IfStmt:
-		out := &IfStmt{Cond: s.Cond, Then: l.lowerBlock(s.Then), Else: l.lowerStmt(s.Else)}
+		prelude, cond := l.lowerExpr(s.Cond)
+		out := &IfStmt{Cond: cond, Then: l.lowerBlock(s.Then), Else: l.lowerStmt(s.Else)}
 		SetStmtLocation(out, s.Loc())
 		if out.Else == nil {
 			empty := &BlockStmt{}
 			SetStmtLocation(empty, s.Loc())
 			out.Else = empty
 		}
-		return out
+		return append(prelude, out)
 	case *MatchStmt:
-		if l.hasTypeMatchArm(s) {
-			return l.lowerTypedMatch(s)
-		}
-		out := &MatchStmt{Value: s.Value, Arms: make([]*MatchArm, 0, len(s.Arms))}
-		SetStmtLocation(out, s.Loc())
-		for _, arm := range s.Arms {
-			if arm == nil {
-				continue
-			}
-			out.Arms = append(out.Arms, &MatchArm{
-				Pattern:     arm.Pattern,
-				TypePattern: arm.TypePattern,
-				BindingName: arm.BindingName,
-				Wildcard:    arm.Wildcard,
-				Body:        l.lowerBlock(arm.Body),
-			})
-		}
-		return out
+		return l.lowerMatchStmt(s)
 	case *WhileStmt:
-		out := &LoopStmt{Cond: s.Cond, Body: l.lowerBlock(s.Body)}
-		SetStmtLocation(out, s.Loc())
-		return out
+		return l.lowerWhileStmt(s)
 	case *ForStmt:
-		out := &ForStmt{Iterable: s.Iterable, IndexName: s.IndexName, ValueName: s.ValueName, Body: l.lowerBlock(s.Body)}
+		prelude, iterable := l.lowerExpr(s.Iterable)
+		out := &ForStmt{Iterable: iterable, IndexName: s.IndexName, ValueName: s.ValueName, Body: l.lowerBlock(s.Body)}
 		SetStmtLocation(out, s.Loc())
-		return out
+		return append(prelude, out)
+	case *LoopStmt:
+		var stmts []Stmt
+		if s.Init != nil {
+			stmts = append(stmts, l.lowerStmtList(s.Init)...)
+		}
+		prelude, cond := l.lowerExpr(s.Cond)
+		stmts = append(stmts, prelude...)
+		out := &LoopStmt{Init: nil, Cond: cond, Post: l.lowerStmt(s.Post), Body: l.lowerBlock(s.Body)}
+		SetStmtLocation(out, s.Loc())
+		stmts = append(stmts, out)
+		return stmts
 	case *LabelStmt:
 		out := &LabelStmt{Name: s.Name, Stmt: l.lowerStmt(s.Stmt)}
 		SetStmtLocation(out, s.Loc())
-		return out
+		return []Stmt{out}
+	case *BreakStmt:
+		return []Stmt{s}
+	case *ContinueStmt:
+		return []Stmt{s}
 	case *DeferStmt:
 		out := &DeferStmt{Body: l.lowerStmt(s.Body)}
 		SetStmtLocation(out, s.Loc())
-		return out
+		return []Stmt{out}
 	case *ReleaseStmt:
-		out := &ReleaseStmt{Value: s.Value}
+		prelude, value := l.lowerExpr(s.Value)
+		out := &ReleaseStmt{Value: value}
 		SetStmtLocation(out, s.Loc())
-		return out
+		return append(prelude, out)
 	case *PanicStmt:
-		out := &PanicStmt{Value: s.Value}
+		prelude, value := l.lowerExpr(s.Value)
+		out := &PanicStmt{Value: value}
 		SetStmtLocation(out, s.Loc())
-		return out
+		return append(prelude, out)
 	case *LockStmt:
-		out := &LockStmt{Value: s.Value, Name: s.Name, Body: l.lowerBlock(s.Body)}
+		prelude, value := l.lowerExpr(s.Value)
+		out := &LockStmt{Value: value, Name: s.Name, Body: l.lowerBlock(s.Body)}
 		SetStmtLocation(out, s.Loc())
-		return out
+		return append(prelude, out)
 	case *UnsafeStmt:
 		out := &UnsafeStmt{Body: l.lowerBlock(s.Body)}
 		SetStmtLocation(out, s.Loc())
-		return out
+		return []Stmt{out}
 	default:
-		return stmt
+		return []Stmt{stmt}
 	}
+}
+
+func (l *lowerer) lowerMatchStmt(s *MatchStmt) []Stmt {
+	prelude, value := l.lowerExpr(s.Value)
+	out := &MatchStmt{Value: value, Arms: make([]*MatchArm, 0, len(s.Arms))}
+	SetStmtLocation(out, s.Loc())
+	for _, arm := range s.Arms {
+		if arm == nil {
+			continue
+		}
+		out.Arms = append(out.Arms, &MatchArm{
+			Pattern:     arm.Pattern,
+			TypePattern: arm.TypePattern,
+			BindingName: arm.BindingName,
+			Wildcard:    arm.Wildcard,
+			Body:        l.lowerBlock(arm.Body),
+		})
+	}
+	if l.hasTypeMatchArm(out) {
+		return append(prelude, l.lowerTypedMatch(out))
+	}
+	return append(prelude, out)
+}
+
+func (l *lowerer) lowerWhileStmt(s *WhileStmt) []Stmt {
+	prelude, cond := l.lowerExpr(s.Cond)
+	body := l.lowerBlock(s.Body)
+	if len(prelude) == 0 {
+		out := &LoopStmt{Cond: cond, Body: body}
+		SetStmtLocation(out, s.Loc())
+		return []Stmt{out}
+	}
+	negated := &PrefixExpr{Op: "!", Right: cond}
+	negated.ExprType = &typeinfo.BuiltinType{Name: "bool"}
+	negated.Location = s.Cond.Loc()
+	negated.Source = s.Cond.SourceExpr()
+	breakStmt := &BreakStmt{}
+	SetStmtLocation(breakStmt, s.Loc())
+	breakBlock := &BlockStmt{Stmts: []Stmt{breakStmt}}
+	SetStmtLocation(breakBlock, s.Loc())
+	empty := &BlockStmt{}
+	SetStmtLocation(empty, s.Loc())
+	guard := &IfStmt{Cond: negated, Then: breakBlock, Else: empty}
+	SetStmtLocation(guard, s.Loc())
+	loopBody := &BlockStmt{Stmts: append(append([]Stmt{}, prelude...), guard)}
+	SetStmtLocation(loopBody, s.Loc())
+	loopBody.Stmts = append(loopBody.Stmts, body.Stmts...)
+	out := &LoopStmt{Body: loopBody}
+	SetStmtLocation(out, s.Loc())
+	return []Stmt{out}
+}
+
+func (l *lowerer) lowerExpr(expr Expr) ([]Stmt, Expr) {
+	switch e := expr.(type) {
+	case nil, *Ident, *BadExpr, *NumberLit, *StringLit, *NoneLit:
+		return nil, expr
+	case *PrefixExpr:
+		prelude, right := l.lowerExpr(e.Right)
+		out := *e
+		out.Right = right
+		return prelude, &out
+	case *BinaryExpr:
+		leftPrelude, left := l.lowerExpr(e.Left)
+		rightPrelude, right := l.lowerExpr(e.Right)
+		out := *e
+		out.Left = left
+		out.Right = right
+		prelude := append([]Stmt{}, leftPrelude...)
+		prelude = append(prelude, rightPrelude...)
+		return prelude, &out
+	case *PostfixExpr:
+		prelude, left := l.lowerExpr(e.Left)
+		out := *e
+		out.Left = left
+		return prelude, &out
+	case *CallExpr:
+		prelude, callee := l.lowerExpr(e.Callee)
+		out := *e
+		out.Callee = callee
+		out.Args = append([]Expr(nil), e.Args...)
+		for i, arg := range out.Args {
+			argPrelude, lowered := l.lowerExpr(arg)
+			prelude = append(prelude, argPrelude...)
+			out.Args[i] = lowered
+		}
+		return prelude, &out
+	case *ConstructorCallExpr:
+		out := *e
+		out.Args = append([]Expr(nil), e.Args...)
+		var prelude []Stmt
+		for i, arg := range out.Args {
+			argPrelude, lowered := l.lowerExpr(arg)
+			prelude = append(prelude, argPrelude...)
+			out.Args[i] = lowered
+		}
+		return prelude, &out
+	case *SelectorExpr:
+		prelude, left := l.lowerExpr(e.Left)
+		out := *e
+		out.Left = left
+		return prelude, &out
+	case *CastExpr:
+		prelude, left := l.lowerExpr(e.Left)
+		out := *e
+		out.Left = left
+		return prelude, &out
+	case *IsExpr:
+		prelude, left := l.lowerExpr(e.Left)
+		out := *e
+		out.Left = left
+		return prelude, &out
+	case *MatchExpr:
+		return l.lowerMatchExpr(e)
+	case *CatchExpr:
+		leftPrelude, left := l.lowerExpr(e.Left)
+		fallbackPrelude, fallback := l.lowerExpr(e.Fallback)
+		out := *e
+		out.Left = left
+		out.Fallback = fallback
+		out.Handler = l.lowerBlock(e.Handler)
+		prelude := append([]Stmt{}, leftPrelude...)
+		prelude = append(prelude, fallbackPrelude...)
+		return prelude, &out
+	case *CompositeLit:
+		out := *e
+		out.Items = append([]CompositeItem(nil), e.Items...)
+		var prelude []Stmt
+		for i, item := range out.Items {
+			itemPrelude, lowered := l.lowerExpr(item.Value)
+			prelude = append(prelude, itemPrelude...)
+			item.Value = lowered
+			out.Items[i] = item
+		}
+		return prelude, &out
+	case *IndexExpr:
+		leftPrelude, left := l.lowerExpr(e.Left)
+		indexPrelude, index := l.lowerExpr(e.Index)
+		out := *e
+		out.Left = left
+		out.Index = index
+		prelude := append([]Stmt{}, leftPrelude...)
+		prelude = append(prelude, indexPrelude...)
+		return prelude, &out
+	default:
+		return nil, expr
+	}
+}
+
+func (l *lowerer) lowerMatchExpr(expr *MatchExpr) ([]Stmt, Expr) {
+	if expr == nil {
+		return nil, nil
+	}
+	valuePrelude, value := l.lowerExpr(expr.Value)
+	resultName := l.nextTemp()
+	resultDecl := &LetStmt{Name: resultName, Mutable: false, Type: expr.Type(), Value: nil}
+	SetStmtLocation(resultDecl, expr.Loc())
+	matchStmt := &MatchStmt{Value: value, Arms: make([]*MatchArm, 0, len(expr.Arms))}
+	SetStmtLocation(matchStmt, expr.Loc())
+	for _, arm := range expr.Arms {
+		if arm == nil {
+			continue
+		}
+		matchStmt.Arms = append(matchStmt.Arms, l.lowerMatchExprArm(arm, resultName, expr.Type()))
+	}
+	prelude := append([]Stmt{}, valuePrelude...)
+	prelude = append(prelude, resultDecl)
+	prelude = append(prelude, l.lowerMatchStmt(matchStmt)...)
+	result := makeTempIdent(resultName, expr.Type(), expr.Loc())
+	result.Source = expr.SourceExpr()
+	return prelude, result
+}
+
+func (l *lowerer) lowerMatchExprArm(arm *MatchArm, resultName string, resultType typeinfo.Type) *MatchArm {
+	if arm == nil {
+		return nil
+	}
+	out := &MatchArm{
+		Pattern:     arm.Pattern,
+		TypePattern: arm.TypePattern,
+		BindingName: arm.BindingName,
+		Wildcard:    arm.Wildcard,
+	}
+	if arm.Body == nil {
+		return out
+	}
+	out.Body = &BlockStmt{Stmts: make([]Stmt, 0, len(arm.Body.Stmts))}
+	SetStmtLocation(out.Body, arm.Body.Loc())
+	if len(arm.Body.Stmts) == 0 {
+		return out
+	}
+	for _, stmt := range arm.Body.Stmts[:len(arm.Body.Stmts)-1] {
+		out.Body.Stmts = append(out.Body.Stmts, stmt)
+	}
+	last := arm.Body.Stmts[len(arm.Body.Stmts)-1]
+	if hirStmtDefinitelyExits(last) {
+		out.Body.Stmts = append(out.Body.Stmts, last)
+		return out
+	}
+	if exprStmt, ok := last.(*ExprStmt); ok {
+		assign := &AssignStmt{Left: makeTempIdent(resultName, resultType, exprStmt.Loc()), Right: exprStmt.Value}
+		SetStmtLocation(assign, exprStmt.Loc())
+		out.Body.Stmts = append(out.Body.Stmts, assign)
+		return out
+	}
+	out.Body.Stmts = append(out.Body.Stmts, last)
+	return out
+}
+
+func makeTempIdent(name string, typ typeinfo.Type, loc source.Location) *Ident {
+	ident := &Ident{Path: []string{name}}
+	ident.ExprType = typ
+	ident.Location = loc
+	return ident
 }
 
 func (l *lowerer) hasTypeMatchArm(s *MatchStmt) bool {
@@ -192,11 +449,7 @@ func (l *lowerer) lowerTypedMatch(s *MatchStmt) Stmt {
 			SetStmtLocation(binding, body.Loc())
 			body.Stmts = append([]Stmt{binding}, body.Stmts...)
 
-			cond = &IsExpr{
-				Left:        matchValue,
-				Target:      arm.TypePattern,
-				StaticKnown: false,
-			}
+			cond = &IsExpr{Left: matchValue, Target: arm.TypePattern, StaticKnown: false}
 			cond.(*IsExpr).ExprType = &typeinfo.BuiltinType{Name: "bool"}
 			cond.(*IsExpr).Location = body.Loc()
 		} else {
@@ -393,6 +646,38 @@ func (l *lowerer) rewriteExprIdents(expr Expr, fromName, toName string) Expr {
 		return &out
 	default:
 		return expr
+	}
+}
+
+func hirStmtDefinitelyExits(stmt Stmt) bool {
+	switch s := stmt.(type) {
+	case nil:
+		return false
+	case *BlockStmt:
+		if len(s.Stmts) == 0 {
+			return false
+		}
+		return hirStmtDefinitelyExits(s.Stmts[len(s.Stmts)-1])
+	case *ReturnStmt, *PanicStmt, *BreakStmt, *ContinueStmt:
+		return true
+	case *IfStmt:
+		return hirStmtDefinitelyExits(s.Then) && hirStmtDefinitelyExits(s.Else)
+	case *MatchStmt:
+		if len(s.Arms) == 0 {
+			return false
+		}
+		hasWildcard := false
+		for _, arm := range s.Arms {
+			if arm == nil || !hirStmtDefinitelyExits(arm.Body) {
+				return false
+			}
+			if arm.Wildcard {
+				hasWildcard = true
+			}
+		}
+		return hasWildcard
+	default:
+		return false
 	}
 }
 

@@ -97,6 +97,14 @@ type IsExpr struct {
 
 func (*IsExpr) exprNode() {}
 
+type MatchExpr struct {
+	baseExpr
+	Value Expr
+	Arms  []*MatchArm
+}
+
+func (*MatchExpr) exprNode() {}
+
 type CatchExpr struct {
 	baseExpr
 	Left        Expr

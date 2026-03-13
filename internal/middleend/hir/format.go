@@ -272,6 +272,30 @@ func formatExpr(expr Expr) string {
 		return fmt.Sprintf("%s as %s", wrapExpr(e.Left), typeString(e.Type()))
 	case *IsExpr:
 		return fmt.Sprintf("%s is %s", wrapExpr(e.Left), typeString(e.Target))
+	case *MatchExpr:
+		var b strings.Builder
+		fmt.Fprintf(&b, "match %s {\n", formatExpr(e.Value))
+		for _, arm := range e.Arms {
+			if arm == nil {
+				continue
+			}
+			indentLine(&b, 1)
+			if arm.Wildcard {
+				b.WriteString("_ => ")
+			} else if arm.TypePattern != nil {
+				fmt.Fprintf(&b, "is %s", arm.TypePattern.String())
+				if arm.BindingName != "" {
+					fmt.Fprintf(&b, " %s", arm.BindingName)
+				}
+				b.WriteString(" => ")
+			} else {
+				fmt.Fprintf(&b, "%s => ", formatExpr(arm.Pattern))
+			}
+			formatBlock(&b, arm.Body, 1)
+			b.WriteByte('\n')
+		}
+		b.WriteByte('}')
+		return b.String()
 	case *CatchExpr:
 		if e.Handler != nil {
 			var b strings.Builder

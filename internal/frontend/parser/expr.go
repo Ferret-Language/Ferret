@@ -89,6 +89,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return p.parseCompositeLit()
 	case tokens.LBRACK:
 		return p.parseArrayLit()
+	case tokens.MATCH:
+		return p.parseMatchExpr()
 	case tokens.AMP:
 		p.advance()
 		op := "&"
@@ -250,6 +252,49 @@ func (p *Parser) parseIs(left ast.Expr) ast.Expr {
 	return &ast.IsExpr{Left: left, Type: typ, Location: p.makeExprLoc(start)}
 }
 
+func (p *Parser) parseMatchExpr() ast.Expr {
+	start := p.advance().Start
+	value := p.parseExpr(precLowest)
+	arms := p.parseMatchArms()
+	return &ast.MatchExpr{Value: value, Arms: arms, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseMatchArms() []*ast.MatchArm {
+	p.expect(tokens.LBRACE, "expected '{'")
+	arms := make([]*ast.MatchArm, 0)
+	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		armStart := p.current().Start
+		var pattern ast.Expr
+		var typePattern ast.TypeExpr
+		var binding *ast.Ident
+		wildcard := false
+		if p.at(tokens.IDENT) && p.current().Literal == "_" {
+			wildcard = true
+			p.advance()
+		} else if p.match(tokens.IS) {
+			typePattern = p.parseType()
+			if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.FATARROW {
+				bindTok := p.advance()
+				binding = &ast.Ident{Path: []string{bindTok.Literal}, Location: p.locOfToken(bindTok)}
+			}
+		} else {
+			pattern = p.parseExprUntil(precLowest, tokens.FATARROW)
+		}
+		p.expect(tokens.FATARROW, "expected '=>' after match pattern")
+		body := p.parseBlock()
+		arms = append(arms, &ast.MatchArm{
+			Pattern:     pattern,
+			TypePattern: typePattern,
+			Binding:     binding,
+			Wildcard:    wildcard,
+			Body:        body,
+			Location:    p.locFrom(armStart),
+		})
+	}
+	p.expect(tokens.RBRACE, "expected '}'")
+	return arms
+}
+
 func (p *Parser) currentPrecedence() int {
 	return precedence(p.current().Kind)
 }
@@ -287,7 +332,7 @@ func (p *Parser) startsExpr() bool {
 	switch p.current().Kind {
 	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.NONE,
 		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
-		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME, tokens.UNSAFE:
+		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME, tokens.UNSAFE, tokens.MATCH:
 		return true
 	default:
 		return false

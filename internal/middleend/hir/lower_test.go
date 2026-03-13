@@ -49,6 +49,130 @@ fn main(items [3]i32) i32 {
 	}
 }
 
+func TestLoweringEliminatesMatchExpr(t *testing.T) {
+	root := t.TempDir()
+	mustWriteLower(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    i64,
+}
+
+fn main() i32 {
+    let value: Token = 1
+    let out: i32 = match value {
+        is i32 n => {
+            n + value
+        }
+        _ => {
+            0
+        }
+    }
+    return out
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	fn := result.Entry.LoweredHIR.Functions[0]
+	var walkExpr func(hir.Expr)
+	walkExpr = func(expr hir.Expr) {
+		switch e := expr.(type) {
+		case nil:
+			return
+		case *hir.MatchExpr:
+			t.Fatal("lowered HIR still contains match expr")
+		case *hir.PrefixExpr:
+			walkExpr(e.Right)
+		case *hir.BinaryExpr:
+			walkExpr(e.Left)
+			walkExpr(e.Right)
+		case *hir.PostfixExpr:
+			walkExpr(e.Left)
+		case *hir.CallExpr:
+			walkExpr(e.Callee)
+			for _, arg := range e.Args {
+				walkExpr(arg)
+			}
+		case *hir.SelectorExpr:
+			walkExpr(e.Left)
+		case *hir.CastExpr:
+			walkExpr(e.Left)
+		case *hir.IsExpr:
+			walkExpr(e.Left)
+		case *hir.CatchExpr:
+			walkExpr(e.Left)
+			walkExpr(e.Fallback)
+		case *hir.CompositeLit:
+			for _, item := range e.Items {
+				walkExpr(item.Value)
+			}
+		case *hir.IndexExpr:
+			walkExpr(e.Left)
+			walkExpr(e.Index)
+		}
+	}
+	var walkStmt func(hir.Stmt)
+	walkStmt = func(stmt hir.Stmt) {
+		switch s := stmt.(type) {
+		case nil:
+			return
+		case *hir.BlockStmt:
+			for _, child := range s.Stmts {
+				walkStmt(child)
+			}
+		case *hir.LetStmt:
+			walkExpr(s.Value)
+		case *hir.ConstStmt:
+			walkExpr(s.Value)
+		case *hir.ReturnStmt:
+			walkExpr(s.Value)
+		case *hir.ExprStmt:
+			walkExpr(s.Value)
+		case *hir.AssignStmt:
+			walkExpr(s.Left)
+			walkExpr(s.Right)
+		case *hir.IfStmt:
+			walkExpr(s.Cond)
+			walkStmt(s.Then)
+			walkStmt(s.Else)
+		case *hir.MatchStmt:
+			walkExpr(s.Value)
+			for _, arm := range s.Arms {
+				if arm != nil {
+					walkStmt(arm.Body)
+				}
+			}
+		case *hir.WhileStmt:
+			walkExpr(s.Cond)
+			walkStmt(s.Body)
+		case *hir.ForStmt:
+			walkExpr(s.Iterable)
+			walkStmt(s.Body)
+		case *hir.LoopStmt:
+			walkStmt(s.Init)
+			walkExpr(s.Cond)
+			walkStmt(s.Post)
+			walkStmt(s.Body)
+		case *hir.LabelStmt:
+			walkStmt(s.Stmt)
+		case *hir.DeferStmt:
+			walkStmt(s.Body)
+		case *hir.ReleaseStmt:
+			walkExpr(s.Value)
+		case *hir.PanicStmt:
+			walkExpr(s.Value)
+		case *hir.LockStmt:
+			walkExpr(s.Value)
+			walkStmt(s.Body)
+		case *hir.UnsafeStmt:
+			walkStmt(s.Body)
+		}
+	}
+	walkStmt(fn.Body)
+}
+
 func mustWriteLower(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

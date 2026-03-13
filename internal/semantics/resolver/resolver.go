@@ -376,6 +376,26 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.IsExpr:
 		r.resolveExpr(scope, e.Left)
 		r.resolveType(scope, e.Type)
+	case *ast.MatchExpr:
+		r.resolveExpr(scope, e.Value)
+		for _, arm := range e.Arms {
+			if arm == nil {
+				continue
+			}
+			armScope := table.New(scope)
+			if arm.TypePattern != nil {
+				r.resolveType(scope, arm.TypePattern)
+				if arm.Binding != nil {
+					sym := symbols.New(arm.Binding.Text(), symbols.SymbolVar, arm.Binding)
+					sym.Location = arm.Binding.Loc()
+					armScope.Declare(sym)
+					r.addFunctionLocal(sym)
+				}
+			} else if !arm.Wildcard {
+				r.resolveExpr(scope, arm.Pattern)
+			}
+			r.resolveStmt(armScope, arm.Body)
+		}
 	case *ast.CompositeLit:
 		for _, item := range e.Items {
 			r.resolveExpr(scope, item.Value)
