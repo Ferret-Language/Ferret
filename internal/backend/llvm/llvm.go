@@ -201,9 +201,71 @@ func (d *debugState) getSliceLikeType(name string) int {
 	return id
 }
 
+// getOptionalType emits a DICompositeType for ?T shaped as { tag: i32, value: T }.
+// If the optional uses a niche (pointer niche), the layout is just the inner type.
+func (d *debugState) getOptionalType(state *moduleState, t *typeinfo.OptionalType) int {
+	innerID := d.getType(state, t.Inner)
+	key := fmt.Sprintf("?::%d", innerID)
+	if id, ok := d.compositeIDs[key]; ok {
+		return id
+	}
+	// Niche optionals (e.g. ?*T) have the same layout as the inner type.
+	if optionalUsesNiche(t.Inner) {
+		d.compositeIDs[key] = innerID
+		return innerID
+	}
+	// Tag (i32) + inner value.
+	tagTypeID := d.getBasicType("i32", 32, "DW_ATE_signed")
+	tagMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"tag\", baseType: !%d, size: 32, align: 32, offset: 0)", tagTypeID))
+	// Compute payload offset: must be aligned to inner type's alignment.
+	innerSize := int64(32) // default
+	innerAlign := int64(32)
+	if state != nil {
+		if sz, al, err := aggregateSizeAlignOfPrimitive(t.Inner); err == nil {
+			innerSize = sz * 8
+			innerAlign = al * 8
+		} else if sz, al, err2 := aggregateSizeAlign(state, t.Inner); err2 == nil {
+			innerSize = sz * 8
+			innerAlign = al * 8
+		}
+	}
+	payloadOffset := int64(32)
+	if innerAlign > 32 {
+		payloadOffset = innerAlign
+	}
+	totalSize := payloadOffset + innerSize
+	valMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"value\", baseType: !%d, size: %d, align: %d, offset: %d)", innerID, innerSize, innerAlign, payloadOffset))
+	elemsID := d.emit(fmt.Sprintf("!{!%d, !%d}", tagMember, valMember))
+	id := d.emit(fmt.Sprintf("!DICompositeType(tag: DW_TAG_structure_type, name: \"option\", size: %d, align: %d, elements: !%d)", totalSize, innerAlign, elemsID))
+	d.compositeIDs[key] = id
+	return id
+}
+
+// getInterfaceType emits a DICompositeType for interface values: { data: ptr, vtable: ptr }.
+func (d *debugState) getInterfaceType() int {
+	key := "::iface"
+	if id, ok := d.compositeIDs[key]; ok {
+		return id
+	}
+	ptrID := d.getPointerType(d.getUnknownType())
+	dataMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"data\", baseType: !%d, size: 64, align: 64, offset: 0)", ptrID))
+	vtableMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"vtable\", baseType: !%d, size: 64, align: 64, offset: 64)", ptrID))
+	elemsID := d.emit(fmt.Sprintf("!{!%d, !%d}", dataMember, vtableMember))
+	id := d.emit("!DICompositeType(tag: DW_TAG_structure_type, name: \"iface\", size: 128, align: 64, elements: !" + fmt.Sprintf("%d)", elemsID))
+	d.compositeIDs[key] = id
+	return id
+}
+
 func (d *debugState) getNamedType(state *moduleState, named *typeinfo.NamedType) int {
 	if named == nil {
 		return d.getUnknownType()
+	}
+	// Interface named types always have a fixed {data ptr, vtable ptr} layout.
+	if namedIsInterface(named) {
+		id := d.getInterfaceType()
+		key := named.ModuleKey + "::" + named.Name
+		d.compositeIDs[key] = id
+		return id
 	}
 	key := named.ModuleKey + "::" + named.Name
 	if id, ok := d.compositeIDs[key]; ok {
@@ -295,6 +357,10 @@ func (d *debugState) getType(state *moduleState, typ typeinfo.Type) int {
 		return d.getSliceLikeType("str")
 	case *typeinfo.SliceType:
 		return d.getSliceLikeType("slice")
+	case *typeinfo.OptionalType:
+		return d.getOptionalType(state, t)
+	case *typeinfo.InterfaceType:
+		return d.getInterfaceType()
 	}
 	return d.getUnknownType()
 }
@@ -3277,6 +3343,11 @@ func lowerUnary(state *moduleState, v *midmir.UnaryValue) (string, error) {
 }
 
 func lowerBinary(state *moduleState, v *midmir.BinaryValue) (string, error) {
+	// ?? (nil-coalesce) requires aggregate access to the optional — handle
+	// it before the generic scalar paths.
+	if v.Op == "??" {
+		return lowerCoalesce(state, v)
+	}
 	left, err := lowerValue(state, v.Left)
 	if err != nil {
 		return "", err
@@ -3305,6 +3376,72 @@ func lowerBinary(state *moduleState, v *midmir.BinaryValue) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported binary op %q", v.Op)
 	}
+}
+
+// lowerCoalesce lowers the ?? (nil-coalesce) operator for scalar inner types.
+// It emits: load tag → icmp ne 0 → load payload → select → returns the result.
+// The left operand must be an optional aggregate; the inner type must be scalar.
+func lowerCoalesce(state *moduleState, v *midmir.BinaryValue) (string, error) {
+	opt, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType)
+	if !ok {
+		return "", fmt.Errorf("?? operator requires optional left operand, got %s", typeinfo.FormatType(typeStringer{v.Left.Type()}))
+	}
+	innerIRType, err := llvmBaseType(opt.Inner)
+	if err != nil {
+		return "", fmt.Errorf("?? operator: inner type must be scalar, got %s: %w", typeinfo.FormatType(typeStringer{opt.Inner}), err)
+	}
+
+	// Degenerate: left is a literal none — always produce the fallback.
+	if _, isNone := v.Left.(*midmir.NoneValue); isNone {
+		rhs, err := lowerValue(state, v.Right)
+		if err != nil {
+			return "", err
+		}
+		copyExpr, err := llvmCopyExpr(innerIRType, rhs)
+		if err != nil {
+			return "", err
+		}
+		return copyExpr, nil
+	}
+
+	// Get a pointer to the optional aggregate.
+	src, err := lowerAggregateSource(state, v.Left)
+	if err != nil {
+		return "", fmt.Errorf("?? operator: cannot get optional source: %w", err)
+	}
+
+	// Compute payload offset using the union layout helper.
+	info, err := llvmUnionLayoutInfo(state, v.Left.Type())
+	if err != nil {
+		return "", fmt.Errorf("?? operator: cannot get optional layout: %w", err)
+	}
+
+	// Load tag (i32 at offset 0).
+	tag := freshTemp(state, "opttag")
+	state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load i32, ptr %s", tag, src))
+
+	// Check if has value (tag != 0).
+	hasVal := freshTemp(state, "opthasval")
+	state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = icmp ne i32 %s, 0", hasVal, tag))
+
+	// Load payload at payloadOffset.
+	payload := freshTemp(state, "optpayload")
+	if info.PayloadOffset != 0 {
+		payloadPtr := freshTemp(state, "optpayloadptr")
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = getelementptr i8, ptr %s, i64 %d", payloadPtr, src, info.PayloadOffset))
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", payload, innerIRType, payloadPtr))
+	} else {
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", payload, innerIRType, src))
+	}
+
+	// Lower the fallback (RHS).
+	rhs, err := lowerValue(state, v.Right)
+	if err != nil {
+		return "", err
+	}
+
+	// Return the select expression; the caller will assign it to the target name.
+	return fmt.Sprintf("select i1 %s, %s %s, %s %s", hasVal, innerIRType, payload, innerIRType, rhs), nil
 }
 
 func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {

@@ -435,11 +435,19 @@ func (c *checker) checkAssignmentTarget(scope *valueScope, left ast.Expr) {
 	case *ast.Ident:
 		if len(e.Path) == 1 {
 			if info, ok := scope.Lookup(e.Path[0]); ok {
-				if info.constant || !info.mutable {
+				if info.constant {
 					c.ctx.Diagnostics.Add(
-						diagnostics.NewError(fmt.Sprintf("cannot assign to %q", e.Path[0])).
+						diagnostics.NewError(fmt.Sprintf("cannot assign to constant %q", e.Path[0])).
 							WithCode(diagnostics.ErrConstantReassignment).
-							WithPrimaryLabel(&e.Location, "this value is not assignable"),
+							WithPrimaryLabel(&e.Location, "invalid assignment"),
+					)
+				}
+				if !info.mutable {
+					c.ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("cannot assign to immutable symbol %q", e.Path[0])).
+							WithCode(diagnostics.ErrConstantReassignment).
+							WithPrimaryLabel(&e.Location, "symbol must be mutable"),
+							//WithCodeReplacement()
 					)
 				}
 				return

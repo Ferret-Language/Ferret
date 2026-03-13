@@ -254,6 +254,22 @@ Current focus: keep MIR/backend contracts stable while tightening `match`, union
 - [ ] preserve source/debug locations where practical
 - [ ] define ABI/runtime boundary
 
+## Debug Build Mode (`-debug`)
+
+- [x] CLI `-debug` flag and pipeline plumbing
+- [x] cross-platform clang debug flags (DWARF / CodeView)
+- [x] `DICompileUnit` / `DISubprogram` / per-instruction `DILocation`
+- [x] `llvm.dbg.declare` for all params and non-temp locals
+- [x] `llvm.dbg.value` for SSA reassignment paths
+- [x] rich `DIType`: precise builtins, pointee-aware pointers, str/slice composites, named structs with fields
+- [ ] optional type debug metadata: emit `{tag: i32, value: T}` composite so debugger shows real value not raw tag
+- [ ] interface type debug metadata: emit `{data: ptr, vtable: ptr}` composite for named and anonymous interface types
+- [ ] `??` (nil coalesce) operator lowering in LLVM backend: `(maybe ?? fallback)` currently errors with "unsupported llvm base type ?T"
+- [ ] optional cast to str: `(?T ?? default) as str` blocked by the `??` lowering gap above
+- [ ] VS Code `launch.json` / `tasks.json` debug configuration
+- [ ] Zed debug task configuration
+- [ ] QBE backend debug info (currently has no debug path)
+
 ## Backend Status
 
 - [x] QBE backend exists
