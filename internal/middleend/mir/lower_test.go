@@ -8,7 +8,7 @@ import (
 
 	compilerapi "compiler/internal/compiler"
 	"compiler/internal/diagnostics"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/phase"
 )
 
@@ -56,14 +56,14 @@ fn main() i32 {
 	foundCompute := false
 	for _, block := range fn.Blocks {
 		for _, instr := range block.Instructions {
-			if _, ok := instr.(*midmir.StoreFieldInstr); ok {
+			if _, ok := instr.(*mir.StoreFieldInstr); ok {
 				foundStore = true
 			}
-			if _, ok := instr.(*midmir.ComputeInstr); ok {
+			if _, ok := instr.(*mir.ComputeInstr); ok {
 				foundCompute = true
 			}
 		}
-		if _, ok := block.Terminator.(*midmir.BranchTerm); ok {
+		if _, ok := block.Terminator.(*mir.BranchTerm); ok {
 			foundBranch = true
 		}
 	}
@@ -78,21 +78,21 @@ fn main() i32 {
 	}
 	for _, block := range fn.Blocks {
 		switch term := block.Terminator.(type) {
-		case *midmir.BranchTerm:
-			if _, ok := term.Cond.(*midmir.LocalValue); !ok {
+		case *mir.BranchTerm:
+			if _, ok := term.Cond.(*mir.LocalValue); !ok {
 				t.Fatalf("expected branch condition temp, got %T", term.Cond)
 			}
-		case *midmir.ReturnTerm:
+		case *mir.ReturnTerm:
 			if term.Value != nil {
 				switch term.Value.(type) {
-				case *midmir.LocalValue, *midmir.NameValue, *midmir.NumberValue, *midmir.StringValue, *midmir.NoneValue:
+				case *mir.LocalValue, *mir.NameValue, *mir.NumberValue, *mir.StringValue, *mir.NoneValue:
 				default:
 					t.Fatalf("expected normalized simple return value, got %T", term.Value)
 				}
 			}
 		}
 	}
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 	if !strings.Contains(text, "type Point struct") {
 		t.Fatalf("expected type declaration in mir dump, got %q", text)
 	}
@@ -129,7 +129,7 @@ fn main() i32 {
 	if got := fn.Locals[0].Type.String(); got != "local:main::Token" {
 		t.Fatalf("expected MIR local type local:main::Token, got %q", got)
 	}
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 	if !strings.Contains(text, "value: Token") {
 		t.Fatalf("expected annotated union local in MIR dump, got %q", text)
 	}
@@ -155,7 +155,7 @@ fn probe(p *own Point) void {
 	if result.Entry == nil || result.Entry.MIR == nil || len(result.Entry.MIR.Functions) != 1 {
 		t.Fatalf("expected one MIR function, got %#v", result.Entry)
 	}
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 	if !strings.Contains(text, "load p") {
 		t.Fatalf("expected explicit load in MIR dump, got %q", text)
 	}
@@ -179,7 +179,7 @@ fn fail() void {
 	if result.Entry == nil || result.Entry.MIR == nil || len(result.Entry.MIR.Functions) != 1 {
 		t.Fatalf("expected MIR functions, got %#v", result.Entry)
 	}
-	var fn *midmir.Function
+	var fn *mir.Function
 	for _, candidate := range result.Entry.MIR.Functions {
 		if candidate.Name == "fail" {
 			fn = candidate
@@ -192,7 +192,7 @@ fn fail() void {
 	if len(fn.Blocks) == 0 {
 		t.Fatalf("expected MIR blocks, got %#v", fn)
 	}
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 	if !strings.Contains(text, "panic ") || !strings.Contains(text, "\"bad\"") {
 		t.Fatalf("expected lowered panic sequence in MIR dump, got %q", text)
 	}
@@ -213,7 +213,7 @@ fn fail() void {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	var fn *midmir.Function
+	var fn *mir.Function
 	for _, candidate := range result.Entry.MIR.Functions {
 		if candidate.Name == "fail" {
 			fn = candidate
@@ -223,7 +223,7 @@ fn fail() void {
 	if fn == nil {
 		t.Fatalf("expected MIR function fail, got %#v", result.Entry.MIR.Functions)
 	}
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 	if !strings.Contains(text, "defer close()") || !strings.Contains(text, "panic ") || !strings.Contains(text, "close()") {
 		t.Fatalf("expected deferred panic cleanup sequence in MIR dump, got %q", text)
 	}
@@ -244,7 +244,7 @@ fn run() i32 {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	var fn *midmir.Function
+	var fn *mir.Function
 	for _, candidate := range result.Entry.MIR.Functions {
 		if candidate.Name == "run" {
 			fn = candidate
@@ -256,7 +256,7 @@ fn run() i32 {
 	}
 	found := false
 	for _, block := range fn.Blocks {
-		term, ok := block.Terminator.(*midmir.ReturnTerm)
+		term, ok := block.Terminator.(*mir.ReturnTerm)
 		if !ok {
 			continue
 		}
@@ -269,7 +269,7 @@ fn run() i32 {
 	if !found {
 		t.Fatalf("expected return terminator in MIR, got %#v", fn.Blocks)
 	}
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 	if !strings.Contains(text, "return 1 unwind") {
 		t.Fatalf("expected return unwind in MIR dump, got %q", text)
 	}
@@ -318,7 +318,7 @@ fn main() i32 {
 		t.Fatalf("expected synthesized static global Point__Origin, got %#v", result.Entry.MIR.Globals)
 	}
 
-	var mainFn *midmir.Function
+	var mainFn *mir.Function
 	for _, fn := range result.Entry.MIR.Functions {
 		if fn != nil && fn.Name == "main" {
 			mainFn = fn
@@ -334,19 +334,19 @@ fn main() i32 {
 	for _, block := range mainFn.Blocks {
 		for _, instr := range block.Instructions {
 			switch ins := instr.(type) {
-			case *midmir.AssignInstr:
-				if comp, ok := ins.Value.(*midmir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
+			case *mir.AssignInstr:
+				if comp, ok := ins.Value.(*mir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
 					foundImplicitConstructor = true
 				}
-			case *midmir.ComputeInstr:
-				if comp, ok := ins.Value.(*midmir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
+			case *mir.ComputeInstr:
+				if comp, ok := ins.Value.(*mir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
 					foundImplicitConstructor = true
 				}
-			case *midmir.EvalInstr:
-				if comp, ok := ins.Value.(*midmir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
+			case *mir.EvalInstr:
+				if comp, ok := ins.Value.(*mir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
 					foundImplicitConstructor = true
 				}
-			case *midmir.DeferInstr:
+			case *mir.DeferInstr:
 				if deferContainsCallNamed(ins, "~Point") {
 					foundDestructorDefer = true
 				}
@@ -361,7 +361,7 @@ fn main() i32 {
 	}
 }
 
-func hasConstructorPath(comp *midmir.CompositeValue, name string) bool {
+func hasConstructorPath(comp *mir.CompositeValue, name string) bool {
 	if comp == nil || len(comp.ConstructorPath) == 0 {
 		return false
 	}
@@ -369,11 +369,11 @@ func hasConstructorPath(comp *midmir.CompositeValue, name string) bool {
 	return last == name || strings.HasSuffix(last, "__"+name)
 }
 
-func hasCallNamed(call *midmir.CallValue, name string) bool {
+func hasCallNamed(call *mir.CallValue, name string) bool {
 	if call == nil {
 		return false
 	}
-	callee, ok := call.Callee.(*midmir.NameValue)
+	callee, ok := call.Callee.(*mir.NameValue)
 	if !ok || len(callee.Path) == 0 {
 		return false
 	}
@@ -381,21 +381,21 @@ func hasCallNamed(call *midmir.CallValue, name string) bool {
 	return last == name || strings.HasSuffix(last, "__"+name)
 }
 
-func deferContainsCallNamed(instr *midmir.DeferInstr, name string) bool {
+func deferContainsCallNamed(instr *mir.DeferInstr, name string) bool {
 	if instr == nil {
 		return false
 	}
 	for _, child := range instr.Body {
 		switch body := child.(type) {
-		case *midmir.EvalInstr:
-			if call, ok := body.Value.(*midmir.CallValue); ok && hasCallNamed(call, name) {
+		case *mir.EvalInstr:
+			if call, ok := body.Value.(*mir.CallValue); ok && hasCallNamed(call, name) {
 				return true
 			}
-		case *midmir.ComputeInstr:
-			if call, ok := body.Value.(*midmir.CallValue); ok && hasCallNamed(call, name) {
+		case *mir.ComputeInstr:
+			if call, ok := body.Value.(*mir.CallValue); ok && hasCallNamed(call, name) {
 				return true
 			}
-		case *midmir.DeferInstr:
+		case *mir.DeferInstr:
 			if deferContainsCallNamed(body, name) {
 				return true
 			}

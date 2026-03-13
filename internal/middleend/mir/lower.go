@@ -2,7 +2,7 @@ package mir
 
 import (
 	"compiler/internal/cfg"
-	fast "compiler/internal/frontend/ast"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/middleend/hir"
 	"compiler/internal/semantics/binding"
 	"compiler/internal/semantics/symbols"
@@ -16,14 +16,14 @@ type lowerContext struct {
 	localsByName map[string]int
 	locals       []*Local
 	bindings     *binding.ModuleInfo
-	globalConsts map[fast.Node]hir.Expr
+	globalConsts map[ast.Node]hir.Expr
 	localConsts  map[string]hir.Expr
 	importPath   string
 	lookupMethod hir.MethodLookup
 	resultType   typeinfo.Type
 }
 
-func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, lookupMethod hir.MethodLookup) *Module {
+func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, lookupMethod hir.MethodLookup) *Module {
 	if cfgMod == nil || hirMod == nil {
 		return nil
 	}
@@ -140,7 +140,7 @@ func lowerInterfaceTypeDecl(decl *hir.InterfaceTypeDecl) *InterfaceTypeDecl {
 	return out
 }
 
-func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *Global {
+func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *Global {
 	if global == nil {
 		return nil
 	}
@@ -155,7 +155,7 @@ func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts 
 	}
 }
 
-func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *Function {
+func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *Function {
 	if fn == nil || fn.Source == nil {
 		return nil
 	}
@@ -623,7 +623,7 @@ func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
 	}
 }
 
-func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *lowerContext {
+func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *lowerContext {
 	locals, byName, consts := collectLocals(fn)
 	return &lowerContext{
 		locals:       locals,
@@ -672,7 +672,7 @@ func (c *lowerContext) fieldIndex(typ typeinfo.Type, name string) int {
 	return -1
 }
 
-func (c *lowerContext) lookupConstExpr(name string, source fast.Expr) (hir.Expr, bool) {
+func (c *lowerContext) lookupConstExpr(name string, source ast.Expr) (hir.Expr, bool) {
 	if c == nil {
 		return nil, false
 	}
@@ -682,7 +682,7 @@ func (c *lowerContext) lookupConstExpr(name string, source fast.Expr) (hir.Expr,
 	return c.lookupResolvedConstExpr(source)
 }
 
-func (c *lowerContext) lookupResolvedConstExpr(source fast.Expr) (hir.Expr, bool) {
+func (c *lowerContext) lookupResolvedConstExpr(source ast.Expr) (hir.Expr, bool) {
 	if c == nil || c.bindings == nil || source == nil {
 		return nil, false
 	}
@@ -699,7 +699,7 @@ func (c *lowerContext) lookupResolvedConstExpr(source fast.Expr) (hir.Expr, bool
 	return nil, false
 }
 
-func (c *lowerContext) lookupResolution(source fast.Expr) (*binding.Resolution, bool) {
+func (c *lowerContext) lookupResolution(source ast.Expr) (*binding.Resolution, bool) {
 	if c == nil || c.bindings == nil || source == nil {
 		return nil, false
 	}
@@ -710,7 +710,7 @@ func (c *lowerContext) lookupResolution(source fast.Expr) (*binding.Resolution, 
 	return resolution, true
 }
 
-func lowerResolvedName(c *lowerContext, source fast.Expr, loc source.Location, typ typeinfo.Type) Value {
+func lowerResolvedName(c *lowerContext, source ast.Expr, loc source.Location, typ typeinfo.Type) Value {
 	if c == nil || source == nil {
 		return nil
 	}
@@ -725,7 +725,7 @@ func lowerResolvedName(c *lowerContext, source fast.Expr, loc source.Location, t
 		baseValue: baseValue{Location: loc, ExprType: typ},
 		Path:      canonicalResolvedPath(c, resolution),
 	}
-	if fn, ok := resolution.Symbol.Node.(*fast.FuncDecl); ok {
+	if fn, ok := resolution.Symbol.Node.(*ast.FuncDecl); ok {
 		if fn.IsExtern && fn.ExternName != "" {
 			out.LinkName = fn.ExternName
 		}
@@ -752,7 +752,7 @@ func lowerResolvedScalarValue(resolution *binding.Resolution, loc source.Locatio
 
 func lookupEnumOrdinal(typ typeinfo.Type, name string) (int, bool) {
 	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
-		if decl, ok := named.Decl.Type.(*fast.EnumType); ok {
+		if decl, ok := named.Decl.Type.(*ast.EnumType); ok {
 			for i, variant := range decl.Variants {
 				if variant != nil && variant.Name != nil && variant.Name.Text() == name {
 					return i, true
@@ -769,7 +769,7 @@ func lookupEnumOrdinal(typ typeinfo.Type, name string) (int, bool) {
 
 func lookupErrorOrdinal(typ typeinfo.Type, name string) (int, bool) {
 	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
-		if decl, ok := named.Decl.Type.(*fast.ErrorType); ok {
+		if decl, ok := named.Decl.Type.(*ast.ErrorType); ok {
 			for i, member := range decl.Members {
 				if member != nil && member.Name != nil && member.Name.Text() == name {
 					return i, true
@@ -784,7 +784,7 @@ func lookupErrorOrdinal(typ typeinfo.Type, name string) (int, bool) {
 	return 0, false
 }
 
-func lowerNameValue(c *lowerContext, source fast.Expr, loc source.Location, typ typeinfo.Type, fallback []string) Value {
+func lowerNameValue(c *lowerContext, source ast.Expr, loc source.Location, typ typeinfo.Type, fallback []string) Value {
 	if resolved := lowerResolvedName(c, source, loc, typ); resolved != nil {
 		return resolved
 	}
@@ -815,7 +815,7 @@ func lowerStructView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 		if t.Decl == nil {
 			return nil, false
 		}
-		structDecl, ok := t.Decl.Type.(*fast.StructType)
+		structDecl, ok := t.Decl.Type.(*ast.StructType)
 		if !ok {
 			return nil, false
 		}
@@ -947,7 +947,7 @@ func lowerReceiverNamed(typ typeinfo.Type) *typeinfo.NamedType {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		if t.Decl != nil {
-			if _, ok := t.Decl.Type.(*fast.InterfaceType); ok {
+			if _, ok := t.Decl.Type.(*ast.InterfaceType); ok {
 				return nil
 			}
 		}
@@ -985,7 +985,7 @@ func lowerInterfaceMethodNames(typ typeinfo.Type) ([]string, bool) {
 	if !ok || named == nil || named.Decl == nil {
 		return nil, false
 	}
-	ifaceDecl, ok := named.Decl.Type.(*fast.InterfaceType)
+	ifaceDecl, ok := named.Decl.Type.(*ast.InterfaceType)
 	if !ok || ifaceDecl == nil {
 		return nil, false
 	}
@@ -1004,7 +1004,7 @@ func lowerIsInterfaceType(typ typeinfo.Type) bool {
 		if t.Decl == nil {
 			return false
 		}
-		_, ok := t.Decl.Type.(*fast.InterfaceType)
+		_, ok := t.Decl.Type.(*ast.InterfaceType)
 		return ok
 	case *typeinfo.InterfaceType:
 		return true

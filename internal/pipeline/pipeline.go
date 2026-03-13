@@ -16,7 +16,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/layoutanalysis"
 	"compiler/internal/middleend/hir"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/ownership"
@@ -179,11 +179,11 @@ func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	mod.LoweredHIR = hir.Lower(mod.HIR)
 	mod.Phase = phase.PhaseHIRLowered
 	cfganalysis.AnalyzeModule(p.ctx, mod)
-	mod.MIR = midmir.LowerModule(mod.CFG, mod.HIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupMethodPath(mod.ImportPath))
-	midmir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
+	mod.MIR = mir.LowerModule(mod.CFG, mod.HIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupMethodPath(mod.ImportPath))
+	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseMIRGenerated
-	midmir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)
-	midmir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
+	mir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)
+	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseConstEvaluated
 	ownership.AnalyzeModule(p.ctx, mod)
 	mod.Phase = phase.PhaseOwnershipAnalyzed

@@ -8,8 +8,8 @@ import (
 	"runtime"
 
 	"compiler/internal/backend"
-	ast "compiler/internal/frontend/ast"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/frontend/ast"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -79,7 +79,7 @@ func SanitizePath(path string) string {
 
 // FunctionReturnLLVMType returns the LLVM IR type string for the function's
 // return type, or "void" for void/unknown.
-func FunctionReturnLLVMType(fn *midmir.Function) string {
+func FunctionReturnLLVMType(fn *mir.Function) string {
 	if fn == nil || fn.Result == nil {
 		return "void"
 	}
@@ -91,7 +91,7 @@ func FunctionReturnLLVMType(fn *midmir.Function) string {
 }
 
 // FunctionReturnIsScalar reports whether the function returns a scalar (non-aggregate).
-func FunctionReturnIsScalar(fn *midmir.Function) bool {
+func FunctionReturnIsScalar(fn *mir.Function) bool {
 	if fn == nil || fn.Result == nil {
 		return false
 	}

@@ -17,7 +17,7 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/layout"
 	"compiler/internal/middleend/hir"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/binding"
 	"compiler/internal/semantics/symbols"
@@ -67,7 +67,7 @@ type Module struct {
 	HIR          *hir.Module
 	LoweredHIR   *hir.Module
 	CFG          *cfg.Module
-	MIR          *midmir.Module
+	MIR          *mir.Module
 	Layout       *layout.Module
 	Phase        phase.ModulePhase
 	Dependencies []string

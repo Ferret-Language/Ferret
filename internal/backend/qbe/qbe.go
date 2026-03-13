@@ -10,7 +10,7 @@ import (
 	"compiler/internal/backend"
 	ast "compiler/internal/frontend/ast"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -22,11 +22,11 @@ var sourceTree embed.FS
 type lowerer struct{}
 
 type moduleState struct {
-	mod               *midmir.Module
+	mod               *mir.Module
 	layout            *layout.Module
 	layouts           map[string]*layout.Module
-	modules           map[string]*midmir.Module
-	fn                *midmir.Function
+	modules           map[string]*mir.Module
+	fn                *mir.Function
 	functions         map[string]struct{}
 	globals           map[string]struct{}
 	modulePrefix      string
@@ -39,7 +39,7 @@ type moduleState struct {
 	pendingLines      []string
 	interfaceVTables  map[string]string
 	interfaceWrappers map[string]struct{}
-	tempValues        map[int]midmir.Value
+	tempValues        map[int]mir.Value
 }
 
 type aggregateLocal struct {
@@ -80,7 +80,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		deferredB:         &strings.Builder{},
 		interfaceVTables:  make(map[string]string),
 		interfaceWrappers: make(map[string]struct{}),
-		tempValues:        make(map[int]midmir.Value),
+		tempValues:        make(map[int]mir.Value),
 	}
 	for _, fn := range unit.Module.Functions {
 		if fn != nil {
@@ -142,12 +142,12 @@ func SourceFS() fs.FS {
 	return root
 }
 
-func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl) error {
+func emitTypes(b *strings.Builder, state *moduleState, types []*mir.TypeDecl) error {
 	// Always emit the built-in slice aggregate type used for str.
 	b.WriteString("type :__ferret_slice = { l, l }\n")
 	seen := make(map[string]struct{})
 	lines := make([]string, 0)
-	emitDecls := func(decls []*midmir.TypeDecl) error {
+	emitDecls := func(decls []*mir.TypeDecl) error {
 		for _, decl := range decls {
 			if decl == nil || decl.Named == nil || (decl.Struct == nil && decl.Union == nil && decl.Interface == nil) {
 				continue
@@ -196,7 +196,7 @@ func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl)
 	return nil
 }
 
-func lowerTypeDecl(state *moduleState, decl *midmir.TypeDecl) (string, error) {
+func lowerTypeDecl(state *moduleState, decl *mir.TypeDecl) (string, error) {
 	layoutInfo, err := lookupNamedLayout(state, decl.Named)
 	if err != nil {
 		return "", err
@@ -226,7 +226,7 @@ func lowerTypeDecl(state *moduleState, decl *midmir.TypeDecl) (string, error) {
 	return "", nil
 }
 
-func emitGlobals(b *strings.Builder, state *moduleState, globals []*midmir.Global) error {
+func emitGlobals(b *strings.Builder, state *moduleState, globals []*mir.Global) error {
 	wrote := 0
 	for _, g := range globals {
 		if g == nil {
@@ -249,13 +249,13 @@ func emitGlobals(b *strings.Builder, state *moduleState, globals []*midmir.Globa
 	return nil
 }
 
-func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
+func lowerGlobal(state *moduleState, g *mir.Global) (string, error) {
 	if g.Init == nil {
 		return "", nil
 	}
 	name := qbeSymbol(state, []string{g.Name})
 	if isInterfaceAggregate(g.Type) {
-		if init, ok := g.Init.(*midmir.InterfaceValue); ok {
+		if init, ok := g.Init.(*mir.InterfaceValue); ok {
 			return lowerGlobalInterface(state, name, g.Type, init)
 		}
 		return "", fmt.Errorf("global %s: interface initializer must be an interface coercion", g.Name)
@@ -268,25 +268,25 @@ func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
 		return fmt.Sprintf("data $%s = { %s }", name, body), nil
 	}
 	switch v := g.Init.(type) {
-	case *midmir.CompositeValue:
+	case *mir.CompositeValue:
 		body, err := lowerGlobalComposite(state, g.Type, v)
 		if err != nil {
 			return "", fmt.Errorf("global %s: %w", g.Name, err)
 		}
 		return fmt.Sprintf("data $%s = { %s }", name, body), nil
-	case *midmir.NumberValue:
+	case *mir.NumberValue:
 		tok, lit, err := qbeDataLiteral(g.Type, v.Value)
 		if err != nil {
 			return "", fmt.Errorf("global %s: %w", g.Name, err)
 		}
 		return fmt.Sprintf("data $%s = { %s %s }", name, tok, lit), nil
-	case *midmir.BoolValue:
+	case *mir.BoolValue:
 		lit := "0"
 		if v.Value {
 			lit = "1"
 		}
 		return fmt.Sprintf("data $%s = { b %s }", name, lit), nil
-	case *midmir.StringValue:
+	case *mir.StringValue:
 		return fmt.Sprintf("data $%s = { b %q, b 0 }", name, v.Value), nil
 	default:
 		return "", fmt.Errorf("global %s: unsupported initializer %T", g.Name, g.Init)
@@ -304,7 +304,7 @@ func isInterfaceAggregate(typ typeinfo.Type) bool {
 	}
 }
 
-func lowerGlobalInterface(state *moduleState, name string, target typeinfo.Type, init *midmir.InterfaceValue) (string, error) {
+func lowerGlobalInterface(state *moduleState, name string, target typeinfo.Type, init *mir.InterfaceValue) (string, error) {
 	if state == nil || init == nil {
 		return "", fmt.Errorf("invalid interface global initializer")
 	}
@@ -324,29 +324,29 @@ func lowerGlobalInterface(state *moduleState, name string, target typeinfo.Type,
 	return strings.Join(lines, "\n"), nil
 }
 
-func lowerInterfaceGlobalData(state *moduleState, ownerName string, init *midmir.InterfaceValue) (string, string, error) {
+func lowerInterfaceGlobalData(state *moduleState, ownerName string, init *mir.InterfaceValue) (string, string, error) {
 	sym := sanitizeIdent(ownerName + "__iface_data")
 	switch v := init.Value.(type) {
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if v.LinkName != "" {
 			return sanitizeIdent(v.LinkName), "", nil
 		}
 		return qbeSymbol(state, v.Path), "", nil
-	case *midmir.NumberValue:
+	case *mir.NumberValue:
 		tok, lit, err := qbeDataLiteral(init.ConcreteType, v.Value)
 		if err != nil {
 			return "", "", err
 		}
 		return sym, fmt.Sprintf("data $%s = { %s %s }", sym, tok, lit), nil
-	case *midmir.BoolValue:
+	case *mir.BoolValue:
 		lit := "0"
 		if v.Value {
 			lit = "1"
 		}
 		return sym, fmt.Sprintf("data $%s = { b %s }", sym, lit), nil
-	case *midmir.StringValue:
+	case *mir.StringValue:
 		return sym, fmt.Sprintf("data $%s = { b %q, b 0 }", sym, v.Value), nil
-	case *midmir.CompositeValue:
+	case *mir.CompositeValue:
 		body, err := lowerGlobalComposite(state, init.ConcreteType, v)
 		if err != nil {
 			return "", "", err
@@ -371,7 +371,7 @@ func bodyForTypedQBEGlobal(typeName, body string) string {
 	return body
 }
 
-func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init midmir.Value) (string, error) {
+func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init mir.Value) (string, error) {
 	info, err := unionLayoutInfo(state, typ)
 	if err != nil {
 		return "", err
@@ -400,7 +400,7 @@ func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init midmir.Value) 
 	return strings.Join(parts, ", "), nil
 }
 
-func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) error {
+func emitFunction(b *strings.Builder, state *moduleState, fn *mir.Function) error {
 	if err := prepareFunctionState(state, fn); err != nil {
 		return err
 	}
@@ -438,7 +438,7 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 		paramParts = append(paramParts, fmt.Sprintf("%s %s", pty, qbeLocalName(param.Name)))
 	}
 	fmt.Fprintf(b, " $%s(%s) {\n", name, strings.Join(paramParts, ", "))
-	blocks := append([]*midmir.Block(nil), fn.Blocks...)
+	blocks := append([]*mir.Block(nil), fn.Blocks...)
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i].ID < blocks[j].ID })
 	for _, block := range blocks {
 		if block == nil {
@@ -478,44 +478,44 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 	return nil
 }
 
-func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
+func lowerInstr(state *moduleState, instr mir.Instr) (string, error) {
 	switch i := instr.(type) {
 	case nil:
 		return "", nil
-	case *midmir.BindInstr:
+	case *mir.BindInstr:
 		return lowerAssignLike(state, i.Name, i.Type, i.Value)
-	case *midmir.AssignInstr:
+	case *mir.AssignInstr:
 		if local := findLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
-			if field, ok := i.Value.(*midmir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
+			if field, ok := i.Value.(*mir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
 				state.tempValues[i.TargetID] = field
 				return "", nil
 			}
 		}
 		name := localNameByID(state.fn, i.TargetID)
 		return lowerAssignLike(state, name, localTypeByID(state.fn, i.TargetID), i.Value)
-	case *midmir.ComputeInstr:
+	case *mir.ComputeInstr:
 		if local := findLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
-			if field, ok := i.Value.(*midmir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
+			if field, ok := i.Value.(*mir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
 				state.tempValues[i.TargetID] = field
 				return "", nil
 			}
 		}
 		name := localNameByID(state.fn, i.TargetID)
 		return lowerAssignLike(state, name, i.Type, i.Value)
-	case *midmir.StoreFieldInstr:
+	case *mir.StoreFieldInstr:
 		return lowerStoreField(state, i)
-	case *midmir.StoreInstr:
+	case *mir.StoreInstr:
 		return lowerStorePlace(state, i)
-	case *midmir.EvalInstr:
-		if call, ok := i.Value.(*midmir.CallValue); ok {
+	case *mir.EvalInstr:
+		if call, ok := i.Value.(*mir.CallValue); ok {
 			return lowerCall(state, "", nil, call)
 		}
 		return "", nil
-	case *midmir.DeferInstr:
+	case *mir.DeferInstr:
 		// Defers are only bookkeeping at the registration site. Cleanup blocks
 		// already contain the lowered deferred body, so nothing is emitted here.
 		return "", nil
-	case *midmir.UnsafeInstr:
+	case *mir.UnsafeInstr:
 		// Unsafe marker: safety is enforced at type-check time; no code to emit.
 		return "", nil
 	default:
@@ -523,7 +523,7 @@ func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
 	}
 }
 
-func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value midmir.Value) (string, error) {
+func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value mir.Value) (string, error) {
 	if local := findLocalByName(state.fn, name); local != nil {
 		if agg, ok := state.aggLocals[local.ID]; ok {
 			return lowerAggregateAssign(state, agg, value)
@@ -535,7 +535,7 @@ func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value m
 	return lowerSSAAssign(state, name, typ, value)
 }
 
-func lowerScalarAllocaAssign(state *moduleState, sc *scalarAllocaLocal, value midmir.Value) (string, error) {
+func lowerScalarAllocaAssign(state *moduleState, sc *scalarAllocaLocal, value mir.Value) (string, error) {
 	tmpName := strings.TrimPrefix(freshTemp(state, "asgn"), "%")
 	line, err := lowerSSAAssign(state, tmpName, sc.Type, value)
 	if err != nil {
@@ -565,20 +565,20 @@ func lowerScalarAllocaAssign(state *moduleState, sc *scalarAllocaLocal, value mi
 	return line + "\n\t" + storeLine, nil
 }
 
-func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value midmir.Value) (string, error) {
-	if call, ok := value.(*midmir.CallValue); ok {
+func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mir.Value) (string, error) {
+	if call, ok := value.(*mir.CallValue); ok {
 		return lowerCall(state, name, typ, call)
 	}
-	if field, ok := value.(*midmir.FieldLoadValue); ok {
+	if field, ok := value.(*mir.FieldLoadValue); ok {
 		return lowerFieldLoad(state, name, typ, field)
 	}
-	if idx, ok := value.(*midmir.IndexValue); ok {
+	if idx, ok := value.(*mir.IndexValue); ok {
 		return lowerIndexLoad(state, name, typ, idx)
 	}
-	if load, ok := value.(*midmir.LoadValue); ok {
+	if load, ok := value.(*mir.LoadValue); ok {
 		return lowerLoadValue(state, name, typ, load)
 	}
-	if bin, ok := value.(*midmir.BinaryValue); ok {
+	if bin, ok := value.(*mir.BinaryValue); ok {
 		if line, handled, err := lowerAggregateCompare(state, name, typ, bin); handled || err != nil {
 			return line, err
 		}
@@ -599,7 +599,7 @@ func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mi
 	return fmt.Sprintf("%s =%s %s", qbeLocalName(name), qtype, expr), nil
 }
 
-func lowerAggregateCompare(state *moduleState, targetName string, targetType typeinfo.Type, bin *midmir.BinaryValue) (string, bool, error) {
+func lowerAggregateCompare(state *moduleState, targetName string, targetType typeinfo.Type, bin *mir.BinaryValue) (string, bool, error) {
 	if bin == nil || (bin.Op != "==" && bin.Op != "!=") {
 		return "", false, nil
 	}
@@ -673,7 +673,7 @@ func lowerAggregateCompare(state *moduleState, targetName string, targetType typ
 	return strings.Join(lines, "\n\t"), true, nil
 }
 
-func lowerLoadValue(state *moduleState, targetName string, targetType typeinfo.Type, load *midmir.LoadValue) (string, error) {
+func lowerLoadValue(state *moduleState, targetName string, targetType typeinfo.Type, load *mir.LoadValue) (string, error) {
 	ptr, err := lowerValue(state, load.Pointer)
 	if err != nil {
 		return "", err
@@ -685,13 +685,13 @@ func lowerLoadValue(state *moduleState, targetName string, targetType typeinfo.T
 	return fmt.Sprintf("%s =%s %s %s", qbeLocalName(targetName), resultType, op, ptr), nil
 }
 
-func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, call *midmir.CallValue) (string, error) {
-	if local, ok := call.Callee.(*midmir.LocalValue); ok {
-		if field, ok := state.tempValues[local.LocalID].(*midmir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
+func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, call *mir.CallValue) (string, error) {
+	if local, ok := call.Callee.(*mir.LocalValue); ok {
+		if field, ok := state.tempValues[local.LocalID].(*mir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
 			return lowerInterfaceCall(state, targetName, targetType, call, field)
 		}
 	}
-	if field, ok := call.Callee.(*midmir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
+	if field, ok := call.Callee.(*mir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
 		return lowerInterfaceCall(state, targetName, targetType, call, field)
 	}
 	callee, err := lowerCallee(state, call.Callee)
@@ -749,11 +749,11 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	return fmt.Sprintf("%s =%s %s", qbeLocalName(targetName), qtype, callText), nil
 }
 
-func isBuiltinPrintCall(call *midmir.CallValue) bool {
+func isBuiltinPrintCall(call *mir.CallValue) bool {
 	if call == nil {
 		return false
 	}
-	callee, ok := call.Callee.(*midmir.NameValue)
+	callee, ok := call.Callee.(*mir.NameValue)
 	if !ok || callee == nil {
 		return false
 	}
@@ -763,7 +763,7 @@ func isBuiltinPrintCall(call *midmir.CallValue) bool {
 	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "print"
 }
 
-func lowerBuiltinPrintCall(state *moduleState, call *midmir.CallValue) (string, error) {
+func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, error) {
 	if call == nil || len(call.Args) != 1 {
 		return "", fmt.Errorf("builtin print expects exactly one argument")
 	}
@@ -792,7 +792,7 @@ func lowerBuiltinPrintCall(state *moduleState, call *midmir.CallValue) (string, 
 	return fmt.Sprintf("call $global__print_type(l $%s)", sym), nil
 }
 
-func lowerBuiltinPrintPrimitive(state *moduleState, arg midmir.Value, name string) (string, error) {
+func lowerBuiltinPrintPrimitive(state *moduleState, arg mir.Value, name string) (string, error) {
 	val, err := lowerValue(state, arg)
 	if err != nil {
 		return "", err
@@ -845,16 +845,16 @@ func lowerBuiltinPrintFloatCast(state *moduleState, value, srcName string) (stri
 	}), nil
 }
 
-func lowerAggregateValuePointer(state *moduleState, value midmir.Value) ([]string, string, error) {
+func lowerAggregateValuePointer(state *moduleState, value mir.Value) ([]string, string, error) {
 	if value == nil {
 		return nil, "", fmt.Errorf("nil aggregate value")
 	}
 	switch v := value.(type) {
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		if agg, ok := state.aggLocals[v.LocalID]; ok {
 			return nil, qbeLocalName(agg.PtrName), nil
 		}
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if v.LinkName != "" {
 			return nil, "$" + sanitizeIdent(v.LinkName), nil
 		}
@@ -893,7 +893,7 @@ func joinQBELines(lines ...[]string) string {
 	return strings.Join(flat, "\n\t")
 }
 
-func lowerConstructorCall(state *moduleState, dstPtr string, call *midmir.CallValue, callee string) (string, error) {
+func lowerConstructorCall(state *moduleState, dstPtr string, call *mir.CallValue, callee string) (string, error) {
 	args := make([]string, 0, len(call.Args)+1)
 	args = append(args, fmt.Sprintf("l %s", dstPtr))
 	for _, arg := range call.Args {
@@ -928,7 +928,7 @@ func lowerImplicitConstructorCall(state *moduleState, dstPtr string, path []stri
 	return fmt.Sprintf("call $%s(l %s)", qbeSymbol(state, path), dstPtr), nil
 }
 
-func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, call *midmir.CallValue, callee string) (string, error) {
+func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, call *mir.CallValue, callee string) (string, error) {
 	if targetType == nil || !isAggregateType(state, targetType) {
 		return "", fmt.Errorf("constructor call requires aggregate target")
 	}
@@ -946,9 +946,9 @@ func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, c
 
 // lowerPanicTerm emits a call to ferret__panic(l ptr) followed by hlt.
 // String literals are null-terminated *i8 constants; we pass the pointer directly.
-func lowerPanicTerm(state *moduleState, t *midmir.PanicTerm) (string, error) {
+func lowerPanicTerm(state *moduleState, t *mir.PanicTerm) (string, error) {
 	switch v := t.Value.(type) {
-	case *midmir.StringValue:
+	case *mir.StringValue:
 		sym := emitQBEStringConstant(state, v.Value)
 		return fmt.Sprintf("call $ferret__panic(l $%s)\n\thlt", sym), nil
 	default:
@@ -956,21 +956,21 @@ func lowerPanicTerm(state *moduleState, t *midmir.PanicTerm) (string, error) {
 	}
 }
 
-func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
+func lowerTerm(state *moduleState, term mir.Terminator) (string, error) {
 	switch t := term.(type) {
 	case nil:
 		return "hlt", nil
-	case *midmir.ExitTerm:
+	case *mir.ExitTerm:
 		return "ret", nil
-	case *midmir.JumpTerm:
+	case *mir.JumpTerm:
 		return fmt.Sprintf("jmp %s", qbeBlockLabel(state.fn, t.TargetID)), nil
-	case *midmir.BranchTerm:
+	case *mir.BranchTerm:
 		cond, err := lowerValue(state, t.Cond)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("jnz %s, %s, %s", cond, qbeBlockLabel(state.fn, t.TrueID), qbeBlockLabel(state.fn, t.FalseID)), nil
-	case *midmir.ReturnTerm:
+	case *mir.ReturnTerm:
 		if t.CleanupID >= 0 {
 			return fmt.Sprintf("jmp %s", qbeBlockLabel(state.fn, t.CleanupID)), nil
 		}
@@ -980,7 +980,7 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 		if alias, ok := resolveQBETempValue(state, t.Value); ok {
 			t.Value = alias
 		}
-		if call, ok := t.Value.(*midmir.CallValue); ok && call.IsConstructor {
+		if call, ok := t.Value.(*mir.CallValue); ok && call.IsConstructor {
 			size, align, err := aggregateSizeAlign(state, call.Type())
 			if err != nil {
 				return "", err
@@ -998,7 +998,7 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 		}
 		if isAggregateType(state, t.Value.Type()) {
 			switch v := t.Value.(type) {
-			case *midmir.CallValue, *midmir.CastValue:
+			case *mir.CallValue, *mir.CastValue:
 				val, err := lowerValue(state, v)
 				if err != nil {
 					return "", err
@@ -1019,19 +1019,19 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 			return "", err
 		}
 		return fmt.Sprintf("ret %s", val), nil
-	case *midmir.PanicTerm:
+	case *mir.PanicTerm:
 		if t.CleanupID >= 0 {
 			return fmt.Sprintf("jmp %s", qbeBlockLabel(state.fn, t.CleanupID)), nil
 		}
 		return lowerPanicTerm(state, t)
-	case *midmir.SwitchTerm:
+	case *mir.SwitchTerm:
 		return lowerSwitchTerm(state, t)
 	default:
 		return "", fmt.Errorf("unsupported MIR terminator %T", term)
 	}
 }
 
-func lowerSwitchTerm(state *moduleState, t *midmir.SwitchTerm) (string, error) {
+func lowerSwitchTerm(state *moduleState, t *mir.SwitchTerm) (string, error) {
 	if t == nil {
 		return "", fmt.Errorf("invalid switch terminator")
 	}
@@ -1069,7 +1069,7 @@ func lowerSwitchTerm(state *moduleState, t *midmir.SwitchTerm) (string, error) {
 	return strings.Join(lines, "\n\t"), nil
 }
 
-func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.Type, field *midmir.FieldLoadValue) (string, error) {
+func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.Type, field *mir.FieldLoadValue) (string, error) {
 	lines, addr, _, err := lowerFieldAddress(state, field.Base, field.FieldIndex)
 	if err != nil {
 		return "", err
@@ -1083,7 +1083,7 @@ func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.T
 }
 
 // lowerIndexLoad lowers arr[index] as an rvalue via QBE load.
-func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *midmir.IndexValue) (string, error) {
+func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
 	lines, addr, err := lowerQBEIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())
 	if err != nil {
 		return "", err
@@ -1097,7 +1097,7 @@ func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.T
 }
 
 // lowerQBEIndexAddress computes ptr = base + index * elemSize.
-func lowerQBEIndexAddress(state *moduleState, base midmir.Value, index midmir.Value, baseType typeinfo.Type) ([]string, string, error) {
+func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
 	switch bt := baseType.(type) {
 	case *typeinfo.ArrayType:
@@ -1136,7 +1136,7 @@ func lowerQBEIndexAddress(state *moduleState, base midmir.Value, index midmir.Va
 }
 
 // lowerStorePlace lowers a StoreInstr (write to an lvalue place).
-func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, error) {
+func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) {
 	if instr == nil {
 		return "", nil
 	}
@@ -1168,20 +1168,20 @@ func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, erro
 	return strings.Join(lines, "\n\t"), nil
 }
 
-func unionAggregateLocalForPlace(state *moduleState, place midmir.Place) *aggregateLocal {
+func unionAggregateLocalForPlace(state *moduleState, place mir.Place) *aggregateLocal {
 	switch p := place.(type) {
-	case *midmir.LocalPlace:
+	case *mir.LocalPlace:
 		if agg, ok := state.aggLocals[p.LocalID]; ok && isUnionAggregate(agg.Type) {
 			return agg
 		}
-	case *midmir.DerefPlace:
-		if addr, ok := p.Pointer.(*midmir.AddrOfValue); ok {
+	case *mir.DerefPlace:
+		if addr, ok := p.Pointer.(*mir.AddrOfValue); ok {
 			switch src := addr.Source.(type) {
-			case *midmir.LocalValue:
+			case *mir.LocalValue:
 				if agg, ok := state.aggLocals[src.LocalID]; ok && isUnionAggregate(agg.Type) {
 					return agg
 				}
-			case *midmir.NameValue:
+			case *mir.NameValue:
 				if len(src.Path) == 1 {
 					if local := findLocalByName(state.fn, src.Path[0]); local != nil {
 						if agg, ok := state.aggLocals[local.ID]; ok && isUnionAggregate(agg.Type) {
@@ -1196,11 +1196,11 @@ func unionAggregateLocalForPlace(state *moduleState, place midmir.Place) *aggreg
 }
 
 // lowerQBEPlaceAddr computes the QBE address for a place.
-func lowerQBEPlaceAddr(state *moduleState, place midmir.Place) ([]string, string, error) {
+func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, error) {
 	switch p := place.(type) {
 	case nil:
 		return nil, "", fmt.Errorf("nil place")
-	case *midmir.LocalPlace:
+	case *mir.LocalPlace:
 		if agg, ok := state.aggLocals[p.LocalID]; ok {
 			return nil, qbeLocalName(agg.PtrName), nil
 		}
@@ -1208,7 +1208,7 @@ func lowerQBEPlaceAddr(state *moduleState, place midmir.Place) ([]string, string
 			return nil, qbeLocalName(sc.PtrName), nil
 		}
 		return nil, qbeLocalName(localNameByID(state.fn, p.LocalID)), nil
-	case *midmir.FieldPlace:
+	case *mir.FieldPlace:
 		baseLines, basePtr, err := lowerQBEPlaceAddr(state, p.Base)
 		if err != nil {
 			return nil, "", err
@@ -1228,7 +1228,7 @@ func lowerQBEPlaceAddr(state *moduleState, place midmir.Place) ([]string, string
 		addrTmp := freshTemp(state, "addr")
 		gepLine := fmt.Sprintf("%s =l add %s, %d", addrTmp, basePtr, field.Offset)
 		return append(baseLines, gepLine), addrTmp, nil
-	case *midmir.IndexPlace:
+	case *mir.IndexPlace:
 		baseLines, basePtr, err := lowerQBEPlaceAddr(state, p.Base)
 		if err != nil {
 			return nil, "", err
@@ -1262,7 +1262,7 @@ func lowerQBEPlaceAddr(state *moduleState, place midmir.Place) ([]string, string
 		addrTmp := freshTemp(state, "elem")
 		idxLines = append(idxLines, fmt.Sprintf("%s =l add %s, %s", addrTmp, basePtr, scaled))
 		return append(baseLines, idxLines...), addrTmp, nil
-	case *midmir.DerefPlace:
+	case *mir.DerefPlace:
 		// *ptr: the address to write to is the pointer value itself.
 		ptrVal, err := lowerValue(state, p.Pointer)
 		if err != nil {
@@ -1275,8 +1275,8 @@ func lowerQBEPlaceAddr(state *moduleState, place midmir.Place) ([]string, string
 }
 
 // qbePlaceType returns the type of variable at the root of a place.
-func qbePlaceType(state *moduleState, place midmir.Place) typeinfo.Type {
-	if lp, ok := place.(*midmir.LocalPlace); ok {
+func qbePlaceType(state *moduleState, place mir.Place) typeinfo.Type {
+	if lp, ok := place.(*mir.LocalPlace); ok {
 		if state.fn != nil && lp.LocalID >= 0 && lp.LocalID < len(state.fn.Locals) {
 			return state.fn.Locals[lp.LocalID].Type
 		}
@@ -1312,7 +1312,7 @@ func alignUpInt64(size, align int64) int64 {
 	return (size + align - 1) &^ (align - 1)
 }
 
-func lowerStoreField(state *moduleState, instr *midmir.StoreFieldInstr) (string, error) {
+func lowerStoreField(state *moduleState, instr *mir.StoreFieldInstr) (string, error) {
 	lines, addr, fieldType, err := lowerFieldAddress(state, instr.Base, instr.FieldIndex)
 	if err != nil {
 		return "", err
@@ -1329,7 +1329,7 @@ func lowerStoreField(state *moduleState, instr *midmir.StoreFieldInstr) (string,
 	return strings.Join(lines, "\n\t"), nil
 }
 
-func lowerFieldAddress(state *moduleState, base midmir.Value, fieldIndex int) ([]string, string, typeinfo.Type, error) {
+func lowerFieldAddress(state *moduleState, base mir.Value, fieldIndex int) ([]string, string, typeinfo.Type, error) {
 	structLayout, err := lookupStructLayout(state, base.Type())
 	if err != nil {
 		return nil, "", nil, err
@@ -1349,12 +1349,12 @@ func lowerFieldAddress(state *moduleState, base midmir.Value, fieldIndex int) ([
 	return []string{fmt.Sprintf("%s =l add %s, %d", addr, baseVal, field.Offset)}, addr, field.Type, nil
 }
 
-func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.Value) (string, error) {
+func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Value) (string, error) {
 	if agg == nil {
 		return "", fmt.Errorf("nil aggregate local")
 	}
 	if isInterfaceAggregate(agg.Type) {
-		if iface, ok := value.(*midmir.InterfaceValue); ok {
+		if iface, ok := value.(*mir.InterfaceValue); ok {
 			return lowerInterfaceAssign(state, qbeLocalName(agg.PtrName), agg.Type, iface)
 		}
 		return "", fmt.Errorf("unsupported interface assignment %T", value)
@@ -1363,11 +1363,11 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 		return lowerUnionAssign(state, agg, value)
 	}
 	switch v := value.(type) {
-	case *midmir.UnaryValue:
+	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerAggregateAssign(state, agg, v.Right)
 		}
-	case *midmir.CastValue:
+	case *mir.CastValue:
 		expr, err := lowerCast(state, v)
 		if err != nil {
 			return "", err
@@ -1384,21 +1384,21 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 			lines = append(lines, fmt.Sprintf("blit %s, %s, %d", temp, qbeLocalName(agg.PtrName), agg.Size))
 		}
 		return strings.Join(lines, "\n\t"), nil
-	case *midmir.CallValue:
+	case *mir.CallValue:
 		return lowerAggregateCall(state, agg, v)
-	case *midmir.LocalValue, *midmir.NameValue:
+	case *mir.LocalValue, *mir.NameValue:
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("blit %s, %s, %d", src, qbeLocalName(agg.PtrName), agg.Size), nil
-	case *midmir.CompositeValue:
+	case *mir.CompositeValue:
 		return lowerAggregateCompositeAssign(state, agg, v)
 	}
 	return "", fmt.Errorf("unsupported aggregate assignment %T", value)
 }
 
-func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Type, value *midmir.InterfaceValue) (string, error) {
+func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Type, value *mir.InterfaceValue) (string, error) {
 	lines, dataPtr, err := lowerInterfaceConcretePointer(state, value.Value, value.ConcreteType)
 	if err != nil {
 		return "", err
@@ -1416,12 +1416,12 @@ func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Typ
 	return strings.Join(lines, "\n\t"), nil
 }
 
-func lowerInterfaceConcretePointer(state *moduleState, value midmir.Value, concreteType typeinfo.Type) ([]string, string, error) {
+func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concreteType typeinfo.Type) ([]string, string, error) {
 	switch v := value.(type) {
-	case *midmir.LocalValue, *midmir.NameValue:
-		ptr, err := lowerAddrOf(state, &midmir.AddrOfValue{Source: value})
+	case *mir.LocalValue, *mir.NameValue:
+		ptr, err := lowerAddrOf(state, &mir.AddrOfValue{Source: value})
 		return nil, ptr, err
-	case *midmir.UnaryValue:
+	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerInterfaceConcretePointer(state, v.Right, concreteType)
 		}
@@ -1449,7 +1449,7 @@ func lowerInterfaceConcretePointer(state *moduleState, value midmir.Value, concr
 	return lines, tmp, nil
 }
 
-func lowerInterfaceCall(state *moduleState, targetName string, targetType typeinfo.Type, call *midmir.CallValue, field *midmir.FieldValue) (string, error) {
+func lowerInterfaceCall(state *moduleState, targetName string, targetType typeinfo.Type, call *mir.CallValue, field *mir.FieldValue) (string, error) {
 	if len(call.Args) == 0 {
 		return "", fmt.Errorf("interface call requires receiver")
 	}
@@ -1525,16 +1525,16 @@ func lowerInterfaceCall(state *moduleState, targetName string, targetType typein
 	return strings.Join(lines, "\n\t"), nil
 }
 
-func lowerInterfaceSlotPointer(state *moduleState, value midmir.Value) (string, error) {
+func lowerInterfaceSlotPointer(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		if value, ok := state.tempValues[v.LocalID]; ok && value != nil {
 			return lowerValue(state, value)
 		}
 		if agg, ok := state.aggLocals[v.LocalID]; ok {
 			return qbeLocalName(agg.PtrName), nil
 		}
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if v.LinkName != "" {
 			return "$" + sanitizeIdent(v.LinkName), nil
 		}
@@ -1543,7 +1543,7 @@ func lowerInterfaceSlotPointer(state *moduleState, value midmir.Value) (string, 
 	return "", fmt.Errorf("unsupported interface receiver storage %T", value)
 }
 
-func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *midmir.InterfaceValue) (string, error) {
+func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *mir.InterfaceValue) (string, error) {
 	if state == nil || value == nil {
 		return "", fmt.Errorf("invalid interface vtable request")
 	}
@@ -1579,7 +1579,7 @@ func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *m
 	return sym, nil
 }
 
-func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *midmir.InterfaceMethodDecl, concrete typeinfo.Type, link midmir.InterfaceMethodLink) (string, error) {
+func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
 	key := iface.String() + "|" + sanitizeType(concrete) + "|" + method.Name
 	name := sanitizeIdent("ifacewrap__" + qbeTypeName(state, iface) + "__" + sanitizeType(concrete) + "__" + method.Name)
 	if _, ok := state.interfaceWrappers[key]; ok {
@@ -1637,7 +1637,7 @@ func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, me
 	return name, nil
 }
 
-func qbeInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type, link midmir.InterfaceMethodLink, method *midmir.InterfaceMethodDecl) (string, string, error) {
+func qbeInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type, link mir.InterfaceMethodLink, method *mir.InterfaceMethodDecl) (string, string, error) {
 	callee := concrete
 	if ptr, ok := concrete.(*typeinfo.PointerType); ok {
 		abi, err := qbeABIType(state, ptr)
@@ -1663,12 +1663,12 @@ func qbeInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type, link mi
 	return fmt.Sprintf("%s %s", abi, tmp), fmt.Sprintf("%s =%s %s %%data", tmp, qtype, op), nil
 }
 
-func lookupInterfaceDecl(state *moduleState, typ typeinfo.Type) (*midmir.InterfaceTypeDecl, *typeinfo.NamedType, error) {
+func lookupInterfaceDecl(state *moduleState, typ typeinfo.Type) (*mir.InterfaceTypeDecl, *typeinfo.NamedType, error) {
 	named, ok := typ.(*typeinfo.NamedType)
 	if !ok || named == nil {
 		return nil, nil, fmt.Errorf("interface type must be named")
 	}
-	var mod *midmir.Module
+	var mod *mir.Module
 	if state.modules != nil {
 		mod = state.modules[named.ModuleKey]
 	}
@@ -1686,7 +1686,7 @@ func lookupInterfaceDecl(state *moduleState, typ typeinfo.Type) (*midmir.Interfa
 	return nil, nil, fmt.Errorf("interface type %s is not available in qbe backend", named.String())
 }
 
-func lookupInterfaceMethodDecl(state *moduleState, typ typeinfo.Type, name string) (*midmir.InterfaceMethodDecl, int, error) {
+func lookupInterfaceMethodDecl(state *moduleState, typ typeinfo.Type, name string) (*mir.InterfaceMethodDecl, int, error) {
 	iface, _, err := lookupInterfaceDecl(state, typ)
 	if err != nil {
 		return nil, -1, err
@@ -1739,19 +1739,19 @@ func optionalUsesNiche(typ typeinfo.Type) bool {
 	return false
 }
 
-func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Value) (string, error) {
+func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.UnaryValue:
+	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerUnionAssign(state, agg, v.Right)
 		}
-	case *midmir.CastValue:
+	case *mir.CastValue:
 		if isUnionAggregate(v.Type()) {
 			return lowerUnionAssign(state, agg, v.Left)
 		}
 	}
 	if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); ok {
-		if _, isNone := value.(*midmir.NoneValue); isNone {
+		if _, isNone := value.(*mir.NoneValue); isNone {
 			return fmt.Sprintf("storew 0, %s", qbeLocalName(agg.PtrName)), nil
 		}
 	}
@@ -1846,16 +1846,16 @@ func emitQBEStringConstant(state *moduleState, s string) string {
 	return sym
 }
 
-func lowerAggregateCall(state *moduleState, agg *aggregateLocal, call *midmir.CallValue) (string, error) {
+func lowerAggregateCall(state *moduleState, agg *aggregateLocal, call *mir.CallValue) (string, error) {
 	if agg == nil || call == nil {
 		return "", fmt.Errorf("invalid aggregate call lowering")
 	}
-	if local, ok := call.Callee.(*midmir.LocalValue); ok {
-		if field, ok := state.tempValues[local.LocalID].(*midmir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
+	if local, ok := call.Callee.(*mir.LocalValue); ok {
+		if field, ok := state.tempValues[local.LocalID].(*mir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
 			return lowerInterfaceCall(state, agg.Name, agg.Type, call, field)
 		}
 	}
-	if field, ok := call.Callee.(*midmir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
+	if field, ok := call.Callee.(*mir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
 		return lowerInterfaceCall(state, agg.Name, agg.Type, call, field)
 	}
 	callee, err := lowerCallee(state, call.Callee)
@@ -1891,7 +1891,7 @@ func lowerAggregateCall(state *moduleState, agg *aggregateLocal, call *midmir.Ca
 	return strings.Join(lines, "\n\t"), nil
 }
 
-func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp *midmir.CompositeValue) (string, error) {
+func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp *mir.CompositeValue) (string, error) {
 	// Array literal: positional items stored at successive element offsets.
 	if arrType, ok := agg.Type.(*typeinfo.ArrayType); ok {
 		elemSize, elemAlign, err := qbeScalarSizeAlign(arrType.Inner)
@@ -1929,7 +1929,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 
 	// String / slice literal: items "ptr" and "len" stored at offsets 0 and 8.
 	if _, ok := agg.Type.(*typeinfo.SliceType); ok {
-		items := make(map[string]midmir.Value, len(comp.Items))
+		items := make(map[string]mir.Value, len(comp.Items))
 		for _, item := range comp.Items {
 			items[item.Name] = item.Value
 		}
@@ -1947,7 +1947,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 			ptrLowered, base, tmp, base, lenLowered, tmp), nil
 	}
 	if _, ok := agg.Type.(*typeinfo.StringType); ok {
-		items := make(map[string]midmir.Value, len(comp.Items))
+		items := make(map[string]mir.Value, len(comp.Items))
 		for _, item := range comp.Items {
 			items[item.Name] = item.Value
 		}
@@ -1969,7 +1969,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 	if err != nil {
 		return "", err
 	}
-	items := make(map[string]midmir.Value, len(comp.Items))
+	items := make(map[string]mir.Value, len(comp.Items))
 	for _, item := range comp.Items {
 		items[item.Name] = item.Value
 	}
@@ -2010,18 +2010,18 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 	return strings.Join(lines, "\n\t"), nil
 }
 
-func lowerAggregateSource(state *moduleState, value midmir.Value) (string, error) {
+func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		return lowerValue(state, v)
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		return lowerValue(state, v)
 	default:
 		return "", fmt.Errorf("unsupported aggregate source %T", value)
 	}
 }
 
-func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *midmir.CompositeValue) (string, error) {
+func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *mir.CompositeValue) (string, error) {
 	if _, ok := typ.(*typeinfo.StringType); ok {
 		return lowerGlobalStringLike(state, comp)
 	}
@@ -2032,7 +2032,7 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *midmir.Co
 	if err != nil {
 		return "", err
 	}
-	items := make(map[string]midmir.Value, len(comp.Items))
+	items := make(map[string]mir.Value, len(comp.Items))
 	for _, item := range comp.Items {
 		items[item.Name] = item.Value
 	}
@@ -2065,8 +2065,8 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *midmir.Co
 	return strings.Join(parts, ", "), nil
 }
 
-func lowerGlobalStringLike(state *moduleState, comp *midmir.CompositeValue) (string, error) {
-	items := make(map[string]midmir.Value, len(comp.Items))
+func lowerGlobalStringLike(state *moduleState, comp *mir.CompositeValue) (string, error) {
+	items := make(map[string]mir.Value, len(comp.Items))
 	for _, item := range comp.Items {
 		items[item.Name] = item.Value
 	}
@@ -2081,16 +2081,16 @@ func lowerGlobalStringLike(state *moduleState, comp *midmir.CompositeValue) (str
 	return fmt.Sprintf("%s %s, %s %s", ptrTok, ptrLit, lenTok, lenLit), nil
 }
 
-func qbeDataItem(state *moduleState, typ typeinfo.Type, value midmir.Value) (string, string, error) {
+func qbeDataItem(state *moduleState, typ typeinfo.Type, value mir.Value) (string, string, error) {
 	switch v := value.(type) {
-	case *midmir.NumberValue:
+	case *mir.NumberValue:
 		return qbeDataLiteral(typ, v.Value)
-	case *midmir.BoolValue:
+	case *mir.BoolValue:
 		if v.Value {
 			return "b", "1", nil
 		}
 		return "b", "0", nil
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if v.LinkName != "" {
 			return "l", "$" + sanitizeIdent(v.LinkName), nil
 		}
@@ -2100,12 +2100,12 @@ func qbeDataItem(state *moduleState, typ typeinfo.Type, value midmir.Value) (str
 	}
 }
 
-func prepareFunctionState(state *moduleState, fn *midmir.Function) error {
+func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 	state.fn = fn
 	state.aggLocals = make(map[int]*aggregateLocal)
 	state.aggParams = make(map[int]struct{})
 	state.scalarLocals = make(map[int]*scalarAllocaLocal)
-	state.tempValues = make(map[int]midmir.Value)
+	state.tempValues = make(map[int]mir.Value)
 	state.nextTemp = 0
 	state.pendingLines = nil
 	for _, param := range fn.Params {
@@ -2193,11 +2193,11 @@ func entryPrelude(state *moduleState) []string {
 	return lines
 }
 
-func lowerValue(state *moduleState, value midmir.Value) (string, error) {
+func lowerValue(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
 	case nil:
 		return "", fmt.Errorf("nil value")
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		if agg, ok := state.aggLocals[v.LocalID]; ok {
 			return qbeLocalName(agg.PtrName), nil
 		}
@@ -2211,7 +2211,7 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 			return tmp, nil
 		}
 		return qbeLocalName(localNameByID(state.fn, v.LocalID)), nil
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if len(v.Path) == 1 {
 			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
 				if value, ok := state.tempValues[local.ID]; ok && value != nil {
@@ -2254,28 +2254,28 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 			return "$" + sanitizeIdent(v.LinkName), nil
 		}
 		return "$" + qbeSymbol(state, v.Path), nil
-	case *midmir.NumberValue:
+	case *mir.NumberValue:
 		return qbeNumberLiteral(v.Type(), v.Value)
-	case *midmir.BoolValue:
+	case *mir.BoolValue:
 		if v.Value {
 			return "1", nil
 		}
 		return "0", nil
-	case *midmir.StringValue:
+	case *mir.StringValue:
 		// String literals are *i8 — emit a data section and return its address.
 		sym := emitQBEStringConstant(state, v.Value)
 		return "$" + sym, nil
-	case *midmir.NoneValue:
+	case *mir.NoneValue:
 		return "0", nil
-	case *midmir.UnaryValue:
+	case *mir.UnaryValue:
 		return lowerUnary(state, v)
-	case *midmir.AddrOfValue:
+	case *mir.AddrOfValue:
 		return lowerAddrOf(state, v)
-	case *midmir.LoadValue:
+	case *mir.LoadValue:
 		return "", fmt.Errorf("load value must be lowered in assignment/eval context")
-	case *midmir.BinaryValue:
+	case *mir.BinaryValue:
 		return lowerBinary(state, v)
-	case *midmir.CastValue:
+	case *mir.CastValue:
 		if isAggregateType(state, v.Type()) {
 			expr, err := lowerCast(state, v)
 			if err != nil {
@@ -2290,9 +2290,9 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 			return tmp, nil
 		}
 		return lowerCast(state, v)
-	case *midmir.TypeTestValue:
+	case *mir.TypeTestValue:
 		return lowerTypeTest(state, v)
-	case *midmir.CallValue:
+	case *mir.CallValue:
 		if isAggregateType(state, v.Type()) {
 			abi, err := qbeABIType(state, v.Type())
 			if err != nil {
@@ -2310,20 +2310,20 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 			return tmp, nil
 		}
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
-	case *midmir.FieldLoadValue:
+	case *mir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
-	case *midmir.IndexValue:
+	case *mir.IndexValue:
 		return "", fmt.Errorf("index value must be lowered in assignment context")
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
 }
 
-func lowerTypeTest(state *moduleState, v *midmir.TypeTestValue) (string, error) {
+func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 	if v == nil {
 		return "", fmt.Errorf("nil type test")
 	}
-	if _, isNone := v.Left.(*midmir.NoneValue); isNone {
+	if _, isNone := v.Left.(*mir.NoneValue); isNone {
 		if _, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
 			return "0", nil
 		}
@@ -2358,9 +2358,9 @@ func lowerTypeTest(state *moduleState, v *midmir.TypeTestValue) (string, error) 
 	return cmp, nil
 }
 
-func lowerAddrOf(state *moduleState, v *midmir.AddrOfValue) (string, error) {
+func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
 	switch src := v.Source.(type) {
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		if agg, ok := state.aggLocals[src.LocalID]; ok {
 			return qbeLocalName(agg.PtrName), nil
 		}
@@ -2368,7 +2368,7 @@ func lowerAddrOf(state *moduleState, v *midmir.AddrOfValue) (string, error) {
 			return qbeLocalName(sc.PtrName), nil
 		}
 		return "", fmt.Errorf("addr_of on scalar local is not supported by qbe lowerer yet")
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if len(src.Path) == 1 {
 			if local := findLocalByName(state.fn, src.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
@@ -2389,7 +2389,7 @@ func lowerAddrOf(state *moduleState, v *midmir.AddrOfValue) (string, error) {
 	}
 }
 
-func lowerUnary(state *moduleState, v *midmir.UnaryValue) (string, error) {
+func lowerUnary(state *moduleState, v *mir.UnaryValue) (string, error) {
 	right, err := lowerValue(state, v.Right)
 	if err != nil {
 		return "", err
@@ -2410,7 +2410,7 @@ func lowerUnary(state *moduleState, v *midmir.UnaryValue) (string, error) {
 	}
 }
 
-func lowerBinary(state *moduleState, v *midmir.BinaryValue) (string, error) {
+func lowerBinary(state *moduleState, v *mir.BinaryValue) (string, error) {
 	left, err := lowerValue(state, v.Left)
 	if err != nil {
 		return "", err
@@ -2437,7 +2437,7 @@ func lowerBinary(state *moduleState, v *midmir.BinaryValue) (string, error) {
 	}
 }
 
-func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
+func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if v == nil || v.Left == nil {
 		return "", fmt.Errorf("invalid cast")
 	}
@@ -2486,13 +2486,13 @@ func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 	return "", fmt.Errorf("unsupported cast from %s to %s", typeinfo.FormatType(typeStringer{v.Left.Type()}), typeinfo.FormatType(typeStringer{v.Type()}))
 }
 
-func lowerUnionSource(state *moduleState, value midmir.Value) (string, error) {
+func lowerUnionSource(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.UnaryValue:
+	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerUnionSource(state, v.Right)
 		}
-	case *midmir.LocalValue, *midmir.NameValue:
+	case *mir.LocalValue, *mir.NameValue:
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
 			return "", err
@@ -2622,7 +2622,7 @@ func unionMemberTypes(info *layout.UnionLayout) []typeinfo.Type {
 	return out
 }
 
-func lowerStringCast(state *moduleState, value midmir.Value) (string, error) {
+func lowerStringCast(state *moduleState, value mir.Value) (string, error) {
 	srcVal, err := lowerValue(state, value)
 	if err != nil {
 		return "", err
@@ -2677,9 +2677,9 @@ func qbeOperandWithTemp(state *moduleState, qtype string, expr string) string {
 	return tmp
 }
 
-func lowerCallee(state *moduleState, value midmir.Value) (string, error) {
+func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if v.LinkName != "" {
 			return "$" + sanitizeIdent(v.LinkName), nil
 		}
@@ -2689,7 +2689,7 @@ func lowerCallee(state *moduleState, value midmir.Value) (string, error) {
 	}
 }
 
-func findLocalByName(fn *midmir.Function, name string) *midmir.Local {
+func findLocalByName(fn *mir.Function, name string) *mir.Local {
 	if fn == nil {
 		return nil
 	}
@@ -2701,7 +2701,7 @@ func findLocalByName(fn *midmir.Function, name string) *midmir.Local {
 	return nil
 }
 
-func findLocalByID(fn *midmir.Function, id int) *midmir.Local {
+func findLocalByID(fn *mir.Function, id int) *mir.Local {
 	if fn == nil {
 		return nil
 	}
@@ -2713,12 +2713,12 @@ func findLocalByID(fn *midmir.Function, id int) *midmir.Local {
 	return nil
 }
 
-func resolveQBETempValue(state *moduleState, value midmir.Value) (midmir.Value, bool) {
+func resolveQBETempValue(state *moduleState, value mir.Value) (mir.Value, bool) {
 	switch v := value.(type) {
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		repl, ok := state.tempValues[v.LocalID]
 		return repl, ok && repl != nil
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if len(v.Path) == 1 {
 			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
 				repl, ok := state.tempValues[local.ID]
@@ -2729,7 +2729,7 @@ func resolveQBETempValue(state *moduleState, value midmir.Value) (midmir.Value, 
 	return nil, false
 }
 
-func localNameByID(fn *midmir.Function, id int) string {
+func localNameByID(fn *mir.Function, id int) string {
 	if fn == nil {
 		return fmt.Sprintf("t%d", id)
 	}
@@ -2741,7 +2741,7 @@ func localNameByID(fn *midmir.Function, id int) string {
 	return fmt.Sprintf("t%d", id)
 }
 
-func localTypeByID(fn *midmir.Function, id int) typeinfo.Type {
+func localTypeByID(fn *mir.Function, id int) typeinfo.Type {
 	if fn == nil {
 		return typeinfo.UnknownType{}
 	}
@@ -3242,12 +3242,12 @@ func qbeFloatCastOp(src, dst string) (string, bool) {
 // an assignment must be an instruction, so bare operands require "copy".
 // Instructions like add/sub/call already carry their opcode and must not be
 // wrapped.
-func qbeValueNeedsCopy(v midmir.Value) bool {
+func qbeValueNeedsCopy(v mir.Value) bool {
 	switch v.(type) {
-	case *midmir.LocalValue, *midmir.NameValue,
-		*midmir.NumberValue, *midmir.BoolValue,
-		*midmir.NoneValue, *midmir.AddrOfValue,
-		*midmir.TypeTestValue:
+	case *mir.LocalValue, *mir.NameValue,
+		*mir.NumberValue, *mir.BoolValue,
+		*mir.NoneValue, *mir.AddrOfValue,
+		*mir.TypeTestValue:
 		return true
 	}
 	return false
@@ -3296,7 +3296,7 @@ func qbeTypeName(state *moduleState, named *typeinfo.NamedType) string {
 	return prefix + "__" + sanitizeIdent(named.Name)
 }
 
-func qbeBlockLabel(fn *midmir.Function, id int) string {
+func qbeBlockLabel(fn *mir.Function, id int) string {
 	if fn != nil && id == fn.EntryID {
 		return "@entry"
 	}
@@ -3339,7 +3339,7 @@ func SanitizePath(path string) string {
 
 // FunctionReturnQBEType returns the QBE base type letter for the function's
 // return type ("w", "l", "s", "d") or "" for void/unknown.
-func FunctionReturnQBEType(fn *midmir.Function) string {
+func FunctionReturnQBEType(fn *mir.Function) string {
 	if fn == nil || fn.Result == nil {
 		return ""
 	}

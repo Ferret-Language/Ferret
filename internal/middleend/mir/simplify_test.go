@@ -7,7 +7,7 @@ import (
 
 	compilerapi "compiler/internal/compiler"
 	"compiler/internal/diagnostics"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 )
 
 func TestPipelineSimplifiesConstantArithmeticInMIR(t *testing.T) {
@@ -27,7 +27,7 @@ fn main() i32 {
 		t.Fatalf("expected one MIR function, got %#v", result.Entry)
 	}
 
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 	if !strings.Contains(text, "return 7") {
 		t.Fatalf("expected folded constant return in MIR, got %q", text)
 	}
@@ -57,7 +57,7 @@ fn main() i32 {
 	}
 
 	fn := result.Entry.MIR.Functions[0]
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 
 	if strings.Contains(text, "branch ") {
 		t.Fatalf("expected constant branch to simplify to jump, got %q", text)
@@ -84,7 +84,7 @@ fn main() i32 {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 	if strings.Contains(text, "x:") {
 		t.Fatalf("expected local const to be elided from MIR locals, got %q", text)
 	}
@@ -114,7 +114,7 @@ fn main() i32 {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 	if strings.Contains(text, "util::Value") {
 		t.Fatalf("expected imported const to be inlined in MIR, got %q", text)
 	}
@@ -214,7 +214,7 @@ fn main() i32 {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 
-	text := midmir.FormatModule(result.Entry.MIR)
+	text := mir.FormatModule(result.Entry.MIR)
 	if strings.Contains(text, "if n is") || strings.Contains(text, "branch ") {
 		t.Fatalf("expected static is-condition to fold away in MIR, got %q", text)
 	}

@@ -1,10 +1,9 @@
 package llvm
 
 import (
+	"compiler/internal/middleend/mir"
 	"fmt"
 	"strings"
-
-	midmir "compiler/internal/middleend/mir"
 )
 
 // MainWrapper emits an LLVM IR entry wrapper for non-"main" entry modules:
@@ -17,12 +16,12 @@ import (
 //
 // When the entry module is named "main" the wrapper is not needed because
 // llvmSymbol already emits the function as @main directly.
-func MainWrapper(mod *midmir.Module) (string, error) {
+func MainWrapper(mod *mir.Module) (string, error) {
 	if mod == nil {
 		return "", fmt.Errorf("entry wrapper: nil MIR module")
 	}
 
-	var mainFunc *midmir.Function
+	var mainFunc *mir.Function
 	for _, fn := range mod.Functions {
 		if fn != nil && fn.Name == "main" {
 			mainFunc = fn

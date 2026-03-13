@@ -10,7 +10,7 @@ import (
 	"compiler/internal/backend/registry"
 	compilerapi "compiler/internal/compiler"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 )
 
 func TestLowerInterfaceDispatchToLLVM(t *testing.T) {
@@ -336,7 +336,7 @@ func mustWrite(t *testing.T, path, content string) {
 
 func testUnit(result compilerapi.Result) *backend.Unit {
 	layouts := make(map[string]*layout.Module)
-	modules := make(map[string]*midmir.Module)
+	modules := make(map[string]*mir.Module)
 	for _, mod := range result.Modules {
 		if mod == nil {
 			continue

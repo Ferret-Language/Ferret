@@ -1528,7 +1528,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -8728,7 +8728,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -10542,7 +10542,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -12502,7 +12502,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -14478,7 +14478,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -21511,7 +21511,7 @@ import (
 	"fmt"
 	"strings"
 
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 )
 
 // MainWrapper emits an LLVM IR entry wrapper for non-"main" entry modules:
@@ -22663,7 +22663,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -25307,7 +25307,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -28043,7 +28043,7 @@ import (
 	"sort"
 	"strings"
 
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -30642,7 +30642,7 @@ import (
 	"sort"
 	"strings"
 
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -33278,7 +33278,7 @@ import (
 	"compiler/internal/frontend/parser"
 	"compiler/internal/layoutanalysis"
 	"compiler/internal/middleend/hir"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/phase"
 	"compiler/internal/semantics/collector"
 	"compiler/internal/semantics/ownership"
@@ -33611,8 +33611,8 @@ import (
 	"compiler/internal/context"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/layout"
-	midhir "compiler/internal/middleend/hir"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/hir"
+	"compiler/internal/middleend/mir"
 )
 
 func main() {
@@ -34105,7 +34105,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -36690,7 +36690,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -39339,7 +39339,7 @@ import (
 	"path/filepath"
 
 	"compiler/internal/backend"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -39505,7 +39505,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -42100,7 +42100,7 @@ import (
 	"fmt"
 	"strings"
 
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 )
 
 // MainWrapper emits a QBE IL entry wrapper for non-"main" entry modules:
@@ -42345,7 +42345,7 @@ import (
 	"fmt"
 
 	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 )
 
 type Target string
@@ -42628,7 +42628,7 @@ import (
 	"path/filepath"
 
 	"compiler/internal/backend"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -43094,7 +43094,7 @@ import (
 	"path/filepath"
 
 	"compiler/internal/backend"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 
@@ -43571,7 +43571,7 @@ import (
 	"path/filepath"
 
 	"compiler/internal/backend"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/semantics/typeinfo"
 )
 

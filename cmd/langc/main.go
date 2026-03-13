@@ -17,8 +17,8 @@ import (
 	"compiler/internal/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/layout"
-	midhir "compiler/internal/middleend/hir"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/middleend/hir"
+	"compiler/internal/middleend/mir"
 	"compiler/internal/project"
 )
 
@@ -61,7 +61,7 @@ func main() {
 	}
 	if *hirFlag || *hirOut != "" {
 		if err := emitTextDump(result, *hirOut, ".hir", func(mod *context.Module) string {
-			return midhir.FormatModule(mod.HIR)
+			return hir.FormatModule(mod.HIR)
 		}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -69,7 +69,7 @@ func main() {
 	}
 	if *mirFlag || *mirOut != "" {
 		if err := emitTextDump(result, *mirOut, ".mir", func(mod *context.Module) string {
-			return midmir.FormatModule(mod.MIR)
+			return mir.FormatModule(mod.MIR)
 		}); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -322,8 +322,8 @@ func backendLayouts(result compilerapi.Result) map[string]*layout.Module {
 	return layouts
 }
 
-func backendModules(result compilerapi.Result) map[string]*midmir.Module {
-	modules := make(map[string]*midmir.Module)
+func backendModules(result compilerapi.Result) map[string]*mir.Module {
+	modules := make(map[string]*mir.Module)
 	for _, mod := range result.Modules {
 		if mod != nil && mod.MIR != nil {
 			modules[mod.Key] = mod.MIR
