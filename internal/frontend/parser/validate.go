@@ -69,7 +69,9 @@ func (p *Parser) validateStmt(stmt ast.Stmt) {
 			if arm == nil {
 				continue
 			}
-			if !arm.Wildcard {
+			if arm.TypePattern != nil {
+				p.validateType(arm.TypePattern)
+			} else if !arm.Wildcard {
 				p.validateExpr(arm.Pattern)
 			}
 			p.validateStmt(arm.Body)

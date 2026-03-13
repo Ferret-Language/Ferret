@@ -67,10 +67,12 @@ func (*IfStmt) stmtNode()              {}
 func (s *IfStmt) Loc() source.Location { return s.Location }
 
 type MatchArm struct {
-	Pattern  Expr
-	Wildcard bool
-	Body     *BlockStmt
-	Location source.Location
+	Pattern     Expr
+	TypePattern TypeExpr
+	Binding     *Ident
+	Wildcard    bool
+	Body        *BlockStmt
+	Location    source.Location
 }
 
 type MatchStmt struct {

@@ -338,7 +338,17 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 			if arm == nil {
 				continue
 			}
-			out.Arms = append(out.Arms, &MatchArm{Wildcard: arm.Wildcard, Pattern: g.generateExpr(arm.Pattern), Body: g.generateBlock(arm.Body)})
+			hirArm := &MatchArm{Wildcard: arm.Wildcard, Body: g.generateBlock(arm.Body)}
+			if arm.Pattern != nil {
+				hirArm.Pattern = g.generateExpr(arm.Pattern)
+			}
+			if arm.TypePattern != nil {
+				hirArm.TypePattern = g.resolveTypeExpr(arm.TypePattern)
+			}
+			if arm.Binding != nil {
+				hirArm.BindingName = arm.Binding.Text()
+			}
+			out.Arms = append(out.Arms, hirArm)
 		}
 		return out
 	case *ast.WhileStmt:

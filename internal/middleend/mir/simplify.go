@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/utils/numeric"
 )
 
@@ -38,7 +39,7 @@ func simplifyFunction(diag *diagnostics.Bag, fn *Function) {
 			switch i := instr.(type) {
 			case *AssignInstr:
 				i.Value = simplifyValue(i.Value, consts)
-				updateConstBinding(consts, i.TargetID, i.Value)
+				updateConstBinding(fn, consts, i.TargetID, i.Value)
 				out = append(out, i)
 			case *ComputeInstr:
 				i.Value = simplifyValue(i.Value, consts)
@@ -48,7 +49,7 @@ func simplifyFunction(diag *diagnostics.Bag, fn *Function) {
 						TargetID:  i.TargetID,
 						Value:     i.Value,
 					}
-					updateConstBinding(consts, i.TargetID, i.Value)
+					updateConstBinding(fn, consts, i.TargetID, i.Value)
 					out = append(out, assign)
 					continue
 				}
@@ -319,8 +320,17 @@ func simplifyValue(value Value, consts map[int]Value) Value {
 	}
 }
 
-func updateConstBinding(consts map[int]Value, localID int, value Value) {
+func updateConstBinding(fn *Function, consts map[int]Value, localID int, value Value) {
 	if consts == nil {
+		return
+	}
+	local := lookupLocal(fn, localID)
+	if local == nil || !isFoldedConst(value) {
+		delete(consts, localID)
+		return
+	}
+	if local.Type != nil && value.Type() != nil && !typeinfo.Equal(local.Type, value.Type()) {
+		delete(consts, localID)
 		return
 	}
 	if isFoldedConst(value) {

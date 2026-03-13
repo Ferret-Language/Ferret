@@ -327,15 +327,25 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 			if arm == nil {
 				continue
 			}
+			armScope := newValueScope(scope)
 			if arm.Wildcard {
 				hasWildcard = true
+			} else if arm.TypePattern != nil {
+				target := c.typeFromSyntax(c.mod, arm.TypePattern)
+				c.info.BindNode(arm.TypePattern, target)
+				_ = c.typeOfIs(scope, &ast.IsExpr{Left: s.Value, Type: arm.TypePattern, Location: arm.Location})
+				armScope = c.narrowedMatchTypeArmScope(scope, s.Value, target)
+				if arm.Binding != nil {
+					armScope = newValueScope(armScope)
+					armScope.Declare(arm.Binding.Text(), valueInfo{typ: target, mutable: false})
+				}
 			} else {
 				patternType := c.typeOfExpr(scope, arm.Pattern, valueType)
 				if !typeinfo.Assignable(valueType, patternType) && !typeinfo.Assignable(patternType, valueType) {
 					c.reportTypeMismatch(arm.Pattern.Loc(), valueType, patternType)
 				}
 			}
-			c.checkStmt(scope, arm.Body)
+			c.checkStmt(armScope, arm.Body)
 		}
 		if !hasWildcard && len(s.Arms) > 0 {
 			// fallback remains possible; CFG handles missing-return paths later
@@ -1150,6 +1160,29 @@ func (c *checker) narrowedScopeForIs(scope *valueScope, expr *ast.IsExpr, truth 
 	narrowed := newValueScope(scope)
 	narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
 	return narrowed
+}
+
+func (c *checker) narrowedMatchTypeArmScope(scope *valueScope, value ast.Expr, target typeinfo.Type) *valueScope {
+	if scope == nil || value == nil || target == nil {
+		return scope
+	}
+	ident, ok := value.(*ast.Ident)
+	if !ok || ident == nil || len(ident.Path) != 1 {
+		return scope
+	}
+	info, ok := scope.Lookup(ident.Path[0])
+	if !ok || info == nil || info.typ == nil {
+		return scope
+	}
+	if unionType, ok := c.underlying(info.typ).(*typeinfo.UnionType); ok && unionType != nil && c.unionTypeMayMatch(unionType, target) {
+		narrowed := newValueScope(scope)
+		narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+		return narrowed
+	}
+	if typeinfo.Equal(info.typ, target) {
+		return scope
+	}
+	return scope
 }
 
 func (c *checker) unionTypeMayMatch(unionType *typeinfo.UnionType, target typeinfo.Type) bool {

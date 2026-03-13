@@ -164,6 +164,12 @@ func formatStmt(b *strings.Builder, stmt Stmt, indent int) {
 			indentLine(b, indent+1)
 			if arm.Wildcard {
 				b.WriteString("_ => ")
+			} else if arm.TypePattern != nil {
+				fmt.Fprintf(b, "is %s", arm.TypePattern.String())
+				if arm.BindingName != "" {
+					fmt.Fprintf(b, " %s", arm.BindingName)
+				}
+				b.WriteString(" => ")
 			} else {
 				fmt.Fprintf(b, "%s => ", formatExpr(arm.Pattern))
 			}

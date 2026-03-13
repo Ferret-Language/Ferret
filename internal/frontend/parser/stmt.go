@@ -167,16 +167,31 @@ func (p *Parser) parseMatchStmt() ast.Stmt {
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
 		armStart := p.current().Start
 		var pattern ast.Expr
+		var typePattern ast.TypeExpr
+		var binding *ast.Ident
 		wildcard := false
 		if p.at(tokens.IDENT) && p.current().Literal == "_" {
 			wildcard = true
 			p.advance()
+		} else if p.match(tokens.IS) {
+			typePattern = p.parseType()
+			if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.FATARROW {
+				bindTok := p.advance()
+				binding = &ast.Ident{Path: []string{bindTok.Literal}, Location: p.locOfToken(bindTok)}
+			}
 		} else {
 			pattern = p.parseExprUntil(precLowest, tokens.FATARROW)
 		}
 		p.expect(tokens.FATARROW, "expected '=>' after match pattern")
 		body := p.parseBlock()
-		arms = append(arms, &ast.MatchArm{Pattern: pattern, Wildcard: wildcard, Body: body, Location: p.locFrom(armStart)})
+		arms = append(arms, &ast.MatchArm{
+			Pattern:     pattern,
+			TypePattern: typePattern,
+			Binding:     binding,
+			Wildcard:    wildcard,
+			Body:        body,
+			Location:    p.locFrom(armStart),
+		})
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
 	return &ast.MatchStmt{Value: value, Arms: arms, Location: p.locFrom(start)}

@@ -172,10 +172,19 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 			if arm == nil {
 				continue
 			}
-			if !arm.Wildcard {
+			armScope := table.New(scope)
+			if arm.TypePattern != nil {
+				r.resolveType(scope, arm.TypePattern)
+				if arm.Binding != nil {
+					sym := symbols.New(arm.Binding.Text(), symbols.SymbolVar, arm.Binding)
+					sym.Location = arm.Binding.Loc()
+					armScope.Declare(sym)
+					r.addFunctionLocal(sym)
+				}
+			} else if !arm.Wildcard {
 				r.resolveExpr(scope, arm.Pattern)
 			}
-			r.resolveStmt(scope, arm.Body)
+			r.resolveStmt(armScope, arm.Body)
 		}
 	case *ast.WhileStmt:
 		r.resolveExpr(scope, s.Cond)

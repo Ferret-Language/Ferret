@@ -533,6 +533,34 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerNarrowsUnionTypeInMatchTypeArmAndBinding(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Token union {
+    i32,
+    i64,
+}
+
+fn main() i32 {
+    let value: Token = 1
+    match value {
+        is i32 n => {
+            let widened: i32 = value
+            return n + widened
+        }
+        _ => {
+            return 0
+        }
+    }
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerRejectsRuntimeInterfaceToConcreteTypeTest(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

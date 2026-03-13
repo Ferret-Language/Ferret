@@ -3105,7 +3105,8 @@ func qbeValueNeedsCopy(v midmir.Value) bool {
 	switch v.(type) {
 	case *midmir.LocalValue, *midmir.NameValue,
 		*midmir.NumberValue, *midmir.BoolValue,
-		*midmir.NoneValue, *midmir.AddrOfValue:
+		*midmir.NoneValue, *midmir.AddrOfValue,
+		*midmir.TypeTestValue:
 		return true
 	}
 	return false

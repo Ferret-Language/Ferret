@@ -748,6 +748,39 @@ fn run(x i32) bool {
 	}
 }
 
+func TestParseMatchTypeArmBinding(t *testing.T) {
+	src := `
+fn run(value Token) i32 {
+    match value {
+        is i32 n => {
+            return n
+        }
+        _ => {
+            return 0
+        }
+    }
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	matchStmt := fn.Body.Stmts[0].(*ast.MatchStmt)
+	arm := matchStmt.Arms[0]
+	if arm.TypePattern == nil {
+		t.Fatalf("expected type pattern arm, got %#v", arm)
+	}
+	if arm.Binding == nil || arm.Binding.Text() != "n" {
+		t.Fatalf("expected binding n, got %#v", arm.Binding)
+	}
+	target, ok := arm.TypePattern.(*ast.NamedType)
+	if !ok || len(target.Path) != 1 || target.Path[0] != "i32" {
+		t.Fatalf("expected target type i32, got %#v", arm.TypePattern)
+	}
+}
+
 func TestParserRejectsMixedCompositeLiteralForms(t *testing.T) {
 	src := `
 fn build() Point {

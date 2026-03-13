@@ -125,7 +125,14 @@ func debugStmt(stmt Stmt) any {
 				arms = append(arms, nil)
 				continue
 			}
-			arms = append(arms, map[string]any{"pattern": debugExpr(arm.Pattern), "wildcard": arm.Wildcard, "body": debugStmt(arm.Body), "loc": debugLoc(arm.Location)})
+			arms = append(arms, map[string]any{
+				"pattern":      debugExpr(arm.Pattern),
+				"type_pattern": debugType(arm.TypePattern),
+				"binding":      debugExpr(arm.Binding),
+				"wildcard":     arm.Wildcard,
+				"body":         debugStmt(arm.Body),
+				"loc":          debugLoc(arm.Location),
+			})
 		}
 		return map[string]any{"kind": "MatchStmt", "value": debugExpr(s.Value), "arms": arms, "loc": debugLoc(s.Location)}
 	case *WhileStmt:
