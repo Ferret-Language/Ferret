@@ -2,7 +2,7 @@
 
 ## AST Generation
 
-Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and later physical layout without another representation rewrite.
+Current focus: keep MIR/backend contracts stable while tightening `match`, union, optional, and interface semantics.
 
 ### Frontend foundation
 
@@ -36,7 +36,7 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 - [x] `return`
 - [x] `if`
 - [x] `if else`
-- [x] `switch`
+- [x] `match` expression
 - [x] blocks
 - [x] named and anonymous `struct`
 - [x] named and anonymous `interface`
@@ -82,7 +82,8 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 - [x] `catch` handler block with mandatory early exit
 - [x] `lock`
 - [x] `unsafe` blocks
-- [x] `unsafe` expressions
+- [x] inline `match` arms: `pattern => expr`
+- [x] `unsafe fn`
 - [x] `#[builtin]` function declarations without body
 - [x] `#[extern("...")]` function declarations without body
 - [ ] function literals
@@ -101,6 +102,10 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 ### Needs syntax to be frozen before implementation
 
 - [x] exact loop syntax
+- [x] exact `match` syntax:
+  - expression form
+  - inline arm expressions
+  - `is T =>` typed arms
 - [ ] exact label syntax
 - [ ] exact closure syntax
 - [ ] exact capture block syntax
@@ -146,6 +151,9 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 - [x] `?T` rules
 - [x] `E!T` rules
 - [x] `!!` rules
+- [x] `match` expression arm result typing
+- [x] `if x is T` true/false branch narrowing for unions
+- [x] `match x { is T => ... }` arm narrowing
 - [x] contextual typing for `.{ ... }`
 - [x] pointer rules
 - [x] method call lookup on typed receivers
@@ -242,9 +250,24 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 
 ## LLVM IR
 
-- [ ] map MIR to LLVM IR
+- [x] map current MIR subset to LLVM IR
 - [ ] preserve source/debug locations where practical
 - [ ] define ABI/runtime boundary
+
+## Backend Status
+
+- [x] QBE backend exists
+- [x] LLVM backend exists
+- [x] scalar lowering on both backends
+- [x] struct lowering on both backends
+- [x] enum lowering on both backends
+- [x] optional lowering on both backends
+- [x] interface lowering on both backends
+- [x] tagged union lowering on both backends
+- [x] `match` lowering on both backends
+- [ ] `defer` cleanup codegen
+- [ ] `lock` codegen
+- [ ] full error-union runtime/codegen
 
 ## Codegen And Later Work
 
@@ -266,7 +289,7 @@ Current focus: keep MIR stable enough for unwind-aware CFG, usage warnings, and 
 - [ ] dependency version conflict handling
 - [ ] stdlib/toolchain root policy finalization
 - [x] minimal `#[if(...)]` declaration filtering exists
-- [ ] widen `#[if(...)]` beyond the minimal forms `debug`, `not, debug`, `target_os`, and `target_arch`
+- [ ] widen `#[if(...)]` beyond the minimal forms `debug`, `target_os`, `target_arch`, `target_backend`, and their `ifnot` variants
 - [x] named types may be explicitly marked `move`
 
 ## Intended Order

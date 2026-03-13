@@ -2,7 +2,7 @@ import "std/io"
 
 
 fn main() {
-    let value : ?i32 = 18
+    let value : ?i32 = none
     let out: i32 = match value {
         is i32 => value
         _ => -1

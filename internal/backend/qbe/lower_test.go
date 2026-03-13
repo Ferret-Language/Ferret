@@ -85,7 +85,7 @@ fn main() i32 {
 	}
 }
 
-func TestRejectUnsupportedMatchLowering(t *testing.T) {
+func TestLowerMatchToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 fn main(x i32) i32 {
@@ -103,9 +103,18 @@ fn main(x i32) i32 {
 	if err != nil {
 		t.Fatalf("lowerer: %v", err)
 	}
-	_, err = lowerer.LowerModule(testUnit(result))
-	if err == nil || !strings.Contains(err.Error(), "match lowering is not implemented yet") {
-		t.Fatalf("expected unsupported match error, got %v", err)
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	for _, want := range []string{
+		"ceqw %x, 0",
+		"ret 1",
+		"ret 2",
+	} {
+		if !strings.Contains(artifact.Text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, artifact.Text)
+		}
 	}
 }
 
@@ -478,7 +487,7 @@ fn main() i32 {
 	}
 	text := artifact.Text
 	// Method should be emitted with receiver as first parameter.
-	if !strings.Contains(text, ":local__main__Point %p)") {
+	if !strings.Contains(text, "function w $Point__Len2(l %p)") {
 		t.Fatalf("expected receiver parameter in Len2 signature, got:\n%s", text)
 	}
 	// Call site should pass receiver as first argument.

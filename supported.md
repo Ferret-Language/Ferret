@@ -1,7 +1,7 @@
 # Ferret Backend Support Matrix
 
-Status of language features through **both** the QBE and LLVM backends.  
-"Both backends" means the feature produces correct native code via `ferret -build-backend qbe` and `ferret -build-backend llvm`.
+Status of language features through **both** the QBE and LLVM backends.
+"Both backends" means the feature produces correct native code via `ferret -build-backend qbe` and `ferret -build-backend llvm` for the currently supported subset.
 
 ---
 
@@ -16,9 +16,9 @@ Status of language features through **both** the QBE and LLVM backends.
 | `i64` / `u64` | ✅ |
 | `isize` / `usize` | ✅ |
 | `f32` | ✅ |
-| `f64` | ⚠️ frontend only |
-| `char` (mapped to i32) | ✅ |
-| `str` / string type | ⚠️ string globals only |
+| `f64` | ⚠️ partial / not fully covered |
+| `char` (mapped to `i32`) | ✅ |
+| `str` | ✅ |
 
 ---
 
@@ -27,15 +27,15 @@ Status of language features through **both** the QBE and LLVM backends.
 | Type | Both backends |
 |------|:---:|
 | Named `struct` | ✅ |
-| Anonymous struct | ✅ |
+| Anonymous `struct` | ✅ |
 | Array `[T; N]` | ✅ |
-| Pointer `*T` / `*mut T` | ✅ |
+| Pointer `*T` / `*mut T` / `*raw T` / `*own T` | ✅ |
 | Tuple | ⚠️ frontend only |
 | Named `enum` | ✅ |
-| Named `union` (safe) | ⚠️ frontend only |
-| Named `interface` | ⚠️ frontend only |
+| Named `union` (tagged runtime model) | ✅ |
+| Named `interface` | ✅ |
 | Named `error` | ⚠️ frontend only |
-| Optional `?T` | ⚠️ frontend only |
+| Optional `?T` | ✅ |
 | Error union `E!T` | ⚠️ frontend only |
 
 ---
@@ -45,12 +45,12 @@ Status of language features through **both** the QBE and LLVM backends.
 | Feature | Both backends |
 |---------|:---:|
 | Top-level `fn` | ✅ |
-| `fn (recv T) method()` external methods | ✅ |
+| External methods with receivers | ✅ |
 | `type Name struct { ... }` | ✅ |
 | `type Name move ...` | ✅ |
-| `type Name enum { ... }` | ⚠️ frontend only |
-| `type Name union { ... }` | ⚠️ frontend only |
-| `type Name interface { ... }` | ⚠️ frontend only |
+| `type Name enum { ... }` | ✅ |
+| `type Name union { ... }` | ✅ |
+| `type Name interface { ... }` | ✅ |
 | `type Name error { ... }` | ⚠️ frontend only |
 | Local `let` / `let mut` | ✅ |
 | Local `const` | ✅ |
@@ -58,10 +58,10 @@ Status of language features through **both** the QBE and LLVM backends.
 | Module-level `let` (globals) | ✅ |
 | `#[extern("sym")] fn` | ✅ |
 | `#[builtin] fn` | ✅ |
-| `#[if(debug)]` / `#[if(target_os, "...")]` top-level filtering | ✅ |
-| Constructor `fn new(...)` syntax | ⚠️ frontend only |
-| Destructor syntax | ⚠️ frontend only |
-| Static fields | ⚠️ frontend only |
+| `#[if(...)]` / `#[ifnot(...)]` declaration filtering | ✅ |
+| Constructor syntax | ✅ |
+| Destructor syntax | ✅ |
+| Static fields | ⚠️ frontend / semantic only |
 
 ---
 
@@ -76,10 +76,11 @@ Status of language features through **both** the QBE and LLVM backends.
 | Comparison `==` `!=` `<` `>` `<=` `>=` | ✅ |
 | Logical `&&` `\|\|` | ✅ |
 | Unary `-` `!` | ✅ |
-| `x as T` (numeric casts) | ✅ |
+| `x as T` numeric casts | ✅ |
+| `number as str` | ✅ |
+| Union member selection/extraction casts | ✅ |
 | `&x` address-of | ✅ |
 | `*p` pointer dereference (read) | ✅ |
-| `unsafe *p` (unsafe context dereference) | ✅ |
 | `f(args)` function call | ✅ |
 | `recv.method(args)` method call | ✅ |
 | `Module::func(args)` cross-module call | ✅ |
@@ -87,12 +88,13 @@ Status of language features through **both** the QBE and LLVM backends.
 | `expr.field` field access (read) | ✅ |
 | `arr[i]` array index (read) | ✅ |
 | `copy expr` | ✅ |
-| `unsafe expr` | ❌ removed |
 | `comptime expr` | ⚠️ frontend / const-fold only |
 | `catch` fallback | ⚠️ frontend only |
 | `!!` force-unwrap | ⚠️ frontend only |
+| `match expr { ... }` | ✅ |
+| `is T` runtime type test on unions / optionals | ✅ |
 | Function literals / lambdas | ❌ not yet |
-| IIFE `(fn() { ... })()` | ❌ not yet |
+| IIFE | ❌ not yet |
 
 ---
 
@@ -105,20 +107,36 @@ Status of language features through **both** the QBE and LLVM backends.
 | `x.field = expr` field store | ✅ |
 | `x[i] = expr` index store | ✅ |
 | `unsafe { *p = expr }` pointer store | ✅ |
-| `x += expr` `-=` `*=` `/=` `%=` compound assign | ✅ |
-| `x &= expr` `\|=` `^=` `<<=` `>>=` compound assign | ✅ |
-| `x++` / `x--` increment / decrement | ✅ |
+| Compound assignment | ✅ |
+| `x++` / `x--` | ✅ |
 | `return [expr]` | ✅ |
 | `if expr { }` / `if expr { } else { }` | ✅ |
 | `while expr { }` | ✅ |
-| `for val \|v\| { }` / `for val \|i, v\| { }` | ✅ |
+| `for iterable \|v\| { }` / `for iterable \|i, v\| { }` | ✅ |
 | `break` / `continue` | ✅ |
-| `break 'label` / `continue 'label` | ✅ |
-| `match expr { pattern => { } ... }` | ✅ |
+| Labeled `break` / `continue` | ✅ |
+| `match expr { arm => expr }` | ✅ |
+| `match expr { arm => { ... } }` | ✅ |
 | `panic expr` | ✅ |
 | `unsafe { }` block | ✅ |
-| `defer { }` | ⚠️ MIR modeled, not codegen'd |
-| `lock { }` | ⚠️ MIR modeled, not codegen'd |
+| `defer ...` | ⚠️ MIR/CFG modeled, not codegen'd |
+| `lock ... as name { ... }` | ⚠️ MIR/CFG modeled, not codegen'd |
+
+---
+
+## Match / Narrowing
+
+| Feature | Both backends |
+|---------|:---:|
+| Literal match arms | ✅ |
+| Wildcard `_` arm | ✅ |
+| Typed arms `is T =>` | ✅ |
+| Inline arm expressions `=> expr` | ✅ |
+| Arm blocks `=> { ... }` | ✅ |
+| Narrow matched value inside typed arm | ✅ |
+| Typed arm binding `is T name =>` | ❌ removed |
+| Exhaustiveness diagnostics | ⚠️ partial |
+| Overlap diagnostics | ⚠️ partial |
 
 ---
 
@@ -132,7 +150,7 @@ Status of language features through **both** the QBE and LLVM backends.
 | `import "path" as alias` | ✅ |
 | Cross-module type references | ✅ |
 | Cross-module function calls | ✅ |
-| `std/*` stdlib imports | ✅ (declarations resolved) |
+| `std/*` stdlib imports | ✅ |
 | Manifest (`fer.ret`) dependency loading | ✅ |
 | Import cycle detection | ✅ |
 
@@ -142,22 +160,18 @@ Status of language features through **both** the QBE and LLVM backends.
 
 Both backends recognize the `main` module specially:
 
-- The `main` function in a module named `main` is emitted directly as the
-  platform entry symbol (`$main` / `@main`) without a generated wrapper.
-- For any other module name the backend emits a thin `export $main` /
-  `define @main` trampoline that calls the Ferret `main`.
+- the `main` function in a module named `main` is emitted directly as the platform entry symbol
+- for any other module name the backend emits a thin trampoline to the Ferret `main`
 
 ---
 
 ## Not Yet Implemented
 
 - Closures, capture blocks, anonymous functions
-- `defer` codegen (MIR node exists; backends emit no instructions for it)
+- `defer` codegen
 - `lock` codegen
-- Enum / union / interface / error-union lowering
-- Optional (`?T`) and error-union (`E!T`) runtime representation
-- `!!` and `catch` codegen
+- `error` / `E!T` runtime representation and codegen
 - Tuple codegen
-- Full `f64` coverage (may work incidentally; not tested)
-- Object files / static/dynamic libraries (only executables today)
-- Optimization pipeline (both backends use default unoptimized codegen)
+- Full `f64` coverage
+- Object files / static/dynamic libraries
+- Optimization pipeline beyond current MIR cleanup/folding

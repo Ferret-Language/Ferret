@@ -427,6 +427,10 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 		if param == nil {
 			continue
 		}
+		if isAggregateType(state, param.Type) {
+			paramParts = append(paramParts, fmt.Sprintf("l %s", qbeLocalName(param.Name)))
+			continue
+		}
 		pty, err := qbeABIType(state, param.Type)
 		if err != nil {
 			return fmt.Errorf("function %s param %s: %w", fn.Name, param.Name, err)
@@ -482,10 +486,6 @@ func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
 		return lowerAssignLike(state, i.Name, i.Type, i.Value)
 	case *midmir.AssignInstr:
 		if local := findLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
-			if isAggregateType(state, local.Type) {
-				state.tempValues[i.TargetID] = i.Value
-				return "", nil
-			}
 			if field, ok := i.Value.(*midmir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
 				state.tempValues[i.TargetID] = field
 				return "", nil
@@ -495,10 +495,6 @@ func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
 		return lowerAssignLike(state, name, localTypeByID(state.fn, i.TargetID), i.Value)
 	case *midmir.ComputeInstr:
 		if local := findLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
-			if isAggregateType(state, local.Type) {
-				state.tempValues[i.TargetID] = i.Value
-				return "", nil
-			}
 			if field, ok := i.Value.(*midmir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
 				state.tempValues[i.TargetID] = field
 				return "", nil
@@ -717,6 +713,17 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	}
 	args := make([]string, 0, len(call.Args))
 	for _, arg := range call.Args {
+		if isAggregateType(state, arg.Type()) {
+			prefix, ptr, err := lowerAggregateValuePointer(state, arg)
+			if err != nil {
+				return "", err
+			}
+			if len(prefix) != 0 {
+				state.pendingLines = append(state.pendingLines, prefix...)
+			}
+			args = append(args, fmt.Sprintf("l %s", ptr))
+			continue
+		}
 		atype, err := qbeABIType(state, arg.Type())
 		if err != nil {
 			return "", err
@@ -890,6 +897,17 @@ func lowerConstructorCall(state *moduleState, dstPtr string, call *midmir.CallVa
 	args := make([]string, 0, len(call.Args)+1)
 	args = append(args, fmt.Sprintf("l %s", dstPtr))
 	for _, arg := range call.Args {
+		if isAggregateType(state, arg.Type()) {
+			prefix, ptr, err := lowerAggregateValuePointer(state, arg)
+			if err != nil {
+				return "", err
+			}
+			if len(prefix) != 0 {
+				state.pendingLines = append(state.pendingLines, prefix...)
+			}
+			args = append(args, fmt.Sprintf("l %s", ptr))
+			continue
+		}
 		atype, err := qbeABIType(state, arg.Type())
 		if err != nil {
 			return "", err
@@ -976,28 +994,29 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			abiType, err := qbeABIType(state, call.Type())
+			return fmt.Sprintf("%s =l alloc%d %d\n\t%s\n\tret %s", tmpPtr, normalizeQBEAlign(align), size, callText, tmpPtr), nil
+		}
+		if isAggregateType(state, t.Value.Type()) {
+			switch v := t.Value.(type) {
+			case *midmir.CallValue, *midmir.CastValue:
+				val, err := lowerValue(state, v)
+				if err != nil {
+					return "", err
+				}
+				return fmt.Sprintf("ret %s", val), nil
+			}
+			prefix, ptr, err := lowerAggregateValuePointer(state, t.Value)
 			if err != nil {
 				return "", err
 			}
-			tmpVal := freshTemp(state, "retval")
-			return fmt.Sprintf("%s =l alloc%d %d\n\t%s\n\t%s =%s load%s %s\n\tret %s", tmpPtr, normalizeQBEAlign(align), size, callText, tmpVal, abiType, abiType, tmpPtr, tmpVal), nil
+			lines := make([]string, 0, len(prefix)+1)
+			lines = append(lines, prefix...)
+			lines = append(lines, fmt.Sprintf("ret %s", ptr))
+			return strings.Join(lines, "\n\t"), nil
 		}
 		val, err := lowerValue(state, t.Value)
 		if err != nil {
 			return "", err
-		}
-		if isAggregateType(state, t.Value.Type()) {
-			switch t.Value.(type) {
-			case *midmir.CallValue, *midmir.CastValue:
-				return fmt.Sprintf("ret %s", val), nil
-			}
-			abiType, err := qbeABIType(state, t.Value.Type())
-			if err != nil {
-				return "", err
-			}
-			tmp := freshTemp(state, "retval")
-			return fmt.Sprintf("%s =%s load%s %s\n\tret %s", tmp, abiType, abiType, val, tmp), nil
 		}
 		return fmt.Sprintf("ret %s", val), nil
 	case *midmir.PanicTerm:
@@ -1006,10 +1025,48 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 		}
 		return lowerPanicTerm(state, t)
 	case *midmir.SwitchTerm:
-		return "", fmt.Errorf("match lowering is not implemented yet")
+		return lowerSwitchTerm(state, t)
 	default:
 		return "", fmt.Errorf("unsupported MIR terminator %T", term)
 	}
+}
+
+func lowerSwitchTerm(state *moduleState, t *midmir.SwitchTerm) (string, error) {
+	if t == nil {
+		return "", fmt.Errorf("invalid switch terminator")
+	}
+	if len(t.Cases) == 0 {
+		return fmt.Sprintf("jmp %s", qbeBlockLabel(state.fn, t.DefaultID)), nil
+	}
+	value, err := lowerValue(state, t.Value)
+	if err != nil {
+		return "", err
+	}
+	cmpOp, err := qbeCompareOp("==", t.Value.Type())
+	if err != nil {
+		return "", err
+	}
+	lines := make([]string, 0, len(t.Cases)*3+1)
+	for i, sc := range t.Cases {
+		caseVal, err := lowerValue(state, sc.Expr)
+		if err != nil {
+			return "", err
+		}
+		cmp := freshTemp(state, "switch")
+		next := qbeFreshLabel(state, "sw")
+		falseLabel := next
+		if i == len(t.Cases)-1 {
+			falseLabel = qbeBlockLabel(state.fn, t.DefaultID)
+		}
+		lines = append(lines,
+			fmt.Sprintf("%s =w %s %s, %s", cmp, cmpOp, value, caseVal),
+			fmt.Sprintf("jnz %s, %s, %s", cmp, qbeBlockLabel(state.fn, sc.TargetID), falseLabel),
+		)
+		if i != len(t.Cases)-1 {
+			lines = append(lines, next)
+		}
+	}
+	return strings.Join(lines, "\n\t"), nil
 }
 
 func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.Type, field *midmir.FieldLoadValue) (string, error) {
@@ -2064,9 +2121,6 @@ func prepareFunctionState(state *moduleState, fn *midmir.Function) error {
 			continue
 		}
 		if isAggregateType(state, local.Type) {
-			if local.IsTemp {
-				continue
-			}
 			agg := &aggregateLocal{
 				ID:      local.ID,
 				Name:    local.Name,
@@ -2730,6 +2784,15 @@ func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, er
 	case *typeinfo.SliceType:
 		// str / []T: { ptr *T, len usize } — 16 bytes, 8-byte aligned.
 		return 16, 8, nil
+	case *typeinfo.OptionalType:
+		if optionalUsesNiche(t.Inner) {
+			return 0, 0, fmt.Errorf("optional %s uses niche layout", t.Inner)
+		}
+		info, err := unionLayoutInfo(state, typ)
+		if err != nil {
+			return 0, 0, err
+		}
+		return info.Size, info.Align, nil
 	case *typeinfo.NamedType:
 		info, err := lookupNamedLayout(state, t)
 		if err != nil {
@@ -2816,6 +2879,11 @@ func qbeAggregateSubType(state *moduleState, typ typeinfo.Type) (string, error) 
 			return ":" + qbeTypeName(state, named), nil
 		}
 	}
+	if opt, ok := typ.(*typeinfo.OptionalType); ok {
+		if !optionalUsesNiche(opt.Inner) {
+			return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
+		}
+	}
 	return qbeExtType(typ)
 }
 
@@ -2869,6 +2937,10 @@ func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
 		if info, err := lookupNamedLayout(state, t); err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(t) || namedIsInterface(t)) {
 			return ":" + qbeTypeName(state, t), nil
 		}
+	case *typeinfo.OptionalType:
+		if !optionalUsesNiche(t.Inner) {
+			return fmt.Sprintf(":__ferret_opt_%d", mustAggregateSize(state, typ)), nil
+		}
 	case *typeinfo.StringType:
 		return ":__ferret_slice", nil
 	case *typeinfo.SliceType:
@@ -2876,6 +2948,14 @@ func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
 		return ":__ferret_slice", nil
 	}
 	return qbeBaseType(typ)
+}
+
+func mustAggregateSize(state *moduleState, typ typeinfo.Type) int64 {
+	size, _, err := aggregateSizeAlign(state, typ)
+	if err != nil {
+		return 0
+	}
+	return size
 }
 
 func namedIsUnion(named *typeinfo.NamedType) bool {
@@ -3228,6 +3308,11 @@ func qbeLocalName(name string) string {
 func freshTemp(state *moduleState, prefix string) string {
 	state.nextTemp++
 	return fmt.Sprintf("%%_%s%d", prefix, state.nextTemp)
+}
+
+func qbeFreshLabel(state *moduleState, prefix string) string {
+	state.nextTemp++
+	return fmt.Sprintf("@__%s%d", prefix, state.nextTemp)
 }
 
 func normalizeQBEAlign(align int64) int64 {

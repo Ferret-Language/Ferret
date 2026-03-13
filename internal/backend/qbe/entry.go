@@ -47,7 +47,7 @@ func MainWrapper(mod *midmir.Module) (string, error) {
 	if retType != "" {
 		fmt.Fprintf(&b, "export function %s $main() {\n", retType)
 	} else {
-		fmt.Fprintf(&b, "export function $main() {\n")
+		fmt.Fprintf(&b, "export function w $main() {\n")
 	}
 	fmt.Fprintf(&b, "@start\n")
 	if retType != "" {
@@ -55,7 +55,7 @@ func MainWrapper(mod *midmir.Module) (string, error) {
 		fmt.Fprintf(&b, "\tret %%r\n")
 	} else {
 		fmt.Fprintf(&b, "\tcall $%s()\n", symbol)
-		fmt.Fprintf(&b, "\tret\n")
+		fmt.Fprintf(&b, "\tret 0\n")
 	}
 	fmt.Fprintf(&b, "}\n")
 	return b.String(), nil
