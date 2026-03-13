@@ -164,6 +164,9 @@ func formatStmt(b *strings.Builder, stmt Stmt, indent int) {
 			indentLine(b, indent+1)
 			if arm.Wildcard {
 				b.WriteString("_ => ")
+			} else if arm.TypePattern != nil {
+				fmt.Fprintf(b, "is %s", arm.TypePattern.String())
+				b.WriteString(" => ")
 			} else {
 				fmt.Fprintf(b, "%s => ", formatExpr(arm.Pattern))
 			}
@@ -254,10 +257,39 @@ func formatExpr(expr Expr) string {
 			parts = append(parts, formatExpr(arg))
 		}
 		return fmt.Sprintf("%s(%s)", wrapExpr(e.Callee), strings.Join(parts, ", "))
+	case *ConstructorCallExpr:
+		parts := make([]string, 0, len(e.Args))
+		for _, arg := range e.Args {
+			parts = append(parts, formatExpr(arg))
+		}
+		return fmt.Sprintf("ctor %s(%s)", strings.Join(e.Path, "::"), strings.Join(parts, ", "))
 	case *SelectorExpr:
 		return fmt.Sprintf("%s.%s", wrapExpr(e.Left), e.Name)
 	case *CastExpr:
 		return fmt.Sprintf("%s as %s", wrapExpr(e.Left), typeString(e.Type()))
+	case *IsExpr:
+		return fmt.Sprintf("%s is %s", wrapExpr(e.Left), typeString(e.Target))
+	case *MatchExpr:
+		var b strings.Builder
+		fmt.Fprintf(&b, "match %s {\n", formatExpr(e.Value))
+		for _, arm := range e.Arms {
+			if arm == nil {
+				continue
+			}
+			indentLine(&b, 1)
+			if arm.Wildcard {
+				b.WriteString("_ => ")
+			} else if arm.TypePattern != nil {
+				fmt.Fprintf(&b, "is %s", arm.TypePattern.String())
+				b.WriteString(" => ")
+			} else {
+				fmt.Fprintf(&b, "%s => ", formatExpr(arm.Pattern))
+			}
+			formatBlock(&b, arm.Body, 1)
+			b.WriteByte('\n')
+		}
+		b.WriteByte('}')
+		return b.String()
 	case *CatchExpr:
 		if e.Handler != nil {
 			var b strings.Builder
@@ -276,6 +308,8 @@ func formatExpr(expr Expr) string {
 			}
 		}
 		return fmt.Sprintf(".{ %s }", strings.Join(parts, ", "))
+	case *IndexExpr:
+		return fmt.Sprintf("%s[%s]", wrapExpr(e.Left), formatExpr(e.Index))
 	default:
 		return "<expr>"
 	}
@@ -285,10 +319,14 @@ func formatTypeDecl(decl *TypeDecl) string {
 	if decl == nil {
 		return ""
 	}
+	movePrefix := ""
+	if decl.IsMove {
+		movePrefix = " move"
+	}
 	switch {
 	case decl.Struct != nil:
 		var b strings.Builder
-		fmt.Fprintf(&b, "type %s struct {", decl.Name)
+		fmt.Fprintf(&b, "type %s%s struct {", decl.Name, movePrefix)
 		if len(decl.Struct.Fields) > 0 || len(decl.Struct.StaticFields) > 0 {
 			b.WriteByte('\n')
 			for _, field := range decl.Struct.Fields {
@@ -320,7 +358,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 		return b.String()
 	case decl.Interface != nil:
 		var b strings.Builder
-		fmt.Fprintf(&b, "type %s interface {", decl.Name)
+		fmt.Fprintf(&b, "type %s%s interface {", decl.Name, movePrefix)
 		if len(decl.Interface.Methods) > 0 {
 			b.WriteByte('\n')
 			for _, method := range decl.Interface.Methods {
@@ -343,15 +381,15 @@ func formatTypeDecl(decl *TypeDecl) string {
 		b.WriteString(" }")
 		return b.String()
 	case decl.Enum != nil:
-		return fmt.Sprintf("type %s enum { %s }", decl.Name, strings.Join(decl.Enum.Variants, ", "))
+		return fmt.Sprintf("type %s%s enum { %s }", decl.Name, movePrefix, strings.Join(decl.Enum.Variants, ", "))
 	case decl.Union != nil:
 		parts := make([]string, 0, len(decl.Union.Members))
 		for _, member := range decl.Union.Members {
 			parts = append(parts, typeString(member))
 		}
-		return fmt.Sprintf("type %s union { %s }", decl.Name, strings.Join(parts, ", "))
+		return fmt.Sprintf("type %s%s union { %s }", decl.Name, movePrefix, strings.Join(parts, ", "))
 	case decl.Error != nil:
-		return fmt.Sprintf("type %s error { %s }", decl.Name, strings.Join(decl.Error.Members, ", "))
+		return fmt.Sprintf("type %s%s error { %s }", decl.Name, movePrefix, strings.Join(decl.Error.Members, ", "))
 	default:
 		return fmt.Sprintf("type %s %s", decl.Name, typeString(decl.Underlying))
 	}
@@ -359,7 +397,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 
 func wrapExpr(expr Expr) string {
 	switch expr.(type) {
-	case *Ident, *NumberLit, *StringLit, *NoneLit, *SelectorExpr, *CallExpr, *CompositeLit:
+	case *Ident, *NumberLit, *StringLit, *NoneLit, *SelectorExpr, *CallExpr, *ConstructorCallExpr, *CompositeLit:
 		return formatExpr(expr)
 	default:
 		return "(" + formatExpr(expr) + ")"

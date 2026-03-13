@@ -1,0 +1,25 @@
+import "std/io"
+
+type Point struct {
+    X i32 = 0
+    Y i32 = 0
+    static Origin Point = .{}
+}
+
+fn (p *mut Point) Point(x i32, y i32) {
+    io::Println("ctor")
+    p.X = x
+    p.Y = y
+}
+
+fn (p *own Point) ~Point() void {
+    io::Println("dtor")
+}
+
+fn main() i32 {
+    let p = Point(3, 4)
+    let origin = Point::Origin
+    io::Println("origin")
+    io::Println("value")
+    return p.X + origin.X
+}

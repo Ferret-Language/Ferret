@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"compiler/internal/diagnostics"
+	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/utils/numeric"
 )
 
@@ -38,7 +39,7 @@ func simplifyFunction(diag *diagnostics.Bag, fn *Function) {
 			switch i := instr.(type) {
 			case *AssignInstr:
 				i.Value = simplifyValue(i.Value, consts)
-				updateConstBinding(consts, i.TargetID, i.Value)
+				updateConstBinding(fn, consts, i.TargetID, i.Value)
 				out = append(out, i)
 			case *ComputeInstr:
 				i.Value = simplifyValue(i.Value, consts)
@@ -48,7 +49,7 @@ func simplifyFunction(diag *diagnostics.Bag, fn *Function) {
 						TargetID:  i.TargetID,
 						Value:     i.Value,
 					}
-					updateConstBinding(consts, i.TargetID, i.Value)
+					updateConstBinding(fn, consts, i.TargetID, i.Value)
 					out = append(out, assign)
 					continue
 				}
@@ -303,18 +304,33 @@ func simplifyValue(value Value, consts map[int]Value) Value {
 	case *CastValue:
 		v.Left = simplifyValue(v.Left, consts)
 		return v
+	case *TypeTestValue:
+		v.Left = simplifyValue(v.Left, consts)
+		return v
 	case *CompositeValue:
 		for i, item := range v.Items {
 			v.Items[i].Value = simplifyValue(item.Value, consts)
 		}
+		return v
+	case *InterfaceValue:
+		v.Value = simplifyValue(v.Value, consts)
 		return v
 	default:
 		return value
 	}
 }
 
-func updateConstBinding(consts map[int]Value, localID int, value Value) {
+func updateConstBinding(fn *Function, consts map[int]Value, localID int, value Value) {
 	if consts == nil {
+		return
+	}
+	local := lookupLocal(fn, localID)
+	if local == nil || !isFoldedConst(value) {
+		delete(consts, localID)
+		return
+	}
+	if local.Type != nil && value.Type() != nil && !typeinfo.Equal(local.Type, value.Type()) {
+		delete(consts, localID)
 		return
 	}
 	if isFoldedConst(value) {
@@ -562,9 +578,6 @@ func pruneUnusedTempLocals(fn *Function) {
 		return
 	}
 	used := make(map[int]bool)
-	if fn.Receiver != nil && fn.Receiver.LocalID >= 0 {
-		used[fn.Receiver.LocalID] = true
-	}
 	for _, param := range fn.Params {
 		if param != nil && param.LocalID >= 0 {
 			used[param.LocalID] = true
@@ -597,9 +610,6 @@ func pruneUnusedTempLocals(fn *Function) {
 		return
 	}
 	fn.Locals = locals
-	if fn.Receiver != nil && fn.Receiver.LocalID >= 0 {
-		fn.Receiver.LocalID = oldToNew[fn.Receiver.LocalID]
-	}
 	for _, param := range fn.Params {
 		if param != nil && param.LocalID >= 0 {
 			param.LocalID = oldToNew[param.LocalID]
@@ -700,6 +710,11 @@ func remapPlaceLocals(place Place, idMap map[int]int) {
 		p.LocalID = idMap[p.LocalID]
 	case *FieldPlace:
 		remapPlaceLocals(p.Base, idMap)
+	case *IndexPlace:
+		remapPlaceLocals(p.Base, idMap)
+		remapValueLocals(p.Index, idMap)
+	case *DerefPlace:
+		remapValueLocals(p.Pointer, idMap)
 	}
 }
 
@@ -735,6 +750,9 @@ func remapValueLocals(value Value, idMap map[int]int) {
 		for _, item := range v.Items {
 			remapValueLocals(item.Value, idMap)
 		}
+	case *IndexValue:
+		remapValueLocals(v.Base, idMap)
+		remapValueLocals(v.Index, idMap)
 	}
 }
 
@@ -846,6 +864,11 @@ func addUsedLocalsFromPlace(dst map[int]bool, place Place) {
 		dst[p.LocalID] = true
 	case *FieldPlace:
 		addUsedLocalsFromPlace(dst, p.Base)
+	case *IndexPlace:
+		addUsedLocalsFromPlace(dst, p.Base)
+		addUsedLocalsFromValue(dst, p.Index)
+	case *DerefPlace:
+		addUsedLocalsFromValue(dst, p.Pointer)
 	}
 }
 
@@ -855,6 +878,11 @@ func countUsedLocalsInPlace(dst map[int]int, place Place) {
 		dst[p.LocalID]++
 	case *FieldPlace:
 		countUsedLocalsInPlace(dst, p.Base)
+	case *IndexPlace:
+		countUsedLocalsInPlace(dst, p.Base)
+		countUsedLocalsInValue(dst, p.Index)
+	case *DerefPlace:
+		countUsedLocalsInValue(dst, p.Pointer)
 	}
 }
 
@@ -890,6 +918,11 @@ func addUsedLocalsFromValue(dst map[int]bool, value Value) {
 		for _, item := range v.Items {
 			addUsedLocalsFromValue(dst, item.Value)
 		}
+	case *InterfaceValue:
+		addUsedLocalsFromValue(dst, v.Value)
+	case *IndexValue:
+		addUsedLocalsFromValue(dst, v.Base)
+		addUsedLocalsFromValue(dst, v.Index)
 	}
 }
 
@@ -925,6 +958,11 @@ func countUsedLocalsInValue(dst map[int]int, value Value) {
 		for _, item := range v.Items {
 			countUsedLocalsInValue(dst, item.Value)
 		}
+	case *InterfaceValue:
+		countUsedLocalsInValue(dst, v.Value)
+	case *IndexValue:
+		countUsedLocalsInValue(dst, v.Base)
+		countUsedLocalsInValue(dst, v.Index)
 	}
 }
 
@@ -981,6 +1019,13 @@ func replaceLocalInPlace(place Place, localID int, replacement Value) Place {
 	case *FieldPlace:
 		p.Base = replaceLocalInPlace(p.Base, localID, replacement)
 		return p
+	case *IndexPlace:
+		p.Base = replaceLocalInPlace(p.Base, localID, replacement)
+		p.Index = replaceLocalInValue(p.Index, localID, replacement)
+		return p
+	case *DerefPlace:
+		p.Pointer = replaceLocalInValue(p.Pointer, localID, replacement)
+		return p
 	default:
 		return place
 	}
@@ -1031,6 +1076,13 @@ func replaceLocalInValue(value Value, localID int, replacement Value) Value {
 			v.Items[i].Value = replaceLocalInValue(item.Value, localID, replacement)
 		}
 		return v
+	case *InterfaceValue:
+		v.Value = replaceLocalInValue(v.Value, localID, replacement)
+		return v
+	case *IndexValue:
+		v.Base = replaceLocalInValue(v.Base, localID, replacement)
+		v.Index = replaceLocalInValue(v.Index, localID, replacement)
+		return v
 	default:
 		return value
 	}
@@ -1056,6 +1108,11 @@ func cloneSimpleValue(value Value) Value {
 		return &copy
 	case *NoneValue:
 		copy := *v
+		return &copy
+	case *InterfaceValue:
+		copy := *v
+		copy.Value = cloneSimpleValue(v.Value)
+		copy.Methods = append([]InterfaceMethodLink(nil), v.Methods...)
 		return &copy
 	default:
 		return value

@@ -3,8 +3,10 @@ package compiler
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
+	"compiler/internal/context"
 	"compiler/internal/diagnostics"
 )
 
@@ -47,7 +49,7 @@ name = "json"
 func TestParsePathResolvesStdlibWithoutManifest(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
-fn Println(text string) void;
+fn Println(text str) void;
 `)
 	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/io"
 
@@ -81,7 +83,7 @@ fn main() void {
 func TestParsePathTypechecksExternStdlibSignature(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
-fn Println(text string) void;
+fn Println(text str) void;
 `)
 	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/io"
 
@@ -89,7 +91,6 @@ fn main() void {
     io::Println(1)
 }
 `)
-
 	result := ParsePath(filepath.Join(root, "main.ferr"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected stdlib signature type error")
@@ -103,6 +104,196 @@ fn main() void {
 	}
 	if !found {
 		t.Fatalf("expected type mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestParsePathResolvesStdlibOSWithoutManifest(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.ferr"), `#[extern("ferret_os_cpu_count")]
+fn CPUCount() usize;
+
+#[extern("ferret_os_platform")]
+fn Platform() str;
+
+#[extern("ferret_os_debug")]
+fn Debug() bool;
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/os"
+
+fn main() void {
+    if os::CPUCount() > 0 {
+        print(os::Platform())
+    }
+    if os::Debug() {
+        print("debug")
+    }
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
+	}
+	if len(result.Modules) != 2 {
+		t.Fatalf("expected 2 modules, got %d", len(result.Modules))
+	}
+	foundMain := false
+	foundStd := false
+	for _, mod := range result.Modules {
+		switch mod.Key {
+		case "local:main":
+			foundMain = true
+		case "stdlib:std/os":
+			foundStd = true
+		}
+	}
+	if !foundMain || !foundStd {
+		t.Fatalf("expected main and std/os modules, got %#v", []string{result.Modules[0].Key, result.Modules[1].Key})
+	}
+}
+
+func TestParsePathTypechecksStdlibOSSignature(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.ferr"), `#[extern("ferret_os_cpu_count")]
+fn CPUCount() usize;
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/os"
+
+fn main() void {
+    os::CPUCount(1)
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected stdlib signature type error")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrWrongArgumentCount {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected wrong arg count diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestIfAttributeFiltersTopLevelDeclarations(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+#[if(target_os, "linux")]
+fn LinuxOnly() i32 { return 1 }
+
+#[if(target_os, "windows")]
+fn WindowsOnly() i32 { return 2 }
+
+fn main() i32 {
+    return LinuxOnly()
+}
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".ferr",
+		DependencyRoots: map[string]string{},
+		TargetOS:        "linux",
+		TargetArch:      runtime.GOARCH,
+	}
+	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if len(result.Entry.AST.Decls) != 2 {
+		t.Fatalf("expected 2 active declarations after filtering, got %d", len(result.Entry.AST.Decls))
+	}
+}
+
+func TestIfAttributeSupportsNegatedTargetSelection(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+#[if(target_os, "linux")]
+const PlatformTag = 1
+
+#[ifnot(target_os, "linux")]
+const PlatformTag = 2
+
+fn main() i32 {
+    return PlatformTag
+}
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".ferr",
+		DependencyRoots: map[string]string{},
+		TargetOS:        "linux",
+		TargetArch:      runtime.GOARCH,
+	}
+	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if len(result.Entry.AST.Decls) != 2 {
+		t.Fatalf("expected 2 active declarations after negated filtering, got %d", len(result.Entry.AST.Decls))
+	}
+}
+
+func TestIfAttributeSupportsBackendSelection(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+#[if(target_backend, "llvm")]
+const BackendTag = 1
+
+#[ifnot(target_backend, "llvm")]
+const BackendTag = 2
+
+fn main() i32 {
+    return BackendTag
+}
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".ferr",
+		DependencyRoots: map[string]string{},
+		TargetBackend:   "llvm",
+	}
+	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if len(result.Entry.AST.Decls) != 2 {
+		t.Fatalf("expected 2 active declarations after backend filtering, got %d", len(result.Entry.AST.Decls))
+	}
+}
+
+func TestIfAttributeInvalidFormReportsDiagnostic(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+#[if(target_os, "linux", extra)]
+fn main() i32 { return 0 }
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".ferr",
+		DependencyRoots: map[string]string{},
+	}
+	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid #[if(...)] diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && diag.Message == "invalid #[if(...)] attribute" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected invalid #[if(...)] diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

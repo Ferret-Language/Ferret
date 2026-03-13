@@ -16,6 +16,7 @@ type Module struct {
 
 type TypeDecl struct {
 	Name       string
+	IsMove     bool
 	Named      *typeinfo.NamedType
 	Underlying typeinfo.Type
 	Struct     *StructTypeDecl
@@ -72,11 +73,11 @@ type Global struct {
 
 type Function struct {
 	Name       string
+	LinkName   string
 	IsUnsafe   bool
 	IsBuiltin  bool
 	IsExtern   bool
 	ExternName string
-	Receiver   *Param
 	Params     []*Param
 	Result     typeinfo.Type
 	EntryID    int
@@ -91,6 +92,7 @@ type Param struct {
 	LocalID    int
 	Type       typeinfo.Type
 	IsComptime bool
+	IsMutable  bool
 	Location   source.Location
 }
 
@@ -163,7 +165,8 @@ func (p *basePlace) node()                {}
 
 type NameValue struct {
 	baseValue
-	Path []string
+	Path     []string
+	LinkName string
 }
 
 func (*NameValue) valueNode() {}
@@ -249,8 +252,10 @@ func (*PostfixValue) valueNode() {}
 
 type CallValue struct {
 	baseValue
-	Callee Value
-	Args   []Value
+	Callee        Value
+	Args          []Value
+	ReceiverType  typeinfo.Type // non-nil when this is a normalized method call; Args[0] is the receiver
+	IsConstructor bool
 }
 
 func (*CallValue) valueNode() {}
@@ -279,17 +284,49 @@ type CastValue struct {
 
 func (*CastValue) valueNode() {}
 
+type TypeTestValue struct {
+	baseValue
+	Left   Value
+	Target typeinfo.Type
+}
+
+func (*TypeTestValue) valueNode() {}
+
 type CompositeItem struct {
 	Name  string
 	Value Value
 }
 
+type InterfaceMethodLink struct {
+	Name string
+	Path []string
+}
+
 type CompositeValue struct {
 	baseValue
-	Items []CompositeItem
+	Items           []CompositeItem
+	ConstructorPath []string
 }
 
 func (*CompositeValue) valueNode() {}
+
+type InterfaceValue struct {
+	baseValue
+	Value        Value
+	ConcreteType typeinfo.Type
+	Methods      []InterfaceMethodLink
+}
+
+func (*InterfaceValue) valueNode() {}
+
+// IndexValue represents arr[index] loaded as an rvalue.
+type IndexValue struct {
+	baseValue
+	Base  Value
+	Index Value
+}
+
+func (*IndexValue) valueNode() {}
 
 type LocalPlace struct {
 	basePlace
@@ -305,6 +342,23 @@ type FieldPlace struct {
 }
 
 func (*FieldPlace) placeNode() {}
+
+// IndexPlace represents the lvalue arr[index].
+type IndexPlace struct {
+	basePlace
+	Base  Place
+	Index Value
+}
+
+func (*IndexPlace) placeNode() {}
+
+// DerefPlace represents the lvalue *ptr (pointer dereference).
+type DerefPlace struct {
+	basePlace
+	Pointer Value // address to write through
+}
+
+func (*DerefPlace) placeNode() {}
 
 type BindInstr struct {
 	baseInstr

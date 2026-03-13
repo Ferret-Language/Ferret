@@ -32,6 +32,7 @@ type Symbol struct {
 	Location     source.Location
 	Node         ast.Node
 	ReceiverType string
+	OwnerType    string
 }
 
 func New(name string, kind Kind, node ast.Node) *Symbol {

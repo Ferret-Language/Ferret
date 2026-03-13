@@ -42,6 +42,8 @@ func (p *Parser) ParseModule() *ast.Module {
 		if p.at(tokens.IMPORT) {
 			if seenDecl {
 				p.errorHere("imports must appear before declarations")
+				p.parseImportDecl() // consume tokens but discard
+				continue
 			}
 			if imp := p.parseImportDecl(); imp != nil {
 				mod.Imports = append(mod.Imports, imp)
@@ -65,29 +67,17 @@ func (p *Parser) parseDecl() ast.Decl {
 	attrs := p.parseAttributes()
 	switch p.current().Kind {
 	case tokens.LET:
-		if len(attrs) > 0 {
-			p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
-		}
-		return p.parseLetDecl()
+		return p.parseLetDecl(attrs)
 	case tokens.CONST:
-		if len(attrs) > 0 {
-			p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
-		}
-		return p.parseConstDecl()
+		return p.parseConstDecl(attrs)
 	case tokens.TYPE:
-		if len(attrs) > 0 {
-			p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
-		}
-		return p.parseTypeDecl()
+		return p.parseTypeDecl(attrs)
 	case tokens.UNSAFE:
 		if p.peekN(1).Kind == tokens.FN {
 			return p.parseFuncDecl(doc, attrs)
 		}
 	case tokens.FN:
 		return p.parseFuncDecl(doc, attrs)
-	}
-	if len(attrs) > 0 {
-		p.errorAt(attrs[0].Location, "attributes are only supported on function declarations")
 	}
 	p.errorHere("expected top-level declaration")
 	p.advance()
@@ -120,7 +110,7 @@ func (p *Parser) parseAttributes() []ast.Attribute {
 	for p.at(tokens.HASH) {
 		start := p.advance().Start
 		p.expect(tokens.LBRACK, "expected '[' after '#'")
-		name := p.expectIdent("expected attribute name").Literal
+		name := p.parseAttributeName()
 		args := make([]string, 0)
 		if p.match(tokens.LPAREN) {
 			for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
@@ -143,6 +133,16 @@ func (p *Parser) parseAttributes() []ast.Attribute {
 		attrs = append(attrs, ast.Attribute{Name: name, Args: args, Location: p.locFrom(start)})
 	}
 	return attrs
+}
+
+func (p *Parser) parseAttributeName() string {
+	switch p.current().Kind {
+	case tokens.IDENT, tokens.IF:
+		return p.advance().Literal
+	default:
+		p.errorHere("expected attribute name")
+		return p.current().Literal
+	}
 }
 
 func (p *Parser) current() tokens.Token {
@@ -187,6 +187,33 @@ func (p *Parser) at(kind tokens.Kind) bool {
 
 func (p *Parser) atAny(kinds ...tokens.Kind) bool {
 	return slices.ContainsFunc(kinds, p.at)
+}
+
+// hasGenericCallAhead reports whether the '[' at the current position begins a
+// generic-call type-argument list, i.e. whether the matching ']' is
+// immediately followed by '('.  If it is NOT followed by '(', the '[...]' is
+// an array index expression instead.
+func (p *Parser) hasGenericCallAhead() bool {
+	depth := 0
+	for i := p.pos; i < len(p.toks); i++ {
+		switch p.toks[i].Kind {
+		case tokens.LBRACK:
+			depth++
+		case tokens.RBRACK:
+			depth--
+			if depth == 0 {
+				// token right after the matching ']'
+				next := i + 1
+				if next < len(p.toks) {
+					return p.toks[next].Kind == tokens.LPAREN
+				}
+				return false
+			}
+		case tokens.EOF:
+			return false
+		}
+	}
+	return false
 }
 
 func (p *Parser) match(kinds ...tokens.Kind) bool {

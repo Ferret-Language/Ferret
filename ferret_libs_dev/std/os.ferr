@@ -1,0 +1,40 @@
+/// Standard OS and platform information.
+///
+/// These declarations expose a small runtime-backed surface for:
+/// - logical CPU count
+/// - canonical platform name
+/// - architecture name
+/// - human-readable OS name
+///
+/// The runtime implementations are small C wrappers linked from
+/// ferret_runtime.a.  They do not allocate unless a future implementation
+/// explicitly needs to.
+
+/// Returns the number of logical CPUs currently available to the process.
+#[extern("ferret_os_cpu_count")]
+fn CPUCount() usize;
+
+/// Returns a canonical lowercase platform name such as:
+/// "linux", "windows", "darwin", "freebsd".
+#[extern("ferret_os_platform")]
+fn Platform() str;
+
+/// Returns a canonical lowercase architecture name such as:
+/// "amd64", "arm64", "arm", "386", "riscv64".
+#[extern("ferret_os_arch")]
+fn Arch() str;
+
+/// Returns the runtime OS name.
+///
+/// On Unix this is typically the uname sysname (for example "Linux").
+/// On Windows this returns "Windows".
+#[extern("ferret_os_name")]
+fn OSName() str;
+
+/// Returns whether this binary was built in debug mode.
+///
+/// Current runtime returns false in normal builds. A future debug build mode
+/// can wire this to a build-generated runtime flag without changing the
+/// Ferret surface.
+#[extern("ferret_os_debug")]
+fn Debug() bool;

@@ -1,0 +1,110 @@
+// Global builtins implicitly available in every module.
+//
+// `str` is the built-in string type: an opaque fat pointer { data *u8, len usize }.
+// `str` is a MOVE type — assigning or passing by value transfers ownership.
+// Pass `*str` (immutable reference) when you only need to read the string.
+// String literals have type `str`. Use str_data(s) and str_len(s) to extract
+// the raw fields at C FFI boundaries.
+//
+// `*raw` is the Ferret spelling of C's `void *`: an untyped raw pointer.
+// Use it at FFI boundaries where C expects `void *`. Use an unsafe cast to
+// convert to a typed pointer: `unsafe raw_ptr as *u8`.
+//
+// `recover` is a builtin function. Panic lowering goes straight to the
+// runtime hook `global__panic` and is not callable from source.
+
+/// Returns the panic message of the current panic as a str.
+/// When there is no active panic, returns an empty str (data=nil, len=0).
+#[builtin]
+fn recover() str;
+
+/// Temporary generic print builtin.
+/// Accepts any single value and prints a best-effort textual form to stdout.
+#[builtin]
+fn print(value str) void;
+
+// ---------------------------------------------------------------------------
+// str field accessors
+//
+// `str` is opaque — you cannot directly access its fields.
+// Use these builtins at `#[extern]` call sites to cross the C FFI boundary.
+// ---------------------------------------------------------------------------
+
+/// Returns the raw byte pointer that backs s.
+/// Valid only as long as s is live. Do not store without care.
+#[builtin]
+fn str_data(s *str) *raw;
+
+/// Returns the byte length of s (number of UTF-8 code units / bytes).
+#[builtin]
+fn str_len(s *str) usize;
+
+/// Copies the UTF-8 bytes of s into a fresh []u8 slice.
+#[builtin]
+fn str_bytes(s *str) []u8;
+
+/// Copies the bytes of a []u8 slice into a fresh str value.
+#[builtin]
+fn bytes_str(bytes *[]u8) str;
+
+/// Decodes the UTF-8 bytes of s into a fresh []char slice.
+#[builtin]
+fn str_chars(s *str) []char;
+
+/// Encodes a []char slice into a fresh UTF-8 str value.
+#[builtin]
+fn chars_str(chars *[]char) str;
+
+/// Copies s into a newly allocated NUL-terminated C string.
+/// The returned pointer can be passed to C APIs and freed with free().
+#[builtin]
+fn str_cstr(s *str) *raw;
+
+// ---------------------------------------------------------------------------
+// Memory management (libc)
+//
+// All functions use *raw (C's void *) matching actual libc signatures.
+// Cast to a typed pointer with unsafe: `unsafe malloc(n) as *u8`
+// ---------------------------------------------------------------------------
+
+/// Allocates size uninitialized bytes. Returns a nil pointer on failure.
+#[extern("malloc")]
+fn malloc(size usize) *raw;
+
+/// Frees memory previously obtained from malloc, calloc, or realloc.
+#[extern("free")]
+fn free(ptr *raw) void;
+
+/// Resizes a previously allocated block to size bytes.
+/// Returns the (possibly moved) new pointer, or nil on failure.
+#[extern("realloc")]
+fn realloc(ptr *raw, size usize) *raw;
+
+/// Allocates count * size zero-initialised bytes. Returns nil on failure.
+#[extern("calloc")]
+fn calloc(count usize, size usize) *raw;
+
+/// Copies n bytes from src to dst. Regions must not overlap.
+#[extern("memcpy")]
+fn memcpy(dst *raw, src *raw, n usize) *raw;
+
+/// Copies n bytes from src to dst, handling overlap correctly.
+#[extern("memmove")]
+fn memmove(dst *raw, src *raw, n usize) *raw;
+
+/// Fills the first n bytes at ptr with the byte value c (low 8 bits used).
+#[extern("memset")]
+fn memset(ptr *raw, c i32, n usize) *raw;
+
+/// Compares n bytes of a and b.
+/// Returns 0 if equal, negative if a < b, positive if a > b.
+#[extern("memcmp")]
+fn memcmp(a *raw, b *raw, n usize) i32;
+
+// ---------------------------------------------------------------------------
+// Process
+// ---------------------------------------------------------------------------
+
+/// Terminates the process immediately with the given exit code.
+#[extern("exit")]
+fn exit(code i32) void;

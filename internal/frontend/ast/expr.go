@@ -111,6 +111,24 @@ type CastExpr struct {
 func (*CastExpr) exprNode()              {}
 func (e *CastExpr) Loc() source.Location { return e.Location }
 
+type IsExpr struct {
+	Left     Expr
+	Type     TypeExpr
+	Location source.Location
+}
+
+func (*IsExpr) exprNode()              {}
+func (e *IsExpr) Loc() source.Location { return e.Location }
+
+type MatchExpr struct {
+	Value    Expr
+	Arms     []*MatchArm
+	Location source.Location
+}
+
+func (*MatchExpr) exprNode()              {}
+func (e *MatchExpr) Loc() source.Location { return e.Location }
+
 type CatchExpr struct {
 	Left     Expr
 	Fallback Expr
@@ -134,6 +152,16 @@ type CompositeLit struct {
 
 func (*CompositeLit) exprNode()              {}
 func (e *CompositeLit) Loc() source.Location { return e.Location }
+
+// IndexExpr represents arr[index].
+type IndexExpr struct {
+	Left     Expr
+	Index    Expr
+	Location source.Location
+}
+
+func (*IndexExpr) exprNode()              {}
+func (e *IndexExpr) Loc() source.Location { return e.Location }
 
 func ExprText(expr Expr) string {
 	switch e := expr.(type) {

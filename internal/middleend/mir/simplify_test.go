@@ -184,3 +184,41 @@ fn main() i32 {
 		t.Fatalf("expected constant false warning, got %#v", result.Diagnostics.All())
 	}
 }
+
+func TestPipelineSimplifiesStaticIsCondition(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Stringer interface {
+    String() str
+}
+
+type Name struct {
+    value i32 = 0
+}
+
+fn (n Name) String() str {
+    return 1 as str
+}
+
+fn main() i32 {
+    let n: Name = .{ .value = 1 }
+    if n is Stringer {
+        return 1
+    }
+    return 0
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	text := midmir.FormatModule(result.Entry.MIR)
+	if strings.Contains(text, "if n is") || strings.Contains(text, "branch ") {
+		t.Fatalf("expected static is-condition to fold away in MIR, got %q", text)
+	}
+	if !strings.Contains(text, "return 1") {
+		t.Fatalf("expected folded true branch in MIR, got %q", text)
+	}
+}

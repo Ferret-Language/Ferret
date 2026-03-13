@@ -3,6 +3,7 @@ package resolver
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
 	"compiler/internal/context"
@@ -171,10 +172,13 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 			if arm == nil {
 				continue
 			}
-			if !arm.Wildcard {
+			armScope := table.New(scope)
+			if arm.TypePattern != nil {
+				r.resolveType(scope, arm.TypePattern)
+			} else if !arm.Wildcard {
 				r.resolveExpr(scope, arm.Pattern)
 			}
-			r.resolveStmt(scope, arm.Body)
+			r.resolveStmt(armScope, arm.Body)
 		}
 	case *ast.WhileStmt:
 		r.resolveExpr(scope, s.Cond)
@@ -363,10 +367,30 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.CastExpr:
 		r.resolveExpr(scope, e.Left)
 		r.resolveType(scope, e.Type)
+	case *ast.IsExpr:
+		r.resolveExpr(scope, e.Left)
+		r.resolveType(scope, e.Type)
+	case *ast.MatchExpr:
+		r.resolveExpr(scope, e.Value)
+		for _, arm := range e.Arms {
+			if arm == nil {
+				continue
+			}
+			armScope := table.New(scope)
+			if arm.TypePattern != nil {
+				r.resolveType(scope, arm.TypePattern)
+			} else if !arm.Wildcard {
+				r.resolveExpr(scope, arm.Pattern)
+			}
+			r.resolveStmt(armScope, arm.Body)
+		}
 	case *ast.CompositeLit:
 		for _, item := range e.Items {
 			r.resolveExpr(scope, item.Value)
 		}
+	case *ast.IndexExpr:
+		r.resolveExpr(scope, e.Left)
+		r.resolveExpr(scope, e.Index)
 	}
 }
 
@@ -428,7 +452,13 @@ func (r *resolver) resolveExprPath(scope *table.Scope, ident *ast.Ident) {
 	}
 	if len(ident.Path) == 1 {
 		if sym, ok := scope.Lookup(ident.Path[0]); ok {
-			r.info.BindNode(ident, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym})
+			moduleKey := r.mod.Key
+			importPath := r.mod.ImportPath
+			if owner := r.findModuleForSymbol(sym); owner != nil {
+				moduleKey = owner.Key
+				importPath = owner.ImportPath
+			}
+			r.info.BindNode(ident, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym, ModuleKey: moduleKey, ImportPath: importPath})
 			return
 		}
 		r.reportUndefined(ident.Location, ident.Path[0])
@@ -447,14 +477,105 @@ func (r *resolver) resolveTypePath(scope *table.Scope, typ *ast.NamedType) {
 			return
 		}
 		if sym, ok := scope.Lookup(typ.Path[0]); ok && sym.Kind == symbols.SymbolType {
-			r.info.BindNode(typ, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym})
+			moduleKey := r.mod.Key
+			importPath := r.mod.ImportPath
+			if owner := r.findModuleForSymbol(sym); owner != nil {
+				moduleKey = owner.Key
+				importPath = owner.ImportPath
+			}
+			r.info.BindNode(typ, &binding.Resolution{Kind: binding.ResolutionSymbol, Symbol: sym, ModuleKey: moduleKey, ImportPath: importPath})
 			return
 		}
 		r.reportUndefined(typ.Location, typ.Path[0])
 		return
 	}
 
+	if resolution, ok := r.resolveUnionMemberTypePath(scope, typ); ok {
+		r.info.BindNode(typ, resolution)
+		return
+	}
+
 	r.resolveQualifiedPath(scope, typ.Path, typ, true)
+}
+
+func (r *resolver) resolveUnionMemberTypePath(scope *table.Scope, typ *ast.NamedType) (*binding.Resolution, bool) {
+	if typ == nil || len(typ.Path) < 2 {
+		return nil, false
+	}
+	prefix := typ.Path[:len(typ.Path)-1]
+	memberName := typ.Path[len(typ.Path)-1]
+	sym, owner, ok := r.lookupTypeSymbolPath(scope, prefix)
+	if !ok || sym == nil {
+		return nil, false
+	}
+	decl, _ := sym.Node.(*ast.TypeDecl)
+	unionDecl, ok := decl.Type.(*ast.UnionType)
+	if !ok || unionDecl == nil || !unionHasNamedMember(unionDecl, memberName) {
+		return nil, false
+	}
+	moduleKey := ""
+	importPath := ""
+	if owner != nil {
+		moduleKey = owner.Key
+		importPath = owner.ImportPath
+	}
+	return &binding.Resolution{
+		Kind:       binding.ResolutionSymbol,
+		Symbol:     sym,
+		ModuleKey:  moduleKey,
+		ImportPath: importPath,
+		Remaining:  []string{memberName},
+	}, true
+}
+
+func unionHasNamedMember(unionDecl *ast.UnionType, name string) bool {
+	if unionDecl == nil {
+		return false
+	}
+	for _, member := range unionDecl.Members {
+		named, ok := member.(*ast.NamedType)
+		if !ok || named == nil || len(named.Path) != 1 {
+			continue
+		}
+		if named.Path[0] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *resolver) lookupTypeSymbolPath(scope *table.Scope, path []string) (*symbols.Symbol, *context.Module, bool) {
+	if len(path) == 0 {
+		return nil, nil, false
+	}
+	if len(path) == 1 {
+		sym, ok := scope.Lookup(path[0])
+		if !ok || sym.Kind != symbols.SymbolType {
+			return nil, nil, false
+		}
+		owner := r.findModuleForSymbol(sym)
+		if owner == nil {
+			owner = r.mod
+		}
+		return sym, owner, true
+	}
+	imp, matched := r.matchImport(path)
+	if imp == nil {
+		return nil, nil, false
+	}
+	mod, ok := r.ctx.GetModule(imp.ModuleKey)
+	if !ok || mod == nil || mod.ModuleScope == nil {
+		return nil, nil, false
+	}
+	remaining := path[matched:]
+	if len(remaining) != 1 {
+		return nil, nil, false
+	}
+	sym, ok := mod.ModuleScope.LookupLocal(remaining[0])
+	if !ok || sym.Kind != symbols.SymbolType {
+		return nil, nil, false
+	}
+	return sym, mod, true
 }
 
 func (r *resolver) resolveQualifiedPath(scope *table.Scope, path []string, node ast.Node, typeOnly bool) {
@@ -546,9 +667,17 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 			r.reportInvalidType(node.Loc(), sym.Name)
 			return nil, false
 		}
+		moduleKey := ""
+		importPath := ""
+		if mod != nil {
+			moduleKey = mod.Key
+			importPath = mod.ImportPath
+		}
 		return &binding.Resolution{
-			Kind:   binding.ResolutionSymbol,
-			Symbol: sym,
+			Kind:       binding.ResolutionSymbol,
+			Symbol:     sym,
+			ModuleKey:  moduleKey,
+			ImportPath: importPath,
 		}, true
 	}
 	if sym.Kind != symbols.SymbolType {
@@ -577,9 +706,17 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 		r.reportInvalidType(node.Loc(), remaining[0])
 		return nil, false
 	}
+	moduleKey := ""
+	importPath := ""
+	if mod != nil {
+		moduleKey = mod.Key
+		importPath = mod.ImportPath
+	}
 	return &binding.Resolution{
-		Kind:   binding.ResolutionSymbol,
-		Symbol: member,
+		Kind:       binding.ResolutionSymbol,
+		Symbol:     member,
+		ModuleKey:  moduleKey,
+		ImportPath: importPath,
 	}, true
 }
 
@@ -677,4 +814,52 @@ func (r *resolver) reportInvalidType(loc source.Location, name string) {
 
 func isPredeclaredType(name string) bool {
 	return tokens.IsBuiltinType(name) || name == "Type"
+}
+
+func (r *resolver) findModuleForSymbol(sym *symbols.Symbol) *context.Module {
+	if r == nil || r.ctx == nil || sym == nil {
+		return nil
+	}
+	if mod := r.ctx.Prelude; mod != nil {
+		if mod.ModuleScope != nil && slices.Contains(mod.ModuleScope.Symbols(), sym) {
+			return mod
+		}
+		for _, methods := range mod.MethodSets {
+			for _, candidate := range methods {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
+		for _, members := range mod.TypeMembers {
+			for _, candidate := range members {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
+	}
+	for _, mod := range r.ctx.Modules() {
+		if mod == nil {
+			continue
+		}
+		if mod.ModuleScope != nil && slices.Contains(mod.ModuleScope.Symbols(), sym) {
+			return mod
+		}
+		for _, methods := range mod.MethodSets {
+			for _, candidate := range methods {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
+		for _, members := range mod.TypeMembers {
+			for _, candidate := range members {
+				if candidate == sym {
+					return mod
+				}
+			}
+		}
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package ownership
 
 import (
 	"fmt"
+	"strings"
 
 	"compiler/internal/cfg"
 	"compiler/internal/context"
@@ -352,14 +353,11 @@ func (a *analyzer) seedFunctionState(fn *mir.Function) *valueScope {
 	if fn == nil {
 		return scope
 	}
-	if fn.Receiver != nil {
-		scope.Declare(fn.Receiver.Name, valueInfo{typ: fn.Receiver.Type, mutable: true})
-	}
 	for _, param := range fn.Params {
 		if param == nil {
 			continue
 		}
-		scope.Declare(param.Name, valueInfo{typ: param.Type})
+		scope.Declare(param.Name, valueInfo{typ: param.Type, mutable: param.IsMutable})
 	}
 	declareFunctionLocals(scope, fn)
 	return scope
@@ -526,7 +524,7 @@ func (a *analyzer) checkComputedValue(scope *valueScope, instr *mir.ComputeInstr
 
 func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 	switch v := value.(type) {
-	case nil, *mir.NumberValue, *mir.StringValue, *mir.NoneValue:
+	case nil, *mir.NumberValue, *mir.BoolValue, *mir.StringValue, *mir.NoneValue:
 		return
 	case *mir.LocalValue:
 		a.requireActiveLocal(scope, v)
@@ -582,6 +580,8 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 		for _, item := range v.Items {
 			a.checkValue(scope, item.Value)
 		}
+	case *mir.InterfaceValue:
+		a.checkValue(scope, v.Value)
 	}
 }
 
@@ -599,6 +599,10 @@ func (a *analyzer) checkPlaceValue(scope *valueScope, place mir.Place) {
 			return
 		}
 		a.checkPlaceValue(scope, p.Base)
+	case *mir.IndexPlace:
+		a.checkPlaceValue(scope, p.Base)
+	case *mir.DerefPlace:
+		a.checkValue(scope, p.Pointer)
 	}
 }
 
@@ -648,6 +652,11 @@ func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
 	if call == nil {
 		return
 	}
+	// Handle normalized method calls: receiver is Args[0], ReceiverType is set.
+	if call.ReceiverType != nil && len(call.Args) > 0 {
+		a.checkNormalizedMethodCall(scope, call)
+		return
+	}
 	if field, ok := call.Callee.(*mir.FieldValue); ok {
 		if handled := a.checkMethodCall(scope, call, field); handled {
 			return
@@ -675,6 +684,46 @@ func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
 		if i < len(fnType.Params) {
 			a.consumeMoveValue(scope, arg, fnType.Params[i])
 		}
+	}
+}
+
+// checkNormalizedMethodCall handles method calls that have been normalized in MIR so
+// that the receiver is Args[0] and ReceiverType is set on the CallValue.
+func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallValue) {
+	receiver := call.Args[0]
+	receiverType := call.ReceiverType
+	a.checkValue(scope, receiver)
+
+	// Look up the method symbol so we can check if it consumes the receiver.
+	methodName := ""
+	if name, ok := call.Callee.(*mir.NameValue); ok && len(name.Path) > 0 {
+		methodName = name.Path[len(name.Path)-1]
+	}
+	if methodName != "" && !typeinfo.IsInvalid(receiverType) && !typeinfo.IsUnknown(receiverType) {
+		if baseNamed, ok := a.receiverBaseNamedType(receiverType); ok && baseNamed != nil {
+			prefix := baseNamed.Name + "__"
+			methodName = strings.TrimPrefix(methodName, prefix)
+		}
+		addressable, mutable := a.valueAccess(scope, receiver)
+		methodSym, methodType := a.lookupMethod(receiverType, methodName, addressable, mutable)
+		if methodType != nil {
+			for i, arg := range call.Args[1:] {
+				a.checkValue(scope, arg)
+				if i < len(methodType.Params) {
+					a.consumeMoveValue(scope, arg, methodType.Params[i])
+				}
+			}
+			if methodSym != nil {
+				if fn, ok := methodSym.Node.(*ast.FuncDecl); ok && a.receiverConsumes(a.findModuleForSymbol(methodSym), fn) {
+					a.consumeMoveValue(scope, receiver, receiverType)
+				}
+			}
+			return
+		}
+	}
+	// Fallback: just check all args normally.
+	for _, arg := range call.Args[1:] {
+		a.checkValue(scope, arg)
 	}
 }
 
@@ -749,6 +798,9 @@ func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ type
 		if v.Op == "copy" || v.Op == "take" {
 			return
 		}
+	case *mir.InterfaceValue:
+		a.consumeMoveValue(scope, v.Value, v.ConcreteType)
+		return
 	case *mir.LocalValue:
 		if info, ok := a.temps[v.LocalID]; ok {
 			if info.root == "" {
@@ -829,6 +881,8 @@ func (a *analyzer) tempInfoForValue(value mir.Value) (tempInfo, bool) {
 			return tempInfo{}, false
 		}
 		return tempInfo{root: root, path: path, value: value}, true
+	case *mir.InterfaceValue:
+		return a.tempInfoForValue(v.Value)
 	}
 	return tempInfo{}, false
 }
@@ -858,6 +912,8 @@ func (a *analyzer) borrowSourcePath(value mir.Value) (string, string, bool) {
 		return a.localValuePath(v)
 	case *mir.FieldValue:
 		return a.localValuePath(v)
+	case *mir.InterfaceValue:
+		return a.borrowSourcePath(v.Value)
 	}
 	return "", "", false
 }
@@ -970,6 +1026,8 @@ func (a *analyzer) localValuePath(value mir.Value) (root string, path string, ok
 			return root, segment, true
 		}
 		return root, path + "." + segment, true
+	case *mir.InterfaceValue:
+		return a.localValuePath(v.Value)
 	}
 	return "", "", false
 }
@@ -1125,6 +1183,9 @@ func (a *analyzer) isMoveType(typ typeinfo.Type) bool {
 	case *typeinfo.PointerType:
 		return t.IsOwn
 	case *typeinfo.NamedType:
+		if typeinfo.NamedTypeIsMove(t) {
+			return true
+		}
 		return a.isMoveType(a.underlying(t))
 	default:
 		return true
@@ -1143,6 +1204,9 @@ func (a *analyzer) isCopyableType(typ typeinfo.Type) bool {
 	case *typeinfo.PointerType:
 		return !t.IsOwn
 	case *typeinfo.NamedType:
+		if typeinfo.NamedTypeIsMove(t) {
+			return false
+		}
 		return a.isCopyableType(a.underlying(t))
 	case *typeinfo.OptionalType:
 		return a.isCopyableType(t.Inner)
@@ -1232,6 +1296,8 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowIn
 			return borrowInfo{}, false
 		}
 		return borrowInfo{owner: slot.borrowOf, loc: slot.borrowLoc}, true
+	case *mir.InterfaceValue:
+		return a.borrowValueInfo(scope, v.Value)
 	}
 	return borrowInfo{}, false
 }

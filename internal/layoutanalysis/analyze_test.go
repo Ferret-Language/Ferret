@@ -76,6 +76,130 @@ fn main() i32 {
 	}
 }
 
+func TestLayoutComputesTaggedUnionLayout(t *testing.T) {
+	root := t.TempDir()
+	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Token union {
+    i32,
+    i64,
+    bool,
+}
+
+fn main() i32 {
+    return 0
+}
+`)
+
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	token, ok := result.Entry.Layout.Lookup("Token")
+	if !ok || token == nil {
+		t.Fatalf("expected Token layout, got %#v", result.Entry.Layout)
+	}
+	if token.Size != 16 || token.Align != 8 {
+		t.Fatalf("expected Token size=16 align=8, got size=%d align=%d", token.Size, token.Align)
+	}
+	if token.Struct != nil {
+		t.Fatalf("expected named union to expose dedicated union layout, got struct %#v", token.Struct)
+	}
+	if token.Union == nil {
+		t.Fatalf("expected union layout, got %#v", token)
+	}
+	if token.Union.TagOffset != 0 || token.Union.PayloadOffset != 8 {
+		t.Fatalf("expected tag@0 payload@8, got %#v", token.Union)
+	}
+	if len(token.Union.Members) != 3 {
+		t.Fatalf("expected 3 union members, got %#v", token.Union.Members)
+	}
+}
+
+func TestLayoutUsesNicheForOptionalPointer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Holder struct {
+    Value ?*raw i32
+}
+
+fn main() i32 {
+    return 0
+}
+`)
+
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	holder, ok := result.Entry.Layout.Lookup("Holder")
+	if !ok || holder == nil || holder.Struct == nil {
+		t.Fatalf("expected Holder layout, got %#v", result.Entry.Layout)
+	}
+	if holder.Size != 8 || holder.Align != 8 {
+		t.Fatalf("expected Holder size=8 align=8, got size=%d align=%d", holder.Size, holder.Align)
+	}
+	if got := holder.Struct.Fields[0].Size; got != 8 {
+		t.Fatalf("expected optional pointer field size=8, got %d", got)
+	}
+}
+
+func TestLayoutUsesNicheForOptionalBool(t *testing.T) {
+	root := t.TempDir()
+	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Flags struct {
+    Value ?bool
+}
+
+fn main() i32 {
+    return 0
+}
+`)
+
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	flags, ok := result.Entry.Layout.Lookup("Flags")
+	if !ok || flags == nil || flags.Struct == nil {
+		t.Fatalf("expected Flags layout, got %#v", result.Entry.Layout)
+	}
+	if flags.Size != 1 || flags.Align != 1 {
+		t.Fatalf("expected Flags size=1 align=1, got size=%d align=%d", flags.Size, flags.Align)
+	}
+	if got := flags.Struct.Fields[0].Size; got != 1 {
+		t.Fatalf("expected optional bool field size=1, got %d", got)
+	}
+}
+
+func TestLayoutUsesNicheForOptionalEnum(t *testing.T) {
+	root := t.TempDir()
+	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Color enum {
+    red,
+    blue,
+}
+
+type Holder struct {
+    Value ?Color
+}
+
+fn main() i32 {
+    return 0
+}
+`)
+
+	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	holder, ok := result.Entry.Layout.Lookup("Holder")
+	if !ok || holder == nil || holder.Struct == nil {
+		t.Fatalf("expected Holder layout, got %#v", result.Entry.Layout)
+	}
+	if holder.Size != 4 || holder.Align != 4 {
+		t.Fatalf("expected Holder size=4 align=4, got size=%d align=%d", holder.Size, holder.Align)
+	}
+	if got := holder.Struct.Fields[0].Size; got != 4 {
+		t.Fatalf("expected optional enum field size=4, got %d", got)
+	}
+}
+
 func mustWriteLayout(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

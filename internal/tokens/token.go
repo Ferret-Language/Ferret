@@ -15,36 +15,50 @@ const (
 	IDENT       Kind = "IDENT"
 	NUMBER      Kind = "NUMBER"
 	STRING      Kind = "STRING"
+	CHAR        Kind = "CHAR"
 	DOC_COMMENT Kind = "DOC_COMMENT"
 
-	ASSIGN    Kind = "="
-	PLUS      Kind = "+"
-	MINUS     Kind = "-"
-	ASTERISK  Kind = "*"
-	SLASH     Kind = "/"
-	PERCENT   Kind = "%"
-	BANG      Kind = "!"
-	QUESTION  Kind = "?"
-	AMP       Kind = "&"
-	TILDE     Kind = "~"
-	LT        Kind = "<"
-	GT        Kind = ">"
-	EQ        Kind = "=="
-	NEQ       Kind = "!="
-	LE        Kind = "<="
-	GE        Kind = ">="
-	ANDAND    Kind = "&&"
-	OROR      Kind = "||"
-	BAR       Kind = "|"
-	QQ        Kind = "??"
-	BB        Kind = "!!"
-	FATARROW  Kind = "=>"
-	COLON     Kind = ":"
-	DCOLON    Kind = "::"
-	COMMA     Kind = ","
-	DOT       Kind = "."
-	HASH      Kind = "#"
-	SEMICOLON Kind = ";"
+	ASSIGN       Kind = "="
+	PLUS         Kind = "+"
+	MINUS        Kind = "-"
+	ASTERISK     Kind = "*"
+	SLASH        Kind = "/"
+	PERCENT      Kind = "%"
+	PLUS_ASSIGN  Kind = "+="
+	MINUS_ASSIGN Kind = "-="
+	STAR_ASSIGN  Kind = "*="
+	SLASH_ASSIGN Kind = "/="
+	PCT_ASSIGN   Kind = "%="
+	PLUS_PLUS    Kind = "++"
+	MINUS_MINUS  Kind = "--"
+	BANG         Kind = "!"
+	QUESTION     Kind = "?"
+	AMP          Kind = "&"
+	TILDE        Kind = "~"
+	LT           Kind = "<"
+	GT           Kind = ">"
+	EQ           Kind = "=="
+	NEQ          Kind = "!="
+	LE           Kind = "<="
+	GE           Kind = ">="
+	ANDAND       Kind = "&&"
+	OROR         Kind = "||"
+	BAR          Kind = "|"
+	PIPE_ARROW   Kind = "|>"
+	CARET        Kind = "^"
+	CARET_ASSIGN Kind = "^="
+	QQ           Kind = "??"
+	BB           Kind = "!!"
+	FATARROW     Kind = "=>"
+	COLON        Kind = ":"
+	DCOLON       Kind = "::"
+	COMMA        Kind = ","
+	DOT          Kind = "."
+	DOTDOT       Kind = ".."
+	DOTDOT_EQ    Kind = "..="
+	ELLIPSIS     Kind = "..."
+	HASH         Kind = "#"
+	SEMICOLON    Kind = ";"
 
 	LPAREN Kind = "("
 	RPAREN Kind = ")"
@@ -72,7 +86,9 @@ const (
 	CONTINUE  Kind = "CONTINUE"
 	RETURN    Kind = "RETURN"
 	AS        Kind = "AS"
+	IS        Kind = "IS"
 	TAKE      Kind = "TAKE"
+	MOVE      Kind = "MOVE"
 	OWN       Kind = "OWN"
 	RAW       Kind = "RAW"
 	MUT       Kind = "MUT"
@@ -107,7 +123,9 @@ var keywords = map[string]Kind{
 	"continue":  CONTINUE,
 	"return":    RETURN,
 	"as":        AS,
+	"is":        IS,
 	"take":      TAKE,
+	"move":      MOVE,
 	"own":       OWN,
 	"raw":       RAW,
 	"mut":       MUT,
@@ -136,7 +154,7 @@ func IsKeyword(ident string) bool {
 
 func IsBuiltinType(name string) bool {
 	switch name {
-	case "bool", "char", "string", "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64", "void":
+	case "bool", "char", "str", "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64", "void":
 		return true
 	default:
 		return false

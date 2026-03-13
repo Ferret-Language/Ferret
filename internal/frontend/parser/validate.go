@@ -69,7 +69,9 @@ func (p *Parser) validateStmt(stmt ast.Stmt) {
 			if arm == nil {
 				continue
 			}
-			if !arm.Wildcard {
+			if arm.TypePattern != nil {
+				p.validateType(arm.TypePattern)
+			} else if !arm.Wildcard {
 				p.validateExpr(arm.Pattern)
 			}
 			p.validateStmt(arm.Body)
@@ -124,12 +126,31 @@ func (p *Parser) validateExpr(expr ast.Expr) {
 	case *ast.CastExpr:
 		p.validateExpr(e.Left)
 		p.validateType(e.Type)
+	case *ast.IsExpr:
+		p.validateExpr(e.Left)
+		p.validateType(e.Type)
+	case *ast.MatchExpr:
+		p.validateExpr(e.Value)
+		for _, arm := range e.Arms {
+			if arm == nil {
+				continue
+			}
+			if arm.TypePattern != nil {
+				p.validateType(arm.TypePattern)
+			} else if !arm.Wildcard {
+				p.validateExpr(arm.Pattern)
+			}
+			p.validateStmt(arm.Body)
+		}
 	case *ast.CatchExpr:
 		p.validateExpr(e.Left)
 		p.validateExpr(e.Fallback)
 		p.validateStmt(e.Handler)
 	case *ast.CompositeLit:
 		p.validateCompositeLit(e)
+	case *ast.IndexExpr:
+		p.validateExpr(e.Left)
+		p.validateExpr(e.Index)
 	}
 }
 

@@ -8,6 +8,8 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/source"
+	"strconv"
+	"strings"
 )
 
 type lowerContext struct {
@@ -16,9 +18,12 @@ type lowerContext struct {
 	bindings     *binding.ModuleInfo
 	globalConsts map[fast.Node]hir.Expr
 	localConsts  map[string]hir.Expr
+	importPath   string
+	lookupMethod hir.MethodLookup
+	resultType   typeinfo.Type
 }
 
-func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *Module {
+func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, lookupMethod hir.MethodLookup) *Module {
 	if cfgMod == nil || hirMod == nil {
 		return nil
 	}
@@ -34,10 +39,10 @@ func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.Modul
 		out.Types = append(out.Types, lowerTypeDecl(decl))
 	}
 	for _, global := range hirMod.Globals {
-		out.Globals = append(out.Globals, lowerGlobal(global, bindings, globalConsts))
+		out.Globals = append(out.Globals, lowerGlobal(global, bindings, globalConsts, hirMod.ImportPath, lookupMethod))
 	}
 	for _, fn := range cfgMod.Functions {
-		out.Functions = append(out.Functions, lowerFunction(fn, bindings, globalConsts))
+		out.Functions = append(out.Functions, lowerFunction(fn, bindings, globalConsts, hirMod.ImportPath, lookupMethod))
 	}
 	return NormalizeModule(out)
 }
@@ -48,6 +53,7 @@ func lowerTypeDecl(decl *hir.TypeDecl) *TypeDecl {
 	}
 	out := &TypeDecl{
 		Name:       decl.Name,
+		IsMove:     decl.IsMove,
 		Named:      decl.Named,
 		Underlying: decl.Underlying,
 		Location:   decl.Location,
@@ -134,28 +140,29 @@ func lowerInterfaceTypeDecl(decl *hir.InterfaceTypeDecl) *InterfaceTypeDecl {
 	return out
 }
 
-func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *Global {
+func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *Global {
 	if global == nil {
 		return nil
 	}
-	lowerCtx := &lowerContext{bindings: bindings, globalConsts: globalConsts}
+	lowerCtx := &lowerContext{bindings: bindings, globalConsts: globalConsts, importPath: importPath, lookupMethod: lookupMethod}
 	return &Global{
 		Name:     global.Name,
 		Mutable:  global.Mutable,
 		Constant: global.Constant,
 		Type:     global.Type,
-		Init:     lowerValue(lowerCtx, global.Value),
+		Init:     lowerCoercedValue(lowerCtx, global.Value, global.Type),
 		Location: global.Location,
 	}
 }
 
-func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *Function {
+func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *Function {
 	if fn == nil || fn.Source == nil {
 		return nil
 	}
-	lowerCtx := newLowerContext(fn.Source, bindings, globalConsts)
+	lowerCtx := newLowerContext(fn.Source, bindings, globalConsts, importPath, lookupMethod)
 	out := &Function{
 		Name:       fn.Name,
+		LinkName:   lowerFunctionLinkName(fn.Source),
 		IsUnsafe:   fn.Source.IsUnsafe,
 		IsBuiltin:  fn.Source.IsBuiltin,
 		IsExtern:   fn.Source.IsExtern,
@@ -174,12 +181,13 @@ func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts 
 		return out
 	}
 	if fn.Source.Receiver != nil {
-		out.Receiver = &Param{
-			Name:     fn.Source.Receiver.Name,
-			LocalID:  lowerCtx.lookupLocalID(fn.Source.Receiver.Name),
-			Type:     fn.Source.Receiver.Type,
-			Location: fn.Source.Receiver.Location,
-		}
+		out.Params = append(out.Params, &Param{
+			Name:      fn.Source.Receiver.Name,
+			LocalID:   lowerCtx.lookupLocalID(fn.Source.Receiver.Name),
+			Type:      fn.Source.Receiver.Type,
+			IsMutable: true,
+			Location:  fn.Source.Receiver.Location,
+		})
 	}
 	for _, param := range fn.Source.Params {
 		if param == nil {
@@ -221,24 +229,32 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 	case nil, *hir.ReturnStmt, *hir.BreakStmt, *hir.ContinueStmt:
 		return nil
 	case *hir.LetStmt:
-		return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: lowerCtx.lookupLocalID(s.Name), Value: lowerValue(lowerCtx, s.Value)}
+		if s.Value == nil {
+			return nil
+		}
+		return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: lowerCtx.lookupLocalID(s.Name), Value: lowerCoercedValue(lowerCtx, s.Value, s.Type)}
 	case *hir.ConstStmt:
 		return nil
 	case *hir.ExprStmt:
 		return &EvalInstr{baseInstr: baseInstr{Location: s.Loc()}, Value: lowerValue(lowerCtx, s.Value)}
 	case *hir.AssignStmt:
+		if target := lowerAssignableTarget(lowerCtx, s.Left); target != nil {
+			return &StoreInstr{baseInstr: baseInstr{Location: s.Loc()}, Target: target, Value: lowerCoercedValue(lowerCtx, s.Right, s.Left.Type())}
+		}
 		if ident, ok := s.Left.(*hir.Ident); ok && len(ident.Path) == 1 {
-			return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: lowerCtx.lookupLocalID(ident.Path[0]), Value: lowerValue(lowerCtx, s.Right)}
+			return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: lowerCtx.lookupLocalID(ident.Path[0]), Value: lowerCoercedValue(lowerCtx, s.Right, s.Left.Type())}
 		}
 		if sel, ok := s.Left.(*hir.SelectorExpr); ok {
-			return &StoreFieldInstr{
-				baseInstr:  baseInstr{Location: s.Loc()},
-				Base:       lowerValue(lowerCtx, sel.Left),
-				FieldIndex: lowerCtx.fieldIndex(sel.Left.Type(), sel.Name),
-				Value:      lowerValue(lowerCtx, s.Right),
+			if fieldIndex := lowerCtx.fieldIndex(sel.Left.Type(), sel.Name); fieldIndex >= 0 {
+				return &StoreFieldInstr{
+					baseInstr:  baseInstr{Location: s.Loc()},
+					Base:       lowerValue(lowerCtx, sel.Left),
+					FieldIndex: fieldIndex,
+					Value:      lowerCoercedValue(lowerCtx, s.Right, s.Left.Type()),
+				}
 			}
 		}
-		return &StoreInstr{baseInstr: baseInstr{Location: s.Loc()}, Target: lowerPlace(lowerCtx, s.Left), Value: lowerValue(lowerCtx, s.Right)}
+		return &StoreInstr{baseInstr: baseInstr{Location: s.Loc()}, Target: lowerPlace(lowerCtx, s.Left), Value: lowerCoercedValue(lowerCtx, s.Right, s.Left.Type())}
 	case *hir.DeferStmt:
 		return &DeferInstr{baseInstr: baseInstr{Location: s.Loc()}, Body: lowerDeferredBody(lowerCtx, s.Body)}
 	case *hir.LockStmt:
@@ -248,6 +264,22 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 	default:
 		return nil
 	}
+}
+
+func lowerAssignableTarget(lowerCtx *lowerContext, expr hir.Expr) Place {
+	if expr == nil {
+		return nil
+	}
+	if resolved := lowerResolvedName(lowerCtx, expr.SourceExpr(), expr.Loc(), expr.Type()); resolved != nil {
+		return &DerefPlace{
+			basePlace: basePlace{Location: expr.Loc()},
+			Pointer: &AddrOfValue{
+				baseValue: baseValue{Location: expr.Loc(), ExprType: &typeinfo.PointerType{Inner: expr.Type()}},
+				Source:    resolved,
+			},
+		}
+	}
+	return nil
 }
 
 func lowerDeferredBody(lowerCtx *lowerContext, stmt hir.Stmt) []Instr {
@@ -288,7 +320,7 @@ func lowerTerminator(lowerCtx *lowerContext, term cfg.Terminator, loc source.Loc
 		if t.Cleanup != nil {
 			cleanupID = blockID(t.Cleanup)
 		}
-		return &ReturnTerm{baseTerm: baseTerm{Location: loc}, Value: lowerValue(lowerCtx, t.Value), CleanupID: cleanupID}
+		return &ReturnTerm{baseTerm: baseTerm{Location: loc}, Value: lowerCoercedValue(lowerCtx, t.Value, lowerCtx.fnResultType()), CleanupID: cleanupID}
 	case *cfg.PanicTerm:
 		cleanupID := -1
 		if t.Cleanup != nil {
@@ -298,6 +330,21 @@ func lowerTerminator(lowerCtx *lowerContext, term cfg.Terminator, loc source.Loc
 	default:
 		return nil
 	}
+}
+
+func lowerCoercedValue(lowerCtx *lowerContext, expr hir.Expr, expected typeinfo.Type) Value {
+	if expr == nil {
+		return nil
+	}
+	if methodLinks, concreteType, ok := lowerInterfaceCoercion(lowerCtx, expr.Type(), expected); ok {
+		return &InterfaceValue{
+			baseValue:    baseValue{Location: expr.Loc(), ExprType: expected},
+			Value:        lowerValue(lowerCtx, expr),
+			ConcreteType: concreteType,
+			Methods:      methodLinks,
+		}
+	}
+	return lowerValue(lowerCtx, expr)
 }
 
 func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
@@ -324,10 +371,23 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 				return &LocalValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, LocalID: id}
 			}
 		}
-		return &NameValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Path: append([]string(nil), e.Path...)}
+		return lowerNameValue(lowerCtx, e.SourceExpr(), e.Loc(), e.Type(), e.Path)
 	case *hir.NumberLit:
 		return &NumberValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: e.Value}
 	case *hir.StringLit:
+		if _, isString := e.Type().(*typeinfo.StringType); isString {
+			// String literal as str: produce a { ptr, len } composite.
+			ptrType := &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
+			ptrVal := &StringValue{baseValue: baseValue{Location: e.Loc(), ExprType: ptrType}, Value: e.Value}
+			lenVal := &NumberValue{baseValue: baseValue{ExprType: &typeinfo.BuiltinType{Name: "usize"}}, Value: strconv.FormatUint(uint64(len(e.Value)), 10)}
+			return &CompositeValue{
+				baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()},
+				Items: []CompositeItem{
+					{Name: "ptr", Value: ptrVal},
+					{Name: "len", Value: lenVal},
+				},
+			}
+		}
 		return &StringValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: e.Value}
 	case *hir.NoneLit:
 		return &NoneValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}}
@@ -347,12 +407,90 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.PostfixExpr:
 		return &PostfixValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left), Op: e.Op}
 	case *hir.CallExpr:
+		// Normalize method calls (instance.Method(...)) to direct function calls
+		// by prepending the receiver as the first argument, e.g. p.Len2() → Len2(p).
+		if sel, ok := e.Callee.(*hir.SelectorExpr); ok {
+			if lowerCtx.fieldIndex(sel.Left.Type(), sel.Name) < 0 {
+				if lowerIsInterfaceType(sel.Left.Type()) {
+					out := &CallValue{
+						baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()},
+						Callee:    lowerValue(lowerCtx, e.Callee),
+						Args:      make([]Value, 0, 1+len(e.Args)),
+					}
+					out.Args = append(out.Args, lowerValue(lowerCtx, sel.Left))
+					var fnType *typeinfo.FuncType
+					if typed, ok := e.Callee.Type().(*typeinfo.FuncType); ok {
+						fnType = typed
+					}
+					for _, arg := range e.Args {
+						expected := typeinfo.Type(nil)
+						if fnType != nil && len(out.Args)-1 < len(fnType.Params) {
+							expected = fnType.Params[len(out.Args)-1]
+						}
+						out.Args = append(out.Args, lowerCoercedValue(lowerCtx, arg, expected))
+					}
+					return out
+				}
+				if named := lowerReceiverNamed(sel.Left.Type()); named != nil {
+					receiver := lowerValue(lowerCtx, sel.Left)
+					// Auto-borrow: if the typechecker determined the method needs a
+					// pointer receiver but the call-site has a plain value, emit
+					// an address-of (the ImplicitReceiver type carries the pointer kind).
+					if fnType, ok := sel.Type().(*typeinfo.FuncType); ok && fnType.ImplicitReceiver != nil {
+						if ptrType, ok := fnType.ImplicitReceiver.(*typeinfo.PointerType); ok {
+							receiver = &AddrOfValue{
+								baseValue: baseValue{Location: sel.Loc(), ExprType: ptrType},
+								Source:    receiver,
+								Mutable:   ptrType.IsMut,
+							}
+						}
+					}
+					path := lowerMethodSymbolPath(lowerCtx, named, sel.Name)
+					callee := &NameValue{
+						baseValue: baseValue{Location: sel.Loc(), ExprType: sel.Type()},
+						Path:      path,
+					}
+					out := &CallValue{
+						baseValue:    baseValue{Location: e.Loc(), ExprType: e.Type()},
+						Callee:       callee,
+						Args:         make([]Value, 0, 1+len(e.Args)),
+						ReceiverType: sel.Left.Type(),
+					}
+					out.Args = append(out.Args, receiver)
+					for _, arg := range e.Args {
+						out.Args = append(out.Args, lowerValue(lowerCtx, arg))
+					}
+					return out
+				}
+			}
+		}
 		out := &CallValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Callee: lowerValue(lowerCtx, e.Callee), Args: make([]Value, 0, len(e.Args))}
+		var fnType *typeinfo.FuncType
+		if typed, ok := e.Callee.Type().(*typeinfo.FuncType); ok {
+			fnType = typed
+		}
+		for _, arg := range e.Args {
+			expected := typeinfo.Type(nil)
+			if fnType != nil && len(out.Args) < len(fnType.Params) {
+				expected = fnType.Params[len(out.Args)]
+			}
+			out.Args = append(out.Args, lowerCoercedValue(lowerCtx, arg, expected))
+		}
+		return out
+	case *hir.ConstructorCallExpr:
+		callee := &NameValue{
+			baseValue: baseValue{Location: e.Loc(), ExprType: &typeinfo.FuncType{Result: &typeinfo.BuiltinType{Name: "void"}}},
+			Path:      append([]string(nil), e.Path...),
+		}
+		out := &CallValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Callee: callee, Args: make([]Value, 0, len(e.Args)), IsConstructor: true}
 		for _, arg := range e.Args {
 			out.Args = append(out.Args, lowerValue(lowerCtx, arg))
 		}
 		return out
 	case *hir.SelectorExpr:
+		if resolved := lowerResolvedName(lowerCtx, e.SourceExpr(), e.Loc(), e.Type()); resolved != nil {
+			return resolved
+		}
 		base := lowerValue(lowerCtx, e.Left)
 		if index := lowerCtx.fieldIndex(e.Left.Type(), e.Name); index >= 0 {
 			return &FieldLoadValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Base: base, FieldIndex: index}
@@ -360,8 +498,17 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		return &FieldValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Base: base, FieldIndex: -1, MemberName: e.Name}
 	case *hir.CastExpr:
 		return &CastValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left)}
+	case *hir.IsExpr:
+		if e.StaticKnown {
+			return &BoolValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: e.StaticValue}
+		}
+		return &TypeTestValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left), Target: e.Target}
+	case *hir.IndexExpr:
+		base := lowerValue(lowerCtx, e.Left)
+		index := lowerValue(lowerCtx, e.Index)
+		return &IndexValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Base: base, Index: index}
 	case *hir.CompositeLit:
-		out := &CompositeValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Items: make([]CompositeItem, 0, len(e.Items))}
+		out := &CompositeValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Items: make([]CompositeItem, 0, len(e.Items)), ConstructorPath: append([]string(nil), e.ConstructorPath...)}
 		for _, item := range e.Items {
 			out.Items = append(out.Items, CompositeItem{Name: item.Name, Value: lowerValue(lowerCtx, item.Value)})
 		}
@@ -450,6 +597,9 @@ func collectLocals(fn *hir.Func) ([]*Local, map[string]int, map[string]hir.Expr)
 }
 
 func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
+	if target := lowerAssignableTarget(lowerCtx, expr); target != nil {
+		return target
+	}
 	switch e := expr.(type) {
 	case nil:
 		return nil
@@ -460,12 +610,20 @@ func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
 		return nil
 	case *hir.SelectorExpr:
 		return &FieldPlace{basePlace: basePlace{Location: e.Loc()}, Base: lowerPlace(lowerCtx, e.Left), FieldIndex: lowerCtx.fieldIndex(e.Left.Type(), e.Name)}
+	case *hir.IndexExpr:
+		index := lowerValue(lowerCtx, e.Index)
+		return &IndexPlace{basePlace: basePlace{Location: e.Loc()}, Base: lowerPlace(lowerCtx, e.Left), Index: index}
+	case *hir.PrefixExpr:
+		if e.Op == "*" {
+			return &DerefPlace{basePlace: basePlace{Location: e.Loc()}, Pointer: lowerValue(lowerCtx, e.Right)}
+		}
+		return nil
 	default:
 		return nil
 	}
 }
 
-func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr) *lowerContext {
+func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[fast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *lowerContext {
 	locals, byName, consts := collectLocals(fn)
 	return &lowerContext{
 		locals:       locals,
@@ -473,7 +631,17 @@ func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts ma
 		bindings:     bindings,
 		globalConsts: globalConsts,
 		localConsts:  consts,
+		importPath:   importPath,
+		lookupMethod: lookupMethod,
+		resultType:   fn.Result,
 	}
+}
+
+func (c *lowerContext) fnResultType() typeinfo.Type {
+	if c == nil {
+		return nil
+	}
+	return c.resultType
 }
 
 func (c *lowerContext) localID(name string) (int, bool) {
@@ -529,6 +697,114 @@ func (c *lowerContext) lookupResolvedConstExpr(source fast.Expr) (hir.Expr, bool
 		return expr, true
 	}
 	return nil, false
+}
+
+func (c *lowerContext) lookupResolution(source fast.Expr) (*binding.Resolution, bool) {
+	if c == nil || c.bindings == nil || source == nil {
+		return nil, false
+	}
+	resolution, ok := c.bindings.Nodes[source]
+	if !ok || resolution == nil {
+		return nil, false
+	}
+	return resolution, true
+}
+
+func lowerResolvedName(c *lowerContext, source fast.Expr, loc source.Location, typ typeinfo.Type) Value {
+	if c == nil || source == nil {
+		return nil
+	}
+	resolution, ok := c.lookupResolution(source)
+	if !ok || resolution.Kind != binding.ResolutionSymbol || resolution.Symbol == nil {
+		return nil
+	}
+	if lit := lowerResolvedScalarValue(resolution, loc, typ); lit != nil {
+		return lit
+	}
+	out := &NameValue{
+		baseValue: baseValue{Location: loc, ExprType: typ},
+		Path:      canonicalResolvedPath(c, resolution),
+	}
+	if fn, ok := resolution.Symbol.Node.(*fast.FuncDecl); ok {
+		if fn.IsExtern && fn.ExternName != "" {
+			out.LinkName = fn.ExternName
+		}
+	}
+	return out
+}
+
+func lowerResolvedScalarValue(resolution *binding.Resolution, loc source.Location, typ typeinfo.Type) Value {
+	if resolution == nil || resolution.Symbol == nil {
+		return nil
+	}
+	switch resolution.Symbol.Kind {
+	case symbols.SymbolVariant:
+		if ordinal, ok := lookupEnumOrdinal(typ, resolution.Symbol.Name); ok {
+			return &NumberValue{baseValue: baseValue{Location: loc, ExprType: typ}, Value: strconv.Itoa(ordinal)}
+		}
+	case symbols.SymbolError:
+		if ordinal, ok := lookupErrorOrdinal(typ, resolution.Symbol.Name); ok {
+			return &NumberValue{baseValue: baseValue{Location: loc, ExprType: typ}, Value: strconv.Itoa(ordinal)}
+		}
+	}
+	return nil
+}
+
+func lookupEnumOrdinal(typ typeinfo.Type, name string) (int, bool) {
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
+		if decl, ok := named.Decl.Type.(*fast.EnumType); ok {
+			for i, variant := range decl.Variants {
+				if variant != nil && variant.Name != nil && variant.Name.Text() == name {
+					return i, true
+				}
+			}
+		}
+	}
+	if enumTyp, ok := typ.(*typeinfo.EnumType); ok && enumTyp != nil && enumTyp.VariantOrdinals != nil {
+		ordinal, ok := enumTyp.VariantOrdinals[name]
+		return ordinal, ok
+	}
+	return 0, false
+}
+
+func lookupErrorOrdinal(typ typeinfo.Type, name string) (int, bool) {
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
+		if decl, ok := named.Decl.Type.(*fast.ErrorType); ok {
+			for i, member := range decl.Members {
+				if member != nil && member.Name != nil && member.Name.Text() == name {
+					return i, true
+				}
+			}
+		}
+	}
+	if errTyp, ok := typ.(*typeinfo.ErrorSetType); ok && errTyp != nil && errTyp.MemberOrdinals != nil {
+		ordinal, ok := errTyp.MemberOrdinals[name]
+		return ordinal, ok
+	}
+	return 0, false
+}
+
+func lowerNameValue(c *lowerContext, source fast.Expr, loc source.Location, typ typeinfo.Type, fallback []string) Value {
+	if resolved := lowerResolvedName(c, source, loc, typ); resolved != nil {
+		return resolved
+	}
+	return &NameValue{baseValue: baseValue{Location: loc, ExprType: typ}, Path: append([]string(nil), fallback...)}
+}
+
+func canonicalResolvedPath(c *lowerContext, resolution *binding.Resolution) []string {
+	if resolution == nil || resolution.Symbol == nil {
+		return nil
+	}
+	name := resolution.Symbol.Name
+	if resolution.Symbol.Kind == symbols.SymbolStatic && resolution.Symbol.OwnerType != "" {
+		name = resolution.Symbol.OwnerType + "__" + name
+	}
+	if resolution.ImportPath == "" || resolution.ImportPath == c.importPath {
+		return []string{name}
+	}
+	parts := strings.Split(resolution.ImportPath, "/")
+	parts = append(parts, name)
+	return parts
 }
 
 func lowerStructView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
@@ -648,6 +924,12 @@ func withValueContext(value Value, loc source.Location, typ typeinfo.Type) Value
 		copy.ExprType = typ
 		copy.Items = append([]CompositeItem(nil), v.Items...)
 		return &copy
+	case *InterfaceValue:
+		copy := *v
+		copy.Location = loc
+		copy.ExprType = typ
+		copy.Methods = append([]InterfaceMethodLink(nil), v.Methods...)
+		return &copy
 	default:
 		return value
 	}
@@ -658,4 +940,111 @@ func blockID(block *cfg.Block) int {
 		return -1
 	}
 	return block.ID
+}
+
+// lowerReceiverNamed unwraps pointer types to get the underlying NamedType for a method receiver.
+func lowerReceiverNamed(typ typeinfo.Type) *typeinfo.NamedType {
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		if t.Decl != nil {
+			if _, ok := t.Decl.Type.(*fast.InterfaceType); ok {
+				return nil
+			}
+		}
+		return t
+	case *typeinfo.PointerType:
+		return lowerReceiverNamed(t.Inner)
+	}
+	return nil
+}
+
+func lowerInterfaceCoercion(lowerCtx *lowerContext, source, target typeinfo.Type) ([]InterfaceMethodLink, typeinfo.Type, bool) {
+	targetIface, ok := lowerInterfaceMethodNames(target)
+	if !ok {
+		return nil, nil, false
+	}
+	if source == nil || typeinfo.Equal(source, target) || lowerIsInterfaceType(source) {
+		return nil, nil, false
+	}
+	if lowerCtx == nil || lowerCtx.lookupMethod == nil {
+		return nil, nil, false
+	}
+	out := make([]InterfaceMethodLink, 0, len(targetIface))
+	for _, name := range targetIface {
+		path, ok := lowerCtx.lookupMethod(source, name)
+		if !ok || len(path) == 0 {
+			return nil, nil, false
+		}
+		out = append(out, InterfaceMethodLink{Name: name, Path: append([]string(nil), path...)})
+	}
+	return out, source, true
+}
+
+func lowerInterfaceMethodNames(typ typeinfo.Type) ([]string, bool) {
+	named, ok := typ.(*typeinfo.NamedType)
+	if !ok || named == nil || named.Decl == nil {
+		return nil, false
+	}
+	ifaceDecl, ok := named.Decl.Type.(*fast.InterfaceType)
+	if !ok || ifaceDecl == nil {
+		return nil, false
+	}
+	out := make([]string, 0, len(ifaceDecl.Methods))
+	for _, method := range ifaceDecl.Methods {
+		if method != nil && method.Name != nil {
+			out = append(out, method.Name.Text())
+		}
+	}
+	return out, true
+}
+
+func lowerIsInterfaceType(typ typeinfo.Type) bool {
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		if t.Decl == nil {
+			return false
+		}
+		_, ok := t.Decl.Type.(*fast.InterfaceType)
+		return ok
+	case *typeinfo.InterfaceType:
+		return true
+	default:
+		return false
+	}
+}
+
+// lowerMethodSymbolPath builds the NameValue.Path for a method call.
+// ModuleKey format is "origin:importPath" (e.g. "local:math/vec2").
+// Same-module methods get a single-element path so qbeSymbol can add the module prefix.
+func lowerMethodSymbolPath(c *lowerContext, named *typeinfo.NamedType, methodName string) []string {
+	if named == nil {
+		return []string{methodName}
+	}
+	leaf := lowerMethodLinkLeaf(named.Name, methodName)
+	importPath := named.ModuleKey
+	if _, after, ok := strings.Cut(named.ModuleKey, ":"); ok {
+		importPath = after
+	}
+	if importPath == "" || importPath == c.importPath {
+		return []string{leaf}
+	}
+	parts := strings.Split(importPath, "/")
+	return append(parts, leaf)
+}
+
+func lowerFunctionLinkName(fn *hir.Func) string {
+	if fn == nil || fn.Receiver == nil {
+		return ""
+	}
+	if named := lowerReceiverNamed(fn.Receiver.Type); named != nil {
+		return lowerMethodLinkLeaf(named.Name, fn.Name)
+	}
+	return ""
+}
+
+func lowerMethodLinkLeaf(typeName, methodName string) string {
+	if typeName == "" {
+		return methodName
+	}
+	return typeName + "__" + methodName
 }

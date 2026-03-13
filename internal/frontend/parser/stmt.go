@@ -39,7 +39,8 @@ func (p *Parser) parseStmt() ast.Stmt {
 	case tokens.IF:
 		return p.parseIfStmt()
 	case tokens.MATCH:
-		return p.parseMatchStmt()
+		expr := p.parseMatchExpr()
+		return &ast.ExprStmt{Value: expr, Location: expr.Loc()}
 	case tokens.WHILE:
 		return p.parseWhileStmt()
 	case tokens.FOR:
@@ -67,6 +68,26 @@ func (p *Parser) parseStmt() ast.Stmt {
 	if p.match(tokens.ASSIGN) {
 		right := p.parseExpr(precLowest)
 		return &ast.AssignStmt{Left: left, Right: right, Location: sourceSpan(left.Loc(), right.Loc())}
+	}
+	// Compound assignment: desugar x += y  →  x = x + y
+	if op, ok := compoundAssignOp(p.current().Kind); ok {
+		p.advance()
+		right := p.parseExpr(precLowest)
+		loc := sourceSpan(left.Loc(), right.Loc())
+		rhs := &ast.BinaryExpr{Left: left, Op: op, Right: right, Location: loc}
+		return &ast.AssignStmt{Left: left, Right: rhs, Location: loc}
+	}
+	// Increment / decrement: desugar x++  →  x = x + 1
+	if p.at(tokens.PLUS_PLUS) || p.at(tokens.MINUS_MINUS) {
+		op := "+"
+		if p.at(tokens.MINUS_MINUS) {
+			op = "-"
+		}
+		tokLoc := p.locOfToken(p.current())
+		p.advance()
+		one := &ast.NumberLit{Value: "1", Location: tokLoc}
+		rhs := &ast.BinaryExpr{Left: left, Op: op, Right: one, Location: tokLoc}
+		return &ast.AssignStmt{Left: left, Right: rhs, Location: sourceSpan(left.Loc(), tokLoc)}
 	}
 	if _, ok := left.(*ast.BadExpr); ok && p.pos == startPos {
 		p.synchronizeStmt()
@@ -137,29 +158,6 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 		}
 	}
 	return &ast.IfStmt{Cond: cond, Then: thenBlock, Else: elseStmt, Location: p.locFrom(start)}
-}
-
-func (p *Parser) parseMatchStmt() ast.Stmt {
-	start := p.advance().Start
-	value := p.parseExpr(precLowest)
-	p.expect(tokens.LBRACE, "expected '{'")
-	arms := make([]*ast.MatchArm, 0)
-	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
-		armStart := p.current().Start
-		var pattern ast.Expr
-		wildcard := false
-		if p.at(tokens.IDENT) && p.current().Literal == "_" {
-			wildcard = true
-			p.advance()
-		} else {
-			pattern = p.parseExprUntil(precLowest, tokens.FATARROW)
-		}
-		p.expect(tokens.FATARROW, "expected '=>' after match pattern")
-		body := p.parseBlock()
-		arms = append(arms, &ast.MatchArm{Pattern: pattern, Wildcard: wildcard, Body: body, Location: p.locFrom(armStart)})
-	}
-	p.expect(tokens.RBRACE, "expected '}'")
-	return &ast.MatchStmt{Value: value, Arms: arms, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseWhileStmt() ast.Stmt {
@@ -274,4 +272,21 @@ func (p *Parser) parseLabelStmt() ast.Stmt {
 		Stmt:     stmt,
 		Location: p.locFrom(start),
 	}
+}
+
+// compoundAssignOp maps a compound-assignment token to its binary operator.
+func compoundAssignOp(k tokens.Kind) (string, bool) {
+	switch k {
+	case tokens.PLUS_ASSIGN:
+		return "+", true
+	case tokens.MINUS_ASSIGN:
+		return "-", true
+	case tokens.STAR_ASSIGN:
+		return "*", true
+	case tokens.SLASH_ASSIGN:
+		return "/", true
+	case tokens.PCT_ASSIGN:
+		return "%", true
+	}
+	return "", false
 }

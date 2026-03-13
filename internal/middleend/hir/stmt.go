@@ -60,9 +60,10 @@ type IfStmt struct {
 func (*IfStmt) stmtNode() {}
 
 type MatchArm struct {
-	Pattern  Expr
-	Wildcard bool
-	Body     *BlockStmt
+	Pattern     Expr
+	TypePattern typeinfo.Type
+	Wildcard    bool
+	Body        *BlockStmt
 }
 
 type MatchStmt struct {

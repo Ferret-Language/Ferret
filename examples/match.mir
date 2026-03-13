@@ -1,0 +1,32 @@
+module match
+fn main() void {
+locals:
+    value: ?i32
+    __match1: i32
+    __match2: ?i32
+    __match3: i32
+    out: i32
+    _t5: bool [temp]
+    _t6: str [temp]
+    _t7: void [temp]
+entry:
+    value = 18
+    __match2 = value
+    _t5 = __match2 is i32
+    branch _t5 -> bb2, bb3
+bb1:
+    exit
+bb2:
+    __match3 = __match2 as i32
+    __match1 = __match3
+    jump bb4
+bb3:
+    __match1 = -1
+    jump bb4
+bb4:
+    out = __match1
+    _t6 = out as str
+    _t7 = std::io::Println(_t6)
+    eval _t7
+    jump bb1
+}

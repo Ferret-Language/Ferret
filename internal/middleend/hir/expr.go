@@ -1,5 +1,7 @@
 package hir
 
+import "compiler/internal/semantics/typeinfo"
+
 type Ident struct {
 	baseExpr
 	Path []string
@@ -62,6 +64,14 @@ type CallExpr struct {
 
 func (*CallExpr) exprNode() {}
 
+type ConstructorCallExpr struct {
+	baseExpr
+	Path []string
+	Args []Expr
+}
+
+func (*ConstructorCallExpr) exprNode() {}
+
 type SelectorExpr struct {
 	baseExpr
 	Left Expr
@@ -76,6 +86,24 @@ type CastExpr struct {
 }
 
 func (*CastExpr) exprNode() {}
+
+type IsExpr struct {
+	baseExpr
+	Left        Expr
+	Target      typeinfo.Type
+	StaticKnown bool
+	StaticValue bool
+}
+
+func (*IsExpr) exprNode() {}
+
+type MatchExpr struct {
+	baseExpr
+	Value Expr
+	Arms  []*MatchArm
+}
+
+func (*MatchExpr) exprNode() {}
 
 type CatchExpr struct {
 	baseExpr
@@ -94,7 +122,17 @@ type CompositeItem struct {
 
 type CompositeLit struct {
 	baseExpr
-	Items []CompositeItem
+	Items           []CompositeItem
+	ConstructorPath []string
 }
 
 func (*CompositeLit) exprNode() {}
+
+// IndexExpr represents arr[index].
+type IndexExpr struct {
+	baseExpr
+	Left  Expr
+	Index Expr
+}
+
+func (*IndexExpr) exprNode() {}

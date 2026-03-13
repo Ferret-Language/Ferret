@@ -26,7 +26,7 @@ func NormalizeModule(mod *Module) *Module {
 
 func (n *normalizer) normalizeGlobalValue(value Value) Value {
 	switch v := value.(type) {
-	case nil, *NameValue, *LocalValue, *NumberValue, *StringValue, *NoneValue:
+	case nil, *NameValue, *LocalValue, *NumberValue, *BoolValue, *StringValue, *NoneValue:
 		return v
 	case *UnaryValue:
 		v.Right = n.normalizeGlobalValue(v.Right)
@@ -56,10 +56,16 @@ func (n *normalizer) normalizeGlobalValue(value Value) Value {
 	case *CastValue:
 		v.Left = n.normalizeGlobalValue(v.Left)
 		return v
+	case *TypeTestValue:
+		v.Left = n.normalizeGlobalValue(v.Left)
+		return v
 	case *CompositeValue:
 		for i, item := range v.Items {
 			v.Items[i].Value = n.normalizeGlobalValue(item.Value)
 		}
+		return v
+	case *InterfaceValue:
+		v.Value = n.normalizeGlobalValue(v.Value)
 		return v
 	default:
 		return v
@@ -173,7 +179,7 @@ func (n *normalizer) normalizeTerminator(fn *Function, term Terminator) (Termina
 
 func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) {
 	switch v := value.(type) {
-	case nil, *NameValue, *LocalValue, *NumberValue, *StringValue, *NoneValue:
+	case nil, *NameValue, *LocalValue, *NumberValue, *BoolValue, *StringValue, *NoneValue:
 		return nil, v
 	case *UnaryValue:
 		temps, right := n.normalizeValue(fn, v.Right)
@@ -220,12 +226,24 @@ func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) 
 		copy := *v
 		copy.Base = base
 		return n.wrapComputed(fn, &copy, temps)
+	case *IndexValue:
+		baseTemps, base := n.normalizeValue(fn, v.Base)
+		indexTemps, index := n.normalizeValue(fn, v.Index)
+		copy := *v
+		copy.Base = base
+		copy.Index = index
+		return n.wrapComputed(fn, &copy, append(baseTemps, indexTemps...))
 	case *FieldValue:
 		temps, base := n.normalizeValue(fn, v.Base)
 		copy := *v
 		copy.Base = base
 		return n.wrapComputed(fn, &copy, temps)
 	case *CastValue:
+		temps, left := n.normalizeValue(fn, v.Left)
+		copy := *v
+		copy.Left = left
+		return n.wrapComputed(fn, &copy, temps)
+	case *TypeTestValue:
 		temps, left := n.normalizeValue(fn, v.Left)
 		copy := *v
 		copy.Left = left
@@ -241,6 +259,12 @@ func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) 
 		copy := *v
 		copy.Items = items
 		return n.wrapComputed(fn, &copy, temps)
+	case *InterfaceValue:
+		temps, inner := n.normalizeValue(fn, v.Value)
+		copy := *v
+		copy.Value = inner
+		copy.Methods = append([]InterfaceMethodLink(nil), v.Methods...)
+		return n.wrapComputed(fn, &copy, temps)
 	default:
 		return nil, v
 	}
@@ -248,7 +272,7 @@ func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) 
 
 func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, Value) {
 	switch v := value.(type) {
-	case nil, *NameValue, *LocalValue, *NumberValue, *StringValue, *NoneValue:
+	case nil, *NameValue, *LocalValue, *NumberValue, *BoolValue, *StringValue, *NoneValue:
 		return nil, v
 	case *UnaryValue:
 		temps, right := n.normalizeValue(fn, v.Right)
@@ -295,12 +319,24 @@ func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, V
 		copy := *v
 		copy.Base = base
 		return temps, &copy
+	case *IndexValue:
+		baseTemps, base := n.normalizeValue(fn, v.Base)
+		indexTemps, index := n.normalizeValue(fn, v.Index)
+		copy := *v
+		copy.Base = base
+		copy.Index = index
+		return append(baseTemps, indexTemps...), &copy
 	case *FieldValue:
 		temps, base := n.normalizeValue(fn, v.Base)
 		copy := *v
 		copy.Base = base
 		return temps, &copy
 	case *CastValue:
+		temps, left := n.normalizeValue(fn, v.Left)
+		copy := *v
+		copy.Left = left
+		return temps, &copy
+	case *TypeTestValue:
 		temps, left := n.normalizeValue(fn, v.Left)
 		copy := *v
 		copy.Left = left
@@ -315,6 +351,12 @@ func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, V
 		}
 		copy := *v
 		copy.Items = items
+		return temps, &copy
+	case *InterfaceValue:
+		temps, inner := n.normalizeValue(fn, v.Value)
+		copy := *v
+		copy.Value = inner
+		copy.Methods = append([]InterfaceMethodLink(nil), v.Methods...)
 		return temps, &copy
 	default:
 		return nil, v

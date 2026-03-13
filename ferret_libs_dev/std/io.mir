@@ -1,0 +1,135 @@
+module io
+type Writer struct {
+    fd i32
+}
+type Reader struct {
+    fd i32
+}
+
+#[extern("write")]
+fn write() isize;
+
+#[extern("read")]
+fn read() isize;
+
+#[extern("open")]
+fn open_raw() i32;
+
+#[extern("close")]
+fn close() i32;
+
+#[extern("lseek")]
+fn lseek() isize;
+
+fn Open(path str, flags i32, mode u32) i32 {
+locals:
+    path: str
+    flags: i32
+    mode: u32
+    cpath: *raw
+    fd: i32
+    _t5: *str [temp]
+    _t6: void [temp]
+entry:
+    _t5 = addr_of path
+    cpath = global::str_cstr(_t5)
+    fd = open_raw(cpath, flags, mode)
+    _t6 = global::free(cpath)
+    eval _t6
+    return fd
+}
+
+fn WriteStr(mut w Writer, s *str) isize {
+locals:
+    w: Writer [mut]
+    s: *str
+    _t2: i32 [temp]
+    _t3: *raw [temp]
+    _t4: usize [temp]
+    _t5: isize [temp]
+entry:
+    _t2 = field w 0
+    _t3 = global::str_data(s)
+    _t4 = global::str_len(s)
+    _t5 = write(_t2, _t3, _t4)
+    return _t5
+}
+
+fn WriteBytes(mut w Writer, buf *raw, count usize) isize {
+locals:
+    w: Writer [mut]
+    buf: *raw
+    count: usize
+    _t3: i32 [temp]
+    _t4: isize [temp]
+entry:
+    _t3 = field w 0
+    _t4 = write(_t3, buf, count)
+    return _t4
+}
+
+fn ReadBytes(mut r Reader, buf *raw, count usize) isize {
+locals:
+    r: Reader [mut]
+    buf: *raw
+    count: usize
+    _t3: i32 [temp]
+    _t4: isize [temp]
+entry:
+    _t3 = field r 0
+    _t4 = read(_t3, buf, count)
+    return _t4
+}
+
+fn Stdout() Writer {
+locals:
+    _t0: Writer [temp]
+entry:
+    _t0 = .{ .fd = 1 }
+    return _t0
+}
+
+fn Stderr() Writer {
+locals:
+    _t0: Writer [temp]
+entry:
+    _t0 = .{ .fd = 2 }
+    return _t0
+}
+
+fn Stdin() Reader {
+locals:
+    _t0: Reader [temp]
+entry:
+    _t0 = .{ .fd = 0 }
+    return _t0
+}
+
+fn Println(s str) void {
+locals:
+    s: str
+    newline: str
+    _t2: *str [temp]
+    _t3: *raw [temp]
+    _t4: *str [temp]
+    _t5: usize [temp]
+    _t6: isize [temp]
+    _t7: *str [temp]
+    _t8: *raw [temp]
+    _t9: isize [temp]
+entry:
+    _t2 = addr_of s
+    _t3 = global::str_data(_t2)
+    _t4 = addr_of s
+    _t5 = global::str_len(_t4)
+    _t6 = write(1, _t3, _t5)
+    eval _t6
+    newline = .{ .ptr = "\n", .len = 1 }
+    _t7 = addr_of newline
+    _t8 = global::str_data(_t7)
+    _t9 = write(1, _t8, 1)
+    eval _t9
+    jump bb1
+bb1:
+    exit
+}

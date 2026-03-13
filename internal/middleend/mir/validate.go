@@ -190,7 +190,11 @@ func childrenAreSimple(value Value) bool {
 		return isSimpleValue(v.Base)
 	case *FieldValue:
 		return isSimpleValue(v.Base)
+	case *IndexValue:
+		return isSimpleValue(v.Base) && isSimpleValue(v.Index)
 	case *CastValue:
+		return isSimpleValue(v.Left)
+	case *TypeTestValue:
 		return isSimpleValue(v.Left)
 	case *CompositeValue:
 		for _, item := range v.Items {
@@ -199,6 +203,8 @@ func childrenAreSimple(value Value) bool {
 			}
 		}
 		return true
+	case *InterfaceValue:
+		return isSimpleValue(v.Value)
 	default:
 		return false
 	}

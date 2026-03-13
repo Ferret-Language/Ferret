@@ -47,6 +47,14 @@ type ArrayType struct {
 func (*ArrayType) typeNode()              {}
 func (t *ArrayType) Loc() source.Location { return t.Location }
 
+type SliceType struct {
+	Inner    TypeExpr
+	Location source.Location
+}
+
+func (*SliceType) typeNode()              {}
+func (t *SliceType) Loc() source.Location { return t.Location }
+
 type TupleType struct {
 	Elems    []TypeExpr
 	Location source.Location

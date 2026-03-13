@@ -1,0 +1,55 @@
+import "std/io"
+
+type Point struct {
+    X i32 = 1
+    Y i32 = 2
+    static Counter i32 = 0
+}
+
+type Circle struct {
+    Rad f32
+}
+
+fn (_ *Circle) Show() {
+    io::Println("I am a circle")
+}
+
+fn (_ *mut Point) Point() {
+    io::Println("ctor")
+    Point::Counter = Point::Counter + 1
+}
+
+fn (_ *own Point) ~Point() void {
+    io::Println("dtor")
+}
+
+fn (_ *Point) Show() {
+    io::Println("I am a point")
+}
+
+type Shape interface{
+    Show()
+}
+
+fn who(s Shape) {
+    s.Show()
+}
+
+fn main() i32 {
+    let mut p: Point = .{}
+    print(p.X)
+    print(p.Y)
+    print(Point::Counter)
+    let p2: Point = .{}
+    print(p2.X)
+    print(p2.Y)
+    print(Point::Counter)
+
+    let p3 = .{} as Point
+    let c1 = .{ .Rad = 2.3 } as Circle
+    
+    who(p3)
+    who(c1)
+
+    return 0
+}

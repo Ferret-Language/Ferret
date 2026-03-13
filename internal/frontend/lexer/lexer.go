@@ -1,6 +1,7 @@
 package lexer
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -11,9 +12,14 @@ import (
 	"compiler/internal/utils/numeric"
 )
 
-type pattern struct {
+// regexHandler is called when a pattern matches at the current position.
+// It receives the compiled regex so it can use FindString / FindStringSubmatch
+// for richer extraction (e.g. capture groups, variable-length content).
+type regexHandler func(lex *Lexer, regex *regexp.Regexp)
+
+type regexPattern struct {
 	regex   *regexp.Regexp
-	handler func(*Lexer, string)
+	handler regexHandler
 }
 
 type Lexer struct {
@@ -21,8 +27,8 @@ type Lexer struct {
 	input    string
 	pos      source.Position
 	diag     *diagnostics.Bag
-	patterns []pattern
-	tokens   []tokens.Token
+	patterns []regexPattern
+	toks     []tokens.Token
 }
 
 func New(file, input string, diag *diagnostics.Bag) *Lexer {
@@ -35,75 +41,117 @@ func New(file, input string, diag *diagnostics.Bag) *Lexer {
 		pos:   source.NewPosition(),
 		diag:  diag,
 	}
-	l.patterns = []pattern{
-		{regexp.MustCompile(`^\s+`), (*Lexer).skip},
-		{regexp.MustCompile(`^///[^\n\r]*`), (*Lexer).docComment},
-		{regexp.MustCompile(`^//[^\n\r]*`), (*Lexer).skip},
-		{regexp.MustCompile(`(?s)^/\*.*?\*/`), (*Lexer).skip},
-		{regexp.MustCompile(`^` + numeric.NumberPattern), (*Lexer).number},
-		{regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*`), (*Lexer).identifier},
-		{regexp.MustCompile(`^::`), emit(tokens.DCOLON)},
-		{regexp.MustCompile(`^==`), emit(tokens.EQ)},
-		{regexp.MustCompile(`^!=`), emit(tokens.NEQ)},
-		{regexp.MustCompile(`^<=`), emit(tokens.LE)},
-		{regexp.MustCompile(`^>=`), emit(tokens.GE)},
-		{regexp.MustCompile(`^&&`), emit(tokens.ANDAND)},
-		{regexp.MustCompile(`^\|\|`), emit(tokens.OROR)},
-		{regexp.MustCompile(`^\|`), emit(tokens.BAR)},
-		{regexp.MustCompile(`^\?\?`), emit(tokens.QQ)},
-		{regexp.MustCompile(`^!!`), emit(tokens.BB)},
-		{regexp.MustCompile(`^=>`), emit(tokens.FATARROW)},
-		{regexp.MustCompile(`^=`), emit(tokens.ASSIGN)},
-		{regexp.MustCompile(`^\+`), emit(tokens.PLUS)},
-		{regexp.MustCompile(`^-`), emit(tokens.MINUS)},
-		{regexp.MustCompile(`^\*`), emit(tokens.ASTERISK)},
-		{regexp.MustCompile(`^/`), emit(tokens.SLASH)},
-		{regexp.MustCompile(`^%`), emit(tokens.PERCENT)},
-		{regexp.MustCompile(`^!`), emit(tokens.BANG)},
-		{regexp.MustCompile(`^\?`), emit(tokens.QUESTION)},
-		{regexp.MustCompile(`^&`), emit(tokens.AMP)},
-		{regexp.MustCompile(`^~`), emit(tokens.TILDE)},
-		{regexp.MustCompile(`^<`), emit(tokens.LT)},
-		{regexp.MustCompile(`^>`), emit(tokens.GT)},
-		{regexp.MustCompile(`^:`), emit(tokens.COLON)},
-		{regexp.MustCompile(`^,`), emit(tokens.COMMA)},
-		{regexp.MustCompile(`^\.`), emit(tokens.DOT)},
-		{regexp.MustCompile(`^#`), emit(tokens.HASH)},
-		{regexp.MustCompile(`^;`), emit(tokens.SEMICOLON)},
-		{regexp.MustCompile(`^\(`), emit(tokens.LPAREN)},
-		{regexp.MustCompile(`^\)`), emit(tokens.RPAREN)},
-		{regexp.MustCompile(`^\{`), emit(tokens.LBRACE)},
-		{regexp.MustCompile(`^\}`), emit(tokens.RBRACE)},
-		{regexp.MustCompile(`^\[`), emit(tokens.LBRACK)},
-		{regexp.MustCompile(`^\]`), emit(tokens.RBRACK)},
+	l.patterns = []regexPattern{
+		{regexp.MustCompile(`\s+`), skipHandler},
+		{regexp.MustCompile(`///[^\n\r]*`), docCommentHandler},
+		{regexp.MustCompile(`//[^\n\r]*`), skipHandler},
+		{regexp.MustCompile(`(?s)/\*.*?\*/`), skipHandler},
+		{regexp.MustCompile(`"(?:\\.|[^"\\])*"`), stringHandler},
+		{regexp.MustCompile(numeric.NumberPattern), numberHandler},
+		{regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`), identifierHandler},
+		// Multi-char operators — must precede their single-char prefixes.
+		{regexp.MustCompile(`::`), defaultHandler(tokens.DCOLON)},
+		{regexp.MustCompile(`==`), defaultHandler(tokens.EQ)},
+		{regexp.MustCompile(`!=`), defaultHandler(tokens.NEQ)},
+		{regexp.MustCompile(`<=`), defaultHandler(tokens.LE)},
+		{regexp.MustCompile(`>=`), defaultHandler(tokens.GE)},
+		{regexp.MustCompile(`&&`), defaultHandler(tokens.ANDAND)},
+		{regexp.MustCompile(`\|\|`), defaultHandler(tokens.OROR)},
+		{regexp.MustCompile(`\?\?`), defaultHandler(tokens.QQ)},
+		{regexp.MustCompile(`!!`), defaultHandler(tokens.BB)},
+		{regexp.MustCompile(`=>`), defaultHandler(tokens.FATARROW)},
+		{regexp.MustCompile(`\+\+`), defaultHandler(tokens.PLUS_PLUS)},
+		{regexp.MustCompile(`--`), defaultHandler(tokens.MINUS_MINUS)},
+		{regexp.MustCompile(`\+=`), defaultHandler(tokens.PLUS_ASSIGN)},
+		{regexp.MustCompile(`-=`), defaultHandler(tokens.MINUS_ASSIGN)},
+		{regexp.MustCompile(`\*=`), defaultHandler(tokens.STAR_ASSIGN)},
+		{regexp.MustCompile(`/=`), defaultHandler(tokens.SLASH_ASSIGN)},
+		{regexp.MustCompile(`%=`), defaultHandler(tokens.PCT_ASSIGN)},
+		// Single-char operators.
+		{regexp.MustCompile(`=`), defaultHandler(tokens.ASSIGN)},
+		{regexp.MustCompile(`\+`), defaultHandler(tokens.PLUS)},
+		{regexp.MustCompile(`-`), defaultHandler(tokens.MINUS)},
+		{regexp.MustCompile(`\*`), defaultHandler(tokens.ASTERISK)},
+		{regexp.MustCompile(`/`), defaultHandler(tokens.SLASH)},
+		{regexp.MustCompile(`%`), defaultHandler(tokens.PERCENT)},
+		{regexp.MustCompile(`!`), defaultHandler(tokens.BANG)},
+		{regexp.MustCompile(`\?`), defaultHandler(tokens.QUESTION)},
+		{regexp.MustCompile(`&`), defaultHandler(tokens.AMP)}, {regexp.MustCompile(`^\|>`), defaultHandler(tokens.PIPE_ARROW)}, {regexp.MustCompile(`\|`), defaultHandler(tokens.BAR)}, {regexp.MustCompile(`^\^=`), defaultHandler(tokens.CARET_ASSIGN)},
+		{regexp.MustCompile(`^\^`), defaultHandler(tokens.CARET)}, {regexp.MustCompile(`~`), defaultHandler(tokens.TILDE)},
+		{regexp.MustCompile(`<`), defaultHandler(tokens.LT)},
+		{regexp.MustCompile(`>`), defaultHandler(tokens.GT)},
+		{regexp.MustCompile(`:`), defaultHandler(tokens.COLON)},
+		{regexp.MustCompile(`,`), defaultHandler(tokens.COMMA)}, {regexp.MustCompile(`^\.\.\.`), defaultHandler(tokens.ELLIPSIS)},
+		{regexp.MustCompile(`^\.\.=`), defaultHandler(tokens.DOTDOT_EQ)},
+		{regexp.MustCompile(`^\.\.`), defaultHandler(tokens.DOTDOT)}, {regexp.MustCompile(`\.`), defaultHandler(tokens.DOT)},
+		{regexp.MustCompile(`#`), defaultHandler(tokens.HASH)},
+		{regexp.MustCompile(`;`), defaultHandler(tokens.SEMICOLON)},
+		{regexp.MustCompile(`\(`), defaultHandler(tokens.LPAREN)},
+		{regexp.MustCompile(`\)`), defaultHandler(tokens.RPAREN)},
+		{regexp.MustCompile(`\{`), defaultHandler(tokens.LBRACE)},
+		{regexp.MustCompile(`\}`), defaultHandler(tokens.RBRACE)},
+		{regexp.MustCompile(`\[`), defaultHandler(tokens.LBRACK)},
+		{regexp.MustCompile(`\]`), defaultHandler(tokens.RBRACK)},
 	}
 	return l
 }
 
-func emit(kind tokens.Kind) func(*Lexer, string) {
-	return func(l *Lexer, match string) {
+// defaultHandler emits a single token with the given kind using the full regex match.
+func defaultHandler(kind tokens.Kind) regexHandler {
+	return func(l *Lexer, re *regexp.Regexp) {
+		match := re.FindString(l.remainder())
 		start := l.pos
-		l.advance(match)
-		l.tokens = append(l.tokens, tokens.Token{Kind: kind, Literal: match, Start: start, End: l.pos})
+		l.advanceBy(match)
+		l.push(tokens.Token{Kind: kind, Literal: match, Start: start, End: l.pos})
 	}
 }
 
-func (l *Lexer) Lex() []tokens.Token {
-	return l.Tokenize()
+func skipHandler(l *Lexer, re *regexp.Regexp) {
+	match := re.FindString(l.remainder())
+	l.advanceBy(match)
 }
+
+func docCommentHandler(l *Lexer, re *regexp.Regexp) {
+	match := re.FindString(l.remainder())
+	start := l.pos
+	l.advanceBy(match)
+	text := strings.TrimSpace(strings.TrimPrefix(match, "///"))
+	l.push(tokens.Token{Kind: tokens.DOC_COMMENT, Literal: text, Start: start, End: l.pos})
+}
+
+func identifierHandler(l *Lexer, re *regexp.Regexp) {
+	match := re.FindString(l.remainder())
+	start := l.pos
+	l.advanceBy(match)
+	l.push(tokens.Token{Kind: tokens.LookupIdent(match), Literal: match, Start: start, End: l.pos})
+}
+
+func numberHandler(l *Lexer, re *regexp.Regexp) {
+	match := re.FindString(l.remainder())
+	start := l.pos
+	l.advanceBy(match)
+	l.push(tokens.Token{Kind: tokens.NUMBER, Literal: strings.ReplaceAll(match, "_", ""), Start: start, End: l.pos})
+}
+
+func stringHandler(l *Lexer, re *regexp.Regexp) {
+	match := re.FindString(l.remainder())
+	start := l.pos
+	l.advanceBy(match)
+	inner := match[1 : len(match)-1] // strip quotes
+	l.push(tokens.Token{Kind: tokens.STRING, Literal: unescapeString(inner), Start: start, End: l.pos})
+}
+
+// Lex is an alias so both names work.
+func (l *Lexer) Lex() []tokens.Token { return l.Tokenize() }
 
 func (l *Lexer) Tokenize() []tokens.Token {
 	for !l.atEOF() {
-		if l.remainder()[0] == '"' {
-			l.stringLiteral()
-			continue
-		}
-
 		matched := false
-		remainder := l.remainder()
-		for _, pattern := range l.patterns {
-			if loc := pattern.regex.FindStringIndex(remainder); loc != nil && loc[0] == 0 {
-				pattern.handler(l, remainder[:loc[1]])
+		rem := l.remainder()
+		for _, p := range l.patterns {
+			loc := p.regex.FindStringIndex(rem)
+			if loc != nil && loc[0] == 0 {
+				p.handler(l, p.regex)
 				matched = true
 				break
 			}
@@ -111,111 +159,31 @@ func (l *Lexer) Tokenize() []tokens.Token {
 		if matched {
 			continue
 		}
-
+		// Unrecognized character — report and skip.
 		start := l.pos
-		_, width := utf8.DecodeRuneInString(remainder)
-		if width <= 0 {
+		_, width := utf8.DecodeRuneInString(rem)
+		if width < 1 {
 			width = 1
 		}
-		bad := remainder[:width]
-		l.advance(bad)
+		bad := rem[:width]
+		l.advanceBy(bad)
 		loc := source.NewLocation(l.file, start, l.pos)
 		l.diag.Add(
-			diagnostics.NewError("illegal character").
+			diagnostics.NewError(fmt.Sprintf("illegal character %q", bad)).
 				WithCode(diagnostics.ErrUnexpectedCharacter).
 				WithPrimaryLabel(&loc, "remove or replace this character"),
 		)
-		l.tokens = append(l.tokens, tokens.Token{Kind: tokens.ILLEGAL, Literal: bad, Start: start, End: l.pos})
+		l.push(tokens.Token{Kind: tokens.ILLEGAL, Literal: bad, Start: start, End: l.pos})
 	}
-
-	l.tokens = append(l.tokens, tokens.Token{Kind: tokens.EOF, Start: l.pos, End: l.pos})
-	return append([]tokens.Token(nil), l.tokens...)
+	l.push(tokens.Token{Kind: tokens.EOF, Start: l.pos, End: l.pos})
+	return append([]tokens.Token(nil), l.toks...)
 }
 
-func (l *Lexer) skip(match string) {
-	l.advance(match)
+func (l *Lexer) push(t tokens.Token) {
+	l.toks = append(l.toks, t)
 }
 
-func (l *Lexer) identifier(match string) {
-	start := l.pos
-	l.advance(match)
-	l.tokens = append(l.tokens, tokens.Token{
-		Kind:    tokens.LookupIdent(match),
-		Literal: match,
-		Start:   start,
-		End:     l.pos,
-	})
-}
-
-func (l *Lexer) docComment(match string) {
-	start := l.pos
-	l.advance(match)
-	text := strings.TrimSpace(strings.TrimPrefix(match, "///"))
-	l.tokens = append(l.tokens, tokens.Token{
-		Kind:    tokens.DOC_COMMENT,
-		Literal: text,
-		Start:   start,
-		End:     l.pos,
-	})
-}
-
-func (l *Lexer) number(match string) {
-	start := l.pos
-	l.advance(match)
-	l.tokens = append(l.tokens, tokens.Token{
-		Kind:    tokens.NUMBER,
-		Literal: strings.ReplaceAll(match, "_", ""),
-		Start:   start,
-		End:     l.pos,
-	})
-}
-
-func (l *Lexer) stringLiteral() {
-	start := l.pos
-	remainder := l.remainder()
-	escaped := false
-	for i := 1; i < len(remainder); i++ {
-		switch remainder[i] {
-		case '\\':
-			escaped = !escaped
-		case '"':
-			if escaped {
-				escaped = false
-				continue
-			}
-			match := remainder[:i+1]
-			l.advance(match)
-			l.tokens = append(l.tokens, tokens.Token{Kind: tokens.STRING, Literal: unescape(match[1 : len(match)-1]), Start: start, End: l.pos})
-			return
-		case '\n', '\r':
-			loc := source.NewLocation(l.file, start, l.pos)
-			l.diag.Add(
-				diagnostics.NewError("unterminated string literal").
-					WithCode(diagnostics.ErrUnterminatedString).
-					WithPrimaryLabel(&loc, "string literal is not closed"),
-			)
-			l.tokens = append(l.tokens, tokens.Token{Kind: tokens.ILLEGAL, Literal: remainder[:i], Start: start, End: l.pos})
-			return
-		default:
-			escaped = false
-		}
-	}
-	l.advance(remainder)
-	loc := source.NewLocation(l.file, start, l.pos)
-	l.diag.Add(
-		diagnostics.NewError("unterminated string literal").
-			WithCode(diagnostics.ErrUnterminatedString).
-			WithPrimaryLabel(&loc, "string literal is not closed"),
-	)
-	l.tokens = append(l.tokens, tokens.Token{Kind: tokens.ILLEGAL, Literal: remainder, Start: start, End: l.pos})
-}
-
-func unescape(in string) string {
-	replacer := strings.NewReplacer(`\\`, `\\`, `\"`, `"`, `\n`, "\n", `\r`, "\r", `\t`, "\t", `\0`, "\x00")
-	return replacer.Replace(in)
-}
-
-func (l *Lexer) advance(text string) {
+func (l *Lexer) advanceBy(text string) {
 	l.pos.Advance(text)
 }
 
@@ -228,4 +196,49 @@ func (l *Lexer) remainder() string {
 
 func (l *Lexer) atEOF() bool {
 	return l.pos.Index >= len(l.input)
+}
+
+func unescapeString(s string) string {
+	var out []byte
+	i := 0
+	for i < len(s) {
+		if s[i] != '\\' || i+1 >= len(s) {
+			out = append(out, s[i])
+			i++
+			continue
+		}
+		switch s[i+1] {
+		case 'n':
+			out = append(out, '\n')
+		case 'r':
+			out = append(out, '\r')
+		case 't':
+			out = append(out, '\t')
+		case '0':
+			out = append(out, 0)
+		case '\\':
+			out = append(out, '\\')
+		case '"':
+			out = append(out, '"')
+		case 'x':
+			if i+3 < len(s) {
+				h := s[i+2 : i+4]
+				var v byte
+				if _, err := fmt.Sscanf(h, "%02x", &v); err == nil {
+					out = append(out, v)
+					i += 4
+					continue
+				}
+			}
+			out = append(out, s[i])
+			i++
+			continue
+		default:
+			out = append(out, s[i]) // keep backslash
+			i++
+			continue
+		}
+		i += 2
+	}
+	return string(out)
 }

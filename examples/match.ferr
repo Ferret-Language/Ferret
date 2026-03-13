@@ -1,0 +1,11 @@
+import "std/io"
+
+
+fn main() {
+    let value : ?i32 = none
+    let out: i32 = match value {
+        is i32 => value
+        _ => -1
+    }
+    io::Println(out as str)
+}

@@ -3,6 +3,7 @@ package typechecker
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"compiler/internal/context"
 	"compiler/internal/diagnostics"
@@ -108,8 +109,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if declared != nil && d.Value != nil && !typeinfo.Assignable(declared, value) {
-			c.reportTypeMismatch(d.Value.Loc(), declared, value)
+		if declared != nil && d.Value != nil && !c.checkAssignable(d.Value.Loc(), declared, value) {
 		}
 		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
 			c.info.BindSymbol(sym, finalType)
@@ -131,8 +131,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if declared != nil && d.Value != nil && !typeinfo.Assignable(declared, value) {
-			c.reportTypeMismatch(d.Value.Loc(), declared, value)
+		if declared != nil && d.Value != nil && !c.checkAssignable(d.Value.Loc(), declared, value) {
 		}
 		c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
 		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
@@ -165,8 +164,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			}
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
-				if !typeinfo.Assignable(fieldType, valueType) {
-					c.reportTypeMismatch(field.Default.Loc(), fieldType, valueType)
+				if !c.checkAssignable(field.Default.Loc(), fieldType, valueType) {
 				}
 			}
 		}
@@ -180,8 +178,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			}
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
-				if !typeinfo.Assignable(fieldType, valueType) {
-					c.reportTypeMismatch(field.Default.Loc(), fieldType, valueType)
+				if !c.checkAssignable(field.Default.Loc(), fieldType, valueType) {
 				}
 				c.requireConstExpr(nil, field.Default, "static field initializer must be compile-time evaluable")
 			}
@@ -214,6 +211,18 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 	if d == nil {
 		return
 	}
+	if (d.IsConstructor || d.IsDestructor) && d.Receiver == nil {
+		loc := d.Name.Loc()
+		kind := "constructor"
+		if d.IsDestructor {
+			kind = "destructor"
+		}
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("%ss must declare a receiver", kind)).
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, kind+"s are methods on their exact owning type"),
+		)
+	}
 	funcScope := newValueScope(nil)
 	if d.Receiver != nil {
 		recvType := c.typeFromSyntax(c.mod, d.Receiver.Type)
@@ -222,6 +231,12 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		}
 		funcScope.Declare(d.Receiver.Name.Text(), valueInfo{typ: recvType, mutable: true})
 		c.info.BindNode(d.Receiver, recvType)
+		if d.IsConstructor {
+			c.checkConstructorDecl(d, recvType)
+		}
+		if d.IsDestructor {
+			c.checkDestructorDecl(d, recvType)
+		}
 	}
 	for _, param := range d.Params {
 		paramType := c.typeFromSyntax(c.mod, param.Type)
@@ -254,6 +269,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		var declared typeinfo.Type
 		if s.Type != nil {
 			declared = c.typeFromSyntax(c.mod, s.Type)
+			c.info.BindNode(s.Type, declared)
 		}
 		var value typeinfo.Type
 		if s.Value != nil {
@@ -266,14 +282,14 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if declared != nil && s.Value != nil && !typeinfo.Assignable(declared, value) {
-			c.reportTypeMismatch(s.Value.Loc(), declared, value)
+		if declared != nil && s.Value != nil && !c.checkAssignable(s.Value.Loc(), declared, value) {
 		}
 		scope.Declare(s.Name.Text(), valueInfo{typ: finalType, mutable: s.IsMut})
 	case *ast.ConstStmt:
 		var declared typeinfo.Type
 		if s.Type != nil {
 			declared = c.typeFromSyntax(c.mod, s.Type)
+			c.info.BindNode(s.Type, declared)
 		}
 		value := c.typeOfExpr(scope, s.Value, declared)
 		finalType := declared
@@ -283,8 +299,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if declared != nil && s.Value != nil && !typeinfo.Assignable(declared, value) {
-			c.reportTypeMismatch(s.Value.Loc(), declared, value)
+		if declared != nil && s.Value != nil && !c.checkAssignable(s.Value.Loc(), declared, value) {
 		}
 		c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
 		scope.Declare(s.Name.Text(), valueInfo{typ: finalType, constant: true})
@@ -295,15 +310,16 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 	case *ast.AssignStmt:
 		leftType := c.typeOfAssignmentTargetExpr(scope, s.Left)
 		rightType := c.typeOfExpr(scope, s.Right, leftType)
-		if !typeinfo.Assignable(leftType, rightType) {
-			c.reportTypeMismatch(s.Right.Loc(), leftType, rightType)
+		if !c.checkAssignable(s.Right.Loc(), leftType, rightType) {
 		}
 		c.checkAssignmentTarget(scope, s.Left)
 	case *ast.IfStmt:
 		condType := c.typeOfExpr(scope, s.Cond, nil)
 		c.requireBool(s.Cond.Loc(), condType)
-		c.checkStmt(scope, s.Then)
-		c.checkStmt(scope, s.Else)
+		thenScope := c.narrowedScopeForCondition(scope, s.Cond, true)
+		elseScope := c.narrowedScopeForCondition(scope, s.Cond, false)
+		c.checkStmt(thenScope, s.Then)
+		c.checkStmt(elseScope, s.Else)
 	case *ast.MatchStmt:
 		valueType := c.typeOfExpr(scope, s.Value, nil)
 		hasWildcard := false
@@ -311,15 +327,21 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 			if arm == nil {
 				continue
 			}
+			armScope := newValueScope(scope)
 			if arm.Wildcard {
 				hasWildcard = true
+			} else if arm.TypePattern != nil {
+				target := c.typeFromSyntax(c.mod, arm.TypePattern)
+				c.info.BindNode(arm.TypePattern, target)
+				_ = c.typeOfIs(scope, &ast.IsExpr{Left: s.Value, Type: arm.TypePattern, Location: arm.Location})
+				armScope = c.narrowedMatchTypeArmScope(scope, s.Value, target)
 			} else {
 				patternType := c.typeOfExpr(scope, arm.Pattern, valueType)
 				if !typeinfo.Assignable(valueType, patternType) && !typeinfo.Assignable(patternType, valueType) {
 					c.reportTypeMismatch(arm.Pattern.Loc(), valueType, patternType)
 				}
 			}
-			c.checkStmt(scope, arm.Body)
+			c.checkStmt(armScope, arm.Body)
 		}
 		if !hasWildcard && len(s.Arms) > 0 {
 			// fallback remains possible; CFG handles missing-return paths later
@@ -327,7 +349,8 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 	case *ast.WhileStmt:
 		condType := c.typeOfExpr(scope, s.Cond, nil)
 		c.requireBool(s.Cond.Loc(), condType)
-		c.checkStmt(newValueScope(scope), s.Body)
+		bodyScope := c.narrowedScopeForCondition(newValueScope(scope), s.Cond, true)
+		c.checkStmt(bodyScope, s.Body)
 	case *ast.ForStmt:
 		loopScope := newValueScope(scope)
 		iterType := c.typeOfExpr(loopScope, s.Iterable, nil)
@@ -390,8 +413,7 @@ func (c *checker) checkReturn(scope *valueScope, stmt *ast.ReturnStmt) {
 		return
 	}
 	got := c.typeOfExpr(scope, stmt.Value, expected)
-	if !typeinfo.Assignable(expected, got) {
-		c.reportTypeMismatch(stmt.Value.Loc(), expected, got)
+	if !c.checkAssignable(stmt.Value.Loc(), expected, got) {
 	}
 }
 
@@ -449,7 +471,8 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.StringLit:
-		typ := &typeinfo.BuiltinType{Name: "string"}
+		// String literals have dedicated type `str`.
+		typ := &typeinfo.StringType{}
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.NoneLit:
@@ -481,8 +504,14 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 		return c.typeOfSelector(scope, e)
 	case *ast.CastExpr:
 		return c.typeOfCast(scope, e)
+	case *ast.IsExpr:
+		return c.typeOfIs(scope, e)
+	case *ast.MatchExpr:
+		return c.typeOfMatchExpr(scope, e, expected)
 	case *ast.CompositeLit:
 		return c.typeOfComposite(scope, e, expected)
+	case *ast.IndexExpr:
+		return c.typeOfIndex(scope, e)
 	default:
 		return typeinfo.UnknownType{}
 	}
@@ -567,6 +596,15 @@ func (c *checker) typeOfPrefix(scope *valueScope, expr *ast.PrefixExpr, expected
 						WithPrimaryLabel(&loc, "wrap this dereference in `unsafe { ... }`"),
 				)
 			}
+			if ptr.Inner == nil {
+				loc := expr.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("cannot dereference untyped raw pointer").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(&loc, "cast this *raw pointer to a typed pointer first"),
+				)
+				return typeinfo.InvalidType{}
+			}
 			c.info.BindNode(expr, ptr.Inner)
 			return ptr.Inner
 		}
@@ -593,9 +631,147 @@ func (c *checker) typeOfPrefix(scope *valueScope, expr *ast.PrefixExpr, expected
 	return typeinfo.InvalidType{}
 }
 
+func (c *checker) typeOfMatchExpr(scope *valueScope, expr *ast.MatchExpr, expected typeinfo.Type) typeinfo.Type {
+	if expr == nil {
+		return typeinfo.UnknownType{}
+	}
+	valueType := c.typeOfExpr(scope, expr.Value, nil)
+	hasWildcard := false
+	var resultType typeinfo.Type
+	seenValueArm := false
+
+	for _, arm := range expr.Arms {
+		if arm == nil {
+			continue
+		}
+		armScope := newValueScope(scope)
+		if arm.Wildcard {
+			hasWildcard = true
+		} else if arm.TypePattern != nil {
+			target := c.typeFromSyntax(c.mod, arm.TypePattern)
+			c.info.BindNode(arm.TypePattern, target)
+			_ = c.typeOfIs(scope, &ast.IsExpr{Left: expr.Value, Type: arm.TypePattern, Location: arm.Location})
+			armScope = c.narrowedMatchTypeArmScope(scope, expr.Value, target)
+		} else {
+			patternType := c.typeOfExpr(scope, arm.Pattern, valueType)
+			if !typeinfo.Assignable(valueType, patternType) && !typeinfo.Assignable(patternType, valueType) {
+				c.reportTypeMismatch(arm.Pattern.Loc(), valueType, patternType)
+			}
+		}
+		armType, diverges := c.blockValueType(armScope, arm.Body, expected)
+		if diverges || typeinfo.IsInvalid(armType) || typeinfo.IsUnknown(armType) {
+			continue
+		}
+		if expected != nil {
+			if c.checkAssignable(arm.Body.Loc(), expected, armType) {
+				resultType = expected
+				seenValueArm = true
+			}
+			continue
+		}
+		if !seenValueArm {
+			resultType = armType
+			seenValueArm = true
+			continue
+		}
+		if unified := c.unifyMatchArmTypes(resultType, armType); unified != nil {
+			resultType = unified
+			continue
+		}
+		c.reportTypeMismatch(arm.Body.Loc(), resultType, armType)
+		resultType = typeinfo.InvalidType{}
+	}
+
+	if !hasWildcard {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("match expression requires a wildcard arm for now").
+				WithCode(diagnostics.ErrNonExhaustiveMatch).
+				WithPrimaryLabel(&loc, "add `_ => { ... }` to handle the remaining cases"),
+		)
+		if !seenValueArm {
+			return typeinfo.InvalidType{}
+		}
+	}
+	if seenValueArm {
+		c.info.BindNode(expr, resultType)
+		return resultType
+	}
+	if expected != nil {
+		c.info.BindNode(expr, expected)
+		return expected
+	}
+	return typeinfo.UnknownType{}
+}
+
+func (c *checker) blockValueType(scope *valueScope, block *ast.BlockStmt, expected typeinfo.Type) (typeinfo.Type, bool) {
+	if block == nil || len(block.Stmts) == 0 {
+		loc := source.Location{}
+		if block != nil {
+			loc = block.Location
+		}
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("match arm must yield a value or exit").
+				WithCode(diagnostics.ErrInvalidExpression).
+				WithPrimaryLabel(&loc, "add a final expression or terminate this arm"),
+		)
+		return typeinfo.InvalidType{}, false
+	}
+	for i := 0; i < len(block.Stmts)-1; i++ {
+		c.checkStmt(scope, block.Stmts[i])
+	}
+	last := block.Stmts[len(block.Stmts)-1]
+	if stmtDefinitelyExits(last) {
+		c.checkStmt(scope, last)
+		return nil, true
+	}
+	if exprStmt, ok := last.(*ast.ExprStmt); ok {
+		return c.typeOfExpr(scope, exprStmt.Value, expected), false
+	}
+	c.checkStmt(scope, last)
+	loc := last.Loc()
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError("match arm must end with a value expression or exit").
+			WithCode(diagnostics.ErrInvalidExpression).
+			WithPrimaryLabel(&loc, "this arm does not produce a value"),
+	)
+	return typeinfo.InvalidType{}, false
+}
+
+func (c *checker) unifyMatchArmTypes(left, right typeinfo.Type) typeinfo.Type {
+	if left == nil {
+		return right
+	}
+	if right == nil {
+		return left
+	}
+	if typeinfo.Equal(left, right) {
+		return left
+	}
+	if common := typeinfo.CommonNumericType(left, right); common != nil {
+		return common
+	}
+	if typeinfo.Assignable(left, right) {
+		return left
+	}
+	if typeinfo.Assignable(right, left) {
+		return right
+	}
+	return nil
+}
+
 func (c *checker) typeOfBinary(scope *valueScope, expr *ast.BinaryExpr) typeinfo.Type {
 	left := c.typeOfExpr(scope, expr.Left, nil)
 	right := c.typeOfExpr(scope, expr.Right, left)
+	if c.isUnionValue(left) || c.isUnionValue(right) {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("union values do not support direct binary operations").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "extract a concrete union member before using this operator"),
+		)
+		return typeinfo.InvalidType{}
+	}
 	switch expr.Op {
 	case "+", "-", "*", "/", "%":
 		if result := typeinfo.CommonNumericType(left, right); result != nil {
@@ -636,6 +812,14 @@ func (c *checker) typeOfBinary(scope *valueScope, expr *ast.BinaryExpr) typeinfo
 			WithPrimaryLabel(&loc, "invalid binary operation"),
 	)
 	return typeinfo.InvalidType{}
+}
+
+func (c *checker) isUnionValue(typ typeinfo.Type) bool {
+	if typ == nil {
+		return false
+	}
+	_, ok := c.underlying(typ).(*typeinfo.UnionType)
+	return ok
 }
 
 func (c *checker) inferNumberLiteralType(lit *ast.NumberLit, expected typeinfo.Type) typeinfo.Type {
@@ -704,6 +888,10 @@ func (c *checker) typeOfPostfix(scope *valueScope, expr *ast.PostfixExpr) typein
 }
 
 func (c *checker) typeOfCall(scope *valueScope, expr *ast.CallExpr) typeinfo.Type {
+	if c.isBuiltinPrintCall(expr.Callee) {
+		return c.typeOfBuiltinPrint(scope, expr)
+	}
+
 	if selector, ok := expr.Callee.(*ast.SelectorExpr); ok {
 		if typ, handled := c.typeOfMethodCall(scope, expr, selector); handled {
 			return typ
@@ -735,6 +923,33 @@ func (c *checker) typeOfCall(scope *valueScope, expr *ast.CallExpr) typeinfo.Typ
 	c.typecheckCallArgs(scope, expr, fnType)
 	c.info.BindNode(expr, fnType.Result)
 	return fnType.Result
+}
+
+func (c *checker) typeOfBuiltinPrint(scope *valueScope, expr *ast.CallExpr) typeinfo.Type {
+	result := &typeinfo.BuiltinType{Name: "void"}
+	if expr == nil {
+		return result
+	}
+	if len(expr.Args) != 1 {
+		c.reportWrongArgCount(expr.Location, 1, len(expr.Args))
+	}
+	if len(expr.Args) > 0 {
+		_ = c.typeOfExpr(scope, expr.Args[0], nil)
+	}
+	c.info.BindNode(expr, result)
+	return result
+}
+
+func (c *checker) isBuiltinPrintCall(callee ast.Expr) bool {
+	res := c.lookupResolution(callee)
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+		return false
+	}
+	if res.Symbol.Name != "print" {
+		return false
+	}
+	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
+	return ok && fn != nil && fn.IsBuiltin
 }
 
 func (c *checker) typeOfCatch(scope *valueScope, expr *ast.CatchExpr) typeinfo.Type {
@@ -796,13 +1011,64 @@ func (c *checker) typeOfMethodCall(scope *valueScope, call *ast.CallExpr, select
 	}
 
 	addressable, mutable := c.exprAccess(scope, selector.Left)
-	_, methodType := c.lookupMethod(receiverType, selector.Name.Text(), addressable, mutable)
+	sym, methodType := c.lookupMethod(receiverType, selector.Name.Text(), addressable, mutable)
 	if methodType == nil {
 		if c.canHaveMethods(receiverType) {
+			// If the method exists but only on a *mut receiver and the variable
+			// is immutable, emit a more helpful diagnostic instead of the
+			// generic "has no method" message.
+			if !mutable && addressable {
+				if _, mutMethodType := c.lookupMethod(receiverType, selector.Name.Text(), true, true); mutMethodType != nil {
+					loc := selector.Location
+					c.ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("cannot call method %q on immutable %s", selector.Name.Text(), receiverType.String())).
+							WithCode(diagnostics.ErrMethodNotFound).
+							WithPrimaryLabel(&loc, "this method requires a mutable receiver (*mut)").
+							WithNote("declare the variable with `let mut` to allow mutable method calls"),
+					)
+					return typeinfo.InvalidType{}, true
+				}
+			}
 			c.reportMethodNotFound(selector.Location, receiverType, selector.Name.Text())
 			return typeinfo.InvalidType{}, true
 		}
 		return nil, false
+	}
+	if decl, ok := sym.Node.(*ast.FuncDecl); ok && decl != nil {
+		if decl.IsConstructor {
+			loc := call.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("constructors are not directly callable").
+					WithCode(diagnostics.ErrNotCallable).
+					WithPrimaryLabel(&loc, "constructors run implicitly when creating a new instance"),
+			)
+			return typeinfo.InvalidType{}, true
+		}
+		if decl.IsDestructor {
+			loc := call.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("destructors are not directly callable").
+					WithCode(diagnostics.ErrNotCallable).
+					WithPrimaryLabel(&loc, "destructors are run automatically by the compiler"),
+			)
+			return typeinfo.InvalidType{}, true
+		}
+	}
+
+	// If the call-site has a plain value type but the method was found via a
+	// pointer-receiver key ("*T" or "*mut T"), record the pointer type on a
+	// per-call-site copy of the FuncType so MIR lowering can emit auto-borrow.
+	if sym != nil {
+		if _, callerIsValue := receiverType.(*typeinfo.NamedType); callerIsValue {
+			rt := sym.ReceiverType // e.g. "*mut Point" or "*Point"
+			if len(rt) > 0 && rt[0] == '*' {
+				isMut := len(rt) > 4 && rt[:5] == "*mut "
+				recvPtrType := &typeinfo.PointerType{IsMut: isMut, Inner: receiverType}
+				copy := *methodType
+				copy.ImplicitReceiver = recvPtrType
+				methodType = &copy
+			}
+		}
 	}
 
 	c.info.BindNode(selector, methodType)
@@ -824,8 +1090,7 @@ func (c *checker) typecheckCallArgs(scope *valueScope, call *ast.CallExpr, fnTyp
 			expected = fnType.Params[i]
 		}
 		argType := c.typeOfExpr(scope, arg, expected)
-		if expected != nil && !typeinfo.Assignable(expected, argType) {
-			c.reportTypeMismatch(arg.Loc(), expected, argType)
+		if expected != nil && !c.checkAssignable(arg.Loc(), expected, argType) {
 		}
 		if i < len(fnType.ComptimeParams) && fnType.ComptimeParams[i] {
 			c.requireConstExpr(scope, arg, "argument to comptime parameter must be compile-time evaluable")
@@ -861,8 +1126,21 @@ func (c *checker) typeOfSelector(scope *valueScope, expr *ast.SelectorExpr) type
 }
 
 func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Type {
+	if unionTarget, memberTarget, ok := c.selectedUnionMemberTarget(c.mod, expr.Type); ok {
+		sourceType := c.typeOfExpr(scope, expr.Left, memberTarget)
+		if c.checkAssignable(expr.Left.Loc(), memberTarget, sourceType) {
+			c.info.BindNode(expr, unionTarget)
+			return unionTarget
+		}
+		return typeinfo.InvalidType{}
+	}
+
 	target := c.typeFromSyntax(c.mod, expr.Type)
-	sourceType := c.typeOfExpr(scope, expr.Left, nil)
+	sourceType := c.typeOfExpr(scope, expr.Left, target)
+	if c.unionContainsExactMember(sourceType, target) {
+		c.info.BindNode(expr, target)
+		return target
+	}
 	if typeinfo.Equal(target, sourceType) {
 		c.info.BindNode(expr, target)
 		return target
@@ -871,11 +1149,276 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 		c.info.BindNode(expr, target)
 		return target
 	}
+	if c.isExplicitEnumCast(target, sourceType) {
+		c.info.BindNode(expr, target)
+		return target
+	}
+	if opt, ok := c.underlying(target).(*typeinfo.OptionalType); ok && opt != nil && typeinfo.Assignable(opt.Inner, sourceType) {
+		c.info.BindNode(expr, target)
+		return target
+	}
+	if c.isExplicitStringCast(target, sourceType) {
+		c.info.BindNode(expr, target)
+		return target
+	}
+	// Raw-pointer reinterpretation: *raw T → *raw S (including *raw void).
+	// Any cast where either side is a raw pointer requires an unsafe block.
+	srcUnderlying := c.underlying(sourceType)
+	dstUnderlying := c.underlying(target)
+	srcPtr, srcIsRawPtr := srcUnderlying.(*typeinfo.PointerType)
+	dstPtr, dstIsRawPtr := dstUnderlying.(*typeinfo.PointerType)
+	srcIsRawPtr = srcIsRawPtr && srcPtr.IsRaw
+	dstIsRawPtr = dstIsRawPtr && dstPtr.IsRaw
+	if srcIsRawPtr || dstIsRawPtr {
+		if c.unsafeDepth > 0 {
+			c.info.BindNode(expr, target)
+			return target
+		}
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot cast %s to %s outside unsafe block", sourceType.String(), target.String())).
+				WithCode(diagnostics.ErrInvalidCast).
+				WithPrimaryLabel(&loc, "raw pointer cast requires 'unsafe'"),
+		)
+		return typeinfo.InvalidType{}
+	}
 	loc := expr.Location
 	c.ctx.Diagnostics.Add(
 		diagnostics.NewError(fmt.Sprintf("cannot cast %s to %s", sourceType.String(), target.String())).
 			WithCode(diagnostics.ErrInvalidCast).
 			WithPrimaryLabel(&loc, "invalid explicit cast"),
+	)
+	return typeinfo.InvalidType{}
+}
+
+func (c *checker) typeOfIs(scope *valueScope, expr *ast.IsExpr) typeinfo.Type {
+	left := c.typeOfExpr(scope, expr.Left, nil)
+	target := c.typeFromSyntax(c.mod, expr.Type)
+	if typeinfo.IsInvalid(left) || typeinfo.IsInvalid(target) || typeinfo.IsUnknown(left) || typeinfo.IsUnknown(target) {
+		return typeinfo.InvalidType{}
+	}
+	c.info.BindNode(expr.Type, target)
+	result, static, ok := c.classifyTypeTest(expr.Location, left, target)
+	if !ok {
+		return typeinfo.InvalidType{}
+	}
+	typ := &typeinfo.BuiltinType{Name: "bool"}
+	if static {
+		c.info.BindBool(expr, result)
+	}
+	c.info.BindNode(expr, typ)
+	return typ
+}
+
+func (c *checker) unionContainsExactMember(source, target typeinfo.Type) bool {
+	unionType, ok := c.underlying(source).(*typeinfo.UnionType)
+	if !ok || unionType == nil {
+		return false
+	}
+	for _, member := range unionType.Members {
+		if typeinfo.Equal(member, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *checker) classifyTypeTest(loc source.Location, left, target typeinfo.Type) (bool, bool, bool) {
+	if typeinfo.Equal(left, target) {
+		return true, true, true
+	}
+	if unionType, ok := c.underlying(left).(*typeinfo.UnionType); ok {
+		if unionType == nil {
+			return false, false, false
+		}
+		if c.unionTypeMayMatch(unionType, target) {
+			return false, false, true
+		}
+		return false, true, true
+	}
+	if opt, ok := c.underlying(left).(*typeinfo.OptionalType); ok && opt != nil {
+		if typeinfo.Equal(opt.Inner, target) {
+			return false, false, true
+		}
+		return false, true, true
+	}
+	if targetIface, ok := c.underlying(target).(*typeinfo.InterfaceType); ok {
+		if srcIface, ok := c.underlying(left).(*typeinfo.InterfaceType); ok {
+			return c.interfaceSatisfies(srcIface, targetIface), true, true
+		}
+		return c.implementsInterface(left, targetIface), true, true
+	}
+	if _, ok := c.underlying(left).(*typeinfo.InterfaceType); ok {
+		result, ok := c.reportUnsupportedTypeTest(loc, "runtime interface type tests are not implemented yet", "only exact or interface-to-interface static checks work right now")
+		return result, false, ok
+	}
+	return false, true, true
+}
+
+func (c *checker) narrowedScopeForCondition(scope *valueScope, cond ast.Expr, truth bool) *valueScope {
+	if scope == nil || cond == nil {
+		return scope
+	}
+	switch e := cond.(type) {
+	case *ast.PrefixExpr:
+		if e.Op == "!" {
+			return c.narrowedScopeForCondition(scope, e.Right, !truth)
+		}
+	case *ast.IsExpr:
+		return c.narrowedScopeForIs(scope, e, truth)
+	}
+	return scope
+}
+
+func (c *checker) narrowedScopeForIs(scope *valueScope, expr *ast.IsExpr, truth bool) *valueScope {
+	if expr == nil {
+		return scope
+	}
+	ident, ok := expr.Left.(*ast.Ident)
+	if !ok || ident == nil || len(ident.Path) != 1 {
+		return scope
+	}
+	info, ok := scope.Lookup(ident.Path[0])
+	if !ok || info == nil || info.typ == nil {
+		return scope
+	}
+	target, ok := c.info.Nodes[expr.Type]
+	if !ok || target == nil {
+		target = c.typeFromSyntax(c.mod, expr.Type)
+	}
+	unionType, ok := c.underlying(info.typ).(*typeinfo.UnionType)
+	if ok && unionType != nil {
+		if truth {
+			if !c.unionTypeMayMatch(unionType, target) {
+				return scope
+			}
+			narrowed := newValueScope(scope)
+			narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+			return narrowed
+		}
+		remaining := c.unionMembersWithoutExactMatch(unionType, target)
+		if len(remaining) == 0 || len(remaining) == len(unionType.Members) {
+			return scope
+		}
+		narrowed := newValueScope(scope)
+		narrowed.Declare(ident.Path[0], valueInfo{
+			typ:      c.narrowedTypeFromMembers(remaining),
+			mutable:  info.mutable,
+			constant: info.constant,
+		})
+		return narrowed
+	}
+	if opt, ok := c.underlying(info.typ).(*typeinfo.OptionalType); ok && opt != nil {
+		if !typeinfo.Equal(opt.Inner, target) {
+			return scope
+		}
+		narrowed := newValueScope(scope)
+		if truth {
+			narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+			return narrowed
+		}
+		narrowed.Declare(ident.Path[0], valueInfo{typ: info.typ, mutable: info.mutable, constant: info.constant})
+		return narrowed
+	}
+	return scope
+}
+
+func (c *checker) unionMembersWithoutExactMatch(unionType *typeinfo.UnionType, target typeinfo.Type) []typeinfo.Type {
+	if unionType == nil || target == nil {
+		return nil
+	}
+	remaining := make([]typeinfo.Type, 0, len(unionType.Members))
+	for _, member := range unionType.Members {
+		if typeinfo.Equal(member, target) {
+			continue
+		}
+		remaining = append(remaining, member)
+	}
+	return remaining
+}
+
+func (c *checker) narrowedTypeFromMembers(members []typeinfo.Type) typeinfo.Type {
+	switch len(members) {
+	case 0:
+		return typeinfo.UnknownType{}
+	case 1:
+		return members[0]
+	default:
+		out := &typeinfo.UnionType{Members: make([]typeinfo.Type, len(members))}
+		copy(out.Members, members)
+		return out
+	}
+}
+
+func (c *checker) narrowedMatchTypeArmScope(scope *valueScope, value ast.Expr, target typeinfo.Type) *valueScope {
+	if scope == nil || value == nil || target == nil {
+		return scope
+	}
+	ident, ok := value.(*ast.Ident)
+	if !ok || ident == nil || len(ident.Path) != 1 {
+		return scope
+	}
+	info, ok := scope.Lookup(ident.Path[0])
+	if !ok || info == nil || info.typ == nil {
+		return scope
+	}
+	if unionType, ok := c.underlying(info.typ).(*typeinfo.UnionType); ok && unionType != nil && c.unionTypeMayMatch(unionType, target) {
+		narrowed := newValueScope(scope)
+		narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+		return narrowed
+	}
+	if opt, ok := c.underlying(info.typ).(*typeinfo.OptionalType); ok && opt != nil && typeinfo.Equal(opt.Inner, target) {
+		narrowed := newValueScope(scope)
+		narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+		return narrowed
+	}
+	if typeinfo.Equal(info.typ, target) {
+		return scope
+	}
+	return scope
+}
+
+func (c *checker) unionTypeMayMatch(unionType *typeinfo.UnionType, target typeinfo.Type) bool {
+	if unionType == nil || target == nil {
+		return false
+	}
+	for _, member := range unionType.Members {
+		if typeinfo.Equal(member, target) || typeinfo.Assignable(member, target) || typeinfo.Assignable(target, member) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *checker) typeOfIndex(scope *valueScope, expr *ast.IndexExpr) typeinfo.Type {
+	baseTyp := c.typeOfExpr(scope, expr.Left, nil)
+	// typecheck the index as usize
+	usize := &typeinfo.BuiltinType{Name: "usize"}
+	c.typeOfExpr(scope, expr.Index, usize)
+	base := c.underlying(baseTyp)
+	if arr, ok := base.(*typeinfo.ArrayType); ok {
+		c.info.BindNode(expr, arr.Inner)
+		return arr.Inner
+	}
+	// Pointer indexing: *T[i] → T
+	if ptr, ok := base.(*typeinfo.PointerType); ok {
+		if ptr.Inner == nil {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot index into untyped raw pointer").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "cast this *raw pointer to a typed pointer first"),
+			)
+			return typeinfo.InvalidType{}
+		}
+		c.info.BindNode(expr, ptr.Inner)
+		return ptr.Inner
+	}
+	loc := expr.Location
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError(fmt.Sprintf("cannot index into %s", baseTyp.String())).
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(&loc, "not an array or pointer type"),
 	)
 	return typeinfo.InvalidType{}
 }
@@ -891,11 +1434,40 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 		return typeinfo.InvalidType{}
 	}
 	base := c.underlying(expected)
+	// Array literal: positional elements matching element type.
+	if arrType, ok := base.(*typeinfo.ArrayType); ok {
+		for i, item := range expr.Items {
+			if item.Name != nil {
+				loc := item.Name.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("array literal does not support named elements").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(&loc, "use positional elements"),
+				)
+				continue
+			}
+			if arrType.Len >= 0 && int64(i) >= arrType.Len {
+				loc := expr.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("too many elements in array literal").
+						WithCode(diagnostics.ErrExtraField).
+						WithPrimaryLabel(&loc, "excess element"),
+				)
+				break
+			}
+			got := c.typeOfExpr(scope, item.Value, arrType.Inner)
+			if !c.checkAssignable(item.Value.Loc(), arrType.Inner, got) {
+			}
+		}
+		c.info.BindNode(expr, expected)
+		return expected
+	}
 	structType, ok := base.(*typeinfo.StructType)
 	if !ok {
 		c.info.BindNode(expr, expected)
 		return expected
 	}
+	provided := make(map[string]struct{}, len(expr.Items))
 	var positional int
 	for _, item := range expr.Items {
 		if item.Name != nil {
@@ -911,9 +1483,9 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 				continue
 			}
 			got := c.typeOfExpr(scope, item.Value, field.Type)
-			if !typeinfo.Assignable(field.Type, got) {
-				c.reportTypeMismatch(item.Value.Loc(), field.Type, got)
+			if !c.checkAssignable(item.Value.Loc(), field.Type, got) {
 			}
+			provided[fieldName] = struct{}{}
 			continue
 		}
 		fields := c.orderedStructFields(structType)
@@ -928,10 +1500,24 @@ func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, exp
 		}
 		field := fields[positional]
 		got := c.typeOfExpr(scope, item.Value, field.Type)
-		if !typeinfo.Assignable(field.Type, got) {
-			c.reportTypeMismatch(item.Value.Loc(), field.Type, got)
+		if !c.checkAssignable(item.Value.Loc(), field.Type, got) {
 		}
+		provided[field.Name] = struct{}{}
 		positional++
+	}
+	for _, field := range c.orderedStructFields(structType) {
+		if field == nil || field.HasDefault {
+			continue
+		}
+		if _, ok := provided[field.Name]; ok {
+			continue
+		}
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("missing required field %q in composite literal", field.Name)).
+				WithCode(diagnostics.ErrMissingField).
+				WithPrimaryLabel(&loc, "provide a value for this field or give it a default"),
+		)
 	}
 	c.info.BindNode(expr, expected)
 	return expected
@@ -1056,12 +1642,171 @@ func (c *checker) funcResultType(mod *context.Module, fn *ast.FuncDecl) typeinfo
 	return c.typeFromSyntax(mod, fn.Result)
 }
 
+func (c *checker) checkConstructorDecl(fn *ast.FuncDecl, recvType typeinfo.Type) {
+	if c == nil || fn == nil {
+		return
+	}
+	if len(fn.Params) > 0 {
+		loc := fn.Name.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("constructors cannot declare parameters").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "new instances call the constructor implicitly with no arguments"),
+		)
+	}
+	if !c.isExactLifecycleReceiver(recvType, fn.Name.Text(), true) {
+		loc := fn.Receiver.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("constructor receiver must be exactly `*mut Type`").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "constructors initialize only their exact owning type in place"),
+		)
+	}
+	if result := c.funcResultType(c.mod, fn); !typeinfo.IsBuiltinNamed(result, "void") {
+		loc := fn.Name.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("constructors cannot return a value").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "the receiver is initialized in place"),
+		)
+	}
+}
+
+func (c *checker) checkDestructorDecl(fn *ast.FuncDecl, recvType typeinfo.Type) {
+	if c == nil || fn == nil {
+		return
+	}
+	if len(fn.Params) > 0 {
+		loc := fn.Name.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("destructors cannot declare parameters").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "destructors are invoked automatically with no arguments"),
+		)
+	}
+	if !c.isExactLifecycleReceiver(recvType, fn.Name.Text(), false) {
+		loc := fn.Receiver.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("destructor receiver must be exactly `*own Type`").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "destructors consume only their exact owning type"),
+		)
+	}
+	if result := c.funcResultType(c.mod, fn); !typeinfo.IsBuiltinNamed(result, "void") {
+		loc := fn.Name.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("destructors cannot return a value").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "destructors perform cleanup only"),
+		)
+	}
+}
+
+func (c *checker) isExactLifecycleReceiver(recvType typeinfo.Type, typeName string, constructor bool) bool {
+	ptr, ok := recvType.(*typeinfo.PointerType)
+	if !ok || ptr == nil || ptr.IsRaw {
+		return false
+	}
+	if constructor {
+		if !ptr.IsMut || ptr.IsOwn {
+			return false
+		}
+	} else {
+		if !ptr.IsOwn || ptr.IsMut {
+			return false
+		}
+	}
+	named, ok := ptr.Inner.(*typeinfo.NamedType)
+	if !ok || named == nil || named.Decl == nil {
+		return false
+	}
+	if named.Name != typeName {
+		return false
+	}
+	if c != nil && c.mod != nil && named.ModuleKey != "" && named.ModuleKey != c.mod.Key {
+		return false
+	}
+	return true
+}
+
+func (c *checker) lookupConstructorType(named *typeinfo.NamedType) *typeinfo.FuncType {
+	if c == nil || named == nil {
+		return nil
+	}
+	owner := c.findModuleForType(named)
+	if owner == nil || owner.MethodSets == nil {
+		return nil
+	}
+	methods := owner.MethodSets["*mut "+named.Name]
+	if methods == nil {
+		return nil
+	}
+	sym := methods[named.Name]
+	if sym == nil {
+		return nil
+	}
+	fn, ok := sym.Node.(*ast.FuncDecl)
+	if !ok || !fn.IsConstructor {
+		return nil
+	}
+	return c.funcType(owner, fn)
+}
+
+func (c *checker) isExplicitEnumCast(target, source typeinfo.Type) bool {
+	if target == nil || source == nil {
+		return false
+	}
+	targetBase := c.underlying(target)
+	sourceBase := c.underlying(source)
+	_, targetIsNumeric := targetBase.(*typeinfo.BuiltinType)
+	_, sourceIsNumeric := sourceBase.(*typeinfo.BuiltinType)
+	_, targetIsEnum := targetBase.(*typeinfo.EnumType)
+	_, sourceIsEnum := sourceBase.(*typeinfo.EnumType)
+	_, targetIsError := targetBase.(*typeinfo.ErrorSetType)
+	_, sourceIsError := sourceBase.(*typeinfo.ErrorSetType)
+	if targetIsNumeric && (sourceIsEnum || sourceIsError) {
+		return true
+	}
+	if sourceIsNumeric && (targetIsEnum || targetIsError) {
+		return true
+	}
+	return false
+}
+
+func (c *checker) isExplicitStringCast(target, source typeinfo.Type) bool {
+	if c.isStringType(target) && (c.isByteSliceType(source) || c.isCharSliceType(source) || typeinfo.IsNumeric(source)) {
+		return true
+	}
+	if c.isStringType(source) && (c.isByteSliceType(target) || c.isCharSliceType(target)) {
+		return true
+	}
+	return false
+}
+
+func (c *checker) isStringType(typ typeinfo.Type) bool {
+	_, ok := c.underlying(typ).(*typeinfo.StringType)
+	return ok
+}
+
+func (c *checker) isByteSliceType(typ typeinfo.Type) bool {
+	sl, ok := c.underlying(typ).(*typeinfo.SliceType)
+	return ok && typeinfo.IsBuiltinNamed(sl.Inner, "u8")
+}
+
+func (c *checker) isCharSliceType(typ typeinfo.Type) bool {
+	sl, ok := c.underlying(typ).(*typeinfo.SliceType)
+	return ok && typeinfo.IsBuiltinNamed(sl.Inner, "char")
+}
+
 func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinfo.Type {
 	switch t := expr.(type) {
 	case nil:
 		return nil
 	case *ast.NamedType:
 		if len(t.Path) == 1 && tokens.IsBuiltinType(t.Path[0]) {
+			if t.Path[0] == "str" {
+				return &typeinfo.StringType{}
+			}
 			return &typeinfo.BuiltinType{Name: t.Path[0]}
 		}
 		resolution := c.lookupTypeResolution(mod, t)
@@ -1075,13 +1820,19 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		decl, _ := resolution.Symbol.Node.(*ast.TypeDecl)
 		return &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}
 	case *ast.PointerType:
-		return &typeinfo.PointerType{IsOwn: t.IsOwn, IsRaw: t.IsRaw, IsMut: t.IsMut, Inner: c.typeFromSyntax(mod, t.Inner)}
+		inner := c.typeFromSyntax(mod, t.Inner)
+		if t.IsRaw && (t.Inner == nil || typeinfo.IsBuiltinNamed(inner, "void")) {
+			inner = nil
+		}
+		return &typeinfo.PointerType{IsOwn: t.IsOwn, IsRaw: t.IsRaw, IsMut: t.IsMut, Inner: inner}
 	case *ast.OptionalType:
 		return &typeinfo.OptionalType{Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.ErrorUnionType:
 		return &typeinfo.ErrorUnionType{Error: c.typeFromSyntax(mod, t.Error), Value: c.typeFromSyntax(mod, t.Value)}
 	case *ast.ArrayType:
 		return &typeinfo.ArrayType{Inner: c.typeFromSyntax(mod, t.Inner), Len: c.arrayLength(t.Size)}
+	case *ast.SliceType:
+		return &typeinfo.SliceType{Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.TupleType:
 		elems := make([]typeinfo.Type, 0, len(t.Elems))
 		for _, elem := range t.Elems {
@@ -1098,7 +1849,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				continue
 			}
 			fieldName := field.Name.Text()
-			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type)}
+			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type), HasDefault: field.Default != nil}
 			fields[fieldName] = structField
 			orderedFields = append(orderedFields, structField)
 		}
@@ -1107,7 +1858,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				continue
 			}
 			fieldName := field.Name.Text()
-			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type)}
+			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type), HasDefault: field.Default != nil}
 			staticFields[fieldName] = structField
 			orderedStaticFields = append(orderedStaticFields, structField)
 		}
@@ -1115,25 +1866,29 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.EnumType:
 		variants := make(map[string]struct{}, len(t.Variants))
 		orderedVariants := make([]string, 0, len(t.Variants))
+		variantOrdinals := make(map[string]int, len(t.Variants))
 		for _, variant := range t.Variants {
 			if variant != nil {
 				name := variant.Name.Text()
 				variants[name] = struct{}{}
+				variantOrdinals[name] = len(orderedVariants)
 				orderedVariants = append(orderedVariants, name)
 			}
 		}
-		return &typeinfo.EnumType{Variants: variants, OrderedVariants: orderedVariants}
+		return &typeinfo.EnumType{Variants: variants, OrderedVariants: orderedVariants, VariantOrdinals: variantOrdinals}
 	case *ast.ErrorType:
 		members := make(map[string]struct{}, len(t.Members))
 		orderedMembers := make([]string, 0, len(t.Members))
+		memberOrdinals := make(map[string]int, len(t.Members))
 		for _, member := range t.Members {
 			if member != nil {
 				name := member.Name.Text()
 				members[name] = struct{}{}
+				memberOrdinals[name] = len(orderedMembers)
 				orderedMembers = append(orderedMembers, name)
 			}
 		}
-		return &typeinfo.ErrorSetType{Members: members, OrderedMembers: orderedMembers}
+		return &typeinfo.ErrorSetType{Members: members, OrderedMembers: orderedMembers, MemberOrdinals: memberOrdinals}
 	case *ast.UnionType:
 		members := make([]typeinfo.Type, 0, len(t.Members))
 		for _, member := range t.Members {
@@ -1153,7 +1908,11 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				params = append(params, c.typeFromSyntax(mod, param.Type))
 				comptimeParams = append(comptimeParams, param.IsComptime)
 			}
-			fnType := &typeinfo.FuncType{Params: params, ComptimeParams: comptimeParams, Result: c.typeFromSyntax(mod, method.Result)}
+			result := c.typeFromSyntax(mod, method.Result)
+			if result == nil {
+				result = &typeinfo.BuiltinType{Name: "void"}
+			}
+			fnType := &typeinfo.FuncType{Params: params, ComptimeParams: comptimeParams, Result: result}
 			name := method.Name.Text()
 			methods[name] = fnType
 			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Type: fnType})
@@ -1162,6 +1921,51 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	default:
 		return typeinfo.UnknownType{}
 	}
+}
+
+func (c *checker) selectedUnionMemberTarget(mod *context.Module, expr ast.TypeExpr) (typeinfo.Type, typeinfo.Type, bool) {
+	named, ok := expr.(*ast.NamedType)
+	if !ok || named == nil {
+		return nil, nil, false
+	}
+	resolution := c.lookupTypeResolution(mod, named)
+	if resolution == nil || resolution.Symbol == nil || len(resolution.Remaining) != 1 {
+		return nil, nil, false
+	}
+	decl, ok := resolution.Symbol.Node.(*ast.TypeDecl)
+	if !ok || decl == nil {
+		return nil, nil, false
+	}
+	unionDecl, ok := decl.Type.(*ast.UnionType)
+	if !ok || unionDecl == nil {
+		return nil, nil, false
+	}
+	owner := c.findModuleForSymbol(resolution.Symbol)
+	if owner == nil {
+		owner = mod
+	}
+	memberName := resolution.Remaining[0]
+	memberType, ok := c.lookupNamedUnionMemberType(owner, unionDecl, memberName)
+	if !ok {
+		return nil, nil, false
+	}
+	return &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}, memberType, true
+}
+
+func (c *checker) lookupNamedUnionMemberType(mod *context.Module, unionDecl *ast.UnionType, name string) (typeinfo.Type, bool) {
+	if unionDecl == nil {
+		return nil, false
+	}
+	for _, member := range unionDecl.Members {
+		named, ok := member.(*ast.NamedType)
+		if !ok || named == nil || len(named.Path) != 1 {
+			continue
+		}
+		if named.Path[0] == name {
+			return c.typeFromSyntax(mod, member), true
+		}
+	}
+	return nil, false
 }
 
 func (c *checker) arrayLength(expr ast.Expr) int64 {
@@ -1463,6 +2267,9 @@ func (c *checker) findTypeDecl(mod *context.Module, name string) *ast.TypeDecl {
 }
 
 func (c *checker) requireBool(loc source.Location, typ typeinfo.Type) bool {
+	if typeinfo.IsInvalid(typ) || typeinfo.IsUnknown(typ) {
+		return false
+	}
 	if typeinfo.IsBuiltinNamed(typ, "bool") {
 		return true
 	}
@@ -1548,7 +2355,7 @@ func (c *checker) isConstIdent(scope *valueScope, ident *ast.Ident) bool {
 	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 		return false
 	}
-	if res.Symbol.Kind != symbols.SymbolConst {
+	if res.Symbol.Kind != symbols.SymbolConst && res.Symbol.Kind != symbols.SymbolVariant && res.Symbol.Kind != symbols.SymbolError {
 		return false
 	}
 	if res.Symbol.Node == nil {
@@ -1571,6 +2378,207 @@ func (c *checker) reportTypeMismatch(loc source.Location, expected, got typeinfo
 			WithCode(diagnostics.ErrTypeMismatch).
 			WithPrimaryLabel(&loc, "type mismatch"),
 	)
+}
+
+func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Type) bool {
+	if c.assignable(expected, got) {
+		return true
+	}
+	if members, matches := c.unionAssignableMembers(expected, got); members != nil {
+		if matches == 0 {
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("type %s is not a valid member of %s", got.String(), expected.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, "value does not match any union member"),
+			)
+			return false
+		}
+		if matches > 1 {
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("type %s matches multiple members of %s", got.String(), expected.String())).
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "add an explicit cast to choose the target union member"),
+			)
+			return false
+		}
+		_ = members
+	}
+	if iface, ok := c.underlying(expected).(*typeinfo.InterfaceType); ok {
+		c.reportInterfaceMismatch(loc, expected, got, iface)
+		return false
+	}
+	c.reportTypeMismatch(loc, expected, got)
+	return false
+}
+
+func (c *checker) assignable(expected, got typeinfo.Type) bool {
+	if typeinfo.Assignable(expected, got) {
+		return true
+	}
+	if iface, ok := c.underlying(expected).(*typeinfo.InterfaceType); ok && c.implementsInterface(got, iface) {
+		return true
+	}
+	_, matches := c.unionAssignableMembers(expected, got)
+	return matches == 1
+}
+
+func (c *checker) implementsInterface(src typeinfo.Type, iface *typeinfo.InterfaceType) bool {
+	if iface == nil || src == nil {
+		return false
+	}
+	for _, method := range iface.OrderedMethods {
+		if method == nil || method.Type == nil {
+			continue
+		}
+		_, got := c.lookupMethod(src, method.Name, true, false)
+		if got == nil || !c.interfaceMethodCompatible(method.Type, got) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typeinfo.Type, iface *typeinfo.InterfaceType) {
+	if iface == nil || got == nil {
+		c.reportTypeMismatch(loc, expected, got)
+		return
+	}
+	expectedName := expected.String()
+	gotName := got.String()
+	if srcIface, ok := c.underlying(got).(*typeinfo.InterfaceType); ok {
+		for _, method := range iface.OrderedMethods {
+			if method == nil || method.Type == nil {
+				continue
+			}
+			gotMethod := srcIface.Methods[method.Name]
+			if gotMethod == nil {
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Name, method.Type))).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(&loc, "this interface is missing a required method"),
+				)
+				return
+			}
+			if !c.interfaceMethodCompatible(method.Type, gotMethod) {
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: method %s has incompatible signature", gotName, expectedName, method.Name)).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Name, method.Type), interfaceMethodString(method.Name, gotMethod))),
+				)
+				return
+			}
+		}
+		c.reportTypeMismatch(loc, expected, got)
+		return
+	}
+	for _, method := range iface.OrderedMethods {
+		if method == nil || method.Type == nil {
+			continue
+		}
+		_, gotMethod := c.lookupMethod(got, method.Name, true, false)
+		if gotMethod == nil {
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Name, method.Type))).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, "this type is missing a required method"),
+			)
+			return
+		}
+		if !c.interfaceMethodCompatible(method.Type, gotMethod) {
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: method %s has incompatible signature", gotName, expectedName, method.Name)).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Name, method.Type), interfaceMethodString(method.Name, gotMethod))),
+			)
+			return
+		}
+	}
+	c.reportTypeMismatch(loc, expected, got)
+}
+
+func interfaceMethodString(name string, fn *typeinfo.FuncType) string {
+	if fn == nil {
+		return name + "()"
+	}
+	params := make([]string, 0, len(fn.Params))
+	for _, param := range fn.Params {
+		params = append(params, param.String())
+	}
+	if fn.Result == nil || typeinfo.IsBuiltinNamed(fn.Result, "void") {
+		return fmt.Sprintf("%s(%s)", name, strings.Join(params, ", "))
+	}
+	return fmt.Sprintf("%s(%s) %s", name, strings.Join(params, ", "), fn.Result.String())
+}
+
+func (c *checker) interfaceSatisfies(src, target *typeinfo.InterfaceType) bool {
+	if src == nil || target == nil {
+		return false
+	}
+	for _, method := range target.OrderedMethods {
+		if method == nil || method.Type == nil {
+			continue
+		}
+		got := src.Methods[method.Name]
+		if got == nil || !c.interfaceMethodCompatible(method.Type, got) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *checker) reportUnsupportedTypeTest(loc source.Location, msg, help string) (bool, bool) {
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError(msg).
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(&loc, "this type test needs runtime type information").
+			WithHelp(help),
+	)
+	return false, false
+}
+
+func (c *checker) interfaceMethodCompatible(expected, got *typeinfo.FuncType) bool {
+	if expected == nil || got == nil {
+		return false
+	}
+	if expected.IsUnsafe != got.IsUnsafe {
+		return false
+	}
+	if len(expected.Params) != len(got.Params) || len(expected.ComptimeParams) != len(got.ComptimeParams) {
+		return false
+	}
+	for i := range expected.Params {
+		if !typeinfo.Equal(expected.Params[i], got.Params[i]) {
+			return false
+		}
+	}
+	for i := range expected.ComptimeParams {
+		if expected.ComptimeParams[i] != got.ComptimeParams[i] {
+			return false
+		}
+	}
+	return typeinfo.Equal(expected.Result, got.Result)
+}
+
+func (c *checker) unionAssignableMembers(expected, got typeinfo.Type) ([]typeinfo.Type, int) {
+	unionType, ok := c.underlying(expected).(*typeinfo.UnionType)
+	if !ok || unionType == nil {
+		return nil, 0
+	}
+	exactMatches := 0
+	assignableMatches := 0
+	for _, member := range unionType.Members {
+		if typeinfo.Equal(member, got) {
+			exactMatches++
+			continue
+		}
+		if typeinfo.Assignable(member, got) {
+			assignableMatches++
+		}
+	}
+	if exactMatches > 0 {
+		return unionType.Members, exactMatches
+	}
+	return unionType.Members, assignableMatches
 }
 
 func (c *checker) reportWrongArgCount(loc source.Location, expected, got int) {
@@ -1617,10 +2625,6 @@ func (c *checker) forBindingTypes(iterable typeinfo.Type) (typeinfo.Type, typein
 	switch t := iterable.(type) {
 	case *typeinfo.ArrayType:
 		return indexType, t.Inner
-	case *typeinfo.BuiltinType:
-		if t.Name == "string" {
-			return indexType, &typeinfo.BuiltinType{Name: "char"}
-		}
 	}
 	return indexType, typeinfo.UnknownType{}
 }

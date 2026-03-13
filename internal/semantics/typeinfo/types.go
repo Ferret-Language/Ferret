@@ -34,6 +34,10 @@ type BuiltinType struct {
 
 func (t *BuiltinType) String() string { return t.Name }
 
+type StringType struct{}
+
+func (*StringType) String() string { return "str" }
+
 type NamedType struct {
 	ModuleKey string
 	Name      string
@@ -48,6 +52,10 @@ func (t *NamedType) String() string {
 		return t.Name
 	}
 	return t.ModuleKey + "::" + t.Name
+}
+
+func NamedTypeIsMove(t *NamedType) bool {
+	return t != nil && t.Decl != nil && t.Decl.IsMove
 }
 
 type PointerType struct {
@@ -71,6 +79,9 @@ func (t *PointerType) String() string {
 	}
 	if t.IsMut {
 		suffix += "mut "
+	}
+	if t.IsRaw && t.Inner == nil {
+		return strings.TrimSpace(prefix + suffix)
 	}
 	return prefix + suffix + typeString(t.Inner)
 }
@@ -105,6 +116,17 @@ func (t *ArrayType) String() string {
 	return fmt.Sprintf("[%d]%s", t.Len, typeString(t.Inner))
 }
 
+type SliceType struct {
+	Inner Type
+}
+
+func (t *SliceType) String() string {
+	if t == nil {
+		return "[]<nil>"
+	}
+	return "[]" + typeString(t.Inner)
+}
+
 type TupleType struct {
 	Elems []Type
 }
@@ -118,8 +140,9 @@ func (t *TupleType) String() string {
 }
 
 type StructField struct {
-	Name string
-	Type Type
+	Name       string
+	Type       Type
+	HasDefault bool
 }
 
 type StructType struct {
@@ -134,6 +157,7 @@ func (t *StructType) String() string { return "struct" }
 type EnumType struct {
 	Variants        map[string]struct{}
 	OrderedVariants []string
+	VariantOrdinals map[string]int
 }
 
 func (t *EnumType) String() string { return "enum" }
@@ -141,6 +165,7 @@ func (t *EnumType) String() string { return "enum" }
 type ErrorSetType struct {
 	Members        map[string]struct{}
 	OrderedMembers []string
+	MemberOrdinals map[string]int
 }
 
 func (t *ErrorSetType) String() string { return "error" }
@@ -163,6 +188,10 @@ type FuncType struct {
 	Params         []Type
 	ComptimeParams []bool
 	Result         Type
+	// ImplicitReceiver is set when a method call is resolved against a pointer
+	// receiver (*T or *mut T) but the call-site expression is a plain value.
+	// MIR lowering uses this to emit an automatic address-of for the receiver.
+	ImplicitReceiver Type
 }
 
 func (t *FuncType) String() string {
@@ -203,6 +232,10 @@ func IsUnknown(t Type) bool {
 }
 
 func IsBuiltinNamed(t Type, name string) bool {
+	if name == "str" {
+		_, ok := t.(*StringType)
+		return ok
+	}
 	b, ok := t.(*BuiltinType)
 	return ok && b.Name == name
 }
@@ -233,6 +266,9 @@ func Equal(a, b Type) bool {
 	case *BuiltinType:
 		bt, ok := b.(*BuiltinType)
 		return ok && at.Name == bt.Name
+	case *StringType:
+		_, ok := b.(*StringType)
+		return ok
 	case *NamedType:
 		bt, ok := b.(*NamedType)
 		return ok && at.ModuleKey == bt.ModuleKey && at.Name == bt.Name
@@ -248,6 +284,9 @@ func Equal(a, b Type) bool {
 	case *ArrayType:
 		bt, ok := b.(*ArrayType)
 		return ok && at.Len == bt.Len && Equal(at.Inner, bt.Inner)
+	case *SliceType:
+		bt, ok := b.(*SliceType)
+		return ok && Equal(at.Inner, bt.Inner)
 	case *TupleType:
 		bt, ok := b.(*TupleType)
 		if !ok || len(at.Elems) != len(bt.Elems) {

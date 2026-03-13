@@ -18,6 +18,7 @@ type Module struct {
 
 type TypeDecl struct {
 	Name       string
+	IsMove     bool
 	Named      *typeinfo.NamedType
 	Underlying typeinfo.Type
 	Struct     *StructTypeDecl

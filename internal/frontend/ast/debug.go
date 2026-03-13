@@ -38,11 +38,11 @@ func DebugModule(mod *Module) map[string]any {
 func debugDecl(decl Decl) any {
 	switch d := decl.(type) {
 	case *LetDecl:
-		return map[string]any{"kind": "LetDecl", "name": debugExpr(d.Name), "is_mut": d.IsMut, "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
+		return map[string]any{"kind": "LetDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "is_mut": d.IsMut, "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
 	case *ConstDecl:
-		return map[string]any{"kind": "ConstDecl", "name": debugExpr(d.Name), "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
+		return map[string]any{"kind": "ConstDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
 	case *TypeDecl:
-		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "type": debugType(d.Type), "loc": debugLoc(d.Location)}
+		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "is_move": d.IsMove, "type": debugType(d.Type), "loc": debugLoc(d.Location)}
 	case *FuncDecl:
 		params := make([]any, 0, len(d.Params))
 		for _, param := range d.Params {
@@ -125,7 +125,13 @@ func debugStmt(stmt Stmt) any {
 				arms = append(arms, nil)
 				continue
 			}
-			arms = append(arms, map[string]any{"pattern": debugExpr(arm.Pattern), "wildcard": arm.Wildcard, "body": debugStmt(arm.Body), "loc": debugLoc(arm.Location)})
+			arms = append(arms, map[string]any{
+				"pattern":      debugExpr(arm.Pattern),
+				"type_pattern": debugType(arm.TypePattern),
+				"wildcard":     arm.Wildcard,
+				"body":         debugStmt(arm.Body),
+				"loc":          debugLoc(arm.Location),
+			})
 		}
 		return map[string]any{"kind": "MatchStmt", "value": debugExpr(s.Value), "arms": arms, "loc": debugLoc(s.Location)}
 	case *WhileStmt:
@@ -187,6 +193,24 @@ func debugExpr(expr Expr) any {
 		return map[string]any{"kind": "SelectorExpr", "left": debugExpr(e.Left), "name": debugExpr(e.Name), "loc": debugLoc(e.Location)}
 	case *CastExpr:
 		return map[string]any{"kind": "CastExpr", "left": debugExpr(e.Left), "type": debugType(e.Type), "loc": debugLoc(e.Location)}
+	case *IsExpr:
+		return map[string]any{"kind": "IsExpr", "left": debugExpr(e.Left), "type": debugType(e.Type), "loc": debugLoc(e.Location)}
+	case *MatchExpr:
+		arms := make([]any, 0, len(e.Arms))
+		for _, arm := range e.Arms {
+			if arm == nil {
+				arms = append(arms, nil)
+				continue
+			}
+			arms = append(arms, map[string]any{
+				"pattern":      debugExpr(arm.Pattern),
+				"type_pattern": debugType(arm.TypePattern),
+				"wildcard":     arm.Wildcard,
+				"body":         debugStmt(arm.Body),
+				"loc":          debugLoc(arm.Location),
+			})
+		}
+		return map[string]any{"kind": "MatchExpr", "value": debugExpr(e.Value), "arms": arms, "loc": debugLoc(e.Location)}
 	case *CatchExpr:
 		return map[string]any{"kind": "CatchExpr", "left": debugExpr(e.Left), "fallback": debugExpr(e.Fallback), "payload": debugExpr(e.Payload), "handler": debugStmt(e.Handler), "loc": debugLoc(e.Location)}
 	case *CompositeLit:
@@ -195,6 +219,8 @@ func debugExpr(expr Expr) any {
 			items = append(items, map[string]any{"name": debugExpr(item.Name), "value": debugExpr(item.Value)})
 		}
 		return map[string]any{"kind": "CompositeLit", "items": items, "loc": debugLoc(e.Location)}
+	case *IndexExpr:
+		return map[string]any{"kind": "IndexExpr", "left": debugExpr(e.Left), "index": debugExpr(e.Index), "loc": debugLoc(e.Location)}
 	default:
 		return map[string]any{"kind": "<unknown-expr>"}
 	}

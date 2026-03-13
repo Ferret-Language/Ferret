@@ -41,7 +41,11 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 		case tokens.LPAREN:
 			left = p.parseCall(left)
 		case tokens.LBRACK:
-			left = p.parseCallWithTypeArgs(left)
+			if p.hasGenericCallAhead() {
+				left = p.parseCallWithTypeArgs(left)
+			} else {
+				left = p.parseIndexExpr(left)
+			}
 		case tokens.DOT:
 			left = p.parseSelector(left)
 		case tokens.BB:
@@ -49,6 +53,8 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 			left = &ast.PostfixExpr{Left: left, Op: tok.Literal, Location: p.makeExprLoc(*left.Loc().Start)}
 		case tokens.AS:
 			left = p.parseCast(left)
+		case tokens.IS:
+			left = p.parseIs(left)
 		default:
 			return left
 		}
@@ -81,6 +87,10 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return expr
 	case tokens.DOT:
 		return p.parseCompositeLit()
+	case tokens.LBRACK:
+		return p.parseArrayLit()
+	case tokens.MATCH:
+		return p.parseMatchExpr()
 	case tokens.AMP:
 		p.advance()
 		op := "&"
@@ -106,6 +116,21 @@ func (p *Parser) parsePrefix() ast.Expr {
 		p.advance()
 		return &ast.BadExpr{Location: p.locFrom(start)}
 	}
+}
+
+// parseArrayLit parses [expr, expr, ...] as a positional CompositeLit.
+func (p *Parser) parseArrayLit() ast.Expr {
+	start := p.expect(tokens.LBRACK, "expected '['").Start
+	items := make([]ast.CompositeItem, 0)
+	for !p.at(tokens.RBRACK) && !p.at(tokens.EOF) {
+		value := p.parseExpr(precLowest)
+		items = append(items, ast.CompositeItem{Value: value})
+		if !p.consumeExprListSeparator(tokens.RBRACK, "array literal element") {
+			break
+		}
+	}
+	p.expect(tokens.RBRACK, "expected ']'")
+	return &ast.CompositeLit{Items: items, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseCompositeLit() ast.Expr {
@@ -164,6 +189,14 @@ func (p *Parser) parseCall(left ast.Expr) ast.Expr {
 	return &ast.CallExpr{Callee: left, Args: args, Location: p.makeExprLoc(start)}
 }
 
+func (p *Parser) parseIndexExpr(left ast.Expr) ast.Expr {
+	start := *left.Loc().Start
+	p.expect(tokens.LBRACK, "expected '[' for index expression")
+	index := p.parseExpr(precLowest)
+	p.expect(tokens.RBRACK, "expected ']' after index")
+	return &ast.IndexExpr{Left: left, Index: index, Location: p.makeExprLoc(start)}
+}
+
 func (p *Parser) parseCallWithTypeArgs(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
 	p.expect(tokens.LBRACK, "expected '['")
@@ -212,6 +245,64 @@ func (p *Parser) parseCast(left ast.Expr) ast.Expr {
 	return &ast.CastExpr{Left: left, Type: typ, Location: p.makeExprLoc(start)}
 }
 
+func (p *Parser) parseIs(left ast.Expr) ast.Expr {
+	start := *left.Loc().Start
+	p.expect(tokens.IS, "expected 'is'")
+	typ := p.parseType()
+	return &ast.IsExpr{Left: left, Type: typ, Location: p.makeExprLoc(start)}
+}
+
+func (p *Parser) parseMatchExpr() ast.Expr {
+	start := p.advance().Start
+	value := p.parseExpr(precLowest)
+	arms := p.parseMatchArms()
+	return &ast.MatchExpr{Value: value, Arms: arms, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseMatchArms() []*ast.MatchArm {
+	p.expect(tokens.LBRACE, "expected '{'")
+	arms := make([]*ast.MatchArm, 0)
+	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		armStart := p.current().Start
+		var pattern ast.Expr
+		var typePattern ast.TypeExpr
+		wildcard := false
+		if p.at(tokens.IDENT) && p.current().Literal == "_" {
+			wildcard = true
+			p.advance()
+		} else if p.match(tokens.IS) {
+			typePattern = p.parseType()
+			if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.FATARROW {
+				bindTok := p.current()
+				p.errorAt(p.locOfToken(bindTok), "typed match arms no longer support a bound name; use the narrowed matched value directly")
+				p.advance()
+			}
+		} else {
+			pattern = p.parseExprUntil(precLowest, tokens.FATARROW)
+		}
+		p.expect(tokens.FATARROW, "expected '=>' after match pattern")
+		var body *ast.BlockStmt
+		if p.at(tokens.LBRACE) {
+			body = p.parseBlock()
+		} else {
+			bodyExpr := p.parseExpr(precLowest)
+			body = &ast.BlockStmt{
+				Stmts:    []ast.Stmt{&ast.ExprStmt{Value: bodyExpr, Location: bodyExpr.Loc()}},
+				Location: bodyExpr.Loc(),
+			}
+		}
+		arms = append(arms, &ast.MatchArm{
+			Pattern:     pattern,
+			TypePattern: typePattern,
+			Wildcard:    wildcard,
+			Body:        body,
+			Location:    p.locFrom(armStart),
+		})
+	}
+	p.expect(tokens.RBRACE, "expected '}'")
+	return arms
+}
+
 func (p *Parser) currentPrecedence() int {
 	return precedence(p.current().Kind)
 }
@@ -238,6 +329,8 @@ func precedence(kind tokens.Kind) int {
 		return precPostfix
 	case tokens.AS:
 		return precPostfix
+	case tokens.IS:
+		return precCompare
 	default:
 		return precLowest
 	}
@@ -247,7 +340,7 @@ func (p *Parser) startsExpr() bool {
 	switch p.current().Kind {
 	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.NONE,
 		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
-		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME:
+		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME, tokens.UNSAFE, tokens.MATCH:
 		return true
 	default:
 		return false

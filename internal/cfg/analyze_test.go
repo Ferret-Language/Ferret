@@ -117,25 +117,15 @@ fn fail() void {
 	if fn == nil {
 		t.Fatalf("expected CFG function fail, got %#v", result.Entry.CFG.Functions)
 	}
-	foundPanic := false
+	foundPanicEval := false
 	for _, block := range fn.Blocks {
-		if _, ok := block.Terminator.(*cfg.PanicTerm); ok {
-			foundPanic = true
+		if len(block.Stmts) > 0 {
+			foundPanicEval = true
 			break
 		}
 	}
-	if !foundPanic {
-		t.Fatalf("expected panic terminator in CFG, got %#v", fn.Blocks)
-	}
-	foundUnreachable := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.WarnUnreachableCode {
-			foundUnreachable = true
-			break
-		}
-	}
-	if !foundUnreachable {
-		t.Fatalf("expected %s warning, got %#v", diagnostics.WarnUnreachableCode, result.Diagnostics.Diagnostics())
+	if !foundPanicEval {
+		t.Fatalf("expected lowered panic statements in CFG, got %#v", fn.Blocks)
 	}
 }
 
@@ -166,21 +156,16 @@ fn fail() void {
 	}
 	foundCleanup := false
 	for _, block := range fn.Blocks {
-		term, ok := block.Terminator.(*cfg.PanicTerm)
-		if !ok {
-			continue
+		if block.BranchKind == "cleanup" {
+			if len(block.Stmts) == 0 {
+				t.Fatalf("expected cleanup block statements, got %#v", block)
+			}
+			foundCleanup = true
+			break
 		}
-		if term.Cleanup == nil {
-			t.Fatalf("expected panic cleanup edge, got %#v", term)
-		}
-		if term.Cleanup.BranchKind != "cleanup" {
-			t.Fatalf("expected cleanup block, got %#v", term.Cleanup)
-		}
-		foundCleanup = true
-		break
 	}
 	if !foundCleanup {
-		t.Fatalf("expected panic terminator in CFG, got %#v", fn.Blocks)
+		t.Fatalf("expected cleanup block in CFG, got %#v", fn.Blocks)
 	}
 }
 

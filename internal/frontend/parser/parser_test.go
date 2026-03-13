@@ -33,7 +33,6 @@ type Point struct {
     y i32 = 0
     static origin Point = .{}
 }
-
 fn (p Point) len2() i32 {
     if p == .{ .x = 1, .y = 2 } {
         return 1
@@ -66,6 +65,55 @@ fn (p Point) len2() i32 {
 	}
 	if fn.Receiver == nil || fn.Receiver.Name.Text() != "p" {
 		t.Fatalf("expected receiver p, got %#v", fn.Receiver)
+	}
+}
+
+func TestParseMoveTypeDecl(t *testing.T) {
+	src := `
+type Handle move enum {
+    stdin,
+    stdout,
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	if len(mod.Decls) != 1 {
+		t.Fatalf("expected 1 decl, got %d", len(mod.Decls))
+	}
+	typ, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok {
+		t.Fatalf("expected type decl, got %T", mod.Decls[0])
+	}
+	if !typ.IsMove {
+		t.Fatal("expected move-marked type declaration")
+	}
+	if _, ok := typ.Type.(*ast.EnumType); !ok {
+		t.Fatalf("expected enum type, got %T", typ.Type)
+	}
+}
+
+func TestParseIfAttributeOnTypeDecl(t *testing.T) {
+	src := `
+#[if(target_os, "linux")]
+type Handle move enum {
+    stdin,
+    stdout,
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	typ, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok {
+		t.Fatalf("expected type decl, got %T", mod.Decls[0])
+	}
+	if len(typ.Attrs) != 1 || typ.Attrs[0].Name != "if" {
+		t.Fatalf("expected #[if(...)] attr on type decl, got %#v", typ.Attrs)
 	}
 }
 
@@ -670,6 +718,93 @@ fn run(path string) i32 {
 	fallbackCatch, ok := ret.Value.(*ast.CatchExpr)
 	if !ok || fallbackCatch.Fallback == nil {
 		t.Fatalf("expected fallback catch expr, got %#v", ret.Value)
+	}
+}
+
+func TestParseIsExpression(t *testing.T) {
+	src := `
+fn run(x i32) bool {
+    return x is i32
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	isExpr, ok := ret.Value.(*ast.IsExpr)
+	if !ok {
+		t.Fatalf("expected is expr, got %T", ret.Value)
+	}
+	left, ok := isExpr.Left.(*ast.Ident)
+	if !ok || left.Text() != "x" {
+		t.Fatalf("expected left ident x, got %#v", isExpr.Left)
+	}
+	target, ok := isExpr.Type.(*ast.NamedType)
+	if !ok || len(target.Path) != 1 || target.Path[0] != "i32" {
+		t.Fatalf("expected target type i32, got %#v", isExpr.Type)
+	}
+}
+
+func TestParseMatchTypeArm(t *testing.T) {
+	src := `
+fn run(value Token) i32 {
+    match value {
+        is i32 => {
+            return value
+        }
+        _ => {
+            return 0
+        }
+    }
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	exprStmt := fn.Body.Stmts[0].(*ast.ExprStmt)
+	matchExpr := exprStmt.Value.(*ast.MatchExpr)
+	arm := matchExpr.Arms[0]
+	if arm.TypePattern == nil {
+		t.Fatalf("expected type pattern arm, got %#v", arm)
+	}
+	target, ok := arm.TypePattern.(*ast.NamedType)
+	if !ok || len(target.Path) != 1 || target.Path[0] != "i32" {
+		t.Fatalf("expected target type i32, got %#v", arm.TypePattern)
+	}
+}
+
+func TestParseMatchExpression(t *testing.T) {
+	src := `
+fn run(value Token) i32 {
+    let out = match value {
+        is i32 => value
+        _ => 0
+    }
+    return out
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	letStmt := fn.Body.Stmts[0].(*ast.LetStmt)
+	matchExpr, ok := letStmt.Value.(*ast.MatchExpr)
+	if !ok {
+		t.Fatalf("expected match expr, got %T", letStmt.Value)
+	}
+	if len(matchExpr.Arms) != 2 {
+		t.Fatalf("expected 2 match arms, got %d", len(matchExpr.Arms))
+	}
+	if matchExpr.Arms[0].Body == nil || len(matchExpr.Arms[0].Body.Stmts) != 1 {
+		t.Fatalf("expected implicit single-expression arm body, got %#v", matchExpr.Arms[0].Body)
 	}
 }
 

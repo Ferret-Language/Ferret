@@ -214,7 +214,7 @@ func accumulateDeferredUses(use, def, locals cfg.NameSet, stmt hir.Stmt) {
 			if arm == nil {
 				continue
 			}
-			if !arm.Wildcard {
+			if arm.TypePattern == nil && !arm.Wildcard {
 				accumulateExprUses(use, def, locals, arm.Pattern)
 			}
 			accumulateDeferredUses(use, def, locals, arm.Body)

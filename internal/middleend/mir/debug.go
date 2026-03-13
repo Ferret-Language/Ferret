@@ -149,12 +149,28 @@ func debugValue(value Value) any {
 		return map[string]any{"kind": "member", "base": debugValue(v.Base), "field_index": v.FieldIndex, "member_name": v.MemberName, "type": typeString(v.Type())}
 	case *CastValue:
 		return map[string]any{"kind": "cast", "left": debugValue(v.Left), "type": typeString(v.Type())}
+	case *TypeTestValue:
+		return map[string]any{"kind": "type_test", "left": debugValue(v.Left), "target": typeString(v.Target), "type": typeString(v.Type())}
 	case *CompositeValue:
 		items := make([]any, 0, len(v.Items))
 		for _, item := range v.Items {
 			items = append(items, map[string]any{"name": item.Name, "value": debugValue(item.Value)})
 		}
 		return map[string]any{"kind": "composite", "items": items, "type": typeString(v.Type())}
+	case *InterfaceValue:
+		methods := make([]any, 0, len(v.Methods))
+		for _, method := range v.Methods {
+			methods = append(methods, map[string]any{"name": method.Name, "path": append([]string(nil), method.Path...)})
+		}
+		return map[string]any{
+			"kind":          "interface",
+			"value":         debugValue(v.Value),
+			"concrete_type": typeString(v.ConcreteType),
+			"methods":       methods,
+			"type":          typeString(v.Type()),
+		}
+	case *IndexValue:
+		return map[string]any{"kind": "index", "base": debugValue(v.Base), "index": debugValue(v.Index), "type": typeString(v.Type())}
 	default:
 		return nil
 	}
@@ -166,6 +182,10 @@ func debugPlace(place Place) any {
 		return map[string]any{"kind": "local", "id": p.LocalID}
 	case *FieldPlace:
 		return map[string]any{"kind": "field", "base": debugPlace(p.Base), "field_index": p.FieldIndex}
+	case *IndexPlace:
+		return map[string]any{"kind": "index_place", "base": debugPlace(p.Base), "index": debugValue(p.Index)}
+	case *DerefPlace:
+		return map[string]any{"kind": "deref_place", "pointer": debugValue(p.Pointer)}
 	default:
 		return nil
 	}

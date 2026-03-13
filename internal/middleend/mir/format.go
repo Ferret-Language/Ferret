@@ -63,7 +63,7 @@ func formatFunction(b *strings.Builder, fn *Function) {
 	if fn.IsUnsafe {
 		b.WriteString("unsafe ")
 	}
-	fmt.Fprintf(b, "fn %s%s", formatReceiver(fn.Receiver), fn.Name)
+	fmt.Fprintf(b, "fn %s", fn.Name)
 	b.WriteByte('(')
 	for i, param := range fn.Params {
 		if i > 0 {
@@ -113,20 +113,16 @@ func formatFunction(b *strings.Builder, fn *Function) {
 	b.WriteString("}\n")
 }
 
-func formatReceiver(param *Param) string {
-	if param == nil {
-		return ""
-	}
-	return fmt.Sprintf("(%s) ", formatParam(param))
-}
-
 func formatParam(param *Param) string {
 	if param == nil {
 		return ""
 	}
 	prefix := ""
+	if param.IsMutable {
+		prefix = "mut "
+	}
 	if param.IsComptime {
-		prefix = "comptime "
+		prefix += "comptime "
 	}
 	return fmt.Sprintf("%s%s %s", prefix, param.Name, renderType(param.Type))
 }
@@ -278,6 +274,8 @@ func formatValue(value Value) string {
 		return fmt.Sprintf("%s.%s", wrapValue(v.Base), v.MemberName)
 	case *CastValue:
 		return fmt.Sprintf("%s as %s", wrapValue(v.Left), renderType(v.Type()))
+	case *TypeTestValue:
+		return fmt.Sprintf("%s is %s", wrapValue(v.Left), renderType(v.Target))
 	case *CompositeValue:
 		parts := make([]string, 0, len(v.Items))
 		for _, item := range v.Items {
@@ -288,6 +286,10 @@ func formatValue(value Value) string {
 			}
 		}
 		return fmt.Sprintf(".{ %s }", strings.Join(parts, ", "))
+	case *InterfaceValue:
+		return fmt.Sprintf("interface(%s)", formatValue(v.Value))
+	case *IndexValue:
+		return fmt.Sprintf("%s[%s]", wrapValue(v.Base), formatValue(v.Index))
 	default:
 		return "<value>"
 	}
@@ -297,10 +299,14 @@ func formatTypeDecl(decl *TypeDecl) string {
 	if decl == nil {
 		return ""
 	}
+	movePrefix := ""
+	if decl.IsMove {
+		movePrefix = " move"
+	}
 	switch {
 	case decl.Struct != nil:
 		var b strings.Builder
-		fmt.Fprintf(&b, "type %s struct {", decl.Name)
+		fmt.Fprintf(&b, "type %s%s struct {", decl.Name, movePrefix)
 		if len(decl.Struct.Fields) > 0 || len(decl.Struct.StaticFields) > 0 {
 			b.WriteByte('\n')
 			for _, field := range decl.Struct.Fields {
@@ -332,7 +338,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 		return b.String()
 	case decl.Interface != nil:
 		var b strings.Builder
-		fmt.Fprintf(&b, "type %s interface {", decl.Name)
+		fmt.Fprintf(&b, "type %s%s interface {", decl.Name, movePrefix)
 		if len(decl.Interface.Methods) > 0 {
 			b.WriteByte('\n')
 			for _, method := range decl.Interface.Methods {
@@ -355,15 +361,15 @@ func formatTypeDecl(decl *TypeDecl) string {
 		b.WriteString(" }")
 		return b.String()
 	case decl.Enum != nil:
-		return fmt.Sprintf("type %s enum { %s }", decl.Name, strings.Join(decl.Enum.Variants, ", "))
+		return fmt.Sprintf("type %s%s enum { %s }", decl.Name, movePrefix, strings.Join(decl.Enum.Variants, ", "))
 	case decl.Union != nil:
 		parts := make([]string, 0, len(decl.Union.Members))
 		for _, member := range decl.Union.Members {
 			parts = append(parts, renderType(member))
 		}
-		return fmt.Sprintf("type %s union { %s }", decl.Name, strings.Join(parts, ", "))
+		return fmt.Sprintf("type %s%s union { %s }", decl.Name, movePrefix, strings.Join(parts, ", "))
 	case decl.Error != nil:
-		return fmt.Sprintf("type %s error { %s }", decl.Name, strings.Join(decl.Error.Members, ", "))
+		return fmt.Sprintf("type %s%s error { %s }", decl.Name, movePrefix, strings.Join(decl.Error.Members, ", "))
 	default:
 		return fmt.Sprintf("type %s %s", decl.Name, renderType(decl.Underlying))
 	}
@@ -400,6 +406,10 @@ func formatPlace(place Place) string {
 		return formatLocalRef(currentFnForFormat, p.LocalID)
 	case *FieldPlace:
 		return fmt.Sprintf("field %s %d", formatPlace(p.Base), p.FieldIndex)
+	case *IndexPlace:
+		return fmt.Sprintf("index %s [%s]", formatPlace(p.Base), formatValue(p.Index))
+	case *DerefPlace:
+		return fmt.Sprintf("deref %s", formatValue(p.Pointer))
 	default:
 		return "<place>"
 	}

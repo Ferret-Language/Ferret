@@ -26,12 +26,22 @@ func (p *Parser) parseType() ast.TypeExpr {
 				ptr.IsMut = true
 				p.advance()
 			default:
+				if ptr.IsRaw {
+					switch p.current().Kind {
+					case tokens.COMMA, tokens.RPAREN, tokens.SEMICOLON, tokens.EOF, tokens.RBRACE, tokens.RBRACK:
+						return ptr
+					}
+				}
 				ptr.Inner = p.parseType()
 				return ptr
 			}
 		}
 	case tokens.LBRACK:
 		p.advance()
+		if p.at(tokens.RBRACK) {
+			p.advance()
+			return &ast.SliceType{Inner: p.parseType(), Location: p.locFrom(start)}
+		}
 		size := p.parseExpr(precLowest)
 		p.expect(tokens.RBRACK, "expected ']' after array size")
 		return &ast.ArrayType{Size: size, Inner: p.parseType(), Location: p.locFrom(start)}
