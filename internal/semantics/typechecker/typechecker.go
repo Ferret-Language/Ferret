@@ -335,10 +335,6 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 				c.info.BindNode(arm.TypePattern, target)
 				_ = c.typeOfIs(scope, &ast.IsExpr{Left: s.Value, Type: arm.TypePattern, Location: arm.Location})
 				armScope = c.narrowedMatchTypeArmScope(scope, s.Value, target)
-				if arm.Binding != nil {
-					armScope = newValueScope(armScope)
-					armScope.Declare(arm.Binding.Text(), valueInfo{typ: target, mutable: false})
-				}
 			} else {
 				patternType := c.typeOfExpr(scope, arm.Pattern, valueType)
 				if !typeinfo.Assignable(valueType, patternType) && !typeinfo.Assignable(patternType, valueType) {
@@ -656,10 +652,6 @@ func (c *checker) typeOfMatchExpr(scope *valueScope, expr *ast.MatchExpr, expect
 			c.info.BindNode(arm.TypePattern, target)
 			_ = c.typeOfIs(scope, &ast.IsExpr{Left: expr.Value, Type: arm.TypePattern, Location: arm.Location})
 			armScope = c.narrowedMatchTypeArmScope(scope, expr.Value, target)
-			if arm.Binding != nil {
-				armScope = newValueScope(armScope)
-				armScope.Declare(arm.Binding.Text(), valueInfo{typ: target, mutable: false})
-			}
 		} else {
 			patternType := c.typeOfExpr(scope, arm.Pattern, valueType)
 			if !typeinfo.Assignable(valueType, patternType) && !typeinfo.Assignable(patternType, valueType) {
@@ -1244,6 +1236,12 @@ func (c *checker) classifyTypeTest(loc source.Location, left, target typeinfo.Ty
 		}
 		return false, true, true
 	}
+	if opt, ok := c.underlying(left).(*typeinfo.OptionalType); ok && opt != nil {
+		if typeinfo.Equal(opt.Inner, target) {
+			return false, false, true
+		}
+		return false, true, true
+	}
 	if targetIface, ok := c.underlying(target).(*typeinfo.InterfaceType); ok {
 		if srcIface, ok := c.underlying(left).(*typeinfo.InterfaceType); ok {
 			return c.interfaceSatisfies(srcIface, targetIface), true, true
@@ -1289,28 +1287,40 @@ func (c *checker) narrowedScopeForIs(scope *valueScope, expr *ast.IsExpr, truth 
 		target = c.typeFromSyntax(c.mod, expr.Type)
 	}
 	unionType, ok := c.underlying(info.typ).(*typeinfo.UnionType)
-	if !ok || unionType == nil {
-		return scope
-	}
-	if truth {
-		if !c.unionTypeMayMatch(unionType, target) {
+	if ok && unionType != nil {
+		if truth {
+			if !c.unionTypeMayMatch(unionType, target) {
+				return scope
+			}
+			narrowed := newValueScope(scope)
+			narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+			return narrowed
+		}
+		remaining := c.unionMembersWithoutExactMatch(unionType, target)
+		if len(remaining) == 0 || len(remaining) == len(unionType.Members) {
 			return scope
 		}
 		narrowed := newValueScope(scope)
-		narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+		narrowed.Declare(ident.Path[0], valueInfo{
+			typ:      c.narrowedTypeFromMembers(remaining),
+			mutable:  info.mutable,
+			constant: info.constant,
+		})
 		return narrowed
 	}
-	remaining := c.unionMembersWithoutExactMatch(unionType, target)
-	if len(remaining) == 0 || len(remaining) == len(unionType.Members) {
-		return scope
+	if opt, ok := c.underlying(info.typ).(*typeinfo.OptionalType); ok && opt != nil {
+		if !typeinfo.Equal(opt.Inner, target) {
+			return scope
+		}
+		narrowed := newValueScope(scope)
+		if truth {
+			narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+			return narrowed
+		}
+		narrowed.Declare(ident.Path[0], valueInfo{typ: info.typ, mutable: info.mutable, constant: info.constant})
+		return narrowed
 	}
-	narrowed := newValueScope(scope)
-	narrowed.Declare(ident.Path[0], valueInfo{
-		typ:      c.narrowedTypeFromMembers(remaining),
-		mutable:  info.mutable,
-		constant: info.constant,
-	})
-	return narrowed
+	return scope
 }
 
 func (c *checker) unionMembersWithoutExactMatch(unionType *typeinfo.UnionType, target typeinfo.Type) []typeinfo.Type {
@@ -1353,6 +1363,11 @@ func (c *checker) narrowedMatchTypeArmScope(scope *valueScope, value ast.Expr, t
 		return scope
 	}
 	if unionType, ok := c.underlying(info.typ).(*typeinfo.UnionType); ok && unionType != nil && c.unionTypeMayMatch(unionType, target) {
+		narrowed := newValueScope(scope)
+		narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+		return narrowed
+	}
+	if opt, ok := c.underlying(info.typ).(*typeinfo.OptionalType); ok && opt != nil && typeinfo.Equal(opt.Inner, target) {
 		narrowed := newValueScope(scope)
 		narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
 		return narrowed

@@ -97,9 +97,6 @@ func collectStmtLocals(locals cfg.NameSet, stmt hir.Stmt) {
 	case *hir.MatchStmt:
 		for _, arm := range s.Arms {
 			if arm != nil {
-				if arm.BindingName != "" {
-					locals.Add(arm.BindingName)
-				}
 				collectBlockLocals(locals, arm.Body)
 			}
 		}
@@ -216,9 +213,6 @@ func accumulateDeferredUses(use, def, locals cfg.NameSet, stmt hir.Stmt) {
 		for _, arm := range s.Arms {
 			if arm == nil {
 				continue
-			}
-			if arm.BindingName != "" {
-				def.Add(arm.BindingName)
 			}
 			if arm.TypePattern == nil && !arm.Wildcard {
 				accumulateExprUses(use, def, locals, arm.Pattern)

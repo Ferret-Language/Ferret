@@ -748,12 +748,12 @@ fn run(x i32) bool {
 	}
 }
 
-func TestParseMatchTypeArmBinding(t *testing.T) {
+func TestParseMatchTypeArm(t *testing.T) {
 	src := `
 fn run(value Token) i32 {
     match value {
-        is i32 n => {
-            return n
+        is i32 => {
+            return value
         }
         _ => {
             return 0
@@ -773,9 +773,6 @@ fn run(value Token) i32 {
 	if arm.TypePattern == nil {
 		t.Fatalf("expected type pattern arm, got %#v", arm)
 	}
-	if arm.Binding == nil || arm.Binding.Text() != "n" {
-		t.Fatalf("expected binding n, got %#v", arm.Binding)
-	}
 	target, ok := arm.TypePattern.(*ast.NamedType)
 	if !ok || len(target.Path) != 1 || target.Path[0] != "i32" {
 		t.Fatalf("expected target type i32, got %#v", arm.TypePattern)
@@ -786,12 +783,8 @@ func TestParseMatchExpression(t *testing.T) {
 	src := `
 fn run(value Token) i32 {
     let out = match value {
-        is i32 n => {
-            n
-        }
-        _ => {
-            0
-        }
+        is i32 => value
+        _ => 0
     }
     return out
 }
@@ -810,8 +803,8 @@ fn run(value Token) i32 {
 	if len(matchExpr.Arms) != 2 {
 		t.Fatalf("expected 2 match arms, got %d", len(matchExpr.Arms))
 	}
-	if matchExpr.Arms[0].Binding == nil || matchExpr.Arms[0].Binding.Text() != "n" {
-		t.Fatalf("expected binding n, got %#v", matchExpr.Arms[0].Binding)
+	if matchExpr.Arms[0].Body == nil || len(matchExpr.Arms[0].Body.Stmts) != 1 {
+		t.Fatalf("expected implicit single-expression arm body, got %#v", matchExpr.Arms[0].Body)
 	}
 }
 

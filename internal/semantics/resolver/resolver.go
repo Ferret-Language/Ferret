@@ -175,12 +175,6 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 			armScope := table.New(scope)
 			if arm.TypePattern != nil {
 				r.resolveType(scope, arm.TypePattern)
-				if arm.Binding != nil {
-					sym := symbols.New(arm.Binding.Text(), symbols.SymbolVar, arm.Binding)
-					sym.Location = arm.Binding.Loc()
-					armScope.Declare(sym)
-					r.addFunctionLocal(sym)
-				}
 			} else if !arm.Wildcard {
 				r.resolveExpr(scope, arm.Pattern)
 			}
@@ -385,12 +379,6 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 			armScope := table.New(scope)
 			if arm.TypePattern != nil {
 				r.resolveType(scope, arm.TypePattern)
-				if arm.Binding != nil {
-					sym := symbols.New(arm.Binding.Text(), symbols.SymbolVar, arm.Binding)
-					sym.Location = arm.Binding.Loc()
-					armScope.Declare(sym)
-					r.addFunctionLocal(sym)
-				}
 			} else if !arm.Wildcard {
 				r.resolveExpr(scope, arm.Pattern)
 			}

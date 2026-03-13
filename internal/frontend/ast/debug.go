@@ -128,7 +128,6 @@ func debugStmt(stmt Stmt) any {
 			arms = append(arms, map[string]any{
 				"pattern":      debugExpr(arm.Pattern),
 				"type_pattern": debugType(arm.TypePattern),
-				"binding":      debugExpr(arm.Binding),
 				"wildcard":     arm.Wildcard,
 				"body":         debugStmt(arm.Body),
 				"loc":          debugLoc(arm.Location),
@@ -206,7 +205,6 @@ func debugExpr(expr Expr) any {
 			arms = append(arms, map[string]any{
 				"pattern":      debugExpr(arm.Pattern),
 				"type_pattern": debugType(arm.TypePattern),
-				"binding":      debugExpr(arm.Binding),
 				"wildcard":     arm.Wildcard,
 				"body":         debugStmt(arm.Body),
 				"loc":          debugLoc(arm.Location),

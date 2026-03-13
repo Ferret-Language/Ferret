@@ -266,7 +266,6 @@ func (p *Parser) parseMatchArms() []*ast.MatchArm {
 		armStart := p.current().Start
 		var pattern ast.Expr
 		var typePattern ast.TypeExpr
-		var binding *ast.Ident
 		wildcard := false
 		if p.at(tokens.IDENT) && p.current().Literal == "_" {
 			wildcard = true
@@ -274,18 +273,27 @@ func (p *Parser) parseMatchArms() []*ast.MatchArm {
 		} else if p.match(tokens.IS) {
 			typePattern = p.parseType()
 			if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.FATARROW {
-				bindTok := p.advance()
-				binding = &ast.Ident{Path: []string{bindTok.Literal}, Location: p.locOfToken(bindTok)}
+				bindTok := p.current()
+				p.errorAt(p.locOfToken(bindTok), "typed match arms no longer support a bound name; use the narrowed matched value directly")
+				p.advance()
 			}
 		} else {
 			pattern = p.parseExprUntil(precLowest, tokens.FATARROW)
 		}
 		p.expect(tokens.FATARROW, "expected '=>' after match pattern")
-		body := p.parseBlock()
+		var body *ast.BlockStmt
+		if p.at(tokens.LBRACE) {
+			body = p.parseBlock()
+		} else {
+			bodyExpr := p.parseExpr(precLowest)
+			body = &ast.BlockStmt{
+				Stmts:    []ast.Stmt{&ast.ExprStmt{Value: bodyExpr, Location: bodyExpr.Loc()}},
+				Location: bodyExpr.Loc(),
+			}
+		}
 		arms = append(arms, &ast.MatchArm{
 			Pattern:     pattern,
 			TypePattern: typePattern,
-			Binding:     binding,
 			Wildcard:    wildcard,
 			Body:        body,
 			Location:    p.locFrom(armStart),

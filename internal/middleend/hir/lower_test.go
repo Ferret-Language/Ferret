@@ -60,8 +60,8 @@ type Token union {
 fn main() i32 {
     let value: Token = 1
     let out: i32 = match value {
-        is i32 n => {
-            n + value
+        is i32 => {
+            value + value
         }
         _ => {
             0

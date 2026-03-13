@@ -345,9 +345,6 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 			if arm.TypePattern != nil {
 				hirArm.TypePattern = g.resolveTypeExpr(arm.TypePattern)
 			}
-			if arm.Binding != nil {
-				hirArm.BindingName = arm.Binding.Text()
-			}
 			out.Arms = append(out.Arms, hirArm)
 		}
 		return out
@@ -524,9 +521,6 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 			}
 			if arm.TypePattern != nil {
 				hirArm.TypePattern = g.resolveTypeExpr(arm.TypePattern)
-			}
-			if arm.Binding != nil {
-				hirArm.BindingName = arm.Binding.Text()
 			}
 			out.Arms = append(out.Arms, hirArm)
 		}

@@ -111,8 +111,27 @@ func llvmBaseType(typ typeinfo.Type) (string, error) {
 		}
 	case *typeinfo.PointerType:
 		return "ptr", nil
+	case *typeinfo.OptionalType:
+		if optionalUsesNiche(base.Inner) {
+			return llvmBaseType(base.Inner)
+		}
 	}
 	return "", fmt.Errorf("unsupported llvm base type %s", typ)
+}
+
+func optionalUsesNiche(typ typeinfo.Type) bool {
+	switch t := unwrapNamed(typ).(type) {
+	case *typeinfo.PointerType:
+		return true
+	case *typeinfo.BuiltinType:
+		switch t.Name {
+		case "bool", "char":
+			return true
+		}
+	case *typeinfo.EnumType, *typeinfo.ErrorSetType:
+		return true
+	}
+	return false
 }
 
 func unwrapNamed(typ typeinfo.Type) typeinfo.Type {

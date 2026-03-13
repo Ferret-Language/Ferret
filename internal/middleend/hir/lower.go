@@ -180,7 +180,6 @@ func (l *lowerer) lowerMatchStmt(s *MatchStmt) []Stmt {
 		out.Arms = append(out.Arms, &MatchArm{
 			Pattern:     arm.Pattern,
 			TypePattern: arm.TypePattern,
-			BindingName: arm.BindingName,
 			Wildcard:    arm.Wildcard,
 			Body:        l.lowerBlock(arm.Body),
 		})
@@ -346,7 +345,6 @@ func (l *lowerer) lowerMatchExprArm(arm *MatchArm, resultName string, resultType
 	out := &MatchArm{
 		Pattern:     arm.Pattern,
 		TypePattern: arm.TypePattern,
-		BindingName: arm.BindingName,
 		Wildcard:    arm.Wildcard,
 	}
 	if arm.Body == nil {
@@ -387,7 +385,7 @@ func (l *lowerer) hasTypeMatchArm(s *MatchStmt) bool {
 		return false
 	}
 	for _, arm := range s.Arms {
-		if arm != nil && (arm.TypePattern != nil || arm.BindingName != "") {
+		if arm != nil && arm.TypePattern != nil {
 			return true
 		}
 	}
@@ -430,10 +428,7 @@ func (l *lowerer) lowerTypedMatch(s *MatchStmt) Stmt {
 		}
 		var cond Expr
 		if arm.TypePattern != nil {
-			bindName := arm.BindingName
-			if bindName == "" {
-				bindName = l.nextTemp()
-			}
+			bindName := l.nextTemp()
 			if valueIdent, ok := s.Value.(*Ident); ok && len(valueIdent.Path) == 1 {
 				body = l.rewriteMatchArmBody(body, valueIdent.Path[0], bindName)
 			}
@@ -448,7 +443,6 @@ func (l *lowerer) lowerTypedMatch(s *MatchStmt) Stmt {
 			}
 			SetStmtLocation(binding, body.Loc())
 			body.Stmts = append([]Stmt{binding}, body.Stmts...)
-
 			cond = &IsExpr{Left: matchValue, Target: arm.TypePattern, StaticKnown: false}
 			cond.(*IsExpr).ExprType = &typeinfo.BuiltinType{Name: "bool"}
 			cond.(*IsExpr).Location = body.Loc()

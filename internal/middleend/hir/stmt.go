@@ -62,7 +62,6 @@ func (*IfStmt) stmtNode() {}
 type MatchArm struct {
 	Pattern     Expr
 	TypePattern typeinfo.Type
-	BindingName string
 	Wildcard    bool
 	Body        *BlockStmt
 }

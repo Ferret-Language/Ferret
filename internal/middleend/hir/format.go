@@ -166,9 +166,6 @@ func formatStmt(b *strings.Builder, stmt Stmt, indent int) {
 				b.WriteString("_ => ")
 			} else if arm.TypePattern != nil {
 				fmt.Fprintf(b, "is %s", arm.TypePattern.String())
-				if arm.BindingName != "" {
-					fmt.Fprintf(b, " %s", arm.BindingName)
-				}
 				b.WriteString(" => ")
 			} else {
 				fmt.Fprintf(b, "%s => ", formatExpr(arm.Pattern))
@@ -284,9 +281,6 @@ func formatExpr(expr Expr) string {
 				b.WriteString("_ => ")
 			} else if arm.TypePattern != nil {
 				fmt.Fprintf(&b, "is %s", arm.TypePattern.String())
-				if arm.BindingName != "" {
-					fmt.Fprintf(&b, " %s", arm.BindingName)
-				}
 				b.WriteString(" => ")
 			} else {
 				fmt.Fprintf(&b, "%s => ", formatExpr(arm.Pattern))

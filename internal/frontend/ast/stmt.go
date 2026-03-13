@@ -69,7 +69,6 @@ func (s *IfStmt) Loc() source.Location { return s.Location }
 type MatchArm struct {
 	Pattern     Expr
 	TypePattern TypeExpr
-	Binding     *Ident
 	Wildcard    bool
 	Body        *BlockStmt
 	Location    source.Location

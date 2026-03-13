@@ -582,7 +582,7 @@ fn main() i64 {
 	}
 }
 
-func TestTypecheckerNarrowsUnionTypeInMatchTypeArmAndBinding(t *testing.T) {
+func TestTypecheckerNarrowsUnionTypeInMatchTypeArm(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Token union {
@@ -593,9 +593,9 @@ type Token union {
 fn main() i32 {
     let value: Token = 1
     match value {
-        is i32 n => {
+        is i32 => {
             let widened: i32 = value
-            return n + widened
+            return value + widened
         }
         _ => {
             return 0
@@ -621,8 +621,8 @@ type Token union {
 fn main() i32 {
     let value: Token = 1
     let out: i32 = match value {
-        is i32 n => {
-            n + value
+        is i32 => {
+            value + value
         }
         _ => {
             0

@@ -1660,9 +1660,26 @@ func isUnionAggregate(typ typeinfo.Type) bool {
 		return namedIsUnion(t)
 	case *typeinfo.UnionType:
 		return true
+	case *typeinfo.OptionalType:
+		return !optionalUsesNiche(t.Inner)
 	default:
 		return false
 	}
+}
+
+func optionalUsesNiche(typ typeinfo.Type) bool {
+	switch t := unwrapNamed(typ).(type) {
+	case *typeinfo.PointerType:
+		return true
+	case *typeinfo.BuiltinType:
+		switch t.Name {
+		case "bool", "char":
+			return true
+		}
+	case *typeinfo.EnumType, *typeinfo.ErrorSetType:
+		return true
+	}
+	return false
 }
 
 func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Value) (string, error) {
@@ -1674,6 +1691,11 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 	case *midmir.CastValue:
 		if isUnionAggregate(v.Type()) {
 			return lowerUnionAssign(state, agg, v.Left)
+		}
+	}
+	if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); ok {
+		if _, isNone := value.(*midmir.NoneValue); isNone {
+			return fmt.Sprintf("storew 0, %s", qbeLocalName(agg.PtrName)), nil
 		}
 	}
 	if isUnionAggregate(value.Type()) {
@@ -1700,9 +1722,12 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 		if err != nil {
 			return "", err
 		}
-		memberIndex, err := unionMemberIndex(info.Members, value.Type())
-		if err != nil {
-			return "", err
+		memberIndex := 1
+		if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
+			memberIndex, err = unionMemberIndex(info.Members, value.Type())
+			if err != nil {
+				return "", err
+			}
 		}
 		lines := []string{fmt.Sprintf("storew %d, %s", memberIndex, qbeLocalName(agg.PtrName))}
 		dst := qbeLocalName(agg.PtrName)
@@ -1726,9 +1751,12 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 	if err != nil {
 		return "", err
 	}
-	memberIndex, err := unionMemberIndex(info.Members, value.Type())
-	if err != nil {
-		return "", err
+	memberIndex := 1
+	if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
+		memberIndex, err = unionMemberIndex(info.Members, value.Type())
+		if err != nil {
+			return "", err
+		}
 	}
 	lines := []string{fmt.Sprintf("storew %d, %s", memberIndex, qbeLocalName(agg.PtrName))}
 	dst := qbeLocalName(agg.PtrName)
@@ -2248,9 +2276,17 @@ func lowerTypeTest(state *moduleState, v *midmir.TypeTestValue) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	memberIndex, err := unionMemberIndex(info.Members, v.Target)
-	if err != nil {
-		return "", err
+	memberIndex := 0
+	if opt, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
+		if !typeinfo.Equal(opt.Inner, v.Target) {
+			return "", fmt.Errorf("optional type test target %s does not match %s", typeinfo.FormatType(typeStringer{v.Target}), typeinfo.FormatType(typeStringer{opt.Inner}))
+		}
+		memberIndex = 1
+	} else {
+		memberIndex, err = unionMemberIndex(info.Members, v.Target)
+		if err != nil {
+			return "", err
+		}
 	}
 	src, err := lowerAggregateSource(state, v.Left)
 	if err != nil {
@@ -2438,6 +2474,26 @@ func unionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLayout
 			Align:         info.Align,
 			PayloadOffset: info.Union.PayloadOffset,
 			Members:       unionMemberTypes(info.Union),
+		}, nil
+	case *typeinfo.OptionalType:
+		payloadSize, payloadAlign, err := qbeScalarSizeAlign(t.Inner)
+		if err != nil {
+			payloadSize, payloadAlign, err = aggregateSizeAlign(state, t.Inner)
+			if err != nil {
+				return nil, err
+			}
+		}
+		payloadOffset := alignUpInt64(4, payloadAlign)
+		align := payloadAlign
+		if align < 4 {
+			align = 4
+		}
+		size := alignUpInt64(payloadOffset+payloadSize, align)
+		return &backendUnionLayout{
+			Size:          size,
+			Align:         align,
+			PayloadOffset: payloadOffset,
+			Members:       []typeinfo.Type{t.Inner},
 		}, nil
 	case *typeinfo.UnionType:
 		payloadSize := int64(0)

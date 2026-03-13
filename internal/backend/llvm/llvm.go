@@ -1921,6 +1921,8 @@ func isUnionAggregate(typ typeinfo.Type) bool {
 		return namedIsUnion(t)
 	case *typeinfo.UnionType:
 		return true
+	case *typeinfo.OptionalType:
+		return !optionalUsesNiche(t.Inner)
 	default:
 		return false
 	}
@@ -1948,6 +1950,11 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 			return lowerUnionAssign(state, agg, v.Left)
 		}
 	}
+	if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); ok {
+		if _, isNone := value.(*midmir.NoneValue); isNone {
+			return fmt.Sprintf("store i32 0, ptr %s", llvmLocalName(agg.PtrName)), nil
+		}
+	}
 	if isUnionAggregate(value.Type()) {
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
@@ -1972,9 +1979,12 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 		if err != nil {
 			return "", err
 		}
-		memberIndex, err := llvmUnionMemberIndex(info.Members, value.Type())
-		if err != nil {
-			return "", err
+		memberIndex := 1
+		if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
+			memberIndex, err = llvmUnionMemberIndex(info.Members, value.Type())
+			if err != nil {
+				return "", err
+			}
 		}
 		lines := []string{fmt.Sprintf("store i32 %d, ptr %s", memberIndex, llvmLocalName(agg.PtrName))}
 		dst := llvmLocalName(agg.PtrName)
@@ -1990,9 +2000,12 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Valu
 	if err != nil {
 		return "", err
 	}
-	memberIndex, err := llvmUnionMemberIndex(info.Members, value.Type())
-	if err != nil {
-		return "", err
+	memberIndex := 1
+	if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
+		memberIndex, err = llvmUnionMemberIndex(info.Members, value.Type())
+		if err != nil {
+			return "", err
+		}
 	}
 	irType, err := llvmBaseType(value.Type())
 	if err != nil {
@@ -2853,9 +2866,17 @@ func lowerTypeTest(state *moduleState, v *midmir.TypeTestValue) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	memberIndex, err := llvmUnionMemberIndex(info.Members, v.Target)
-	if err != nil {
-		return "", err
+	memberIndex := 0
+	if opt, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
+		if !typeinfo.Equal(opt.Inner, v.Target) {
+			return "", fmt.Errorf("optional type test target %s does not match %s", typeinfo.FormatType(typeStringer{v.Target}), typeinfo.FormatType(typeStringer{opt.Inner}))
+		}
+		memberIndex = 1
+	} else {
+		memberIndex, err = llvmUnionMemberIndex(info.Members, v.Target)
+		if err != nil {
+			return "", err
+		}
 	}
 	src, err := lowerAggregateSource(state, v.Left)
 	if err != nil {
@@ -3057,6 +3078,26 @@ func llvmUnionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLa
 			Align:         info.Align,
 			PayloadOffset: info.Union.PayloadOffset,
 			Members:       llvmUnionMemberTypes(info.Union),
+		}, nil
+	case *typeinfo.OptionalType:
+		payloadSize, payloadAlign, err := aggregateSizeAlignOfPrimitive(t.Inner)
+		if err != nil {
+			payloadSize, payloadAlign, err = aggregateSizeAlign(state, t.Inner)
+			if err != nil {
+				return nil, err
+			}
+		}
+		payloadOffset := alignUpInt64(4, payloadAlign)
+		align := payloadAlign
+		if align < 4 {
+			align = 4
+		}
+		size := alignUpInt64(payloadOffset+payloadSize, align)
+		return &backendUnionLayout{
+			Size:          size,
+			Align:         align,
+			PayloadOffset: payloadOffset,
+			Members:       []typeinfo.Type{t.Inner},
 		}, nil
 	case *typeinfo.UnionType:
 		payloadSize := int64(0)
@@ -3475,6 +3516,15 @@ func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, er
 	case *typeinfo.SliceType:
 		// str / []T: { ptr *T, len usize } — 16 bytes, 8-byte aligned.
 		return 16, 8, nil
+	case *typeinfo.OptionalType:
+		if optionalUsesNiche(t.Inner) {
+			return 0, 0, fmt.Errorf("optional %s uses niche layout", t.Inner)
+		}
+		info, err := llvmUnionLayoutInfo(state, typ)
+		if err != nil {
+			return 0, 0, err
+		}
+		return info.Size, info.Align, nil
 	case *typeinfo.NamedType:
 		info, err := lookupNamedLayout(state, t)
 		if err != nil {
@@ -3566,6 +3616,15 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 			return "%" + llvmTypeName(state, named), nil
 		}
 	}
+	if opt, ok := typ.(*typeinfo.OptionalType); ok {
+		if !optionalUsesNiche(opt.Inner) {
+			info, err := llvmUnionLayoutInfo(state, typ)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("[%d x i8]", info.Size), nil
+		}
+	}
 	if _, ok := typ.(*typeinfo.StringType); ok {
 		return "{ ptr, i64 }", nil
 	}
@@ -3584,6 +3643,15 @@ func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
 	if named, ok := typ.(*typeinfo.NamedType); ok {
 		if info, err := lookupNamedLayout(state, named); err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named) || namedIsInterface(named)) {
 			return "%" + llvmTypeName(state, named), nil
+		}
+	}
+	if opt, ok := typ.(*typeinfo.OptionalType); ok {
+		if !optionalUsesNiche(opt.Inner) {
+			info, err := llvmUnionLayoutInfo(state, typ)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("[%d x i8]", info.Size), nil
 		}
 	}
 	if _, ok := typ.(*typeinfo.StringType); ok {
