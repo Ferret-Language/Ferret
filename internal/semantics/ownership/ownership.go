@@ -24,39 +24,40 @@ type valueInfo struct {
 	movedPath string
 	movedSubs map[string]source.Location
 	frozen    int
-	borrowOf  string
+	borrowOf  int
 	borrowLoc source.Location
 }
 
 type valueScope struct {
-	values map[string]*valueInfo
+	values map[int]*valueInfo
 }
 
 func newValueScope() *valueScope {
-	return &valueScope{values: make(map[string]*valueInfo)}
+	return &valueScope{values: make(map[int]*valueInfo)}
 }
 
-func (s *valueScope) Declare(name string, info valueInfo) *valueInfo {
-	if s == nil || name == "" {
+func (s *valueScope) Declare(id int, info valueInfo) *valueInfo {
+	if s == nil || id < 0 {
 		return nil
 	}
 	slot := &valueInfo{
 		typ:      info.typ,
 		mutable:  info.mutable,
 		constant: info.constant,
+		borrowOf: -1,
 	}
 	if len(info.movedSubs) > 0 {
 		slot.movedSubs = cloneMovedSubs(info.movedSubs)
 	}
-	s.values[name] = slot
+	s.values[id] = slot
 	return slot
 }
 
-func (s *valueScope) Lookup(name string) (*valueInfo, bool) {
+func (s *valueScope) Lookup(id int) (*valueInfo, bool) {
 	if s == nil {
 		return nil, false
 	}
-	info, ok := s.values[name]
+	info, ok := s.values[id]
 	return info, ok
 }
 
@@ -65,7 +66,7 @@ func (s *valueScope) Clone() *valueScope {
 		return nil
 	}
 	out := newValueScope()
-	for name, info := range s.values {
+	for id, info := range s.values {
 		if info == nil {
 			continue
 		}
@@ -73,20 +74,20 @@ func (s *valueScope) Clone() *valueScope {
 		if len(info.movedSubs) > 0 {
 			clone.movedSubs = cloneMovedSubs(info.movedSubs)
 		}
-		out.values[name] = &clone
+		out.values[id] = &clone
 	}
 	return out
 }
 
-func (s *valueScope) TrimToLiveOut(live cfg.NameSet) {
+func (s *valueScope) TrimToLiveOut(live cfg.LocalSet) {
 	if s == nil {
 		return
 	}
-	for name, info := range s.values {
-		if info == nil || live.Has(name) {
+	for id, info := range s.values {
+		if info == nil || live.Has(id) {
 			continue
 		}
-		if info.borrowOf != "" {
+		if info.borrowOf >= 0 {
 			if owner, ok := s.values[info.borrowOf]; ok && owner != nil && owner.frozen > 0 {
 				owner.frozen--
 			}
@@ -96,30 +97,30 @@ func (s *valueScope) TrimToLiveOut(live cfg.NameSet) {
 		info.movedPath = ""
 		info.movedSubs = nil
 		info.frozen = 0
-		info.borrowOf = ""
+		info.borrowOf = -1
 		info.borrowLoc = source.Location{}
 	}
 }
 
-func (s *valueScope) MergeFrom(other *valueScope, live cfg.NameSet) bool {
+func (s *valueScope) MergeFrom(other *valueScope, live cfg.LocalSet) bool {
 	if s == nil || other == nil {
 		return false
 	}
 	changed := false
-	for name, incoming := range other.values {
-		if incoming == nil || (len(live) > 0 && !live.Has(name)) {
+	for id, incoming := range other.values {
+		if incoming == nil || (len(live) > 0 && !live.Has(id)) {
 			continue
 		}
-		current, ok := s.values[name]
+		current, ok := s.values[id]
 		if !ok || current == nil {
 			clone := *incoming
-			s.values[name] = &clone
+			s.values[id] = &clone
 			changed = true
 			continue
 		}
 		merged := mergeValueInfo(current, incoming)
 		if !equalValueInfo(current, merged) {
-			s.values[name] = merged
+			s.values[id] = merged
 			changed = true
 		}
 	}
@@ -183,7 +184,7 @@ func mergeValueInfo(a, b *valueInfo) *valueInfo {
 			out.borrowLoc = b.borrowLoc
 		}
 	} else {
-		out.borrowOf = ""
+		out.borrowOf = -1
 		out.borrowLoc = source.Location{}
 	}
 	return &out
@@ -229,13 +230,24 @@ func mergeMovedSubs(a, b map[string]source.Location) map[string]source.Location 
 	return out
 }
 
+type ownerRef struct {
+	localID int
+	name    string
+}
+
+func ownerLocal(id int) ownerRef { return ownerRef{localID: id} }
+func ownerName(name string) ownerRef {
+	return ownerRef{localID: -1, name: name}
+}
+func (o ownerRef) isLocal() bool { return o.localID >= 0 }
+
 type borrowInfo struct {
-	owner string
+	owner ownerRef
 	loc   source.Location
 }
 
 type tempInfo struct {
-	root   string
+	root   ownerRef
 	path   string
 	borrow *borrowInfo
 	value  mir.Value
@@ -278,6 +290,18 @@ func (a *analyzer) localName(id int) string {
 		return ""
 	}
 	return a.currentFn.LocalName(id)
+}
+
+func (a *analyzer) localIDByName(name string) int {
+	if a == nil || a.currentFn == nil || name == "" {
+		return -1
+	}
+	for _, local := range a.currentFn.Locals {
+		if local != nil && local.Name == name {
+			return local.ID
+		}
+	}
+	return -1
 }
 
 func (a *analyzer) localType(id int) typeinfo.Type {
@@ -357,7 +381,7 @@ func (a *analyzer) seedFunctionState(fn *mir.Function) *valueScope {
 		if param == nil {
 			continue
 		}
-		scope.Declare(param.Name, valueInfo{typ: param.Type, mutable: param.IsMutable})
+		scope.Declare(param.LocalID, valueInfo{typ: param.Type, mutable: param.IsMutable})
 	}
 	declareFunctionLocals(scope, fn)
 	return scope
@@ -368,10 +392,10 @@ func declareFunctionLocals(scope *valueScope, fn *mir.Function) {
 		return
 	}
 	for _, local := range fn.Locals {
-		if local == nil || local.Name == "" {
+		if local == nil || local.ID < 0 {
 			continue
 		}
-		scope.Declare(local.Name, valueInfo{typ: local.Type, mutable: local.Mutable, constant: local.Constant})
+		scope.Declare(local.ID, valueInfo{typ: local.Type, mutable: local.Mutable, constant: local.Constant})
 	}
 }
 
@@ -412,7 +436,11 @@ func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
 			a.checkValue(scope, inst.Value)
 			a.consumeMoveValue(scope, inst.Value, inst.Type)
 		}
-		if slot, ok := scope.Lookup(inst.Name); ok {
+		if id := a.localIDByName(inst.Name); id >= 0 {
+			slot, _ := scope.Lookup(id)
+			if slot == nil {
+				break
+			}
 			slot.moved = false
 			slot.moveLoc = source.Location{}
 			slot.movedPath = ""
@@ -431,8 +459,7 @@ func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
 		a.checkValue(scope, inst.Value)
 		a.consumeMoveValue(scope, inst.Value, mir.FieldType(valueType(inst.Base), inst.FieldIndex))
 	case *mir.AssignInstr:
-		targetName := a.localName(inst.TargetID)
-		if targetName == "" {
+		if inst.TargetID < 0 {
 			return
 		}
 		target := &mir.LocalPlace{LocalID: inst.TargetID}
@@ -448,7 +475,7 @@ func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
 		}
 	case *mir.LockInstr:
 		a.checkValue(scope, inst.Value)
-		if slot, ok := scope.Lookup(a.localName(inst.LocalID)); ok {
+		if slot, _ := scope.Lookup(inst.LocalID); slot != nil {
 			slot.moved = false
 			slot.moveLoc = source.Location{}
 			slot.movedPath = ""
@@ -590,9 +617,7 @@ func (a *analyzer) checkPlaceValue(scope *valueScope, place mir.Place) {
 	case nil:
 		return
 	case *mir.LocalPlace:
-		if name := a.localName(p.LocalID); name != "" {
-			a.requireActivePath(scope, name, "", p.Loc())
-		}
+		a.requireActivePath(scope, p.LocalID, "", p.Loc())
 	case *mir.FieldPlace:
 		if root, path, ok := a.localPlacePath(p); ok {
 			a.requireActivePath(scope, root, path, p.Loc())
@@ -770,23 +795,20 @@ func (a *analyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field
 }
 
 func (a *analyzer) requireActiveValue(scope *valueScope, value *mir.NameValue) {
-	if value == nil || len(value.Path) != 1 {
-		return
-	}
-	a.requireActivePath(scope, value.Path[0], "", value.Loc())
+	// Globals and other non-local names are not tracked as movable slots.
+	_ = scope
+	_ = value
 }
 
 func (a *analyzer) requireActiveLocal(scope *valueScope, value *mir.LocalValue) {
 	if value == nil {
 		return
 	}
-	if info, ok := a.temps[value.LocalID]; ok && info.root != "" {
-		a.requireActivePath(scope, info.root, info.path, value.Loc())
+	if info, ok := a.temps[value.LocalID]; ok && info.root.isLocal() {
+		a.requireActivePath(scope, info.root.localID, info.path, value.Loc())
 		return
 	}
-	if name := a.localName(value.LocalID); name != "" {
-		a.requireActivePath(scope, name, "", value.Loc())
-	}
+	a.requireActivePath(scope, value.LocalID, "", value.Loc())
 }
 
 func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ typeinfo.Type) {
@@ -803,15 +825,13 @@ func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ type
 		return
 	case *mir.LocalValue:
 		if info, ok := a.temps[v.LocalID]; ok {
-			if info.root == "" {
+			if !info.root.isLocal() {
 				return
 			}
-			a.consumeLocalPath(scope, info.root, info.path, value.Loc())
+			a.consumeLocalPath(scope, info.root.localID, info.path, value.Loc())
 			return
 		}
-		if name := a.localName(v.LocalID); name != "" {
-			a.consumeLocalPath(scope, name, "", value.Loc())
-		}
+		a.consumeLocalPath(scope, v.LocalID, "", value.Loc())
 		return
 	}
 	root, path, ok := a.localValuePath(value)
@@ -821,8 +841,8 @@ func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ type
 	a.consumeLocalPath(scope, root, path, value.Loc())
 }
 
-func (a *analyzer) consumeLocalPath(scope *valueScope, root, path string, loc source.Location) {
-	if scope == nil || root == "" {
+func (a *analyzer) consumeLocalPath(scope *valueScope, root int, path string, loc source.Location) {
+	if scope == nil || root < 0 {
 		return
 	}
 	info, ok := scope.Lookup(root)
@@ -875,31 +895,29 @@ func (a *analyzer) tempInfoForValue(value mir.Value) (tempInfo, bool) {
 			}
 			return tempInfo{root: root, path: path, value: value}, true
 		}
-	case *mir.FieldLoadValue, *mir.FieldValue, *mir.NameValue, *mir.LocalValue:
-		root, path, ok := a.localValuePath(value)
+	case *mir.FieldLoadValue, *mir.FieldValue, *mir.LocalValue:
+		rootID, path, ok := a.localValuePath(value)
 		if !ok {
 			return tempInfo{}, false
 		}
-		return tempInfo{root: root, path: path, value: value}, true
+		return tempInfo{root: ownerLocal(rootID), path: path, value: value}, true
 	case *mir.InterfaceValue:
 		return a.tempInfoForValue(v.Value)
 	}
 	return tempInfo{}, false
 }
 
-func (a *analyzer) borrowSourcePath(value mir.Value) (string, string, bool) {
+func (a *analyzer) borrowSourcePath(value mir.Value) (ownerRef, string, bool) {
 	switch v := value.(type) {
 	case *mir.NameValue:
 		if len(v.Path) == 1 {
-			return v.Path[0], "", true
+			return ownerName(v.Path[0]), "", true
 		}
 	case *mir.LocalValue:
-		if info, ok := a.temps[v.LocalID]; ok && info.root != "" {
+		if info, ok := a.temps[v.LocalID]; ok && info.root.isLocal() {
 			return info.root, info.path, true
 		}
-		if name := a.localName(v.LocalID); name != "" {
-			return name, "", true
-		}
+		return ownerLocal(v.LocalID), "", true
 	case *mir.AddrOfValue:
 		return a.borrowSourcePath(v.Source)
 	case *mir.LoadValue:
@@ -909,13 +927,17 @@ func (a *analyzer) borrowSourcePath(value mir.Value) (string, string, bool) {
 			return a.borrowSourcePath(v.Right)
 		}
 	case *mir.FieldLoadValue:
-		return a.localValuePath(v)
+		if rootID, path, ok := a.localValuePath(v); ok {
+			return ownerLocal(rootID), path, true
+		}
 	case *mir.FieldValue:
-		return a.localValuePath(v)
+		if rootID, path, ok := a.localValuePath(v); ok {
+			return ownerLocal(rootID), path, true
+		}
 	case *mir.InterfaceValue:
 		return a.borrowSourcePath(v.Value)
 	}
-	return "", "", false
+	return ownerRef{}, "", false
 }
 
 func (a *analyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, value mir.Value) {
@@ -927,14 +949,14 @@ func (a *analyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, value mir
 		return
 	}
 	info, ok := a.borrowValueInfo(scope, value)
-	if !ok || info.owner == "" {
+	if !ok || !info.owner.isLocal() {
 		return
 	}
-	owner, ok := scope.Lookup(info.owner)
-	if !ok || owner == nil {
+	owner, _ := scope.Lookup(info.owner.localID)
+	if owner == nil {
 		return
 	}
-	slot.borrowOf = info.owner
+	slot.borrowOf = info.owner.localID
 	slot.borrowLoc = info.loc
 	if a.isMoveType(owner.typ) {
 		owner.frozen++
@@ -942,13 +964,13 @@ func (a *analyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, value mir
 }
 
 func (a *analyzer) releaseBorrowValue(scope *valueScope, slot *valueInfo) {
-	if scope == nil || slot == nil || slot.borrowOf == "" {
+	if scope == nil || slot == nil || slot.borrowOf < 0 {
 		return
 	}
 	if owner, ok := scope.Lookup(slot.borrowOf); ok && owner != nil && owner.frozen > 0 {
 		owner.frozen--
 	}
-	slot.borrowOf = ""
+	slot.borrowOf = -1
 	slot.borrowLoc = source.Location{}
 }
 
@@ -990,23 +1012,17 @@ func (a *analyzer) checkAssignmentTarget(scope *valueScope, left mir.Place) {
 	clearMovedPath(info, path)
 }
 
-func (a *analyzer) localValuePath(value mir.Value) (root string, path string, ok bool) {
+func (a *analyzer) localValuePath(value mir.Value) (root int, path string, ok bool) {
 	switch v := value.(type) {
-	case *mir.NameValue:
-		if len(v.Path) == 1 {
-			return v.Path[0], "", true
-		}
 	case *mir.LocalValue:
-		if info, ok := a.temps[v.LocalID]; ok && info.root != "" {
-			return info.root, info.path, true
+		if info, ok := a.temps[v.LocalID]; ok && info.root.isLocal() {
+			return info.root.localID, info.path, true
 		}
-		if name := a.localName(v.LocalID); name != "" {
-			return name, "", true
-		}
+		return v.LocalID, "", true
 	case *mir.FieldLoadValue:
 		root, path, ok := a.localValuePath(v.Base)
 		if !ok {
-			return "", "", false
+			return -1, "", false
 		}
 		segment := a.fieldPathSegment(v.Base, v.FieldIndex)
 		if path == "" {
@@ -1016,7 +1032,7 @@ func (a *analyzer) localValuePath(value mir.Value) (root string, path string, ok
 	case *mir.FieldValue:
 		root, path, ok := a.localValuePath(v.Base)
 		if !ok {
-			return "", "", false
+			return -1, "", false
 		}
 		segment := a.fieldPathSegment(v.Base, v.FieldIndex)
 		if segment == "" {
@@ -1029,19 +1045,17 @@ func (a *analyzer) localValuePath(value mir.Value) (root string, path string, ok
 	case *mir.InterfaceValue:
 		return a.localValuePath(v.Value)
 	}
-	return "", "", false
+	return -1, "", false
 }
 
-func (a *analyzer) localPlacePath(place mir.Place) (root string, path string, ok bool) {
+func (a *analyzer) localPlacePath(place mir.Place) (root int, path string, ok bool) {
 	switch p := place.(type) {
 	case *mir.LocalPlace:
-		if name := a.localName(p.LocalID); name != "" {
-			return name, "", true
-		}
+		return p.LocalID, "", true
 	case *mir.FieldPlace:
 		root, path, ok := a.localPlacePath(p.Base)
 		if !ok {
-			return "", "", false
+			return -1, "", false
 		}
 		segment := a.fieldPathSegmentFromPlace(p.Base, p.FieldIndex)
 		if path == "" {
@@ -1049,7 +1063,7 @@ func (a *analyzer) localPlacePath(place mir.Place) (root string, path string, ok
 		}
 		return root, path + "." + segment, true
 	}
-	return "", "", false
+	return -1, "", false
 }
 
 func movedPathConflict(info *valueInfo, path string) (source.Location, string, bool) {
@@ -1111,8 +1125,8 @@ func parentPath(path string) string {
 	return ""
 }
 
-func (a *analyzer) requireActivePath(scope *valueScope, root, path string, loc source.Location) {
-	if scope == nil || root == "" {
+func (a *analyzer) requireActivePath(scope *valueScope, root int, path string, loc source.Location) {
+	if scope == nil || root < 0 {
 		return
 	}
 	info, ok := scope.Lookup(root)
@@ -1134,7 +1148,7 @@ func (a *analyzer) requireActivePath(scope *valueScope, root, path string, loc s
 	}
 }
 
-func (a *analyzer) reportPartialMoveUse(root string, loc source.Location, info *valueInfo) {
+func (a *analyzer) reportPartialMoveUse(root int, loc source.Location, info *valueInfo) {
 	if info == nil || len(info.movedSubs) == 0 {
 		return
 	}
@@ -1144,7 +1158,11 @@ func (a *analyzer) reportPartialMoveUse(root string, loc source.Location, info *
 		movedPath, movedLoc = path, current
 		break
 	}
-	diag := diagnostics.NewError(fmt.Sprintf("use of partially moved value %q", root)).
+	display := a.localName(root)
+	if display == "" {
+		display = fmt.Sprintf("local#%d", root)
+	}
+	diag := diagnostics.NewError(fmt.Sprintf("use of partially moved value %q", display)).
 		WithCode(diagnostics.ErrUseAfterMove).
 		WithPrimaryLabel(&loc, "some fields of this value were already moved")
 	if movedLoc.Start != nil {
@@ -1153,8 +1171,11 @@ func (a *analyzer) reportPartialMoveUse(root string, loc source.Location, info *
 	a.addDiagnostic(diag)
 }
 
-func (a *analyzer) reportMovedPathUse(root, path string, loc source.Location, movedLoc source.Location, movedPath string) {
-	display := root
+func (a *analyzer) reportMovedPathUse(root int, path string, loc source.Location, movedLoc source.Location, movedPath string) {
+	display := a.localName(root)
+	if display == "" {
+		display = fmt.Sprintf("local#%d", root)
+	}
 	if path != "" {
 		display += "." + path
 	}
@@ -1267,10 +1288,9 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowIn
 		if info, ok := a.temps[v.LocalID]; ok && info.borrow != nil {
 			return *info.borrow, true
 		}
-		if name := a.localName(v.LocalID); name != "" && scope != nil {
-			slot, ok := scope.Lookup(name)
-			if ok && slot != nil && slot.borrowOf != "" {
-				return borrowInfo{owner: slot.borrowOf, loc: slot.borrowLoc}, true
+		if scope != nil {
+			if slot, _ := scope.Lookup(v.LocalID); slot != nil && slot.borrowOf >= 0 {
+				return borrowInfo{owner: ownerLocal(slot.borrowOf), loc: slot.borrowLoc}, true
 			}
 		}
 	case *mir.AddrOfValue:
@@ -1287,22 +1307,17 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowIn
 			}
 			return borrowInfo{owner: root, loc: v.Loc()}, true
 		}
-	case *mir.NameValue:
-		if len(v.Path) != 1 || scope == nil {
-			return borrowInfo{}, false
-		}
-		slot, ok := scope.Lookup(v.Path[0])
-		if !ok || slot == nil || slot.borrowOf == "" {
-			return borrowInfo{}, false
-		}
-		return borrowInfo{owner: slot.borrowOf, loc: slot.borrowLoc}, true
 	case *mir.InterfaceValue:
 		return a.borrowValueInfo(scope, v.Value)
 	}
 	return borrowInfo{}, false
 }
 
-func (a *analyzer) reportBorrowConflict(loc source.Location, name string, message string) {
+func (a *analyzer) reportBorrowConflict(loc source.Location, localID int, message string) {
+	name := a.localName(localID)
+	if name == "" {
+		name = fmt.Sprintf("local#%d", localID)
+	}
 	a.addDiagnostic(
 		diagnostics.NewError(fmt.Sprintf("cannot use %q here", name)).
 			WithCode(diagnostics.ErrBorrowConflict).
@@ -1549,16 +1564,16 @@ func (a *analyzer) valueAccess(scope *valueScope, value mir.Value) (addressable 
 		if len(v.Path) != 1 {
 			return false, false
 		}
-		if info, ok := scope.Lookup(v.Path[0]); ok && info != nil {
+		id := a.localIDByName(v.Path[0])
+		if id < 0 {
+			return false, false
+		}
+		if info, ok := scope.Lookup(id); ok && info != nil {
 			return true, info.mutable && !info.constant
 		}
 		return false, false
 	case *mir.LocalValue:
-		name := a.localName(v.LocalID)
-		if name == "" {
-			return false, false
-		}
-		if info, ok := scope.Lookup(name); ok && info != nil {
+		if info, ok := scope.Lookup(v.LocalID); ok && info != nil {
 			return true, info.mutable && !info.constant
 		}
 		return false, false

@@ -82,6 +82,7 @@ func collectTypeMembers(ctx *context.CompilerContext, typeMembers map[string]map
 				continue
 			}
 			sym := symbols.New(field.Name.Text(), symbols.SymbolStatic, field)
+			sym.Mutable = true
 			sym.Location = field.Name.Loc()
 			sym.OwnerType = typeName
 			declareTypeMember(ctx, typeName, members, sym)

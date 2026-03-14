@@ -73,6 +73,9 @@ fn (p *mut Point) Shift(dx i32) {
 	if result.Entry.TypeMembers["Point"]["Origin"].Kind != symbols.SymbolStatic {
 		t.Fatalf("expected static member symbol, got %#v", result.Entry.TypeMembers["Point"]["Origin"])
 	}
+	if !result.Entry.TypeMembers["Point"]["Origin"].Mutable {
+		t.Fatalf("expected static member to be mutable by default, got %#v", result.Entry.TypeMembers["Point"]["Origin"])
+	}
 	if result.Entry.TypeMembers["Color"]["Red"].Kind != symbols.SymbolVariant {
 		t.Fatalf("expected enum variant symbol, got %#v", result.Entry.TypeMembers["Color"]["Red"])
 	}

@@ -15,10 +15,10 @@ func computeLiveness(fn *cfg.Function) {
 		if block == nil {
 			continue
 		}
-		block.Use = cfg.NewNameSet()
-		block.Def = cfg.NewNameSet()
-		block.LiveIn = cfg.NewNameSet()
-		block.LiveOut = cfg.NewNameSet()
+		block.Use = cfg.NewLocalSet()
+		block.Def = cfg.NewLocalSet()
+		block.LiveIn = cfg.NewLocalSet()
+		block.LiveOut = cfg.NewLocalSet()
 		if !block.Reachable {
 			continue
 		}
@@ -33,7 +33,7 @@ func computeLiveness(fn *cfg.Function) {
 			if block == nil || !block.Reachable {
 				continue
 			}
-			liveOut := cfg.NewNameSet()
+			liveOut := cfg.NewLocalSet()
 			if block.Terminator != nil {
 				for _, succ := range block.Terminator.Successors() {
 					if succ == nil || !succ.Reachable {
@@ -55,78 +55,18 @@ func computeLiveness(fn *cfg.Function) {
 	}
 }
 
-func collectFunctionLocals(fn *hir.Func) cfg.NameSet {
-	locals := cfg.NewNameSet()
-	if fn == nil {
+func collectFunctionLocals(fn *hir.Func) cfg.LocalSet {
+	locals := cfg.NewLocalSet()
+	if fn == nil || fn.LocalCount <= 0 {
 		return locals
 	}
-	if fn.Receiver != nil {
-		locals.Add(fn.Receiver.Name)
+	for id := 0; id < fn.LocalCount; id++ {
+		locals.Add(id)
 	}
-	for _, param := range fn.Params {
-		if param != nil {
-			locals.Add(param.Name)
-		}
-	}
-	collectBlockLocals(locals, fn.Body)
 	return locals
 }
 
-func collectBlockLocals(locals cfg.NameSet, block *hir.BlockStmt) {
-	if locals == nil || block == nil {
-		return
-	}
-	for _, stmt := range block.Stmts {
-		collectStmtLocals(locals, stmt)
-	}
-}
-
-func collectStmtLocals(locals cfg.NameSet, stmt hir.Stmt) {
-	switch s := stmt.(type) {
-	case nil:
-		return
-	case *hir.BlockStmt:
-		collectBlockLocals(locals, s)
-	case *hir.LetStmt:
-		locals.Add(s.Name)
-	case *hir.ConstStmt:
-		locals.Add(s.Name)
-	case *hir.IfStmt:
-		collectBlockLocals(locals, s.Then)
-		collectStmtLocals(locals, s.Else)
-	case *hir.MatchStmt:
-		for _, arm := range s.Arms {
-			if arm != nil {
-				collectBlockLocals(locals, arm.Body)
-			}
-		}
-	case *hir.WhileStmt:
-		collectBlockLocals(locals, s.Body)
-	case *hir.ForStmt:
-		if s.IndexName != "" {
-			locals.Add(s.IndexName)
-		}
-		if s.ValueName != "" {
-			locals.Add(s.ValueName)
-		}
-		collectBlockLocals(locals, s.Body)
-	case *hir.LoopStmt:
-		collectStmtLocals(locals, s.Init)
-		collectStmtLocals(locals, s.Post)
-		collectBlockLocals(locals, s.Body)
-	case *hir.LabelStmt:
-		collectStmtLocals(locals, s.Stmt)
-	case *hir.DeferStmt:
-		collectStmtLocals(locals, s.Body)
-	case *hir.LockStmt:
-		locals.Add(s.Name)
-		collectBlockLocals(locals, s.Body)
-	case *hir.UnsafeStmt:
-		collectBlockLocals(locals, s.Body)
-	}
-}
-
-func computeBlockUseDef(block *cfg.Block, locals cfg.NameSet) {
+func computeBlockUseDef(block *cfg.Block, locals cfg.LocalSet) {
 	for _, stmt := range block.Stmts {
 		accumulateStmtUseDef(block.Use, block.Def, locals, stmt)
 	}
@@ -141,16 +81,16 @@ func computeBlockUseDef(block *cfg.Block, locals cfg.NameSet) {
 	}
 }
 
-func accumulateStmtUseDef(use, def, locals cfg.NameSet, stmt hir.Stmt) {
+func accumulateStmtUseDef(use, def, locals cfg.LocalSet, stmt hir.Stmt) {
 	switch s := stmt.(type) {
 	case nil:
 		return
 	case *hir.LetStmt:
 		accumulateExprUses(use, def, locals, s.Value)
-		def.Add(s.Name)
+		def.Add(s.LocalID)
 	case *hir.ConstStmt:
 		accumulateExprUses(use, def, locals, s.Value)
-		def.Add(s.Name)
+		// Consts don't allocate runtime locals.
 	case *hir.ReturnStmt:
 		accumulateExprUses(use, def, locals, s.Value)
 	case *hir.PanicStmt:
@@ -164,26 +104,26 @@ func accumulateStmtUseDef(use, def, locals cfg.NameSet, stmt hir.Stmt) {
 		accumulateDeferredUses(use, def, locals, s.Body)
 	case *hir.LockStmt:
 		accumulateExprUses(use, def, locals, s.Value)
-		def.Add(s.Name)
+		def.Add(s.LocalID)
 	case *hir.BreakStmt, *hir.ContinueStmt, *hir.UnsafeStmt:
 		return
 	}
 }
 
-func accumulateAssignTarget(use, def, locals cfg.NameSet, expr hir.Expr) {
+func accumulateAssignTarget(use, def, locals cfg.LocalSet, expr hir.Expr) {
 	switch e := expr.(type) {
 	case nil:
 		return
 	case *hir.Ident:
-		if len(e.Path) == 1 && locals.Has(e.Path[0]) {
-			def.Add(e.Path[0])
+		if e.LocalID >= 0 && locals.Has(e.LocalID) {
+			def.Add(e.LocalID)
 		}
 	default:
 		accumulateExprUses(use, def, locals, expr)
 	}
 }
 
-func accumulateDeferredUses(use, def, locals cfg.NameSet, stmt hir.Stmt) {
+func accumulateDeferredUses(use, def, locals cfg.LocalSet, stmt hir.Stmt) {
 	switch s := stmt.(type) {
 	case nil:
 		return
@@ -224,11 +164,11 @@ func accumulateDeferredUses(use, def, locals cfg.NameSet, stmt hir.Stmt) {
 		accumulateDeferredUses(use, def, locals, s.Body)
 	case *hir.ForStmt:
 		accumulateExprUses(use, def, locals, s.Iterable)
-		if s.IndexName != "" {
-			def.Add(s.IndexName)
+		if s.IndexID >= 0 {
+			def.Add(s.IndexID)
 		}
-		if s.ValueName != "" {
-			def.Add(s.ValueName)
+		if s.ValueID >= 0 {
+			def.Add(s.ValueID)
 		}
 		accumulateDeferredUses(use, def, locals, s.Body)
 	case *hir.LoopStmt:
@@ -246,13 +186,13 @@ func accumulateDeferredUses(use, def, locals cfg.NameSet, stmt hir.Stmt) {
 	}
 }
 
-func accumulateExprUses(use, def, locals cfg.NameSet, expr hir.Expr) {
+func accumulateExprUses(use, def, locals cfg.LocalSet, expr hir.Expr) {
 	switch e := expr.(type) {
 	case nil:
 		return
 	case *hir.Ident:
-		if len(e.Path) == 1 && locals.Has(e.Path[0]) && !def.Has(e.Path[0]) {
-			use.Add(e.Path[0])
+		if e.LocalID >= 0 && locals.Has(e.LocalID) && !def.Has(e.LocalID) {
+			use.Add(e.LocalID)
 		}
 	case *hir.PrefixExpr:
 		accumulateExprUses(use, def, locals, e.Right)

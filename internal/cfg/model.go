@@ -14,7 +14,7 @@ type Function struct {
 	Entry  *Block
 	Exit   *Block
 	Blocks []*Block
-	Locals NameSet
+	Locals LocalSet
 	Source *hir.Func
 }
 
@@ -27,10 +27,10 @@ type Block struct {
 	Location     source.Location
 	BranchKind   string
 	Predecessors []*Block
-	Use          NameSet
-	Def          NameSet
-	LiveIn       NameSet
-	LiveOut      NameSet
+	Use          LocalSet
+	Def          LocalSet
+	LiveIn       LocalSet
+	LiveOut      LocalSet
 }
 
 type Terminator interface {

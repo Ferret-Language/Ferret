@@ -465,6 +465,31 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerAllowsStaticFieldAssignment(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+    static Counter i32 = 0
+}
+
+fn (_ *mut Point) Point() {
+    Point::Counter = Point::Counter + 1
+}
+
+fn main() i32 {
+    let p: Point = .{}
+    print(p.X)
+    return Point::Counter
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsRuntimeUnionTypeTest(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

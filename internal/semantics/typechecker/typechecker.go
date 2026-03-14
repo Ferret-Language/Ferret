@@ -34,7 +34,8 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if declared != nil && d.Value != nil && !c.checkAssignable(d.Value.Loc(), declared, value) {
+		if declared != nil && d.Value != nil {
+			c.checkAssignable(d.Value.Loc(), declared, value)
 		}
 		c.bindDeclSymbol(d.Name, finalType)
 		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
@@ -57,7 +58,8 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if declared != nil && d.Value != nil && !c.checkAssignable(d.Value.Loc(), declared, value) {
+		if declared != nil && d.Value != nil {
+			c.checkAssignable(d.Value.Loc(), declared, value)
 		}
 		c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
 		c.bindDeclSymbol(d.Name, finalType)
@@ -91,8 +93,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			}
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
-				if !c.checkAssignable(field.Default.Loc(), fieldType, valueType) {
-				}
+				c.checkAssignable(field.Default.Loc(), fieldType, valueType)
 			}
 		}
 		for _, field := range t.StaticFields {
@@ -105,8 +106,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			}
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
-				if !c.checkAssignable(field.Default.Loc(), fieldType, valueType) {
-				}
+				c.checkAssignable(field.Default.Loc(), fieldType, valueType)
 				c.requireConstExpr(nil, field.Default, "static field initializer must be compile-time evaluable")
 			}
 		}
@@ -816,7 +816,8 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 			expected = fnType.Params[i]
 		}
 		argType := c.typeOfExpr(scope, arg, expected)
-		if expected != nil && !c.checkAssignable(arg.Loc(), expected, argType) {
+		if expected != nil {
+			c.checkAssignable(arg.Loc(), expected, argType)
 		}
 		if i < len(fnType.ComptimeParams) && fnType.ComptimeParams[i] {
 			c.requireConstExpr(scope, arg, "argument to comptime parameter must be compile-time evaluable")
@@ -1047,8 +1048,7 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 				break
 			}
 			got := c.typeOfExpr(scope, item.Value, arrType.Inner)
-			if !c.checkAssignable(item.Value.Loc(), arrType.Inner, got) {
-			}
+			c.checkAssignable(item.Value.Loc(), arrType.Inner, got)
 		}
 		c.info.BindNode(expr, expected)
 		return expected
@@ -1074,8 +1074,7 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 				continue
 			}
 			got := c.typeOfExpr(scope, item.Value, field.Type)
-			if !c.checkAssignable(item.Value.Loc(), field.Type, got) {
-			}
+			c.checkAssignable(item.Value.Loc(), field.Type, got)
 			provided[fieldName] = struct{}{}
 			continue
 		}
@@ -1091,8 +1090,7 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 		}
 		field := fields[positional]
 		got := c.typeOfExpr(scope, item.Value, field.Type)
-		if !c.checkAssignable(item.Value.Loc(), field.Type, got) {
-		}
+		c.checkAssignable(item.Value.Loc(), field.Type, got)
 		provided[field.Name] = struct{}{}
 		positional++
 	}
