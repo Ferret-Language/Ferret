@@ -228,7 +228,7 @@ func (p *Parser) expect(kind tokens.Kind, message string) tokens.Token {
 	if p.at(kind) {
 		return p.advance()
 	}
-	p.errorHere(message)
+	p.errorExpected(message)
 	return p.current()
 }
 
@@ -256,6 +256,24 @@ func (p *Parser) errorHere(message string) {
 	tok := p.current()
 	loc := source.NewLocation(p.file, tok.Start, tok.End)
 	p.errorAt(loc, message)
+}
+
+func (p *Parser) errorExpected(message string) {
+	insert := p.expectedInsertionPoint()
+	loc := source.NewLocation(p.file, insert, insert)
+	p.errorAt(loc, message)
+}
+
+func (p *Parser) expectedInsertionPoint() source.Position {
+	tok := p.current()
+	insert := tok.Start
+	if p.pos > 0 {
+		prevEnd := p.previous().End
+		if prevEnd.Index <= tok.Start.Index {
+			insert = prevEnd
+		}
+	}
+	return insert
 }
 
 func (p *Parser) errorAt(loc source.Location, message string) {
@@ -308,6 +326,31 @@ func (p *Parser) consumeTypeListSeparator(end tokens.Kind, itemName string) bool
 	return p.consumeListSeparator(end, itemName, p.startsType())
 }
 
+func (p *Parser) isRecoveryBoundary(kind tokens.Kind) bool {
+	switch kind {
+	case tokens.RBRACE,
+		tokens.SEMICOLON,
+		tokens.LET,
+		tokens.CONST,
+		tokens.RETURN,
+		tokens.IF,
+		tokens.MATCH,
+		tokens.WHILE,
+		tokens.FOR,
+		tokens.DEFER,
+		tokens.LOCK,
+		tokens.UNSAFE,
+		tokens.BREAK,
+		tokens.CONTINUE,
+		tokens.IMPORT,
+		tokens.TYPE,
+		tokens.FN:
+		return true
+	default:
+		return false
+	}
+}
+
 func (p *Parser) consumeListSeparator(end tokens.Kind, itemName string, canStartNext bool) bool {
 	if p.match(tokens.COMMA) {
 		return true
@@ -317,8 +360,15 @@ func (p *Parser) consumeListSeparator(end tokens.Kind, itemName string, canStart
 	}
 	tok := p.current()
 	loc := source.NewLocation(p.file, tok.Start, tok.End)
+	if !canStartNext {
+		insert := p.expectedInsertionPoint()
+		loc = source.NewLocation(p.file, insert, insert)
+	}
 	p.errorAt(loc, "expected ',' or '"+string(end)+"' after "+itemName)
 	if !canStartNext {
+		if p.isRecoveryBoundary(p.current().Kind) {
+			return false
+		}
 		p.advanceUntil(tokens.COMMA, end)
 		p.match(tokens.COMMA)
 	}

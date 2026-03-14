@@ -26,6 +26,15 @@ func hasDiagnosticMessage(diag *diagnostics.Bag, substr string) bool {
 	return false
 }
 
+func findDiagnosticWithMessage(diag *diagnostics.Bag, substr string) *diagnostics.Diagnostic {
+	for _, d := range diag.All() {
+		if strings.Contains(d.Message, substr) {
+			return d
+		}
+	}
+	return nil
+}
+
 func TestParseMethodReceiverAndLiteral(t *testing.T) {
 	src := `
 type Point struct {
@@ -982,5 +991,48 @@ fn run() void {
 	}
 	if _, ok := fn.Body.Stmts[1].(*ast.ReturnStmt); !ok {
 		t.Fatalf("expected recovered return stmt, got %T", fn.Body.Stmts[1])
+	}
+}
+
+func TestParserMissingCallCloserAnchorsAtInsertionPoint(t *testing.T) {
+	src := `
+fn run() void {
+    print(Point::Counter
+    let mut maybe : ?i32 = none
+    return
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	d := findDiagnosticWithMessage(diag, "expected ',' or ')' after argument")
+	if d == nil {
+		t.Fatalf("expected missing call closer diagnostic, got %v", diag.All())
+	}
+	if len(d.Labels) == 0 || d.Labels[0].Location == nil || d.Labels[0].Location.Start == nil || d.Labels[0].Location.End == nil {
+		t.Fatalf("expected diagnostic label location, got %#v", d.Labels)
+	}
+	start := d.Labels[0].Location.Start
+	end := d.Labels[0].Location.End
+	if start.Line != 3 || start.Column != 25 {
+		t.Fatalf("expected insertion anchor at line 3 col 25, got %d:%d", start.Line, start.Column)
+	}
+	if end.Line != start.Line || end.Column != start.Column {
+		t.Fatalf("expected zero-width insertion range, got %d:%d-%d:%d", start.Line, start.Column, end.Line, end.Column)
+	}
+}
+
+func TestParserMissingCallCloserDoesNotCascadeExpectedRBrace(t *testing.T) {
+	src := `
+fn main() {
+    io::Println("Hello world"
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "expected ',' or ')' after argument") {
+		t.Fatalf("expected missing call closer diagnostic, got %v", diag.All())
+	}
+	if hasDiagnosticMessage(diag, "expected '}'") {
+		t.Fatalf("unexpected cascading expected '}' diagnostic: %v", diag.All())
 	}
 }

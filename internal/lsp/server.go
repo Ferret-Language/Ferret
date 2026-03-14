@@ -13,13 +13,24 @@ import (
 	"sync"
 
 	"compiler/internal/core/diagnostics"
+	"compiler/internal/core/source"
 	"compiler/internal/driver"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
+	"compiler/internal/tokens"
 )
 
 const (
 	textDocumentSyncFull = 1
+)
+
+var (
+	lexSource = func(path, text string, diag *diagnostics.Bag) []tokens.Token {
+		return lexer.New(path, text, diag).Tokenize()
+	}
+	parseSource = func(path string, toks []tokens.Token, diag *diagnostics.Bag) {
+		_ = parser.Parse(path, toks, diag)
+	}
 )
 
 type rpcRequest struct {
@@ -168,6 +179,14 @@ func (s *Server) serve() error {
 }
 
 func (s *Server) handleRequest(req rpcRequest) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if len(req.ID) > 0 {
+				s.writeError(req.ID, -32603, "internal server error")
+			}
+		}
+	}()
+
 	switch req.Method {
 	case "initialize":
 		s.handleInitialize(req)
@@ -292,8 +311,23 @@ func (s *Server) publishSyntaxDiagnostics(uri string, version int, text string) 
 	}
 	diagBag := diagnostics.NewDiagnosticBag(path)
 	diagBag.AddSourceContent(path, text)
-	tokens := lexer.New(path, text, diagBag).Tokenize()
-	_ = parser.Parse(path, tokens, diagBag)
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				msg := fmt.Sprintf("language server internal error while parsing: %v", recovered)
+				origin := source.NewPosition()
+				loc := source.NewLocation(path, origin, origin)
+				diagBag.Add(
+					diagnostics.NewError(msg).
+						WithCode(diagnostics.ErrUnexpectedToken).
+						WithPrimaryLabel(&loc, "parser recovered; keep editing"),
+				)
+			}
+		}()
+
+		toks := lexSource(path, text, diagBag)
+		parseSource(path, toks, diagBag)
+	}()
 
 	diagnostics := convertDiagnostics(diagBag.Diagnostics(), path)
 	v := version
@@ -323,10 +357,14 @@ func convertDiagnostics(diags []*diagnostics.Diagnostic, targetPath string) []ls
 			startLine := max(label.Location.Start.Line-1, 0)
 			startCol := max(label.Location.Start.Column-1, 0)
 			endLine := startLine
-			endCol := startCol + 1
+			endCol := startCol
 			if label.Location.End != nil {
-				endLine = max(label.Location.End.Line-1, startLine)
-				endCol = max(label.Location.End.Column-1, startCol+1)
+				endLine = max(label.Location.End.Line-1, 0)
+				endCol = max(label.Location.End.Column-1, 0)
+				if endLine < startLine || (endLine == startLine && endCol < startCol) {
+					endLine = startLine
+					endCol = startCol
+				}
 			}
 			rng = lspRange{
 				Start: lspPosition{Line: startLine, Character: startCol},
