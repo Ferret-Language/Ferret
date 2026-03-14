@@ -4,7 +4,8 @@ import "compiler/internal/semantics/typeinfo"
 
 type Ident struct {
 	baseExpr
-	Path []string
+	Path    []string
+	LocalID int // -1 when this ident is not a local (globals, builtins, etc).
 }
 
 func (*Ident) exprNode() {}
@@ -110,6 +111,7 @@ type CatchExpr struct {
 	Left        Expr
 	Fallback    Expr
 	PayloadName string
+	PayloadID   int
 	Handler     *BlockStmt
 }
 

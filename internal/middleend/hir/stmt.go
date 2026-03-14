@@ -12,6 +12,7 @@ func (*BlockStmt) stmtNode() {}
 type LetStmt struct {
 	baseStmt
 	Name    string
+	LocalID int
 	Mutable bool
 	Type    typeinfo.Type
 	Value   Expr
@@ -21,9 +22,10 @@ func (*LetStmt) stmtNode() {}
 
 type ConstStmt struct {
 	baseStmt
-	Name  string
-	Type  typeinfo.Type
-	Value Expr
+	Name    string
+	LocalID int
+	Type    typeinfo.Type
+	Value   Expr
 }
 
 func (*ConstStmt) stmtNode() {}
@@ -86,7 +88,9 @@ type ForStmt struct {
 	baseStmt
 	Iterable  Expr
 	IndexName string
+	IndexID   int
 	ValueName string
+	ValueID   int
 	Body      *BlockStmt
 }
 
@@ -147,9 +151,10 @@ func (*PanicStmt) stmtNode() {}
 
 type LockStmt struct {
 	baseStmt
-	Value Expr
-	Name  string
-	Body  *BlockStmt
+	Value   Expr
+	Name    string
+	LocalID int
+	Body    *BlockStmt
 }
 
 func (*LockStmt) stmtNode() {}

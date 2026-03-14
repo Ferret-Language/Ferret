@@ -26,12 +26,16 @@ func Lower(input *Module) *Module {
 }
 
 type lowerer struct {
-	tempID int
+	tempID      int
+	nextLocalID int
 }
 
-func (l *lowerer) nextTemp() string {
+func (l *lowerer) nextTempLocal() (string, int) {
 	l.tempID++
-	return "__match" + itoa(l.tempID)
+	name := "__match" + itoa(l.tempID)
+	id := l.nextLocalID
+	l.nextLocalID++
+	return name, id
 }
 
 func (l *lowerer) lowerFunc(fn *Func) *Func {
@@ -39,7 +43,9 @@ func (l *lowerer) lowerFunc(fn *Func) *Func {
 		return nil
 	}
 	out := *fn
+	l.nextLocalID = out.LocalCount
 	out.Body = l.lowerBlock(fn.Body)
+	out.LocalCount = l.nextLocalID
 	return &out
 }
 
@@ -77,12 +83,12 @@ func (l *lowerer) lowerStmtList(stmt Stmt) []Stmt {
 		return []Stmt{l.lowerBlock(s)}
 	case *LetStmt:
 		prelude, value := l.lowerExpr(s.Value)
-		out := &LetStmt{Name: s.Name, Mutable: s.Mutable, Type: s.Type, Value: value}
+		out := &LetStmt{Name: s.Name, LocalID: s.LocalID, Mutable: s.Mutable, Type: s.Type, Value: value}
 		SetStmtLocation(out, s.Loc())
 		return append(prelude, out)
 	case *ConstStmt:
 		prelude, value := l.lowerExpr(s.Value)
-		out := &ConstStmt{Name: s.Name, Type: s.Type, Value: value}
+		out := &ConstStmt{Name: s.Name, LocalID: s.LocalID, Type: s.Type, Value: value}
 		SetStmtLocation(out, s.Loc())
 		return append(prelude, out)
 	case *ReturnStmt:
@@ -119,7 +125,7 @@ func (l *lowerer) lowerStmtList(stmt Stmt) []Stmt {
 		return l.lowerWhileStmt(s)
 	case *ForStmt:
 		prelude, iterable := l.lowerExpr(s.Iterable)
-		out := &ForStmt{Iterable: iterable, IndexName: s.IndexName, ValueName: s.ValueName, Body: l.lowerBlock(s.Body)}
+		out := &ForStmt{Iterable: iterable, IndexName: s.IndexName, IndexID: s.IndexID, ValueName: s.ValueName, ValueID: s.ValueID, Body: l.lowerBlock(s.Body)}
 		SetStmtLocation(out, s.Loc())
 		return append(prelude, out)
 	case *LoopStmt:
@@ -157,7 +163,7 @@ func (l *lowerer) lowerStmtList(stmt Stmt) []Stmt {
 		return append(prelude, out)
 	case *LockStmt:
 		prelude, value := l.lowerExpr(s.Value)
-		out := &LockStmt{Value: value, Name: s.Name, Body: l.lowerBlock(s.Body)}
+		out := &LockStmt{Value: value, Name: s.Name, LocalID: s.LocalID, Body: l.lowerBlock(s.Body)}
 		SetStmtLocation(out, s.Loc())
 		return append(prelude, out)
 	case *UnsafeStmt:
@@ -319,8 +325,8 @@ func (l *lowerer) lowerMatchExpr(expr *MatchExpr) ([]Stmt, Expr) {
 		return nil, nil
 	}
 	valuePrelude, value := l.lowerExpr(expr.Value)
-	resultName := l.nextTemp()
-	resultDecl := &LetStmt{Name: resultName, Mutable: false, Type: expr.Type(), Value: nil}
+	resultName, resultID := l.nextTempLocal()
+	resultDecl := &LetStmt{Name: resultName, LocalID: resultID, Mutable: false, Type: expr.Type(), Value: nil}
 	SetStmtLocation(resultDecl, expr.Loc())
 	matchStmt := &MatchStmt{Value: value, Arms: make([]*MatchArm, 0, len(expr.Arms))}
 	SetStmtLocation(matchStmt, expr.Loc())
@@ -328,17 +334,17 @@ func (l *lowerer) lowerMatchExpr(expr *MatchExpr) ([]Stmt, Expr) {
 		if arm == nil {
 			continue
 		}
-		matchStmt.Arms = append(matchStmt.Arms, l.lowerMatchExprArm(arm, resultName, expr.Type()))
+		matchStmt.Arms = append(matchStmt.Arms, l.lowerMatchExprArm(arm, resultName, resultID, expr.Type()))
 	}
 	prelude := append([]Stmt{}, valuePrelude...)
 	prelude = append(prelude, resultDecl)
 	prelude = append(prelude, l.lowerMatchStmt(matchStmt)...)
-	result := makeTempIdent(resultName, expr.Type(), expr.Loc())
+	result := makeTempIdent(resultName, resultID, expr.Type(), expr.Loc())
 	result.Source = expr.SourceExpr()
 	return prelude, result
 }
 
-func (l *lowerer) lowerMatchExprArm(arm *MatchArm, resultName string, resultType typeinfo.Type) *MatchArm {
+func (l *lowerer) lowerMatchExprArm(arm *MatchArm, resultName string, resultID int, resultType typeinfo.Type) *MatchArm {
 	if arm == nil {
 		return nil
 	}
@@ -364,7 +370,7 @@ func (l *lowerer) lowerMatchExprArm(arm *MatchArm, resultName string, resultType
 		return out
 	}
 	if exprStmt, ok := last.(*ExprStmt); ok {
-		assign := &AssignStmt{Left: makeTempIdent(resultName, resultType, exprStmt.Loc()), Right: exprStmt.Value}
+		assign := &AssignStmt{Left: makeTempIdent(resultName, resultID, resultType, exprStmt.Loc()), Right: exprStmt.Value}
 		SetStmtLocation(assign, exprStmt.Loc())
 		out.Body.Stmts = append(out.Body.Stmts, assign)
 		return out
@@ -373,8 +379,8 @@ func (l *lowerer) lowerMatchExprArm(arm *MatchArm, resultName string, resultType
 	return out
 }
 
-func makeTempIdent(name string, typ typeinfo.Type, loc source.Location) *Ident {
-	ident := &Ident{Path: []string{name}}
+func makeTempIdent(name string, localID int, typ typeinfo.Type, loc source.Location) *Ident {
+	ident := &Ident{Path: []string{name}, LocalID: localID}
 	ident.ExprType = typ
 	ident.Location = loc
 	return ident
@@ -393,8 +399,8 @@ func (l *lowerer) hasTypeMatchArm(s *MatchStmt) bool {
 }
 
 func (l *lowerer) lowerTypedMatch(s *MatchStmt) Stmt {
-	matchName := l.nextTemp()
-	matchValue := &Ident{Path: []string{matchName}}
+	matchName, matchID := l.nextTempLocal()
+	matchValue := &Ident{Path: []string{matchName}, LocalID: matchID}
 	matchValue.ExprType = s.Value.Type()
 	matchValue.Location = s.Value.Loc()
 	matchValue.Source = s.Value.SourceExpr()
@@ -404,6 +410,7 @@ func (l *lowerer) lowerTypedMatch(s *MatchStmt) Stmt {
 
 	init := &LetStmt{
 		Name:    matchName,
+		LocalID: matchID,
 		Mutable: false,
 		Type:    s.Value.Type(),
 		Value:   s.Value,
@@ -428,15 +435,16 @@ func (l *lowerer) lowerTypedMatch(s *MatchStmt) Stmt {
 		}
 		var cond Expr
 		if arm.TypePattern != nil {
-			bindName := l.nextTemp()
-			if valueIdent, ok := s.Value.(*Ident); ok && len(valueIdent.Path) == 1 {
-				body = l.rewriteMatchArmBody(body, valueIdent.Path[0], bindName)
+			bindName, bindID := l.nextTempLocal()
+			if valueIdent, ok := s.Value.(*Ident); ok {
+				body = l.rewriteMatchArmBody(body, valueIdent.Path[0], valueIdent.LocalID, bindName, bindID)
 			}
 			cast := &CastExpr{Left: matchValue}
 			cast.ExprType = arm.TypePattern
 			cast.Location = body.Loc()
 			binding := &LetStmt{
 				Name:    bindName,
+				LocalID: bindID,
 				Mutable: false,
 				Type:    arm.TypePattern,
 				Value:   cast,
@@ -462,181 +470,182 @@ func (l *lowerer) lowerTypedMatch(s *MatchStmt) Stmt {
 	return out
 }
 
-func (l *lowerer) rewriteMatchArmBody(body *BlockStmt, fromName, toName string) *BlockStmt {
-	if body == nil || fromName == "" || toName == "" || fromName == toName {
+func (l *lowerer) rewriteMatchArmBody(body *BlockStmt, fromName string, fromID int, toName string, toID int) *BlockStmt {
+	if body == nil || toName == "" || (fromName == "" && fromID < 0) {
 		return body
 	}
 	out := &BlockStmt{Stmts: make([]Stmt, 0, len(body.Stmts))}
 	SetStmtLocation(out, body.Loc())
 	for _, stmt := range body.Stmts {
-		out.Stmts = append(out.Stmts, l.rewriteStmtIdents(stmt, fromName, toName))
+		out.Stmts = append(out.Stmts, l.rewriteStmtIdents(stmt, fromName, fromID, toName, toID))
 	}
 	return out
 }
 
-func (l *lowerer) rewriteStmtIdents(stmt Stmt, fromName, toName string) Stmt {
+func (l *lowerer) rewriteStmtIdents(stmt Stmt, fromName string, fromID int, toName string, toID int) Stmt {
 	switch s := stmt.(type) {
 	case nil:
 		return nil
 	case *BlockStmt:
-		return l.rewriteMatchArmBody(s, fromName, toName)
+		return l.rewriteMatchArmBody(s, fromName, fromID, toName, toID)
 	case *LetStmt:
-		if s.Name == fromName {
+		if (fromName != "" && s.Name == fromName) || (fromID >= 0 && s.LocalID == fromID) {
 			return s
 		}
 		out := *s
-		out.Value = l.rewriteExprIdents(s.Value, fromName, toName)
+		out.Value = l.rewriteExprIdents(s.Value, fromName, fromID, toName, toID)
 		return &out
 	case *ConstStmt:
-		if s.Name == fromName {
+		if (fromName != "" && s.Name == fromName) || (fromID >= 0 && s.LocalID == fromID) {
 			return s
 		}
 		out := *s
-		out.Value = l.rewriteExprIdents(s.Value, fromName, toName)
+		out.Value = l.rewriteExprIdents(s.Value, fromName, fromID, toName, toID)
 		return &out
 	case *ReturnStmt:
 		out := *s
-		out.Value = l.rewriteExprIdents(s.Value, fromName, toName)
+		out.Value = l.rewriteExprIdents(s.Value, fromName, fromID, toName, toID)
 		return &out
 	case *ExprStmt:
 		out := *s
-		out.Value = l.rewriteExprIdents(s.Value, fromName, toName)
+		out.Value = l.rewriteExprIdents(s.Value, fromName, fromID, toName, toID)
 		return &out
 	case *AssignStmt:
 		out := *s
-		out.Left = l.rewriteExprIdents(s.Left, fromName, toName)
-		out.Right = l.rewriteExprIdents(s.Right, fromName, toName)
+		out.Left = l.rewriteExprIdents(s.Left, fromName, fromID, toName, toID)
+		out.Right = l.rewriteExprIdents(s.Right, fromName, fromID, toName, toID)
 		return &out
 	case *IfStmt:
 		out := *s
-		out.Cond = l.rewriteExprIdents(s.Cond, fromName, toName)
-		out.Then = l.rewriteMatchArmBody(s.Then, fromName, toName)
-		out.Else = l.rewriteStmtIdents(s.Else, fromName, toName)
+		out.Cond = l.rewriteExprIdents(s.Cond, fromName, fromID, toName, toID)
+		out.Then = l.rewriteMatchArmBody(s.Then, fromName, fromID, toName, toID)
+		out.Else = l.rewriteStmtIdents(s.Else, fromName, fromID, toName, toID)
 		return &out
 	case *MatchStmt:
 		return s
 	case *WhileStmt:
 		out := *s
-		out.Cond = l.rewriteExprIdents(s.Cond, fromName, toName)
-		out.Body = l.rewriteMatchArmBody(s.Body, fromName, toName)
+		out.Cond = l.rewriteExprIdents(s.Cond, fromName, fromID, toName, toID)
+		out.Body = l.rewriteMatchArmBody(s.Body, fromName, fromID, toName, toID)
 		return &out
 	case *ForStmt:
-		if s.IndexName == fromName || s.ValueName == fromName {
+		if (fromName != "" && (s.IndexName == fromName || s.ValueName == fromName)) || (fromID >= 0 && (s.IndexID == fromID || s.ValueID == fromID)) {
 			return s
 		}
 		out := *s
-		out.Iterable = l.rewriteExprIdents(s.Iterable, fromName, toName)
-		out.Body = l.rewriteMatchArmBody(s.Body, fromName, toName)
+		out.Iterable = l.rewriteExprIdents(s.Iterable, fromName, fromID, toName, toID)
+		out.Body = l.rewriteMatchArmBody(s.Body, fromName, fromID, toName, toID)
 		return &out
 	case *LoopStmt:
 		out := *s
-		out.Init = l.rewriteStmtIdents(s.Init, fromName, toName)
-		out.Cond = l.rewriteExprIdents(s.Cond, fromName, toName)
-		out.Post = l.rewriteStmtIdents(s.Post, fromName, toName)
-		out.Body = l.rewriteMatchArmBody(s.Body, fromName, toName)
+		out.Init = l.rewriteStmtIdents(s.Init, fromName, fromID, toName, toID)
+		out.Cond = l.rewriteExprIdents(s.Cond, fromName, fromID, toName, toID)
+		out.Post = l.rewriteStmtIdents(s.Post, fromName, fromID, toName, toID)
+		out.Body = l.rewriteMatchArmBody(s.Body, fromName, fromID, toName, toID)
 		return &out
 	case *LabelStmt:
 		out := *s
-		out.Stmt = l.rewriteStmtIdents(s.Stmt, fromName, toName)
+		out.Stmt = l.rewriteStmtIdents(s.Stmt, fromName, fromID, toName, toID)
 		return &out
 	case *DeferStmt:
 		out := *s
-		out.Body = l.rewriteStmtIdents(s.Body, fromName, toName)
+		out.Body = l.rewriteStmtIdents(s.Body, fromName, fromID, toName, toID)
 		return &out
 	case *ReleaseStmt:
 		out := *s
-		out.Value = l.rewriteExprIdents(s.Value, fromName, toName)
+		out.Value = l.rewriteExprIdents(s.Value, fromName, fromID, toName, toID)
 		return &out
 	case *PanicStmt:
 		out := *s
-		out.Value = l.rewriteExprIdents(s.Value, fromName, toName)
+		out.Value = l.rewriteExprIdents(s.Value, fromName, fromID, toName, toID)
 		return &out
 	case *LockStmt:
-		if s.Name == fromName {
+		if (fromName != "" && s.Name == fromName) || (fromID >= 0 && s.LocalID == fromID) {
 			return s
 		}
 		out := *s
-		out.Value = l.rewriteExprIdents(s.Value, fromName, toName)
-		out.Body = l.rewriteMatchArmBody(s.Body, fromName, toName)
+		out.Value = l.rewriteExprIdents(s.Value, fromName, fromID, toName, toID)
+		out.Body = l.rewriteMatchArmBody(s.Body, fromName, fromID, toName, toID)
 		return &out
 	case *UnsafeStmt:
 		out := *s
-		out.Body = l.rewriteMatchArmBody(s.Body, fromName, toName)
+		out.Body = l.rewriteMatchArmBody(s.Body, fromName, fromID, toName, toID)
 		return &out
 	default:
 		return stmt
 	}
 }
 
-func (l *lowerer) rewriteExprIdents(expr Expr, fromName, toName string) Expr {
+func (l *lowerer) rewriteExprIdents(expr Expr, fromName string, fromID int, toName string, toID int) Expr {
 	switch e := expr.(type) {
 	case nil:
 		return nil
 	case *Ident:
-		if len(e.Path) == 1 && e.Path[0] == fromName {
+		if (fromName != "" && len(e.Path) == 1 && e.Path[0] == fromName) || (fromID >= 0 && e.LocalID == fromID) {
 			out := *e
 			out.Path = []string{toName}
+			out.LocalID = toID
 			return &out
 		}
 		return e
 	case *PrefixExpr:
 		out := *e
-		out.Right = l.rewriteExprIdents(e.Right, fromName, toName)
+		out.Right = l.rewriteExprIdents(e.Right, fromName, fromID, toName, toID)
 		return &out
 	case *BinaryExpr:
 		out := *e
-		out.Left = l.rewriteExprIdents(e.Left, fromName, toName)
-		out.Right = l.rewriteExprIdents(e.Right, fromName, toName)
+		out.Left = l.rewriteExprIdents(e.Left, fromName, fromID, toName, toID)
+		out.Right = l.rewriteExprIdents(e.Right, fromName, fromID, toName, toID)
 		return &out
 	case *PostfixExpr:
 		out := *e
-		out.Left = l.rewriteExprIdents(e.Left, fromName, toName)
+		out.Left = l.rewriteExprIdents(e.Left, fromName, fromID, toName, toID)
 		return &out
 	case *CallExpr:
 		out := *e
-		out.Callee = l.rewriteExprIdents(e.Callee, fromName, toName)
+		out.Callee = l.rewriteExprIdents(e.Callee, fromName, fromID, toName, toID)
 		out.Args = append([]Expr(nil), e.Args...)
 		for i, arg := range out.Args {
-			out.Args[i] = l.rewriteExprIdents(arg, fromName, toName)
+			out.Args[i] = l.rewriteExprIdents(arg, fromName, fromID, toName, toID)
 		}
 		return &out
 	case *ConstructorCallExpr:
 		out := *e
 		out.Args = append([]Expr(nil), e.Args...)
 		for i, arg := range out.Args {
-			out.Args[i] = l.rewriteExprIdents(arg, fromName, toName)
+			out.Args[i] = l.rewriteExprIdents(arg, fromName, fromID, toName, toID)
 		}
 		return &out
 	case *SelectorExpr:
 		out := *e
-		out.Left = l.rewriteExprIdents(e.Left, fromName, toName)
+		out.Left = l.rewriteExprIdents(e.Left, fromName, fromID, toName, toID)
 		return &out
 	case *CastExpr:
 		out := *e
-		out.Left = l.rewriteExprIdents(e.Left, fromName, toName)
+		out.Left = l.rewriteExprIdents(e.Left, fromName, fromID, toName, toID)
 		return &out
 	case *IsExpr:
 		out := *e
-		out.Left = l.rewriteExprIdents(e.Left, fromName, toName)
+		out.Left = l.rewriteExprIdents(e.Left, fromName, fromID, toName, toID)
 		return &out
 	case *CatchExpr:
 		out := *e
-		out.Left = l.rewriteExprIdents(e.Left, fromName, toName)
-		out.Fallback = l.rewriteExprIdents(e.Fallback, fromName, toName)
-		out.Handler = l.rewriteMatchArmBody(e.Handler, fromName, toName)
+		out.Left = l.rewriteExprIdents(e.Left, fromName, fromID, toName, toID)
+		out.Fallback = l.rewriteExprIdents(e.Fallback, fromName, fromID, toName, toID)
+		out.Handler = l.rewriteMatchArmBody(e.Handler, fromName, fromID, toName, toID)
 		return &out
 	case *CompositeLit:
 		out := *e
 		out.Items = append([]CompositeItem(nil), e.Items...)
 		for i, item := range out.Items {
-			item.Value = l.rewriteExprIdents(item.Value, fromName, toName)
+			item.Value = l.rewriteExprIdents(item.Value, fromName, fromID, toName, toID)
 			out.Items[i] = item
 		}
 		return &out
 	case *IndexExpr:
 		out := *e
-		out.Left = l.rewriteExprIdents(e.Left, fromName, toName)
-		out.Index = l.rewriteExprIdents(e.Index, fromName, toName)
+		out.Left = l.rewriteExprIdents(e.Left, fromName, fromID, toName, toID)
+		out.Index = l.rewriteExprIdents(e.Index, fromName, fromID, toName, toID)
 		return &out
 	default:
 		return expr

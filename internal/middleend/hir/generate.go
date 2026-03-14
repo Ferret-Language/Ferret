@@ -21,6 +21,7 @@ type generator struct {
 
 	currentFn  *ast.FuncDecl
 	localNames map[*symbols.Symbol]string
+	localIDs   map[*symbols.Symbol]int
 	usedNames  map[string]struct{}
 }
 
@@ -84,6 +85,33 @@ func (g *generator) isFunctionLocal(sym *symbols.Symbol) bool {
 	}
 }
 
+func (g *generator) beginFunction(fn *ast.FuncDecl) {
+	g.currentFn = fn
+	g.usedNames = make(map[string]struct{})
+	g.localNames = make(map[*symbols.Symbol]string)
+	g.localIDs = make(map[*symbols.Symbol]int)
+
+	if fn == nil || g.bindings == nil {
+		return
+	}
+	for _, sym := range g.bindings.FunctionLocals[fn] {
+		if sym == nil {
+			continue
+		}
+		if _, ok := g.localIDs[sym]; ok {
+			continue
+		}
+		g.localIDs[sym] = len(g.localIDs)
+	}
+}
+
+func (g *generator) endFunction() {
+	g.currentFn = nil
+	g.usedNames = nil
+	g.localNames = nil
+	g.localIDs = nil
+}
+
 func (g *generator) mangleLocal(sym *symbols.Symbol) string {
 	if g == nil || sym == nil {
 		return ""
@@ -132,6 +160,24 @@ func (g *generator) localSymbol(node ast.Node) (*symbols.Symbol, bool) {
 	return res.Symbol, true
 }
 
+func (g *generator) localIDFromIdent(ident *ast.Ident) (int, bool) {
+	if g == nil || ident == nil {
+		return -1, false
+	}
+	if g.currentFn == nil {
+		return -1, false
+	}
+	sym, ok := g.localSymbol(ident)
+	if !ok || !g.isFunctionLocal(sym) {
+		return -1, false
+	}
+	id, ok := g.localIDs[sym]
+	if !ok {
+		return -1, false
+	}
+	return id, true
+}
+
 func (g *generator) maybeMangledLocalName(id *ast.Ident) string {
 	if id == nil {
 		return ""
@@ -144,6 +190,13 @@ func (g *generator) maybeMangledLocalName(id *ast.Ident) string {
 		return id.Text()
 	}
 	return g.mangleLocal(sym)
+}
+
+func (g *generator) maybeLocalID(id *ast.Ident) int {
+	if localID, ok := g.localIDFromIdent(id); ok {
+		return localID
+	}
+	return -1
 }
 
 func staticFieldGlobalName(typeName, fieldName string) string {
@@ -341,12 +394,11 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	if d == nil {
 		return nil
 	}
-	prevFn := g.currentFn
-	g.currentFn = d
-	prevUsed := g.usedNames
-	g.usedNames = make(map[string]struct{})
-	defer func() { g.currentFn = prevFn }()
-	defer func() { g.usedNames = prevUsed }()
+	prevFn, prevUsed, prevNames, prevIDs := g.currentFn, g.usedNames, g.localNames, g.localIDs
+	g.beginFunction(d)
+	defer func() {
+		g.currentFn, g.usedNames, g.localNames, g.localIDs = prevFn, prevUsed, prevNames, prevIDs
+	}()
 
 	fn := &Func{
 		Name:       d.Name.Text(),
@@ -356,6 +408,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 		ExternName: d.ExternName,
 		Result:     syntaxType(g.types, d.Result),
 		Body:       g.generateBlock(d.Body),
+		LocalCount: len(g.localIDs),
 		Location:   d.Location,
 		Source:     d,
 	}
@@ -368,6 +421,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	if d.Receiver != nil {
 		fn.Receiver = &Param{
 			Name:     g.maybeMangledLocalName(d.Receiver.Name),
+			LocalID:  g.maybeLocalID(d.Receiver.Name),
 			Type:     syntaxType(g.types, d.Receiver.Type),
 			Location: d.Receiver.Location,
 		}
@@ -376,6 +430,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	for _, param := range d.Params {
 		fn.Params = append(fn.Params, &Param{
 			Name:       g.maybeMangledLocalName(param.Name),
+			LocalID:    g.maybeLocalID(param.Name),
 			Type:       syntaxType(g.types, param.Type),
 			IsComptime: param.IsComptime,
 			Location:   param.Location,
@@ -408,11 +463,11 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 	case *ast.BlockStmt:
 		return g.generateBlock(s)
 	case *ast.LetStmt:
-		out := &LetStmt{Name: g.maybeMangledLocalName(s.Name), Mutable: s.IsMut, Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
+		out := &LetStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Mutable: s.IsMut, Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
 		out.Location = s.Location
 		return out
 	case *ast.ConstStmt:
-		out := &ConstStmt{Name: g.maybeMangledLocalName(s.Name), Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
+		out := &ConstStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
 		out.Location = s.Location
 		return out
 	case *ast.ReturnStmt:
@@ -457,12 +512,14 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.ForStmt:
-		out := &ForStmt{Iterable: g.generateExpr(s.Iterable), Body: g.generateBlock(s.Body)}
+		out := &ForStmt{Iterable: g.generateExpr(s.Iterable), Body: g.generateBlock(s.Body), IndexID: -1, ValueID: -1}
 		if s.Index != nil {
 			out.IndexName = g.maybeMangledLocalName(s.Index)
+			out.IndexID = g.maybeLocalID(s.Index)
 		}
 		if s.Value != nil {
 			out.ValueName = g.maybeMangledLocalName(s.Value)
+			out.ValueID = g.maybeLocalID(s.Value)
 		}
 		out.Location = s.Location
 		return out
@@ -493,7 +550,7 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.LockStmt:
-		out := &LockStmt{Value: g.generateExpr(s.Value), Name: g.maybeMangledLocalName(s.Name), Body: g.generateBlock(s.Body)}
+		out := &LockStmt{Value: g.generateExpr(s.Value), Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Body: g.generateBlock(s.Body)}
 		out.Location = s.Location
 		return out
 	case *ast.UnsafeStmt:
@@ -515,6 +572,7 @@ func (g *generator) generateAutoDestructorDefer(stmt ast.Stmt) Stmt {
 		return nil
 	}
 	ident := &Ident{Path: []string{g.maybeMangledLocalName(letStmt.Name)}}
+	ident.LocalID = g.maybeLocalID(letStmt.Name)
 	ident.ExprType = effectiveType(g.types, letStmt.Type, letStmt.Value)
 	ident.Location = letStmt.Name.Location
 	call := &CallExpr{
@@ -560,12 +618,16 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		return out
 	case *ast.Ident:
 		path := append([]string{}, e.Path...)
+		localID := -1
 		if len(path) == 1 && g.currentFn != nil {
 			if sym, ok := g.localSymbol(e); ok && g.isFunctionLocal(sym) {
 				path[0] = g.mangleLocal(sym)
+				if id, ok := g.localIDs[sym]; ok {
+					localID = id
+				}
 			}
 		}
-		out := &Ident{Path: path}
+		out := &Ident{Path: path, LocalID: localID}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
 	case *ast.NumberLit:
@@ -637,12 +699,14 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		return out
 	case *ast.CatchExpr:
 		out := &CatchExpr{
-			Left:     g.generateExpr(e.Left),
-			Fallback: g.generateExpr(e.Fallback),
-			Handler:  g.generateBlock(e.Handler),
+			Left:      g.generateExpr(e.Left),
+			Fallback:  g.generateExpr(e.Fallback),
+			Handler:   g.generateBlock(e.Handler),
+			PayloadID: -1,
 		}
 		if e.Payload != nil {
 			out.PayloadName = g.maybeMangledLocalName(e.Payload)
+			out.PayloadID = g.maybeLocalID(e.Payload)
 		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out

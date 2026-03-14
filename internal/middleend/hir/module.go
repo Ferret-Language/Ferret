@@ -85,12 +85,16 @@ type Func struct {
 	Params     []*Param
 	Result     typeinfo.Type
 	Body       *BlockStmt
+	// LocalCount is the number of local slots in the function. Generator seeds
+	// this with resolver-bound locals; HIR lowering may append temporaries.
+	LocalCount int
 	Location   source.Location
 	Source     *ast.FuncDecl
 }
 
 type Param struct {
 	Name       string
+	LocalID    int
 	Type       typeinfo.Type
 	IsComptime bool
 	Location   source.Location
