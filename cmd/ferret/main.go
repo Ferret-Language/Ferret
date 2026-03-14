@@ -20,9 +20,19 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
+	"compiler/internal/lsp"
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "lsp" {
+		fmt.Fprintln(os.Stderr, "starting Ferret LSP server...")
+		if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	astFlag := flag.Bool("ast", false, "dump AST as JSON")
 	astOut := flag.String("ast-out", "", "write AST JSON to file")
 	hirFlag := flag.Bool("hir", false, "write HIR dump as .hir text")
@@ -35,7 +45,7 @@ func main() {
 	buildBackend := flag.String("build-backend", "qbe", "backend to use for -o compilation (qbe|llvm)")
 	debugBuild := flag.Bool("debug", false, "enable debug build mode (emits debug info and debug-friendly codegen)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [-o output] [-ast] [-ast-out file] [-hir] [-hir-out path] [-mir] [-mir-out path] [-backend target] [-backend-out path] <source-file-or-directory>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "usage: %s [lsp] | [-o output] [-ast] [-ast-out file] [-hir] [-hir-out path] [-mir] [-mir-out path] [-backend target] [-backend-out path] <source-file-or-directory>\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()

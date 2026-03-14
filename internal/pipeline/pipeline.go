@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"compiler/internal/analysis/frontend/attrfilter"
+	"compiler/internal/analysis/attrfilter"
 	"compiler/internal/analysis/cfg/analysis"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
