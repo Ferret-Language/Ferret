@@ -1,7 +1,7 @@
 package ast
 
 import (
-	"compiler/internal/source"
+	"compiler/internal/core/source"
 	"strings"
 )
 

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	compilerapi "compiler/internal/compiler"
-	"compiler/internal/diagnostics"
+	"compiler/internal/core/diagnostics"
+	"compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 )
 
@@ -24,7 +24,7 @@ fn build() i32 {
 `)
 
 	diag := diagnostics.NewBag()
-	c := compilerapi.New(root, ".ferr", diag)
+	c := compiler.New(root, ".ferr", diag)
 	first := c.ParseEntry(filepath.Join(root, "main.ferr"))
 	if first.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", first.Diagnostics.Diagnostics())
@@ -55,7 +55,7 @@ fn a() i32 { return 1 }
 fn b() i32 { return 2 }
 `)
 
-	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "a.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "a.ferr"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected cycle diagnostic")
 	}
@@ -86,7 +86,7 @@ fn build() i32 {
 	mustWrite(t, filepath.Join(root, "extra.ferr"), `const BuildMode = "debug"
 `)
 
-	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseWorkspace()
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseWorkspace()
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
 	}
@@ -112,7 +112,7 @@ fn b() i32 { return 2 }
 `)
 	mustWrite(t, filepath.Join(root, "main.ferr"), `fn main() i32 { return 0 }`)
 
-	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseWorkspace()
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseWorkspace()
 	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected cycle diagnostic")
 	}
@@ -135,7 +135,7 @@ func TestPipelineRejectsRelativeImports(t *testing.T) {
 fn main() i32 { return 0 }
 `)
 
-	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected import path diagnostic")
 	}

@@ -1,6 +1,6 @@
 package ast
 
-import "compiler/internal/source"
+import "compiler/internal/core/source"
 
 type Node interface {
 	Loc() source.Location

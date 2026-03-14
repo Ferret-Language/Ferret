@@ -6,8 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"compiler/internal/diagnostics"
-	"compiler/internal/source"
+	"compiler/internal/core/diagnostics"
+	"compiler/internal/core/source"
 	"compiler/internal/tokens"
 	"compiler/internal/utils/numeric"
 )

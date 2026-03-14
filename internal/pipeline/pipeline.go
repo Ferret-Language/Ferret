@@ -7,25 +7,25 @@ import (
 	"strings"
 	"sync"
 
-	"compiler/internal/attrfilter"
-	"compiler/internal/cfganalysis"
-	"compiler/internal/context"
-	"compiler/internal/diagnostics"
+	"compiler/internal/analysis/frontend/attrfilter"
+	"compiler/internal/analysis/cfg/analysis"
+	"compiler/internal/core/context"
+	"compiler/internal/core/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
-	"compiler/internal/layoutanalysis"
-	"compiler/internal/middleend/hir"
-	midmir "compiler/internal/middleend/mir"
-	"compiler/internal/phase"
-	"compiler/internal/semantics/collector"
-	"compiler/internal/semantics/ownership"
-	"compiler/internal/semantics/resolver"
-	"compiler/internal/semantics/symbols"
-	"compiler/internal/semantics/typechecker"
-	"compiler/internal/semantics/typeinfo"
-	"compiler/internal/semantics/usage"
-	"compiler/internal/source"
+	"compiler/internal/analysis/layout/analysis"
+	"compiler/internal/ir/hir"
+	"compiler/internal/ir/mir"
+	"compiler/internal/core/phase"
+	"compiler/internal/analysis/semantics/collector"
+	"compiler/internal/analysis/semantics/ownership"
+	"compiler/internal/analysis/semantics/resolver"
+	"compiler/internal/analysis/semantics/symbols"
+	"compiler/internal/analysis/semantics/typechecker"
+	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/analysis/semantics/usage"
+	"compiler/internal/core/source"
 )
 
 // Pipeline coordinates the compilation process.
@@ -179,11 +179,11 @@ func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	mod.LoweredHIR = hir.Lower(mod.HIR)
 	mod.Phase = phase.PhaseHIRLowered
 	cfganalysis.AnalyzeModule(p.ctx, mod)
-	mod.MIR = midmir.LowerModule(mod.CFG, mod.HIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupMethodPath(mod.ImportPath))
-	midmir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
+	mod.MIR = mir.LowerModule(mod.CFG, mod.HIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupMethodPath(mod.ImportPath))
+	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseMIRGenerated
-	midmir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)
-	midmir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
+	mir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)
+	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseConstEvaluated
 	ownership.AnalyzeModule(p.ctx, mod)
 	mod.Phase = phase.PhaseOwnershipAnalyzed

@@ -3,7 +3,7 @@ package tokens
 import (
 	"fmt"
 
-	"compiler/internal/source"
+	"compiler/internal/core/source"
 )
 
 type Kind string

@@ -1,0 +1,194 @@
+package usage_test
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"compiler/internal/core/diagnostics"
+	"compiler/internal/core/phase"
+	"compiler/internal/driver"
+)
+
+func TestUsageWarnsUnusedImport(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
+fn Println(text str) void;
+`)
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `import "std/io"
+
+fn main() i32 {
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected usage-analyzed entry phase, got %#v", result.Entry)
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedImport && diag.Message == `unused import "std/io"` {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected unused import warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestUsageWarnsUnusedPrivateTopLevelSymbols(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `type point struct {
+}
+
+let hiddenValue: i32 = 1
+let deadValue: i32 = 2
+
+fn helper() i32 {
+    return hiddenValue
+}
+
+fn main() i32 {
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	codes := map[string]bool{}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		codes[diag.Code] = true
+	}
+	if !codes[diagnostics.WarnUnusedPrivateType] {
+		t.Fatalf("expected unused private type warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if !codes[diagnostics.WarnUnusedPrivateFunction] {
+		t.Fatalf("expected unused private function warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if !codes[diagnostics.WarnUnusedPrivateBinding] {
+		t.Fatalf("expected unused private binding warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestUsageDoesNotWarnUsedOrExportedSymbols(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
+fn Println(text str) void;
+`)
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `import "std/io"
+
+type Point struct {
+}
+
+let hiddenValue: i32 = 1
+
+fn helper() i32 {
+    return hiddenValue
+}
+
+fn main() i32 {
+    io::Println("ok")
+    return helper()
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		switch diag.Code {
+		case diagnostics.WarnUnusedImport, diagnostics.WarnUnusedPrivateFunction, diagnostics.WarnUnusedPrivateType, diagnostics.WarnUnusedPrivateBinding:
+			t.Fatalf("did not expect usage warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
+func TestUsageWarnsUnusedLocalsAndParametersInUsedFunction(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn helper(x i32, y i32, z i32) i32 {
+    let alive = x
+    let dead = y
+    return alive
+}
+
+fn main() i32 {
+    return helper(1, 2, 3)
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	foundParam := false
+	foundLocal := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		switch diag.Code {
+		case diagnostics.WarnUnusedParameter:
+			if diag.Message == `unused parameter "z"` {
+				foundParam = true
+			}
+		case diagnostics.WarnUnusedLocal:
+			if diag.Message == `unused local "dead"` {
+				foundLocal = true
+			}
+		}
+	}
+	if !foundParam {
+		t.Fatalf("expected unused parameter warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if !foundLocal {
+		t.Fatalf("expected unused local warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestUsageSkipsLocalWarningsInUnusedFunction(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn helper(x i32, y i32) i32 {
+    let dead = y
+    return x
+}
+
+fn main() i32 {
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	foundUnusedFunction := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		switch diag.Code {
+		case diagnostics.WarnUnusedPrivateFunction:
+			if diag.Message == `unused private function "helper"` {
+				foundUnusedFunction = true
+			}
+		case diagnostics.WarnUnusedParameter, diagnostics.WarnUnusedLocal:
+			t.Fatalf("did not expect local warnings for unused function, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+	if !foundUnusedFunction {
+		t.Fatalf("expected unused function warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func mustWriteUsage(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}

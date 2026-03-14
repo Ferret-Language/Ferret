@@ -10,21 +10,21 @@ import (
 	"strings"
 
 	"compiler/internal/backend"
-	ast "compiler/internal/frontend/ast"
-	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/frontend/ast"
+	"compiler/internal/analysis/layout/model"
+	"compiler/internal/ir/mir"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/utils/numeric"
 )
 
 type lowerer struct{}
 
 type moduleState struct {
-	mod               *midmir.Module
+	mod               *mir.Module
 	layout            *layout.Module
 	layouts           map[string]*layout.Module
-	modules           map[string]*midmir.Module
-	fn                *midmir.Function
+	modules           map[string]*mir.Module
+	fn                *mir.Function
 	functions         map[string]struct{}
 	globals           map[string]struct{}
 	modulePrefix      string
@@ -37,9 +37,10 @@ type moduleState struct {
 	pendingLines      []string         // extra load instructions to flush before each emitted line
 	interfaceVTables  map[string]string
 	interfaceWrappers map[string]struct{}
-	tempValues        map[int]midmir.Value
+	tempValues        map[int]mir.Value
 	debug             *debugState // nil if debug info is disabled
 	fnScopeID         int         // DISubprogram metadata ID for the current function
+	debugLocalVarIDs  map[int]int // local ID -> DILocalVariable metadata ID (for dbg.value updates)
 }
 
 // debugState accumulates LLVM debug-info metadata nodes (DWARF) while
@@ -51,6 +52,15 @@ type debugState struct {
 	cuIDs          []int          // all DICompileUnit IDs (one per module)
 	fileIDs        map[string]int // abs file path → DIFile metadata ID
 	subroutineType int            // cached !DISubroutineType(types: !{null}) ID; -1 = not yet emitted
+	emptyExpr      int            // cached !DIExpression() ID; -1 = not yet emitted
+	emptyTuple     int            // cached !{} ID; -1 = not yet emitted
+	unknownType    int            // cached generic !DIBasicType for unknown locals; -1 = not yet emitted
+	stringType     int            // cached debug type for str; -1 = not yet emitted
+	sliceType      int            // cached debug type for []T-like ABI shape; -1 = not yet emitted
+	basicTypeIDs   map[string]int // builtin ferret type name -> DIBasicType metadata ID
+	pointerTypeIDs map[int]int    // base type metadata ID -> pointer debug type metadata ID
+	compositeIDs   map[string]int // logical composite key -> metadata ID
+	buildingTypes  map[string]bool
 }
 
 func newDebugState() *debugState {
@@ -58,6 +68,15 @@ func newDebugState() *debugState {
 		nextID:         0,
 		fileIDs:        make(map[string]int),
 		subroutineType: -1,
+		emptyExpr:      -1,
+		emptyTuple:     -1,
+		unknownType:    -1,
+		stringType:     -1,
+		sliceType:      -1,
+		basicTypeIDs:   make(map[string]int),
+		pointerTypeIDs: make(map[int]int),
+		compositeIDs:   make(map[string]int),
+		buildingTypes:  make(map[string]bool),
 	}
 }
 
@@ -114,6 +133,252 @@ func (d *debugState) addLocation(line, col, scopeID int) int {
 	return d.emit(fmt.Sprintf("!DILocation(line: %d, column: %d, scope: !%d)", line, col, scopeID))
 }
 
+// getEmptyExpression returns (creating once) the empty DIExpression metadata.
+func (d *debugState) getEmptyExpression() int {
+	if d.emptyExpr >= 0 {
+		return d.emptyExpr
+	}
+	d.emptyExpr = d.emit("!DIExpression()")
+	return d.emptyExpr
+}
+
+func (d *debugState) getEmptyTuple() int {
+	if d.emptyTuple >= 0 {
+		return d.emptyTuple
+	}
+	d.emptyTuple = d.emit("!{}")
+	return d.emptyTuple
+}
+
+// getUnknownType returns a generic fallback debug type for locals/params.
+func (d *debugState) getUnknownType() int {
+	if d.unknownType >= 0 {
+		return d.unknownType
+	}
+	d.unknownType = d.emit(`!DIBasicType(name: "unknown", size: 0, encoding: DW_ATE_unsigned)`)
+	return d.unknownType
+}
+
+func (d *debugState) getPointerType(baseTypeID int) int {
+	if baseTypeID < 0 {
+		baseTypeID = d.getUnknownType()
+	}
+	if id, ok := d.pointerTypeIDs[baseTypeID]; ok {
+		return id
+	}
+	id := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !%d, size: 64)", baseTypeID))
+	d.pointerTypeIDs[baseTypeID] = id
+	return id
+}
+
+func (d *debugState) getBasicType(name string, sizeBits int, encoding string) int {
+	if id, ok := d.basicTypeIDs[name]; ok {
+		return id
+	}
+	id := d.emit(fmt.Sprintf("!DIBasicType(name: %q, size: %d, encoding: %s)", name, sizeBits, encoding))
+	d.basicTypeIDs[name] = id
+	return id
+}
+
+func (d *debugState) getSliceLikeType(name string) int {
+	if name == "str" && d.stringType >= 0 {
+		return d.stringType
+	}
+	if name == "slice" && d.sliceType >= 0 {
+		return d.sliceType
+	}
+	ptrID := d.getPointerType(d.getUnknownType())
+	lenID := d.getBasicType("usize", 64, "DW_ATE_unsigned")
+	dataMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: %q, baseType: !%d, size: 64, align: 64, offset: 0)", "data", ptrID))
+	lenMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: %q, baseType: !%d, size: 64, align: 64, offset: 64)", "len", lenID))
+	elemsID := d.emit(fmt.Sprintf("!{!%d, !%d}", dataMember, lenMember))
+	id := d.emit(fmt.Sprintf("!DICompositeType(tag: DW_TAG_structure_type, name: %q, size: 128, align: 64, elements: !%d)", name, elemsID))
+	if name == "str" {
+		d.stringType = id
+	} else if name == "slice" {
+		d.sliceType = id
+	}
+	return id
+}
+
+// getOptionalType emits a DICompositeType for ?T shaped as { tag: i32, value: T }.
+// If the optional uses a niche (pointer niche), the layout is just the inner type.
+func (d *debugState) getOptionalType(state *moduleState, t *typeinfo.OptionalType) int {
+	innerID := d.getType(state, t.Inner)
+	key := fmt.Sprintf("?::%d", innerID)
+	if id, ok := d.compositeIDs[key]; ok {
+		return id
+	}
+	// Niche optionals (e.g. ?*T) have the same layout as the inner type.
+	if optionalUsesNiche(t.Inner) {
+		d.compositeIDs[key] = innerID
+		return innerID
+	}
+	// Tag (i32) + inner value.
+	tagTypeID := d.getBasicType("i32", 32, "DW_ATE_signed")
+	tagMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"tag\", baseType: !%d, size: 32, align: 32, offset: 0)", tagTypeID))
+	// Compute payload offset: must be aligned to inner type's alignment.
+	innerSize := int64(32) // default
+	innerAlign := int64(32)
+	if state != nil {
+		if sz, al, err := aggregateSizeAlignOfPrimitive(t.Inner); err == nil {
+			innerSize = sz * 8
+			innerAlign = al * 8
+		} else if sz, al, err2 := aggregateSizeAlign(state, t.Inner); err2 == nil {
+			innerSize = sz * 8
+			innerAlign = al * 8
+		}
+	}
+	payloadOffset := int64(32)
+	if innerAlign > 32 {
+		payloadOffset = innerAlign
+	}
+	totalSize := payloadOffset + innerSize
+	valMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"value\", baseType: !%d, size: %d, align: %d, offset: %d)", innerID, innerSize, innerAlign, payloadOffset))
+	elemsID := d.emit(fmt.Sprintf("!{!%d, !%d}", tagMember, valMember))
+	id := d.emit(fmt.Sprintf("!DICompositeType(tag: DW_TAG_structure_type, name: \"option\", size: %d, align: %d, elements: !%d)", totalSize, innerAlign, elemsID))
+	d.compositeIDs[key] = id
+	return id
+}
+
+// getInterfaceType emits a DICompositeType for interface values: { data: ptr, vtable: ptr }.
+func (d *debugState) getInterfaceType() int {
+	key := "::iface"
+	if id, ok := d.compositeIDs[key]; ok {
+		return id
+	}
+	ptrID := d.getPointerType(d.getUnknownType())
+	dataMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"data\", baseType: !%d, size: 64, align: 64, offset: 0)", ptrID))
+	vtableMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"vtable\", baseType: !%d, size: 64, align: 64, offset: 64)", ptrID))
+	elemsID := d.emit(fmt.Sprintf("!{!%d, !%d}", dataMember, vtableMember))
+	id := d.emit("!DICompositeType(tag: DW_TAG_structure_type, name: \"iface\", size: 128, align: 64, elements: !" + fmt.Sprintf("%d)", elemsID))
+	d.compositeIDs[key] = id
+	return id
+}
+
+func (d *debugState) getNamedType(state *moduleState, named *typeinfo.NamedType) int {
+	if named == nil {
+		return d.getUnknownType()
+	}
+	// Interface named types always have a fixed {data ptr, vtable ptr} layout.
+	if namedIsInterface(named) {
+		id := d.getInterfaceType()
+		key := named.ModuleKey + "::" + named.Name
+		d.compositeIDs[key] = id
+		return id
+	}
+	key := named.ModuleKey + "::" + named.Name
+	if id, ok := d.compositeIDs[key]; ok {
+		return id
+	}
+	if d.buildingTypes[key] {
+		return d.getUnknownType()
+	}
+	if state == nil {
+		return d.getUnknownType()
+	}
+	info, err := lookupNamedLayout(state, named)
+	if err != nil || info == nil || !info.Known {
+		return d.getUnknownType()
+	}
+	d.buildingTypes[key] = true
+	defer delete(d.buildingTypes, key)
+
+	name := named.Name
+	tag := "DW_TAG_structure_type"
+	if info.Union != nil || namedIsUnion(named) {
+		tag = "DW_TAG_union_type"
+	}
+	elemsID := d.getEmptyTuple()
+	if info.Struct != nil {
+		memberRefs := make([]string, 0, len(info.Struct.Fields))
+		for _, field := range info.Struct.Fields {
+			if field == nil {
+				continue
+			}
+			memberTypeID := d.getType(state, field.Type)
+			memberID := d.emit(fmt.Sprintf(
+				"!DIDerivedType(tag: DW_TAG_member, name: %q, baseType: !%d, size: %d, align: %d, offset: %d)",
+				field.Name, memberTypeID, field.Size*8, field.Align*8, field.Offset*8))
+			memberRefs = append(memberRefs, fmt.Sprintf("!%d", memberID))
+		}
+		if len(memberRefs) > 0 {
+			elemsID = d.emit(fmt.Sprintf("!{%s}", strings.Join(memberRefs, ", ")))
+		}
+	}
+	align := info.Align * 8
+	if align <= 0 {
+		align = 8
+	}
+	id := d.emit(fmt.Sprintf("!DICompositeType(tag: %s, name: %q, size: %d, align: %d, elements: !%d)", tag, name, info.Size*8, align, elemsID))
+	d.compositeIDs[key] = id
+	return id
+}
+
+func (d *debugState) getType(state *moduleState, typ typeinfo.Type) int {
+	if typ == nil {
+		return d.getUnknownType()
+	}
+	if named, ok := typ.(*typeinfo.NamedType); ok {
+		return d.getNamedType(state, named)
+	}
+	switch t := unwrapNamed(typ).(type) {
+	case *typeinfo.BuiltinType:
+		switch t.Name {
+		case "bool", "u8":
+			return d.getBasicType(t.Name, 8, "DW_ATE_unsigned")
+		case "i8":
+			return d.getBasicType(t.Name, 8, "DW_ATE_signed")
+		case "u16":
+			return d.getBasicType(t.Name, 16, "DW_ATE_unsigned")
+		case "i16":
+			return d.getBasicType(t.Name, 16, "DW_ATE_signed")
+		case "u32":
+			return d.getBasicType(t.Name, 32, "DW_ATE_unsigned")
+		case "i32":
+			return d.getBasicType(t.Name, 32, "DW_ATE_signed")
+		case "char":
+			return d.getBasicType(t.Name, 32, "DW_ATE_UTF")
+		case "u64", "usize":
+			return d.getBasicType(t.Name, 64, "DW_ATE_unsigned")
+		case "i64", "isize":
+			return d.getBasicType(t.Name, 64, "DW_ATE_signed")
+		case "f32":
+			return d.getBasicType(t.Name, 32, "DW_ATE_float")
+		case "f64":
+			return d.getBasicType(t.Name, 64, "DW_ATE_float")
+		case "void":
+			return d.getUnknownType()
+		}
+	case *typeinfo.PointerType:
+		innerID := d.getType(state, t.Inner)
+		return d.getPointerType(innerID)
+	case *typeinfo.StringType:
+		return d.getSliceLikeType("str")
+	case *typeinfo.SliceType:
+		return d.getSliceLikeType("slice")
+	case *typeinfo.OptionalType:
+		return d.getOptionalType(state, t)
+	case *typeinfo.InterfaceType:
+		return d.getInterfaceType()
+	}
+	return d.getUnknownType()
+}
+
+// addLocalVariable creates DILocalVariable metadata for a parameter/local.
+// Pass argIndex=0 for non-parameters.
+func (d *debugState) addLocalVariable(state *moduleState, name string, varType typeinfo.Type, fileID, scopeID, line, argIndex int) int {
+	typeID := d.getType(state, varType)
+	if argIndex > 0 {
+		return d.emit(fmt.Sprintf(
+			`!DILocalVariable(name: %q, arg: %d, scope: !%d, file: !%d, line: %d, type: !%d)`,
+			name, argIndex, scopeID, fileID, line, typeID))
+	}
+	return d.emit(fmt.Sprintf(
+		`!DILocalVariable(name: %q, scope: !%d, file: !%d, line: %d, type: !%d)`,
+		name, scopeID, fileID, line, typeID))
+}
+
 // appendDebugSuffix appends ", !dbg !N" to every non-empty, non-comment line
 // in a (possibly multi-line) LLVM IR instruction string.
 func appendDebugSuffix(ir string, suffix string) string {
@@ -155,7 +420,7 @@ func (*lowerer) Target() backend.Target { return backend.TargetLLVM }
 // All named type declarations are collected and deduplicated first so they
 // precede every function body — a hard requirement of the LLVM IR format.
 // Use this instead of calling LowerModule per-module and concatenating.
-func LowerProgram(units []*backend.Unit) (string, error) {
+func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 	// Build a merged layouts map so every unit can resolve cross-module types.
 	allLayouts := make(map[string]*layout.Module)
 	for _, u := range units {
@@ -164,7 +429,10 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 		}
 	}
 
-	dbg := newDebugState()
+	var dbg *debugState
+	if includeDebug {
+		dbg = newDebugState()
+	}
 
 	// Pass 1: collect all type declarations in dependency order (units are
 	// already ordered imports-before-entry by the caller).
@@ -210,6 +478,10 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 		}
 		seenExterns[sym] = struct{}{}
 		declLines = append(declLines, decl)
+	}
+	if includeDebug {
+		declLines = append(declLines, "declare void @llvm.dbg.declare(metadata, metadata, metadata)")
+		declLines = append(declLines, "declare void @llvm.dbg.value(metadata, metadata, metadata)")
 	}
 	for _, unit := range units {
 		if unit == nil || unit.Module == nil {
@@ -294,7 +566,7 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 		state := newModuleStateWithDebug(unit, allLayouts, dbg)
 
 		// Create one DICompileUnit per module source file.
-		if unit.Module.FilePath != "" {
+		if state.debug != nil && unit.Module.FilePath != "" {
 			fileID := dbg.getFile(unit.Module.FilePath)
 			state.debug.addCU(fileID)
 		}
@@ -324,7 +596,7 @@ func LowerProgram(units []*backend.Unit) (string, error) {
 	}
 
 	// Emit DWARF debug metadata section.
-	if len(dbg.cuIDs) > 0 {
+	if dbg != nil && len(dbg.cuIDs) > 0 {
 		// Module flags required by LLVM for DWARF.
 		dwarfVerID := dbg.emit("!{i32 7, !\"Dwarf Version\", i32 4}")
 		dbgVerID := dbg.emit("!{i32 2, !\"Debug Info Version\", i32 3}")
@@ -374,7 +646,7 @@ func implicitExternSymbol(decl string) string {
 }
 
 // llvmExternDecl builds a "declare" line for an extern function.
-func llvmExternDecl(state *moduleState, fn *midmir.Function) (string, error) {
+func llvmExternDecl(state *moduleState, fn *mir.Function) (string, error) {
 	sym := sanitizeIdent(fn.ExternName)
 
 	var retStr string
@@ -442,7 +714,7 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		deferredB:         &strings.Builder{},
 		interfaceVTables:  make(map[string]string),
 		interfaceWrappers: make(map[string]struct{}),
-		tempValues:        make(map[int]midmir.Value),
+		tempValues:        make(map[int]mir.Value),
 	}
 	for _, fn := range unit.Module.Functions {
 		if fn != nil {
@@ -550,9 +822,9 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 // Type declarations
 // ---------------------------------------------------------------------------
 
-func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl) error {
+func emitTypes(b *strings.Builder, state *moduleState, types []*mir.TypeDecl) error {
 	seen := make(map[string]struct{})
-	emitDecls := func(decls []*midmir.TypeDecl) error {
+	emitDecls := func(decls []*mir.TypeDecl) error {
 		for _, decl := range decls {
 			if decl == nil || decl.Named == nil || (decl.Struct == nil && decl.Union == nil && decl.Interface == nil) {
 				continue
@@ -595,7 +867,7 @@ func emitTypes(b *strings.Builder, state *moduleState, types []*midmir.TypeDecl)
 	return nil
 }
 
-func lowerTypeDecl(state *moduleState, decl *midmir.TypeDecl) (string, error) {
+func lowerTypeDecl(state *moduleState, decl *mir.TypeDecl) (string, error) {
 	if decl == nil || decl.Named == nil || (decl.Struct == nil && decl.Union == nil && decl.Interface == nil) {
 		return "", nil
 	}
@@ -629,7 +901,7 @@ func lowerTypeDecl(state *moduleState, decl *midmir.TypeDecl) (string, error) {
 // Globals
 // ---------------------------------------------------------------------------
 
-func emitGlobals(b *strings.Builder, state *moduleState, globals []*midmir.Global) error {
+func emitGlobals(b *strings.Builder, state *moduleState, globals []*mir.Global) error {
 	wrote := 0
 	for _, g := range globals {
 		if g == nil {
@@ -652,13 +924,13 @@ func emitGlobals(b *strings.Builder, state *moduleState, globals []*midmir.Globa
 	return nil
 }
 
-func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
+func lowerGlobal(state *moduleState, g *mir.Global) (string, error) {
 	if g.Init == nil {
 		return "", nil
 	}
 	name := llvmSymbol(state, []string{g.Name})
 	if isInterfaceAggregate(g.Type) {
-		if init, ok := g.Init.(*midmir.InterfaceValue); ok {
+		if init, ok := g.Init.(*mir.InterfaceValue); ok {
 			return lowerGlobalInterface(state, name, g.Type, init)
 		}
 		return "", fmt.Errorf("global %s: unsupported interface initializer %T", g.Name, g.Init)
@@ -675,7 +947,7 @@ func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
 		return fmt.Sprintf("@%s = global [%d x i8] %s", name, size, body), nil
 	}
 	switch v := g.Init.(type) {
-	case *midmir.CompositeValue:
+	case *mir.CompositeValue:
 		body, err := lowerGlobalComposite(state, g.Type, v)
 		if err != nil {
 			return "", fmt.Errorf("global %s: %w", g.Name, err)
@@ -685,7 +957,7 @@ func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
 			return "", fmt.Errorf("global %s: %w", g.Name, err)
 		}
 		return fmt.Sprintf("@%s = global %s { %s }", name, typeName, body), nil
-	case *midmir.NumberValue:
+	case *mir.NumberValue:
 		irType, err := llvmBaseType(g.Type)
 		if err != nil {
 			return "", fmt.Errorf("global %s: %w", g.Name, err)
@@ -695,13 +967,13 @@ func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
 			return "", fmt.Errorf("global %s: %w", g.Name, err)
 		}
 		return fmt.Sprintf("@%s = global %s %s", name, irType, lit), nil
-	case *midmir.BoolValue:
+	case *mir.BoolValue:
 		lit := "0"
 		if v.Value {
 			lit = "1"
 		}
 		return fmt.Sprintf("@%s = global i8 %s", name, lit), nil
-	case *midmir.StringValue:
+	case *mir.StringValue:
 		escaped := llvmStringLiteral(v.Value)
 		length := len(v.Value) + 1
 		return fmt.Sprintf("@%s = private unnamed_addr constant [%d x i8] %s", name, length, escaped), nil
@@ -710,7 +982,7 @@ func lowerGlobal(state *moduleState, g *midmir.Global) (string, error) {
 	}
 }
 
-func lowerGlobalInterface(state *moduleState, name string, target typeinfo.Type, init *midmir.InterfaceValue) (string, error) {
+func lowerGlobalInterface(state *moduleState, name string, target typeinfo.Type, init *mir.InterfaceValue) (string, error) {
 	dataPtr, err := lowerGlobalInterfaceData(state, name, init)
 	if err != nil {
 		return "", err
@@ -727,14 +999,14 @@ func lowerGlobalInterface(state *moduleState, name string, target typeinfo.Type,
 	return fmt.Sprintf("@%s = global %s { ptr %s, ptr %s }", name, typeName, dataPtr, vtPtr), nil
 }
 
-func lowerGlobalInterfaceData(state *moduleState, ownerName string, init *midmir.InterfaceValue) (string, error) {
+func lowerGlobalInterfaceData(state *moduleState, ownerName string, init *mir.InterfaceValue) (string, error) {
 	switch v := init.Value.(type) {
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if v.LinkName != "" {
 			return "@" + sanitizeIdent(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
-	case *midmir.NumberValue:
+	case *mir.NumberValue:
 		irType, err := llvmBaseType(v.Type())
 		if err != nil {
 			return "", err
@@ -746,7 +1018,7 @@ func lowerGlobalInterfaceData(state *moduleState, ownerName string, init *midmir
 		sym := sanitizeIdent(ownerName + "__iface_data")
 		fmt.Fprintf(state.deferredB, "@%s = private global %s %s\n", sym, irType, lit)
 		return "@" + sym, nil
-	case *midmir.BoolValue:
+	case *mir.BoolValue:
 		sym := sanitizeIdent(ownerName + "__iface_data")
 		lit := "0"
 		if v.Value {
@@ -759,7 +1031,7 @@ func lowerGlobalInterfaceData(state *moduleState, ownerName string, init *midmir
 	}
 }
 
-func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init midmir.Value) (string, error) {
+func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init mir.Value) (string, error) {
 	info, err := llvmUnionLayoutInfo(state, typ)
 	if err != nil {
 		return "", err
@@ -781,7 +1053,7 @@ func lowerGlobalUnion(state *moduleState, typ typeinfo.Type, init midmir.Value) 
 	return fmt.Sprintf("[%s]", strings.Join(parts, ", ")), nil
 }
 
-func llvmUnionInitBytes(info *backendUnionLayout, init midmir.Value) ([]byte, error) {
+func llvmUnionInitBytes(info *backendUnionLayout, init mir.Value) ([]byte, error) {
 	if info == nil {
 		return nil, fmt.Errorf("nil union layout")
 	}
@@ -799,14 +1071,14 @@ func llvmUnionInitBytes(info *backendUnionLayout, init midmir.Value) ([]byte, er
 		bytes = append(bytes, 0)
 	}
 	switch v := init.(type) {
-	case *midmir.BoolValue:
+	case *mir.BoolValue:
 		if v.Value {
 			bytes = append(bytes, 1)
 			return bytes, nil
 		}
 		bytes = append(bytes, 0)
 		return bytes, nil
-	case *midmir.NumberValue:
+	case *mir.NumberValue:
 		builtin, ok := unwrapNamed(v.Type()).(*typeinfo.BuiltinType)
 		if !ok {
 			return nil, fmt.Errorf("unsupported union numeric initializer type %s", v.Type())
@@ -865,7 +1137,7 @@ func llvmScalarBytesFromNumber(typeName, raw string) ([]byte, error) {
 // Functions
 // ---------------------------------------------------------------------------
 
-func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) error {
+func emitFunction(b *strings.Builder, state *moduleState, fn *mir.Function) error {
 	if err := prepareFunctionState(state, fn); err != nil {
 		return err
 	}
@@ -944,7 +1216,7 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 	}
 
 	// Sort blocks by ID, entry block first.
-	blocks := append([]*midmir.Block(nil), fn.Blocks...)
+	blocks := append([]*mir.Block(nil), fn.Blocks...)
 	sort.Slice(blocks, func(i, j int) bool { return blocks[i].ID < blocks[j].ID })
 
 	for _, block := range blocks {
@@ -957,6 +1229,9 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 		// Entry prelude: alloca for non-param aggregate locals.
 		if block.ID == fn.EntryID {
 			for _, line := range entryPrelude(state) {
+				fmt.Fprintf(b, "  %s\n", line)
+			}
+			for _, line := range entryDebugDecls(state) {
 				fmt.Fprintf(b, "  %s\n", line)
 			}
 		}
@@ -1023,49 +1298,131 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *midmir.Function) e
 	return nil
 }
 
+func entryDebugDecls(state *moduleState) []string {
+	if state == nil || state.fn == nil || state.debug == nil || state.fnScopeID < 0 {
+		return nil
+	}
+
+	paramIDs := make(map[int]struct{}, len(state.fn.Params))
+	lines := make([]string, 0, len(state.fn.Params)+len(state.fn.Locals))
+	argIndex := 1
+
+	emitDecl := func(localID int, name string, varType typeinfo.Type, ptrName, filePath string, line, arg int) {
+		if name == "" || ptrName == "" || filePath == "" {
+			return
+		}
+		if line <= 0 {
+			line = 1
+		}
+		fileID := state.debug.getFile(filePath)
+		varID := state.debug.addLocalVariable(state, name, varType, fileID, state.fnScopeID, line, arg)
+		state.debugLocalVarIDs[localID] = varID
+		exprID := state.debug.getEmptyExpression()
+		locID := state.debug.addLocation(line, 1, state.fnScopeID)
+		lines = append(lines, fmt.Sprintf("call void @llvm.dbg.declare(metadata ptr %s, metadata !%d, metadata !%d), !dbg !%d", ptrName, varID, exprID, locID))
+	}
+
+	for _, param := range state.fn.Params {
+		if param == nil {
+			continue
+		}
+		paramIDs[param.LocalID] = struct{}{}
+		filePath := param.Location.File
+		if filePath == "" {
+			filePath = state.fn.Location.File
+		}
+		line := 1
+		if param.Location.Start != nil {
+			line = param.Location.Start.Line
+		} else if state.fn.Location.Start != nil {
+			line = state.fn.Location.Start.Line
+		}
+		if _, ok := state.aggParams[param.LocalID]; ok {
+			emitDecl(param.LocalID, param.Name, param.Type, llvmLocalName(param.Name), filePath, line, argIndex)
+			argIndex++
+			continue
+		}
+		if sc, ok := state.scalarLocals[param.LocalID]; ok {
+			emitDecl(param.LocalID, param.Name, param.Type, sc.AllocaName, filePath, line, argIndex)
+			argIndex++
+		}
+	}
+
+	for _, local := range state.fn.Locals {
+		if local == nil || local.IsTemp {
+			continue
+		}
+		if _, isParam := paramIDs[local.ID]; isParam {
+			continue
+		}
+		filePath := local.Location.File
+		if filePath == "" {
+			filePath = state.fn.Location.File
+		}
+		line := 1
+		if local.Location.Start != nil {
+			line = local.Location.Start.Line
+		} else if state.fn.Location.Start != nil {
+			line = state.fn.Location.Start.Line
+		}
+		if sc, ok := state.scalarLocals[local.ID]; ok {
+			emitDecl(local.ID, local.Name, local.Type, sc.AllocaName, filePath, line, 0)
+			continue
+		}
+		if agg, ok := state.aggLocals[local.ID]; ok {
+			if _, isParam := state.aggParams[local.ID]; isParam {
+				continue
+			}
+			emitDecl(local.ID, local.Name, local.Type, llvmLocalName(agg.PtrName), filePath, line, 0)
+		}
+	}
+
+	return lines
+}
+
 // ---------------------------------------------------------------------------
 // Instructions
 // ---------------------------------------------------------------------------
 
-func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
+func lowerInstr(state *moduleState, instr mir.Instr) (string, error) {
 	switch i := instr.(type) {
 	case nil:
 		return "", nil
-	case *midmir.BindInstr:
+	case *mir.BindInstr:
 		return lowerAssignLike(state, i.Name, i.Type, i.Value)
-	case *midmir.AssignInstr:
+	case *mir.AssignInstr:
 		if local := findLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
-			if field, ok := i.Value.(*midmir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
+			if field, ok := i.Value.(*mir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
 				state.tempValues[i.TargetID] = field
 				return "", nil
 			}
 		}
 		name := localNameByID(state.fn, i.TargetID)
 		return lowerAssignLike(state, name, localTypeByID(state.fn, i.TargetID), i.Value)
-	case *midmir.ComputeInstr:
+	case *mir.ComputeInstr:
 		if local := findLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
-			if field, ok := i.Value.(*midmir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
+			if field, ok := i.Value.(*mir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
 				state.tempValues[i.TargetID] = field
 				return "", nil
 			}
 		}
 		name := localNameByID(state.fn, i.TargetID)
 		return lowerAssignLike(state, name, i.Type, i.Value)
-	case *midmir.StoreFieldInstr:
+	case *mir.StoreFieldInstr:
 		return lowerStoreField(state, i)
-	case *midmir.StoreInstr:
+	case *mir.StoreInstr:
 		return lowerStorePlace(state, i)
-	case *midmir.EvalInstr:
-		if call, ok := i.Value.(*midmir.CallValue); ok {
+	case *mir.EvalInstr:
+		if call, ok := i.Value.(*mir.CallValue); ok {
 			return lowerCall(state, "", nil, call)
 		}
 		return "", nil
-	case *midmir.DeferInstr:
+	case *mir.DeferInstr:
 		// Defers are compile-time cleanup markers. CFG cleanup edges already
 		// materialize their bodies in dedicated cleanup blocks, so there is no
 		// direct runtime instruction to emit at the registration site.
 		return "", nil
-	case *midmir.UnsafeInstr:
+	case *mir.UnsafeInstr:
 		// Unsafe marker: safety is enforced at type-check time; no code to emit.
 		return "", nil
 	default:
@@ -1073,18 +1430,49 @@ func lowerInstr(state *moduleState, instr midmir.Instr) (string, error) {
 	}
 }
 
-func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value midmir.Value) (string, error) {
+func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value mir.Value) (string, error) {
 	// Route scalar alloca targets: compute to a fresh temp then store.
-	if local := findLocalByName(state.fn, name); local != nil {
+	local := findLocalByName(state.fn, name)
+	if local != nil {
 		if sc, ok := state.scalarLocals[local.ID]; ok {
 			return lowerScalarAllocaAssign(state, sc, typ, value)
 		}
 	}
-	return lowerSSAAssign(state, name, typ, value)
+	line, err := lowerSSAAssign(state, name, typ, value)
+	if err != nil {
+		return "", err
+	}
+	if local != nil {
+		line = appendDbgValueForLocal(state, line, local, typ)
+	}
+	return line, nil
+}
+
+func appendDbgValueForLocal(state *moduleState, line string, local *mir.Local, typ typeinfo.Type) string {
+	if state == nil || state.debug == nil || state.fnScopeID < 0 || local == nil || local.IsTemp || line == "" {
+		return line
+	}
+	if _, allocaBacked := state.scalarLocals[local.ID]; allocaBacked {
+		return line
+	}
+	if _, aggregateBacked := state.aggLocals[local.ID]; aggregateBacked {
+		return line
+	}
+	varID, ok := state.debugLocalVarIDs[local.ID]
+	if !ok {
+		return line
+	}
+	irType, err := llvmBaseType(typ)
+	if err != nil || irType == "void" {
+		return line
+	}
+	valueExpr := fmt.Sprintf("%s %s", irType, llvmLocalName(local.Name))
+	exprID := state.debug.getEmptyExpression()
+	return line + "\n" + fmt.Sprintf("call void @llvm.dbg.value(metadata %s, metadata !%d, metadata !%d)", valueExpr, varID, exprID)
 }
 
 // lowerScalarAllocaAssign computes value to a fresh SSA temp then stores to alloca.
-func lowerScalarAllocaAssign(state *moduleState, sc *scalarAllocaLocal, typ typeinfo.Type, value midmir.Value) (string, error) {
+func lowerScalarAllocaAssign(state *moduleState, sc *scalarAllocaLocal, typ typeinfo.Type, value mir.Value) (string, error) {
 	tmp := freshTemp(state, "asgn")
 	line, err := lowerSSAAssign(state, tmp[1:], typ, value) // strip leading %
 	if err != nil {
@@ -1114,25 +1502,25 @@ func lowerScalarAllocaAssign(state *moduleState, sc *scalarAllocaLocal, typ type
 }
 
 // lowerSSAAssign assigns a MIR value to a fresh SSA name (no alloca routing).
-func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value midmir.Value) (string, error) {
+func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mir.Value) (string, error) {
 	if local := findLocalByName(state.fn, name); local != nil {
 		if agg, ok := state.aggLocals[local.ID]; ok {
 			return lowerAggregateAssign(state, agg, value)
 		}
 	}
-	if call, ok := value.(*midmir.CallValue); ok {
+	if call, ok := value.(*mir.CallValue); ok {
 		return lowerCall(state, name, typ, call)
 	}
-	if field, ok := value.(*midmir.FieldLoadValue); ok {
+	if field, ok := value.(*mir.FieldLoadValue); ok {
 		return lowerFieldLoad(state, name, typ, field)
 	}
-	if idx, ok := value.(*midmir.IndexValue); ok {
+	if idx, ok := value.(*mir.IndexValue); ok {
 		return lowerIndexLoad(state, name, typ, idx)
 	}
-	if load, ok := value.(*midmir.LoadValue); ok {
+	if load, ok := value.(*mir.LoadValue); ok {
 		return lowerLoadValue(state, name, typ, load)
 	}
-	if bin, ok := value.(*midmir.BinaryValue); ok {
+	if bin, ok := value.(*mir.BinaryValue); ok {
 		if line, handled, err := lowerAggregateCompare(state, name, typ, bin); handled || err != nil {
 			return line, err
 		}
@@ -1144,7 +1532,7 @@ func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mi
 			return lowerCompareAssign(state, name, irType, bin)
 		}
 	}
-	if un, ok := value.(*midmir.UnaryValue); ok && un.Op == "!" {
+	if un, ok := value.(*mir.UnaryValue); ok && un.Op == "!" {
 		irType, err := llvmBaseType(typ)
 		if err != nil {
 			return "", err
@@ -1171,7 +1559,7 @@ func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mi
 }
 
 // lowerCompareAssign emits an icmp/fcmp + optional zext.
-func lowerCompareAssign(state *moduleState, name, targetIRType string, bin *midmir.BinaryValue) (string, error) {
+func lowerCompareAssign(state *moduleState, name, targetIRType string, bin *mir.BinaryValue) (string, error) {
 	left, err := lowerValue(state, bin.Left)
 	if err != nil {
 		return "", err
@@ -1193,7 +1581,7 @@ func lowerCompareAssign(state *moduleState, name, targetIRType string, bin *midm
 }
 
 // lowerNotAssign emits an icmp eq zero + optional zext.
-func lowerNotAssign(state *moduleState, name, targetIRType string, un *midmir.UnaryValue) (string, error) {
+func lowerNotAssign(state *moduleState, name, targetIRType string, un *mir.UnaryValue) (string, error) {
 	rightExpr, err := lowerValue(state, un.Right)
 	if err != nil {
 		return "", err
@@ -1214,7 +1602,7 @@ func lowerNotAssign(state *moduleState, name, targetIRType string, un *midmir.Un
 // Aggregate compare
 // ---------------------------------------------------------------------------
 
-func lowerAggregateCompare(state *moduleState, targetName string, targetType typeinfo.Type, bin *midmir.BinaryValue) (string, bool, error) {
+func lowerAggregateCompare(state *moduleState, targetName string, targetType typeinfo.Type, bin *mir.BinaryValue) (string, bool, error) {
 	if bin == nil || (bin.Op != "==" && bin.Op != "!=") {
 		return "", false, nil
 	}
@@ -1304,7 +1692,7 @@ func lowerAggregateCompare(state *moduleState, targetName string, targetType typ
 // Load / Store / Field
 // ---------------------------------------------------------------------------
 
-func lowerLoadValue(state *moduleState, targetName string, targetType typeinfo.Type, load *midmir.LoadValue) (string, error) {
+func lowerLoadValue(state *moduleState, targetName string, targetType typeinfo.Type, load *mir.LoadValue) (string, error) {
 	ptr, err := lowerValue(state, load.Pointer)
 	if err != nil {
 		return "", err
@@ -1316,7 +1704,7 @@ func lowerLoadValue(state *moduleState, targetName string, targetType typeinfo.T
 	return fmt.Sprintf("%s = load %s, ptr %s", llvmLocalName(targetName), irType, ptr), nil
 }
 
-func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.Type, field *midmir.FieldLoadValue) (string, error) {
+func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.Type, field *mir.FieldLoadValue) (string, error) {
 	lines, addr, _, err := lowerFieldAddress(state, field.Base, field.FieldIndex)
 	if err != nil {
 		return "", err
@@ -1330,7 +1718,7 @@ func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.T
 }
 
 // lowerIndexLoad lowers arr[index] as an rvalue load.
-func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *midmir.IndexValue) (string, error) {
+func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
 	lines, addr, err := lowerIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())
 	if err != nil {
 		return "", err
@@ -1345,7 +1733,7 @@ func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.T
 
 // lowerIndexAddress computes the pointer to arr[index].
 // baseType must be *typeinfo.ArrayType or *typeinfo.PointerType.
-func lowerIndexAddress(state *moduleState, base midmir.Value, index midmir.Value, baseType typeinfo.Type) ([]string, string, error) {
+func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
 	switch bt := baseType.(type) {
 	case *typeinfo.ArrayType:
@@ -1372,7 +1760,7 @@ func lowerIndexAddress(state *moduleState, base midmir.Value, index midmir.Value
 	return []string{line}, addr, nil
 }
 
-func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, error) {
+func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) {
 	if instr == nil {
 		return "", nil
 	}
@@ -1400,20 +1788,20 @@ func lowerStorePlace(state *moduleState, instr *midmir.StoreInstr) (string, erro
 	return strings.Join(lines, "\n"), nil
 }
 
-func unionAggregateLocalForPlace(state *moduleState, place midmir.Place) *aggregateLocal {
+func unionAggregateLocalForPlace(state *moduleState, place mir.Place) *aggregateLocal {
 	switch p := place.(type) {
-	case *midmir.LocalPlace:
+	case *mir.LocalPlace:
 		if agg, ok := state.aggLocals[p.LocalID]; ok && isUnionAggregate(agg.Type) {
 			return agg
 		}
-	case *midmir.DerefPlace:
-		if addr, ok := p.Pointer.(*midmir.AddrOfValue); ok {
+	case *mir.DerefPlace:
+		if addr, ok := p.Pointer.(*mir.AddrOfValue); ok {
 			switch src := addr.Source.(type) {
-			case *midmir.LocalValue:
+			case *mir.LocalValue:
 				if agg, ok := state.aggLocals[src.LocalID]; ok && isUnionAggregate(agg.Type) {
 					return agg
 				}
-			case *midmir.NameValue:
+			case *mir.NameValue:
 				if len(src.Path) == 1 {
 					if local := findLocalByName(state.fn, src.Path[0]); local != nil {
 						if agg, ok := state.aggLocals[local.ID]; ok && isUnionAggregate(agg.Type) {
@@ -1428,11 +1816,11 @@ func unionAggregateLocalForPlace(state *moduleState, place midmir.Place) *aggreg
 }
 
 // lowerPlaceAddr returns the LLVM ptr value for a MIR place.
-func lowerPlaceAddr(state *moduleState, place midmir.Place) ([]string, string, error) {
+func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, error) {
 	switch p := place.(type) {
 	case nil:
 		return nil, "", fmt.Errorf("nil place")
-	case *midmir.LocalPlace:
+	case *mir.LocalPlace:
 		if agg, ok := state.aggLocals[p.LocalID]; ok {
 			return nil, llvmLocalName(agg.PtrName), nil
 		}
@@ -1440,7 +1828,7 @@ func lowerPlaceAddr(state *moduleState, place midmir.Place) ([]string, string, e
 			return nil, sc.AllocaName, nil
 		}
 		return nil, llvmLocalName(localNameByID(state.fn, p.LocalID)), nil
-	case *midmir.FieldPlace:
+	case *mir.FieldPlace:
 		baseLines, basePtr, err := lowerPlaceAddr(state, p.Base)
 		if err != nil {
 			return nil, "", err
@@ -1461,7 +1849,7 @@ func lowerPlaceAddr(state *moduleState, place midmir.Place) ([]string, string, e
 		addrTmp := freshTemp(state, "addr")
 		gepLine := fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", addrTmp, basePtr, field.Offset)
 		return append(baseLines, gepLine), addrTmp, nil
-	case *midmir.IndexPlace:
+	case *mir.IndexPlace:
 		baseLines, basePtr, err := lowerPlaceAddr(state, p.Base)
 		if err != nil {
 			return nil, "", err
@@ -1483,7 +1871,7 @@ func lowerPlaceAddr(state *moduleState, place midmir.Place) ([]string, string, e
 		addrTmp := freshTemp(state, "elem")
 		gepLine := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", addrTmp, elemIRType, basePtr, idxVal)
 		return append(baseLines, gepLine), addrTmp, nil
-	case *midmir.DerefPlace:
+	case *mir.DerefPlace:
 		// *ptr: the address to store to is the pointer value itself.
 		ptrVal, err := lowerValue(state, p.Pointer)
 		if err != nil {
@@ -1496,8 +1884,8 @@ func lowerPlaceAddr(state *moduleState, place midmir.Place) ([]string, string, e
 }
 
 // localTypeByPlaceID returns the type of the variable referenced by a place.
-func localTypeByPlaceID(state *moduleState, place midmir.Place) typeinfo.Type {
-	if lp, ok := place.(*midmir.LocalPlace); ok {
+func localTypeByPlaceID(state *moduleState, place mir.Place) typeinfo.Type {
+	if lp, ok := place.(*mir.LocalPlace); ok {
 		if state.fn != nil && lp.LocalID >= 0 && lp.LocalID < len(state.fn.Locals) {
 			return state.fn.Locals[lp.LocalID].Type
 		}
@@ -1505,7 +1893,7 @@ func localTypeByPlaceID(state *moduleState, place midmir.Place) typeinfo.Type {
 	return nil
 }
 
-func lowerStoreField(state *moduleState, instr *midmir.StoreFieldInstr) (string, error) {
+func lowerStoreField(state *moduleState, instr *mir.StoreFieldInstr) (string, error) {
 	lines, addr, fieldType, err := lowerFieldAddress(state, instr.Base, instr.FieldIndex)
 	if err != nil {
 		return "", err
@@ -1522,7 +1910,7 @@ func lowerStoreField(state *moduleState, instr *midmir.StoreFieldInstr) (string,
 	return strings.Join(lines, "\n"), nil
 }
 
-func lowerFieldAddress(state *moduleState, base midmir.Value, fieldIndex int) ([]string, string, typeinfo.Type, error) {
+func lowerFieldAddress(state *moduleState, base mir.Value, fieldIndex int) ([]string, string, typeinfo.Type, error) {
 	structLayout, err := lookupStructLayout(state, base.Type())
 	if err != nil {
 		return nil, "", nil, err
@@ -1547,13 +1935,13 @@ func lowerFieldAddress(state *moduleState, base midmir.Value, fieldIndex int) ([
 // Call
 // ---------------------------------------------------------------------------
 
-func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, call *midmir.CallValue) (string, error) {
-	if local, ok := call.Callee.(*midmir.LocalValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
-		if field, ok := state.tempValues[local.LocalID].(*midmir.FieldValue); ok {
+func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, call *mir.CallValue) (string, error) {
+	if local, ok := call.Callee.(*mir.LocalValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
+		if field, ok := state.tempValues[local.LocalID].(*mir.FieldValue); ok {
 			return lowerInterfaceCall(state, targetName, targetType, call, field)
 		}
 	}
-	if field, ok := call.Callee.(*midmir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
+	if field, ok := call.Callee.(*mir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
 		return lowerInterfaceCall(state, targetName, targetType, call, field)
 	}
 	callee, err := lowerCallee(state, call.Callee)
@@ -1641,11 +2029,11 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	return fmt.Sprintf("%s = %s", llvmLocalName(targetName), callText), nil
 }
 
-func isBuiltinPrintCall(call *midmir.CallValue) bool {
+func isBuiltinPrintCall(call *mir.CallValue) bool {
 	if call == nil {
 		return false
 	}
-	callee, ok := call.Callee.(*midmir.NameValue)
+	callee, ok := call.Callee.(*mir.NameValue)
 	if !ok || callee == nil {
 		return false
 	}
@@ -1655,7 +2043,7 @@ func isBuiltinPrintCall(call *midmir.CallValue) bool {
 	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "print"
 }
 
-func lowerBuiltinPrintCall(state *moduleState, call *midmir.CallValue) (string, error) {
+func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, error) {
 	if call == nil || len(call.Args) != 1 {
 		return "", fmt.Errorf("builtin print expects exactly one argument")
 	}
@@ -1684,7 +2072,7 @@ func lowerBuiltinPrintCall(state *moduleState, call *midmir.CallValue) (string, 
 	return fmt.Sprintf("call void @global__print_type(ptr @%s)", sym), nil
 }
 
-func lowerBuiltinPrintPrimitive(state *moduleState, arg midmir.Value, name string) (string, error) {
+func lowerBuiltinPrintPrimitive(state *moduleState, arg mir.Value, name string) (string, error) {
 	val, err := lowerValue(state, arg)
 	if err != nil {
 		return "", err
@@ -1736,16 +2124,16 @@ func lowerBuiltinPrintFloatCast(state *moduleState, value, srcName string) (stri
 	}), nil
 }
 
-func lowerAggregateValuePointer(state *moduleState, value midmir.Value) ([]string, string, error) {
+func lowerAggregateValuePointer(state *moduleState, value mir.Value) ([]string, string, error) {
 	if value == nil {
 		return nil, "", fmt.Errorf("nil aggregate value")
 	}
 	switch v := value.(type) {
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		if agg, ok := state.aggLocals[v.LocalID]; ok {
 			return nil, llvmLocalName(agg.PtrName), nil
 		}
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if v.LinkName != "" {
 			return nil, "@" + sanitizeIdent(v.LinkName), nil
 		}
@@ -1801,7 +2189,7 @@ func lowerAggregateCall(state *moduleState, agg *aggregateLocal, callee, argsStr
 	return strings.Join(lines, "\n"), nil
 }
 
-func lowerConstructorCall(state *moduleState, dstPtr string, call *midmir.CallValue, callee string) (string, error) {
+func lowerConstructorCall(state *moduleState, dstPtr string, call *mir.CallValue, callee string) (string, error) {
 	args := make([]string, 0, len(call.Args)+1)
 	args = append(args, fmt.Sprintf("ptr %s", dstPtr))
 	for _, arg := range call.Args {
@@ -1841,7 +2229,7 @@ func lowerImplicitConstructorCall(state *moduleState, dstPtr string, path []stri
 	return fmt.Sprintf("call void @%s(ptr %s)", llvmSymbol(state, path), dstPtr), nil
 }
 
-func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, call *midmir.CallValue, callee string) (string, error) {
+func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, call *mir.CallValue, callee string) (string, error) {
 	if targetType == nil || !isAggregateType(state, targetType) {
 		return "", fmt.Errorf("constructor call requires aggregate target")
 	}
@@ -1865,12 +2253,12 @@ func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, c
 // Aggregate assign
 // ---------------------------------------------------------------------------
 
-func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.Value) (string, error) {
+func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Value) (string, error) {
 	if agg == nil {
 		return "", fmt.Errorf("nil aggregate local")
 	}
 	if isInterfaceAggregate(agg.Type) {
-		if iface, ok := value.(*midmir.InterfaceValue); ok {
+		if iface, ok := value.(*mir.InterfaceValue); ok {
 			return lowerInterfaceAssign(state, llvmLocalName(agg.PtrName), agg.Type, iface)
 		}
 		return "", fmt.Errorf("unsupported interface assignment %T", value)
@@ -1879,11 +2267,11 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 		return lowerUnionAssign(state, agg, value)
 	}
 	switch v := value.(type) {
-	case *midmir.UnaryValue:
+	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerAggregateAssign(state, agg, v.Right)
 		}
-	case *midmir.CastValue:
+	case *mir.CastValue:
 		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) {
 			return lowerAggregateAssign(state, agg, v.Left)
 		}
@@ -1901,15 +2289,15 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value midmir.
 			fmt.Sprintf("store %s %s, ptr %s", typeName, temp, llvmLocalName(agg.PtrName)),
 		}
 		return strings.Join(lines, "\n"), nil
-	case *midmir.CallValue:
+	case *mir.CallValue:
 		return lowerAggregateCallValue(state, agg, v)
-	case *midmir.LocalValue, *midmir.NameValue:
+	case *mir.LocalValue, *mir.NameValue:
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
 			return "", err
 		}
 		return llvmMemcpy(llvmLocalName(agg.PtrName), src, agg.Size, agg.Align), nil
-	case *midmir.CompositeValue:
+	case *mir.CompositeValue:
 		return lowerAggregateCompositeAssign(state, agg, v)
 	}
 	return "", fmt.Errorf("unsupported aggregate assignment %T", value)
@@ -1939,19 +2327,19 @@ func isInterfaceAggregate(typ typeinfo.Type) bool {
 	}
 }
 
-func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value midmir.Value) (string, error) {
+func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.UnaryValue:
+	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerUnionAssign(state, agg, v.Right)
 		}
-	case *midmir.CastValue:
+	case *mir.CastValue:
 		if isUnionAggregate(v.Type()) {
 			return lowerUnionAssign(state, agg, v.Left)
 		}
 	}
 	if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); ok {
-		if _, isNone := value.(*midmir.NoneValue); isNone {
+		if _, isNone := value.(*mir.NoneValue); isNone {
 			return fmt.Sprintf("store i32 0, ptr %s", llvmLocalName(agg.PtrName)), nil
 		}
 	}
@@ -2041,13 +2429,13 @@ func emitStringConstant(state *moduleState, s string) string {
 	return sym
 }
 
-func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *midmir.CallValue) (string, error) {
-	if local, ok := call.Callee.(*midmir.LocalValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
-		if field, ok := state.tempValues[local.LocalID].(*midmir.FieldValue); ok {
+func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *mir.CallValue) (string, error) {
+	if local, ok := call.Callee.(*mir.LocalValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
+		if field, ok := state.tempValues[local.LocalID].(*mir.FieldValue); ok {
 			return lowerInterfaceCall(state, agg.Name, agg.Type, call, field)
 		}
 	}
-	if field, ok := call.Callee.(*midmir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
+	if field, ok := call.Callee.(*mir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
 		return lowerInterfaceCall(state, agg.Name, agg.Type, call, field)
 	}
 	callee, err := lowerCallee(state, call.Callee)
@@ -2097,7 +2485,7 @@ func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *midm
 	return strings.Join(lines, "\n"), nil
 }
 
-func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp *midmir.CompositeValue) (string, error) {
+func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp *mir.CompositeValue) (string, error) {
 	// Array literal: positional items stored at successive element offsets.
 	if arrType, ok := agg.Type.(*typeinfo.ArrayType); ok {
 		elemSize, elemAlign, err := aggregateSizeAlignOfPrimitive(arrType.Inner)
@@ -2135,7 +2523,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 
 	// String / slice literal: items "ptr" and "len" stored at byte offsets 0 and 8.
 	if _, ok := agg.Type.(*typeinfo.SliceType); ok {
-		items := make(map[string]midmir.Value, len(comp.Items))
+		items := make(map[string]mir.Value, len(comp.Items))
 		for _, item := range comp.Items {
 			items[item.Name] = item.Value
 		}
@@ -2157,7 +2545,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		return strings.Join(lines, "\n"), nil
 	}
 	if _, ok := agg.Type.(*typeinfo.StringType); ok {
-		items := make(map[string]midmir.Value, len(comp.Items))
+		items := make(map[string]mir.Value, len(comp.Items))
 		for _, item := range comp.Items {
 			items[item.Name] = item.Value
 		}
@@ -2183,7 +2571,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 	if err != nil {
 		return "", err
 	}
-	items := make(map[string]midmir.Value, len(comp.Items))
+	items := make(map[string]mir.Value, len(comp.Items))
 	for _, item := range comp.Items {
 		items[item.Name] = item.Value
 	}
@@ -2224,7 +2612,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 	return strings.Join(lines, "\n"), nil
 }
 
-func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Type, value *midmir.InterfaceValue) (string, error) {
+func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Type, value *mir.InterfaceValue) (string, error) {
 	lines, dataPtr, err := lowerInterfaceConcretePointer(state, value.Value, value.ConcreteType)
 	if err != nil {
 		return "", err
@@ -2244,20 +2632,20 @@ func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Typ
 	return strings.Join(lines, "\n"), nil
 }
 
-func lowerInterfaceConcretePointer(state *moduleState, value midmir.Value, concreteType typeinfo.Type) ([]string, string, error) {
+func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concreteType typeinfo.Type) ([]string, string, error) {
 	switch v := value.(type) {
-	case *midmir.UnaryValue:
+	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerInterfaceConcretePointer(state, v.Right, concreteType)
 		}
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		if agg, ok := state.aggLocals[v.LocalID]; ok {
 			return nil, llvmLocalName(agg.PtrName), nil
 		}
 		if sc, ok := state.scalarLocals[v.LocalID]; ok {
 			return nil, sc.AllocaName, nil
 		}
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if len(v.Path) == 1 {
 			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
@@ -2317,7 +2705,7 @@ func lowerInterfaceConcretePointer(state *moduleState, value midmir.Value, concr
 	return lines, tmp, nil
 }
 
-func lowerInterfaceCall(state *moduleState, targetName string, targetType typeinfo.Type, call *midmir.CallValue, field *midmir.FieldValue) (string, error) {
+func lowerInterfaceCall(state *moduleState, targetName string, targetType typeinfo.Type, call *mir.CallValue, field *mir.FieldValue) (string, error) {
 	recv := call.Args[0]
 	method, index, err := lookupInterfaceMethodDecl(state, field.Base.Type(), field.MemberName)
 	if err != nil {
@@ -2409,16 +2797,16 @@ func lowerInterfaceCall(state *moduleState, targetName string, targetType typein
 	return strings.Join(lines, "\n"), nil
 }
 
-func lowerInterfaceSlotPointer(state *moduleState, value midmir.Value) (string, error) {
+func lowerInterfaceSlotPointer(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		if repl, ok := state.tempValues[v.LocalID]; ok && repl != nil {
 			return lowerValue(state, repl)
 		}
 		if agg, ok := state.aggLocals[v.LocalID]; ok {
 			return llvmLocalName(agg.PtrName), nil
 		}
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if len(v.Path) == 1 {
 			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
@@ -2434,7 +2822,7 @@ func lowerInterfaceSlotPointer(state *moduleState, value midmir.Value) (string, 
 	return "", fmt.Errorf("unsupported interface receiver storage %T", value)
 }
 
-func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *midmir.InterfaceValue) (string, int, error) {
+func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *mir.InterfaceValue) (string, int, error) {
 	if state == nil || value == nil {
 		return "", 0, fmt.Errorf("invalid interface vtable request")
 	}
@@ -2473,7 +2861,7 @@ func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *
 	return sym, len(iface.Methods), nil
 }
 
-func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *midmir.InterfaceMethodDecl, concrete typeinfo.Type, link midmir.InterfaceMethodLink) (string, error) {
+func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
 	key := iface.String() + "|" + sanitizeType(concrete) + "|" + method.Name
 	name := sanitizeIdent("ifacewrap__" + llvmTypeName(state, iface) + "__" + sanitizeType(concrete) + "__" + method.Name)
 	if _, ok := state.interfaceWrappers[key]; ok {
@@ -2579,12 +2967,12 @@ func llvmInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type) (strin
 	return fmt.Sprintf("%s %%recv", irType), []string{fmt.Sprintf("%%recv = load %s, ptr %%data", irType)}, nil
 }
 
-func lookupInterfaceDecl(state *moduleState, typ typeinfo.Type) (*midmir.InterfaceTypeDecl, *typeinfo.NamedType, error) {
+func lookupInterfaceDecl(state *moduleState, typ typeinfo.Type) (*mir.InterfaceTypeDecl, *typeinfo.NamedType, error) {
 	named, ok := typ.(*typeinfo.NamedType)
 	if !ok || named == nil {
 		return nil, nil, fmt.Errorf("interface type must be named")
 	}
-	var mod *midmir.Module
+	var mod *mir.Module
 	if state.modules != nil {
 		mod = state.modules[named.ModuleKey]
 	}
@@ -2602,7 +2990,7 @@ func lookupInterfaceDecl(state *moduleState, typ typeinfo.Type) (*midmir.Interfa
 	return nil, nil, fmt.Errorf("interface type %s is not available in llvm backend", named.String())
 }
 
-func lookupInterfaceMethodDecl(state *moduleState, typ typeinfo.Type, name string) (*midmir.InterfaceMethodDecl, int, error) {
+func lookupInterfaceMethodDecl(state *moduleState, typ typeinfo.Type, name string) (*mir.InterfaceMethodDecl, int, error) {
 	iface, _, err := lookupInterfaceDecl(state, typ)
 	if err != nil {
 		return nil, -1, err
@@ -2615,11 +3003,11 @@ func lookupInterfaceMethodDecl(state *moduleState, typ typeinfo.Type, name strin
 	return nil, -1, fmt.Errorf("interface method %s not found", name)
 }
 
-func lowerAggregateSource(state *moduleState, value midmir.Value) (string, error) {
+func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		return lowerValue(state, v)
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		return lowerValue(state, v)
 	default:
 		return "", fmt.Errorf("unsupported aggregate source %T", value)
@@ -2632,9 +3020,9 @@ func lowerAggregateSource(state *moduleState, value midmir.Value) (string, error
 
 // lowerPanicTerm emits a call to ferret__panic(ptr msg) followed by unreachable.
 // String literals are null-terminated *i8 constants; we pass the pointer directly.
-func lowerPanicTerm(state *moduleState, t *midmir.PanicTerm) (string, error) {
+func lowerPanicTerm(state *moduleState, t *mir.PanicTerm) (string, error) {
 	switch v := t.Value.(type) {
-	case *midmir.StringValue:
+	case *mir.StringValue:
 		sym := emitStringConstant(state, v.Value)
 		return fmt.Sprintf("call void @ferret__panic(ptr @%s)\nunreachable", sym), nil
 	default:
@@ -2642,17 +3030,17 @@ func lowerPanicTerm(state *moduleState, t *midmir.PanicTerm) (string, error) {
 	}
 }
 
-func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
+func lowerTerm(state *moduleState, term mir.Terminator) (string, error) {
 	switch t := term.(type) {
 	case nil:
 		return "unreachable", nil
-	case *midmir.ExitTerm:
+	case *mir.ExitTerm:
 		// ExitTerm is emitted for void functions that have no explicit return.
 		// Emit ret void so the function terminates correctly.
 		return "ret void", nil
-	case *midmir.JumpTerm:
+	case *mir.JumpTerm:
 		return fmt.Sprintf("br label %%%s", llvmBlockLabel(state.fn, t.TargetID)), nil
-	case *midmir.BranchTerm:
+	case *mir.BranchTerm:
 		cond, err := lowerCondValue(state, t.Cond)
 		if err != nil {
 			return "", err
@@ -2662,14 +3050,14 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 			freshTempRef(cond),
 			llvmBlockLabel(state.fn, t.TrueID),
 			llvmBlockLabel(state.fn, t.FalseID)), nil
-	case *midmir.ReturnTerm:
+	case *mir.ReturnTerm:
 		if t.CleanupID >= 0 {
 			return fmt.Sprintf("br label %%%s", llvmBlockLabel(state.fn, t.CleanupID)), nil
 		}
 		if t.Value == nil {
 			return "ret void", nil
 		}
-		if call, ok := t.Value.(*midmir.CallValue); ok && call.IsConstructor {
+		if call, ok := t.Value.(*mir.CallValue); ok && call.IsConstructor {
 			typeName, err := llvmABITypeName(state, call.Type())
 			if err != nil {
 				return "", err
@@ -2715,12 +3103,12 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 			return "ret void", nil
 		}
 		return fmt.Sprintf("ret %s %s", retIRType, val), nil
-	case *midmir.PanicTerm:
+	case *mir.PanicTerm:
 		if t.CleanupID >= 0 {
 			return fmt.Sprintf("br label %%%s", llvmBlockLabel(state.fn, t.CleanupID)), nil
 		}
 		return lowerPanicTerm(state, t)
-	case *midmir.SwitchTerm:
+	case *mir.SwitchTerm:
 		return "", fmt.Errorf("match lowering is not implemented yet")
 	default:
 		return "", fmt.Errorf("unsupported MIR terminator %T", term)
@@ -2730,7 +3118,7 @@ func lowerTerm(state *moduleState, term midmir.Terminator) (string, error) {
 // lowerCondValue lowers a MIR value to an i1 condition.
 // Returns a multi-line string where the last line is the comparison instruction
 // that defines the i1 temp. Use freshTempRef to extract the temp name.
-func lowerCondValue(state *moduleState, cond midmir.Value) (string, error) {
+func lowerCondValue(state *moduleState, cond mir.Value) (string, error) {
 	condIRType, err := llvmBaseType(cond.Type())
 	if err != nil {
 		return "", err
@@ -2767,11 +3155,11 @@ func freshTempRef(line string) string {
 // Value lowering
 // ---------------------------------------------------------------------------
 
-func lowerValue(state *moduleState, value midmir.Value) (string, error) {
+func lowerValue(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
 	case nil:
 		return "", fmt.Errorf("nil value")
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		if agg, ok := state.aggLocals[v.LocalID]; ok {
 			return llvmLocalName(agg.PtrName), nil
 		}
@@ -2782,7 +3170,7 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 			return tmp, nil
 		}
 		return llvmLocalName(localNameByID(state.fn, v.LocalID)), nil
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if len(v.Path) == 1 {
 			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
@@ -2819,47 +3207,47 @@ func lowerValue(state *moduleState, value midmir.Value) (string, error) {
 			return "@" + sanitizeIdent(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
-	case *midmir.NumberValue:
+	case *mir.NumberValue:
 		return llvmNumberLiteral(v.Type(), v.Value)
-	case *midmir.BoolValue:
+	case *mir.BoolValue:
 		if v.Value {
 			return "1", nil
 		}
 		return "0", nil
-	case *midmir.StringValue:
+	case *mir.StringValue:
 		// String literals are *i8 — emit a private global constant and return its address.
 		sym := emitStringConstant(state, v.Value)
 		return "@" + sym, nil
-	case *midmir.NoneValue:
+	case *mir.NoneValue:
 		return "null", nil
-	case *midmir.UnaryValue:
+	case *mir.UnaryValue:
 		return lowerUnary(state, v)
-	case *midmir.AddrOfValue:
+	case *mir.AddrOfValue:
 		return lowerAddrOf(state, v)
-	case *midmir.LoadValue:
+	case *mir.LoadValue:
 		return "", fmt.Errorf("load value must be lowered in assignment/eval context")
-	case *midmir.BinaryValue:
+	case *mir.BinaryValue:
 		return lowerBinary(state, v)
-	case *midmir.CastValue:
+	case *mir.CastValue:
 		return lowerCast(state, v)
-	case *midmir.TypeTestValue:
+	case *mir.TypeTestValue:
 		return lowerTypeTest(state, v)
-	case *midmir.CallValue:
+	case *mir.CallValue:
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
-	case *midmir.FieldLoadValue:
+	case *mir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
-	case *midmir.IndexValue:
+	case *mir.IndexValue:
 		return "", fmt.Errorf("index value must be lowered in assignment context")
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
 }
 
-func lowerTypeTest(state *moduleState, v *midmir.TypeTestValue) (string, error) {
+func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 	if v == nil {
 		return "", fmt.Errorf("nil type test")
 	}
-	if _, isNone := v.Left.(*midmir.NoneValue); isNone {
+	if _, isNone := v.Left.(*mir.NoneValue); isNone {
 		if _, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
 			return "0", nil
 		}
@@ -2896,9 +3284,9 @@ func lowerTypeTest(state *moduleState, v *midmir.TypeTestValue) (string, error) 
 	return out, nil
 }
 
-func lowerAddrOf(state *moduleState, v *midmir.AddrOfValue) (string, error) {
+func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
 	switch src := v.Source.(type) {
-	case *midmir.LocalValue:
+	case *mir.LocalValue:
 		if agg, ok := state.aggLocals[src.LocalID]; ok {
 			return llvmLocalName(agg.PtrName), nil
 		}
@@ -2906,7 +3294,7 @@ func lowerAddrOf(state *moduleState, v *midmir.AddrOfValue) (string, error) {
 			return sc.AllocaName, nil
 		}
 		return "", fmt.Errorf("addr_of on scalar SSA local not supported by llvm lowerer yet")
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if len(src.Path) == 1 {
 			if local := findLocalByName(state.fn, src.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
@@ -2927,7 +3315,7 @@ func lowerAddrOf(state *moduleState, v *midmir.AddrOfValue) (string, error) {
 	}
 }
 
-func lowerUnary(state *moduleState, v *midmir.UnaryValue) (string, error) {
+func lowerUnary(state *moduleState, v *mir.UnaryValue) (string, error) {
 	right, err := lowerValue(state, v.Right)
 	if err != nil {
 		return "", err
@@ -2954,7 +3342,12 @@ func lowerUnary(state *moduleState, v *midmir.UnaryValue) (string, error) {
 	}
 }
 
-func lowerBinary(state *moduleState, v *midmir.BinaryValue) (string, error) {
+func lowerBinary(state *moduleState, v *mir.BinaryValue) (string, error) {
+	// ?? (nil-coalesce) requires aggregate access to the optional — handle
+	// it before the generic scalar paths.
+	if v.Op == "??" {
+		return lowerCoalesce(state, v)
+	}
 	left, err := lowerValue(state, v.Left)
 	if err != nil {
 		return "", err
@@ -2985,7 +3378,73 @@ func lowerBinary(state *moduleState, v *midmir.BinaryValue) (string, error) {
 	}
 }
 
-func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
+// lowerCoalesce lowers the ?? (nil-coalesce) operator for scalar inner types.
+// It emits: load tag → icmp ne 0 → load payload → select → returns the result.
+// The left operand must be an optional aggregate; the inner type must be scalar.
+func lowerCoalesce(state *moduleState, v *mir.BinaryValue) (string, error) {
+	opt, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType)
+	if !ok {
+		return "", fmt.Errorf("?? operator requires optional left operand, got %s", typeinfo.FormatType(typeStringer{v.Left.Type()}))
+	}
+	innerIRType, err := llvmBaseType(opt.Inner)
+	if err != nil {
+		return "", fmt.Errorf("?? operator: inner type must be scalar, got %s: %w", typeinfo.FormatType(typeStringer{opt.Inner}), err)
+	}
+
+	// Degenerate: left is a literal none — always produce the fallback.
+	if _, isNone := v.Left.(*mir.NoneValue); isNone {
+		rhs, err := lowerValue(state, v.Right)
+		if err != nil {
+			return "", err
+		}
+		copyExpr, err := llvmCopyExpr(innerIRType, rhs)
+		if err != nil {
+			return "", err
+		}
+		return copyExpr, nil
+	}
+
+	// Get a pointer to the optional aggregate.
+	src, err := lowerAggregateSource(state, v.Left)
+	if err != nil {
+		return "", fmt.Errorf("?? operator: cannot get optional source: %w", err)
+	}
+
+	// Compute payload offset using the union layout helper.
+	info, err := llvmUnionLayoutInfo(state, v.Left.Type())
+	if err != nil {
+		return "", fmt.Errorf("?? operator: cannot get optional layout: %w", err)
+	}
+
+	// Load tag (i32 at offset 0).
+	tag := freshTemp(state, "opttag")
+	state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load i32, ptr %s", tag, src))
+
+	// Check if has value (tag != 0).
+	hasVal := freshTemp(state, "opthasval")
+	state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = icmp ne i32 %s, 0", hasVal, tag))
+
+	// Load payload at payloadOffset.
+	payload := freshTemp(state, "optpayload")
+	if info.PayloadOffset != 0 {
+		payloadPtr := freshTemp(state, "optpayloadptr")
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = getelementptr i8, ptr %s, i64 %d", payloadPtr, src, info.PayloadOffset))
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", payload, innerIRType, payloadPtr))
+	} else {
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", payload, innerIRType, src))
+	}
+
+	// Lower the fallback (RHS).
+	rhs, err := lowerValue(state, v.Right)
+	if err != nil {
+		return "", err
+	}
+
+	// Return the select expression; the caller will assign it to the target name.
+	return fmt.Sprintf("select i1 %s, %s %s, %s %s", hasVal, innerIRType, payload, innerIRType, rhs), nil
+}
+
+func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if v == nil || v.Left == nil {
 		return "", fmt.Errorf("invalid cast")
 	}
@@ -3036,13 +3495,13 @@ func lowerCast(state *moduleState, v *midmir.CastValue) (string, error) {
 	return "", fmt.Errorf("unsupported cast from %s to %s", src, dst)
 }
 
-func lowerUnionSource(state *moduleState, value midmir.Value) (string, error) {
+func lowerUnionSource(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.UnaryValue:
+	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerUnionSource(state, v.Right)
 		}
-	case *midmir.LocalValue, *midmir.NameValue:
+	case *mir.LocalValue, *mir.NameValue:
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
 			return "", err
@@ -3172,7 +3631,7 @@ func llvmUnionMemberTypes(info *layout.UnionLayout) []typeinfo.Type {
 	return out
 }
 
-func lowerStringCast(state *moduleState, value midmir.Value) (string, error) {
+func lowerStringCast(state *moduleState, value mir.Value) (string, error) {
 	srcVal, err := lowerValue(state, value)
 	if err != nil {
 		return "", err
@@ -3220,9 +3679,9 @@ func operandWithTemp(state *moduleState, irType, expr string) string {
 	return irType + " " + tmp
 }
 
-func lowerCallee(state *moduleState, value midmir.Value) (string, error) {
+func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if v.LinkName != "" {
 			return sanitizeIdent(v.LinkName), nil
 		}
@@ -3236,12 +3695,13 @@ func lowerCallee(state *moduleState, value midmir.Value) (string, error) {
 // Function state
 // ---------------------------------------------------------------------------
 
-func prepareFunctionState(state *moduleState, fn *midmir.Function) error {
+func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 	state.fn = fn
 	state.aggLocals = make(map[int]*aggregateLocal)
 	state.aggParams = make(map[int]struct{})
 	state.scalarLocals = make(map[int]*scalarAllocaLocal)
-	state.tempValues = make(map[int]midmir.Value)
+	state.tempValues = make(map[int]mir.Value)
+	state.debugLocalVarIDs = make(map[int]int)
 	state.pendingLines = nil
 	state.nextTemp = 0
 
@@ -3359,7 +3819,7 @@ func entryPrelude(state *moduleState) []string {
 // Global composite
 // ---------------------------------------------------------------------------
 
-func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *midmir.CompositeValue) (string, error) {
+func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *mir.CompositeValue) (string, error) {
 	if _, ok := typ.(*typeinfo.StringType); ok {
 		return lowerGlobalStringLike(state, comp)
 	}
@@ -3370,7 +3830,7 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *midmir.Co
 	if err != nil {
 		return "", err
 	}
-	items := make(map[string]midmir.Value, len(comp.Items))
+	items := make(map[string]mir.Value, len(comp.Items))
 	for _, item := range comp.Items {
 		items[item.Name] = item.Value
 	}
@@ -3409,8 +3869,8 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *midmir.Co
 	return strings.Join(parts, ", "), nil
 }
 
-func lowerGlobalStringLike(state *moduleState, comp *midmir.CompositeValue) (string, error) {
-	items := make(map[string]midmir.Value, len(comp.Items))
+func lowerGlobalStringLike(state *moduleState, comp *mir.CompositeValue) (string, error) {
+	items := make(map[string]mir.Value, len(comp.Items))
 	for _, item := range comp.Items {
 		items[item.Name] = item.Value
 	}
@@ -3425,16 +3885,16 @@ func lowerGlobalStringLike(state *moduleState, comp *midmir.CompositeValue) (str
 	return fmt.Sprintf("{ ptr, i64 } { ptr %s, i64 %s }", ptrLit, lenLit), nil
 }
 
-func lowerGlobalValue(state *moduleState, typ typeinfo.Type, value midmir.Value) (string, error) {
+func lowerGlobalValue(state *moduleState, typ typeinfo.Type, value mir.Value) (string, error) {
 	switch v := value.(type) {
-	case *midmir.NumberValue:
+	case *mir.NumberValue:
 		return llvmNumberLiteral(typ, v.Value)
-	case *midmir.BoolValue:
+	case *mir.BoolValue:
 		if v.Value {
 			return "1", nil
 		}
 		return "0", nil
-	case *midmir.NameValue:
+	case *mir.NameValue:
 		if v.LinkName != "" {
 			return "@" + sanitizeIdent(v.LinkName), nil
 		}
@@ -3927,12 +4387,12 @@ func llvmCopyExprUnchecked(irType, valExpr string) string {
 	}
 }
 
-func llvmValueNeedsCopy(v midmir.Value) bool {
+func llvmValueNeedsCopy(v mir.Value) bool {
 	switch v.(type) {
-	case *midmir.LocalValue, *midmir.NameValue,
-		*midmir.NumberValue, *midmir.BoolValue,
-		*midmir.NoneValue, *midmir.AddrOfValue,
-		*midmir.TypeTestValue:
+	case *mir.LocalValue, *mir.NameValue,
+		*mir.NumberValue, *mir.BoolValue,
+		*mir.NoneValue, *mir.AddrOfValue,
+		*mir.TypeTestValue:
 		return true
 	}
 	return false
@@ -4007,7 +4467,7 @@ func llvmTypeName(state *moduleState, named *typeinfo.NamedType) string {
 	return prefix + "__" + sanitizeIdent(named.Name)
 }
 
-func llvmBlockLabel(fn *midmir.Function, id int) string {
+func llvmBlockLabel(fn *mir.Function, id int) string {
 	if fn != nil && id == fn.EntryID {
 		return "entry"
 	}
@@ -4060,7 +4520,7 @@ func irTypeAlign(irType string) int64 {
 // Local / function helpers
 // ---------------------------------------------------------------------------
 
-func findLocalByName(fn *midmir.Function, name string) *midmir.Local {
+func findLocalByName(fn *mir.Function, name string) *mir.Local {
 	if fn == nil {
 		return nil
 	}
@@ -4072,7 +4532,7 @@ func findLocalByName(fn *midmir.Function, name string) *midmir.Local {
 	return nil
 }
 
-func findLocalByID(fn *midmir.Function, id int) *midmir.Local {
+func findLocalByID(fn *mir.Function, id int) *mir.Local {
 	if fn == nil {
 		return nil
 	}
@@ -4084,7 +4544,7 @@ func findLocalByID(fn *midmir.Function, id int) *midmir.Local {
 	return nil
 }
 
-func localNameByID(fn *midmir.Function, id int) string {
+func localNameByID(fn *mir.Function, id int) string {
 	if fn == nil {
 		return fmt.Sprintf("t%d", id)
 	}
@@ -4096,7 +4556,7 @@ func localNameByID(fn *midmir.Function, id int) string {
 	return fmt.Sprintf("t%d", id)
 }
 
-func localTypeByID(fn *midmir.Function, id int) typeinfo.Type {
+func localTypeByID(fn *mir.Function, id int) typeinfo.Type {
 	if fn == nil {
 		return typeinfo.UnknownType{}
 	}

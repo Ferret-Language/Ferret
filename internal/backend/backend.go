@@ -3,8 +3,8 @@ package backend
 import (
 	"fmt"
 
-	"compiler/internal/layout"
-	midmir "compiler/internal/middleend/mir"
+	"compiler/internal/analysis/layout/model"
+	"compiler/internal/ir/mir"
 )
 
 type Target string
@@ -15,10 +15,10 @@ const (
 )
 
 type Unit struct {
-	Module  *midmir.Module
+	Module  *mir.Module
 	Layout  *layout.Module
 	Layouts map[string]*layout.Module
-	Modules map[string]*midmir.Module
+	Modules map[string]*mir.Module
 }
 
 type Artifact struct {
