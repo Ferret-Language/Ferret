@@ -7,6 +7,10 @@ This repo contains:
 
 This report focuses on why the current semantic analysis feels hard to follow, how the legacy approach kept flow “single source”, and a refactor plan that keeps the current architectural rules (especially “no semantic state in AST”) while reducing duplicated state and improving traceability.
 
+## Implementation Notes
+
+Maintainability refactors and progress notes are tracked in `docs/TYPECHECKER_REFACTOR_NOTES.md`.
+
 ## 1. What The Current Compiler Does Today
 
 ### 1.1 Phase Order And Data Flow
@@ -261,4 +265,3 @@ The refactor above keeps those needs, but moves them onto:
 - a tiny refinement overlay (narrowing only)
 
 This cuts the duplicated “locals environment” down to the one part that actually benefits from an overlay: narrowing.
-
