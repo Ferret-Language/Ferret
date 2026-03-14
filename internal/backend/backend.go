@@ -3,8 +3,8 @@ package backend
 import (
 	"fmt"
 
-	"compiler/internal/layout"
-	"compiler/internal/middleend/mir"
+	"compiler/internal/analysis/layout/model"
+	"compiler/internal/ir/mir"
 )
 
 type Target string

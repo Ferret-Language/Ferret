@@ -152,7 +152,7 @@ func buildRuntimeLib(runtimeDir, libsDir string) error {
 }
 
 func buildCompiler(root, outPath string) error {
-	return runCmd(root, "go", "build", "-o", outPath, "./cmd/langc")
+	return runCmd(root, "go", "build", "-o", outPath, "./cmd/ferret")
 }
 
 func runCmd(dir, name string, args ...string) error {

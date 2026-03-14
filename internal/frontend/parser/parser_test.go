@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/internal/diagnostics"
+	"compiler/internal/core/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 )

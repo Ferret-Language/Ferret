@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"reflect"
 
-	"compiler/internal/diagnostics"
+	"compiler/internal/core/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/source"
+	"compiler/internal/core/source"
 )
 
 func (p *Parser) validateModule(mod *ast.Module) {

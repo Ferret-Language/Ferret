@@ -1,7 +1,7 @@
 package llvm
 
 import (
-	"compiler/internal/middleend/mir"
+	"compiler/internal/ir/mir"
 	"fmt"
 	"strings"
 )

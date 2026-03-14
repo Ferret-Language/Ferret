@@ -2,7 +2,7 @@ package parser
 
 import (
 	"compiler/internal/frontend/ast"
-	"compiler/internal/source"
+	"compiler/internal/core/source"
 	"compiler/internal/tokens"
 )
 

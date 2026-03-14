@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"
 	"compiler/internal/backend/registry"
-	compilerapi "compiler/internal/compiler"
-	"compiler/internal/layout"
-	"compiler/internal/middleend/mir"
+	"compiler/internal/driver"
+	"compiler/internal/ir/mir"
 )
 
 func TestLowerScalarFunctionToQBE(t *testing.T) {
@@ -21,7 +21,7 @@ fn add(a i32, b i32) i32 {
     return sum
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -58,7 +58,7 @@ fn main() i32 {
     return 0
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -95,7 +95,7 @@ fn main(x i32) i32 {
     }
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -130,7 +130,7 @@ fn main() i32 {
     return out
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -175,7 +175,7 @@ fn main() i32 {
     return p.X
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -216,7 +216,7 @@ fn main() i32 {
     return build::Origin()
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -243,7 +243,7 @@ fn main() i32 {
     return AbsI32(-1)
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -280,7 +280,7 @@ fn main() i32 {
     return p.X
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -312,7 +312,7 @@ fn main() void {
     print(text)
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -349,7 +349,7 @@ fn main() i32 {
     return 0
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -392,7 +392,7 @@ fn main(flag bool) i32 {
     return out
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -435,7 +435,7 @@ fn main() i32 {
     return out
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -470,7 +470,7 @@ func mustWrite(t *testing.T, path, content string) {
 	}
 }
 
-func testUnit(result compilerapi.Result) *backend.Unit {
+func testUnit(result compiler.Result) *backend.Unit {
 	layouts := make(map[string]*layout.Module)
 	modules := make(map[string]*mir.Module)
 	for _, mod := range result.Modules {
@@ -512,7 +512,7 @@ fn main() i32 {
     return p.Len2()
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -556,7 +556,7 @@ fn main() str {
     return s.String()
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -610,7 +610,7 @@ fn main() str {
     return s.String()
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -656,7 +656,7 @@ fn main() str {
     return GlobalStringer.String()
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -702,7 +702,7 @@ fn main(flag bool) i32 {
     return 2
 }
 `)
-	result := compilerapi.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}

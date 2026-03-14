@@ -3,7 +3,7 @@ package lexer
 import (
 	"testing"
 
-	"compiler/internal/diagnostics"
+	"compiler/internal/core/diagnostics"
 	"compiler/internal/tokens"
 )
 

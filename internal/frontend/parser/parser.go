@@ -5,9 +5,9 @@ import (
 	"slices"
 	"strings"
 
-	"compiler/internal/diagnostics"
+	"compiler/internal/core/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/source"
+	"compiler/internal/core/source"
 	"compiler/internal/tokens"
 )
 

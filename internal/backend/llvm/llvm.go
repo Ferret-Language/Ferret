@@ -11,9 +11,9 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/layout"
-	"compiler/internal/middleend/mir"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/analysis/layout/model"
+	"compiler/internal/ir/mir"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/utils/numeric"
 )
 

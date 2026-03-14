@@ -3,7 +3,7 @@ package ast
 import (
 	"encoding/json"
 
-	"compiler/internal/source"
+	"compiler/internal/core/source"
 )
 
 func MarshalModuleJSON(mod *Module) ([]byte, error) {

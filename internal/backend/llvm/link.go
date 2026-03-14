@@ -9,8 +9,8 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/middleend/mir"
-	"compiler/internal/semantics/typeinfo"
+	"compiler/internal/ir/mir"
+	"compiler/internal/analysis/semantics/typeinfo"
 )
 
 type CompileOptions struct {

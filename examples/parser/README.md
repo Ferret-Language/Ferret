@@ -12,11 +12,11 @@ Suggested commands:
 
 ```bash
 cd /home/fuad/Dev/test/compiler
-go run ./cmd/langc ./examples/parser/valid/00_decls_and_types.ferr
-go run ./cmd/langc ./examples/parser/valid/01_control_flow.ferr
-go run ./cmd/langc ./examples/parser/valid/02_special_forms.ferr
-go run ./cmd/langc ./examples/parser/workspace
-go run ./cmd/langc ./examples/parser/invalid/00_missing_expression.ferr
-go run ./cmd/langc ./examples/parser/invalid/01_struct_recovery.ferr
-go run ./cmd/langc ./examples/parser/invalid/02_mixed_composite_literal.ferr
+go run ./cmd/ferret ./examples/parser/valid/00_decls_and_types.ferr
+go run ./cmd/ferret ./examples/parser/valid/01_control_flow.ferr
+go run ./cmd/ferret ./examples/parser/valid/02_special_forms.ferr
+go run ./cmd/ferret ./examples/parser/workspace
+go run ./cmd/ferret ./examples/parser/invalid/00_missing_expression.ferr
+go run ./cmd/ferret ./examples/parser/invalid/01_struct_recovery.ferr
+go run ./cmd/ferret ./examples/parser/invalid/02_mixed_composite_literal.ferr
 ```
