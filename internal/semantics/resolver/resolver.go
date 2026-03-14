@@ -26,6 +26,33 @@ type resolver struct {
 	currentFn *ast.FuncDecl
 }
 
+func (r *resolver) bindDeclIdent(ident *ast.Ident, sym *symbols.Symbol) {
+	if r == nil || r.info == nil || r.mod == nil || ident == nil || sym == nil {
+		return
+	}
+	// Declaration identifiers are always local to the current module.
+	r.info.BindNode(ident, &binding.Resolution{
+		Kind:       binding.ResolutionSymbol,
+		Symbol:     sym,
+		ModuleKey:  r.mod.Key,
+		ImportPath: r.mod.ImportPath,
+	})
+}
+
+func (r *resolver) declareLocal(scope *table.Scope, sym *symbols.Symbol) *symbols.Symbol {
+	if scope == nil || sym == nil {
+		return sym
+	}
+	if scope.Declare(sym) {
+		return sym
+	}
+	// Keep declaration bindings consistent with subsequent lookups.
+	if existing, ok := scope.LookupLocal(sym.Name); ok && existing != nil {
+		return existing
+	}
+	return sym
+}
+
 func ResolveModule(ctx *context.CompilerContext, mod *context.Module) {
 	if ctx == nil || mod == nil || mod.AST == nil || mod.ModuleScope == nil {
 		return
@@ -97,17 +124,35 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 	case *ast.LetDecl:
 		r.resolveType(scope, d.Type)
 		r.resolveExpr(scope, d.Value)
+		if d.Name != nil && r.mod.ModuleScope != nil {
+			if sym, ok := r.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
+				r.bindDeclIdent(d.Name, sym)
+			}
+		}
 	case *ast.ConstDecl:
 		r.resolveType(scope, d.Type)
 		r.resolveExpr(scope, d.Value)
+		if d.Name != nil && r.mod.ModuleScope != nil {
+			if sym, ok := r.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
+				r.bindDeclIdent(d.Name, sym)
+			}
+		}
 	case *ast.TypeDecl:
 		r.resolveType(scope, d.Type)
+		if d.Name != nil && r.mod.ModuleScope != nil {
+			if sym, ok := r.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
+				r.bindDeclIdent(d.Name, sym)
+			}
+		}
 	case *ast.FuncDecl:
 		if d.Receiver != nil {
 			r.resolveType(scope, d.Receiver.Type)
 		}
 		if sym, ok := r.lookupFunctionSymbol(d); ok {
 			r.info.BindFunctionSymbol(d, sym)
+			if d.Name != nil {
+				r.bindDeclIdent(d.Name, sym)
+			}
 		}
 		prevFn := r.currentFn
 		r.currentFn = d
@@ -116,15 +161,19 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 		if d.Receiver != nil {
 			sym := symbols.New(d.Receiver.Name.Text(), symbols.SymbolParam, nil)
 			sym.Location = d.Receiver.Name.Loc()
-			funcScope.Declare(sym)
-			r.info.AddFunctionLocal(d, sym)
+			sym.Mutable = true
+			declared := r.declareLocal(funcScope, sym)
+			r.info.AddFunctionLocal(d, declared)
+			r.bindDeclIdent(d.Receiver.Name, declared)
 		}
 		for _, param := range d.Params {
 			r.resolveType(scope, param.Type)
 			sym := symbols.New(param.Name.Text(), symbols.SymbolParam, nil)
 			sym.Location = param.Name.Loc()
-			funcScope.Declare(sym)
-			r.info.AddFunctionLocal(d, sym)
+			sym.Mutable = false
+			declared := r.declareLocal(funcScope, sym)
+			r.info.AddFunctionLocal(d, declared)
+			r.bindDeclIdent(param.Name, declared)
 		}
 		r.resolveType(scope, d.Result)
 		r.resolveStmt(funcScope, d.Body)
@@ -146,15 +195,19 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.resolveExpr(scope, s.Value)
 		sym := symbols.New(s.Name.Text(), symbols.SymbolVar, s)
 		sym.Location = s.Name.Loc()
-		scope.Declare(sym)
-		r.addFunctionLocal(sym)
+		sym.Mutable = s.IsMut
+		declared := r.declareLocal(scope, sym)
+		r.addFunctionLocal(declared)
+		r.bindDeclIdent(s.Name, declared)
 	case *ast.ConstStmt:
 		r.resolveType(scope, s.Type)
 		r.resolveExpr(scope, s.Value)
 		sym := symbols.New(s.Name.Text(), symbols.SymbolConst, s)
 		sym.Location = s.Name.Loc()
-		scope.Declare(sym)
-		r.addFunctionLocal(sym)
+		sym.Mutable = false
+		declared := r.declareLocal(scope, sym)
+		r.addFunctionLocal(declared)
+		r.bindDeclIdent(s.Name, declared)
 	case *ast.ReturnStmt:
 		r.resolveExpr(scope, s.Value)
 	case *ast.ExprStmt:
@@ -191,14 +244,18 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		if s.Index != nil {
 			sym := symbols.New(s.Index.Text(), symbols.SymbolVar, nil)
 			sym.Location = s.Index.Loc()
-			loopScope.Declare(sym)
-			r.addFunctionLocal(sym)
+			sym.Mutable = false
+			declared := r.declareLocal(loopScope, sym)
+			r.addFunctionLocal(declared)
+			r.bindDeclIdent(s.Index, declared)
 		}
 		if s.Value != nil {
 			sym := symbols.New(s.Value.Text(), symbols.SymbolVar, nil)
 			sym.Location = s.Value.Loc()
-			loopScope.Declare(sym)
-			r.addFunctionLocal(sym)
+			sym.Mutable = false
+			declared := r.declareLocal(loopScope, sym)
+			r.addFunctionLocal(declared)
+			r.bindDeclIdent(s.Value, declared)
 		}
 		r.loopDepth++
 		r.resolveStmt(loopScope, s.Body)
@@ -223,8 +280,10 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		lockScope := table.New(scope)
 		sym := symbols.New(s.Name.Text(), symbols.SymbolVar, s)
 		sym.Location = s.Name.Loc()
-		lockScope.Declare(sym)
-		r.addFunctionLocal(sym)
+		sym.Mutable = true
+		declared := r.declareLocal(lockScope, sym)
+		r.addFunctionLocal(declared)
+		r.bindDeclIdent(s.Name, declared)
 		r.resolveStmt(lockScope, s.Body)
 	case *ast.UnsafeStmt:
 		r.resolveStmt(scope, s.Body)
@@ -384,6 +443,22 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 			}
 			r.resolveStmt(armScope, arm.Body)
 		}
+	case *ast.CatchExpr:
+		r.resolveExpr(scope, e.Left)
+		if e.Handler != nil {
+			handlerScope := table.New(scope)
+			if e.Payload != nil {
+				sym := symbols.New(e.Payload.Text(), symbols.SymbolVar, nil)
+				sym.Location = e.Payload.Loc()
+				sym.Mutable = false
+				declared := r.declareLocal(handlerScope, sym)
+				r.addFunctionLocal(declared)
+				r.bindDeclIdent(e.Payload, declared)
+			}
+			r.resolveStmt(handlerScope, e.Handler)
+			return
+		}
+		r.resolveExpr(scope, e.Fallback)
 	case *ast.CompositeLit:
 		for _, item := range e.Items {
 			r.resolveExpr(scope, item.Value)

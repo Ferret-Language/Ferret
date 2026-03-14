@@ -1354,6 +1354,83 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerBindsLocalSymbolTypes(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type MyErr error {
+    Oops
+}
+
+fn run(items [3]i32) i32 {
+    let r: MyErr!i32 = undefined
+    let x = 1
+    return r catch |e| { return x }
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.Types == nil || result.Entry.Bindings == nil {
+		t.Fatalf("expected entry types+bindings, got %#v", result.Entry)
+	}
+
+	runFn := findTypeFunc(t, result.Entry.AST, "run")
+
+	// Param type binding.
+	paramIdent := runFn.Params[0].Name
+	paramRes := result.Entry.Bindings.Nodes[paramIdent]
+	if paramRes == nil || paramRes.Symbol == nil {
+		t.Fatalf("expected param resolution for items, got %#v", paramRes)
+	}
+	paramType := result.Entry.Types.Symbols[paramRes.Symbol]
+	arr, ok := paramType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 3 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected items type [3]i32, got %T %#v", paramType, paramType)
+	}
+
+	// let r binding.
+	letR := runFn.Body.Stmts[0].(*ast.LetStmt)
+	rRes := result.Entry.Bindings.Nodes[letR.Name]
+	if rRes == nil || rRes.Symbol == nil {
+		t.Fatalf("expected let resolution for r, got %#v", rRes)
+	}
+	rType := result.Entry.Types.Symbols[rRes.Symbol]
+	errUnion, ok := rType.(*typeinfo.ErrorUnionType)
+	if !ok || !typeinfo.IsBuiltinNamed(errUnion.Value, "i32") {
+		t.Fatalf("expected r type MyErr!i32, got %T %#v", rType, rType)
+	}
+	errNamed, ok := errUnion.Error.(*typeinfo.NamedType)
+	if !ok || errNamed.Name != "MyErr" {
+		t.Fatalf("expected r error type MyErr, got %T %#v", errUnion.Error, errUnion.Error)
+	}
+
+	// let x binding.
+	letX := runFn.Body.Stmts[1].(*ast.LetStmt)
+	xRes := result.Entry.Bindings.Nodes[letX.Name]
+	if xRes == nil || xRes.Symbol == nil {
+		t.Fatalf("expected let resolution for x, got %#v", xRes)
+	}
+	xType := result.Entry.Types.Symbols[xRes.Symbol]
+	if !typeinfo.IsBuiltinNamed(xType, "i32") {
+		t.Fatalf("expected x type i32, got %T %#v", xType, xType)
+	}
+
+	// catch payload binding.
+	ret := runFn.Body.Stmts[2].(*ast.ReturnStmt)
+	catchExpr := ret.Value.(*ast.CatchExpr)
+	payloadRes := result.Entry.Bindings.Nodes[catchExpr.Payload]
+	if payloadRes == nil || payloadRes.Symbol == nil {
+		t.Fatalf("expected catch payload resolution for e, got %#v", payloadRes)
+	}
+	payloadType := result.Entry.Types.Symbols[payloadRes.Symbol]
+	payloadNamed, ok := payloadType.(*typeinfo.NamedType)
+	if !ok || payloadNamed.Name != "MyErr" {
+		t.Fatalf("expected catch payload type MyErr, got %T %#v", payloadType, payloadType)
+	}
+}
+
 func findTypeFunc(t *testing.T, mod *ast.Module, name string) *ast.FuncDecl {
 	t.Helper()
 	for _, decl := range mod.Decls {

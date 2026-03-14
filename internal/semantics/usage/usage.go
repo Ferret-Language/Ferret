@@ -2,6 +2,7 @@ package usage
 
 import (
 	"fmt"
+	"reflect"
 
 	"compiler/internal/context"
 	"compiler/internal/diagnostics"
@@ -16,6 +17,7 @@ type analyzer struct {
 	mod         *context.Module
 	usedImports map[*binding.ImportBinding]bool
 	usedSymbols map[*symbols.Symbol]int
+	declNodes   map[ast.Node]struct{}
 }
 
 func AnalyzeModules(ctx *context.CompilerContext, mods []*context.Module) {
@@ -36,7 +38,9 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 		mod:         mod,
 		usedImports: make(map[*binding.ImportBinding]bool),
 		usedSymbols: make(map[*symbols.Symbol]int),
+		declNodes:   make(map[ast.Node]struct{}),
 	}
+	a.collectDeclNodes()
 	a.collectUses()
 	a.reportUnusedImports()
 	a.reportUnusedModuleSymbols()
@@ -44,11 +48,280 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 	mod.Phase = phase.PhaseUsageAnalyzed
 }
 
+func (a *analyzer) collectDeclNodes() {
+	if a == nil || a.mod == nil || a.mod.AST == nil {
+		return
+	}
+	for _, decl := range a.mod.AST.Decls {
+		a.collectDeclNodesDecl(decl)
+	}
+}
+
+func (a *analyzer) markDeclNode(node ast.Node) {
+	if a == nil || node == nil {
+		return
+	}
+	a.declNodes[node] = struct{}{}
+}
+
+func (a *analyzer) collectDeclNodesDecl(decl ast.Decl) {
+	switch d := decl.(type) {
+	case *ast.LetDecl:
+		if d == nil {
+			return
+		}
+		a.markDeclNode(d.Name)
+		a.collectDeclNodesExpr(d.Value)
+	case *ast.ConstDecl:
+		if d == nil {
+			return
+		}
+		a.markDeclNode(d.Name)
+		a.collectDeclNodesExpr(d.Value)
+	case *ast.TypeDecl:
+		if d == nil {
+			return
+		}
+		a.markDeclNode(d.Name)
+	case *ast.FuncDecl:
+		if d == nil {
+			return
+		}
+		a.markDeclNode(d.Name)
+		if d.Receiver != nil {
+			a.markDeclNode(d.Receiver.Name)
+		}
+		for _, p := range d.Params {
+			a.markDeclNode(p.Name)
+		}
+		a.collectDeclNodesStmt(d.Body)
+	}
+}
+
+func (a *analyzer) collectDeclNodesStmt(stmt ast.Stmt) {
+	if stmt == nil {
+		return
+	}
+	v := reflect.ValueOf(stmt)
+	if v.Kind() == reflect.Pointer && v.IsNil() {
+		return
+	}
+	switch s := stmt.(type) {
+	case *ast.BlockStmt:
+		if s == nil {
+			return
+		}
+		for _, child := range s.Stmts {
+			a.collectDeclNodesStmt(child)
+		}
+	case *ast.LetStmt:
+		if s == nil {
+			return
+		}
+		a.markDeclNode(s.Name)
+		a.collectDeclNodesExpr(s.Value)
+	case *ast.ConstStmt:
+		if s == nil {
+			return
+		}
+		a.markDeclNode(s.Name)
+		a.collectDeclNodesExpr(s.Value)
+	case *ast.ReturnStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Value)
+	case *ast.ExprStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Value)
+	case *ast.AssignStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Left)
+		a.collectDeclNodesExpr(s.Right)
+	case *ast.IfStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Cond)
+		a.collectDeclNodesStmt(s.Then)
+		a.collectDeclNodesStmt(s.Else)
+	case *ast.MatchStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Value)
+		for _, arm := range s.Arms {
+			if arm == nil {
+				continue
+			}
+			if arm.TypePattern != nil {
+				// no decl binders
+			} else if !arm.Wildcard {
+				a.collectDeclNodesExpr(arm.Pattern)
+			}
+			a.collectDeclNodesStmt(arm.Body)
+		}
+	case *ast.WhileStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Cond)
+		a.collectDeclNodesStmt(s.Body)
+	case *ast.ForStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Iterable)
+		a.markDeclNode(s.Index)
+		a.markDeclNode(s.Value)
+		a.collectDeclNodesStmt(s.Body)
+	case *ast.LabelStmt:
+		if s == nil {
+			return
+		}
+		// Labels are tracked separately, but don't count them as uses.
+		a.markDeclNode(s.Name)
+		a.collectDeclNodesStmt(s.Stmt)
+	case *ast.BreakStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Label)
+	case *ast.ContinueStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Label)
+	case *ast.DeferStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesStmt(s.Body)
+	case *ast.ReleaseStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Value)
+	case *ast.PanicStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Value)
+	case *ast.LockStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesExpr(s.Value)
+		a.markDeclNode(s.Name)
+		a.collectDeclNodesStmt(s.Body)
+	case *ast.UnsafeStmt:
+		if s == nil {
+			return
+		}
+		a.collectDeclNodesStmt(s.Body)
+	}
+}
+
+func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {
+	if expr == nil {
+		return
+	}
+	v := reflect.ValueOf(expr)
+	if v.Kind() == reflect.Pointer && v.IsNil() {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.PrefixExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Right)
+	case *ast.BinaryExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Left)
+		a.collectDeclNodesExpr(e.Right)
+	case *ast.PostfixExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Left)
+	case *ast.CallExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Callee)
+		for _, arg := range e.Args {
+			a.collectDeclNodesExpr(arg)
+		}
+	case *ast.SelectorExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Left)
+	case *ast.CastExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Left)
+	case *ast.IsExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Left)
+	case *ast.MatchExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Value)
+		for _, arm := range e.Arms {
+			if arm == nil {
+				continue
+			}
+			if arm.TypePattern != nil {
+				// no decl binders
+			} else if !arm.Wildcard {
+				a.collectDeclNodesExpr(arm.Pattern)
+			}
+			a.collectDeclNodesStmt(arm.Body)
+		}
+	case *ast.CatchExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Left)
+		a.collectDeclNodesExpr(e.Fallback)
+		a.markDeclNode(e.Payload)
+		a.collectDeclNodesStmt(e.Handler)
+	case *ast.CompositeLit:
+		if e == nil {
+			return
+		}
+		for _, item := range e.Items {
+			a.collectDeclNodesExpr(item.Value)
+		}
+	case *ast.IndexExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Left)
+		a.collectDeclNodesExpr(e.Index)
+	}
+}
+
 func (a *analyzer) collectUses() {
 	if a == nil || a.mod == nil || a.mod.Bindings == nil {
 		return
 	}
 	for node, resolution := range a.mod.Bindings.Nodes {
+		if _, ok := a.declNodes[node]; ok {
+			continue
+		}
 		if resolution == nil {
 			continue
 		}

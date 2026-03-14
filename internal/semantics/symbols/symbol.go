@@ -33,6 +33,10 @@ type Symbol struct {
 	Node         ast.Node
 	ReceiverType string
 	OwnerType    string
+	// Mutable is a binder property for locals/params that don't have a dedicated AST node
+	// with mutability flags (e.g. for/lock/catch binders). For LetDecl/LetStmt, prefer
+	// the AST node's `IsMut` when available.
+	Mutable bool
 }
 
 func New(name string, kind Kind, node ast.Node) *Symbol {

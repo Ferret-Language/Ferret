@@ -17,38 +17,33 @@ import (
 	"compiler/internal/utils/numeric"
 )
 
-type valueInfo struct {
-	typ      typeinfo.Type
-	mutable  bool
-	constant bool
+// refineScope is a narrow, per-branch overlay that can override the type of a
+// resolved symbol (used for `is` narrowing and match-type arms).
+//
+// Base types always live in `Module.Types` and are keyed by `*symbols.Symbol`.
+type refineScope struct {
+	parent *refineScope
+	types  map[*symbols.Symbol]typeinfo.Type
 }
 
-type valueScope struct {
-	parent *valueScope
-	values map[string]*valueInfo
+func newRefineScope(parent *refineScope) *refineScope {
+	return &refineScope{parent: parent, types: make(map[*symbols.Symbol]typeinfo.Type)}
 }
 
-func newValueScope(parent *valueScope) *valueScope {
-	return &valueScope{parent: parent, values: make(map[string]*valueInfo)}
-}
-
-func (s *valueScope) Declare(name string, info valueInfo) *valueInfo {
-	if s == nil || name == "" {
-		return nil
+func (s *refineScope) Set(sym *symbols.Symbol, typ typeinfo.Type) {
+	if s == nil || sym == nil || typ == nil {
+		return
 	}
-	slot := &valueInfo{
-		typ:      info.typ,
-		mutable:  info.mutable,
-		constant: info.constant,
-	}
-	s.values[name] = slot
-	return slot
+	s.types[sym] = typ
 }
 
-func (s *valueScope) Lookup(name string) (*valueInfo, bool) {
+func (s *refineScope) Lookup(sym *symbols.Symbol) (typeinfo.Type, bool) {
+	if sym == nil {
+		return nil, false
+	}
 	for scope := s; scope != nil; scope = scope.parent {
-		if info, ok := scope.values[name]; ok {
-			return info, true
+		if typ, ok := scope.types[sym]; ok {
+			return typ, true
 		}
 	}
 	return nil, false
@@ -61,6 +56,47 @@ type checker struct {
 	currentResult typeinfo.Type
 	unsafeDepth   int
 	deferDepth    int
+}
+
+func (c *checker) symbolMutable(sym *symbols.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	if sym.Kind == symbols.SymbolConst {
+		return false
+	}
+	switch node := sym.Node.(type) {
+	case *ast.LetDecl:
+		return node != nil && node.IsMut
+	case *ast.LetStmt:
+		return node != nil && node.IsMut
+	case *ast.ConstDecl, *ast.ConstStmt:
+		return false
+	default:
+		return sym.Mutable
+	}
+}
+
+func (c *checker) bindDeclSymbol(node ast.Node, typ typeinfo.Type) {
+	if c == nil || c.info == nil || node == nil || typ == nil {
+		return
+	}
+	res := c.lookupResolution(node)
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+		return
+	}
+	c.info.BindSymbol(res.Symbol, typ)
+}
+
+func (c *checker) declSymbol(node ast.Node) *symbols.Symbol {
+	if c == nil || node == nil {
+		return nil
+	}
+	res := c.lookupResolution(node)
+	if res == nil || res.Kind != binding.ResolutionSymbol {
+		return nil
+	}
+	return res.Symbol
 }
 
 func CheckModule(ctx *context.CompilerContext, mod *context.Module) {
@@ -111,6 +147,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		}
 		if declared != nil && d.Value != nil && !c.checkAssignable(d.Value.Loc(), declared, value) {
 		}
+		c.bindDeclSymbol(d.Name, finalType)
 		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
 			c.info.BindSymbol(sym, finalType)
 		}
@@ -134,6 +171,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if declared != nil && d.Value != nil && !c.checkAssignable(d.Value.Loc(), declared, value) {
 		}
 		c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
+		c.bindDeclSymbol(d.Name, finalType)
 		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
 			c.info.BindSymbol(sym, finalType)
 		}
@@ -223,13 +261,17 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 				WithPrimaryLabel(&loc, kind+"s are methods on their exact owning type"),
 		)
 	}
-	funcScope := newValueScope(nil)
+	funcScope := newRefineScope(nil)
 	if d.Receiver != nil {
 		recvType := c.typeFromSyntax(c.mod, d.Receiver.Type)
 		if d.Receiver.Type != nil {
 			c.info.BindNode(d.Receiver.Type, recvType)
 		}
-		funcScope.Declare(d.Receiver.Name.Text(), valueInfo{typ: recvType, mutable: true})
+		// No base-type environment: locals/params are typed via Bindings+Types.
+		if recvType == nil {
+			recvType = typeinfo.UnknownType{}
+		}
+		c.bindDeclSymbol(d.Receiver.Name, recvType)
 		c.info.BindNode(d.Receiver, recvType)
 		if d.IsConstructor {
 			c.checkConstructorDecl(d, recvType)
@@ -243,7 +285,11 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		if param.Type != nil {
 			c.info.BindNode(param.Type, paramType)
 		}
-		funcScope.Declare(param.Name.Text(), valueInfo{typ: paramType, mutable: false})
+		if paramType == nil {
+			paramType = typeinfo.UnknownType{}
+		}
+		c.bindDeclSymbol(param.Name, paramType)
+		// No base-type environment: locals/params are typed via Bindings+Types.
 	}
 	prevResult := c.currentResult
 	c.currentResult = c.funcResultType(c.mod, d)
@@ -256,14 +302,13 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 	c.currentResult = prevResult
 }
 
-func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
+func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 	switch s := stmt.(type) {
 	case nil:
 		return
 	case *ast.BlockStmt:
-		block := newValueScope(scope)
 		for _, child := range s.Stmts {
-			c.checkStmt(block, child)
+			c.checkStmt(scope, child)
 		}
 	case *ast.LetStmt:
 		var declared typeinfo.Type
@@ -284,7 +329,8 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		}
 		if declared != nil && s.Value != nil && !c.checkAssignable(s.Value.Loc(), declared, value) {
 		}
-		scope.Declare(s.Name.Text(), valueInfo{typ: finalType, mutable: s.IsMut})
+		c.bindDeclSymbol(s.Name, finalType)
+		// No base-type environment: locals/params are typed via Bindings+Types.
 	case *ast.ConstStmt:
 		var declared typeinfo.Type
 		if s.Type != nil {
@@ -302,7 +348,8 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		if declared != nil && s.Value != nil && !c.checkAssignable(s.Value.Loc(), declared, value) {
 		}
 		c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
-		scope.Declare(s.Name.Text(), valueInfo{typ: finalType, constant: true})
+		c.bindDeclSymbol(s.Name, finalType)
+		// No base-type environment: locals/params are typed via Bindings+Types.
 	case *ast.ReturnStmt:
 		c.checkReturn(scope, s)
 	case *ast.ExprStmt:
@@ -327,7 +374,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 			if arm == nil {
 				continue
 			}
-			armScope := newValueScope(scope)
+			armScope := scope
 			if arm.Wildcard {
 				hasWildcard = true
 			} else if arm.TypePattern != nil {
@@ -349,17 +396,26 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 	case *ast.WhileStmt:
 		condType := c.typeOfExpr(scope, s.Cond, nil)
 		c.requireBool(s.Cond.Loc(), condType)
-		bodyScope := c.narrowedScopeForCondition(newValueScope(scope), s.Cond, true)
+		bodyScope := c.narrowedScopeForCondition(scope, s.Cond, true)
 		c.checkStmt(bodyScope, s.Body)
 	case *ast.ForStmt:
-		loopScope := newValueScope(scope)
-		iterType := c.typeOfExpr(loopScope, s.Iterable, nil)
+		iterType := c.typeOfExpr(scope, s.Iterable, nil)
 		indexType, valueType := c.forBindingTypes(iterType)
-		if s.Index != nil {
-			loopScope.Declare(s.Index.Text(), valueInfo{typ: indexType, mutable: false})
+		if indexType == nil {
+			indexType = typeinfo.UnknownType{}
 		}
-		loopScope.Declare(s.Value.Text(), valueInfo{typ: valueType, mutable: false})
-		c.checkStmt(loopScope, s.Body)
+		if valueType == nil {
+			valueType = typeinfo.UnknownType{}
+		}
+		if s.Index != nil {
+			c.bindDeclSymbol(s.Index, indexType)
+			// No base-type environment: locals/params are typed via Bindings+Types.
+		}
+		if s.Value != nil {
+			c.bindDeclSymbol(s.Value, valueType)
+			// No base-type environment: locals/params are typed via Bindings+Types.
+		}
+		c.checkStmt(scope, s.Body)
 	case *ast.LabelStmt:
 		c.checkStmt(scope, s.Stmt)
 	case *ast.DeferStmt:
@@ -381,9 +437,14 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 		c.typeOfExpr(scope, s.Value, nil)
 	case *ast.LockStmt:
 		valueType := c.typeOfExpr(scope, s.Value, nil)
-		lockScope := newValueScope(scope)
-		lockScope.Declare(s.Name.Text(), valueInfo{typ: valueType, mutable: true})
-		c.checkStmt(lockScope, s.Body)
+		if valueType == nil {
+			valueType = typeinfo.UnknownType{}
+		}
+		if s.Name != nil {
+			c.bindDeclSymbol(s.Name, valueType)
+			// No base-type environment: locals/params are typed via Bindings+Types.
+		}
+		c.checkStmt(scope, s.Body)
 	case *ast.UnsafeStmt:
 		c.unsafeDepth++
 		c.checkStmt(scope, s.Body)
@@ -391,7 +452,7 @@ func (c *checker) checkStmt(scope *valueScope, stmt ast.Stmt) {
 	}
 }
 
-func (c *checker) checkReturn(scope *valueScope, stmt *ast.ReturnStmt) {
+func (c *checker) checkReturn(scope *refineScope, stmt *ast.ReturnStmt) {
 	expected := c.currentResult
 	if expected == nil || typeinfo.IsBuiltinNamed(expected, "void") {
 		if stmt.Value != nil {
@@ -417,44 +478,20 @@ func (c *checker) checkReturn(scope *valueScope, stmt *ast.ReturnStmt) {
 	}
 }
 
-func (c *checker) typeOfAssignmentTargetExpr(scope *valueScope, expr ast.Expr) typeinfo.Type {
+func (c *checker) typeOfAssignmentTargetExpr(scope *refineScope, expr ast.Expr) typeinfo.Type {
 	switch e := expr.(type) {
 	case *ast.Ident:
-		if identType, ok := c.typeOfLocalIdent(scope, e); ok {
-			c.info.BindNode(e, identType)
-			return identType
-		}
 		return c.typeOfIdent(scope, e, nil)
 	default:
 		return c.typeOfExpr(scope, expr, nil)
 	}
 }
 
-func (c *checker) checkAssignmentTarget(scope *valueScope, left ast.Expr) {
+func (c *checker) checkAssignmentTarget(scope *refineScope, left ast.Expr) {
 	switch e := left.(type) {
 	case *ast.Ident:
-		if len(e.Path) == 1 {
-			if info, ok := scope.Lookup(e.Path[0]); ok {
-				if info.constant {
-					c.ctx.Diagnostics.Add(
-						diagnostics.NewError(fmt.Sprintf("cannot assign to constant %q", e.Path[0])).
-							WithCode(diagnostics.ErrConstantReassignment).
-							WithPrimaryLabel(&e.Location, "invalid assignment"),
-					)
-				}
-				if !info.mutable {
-					c.ctx.Diagnostics.Add(
-						diagnostics.NewError(fmt.Sprintf("cannot assign to immutable symbol %q", e.Path[0])).
-							WithCode(diagnostics.ErrConstantReassignment).
-							WithPrimaryLabel(&e.Location, "symbol must be mutable"),
-							//WithCodeReplacement()
-					)
-				}
-				return
-			}
-		}
 		res := c.lookupResolution(e)
-		if res == nil || res.Symbol == nil {
+		if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 			return
 		}
 		if res.Symbol.Kind == symbols.SymbolConst {
@@ -464,11 +501,20 @@ func (c *checker) checkAssignmentTarget(scope *valueScope, left ast.Expr) {
 					WithCode(diagnostics.ErrConstantReassignment).
 					WithPrimaryLabel(&loc, "constants are not assignable"),
 			)
+			return
+		}
+		if !c.symbolMutable(res.Symbol) {
+			loc := e.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot assign to immutable symbol %q", res.Symbol.Name)).
+					WithCode(diagnostics.ErrConstantReassignment).
+					WithPrimaryLabel(&loc, "symbol must be mutable"),
+			)
 		}
 	}
 }
 
-func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeOfExpr(scope *refineScope, expr ast.Expr, expected typeinfo.Type) typeinfo.Type {
 	switch e := expr.(type) {
 	case nil:
 		return nil
@@ -525,21 +571,21 @@ func (c *checker) typeOfExpr(scope *valueScope, expr ast.Expr, expected typeinfo
 	}
 }
 
-func (c *checker) typeOfIdent(scope *valueScope, ident *ast.Ident, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeOfIdent(scope *refineScope, ident *ast.Ident, expected typeinfo.Type) typeinfo.Type {
 	if ident == nil {
 		return typeinfo.UnknownType{}
-	}
-	if len(ident.Path) == 1 {
-		if localType, ok := c.typeOfLocalIdent(scope, ident); ok {
-			c.info.BindNode(ident, localType)
-			return localType
-		}
 	}
 	res := c.lookupResolution(ident)
 	if res == nil {
 		return typeinfo.InvalidType{}
 	}
 	if res.Kind == binding.ResolutionSymbol && res.Symbol != nil {
+		if scope != nil && len(ident.Path) == 1 {
+			if typ, ok := scope.Lookup(res.Symbol); ok && typ != nil {
+				c.info.BindNode(ident, typ)
+				return typ
+			}
+		}
 		if res.Symbol.Kind == symbols.SymbolConst && res.Symbol.Node == nil && res.Symbol.Name == "undefined" {
 			if expected != nil {
 				c.info.BindNode(ident, expected)
@@ -562,18 +608,7 @@ func (c *checker) typeOfIdent(scope *valueScope, ident *ast.Ident, expected type
 	return typeinfo.InvalidType{}
 }
 
-func (c *checker) typeOfLocalIdent(scope *valueScope, ident *ast.Ident) (typeinfo.Type, bool) {
-	if ident == nil || len(ident.Path) != 1 || scope == nil {
-		return nil, false
-	}
-	info, ok := scope.Lookup(ident.Path[0])
-	if !ok || info == nil {
-		return nil, false
-	}
-	return info.typ, true
-}
-
-func (c *checker) typeOfPrefix(scope *valueScope, expr *ast.PrefixExpr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expected typeinfo.Type) typeinfo.Type {
 	right := c.typeOfExpr(scope, expr.Right, expected)
 	switch expr.Op {
 	case "copy":
@@ -639,7 +674,7 @@ func (c *checker) typeOfPrefix(scope *valueScope, expr *ast.PrefixExpr, expected
 	return typeinfo.InvalidType{}
 }
 
-func (c *checker) typeOfMatchExpr(scope *valueScope, expr *ast.MatchExpr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeOfMatchExpr(scope *refineScope, expr *ast.MatchExpr, expected typeinfo.Type) typeinfo.Type {
 	if expr == nil {
 		return typeinfo.UnknownType{}
 	}
@@ -652,7 +687,7 @@ func (c *checker) typeOfMatchExpr(scope *valueScope, expr *ast.MatchExpr, expect
 		if arm == nil {
 			continue
 		}
-		armScope := newValueScope(scope)
+		armScope := scope
 		if arm.Wildcard {
 			hasWildcard = true
 		} else if arm.TypePattern != nil {
@@ -712,7 +747,7 @@ func (c *checker) typeOfMatchExpr(scope *valueScope, expr *ast.MatchExpr, expect
 	return typeinfo.UnknownType{}
 }
 
-func (c *checker) blockValueType(scope *valueScope, block *ast.BlockStmt, expected typeinfo.Type) (typeinfo.Type, bool) {
+func (c *checker) blockValueType(scope *refineScope, block *ast.BlockStmt, expected typeinfo.Type) (typeinfo.Type, bool) {
 	if block == nil || len(block.Stmts) == 0 {
 		loc := source.Location{}
 		if block != nil {
@@ -768,7 +803,7 @@ func (c *checker) unifyMatchArmTypes(left, right typeinfo.Type) typeinfo.Type {
 	return nil
 }
 
-func (c *checker) typeOfBinary(scope *valueScope, expr *ast.BinaryExpr) typeinfo.Type {
+func (c *checker) typeOfBinary(scope *refineScope, expr *ast.BinaryExpr) typeinfo.Type {
 	left := c.typeOfExpr(scope, expr.Left, nil)
 	right := c.typeOfExpr(scope, expr.Right, left)
 	if c.isUnionValue(left) || c.isUnionValue(right) {
@@ -878,7 +913,7 @@ func builtinNumericInfo(t typeinfo.Type) (typeinfo.NumericFamily, int, bool) {
 	return typeinfo.NumericInfo(t)
 }
 
-func (c *checker) typeOfPostfix(scope *valueScope, expr *ast.PostfixExpr) typeinfo.Type {
+func (c *checker) typeOfPostfix(scope *refineScope, expr *ast.PostfixExpr) typeinfo.Type {
 	left := c.typeOfExpr(scope, expr.Left, nil)
 	if expr.Op == "!!" {
 		if errUnion, ok := left.(*typeinfo.ErrorUnionType); ok {
@@ -895,7 +930,7 @@ func (c *checker) typeOfPostfix(scope *valueScope, expr *ast.PostfixExpr) typein
 	return typeinfo.InvalidType{}
 }
 
-func (c *checker) typeOfCall(scope *valueScope, expr *ast.CallExpr) typeinfo.Type {
+func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr) typeinfo.Type {
 	if c.isBuiltinPrintCall(expr.Callee) {
 		return c.typeOfBuiltinPrint(scope, expr)
 	}
@@ -933,7 +968,7 @@ func (c *checker) typeOfCall(scope *valueScope, expr *ast.CallExpr) typeinfo.Typ
 	return fnType.Result
 }
 
-func (c *checker) typeOfBuiltinPrint(scope *valueScope, expr *ast.CallExpr) typeinfo.Type {
+func (c *checker) typeOfBuiltinPrint(scope *refineScope, expr *ast.CallExpr) typeinfo.Type {
 	result := &typeinfo.BuiltinType{Name: "void"}
 	if expr == nil {
 		return result
@@ -960,7 +995,7 @@ func (c *checker) isBuiltinPrintCall(callee ast.Expr) bool {
 	return ok && fn != nil && fn.IsBuiltin
 }
 
-func (c *checker) typeOfCatch(scope *valueScope, expr *ast.CatchExpr) typeinfo.Type {
+func (c *checker) typeOfCatch(scope *refineScope, expr *ast.CatchExpr) typeinfo.Type {
 	left := c.typeOfExpr(scope, expr.Left, nil)
 	errUnion, ok := left.(*typeinfo.ErrorUnionType)
 	if !ok {
@@ -973,9 +1008,15 @@ func (c *checker) typeOfCatch(scope *valueScope, expr *ast.CatchExpr) typeinfo.T
 		return typeinfo.InvalidType{}
 	}
 	if expr.Handler != nil {
-		handlerScope := newValueScope(scope)
-		handlerScope.Declare(expr.Payload.Text(), valueInfo{typ: errUnion.Error, mutable: false})
-		c.checkStmt(handlerScope, expr.Handler)
+		if expr.Payload != nil {
+			payloadType := errUnion.Error
+			if payloadType == nil {
+				payloadType = typeinfo.UnknownType{}
+			}
+			c.bindDeclSymbol(expr.Payload, payloadType)
+			// No base-type environment: locals/params are typed via Bindings+Types.
+		}
+		c.checkStmt(scope, expr.Handler)
 		if !stmtDefinitelyExits(expr.Handler) {
 			loc := expr.Handler.Location
 			c.ctx.Diagnostics.Add(
@@ -996,7 +1037,7 @@ func (c *checker) typeOfCatch(scope *valueScope, expr *ast.CatchExpr) typeinfo.T
 	return errUnion.Value
 }
 
-func (c *checker) typeOfMethodCall(scope *valueScope, call *ast.CallExpr, selector *ast.SelectorExpr) (typeinfo.Type, bool) {
+func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selector *ast.SelectorExpr) (typeinfo.Type, bool) {
 	receiverType := c.typeOfExpr(scope, selector.Left, nil)
 	if typeinfo.IsInvalid(receiverType) || typeinfo.IsUnknown(receiverType) {
 		return typeinfo.InvalidType{}, true
@@ -1085,7 +1126,7 @@ func (c *checker) typeOfMethodCall(scope *valueScope, call *ast.CallExpr, select
 	return methodType.Result, true
 }
 
-func (c *checker) typecheckCallArgs(scope *valueScope, call *ast.CallExpr, fnType *typeinfo.FuncType) {
+func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnType *typeinfo.FuncType) {
 	if fnType == nil {
 		return
 	}
@@ -1106,7 +1147,7 @@ func (c *checker) typecheckCallArgs(scope *valueScope, call *ast.CallExpr, fnTyp
 	}
 }
 
-func (c *checker) typeOfSelector(scope *valueScope, expr *ast.SelectorExpr) typeinfo.Type {
+func (c *checker) typeOfSelector(scope *refineScope, expr *ast.SelectorExpr) typeinfo.Type {
 	left := c.typeOfExpr(scope, expr.Left, nil)
 	base := c.derefForSelector(left)
 	structType, ok := c.structView(base)
@@ -1133,7 +1174,7 @@ func (c *checker) typeOfSelector(scope *valueScope, expr *ast.SelectorExpr) type
 	return field.Type
 }
 
-func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Type {
+func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Type {
 	if unionTarget, memberTarget, ok := c.selectedUnionMemberTarget(c.mod, expr.Type); ok {
 		sourceType := c.typeOfExpr(scope, expr.Left, memberTarget)
 		if c.checkAssignable(expr.Left.Loc(), memberTarget, sourceType) {
@@ -1199,7 +1240,7 @@ func (c *checker) typeOfCast(scope *valueScope, expr *ast.CastExpr) typeinfo.Typ
 	return typeinfo.InvalidType{}
 }
 
-func (c *checker) typeOfIs(scope *valueScope, expr *ast.IsExpr) typeinfo.Type {
+func (c *checker) typeOfIs(scope *refineScope, expr *ast.IsExpr) typeinfo.Type {
 	left := c.typeOfExpr(scope, expr.Left, nil)
 	target := c.typeFromSyntax(c.mod, expr.Type)
 	if typeinfo.IsInvalid(left) || typeinfo.IsInvalid(target) || typeinfo.IsUnknown(left) || typeinfo.IsUnknown(target) {
@@ -1263,7 +1304,7 @@ func (c *checker) classifyTypeTest(loc source.Location, left, target typeinfo.Ty
 	return false, true, true
 }
 
-func (c *checker) narrowedScopeForCondition(scope *valueScope, cond ast.Expr, truth bool) *valueScope {
+func (c *checker) narrowedScopeForCondition(scope *refineScope, cond ast.Expr, truth bool) *refineScope {
 	if scope == nil || cond == nil {
 		return scope
 	}
@@ -1278,7 +1319,7 @@ func (c *checker) narrowedScopeForCondition(scope *valueScope, cond ast.Expr, tr
 	return scope
 }
 
-func (c *checker) narrowedScopeForIs(scope *valueScope, expr *ast.IsExpr, truth bool) *valueScope {
+func (c *checker) narrowedScopeForIs(scope *refineScope, expr *ast.IsExpr, truth bool) *refineScope {
 	if expr == nil {
 		return scope
 	}
@@ -1286,46 +1327,46 @@ func (c *checker) narrowedScopeForIs(scope *valueScope, expr *ast.IsExpr, truth 
 	if !ok || ident == nil || len(ident.Path) != 1 {
 		return scope
 	}
-	info, ok := scope.Lookup(ident.Path[0])
-	if !ok || info == nil || info.typ == nil {
+	res := c.lookupResolution(ident)
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+		return scope
+	}
+	baseType := c.typeOfSymbol(res.Symbol)
+	if baseType == nil || typeinfo.IsInvalid(baseType) || typeinfo.IsUnknown(baseType) {
 		return scope
 	}
 	target, ok := c.info.Nodes[expr.Type]
 	if !ok || target == nil {
 		target = c.typeFromSyntax(c.mod, expr.Type)
 	}
-	unionType, ok := c.underlying(info.typ).(*typeinfo.UnionType)
+	unionType, ok := c.underlying(baseType).(*typeinfo.UnionType)
 	if ok && unionType != nil {
 		if truth {
 			if !c.unionTypeMayMatch(unionType, target) {
 				return scope
 			}
-			narrowed := newValueScope(scope)
-			narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+			narrowed := newRefineScope(scope)
+			narrowed.Set(res.Symbol, target)
 			return narrowed
 		}
 		remaining := c.unionMembersWithoutExactMatch(unionType, target)
 		if len(remaining) == 0 || len(remaining) == len(unionType.Members) {
 			return scope
 		}
-		narrowed := newValueScope(scope)
-		narrowed.Declare(ident.Path[0], valueInfo{
-			typ:      c.narrowedTypeFromMembers(remaining),
-			mutable:  info.mutable,
-			constant: info.constant,
-		})
+		narrowed := newRefineScope(scope)
+		narrowed.Set(res.Symbol, c.narrowedTypeFromMembers(remaining))
 		return narrowed
 	}
-	if opt, ok := c.underlying(info.typ).(*typeinfo.OptionalType); ok && opt != nil {
+	if opt, ok := c.underlying(baseType).(*typeinfo.OptionalType); ok && opt != nil {
 		if !typeinfo.Equal(opt.Inner, target) {
 			return scope
 		}
-		narrowed := newValueScope(scope)
+		narrowed := newRefineScope(scope)
 		if truth {
-			narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+			narrowed.Set(res.Symbol, target)
 			return narrowed
 		}
-		narrowed.Declare(ident.Path[0], valueInfo{typ: info.typ, mutable: info.mutable, constant: info.constant})
+		narrowed.Set(res.Symbol, baseType)
 		return narrowed
 	}
 	return scope
@@ -1358,7 +1399,7 @@ func (c *checker) narrowedTypeFromMembers(members []typeinfo.Type) typeinfo.Type
 	}
 }
 
-func (c *checker) narrowedMatchTypeArmScope(scope *valueScope, value ast.Expr, target typeinfo.Type) *valueScope {
+func (c *checker) narrowedMatchTypeArmScope(scope *refineScope, value ast.Expr, target typeinfo.Type) *refineScope {
 	if scope == nil || value == nil || target == nil {
 		return scope
 	}
@@ -1366,21 +1407,25 @@ func (c *checker) narrowedMatchTypeArmScope(scope *valueScope, value ast.Expr, t
 	if !ok || ident == nil || len(ident.Path) != 1 {
 		return scope
 	}
-	info, ok := scope.Lookup(ident.Path[0])
-	if !ok || info == nil || info.typ == nil {
+	res := c.lookupResolution(ident)
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 		return scope
 	}
-	if unionType, ok := c.underlying(info.typ).(*typeinfo.UnionType); ok && unionType != nil && c.unionTypeMayMatch(unionType, target) {
-		narrowed := newValueScope(scope)
-		narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+	baseType := c.typeOfSymbol(res.Symbol)
+	if baseType == nil || typeinfo.IsInvalid(baseType) || typeinfo.IsUnknown(baseType) {
+		return scope
+	}
+	if unionType, ok := c.underlying(baseType).(*typeinfo.UnionType); ok && unionType != nil && c.unionTypeMayMatch(unionType, target) {
+		narrowed := newRefineScope(scope)
+		narrowed.Set(res.Symbol, target)
 		return narrowed
 	}
-	if opt, ok := c.underlying(info.typ).(*typeinfo.OptionalType); ok && opt != nil && typeinfo.Equal(opt.Inner, target) {
-		narrowed := newValueScope(scope)
-		narrowed.Declare(ident.Path[0], valueInfo{typ: target, mutable: info.mutable, constant: info.constant})
+	if opt, ok := c.underlying(baseType).(*typeinfo.OptionalType); ok && opt != nil && typeinfo.Equal(opt.Inner, target) {
+		narrowed := newRefineScope(scope)
+		narrowed.Set(res.Symbol, target)
 		return narrowed
 	}
-	if typeinfo.Equal(info.typ, target) {
+	if typeinfo.Equal(baseType, target) {
 		return scope
 	}
 	return scope
@@ -1398,7 +1443,7 @@ func (c *checker) unionTypeMayMatch(unionType *typeinfo.UnionType, target typein
 	return false
 }
 
-func (c *checker) typeOfIndex(scope *valueScope, expr *ast.IndexExpr) typeinfo.Type {
+func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.Type {
 	baseTyp := c.typeOfExpr(scope, expr.Left, nil)
 	// typecheck the index as usize
 	usize := &typeinfo.BuiltinType{Name: "usize"}
@@ -1431,7 +1476,7 @@ func (c *checker) typeOfIndex(scope *valueScope, expr *ast.IndexExpr) typeinfo.T
 	return typeinfo.InvalidType{}
 }
 
-func (c *checker) typeOfComposite(scope *valueScope, expr *ast.CompositeLit, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, expected typeinfo.Type) typeinfo.Type {
 	if expected == nil {
 		loc := expr.Location
 		c.ctx.Diagnostics.Add(
@@ -2166,15 +2211,13 @@ func (c *checker) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
 	}
 }
 
-func (c *checker) exprAccess(scope *valueScope, expr ast.Expr) (addressable bool, mutable bool) {
+func (c *checker) exprAccess(scope *refineScope, expr ast.Expr) (addressable bool, mutable bool) {
 	switch e := expr.(type) {
 	case *ast.Ident:
-		if len(e.Path) == 1 {
-			if info, ok := scope.Lookup(e.Path[0]); ok {
-				return true, info.mutable && !info.constant
-			}
-		}
 		res := c.lookupResolution(e)
+		if res != nil && res.Kind == binding.ResolutionSymbol && res.Symbol != nil {
+			return true, c.symbolMutable(res.Symbol)
+		}
 		if res == nil || res.Symbol == nil {
 			return false, false
 		}
@@ -2186,7 +2229,7 @@ func (c *checker) exprAccess(scope *valueScope, expr ast.Expr) (addressable bool
 		case *ast.ConstDecl, *ast.ConstStmt:
 			return true, false
 		default:
-			return true, res.Symbol.Kind == symbols.SymbolVar
+			return true, c.symbolMutable(res.Symbol)
 		}
 	case *ast.SelectorExpr:
 		return c.exprAccess(scope, e.Left)
@@ -2297,7 +2340,7 @@ func (c *checker) reportMethodNotFound(loc source.Location, receiver typeinfo.Ty
 	)
 }
 
-func (c *checker) requireConstExpr(scope *valueScope, expr ast.Expr, message string) {
+func (c *checker) requireConstExpr(scope *refineScope, expr ast.Expr, message string) {
 	if expr == nil || c.isConstExpr(scope, expr) {
 		return
 	}
@@ -2309,7 +2352,7 @@ func (c *checker) requireConstExpr(scope *valueScope, expr ast.Expr, message str
 	)
 }
 
-func (c *checker) isConstExpr(scope *valueScope, expr ast.Expr) bool {
+func (c *checker) isConstExpr(scope *refineScope, expr ast.Expr) bool {
 	switch e := expr.(type) {
 	case nil:
 		return true
@@ -2342,14 +2385,9 @@ func (c *checker) isConstExpr(scope *valueScope, expr ast.Expr) bool {
 	}
 }
 
-func (c *checker) isConstIdent(scope *valueScope, ident *ast.Ident) bool {
+func (c *checker) isConstIdent(scope *refineScope, ident *ast.Ident) bool {
 	if ident == nil || len(ident.Path) == 0 {
 		return false
-	}
-	if len(ident.Path) == 1 && scope != nil {
-		if info, ok := scope.Lookup(ident.Path[0]); ok && info != nil && info.constant {
-			return true
-		}
 	}
 	if len(ident.Path) == 1 {
 		switch ident.Path[0] {

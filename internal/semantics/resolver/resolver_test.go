@@ -164,6 +164,82 @@ fn run(items [3]i32) void {
 	}
 }
 
+func TestResolverBindsDeclarationIdents(t *testing.T) {
+	root := t.TempDir()
+	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    x i32 = 0
+}
+
+fn (p Point) get() i32 {
+    return p.x
+}
+
+fn run(items [3]i32) void {
+    let x = 1
+    const y = 2
+    for items |i, v| {
+        let mut z = v
+        lock z as g {
+            print("hi")
+        }
+    }
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	getFn := findFunc(t, result.Entry.AST, "get")
+	if getFn.Receiver == nil || getFn.Receiver.Name == nil {
+		t.Fatalf("expected get() receiver")
+	}
+	if res := result.Entry.Bindings.Nodes[getFn.Receiver.Name]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "p" {
+		t.Fatalf("expected receiver decl binding for p, got %#v", res)
+	}
+
+	runFn := findFunc(t, result.Entry.AST, "run")
+	if len(runFn.Params) != 1 || runFn.Params[0].Name == nil {
+		t.Fatalf("expected run(items ...) param")
+	}
+	if res := result.Entry.Bindings.Nodes[runFn.Params[0].Name]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "items" {
+		t.Fatalf("expected param decl binding for items, got %#v", res)
+	}
+
+	letX := runFn.Body.Stmts[0].(*ast.LetStmt)
+	if res := result.Entry.Bindings.Nodes[letX.Name]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "x" {
+		t.Fatalf("expected let decl binding for x, got %#v", res)
+	}
+
+	constY := runFn.Body.Stmts[1].(*ast.ConstStmt)
+	if res := result.Entry.Bindings.Nodes[constY.Name]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "y" {
+		t.Fatalf("expected const decl binding for y, got %#v", res)
+	}
+
+	loop := runFn.Body.Stmts[2].(*ast.ForStmt)
+	if loop.Index == nil || loop.Value == nil {
+		t.Fatalf("expected for bindings i, v")
+	}
+	if res := result.Entry.Bindings.Nodes[loop.Index]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "i" {
+		t.Fatalf("expected for-index decl binding for i, got %#v", res)
+	}
+	if res := result.Entry.Bindings.Nodes[loop.Value]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "v" {
+		t.Fatalf("expected for-value decl binding for v, got %#v", res)
+	}
+
+	letZ := loop.Body.Stmts[0].(*ast.LetStmt)
+	if res := result.Entry.Bindings.Nodes[letZ.Name]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "z" {
+		t.Fatalf("expected let decl binding for z, got %#v", res)
+	}
+
+	lock := loop.Body.Stmts[1].(*ast.LockStmt)
+	if res := result.Entry.Bindings.Nodes[lock.Name]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "g" {
+		t.Fatalf("expected lock binder decl binding for g, got %#v", res)
+	}
+}
+
 func TestResolverReportsUndefinedSymbol(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
