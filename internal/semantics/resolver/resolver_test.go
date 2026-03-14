@@ -264,6 +264,32 @@ fn run() i32 {
 	}
 }
 
+func TestResolverReportsRedeclaredLocalInSameScope(t *testing.T) {
+	root := t.TempDir()
+	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+fn run() i32 {
+    let x = 1
+    let x = 2
+    return x
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatalf("expected redeclared symbol diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrRedeclaredSymbol {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrRedeclaredSymbol, result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestResolverReportsMissingSymbolInImportedModule(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `

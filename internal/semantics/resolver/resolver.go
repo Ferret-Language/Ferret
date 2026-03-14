@@ -46,6 +46,20 @@ func (r *resolver) declareLocal(scope *table.Scope, sym *symbols.Symbol) *symbol
 	if scope.Declare(sym) {
 		return sym
 	}
+	// Same-scope redeclaration: keep resolution stable (return the original
+	// symbol) but emit a diagnostic so the user can fix it.
+	if r != nil && r.ctx != nil && r.ctx.Diagnostics != nil {
+		if existing, ok := scope.LookupLocal(sym.Name); ok && existing != nil {
+			loc := sym.Location
+			diag := diagnostics.NewError(fmt.Sprintf("redeclared symbol %q", sym.Name)).
+				WithCode(diagnostics.ErrRedeclaredSymbol).
+				WithPrimaryLabel(&loc, "redeclared here")
+			prev := existing.Location
+			diag.WithSecondaryLabel(&prev, "previous declaration is here")
+			r.ctx.Diagnostics.Add(diag)
+			return existing
+		}
+	}
 	// Keep declaration bindings consistent with subsequent lookups.
 	if existing, ok := scope.LookupLocal(sym.Name); ok && existing != nil {
 		return existing
