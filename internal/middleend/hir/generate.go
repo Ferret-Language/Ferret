@@ -98,6 +98,11 @@ func (g *generator) beginFunction(fn *ast.FuncDecl) {
 		if sym == nil {
 			continue
 		}
+		// Local consts are compile-time only and should not allocate runtime
+		// storage slots in MIR; keep them name-based (mangled) instead.
+		if sym.Kind == symbols.SymbolConst {
+			continue
+		}
 		if _, ok := g.localIDs[sym]; ok {
 			continue
 		}

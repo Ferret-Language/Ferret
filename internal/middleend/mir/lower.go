@@ -13,7 +13,6 @@ import (
 )
 
 type lowerContext struct {
-	localsByName map[string]int
 	locals       []*Local
 	bindings     *binding.ModuleInfo
 	globalConsts map[ast.Node]hir.Expr
@@ -183,7 +182,7 @@ func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts 
 	if fn.Source.Receiver != nil {
 		out.Params = append(out.Params, &Param{
 			Name:      fn.Source.Receiver.Name,
-			LocalID:   lowerCtx.lookupLocalID(fn.Source.Receiver.Name),
+			LocalID:   fn.Source.Receiver.LocalID,
 			Type:      fn.Source.Receiver.Type,
 			IsMutable: true,
 			Location:  fn.Source.Receiver.Location,
@@ -195,7 +194,7 @@ func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts 
 		}
 		out.Params = append(out.Params, &Param{
 			Name:       param.Name,
-			LocalID:    lowerCtx.lookupLocalID(param.Name),
+			LocalID:    param.LocalID,
 			Type:       param.Type,
 			IsComptime: param.IsComptime,
 			Location:   param.Location,
@@ -232,7 +231,7 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 		if s.Value == nil {
 			return nil
 		}
-		return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: lowerCtx.lookupLocalID(s.Name), Value: lowerCoercedValue(lowerCtx, s.Value, s.Type)}
+		return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: s.LocalID, Value: lowerCoercedValue(lowerCtx, s.Value, s.Type)}
 	case *hir.ConstStmt:
 		return nil
 	case *hir.ExprStmt:
@@ -241,8 +240,8 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 		if target := lowerAssignableTarget(lowerCtx, s.Left); target != nil {
 			return &StoreInstr{baseInstr: baseInstr{Location: s.Loc()}, Target: target, Value: lowerCoercedValue(lowerCtx, s.Right, s.Left.Type())}
 		}
-		if ident, ok := s.Left.(*hir.Ident); ok && len(ident.Path) == 1 {
-			return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: lowerCtx.lookupLocalID(ident.Path[0]), Value: lowerCoercedValue(lowerCtx, s.Right, s.Left.Type())}
+		if ident, ok := s.Left.(*hir.Ident); ok && ident.LocalID >= 0 {
+			return &AssignInstr{baseInstr: baseInstr{Location: s.Loc()}, TargetID: ident.LocalID, Value: lowerCoercedValue(lowerCtx, s.Right, s.Left.Type())}
 		}
 		if sel, ok := s.Left.(*hir.SelectorExpr); ok {
 			if fieldIndex := lowerCtx.fieldIndex(sel.Left.Type(), sel.Name); fieldIndex >= 0 {
@@ -258,7 +257,7 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 	case *hir.DeferStmt:
 		return &DeferInstr{baseInstr: baseInstr{Location: s.Loc()}, Body: lowerDeferredBody(lowerCtx, s.Body)}
 	case *hir.LockStmt:
-		return &LockInstr{baseInstr: baseInstr{Location: s.Loc()}, Value: lowerValue(lowerCtx, s.Value), LocalID: lowerCtx.lookupLocalID(s.Name)}
+		return &LockInstr{baseInstr: baseInstr{Location: s.Loc()}, Value: lowerValue(lowerCtx, s.Value), LocalID: s.LocalID}
 	case *hir.UnsafeStmt:
 		return &UnsafeInstr{baseInstr: baseInstr{Location: s.Loc()}}
 	default:
@@ -359,17 +358,22 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 			case "false":
 				return &BoolValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: false}
 			}
-			if value, ok := lowerCtx.lookupConstExpr(e.Path[0], e.SourceExpr()); ok {
+			if lowerCtx != nil {
+				if value, ok := lowerCtx.lookupConstExpr(e.Path[0], e.SourceExpr()); ok {
+					return withValueContext(lowerValue(lowerCtx, value), e.Loc(), e.Type())
+				}
+			}
+		}
+		if lowerCtx != nil {
+			if value, ok := lowerCtx.lookupResolvedConstExpr(e.SourceExpr()); ok {
 				return withValueContext(lowerValue(lowerCtx, value), e.Loc(), e.Type())
 			}
 		}
-		if value, ok := lowerCtx.lookupResolvedConstExpr(e.SourceExpr()); ok {
-			return withValueContext(lowerValue(lowerCtx, value), e.Loc(), e.Type())
+		if e.LocalID >= 0 {
+			return &LocalValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, LocalID: e.LocalID}
 		}
-		if len(e.Path) == 1 {
-			if id, ok := lowerCtx.localID(e.Path[0]); ok {
-				return &LocalValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, LocalID: id}
-			}
+		if lowerCtx == nil {
+			return &NameValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Path: append([]string(nil), e.Path...)}
 		}
 		return lowerNameValue(lowerCtx, e.SourceExpr(), e.Loc(), e.Type(), e.Path)
 	case *hir.NumberLit:
@@ -518,33 +522,51 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	}
 }
 
-func collectLocals(fn *hir.Func) ([]*Local, map[string]int, map[string]hir.Expr) {
-	if fn == nil || fn.Body == nil {
-		return nil, nil, nil
+func collectLocals(fn *hir.Func) ([]*Local, map[string]hir.Expr) {
+	if fn == nil {
+		return nil, nil
 	}
-	locals := make([]*Local, 0)
-	byName := make(map[string]int)
+	if fn.LocalCount < 0 {
+		fn.LocalCount = 0
+	}
+	locals := make([]*Local, fn.LocalCount)
 	consts := make(map[string]hir.Expr)
-	add := func(name string, typ typeinfo.Type, mutable, constant bool, loc source.Location) {
-		if name == "" {
+
+	set := func(id int, name string, typ typeinfo.Type, mutable, constant bool, loc source.Location) {
+		if id < 0 || id >= len(locals) {
 			return
 		}
-		if _, ok := byName[name]; ok {
+		if typ == nil {
+			typ = typeinfo.UnknownType{}
+		}
+		if locals[id] == nil {
+			locals[id] = &Local{ID: id, Name: name, Type: typ, Mutable: mutable, Constant: constant, Location: loc}
 			return
 		}
-		id := len(locals)
-		byName[name] = id
-		locals = append(locals, &Local{ID: id, Name: name, Type: typ, Mutable: mutable, Constant: constant, Location: loc})
+		// Prefer first-seen location and "real" type information.
+		if locals[id].Name == "" && name != "" {
+			locals[id].Name = name
+		}
+		if typeinfo.IsUnknown(locals[id].Type) && !typeinfo.IsUnknown(typ) {
+			locals[id].Type = typ
+		}
+		locals[id].Mutable = locals[id].Mutable || mutable
+		locals[id].Constant = locals[id].Constant || constant
+		if locals[id].Location.Start == nil && loc.Start != nil {
+			locals[id].Location = loc
+		}
 	}
+
 	if fn.Receiver != nil {
-		add(fn.Receiver.Name, fn.Receiver.Type, true, false, fn.Receiver.Location)
+		set(fn.Receiver.LocalID, fn.Receiver.Name, fn.Receiver.Type, true, false, fn.Receiver.Location)
 	}
 	for _, param := range fn.Params {
 		if param == nil {
 			continue
 		}
-		add(param.Name, param.Type, false, false, param.Location)
+		set(param.LocalID, param.Name, param.Type, false, false, param.Location)
 	}
+
 	var walkStmt func(hir.Stmt)
 	walkStmt = func(stmt hir.Stmt) {
 		switch s := stmt.(type) {
@@ -555,9 +577,12 @@ func collectLocals(fn *hir.Func) ([]*Local, map[string]int, map[string]hir.Expr)
 				walkStmt(child)
 			}
 		case *hir.LetStmt:
-			add(s.Name, s.Type, s.Mutable, false, s.Loc())
+			set(s.LocalID, s.Name, s.Type, s.Mutable, false, s.Loc())
 		case *hir.ConstStmt:
-			consts[s.Name] = s.Value
+			// Consts are compile-time only; don't create runtime locals.
+			if s.Name != "" {
+				consts[s.Name] = s.Value
+			}
 		case *hir.IfStmt:
 			walkStmt(s.Then)
 			walkStmt(s.Else)
@@ -570,11 +595,11 @@ func collectLocals(fn *hir.Func) ([]*Local, map[string]int, map[string]hir.Expr)
 		case *hir.WhileStmt:
 			walkStmt(s.Body)
 		case *hir.ForStmt:
-			if s.IndexName != "" {
-				add(s.IndexName, &typeinfo.BuiltinType{Name: "usize"}, false, false, s.Loc())
+			if s.IndexID >= 0 {
+				set(s.IndexID, s.IndexName, &typeinfo.BuiltinType{Name: "usize"}, false, false, s.Loc())
 			}
-			if s.ValueName != "" {
-				add(s.ValueName, typeinfo.UnknownType{}, false, false, s.Loc())
+			if s.ValueID >= 0 {
+				set(s.ValueID, s.ValueName, typeinfo.UnknownType{}, false, false, s.Loc())
 			}
 			walkStmt(s.Body)
 		case *hir.LoopStmt:
@@ -586,14 +611,31 @@ func collectLocals(fn *hir.Func) ([]*Local, map[string]int, map[string]hir.Expr)
 		case *hir.DeferStmt:
 			walkStmt(s.Body)
 		case *hir.LockStmt:
-			add(s.Name, s.Value.Type(), true, false, s.Loc())
+			set(s.LocalID, s.Name, s.Value.Type(), true, false, s.Loc())
 			walkStmt(s.Body)
 		case *hir.UnsafeStmt:
 			walkStmt(s.Body)
 		}
 	}
-	walkStmt(fn.Body)
-	return locals, byName, consts
+	if fn.Body != nil {
+		walkStmt(fn.Body)
+	}
+
+	for i := range locals {
+		if locals[i] != nil {
+			continue
+		}
+		locals[i] = &Local{
+			ID:       i,
+			Name:     "__local" + strconv.Itoa(i),
+			Type:     typeinfo.UnknownType{},
+			Mutable:  false,
+			Constant: false,
+			Location: source.Location{},
+		}
+	}
+
+	return locals, consts
 }
 
 func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
@@ -604,8 +646,8 @@ func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
 	case nil:
 		return nil
 	case *hir.Ident:
-		if len(e.Path) == 1 {
-			return &LocalPlace{basePlace: basePlace{Location: e.Loc()}, LocalID: lowerCtx.lookupLocalID(e.Path[0])}
+		if e.LocalID >= 0 {
+			return &LocalPlace{basePlace: basePlace{Location: e.Loc()}, LocalID: e.LocalID}
 		}
 		return nil
 	case *hir.SelectorExpr:
@@ -624,10 +666,9 @@ func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
 }
 
 func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *lowerContext {
-	locals, byName, consts := collectLocals(fn)
+	locals, consts := collectLocals(fn)
 	return &lowerContext{
 		locals:       locals,
-		localsByName: byName,
 		bindings:     bindings,
 		globalConsts: globalConsts,
 		localConsts:  consts,
@@ -642,21 +683,6 @@ func (c *lowerContext) fnResultType() typeinfo.Type {
 		return nil
 	}
 	return c.resultType
-}
-
-func (c *lowerContext) localID(name string) (int, bool) {
-	if c == nil {
-		return -1, false
-	}
-	id, ok := c.localsByName[name]
-	return id, ok
-}
-
-func (c *lowerContext) lookupLocalID(name string) int {
-	if id, ok := c.localID(name); ok {
-		return id
-	}
-	return -1
 }
 
 func (c *lowerContext) fieldIndex(typ typeinfo.Type, name string) int {
