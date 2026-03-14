@@ -361,6 +361,65 @@ fn main() i32 {
 	}
 }
 
+func TestPipelineHandlesLocalShadowingInMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let x = 1
+    if true {
+        let x = 2
+        x
+    }
+    return x
+}
+`)
+
+	result := compilerapi.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil || len(result.Entry.MIR.Functions) != 1 {
+		t.Fatalf("expected one MIR function, got %#v", result.Entry)
+	}
+	fn := result.Entry.MIR.Functions[0]
+
+	outerID := -1
+	innerID := -1
+	for _, local := range fn.Locals {
+		if local == nil {
+			continue
+		}
+		if local.Name == "x" {
+			outerID = local.ID
+		}
+		if strings.HasPrefix(local.Name, "x#") {
+			innerID = local.ID
+		}
+	}
+	if outerID < 0 || innerID < 0 {
+		t.Fatalf("expected shadowed locals x and x#..., got locals %#v", fn.Locals)
+	}
+
+	foundReturn := false
+	for _, block := range fn.Blocks {
+		term, ok := block.Terminator.(*mir.ReturnTerm)
+		if !ok || term == nil {
+			continue
+		}
+		foundReturn = true
+		local, ok := term.Value.(*mir.LocalValue)
+		if !ok || local == nil {
+			t.Fatalf("expected return value to be a local, got %T", term.Value)
+		}
+		if local.LocalID != outerID {
+			t.Fatalf("expected return to use outer x local id %d, got %d", outerID, local.LocalID)
+		}
+	}
+	if !foundReturn {
+		t.Fatalf("expected return terminator, got blocks %#v", fn.Blocks)
+	}
+}
+
 func hasConstructorPath(comp *mir.CompositeValue, name string) bool {
 	if comp == nil || len(comp.ConstructorPath) == 0 {
 		return false

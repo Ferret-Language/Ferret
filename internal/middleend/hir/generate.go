@@ -6,6 +6,7 @@ import (
 	"compiler/internal/semantics/symbols"
 	"compiler/internal/semantics/typeinfo"
 	"compiler/internal/tokens"
+	"fmt"
 )
 
 type MethodLookup func(receiver typeinfo.Type, methodName string) ([]string, bool)
@@ -17,13 +18,25 @@ type generator struct {
 	types        *typeinfo.ModuleInfo
 	bindings     *binding.ModuleInfo
 	lookupMethod MethodLookup
+
+	currentFn  *ast.FuncDecl
+	localNames map[*symbols.Symbol]string
+	usedNames  map[string]struct{}
 }
 
 func Generate(key, importPath, filePath string, astMod *ast.Module, types *typeinfo.ModuleInfo, bindings *binding.ModuleInfo, lookupMethod MethodLookup) *Module {
 	if astMod == nil || types == nil {
 		return nil
 	}
-	g := &generator{key: key, importPath: importPath, filePath: filePath, types: types, bindings: bindings, lookupMethod: lookupMethod}
+	g := &generator{
+		key:          key,
+		importPath:   importPath,
+		filePath:     filePath,
+		types:        types,
+		bindings:     bindings,
+		lookupMethod: lookupMethod,
+		localNames:   make(map[*symbols.Symbol]string),
+	}
 	out := &Module{
 		Key:        key,
 		ImportPath: importPath,
@@ -47,6 +60,90 @@ func Generate(key, importPath, filePath string, astMod *ast.Module, types *typei
 		}
 	}
 	return out
+}
+
+func (g *generator) isFunctionLocal(sym *symbols.Symbol) bool {
+	if g == nil || g.currentFn == nil || sym == nil {
+		return false
+	}
+	switch sym.Kind {
+	case symbols.SymbolParam:
+		return true
+	case symbols.SymbolVar, symbols.SymbolConst:
+		switch sym.Node.(type) {
+		case *ast.LetStmt, *ast.ConstStmt, *ast.LockStmt:
+			return true
+		case *ast.LetDecl, *ast.ConstDecl:
+			return false
+		default:
+			// For/ catch binders don't currently have a dedicated AST node.
+			return sym.Node == nil
+		}
+	default:
+		return false
+	}
+}
+
+func (g *generator) mangleLocal(sym *symbols.Symbol) string {
+	if g == nil || sym == nil {
+		return ""
+	}
+	if cached, ok := g.localNames[sym]; ok && cached != "" {
+		return cached
+	}
+
+	// Keep user-facing names stable when possible. Only introduce a suffix when
+	// there is a collision within the same function (shadowing).
+	out := sym.Name
+	if g.usedNames == nil {
+		g.usedNames = make(map[string]struct{})
+	}
+	if _, exists := g.usedNames[out]; !exists {
+		g.usedNames[out] = struct{}{}
+		g.localNames[sym] = out
+		return out
+	}
+
+	if sym.Location.Start != nil {
+		out = fmt.Sprintf("%s#%d:%d", sym.Name, sym.Location.Start.Line, sym.Location.Start.Column)
+	} else {
+		out = fmt.Sprintf("%s#shadow", sym.Name)
+	}
+	// Be defensive: ensure uniqueness even if two binders share a location.
+	for {
+		if _, exists := g.usedNames[out]; !exists {
+			break
+		}
+		out += "_"
+	}
+	g.usedNames[out] = struct{}{}
+	g.localNames[sym] = out
+	return out
+}
+
+func (g *generator) localSymbol(node ast.Node) (*symbols.Symbol, bool) {
+	if g == nil || g.bindings == nil || node == nil {
+		return nil, false
+	}
+	res := g.bindings.Nodes[node]
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+		return nil, false
+	}
+	return res.Symbol, true
+}
+
+func (g *generator) maybeMangledLocalName(id *ast.Ident) string {
+	if id == nil {
+		return ""
+	}
+	if g.currentFn == nil {
+		return id.Text()
+	}
+	sym, ok := g.localSymbol(id)
+	if !ok || !g.isFunctionLocal(sym) {
+		return id.Text()
+	}
+	return g.mangleLocal(sym)
 }
 
 func staticFieldGlobalName(typeName, fieldName string) string {
@@ -244,6 +341,13 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	if d == nil {
 		return nil
 	}
+	prevFn := g.currentFn
+	g.currentFn = d
+	prevUsed := g.usedNames
+	g.usedNames = make(map[string]struct{})
+	defer func() { g.currentFn = prevFn }()
+	defer func() { g.usedNames = prevUsed }()
+
 	fn := &Func{
 		Name:       d.Name.Text(),
 		IsUnsafe:   d.IsUnsafe,
@@ -263,7 +367,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	}
 	if d.Receiver != nil {
 		fn.Receiver = &Param{
-			Name:     d.Receiver.Name.Text(),
+			Name:     g.maybeMangledLocalName(d.Receiver.Name),
 			Type:     syntaxType(g.types, d.Receiver.Type),
 			Location: d.Receiver.Location,
 		}
@@ -271,7 +375,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	fn.Params = make([]*Param, 0, len(d.Params))
 	for _, param := range d.Params {
 		fn.Params = append(fn.Params, &Param{
-			Name:       param.Name.Text(),
+			Name:       g.maybeMangledLocalName(param.Name),
 			Type:       syntaxType(g.types, param.Type),
 			IsComptime: param.IsComptime,
 			Location:   param.Location,
@@ -304,11 +408,11 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 	case *ast.BlockStmt:
 		return g.generateBlock(s)
 	case *ast.LetStmt:
-		out := &LetStmt{Name: s.Name.Text(), Mutable: s.IsMut, Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
+		out := &LetStmt{Name: g.maybeMangledLocalName(s.Name), Mutable: s.IsMut, Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
 		out.Location = s.Location
 		return out
 	case *ast.ConstStmt:
-		out := &ConstStmt{Name: s.Name.Text(), Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
+		out := &ConstStmt{Name: g.maybeMangledLocalName(s.Name), Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
 		out.Location = s.Location
 		return out
 	case *ast.ReturnStmt:
@@ -355,10 +459,10 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 	case *ast.ForStmt:
 		out := &ForStmt{Iterable: g.generateExpr(s.Iterable), Body: g.generateBlock(s.Body)}
 		if s.Index != nil {
-			out.IndexName = s.Index.Text()
+			out.IndexName = g.maybeMangledLocalName(s.Index)
 		}
 		if s.Value != nil {
-			out.ValueName = s.Value.Text()
+			out.ValueName = g.maybeMangledLocalName(s.Value)
 		}
 		out.Location = s.Location
 		return out
@@ -389,7 +493,7 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.LockStmt:
-		out := &LockStmt{Value: g.generateExpr(s.Value), Name: s.Name.Text(), Body: g.generateBlock(s.Body)}
+		out := &LockStmt{Value: g.generateExpr(s.Value), Name: g.maybeMangledLocalName(s.Name), Body: g.generateBlock(s.Body)}
 		out.Location = s.Location
 		return out
 	case *ast.UnsafeStmt:
@@ -410,7 +514,7 @@ func (g *generator) generateAutoDestructorDefer(stmt ast.Stmt) Stmt {
 	if !ok {
 		return nil
 	}
-	ident := &Ident{Path: []string{letStmt.Name.Text()}}
+	ident := &Ident{Path: []string{g.maybeMangledLocalName(letStmt.Name)}}
 	ident.ExprType = effectiveType(g.types, letStmt.Type, letStmt.Value)
 	ident.Location = letStmt.Name.Location
 	call := &CallExpr{
@@ -455,7 +559,13 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
 	case *ast.Ident:
-		out := &Ident{Path: append([]string{}, e.Path...)}
+		path := append([]string{}, e.Path...)
+		if len(path) == 1 && g.currentFn != nil {
+			if sym, ok := g.localSymbol(e); ok && g.isFunctionLocal(sym) {
+				path[0] = g.mangleLocal(sym)
+			}
+		}
+		out := &Ident{Path: path}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
 	case *ast.NumberLit:
@@ -532,7 +642,7 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 			Handler:  g.generateBlock(e.Handler),
 		}
 		if e.Payload != nil {
-			out.PayloadName = e.Payload.Text()
+			out.PayloadName = g.maybeMangledLocalName(e.Payload)
 		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
