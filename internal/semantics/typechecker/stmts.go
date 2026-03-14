@@ -216,8 +216,7 @@ func (c *checker) checkAssignmentTarget(scope *refineScope, left ast.Expr) {
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("cannot assign to immutable symbol %q", res.Symbol.Name)).
 					WithCode(diagnostics.ErrConstantReassignment).
-					WithPrimaryLabel(&loc, "symbol must be mutable").
-					WithCodeReplacement(&res.Symbol.Location, res.Symbol.Name, "mut "+res.Symbol.Name),
+					WithPrimaryLabel(&loc, "symbol must be mutable"),
 			)
 		}
 	}
