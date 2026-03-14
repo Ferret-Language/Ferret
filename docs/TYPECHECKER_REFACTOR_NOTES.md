@@ -36,3 +36,16 @@ New files:
   units (expressions, narrowing, method lookup, casts, etc.) while keeping tests
   green and avoiding behavior changes.
 
+### Follow-Up Split (Same Day)
+
+Additional extraction from `internal/semantics/typechecker/typechecker.go`:
+
+- `internal/semantics/typechecker/narrowing.go`
+  - Type narrowing overlays (`narrowedScopeForCondition`, match/union narrowing).
+- `internal/semantics/typechecker/methods.go`
+  - Method lookup helpers (`lookupMethod`, receiver-key logic).
+- `internal/semantics/typechecker/syntax_types.go`
+  - Syntax-type conversion (`typeFromSyntax`) and union-member selection helpers.
+
+This reduces `internal/semantics/typechecker/typechecker.go` further (now ~1800
+lines) while keeping behavior unchanged and tests green.
