@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"compiler/cmd/ferret/cli"
+	"compiler/colors"
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"
 	"compiler/internal/backend/llvm"
@@ -34,57 +35,51 @@ func main() {
 		commandArgs := os.Args[2:]
 		switch command {
 		case "lsp":
-			fmt.Fprintln(os.Stderr, "starting Ferret LSP server...")
+			colors.CYAN.Fprintln(os.Stderr, "starting Ferret LSP server...")
 			if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			return
 		case "init":
 			if err := cli.InitCommand(commandArgs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			return
 		case "get":
 			if err := cli.GetCommand(commandArgs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			return
 		case "update":
 			if err := cli.UpdateCommand(commandArgs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			return
 		case "remove", "rm":
 			if err := cli.RemoveCommand(commandArgs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			return
 		case "list", "ls":
 			if err := cli.ListCommand(commandArgs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			return
 		case "clean":
 			if err := cli.CleanupCommand(commandArgs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			return
-		case "cleanup":
-			if err := cli.CleanupCommand(commandArgs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
-				os.Exit(1)
-			}
-			return
-		case "run", "runs":
+		case "run":
 			if err := runCommand(commandArgs); err != nil {
-				fmt.Fprintln(os.Stderr, err)
+				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			return
@@ -101,14 +96,13 @@ func main() {
 	showHelp := flag.Bool("help", false, "show help")
 	flag.BoolVar(showHelp, "h", false, "alias for -help")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Ferret compiler v%s\n\n", compilerVersion)
-		fmt.Fprintf(os.Stderr, "Usage:\n")
-		fmt.Fprintf(os.Stderr, "  %s [options] <source-file-or-directory>\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s [command] [args]\n\n", os.Args[0])
-		fmt.Fprintln(os.Stderr, "Options:")
+		colors.BLUE.Fprintln(os.Stderr, "Ferret compiler v"+compilerVersion)
+		colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
+		colors.GREEN.Fprintf(os.Stderr, "  %s [options] <source-file-or-directory>\n", os.Args[0])
+		colors.GREEN.Fprintf(os.Stderr, "  %s [command] [args]\n", os.Args[0])
+		colors.CYAN.Fprintln(os.Stderr, "\nOptions:")
 		flag.PrintDefaults()
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Commands:")
+		colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
 		fmt.Fprintln(os.Stderr, "  init [name]             create a new project with fer.ret")
 		fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from fer.ret or specific packages")
 		fmt.Fprintln(os.Stderr, "  update [pkg ...]        update locked dependencies")
@@ -116,16 +110,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
 		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
 		fmt.Fprintln(os.Stderr, "  run|runs <path> [args]  build and run a program using LLVM")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Examples:")
-		fmt.Fprintf(os.Stderr, "  %s -backend llvm main.ferr\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -k main.ferr\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s run main.ferr arg1 arg2\n", os.Args[0])
+		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
+		colors.GREEN.Fprintf(os.Stderr, "  %s -backend llvm main.ferr\n", os.Args[0])
+		colors.GREEN.Fprintf(os.Stderr, "  %s -k main.ferr\n", os.Args[0])
+		colors.GREEN.Fprintf(os.Stderr, "  %s run main.ferr arg1 arg2\n", os.Args[0])
 	}
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("Ferret compiler v%s\n", compilerVersion)
+		fmt.Printf("v%s\n", compilerVersion)
 		return
 	}
 	if *showHelp {
@@ -143,7 +136,7 @@ func main() {
 		selectedBackend = "llvm"
 	}
 	if selectedBackend != string(backend.TargetLLVM) && selectedBackend != string(backend.TargetQBE) {
-		fmt.Fprintf(os.Stderr, "invalid backend %q (expected llvm or qbe)\n", selectedBackend)
+		colors.RED.Fprintf(os.Stderr, "Error: invalid backend %q (expected llvm or qbe)\n", selectedBackend)
 		os.Exit(2)
 	}
 
@@ -157,16 +150,18 @@ func main() {
 
 	if *keepGen {
 		if err := emitKeepGenArtifacts(result, selectedBackend, "_gen"); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			colors.RED.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		colors.GREEN.Fprintln(os.Stdout, "Generated artifacts in _gen")
 	}
 
 	if *outputPath != "" {
 		if err := buildExecutable(result, *outputPath, backend.Target(selectedBackend)); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			colors.RED.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		colors.GREEN.Fprintf(os.Stdout, "Built %s\n", *outputPath)
 		return
 	}
 
