@@ -1,8 +1,8 @@
 package mir
 
 import (
-	"compiler/internal/frontend/ast"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/frontend/ast"
 )
 
 func (fn *Function) LocalByID(id int) *Local {

@@ -1,9 +1,9 @@
 package typechecker
 
 import (
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/tokens"
 	"compiler/internal/utils/numeric"
 )

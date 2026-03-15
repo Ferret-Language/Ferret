@@ -1,9 +1,9 @@
 package hir
 
 import (
-	"compiler/internal/frontend/ast"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/source"
+	"compiler/internal/frontend/ast"
 )
 
 type Module struct {

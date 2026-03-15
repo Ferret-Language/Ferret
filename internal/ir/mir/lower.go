@@ -2,12 +2,12 @@ package mir
 
 import (
 	"compiler/internal/analysis/cfg/model"
-	"compiler/internal/frontend/ast"
-	"compiler/internal/ir/hir"
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/source"
+	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/hir"
 	"strconv"
 	"strings"
 )

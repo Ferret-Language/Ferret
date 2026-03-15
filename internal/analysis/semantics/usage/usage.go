@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"reflect"
 
-	"compiler/internal/core/context"
-	"compiler/internal/core/diagnostics"
-	"compiler/internal/frontend/ast"
-	"compiler/internal/core/phase"
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
+	"compiler/internal/core/context"
+	"compiler/internal/core/diagnostics"
+	"compiler/internal/core/phase"
+	"compiler/internal/frontend/ast"
 )
 
 type analyzer struct {

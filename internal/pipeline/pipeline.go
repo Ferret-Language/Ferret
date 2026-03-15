@@ -9,15 +9,7 @@ import (
 
 	"compiler/internal/analysis/attrfilter"
 	"compiler/internal/analysis/cfg/analysis"
-	"compiler/internal/core/context"
-	"compiler/internal/core/diagnostics"
-	"compiler/internal/frontend/ast"
-	"compiler/internal/frontend/lexer"
-	"compiler/internal/frontend/parser"
 	"compiler/internal/analysis/layout/analysis"
-	"compiler/internal/ir/hir"
-	"compiler/internal/ir/mir"
-	"compiler/internal/core/phase"
 	"compiler/internal/analysis/semantics/collector"
 	"compiler/internal/analysis/semantics/ownership"
 	"compiler/internal/analysis/semantics/resolver"
@@ -25,7 +17,15 @@ import (
 	"compiler/internal/analysis/semantics/typechecker"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/analysis/semantics/usage"
+	"compiler/internal/core/context"
+	"compiler/internal/core/diagnostics"
+	"compiler/internal/core/phase"
 	"compiler/internal/core/source"
+	"compiler/internal/frontend/ast"
+	"compiler/internal/frontend/lexer"
+	"compiler/internal/frontend/parser"
+	"compiler/internal/ir/hir"
+	"compiler/internal/ir/mir"
 )
 
 // Pipeline coordinates the compilation process.

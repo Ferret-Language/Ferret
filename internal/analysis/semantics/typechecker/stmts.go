@@ -3,11 +3,11 @@ package typechecker
 import (
 	"fmt"
 
-	"compiler/internal/core/diagnostics"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/diagnostics"
+	"compiler/internal/frontend/ast"
 )
 
 func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {

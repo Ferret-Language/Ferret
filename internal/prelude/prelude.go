@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"compiler/internal/core/context"
-	"compiler/internal/frontend/lexer"
-	"compiler/internal/frontend/parser"
-	"compiler/internal/core/phase"
 	"compiler/internal/analysis/semantics/collector"
 	"compiler/internal/analysis/semantics/resolver"
 	"compiler/internal/analysis/semantics/typechecker"
+	"compiler/internal/core/context"
+	"compiler/internal/core/phase"
+	"compiler/internal/frontend/lexer"
+	"compiler/internal/frontend/parser"
 )
 
 const globalModuleKey = "builtin:global"

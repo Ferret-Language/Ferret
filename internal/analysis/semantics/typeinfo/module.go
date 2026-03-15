@@ -1,8 +1,8 @@
 package typeinfo
 
 import (
-	"compiler/internal/frontend/ast"
 	"compiler/internal/analysis/semantics/symbols"
+	"compiler/internal/frontend/ast"
 )
 
 type ModuleInfo struct {

@@ -4,10 +4,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/analysis/semantics/symbols"
 )
 
 func TestLoadRegistersGlobalBuiltinsFromPrelude(t *testing.T) {

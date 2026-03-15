@@ -7,11 +7,11 @@ import (
 	"sort"
 	"strings"
 
+	"compiler/internal/analysis/layout/model"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/analysis/layout/model"
 	"compiler/internal/ir/mir"
-	"compiler/internal/analysis/semantics/typeinfo"
 )
 
 const VendoredCommit = "8ff06515526c97628b47d8223b73d5376287a9b4"

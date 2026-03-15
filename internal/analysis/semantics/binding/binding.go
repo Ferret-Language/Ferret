@@ -3,9 +3,9 @@ package binding
 import (
 	"strings"
 
-	"compiler/internal/frontend/ast"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/core/source"
+	"compiler/internal/frontend/ast"
 )
 
 type ResolutionKind string

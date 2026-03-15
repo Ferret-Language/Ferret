@@ -1,12 +1,12 @@
 package typechecker
 
 import (
-	"compiler/internal/core/context"
-	"compiler/internal/frontend/ast"
-	"compiler/internal/core/phase"
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/context"
+	"compiler/internal/core/phase"
+	"compiler/internal/frontend/ast"
 )
 
 // refineScope is a narrow, per-branch overlay that can override the type of a

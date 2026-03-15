@@ -4,12 +4,12 @@ import (
 	"fmt"
 
 	"compiler/internal/analysis/cfg/model"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
-	"compiler/internal/ir/hir"
 	"compiler/internal/core/phase"
-	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/source"
+	"compiler/internal/ir/hir"
 )
 
 type loopContext struct {

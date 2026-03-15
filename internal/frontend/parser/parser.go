@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"compiler/internal/core/diagnostics"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/core/source"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
 )
 

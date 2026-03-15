@@ -4,8 +4,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"compiler/internal/frontend/ast"
 	"compiler/internal/core/source"
+	"compiler/internal/frontend/ast"
 )
 
 type Kind string

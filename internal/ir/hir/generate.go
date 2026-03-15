@@ -1,10 +1,10 @@
 package hir
 
 import (
-	"compiler/internal/frontend/ast"
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
 	"fmt"
 )

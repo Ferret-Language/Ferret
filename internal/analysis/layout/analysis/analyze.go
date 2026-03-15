@@ -3,10 +3,10 @@ package layoutanalysis
 import (
 	"fmt"
 
-	"compiler/internal/core/context"
 	"compiler/internal/analysis/layout/model"
-	"compiler/internal/core/phase"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/context"
+	"compiler/internal/core/phase"
 )
 
 const (

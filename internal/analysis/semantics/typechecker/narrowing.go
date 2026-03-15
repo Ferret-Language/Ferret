@@ -1,9 +1,9 @@
 package typechecker
 
 import (
-	"compiler/internal/frontend/ast"
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/frontend/ast"
 )
 
 func (c *checker) narrowedScopeForCondition(scope *refineScope, cond ast.Expr, truth bool) *refineScope {

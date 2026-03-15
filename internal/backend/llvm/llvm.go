@@ -9,11 +9,11 @@ import (
 	"strconv"
 	"strings"
 
+	"compiler/internal/analysis/layout/model"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/analysis/layout/model"
 	"compiler/internal/ir/mir"
-	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/utils/numeric"
 )
 

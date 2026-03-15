@@ -5,14 +5,14 @@ import (
 	"strings"
 
 	"compiler/internal/analysis/cfg/model"
-	"compiler/internal/core/context"
-	"compiler/internal/core/diagnostics"
-	"compiler/internal/frontend/ast"
-	"compiler/internal/ir/mir"
-	"compiler/internal/core/phase"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/context"
+	"compiler/internal/core/diagnostics"
+	"compiler/internal/core/phase"
 	"compiler/internal/core/source"
+	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/mir"
 )
 
 type valueInfo struct {

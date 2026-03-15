@@ -1,8 +1,8 @@
 package cfg
 
 import (
-	"compiler/internal/ir/hir"
 	"compiler/internal/core/source"
+	"compiler/internal/ir/hir"
 )
 
 type Module struct {

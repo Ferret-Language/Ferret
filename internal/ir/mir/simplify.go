@@ -4,8 +4,8 @@ import (
 	"math/big"
 	"slices"
 
-	"compiler/internal/core/diagnostics"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/diagnostics"
 	"compiler/internal/utils/numeric"
 )
 

@@ -1,10 +1,10 @@
 package typechecker
 
 import (
-	"compiler/internal/core/context"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/context"
+	"compiler/internal/frontend/ast"
 )
 
 func (c *checker) typeOfSymbol(sym *symbols.Symbol) typeinfo.Type {
