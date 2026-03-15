@@ -3,10 +3,10 @@ package qbe
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"compiler/internal/backend"
+	"compiler/internal/backend/toolchain"
 )
 
 // CompileIR compiles QBE IL text into a native executable at outputPath.
@@ -42,7 +42,7 @@ func CompileIR(qbeIR, outputPath string) error {
 	}
 
 	asmFile := filepath.Join(tmp, "output.s")
-	qbeCmd := exec.Command(qbeBin, "-o", asmFile, irFile)
+	qbeCmd := toolchain.Command(qbeBin, "-o", asmFile, irFile)
 	if out, err := qbeCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compile ir: qbe: %w\n%s", err, out)
 	}
@@ -51,7 +51,12 @@ func CompileIR(qbeIR, outputPath string) error {
 	// Pass the archive as a plain positional argument so it works with any
 	// cc/ld combination — -l:name is GNU ld only and not reliable through
 	// the clang driver on all platforms.
-	ccCmd := exec.Command("cc",
+	linkerPath, err := toolchain.ResolveBinary("clang", "cc", "gcc")
+	if err != nil {
+		return fmt.Errorf("compile ir: %w", err)
+	}
+
+	ccCmd := toolchain.Command(linkerPath,
 		asmFile,
 		runtimeLib,
 		"-o", outputPath,

@@ -50,13 +50,13 @@ For this repo specifically:
 Library source files live in `ferret_libs_dev/`.
 
 - `ferret_libs_dev/` is the editable source tree for builtin Ferret libraries
-- `libs/` is a build artifact/output tree
-- compiler builds must copy `ferret_libs_dev/` into `libs/` before producing the compiler binary
-- the main build entrypoint is `build.sh`
-- the compiler binary is produced at `bin/ferret`
-- later, `libs/` may also contain runtime static libraries and other produced assets
-- do not edit generated copies in `libs/` directly
-- do not wipe `libs/` during normal compiler builds, because runtime/static libraries may also live there later
+- the build tooling has a single mode: `go run ./tools` (also used by `build.sh` / `build.bat`)
+- all generated artifacts are placed under `output/ferret/`
+- the compiler binary is produced at `output/ferret/bin/ferret` (or `.exe` on Windows)
+- builtin libs and runtime archive are produced at `output/ferret/libs/`
+- backend toolchain binaries and shared libs are bundled under `output/ferret/toolchain/`
+- root-level `bin/` and `libs/` are legacy and are removed by the unified build flow
+- do not edit generated files under `output/ferret/` directly
 
 ## 2. Project Priorities
 

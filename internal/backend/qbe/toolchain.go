@@ -5,10 +5,11 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sync"
+
+	"compiler/internal/backend/toolchain"
 )
 
 var (
@@ -27,6 +28,12 @@ func QBEBinary() (string, error) {
 }
 
 func ensureQBEBinary() (string, error) {
+	if bundled, err := toolchain.ResolveBinary("qbe"); err == nil {
+		if info, statErr := os.Stat(bundled); statErr == nil && !info.IsDir() && info.Size() > 0 {
+			return bundled, nil
+		}
+	}
+
 	cacheDir, err := os.UserCacheDir()
 	if err != nil {
 		return "", fmt.Errorf("qbe toolchain: cannot determine cache dir: %w", err)
@@ -58,8 +65,12 @@ func ensureQBEBinary() (string, error) {
 		return "", fmt.Errorf("qbe toolchain: gather sources: %w", err)
 	}
 
+	ccPath, err := toolchain.ResolveBinary("cc", "clang", "gcc")
+	if err != nil {
+		return "", fmt.Errorf("qbe toolchain: %w", err)
+	}
 	args := append([]string{"-o", binPath}, srcs...)
-	cmd := exec.Command("cc", args...)
+	cmd := toolchain.Command(ccPath, args...)
 	cmd.Dir = srcDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("qbe toolchain: build failed: %w\n%s", err, out)

@@ -3,12 +3,12 @@ package llvm
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
+	"compiler/internal/backend/toolchain"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/mir"
 )
@@ -63,7 +63,12 @@ func CompileIR(llvmIR, outputPath string, opts CompileOptions) error {
 	}
 	args = append(args, irFile, runtimeLib, "-o", outputPath)
 
-	cmd := exec.Command("clang", args...)
+	clangPath, err := toolchain.ResolveBinary("clang", "cc", "gcc")
+	if err != nil {
+		return fmt.Errorf("compile ir: %w", err)
+	}
+
+	cmd := toolchain.Command(clangPath, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compile ir: clang: %w\n%s", err, out)
 	}
