@@ -253,6 +253,12 @@ func (s *Server) handleDidOpen(raw json.RawMessage) {
 	s.documents[uri] = openDocument{Version: params.TextDocument.Version, Text: params.TextDocument.Text}
 	s.mu.Unlock()
 
+	path, err := uriToPath(uri)
+	if err != nil || !isFerretSourcePath(path) {
+		s.publishDiagnostics(uri, nil, nil)
+		return
+	}
+
 	s.publishSyntaxDiagnostics(uri, params.TextDocument.Version, params.TextDocument.Text)
 }
 
@@ -271,6 +277,12 @@ func (s *Server) handleDidChange(raw json.RawMessage) {
 	s.documents[uri] = openDocument{Version: params.TextDocument.Version, Text: text}
 	s.mu.Unlock()
 
+	path, err := uriToPath(uri)
+	if err != nil || !isFerretSourcePath(path) {
+		s.publishDiagnostics(uri, nil, nil)
+		return
+	}
+
 	s.publishSyntaxDiagnostics(uri, params.TextDocument.Version, text)
 }
 
@@ -283,6 +295,10 @@ func (s *Server) handleDidSave(raw json.RawMessage) {
 	uri := params.TextDocument.URI
 	path, err := uriToPath(uri)
 	if err != nil {
+		return
+	}
+	if !isFerretSourcePath(path) {
+		s.publishDiagnostics(uri, nil, nil)
 		return
 	}
 
@@ -425,6 +441,13 @@ func toLSPSeverity(sev diagnostics.Severity) int {
 	default:
 		return 1
 	}
+}
+
+func isFerretSourcePath(path string) bool {
+	if path == "" {
+		return false
+	}
+	return strings.EqualFold(filepath.Ext(path), compiler.FerretSourceExt)
 }
 
 func (s *Server) readMessage() ([]byte, error) {

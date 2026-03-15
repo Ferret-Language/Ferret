@@ -3,14 +3,18 @@ package compiler
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
+	"compiler/internal/core/project"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/pipeline"
 	"compiler/internal/prelude"
-	"compiler/internal/core/project"
 )
+
+const CompilerVersion = "0.1.0"
+const FerretSourceExt = ".ferr"
 
 type Result struct {
 	Entry         *context.Module
@@ -66,7 +70,11 @@ func ParsePath(path string) Result {
 		compiler := NewWithConfig(ws.Context, diag)
 		return compiler.ParseWorkspace()
 	}
-	ws, err := project.Load(absPath, filepath.Ext(absPath))
+	if !strings.EqualFold(filepath.Ext(absPath), FerretSourceExt) {
+		diag.Add(diagnostics.NewError("unsupported source file extension"))
+		return Result{Diagnostics: diag}
+	}
+	ws, err := project.Load(absPath, FerretSourceExt)
 	if err != nil {
 		diag.Add(diagnostics.NewError(err.Error()))
 		return Result{Diagnostics: diag}

@@ -12,7 +12,7 @@ import (
 
 	"compiler/cmd/ferret/cli"
 	"compiler/colors"
-	layout "compiler/internal/analysis/layout/model"
+	"compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"
 	"compiler/internal/backend/llvm"
 	"compiler/internal/backend/qbe"
@@ -26,8 +26,6 @@ import (
 	"compiler/internal/ir/mir"
 	"compiler/internal/lsp"
 )
-
-const compilerVersion = "0.1.0"
 
 func main() {
 	if len(os.Args) > 1 {
@@ -83,6 +81,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "check", "lint":
+			if err := checkCommand(commandArgs); err != nil {
+				colors.RED.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		}
 	}
 
@@ -96,7 +100,7 @@ func main() {
 	showHelp := flag.Bool("help", false, "show help")
 	flag.BoolVar(showHelp, "h", false, "alias for -help")
 	flag.Usage = func() {
-		colors.BLUE.Fprintln(os.Stderr, "Ferret compiler v"+compilerVersion)
+		colors.BLUE.Fprintln(os.Stderr, "Ferret compiler v"+compiler.CompilerVersion)
 		colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
 		colors.GREEN.Fprintf(os.Stderr, "  %s [options] <source-file-or-directory>\n", os.Args[0])
 		colors.GREEN.Fprintf(os.Stderr, "  %s [command] [args]\n", os.Args[0])
@@ -109,7 +113,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from fer.ret and lockfile")
 		fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
 		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
-		fmt.Fprintln(os.Stderr, "  run|runs <path> [args]  build and run a program using LLVM")
+		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.ferr only)")
+		fmt.Fprintln(os.Stderr, "  run <path> [args]       build and run a program using LLVM")
 		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
 		colors.GREEN.Fprintf(os.Stderr, "  %s -backend llvm main.ferr\n", os.Args[0])
 		colors.GREEN.Fprintf(os.Stderr, "  %s -k main.ferr\n", os.Args[0])
@@ -118,7 +123,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("v%s\n", compilerVersion)
+		fmt.Printf("v%s\n", compiler.CompilerVersion)
 		return
 	}
 	if *showHelp {
@@ -260,6 +265,22 @@ func runCommand(args []string) error {
 	return nil
 }
 
+func checkCommand(args []string) error {
+	path := "."
+	if len(args) > 0 {
+		path = args[0]
+	}
+
+	result := parsePathForCheck(path)
+	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
+		result.Diagnostics.EmitAll()
+	}
+	if result.Diagnostics.HasErrors() {
+		return fmt.Errorf("check failed")
+	}
+	return nil
+}
+
 func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.Result {
 	absPath, err := filepath.Abs(path)
 	diag := diagnostics.NewDiagnosticBag(absPath)
@@ -273,7 +294,13 @@ func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.
 		return compiler.Result{Diagnostics: diag}
 	}
 	if info.IsDir() {
-		ws, err := project.Load(absPath, ".ferr")
+		entryPath := filepath.Join(absPath, "main"+compiler.FerretSourceExt)
+		entryInfo, entryErr := os.Stat(entryPath)
+		if entryErr != nil || entryInfo.IsDir() {
+			diag.Add(diagnostics.NewError(fmt.Sprintf("entry file not found: %s", entryPath)))
+			return compiler.Result{Diagnostics: diag}
+		}
+		ws, err := project.Load(entryPath, compiler.FerretSourceExt)
 		if err != nil {
 			diag.Add(diagnostics.NewError(err.Error()))
 			return compiler.Result{Diagnostics: diag}
@@ -281,15 +308,53 @@ func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.
 		ws.Context.TargetBackend = targetBackend
 		ws.Context.BuildDebug = buildDebug
 		compiler := compiler.NewWithConfig(ws.Context, diag)
-		return compiler.ParseWorkspace()
+		return compiler.ParseEntry(entryPath)
 	}
-	ws, err := project.Load(absPath, filepath.Ext(absPath))
+	if !strings.EqualFold(filepath.Ext(absPath), compiler.FerretSourceExt) {
+		diag.Add(diagnostics.NewError(fmt.Sprintf("unsupported source file extension %q (expected %s)", filepath.Ext(absPath), compiler.FerretSourceExt)))
+		return compiler.Result{Diagnostics: diag}
+	}
+	ws, err := project.Load(absPath, compiler.FerretSourceExt)
 	if err != nil {
 		diag.Add(diagnostics.NewError(err.Error()))
 		return compiler.Result{Diagnostics: diag}
 	}
 	ws.Context.TargetBackend = targetBackend
 	ws.Context.BuildDebug = buildDebug
+	compiler := compiler.NewWithConfig(ws.Context, diag)
+	return compiler.ParseEntry(absPath)
+}
+
+func parsePathForCheck(path string) compiler.Result {
+	absPath, err := filepath.Abs(path)
+	diag := diagnostics.NewDiagnosticBag(absPath)
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return compiler.Result{Diagnostics: diag}
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return compiler.Result{Diagnostics: diag}
+	}
+	if info.IsDir() {
+		ws, err := project.Load(absPath, compiler.FerretSourceExt)
+		if err != nil {
+			diag.Add(diagnostics.NewError(err.Error()))
+			return compiler.Result{Diagnostics: diag}
+		}
+		compiler := compiler.NewWithConfig(ws.Context, diag)
+		return compiler.ParseWorkspace()
+	}
+	if !strings.EqualFold(filepath.Ext(absPath), compiler.FerretSourceExt) {
+		diag.Add(diagnostics.NewError(fmt.Sprintf("unsupported source file extension %q (expected %s)", filepath.Ext(absPath), compiler.FerretSourceExt)))
+		return compiler.Result{Diagnostics: diag}
+	}
+	ws, err := project.Load(absPath, compiler.FerretSourceExt)
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return compiler.Result{Diagnostics: diag}
+	}
 	compiler := compiler.NewWithConfig(ws.Context, diag)
 	return compiler.ParseEntry(absPath)
 }
