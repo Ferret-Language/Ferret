@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"compiler/internal/toml"
@@ -25,6 +27,11 @@ type PackageInfo struct {
 	CompilerVersion string
 }
 
+type DevConfig struct {
+	MockRemote bool
+	MockPath   string
+}
+
 type Dependency struct {
 	Type    DependencyType
 	Version string
@@ -34,6 +41,7 @@ type Dependency struct {
 type File struct {
 	Package      PackageInfo
 	Dependencies map[string]Dependency
+	Dev          DevConfig
 	FilePath     string
 }
 
@@ -109,7 +117,20 @@ func Load(path string) (*File, error) {
 			manifest.Dependencies[alias] = dep
 		}
 	}
+
+	if dev, ok := data.Sections["dev"]; ok {
+		if mockRemote, ok := dev["mock_remote"].(bool); ok {
+			manifest.Dev.MockRemote = mockRemote
+		}
+		if mockPath, ok := dev["mock_path"].(string); ok {
+			manifest.Dev.MockPath = mockPath
+		}
+	}
 	return manifest, nil
+}
+
+func ParseDependency(spec string) (Dependency, error) {
+	return parseDependencyString(spec)
 }
 
 func parseDependency(raw toml.Value) (Dependency, error) {
@@ -184,4 +205,69 @@ func parseDependencyTable(table toml.Table) (Dependency, error) {
 
 func isRemoteRepo(path string) bool {
 	return strings.HasPrefix(path, "github.com/") || strings.HasPrefix(path, "gitlab.com/") || strings.HasPrefix(path, "bitbucket.org/")
+}
+
+func Save(path string, file *File) error {
+	if file == nil {
+		return fmt.Errorf("nil manifest")
+	}
+
+	var builder strings.Builder
+	builder.WriteString("[package]\n")
+	builder.WriteString(fmt.Sprintf("name = %s\n", strconv.Quote(file.Package.Name)))
+	if file.Package.Version != "" {
+		builder.WriteString(fmt.Sprintf("version = %s\n", strconv.Quote(file.Package.Version)))
+	}
+	if file.Package.CompilerVersion != "" {
+		builder.WriteString(fmt.Sprintf("compiler = %s\n", strconv.Quote(file.Package.CompilerVersion)))
+	}
+
+	if len(file.Dependencies) > 0 {
+		builder.WriteString("\n[dependencies]\n")
+		aliases := make([]string, 0, len(file.Dependencies))
+		for alias := range file.Dependencies {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
+		for _, alias := range aliases {
+			dep := file.Dependencies[alias]
+			builder.WriteString(fmt.Sprintf("%s = %s\n", alias, strconv.Quote(renderDependency(dep))))
+		}
+	}
+
+	if file.Dev.MockRemote || file.Dev.MockPath != "" {
+		builder.WriteString("\n[dev]\n")
+		builder.WriteString(fmt.Sprintf("mock_remote = %t\n", file.Dev.MockRemote))
+		if file.Dev.MockPath != "" {
+			builder.WriteString(fmt.Sprintf("mock_path = %s\n", strconv.Quote(file.Dev.MockPath)))
+		}
+	}
+
+	if !strings.HasSuffix(builder.String(), "\n") {
+		builder.WriteString("\n")
+	}
+	return os.WriteFile(path, []byte(builder.String()), 0o644)
+}
+
+func RemoveDependency(path, alias string) error {
+	file, err := Load(path)
+	if err != nil {
+		return err
+	}
+	delete(file.Dependencies, alias)
+	return Save(path, file)
+}
+
+func renderDependency(dep Dependency) string {
+	switch dep.Type {
+	case DependencyNeighbor:
+		return dep.Path
+	case DependencyRemote:
+		if dep.Version == "" || dep.Version == "latest" {
+			return dep.Path
+		}
+		return dep.Path + "@" + dep.Version
+	default:
+		return dep.Path
+	}
 }

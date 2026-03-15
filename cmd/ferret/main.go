@@ -5,10 +5,13 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
-	"compiler/internal/analysis/layout/model"
+	"compiler/cmd/ferret/cli"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"
 	"compiler/internal/backend/llvm"
 	"compiler/internal/backend/qbe"
@@ -16,7 +19,7 @@ import (
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/project"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
@@ -24,13 +27,60 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "lsp" {
-		fmt.Fprintln(os.Stderr, "starting Ferret LSP server...")
-		if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+	if len(os.Args) > 1 {
+		command := os.Args[1]
+		commandArgs := os.Args[2:]
+		switch command {
+		case "lsp":
+			fmt.Fprintln(os.Stderr, "starting Ferret LSP server...")
+			if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "init":
+			if err := cli.InitCommand(commandArgs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "get":
+			if err := cli.GetCommand(commandArgs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "update":
+			if err := cli.UpdateCommand(commandArgs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "remove", "rm":
+			if err := cli.RemoveCommand(commandArgs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "list", "ls":
+			if err := cli.ListCommand(commandArgs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "clean":
+			if err := cli.CleanupCommand(commandArgs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "run":
+			if err := runCommand(commandArgs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		}
-		return
 	}
 
 	astFlag := flag.Bool("ast", false, "dump AST as JSON")
@@ -42,11 +92,19 @@ func main() {
 	backendTarget := flag.String("backend", "", "lower to backend IR target (qbe|llvm)")
 	backendOut := flag.String("backend-out", "", "write backend IR to file or directory")
 	outputPath := flag.String("o", "", "compile and link to executable (see -build-backend)")
-	buildBackend := flag.String("build-backend", "qbe", "backend to use for -o compilation (qbe|llvm)")
+	buildBackend := flag.String("build-backend", "llvm", "backend to use for -o compilation (qbe|llvm)")
 	debugBuild := flag.Bool("debug", false, "enable debug build mode (emits debug info and debug-friendly codegen)")
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "usage: %s [lsp] | [-o output] [-ast] [-ast-out file] [-hir] [-hir-out path] [-mir] [-mir-out path] [-backend target] [-backend-out path] <source-file-or-directory>\n", os.Args[0])
 		flag.PrintDefaults()
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "commands:")
+		fmt.Fprintln(os.Stderr, "  init [name]             create a new project with fer.ret")
+		fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from fer.ret or specific packages")
+		fmt.Fprintln(os.Stderr, "  update [pkg ...]        update locked dependencies")
+		fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from fer.ret and lockfile")
+		fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
+		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
+		fmt.Fprintln(os.Stderr, "  run <path> [args...]    build and run a program using the default backend")
 	}
 	flag.Parse()
 
@@ -60,7 +118,7 @@ func main() {
 		selectedBackend = *buildBackend
 	}
 	if selectedBackend == "" {
-		selectedBackend = "qbe"
+		selectedBackend = "llvm"
 	}
 	result := parsePathWithBackend(flag.Arg(0), selectedBackend, *debugBuild)
 	if *astFlag || *astOut != "" {
@@ -130,6 +188,60 @@ func main() {
 			fmt.Printf("  %s\n", ast.DeclSummary(decl))
 		}
 	}
+}
+
+func runCommand(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: ferret run <source-file-or-directory> [args...]")
+	}
+
+	sourcePath := args[0]
+	runtimeArgs := args[1:]
+	result := parsePathWithBackend(sourcePath, string(backend.TargetLLVM), false)
+
+	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
+		result.Diagnostics.EmitAll()
+	}
+	if result.Diagnostics.HasErrors() {
+		return fmt.Errorf("build failed")
+	}
+
+	tempPattern := "ferret-run-*"
+	if runtime.GOOS == "windows" {
+		tempPattern = "ferret-run-*.exe"
+	}
+	tempFile, err := os.CreateTemp("", tempPattern)
+	if err != nil {
+		return fmt.Errorf("create temp output: %w", err)
+	}
+	tempPath := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		return err
+	}
+	_ = os.Remove(tempPath)
+
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(tempPath), ".exe") {
+		tempPath += ".exe"
+	}
+	defer func() {
+		_ = os.Remove(tempPath)
+	}()
+
+	if err := buildExecutable(result, tempPath, backend.TargetLLVM); err != nil {
+		return err
+	}
+
+	cmd := exec.Command(tempPath, runtimeArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		return fmt.Errorf("run program: %w", err)
+	}
+	return nil
 }
 
 func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.Result {

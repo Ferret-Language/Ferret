@@ -44,7 +44,7 @@ fn main() i32 {
     let p2: Point = .{}
     print(p2.X)
     print(p2.Y)
-    print(Point::Counter
+    print(Point::Counter)
 
     let mut maybe : ?i32 = none
     maybe = 21
