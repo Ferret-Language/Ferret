@@ -25,6 +25,7 @@ type PackageInfo struct {
 	Name            string
 	Version         string
 	CompilerVersion string
+	Entry           string
 }
 
 type DevConfig struct {
@@ -97,6 +98,9 @@ func Load(path string) (*File, error) {
 	}
 	if compilerVersion, ok := pkg["compiler"].(string); ok {
 		manifest.Package.CompilerVersion = compilerVersion
+	}
+	if entry, ok := pkg["entry"].(string); ok {
+		manifest.Package.Entry = strings.TrimSpace(entry)
 	}
 
 	if deps, ok := data.Sections["dependencies"]; ok {
@@ -220,6 +224,9 @@ func Save(path string, file *File) error {
 	}
 	if file.Package.CompilerVersion != "" {
 		builder.WriteString(fmt.Sprintf("compiler = %s\n", strconv.Quote(file.Package.CompilerVersion)))
+	}
+	if file.Package.Entry != "" {
+		builder.WriteString(fmt.Sprintf("entry = %s\n", strconv.Quote(file.Package.Entry)))
 	}
 
 	if len(file.Dependencies) > 0 {

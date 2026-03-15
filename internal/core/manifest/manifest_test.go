@@ -52,3 +52,48 @@ std = "./deps/std"
 		t.Fatal("expected reserved alias error")
 	}
 }
+
+func TestLoadParsesPackageEntry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, FileName)
+	src := `
+[package]
+name = "app"
+entry = "cmd/main"
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	file, err := Load(path)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if file.Package.Entry != "cmd/main" {
+		t.Fatalf("expected package.entry to be parsed, got %q", file.Package.Entry)
+	}
+}
+
+func TestSaveWritesPackageEntry(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, FileName)
+	file := &File{
+		Package: PackageInfo{
+			Name:  "app",
+			Entry: "main.ferr",
+		},
+		Dependencies: map[string]Dependency{},
+	}
+
+	if err := Save(path, file); err != nil {
+		t.Fatalf("save manifest: %v", err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
+	if loaded.Package.Entry != "main.ferr" {
+		t.Fatalf("expected package.entry to round-trip, got %q", loaded.Package.Entry)
+	}
+}

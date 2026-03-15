@@ -19,6 +19,7 @@ import (
 	"compiler/internal/backend/registry"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
+	"compiler/internal/core/manifest"
 	"compiler/internal/core/project"
 	"compiler/internal/driver"
 	"compiler/internal/frontend/ast"
@@ -114,7 +115,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
 		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
 		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.ferr only)")
-		fmt.Fprintln(os.Stderr, "  run <path> [args]       build and run a program using LLVM")
+		fmt.Fprintln(os.Stderr, "  run [path] [args]       build and run a program using LLVM")
 		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
 		colors.GREEN.Fprintf(os.Stderr, "  %s -backend llvm main.ferr\n", os.Args[0])
 		colors.GREEN.Fprintf(os.Stderr, "  %s -k main.ferr\n", os.Args[0])
@@ -212,13 +213,21 @@ func emitKeepGenArtifacts(result compiler.Result, backendName, outDir string) er
 }
 
 func runCommand(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: ferret run <source-file-or-directory> [args...]")
+	sourcePath := ""
+	runtimeArgs := []string{}
+	if len(args) > 0 {
+		sourcePath = args[0]
+		runtimeArgs = args[1:]
+	}
+	resolvedPath, entryPath, selectedByDiscovery, err := resolveRunTarget(sourcePath)
+	if err != nil {
+		return err
+	}
+	if selectedByDiscovery {
+		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", entryPath)
 	}
 
-	sourcePath := args[0]
-	runtimeArgs := args[1:]
-	result := parsePathWithBackend(sourcePath, string(backend.TargetLLVM), false)
+	result := parsePathWithBackend(resolvedPath, string(backend.TargetLLVM), false)
 
 	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
 		result.Diagnostics.EmitAll()
@@ -265,6 +274,78 @@ func runCommand(args []string) error {
 	return nil
 }
 
+func resolveRunTarget(path string) (resolvedPath string, entryPath string, selectedByDiscovery bool, err error) {
+	if strings.TrimSpace(path) == "" {
+		entryPath, err = resolveManifestEntryPath(".")
+		if err != nil {
+			return "", "", false, err
+		}
+		return entryPath, entryPath, true, nil
+	}
+
+	resolvedPath, err = filepath.Abs(path)
+	if err != nil {
+		return "", "", false, err
+	}
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		return "", "", false, err
+	}
+	if info.IsDir() {
+		entryPath, err = resolveManifestEntryPath(resolvedPath)
+		if err != nil {
+			return "", "", false, err
+		}
+		return entryPath, entryPath, true, nil
+	}
+	if !strings.EqualFold(filepath.Ext(resolvedPath), compiler.FerretSourceExt) {
+		return "", "", false, fmt.Errorf("unsupported source file extension %q (expected %s)", filepath.Ext(resolvedPath), compiler.FerretSourceExt)
+	}
+	return resolvedPath, resolvedPath, false, nil
+}
+
+func resolveManifestEntryPath(startPath string) (string, error) {
+	manifestPath, err := manifest.Find(startPath)
+	if err != nil {
+		return "", fmt.Errorf("run requires an input file or %s with package.entry", manifest.FileName)
+	}
+	file, err := manifest.Load(manifestPath)
+	if err != nil {
+		return "", err
+	}
+	entry := strings.TrimSpace(file.Package.Entry)
+	if entry == "" {
+		return "", fmt.Errorf("%s: package.entry is required for `ferret run` without an explicit file", manifestPath)
+	}
+
+	entry = strings.ReplaceAll(entry, "\\", "/")
+	if filepath.Ext(entry) == "" {
+		entry += compiler.FerretSourceExt
+	}
+	if !strings.EqualFold(filepath.Ext(entry), compiler.FerretSourceExt) {
+		return "", fmt.Errorf("%s: package.entry must point to a %s file", manifestPath, compiler.FerretSourceExt)
+	}
+
+	manifestDir := filepath.Dir(manifestPath)
+	entryPath := filepath.Clean(filepath.Join(manifestDir, filepath.FromSlash(entry)))
+	rel, relErr := filepath.Rel(manifestDir, entryPath)
+	if relErr != nil {
+		return "", relErr
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("%s: package.entry must stay inside the package root", manifestPath)
+	}
+
+	entryInfo, statErr := os.Stat(entryPath)
+	if statErr != nil {
+		return "", fmt.Errorf("entry file not found: %s", entryPath)
+	}
+	if entryInfo.IsDir() {
+		return "", fmt.Errorf("entry path is a directory: %s", entryPath)
+	}
+	return entryPath, nil
+}
+
 func checkCommand(args []string) error {
 	path := "."
 	if len(args) > 0 {
@@ -294,10 +375,9 @@ func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.
 		return compiler.Result{Diagnostics: diag}
 	}
 	if info.IsDir() {
-		entryPath := filepath.Join(absPath, "main"+compiler.FerretSourceExt)
-		entryInfo, entryErr := os.Stat(entryPath)
-		if entryErr != nil || entryInfo.IsDir() {
-			diag.Add(diagnostics.NewError(fmt.Sprintf("entry file not found: %s", entryPath)))
+		entryPath, entryErr := resolveManifestEntryPath(absPath)
+		if entryErr != nil {
+			diag.Add(diagnostics.NewError(entryErr.Error()))
 			return compiler.Result{Diagnostics: diag}
 		}
 		ws, err := project.Load(entryPath, compiler.FerretSourceExt)

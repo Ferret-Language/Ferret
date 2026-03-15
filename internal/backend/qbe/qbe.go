@@ -952,7 +952,18 @@ func lowerPanicTerm(state *moduleState, t *mir.PanicTerm) (string, error) {
 		sym := emitQBEStringConstant(state, v.Value)
 		return fmt.Sprintf("call $ferret__panic(l $%s)\n\thlt", sym), nil
 	default:
-		return "", fmt.Errorf("panic: non-literal message not yet supported (%T)", t.Value)
+		if _, ok := unwrapNamed(t.Value.Type()).(*typeinfo.StringType); ok {
+			addr, err := lowerAddrOf(state, &mir.AddrOfValue{Source: t.Value})
+			if err != nil {
+				if lv, valueErr := lowerValue(state, t.Value); valueErr == nil {
+					addr = lv
+				} else {
+					return "", fmt.Errorf("panic: unsupported string payload (%T): %w", t.Value, err)
+				}
+			}
+			return fmt.Sprintf("call $global__panic(l %s)\n\thlt", addr), nil
+		}
+		return "", fmt.Errorf("panic: unsupported payload type %T", t.Value)
 	}
 }
 

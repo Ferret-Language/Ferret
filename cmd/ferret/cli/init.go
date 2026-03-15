@@ -54,6 +54,7 @@ version = "0.1.0"
 description = %q
 author = %q
 compiler = "<=%s"
+	entry = "main.ferr"
 
 [dependencies]
 # Add dependencies here
