@@ -19,12 +19,14 @@ import (
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/project"
-	compiler "compiler/internal/driver"
+	"compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
 	"compiler/internal/lsp"
 )
+
+const compilerVersion = "0.1.0"
 
 func main() {
 	if len(os.Args) > 1 {
@@ -74,7 +76,13 @@ func main() {
 				os.Exit(1)
 			}
 			return
-		case "run":
+		case "cleanup":
+			if err := cli.CleanupCommand(commandArgs); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
+		case "run", "runs":
 			if err := runCommand(commandArgs); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				os.Exit(1)
@@ -83,92 +91,82 @@ func main() {
 		}
 	}
 
-	astFlag := flag.Bool("ast", false, "dump AST as JSON")
-	astOut := flag.String("ast-out", "", "write AST JSON to file")
-	hirFlag := flag.Bool("hir", false, "write HIR dump as .hir text")
-	hirOut := flag.String("hir-out", "", "write HIR dump to file or directory")
-	mirFlag := flag.Bool("mir", false, "write MIR dump as .mir text")
-	mirOut := flag.String("mir-out", "", "write MIR dump to file or directory")
-	backendTarget := flag.String("backend", "", "lower to backend IR target (qbe|llvm)")
-	backendOut := flag.String("backend-out", "", "write backend IR to file or directory")
-	outputPath := flag.String("o", "", "compile and link to executable (see -build-backend)")
-	buildBackend := flag.String("build-backend", "llvm", "backend to use for -o compilation (qbe|llvm)")
+	backendTarget := flag.String("backend", "llvm", "backend target (llvm|qbe)")
+	outputPath := flag.String("o", "", "compile and link to executable")
+	keepGen := flag.Bool("keep-gen", false, "keep generated AST/HIR/MIR/backend IR in _gen directory")
+	flag.BoolVar(keepGen, "k", false, "alias for -keep-gen")
 	debugBuild := flag.Bool("debug", false, "enable debug build mode (emits debug info and debug-friendly codegen)")
+	showVersion := flag.Bool("version", false, "show compiler version")
+	flag.BoolVar(showVersion, "v", false, "alias for -version")
+	showHelp := flag.Bool("help", false, "show help")
+	flag.BoolVar(showHelp, "h", false, "alias for -help")
 	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Ferret compiler v%s\n\n", compilerVersion)
+		fmt.Fprintf(os.Stderr, "Usage:\n")
+		fmt.Fprintf(os.Stderr, "  %s [options] <source-file-or-directory>\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s [command] [args]\n\n", os.Args[0])
+		fmt.Fprintln(os.Stderr, "Options:")
 		flag.PrintDefaults()
 		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "commands:")
+		fmt.Fprintln(os.Stderr, "Commands:")
 		fmt.Fprintln(os.Stderr, "  init [name]             create a new project with fer.ret")
 		fmt.Fprintln(os.Stderr, "  get [pkg ...]           install dependencies from fer.ret or specific packages")
 		fmt.Fprintln(os.Stderr, "  update [pkg ...]        update locked dependencies")
 		fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from fer.ret and lockfile")
 		fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
 		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
-		fmt.Fprintln(os.Stderr, "  run <path> [args...]    build and run a program using the default backend")
+		fmt.Fprintln(os.Stderr, "  run|runs <path> [args]  build and run a program using LLVM")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Examples:")
+		fmt.Fprintf(os.Stderr, "  %s -backend llvm main.ferr\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -k main.ferr\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s run main.ferr arg1 arg2\n", os.Args[0])
 	}
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("Ferret compiler v%s\n", compilerVersion)
+		return
+	}
+	if *showHelp {
+		flag.Usage()
+		return
+	}
 
 	if flag.NArg() != 1 {
 		flag.Usage()
 		os.Exit(2)
 	}
 
-	selectedBackend := *backendTarget
-	if selectedBackend == "" {
-		selectedBackend = *buildBackend
-	}
+	selectedBackend := strings.ToLower(strings.TrimSpace(*backendTarget))
 	if selectedBackend == "" {
 		selectedBackend = "llvm"
 	}
+	if selectedBackend != string(backend.TargetLLVM) && selectedBackend != string(backend.TargetQBE) {
+		fmt.Fprintf(os.Stderr, "invalid backend %q (expected llvm or qbe)\n", selectedBackend)
+		os.Exit(2)
+	}
+
 	result := parsePathWithBackend(flag.Arg(0), selectedBackend, *debugBuild)
-	if *astFlag || *astOut != "" {
-		if err := emitASTDump(result, *astOut); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-	if *hirFlag || *hirOut != "" {
-		if err := emitTextDump(result, *hirOut, ".hir", func(mod *context.Module) string {
-			return hir.FormatModule(mod.HIR)
-		}); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-	if *mirFlag || *mirOut != "" {
-		if err := emitTextDump(result, *mirOut, ".mir", func(mod *context.Module) string {
-			return mir.FormatModule(mod.MIR)
-		}); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
 	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
 		result.Diagnostics.EmitAll()
 	}
 	if result.Diagnostics.HasErrors() {
 		os.Exit(1)
 	}
+
+	if *keepGen {
+		if err := emitKeepGenArtifacts(result, selectedBackend, "_gen"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	}
+
 	if *outputPath != "" {
-		if err := buildExecutable(result, *outputPath, backend.Target(*buildBackend)); err != nil {
+		if err := buildExecutable(result, *outputPath, backend.Target(selectedBackend)); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
-		return
-	}
-	if *backendTarget != "" {
-		if err := emitBackend(result, *backendTarget, *backendOut); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-	}
-	if *astFlag || *astOut != "" || *hirFlag || *hirOut != "" || *mirFlag || *mirOut != "" {
-		if *backendTarget != "" {
-			return
-		}
-		return
-	}
-	if *backendTarget != "" {
 		return
 	}
 
@@ -188,6 +186,29 @@ func main() {
 			fmt.Printf("  %s\n", ast.DeclSummary(decl))
 		}
 	}
+}
+
+func emitKeepGenArtifacts(result compiler.Result, backendName, outDir string) error {
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+	if err := emitASTDump(result, filepath.Join(outDir, "ast.json")); err != nil {
+		return err
+	}
+	if err := emitTextDump(result, outDir, ".hir", func(mod *context.Module) string {
+		return hir.FormatModule(mod.HIR)
+	}); err != nil {
+		return err
+	}
+	if err := emitTextDump(result, outDir, ".mir", func(mod *context.Module) string {
+		return mir.FormatModule(mod.MIR)
+	}); err != nil {
+		return err
+	}
+	if err := emitBackend(result, backendName, outDir); err != nil {
+		return err
+	}
+	return nil
 }
 
 func runCommand(args []string) error {
@@ -580,7 +601,7 @@ func debugPayload(result compiler.Result) any {
 			"file_path":   result.Entry.FilePath,
 			"origin":      string(result.Entry.Origin),
 			"phase":       result.Entry.Phase.String(),
-			"ast":         ast.DebugModule(result.Entry.AST),
+			"ast":         safeDebugModule(result.Entry.AST),
 		}
 	}
 	modules := make([]any, 0, len(result.Modules))
@@ -594,11 +615,18 @@ func debugPayload(result compiler.Result) any {
 			"origin":       string(mod.Origin),
 			"phase":        mod.Phase.String(),
 			"dependencies": append([]string(nil), mod.Dependencies...),
-			"ast":          ast.DebugModule(mod.AST),
+			"ast":          safeDebugModule(mod.AST),
 		})
 	}
 	return map[string]any{
 		"kind":    "workspace",
 		"modules": modules,
 	}
+}
+
+func safeDebugModule(module *ast.Module) any {
+	defer func() {
+		_ = recover()
+	}()
+	return ast.DebugModule(module)
 }

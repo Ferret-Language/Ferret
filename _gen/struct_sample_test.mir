@@ -1,0 +1,177 @@
+module struct_sample_test
+type Point struct {
+    X i32 = 1
+    Y i32 = 2
+    static Counter i32 = 0
+}
+type Circle struct {
+    Rad f32
+}
+type Shape interface {
+    Show() void
+}
+
+globals:
+    const Point__Counter: i32 = 0
+
+fn Show(mut _ *Circle) void {
+locals:
+    _: *Circle [mut]
+    _t1: str [temp]
+    _t2: void [temp]
+entry:
+    _t1 = .{ .ptr = "I am a circle", .len = 13 }
+    _t2 = std::io::Println(_t1)
+    eval _t2
+    jump bb1
+bb1:
+    exit
+}
+
+fn Point(mut _ *mut Point) void {
+locals:
+    _: *mut Point [mut]
+    _t1: str [temp]
+    _t2: void [temp]
+entry:
+    _t1 = .{ .ptr = "ctor", .len = 4 }
+    _t2 = std::io::Println(_t1)
+    eval _t2
+    store deref addr_of Point__Counter = add Point__Counter 1
+    jump bb1
+bb1:
+    exit
+}
+
+fn ~Point(mut _ *own Point) void {
+locals:
+    _: *own Point [mut]
+    _t1: str [temp]
+    _t2: void [temp]
+entry:
+    _t1 = .{ .ptr = "dtor", .len = 4 }
+    _t2 = std::io::Println(_t1)
+    eval _t2
+    jump bb1
+bb1:
+    exit
+}
+
+fn Show(mut _ *Point) void {
+locals:
+    _: *Point [mut]
+    _t1: str [temp]
+    _t2: void [temp]
+entry:
+    _t1 = .{ .ptr = "I am a point", .len = 12 }
+    _t2 = std::io::Println(_t1)
+    eval _t2
+    jump bb1
+bb1:
+    exit
+}
+
+fn who(s Shape) void {
+locals:
+    s: Shape
+    _t1: fn() void [temp]
+    _t2: void [temp]
+entry:
+    _t1 = s.Show
+    _t2 = _t1(s)
+    eval _t2
+    jump bb1
+bb1:
+    exit
+}
+
+fn main() i32 {
+locals:
+    p: Point [mut]
+    p2: Point
+    maybe: ?i32 [mut]
+    p3: Point
+    c1: Circle
+    _t5: *own Point [temp]
+    _t6: void [temp]
+    _t7: i32 [temp]
+    _t8: void [temp]
+    _t9: i32 [temp]
+    _t10: void [temp]
+    _t11: void [temp]
+    _t12: *own Point [temp]
+    _t13: void [temp]
+    _t14: i32 [temp]
+    _t15: void [temp]
+    _t16: i32 [temp]
+    _t17: void [temp]
+    _t18: void [temp]
+    _t19: Point [temp]
+    _t20: *own Point [temp]
+    _t21: void [temp]
+    _t22: Circle [temp]
+    _t23: Shape [temp]
+    _t24: void [temp]
+    _t25: Shape [temp]
+    _t26: void [temp]
+    _t27: *own Point [temp]
+    _t28: void [temp]
+    _t29: *own Point [temp]
+    _t30: void [temp]
+    _t31: *own Point [temp]
+    _t32: void [temp]
+entry:
+    p = .{ .X = 1, .Y = 2 }
+    defer { _t5 = addr_of p; _t6 = Point__~Point(_t5); eval _t6 }
+    _t7 = field p 0
+    _t8 = global::print(_t7)
+    eval _t8
+    _t9 = field p 1
+    _t10 = global::print(_t9)
+    eval _t10
+    _t11 = global::print(Point__Counter)
+    eval _t11
+    p2 = .{ .X = 1, .Y = 2 }
+    defer { _t12 = addr_of p2; _t13 = Point__~Point(_t12); eval _t13 }
+    _t14 = field p2 0
+    _t15 = global::print(_t14)
+    eval _t15
+    _t16 = field p2 1
+    _t17 = global::print(_t16)
+    eval _t17
+    _t18 = global::print(Point__Counter)
+    eval _t18
+    maybe = none
+    store deref addr_of maybe = 21
+    store deref addr_of maybe = 66
+    store deref addr_of maybe = none
+    _t19 = .{ .X = 1, .Y = 2 }
+    p3 = _t19 as Point
+    defer { _t20 = addr_of p3; _t21 = Point__~Point(_t20); eval _t21 }
+    _t22 = .{ .Rad = 2.3 }
+    c1 = _t22 as Circle
+    _t23 = interface(p3)
+    _t24 = who(_t23)
+    eval _t24
+    _t25 = interface(c1)
+    _t26 = who(_t25)
+    eval _t26
+    return 0 unwind bb4
+bb1:
+    return 0
+bb2:
+    _t27 = addr_of p3
+    _t28 = Point__~Point(_t27)
+    eval _t28
+    jump bb1
+bb3:
+    _t29 = addr_of p2
+    _t30 = Point__~Point(_t29)
+    eval _t30
+    jump bb2
+bb4:
+    _t31 = addr_of p
+    _t32 = Point__~Point(_t31)
+    eval _t32
+    jump bb3
+}
