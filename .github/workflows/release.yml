@@ -66,26 +66,26 @@ jobs:
       - name: Pack bundle (unix)
         if: matrix.os != 'windows'
         run: |
-          rm -rf output dist
+          rm -rf build dist
           go run ./tools
 
       - name: Pack bundle (windows)
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          Remove-Item -Recurse -Force output, dist -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
           go run ./tools
 
       - name: Verify bundled clang (unix)
         if: matrix.os != 'windows'
         run: |
-          test -f output/ferret/toolchain/bin/clang
+          test -f build/toolchain/bin/clang
 
       - name: Verify bundled clang (windows)
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          if (!(Test-Path "output\ferret\toolchain\bin\clang.exe")) {
+          if (!(Test-Path "build\toolchain\bin\clang.exe")) {
             throw "bundled clang.exe not found"
           }
 
@@ -93,14 +93,14 @@ jobs:
         if: matrix.os != 'windows'
         run: |
           mkdir -p dist
-          tar -czf "dist/ferret-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" -C output ferret
+          tar -czf "dist/ferret-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" -C build .
 
       - name: Archive (windows)
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path "output\ferret\*" -DestinationPath "dist\ferret-${{ matrix.os }}-${{ matrix.arch }}.zip"
+          Compress-Archive -Path "build\*" -DestinationPath "dist\ferret-${{ matrix.os }}-${{ matrix.arch }}.zip"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

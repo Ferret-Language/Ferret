@@ -12,10 +12,10 @@ import (
 	"syscall/js"
 
 	"compiler/internal/core/diagnostics"
+	"compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
-	compiler "compiler/internal/driver"
 )
 
 type bridgeCapabilities struct {
@@ -172,10 +172,10 @@ func main() {
 		}
 
 		return toJSResult(compileResult{
-			Success: true,
-			Output:  fmt.Sprintf("Compiled minimal browser wasm from %d source file(s).", ferretFileCount),
-			Wasm:    js.Global().Call("btoa", string(wasmBytes)).String(),
-			Diagnostics: diagnosticsOut,
+			Success:      true,
+			Output:       fmt.Sprintf("Compiled minimal browser wasm from %d source file(s).", ferretFileCount),
+			Wasm:         js.Global().Call("btoa", string(wasmBytes)).String(),
+			Diagnostics:  diagnosticsOut,
 			Capabilities: caps,
 		})
 	}))
