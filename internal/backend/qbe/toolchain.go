@@ -39,7 +39,7 @@ func ensureQBEBinary() (string, error) {
 		return "", fmt.Errorf("qbe toolchain: cannot determine cache dir: %w", err)
 	}
 	qbeDir := filepath.Join(cacheDir, "ferret", "qbe-"+VendoredCommit[:12])
-	binPath := filepath.Join(qbeDir, "qbe")
+	binPath := filepath.Join(qbeDir, qbeBinaryName())
 
 	// Already built — fast path.
 	if info, err := os.Stat(binPath); err == nil && info.Size() > 0 {
@@ -77,6 +77,13 @@ func ensureQBEBinary() (string, error) {
 	}
 
 	return binPath, nil
+}
+
+func qbeBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "qbe.exe"
+	}
+	return "qbe"
 }
 
 // deftgt returns the QBE Deftgt symbol for the current OS/arch combination,
