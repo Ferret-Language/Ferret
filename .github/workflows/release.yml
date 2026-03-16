@@ -29,7 +29,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: compiler
+        working-directory: .
 
     steps:
       - name: Checkout
@@ -38,7 +38,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: compiler/go.mod
+          go-version-file: go.mod
 
       - name: Install LLVM toolchain (linux)
         if: matrix.os == 'linux'
@@ -107,8 +107,8 @@ jobs:
         with:
           name: ferret-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            compiler/dist/ferret-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
-            compiler/dist/ferret-${{ matrix.os }}-${{ matrix.arch }}.zip
+            dist/ferret-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+            dist/ferret-${{ matrix.os }}-${{ matrix.arch }}.zip
           if-no-files-found: ignore
 
   publish:
