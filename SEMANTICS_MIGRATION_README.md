@@ -79,7 +79,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Enforce single active `&mut` borrow and no overlapping mutable/immutable borrows.
 [*] Enforce that references cannot escape scope by return, module binding, heap storage, or deferred capture.
 [*] Enforce that heap values cannot contain `&T` or `&mut T`.
-[ ] Revisit partial-move logic so it only applies where the new model actually needs it.
+[*] Revisit partial-move logic so it only applies where the new model actually needs it.
 [*] Expand ownership tests to cover local scopes, branches, loops, returns, globals, and aggregate storage.
 
 ### Phase 7: Update assignment, mutation, and access rules

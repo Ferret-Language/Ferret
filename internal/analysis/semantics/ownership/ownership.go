@@ -881,6 +881,9 @@ func (a *analyzer) consumeLocalPath(scope *valueScope, root int, path string, lo
 		return
 	}
 	if path != "" {
+		if !a.isMoveType(a.pathType(info.typ, path)) {
+			return
+		}
 		if movedLoc, movedPath, ok := movedPathConflict(info, path); ok {
 			a.reportMovedPathUse(root, path, loc, movedLoc, movedPath)
 			return
@@ -1470,6 +1473,24 @@ func (a *analyzer) underlying(typ typeinfo.Type) typeinfo.Type {
 			owner = a.mod
 		}
 		return syntaxType(owner, named.Decl.Type)
+	}
+	return typ
+}
+
+func (a *analyzer) pathType(root typeinfo.Type, path string) typeinfo.Type {
+	if root == nil || path == "" {
+		return root
+	}
+	typ := root
+	for _, name := range splitPath(path) {
+		field := a.lookupStructField(typ, name)
+		if field == nil {
+			return typeinfo.UnknownType{}
+		}
+		typ = field.Type
+	}
+	if typ == nil {
+		return typeinfo.UnknownType{}
 	}
 	return typ
 }

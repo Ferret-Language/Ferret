@@ -399,6 +399,32 @@ fn main(n Node) i32 {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
 }
 
+func TestOwnershipPhaseAllowsWholeValueUseAfterCopyingPlainField(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+type Node struct {
+    Child *Node
+    Value i32 = 0
+}
+
+fn main(n Node) i32 {
+    let value = n.Value
+    let again = n
+    return again.Value + value
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
+		}
+	}
+}
+
 func TestOwnershipPhaseAllowsOtherFieldAfterFieldMove(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
