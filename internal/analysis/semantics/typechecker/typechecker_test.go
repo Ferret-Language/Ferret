@@ -22,7 +22,7 @@ import "util/build"
 fn main() i32 {
     let p = build::Origin()
     if p == .{ .X = 0, .Y = 0 } {
-        return vec2::Len2(copy p)
+        return vec2::Len2(p)
     }
     return 1
 }
@@ -1534,7 +1534,7 @@ fn main() i32 {
 	}
 }
 
-func TestTypecheckerAllowsExplicitCopyForStructValue(t *testing.T) {
+func TestTypecheckerRejectsCopyAsNotYetImplemented(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
@@ -1550,8 +1550,18 @@ fn main() i32 {
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid copy diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidCopy && strings.Contains(diag.Message, "`copy` is not yet implemented") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected not-yet-implemented copy diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -1571,7 +1581,7 @@ fn bad(c *Conn) void {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidCopy && strings.Contains(diag.Message, "deep copy of owning pointer type") {
+		if diag.Code == diagnostics.ErrInvalidCopy && strings.Contains(diag.Message, "`copy` is not yet implemented") {
 			found = true
 			break
 		}
@@ -1595,13 +1605,13 @@ fn bad(p ^i32) void {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidCopy && strings.Contains(diag.Message, "cannot deep copy raw pointer type") {
+		if diag.Code == diagnostics.ErrInvalidCopy && strings.Contains(diag.Message, "`copy` is not yet implemented") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected raw-pointer copy diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected copy not-yet-implemented diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

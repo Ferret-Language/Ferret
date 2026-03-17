@@ -43,6 +43,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Decide whether `copy` remains as optional explicit syntax or is removed entirely.
 [*] Remove or redefine `take` so it no longer carries the old move-model assumptions.
 [*] Update ownership tests to match the new move/copy rules.
+[*] Temporarily block `copy` with a "`copy` is not yet implemented" diagnostic until deep clone support lands.
 
 ### Phase 3: Separate references from pointers
 

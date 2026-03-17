@@ -24,7 +24,7 @@ type Point struct {
 let mut GlobalPoint: Point = .{ .X = 1, .Y = 2 }
 
 fn main() i32 {
-    let mut p = copy GlobalPoint
+    let mut p = GlobalPoint
     if p.X > 0 {
         p.X = p.X + 1
     }

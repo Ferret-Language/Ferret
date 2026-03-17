@@ -585,14 +585,12 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 		switch v.Op {
 		case "copy":
 			a.checkValue(scope, v.Right)
-			if ok, msg := a.canDeepCopyType(valueType(v.Right)); !ok {
-				loc := v.Loc()
-				a.addDiagnostic(
-					diagnostics.NewError(msg).
-						WithCode(diagnostics.ErrInvalidCopy).
-						WithPrimaryLabel(&loc, "`copy` requires a deep-cloneable value"),
-				)
-			}
+			loc := v.Loc()
+			a.addDiagnostic(
+				diagnostics.NewError("`copy` is not yet implemented").
+					WithCode(diagnostics.ErrInvalidCopy).
+					WithPrimaryLabel(&loc, "deep clone support has not been implemented yet"),
+			)
 		case "&", "&mut":
 			a.checkValue(scope, v.Right)
 		default:

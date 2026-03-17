@@ -414,14 +414,12 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 	right := c.typeOfExpr(scope, expr.Right, expected)
 	switch expr.Op {
 	case "copy":
-		if ok, msg := c.canDeepCopyType(right); !ok {
-			loc := expr.Loc()
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError(msg).
-					WithCode(diagnostics.ErrInvalidCopy).
-					WithPrimaryLabel(&loc, "`copy` requires a deep-cloneable value"),
-			)
-		}
+		loc := expr.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("`copy` is not yet implemented").
+				WithCode(diagnostics.ErrInvalidCopy).
+				WithPrimaryLabel(&loc, "deep clone support has not been implemented yet"),
+		)
 		c.info.BindNode(expr, right)
 		return right
 	case "comptime":

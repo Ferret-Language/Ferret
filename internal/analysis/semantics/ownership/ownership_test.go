@@ -358,8 +358,7 @@ fn make(flag bool) Handle {
 
 fn main() i32 {
     let h = make(true)
-    let other = copy h
-    return other as i32
+    return h as i32
 }
 `)
 
