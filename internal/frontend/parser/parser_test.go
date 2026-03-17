@@ -160,21 +160,31 @@ type Handle enum {
 }
 
 func TestParserRejectsLegacyPointerQualifiers(t *testing.T) {
-	src := `
-type Buf struct {
-    data *own u8
-    ptr *raw mut u8
-    maybe ?*own u8
-}
+	tests := []struct {
+		name    string
+		src     string
+		message string
+	}{
+		{name: "own", src: "type Buf struct { data *own u8 }", message: "`*own T` is no longer supported; use `*T`"},
+		{name: "mut", src: "fn (b *mut Buf) grow() void {}", message: "`*mut T` is no longer supported; use `*T` or `&mut T`"},
+		{name: "raw", src: "type Buf struct { ptr *raw u8 }", message: "`*raw T` is no longer supported; use `^T`"},
+		{name: "raw mut", src: "type Buf struct { ptr *raw mut u8 }", message: "`*raw mut T` is no longer supported; use `^T`"},
+	}
 
-fn (b *mut Buf) grow(n usize) Oom!*own u8 {
-    return b.ptr
-}
-`
-
-	_, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) == 0 {
-		t.Fatal("expected legacy pointer syntax diagnostics")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, diag := parseTestModule(t, tt.src)
+			found := false
+			for _, d := range diag.All() {
+				if strings.Contains(d.Message, tt.message) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected %q diagnostic, got %v", tt.message, diag.All())
+			}
+		})
 	}
 }
 
