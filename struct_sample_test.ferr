@@ -14,12 +14,12 @@ fn (_ *Circle) Show() {
     io::Println("I am a circle")
 }
 
-fn (_ *mut Point) Point() {
+fn (_ *Point) Point() {
     io::Println("ctor")
     Point::Counter = Point::Counter + 1
 }
 
-fn (_ *own Point) ~Point() void {
+fn (_ *Point) ~Point() void {
     io::Println("dtor")
 }
 
@@ -53,7 +53,7 @@ fn main() i32 {
 
     let p3 = .{} as Point
     let c1 = .{ .Rad = 2.3 } as Circle
-    
+
     who(p3)
     who(c1)
 

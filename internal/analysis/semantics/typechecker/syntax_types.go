@@ -31,10 +31,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		return &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}
 	case *ast.PointerType:
 		inner := c.typeFromSyntax(mod, t.Inner)
-		if t.IsRaw && (t.Inner == nil || typeinfo.IsBuiltinNamed(inner, "void")) {
-			inner = nil
-		}
-		return &typeinfo.PointerType{IsOwn: t.IsOwn, IsRaw: t.IsRaw, IsMut: t.IsMut, Inner: inner}
+		return &typeinfo.PointerType{IsOwn: true, Inner: inner}
 	case *ast.RefType:
 		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.RawPtrType:

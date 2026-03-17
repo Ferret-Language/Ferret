@@ -8,7 +8,7 @@ import (
 
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
 )
 
@@ -142,7 +142,7 @@ type Point struct {
     X i32 = 0
 }
 
-fn probe(p *own Point) void {
+fn probe(p *Point) void {
     let q = &*p
     q
 }
@@ -284,11 +284,11 @@ type Point struct {
     static Origin Point = .{}
 }
 
-fn (p *mut Point) Point() {
+fn (p *Point) Point() {
 	p.Y = p.Y + 1
 }
 
-fn (p *own Point) ~Point() void {
+fn (p *Point) ~Point() void {
     p.X = 0
 }
 

@@ -6,9 +6,9 @@
 // String literals have type `str`. Use str_data(s) and str_len(s) to extract
 // the raw fields at C FFI boundaries.
 //
-// `*raw` is the Ferret spelling of C's `void *`: an untyped raw pointer.
+// `^T` is the Ferret raw pointer form for C-style unchecked pointers.
 // Use it at FFI boundaries where C expects `void *`. Use an unsafe cast to
-// convert to a typed pointer: `unsafe raw_ptr as *u8`.
+// convert to a typed pointer: `unsafe raw_ptr as ^u8`.
 //
 // `recover` is a builtin function. Panic lowering goes straight to the
 // runtime hook `global__panic` and is not callable from source.
@@ -33,7 +33,7 @@ fn print(value str) void;
 /// Returns the raw byte pointer that backs s.
 /// Valid only as long as s is live. Do not store without care.
 #[builtin]
-fn str_data(s *str) *raw;
+fn str_data(s *str) ^void;
 
 /// Returns the byte length of s (number of UTF-8 code units / bytes).
 #[builtin]
@@ -58,48 +58,48 @@ fn chars_str(chars *[]char) str;
 /// Copies s into a newly allocated NUL-terminated C string.
 /// The returned pointer can be passed to C APIs and freed with free().
 #[builtin]
-fn str_cstr(s *str) *raw;
+fn str_cstr(s *str) ^void;
 
 // ---------------------------------------------------------------------------
 // Memory management (libc)
 //
-// All functions use *raw (C's void *) matching actual libc signatures.
-// Cast to a typed pointer with unsafe: `unsafe malloc(n) as *u8`
+// All functions use ^void matching actual libc signatures.
+// Cast to a typed pointer with unsafe: `unsafe malloc(n) as ^u8`
 // ---------------------------------------------------------------------------
 
 /// Allocates size uninitialized bytes. Returns a nil pointer on failure.
 #[extern("malloc")]
-fn malloc(size usize) *raw;
+fn malloc(size usize) ^void;
 
 /// Frees memory previously obtained from malloc, calloc, or realloc.
 #[extern("free")]
-fn free(ptr *raw) void;
+fn free(ptr ^void) void;
 
 /// Resizes a previously allocated block to size bytes.
 /// Returns the (possibly moved) new pointer, or nil on failure.
 #[extern("realloc")]
-fn realloc(ptr *raw, size usize) *raw;
+fn realloc(ptr ^void, size usize) ^void;
 
 /// Allocates count * size zero-initialised bytes. Returns nil on failure.
 #[extern("calloc")]
-fn calloc(count usize, size usize) *raw;
+fn calloc(count usize, size usize) ^void;
 
 /// Copies n bytes from src to dst. Regions must not overlap.
 #[extern("memcpy")]
-fn memcpy(dst *raw, src *raw, n usize) *raw;
+fn memcpy(dst ^void, src ^void, n usize) ^void;
 
 /// Copies n bytes from src to dst, handling overlap correctly.
 #[extern("memmove")]
-fn memmove(dst *raw, src *raw, n usize) *raw;
+fn memmove(dst ^void, src ^void, n usize) ^void;
 
 /// Fills the first n bytes at ptr with the byte value c (low 8 bits used).
 #[extern("memset")]
-fn memset(ptr *raw, c i32, n usize) *raw;
+fn memset(ptr ^void, c i32, n usize) ^void;
 
 /// Compares n bytes of a and b.
 /// Returns 0 if equal, negative if a < b, positive if a > b.
 #[extern("memcmp")]
-fn memcmp(a *raw, b *raw, n usize) i32;
+fn memcmp(a ^void, b ^void, n usize) i32;
 
 // ---------------------------------------------------------------------------
 // Process

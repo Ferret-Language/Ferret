@@ -162,7 +162,7 @@ type Handle move enum {
 	}
 }
 
-func TestParsePointerQualifiers(t *testing.T) {
+func TestParserRejectsLegacyPointerQualifiers(t *testing.T) {
 	src := `
 type Buf struct {
     data *own u8
@@ -176,8 +176,8 @@ fn (b *mut Buf) grow(n usize) Oom!*own u8 {
 `
 
 	_, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", got)
+	if got := diag.All(); len(got) == 0 {
+		t.Fatal("expected legacy pointer syntax diagnostics")
 	}
 }
 
@@ -601,10 +601,10 @@ import "json/parser" as json
 
 type Conn struct {}
 
-fn (c *mut Conn) Conn(fd i32) {
+fn (c *Conn) Conn(fd i32) {
 }
 
-fn (c *own Conn) ~Conn() {
+fn (c *Conn) ~Conn() {
 }
 `
 
@@ -677,11 +677,11 @@ fn run(m Mutex, cond bool) void {
 
 func TestParseUnsafeBlockAndUnsafeFunctionCall(t *testing.T) {
 	src := `
-unsafe fn Read(ptr *raw i32) i32 {
+unsafe fn Read(ptr ^i32) i32 {
     return *ptr
 }
 
-fn run(ptr *raw i32) i32 {
+fn run(ptr ^i32) i32 {
     let x: i32
     unsafe {
         x = Read(ptr)

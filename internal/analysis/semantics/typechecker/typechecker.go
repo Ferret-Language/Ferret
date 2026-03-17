@@ -37,6 +37,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if declared != nil && d.Value != nil {
 			c.checkAssignable(d.Value.Loc(), declared, value)
 		}
+		c.checkModuleBindingType(d.Name.Loc(), finalType)
 		c.bindDeclSymbol(d.Name, finalType)
 		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
 			c.info.BindSymbol(sym, finalType)
@@ -62,6 +63,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 			c.checkAssignable(d.Value.Loc(), declared, value)
 		}
 		c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
+		c.checkModuleBindingType(d.Name.Loc(), finalType)
 		c.bindDeclSymbol(d.Name, finalType)
 		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
 			c.info.BindSymbol(sym, finalType)
@@ -91,6 +93,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			if field.Type != nil {
 				c.info.BindNode(field.Type, fieldType)
 			}
+			c.checkHeapStoredReference(field.Type.Loc(), fieldType)
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
 				c.checkAssignable(field.Default.Loc(), fieldType, valueType)
@@ -104,6 +107,8 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			if field.Type != nil {
 				c.info.BindNode(field.Type, fieldType)
 			}
+			c.checkModuleBindingType(field.Type.Loc(), fieldType)
+			c.checkHeapStoredReference(field.Type.Loc(), fieldType)
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
 				c.checkAssignable(field.Default.Loc(), fieldType, valueType)
@@ -131,6 +136,88 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 				c.info.BindNode(member, c.typeFromSyntax(c.mod, member))
 			}
 		}
+	}
+}
+
+func (c *checker) checkModuleBindingType(loc source.Location, typ typeinfo.Type) {
+	if c == nil || typ == nil {
+		return
+	}
+	if _, ok := typ.(*typeinfo.RefType); ok {
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("module-level bindings cannot have reference type").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "references are stack-only and cannot escape to module scope"),
+		)
+	}
+}
+
+func (c *checker) checkHeapStoredReference(loc source.Location, typ typeinfo.Type) {
+	if c == nil || typ == nil {
+		return
+	}
+	ptr, ok := typ.(*typeinfo.PointerType)
+	if !ok || ptr == nil || !ptr.IsOwn {
+		return
+	}
+	if c.typeContainsReference(ptr.Inner) {
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("owning heap types cannot contain references").
+				WithCode(diagnostics.ErrInvalidType).
+				WithPrimaryLabel(&loc, "heap storage cannot contain `&T` or `&mut T`"),
+		)
+	}
+}
+
+func (c *checker) typeContainsReference(typ typeinfo.Type) bool {
+	if typ == nil {
+		return false
+	}
+	switch t := c.underlying(typ).(type) {
+	case *typeinfo.RefType:
+		return true
+	case *typeinfo.PointerType:
+		return c.typeContainsReference(t.Inner)
+	case *typeinfo.RawPtrType:
+		return false
+	case *typeinfo.OptionalType:
+		return c.typeContainsReference(t.Inner)
+	case *typeinfo.ErrorUnionType:
+		return c.typeContainsReference(t.Error) || c.typeContainsReference(t.Value)
+	case *typeinfo.ArrayType:
+		return c.typeContainsReference(t.Inner)
+	case *typeinfo.SliceType:
+		return c.typeContainsReference(t.Inner)
+	case *typeinfo.TupleType:
+		for _, elem := range t.Elems {
+			if c.typeContainsReference(elem) {
+				return true
+			}
+		}
+		return false
+	case *typeinfo.StructType:
+		for _, field := range t.OrderedFields {
+			if field != nil && c.typeContainsReference(field.Type) {
+				return true
+			}
+		}
+		for _, field := range t.OrderedStaticFields {
+			if field != nil && c.typeContainsReference(field.Type) {
+				return true
+			}
+		}
+		return false
+	case *typeinfo.UnionType:
+		for _, member := range t.Members {
+			if c.typeContainsReference(member) {
+				return true
+			}
+		}
+		return false
+	case *typeinfo.InterfaceType, *typeinfo.BuiltinType, *typeinfo.StringType, *typeinfo.EnumType, *typeinfo.ErrorSetType:
+		return false
+	default:
+		return false
 	}
 }
 
@@ -342,23 +429,6 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 			c.info.BindNode(expr, ptr.Inner)
 			return ptr.Inner
 		case *typeinfo.PointerType:
-			if ptr.IsRaw && c.unsafeDepth == 0 {
-				loc := expr.Location
-				c.ctx.Diagnostics.Add(
-					diagnostics.NewError("raw pointer dereference requires unsafe block").
-						WithCode(diagnostics.ErrInvalidOperation).
-						WithPrimaryLabel(&loc, "wrap this dereference in `unsafe { ... }`"),
-				)
-			}
-			if ptr.Inner == nil {
-				loc := expr.Location
-				c.ctx.Diagnostics.Add(
-					diagnostics.NewError("cannot dereference untyped raw pointer").
-						WithCode(diagnostics.ErrInvalidOperation).
-						WithPrimaryLabel(&loc, "cast this *raw pointer to a typed pointer first"),
-				)
-				return typeinfo.InvalidType{}
-			}
 			c.info.BindNode(expr, ptr.Inner)
 			return ptr.Inner
 		}
@@ -906,14 +976,12 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 		c.info.BindNode(expr, target)
 		return target
 	}
-	// Raw-pointer reinterpretation: *raw T → *raw S (including *raw void).
+	// Raw-pointer reinterpretation: ^T → ^S (including ^void).
 	// Any cast where either side is a raw pointer requires an unsafe block.
 	srcUnderlying := c.underlying(sourceType)
 	dstUnderlying := c.underlying(target)
-	srcPtr, srcIsRawPtr := srcUnderlying.(*typeinfo.PointerType)
-	dstPtr, dstIsRawPtr := dstUnderlying.(*typeinfo.PointerType)
-	srcIsRawPtr = srcIsRawPtr && srcPtr.IsRaw
-	dstIsRawPtr = dstIsRawPtr && dstPtr.IsRaw
+	_, srcIsRawPtr := srcUnderlying.(*typeinfo.RawPtrType)
+	_, dstIsRawPtr := dstUnderlying.(*typeinfo.RawPtrType)
 	if srcIsRawPtr || dstIsRawPtr {
 		if c.unsafeDepth > 0 {
 			c.info.BindNode(expr, target)
@@ -1012,12 +1080,24 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 	}
 	// Pointer indexing: *T[i] → T
 	if ptr, ok := base.(*typeinfo.PointerType); ok {
+		c.info.BindNode(expr, ptr.Inner)
+		return ptr.Inner
+	}
+	if ptr, ok := base.(*typeinfo.RawPtrType); ok {
+		if c.unsafeDepth == 0 {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("raw pointer indexing requires unsafe block").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "wrap this indexing operation in `unsafe { ... }`"),
+			)
+		}
 		if ptr.Inner == nil {
 			loc := expr.Location
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError("cannot index into untyped raw pointer").
 					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "cast this *raw pointer to a typed pointer first"),
+					WithPrimaryLabel(&loc, "cast this raw pointer to a typed pointer first"),
 			)
 			return typeinfo.InvalidType{}
 		}
@@ -1192,7 +1272,7 @@ func (c *checker) checkDestructorDecl(fn *ast.FuncDecl, recvType typeinfo.Type) 
 
 func (c *checker) isExactLifecycleReceiver(recvType typeinfo.Type, typeName string, constructor bool) bool {
 	ptr, ok := recvType.(*typeinfo.PointerType)
-	if !ok || ptr == nil || ptr.IsRaw {
+	if !ok || ptr == nil || ptr.IsRaw || !ptr.IsOwn {
 		return false
 	}
 	named, ok := ptr.Inner.(*typeinfo.NamedType)

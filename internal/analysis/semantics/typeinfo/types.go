@@ -69,21 +69,13 @@ func (t *PointerType) String() string {
 	if t == nil {
 		return "<nil>"
 	}
-	prefix := "*"
-	suffix := ""
-	if t.IsOwn {
-		suffix += "own "
-	}
 	if t.IsRaw {
-		suffix += "raw "
+		if t.Inner == nil {
+			return "^void"
+		}
+		return "^" + typeString(t.Inner)
 	}
-	if t.IsMut {
-		suffix += "mut "
-	}
-	if t.IsRaw && t.Inner == nil {
-		return strings.TrimSpace(prefix + suffix)
-	}
-	return prefix + suffix + typeString(t.Inner)
+	return "*" + typeString(t.Inner)
 }
 
 type RefType struct {
@@ -220,8 +212,8 @@ type FuncType struct {
 	Params         []Type
 	ComptimeParams []bool
 	Result         Type
-	// ImplicitReceiver is set when a method call is resolved against a pointer
-	// receiver (*T or *mut T) but the call-site expression is a plain value.
+	// ImplicitReceiver is set when a synthetic call needs an explicit receiver
+	// type during lowering, such as deferred destructor cleanup.
 	// MIR lowering uses this to emit an automatic address-of for the receiver.
 	ImplicitReceiver Type
 }
@@ -306,7 +298,7 @@ func Equal(a, b Type) bool {
 		return ok && at.ModuleKey == bt.ModuleKey && at.Name == bt.Name
 	case *PointerType:
 		bt, ok := b.(*PointerType)
-		return ok && at.IsOwn == bt.IsOwn && at.IsRaw == bt.IsRaw && at.IsMut == bt.IsMut && Equal(at.Inner, bt.Inner)
+		return ok && at.IsRaw == bt.IsRaw && Equal(at.Inner, bt.Inner)
 	case *RefType:
 		bt, ok := b.(*RefType)
 		return ok && at.Mutable == bt.Mutable && Equal(at.Inner, bt.Inner)

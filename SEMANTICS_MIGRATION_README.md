@@ -33,13 +33,13 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 ### Phase 1: Introduce the new surface syntax and type model
 
 [ ] Replace the old pointer AST/type model with explicit categories for owning pointer, reference, mutable reference, and raw pointer.
-[ ] Update the lexer/parser so the accepted type forms become `T`, `*T`, `&T`, `&mut T`, and `^T`.
-[ ] Remove parser support for old safe pointer spellings `*mut T`, `*own T`, and `*raw T`.
+[*] Update the lexer/parser so the accepted type forms become `T`, `*T`, `&T`, `&mut T`, and `^T`.
+[*] Remove parser support for old safe pointer spellings `*mut T`, `*own T`, and `*raw T`.
 [ ] Remove parser support for `type Name move ...`.
-[ ] Update AST debug/dump output to reflect the new type forms.
-[ ] Update type lowering in the typechecker so syntax maps to the new semantic types.
-[ ] Update type formatting and equality logic to reflect the new type identities.
-[ ] Add parser and typeinfo tests for all new type forms.
+[*] Update AST debug/dump output to reflect the new type forms.
+[*] Update type lowering in the typechecker so syntax maps to the new semantic types.
+[*] Update type formatting and equality logic to reflect the new type identities.
+[*] Add parser and typeinfo tests for all new type forms.
 
 ### Phase 2: Make copy/move classification match the new rules
 
@@ -55,8 +55,8 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 
 [*] Introduce distinct semantic types for `&T` and `&mut T`; they must not be represented as ordinary pointers.
 [*] Update prefix expression typing so `&` and `&mut` produce reference types, not pointer types.
-[ ] Update dereference and field/index access rules so they operate correctly on owning pointers, references, and raw pointers.
-[ ] Enforce that `^T` operations requiring safety are allowed only in `unsafe` contexts.
+[*] Update dereference and field/index access rules so they operate correctly on owning pointers, references, and raw pointers.
+[*] Enforce that `^T` operations requiring safety are allowed only in `unsafe` contexts.
 [ ] Add diagnostics for illegal reference usage where the current compiler still assumes pointer behavior.
 
 ### Phase 4: Rework parameter and receiver semantics around one rule
@@ -65,8 +65,8 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Replace old receiver matching keys (`*T`, `*mut T`, `*own T`) with the new receiver forms (`T`, `*T`, `&T`, `&mut T`).
 [*] Remove old method-call auto-borrow behavior that was designed for pointer receivers.
 [ ] Revisit call-site lowering so receiver passing is just ordinary first-parameter lowering under the new rules.
-[ ] Update constructor/destructor special cases if they still exist after the receiver model change.
-[ ] Add focused tests for each receiver form and each allowed/disallowed call pattern.
+[*] Update constructor/destructor special cases if they still exist after the receiver model change.
+[*] Add focused tests for each receiver form and each allowed/disallowed call pattern.
 
 ### Phase 5: Redesign interface method signatures
 
@@ -80,14 +80,14 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 
 ### Phase 6: Rewrite ownership analysis around owners and borrows
 
-[ ] Rebuild ownership classification so only owning heap pointers (`*T`) are consumed by moves.
-[ ] Keep use-after-move diagnostics for owners, but stop treating ordinary value types as move-only by default.
+[*] Rebuild ownership classification so only owning heap pointers (`*T`) are consumed by moves.
+[*] Keep use-after-move diagnostics for owners, but stop treating ordinary value types as move-only by default.
 [ ] Rebuild borrow tracking around reference types instead of pointer-shaped borrows.
 [ ] Enforce single active `&mut` borrow and no overlapping mutable/immutable borrows.
 [ ] Enforce that references cannot escape scope by return, module binding, heap storage, or deferred capture.
-[ ] Enforce that heap values cannot contain `&T` or `&mut T`.
+[*] Enforce that heap values cannot contain `&T` or `&mut T`.
 [ ] Revisit partial-move logic so it only applies where the new model actually needs it.
-[ ] Expand ownership tests to cover local scopes, branches, loops, returns, globals, and aggregate storage.
+[*] Expand ownership tests to cover local scopes, branches, loops, returns, globals, and aggregate storage.
 
 ### Phase 7: Update assignment, mutation, and access rules
 
@@ -101,9 +101,9 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 
 [ ] Update HIR generation so it no longer assumes old pointer kinds or old implicit receiver borrowing.
 [ ] Update MIR lowering and normalization to represent new owner/reference/raw operations cleanly.
-[ ] Remove IR-level assumptions tied to `*own`, `*mut`, and `*raw`.
+[*] Remove IR-level assumptions tied to `*own`, `*mut`, and `*raw`.
 [ ] Review deferred destructor generation and any ownership-triggered synthetic IR for compatibility with the new model.
-[ ] Keep MIR validation passing after each semantic slice lands.
+[*] Keep MIR validation passing after each semantic slice lands.
 
 ### Phase 9: Adapt backends and runtime contracts
 

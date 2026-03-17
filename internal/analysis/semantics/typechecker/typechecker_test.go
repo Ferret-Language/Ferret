@@ -1365,12 +1365,12 @@ fn main() i32 {
 	}
 }
 
-func TestTypecheckerRejectsCopyOfOwnPointer(t *testing.T) {
+func TestTypecheckerRejectsCopyOfOwningPointer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn bad(c *own Conn) void {
+fn bad(c *Conn) void {
     let d = copy c
 }
 `)
@@ -1633,5 +1633,55 @@ fn main() i32 {
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsOwningPointerToReferenceContainingType(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Inner struct {
+    Ref &i32
+}
+
+type Outer struct {
+    Child *Inner
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected heap reference containment diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "owning heap types cannot contain references") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected heap reference containment diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsModuleLevelReferenceBinding(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+let GlobalRef: &i32 = undefined
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected module-level reference binding diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "module-level bindings cannot have reference type") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected module-level reference binding diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }

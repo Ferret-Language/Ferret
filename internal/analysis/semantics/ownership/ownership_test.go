@@ -49,10 +49,10 @@ func TestOwnershipPhaseConsumesOwningReceiver(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn (c *own Conn) Close() void {
+fn (c *Conn) Close() void {
 }
 
-fn run(c *own Conn) void {
+fn run(c *Conn) void {
     c.Close()
     c.Close()
 }
@@ -134,10 +134,10 @@ func TestOwnershipPhaseFreezesBorrowedOwnerWithinBlock(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn useConn(c *own Conn) void {
+fn useConn(c *Conn) void {
 }
 
-fn run(c *own Conn) void {
+fn run(c *Conn) void {
     if 1 == 1 {
         let p = &*c
         useConn(c)
@@ -163,7 +163,7 @@ func TestOwnershipPhaseRejectsReturnedBorrow(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn borrow(c *own Conn) *Conn {
+fn borrow(c *Conn) &Conn {
     return &*c
 }
 `)
@@ -185,7 +185,7 @@ func TestOwnershipPhaseRejectsReturnedBorrowBinding(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn borrow(c *own Conn) *Conn {
+fn borrow(c *Conn) &Conn {
     let p = &*c
     return p
 }
@@ -272,7 +272,7 @@ func TestOwnershipPhaseRejectsWholeValueUseAfterFieldMove(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Node struct {
-    Child *own Node
+    Child *Node
     Value i32 = 0
 }
 
@@ -299,7 +299,7 @@ func TestOwnershipPhaseAllowsOtherFieldAfterFieldMove(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Node struct {
-    Child *own Node
+    Child *Node
     Value i32 = 0
 }
 
@@ -324,11 +324,11 @@ func TestOwnershipPhaseAllowsFieldReinitializationAfterFieldMove(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Node struct {
-    Child *own Node
+    Child *Node
     Value i32 = 0
 }
 
-fn main(n Node, replacement *own Node) i32 {
+fn main(n Node, replacement *Node) i32 {
     let mut current = n
     let child = current.Child
     current.Child = replacement
