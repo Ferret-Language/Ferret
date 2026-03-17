@@ -203,6 +203,35 @@ fn borrow(c *Conn) &Conn {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrBorrowEscape, result.Diagnostics.Diagnostics())
 }
 
+func TestOwnershipPhaseRejectsDeferredBorrowCapture(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    Value i32 = 0
+}
+
+fn read(p &Point) void {
+    p
+}
+
+fn run() void {
+    let p: Point = .{}
+    defer read(&p)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrBorrowEscape {
+			return
+		}
+	}
+	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrBorrowEscape, result.Diagnostics.Diagnostics())
+}
+
 func TestOwnershipPhaseRejectsImmutableBorrowWhileMutableBorrowIsLive(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `

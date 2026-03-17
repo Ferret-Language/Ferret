@@ -502,24 +502,32 @@ func (a *analyzer) checkDeferredInstr(scope *valueScope, instr mir.Instr) {
 		return
 	case *mir.ComputeInstr:
 		a.checkComputedValue(scope, inst)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.BindInstr:
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.StoreInstr:
 		a.checkPlaceValue(scope, inst.Target)
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.AssignInstr:
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.StoreFieldInstr:
 		a.checkValue(scope, inst.Base)
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Base, "borrow cannot escape into defer")
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.EvalInstr:
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.DeferInstr:
 		for _, child := range inst.Body {
 			a.checkDeferredInstr(scope, child)
 		}
 	case *mir.LockInstr:
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.UnsafeInstr:
 		return
 	}

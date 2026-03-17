@@ -84,7 +84,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Keep use-after-move diagnostics for owners, but stop treating ordinary value types as move-only by default.
 [*] Rebuild borrow tracking around reference types instead of pointer-shaped borrows.
 [*] Enforce single active `&mut` borrow and no overlapping mutable/immutable borrows.
-[ ] Enforce that references cannot escape scope by return, module binding, heap storage, or deferred capture.
+[*] Enforce that references cannot escape scope by return, module binding, heap storage, or deferred capture.
 [*] Enforce that heap values cannot contain `&T` or `&mut T`.
 [ ] Revisit partial-move logic so it only applies where the new model actually needs it.
 [*] Expand ownership tests to cover local scopes, branches, loops, returns, globals, and aggregate storage.
