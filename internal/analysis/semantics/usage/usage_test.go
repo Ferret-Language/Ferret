@@ -228,6 +228,52 @@ func TestUsageTreatsDiscardAssignmentAsUse(t *testing.T) {
 	}
 }
 
+func TestUsageWarnsWhenMutableBindingIsNeverModified(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+    let mut a = 10
+    _ = a
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnmodifiedMutable && diag.Message == `"a" is never modified` {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected never-modified mutable warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestUsageDoesNotWarnWhenMutableBindingIsAssigned(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+    let mut a = 10
+    a = 12
+    _ = a
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnmodifiedMutable && diag.Message == `"a" is never modified` {
+			t.Fatalf("did not expect never-modified mutable warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
 func mustWriteUsage(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

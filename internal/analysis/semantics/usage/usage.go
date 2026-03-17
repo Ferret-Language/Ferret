@@ -17,6 +17,7 @@ type analyzer struct {
 	mod         *context.Module
 	usedImports map[*binding.ImportBinding]bool
 	usedSymbols map[*symbols.Symbol]int
+	written     map[*symbols.Symbol]int
 	declNodes   map[ast.Node]struct{}
 	writeNodes  map[ast.Node]struct{}
 }
@@ -39,6 +40,7 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 		mod:         mod,
 		usedImports: make(map[*binding.ImportBinding]bool),
 		usedSymbols: make(map[*symbols.Symbol]int),
+		written:     make(map[*symbols.Symbol]int),
 		declNodes:   make(map[ast.Node]struct{}),
 		writeNodes:  make(map[ast.Node]struct{}),
 	}
@@ -47,6 +49,7 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 	a.reportUnusedImports()
 	a.reportUnusedModuleSymbols()
 	a.reportUnusedFunctionSymbols()
+	a.reportNeverModifiedMutableBindings()
 	mod.Phase = phase.PhaseUsageAnalyzed
 }
 
@@ -331,6 +334,11 @@ func (a *analyzer) collectUses() {
 		return
 	}
 	for node, resolution := range a.mod.Bindings.Nodes {
+		if _, ok := a.writeNodes[node]; ok {
+			if resolution != nil && resolution.Symbol != nil {
+				a.written[resolution.Symbol]++
+			}
+		}
 		if _, ok := a.declNodes[node]; ok {
 			continue
 		}
@@ -413,6 +421,98 @@ func (a *analyzer) reportUnusedFunctionSymbols() {
 			)
 		}
 	}
+}
+
+func (a *analyzer) reportNeverModifiedMutableBindings() {
+	if a == nil || a.mod == nil {
+		return
+	}
+	for _, decl := range a.mod.AST.Decls {
+		switch d := decl.(type) {
+		case *ast.LetDecl:
+			if d == nil || !d.IsMut {
+				continue
+			}
+			a.reportNeverModifiedDecl(d.Name)
+		case *ast.FuncDecl:
+			if d == nil || d.Body == nil || !a.shouldWarnInsideFunction(d) {
+				continue
+			}
+			a.reportNeverModifiedStmt(d.Body)
+		}
+	}
+}
+
+func (a *analyzer) reportNeverModifiedStmt(stmt ast.Stmt) {
+	if stmt == nil {
+		return
+	}
+	switch s := stmt.(type) {
+	case *ast.BlockStmt:
+		for _, child := range s.Stmts {
+			a.reportNeverModifiedStmt(child)
+		}
+	case *ast.LetStmt:
+		if s != nil && s.IsMut {
+			a.reportNeverModifiedDecl(s.Name)
+		}
+	case *ast.IfStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Then)
+			a.reportNeverModifiedStmt(s.Else)
+		}
+	case *ast.MatchStmt:
+		if s != nil {
+			for _, arm := range s.Arms {
+				if arm != nil {
+					a.reportNeverModifiedStmt(arm.Body)
+				}
+			}
+		}
+	case *ast.WhileStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Body)
+		}
+	case *ast.ForStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Body)
+		}
+	case *ast.LabelStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Stmt)
+		}
+	case *ast.DeferStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Body)
+		}
+	case *ast.LockStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Body)
+		}
+	case *ast.UnsafeStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Body)
+		}
+	}
+}
+
+func (a *analyzer) reportNeverModifiedDecl(node ast.Node) {
+	if a == nil || node == nil {
+		return
+	}
+	resolution := a.mod.Bindings.Nodes[node]
+	if resolution == nil || resolution.Symbol == nil {
+		return
+	}
+	sym := resolution.Symbol
+	if sym.Name == "_" || a.usedSymbols[sym] == 0 || a.written[sym] > 0 {
+		return
+	}
+	a.ctx.Diagnostics.Add(
+		diagnostics.NewWarning(fmt.Sprintf("%q is never modified", sym.Name)).
+			WithCode(diagnostics.WarnUnmodifiedMutable).
+			WithPrimaryLabel(&sym.Location, "remove `mut` from this binding"),
+	)
 }
 
 func shouldWarnOnUnusedModuleSymbol(mod *context.Module, sym *symbols.Symbol) bool {

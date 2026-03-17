@@ -56,6 +56,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Keep array indexing working end-to-end and support inferred array lengths via `[_]T`.
 [*] Keep existing slice type/indexing paths working where the compiler/runtime already relies on them, but reject slice literals with a clear "not yet implemented" diagnostic until slice construction semantics are designed properly.
 [*] Allow `_ = value` as an explicit discard assignment and stop counting plain assignment targets as value uses in unused-local analysis.
+[*] Warn when `let mut` bindings are never modified and suggest removing `mut`.
 
 ### Phase 4: Rework parameter and receiver semantics around one rule
 
