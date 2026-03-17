@@ -17,14 +17,14 @@ func TestLowerInterfaceDispatchToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
-fn (n Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 
@@ -49,8 +49,8 @@ fn main() str {
 	text := artifact.Text
 	for _, want := range []string{
 		"%local__main__Stringer = type { ptr, ptr }",
-		"@vtable__local__main__Stringer__main__Name = private unnamed_addr constant [1 x ptr]",
-		"define { ptr, i64 } @ifacewrap__local__main__Stringer__main__Name__String(ptr %data)",
+		"@vtable__local__main__Stringer__Name = private unnamed_addr constant [1 x ptr]",
+		"define { ptr, i64 } @ifacewrap__local__main__Stringer__Name__String(ptr %data)",
 		"%_iface_fnslot",
 		"%_iface_fn",
 		"call { ptr, i64 } %_iface_fn",
@@ -65,14 +65,14 @@ func TestLowerImportedInterfaceDispatchToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "util", "name.ferr"), `
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
 fn Origin() Name {
     return .{ .value = 7 }
 }
 
-fn (n Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 `)
@@ -80,7 +80,7 @@ fn (n Name) String() str {
 import "util/name"
 
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 fn main() str {
@@ -103,8 +103,8 @@ fn main() str {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"@vtable__local__main__Stringer__util__name__Name",
-		"@ifacewrap__local__main__Stringer__util__name__Name__String",
+		"@vtable__local__main__Stringer__Name",
+		"@ifacewrap__local__main__Stringer__Name__String",
 		"@util__name__Name__String",
 	} {
 		if !strings.Contains(text, want) {
@@ -117,14 +117,14 @@ func TestLowerGlobalInterfaceValueToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
-fn (n Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 
@@ -151,7 +151,7 @@ fn main() str {
 	for _, want := range []string{
 		"@main__GlobalName = global %local__main__Name",
 		"@main__GlobalStringer = global %local__main__Stringer",
-		"@vtable__local__main__Stringer__main__Name",
+		"@vtable__local__main__Stringer__Name",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
@@ -196,7 +196,7 @@ fn main() i32 {
 func TestLowerSliceIndexToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(items []i32) i32 {
+fn main(items: []i32) i32 {
     let n = items[1]
     return n
 }
@@ -309,7 +309,7 @@ type Token union {
     i64,
 }
 
-fn main(flag bool) i32 {
+fn main(flag: bool) i32 {
     let mut value: Token = 1
     if flag {
         value = 2 as i64

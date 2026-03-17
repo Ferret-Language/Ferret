@@ -1,5 +1,26 @@
 
 
+type Conn struct {}
+
+fn run(c: *Conn) void {
+    let m = &mut *c
+    let r = &*c
+    m
+    r
+}
+
+type Point struct {
+    Value: i32 = 0
+}
+
+fn run2() void {
+    let mut p: Point = .{}
+    let m = &mut p
+    let r = &p
+    m
+    r
+}
+
 fn main() {
     let mut a = 10
     let b : i32 = a

@@ -3,3 +3,9 @@ a.out
 *.ll
 main.ferr
 *.ferr.tmp
+app
+*.hir
+*.mir
+*.
+*.ast.json
+_gen

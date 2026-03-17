@@ -146,6 +146,7 @@ type CompositeItem struct {
 }
 
 type CompositeLit struct {
+	Type     TypeExpr
 	Items    []CompositeItem
 	Location source.Location
 }

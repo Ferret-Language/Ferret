@@ -17,8 +17,8 @@ func TestPipelineGeneratesMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
-    Y i32 = 0
+    X: i32 = 0
+    Y: i32 = 0
 }
 
 let mut GlobalPoint: Point = .{ .X = 1, .Y = 2 }
@@ -106,10 +106,10 @@ func TestPipelineNormalizesMethodReceiverAsFirstArgument(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn (p &mut Point) Bump() i32 {
+fn (p: &mut Point) Bump() i32 {
     return p.X + 1
 }
 
@@ -167,10 +167,10 @@ type Reader interface {
 }
 
 type File struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
-fn File::read(&mut self, buf []u8) i32 {
+fn File::read(&mut self, buf: []u8) i32 {
     return self.value
 }
 
@@ -245,7 +245,7 @@ func TestPipelineLowersRawAddressOperator(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() i32 {
@@ -395,10 +395,10 @@ func TestPipelineGeneratesExplicitAddrOfAndLoadInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn probe(p *Point) void {
+fn probe(p: *Point) void {
     let q = &*p
     q
 }
@@ -531,26 +531,29 @@ fn run() i32 {
 	}
 }
 
-func TestPipelineLowersStaticFieldConstructorAndDestructorToMIR(t *testing.T) {
+func TestPipelineDoesNotLowerImplicitLifecycleHooksToMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
-    Y i32 = 0
-    static Origin Point = .{}
+    X: i32 = 0
+    Y: i32 = 0
 }
 
-fn (p *Point) Point() {
+fn Point::New() Point {
+    return .{}
+}
+
+fn (p: *Point) Bump() {
 	p.Y = p.Y + 1
 }
 
-fn (p *Point) ~Point() void {
-    p.X = 0
+fn Point::Drop(*self) void {
+    _ = self
 }
 
 fn main() i32 {
 	let p: Point = .{ .X = 3, .Y = 4 }
-    let q = Point::Origin
+    let q: Point = .{}
     return p.X + q.X
 }
 `)
@@ -561,17 +564,6 @@ fn main() i32 {
 	}
 	if result.Entry == nil || result.Entry.MIR == nil {
 		t.Fatalf("expected MIR module, got %#v", result.Entry)
-	}
-
-	foundStaticGlobal := false
-	for _, global := range result.Entry.MIR.Globals {
-		if global != nil && global.Name == "Point__Origin" {
-			foundStaticGlobal = true
-			break
-		}
-	}
-	if !foundStaticGlobal {
-		t.Fatalf("expected synthesized static global Point__Origin, got %#v", result.Entry.MIR.Globals)
 	}
 
 	var mainFn *mir.Function
@@ -585,35 +577,19 @@ fn main() i32 {
 		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
 	}
 
-	foundImplicitConstructor := false
-	foundDestructorDefer := false
 	for _, block := range mainFn.Blocks {
 		for _, instr := range block.Instructions {
 			switch ins := instr.(type) {
 			case *mir.AssignInstr:
-				if comp, ok := ins.Value.(*mir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
-					foundImplicitConstructor = true
-				}
+				_ = ins
 			case *mir.ComputeInstr:
-				if comp, ok := ins.Value.(*mir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
-					foundImplicitConstructor = true
-				}
+				_ = ins
 			case *mir.EvalInstr:
-				if comp, ok := ins.Value.(*mir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
-					foundImplicitConstructor = true
-				}
+				_ = ins
 			case *mir.DeferInstr:
-				if deferContainsCallNamed(ins, "~Point") {
-					foundDestructorDefer = true
-				}
+				t.Fatalf("did not expect implicit defer in MIR, got %#v", ins)
 			}
 		}
-	}
-	if !foundImplicitConstructor {
-		t.Fatal("expected implicit constructor metadata on lowered composite literal")
-	}
-	if foundDestructorDefer {
-		t.Fatal("did not expect destructor defer for plain stack value")
 	}
 }
 

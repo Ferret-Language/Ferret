@@ -143,6 +143,12 @@ func (p *Parser) parseArrayLit() ast.Expr {
 
 func (p *Parser) parseCompositeLit() ast.Expr {
 	start := p.expect(tokens.DOT, "expected '.'").Start
+	var literalType ast.TypeExpr
+	if !p.at(tokens.LBRACE) {
+		typeStart := p.current().Start
+		path := p.parseNamePath()
+		literalType = &ast.NamedType{Path: path, Location: p.locFrom(typeStart)}
+	}
 	p.expect(tokens.LBRACE, "expected '{' after '.'")
 	items := make([]ast.CompositeItem, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
@@ -167,7 +173,7 @@ func (p *Parser) parseCompositeLit() ast.Expr {
 		}
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
-	return &ast.CompositeLit{Items: items, Location: p.locFrom(start)}
+	return &ast.CompositeLit{Type: literalType, Items: items, Location: p.locFrom(start)}
 }
 
 func (p *Parser) atCompositeFieldBoundary() bool {

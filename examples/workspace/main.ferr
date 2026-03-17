@@ -15,11 +15,11 @@ fn run() i32 {
 }
 
 type Point struct {
-    X i32
-    Y i32
+    X: i32
+    Y: i32
 }
 
-fn (p Point) nothing(comptime a i32) {
+fn (p: Point) nothing(comptime a: i32) {
     
 }
 

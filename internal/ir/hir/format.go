@@ -53,15 +53,23 @@ func formatFunc(b *strings.Builder, fn *Func) {
 	if fn.IsUnsafe {
 		b.WriteString("unsafe ")
 	}
-	fmt.Fprintf(b, "fn %s%s", formatReceiver(fn.Receiver), fn.Name)
-	b.WriteByte('(')
-	for i, param := range fn.Params {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(formatParam(param))
+	name := fn.Name
+	if fn.OwnerType != "" {
+		name = fn.OwnerType + "::" + name
 	}
-	b.WriteByte(')')
+	if fn.OwnerType != "" {
+		fmt.Fprintf(b, "fn %s%s", name, formatAttachedParams(fn.Receiver, fn.Params))
+	} else {
+		fmt.Fprintf(b, "fn %s%s", formatReceiver(fn.Receiver), name)
+		b.WriteByte('(')
+		for i, param := range fn.Params {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(formatParam(param))
+		}
+		b.WriteByte(')')
+	}
 	if fn.Result != nil {
 		fmt.Fprintf(b, " %s", typeString(fn.Result))
 	}
@@ -79,6 +87,46 @@ func formatReceiver(param *Param) string {
 		return ""
 	}
 	return fmt.Sprintf("(%s) ", formatParam(param))
+}
+
+func formatAttachedParams(receiver *Param, params []*Param) string {
+	var b strings.Builder
+	b.WriteByte('(')
+	wrote := false
+	if receiver != nil {
+		b.WriteString(formatReceiverArg(receiver))
+		wrote = true
+	}
+	for _, param := range params {
+		if param == nil {
+			continue
+		}
+		if wrote {
+			b.WriteString(", ")
+		}
+		b.WriteString(formatParam(param))
+		wrote = true
+	}
+	b.WriteByte(')')
+	return b.String()
+}
+
+func formatReceiverArg(param *Param) string {
+	if param == nil {
+		return ""
+	}
+	switch t := param.Type.(type) {
+	case *typeinfo.PointerType:
+		_ = t
+		return "*self"
+	case *typeinfo.RefType:
+		if t.Mutable {
+			return "&mut self"
+		}
+		return "&self"
+	default:
+		return "self"
+	}
 }
 
 func formatParam(param *Param) string {
@@ -323,7 +371,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 	case decl.Struct != nil:
 		var b strings.Builder
 		fmt.Fprintf(&b, "type %s struct {", decl.Name)
-		if len(decl.Struct.Fields) > 0 || len(decl.Struct.StaticFields) > 0 {
+		if len(decl.Struct.Fields) > 0 {
 			b.WriteByte('\n')
 			for _, field := range decl.Struct.Fields {
 				if field == nil {
@@ -331,17 +379,6 @@ func formatTypeDecl(decl *TypeDecl) string {
 				}
 				indentLine(&b, 1)
 				fmt.Fprintf(&b, "%s %s", field.Name, typeString(field.Type))
-				if field.Default != nil {
-					fmt.Fprintf(&b, " = %s", formatExpr(field.Default))
-				}
-				b.WriteByte('\n')
-			}
-			for _, field := range decl.Struct.StaticFields {
-				if field == nil {
-					continue
-				}
-				indentLine(&b, 1)
-				fmt.Fprintf(&b, "static %s %s", field.Name, typeString(field.Type))
 				if field.Default != nil {
 					fmt.Fprintf(&b, " = %s", formatExpr(field.Default))
 				}
@@ -362,14 +399,11 @@ func formatTypeDecl(decl *TypeDecl) string {
 					continue
 				}
 				indentLine(&b, 1)
-				fmt.Fprintf(&b, "%s(", method.Name)
-				for i, param := range method.Params {
-					if i > 0 {
-						b.WriteString(", ")
-					}
-					b.WriteString(formatParam(param))
+				fmt.Fprintf(&b, "%s%s", method.Name, formatInterfaceParams(method.Receiver, method.Params))
+				if method.Result != nil {
+					fmt.Fprintf(&b, " %s", typeString(method.Result))
 				}
-				fmt.Fprintf(&b, ") %s\n", typeString(method.Result))
+				b.WriteByte('\n')
 			}
 			b.WriteByte('}')
 			return b.String()
@@ -389,6 +423,35 @@ func formatTypeDecl(decl *TypeDecl) string {
 	default:
 		return fmt.Sprintf("type %s %s", decl.Name, typeString(decl.Underlying))
 	}
+}
+
+func formatInterfaceParams(receiver string, params []*Param) string {
+	var b strings.Builder
+	b.WriteByte('(')
+	wrote := false
+	switch receiver {
+	case "&":
+		b.WriteString("&self")
+		wrote = true
+	case "&mut ":
+		b.WriteString("&mut self")
+		wrote = true
+	case "*":
+		b.WriteString("*self")
+		wrote = true
+	}
+	for _, param := range params {
+		if param == nil {
+			continue
+		}
+		if wrote {
+			b.WriteString(", ")
+		}
+		b.WriteString(formatParam(param))
+		wrote = true
+	}
+	b.WriteByte(')')
+	return b.String()
 }
 
 func wrapExpr(expr Expr) string {

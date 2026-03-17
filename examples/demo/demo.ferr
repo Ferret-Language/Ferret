@@ -40,7 +40,7 @@ type Handle move enum {
     stdout,
 }
 
-fn ChooseMode(sum i32) Mode {
+fn ChooseMode(sum: i32) Mode {
     if sum > 10 {
         return Mode::run
     }

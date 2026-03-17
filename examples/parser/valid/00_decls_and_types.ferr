@@ -2,9 +2,9 @@ let mut GlobalCount: i32 = 0
 const BuildMode = "debug"
 
 type Point struct {
-    x i32 = 0
-    y i32 = 0
-    static origin Point = .{}
+    x: i32 = 0
+    y: i32 = 0
+    static: origin Point = .{}
 }
 
 type Shape interface {

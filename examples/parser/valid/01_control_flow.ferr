@@ -1,4 +1,4 @@
-fn Run(items [8]i32, limit i32) i32 {
+fn Run(items: [8]i32, limit: i32) i32 {
     let mut sum: i32 = 0
 
     outer: for items |i, v| {

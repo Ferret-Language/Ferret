@@ -224,7 +224,7 @@ func debugExpr(expr Expr) any {
 		for _, item := range e.Items {
 			items = append(items, map[string]any{"name": debugExpr(item.Name), "value": debugExpr(item.Value)})
 		}
-		return map[string]any{"kind": "CompositeLit", "items": items, "loc": debugLoc(e.Location)}
+		return map[string]any{"kind": "CompositeLit", "type": debugType(e.Type), "items": items, "loc": debugLoc(e.Location)}
 	case *IndexExpr:
 		return map[string]any{"kind": "IndexExpr", "left": debugExpr(e.Left), "index": debugExpr(e.Index), "loc": debugLoc(e.Location)}
 	default:
@@ -244,6 +244,8 @@ func debugType(typ TypeExpr) any {
 		return map[string]any{"kind": "RefType", "mutable": t.Mutable, "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *RawPtrType:
 		return map[string]any{"kind": "RawPtrType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
+	case *SelfType:
+		return map[string]any{"kind": "SelfType", "loc": debugLoc(t.Location)}
 	case *OptionalType:
 		return map[string]any{"kind": "OptionalType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *ErrorUnionType:
@@ -261,11 +263,7 @@ func debugType(typ TypeExpr) any {
 		for _, field := range t.Fields {
 			fields = append(fields, debugField(field))
 		}
-		staticFields := make([]any, 0, len(t.StaticFields))
-		for _, field := range t.StaticFields {
-			staticFields = append(staticFields, debugStaticField(field))
-		}
-		return map[string]any{"kind": "StructType", "fields": fields, "static_fields": staticFields, "loc": debugLoc(t.Location)}
+		return map[string]any{"kind": "StructType", "fields": fields, "loc": debugLoc(t.Location)}
 	case *InterfaceType:
 		methods := make([]any, 0, len(t.Methods))
 		for _, method := range t.Methods {
@@ -312,13 +310,6 @@ func debugType(typ TypeExpr) any {
 }
 
 func debugField(field *FieldDecl) any {
-	if field == nil {
-		return nil
-	}
-	return map[string]any{"name": debugExpr(field.Name), "type": debugType(field.Type), "default": debugExpr(field.Default), "loc": debugLoc(field.Location)}
-}
-
-func debugStaticField(field *StaticFieldDecl) any {
 	if field == nil {
 		return nil
 	}

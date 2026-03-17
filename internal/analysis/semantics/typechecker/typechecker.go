@@ -100,22 +100,6 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 				c.checkAssignable(field.Default.Loc(), fieldType, valueType)
 			}
 		}
-		for _, field := range t.StaticFields {
-			if field == nil {
-				continue
-			}
-			fieldType := c.typeFromSyntax(c.mod, field.Type)
-			if field.Type != nil {
-				c.info.BindNode(field.Type, fieldType)
-			}
-			c.checkModuleBindingType(field.Type.Loc(), fieldType)
-			c.checkHeapStoredReference(field.Type.Loc(), fieldType)
-			if field.Default != nil {
-				valueType := c.typeOfExpr(nil, field.Default, fieldType)
-				c.checkAssignable(field.Default.Loc(), fieldType, valueType)
-				c.requireConstExpr(nil, field.Default, "static field initializer must be compile-time evaluable")
-			}
-		}
 	case *ast.InterfaceType:
 		for _, method := range t.Methods {
 			if method == nil {
@@ -241,11 +225,6 @@ func (c *checker) typeContainsReferenceSeen(typ typeinfo.Type, seen map[typeinfo
 				return true
 			}
 		}
-		for _, field := range t.OrderedStaticFields {
-			if field != nil && c.typeContainsReferenceSeen(field.Type, seen, seenNamed) {
-				return true
-			}
-		}
 		return false
 	case *typeinfo.UnionType:
 		for _, member := range t.Members {
@@ -265,17 +244,9 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 	if d == nil {
 		return
 	}
-	if (d.IsConstructor || d.IsDestructor) && d.Receiver == nil {
-		loc := d.Name.Loc()
-		kind := "constructor"
-		if d.IsDestructor {
-			kind = "destructor"
-		}
-		c.ctx.Diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("%ss must declare a receiver", kind)).
-				WithCode(diagnostics.ErrInvalidOperation).
-				WithPrimaryLabel(&loc, kind+"s are methods on their exact owning type"),
-		)
+	var selfType typeinfo.Type
+	if d.OwnerType != nil {
+		selfType = c.typeFromSyntax(c.mod, d.OwnerType)
 	}
 	funcScope := newRefineScope(nil)
 	if d.Receiver != nil {
@@ -299,12 +270,6 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		}
 		c.bindDeclSymbol(d.Receiver.Name, recvType)
 		c.info.BindNode(d.Receiver, recvType)
-		if d.IsConstructor {
-			c.checkConstructorDecl(d, recvType)
-		}
-		if d.IsDestructor {
-			c.checkDestructorDecl(d, recvType)
-		}
 	}
 	if d.IsStatic && d.OwnerType != nil {
 		ownerType := c.typeFromSyntax(c.mod, d.OwnerType)
@@ -321,7 +286,7 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		}
 	}
 	for _, param := range d.Params {
-		paramType := c.typeFromSyntax(c.mod, param.Type)
+		paramType := c.instantiateSelfType(c.typeFromSyntax(c.mod, param.Type), selfType)
 		if param.Type != nil {
 			c.info.BindNode(param.Type, paramType)
 		}
@@ -332,7 +297,7 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		// No base-type environment: locals/params are typed via Bindings+Types.
 	}
 	prevResult := c.currentResult
-	c.currentResult = c.funcResultType(c.mod, d)
+	c.currentResult = c.instantiateSelfType(c.funcResultType(c.mod, d), selfType)
 	if d.Result != nil {
 		c.info.BindNode(d.Result, c.currentResult)
 	}
@@ -949,7 +914,7 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 	}
 
 	addressable, mutable := c.exprAccess(scope, selector.Left)
-	sym, methodType := c.lookupMethod(receiverType, selector.Name.Text(), addressable, mutable)
+	_, methodType := c.lookupMethod(receiverType, selector.Name.Text(), addressable, mutable)
 	if methodType == nil {
 		if c.canHaveMethods(receiverType) {
 			// If the method exists but only on a mutable receiver and the variable
@@ -972,27 +937,6 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 		}
 		return nil, false
 	}
-	if decl, ok := sym.Node.(*ast.FuncDecl); ok && decl != nil {
-		if decl.IsConstructor {
-			loc := call.Location
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("constructors are not directly callable").
-					WithCode(diagnostics.ErrNotCallable).
-					WithPrimaryLabel(&loc, "constructors run implicitly when creating a new instance"),
-			)
-			return typeinfo.InvalidType{}, true
-		}
-		if decl.IsDestructor {
-			loc := call.Location
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("destructors are not directly callable").
-					WithCode(diagnostics.ErrNotCallable).
-					WithPrimaryLabel(&loc, "destructors are run automatically by the compiler"),
-			)
-			return typeinfo.InvalidType{}, true
-		}
-	}
-
 	c.info.BindNode(selector, methodType)
 	c.typecheckCallArgs(scope, call, methodType)
 	c.info.BindNode(call, methodType.Result)
@@ -1114,14 +1058,6 @@ func (c *checker) canDeepCopyTypeSeen(typ typeinfo.Type, seen map[typeinfo.Type]
 		return true, ""
 	case *typeinfo.StructType:
 		for _, field := range t.OrderedFields {
-			if field == nil {
-				continue
-			}
-			if ok, msg := c.canDeepCopyTypeSeen(field.Type, seen, seenNamed); !ok {
-				return false, msg
-			}
-		}
-		for _, field := range t.OrderedStaticFields {
 			if field == nil {
 				continue
 			}
@@ -1347,6 +1283,13 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 }
 
 func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, expected typeinfo.Type) typeinfo.Type {
+	if expr != nil && expr.Type != nil {
+		explicit := c.typeFromSyntax(c.mod, expr.Type)
+		if expr.Type != nil {
+			c.info.BindNode(expr.Type, explicit)
+		}
+		expected = explicit
+	}
 	if expected == nil {
 		loc := expr.Location
 		c.ctx.Diagnostics.Add(
@@ -1959,13 +1902,14 @@ func (c *checker) implementsInterface(src typeinfo.Type, iface *typeinfo.Interfa
 		if method == nil || method.Type == nil {
 			continue
 		}
+		want := c.instantiateSelfFuncType(method.Type, src)
 		var got *typeinfo.FuncType
 		if method.Static {
 			_, got = c.lookupStaticMethod(src, method.Name)
 		} else {
 			_, got = c.lookupMethodWithReceiver(src, method.Receiver, method.Name)
 		}
-		if got == nil || !c.interfaceMethodCompatible(method.Type, got) {
+		if got == nil || !c.interfaceMethodCompatible(want, got) {
 			return false
 		}
 	}
@@ -1987,17 +1931,18 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 			gotMethod := srcIface.Methods[method.Name]
 			if gotMethod == nil {
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Static, method.Receiver, method.Name, method.Type))).
+					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Static, method.Receiver, method.Name, c.instantiateSelfFuncType(method.Type, got)))).
 						WithCode(diagnostics.ErrTypeMismatch).
 						WithPrimaryLabel(&loc, "this interface is missing a required method"),
 				)
 				return
 			}
-			if srcIface.MethodReceivers[method.Name] != method.Receiver || srcIface.MethodStatic[method.Name] != method.Static || !c.interfaceMethodCompatible(method.Type, gotMethod) {
+			want := c.instantiateSelfFuncType(method.Type, got)
+			if srcIface.MethodReceivers[method.Name] != method.Receiver || srcIface.MethodStatic[method.Name] != method.Static || !c.interfaceMethodCompatible(want, gotMethod) {
 				c.ctx.Diagnostics.Add(
 					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: method %s has incompatible signature", gotName, expectedName, method.Name)).
 						WithCode(diagnostics.ErrTypeMismatch).
-						WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Static, method.Receiver, method.Name, method.Type), interfaceMethodString(srcIface.MethodStatic[method.Name], srcIface.MethodReceivers[method.Name], method.Name, gotMethod))),
+						WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Static, method.Receiver, method.Name, want), interfaceMethodString(srcIface.MethodStatic[method.Name], srcIface.MethodReceivers[method.Name], method.Name, gotMethod))),
 				)
 				return
 			}
@@ -2009,6 +1954,7 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 		if method == nil || method.Type == nil {
 			continue
 		}
+		want := c.instantiateSelfFuncType(method.Type, got)
 		var gotMethod *typeinfo.FuncType
 		if method.Static {
 			_, gotMethod = c.lookupStaticMethod(got, method.Name)
@@ -2017,17 +1963,17 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 		}
 		if gotMethod == nil {
 			c.ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Static, method.Receiver, method.Name, method.Type))).
+				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Static, method.Receiver, method.Name, want))).
 					WithCode(diagnostics.ErrTypeMismatch).
 					WithPrimaryLabel(&loc, "this type is missing a required method"),
 			)
 			return
 		}
-		if !c.interfaceMethodCompatible(method.Type, gotMethod) {
+		if !c.interfaceMethodCompatible(want, gotMethod) {
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: method %s has incompatible signature", gotName, expectedName, method.Name)).
 					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Static, method.Receiver, method.Name, method.Type), interfaceMethodString(method.Static, method.Receiver, method.Name, gotMethod))),
+					WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Static, method.Receiver, method.Name, want), interfaceMethodString(method.Static, method.Receiver, method.Name, gotMethod))),
 			)
 			return
 		}
@@ -2075,6 +2021,55 @@ func (c *checker) interfaceSatisfies(src, target *typeinfo.InterfaceType) bool {
 		}
 	}
 	return true
+}
+
+func (c *checker) instantiateSelfFuncType(fn *typeinfo.FuncType, selfType typeinfo.Type) *typeinfo.FuncType {
+	if fn == nil {
+		return nil
+	}
+	params := make([]typeinfo.Type, 0, len(fn.Params))
+	for _, param := range fn.Params {
+		params = append(params, c.instantiateSelfType(param, selfType))
+	}
+	comptime := append([]bool(nil), fn.ComptimeParams...)
+	return &typeinfo.FuncType{
+		IsUnsafe:       fn.IsUnsafe,
+		Params:         params,
+		ComptimeParams: comptime,
+		Result:         c.instantiateSelfType(fn.Result, selfType),
+	}
+}
+
+func (c *checker) instantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type {
+	if selfType == nil {
+		return typ
+	}
+	switch t := typ.(type) {
+	case *typeinfo.SelfType:
+		return selfType
+	case *typeinfo.PointerType:
+		return &typeinfo.PointerType{Inner: c.instantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.RefType:
+		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.instantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.RawPtrType:
+		return &typeinfo.RawPtrType{Inner: c.instantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.OptionalType:
+		return &typeinfo.OptionalType{Inner: c.instantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.ErrorUnionType:
+		return &typeinfo.ErrorUnionType{Error: c.instantiateSelfType(t.Error, selfType), Value: c.instantiateSelfType(t.Value, selfType)}
+	case *typeinfo.ArrayType:
+		return &typeinfo.ArrayType{Inner: c.instantiateSelfType(t.Inner, selfType), Len: t.Len}
+	case *typeinfo.SliceType:
+		return &typeinfo.SliceType{Inner: c.instantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.TupleType:
+		elems := make([]typeinfo.Type, 0, len(t.Elems))
+		for _, elem := range t.Elems {
+			elems = append(elems, c.instantiateSelfType(elem, selfType))
+		}
+		return &typeinfo.TupleType{Elems: elems}
+	default:
+		return typ
+	}
 }
 
 func (c *checker) reportUnsupportedTypeTest(loc source.Location, msg, help string) (bool, bool) {

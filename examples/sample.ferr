@@ -1,22 +1,22 @@
 type Point struct {
-    X i32 = 0
-    Y i32 = 0
-    static origin Point = .{}
+    X: i32 = 0
+    Y: i32 = 0
+    static: origin Point = .{}
 }
 
 type Shape interface {
     Area() f64
 }
 
-fn (p Point) Len2() i32 {
+fn (p: Point) Len2() i32 {
     return p.X * p.X + p.Y * p.Y
 }
 
-fn (p *Point) Len() i32 {
+fn (p: *Point) Len() i32 {
     return p.X * p.X + p.Y * p.Y
 }
 
-fn build(a Alloc) Point {
+fn build(a: Alloc) Point {
     let p: Point = .{ .X = 1, .Y = 2 }
     if p == .{ .X = 1, .Y = 2 } {
         return copy p

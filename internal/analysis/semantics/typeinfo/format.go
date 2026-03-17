@@ -24,19 +24,13 @@ func FormatNamedDecl(name string, underlying Type) string {
 	case *StructType:
 		var b strings.Builder
 		fmt.Fprintf(&b, "type %s struct {", name)
-		if len(t.OrderedFields) > 0 || len(t.OrderedStaticFields) > 0 {
+		if len(t.OrderedFields) > 0 {
 			b.WriteByte('\n')
 			for _, field := range t.OrderedFields {
 				if field == nil {
 					continue
 				}
 				fmt.Fprintf(&b, "    %s %s\n", field.Name, FormatType(field.Type))
-			}
-			for _, field := range t.OrderedStaticFields {
-				if field == nil {
-					continue
-				}
-				fmt.Fprintf(&b, "    static %s %s\n", field.Name, FormatType(field.Type))
 			}
 			b.WriteString("}")
 			return b.String()

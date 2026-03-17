@@ -63,15 +63,20 @@ func formatFunction(b *strings.Builder, fn *Function) {
 	if fn.IsUnsafe {
 		b.WriteString("unsafe ")
 	}
-	fmt.Fprintf(b, "fn %s", fn.Name)
-	b.WriteByte('(')
-	for i, param := range fn.Params {
-		if i > 0 {
-			b.WriteString(", ")
+	name := prettyFunctionName(fn)
+	if strings.Contains(name, "::") && len(fn.Params) > 0 {
+		fmt.Fprintf(b, "fn %s%s", name, formatMethodParams(fn.Params))
+	} else {
+		fmt.Fprintf(b, "fn %s", name)
+		b.WriteByte('(')
+		for i, param := range fn.Params {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(formatParam(param))
 		}
-		b.WriteString(formatParam(param))
+		b.WriteByte(')')
 	}
-	b.WriteByte(')')
 	if fn.Blocks == nil {
 		fmt.Fprintf(b, " %s;\n", renderType(fn.Result))
 		return
@@ -125,6 +130,54 @@ func formatParam(param *Param) string {
 		prefix += "comptime "
 	}
 	return fmt.Sprintf("%s%s %s", prefix, param.Name, renderType(param.Type))
+}
+
+func formatMethodParams(params []*Param) string {
+	var b strings.Builder
+	b.WriteByte('(')
+	for i, param := range params {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if i == 0 {
+			b.WriteString(formatReceiverParam(param))
+			continue
+		}
+		b.WriteString(formatParam(param))
+	}
+	b.WriteByte(')')
+	return b.String()
+}
+
+func formatReceiverParam(param *Param) string {
+	if param == nil {
+		return ""
+	}
+	switch t := param.Type.(type) {
+	case *typeinfo.PointerType:
+		_ = t
+		return "*self"
+	case *typeinfo.RefType:
+		if t.Mutable {
+			return "&mut self"
+		}
+		return "&self"
+	default:
+		return "self"
+	}
+}
+
+func prettyFunctionName(fn *Function) string {
+	if fn == nil {
+		return ""
+	}
+	if fn.LinkName != "" && strings.Contains(fn.LinkName, "__") {
+		parts := strings.SplitN(fn.LinkName, "__", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return parts[0] + "::" + parts[1]
+		}
+	}
+	return fn.Name
 }
 
 func formatInstr(instr Instr) string {
@@ -310,7 +363,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 	case decl.Struct != nil:
 		var b strings.Builder
 		fmt.Fprintf(&b, "type %s struct {", decl.Name)
-		if len(decl.Struct.Fields) > 0 || len(decl.Struct.StaticFields) > 0 {
+		if len(decl.Struct.Fields) > 0 {
 			b.WriteByte('\n')
 			for _, field := range decl.Struct.Fields {
 				if field == nil {
@@ -318,17 +371,6 @@ func formatTypeDecl(decl *TypeDecl) string {
 				}
 				b.WriteString("    ")
 				fmt.Fprintf(&b, "%s %s", field.Name, renderType(field.Type))
-				if field.Default != nil {
-					fmt.Fprintf(&b, " = %s", formatValue(field.Default))
-				}
-				b.WriteByte('\n')
-			}
-			for _, field := range decl.Struct.StaticFields {
-				if field == nil {
-					continue
-				}
-				b.WriteString("    ")
-				fmt.Fprintf(&b, "static %s %s", field.Name, renderType(field.Type))
 				if field.Default != nil {
 					fmt.Fprintf(&b, " = %s", formatValue(field.Default))
 				}
@@ -349,14 +391,11 @@ func formatTypeDecl(decl *TypeDecl) string {
 					continue
 				}
 				b.WriteString("    ")
-				fmt.Fprintf(&b, "%s(", method.Name)
-				for i, param := range method.Params {
-					if i > 0 {
-						b.WriteString(", ")
-					}
-					b.WriteString(formatParam(param))
+				fmt.Fprintf(&b, "%s%s", method.Name, formatInterfaceParamsMIR(method.Receiver, method.Params))
+				if method.Result != nil {
+					fmt.Fprintf(&b, " %s", renderType(method.Result))
 				}
-				fmt.Fprintf(&b, ") %s\n", renderType(method.Result))
+				b.WriteByte('\n')
 			}
 			b.WriteByte('}')
 			return b.String()
@@ -376,6 +415,35 @@ func formatTypeDecl(decl *TypeDecl) string {
 	default:
 		return fmt.Sprintf("type %s %s", decl.Name, renderType(decl.Underlying))
 	}
+}
+
+func formatInterfaceParamsMIR(receiver string, params []*Param) string {
+	var b strings.Builder
+	b.WriteByte('(')
+	wrote := false
+	switch receiver {
+	case "&":
+		b.WriteString("&self")
+		wrote = true
+	case "&mut ":
+		b.WriteString("&mut self")
+		wrote = true
+	case "*":
+		b.WriteString("*self")
+		wrote = true
+	}
+	for _, param := range params {
+		if param == nil {
+			continue
+		}
+		if wrote {
+			b.WriteString(", ")
+		}
+		b.WriteString(formatParam(param))
+		wrote = true
+	}
+	b.WriteByte(')')
+	return b.String()
 }
 
 var currentFnForFormat *Function

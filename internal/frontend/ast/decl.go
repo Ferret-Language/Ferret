@@ -89,12 +89,3 @@ type FieldDecl struct {
 }
 
 func (d *FieldDecl) Loc() source.Location { return d.Location }
-
-type StaticFieldDecl struct {
-	Name     *Ident
-	Type     TypeExpr
-	Default  Expr
-	Location source.Location
-}
-
-func (d *StaticFieldDecl) Loc() source.Location { return d.Location }

@@ -102,12 +102,15 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 	} else if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.DCOLON {
 		owner = p.parseAttachedOwner()
 	}
-	isDestructor := p.match(tokens.TILDE)
+	if p.at(tokens.TILDE) {
+		loc := p.locOfToken(p.current())
+		p.advance()
+		p.errorAt(loc, "special destructor syntax has been removed; use an ordinary method name like `Drop`")
+	}
 	nameTok := p.expectIdent("expected function or method name")
-	isConstructor := recv != nil && !isDestructor && receiverNamedType(recv.Type) == nameTok.Literal
+	isConstructor := false
 	if owner != nil {
 		recv, params, isStaticMethod = p.parseAttachedMethodParams(owner)
-		isConstructor = recv != nil && !isDestructor && receiverNamedType(recv.Type) == nameTok.Literal
 	} else {
 		params = p.parseParams()
 	}
@@ -138,7 +141,7 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		IsExtern:      isExtern,
 		ExternName:    externName,
 		IsConstructor: isConstructor,
-		IsDestructor:  isDestructor,
+		IsDestructor:  false,
 		Params:        params,
 		Result:        result,
 		Body:          body,
@@ -200,6 +203,7 @@ func receiverNamedType(typ ast.TypeExpr) string {
 func (p *Parser) parseReceiver() *ast.Receiver {
 	start := p.current().Start
 	nameTok := p.expectIdent("expected receiver name")
+	p.expect(tokens.COLON, "expected ':' after receiver name")
 	recvType := p.parseType()
 	return &ast.Receiver{
 		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
@@ -215,6 +219,7 @@ func (p *Parser) parseParams() []ast.Param {
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
 		nameTok := p.expectIdent("expected parameter name")
+		p.expect(tokens.COLON, "expected ':' after parameter name")
 		paramType := p.parseType()
 		params = append(params, ast.Param{
 			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
@@ -250,6 +255,7 @@ func (p *Parser) parseAttachedMethodParams(owner *ast.NamedType) (*ast.Receiver,
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
 		nameTok := p.expectIdent("expected parameter name")
+		p.expect(tokens.COLON, "expected ':' after parameter name")
 		paramType := p.parseType()
 		params = append(params, ast.Param{
 			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
@@ -341,7 +347,6 @@ func (p *Parser) parseStructType() ast.TypeExpr {
 	start := p.advance().Start
 	p.expect(tokens.LBRACE, "expected '{'")
 	fields := make([]*ast.FieldDecl, 0)
-	staticFields := make([]*ast.StaticFieldDecl, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
 		if !p.at(tokens.STATIC) && !p.at(tokens.IDENT) {
 			p.errorHere("expected struct field")
@@ -349,23 +354,17 @@ func (p *Parser) parseStructType() ast.TypeExpr {
 			continue
 		}
 		fieldStart := p.current().Start
-		isStatic := p.match(tokens.STATIC)
+		if p.match(tokens.STATIC) {
+			p.errorAt(p.locFrom(fieldStart), "static struct fields are not supported")
+		}
 		nameTok := p.expectIdent("expected field name")
+		p.expect(tokens.COLON, "expected ':' after field name")
 		fieldType := p.parseType()
 		var def ast.Expr
 		if p.match(tokens.ASSIGN) {
 			def = p.parseExpr(precLowest)
 		}
 		p.match(tokens.SEMICOLON)
-		if isStatic {
-			staticFields = append(staticFields, &ast.StaticFieldDecl{
-				Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
-				Type:     fieldType,
-				Default:  def,
-				Location: p.locFrom(fieldStart),
-			})
-			continue
-		}
 		fields = append(fields, &ast.FieldDecl{
 			Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Type:     fieldType,
@@ -374,7 +373,7 @@ func (p *Parser) parseStructType() ast.TypeExpr {
 		})
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
-	return &ast.StructType{Fields: fields, StaticFields: staticFields, Location: p.locFrom(start)}
+	return &ast.StructType{Fields: fields, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseInterfaceType() ast.TypeExpr {
@@ -449,6 +448,7 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
 		nameTok := p.expectIdent("expected parameter name")
+		p.expect(tokens.COLON, "expected ':' after parameter name")
 		paramType := p.parseType()
 		params = append(params, ast.Param{
 			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},

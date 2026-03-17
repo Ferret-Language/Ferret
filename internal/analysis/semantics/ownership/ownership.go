@@ -1311,14 +1311,6 @@ func (a *analyzer) canDeepCopyTypeSeen(typ typeinfo.Type, seen map[typeinfo.Type
 				return false, msg
 			}
 		}
-		for _, field := range t.OrderedStaticFields {
-			if field == nil {
-				continue
-			}
-			if ok, msg := a.canDeepCopyTypeSeen(field.Type, seen, seenNamed); !ok {
-				return false, msg
-			}
-		}
 		return true, ""
 	case *typeinfo.UnionType:
 		for _, member := range t.Members {

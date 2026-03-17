@@ -79,25 +79,13 @@ func lowerStructTypeDecl(decl *hir.StructTypeDecl) *StructTypeDecl {
 		return nil
 	}
 	out := &StructTypeDecl{
-		Fields:       make([]*StructFieldDecl, 0, len(decl.Fields)),
-		StaticFields: make([]*StructFieldDecl, 0, len(decl.StaticFields)),
+		Fields: make([]*StructFieldDecl, 0, len(decl.Fields)),
 	}
 	for _, field := range decl.Fields {
 		if field == nil {
 			continue
 		}
 		out.Fields = append(out.Fields, &StructFieldDecl{
-			Name:     field.Name,
-			Type:     field.Type,
-			Default:  lowerValue(nil, field.Default),
-			Location: field.Location,
-		})
-	}
-	for _, field := range decl.StaticFields {
-		if field == nil {
-			continue
-		}
-		out.StaticFields = append(out.StaticFields, &StructFieldDecl{
 			Name:     field.Name,
 			Type:     field.Type,
 			Default:  lowerValue(nil, field.Default),
@@ -113,11 +101,12 @@ func lowerInterfaceTypeDecl(decl *hir.InterfaceTypeDecl) *InterfaceTypeDecl {
 	}
 	out := &InterfaceTypeDecl{Methods: make([]*InterfaceMethodDecl, 0, len(decl.Methods))}
 	for _, method := range decl.Methods {
-		if method == nil {
+		if method == nil || method.Static {
 			continue
 		}
 		entry := &InterfaceMethodDecl{
 			Receiver: method.Receiver,
+			Static:   method.Static,
 			Name:     method.Name,
 			Result:   method.Result,
 			Location: method.Location,
@@ -237,6 +226,9 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 	case *hir.ExprStmt:
 		return &EvalInstr{baseInstr: baseInstr{Location: s.Loc()}, Value: lowerValue(lowerCtx, s.Value)}
 	case *hir.AssignStmt:
+		if ident, ok := s.Left.(*hir.Ident); ok && len(ident.Path) == 1 && ident.Path[0] == "_" {
+			return &EvalInstr{baseInstr: baseInstr{Location: s.Loc()}, Value: lowerValue(lowerCtx, s.Right)}
+		}
 		if target := lowerAssignableTarget(lowerCtx, s.Left); target != nil {
 			return &StoreInstr{baseInstr: baseInstr{Location: s.Loc()}, Target: target, Value: lowerCoercedValue(lowerCtx, s.Right, s.Left.Type())}
 		}
@@ -989,7 +981,7 @@ func lowerReceiverNamed(typ typeinfo.Type) *typeinfo.NamedType {
 }
 
 func lowerInterfaceCoercion(lowerCtx *lowerContext, source, target typeinfo.Type) ([]InterfaceMethodLink, typeinfo.Type, bool) {
-	targetIface, ok := lowerInterfaceMethodNames(target)
+	targetIface, ok := lowerInterfaceMethods(target)
 	if !ok {
 		return nil, nil, false
 	}
@@ -1000,7 +992,11 @@ func lowerInterfaceCoercion(lowerCtx *lowerContext, source, target typeinfo.Type
 		return nil, nil, false
 	}
 	out := make([]InterfaceMethodLink, 0, len(targetIface))
-	for _, name := range targetIface {
+	for _, method := range targetIface {
+		if method == nil || method.Static {
+			continue
+		}
+		name := method.Name.Text()
 		path, ok := lowerCtx.lookupMethod(source, name)
 		if !ok || len(path) == 0 {
 			return nil, nil, false
@@ -1010,7 +1006,7 @@ func lowerInterfaceCoercion(lowerCtx *lowerContext, source, target typeinfo.Type
 	return out, source, true
 }
 
-func lowerInterfaceMethodNames(typ typeinfo.Type) ([]string, bool) {
+func lowerInterfaceMethods(typ typeinfo.Type) ([]*ast.InterfaceMethod, bool) {
 	named, ok := typ.(*typeinfo.NamedType)
 	if !ok || named == nil || named.Decl == nil {
 		return nil, false
@@ -1019,10 +1015,10 @@ func lowerInterfaceMethodNames(typ typeinfo.Type) ([]string, bool) {
 	if !ok || ifaceDecl == nil {
 		return nil, false
 	}
-	out := make([]string, 0, len(ifaceDecl.Methods))
+	out := make([]*ast.InterfaceMethod, 0, len(ifaceDecl.Methods))
 	for _, method := range ifaceDecl.Methods {
 		if method != nil && method.Name != nil {
-			out = append(out, method.Name.Text())
+			out = append(out, method)
 		}
 	}
 	return out, true

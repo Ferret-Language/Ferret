@@ -486,6 +486,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		}
 		r.resolveExpr(scope, e.Fallback)
 	case *ast.CompositeLit:
+		r.resolveType(scope, e.Type)
 		for _, item := range e.Items {
 			r.resolveExpr(scope, item.Value)
 		}
@@ -523,13 +524,6 @@ func (r *resolver) resolveType(scope *table.Scope, typ ast.TypeExpr) {
 		}
 	case *ast.StructType:
 		for _, field := range t.Fields {
-			if field == nil {
-				continue
-			}
-			r.resolveType(scope, field.Type)
-			r.resolveExpr(scope, field.Default)
-		}
-		for _, field := range t.StaticFields {
 			if field == nil {
 				continue
 			}

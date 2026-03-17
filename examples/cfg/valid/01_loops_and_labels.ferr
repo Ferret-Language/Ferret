@@ -1,4 +1,4 @@
-fn run(items [10]i32) i32 {
+fn run(items: [10]i32) i32 {
     let mut x: i32 = 0
 outer: for items |i, v| {
         while x < v {

@@ -1,7 +1,7 @@
 type Point struct {
-    x =
-    y i32 = 1
-    static origin Point = .{}
+    x: =
+    y: i32 = 1
+    static: origin Point = .{}
 }
 
 fn build() i32 {

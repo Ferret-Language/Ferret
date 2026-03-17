@@ -20,6 +20,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Parameter passing defines semantics for values, parameters, and receivers.
 [*] Interfaces must include receiver modifier in the required method signature.
 [*] Heap values must not contain references.
+[*] Constructors/destructors are no longer special language concepts; use ordinary attached methods and explicit `defer`.
 
 ## Incremental Migration Phases
 
@@ -59,6 +60,8 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Warn when `let mut` bindings are never modified and suggest removing `mut`.
 [*] Support attached methods with unified `fn Type::Name(...)` syntax, where the first parameter slot decides instance vs static method behavior.
 [*] Warn when attached-method receiver binders use names other than `self`, while still accepting them for compatibility.
+[*] Add `Self` as a type placeholder for attached methods and interface signatures, instantiated against the concrete implementing type during checking.
+[*] Add explicit typed composite literals like `.Point{}` alongside contextual `.{}`
 
 ### Phase 4: Rework parameter and receiver semantics around one rule
 

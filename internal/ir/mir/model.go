@@ -27,8 +27,7 @@ type TypeDecl struct {
 }
 
 type StructTypeDecl struct {
-	Fields       []*StructFieldDecl
-	StaticFields []*StructFieldDecl
+	Fields []*StructFieldDecl
 }
 
 type StructFieldDecl struct {
@@ -44,6 +43,7 @@ type InterfaceTypeDecl struct {
 
 type InterfaceMethodDecl struct {
 	Receiver string
+	Static   bool
 	Name     string
 	Params   []*Param
 	Result   typeinfo.Type

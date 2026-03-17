@@ -1,29 +1,29 @@
 import "std/io"
 
 type Point struct {
-    X i32 = 1
-    Y i32 = 2
-    static Counter i32 = 0
+    X: i32 = 1
+    Y: i32 = 2
+    static: Counter i32 = 0
 }
 
 type Circle struct {
-    Rad f32
+    Rad: f32
 }
 
-fn (_ *Circle) Show() {
+fn (_: *Circle) Show() {
     io::Println("I am a circle")
 }
 
-fn (_ *Point) Point() {
+fn (_: *Point) Point() {
     io::Println("ctor")
     Point::Counter = Point::Counter + 1
 }
 
-fn (_ *Point) ~Point() void {
+fn (_: *Point) ~Point() void {
     io::Println("dtor")
 }
 
-fn (_ *Point) Show() {
+fn (_: *Point) Show() {
     io::Println("I am a point")
 }
 
@@ -31,7 +31,7 @@ type Shape interface{
     Show()
 }
 
-fn who(s Shape) {
+fn who(s: Shape) {
     s.Show()
 }
 

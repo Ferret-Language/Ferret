@@ -29,11 +29,11 @@ fn main() i32 {
 `)
 	mustWriteType(t, filepath.Join(root, "math", "vec2.ferr"), `
 type Vec2 struct {
-    X i32 = 0
-    Y i32 = 0
+    X: i32 = 0
+    Y: i32 = 0
 }
 
-fn Len2(v Vec2) i32 {
+fn Len2(v: Vec2) i32 {
     return v.X * v.X + v.Y * v.Y
 }
 `)
@@ -91,7 +91,7 @@ fn bad() i32 {
 func TestTypecheckerReportsArgumentTypeMismatch(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn Add(x i32, y i32) i32 {
+fn Add(x: i32, y: i32) i32 {
     return x + y
 }
 
@@ -239,8 +239,8 @@ func TestTypecheckerAllowsCompositeLiteralCastWithTargetType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 1
-    Y i32 = 2
+    X: i32 = 1
+    Y: i32 = 2
 }
 
 fn main() i32 {
@@ -259,7 +259,7 @@ func TestTypecheckerAllowsValueToSatisfyInterfaceValueMethod(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn Point::Show(self) {
@@ -412,7 +412,7 @@ type Stringer interface {
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
 fn Name::String(self) str {
@@ -432,6 +432,38 @@ fn main() str {
 	}
 }
 
+func TestTypecheckerMatchesInterfaceSelfReturnAndTypedCompositeLiteral(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Shape interface {
+    New() Self
+    Draw(&self)
+}
+
+type Point struct {
+    value: i32 = 0
+}
+
+fn Point::New() Self {
+    return .Point{}
+}
+
+fn Point::Draw(&self) {
+}
+
+fn main() void {
+    let p: Point = .Point{}
+    let s: Shape = p
+    _ = s
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsStaticIsChecks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
@@ -440,10 +472,10 @@ type Stringer interface {
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
-fn (n Name) String() str {
+fn (n: Name) String() str {
     return 1 as str
 }
 
@@ -465,28 +497,21 @@ fn main() i32 {
 	}
 }
 
-func TestTypecheckerAllowsStaticFieldAssignment(t *testing.T) {
+func TestTypecheckerRejectsStaticStructField(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
-    static Counter i32 = 0
-}
-
-fn (_ *Point) Point() {
-    Point::Counter = Point::Counter + 1
-}
-
-fn main() i32 {
-    let p: Point = .{}
-    print(p.X)
-    return Point::Counter
+    X: i32 = 0
+    static: Counter i32 = 0
 }
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected static-struct-field diagnostic")
+	}
+	if !strings.Contains(result.Diagnostics.Diagnostics()[0].Message, "static struct fields are not supported") {
+		t.Fatalf("expected static-field rejection diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -670,7 +695,7 @@ type Stringer interface {
     String() str
 }
 
-fn main(s Stringer) bool {
+fn main(s: Stringer) bool {
     return s is str
 }
 `)
@@ -695,7 +720,7 @@ type Stringer interface {
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
 fn main() i32 {
@@ -729,7 +754,7 @@ type Stringer interface {
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
 fn Name::String(self) i32 {
@@ -767,10 +792,10 @@ type Reader interface {
 }
 
 type File struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
-fn File::read(&self, buf []u8) i32 {
+fn File::read(&self, buf: []u8) i32 {
     return 0
 }
 
@@ -802,13 +827,13 @@ func TestTypecheckerRejectsCrossModuleMethodDeclaration(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 import "util/name"
 
-fn (n name::Name) String() str {
+fn (n: name::Name) String() str {
     return "x"
 }
 `)
 	mustWriteType(t, filepath.Join(root, "util", "name.ferr"), `
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 `)
 
@@ -828,152 +853,112 @@ type Name struct {
 	}
 }
 
-func TestTypecheckerRejectsConstructorParameters(t *testing.T) {
+func TestTypecheckerAllowsMethodNamedLikeType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn (p *Point) Point(x i32) {
+fn (p: *Point) Point(x: i32) {
     p.X = x
 }
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected invalid constructor diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidOperation {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrInvalidOperation, result.Diagnostics.Diagnostics())
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
-func TestTypecheckerRejectsNonOwningConstructorReceiver(t *testing.T) {
+func TestTypecheckerAllowsMethodNamedLikeTypeOnRefReceiver(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn (p &mut Point) Point() {
+fn (p: &mut Point) Point() {
 }
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected invalid constructor receiver diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidOperation {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrInvalidOperation, result.Diagnostics.Diagnostics())
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
-func TestTypecheckerRejectsDestructorReceiverAndParameters(t *testing.T) {
+func TestTypecheckerRejectsRemovedDestructorSyntax(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn (p *Point) ~Point(x i32) i32 {
+fn (p: *Point) ~Point(x: i32) i32 {
     return x
 }
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
 	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected invalid destructor diagnostic")
+		t.Fatal("expected removed destructor syntax diagnostic")
 	}
-	count := 0
+	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidOperation {
-			count++
+		if strings.Contains(diag.Message, "special destructor syntax has been removed") {
+			found = true
+			break
 		}
 	}
-	if count < 2 {
-		t.Fatalf("expected multiple %s diagnostics, got %#v", diagnostics.ErrInvalidOperation, result.Diagnostics.Diagnostics())
+	if !found {
+		t.Fatalf("expected removed destructor syntax diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
-func TestTypecheckerRejectsExplicitConstructorCall(t *testing.T) {
+func TestTypecheckerAllowsDirectMethodCallNamedLikeType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn (p *Point) Point() {
-    p.X = 1
+fn (p: Point) Point() i32 {
+    return p.X
 }
 
 fn main() i32 {
-    let p = Point()
+    let p: Point = .Point{}
+    return p.Point()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsStaticMethodNamedLikeType(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn Point::Point() Point {
+    return .{}
+}
+
+fn main() i32 {
+    let p = Point::Point()
     return p.X
 }
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected explicit constructor call diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrNotCallable {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrNotCallable, result.Diagnostics.Diagnostics())
-	}
-}
-
-func TestTypecheckerRejectsDirectConstructorMethodCall(t *testing.T) {
-	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-type Point struct {
-    X i32 = 0
-}
-
-fn (p *Point) Point() {
-    p.X = 1
-}
-
-fn main() i32 {
-    let p: *Point
-    p.Point()
-    return 0
-}
-`)
-
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected direct constructor method call diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrNotCallable {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrNotCallable, result.Diagnostics.Diagnostics())
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -981,7 +966,7 @@ func TestTypecheckerRejectsFieldMutationThroughImmutableBinding(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() void {
@@ -1010,7 +995,7 @@ func TestTypecheckerAllowsFieldMutationThroughMutableBinding(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() void {
@@ -1029,10 +1014,10 @@ func TestTypecheckerAllowsMutationThroughMutableReference(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn bump(p &mut Point) void {
+fn bump(p: &mut Point) void {
     (*p).X = 1
 }
 `)
@@ -1047,10 +1032,10 @@ func TestTypecheckerRejectsMutationThroughImmutableReference(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn bump(p &Point) void {
+fn bump(p: &Point) void {
     (*p).X = 1
 }
 `)
@@ -1075,7 +1060,7 @@ func TestTypecheckerRejectsMutableReferenceFromImmutableBinding(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() void {
@@ -1105,10 +1090,10 @@ func TestTypecheckerRejectsPlainValueForBorrowParameter(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn read(p &Point) i32 {
+fn read(p: &Point) i32 {
     return p.X
 }
 
@@ -1138,10 +1123,10 @@ func TestTypecheckerRejectsPlainImmutableValueForMutableBorrowParameter(t *testi
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn bump(p &mut Point) i32 {
+fn bump(p: &mut Point) i32 {
     return p.X
 }
 
@@ -1261,7 +1246,7 @@ func TestTypecheckerAllowsCatchFallbackValue(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Io error { denied }
 
-fn main(x Io!i32) i32 {
+fn main(x: Io!i32) i32 {
     return x catch -1
 }
 `)
@@ -1322,7 +1307,7 @@ fn main() string {
 func TestTypecheckerDoesNotCascadeNotCallableAfterMissingImportedSymbol(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "ferret_libs_dev", "std", "math.ferr"), `
-fn ClampToZero(value i32) i32 {
+fn ClampToZero(value: i32) i32 {
     return value
 }
 `)
@@ -1355,9 +1340,9 @@ func TestTypecheckerRequiresCatchHandlerToExit(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Io error { denied }
 
-fn log(x Io) void {}
+fn log(x: Io) void {}
 
-fn main(x Io!i32) i32 {
+fn main(x: Io!i32) i32 {
     let file = x catch |err| {
         log(err)
     }
@@ -1427,15 +1412,15 @@ func TestTypecheckerResolvesMethodCalls(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
-    Y i32 = 0
+    X: i32 = 0
+    Y: i32 = 0
 }
 
-fn (p Point) Len2() i32 {
+fn (p: Point) Len2() i32 {
     return p.X * p.X + p.Y * p.Y
 }
 
-fn (p *Point) Len() i32 {
+fn (p: *Point) Len() i32 {
     return p.X * p.X + p.Y * p.Y
 }
 
@@ -1456,10 +1441,10 @@ func TestTypecheckerRejectsPointerMethodCallOnValue(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn (p *Point) Len() i32 {
+fn (p: *Point) Len() i32 {
     return p.X
 }
 
@@ -1489,7 +1474,7 @@ func TestTypecheckerReportsMissingMethod(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() i32 {
@@ -1518,7 +1503,7 @@ func TestTypecheckerAllowsPlainStructCopyFromLetBinding(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() i32 {
@@ -1538,8 +1523,8 @@ func TestTypecheckerRejectsCopyAsNotYetImplemented(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
-    Y i32 = 0
+    X: i32 = 0
+    Y: i32 = 0
 }
 
 fn main() i32 {
@@ -1570,7 +1555,7 @@ func TestTypecheckerRejectsCopyOfOwningPointer(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn bad(c *Conn) void {
+fn bad(c: *Conn) void {
     let d = copy c
 }
 `)
@@ -1594,7 +1579,7 @@ fn bad(c *Conn) void {
 func TestTypecheckerRejectsCopyOfRawPointer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn bad(p ^i32) void {
+fn bad(p: ^i32) void {
     let d = copy p
 }
 `)
@@ -1644,7 +1629,7 @@ fn main() i32 {
 func TestTypecheckerRejectsNonConstComptimeArgument(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn id(comptime T i32, x i32) i32 {
+fn id(comptime T: i32, x: i32) i32 {
     return x
 }
 
@@ -1702,7 +1687,7 @@ type MyErr error {
     Oops
 }
 
-fn run(items [3]i32) i32 {
+fn run(items: [3]i32) i32 {
     let r: MyErr!i32 = undefined
     let x = 1
     return r catch |e| { return x }
@@ -1798,7 +1783,7 @@ func TestTypecheckerUsesReferenceTypesForAddressOf(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn readPoint() i32 {
@@ -1841,7 +1826,7 @@ func TestTypecheckerUsesRawPointerTypesForRawAddress(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() void {
@@ -1884,7 +1869,7 @@ func TestTypecheckerRejectsRawAddressOutsideUnsafe(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() void {
@@ -1913,7 +1898,7 @@ fn main() void {
 func TestTypecheckerTypesArrayIndexing(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main(items [3]i32) i32 {
+fn main(items: [3]i32) i32 {
     let v = items[1]
     return v
 }
@@ -2003,14 +1988,14 @@ func TestTypecheckerResolvesExplicitReferenceReceivers(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn (p &Point) Read() i32 {
+fn (p: &Point) Read() i32 {
     return p.X
 }
 
-fn (p &mut Point) Bump() i32 {
+fn (p: &mut Point) Bump() i32 {
     return p.X + 1
 }
 
@@ -2032,11 +2017,11 @@ func TestTypecheckerRejectsOwningPointerToReferenceContainingType(t *testing.T) 
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Inner struct {
-    Ref &i32
+    Ref: &i32
 }
 
 type Outer struct {
-    Child *Inner
+    Child: *Inner
 }
 `)
 

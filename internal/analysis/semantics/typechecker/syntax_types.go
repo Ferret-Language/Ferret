@@ -29,6 +29,8 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		}
 		decl, _ := resolution.Symbol.Node.(*ast.TypeDecl)
 		return &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}
+	case *ast.SelfType:
+		return &typeinfo.SelfType{}
 	case *ast.PointerType:
 		inner := c.typeFromSyntax(mod, t.Inner)
 		return &typeinfo.PointerType{Inner: inner}
@@ -57,8 +59,6 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.StructType:
 		fields := make(map[string]*typeinfo.StructField)
 		orderedFields := make([]*typeinfo.StructField, 0, len(t.Fields))
-		staticFields := make(map[string]*typeinfo.StructField)
-		orderedStaticFields := make([]*typeinfo.StructField, 0, len(t.StaticFields))
 		for _, field := range t.Fields {
 			if field == nil {
 				continue
@@ -68,16 +68,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			fields[fieldName] = structField
 			orderedFields = append(orderedFields, structField)
 		}
-		for _, field := range t.StaticFields {
-			if field == nil {
-				continue
-			}
-			fieldName := field.Name.Text()
-			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type), HasDefault: field.Default != nil}
-			staticFields[fieldName] = structField
-			orderedStaticFields = append(orderedStaticFields, structField)
-		}
-		return &typeinfo.StructType{Fields: fields, OrderedFields: orderedFields, StaticFields: staticFields, OrderedStaticFields: orderedStaticFields}
+		return &typeinfo.StructType{Fields: fields, OrderedFields: orderedFields}
 	case *ast.EnumType:
 		variants := make(map[string]struct{}, len(t.Variants))
 		orderedVariants := make([]string, 0, len(t.Variants))

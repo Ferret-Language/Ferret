@@ -195,23 +195,6 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 			p.validateType(field.Type)
 			p.validateExpr(field.Default)
 		}
-		for _, field := range t.StaticFields {
-			if field == nil {
-				continue
-			}
-			name := field.Name.Text()
-			if prev, ok := seenFields[name]; ok {
-				p.reportDuplicateDeclName(
-					fmt.Sprintf("duplicate field %q", name),
-					field.Location,
-					prev,
-				)
-			} else {
-				seenFields[name] = field.Location
-			}
-			p.validateType(field.Type)
-			p.validateExpr(field.Default)
-		}
 	case *ast.InterfaceType:
 		seen := make(map[string]*ast.InterfaceMethod)
 		for _, method := range t.Methods {

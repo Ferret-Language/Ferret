@@ -89,17 +89,6 @@ func collectTypeMembers(ctx *context.CompilerContext, typeMembers map[string]map
 	}
 
 	switch t := decl.Type.(type) {
-	case *ast.StructType:
-		for _, field := range t.StaticFields {
-			if field == nil {
-				continue
-			}
-			sym := symbols.New(field.Name.Text(), symbols.SymbolStatic, field)
-			sym.Mutable = true
-			sym.Location = field.Name.Loc()
-			sym.OwnerType = typeName
-			declareTypeMember(ctx, typeName, members, sym)
-		}
 	case *ast.EnumType:
 		for _, variant := range t.Variants {
 			if variant == nil {

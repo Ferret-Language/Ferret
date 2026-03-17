@@ -38,6 +38,10 @@ type StringType struct{}
 
 func (*StringType) String() string { return "str" }
 
+type SelfType struct{}
+
+func (*SelfType) String() string { return "Self" }
+
 type NamedType struct {
 	ModuleKey string
 	Name      string
@@ -156,10 +160,8 @@ type StructField struct {
 }
 
 type StructType struct {
-	Fields              map[string]*StructField
-	OrderedFields       []*StructField
-	StaticFields        map[string]*StructField
-	OrderedStaticFields []*StructField
+	Fields        map[string]*StructField
+	OrderedFields []*StructField
 }
 
 func (t *StructType) String() string { return "struct" }
@@ -276,6 +278,9 @@ func Equal(a, b Type) bool {
 		return ok && at.Name == bt.Name
 	case *StringType:
 		_, ok := b.(*StringType)
+		return ok
+	case *SelfType:
+		_, ok := b.(*SelfType)
 		return ok
 	case *NamedType:
 		bt, ok := b.(*NamedType)

@@ -35,6 +35,13 @@ type RawPtrType struct {
 func (*RawPtrType) typeNode()              {}
 func (t *RawPtrType) Loc() source.Location { return t.Location }
 
+type SelfType struct {
+	Location source.Location
+}
+
+func (*SelfType) typeNode()              {}
+func (t *SelfType) Loc() source.Location { return t.Location }
+
 type OptionalType struct {
 	Inner    TypeExpr
 	Location source.Location
@@ -78,9 +85,8 @@ func (*TupleType) typeNode()              {}
 func (t *TupleType) Loc() source.Location { return t.Location }
 
 type StructType struct {
-	Fields       []*FieldDecl
-	StaticFields []*StaticFieldDecl
-	Location     source.Location
+	Fields   []*FieldDecl
+	Location source.Location
 }
 
 func (*StructType) typeNode()              {}

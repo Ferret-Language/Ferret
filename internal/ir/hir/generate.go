@@ -51,7 +51,6 @@ func Generate(key, importPath, filePath string, astMod *ast.Module, types *typei
 		switch d := decl.(type) {
 		case *ast.TypeDecl:
 			out.Types = append(out.Types, g.generateTypeDecl(d))
-			out.Globals = append(out.Globals, g.generateStaticFieldGlobals(d)...)
 		case *ast.LetDecl:
 			out.Globals = append(out.Globals, g.generateLetDecl(d))
 		case *ast.ConstDecl:
@@ -204,42 +203,6 @@ func (g *generator) maybeLocalID(id *ast.Ident) int {
 	return -1
 }
 
-func staticFieldGlobalName(typeName, fieldName string) string {
-	if typeName == "" {
-		return fieldName
-	}
-	if fieldName == "" {
-		return typeName
-	}
-	return typeName + "__" + fieldName
-}
-
-func (g *generator) generateStaticFieldGlobals(d *ast.TypeDecl) []*Global {
-	if d == nil {
-		return nil
-	}
-	st, ok := d.Type.(*ast.StructType)
-	if !ok || len(st.StaticFields) == 0 {
-		return nil
-	}
-	out := make([]*Global, 0, len(st.StaticFields))
-	for _, field := range st.StaticFields {
-		if field == nil {
-			continue
-		}
-		out = append(out, &Global{
-			Name:     staticFieldGlobalName(d.Name.Text(), field.Name.Text()),
-			Mutable:  false,
-			Constant: true,
-			Type:     syntaxType(g.types, field.Type),
-			Value:    g.generateExpr(field.Default),
-			Location: field.Location,
-			Source:   nil,
-		})
-	}
-	return out
-}
-
 func (g *generator) generateTypeDecl(d *ast.TypeDecl) *TypeDecl {
 	if d == nil {
 		return nil
@@ -271,25 +234,13 @@ func (g *generator) generateStructTypeDecl(t *ast.StructType) *StructTypeDecl {
 		return nil
 	}
 	out := &StructTypeDecl{
-		Fields:       make([]*StructFieldDecl, 0, len(t.Fields)),
-		StaticFields: make([]*StructFieldDecl, 0, len(t.StaticFields)),
+		Fields: make([]*StructFieldDecl, 0, len(t.Fields)),
 	}
 	for _, field := range t.Fields {
 		if field == nil {
 			continue
 		}
 		out.Fields = append(out.Fields, &StructFieldDecl{
-			Name:     field.Name.Text(),
-			Type:     syntaxType(g.types, field.Type),
-			Default:  g.generateExpr(field.Default),
-			Location: field.Location,
-		})
-	}
-	for _, field := range t.StaticFields {
-		if field == nil {
-			continue
-		}
-		out.StaticFields = append(out.StaticFields, &StructFieldDecl{
 			Name:     field.Name.Text(),
 			Type:     syntaxType(g.types, field.Type),
 			Default:  g.generateExpr(field.Default),
@@ -310,6 +261,7 @@ func generateInterfaceTypeDecl(types *typeinfo.ModuleInfo, t *ast.InterfaceType)
 		}
 		entry := &InterfaceMethodDecl{
 			Receiver: method.Receiver,
+			Static:   method.Static,
 			Name:     method.Name.Text(),
 			Result:   syntaxType(types, method.Result),
 			Location: method.Location,
@@ -421,9 +373,11 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	if d.OwnerType != nil && len(d.OwnerType.Path) > 0 {
 		fn.OwnerType = d.OwnerType.Path[len(d.OwnerType.Path)-1]
 	}
-	if d.IsDestructor {
-		fn.Name = "~" + d.Name.Text()
+	var selfType typeinfo.Type
+	if d.OwnerType != nil {
+		selfType = syntaxType(g.types, d.OwnerType)
 	}
+	fn.Result = hirInstantiateSelfType(fn.Result, selfType)
 	if fn.Result == nil {
 		fn.Result = &typeinfo.BuiltinType{Name: "void"}
 	}
@@ -431,7 +385,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 		fn.Receiver = &Param{
 			Name:     g.maybeMangledLocalName(d.Receiver.Name),
 			LocalID:  g.maybeLocalID(d.Receiver.Name),
-			Type:     syntaxType(g.types, d.Receiver.Type),
+			Type:     hirInstantiateSelfType(syntaxType(g.types, d.Receiver.Type), selfType),
 			Location: d.Receiver.Location,
 		}
 	}
@@ -440,12 +394,44 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 		fn.Params = append(fn.Params, &Param{
 			Name:       g.maybeMangledLocalName(param.Name),
 			LocalID:    g.maybeLocalID(param.Name),
-			Type:       syntaxType(g.types, param.Type),
+			Type:       hirInstantiateSelfType(syntaxType(g.types, param.Type), selfType),
 			IsComptime: param.IsComptime,
 			Location:   param.Location,
 		})
 	}
 	return fn
+}
+
+func hirInstantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type {
+	if selfType == nil {
+		return typ
+	}
+	switch t := typ.(type) {
+	case *typeinfo.SelfType:
+		return selfType
+	case *typeinfo.PointerType:
+		return &typeinfo.PointerType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.RefType:
+		return &typeinfo.RefType{Mutable: t.Mutable, Inner: hirInstantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.RawPtrType:
+		return &typeinfo.RawPtrType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.OptionalType:
+		return &typeinfo.OptionalType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.ErrorUnionType:
+		return &typeinfo.ErrorUnionType{Error: hirInstantiateSelfType(t.Error, selfType), Value: hirInstantiateSelfType(t.Value, selfType)}
+	case *typeinfo.ArrayType:
+		return &typeinfo.ArrayType{Inner: hirInstantiateSelfType(t.Inner, selfType), Len: t.Len}
+	case *typeinfo.SliceType:
+		return &typeinfo.SliceType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.TupleType:
+		elems := make([]typeinfo.Type, 0, len(t.Elems))
+		for _, elem := range t.Elems {
+			elems = append(elems, hirInstantiateSelfType(elem, selfType))
+		}
+		return &typeinfo.TupleType{Elems: elems}
+	default:
+		return typ
+	}
 }
 
 func (g *generator) generateBlock(block *ast.BlockStmt) *BlockStmt {
@@ -457,9 +443,6 @@ func (g *generator) generateBlock(block *ast.BlockStmt) *BlockStmt {
 	for _, stmt := range block.Stmts {
 		if lowered := g.generateStmt(stmt); lowered != nil {
 			out.Stmts = append(out.Stmts, lowered)
-		}
-		if deferred := g.generateAutoDestructorDefer(stmt); deferred != nil {
-			out.Stmts = append(out.Stmts, deferred)
 		}
 	}
 	return out
@@ -480,7 +463,15 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.ReturnStmt:
-		out := &ReturnStmt{Value: g.generateExpr(s.Value)}
+		value := g.generateExpr(s.Value)
+		if comp, ok := value.(*CompositeLit); ok && (typeinfo.IsInvalid(comp.ExprType) || isUnknownType(comp.ExprType)) {
+			if g.currentFn != nil && g.currentFn.Result != nil {
+				if resultType := syntaxType(g.types, g.currentFn.Result); resultType != nil {
+					comp.ExprType = resultType
+				}
+			}
+		}
+		out := &ReturnStmt{Value: value}
 		out.Location = s.Location
 		return out
 	case *ast.ExprStmt:
@@ -569,54 +560,6 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 	default:
 		return nil
 	}
-}
-
-func (g *generator) generateAutoDestructorDefer(stmt ast.Stmt) Stmt {
-	letStmt, ok := stmt.(*ast.LetStmt)
-	if !ok || letStmt == nil || letStmt.Name == nil {
-		return nil
-	}
-	methodName, ok := g.destructorMethodName(effectiveType(g.types, letStmt.Type, letStmt.Value))
-	if !ok {
-		return nil
-	}
-	ident := &Ident{Path: []string{g.maybeMangledLocalName(letStmt.Name)}}
-	ident.LocalID = g.maybeLocalID(letStmt.Name)
-	ident.ExprType = effectiveType(g.types, letStmt.Type, letStmt.Value)
-	ident.Location = letStmt.Name.Location
-	call := &CallExpr{
-		Callee: &SelectorExpr{
-			Left: ident,
-			Name: methodName,
-		},
-		Args: nil,
-	}
-	call.ExprType = &typeinfo.BuiltinType{Name: "void"}
-	call.Location = letStmt.Location
-	call.Source = nil
-	call.Callee.(*SelectorExpr).ExprType = &typeinfo.FuncType{
-		Result: &typeinfo.BuiltinType{Name: "void"},
-	}
-	call.Callee.(*SelectorExpr).Location = letStmt.Location
-	deferred := &DeferStmt{Body: &ExprStmt{Value: call}}
-	deferred.Location = letStmt.Location
-	return deferred
-}
-
-func (g *generator) destructorMethodName(typ typeinfo.Type) (string, bool) {
-	ptr, ok := typ.(*typeinfo.PointerType)
-	if !ok || ptr == nil || g.lookupMethod == nil {
-		return "", false
-	}
-	named, ok := ptr.Inner.(*typeinfo.NamedType)
-	if !ok || named == nil {
-		return "", false
-	}
-	name := "~" + named.Name
-	if _, ok := g.lookupMethod(ptr, name); !ok {
-		return "", false
-	}
-	return name, true
 }
 
 func (g *generator) generateExpr(expr ast.Expr) Expr {
@@ -723,11 +666,13 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
 	case *ast.CompositeLit:
+		if typeinfo.IsInvalid(typ) || isUnknownType(typ) {
+			if e.Type != nil {
+				typ = g.resolveTypeExpr(e.Type)
+			}
+		}
 		out := &CompositeLit{Items: make([]CompositeItem, 0, len(e.Items))}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
-		if path, ok := g.constructorMethodPath(typ); ok {
-			out.ConstructorPath = append([]string(nil), path...)
-		}
 		if fields, ok := g.structLiteralFields(typ); ok {
 			used := make(map[string]struct{}, len(fields))
 			positional := 0
@@ -771,6 +716,14 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 	default:
 		return nil
 	}
+}
+
+func isUnknownType(typ typeinfo.Type) bool {
+	if typ == nil {
+		return true
+	}
+	_, ok := typ.(typeinfo.UnknownType)
+	return ok
 }
 
 func (g *generator) staticIsResult(left, target typeinfo.Type) bool {
@@ -831,21 +784,6 @@ func hirInterfaceMethodCompatible(expected, got *typeinfo.FuncType) bool {
 		}
 	}
 	return typeinfo.Equal(expected.Result, got.Result)
-}
-
-func (g *generator) constructorMethodPath(typ typeinfo.Type) ([]string, bool) {
-	if g == nil || g.lookupMethod == nil {
-		return nil, false
-	}
-	named, ok := typ.(*typeinfo.NamedType)
-	if !ok || named == nil {
-		return nil, false
-	}
-	path, ok := g.lookupMethod(named, named.Name)
-	if !ok {
-		return nil, false
-	}
-	return path, true
 }
 
 func exprType(types *typeinfo.ModuleInfo, expr ast.Expr) typeinfo.Type {

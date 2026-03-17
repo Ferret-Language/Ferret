@@ -19,15 +19,14 @@ const BuildMode = "debug"
 
 type Point struct {
     X i32 = 0
-    static Origin Point = .{}
 }
 
 type Color enum {
     Red
 }
 
-fn Build() i32 {
-    return 1
+fn Point::Origin() Point {
+    return .{}
 }
 
 fn (p *Point) Shift(dx i32) {
@@ -59,10 +58,6 @@ fn (p *Point) Shift(dx i32) {
 	if !ok || typeSym.Kind != symbols.SymbolType {
 		t.Fatalf("expected type symbol, got %#v", typeSym)
 	}
-	funcSym, ok := scope.LookupLocal("Build")
-	if !ok || funcSym.Kind != symbols.SymbolFunc || !funcSym.Exported {
-		t.Fatalf("expected exported function symbol, got %#v", funcSym)
-	}
 	methods := result.Entry.MethodSets["*Point"]
 	if len(methods) != 1 {
 		t.Fatalf("expected one method for *Point, got %#v", methods)
@@ -70,11 +65,8 @@ fn (p *Point) Shift(dx i32) {
 	if methods["Shift"].Kind != symbols.SymbolMethod {
 		t.Fatalf("expected method symbol, got %#v", methods["Shift"])
 	}
-	if result.Entry.TypeMembers["Point"]["Origin"].Kind != symbols.SymbolStatic {
-		t.Fatalf("expected static member symbol, got %#v", result.Entry.TypeMembers["Point"]["Origin"])
-	}
-	if !result.Entry.TypeMembers["Point"]["Origin"].Mutable {
-		t.Fatalf("expected static member to be mutable by default, got %#v", result.Entry.TypeMembers["Point"]["Origin"])
+	if result.Entry.TypeMembers["Point"]["Origin"].Kind != symbols.SymbolFunc {
+		t.Fatalf("expected static method symbol, got %#v", result.Entry.TypeMembers["Point"]["Origin"])
 	}
 	if result.Entry.TypeMembers["Color"]["Red"].Kind != symbols.SymbolVariant {
 		t.Fatalf("expected enum variant symbol, got %#v", result.Entry.TypeMembers["Color"]["Red"])

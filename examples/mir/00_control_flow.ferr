@@ -1,6 +1,6 @@
 type Point struct {
-    X i32 = 0
-    Y i32 = 0
+    X: i32 = 0
+    Y: i32 = 0
 }
 
 let mut GlobalPoint: Point = .{ .X = 1, .Y = 2 }

@@ -14,7 +14,7 @@ func TestOwnershipPhaseAllowsPlainStructCopy(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() i32 {
@@ -49,10 +49,10 @@ func TestOwnershipPhaseConsumesOwningReceiver(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn (c *Conn) Close() void {
+fn (c: *Conn) Close() void {
 }
 
-fn run(c *Conn) void {
+fn run(c: *Conn) void {
     c.Close()
     c.Close()
 }
@@ -74,7 +74,7 @@ func TestOwnershipPhaseAllowsPlainStructCopyThroughLoop(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() i32 {
@@ -101,7 +101,7 @@ fn main() i32 {
 func TestOwnershipPhaseAllowsArrayCopyByDefault(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
-fn main(items [3]i32) i32 {
+fn main(items: [3]i32) i32 {
     let other = items
     return items[0] + other[1]
 }
@@ -123,7 +123,7 @@ func TestOwnershipPhaseAllowsLoopReinitialization(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 fn main() i32 {
@@ -154,10 +154,10 @@ func TestOwnershipPhaseFreezesBorrowedOwnerWithinBlock(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn useConn(c *Conn) void {
+fn useConn(c: *Conn) void {
 }
 
-fn run(c *Conn) void {
+fn run(c: *Conn) void {
     if 1 == 1 {
         let p = &*c
         useConn(c)
@@ -183,7 +183,7 @@ func TestOwnershipPhaseRejectsReturnedBorrow(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn borrow(c *Conn) &Conn {
+fn borrow(c: *Conn) &Conn {
     return &*c
 }
 `)
@@ -205,7 +205,7 @@ func TestOwnershipPhaseRejectsReturnedBorrowBinding(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn borrow(c *Conn) &Conn {
+fn borrow(c: *Conn) &Conn {
     let p = &*c
     return p
 }
@@ -227,10 +227,10 @@ func TestOwnershipPhaseRejectsDeferredBorrowCapture(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    Value i32 = 0
+    Value: i32 = 0
 }
 
-fn read(p &Point) void {
+fn read(p: &Point) void {
     p
 }
 
@@ -256,7 +256,7 @@ func TestOwnershipPhaseRejectsImmutableBorrowWhileMutableBorrowIsLive(t *testing
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    Value i32 = 0
+    Value: i32 = 0
 }
 
 fn run() void {
@@ -284,7 +284,7 @@ func TestOwnershipPhaseAllowsMultipleImmutableBorrows(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    Value i32 = 0
+    Value: i32 = 0
 }
 
 fn run() void {
@@ -315,7 +315,7 @@ type Handle enum {
     stdout,
 }
 
-fn make(flag bool) Handle {
+fn make(flag: bool) Handle {
     if flag {
         return Handle::stdin
     }
@@ -349,7 +349,7 @@ type Handle enum {
     stdout,
 }
 
-fn make(flag bool) Handle {
+fn make(flag: bool) Handle {
     if flag {
         return Handle::stdin
     }
@@ -375,11 +375,11 @@ func TestOwnershipPhaseRejectsWholeValueUseAfterFieldMove(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Node struct {
-    Child *Node
-    Value i32 = 0
+    Child: *Node
+    Value: i32 = 0
 }
 
-fn main(n Node) i32 {
+fn main(n: Node) i32 {
     let child = n.Child
     let copy = n
     return copy.Value
@@ -402,11 +402,11 @@ func TestOwnershipPhaseAllowsWholeValueUseAfterCopyingPlainField(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Node struct {
-    Child *Node
-    Value i32 = 0
+    Child: *Node
+    Value: i32 = 0
 }
 
-fn main(n Node) i32 {
+fn main(n: Node) i32 {
     let value = n.Value
     let again = n
     return again.Value + value
@@ -428,11 +428,11 @@ func TestOwnershipPhaseAllowsOtherFieldAfterFieldMove(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Node struct {
-    Child *Node
-    Value i32 = 0
+    Child: *Node
+    Value: i32 = 0
 }
 
-fn main(n Node) i32 {
+fn main(n: Node) i32 {
     let child = n.Child
     return n.Value
 }
@@ -453,11 +453,11 @@ func TestOwnershipPhaseAllowsFieldReinitializationAfterFieldMove(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Node struct {
-    Child *Node
-    Value i32 = 0
+    Child: *Node
+    Value: i32 = 0
 }
 
-fn main(n Node, replacement *Node) i32 {
+fn main(n: Node, replacement: *Node) i32 {
     let mut current = n
     let child = current.Child
     current.Child = replacement
