@@ -91,11 +91,11 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 
 ### Phase 7: Update assignment, mutation, and access rules
 
-[ ] Make binding mutability (`let mut`) the gate for reassignment and mutation.
-[ ] Ensure mutation through `&mut T` and owning pointers is allowed only with mutable access.
+[*] Make binding mutability (`let mut`) the gate for reassignment and mutation.
+[*] Ensure mutation through `&mut T` and owning pointers is allowed only with mutable access.
 [ ] Ensure immutable references and immutable bindings reject mutation consistently.
-[ ] Review selector, dereference, and assignment-target checks so they respect the new access model.
-[ ] Add tests for field mutation, pointer mutation, reassignment, and immutable access failures.
+[*] Review selector, dereference, and assignment-target checks so they respect the new access model.
+[*] Add tests for field mutation, pointer mutation, reassignment, and immutable access failures.
 
 ### Phase 8: Propagate the new semantics through HIR and MIR
 

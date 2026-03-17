@@ -219,5 +219,36 @@ func (c *checker) checkAssignmentTarget(scope *refineScope, left ast.Expr) {
 					WithPrimaryLabel(&loc, "symbol must be mutable"),
 			)
 		}
+	case *ast.SelectorExpr, *ast.IndexExpr:
+		addressable, mutable := c.exprAccess(scope, left)
+		if !addressable {
+			return
+		}
+		if !mutable {
+			loc := left.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot assign through immutable access path").
+					WithCode(diagnostics.ErrConstantReassignment).
+					WithPrimaryLabel(&loc, "this assignment target requires mutable access").
+					WithNote("declare the base binding with `let mut` or use `&mut`"),
+			)
+		}
+	case *ast.PrefixExpr:
+		if e.Op != "*" {
+			return
+		}
+		addressable, mutable := c.exprAccess(scope, left)
+		if !addressable {
+			return
+		}
+		if !mutable {
+			loc := left.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot assign through immutable access path").
+					WithCode(diagnostics.ErrConstantReassignment).
+					WithPrimaryLabel(&loc, "this assignment target requires mutable access").
+					WithNote("declare the base binding with `let mut` or use `&mut`"),
+			)
+		}
 	}
 }

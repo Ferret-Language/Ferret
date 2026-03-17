@@ -977,6 +977,72 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerRejectsFieldMutationThroughImmutableBinding(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn main() void {
+    let p: Point = .{}
+    p.X = 1
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected immutable assignment diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrConstantReassignment && strings.Contains(diag.Message, "cannot assign through immutable access path") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected immutable assignment diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsFieldMutationThroughMutableBinding(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn main() void {
+    let mut p: Point = .{}
+    p.X = 1
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsMutationThroughMutableReference(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn bump(p &mut Point) void {
+    (*p).X = 1
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerUsesBuiltInBoolConstants(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

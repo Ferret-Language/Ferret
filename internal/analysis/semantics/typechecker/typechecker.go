@@ -1477,6 +1477,22 @@ func (c *checker) exprAccess(scope *refineScope, expr ast.Expr) (addressable boo
 		}
 	case *ast.SelectorExpr:
 		return c.exprAccess(scope, e.Left)
+	case *ast.IndexExpr:
+		return c.exprAccess(scope, e.Left)
+	case *ast.PrefixExpr:
+		if e.Op != "*" {
+			return false, false
+		}
+		rightType := c.typeOfExpr(scope, e.Right, nil)
+		switch t := c.underlying(rightType).(type) {
+		case *typeinfo.RefType:
+			return true, t.Mutable
+		case *typeinfo.PointerType:
+			_, rightMutable := c.exprAccess(scope, e.Right)
+			return true, rightMutable
+		default:
+			return false, false
+		}
 	default:
 		return false, false
 	}
