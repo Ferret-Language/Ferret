@@ -38,7 +38,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 
 [*] Redefine move semantics so only `*T` is move-only by default.
 [*] Redefine copy semantics so plain `T` values are copyable by default.
-[ ] Remove structural move-by-default behavior for structs, tuples, arrays, unions, interfaces, optionals, and error unions.
+[*] Remove structural move-by-default behavior for structs, tuples, arrays, unions, interfaces, optionals, and error unions.
 [*] Remove dependence on move-marked named types from semantic analysis.
 [ ] Decide whether `copy` remains as optional explicit syntax or is removed entirely.
 [*] Remove or redefine `take` so it no longer carries the old move-model assumptions.

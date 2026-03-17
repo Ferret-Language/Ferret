@@ -98,6 +98,26 @@ fn main() i32 {
 	}
 }
 
+func TestOwnershipPhaseAllowsArrayCopyByDefault(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+fn main(items [3]i32) i32 {
+    let other = items
+    return items[0] + other[1]
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
+		}
+	}
+}
+
 func TestOwnershipPhaseAllowsLoopReinitialization(t *testing.T) {
 	t.Skip("loop reinitialization after move needs stronger ownership data-flow than the current phase provides")
 	root := t.TempDir()
