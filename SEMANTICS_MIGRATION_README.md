@@ -62,6 +62,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Warn when attached-method receiver binders use names other than `self`, while still accepting them for compatibility.
 [*] Add `Self` as a type placeholder for attached methods and interface signatures, instantiated against the concrete implementing type during checking.
 [*] Add explicit typed composite literals like `.Point{}` alongside contextual `.{}`
+[*] Require `:` consistently in type annotations for let-bindings, parameters, and struct fields.
 
 ### Phase 4: Rework parameter and receiver semantics around one rule
 
@@ -72,6 +73,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Update constructor/destructor special cases if they still exist after the receiver model change.
 [*] Add focused tests for each receiver form and each allowed/disallowed call pattern.
 [*] Accept `fn Type::Method(self|&self|&mut self|*self, ...)` and `fn Type::Method(...)` without changing the underlying receiver-based semantic pipeline more than necessary.
+[*] Support `mut` parameter bindings and require mutable arguments when calling functions whose parameters are declared `mut`.
 
 ### Phase 5: Redesign interface method signatures
 
@@ -93,6 +95,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Enforce that heap values cannot contain `&T` or `&mut T`.
 [*] Revisit partial-move logic so it only applies where the new model actually needs it.
 [*] Expand ownership tests to cover local scopes, branches, loops, returns, globals, and aggregate storage.
+[*] Release borrow bindings after last use within a block, while keeping deferred uses pinned until scope end instead of following NLL shortening.
 
 ### Phase 7: Update assignment, mutation, and access rules
 

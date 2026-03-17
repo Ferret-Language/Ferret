@@ -129,7 +129,7 @@ func formatParam(param *Param) string {
 	if param.IsComptime {
 		prefix += "comptime "
 	}
-	return fmt.Sprintf("%s%s %s", prefix, param.Name, renderType(param.Type))
+	return fmt.Sprintf("%s%s: %s", prefix, param.Name, renderType(param.Type))
 }
 
 func formatMethodParams(params []*Param) string {
@@ -370,7 +370,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 					continue
 				}
 				b.WriteString("    ")
-				fmt.Fprintf(&b, "%s %s", field.Name, renderType(field.Type))
+				fmt.Fprintf(&b, "%s: %s", field.Name, renderType(field.Type))
 				if field.Default != nil {
 					fmt.Fprintf(&b, " = %s", formatValue(field.Default))
 				}

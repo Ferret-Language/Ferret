@@ -572,6 +572,9 @@ func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mi
 	if field, ok := value.(*mir.FieldLoadValue); ok {
 		return lowerFieldLoad(state, name, typ, field)
 	}
+	if field, ok := value.(*mir.FieldValue); ok {
+		return lowerResolvedFieldValueLoad(state, name, typ, field)
+	}
 	if idx, ok := value.(*mir.IndexValue); ok {
 		return lowerIndexLoad(state, name, typ, idx)
 	}
@@ -1111,6 +1114,46 @@ func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.T
 	return strings.Join(lines, "\n\t"), nil
 }
 
+func lowerFieldValueLoad(state *moduleState, targetName string, targetType typeinfo.Type, base mir.Value, fieldIndex int) (string, error) {
+	lines, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
+	if err != nil {
+		return "", err
+	}
+	op, resultType, err := qbeLoadOp(targetType)
+	if err != nil {
+		return "", err
+	}
+	lines = append(lines, fmt.Sprintf("%s =%s %s %s", qbeLocalName(targetName), resultType, op, addr))
+	return strings.Join(lines, "\n\t"), nil
+}
+
+func lowerResolvedFieldValueLoad(state *moduleState, targetName string, targetType typeinfo.Type, field *mir.FieldValue) (string, error) {
+	if field == nil {
+		return "", fmt.Errorf("nil field value")
+	}
+	fieldIndex, err := qbeResolveFieldIndex(state, qbeFieldBaseType(state, field.Base), field.FieldIndex, field.MemberName)
+	if err != nil {
+		return "", err
+	}
+	return lowerFieldValueLoad(state, targetName, targetType, field.Base, fieldIndex)
+}
+
+func qbeResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldIndex int, memberName string) (int, error) {
+	if fieldIndex >= 0 {
+		return fieldIndex, nil
+	}
+	structLayout, err := lookupStructLayout(state, baseType)
+	if err != nil {
+		return -1, err
+	}
+	for _, field := range structLayout.Fields {
+		if field != nil && field.Name == memberName {
+			return field.SemanticIndex, nil
+		}
+	}
+	return -1, fmt.Errorf("unknown field %q", memberName)
+}
+
 // lowerIndexLoad lowers arr[index] as an rvalue via QBE load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
 	if _, ok := unwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
@@ -1461,7 +1504,7 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 		return strings.Join(lines, "\n\t"), nil
 	case *mir.CallValue:
 		return lowerAggregateCall(state, agg, v)
-	case *mir.LocalValue, *mir.NameValue:
+	case *mir.LocalValue, *mir.NameValue, *mir.LoadValue, *mir.FieldLoadValue:
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
 			return "", err
@@ -2091,6 +2134,14 @@ func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
 		return lowerValue(state, v)
 	case *mir.NameValue:
 		return lowerValue(state, v)
+	case *mir.LoadValue:
+		return lowerValue(state, v.Pointer)
+	case *mir.FieldLoadValue:
+		_, addr, _, err := lowerFieldAddress(state, v.Base, v.FieldIndex)
+		if err != nil {
+			return "", err
+		}
+		return addr, nil
 	default:
 		return "", fmt.Errorf("unsupported aggregate source %T", value)
 	}
@@ -2378,7 +2429,7 @@ func entryPrelude(state *moduleState) []string {
 	sort.Ints(scalarIDs)
 	aggIDs := make([]int, 0, len(state.aggLocals))
 	for id, agg := range state.aggLocals {
-		if agg == nil || agg.Size == 0 {
+		if agg == nil {
 			continue
 		}
 		if _, ok := state.aggParams[id]; ok {
@@ -2394,7 +2445,13 @@ func entryPrelude(state *moduleState) []string {
 	}
 	for _, id := range aggIDs {
 		agg := state.aggLocals[id]
-		lines = append(lines, fmt.Sprintf("%s =l alloc%d %d", qbeLocalName(agg.PtrName), normalizeQBEAlign(agg.Align), agg.Size))
+		size := agg.Size
+		align := agg.Align
+		if size == 0 {
+			size = 1
+			align = 1
+		}
+		lines = append(lines, fmt.Sprintf("%s =l alloc%d %d", qbeLocalName(agg.PtrName), normalizeQBEAlign(align), size))
 	}
 	return lines
 }
@@ -2518,11 +2575,41 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
 	case *mir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
+	case *mir.FieldValue:
+		fieldIndex, err := qbeResolveFieldIndex(state, qbeFieldBaseType(state, v.Base), v.FieldIndex, v.MemberName)
+		if err != nil {
+			return "", err
+		}
+		lines, addr, _, err := lowerFieldAddress(state, v.Base, fieldIndex)
+		if err != nil {
+			return "", err
+		}
+		op, resultType, err := qbeLoadOp(v.Type())
+		if err != nil {
+			return "", err
+		}
+		tmp := freshTemp(state, "fld")
+		state.pendingLines = append(state.pendingLines, lines...)
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, resultType, op, addr))
+		return tmp, nil
 	case *mir.IndexValue:
 		return "", fmt.Errorf("index value must be lowered in assignment context")
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
+}
+
+func qbeFieldBaseType(state *moduleState, value mir.Value) typeinfo.Type {
+	if value == nil {
+		return nil
+	}
+	if typ := value.Type(); typ != nil {
+		return typ
+	}
+	if local, ok := value.(*mir.LocalValue); ok {
+		return localTypeByID(state.fn, local.LocalID)
+	}
+	return nil
 }
 
 func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
@@ -3053,6 +3140,10 @@ func lookupStructLayout(state *moduleState, typ typeinfo.Type) (*layout.StructLa
 		}
 		return info.Struct, nil
 	case *typeinfo.PointerType:
+		return lookupStructLayout(state, t.Inner)
+	case *typeinfo.RefType:
+		return lookupStructLayout(state, t.Inner)
+	case *typeinfo.RawPtrType:
 		return lookupStructLayout(state, t.Inner)
 	default:
 		return nil, fmt.Errorf("unsupported struct base type %s", typeinfo.FormatType(typeStringer{typ}))

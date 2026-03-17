@@ -1,5 +1,0 @@
-import "math/vec2"
-
-fn Origin() vec2::Vec2 {
-    return .{}
-}

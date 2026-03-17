@@ -5,10 +5,10 @@ type Color enum {
     Blue,
 }
 
-let mut RuntimeColor: Color = Color::Red
+let RuntimeColor: Color = Color::Red
 const DefaultColor = Color::Green
 
-fn main(flag bool) i32 {
+fn main(flag: bool) i32 {
     let mut value = Color::Blue
     if flag {
         value = RuntimeColor

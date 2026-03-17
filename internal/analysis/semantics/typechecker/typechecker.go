@@ -294,6 +294,9 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 			paramType = typeinfo.UnknownType{}
 		}
 		c.bindDeclSymbol(param.Name, paramType)
+		if sym := c.declSymbol(param.Name); sym != nil {
+			sym.Mutable = param.IsMut
+		}
 		// No base-type environment: locals/params are typed via Bindings+Types.
 	}
 	prevResult := c.currentResult
@@ -914,7 +917,7 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 	}
 
 	addressable, mutable := c.exprAccess(scope, selector.Left)
-	_, methodType := c.lookupMethod(receiverType, selector.Name.Text(), addressable, mutable)
+	_, methodType, methodReceiver := c.lookupMethodDetailed(receiverType, selector.Name.Text(), addressable, mutable)
 	if methodType == nil {
 		if c.canHaveMethods(receiverType) {
 			// If the method exists but only on a mutable receiver and the variable
@@ -938,6 +941,9 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 		return nil, false
 	}
 	c.info.BindNode(selector, methodType)
+	if methodReceiver != nil {
+		c.info.BindMethodReceiver(call, methodReceiver)
+	}
 	c.typecheckCallArgs(scope, call, methodType)
 	c.info.BindNode(call, methodType.Result)
 	return methodType.Result, true
@@ -959,6 +965,18 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 		if expected != nil {
 			if !c.checkReferenceArg(scope, arg, expected, argType) {
 				continue
+			}
+			if i < len(fnType.MutParams) && fnType.MutParams[i] {
+				addressable, mutable := c.exprAccess(scope, arg)
+				if !addressable || !mutable {
+					loc := arg.Loc()
+					c.ctx.Diagnostics.Add(
+						diagnostics.NewError("mutable parameter requires mutable argument binding").
+							WithCode(diagnostics.ErrTypeMismatch).
+							WithPrimaryLabel(&loc, "pass a mutable binding here"),
+					)
+					continue
+				}
 			}
 			c.checkAssignable(arg.Loc(), expected, argType)
 		}
@@ -2031,10 +2049,12 @@ func (c *checker) instantiateSelfFuncType(fn *typeinfo.FuncType, selfType typein
 	for _, param := range fn.Params {
 		params = append(params, c.instantiateSelfType(param, selfType))
 	}
+	mutParams := append([]bool(nil), fn.MutParams...)
 	comptime := append([]bool(nil), fn.ComptimeParams...)
 	return &typeinfo.FuncType{
 		IsUnsafe:       fn.IsUnsafe,
 		Params:         params,
+		MutParams:      mutParams,
 		ComptimeParams: comptime,
 		Result:         c.instantiateSelfType(fn.Result, selfType),
 	}
@@ -2089,11 +2109,16 @@ func (c *checker) interfaceMethodCompatible(expected, got *typeinfo.FuncType) bo
 	if expected.IsUnsafe != got.IsUnsafe {
 		return false
 	}
-	if len(expected.Params) != len(got.Params) || len(expected.ComptimeParams) != len(got.ComptimeParams) {
+	if len(expected.Params) != len(got.Params) || len(expected.MutParams) != len(got.MutParams) || len(expected.ComptimeParams) != len(got.ComptimeParams) {
 		return false
 	}
 	for i := range expected.Params {
 		if !typeinfo.Equal(expected.Params[i], got.Params[i]) {
+			return false
+		}
+	}
+	for i := range expected.MutParams {
+		if expected.MutParams[i] != got.MutParams[i] {
 			return false
 		}
 	}

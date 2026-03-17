@@ -6,16 +6,18 @@ import (
 )
 
 type ModuleInfo struct {
-	Nodes   map[ast.Node]Type
-	Symbols map[*symbols.Symbol]Type
-	Bools   map[ast.Node]bool
+	Nodes           map[ast.Node]Type
+	Symbols         map[*symbols.Symbol]Type
+	Bools           map[ast.Node]bool
+	MethodReceivers map[ast.Node]Type
 }
 
 func NewModuleInfo() *ModuleInfo {
 	return &ModuleInfo{
-		Nodes:   make(map[ast.Node]Type),
-		Symbols: make(map[*symbols.Symbol]Type),
-		Bools:   make(map[ast.Node]bool),
+		Nodes:           make(map[ast.Node]Type),
+		Symbols:         make(map[*symbols.Symbol]Type),
+		Bools:           make(map[ast.Node]bool),
+		MethodReceivers: make(map[ast.Node]Type),
 	}
 }
 
@@ -46,4 +48,19 @@ func (m *ModuleInfo) LookupBool(node ast.Node) (bool, bool) {
 	}
 	value, ok := m.Bools[node]
 	return value, ok
+}
+
+func (m *ModuleInfo) BindMethodReceiver(node ast.Node, typ Type) {
+	if m == nil || node == nil || typ == nil {
+		return
+	}
+	m.MethodReceivers[node] = typ
+}
+
+func (m *ModuleInfo) LookupMethodReceiver(node ast.Node) (Type, bool) {
+	if m == nil || node == nil {
+		return nil, false
+	}
+	typ, ok := m.MethodReceivers[node]
+	return typ, ok
 }

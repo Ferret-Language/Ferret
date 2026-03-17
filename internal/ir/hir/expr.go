@@ -59,8 +59,9 @@ func (*PostfixExpr) exprNode() {}
 
 type CallExpr struct {
 	baseExpr
-	Callee Expr
-	Args   []Expr
+	Callee         Expr
+	Args           []Expr
+	MethodReceiver typeinfo.Type
 }
 
 func (*CallExpr) exprNode() {}

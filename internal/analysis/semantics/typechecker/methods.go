@@ -17,13 +17,18 @@ func (c *checker) canHaveMethods(typ typeinfo.Type) bool {
 }
 
 func (c *checker) lookupMethod(receiverType typeinfo.Type, name string, addressable bool, mutable bool) (*symbols.Symbol, *typeinfo.FuncType) {
+	sym, fnType, _ := c.lookupMethodDetailed(receiverType, name, addressable, mutable)
+	return sym, fnType
+}
+
+func (c *checker) lookupMethodDetailed(receiverType typeinfo.Type, name string, addressable bool, mutable bool) (*symbols.Symbol, *typeinfo.FuncType, typeinfo.Type) {
 	baseNamed, ok := c.receiverBaseNamedType(receiverType)
 	if !ok {
-		return nil, nil
+		return nil, nil, nil
 	}
 	owner := c.findModuleForType(baseNamed)
 	if owner == nil || owner.MethodSets == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	for _, key := range c.methodCandidateKeys(receiverType, baseNamed.Name, addressable, mutable) {
 		methods := owner.MethodSets[key]
@@ -35,9 +40,9 @@ func (c *checker) lookupMethod(receiverType typeinfo.Type, name string, addressa
 			continue
 		}
 		fnType, _ := c.typeOfSymbol(sym).(*typeinfo.FuncType)
-		return sym, fnType
+		return sym, fnType, c.receiverTypeFromKey(baseNamed, key)
 	}
-	return nil, nil
+	return nil, nil, nil
 }
 
 func (c *checker) lookupMethodWithReceiver(receiverType typeinfo.Type, receiver string, name string) (*symbols.Symbol, *typeinfo.FuncType) {
@@ -100,6 +105,12 @@ func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName strin
 	switch t := receiverType.(type) {
 	case *typeinfo.NamedType:
 		add(baseName)
+		if addressable {
+			add("&" + baseName)
+			if mutable {
+				add("&mut " + baseName)
+			}
+		}
 	case *typeinfo.RefType:
 		if exact, ok := c.receiverKeyFromType(t); ok {
 			add(exact)
@@ -113,6 +124,24 @@ func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName strin
 		}
 	}
 	return keys
+}
+
+func (c *checker) receiverTypeFromKey(named *typeinfo.NamedType, key string) typeinfo.Type {
+	if named == nil {
+		return nil
+	}
+	switch {
+	case key == named.Name:
+		return named
+	case key == "&"+named.Name:
+		return &typeinfo.RefType{Inner: named}
+	case key == "&mut "+named.Name:
+		return &typeinfo.RefType{Mutable: true, Inner: named}
+	case key == "*"+named.Name:
+		return &typeinfo.PointerType{Inner: named}
+	default:
+		return nil
+	}
 }
 
 func (c *checker) receiverBaseNamedType(typ typeinfo.Type) (*typeinfo.NamedType, bool) {

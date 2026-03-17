@@ -75,8 +75,11 @@ func formatSignature(fn *FuncType) string {
 	parts := make([]string, 0, len(fn.Params))
 	for i, param := range fn.Params {
 		prefix := ""
+		if i < len(fn.MutParams) && fn.MutParams[i] {
+			prefix += "mut "
+		}
 		if i < len(fn.ComptimeParams) && fn.ComptimeParams[i] {
-			prefix = "comptime "
+			prefix += "comptime "
 		}
 		parts = append(parts, prefix+FormatType(param))
 	}

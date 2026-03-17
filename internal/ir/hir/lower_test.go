@@ -7,14 +7,14 @@ import (
 
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/hir"
 )
 
 func TestLoweringNormalizesLoops(t *testing.T) {
 	root := t.TempDir()
 	mustWriteLower(t, filepath.Join(root, "main.ferr"), `
-fn main(items [3]i32) i32 {
+fn main(items: [3]i32) i32 {
     let mut x: i32 = 0
     while x < 5 {
         x = x + 1

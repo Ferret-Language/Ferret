@@ -1520,6 +1520,9 @@ func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mi
 	if field, ok := value.(*mir.FieldLoadValue); ok {
 		return lowerFieldLoad(state, name, typ, field)
 	}
+	if field, ok := value.(*mir.FieldValue); ok {
+		return lowerResolvedFieldValueLoad(state, name, typ, field)
+	}
 	if idx, ok := value.(*mir.IndexValue); ok {
 		return lowerIndexLoad(state, name, typ, idx)
 	}
@@ -1721,6 +1724,46 @@ func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.T
 	}
 	lines = append(lines, fmt.Sprintf("%s = load %s, ptr %s", llvmLocalName(targetName), irType, addr))
 	return strings.Join(lines, "\n"), nil
+}
+
+func lowerFieldValueLoad(state *moduleState, targetName string, targetType typeinfo.Type, base mir.Value, fieldIndex int) (string, error) {
+	lines, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
+	if err != nil {
+		return "", err
+	}
+	irType, err := llvmBaseType(targetType)
+	if err != nil {
+		return "", err
+	}
+	lines = append(lines, fmt.Sprintf("%s = load %s, ptr %s", llvmLocalName(targetName), irType, addr))
+	return strings.Join(lines, "\n"), nil
+}
+
+func lowerResolvedFieldValueLoad(state *moduleState, targetName string, targetType typeinfo.Type, field *mir.FieldValue) (string, error) {
+	if field == nil {
+		return "", fmt.Errorf("nil field value")
+	}
+	fieldIndex, err := llvmResolveFieldIndex(state, llvmFieldBaseType(state, field.Base), field.FieldIndex, field.MemberName)
+	if err != nil {
+		return "", err
+	}
+	return lowerFieldValueLoad(state, targetName, targetType, field.Base, fieldIndex)
+}
+
+func llvmResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldIndex int, memberName string) (int, error) {
+	if fieldIndex >= 0 {
+		return fieldIndex, nil
+	}
+	structLayout, err := lookupStructLayout(state, baseType)
+	if err != nil {
+		return -1, err
+	}
+	for _, field := range structLayout.Fields {
+		if field != nil && field.Name == memberName {
+			return field.SemanticIndex, nil
+		}
+	}
+	return -1, fmt.Errorf("unknown field %q", memberName)
 }
 
 // lowerIndexLoad lowers arr[index] as an rvalue load.
@@ -2353,7 +2396,7 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 		return strings.Join(lines, "\n"), nil
 	case *mir.CallValue:
 		return lowerAggregateCallValue(state, agg, v)
-	case *mir.LocalValue, *mir.NameValue:
+	case *mir.LocalValue, *mir.NameValue, *mir.LoadValue, *mir.FieldLoadValue:
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
 			return "", err
@@ -3070,6 +3113,14 @@ func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
 		return lowerValue(state, v)
 	case *mir.NameValue:
 		return lowerValue(state, v)
+	case *mir.LoadValue:
+		return lowerValue(state, v.Pointer)
+	case *mir.FieldLoadValue:
+		_, addr, _, err := lowerFieldAddress(state, v.Base, v.FieldIndex)
+		if err != nil {
+			return "", err
+		}
+		return addr, nil
 	default:
 		return "", fmt.Errorf("unsupported aggregate source %T", value)
 	}
@@ -3308,11 +3359,41 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
 	case *mir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
+	case *mir.FieldValue:
+		fieldIndex, err := llvmResolveFieldIndex(state, llvmFieldBaseType(state, v.Base), v.FieldIndex, v.MemberName)
+		if err != nil {
+			return "", err
+		}
+		lines, addr, fieldType, err := lowerFieldAddress(state, v.Base, fieldIndex)
+		if err != nil {
+			return "", err
+		}
+		irType, err := llvmBaseType(fieldType)
+		if err != nil {
+			return "", err
+		}
+		tmp := freshTemp(state, "fld")
+		state.pendingLines = append(state.pendingLines, lines...)
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, addr))
+		return tmp, nil
 	case *mir.IndexValue:
 		return "", fmt.Errorf("index value must be lowered in assignment context")
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
+}
+
+func llvmFieldBaseType(state *moduleState, value mir.Value) typeinfo.Type {
+	if value == nil {
+		return nil
+	}
+	if typ := value.Type(); typ != nil {
+		return typ
+	}
+	if local, ok := value.(*mir.LocalValue); ok {
+		return localTypeByID(state.fn, local.LocalID)
+	}
+	return nil
 }
 
 func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
@@ -3836,7 +3917,7 @@ func entryPrelude(state *moduleState) []string {
 	// 2. Alloca non-param aggregate locals.
 	aggIDs := make([]int, 0, len(state.aggLocals))
 	for id, agg := range state.aggLocals {
-		if agg == nil || agg.Size == 0 {
+		if agg == nil {
 			continue
 		}
 		if _, ok := state.aggParams[id]; ok {
@@ -3876,12 +3957,18 @@ func entryPrelude(state *moduleState) []string {
 
 	for _, id := range aggIDs {
 		agg := state.aggLocals[id]
-		typeName, err := llvmABITypeName(state, agg.Type)
-		if err != nil {
-			typeName = fmt.Sprintf("[%d x i8]", agg.Size)
+		typeName := "i8"
+		align := int64(1)
+		if agg.Size > 0 {
+			var err error
+			typeName, err = llvmABITypeName(state, agg.Type)
+			if err != nil {
+				typeName = fmt.Sprintf("[%d x i8]", agg.Size)
+			}
+			align = normalizeAlign(agg.Align)
 		}
 		lines = append(lines, fmt.Sprintf("%s = alloca %s, align %d",
-			llvmLocalName(agg.PtrName), typeName, normalizeAlign(agg.Align)))
+			llvmLocalName(agg.PtrName), typeName, align))
 	}
 
 	return lines

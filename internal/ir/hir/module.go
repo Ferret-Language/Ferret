@@ -98,6 +98,7 @@ type Param struct {
 	Name       string
 	LocalID    int
 	Type       typeinfo.Type
+	IsMutable  bool
 	IsComptime bool
 	Location   source.Location
 }

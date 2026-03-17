@@ -134,10 +134,13 @@ func formatParam(param *Param) string {
 		return ""
 	}
 	prefix := ""
-	if param.IsComptime {
-		prefix = "comptime "
+	if param.IsMutable {
+		prefix += "mut "
 	}
-	return fmt.Sprintf("%s%s %s", prefix, param.Name, typeString(param.Type))
+	if param.IsComptime {
+		prefix += "comptime "
+	}
+	return fmt.Sprintf("%s%s: %s", prefix, param.Name, typeString(param.Type))
 }
 
 func formatBlock(b *strings.Builder, block *BlockStmt, indent int) {
@@ -378,7 +381,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 					continue
 				}
 				indentLine(&b, 1)
-				fmt.Fprintf(&b, "%s %s", field.Name, typeString(field.Type))
+				fmt.Fprintf(&b, "%s: %s", field.Name, typeString(field.Type))
 				if field.Default != nil {
 					fmt.Fprintf(&b, " = %s", formatExpr(field.Default))
 				}

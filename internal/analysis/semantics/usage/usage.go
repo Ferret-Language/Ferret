@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"compiler/internal/analysis/semantics/typeinfo"
 	"fmt"
 	"reflect"
 
@@ -20,6 +21,7 @@ type analyzer struct {
 	written     map[*symbols.Symbol]int
 	declNodes   map[ast.Node]struct{}
 	writeNodes  map[ast.Node]struct{}
+	readWrites  map[ast.Node]struct{}
 }
 
 func AnalyzeModules(ctx *context.CompilerContext, mods []*context.Module) {
@@ -43,6 +45,7 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 		written:     make(map[*symbols.Symbol]int),
 		declNodes:   make(map[ast.Node]struct{}),
 		writeNodes:  make(map[ast.Node]struct{}),
+		readWrites:  make(map[ast.Node]struct{}),
 	}
 	a.collectDeclNodes()
 	a.collectUses()
@@ -233,11 +236,35 @@ func (a *analyzer) collectDeclNodesStmt(stmt ast.Stmt) {
 }
 
 func (a *analyzer) markWriteTarget(expr ast.Expr) {
+	a.markTarget(expr, false)
+}
+
+func (a *analyzer) markReadWriteTarget(expr ast.Expr) {
+	a.markTarget(expr, true)
+}
+
+func (a *analyzer) markTarget(expr ast.Expr, readWrite bool) {
 	if a == nil || expr == nil {
 		return
 	}
-	if ident, ok := expr.(*ast.Ident); ok {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		ident := e
 		a.writeNodes[ident] = struct{}{}
+		if readWrite {
+			a.readWrites[ident] = struct{}{}
+		}
+	case *ast.SelectorExpr:
+		a.markTarget(e.Left, readWrite)
+	case *ast.IndexExpr:
+		a.markTarget(e.Left, readWrite)
+	case *ast.PrefixExpr:
+		switch e.Op {
+		case "*", "&", "&mut":
+			a.markTarget(e.Right, readWrite)
+		}
+	case *ast.CastExpr:
+		a.markTarget(e.Left, readWrite)
 	}
 }
 
@@ -270,6 +297,7 @@ func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {
 		if e == nil {
 			return
 		}
+		a.markCallWrites(e)
 		a.collectDeclNodesExpr(e.Callee)
 		for _, arg := range e.Args {
 			a.collectDeclNodesExpr(arg)
@@ -329,6 +357,28 @@ func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {
 	}
 }
 
+func (a *analyzer) markCallWrites(call *ast.CallExpr) {
+	if a == nil || call == nil || a.mod == nil || a.mod.Types == nil {
+		return
+	}
+	if receiverType, ok := a.mod.Types.LookupMethodReceiver(call); ok {
+		if ref, ok := receiverType.(*typeinfo.RefType); ok && ref.Mutable {
+			if sel, ok := call.Callee.(*ast.SelectorExpr); ok {
+				a.markReadWriteTarget(sel.Left)
+			}
+		}
+	}
+	fnType, ok := a.mod.Types.Nodes[call.Callee].(*typeinfo.FuncType)
+	if !ok || fnType == nil {
+		return
+	}
+	for i, arg := range call.Args {
+		if i < len(fnType.MutParams) && fnType.MutParams[i] {
+			a.markReadWriteTarget(arg)
+		}
+	}
+}
+
 func (a *analyzer) collectUses() {
 	if a == nil || a.mod == nil || a.mod.Bindings == nil {
 		return
@@ -338,11 +388,11 @@ func (a *analyzer) collectUses() {
 			if resolution != nil && resolution.Symbol != nil {
 				a.written[resolution.Symbol]++
 			}
+			if _, ok := a.readWrites[node]; !ok {
+				continue
+			}
 		}
 		if _, ok := a.declNodes[node]; ok {
-			continue
-		}
-		if _, ok := a.writeNodes[node]; ok {
 			continue
 		}
 		if resolution == nil {
@@ -542,6 +592,9 @@ func shouldWarnOnUnusedModuleSymbol(mod *context.Module, sym *symbols.Symbol) bo
 
 func shouldWarnOnUnusedFunctionSymbol(sym *symbols.Symbol) bool {
 	if sym == nil || sym.Name == "_" {
+		return false
+	}
+	if sym.Kind == symbols.SymbolParam && sym.Name == "self" {
 		return false
 	}
 	switch sym.Kind {

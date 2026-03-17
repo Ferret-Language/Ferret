@@ -2,10 +2,10 @@
 
 type Conn struct {}
 
-fn run(c: *Conn) void {
+fn run(mut c: *Conn) void {
     let m = &mut *c
     let r = &*c
-    m
+    //m
     r
 }
 
@@ -13,8 +13,18 @@ type Point struct {
     Value: i32 = 0
 }
 
+fn Point::Incr(&mut self) {
+    self.Value++
+}
+
+fn Point::Calc(&self) i32 {
+    return self.Value
+}
+
 fn run2() void {
     let mut p: Point = .{}
+    p.Calc()
+    p.Incr() // should only work if p is mutable
     let m = &mut p
     let r = &p
     m

@@ -1028,6 +1028,35 @@ fn bump(p: &mut Point) void {
 	}
 }
 
+func TestTypecheckerRejectsImmutableArgumentForMutableParameter(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn mutate(mut x: i32) i32 {
+    return x
+}
+
+fn main() i32 {
+    let x: i32 = 1
+    return mutate(x)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected mutable parameter argument diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "mutable parameter requires mutable argument binding") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected mutable parameter argument diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerRejectsMutationThroughImmutableReference(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
@@ -2004,6 +2033,34 @@ fn main() i32 {
     let a = (&p).Read()
     let b = (&mut p).Bump()
     return a + b
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerResolvesAttachedReferenceReceiversFromValueCalls(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn Point::Read(&self) i32 {
+    return self.X
+}
+
+fn Point::Bump(&mut self) i32 {
+    self.X++
+    return self.X
+}
+
+fn main() i32 {
+    let mut p: Point = .{ .X = 1 }
+    return p.Read() + p.Bump()
 }
 `)
 

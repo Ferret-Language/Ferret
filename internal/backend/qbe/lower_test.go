@@ -233,6 +233,53 @@ fn main() i32 {
 	}
 }
 
+func TestLowerAggregateLoadAssignmentToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Conn struct {}
+
+fn run(mut c: *Conn) void {
+    let r = &*c
+    r
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	if _, err := lowerer.LowerModule(testUnit(result)); err != nil {
+		t.Fatalf("lower qbe aggregate load: %v", err)
+	}
+}
+
+func TestLowerReceiverFieldReadToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    Value: i32 = 0
+}
+
+fn Point::Incr(&mut self) void {
+    self.Value = self.Value + 1
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	if _, err := lowerer.LowerModule(testUnit(result)); err != nil {
+		t.Fatalf("lower qbe receiver field read: %v", err)
+	}
+}
+
 func TestLowerExternFunctionCallToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `

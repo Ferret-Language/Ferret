@@ -232,6 +232,9 @@ fn add(comptime T: Type, x: T) T {
 	if len(fn.Params) != 2 || !fn.Params[0].IsComptime {
 		t.Fatalf("expected first param to be comptime, got %#v", fn.Params)
 	}
+	if fn.Params[1].IsMut {
+		t.Fatalf("did not expect second param to be mutable, got %#v", fn.Params[1])
+	}
 	if len(fn.Body.Stmts) != 4 {
 		t.Fatalf("expected 4 statements, got %d", len(fn.Body.Stmts))
 	}
@@ -254,6 +257,26 @@ fn add(comptime T: Type, x: T) T {
 	localConst, ok := fn.Body.Stmts[2].(*ast.ConstStmt)
 	if !ok || localConst.Name.Text() != "local" {
 		t.Fatalf("expected local const stmt, got %#v", fn.Body.Stmts[2])
+	}
+}
+
+func TestParseMutableParameter(t *testing.T) {
+	src := `
+fn set(mut x: i32, y: i32) i32 {
+    return x
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	if len(fn.Params) != 2 || !fn.Params[0].IsMut || fn.Params[1].IsMut {
+		t.Fatalf("expected only first param to be mutable, got %#v", fn.Params)
 	}
 }
 

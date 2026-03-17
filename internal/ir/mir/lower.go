@@ -185,6 +185,7 @@ func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts 
 			Name:       param.Name,
 			LocalID:    param.LocalID,
 			Type:       param.Type,
+			IsMutable:  param.IsMutable,
 			IsComptime: param.IsComptime,
 			Location:   param.Location,
 		})
@@ -432,7 +433,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 					return out
 				}
 				if named := lowerReceiverNamed(sel.Left.Type()); named != nil {
-					receiver := lowerValue(lowerCtx, sel.Left)
+					receiver := lowerMethodReceiverValue(lowerCtx, sel.Left, e.MethodReceiver)
 					path := lowerMethodSymbolPath(lowerCtx, named, sel.Name)
 					callee := &NameValue{
 						baseValue: baseValue{Location: sel.Loc(), ExprType: sel.Type()},
@@ -442,7 +443,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 						baseValue:    baseValue{Location: e.Loc(), ExprType: e.Type()},
 						Callee:       callee,
 						Args:         make([]Value, 0, 1+len(e.Args)),
-						ReceiverType: sel.Left.Type(),
+						ReceiverType: e.MethodReceiver,
 					}
 					out.Args = append(out.Args, receiver)
 					for _, arg := range e.Args {
@@ -804,6 +805,23 @@ func lowerAddrSource(c *lowerContext, expr hir.Expr) Value {
 	return lowerValue(c, expr)
 }
 
+func lowerMethodReceiverValue(c *lowerContext, expr hir.Expr, receiverType typeinfo.Type) Value {
+	if expr == nil {
+		return nil
+	}
+	if receiverType == nil || typeinfo.Equal(expr.Type(), receiverType) {
+		return lowerValue(c, expr)
+	}
+	if ref, ok := receiverType.(*typeinfo.RefType); ok {
+		return &AddrOfValue{
+			baseValue: baseValue{Location: expr.Loc(), ExprType: receiverType},
+			Source:    lowerAddrSource(c, expr),
+			Mutable:   ref.Mutable,
+		}
+	}
+	return lowerValue(c, expr)
+}
+
 func lowerNameValue(c *lowerContext, source ast.Expr, loc source.Location, typ typeinfo.Type, fallback []string) Value {
 	if resolved := lowerResolvedName(c, source, loc, typ); resolved != nil {
 		return resolved
@@ -830,6 +848,10 @@ func canonicalResolvedPath(c *lowerContext, resolution *binding.Resolution) []st
 func lowerStructView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 	switch t := typ.(type) {
 	case *typeinfo.PointerType:
+		return lowerStructView(t.Inner)
+	case *typeinfo.RefType:
+		return lowerStructView(t.Inner)
+	case *typeinfo.RawPtrType:
 		return lowerStructView(t.Inner)
 	case *typeinfo.NamedType:
 		if t.Decl == nil {

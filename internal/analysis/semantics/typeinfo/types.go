@@ -200,6 +200,7 @@ func (t *InterfaceType) String() string { return "interface" }
 type FuncType struct {
 	IsUnsafe       bool
 	Params         []Type
+	MutParams      []bool
 	ComptimeParams []bool
 	Result         Type
 }
@@ -319,11 +320,16 @@ func Equal(a, b Type) bool {
 		return true
 	case *FuncType:
 		bt, ok := b.(*FuncType)
-		if !ok || at.IsUnsafe != bt.IsUnsafe || len(at.Params) != len(bt.Params) || len(at.ComptimeParams) != len(bt.ComptimeParams) || !Equal(at.Result, bt.Result) {
+		if !ok || at.IsUnsafe != bt.IsUnsafe || len(at.Params) != len(bt.Params) || len(at.MutParams) != len(bt.MutParams) || len(at.ComptimeParams) != len(bt.ComptimeParams) || !Equal(at.Result, bt.Result) {
 			return false
 		}
 		for i := range at.Params {
 			if !Equal(at.Params[i], bt.Params[i]) {
+				return false
+			}
+		}
+		for i := range at.MutParams {
+			if at.MutParams[i] != bt.MutParams[i] {
 				return false
 			}
 		}

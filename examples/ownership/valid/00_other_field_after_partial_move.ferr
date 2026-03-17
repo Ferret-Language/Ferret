@@ -1,9 +1,0 @@
-type Node struct {
-    Child: *Node
-    Value: i32 = 0
-}
-
-fn read(n: Node) i32 {
-    let child = n.Child
-    return n.Value
-}

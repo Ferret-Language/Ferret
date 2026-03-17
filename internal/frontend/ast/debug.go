@@ -99,7 +99,7 @@ func debugAttrs(attrs []Attribute) []any {
 }
 
 func debugParam(p Param) any {
-	return map[string]any{"name": debugExpr(p.Name), "is_comptime": p.IsComptime, "type": debugType(p.Type), "loc": debugLoc(p.Location)}
+	return map[string]any{"name": debugExpr(p.Name), "is_mut": p.IsMut, "is_comptime": p.IsComptime, "type": debugType(p.Type), "loc": debugLoc(p.Location)}
 }
 
 func debugStmt(stmt Stmt) any {

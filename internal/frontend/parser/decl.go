@@ -218,11 +218,13 @@ func (p *Parser) parseParams() []ast.Param {
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
+		isMut := p.match(tokens.MUT)
 		nameTok := p.expectIdent("expected parameter name")
 		p.expect(tokens.COLON, "expected ':' after parameter name")
 		paramType := p.parseType()
 		params = append(params, ast.Param{
 			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+			IsMut:      isMut,
 			IsComptime: isComptime,
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
@@ -254,11 +256,13 @@ func (p *Parser) parseAttachedMethodParams(owner *ast.NamedType) (*ast.Receiver,
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
+		isMut := p.match(tokens.MUT)
 		nameTok := p.expectIdent("expected parameter name")
 		p.expect(tokens.COLON, "expected ':' after parameter name")
 		paramType := p.parseType()
 		params = append(params, ast.Param{
 			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+			IsMut:      isMut,
 			IsComptime: isComptime,
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),

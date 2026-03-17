@@ -193,7 +193,7 @@ type Stringer interface {
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
 fn Name::String(self) str {

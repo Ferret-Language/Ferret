@@ -270,6 +270,7 @@ type analyzer struct {
 	currentFn *mir.Function
 	temps     map[int]tempInfo
 	reported  map[string]struct{}
+	deferUses cfg.LocalSet
 }
 
 func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
@@ -340,7 +341,11 @@ func (a *analyzer) checkFunc(cfgFn *cfg.Function, mirFn *mir.Function) {
 		return
 	}
 	a.currentFn = mirFn
-	defer func() { a.currentFn = nil }()
+	a.deferUses = a.collectDeferredLocalUses(mirFn)
+	defer func() {
+		a.currentFn = nil
+		a.deferUses = nil
+	}()
 	blocks := make(map[int]*mir.Block, len(mirFn.Blocks))
 	for _, block := range mirFn.Blocks {
 		if block != nil {
@@ -419,8 +424,15 @@ func (a *analyzer) transferBlock(in *valueScope, cfgBlock *cfg.Block, mirBlock *
 	}
 	a.temps = make(map[int]tempInfo)
 	if mirBlock != nil {
+		liveAfter := a.blockLiveAfterInstrs(cfgBlock, mirBlock)
 		for _, instr := range mirBlock.Instructions {
+			_ = instr
+		}
+		for i, instr := range mirBlock.Instructions {
 			a.checkMIRInstr(state, instr)
+			if i < len(liveAfter) {
+				a.releaseDeadBorrows(state, liveAfter[i])
+			}
 		}
 		a.checkMIRTerm(state, mirBlock.Terminator)
 	} else {
@@ -433,6 +445,38 @@ func (a *analyzer) transferBlock(in *valueScope, cfgBlock *cfg.Block, mirBlock *
 	}
 	state.TrimToLiveOut(cfgBlock.LiveOut)
 	return state
+}
+
+func (a *analyzer) blockLiveAfterInstrs(cfgBlock *cfg.Block, mirBlock *mir.Block) []cfg.LocalSet {
+	if mirBlock == nil {
+		return nil
+	}
+	out := make([]cfg.LocalSet, len(mirBlock.Instructions))
+	future := cfg.NewLocalSet()
+	if cfgBlock != nil && cfgBlock.LiveOut != nil {
+		future = cfgBlock.LiveOut.Clone()
+	}
+	a.collectTermLocalUses(future, mirBlock.Terminator)
+	for i := len(mirBlock.Instructions) - 1; i >= 0; i-- {
+		out[i] = future.Clone()
+		a.collectInstrLocalUses(future, mirBlock.Instructions[i])
+	}
+	return out
+}
+
+func (a *analyzer) releaseDeadBorrows(scope *valueScope, keep cfg.LocalSet) {
+	if scope == nil {
+		return
+	}
+	for id, slot := range scope.values {
+		if slot == nil || slot.borrowOf < 0 {
+			continue
+		}
+		if keep.Has(id) || a.deferUses.Has(id) {
+			continue
+		}
+		a.releaseBorrowValue(scope, slot)
+	}
 }
 
 func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
@@ -533,6 +577,56 @@ func (a *analyzer) checkDeferredInstr(scope *valueScope, instr mir.Instr) {
 	}
 }
 
+func (a *analyzer) collectDeferredLocalUses(fn *mir.Function) cfg.LocalSet {
+	used := cfg.NewLocalSet()
+	if fn == nil {
+		return used
+	}
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, instr := range block.Instructions {
+			if deferInstr, ok := instr.(*mir.DeferInstr); ok {
+				a.collectDeferredInstrLocalUses(used, deferInstr)
+			}
+		}
+	}
+	return used
+}
+
+func (a *analyzer) collectDeferredInstrLocalUses(used cfg.LocalSet, instr *mir.DeferInstr) {
+	if used == nil || instr == nil {
+		return
+	}
+	for _, child := range instr.Body {
+		switch inst := child.(type) {
+		case nil:
+			continue
+		case *mir.ComputeInstr:
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.BindInstr:
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.StoreInstr:
+			a.collectPlaceLocalUses(used, inst.Target)
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.AssignInstr:
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.StoreFieldInstr:
+			a.collectValueLocalUses(used, inst.Base)
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.EvalInstr:
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.DeferInstr:
+			a.collectDeferredInstrLocalUses(used, inst)
+		case *mir.LockInstr:
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.UnsafeInstr:
+			continue
+		}
+	}
+}
+
 func (a *analyzer) checkMIRTerm(scope *valueScope, term mir.Terminator) {
 	switch t := term.(type) {
 	case nil, *mir.JumpTerm, *mir.ExitTerm:
@@ -554,6 +648,112 @@ func (a *analyzer) checkMIRTerm(scope *valueScope, term mir.Terminator) {
 		if t.Value != nil {
 			a.checkValue(scope, t.Value)
 		}
+	}
+}
+
+func (a *analyzer) collectInstrLocalUses(used cfg.LocalSet, instr mir.Instr) {
+	if used == nil || instr == nil {
+		return
+	}
+	switch inst := instr.(type) {
+	case *mir.ComputeInstr:
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.BindInstr:
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.StoreInstr:
+		a.collectPlaceLocalUses(used, inst.Target)
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.AssignInstr:
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.StoreFieldInstr:
+		a.collectValueLocalUses(used, inst.Base)
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.EvalInstr:
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.DeferInstr:
+		// Deferred bodies execute at scope end, not at this point.
+	case *mir.LockInstr:
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.UnsafeInstr:
+	}
+}
+
+func (a *analyzer) collectTermLocalUses(used cfg.LocalSet, term mir.Terminator) {
+	if used == nil || term == nil {
+		return
+	}
+	switch t := term.(type) {
+	case *mir.BranchTerm:
+		a.collectValueLocalUses(used, t.Cond)
+	case *mir.SwitchTerm:
+		a.collectValueLocalUses(used, t.Value)
+		for _, kase := range t.Cases {
+			a.collectValueLocalUses(used, kase.Expr)
+		}
+	case *mir.ReturnTerm:
+		a.collectValueLocalUses(used, t.Value)
+	case *mir.PanicTerm:
+		a.collectValueLocalUses(used, t.Value)
+	}
+}
+
+func (a *analyzer) collectPlaceLocalUses(used cfg.LocalSet, place mir.Place) {
+	if used == nil || place == nil {
+		return
+	}
+	switch p := place.(type) {
+	case *mir.LocalPlace:
+		// Pure local assignment target is not a read-use.
+	case *mir.FieldPlace:
+		a.collectPlaceLocalUses(used, p.Base)
+	case *mir.IndexPlace:
+		a.collectPlaceLocalUses(used, p.Base)
+		a.collectValueLocalUses(used, p.Index)
+	case *mir.DerefPlace:
+		a.collectValueLocalUses(used, p.Pointer)
+	}
+}
+
+func (a *analyzer) collectValueLocalUses(used cfg.LocalSet, value mir.Value) {
+	if used == nil || value == nil {
+		return
+	}
+	switch v := value.(type) {
+	case *mir.LocalValue:
+		used.Add(v.LocalID)
+	case *mir.AddrOfValue:
+		a.collectValueLocalUses(used, v.Source)
+	case *mir.LoadValue:
+		a.collectValueLocalUses(used, v.Pointer)
+	case *mir.UnaryValue:
+		a.collectValueLocalUses(used, v.Right)
+	case *mir.BinaryValue:
+		a.collectValueLocalUses(used, v.Left)
+		a.collectValueLocalUses(used, v.Right)
+	case *mir.PostfixValue:
+		a.collectValueLocalUses(used, v.Left)
+	case *mir.CallValue:
+		a.collectValueLocalUses(used, v.Callee)
+		for _, arg := range v.Args {
+			a.collectValueLocalUses(used, arg)
+		}
+	case *mir.FieldLoadValue:
+		a.collectValueLocalUses(used, v.Base)
+	case *mir.FieldValue:
+		a.collectValueLocalUses(used, v.Base)
+	case *mir.CastValue:
+		a.collectValueLocalUses(used, v.Left)
+	case *mir.TypeTestValue:
+		a.collectValueLocalUses(used, v.Left)
+	case *mir.CompositeValue:
+		for _, item := range v.Items {
+			a.collectValueLocalUses(used, item.Value)
+		}
+	case *mir.InterfaceValue:
+		a.collectValueLocalUses(used, v.Value)
+	case *mir.IndexValue:
+		a.collectValueLocalUses(used, v.Base)
+		a.collectValueLocalUses(used, v.Index)
 	}
 }
 

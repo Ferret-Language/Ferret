@@ -111,16 +111,18 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				continue
 			}
 			params := make([]typeinfo.Type, 0, len(method.Params))
+			mutParams := make([]bool, 0, len(method.Params))
 			comptimeParams := make([]bool, 0, len(method.Params))
 			for _, param := range method.Params {
 				params = append(params, c.typeFromSyntax(mod, param.Type))
+				mutParams = append(mutParams, param.IsMut)
 				comptimeParams = append(comptimeParams, param.IsComptime)
 			}
 			result := c.typeFromSyntax(mod, method.Result)
 			if result == nil {
 				result = &typeinfo.BuiltinType{Name: "void"}
 			}
-			fnType := &typeinfo.FuncType{Params: params, ComptimeParams: comptimeParams, Result: result}
+			fnType := &typeinfo.FuncType{Params: params, MutParams: mutParams, ComptimeParams: comptimeParams, Result: result}
 			name := method.Name.Text()
 			methods[name] = fnType
 			methodReceivers[name] = method.Receiver

@@ -271,6 +271,7 @@ func generateInterfaceTypeDecl(types *typeinfo.ModuleInfo, t *ast.InterfaceType)
 			entry.Params = append(entry.Params, &Param{
 				Name:       param.Name.Text(),
 				Type:       syntaxType(types, param.Type),
+				IsMutable:  param.IsMut,
 				IsComptime: param.IsComptime,
 				Location:   param.Location,
 			})
@@ -395,6 +396,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 			Name:       g.maybeMangledLocalName(param.Name),
 			LocalID:    g.maybeLocalID(param.Name),
 			Type:       hirInstantiateSelfType(syntaxType(g.types, param.Type), selfType),
+			IsMutable:  param.IsMut,
 			IsComptime: param.IsComptime,
 			Location:   param.Location,
 		})
@@ -611,6 +613,9 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		return out
 	case *ast.CallExpr:
 		out := &CallExpr{Callee: g.generateExpr(e.Callee), Args: make([]Expr, 0, len(e.Args))}
+		if recv, ok := g.types.LookupMethodReceiver(e); ok {
+			out.MethodReceiver = recv
+		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		for _, arg := range e.Args {
 			out.Args = append(out.Args, g.generateExpr(arg))
@@ -770,11 +775,16 @@ func hirInterfaceMethodCompatible(expected, got *typeinfo.FuncType) bool {
 	if expected.IsUnsafe != got.IsUnsafe {
 		return false
 	}
-	if len(expected.Params) != len(got.Params) || len(expected.ComptimeParams) != len(got.ComptimeParams) {
+	if len(expected.Params) != len(got.Params) || len(expected.MutParams) != len(got.MutParams) || len(expected.ComptimeParams) != len(got.ComptimeParams) {
 		return false
 	}
 	for i := range expected.Params {
 		if !typeinfo.Equal(expected.Params[i], got.Params[i]) {
+			return false
+		}
+	}
+	for i := range expected.MutParams {
+		if expected.MutParams[i] != got.MutParams[i] {
 			return false
 		}
 	}

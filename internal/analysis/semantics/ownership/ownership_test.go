@@ -178,6 +178,32 @@ fn run(c: *Conn) void {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrBorrowConflict, result.Diagnostics.Diagnostics())
 }
 
+func TestOwnershipPhaseReleasesBorrowAfterLastUse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+type Conn struct {}
+
+fn useConn(c: *Conn) void {
+}
+
+fn run(c: *Conn) void {
+    let p = &*c
+    p
+    useConn(c)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrBorrowConflict {
+			t.Fatalf("unexpected borrow conflict %#v", diag)
+		}
+	}
+}
+
 func TestOwnershipPhaseRejectsReturnedBorrow(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
@@ -255,14 +281,11 @@ fn run() void {
 func TestOwnershipPhaseRejectsImmutableBorrowWhileMutableBorrowIsLive(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
-type Point struct {
-    Value: i32 = 0
-}
+type Conn struct {}
 
-fn run() void {
-    let mut p: Point = .{}
-    let m = &mut p
-    let r = &p
+fn run(mut c: *Conn) void {
+    let m = &mut *c
+    let r = &*c
     m
     r
 }

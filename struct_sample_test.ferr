@@ -1,34 +1,22 @@
-import "std/io"
-
 type Point struct {
     X: i32 = 1
     Y: i32 = 2
-    static: Counter i32 = 0
 }
 
 type Circle struct {
     Rad: f32
 }
 
-fn (_: *Circle) Show() {
-    io::Println("I am a circle")
+fn Circle::Show(&self) {
+    print("I am a circle")
 }
 
-fn (_: *Point) Point() {
-    io::Println("ctor")
-    Point::Counter = Point::Counter + 1
-}
-
-fn (_: *Point) ~Point() void {
-    io::Println("dtor")
-}
-
-fn (_: *Point) Show() {
-    io::Println("I am a point")
+fn Point::Show(&self) {
+    print("I am a point")
 }
 
 type Shape interface{
-    Show()
+    Show(&self)
 }
 
 fn who(s: Shape) {
@@ -40,11 +28,9 @@ fn main() i32 {
     //let px = p
     print(p.X)
     print(p.Y)
-    print(Point::Counter)
     let p2: Point = .{}
     print(p2.X)
     print(p2.Y)
-    print(Point::Counter)
 
     let mut maybe : ?i32 = none
     maybe = 21

@@ -187,7 +187,7 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 			r.resolveType(scope, param.Type)
 			sym := symbols.New(param.Name.Text(), symbols.SymbolParam, nil)
 			sym.Location = param.Name.Loc()
-			sym.Mutable = false
+			sym.Mutable = param.IsMut
 			declared := r.declareLocal(funcScope, sym)
 			r.info.AddFunctionLocal(d, declared)
 			r.bindDeclIdent(param.Name, declared)
