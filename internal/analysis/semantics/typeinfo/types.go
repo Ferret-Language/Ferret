@@ -48,10 +48,7 @@ func (t *NamedType) String() string {
 	if t == nil {
 		return "<nil>"
 	}
-	if t.ModuleKey == "" {
-		return t.Name
-	}
-	return t.ModuleKey + "::" + t.Name
+	return t.Name
 }
 
 type PointerType struct {
@@ -192,6 +189,7 @@ func (t *UnionType) String() string { return "union" }
 type InterfaceType struct {
 	Methods         map[string]*FuncType
 	MethodReceivers map[string]string
+	MethodStatic    map[string]bool
 	OrderedMethods  []*InterfaceMethod
 }
 

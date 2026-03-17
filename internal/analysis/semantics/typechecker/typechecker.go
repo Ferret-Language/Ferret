@@ -1959,7 +1959,12 @@ func (c *checker) implementsInterface(src typeinfo.Type, iface *typeinfo.Interfa
 		if method == nil || method.Type == nil {
 			continue
 		}
-		_, got := c.lookupMethodWithReceiver(src, method.Receiver, method.Name)
+		var got *typeinfo.FuncType
+		if method.Static {
+			_, got = c.lookupStaticMethod(src, method.Name)
+		} else {
+			_, got = c.lookupMethodWithReceiver(src, method.Receiver, method.Name)
+		}
 		if got == nil || !c.interfaceMethodCompatible(method.Type, got) {
 			return false
 		}
@@ -1982,17 +1987,17 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 			gotMethod := srcIface.Methods[method.Name]
 			if gotMethod == nil {
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Receiver, method.Name, method.Type))).
+					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Static, method.Receiver, method.Name, method.Type))).
 						WithCode(diagnostics.ErrTypeMismatch).
 						WithPrimaryLabel(&loc, "this interface is missing a required method"),
 				)
 				return
 			}
-			if srcIface.MethodReceivers[method.Name] != method.Receiver || !c.interfaceMethodCompatible(method.Type, gotMethod) {
+			if srcIface.MethodReceivers[method.Name] != method.Receiver || srcIface.MethodStatic[method.Name] != method.Static || !c.interfaceMethodCompatible(method.Type, gotMethod) {
 				c.ctx.Diagnostics.Add(
 					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: method %s has incompatible signature", gotName, expectedName, method.Name)).
 						WithCode(diagnostics.ErrTypeMismatch).
-						WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Receiver, method.Name, method.Type), interfaceMethodString(srcIface.MethodReceivers[method.Name], method.Name, gotMethod))),
+						WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Static, method.Receiver, method.Name, method.Type), interfaceMethodString(srcIface.MethodStatic[method.Name], srcIface.MethodReceivers[method.Name], method.Name, gotMethod))),
 				)
 				return
 			}
@@ -2004,10 +2009,15 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 		if method == nil || method.Type == nil {
 			continue
 		}
-		_, gotMethod := c.lookupMethodWithReceiver(got, method.Receiver, method.Name)
+		var gotMethod *typeinfo.FuncType
+		if method.Static {
+			_, gotMethod = c.lookupStaticMethod(got, method.Name)
+		} else {
+			_, gotMethod = c.lookupMethodWithReceiver(got, method.Receiver, method.Name)
+		}
 		if gotMethod == nil {
 			c.ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Receiver, method.Name, method.Type))).
+				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Static, method.Receiver, method.Name, method.Type))).
 					WithCode(diagnostics.ErrTypeMismatch).
 					WithPrimaryLabel(&loc, "this type is missing a required method"),
 			)
@@ -2017,7 +2027,7 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: method %s has incompatible signature", gotName, expectedName, method.Name)).
 					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Receiver, method.Name, method.Type), interfaceMethodString(method.Receiver, method.Name, gotMethod))),
+					WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Static, method.Receiver, method.Name, method.Type), interfaceMethodString(method.Static, method.Receiver, method.Name, gotMethod))),
 			)
 			return
 		}
@@ -2025,18 +2035,30 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 	c.reportTypeMismatch(loc, expected, got)
 }
 
-func interfaceMethodString(receiver, name string, fn *typeinfo.FuncType) string {
+func interfaceMethodString(isStatic bool, receiver, name string, fn *typeinfo.FuncType) string {
 	if fn == nil {
-		return receiver + name + "()"
+		if isStatic {
+			return name + "()"
+		}
+		return fmt.Sprintf("%s(%sself)", name, receiver)
 	}
 	params := make([]string, 0, len(fn.Params))
 	for _, param := range fn.Params {
 		params = append(params, param.String())
 	}
-	if fn.Result == nil || typeinfo.IsBuiltinNamed(fn.Result, "void") {
-		return fmt.Sprintf("%s%s(%s)", receiver, name, strings.Join(params, ", "))
+	sigParams := strings.Join(params, ", ")
+	if !isStatic {
+		selfParam := receiver + "self"
+		if sigParams == "" {
+			sigParams = selfParam
+		} else {
+			sigParams = selfParam + ", " + sigParams
+		}
 	}
-	return fmt.Sprintf("%s%s(%s) %s", receiver, name, strings.Join(params, ", "), fn.Result.String())
+	if fn.Result == nil || typeinfo.IsBuiltinNamed(fn.Result, "void") {
+		return fmt.Sprintf("%s(%s)", name, sigParams)
+	}
+	return fmt.Sprintf("%s(%s) %s", name, sigParams, fn.Result.String())
 }
 
 func (c *checker) interfaceSatisfies(src, target *typeinfo.InterfaceType) bool {
@@ -2048,7 +2070,7 @@ func (c *checker) interfaceSatisfies(src, target *typeinfo.InterfaceType) bool {
 			continue
 		}
 		got := src.Methods[method.Name]
-		if got == nil || src.MethodReceivers[method.Name] != method.Receiver || !c.interfaceMethodCompatible(method.Type, got) {
+		if got == nil || src.MethodReceivers[method.Name] != method.Receiver || src.MethodStatic[method.Name] != method.Static || !c.interfaceMethodCompatible(method.Type, got) {
 			return false
 		}
 	}

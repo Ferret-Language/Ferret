@@ -7,6 +7,7 @@ import (
 
 type InterfaceMethod struct {
 	Receiver string
+	Static   bool
 	Name     string
 	Type     *FuncType
 }

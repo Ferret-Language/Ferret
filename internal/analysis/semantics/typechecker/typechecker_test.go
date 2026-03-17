@@ -408,14 +408,14 @@ func TestTypecheckerAllowsConcreteTypeAssignmentToInterface(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
     value i32 = 0
 }
 
-fn (n Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 
@@ -436,7 +436,7 @@ func TestTypecheckerAllowsStaticIsChecks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
@@ -732,8 +732,8 @@ type Name struct {
     value i32 = 0
 }
 
-fn (n Name) String() i32 {
-    return n.value
+fn Name::String(self) i32 {
+    return self.value
 }
 
 fn main() i32 {
@@ -749,7 +749,7 @@ fn main() i32 {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `method String has incompatible signature`) {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `type Name does not implement Stringer`) {
 			found = true
 			break
 		}
@@ -787,7 +787,7 @@ fn main() i32 {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `missing method &mut read([]u8) i32`) {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `type File does not implement Reader`) {
 			found = true
 			break
 		}

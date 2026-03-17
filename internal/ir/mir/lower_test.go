@@ -382,8 +382,8 @@ fn main() i32 {
 	if len(fn.Locals) != 1 {
 		t.Fatalf("expected one MIR local, got %#v", fn.Locals)
 	}
-	if got := fn.Locals[0].Type.String(); got != "local:main::Token" {
-		t.Fatalf("expected MIR local type local:main::Token, got %q", got)
+	if got := fn.Locals[0].Type.String(); got != "Token" {
+		t.Fatalf("expected MIR local type Token, got %q", got)
 	}
 	text := mir.FormatModule(result.Entry.MIR)
 	if !strings.Contains(text, "value: Token") {

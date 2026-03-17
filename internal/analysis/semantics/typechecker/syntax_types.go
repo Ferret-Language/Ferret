@@ -113,6 +113,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.InterfaceType:
 		methods := make(map[string]*typeinfo.FuncType)
 		methodReceivers := make(map[string]string)
+		methodStatic := make(map[string]bool)
 		orderedMethods := make([]*typeinfo.InterfaceMethod, 0, len(t.Methods))
 		for _, method := range t.Methods {
 			if method == nil {
@@ -132,9 +133,10 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			name := method.Name.Text()
 			methods[name] = fnType
 			methodReceivers[name] = method.Receiver
-			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Receiver: method.Receiver, Type: fnType})
+			methodStatic[name] = method.Static
+			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Receiver: method.Receiver, Static: method.Static, Type: fnType})
 		}
-		return &typeinfo.InterfaceType{Methods: methods, MethodReceivers: methodReceivers, OrderedMethods: orderedMethods}
+		return &typeinfo.InterfaceType{Methods: methods, MethodReceivers: methodReceivers, MethodStatic: methodStatic, OrderedMethods: orderedMethods}
 	default:
 		return typeinfo.UnknownType{}
 	}
