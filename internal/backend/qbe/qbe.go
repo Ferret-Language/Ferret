@@ -1801,7 +1801,7 @@ func isUnionAggregate(typ typeinfo.Type) bool {
 
 func optionalUsesNiche(typ typeinfo.Type) bool {
 	switch t := unwrapNamed(typ).(type) {
-	case *typeinfo.PointerType, *typeinfo.RefType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return true
 	case *typeinfo.BuiltinType:
 		switch t.Name {
@@ -2213,7 +2213,7 @@ func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 			state.aggLocals[local.ID] = agg
 			continue
 		}
-		if !local.Mutable {
+		if !local.Mutable && !qbeLocalAddressTaken(fn, local) {
 			continue
 		}
 		qtype, err := qbeBaseType(local.Type)
@@ -2234,6 +2234,137 @@ func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 		}
 	}
 	return nil
+}
+
+func qbeLocalAddressTaken(fn *mir.Function, local *mir.Local) bool {
+	if fn == nil || local == nil {
+		return false
+	}
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, instr := range block.Instructions {
+			if qbeInstrHasAddrOfLocal(instr, local) {
+				return true
+			}
+		}
+		if qbeTermHasAddrOfLocal(block.Terminator, local) {
+			return true
+		}
+	}
+	return false
+}
+
+func qbeInstrHasAddrOfLocal(instr mir.Instr, local *mir.Local) bool {
+	switch ins := instr.(type) {
+	case *mir.BindInstr:
+		return qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.ComputeInstr:
+		return qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.AssignInstr:
+		return qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.StoreInstr:
+		return qbePlaceHasAddrOfLocal(ins.Target, local) || qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.StoreFieldInstr:
+		return qbeValueHasAddrOfLocal(ins.Base, local) || qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.EvalInstr:
+		return qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.DeferInstr:
+		for _, nested := range ins.Body {
+			if qbeInstrHasAddrOfLocal(nested, local) {
+				return true
+			}
+		}
+	case *mir.LockInstr:
+		return qbeValueHasAddrOfLocal(ins.Value, local)
+	}
+	return false
+}
+
+func qbeTermHasAddrOfLocal(term mir.Terminator, local *mir.Local) bool {
+	switch t := term.(type) {
+	case *mir.BranchTerm:
+		return qbeValueHasAddrOfLocal(t.Cond, local)
+	case *mir.SwitchTerm:
+		if qbeValueHasAddrOfLocal(t.Value, local) {
+			return true
+		}
+		for _, c := range t.Cases {
+			if qbeValueHasAddrOfLocal(c.Expr, local) {
+				return true
+			}
+		}
+	case *mir.ReturnTerm:
+		return qbeValueHasAddrOfLocal(t.Value, local)
+	case *mir.PanicTerm:
+		return qbeValueHasAddrOfLocal(t.Value, local)
+	}
+	return false
+}
+
+func qbePlaceHasAddrOfLocal(place mir.Place, local *mir.Local) bool {
+	switch p := place.(type) {
+	case *mir.FieldPlace:
+		return qbePlaceHasAddrOfLocal(p.Base, local)
+	case *mir.IndexPlace:
+		return qbePlaceHasAddrOfLocal(p.Base, local) || qbeValueHasAddrOfLocal(p.Index, local)
+	case *mir.DerefPlace:
+		return qbeValueHasAddrOfLocal(p.Pointer, local)
+	default:
+		return false
+	}
+}
+
+func qbeValueHasAddrOfLocal(v mir.Value, local *mir.Local) bool {
+	switch val := v.(type) {
+	case *mir.AddrOfValue:
+		switch src := val.Source.(type) {
+		case *mir.LocalValue:
+			if src.LocalID == local.ID {
+				return true
+			}
+		case *mir.NameValue:
+			return len(src.Path) == 1 && src.Path[0] == local.Name
+		}
+		return qbeValueHasAddrOfLocal(val.Source, local)
+	case *mir.UnaryValue:
+		return qbeValueHasAddrOfLocal(val.Right, local)
+	case *mir.LoadValue:
+		return qbeValueHasAddrOfLocal(val.Pointer, local)
+	case *mir.BinaryValue:
+		return qbeValueHasAddrOfLocal(val.Left, local) || qbeValueHasAddrOfLocal(val.Right, local)
+	case *mir.PostfixValue:
+		return qbeValueHasAddrOfLocal(val.Left, local)
+	case *mir.CallValue:
+		if qbeValueHasAddrOfLocal(val.Callee, local) {
+			return true
+		}
+		for _, arg := range val.Args {
+			if qbeValueHasAddrOfLocal(arg, local) {
+				return true
+			}
+		}
+	case *mir.FieldLoadValue:
+		return qbeValueHasAddrOfLocal(val.Base, local)
+	case *mir.FieldValue:
+		return qbeValueHasAddrOfLocal(val.Base, local)
+	case *mir.CastValue:
+		return qbeValueHasAddrOfLocal(val.Left, local)
+	case *mir.TypeTestValue:
+		return qbeValueHasAddrOfLocal(val.Left, local)
+	case *mir.CompositeValue:
+		for _, item := range val.Items {
+			if qbeValueHasAddrOfLocal(item.Value, local) {
+				return true
+			}
+		}
+	case *mir.InterfaceValue:
+		return qbeValueHasAddrOfLocal(val.Value, local)
+	case *mir.IndexValue:
+		return qbeValueHasAddrOfLocal(val.Base, local) || qbeValueHasAddrOfLocal(val.Index, local)
+	}
+	return false
 }
 
 func entryPrelude(state *moduleState) []string {

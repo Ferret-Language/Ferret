@@ -398,13 +398,13 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.PrefixExpr:
 		switch e.Op {
 		case "&":
-			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: false}
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: false}
 		case "&mut":
-			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: true}
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: true}
 		case "@":
-			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: false, Raw: true}
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: false, Raw: true}
 		case "@mut":
-			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: true, Raw: true}
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: true, Raw: true}
 		case "*":
 			return &LoadValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Pointer: lowerValue(lowerCtx, e.Right)}
 		default:
@@ -800,6 +800,16 @@ func lookupErrorOrdinal(typ typeinfo.Type, name string) (int, bool) {
 		return ordinal, ok
 	}
 	return 0, false
+}
+
+func lowerAddrSource(c *lowerContext, expr hir.Expr) Value {
+	if expr == nil {
+		return nil
+	}
+	if resolved := lowerResolvedName(c, expr.SourceExpr(), expr.Loc(), expr.Type()); resolved != nil {
+		return resolved
+	}
+	return lowerValue(c, expr)
 }
 
 func lowerNameValue(c *lowerContext, source ast.Expr, loc source.Location, typ typeinfo.Type, fallback []string) Value {
