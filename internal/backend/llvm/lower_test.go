@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/internal/analysis/layout/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"
 	"compiler/internal/backend/registry"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
 )
 
@@ -152,6 +152,40 @@ fn main() str {
 		"@main__GlobalName = global %local__main__Name",
 		"@main__GlobalStringer = global %local__main__Stringer",
 		"@vtable__local__main__Stringer__main__Name",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerLocalArrayLiteralAndIndexToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let arr: [3]i32 = [1, 2, 3]
+    let n = arr[1]
+    return n
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%arr = alloca [12 x i8], align 4",
+		"store i32 1, ptr %arr",
+		"getelementptr inbounds i8, ptr %arr, i64 4",
+		"getelementptr inbounds i32, ptr %arr, i64 1",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

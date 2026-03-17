@@ -3842,7 +3842,7 @@ func entryPrelude(state *moduleState) []string {
 		agg := state.aggLocals[id]
 		typeName, err := llvmABITypeName(state, agg.Type)
 		if err != nil {
-			continue
+			typeName = fmt.Sprintf("[%d x i8]", agg.Size)
 		}
 		lines = append(lines, fmt.Sprintf("%s = alloca %s, align %d",
 			llvmLocalName(agg.PtrName), typeName, normalizeAlign(agg.Align)))
