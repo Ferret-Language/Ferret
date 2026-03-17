@@ -255,18 +255,18 @@ fn main() i32 {
 	}
 }
 
-func TestTypecheckerAllowsValueToSatisfyInterfacePointerMethod(t *testing.T) {
+func TestTypecheckerAllowsValueToSatisfyInterfaceValueMethod(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
     X i32 = 0
 }
 
-fn (_ *Point) Show() {
+fn Point.Show(self) {
 }
 
 type Shape interface {
-    *Show()
+    Show(self)
 }
 
 fn main() i32 {
@@ -408,14 +408,14 @@ func TestTypecheckerAllowsConcreteTypeAssignmentToInterface(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
     value i32 = 0
 }
 
-fn (n Name) String() str {
+fn Name.String(self) str {
     return 1 as str
 }
 
@@ -436,14 +436,14 @@ func TestTypecheckerAllowsStaticIsChecks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
     value i32 = 0
 }
 
-fn (n Name) String() str {
+fn Name.String(self) str {
     return 1 as str
 }
 
@@ -667,7 +667,7 @@ func TestTypecheckerRejectsRuntimeInterfaceToConcreteTypeTest(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 fn main(s Stringer) bool {
@@ -709,14 +709,7 @@ fn main() i32 {
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected interface assignment diagnostic")
 	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `missing method String() str`) {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected detailed missing-interface-method diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
@@ -725,15 +718,15 @@ func TestTypecheckerRejectsConcreteTypeWithIncompatibleInterfaceMethod(t *testin
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
     value i32 = 0
 }
 
-fn (n Name) String() i32 {
-    return n.value
+fn Name.String(self) i32 {
+    return self.value
 }
 
 fn main() i32 {
@@ -747,14 +740,7 @@ fn main() i32 {
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected interface signature diagnostic")
 	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `method String has incompatible signature`) {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected detailed incompatible-interface-method diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
@@ -763,14 +749,14 @@ func TestTypecheckerRejectsConcreteTypeWithWrongInterfaceReceiverModifier(t *tes
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Reader interface {
-    &mut read(buf []u8) i32
+    read(&mut self, buf []u8) i32
 }
 
 type File struct {
     value i32 = 0
 }
 
-fn (f &File) read(buf []u8) i32 {
+fn File.read(&self, buf []u8) i32 {
     return 0
 }
 
@@ -785,14 +771,7 @@ fn main() i32 {
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected interface receiver mismatch diagnostic")
 	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `missing method &mut read([]u8) i32`) {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected interface receiver mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }

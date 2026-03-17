@@ -310,6 +310,7 @@ func generateInterfaceTypeDecl(types *typeinfo.ModuleInfo, t *ast.InterfaceType)
 		}
 		entry := &InterfaceMethodDecl{
 			Receiver: method.Receiver,
+			Static:   method.Static,
 			Name:     method.Name.Text(),
 			Result:   syntaxType(types, method.Result),
 			Location: method.Location,
@@ -407,6 +408,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 
 	fn := &Func{
 		Name:       d.Name.Text(),
+		IsStatic:   d.IsStatic,
 		IsUnsafe:   d.IsUnsafe,
 		IsBuiltin:  d.IsBuiltin,
 		IsExtern:   d.IsExtern,
@@ -429,6 +431,9 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 			LocalID:  g.maybeLocalID(d.Receiver.Name),
 			Type:     syntaxType(g.types, d.Receiver.Type),
 			Location: d.Receiver.Location,
+		}
+		if d.OwnerType != nil && len(d.OwnerType.Path) > 0 {
+			fn.OwnerType = d.OwnerType.Path[len(d.OwnerType.Path)-1]
 		}
 	}
 	fn.Params = make([]*Param, 0, len(d.Params))
@@ -786,7 +791,7 @@ func (g *generator) staticIsResult(left, target typeinfo.Type) bool {
 				continue
 			}
 			got := srcIface.Methods[method.Name]
-			if got == nil || srcIface.MethodReceivers[method.Name] != method.Receiver || !hirInterfaceMethodCompatible(method.Type, got) {
+			if got == nil || srcIface.MethodReceivers[method.Name] != method.Receiver || srcIface.MethodStatic[method.Name] != method.Static || !hirInterfaceMethodCompatible(method.Type, got) {
 				return false
 			}
 		}

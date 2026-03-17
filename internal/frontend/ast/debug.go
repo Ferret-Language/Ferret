@@ -52,6 +52,10 @@ func debugDecl(decl Decl) any {
 		if d.Receiver != nil {
 			recv = map[string]any{"name": debugExpr(d.Receiver.Name), "type": debugType(d.Receiver.Type), "loc": debugLoc(d.Receiver.Location)}
 		}
+		var owner any
+		if d.OwnerType != nil {
+			owner = debugType(d.OwnerType)
+		}
 		return map[string]any{
 			"kind":           "FuncDecl",
 			"name":           debugExpr(d.Name),
@@ -61,6 +65,8 @@ func debugDecl(decl Decl) any {
 			"is_builtin":     d.IsBuiltin,
 			"is_extern":      d.IsExtern,
 			"extern_name":    d.ExternName,
+			"owner_type":     owner,
+			"is_static":      d.IsStatic,
 			"receiver":       recv,
 			"is_constructor": d.IsConstructor,
 			"is_destructor":  d.IsDestructor,
@@ -238,6 +244,8 @@ func debugType(typ TypeExpr) any {
 		return map[string]any{"kind": "RefType", "mutable": t.Mutable, "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *RawPtrType:
 		return map[string]any{"kind": "RawPtrType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
+	case *SelfType:
+		return map[string]any{"kind": "SelfType", "loc": debugLoc(t.Location)}
 	case *OptionalType:
 		return map[string]any{"kind": "OptionalType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *ErrorUnionType:
@@ -271,7 +279,7 @@ func debugType(typ TypeExpr) any {
 			for _, param := range method.Params {
 				params = append(params, debugParam(param))
 			}
-			methods = append(methods, map[string]any{"receiver": method.Receiver, "name": debugExpr(method.Name), "params": params, "result": debugType(method.Result), "loc": debugLoc(method.Location)})
+			methods = append(methods, map[string]any{"receiver": method.Receiver, "static": method.Static, "name": debugExpr(method.Name), "params": params, "result": debugType(method.Result), "loc": debugLoc(method.Location)})
 		}
 		return map[string]any{"kind": "InterfaceType", "methods": methods, "loc": debugLoc(t.Location)}
 	case *EnumType:

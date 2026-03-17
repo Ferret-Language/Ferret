@@ -7,6 +7,7 @@ import (
 
 type InterfaceMethod struct {
 	Receiver string
+	Static   bool
 	Name     string
 	Type     *FuncType
 }
@@ -51,7 +52,14 @@ func FormatNamedDecl(name string, underlying Type) string {
 				if method == nil || method.Type == nil {
 					continue
 				}
-				fmt.Fprintf(&b, "    %s%s%s\n", method.Receiver, method.Name, formatSignature(method.Type))
+				switch {
+				case method.Static:
+					fmt.Fprintf(&b, "    %s()%s\n", method.Name, formatResult(method.Type))
+				case len(method.Type.Params) == 0:
+					fmt.Fprintf(&b, "    %s(%sself)%s\n", method.Name, method.Receiver, formatResult(method.Type))
+				default:
+					fmt.Fprintf(&b, "    %s(%sself, %s)%s\n", method.Name, method.Receiver, formatParams(method.Type), formatResult(method.Type))
+				}
 			}
 			b.WriteString("}")
 			return b.String()
@@ -77,6 +85,13 @@ func formatSignature(fn *FuncType) string {
 	if fn == nil {
 		return "()"
 	}
+	return fmt.Sprintf("(%s)%s", formatParams(fn), formatResult(fn))
+}
+
+func formatParams(fn *FuncType) string {
+	if fn == nil {
+		return ""
+	}
 	parts := make([]string, 0, len(fn.Params))
 	for i, param := range fn.Params {
 		prefix := ""
@@ -85,5 +100,15 @@ func formatSignature(fn *FuncType) string {
 		}
 		parts = append(parts, prefix+FormatType(param))
 	}
-	return fmt.Sprintf("(%s) %s", strings.Join(parts, ", "), FormatType(fn.Result))
+	return strings.Join(parts, ", ")
+}
+
+func formatResult(fn *FuncType) string {
+	if fn == nil || fn.Result == nil {
+		return ""
+	}
+	if IsBuiltinNamed(fn.Result, "void") {
+		return ""
+	}
+	return " " + FormatType(fn.Result)
 }

@@ -159,6 +159,9 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 			}
 		}
 	case *ast.FuncDecl:
+		if d.OwnerType != nil {
+			r.resolveType(scope, d.OwnerType)
+		}
 		if d.Receiver != nil {
 			r.resolveType(scope, d.Receiver.Type)
 		}
@@ -316,6 +319,13 @@ func (r *resolver) addFunctionLocal(sym *symbols.Symbol) {
 func (r *resolver) lookupFunctionSymbol(fn *ast.FuncDecl) (*symbols.Symbol, bool) {
 	if r == nil || r.mod == nil || fn == nil {
 		return nil, false
+	}
+	if fn.IsStatic && fn.OwnerType != nil {
+		if members, ok := r.mod.TypeMembers[fn.OwnerType.Path[len(fn.OwnerType.Path)-1]]; ok {
+			if sym, ok := members[fn.Name.Text()]; ok {
+				return sym, true
+			}
+		}
 	}
 	if fn.Receiver == nil && r.mod.ModuleScope != nil {
 		if sym, ok := r.mod.ModuleScope.LookupLocal(fn.Name.Text()); ok {

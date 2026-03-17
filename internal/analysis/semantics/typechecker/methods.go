@@ -62,6 +62,27 @@ func (c *checker) lookupMethodWithReceiver(receiverType typeinfo.Type, receiver 
 	return sym, fnType
 }
 
+func (c *checker) lookupStaticMethod(ownerType typeinfo.Type, name string) (*symbols.Symbol, *typeinfo.FuncType) {
+	named, ok := ownerType.(*typeinfo.NamedType)
+	if !ok || named == nil {
+		return nil, nil
+	}
+	owner := c.findModuleForType(named)
+	if owner == nil || owner.TypeMembers == nil {
+		return nil, nil
+	}
+	members := owner.TypeMembers[named.Name]
+	if members == nil {
+		return nil, nil
+	}
+	sym := members[name]
+	if sym == nil || sym.Kind != symbols.SymbolFunc {
+		return nil, nil
+	}
+	fnType, _ := c.typeOfSymbol(sym).(*typeinfo.FuncType)
+	return sym, fnType
+}
+
 func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName string, addressable bool, mutable bool) []string {
 	keys := make([]string, 0, 4)
 	seen := make(map[string]struct{})

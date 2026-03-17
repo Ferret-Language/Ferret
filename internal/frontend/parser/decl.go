@@ -92,17 +92,30 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 	isUnsafe := p.match(tokens.UNSAFE)
 	start := p.expect(tokens.FN, "expected 'fn'").Start
 	var recv *ast.Receiver
-	if p.match(tokens.LPAREN) {
+	var ownerType *ast.NamedType
+	isStaticMethod := false
+	if p.at(tokens.LPAREN) {
+		p.advance()
 		recv = p.parseReceiver()
 		p.expect(tokens.RPAREN, "expected ')' after receiver")
+	} else if p.at(tokens.IDENT) && (p.peekN(1).Kind == tokens.DOT || p.peekN(1).Kind == tokens.DCOLON) {
+		ownerType, recv, isStaticMethod = p.parseAttachedMethodPrefix()
 	}
 	isDestructor := p.match(tokens.TILDE)
 	nameTok := p.expectIdent("expected function or method name")
+	var params []ast.Param
+	if ownerType != nil {
+		recv, params = p.parseAttachedMethodParams(ownerType, recv, isStaticMethod)
+	} else {
+		params = p.parseParams()
+	}
 	isConstructor := recv != nil && !isDestructor && receiverNamedType(recv.Type) == nameTok.Literal
-	params := p.parseParams()
 	var result ast.TypeExpr
 	if p.startsType() {
 		result = p.parseType()
+	}
+	if ownerType != nil {
+		result = rewriteSelfType(result, ownerType)
 	}
 	isBuiltin := hasAttr(attrs, "builtin")
 	externName := externAttrName(attrs, nameTok.Literal)
@@ -117,6 +130,8 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 	}
 	return &ast.FuncDecl{
 		Receiver:      recv,
+		OwnerType:     ownerType,
+		IsStatic:      isStaticMethod,
 		Name:          &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 		Doc:           doc,
 		Attrs:         attrs,
@@ -131,6 +146,17 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		Body:          body,
 		Location:      p.locFrom(start),
 	}
+}
+
+func (p *Parser) parseAttachedMethodPrefix() (*ast.NamedType, *ast.Receiver, bool) {
+	start := p.current().Start
+	ownerTok := p.expectIdent("expected attached method owner type")
+	owner := &ast.NamedType{Path: []string{ownerTok.Literal}, Location: p.locFrom(start)}
+	if p.match(tokens.DCOLON) {
+		return owner, nil, true
+	}
+	p.expect(tokens.DOT, "expected '.' or '::' after attached method owner type")
+	return owner, nil, false
 }
 
 func hasAttr(attrs []ast.Attribute, name string) bool {
@@ -182,6 +208,75 @@ func (p *Parser) parseReceiver() *ast.Receiver {
 		Type:     recvType,
 		Location: p.locFrom(start),
 	}
+}
+
+func (p *Parser) parseAttachedMethodParams(owner *ast.NamedType, recv *ast.Receiver, isStatic bool) (*ast.Receiver, []ast.Param) {
+	p.expect(tokens.LPAREN, "expected '('")
+	params := make([]ast.Param, 0)
+	if !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+		if !isStatic {
+			if synthesized := p.parseSelfReceiver(owner); synthesized != nil {
+				recv = synthesized
+				if p.at(tokens.COMMA) {
+					p.advance()
+				}
+			} else {
+				p.errorHere("expected self parameter (`self`, `&self`, `&mut self`, or `*self`)")
+			}
+		}
+		for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+			paramStart := p.current().Start
+			isComptime := p.match(tokens.COMPTIME)
+			nameTok := p.expectIdent("expected parameter name")
+			paramType := rewriteSelfType(p.parseType(), owner)
+			params = append(params, ast.Param{
+				Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+				IsComptime: isComptime,
+				Type:       paramType,
+				Location:   p.locFrom(paramStart),
+			})
+			if !p.consumeExprListSeparator(tokens.RPAREN, "parameter") {
+				break
+			}
+		}
+	}
+	p.expect(tokens.RPAREN, "expected ')'")
+	return recv, params
+}
+
+func (p *Parser) parseSelfReceiver(owner *ast.NamedType) *ast.Receiver {
+	start := p.current().Start
+	var recvType ast.TypeExpr
+	switch {
+	case p.match(tokens.AMP):
+		ref := &ast.RefType{Location: p.locFrom(start), Inner: cloneNamedType(owner)}
+		if p.match(tokens.MUT) {
+			ref.Mutable = true
+		}
+		p.expectSelfIdent()
+		recvType = ref
+	case p.match(tokens.ASTERISK):
+		p.expectSelfIdent()
+		recvType = &ast.PointerType{Inner: cloneNamedType(owner), Location: p.locFrom(start)}
+	case p.at(tokens.IDENT) && p.current().Literal == "self":
+		p.advance()
+		recvType = cloneNamedType(owner)
+	default:
+		return nil
+	}
+	return &ast.Receiver{
+		Name:     &ast.Ident{Path: []string{"self"}, Location: p.locFrom(start)},
+		Type:     recvType,
+		Location: p.locFrom(start),
+	}
+}
+
+func (p *Parser) expectSelfIdent() {
+	if p.at(tokens.IDENT) && p.current().Literal == "self" {
+		p.advance()
+		return
+	}
+	p.errorHere("expected `self`")
 }
 
 func (p *Parser) parseParams() []ast.Param {
@@ -268,23 +363,14 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 	p.expect(tokens.LBRACE, "expected '{'")
 	methods := make([]*ast.InterfaceMethod, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
-		if !p.at(tokens.IDENT) && !p.at(tokens.ASTERISK) && !p.at(tokens.AMP) {
+		if !p.at(tokens.IDENT) {
 			p.errorHere("expected interface method")
 			p.synchronizeTypeBody(tokens.RBRACE)
 			continue
 		}
 		methodStart := p.current().Start
-		receiver := ""
-		if p.match(tokens.ASTERISK) {
-			receiver = "*"
-		} else if p.match(tokens.AMP) {
-			receiver = "&"
-			if p.match(tokens.MUT) {
-				receiver = "&mut "
-			}
-		}
 		nameTok := p.expectIdent("expected interface method name")
-		params := p.parseParams()
+		receiver, params, isStatic := p.parseInterfaceMethodParams()
 		var result ast.TypeExpr
 		if p.startsType() {
 			result = p.parseType()
@@ -292,6 +378,7 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 		p.match(tokens.SEMICOLON)
 		methods = append(methods, &ast.InterfaceMethod{
 			Receiver: receiver,
+			Static:   isStatic,
 			Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Params:   params,
 			Result:   result,
@@ -300,6 +387,98 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
 	return &ast.InterfaceType{Methods: methods, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
+	p.expect(tokens.LPAREN, "expected '('")
+	receiver := ""
+	isStatic := true
+	params := make([]ast.Param, 0)
+	if !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+		switch {
+		case p.match(tokens.AMP):
+			receiver = "&"
+			if p.match(tokens.MUT) {
+				receiver = "&mut "
+			}
+			p.expectSelfIdent()
+			isStatic = false
+			if p.at(tokens.COMMA) {
+				p.advance()
+			}
+		case p.match(tokens.ASTERISK):
+			p.expectSelfIdent()
+			receiver = "*"
+			isStatic = false
+			if p.at(tokens.COMMA) {
+				p.advance()
+			}
+		case p.at(tokens.IDENT) && p.current().Literal == "self":
+			p.advance()
+			receiver = ""
+			isStatic = false
+			if p.at(tokens.COMMA) {
+				p.advance()
+			}
+		}
+		for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+			paramStart := p.current().Start
+			isComptime := p.match(tokens.COMPTIME)
+			nameTok := p.expectIdent("expected parameter name")
+			paramType := p.parseType()
+			params = append(params, ast.Param{
+				Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+				IsComptime: isComptime,
+				Type:       paramType,
+				Location:   p.locFrom(paramStart),
+			})
+			if !p.consumeExprListSeparator(tokens.RPAREN, "parameter") {
+				break
+			}
+		}
+	}
+	p.expect(tokens.RPAREN, "expected ')'")
+	return receiver, params, isStatic
+}
+
+func rewriteSelfType(expr ast.TypeExpr, owner *ast.NamedType) ast.TypeExpr {
+	switch t := expr.(type) {
+	case nil:
+		return nil
+	case *ast.SelfType:
+		return cloneNamedType(owner)
+	case *ast.PointerType:
+		return &ast.PointerType{Inner: rewriteSelfType(t.Inner, owner), Location: t.Location}
+	case *ast.RefType:
+		return &ast.RefType{Mutable: t.Mutable, Inner: rewriteSelfType(t.Inner, owner), Location: t.Location}
+	case *ast.RawPtrType:
+		return &ast.RawPtrType{Inner: rewriteSelfType(t.Inner, owner), Location: t.Location}
+	case *ast.OptionalType:
+		return &ast.OptionalType{Inner: rewriteSelfType(t.Inner, owner), Location: t.Location}
+	case *ast.ErrorUnionType:
+		return &ast.ErrorUnionType{Error: rewriteSelfType(t.Error, owner), Value: rewriteSelfType(t.Value, owner), Location: t.Location}
+	case *ast.ArrayType:
+		return &ast.ArrayType{Size: t.Size, Inner: rewriteSelfType(t.Inner, owner), Location: t.Location}
+	case *ast.SliceType:
+		return &ast.SliceType{Inner: rewriteSelfType(t.Inner, owner), Location: t.Location}
+	case *ast.TupleType:
+		elems := make([]ast.TypeExpr, 0, len(t.Elems))
+		for _, elem := range t.Elems {
+			elems = append(elems, rewriteSelfType(elem, owner))
+		}
+		return &ast.TupleType{Elems: elems, Location: t.Location}
+	default:
+		return expr
+	}
+}
+
+func cloneNamedType(owner *ast.NamedType) *ast.NamedType {
+	if owner == nil {
+		return nil
+	}
+	path := make([]string, len(owner.Path))
+	copy(path, owner.Path)
+	return &ast.NamedType{Path: path, Location: owner.Location}
 }
 
 func (p *Parser) synchronizeTypeBody(end tokens.Kind) {

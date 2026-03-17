@@ -61,6 +61,8 @@ type Param struct {
 
 type FuncDecl struct {
 	Receiver      *Receiver
+	OwnerType     *NamedType
+	IsStatic      bool
 	Name          *Ident
 	Doc           *CommentGroup
 	Attrs         []Attribute

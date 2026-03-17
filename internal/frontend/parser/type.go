@@ -60,6 +60,10 @@ func (p *Parser) parseType() ast.TypeExpr {
 	case tokens.STRUCT, tokens.INTERFACE, tokens.ENUM, tokens.UNION, tokens.ERROR:
 		return p.parseTypeSpec()
 	case tokens.IDENT:
+		if p.current().Literal == "self" {
+			p.advance()
+			return &ast.SelfType{Location: p.locFrom(start)}
+		}
 		base := &ast.NamedType{Path: p.parseNamePath(), Location: p.locFrom(start)}
 		if p.match(tokens.BANG) {
 			return &ast.ErrorUnionType{Error: base, Value: p.parseType(), Location: p.locFrom(start)}

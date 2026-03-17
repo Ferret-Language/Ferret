@@ -38,6 +38,10 @@ type StringType struct{}
 
 func (*StringType) String() string { return "str" }
 
+type SelfType struct{}
+
+func (*SelfType) String() string { return "self" }
+
 type NamedType struct {
 	ModuleKey string
 	Name      string
@@ -192,6 +196,7 @@ func (t *UnionType) String() string { return "union" }
 type InterfaceType struct {
 	Methods         map[string]*FuncType
 	MethodReceivers map[string]string
+	MethodStatic    map[string]bool
 	OrderedMethods  []*InterfaceMethod
 }
 
@@ -278,6 +283,9 @@ func Equal(a, b Type) bool {
 		return ok && at.Name == bt.Name
 	case *StringType:
 		_, ok := b.(*StringType)
+		return ok
+	case *SelfType:
+		_, ok := b.(*SelfType)
 		return ok
 	case *NamedType:
 		bt, ok := b.(*NamedType)
