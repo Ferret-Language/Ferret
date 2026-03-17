@@ -1036,3 +1036,57 @@ fn main() {
 		t.Fatalf("unexpected cascading expected '}' diagnostic: %v", diag.All())
 	}
 }
+
+func TestParseNewReferenceAndRawTypes(t *testing.T) {
+	src := `
+type Node struct {
+    next *Node
+    view &Node
+    edit &mut Node
+    data ^u8
+}
+
+fn (n &Node) peek() &Node {
+    return n.view
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	typ, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok {
+		t.Fatalf("expected type decl, got %T", mod.Decls[0])
+	}
+	st, ok := typ.Type.(*ast.StructType)
+	if !ok {
+		t.Fatalf("expected struct type, got %T", typ.Type)
+	}
+	if _, ok := st.Fields[0].Type.(*ast.PointerType); !ok {
+		t.Fatalf("expected owning pointer type, got %T", st.Fields[0].Type)
+	}
+	ref, ok := st.Fields[1].Type.(*ast.RefType)
+	if !ok || ref.Mutable {
+		t.Fatalf("expected immutable ref type, got %#v", st.Fields[1].Type)
+	}
+	mutRef, ok := st.Fields[2].Type.(*ast.RefType)
+	if !ok || !mutRef.Mutable {
+		t.Fatalf("expected mutable ref type, got %#v", st.Fields[2].Type)
+	}
+	if _, ok := st.Fields[3].Type.(*ast.RawPtrType); !ok {
+		t.Fatalf("expected raw ptr type, got %T", st.Fields[3].Type)
+	}
+	fn, ok := mod.Decls[1].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[1])
+	}
+	recv, ok := fn.Receiver.Type.(*ast.RefType)
+	if !ok || recv.Mutable {
+		t.Fatalf("expected immutable receiver ref type, got %#v", fn.Receiver.Type)
+	}
+	ret, ok := fn.Result.(*ast.RefType)
+	if !ok || ret.Mutable {
+		t.Fatalf("expected immutable ref result type, got %#v", fn.Result)
+	}
+}

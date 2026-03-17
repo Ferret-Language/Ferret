@@ -158,6 +158,10 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 	switch t := typ.(type) {
 	case *ast.PointerType:
 		p.validateType(t.Inner)
+	case *ast.RefType:
+		p.validateType(t.Inner)
+	case *ast.RawPtrType:
+		p.validateType(t.Inner)
 	case *ast.OptionalType:
 		p.validateType(t.Inner)
 	case *ast.ErrorUnionType:
@@ -329,6 +333,14 @@ func renderType(typ ast.TypeExpr) string {
 		return fmt.Sprintf("named:%v", t.Path)
 	case *ast.PointerType:
 		return fmt.Sprintf("ptr(own=%t,raw=%t,mut=%t,%s)", t.IsOwn, t.IsRaw, t.IsMut, renderType(t.Inner))
+	case *ast.RefType:
+		prefix := "&"
+		if t.Mutable {
+			prefix = "&mut "
+		}
+		return prefix + renderType(t.Inner)
+	case *ast.RawPtrType:
+		return "^" + renderType(t.Inner)
 	case *ast.OptionalType:
 		return "?" + renderType(t.Inner)
 	case *ast.ErrorUnionType:

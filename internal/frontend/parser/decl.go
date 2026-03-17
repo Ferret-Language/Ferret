@@ -163,6 +163,10 @@ func receiverNamedType(typ ast.TypeExpr) string {
 		return t.Path[len(t.Path)-1]
 	case *ast.PointerType:
 		return receiverNamedType(t.Inner)
+	case *ast.RefType:
+		return receiverNamedType(t.Inner)
+	case *ast.RawPtrType:
+		return receiverNamedType(t.Inner)
 	default:
 		return ""
 	}

@@ -35,6 +35,14 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			inner = nil
 		}
 		return &typeinfo.PointerType{IsOwn: t.IsOwn, IsRaw: t.IsRaw, IsMut: t.IsMut, Inner: inner}
+	case *ast.RefType:
+		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.typeFromSyntax(mod, t.Inner)}
+	case *ast.RawPtrType:
+		inner := c.typeFromSyntax(mod, t.Inner)
+		if t.Inner == nil || typeinfo.IsBuiltinNamed(inner, "void") {
+			inner = nil
+		}
+		return &typeinfo.RawPtrType{Inner: inner}
 	case *ast.OptionalType:
 		return &typeinfo.OptionalType{Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.ErrorUnionType:

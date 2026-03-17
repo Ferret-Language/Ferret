@@ -21,6 +21,23 @@ type PointerType struct {
 func (*PointerType) typeNode()              {}
 func (t *PointerType) Loc() source.Location { return t.Location }
 
+type RefType struct {
+	Mutable  bool
+	Inner    TypeExpr
+	Location source.Location
+}
+
+func (*RefType) typeNode()              {}
+func (t *RefType) Loc() source.Location { return t.Location }
+
+type RawPtrType struct {
+	Inner    TypeExpr
+	Location source.Location
+}
+
+func (*RawPtrType) typeNode()              {}
+func (t *RawPtrType) Loc() source.Location { return t.Location }
+
 type OptionalType struct {
 	Inner    TypeExpr
 	Location source.Location

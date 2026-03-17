@@ -86,6 +86,37 @@ func (t *PointerType) String() string {
 	return prefix + suffix + typeString(t.Inner)
 }
 
+type RefType struct {
+	Mutable bool
+	Inner   Type
+}
+
+func (t *RefType) String() string {
+	if t == nil {
+		return "<nil>"
+	}
+	prefix := "&"
+	if t.Mutable {
+		prefix = "&mut "
+	}
+	return prefix + typeString(t.Inner)
+}
+
+type RawPtrType struct {
+	Inner Type
+}
+
+func (t *RawPtrType) String() string {
+	if t == nil {
+		return "<nil>"
+	}
+	if t.Inner == nil {
+		return "^void"
+	}
+	return "^" + typeString(t.Inner)
+
+}
+
 type OptionalType struct {
 	Inner Type
 }
@@ -275,6 +306,12 @@ func Equal(a, b Type) bool {
 	case *PointerType:
 		bt, ok := b.(*PointerType)
 		return ok && at.IsOwn == bt.IsOwn && at.IsRaw == bt.IsRaw && at.IsMut == bt.IsMut && Equal(at.Inner, bt.Inner)
+	case *RefType:
+		bt, ok := b.(*RefType)
+		return ok && at.Mutable == bt.Mutable && Equal(at.Inner, bt.Inner)
+	case *RawPtrType:
+		bt, ok := b.(*RawPtrType)
+		return ok && Equal(at.Inner, bt.Inner)
 	case *OptionalType:
 		bt, ok := b.(*OptionalType)
 		return ok && Equal(at.Inner, bt.Inner)

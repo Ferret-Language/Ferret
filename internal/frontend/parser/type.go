@@ -11,6 +11,17 @@ func (p *Parser) parseType() ast.TypeExpr {
 	case tokens.QUESTION:
 		p.advance()
 		return &ast.OptionalType{Inner: p.parseType(), Location: p.locFrom(start)}
+	case tokens.AMP:
+		p.advance()
+		ref := &ast.RefType{Location: p.locFrom(start)}
+		if p.match(tokens.MUT) {
+			ref.Mutable = true
+		}
+		ref.Inner = p.parseType()
+		return ref
+	case tokens.CARET:
+		p.advance()
+		return &ast.RawPtrType{Inner: p.parseType(), Location: p.locFrom(start)}
 	case tokens.ASTERISK:
 		p.advance()
 		ptr := &ast.PointerType{Location: p.locFrom(start)}

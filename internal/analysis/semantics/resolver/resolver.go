@@ -491,6 +491,10 @@ func (r *resolver) resolveType(scope *table.Scope, typ ast.TypeExpr) {
 		r.resolveTypePath(scope, t)
 	case *ast.PointerType:
 		r.resolveType(scope, t.Inner)
+	case *ast.RefType:
+		r.resolveType(scope, t.Inner)
+	case *ast.RawPtrType:
+		r.resolveType(scope, t.Inner)
 	case *ast.OptionalType:
 		r.resolveType(scope, t.Inner)
 	case *ast.ErrorUnionType:

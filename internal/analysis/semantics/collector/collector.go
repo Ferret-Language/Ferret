@@ -185,6 +185,14 @@ func receiverTypeName(typ ast.TypeExpr) string {
 			prefix += "mut "
 		}
 		return prefix + receiverTypeName(t.Inner)
+	case *ast.RefType:
+		prefix := "&"
+		if t.Mutable {
+			prefix = "&mut "
+		}
+		return prefix + receiverTypeName(t.Inner)
+	case *ast.RawPtrType:
+		return "^" + receiverTypeName(t.Inner)
 	default:
 		return fmt.Sprintf("%T", typ)
 	}
