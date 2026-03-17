@@ -463,8 +463,8 @@ fn main() i32 {
 	if !foundImplicitConstructor {
 		t.Fatal("expected implicit constructor metadata on lowered composite literal")
 	}
-	if !foundDestructorDefer {
-		t.Fatal("expected destructor defer in lowered MIR")
+	if foundDestructorDefer {
+		t.Fatal("did not expect destructor defer for plain stack value")
 	}
 }
 

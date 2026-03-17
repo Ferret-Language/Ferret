@@ -95,7 +95,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Update HIR generation so it no longer assumes old pointer kinds or old implicit receiver borrowing.
 [*] Update MIR lowering and normalization to represent new owner/reference/raw operations cleanly.
 [*] Remove IR-level assumptions tied to `*own`, `*mut`, and `*raw`.
-[ ] Review deferred destructor generation and any ownership-triggered synthetic IR for compatibility with the new model.
+[*] Review deferred destructor generation and any ownership-triggered synthetic IR for compatibility with the new model.
 [*] Keep MIR validation passing after each semantic slice lands.
 
 ### Phase 9: Adapt backends and runtime contracts

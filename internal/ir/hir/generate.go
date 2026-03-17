@@ -600,12 +600,16 @@ func (g *generator) generateAutoDestructorDefer(stmt ast.Stmt) Stmt {
 }
 
 func (g *generator) destructorMethodName(typ typeinfo.Type) (string, bool) {
-	named, ok := typ.(*typeinfo.NamedType)
-	if !ok || named == nil || g.lookupMethod == nil {
+	ptr, ok := typ.(*typeinfo.PointerType)
+	if !ok || ptr == nil || !ptr.IsOwn || ptr.IsRaw || g.lookupMethod == nil {
+		return "", false
+	}
+	named, ok := ptr.Inner.(*typeinfo.NamedType)
+	if !ok || named == nil {
 		return "", false
 	}
 	name := "~" + named.Name
-	if _, ok := g.lookupMethod(named, name); !ok {
+	if _, ok := g.lookupMethod(ptr, name); !ok {
 		return "", false
 	}
 	return name, true
