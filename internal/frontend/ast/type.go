@@ -11,9 +11,6 @@ func (*NamedType) typeNode()              {}
 func (t *NamedType) Loc() source.Location { return t.Location }
 
 type PointerType struct {
-	IsOwn    bool
-	IsRaw    bool
-	IsMut    bool
 	Inner    TypeExpr
 	Location source.Location
 }

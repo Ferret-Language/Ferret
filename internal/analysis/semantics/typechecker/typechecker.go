@@ -85,7 +85,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 	}
 	switch t := d.Type.(type) {
 	case *ast.StructType:
-		c.checkHeapStoredReference(d.Name.Loc(), &typeinfo.PointerType{IsOwn: true, Inner: declType})
+		c.checkHeapStoredReference(d.Name.Loc(), &typeinfo.PointerType{Inner: declType})
 		for _, field := range t.Fields {
 			if field == nil {
 				continue
@@ -132,14 +132,14 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			}
 		}
 	case *ast.UnionType:
-		c.checkHeapStoredReference(d.Name.Loc(), &typeinfo.PointerType{IsOwn: true, Inner: declType})
+		c.checkHeapStoredReference(d.Name.Loc(), &typeinfo.PointerType{Inner: declType})
 		for _, member := range t.Members {
 			if member != nil {
 				c.info.BindNode(member, c.typeFromSyntax(c.mod, member))
 			}
 		}
 	case *ast.TupleType, *ast.ArrayType, *ast.OptionalType, *ast.ErrorUnionType:
-		c.checkHeapStoredReference(d.Name.Loc(), &typeinfo.PointerType{IsOwn: true, Inner: declType})
+		c.checkHeapStoredReference(d.Name.Loc(), &typeinfo.PointerType{Inner: declType})
 	}
 }
 
@@ -1023,10 +1023,7 @@ func (c *checker) canDeepCopyTypeSeen(typ typeinfo.Type, seen map[typeinfo.Type]
 	}
 	switch t := base.(type) {
 	case *typeinfo.PointerType:
-		if t.IsOwn {
-			return false, fmt.Sprintf("deep copy of owning pointer type %s is not implemented yet", typ.String())
-		}
-		return true, ""
+		return false, fmt.Sprintf("deep copy of owning pointer type %s is not implemented yet", typ.String())
 	case *typeinfo.RawPtrType:
 		return false, fmt.Sprintf("cannot deep copy raw pointer type %s", typ.String())
 	case *typeinfo.RefType:
@@ -1462,7 +1459,7 @@ func (c *checker) lookupConstructorType(named *typeinfo.NamedType) *typeinfo.Fun
 	if owner == nil || owner.MethodSets == nil {
 		return nil
 	}
-	key, ok := c.receiverKeyFromType(&typeinfo.PointerType{IsOwn: true, Inner: named})
+	key, ok := c.receiverKeyFromType(&typeinfo.PointerType{Inner: named})
 	if !ok {
 		return nil
 	}

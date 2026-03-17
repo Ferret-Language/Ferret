@@ -55,9 +55,6 @@ func (t *NamedType) String() string {
 }
 
 type PointerType struct {
-	IsOwn bool
-	IsRaw bool
-	IsMut bool
 	Inner Type
 }
 

@@ -31,7 +31,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		return &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}
 	case *ast.PointerType:
 		inner := c.typeFromSyntax(mod, t.Inner)
-		return &typeinfo.PointerType{IsOwn: true, Inner: inner}
+		return &typeinfo.PointerType{Inner: inner}
 	case *ast.RefType:
 		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.RawPtrType:
