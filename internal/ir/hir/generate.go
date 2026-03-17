@@ -310,6 +310,7 @@ func generateInterfaceTypeDecl(types *typeinfo.ModuleInfo, t *ast.InterfaceType)
 			continue
 		}
 		entry := &InterfaceMethodDecl{
+			Receiver: method.Receiver,
 			Name:     method.Name.Text(),
 			Result:   syntaxType(types, method.Result),
 			Location: method.Location,
@@ -783,7 +784,7 @@ func (g *generator) staticIsResult(left, target typeinfo.Type) bool {
 				continue
 			}
 			got := srcIface.Methods[method.Name]
-			if got == nil || !hirInterfaceMethodCompatible(method.Type, got) {
+			if got == nil || srcIface.MethodReceivers[method.Name] != method.Receiver || !hirInterfaceMethodCompatible(method.Type, got) {
 				return false
 			}
 		}

@@ -104,6 +104,42 @@ type Handle move enum {
 	}
 }
 
+func TestParseInterfaceReceiverModifiers(t *testing.T) {
+	src := `
+type Reader interface {
+    read(buf []u8) i32
+    &peek() u8
+    &mut refill() i32
+    *close() void
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	typ, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok {
+		t.Fatalf("expected type decl, got %T", mod.Decls[0])
+	}
+	iface, ok := typ.Type.(*ast.InterfaceType)
+	if !ok {
+		t.Fatalf("expected interface type, got %T", typ.Type)
+	}
+	if got := iface.Methods[0].Receiver; got != "" {
+		t.Fatalf("expected value receiver, got %q", got)
+	}
+	if got := iface.Methods[1].Receiver; got != "&" {
+		t.Fatalf("expected & receiver, got %q", got)
+	}
+	if got := iface.Methods[2].Receiver; got != "&mut " {
+		t.Fatalf("expected &mut receiver, got %q", got)
+	}
+	if got := iface.Methods[3].Receiver; got != "*" {
+		t.Fatalf("expected * receiver, got %q", got)
+	}
+}
+
 func TestParseIfAttributeOnTypeDecl(t *testing.T) {
 	src := `
 #[if(target_os, "linux")]

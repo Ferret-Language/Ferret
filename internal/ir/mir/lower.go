@@ -118,6 +118,7 @@ func lowerInterfaceTypeDecl(decl *hir.InterfaceTypeDecl) *InterfaceTypeDecl {
 			continue
 		}
 		entry := &InterfaceMethodDecl{
+			Receiver: method.Receiver,
 			Name:     method.Name,
 			Result:   method.Result,
 			Location: method.Location,

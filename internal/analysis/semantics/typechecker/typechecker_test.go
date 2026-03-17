@@ -255,7 +255,7 @@ fn main() i32 {
 	}
 }
 
-func TestTypecheckerAllowsAddressableValueToSatisfyInterfacePointerMethod(t *testing.T) {
+func TestTypecheckerAllowsValueToSatisfyInterfacePointerMethod(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
@@ -266,7 +266,7 @@ fn (_ *Point) Show() {
 }
 
 type Shape interface {
-    Show()
+    *Show()
 }
 
 fn main() i32 {
@@ -756,6 +756,75 @@ fn main() i32 {
 	}
 	if !found {
 		t.Fatalf("expected detailed incompatible-interface-method diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsConcreteTypeWithWrongInterfaceReceiverModifier(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Reader interface {
+    &mut read(buf []u8) i32
+}
+
+type File struct {
+    value i32 = 0
+}
+
+fn (f &File) read(buf []u8) i32 {
+    return 0
+}
+
+fn main() i32 {
+    let f: File = .{}
+    let r: Reader = f
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected interface receiver mismatch diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `missing method &mut read([]u8) i32`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected interface receiver mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsCrossModuleMethodDeclaration(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+import "util/name"
+
+fn (n name::Name) String() str {
+    return "x"
+}
+`)
+	mustWriteType(t, filepath.Join(root, "util", "name.ferr"), `
+type Name struct {
+    value i32 = 0
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected cross-module method declaration diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "cross-module method declarations are not allowed") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected cross-module method declaration diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

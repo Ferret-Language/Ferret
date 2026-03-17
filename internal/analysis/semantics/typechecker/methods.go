@@ -40,6 +40,27 @@ func (c *checker) lookupMethod(receiverType typeinfo.Type, name string, addressa
 	return nil, nil
 }
 
+func (c *checker) lookupMethodWithReceiver(receiverType typeinfo.Type, receiver string, name string) (*symbols.Symbol, *typeinfo.FuncType) {
+	baseNamed, ok := c.receiverBaseNamedType(receiverType)
+	if !ok {
+		return nil, nil
+	}
+	owner := c.findModuleForType(baseNamed)
+	if owner == nil || owner.MethodSets == nil {
+		return nil, nil
+	}
+	methods := owner.MethodSets[receiver+baseNamed.Name]
+	if methods == nil {
+		return nil, nil
+	}
+	sym := methods[name]
+	if sym == nil {
+		return nil, nil
+	}
+	fnType, _ := c.typeOfSymbol(sym).(*typeinfo.FuncType)
+	return sym, fnType
+}
+
 func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName string, addressable bool, mutable bool) []string {
 	keys := make([]string, 0, 4)
 	seen := make(map[string]struct{})

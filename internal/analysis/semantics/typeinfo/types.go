@@ -208,8 +208,9 @@ type UnionType struct {
 func (t *UnionType) String() string { return "union" }
 
 type InterfaceType struct {
-	Methods        map[string]*FuncType
-	OrderedMethods []*InterfaceMethod
+	Methods         map[string]*FuncType
+	MethodReceivers map[string]string
+	OrderedMethods  []*InterfaceMethod
 }
 
 func (t *InterfaceType) String() string { return "interface" }

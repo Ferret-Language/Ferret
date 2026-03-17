@@ -90,6 +90,7 @@ func (*StructType) typeNode()              {}
 func (t *StructType) Loc() source.Location { return t.Location }
 
 type InterfaceMethod struct {
+	Receiver string
 	Name     *Ident
 	Params   []Param
 	Result   TypeExpr

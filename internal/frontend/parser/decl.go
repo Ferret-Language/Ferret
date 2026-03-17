@@ -267,12 +267,21 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 	p.expect(tokens.LBRACE, "expected '{'")
 	methods := make([]*ast.InterfaceMethod, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
-		if !p.at(tokens.IDENT) {
+		if !p.at(tokens.IDENT) && !p.at(tokens.ASTERISK) && !p.at(tokens.AMP) {
 			p.errorHere("expected interface method")
 			p.synchronizeTypeBody(tokens.RBRACE)
 			continue
 		}
 		methodStart := p.current().Start
+		receiver := ""
+		if p.match(tokens.ASTERISK) {
+			receiver = "*"
+		} else if p.match(tokens.AMP) {
+			receiver = "&"
+			if p.match(tokens.MUT) {
+				receiver = "&mut "
+			}
+		}
 		nameTok := p.expectIdent("expected interface method name")
 		params := p.parseParams()
 		var result ast.TypeExpr
@@ -281,6 +290,7 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 		}
 		p.match(tokens.SEMICOLON)
 		methods = append(methods, &ast.InterfaceMethod{
+			Receiver: receiver,
 			Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Params:   params,
 			Result:   result,

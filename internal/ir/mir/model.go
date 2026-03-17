@@ -44,6 +44,7 @@ type InterfaceTypeDecl struct {
 }
 
 type InterfaceMethodDecl struct {
+	Receiver string
 	Name     string
 	Params   []*Param
 	Result   typeinfo.Type

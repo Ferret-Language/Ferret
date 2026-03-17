@@ -271,7 +271,7 @@ func debugType(typ TypeExpr) any {
 			for _, param := range method.Params {
 				params = append(params, debugParam(param))
 			}
-			methods = append(methods, map[string]any{"name": debugExpr(method.Name), "params": params, "result": debugType(method.Result), "loc": debugLoc(method.Location)})
+			methods = append(methods, map[string]any{"receiver": method.Receiver, "name": debugExpr(method.Name), "params": params, "result": debugType(method.Result), "loc": debugLoc(method.Location)})
 		}
 		return map[string]any{"kind": "InterfaceType", "methods": methods, "loc": debugLoc(t.Location)}
 	case *EnumType:

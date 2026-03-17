@@ -6,8 +6,9 @@ import (
 )
 
 type InterfaceMethod struct {
-	Name string
-	Type *FuncType
+	Receiver string
+	Name     string
+	Type     *FuncType
 }
 
 func FormatType(t fmt.Stringer) string {
@@ -50,7 +51,7 @@ func FormatNamedDecl(name string, underlying Type) string {
 				if method == nil || method.Type == nil {
 					continue
 				}
-				fmt.Fprintf(&b, "    %s%s\n", method.Name, formatSignature(method.Type))
+				fmt.Fprintf(&b, "    %s%s%s\n", method.Receiver, method.Name, formatSignature(method.Type))
 			}
 			b.WriteString("}")
 			return b.String()
