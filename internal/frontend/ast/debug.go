@@ -233,7 +233,7 @@ func debugType(typ TypeExpr) any {
 	case *NamedType:
 		return map[string]any{"kind": "NamedType", "path": t.Path, "loc": debugLoc(t.Location)}
 	case *PointerType:
-		return map[string]any{"kind": "PointerType", "is_own": t.IsOwn, "is_raw": t.IsRaw, "is_mut": t.IsMut, "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
+		return map[string]any{"kind": "PointerType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *RefType:
 		return map[string]any{"kind": "RefType", "mutable": t.Mutable, "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *RawPtrType:

@@ -332,7 +332,7 @@ func renderType(typ ast.TypeExpr) string {
 	case *ast.NamedType:
 		return fmt.Sprintf("named:%v", t.Path)
 	case *ast.PointerType:
-		return fmt.Sprintf("ptr(own=%t,raw=%t,mut=%t,%s)", t.IsOwn, t.IsRaw, t.IsMut, renderType(t.Inner))
+		return fmt.Sprintf("ptr(%s)", renderType(t.Inner))
 	case *ast.RefType:
 		prefix := "&"
 		if t.Mutable {

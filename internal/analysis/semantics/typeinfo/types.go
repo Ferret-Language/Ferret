@@ -65,12 +65,6 @@ func (t *PointerType) String() string {
 	if t == nil {
 		return "<nil>"
 	}
-	if t.IsRaw {
-		if t.Inner == nil {
-			return "^void"
-		}
-		return "^" + typeString(t.Inner)
-	}
 	return "*" + typeString(t.Inner)
 }
 
@@ -290,7 +284,7 @@ func Equal(a, b Type) bool {
 		return ok && at.ModuleKey == bt.ModuleKey && at.Name == bt.Name
 	case *PointerType:
 		bt, ok := b.(*PointerType)
-		return ok && at.IsRaw == bt.IsRaw && Equal(at.Inner, bt.Inner)
+		return ok && Equal(at.Inner, bt.Inner)
 	case *RefType:
 		bt, ok := b.(*RefType)
 		return ok && at.Mutable == bt.Mutable && Equal(at.Inner, bt.Inner)
