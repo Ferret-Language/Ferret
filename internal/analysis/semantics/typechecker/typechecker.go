@@ -85,6 +85,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 	}
 	switch t := d.Type.(type) {
 	case *ast.StructType:
+		c.checkHeapStoredReference(d.Name.Loc(), &typeinfo.PointerType{IsOwn: true, Inner: declType})
 		for _, field := range t.Fields {
 			if field == nil {
 				continue
@@ -131,11 +132,14 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			}
 		}
 	case *ast.UnionType:
+		c.checkHeapStoredReference(d.Name.Loc(), &typeinfo.PointerType{IsOwn: true, Inner: declType})
 		for _, member := range t.Members {
 			if member != nil {
 				c.info.BindNode(member, c.typeFromSyntax(c.mod, member))
 			}
 		}
+	case *ast.TupleType, *ast.ArrayType, *ast.OptionalType, *ast.ErrorUnionType:
+		c.checkHeapStoredReference(d.Name.Loc(), &typeinfo.PointerType{IsOwn: true, Inner: declType})
 	}
 }
 
@@ -170,46 +174,70 @@ func (c *checker) checkHeapStoredReference(loc source.Location, typ typeinfo.Typ
 }
 
 func (c *checker) typeContainsReference(typ typeinfo.Type) bool {
+	return c.typeContainsReferenceSeen(typ, map[typeinfo.Type]struct{}{}, map[string]struct{}{})
+}
+
+func (c *checker) typeContainsReferenceSeen(typ typeinfo.Type, seen map[typeinfo.Type]struct{}, seenNamed map[string]struct{}) bool {
 	if typ == nil {
 		return false
 	}
-	switch t := c.underlying(typ).(type) {
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil {
+		key := named.ModuleKey + "::" + named.Name
+		if _, ok := seenNamed[key]; ok {
+			return false
+		}
+		seenNamed[key] = struct{}{}
+	}
+	if _, ok := seen[typ]; ok {
+		return false
+	}
+	seen[typ] = struct{}{}
+	base := c.underlying(typ)
+	if base != nil {
+		if base != typ {
+			if _, ok := seen[base]; ok {
+				return false
+			}
+			seen[base] = struct{}{}
+		}
+	}
+	switch t := base.(type) {
 	case *typeinfo.RefType:
 		return true
 	case *typeinfo.PointerType:
-		return c.typeContainsReference(t.Inner)
+		return c.typeContainsReferenceSeen(t.Inner, seen, seenNamed)
 	case *typeinfo.RawPtrType:
 		return false
 	case *typeinfo.OptionalType:
-		return c.typeContainsReference(t.Inner)
+		return c.typeContainsReferenceSeen(t.Inner, seen, seenNamed)
 	case *typeinfo.ErrorUnionType:
-		return c.typeContainsReference(t.Error) || c.typeContainsReference(t.Value)
+		return c.typeContainsReferenceSeen(t.Error, seen, seenNamed) || c.typeContainsReferenceSeen(t.Value, seen, seenNamed)
 	case *typeinfo.ArrayType:
-		return c.typeContainsReference(t.Inner)
+		return c.typeContainsReferenceSeen(t.Inner, seen, seenNamed)
 	case *typeinfo.SliceType:
-		return c.typeContainsReference(t.Inner)
+		return c.typeContainsReferenceSeen(t.Inner, seen, seenNamed)
 	case *typeinfo.TupleType:
 		for _, elem := range t.Elems {
-			if c.typeContainsReference(elem) {
+			if c.typeContainsReferenceSeen(elem, seen, seenNamed) {
 				return true
 			}
 		}
 		return false
 	case *typeinfo.StructType:
 		for _, field := range t.OrderedFields {
-			if field != nil && c.typeContainsReference(field.Type) {
+			if field != nil && c.typeContainsReferenceSeen(field.Type, seen, seenNamed) {
 				return true
 			}
 		}
 		for _, field := range t.OrderedStaticFields {
-			if field != nil && c.typeContainsReference(field.Type) {
+			if field != nil && c.typeContainsReferenceSeen(field.Type, seen, seenNamed) {
 				return true
 			}
 		}
 		return false
 	case *typeinfo.UnionType:
 		for _, member := range t.Members {
-			if c.typeContainsReference(member) {
+			if c.typeContainsReferenceSeen(member, seen, seenNamed) {
 				return true
 			}
 		}

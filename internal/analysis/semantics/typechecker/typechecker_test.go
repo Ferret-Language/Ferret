@@ -1577,12 +1577,17 @@ type Point struct {
     X i32 = 0
 }
 
-fn main() i32 {
-    let mut p: Point = .{}
+fn readPoint() i32 {
+    let p: Point = .{}
     let r = &p
-    let m = &mut p
     let x = *r
     return x.X
+}
+
+fn writePoint() void {
+    let mut p: Point = .{}
+    let m = &mut p
+    m
 }
 `)
 
@@ -1590,10 +1595,11 @@ fn main() i32 {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	mainFn := findTypeFunc(t, result.Entry.AST, "main")
-	letR := mainFn.Body.Stmts[1].(*ast.LetStmt)
-	letM := mainFn.Body.Stmts[2].(*ast.LetStmt)
-	letX := mainFn.Body.Stmts[3].(*ast.LetStmt)
+	readFn := findTypeFunc(t, result.Entry.AST, "readPoint")
+	writeFn := findTypeFunc(t, result.Entry.AST, "writePoint")
+	letR := readFn.Body.Stmts[1].(*ast.LetStmt)
+	letX := readFn.Body.Stmts[2].(*ast.LetStmt)
+	letM := writeFn.Body.Stmts[1].(*ast.LetStmt)
 	rType, ok := result.Entry.Types.Nodes[letR.Value].(*typeinfo.RefType)
 	if !ok || rType.Mutable {
 		t.Fatalf("expected immutable RefType for &p, got %#v", result.Entry.Types.Nodes[letR.Value])
@@ -1624,9 +1630,9 @@ fn (p &mut Point) Bump() i32 {
 
 fn main() i32 {
     let mut p: Point = .{ .X = 1 }
-    let r = &p
-    let m = &mut p
-    return r.Read() + m.Bump()
+    let a = (&p).Read()
+    let b = (&mut p).Bump()
+    return a + b
 }
 `)
 

@@ -24,7 +24,9 @@ type valueInfo struct {
 	movedPath string
 	movedSubs map[string]source.Location
 	frozen    int
+	mutBorrow bool
 	borrowOf  int
+	borrowMut bool
 	borrowLoc source.Location
 }
 
@@ -97,7 +99,9 @@ func (s *valueScope) TrimToLiveOut(live cfg.LocalSet) {
 		info.movedPath = ""
 		info.movedSubs = nil
 		info.frozen = 0
+		info.mutBorrow = false
 		info.borrowOf = -1
+		info.borrowMut = false
 		info.borrowLoc = source.Location{}
 	}
 }
@@ -139,7 +143,9 @@ func equalValueInfo(a, b *valueInfo) bool {
 		a.movedPath == b.movedPath &&
 		equalMovedSubs(a.movedSubs, b.movedSubs) &&
 		a.frozen == b.frozen &&
+		a.mutBorrow == b.mutBorrow &&
 		a.borrowOf == b.borrowOf &&
+		a.borrowMut == b.borrowMut &&
 		a.borrowLoc == b.borrowLoc
 }
 
@@ -176,8 +182,10 @@ func mergeValueInfo(a, b *valueInfo) *valueInfo {
 	if b.frozen > out.frozen {
 		out.frozen = b.frozen
 	}
+	out.mutBorrow = a.mutBorrow || b.mutBorrow
 	if a.borrowOf == b.borrowOf {
 		out.borrowOf = a.borrowOf
+		out.borrowMut = a.borrowMut || b.borrowMut
 		if a.borrowLoc.Start != nil {
 			out.borrowLoc = a.borrowLoc
 		} else {
@@ -185,6 +193,7 @@ func mergeValueInfo(a, b *valueInfo) *valueInfo {
 		}
 	} else {
 		out.borrowOf = -1
+		out.borrowMut = false
 		out.borrowLoc = source.Location{}
 	}
 	return &out
@@ -242,8 +251,9 @@ func ownerName(name string) ownerRef {
 func (o ownerRef) isLocal() bool { return o.localID >= 0 }
 
 type borrowInfo struct {
-	owner ownerRef
-	loc   source.Location
+	owner   ownerRef
+	loc     source.Location
+	mutable bool
 }
 
 type tempInfo struct {
@@ -664,6 +674,23 @@ func (a *analyzer) checkAddrOfValue(scope *valueScope, value *mir.AddrOfValue) {
 		return
 	}
 	a.checkValue(scope, value.Source)
+	root, _, ok := a.borrowSourcePath(value.Source)
+	if !ok || !root.isLocal() || scope == nil {
+		return
+	}
+	owner, _ := scope.Lookup(root.localID)
+	if owner == nil {
+		return
+	}
+	if value.Mutable {
+		if owner.frozen > 0 {
+			a.reportBorrowConflict(value.Loc(), root.localID, "cannot create mutable borrow while another borrow is live")
+		}
+		return
+	}
+	if owner.mutBorrow {
+		a.reportBorrowConflict(value.Loc(), root.localID, "cannot create immutable borrow while a mutable borrow is live")
+	}
 }
 
 func (a *analyzer) checkLoadValue(scope *valueScope, value *mir.LoadValue) {
@@ -956,10 +983,21 @@ func (a *analyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, value mir
 	if owner == nil {
 		return
 	}
+	if info.mutable {
+		if owner.frozen > 0 {
+			a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create mutable borrow while another borrow is live")
+			return
+		}
+	} else if owner.mutBorrow {
+		a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create immutable borrow while a mutable borrow is live")
+		return
+	}
 	slot.borrowOf = info.owner.localID
+	slot.borrowMut = info.mutable
 	slot.borrowLoc = info.loc
-	if a.isMoveType(owner.typ) {
-		owner.frozen++
+	owner.frozen++
+	if info.mutable {
+		owner.mutBorrow = true
 	}
 }
 
@@ -969,8 +1007,12 @@ func (a *analyzer) releaseBorrowValue(scope *valueScope, slot *valueInfo) {
 	}
 	if owner, ok := scope.Lookup(slot.borrowOf); ok && owner != nil && owner.frozen > 0 {
 		owner.frozen--
+		if slot.borrowMut && owner.frozen == 0 {
+			owner.mutBorrow = false
+		}
 	}
 	slot.borrowOf = -1
+	slot.borrowMut = false
 	slot.borrowLoc = source.Location{}
 }
 
@@ -1249,7 +1291,7 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowIn
 		}
 		if scope != nil {
 			if slot, _ := scope.Lookup(v.LocalID); slot != nil && slot.borrowOf >= 0 {
-				return borrowInfo{owner: ownerLocal(slot.borrowOf), loc: slot.borrowLoc}, true
+				return borrowInfo{owner: ownerLocal(slot.borrowOf), loc: slot.borrowLoc, mutable: slot.borrowMut}, true
 			}
 		}
 	case *mir.AddrOfValue:
@@ -1257,14 +1299,14 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowIn
 		if !ok {
 			return borrowInfo{}, false
 		}
-		return borrowInfo{owner: root, loc: v.Loc()}, true
+		return borrowInfo{owner: root, loc: v.Loc(), mutable: v.Mutable}, true
 	case *mir.UnaryValue:
 		if v.Op == "&" || v.Op == "&mut" {
 			root, _, ok := a.borrowSourcePath(v.Right)
 			if !ok {
 				return borrowInfo{}, false
 			}
-			return borrowInfo{owner: root, loc: v.Loc()}, true
+			return borrowInfo{owner: root, loc: v.Loc(), mutable: v.Op == "&mut"}, true
 		}
 	case *mir.InterfaceValue:
 		return a.borrowValueInfo(scope, v.Value)

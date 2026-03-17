@@ -32,7 +32,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 
 ### Phase 1: Introduce the new surface syntax and type model
 
-[ ] Replace the old pointer AST/type model with explicit categories for owning pointer, reference, mutable reference, and raw pointer.
+[*] Replace the old pointer AST/type model with explicit categories for owning pointer, reference, mutable reference, and raw pointer.
 [*] Update the lexer/parser so the accepted type forms become `T`, `*T`, `&T`, `&mut T`, and `^T`.
 [*] Remove parser support for old safe pointer spellings `*mut T`, `*own T`, and `*raw T`.
 [ ] Remove parser support for `type Name move ...`.
@@ -82,8 +82,8 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 
 [*] Rebuild ownership classification so only owning heap pointers (`*T`) are consumed by moves.
 [*] Keep use-after-move diagnostics for owners, but stop treating ordinary value types as move-only by default.
-[ ] Rebuild borrow tracking around reference types instead of pointer-shaped borrows.
-[ ] Enforce single active `&mut` borrow and no overlapping mutable/immutable borrows.
+[*] Rebuild borrow tracking around reference types instead of pointer-shaped borrows.
+[*] Enforce single active `&mut` borrow and no overlapping mutable/immutable borrows.
 [ ] Enforce that references cannot escape scope by return, module binding, heap storage, or deferred capture.
 [*] Enforce that heap values cannot contain `&T` or `&mut T`.
 [ ] Revisit partial-move logic so it only applies where the new model actually needs it.

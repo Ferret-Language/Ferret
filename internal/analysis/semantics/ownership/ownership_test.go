@@ -203,6 +203,61 @@ fn borrow(c *Conn) &Conn {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrBorrowEscape, result.Diagnostics.Diagnostics())
 }
 
+func TestOwnershipPhaseRejectsImmutableBorrowWhileMutableBorrowIsLive(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    Value i32 = 0
+}
+
+fn run() void {
+    let mut p: Point = .{}
+    let m = &mut p
+    let r = &p
+    m
+    r
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrBorrowConflict {
+			return
+		}
+	}
+	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrBorrowConflict, result.Diagnostics.Diagnostics())
+}
+
+func TestOwnershipPhaseAllowsMultipleImmutableBorrows(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    Value i32 = 0
+}
+
+fn run() void {
+    let p: Point = .{}
+    let a = &p
+    let b = &p
+    a
+    b
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrBorrowConflict {
+			t.Fatalf("unexpected borrow conflict %#v", diag)
+		}
+	}
+}
+
 func TestOwnershipPhaseIgnoresMoveMarkedEnumForCopySemantics(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
