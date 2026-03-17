@@ -182,8 +182,8 @@ Named types use constructor and destructor names in the C++ style.
 Examples:
 
 ```go
-fn (p *mut Point) Point(x i32, y i32) {}
-fn (p *mut Point) ~Point() {}
+fn (p *Point) Point() {}
+fn (p *Point) ~Point() {}
 ```
 
 Parser rule:
@@ -198,25 +198,24 @@ The core type forms are:
 - Scalars: `bool`, integers, floats, `char`
 - Tuples: `(T1, T2, ..., Tn)`
 - Arrays: `[N]T`
-- Read pointers: `*T`
-- Mutable pointers: `*mut T`
-- Owning pointers: `*own T`
-- Raw pointers: `*raw T`, `*raw mut T`
+- Owning pointers: `*T`
+- References: `&T`, `&mut T`
+- Raw pointers: `^T`
 - Optional: `?T`
 - Error union: `E!T`
 - Structs, enums, unions, interfaces
 
 Interpretation:
 
-- `*T` is a non-owning non-null read pointer
-- `*mut T` is a non-owning non-null mutable pointer
-- `*own T` is the unique non-null owner of one heap allocation
-- `*raw T` and `*raw mut T` are unchecked pointers and require `unsafe` to dereference
+- `*T` is the unique non-null owner of one heap allocation
+- `&T` is a non-owning non-null immutable reference
+- `&mut T` is a non-owning non-null mutable reference
+- `^T` is an unchecked raw pointer and requires `unsafe` to dereference
 - `?T` is the only way to represent absence
 - `E!T` is a value-or-error type where `E` is a named `error` type
 
 `none` is only valid for `?T`.
-`?*T`, `?*mut T`, and `?*own T` are the nullable forms of safe pointers.
+`?*T` and `?^T` are the nullable forms of pointer-like storage.
 
 ## 5. Copy vs Move
 
@@ -226,9 +225,9 @@ Default behavior:
 
 - Scalars are copied
 - Enums are copied
-- Non-owning pointers are copied
-- `*own T` is moved
-- Structs, unions, interfaces, tuples, arrays, `?T`, and `E!T` are moved by default
+- Plain values are copied
+- `*T` is moved
+- References are copied as non-owning views
 
 Assignment rules:
 
@@ -242,29 +241,12 @@ Current standard behaviour:
   - builtin scalars
   - enum values
   - error members / error-set values
-  - non-owning pointers
+  - references
 - move types:
-  - `str`
-  - arrays and slices
-  - structs, unions, interfaces
-  - `*own T`
-  - user-defined resource types
+  - owning pointers `*T`
 - `copy expr` is the only explicit duplication form in safe code
-- a named type may be explicitly marked `move` to force move-only behaviour
-  even if its underlying representation would otherwise be copyable
 
 Examples:
-
-```go
-type File move struct {
-    fd i32
-}
-
-type Handle move enum {
-    stdin
-    stdout
-}
-```
 
 ```go
 let a: i32 = 1
@@ -273,7 +255,7 @@ let b = a
 let p: Point = .{ .x = 1, .y = 2 }
 let q = copy p
 
-let f: *own File = new(a, .{ .fd = 3 })!!
+let f: *File = new(a, .{ .fd = 3 })!!
 let g = f
 ```
 
@@ -303,31 +285,31 @@ Rules:
 
 ## 6. Ownership and Lifetime
 
-Objects have lifetimes. Pointers do not own memory unless marked `own`.
+Objects have lifetimes. References do not own memory.
 
 - Stack values are owned by lexical scope
-- Heap values are owned by exactly one `*own T`
-- When an `*own T` binding leaves scope, its allocation is destroyed and freed unless ownership was moved away
-- `*T` and `*mut T` never free memory
+- Heap values are owned by exactly one `*T`
+- When a `*T` binding leaves scope, its allocation is destroyed and freed unless ownership was moved away
+- `&T` and `&mut T` never free memory
 
 The language does not permit shared ownership in safe code.
 
 ## 7. Borrowing
 
-Borrowing uses ordinary pointer syntax:
+Borrowing uses reference syntax:
 
 ```go
 let x: i32 = 10
-let p: *i32 = &x
-let m: *mut i32 = &mut x
+let p: &i32 = &x
+let m: &mut i32 = &mut x
 ```
 
 Borrowing from an owner is explicit:
 
 ```go
-let h: *own Point = new(a, .{ .x = 1, .y = 2 })!!
-let p: *Point = &*h
-let m: *mut Point = &mut *h
+let h: *Point = new(a, .{ .x = 1, .y = 2 })!!
+let p: &Point = &*h
+let m: &mut Point = &mut *h
 ```
 
 Safe-code borrow rules:
@@ -354,10 +336,10 @@ This rule is block-scoped rather than last-use analyzed.
 Heap allocation is explicit and always uses an allocator.
 
 ```go
-fn new[T](a Alloc, value T) Oom!*own T
-fn alloc[T](a Alloc, count usize) Oom!*own T
-fn free[T](take p *own T)
-fn reserve[T](take p *own T, old_count usize, new_count usize, a Alloc) Oom!*own T
+fn new[T](a Alloc, value T) Oom!*T
+fn alloc[T](a Alloc, count usize) Oom!*T
+fn free[T](p *T)
+fn reserve[T](p *T, old_count usize, new_count usize, a Alloc) Oom!*T
 ```
 
 Semantics:
@@ -515,7 +497,7 @@ fn (p Point) len2() i32 {
     return p.x * p.x + p.y * p.y
 }
 
-fn (p *mut Point) shift(dx i32, dy i32) {
+fn (p &mut Point) shift(dx i32, dy i32) {
     p.x += dx
     p.y += dy
 }
@@ -528,12 +510,12 @@ Rules:
 - static methods do not exist
 - receiver forms are:
 - `fn (p T) name(...)` for by-value receiver
-- `fn (p *T) name(...)` for read borrow receiver
-- `fn (p *mut T) name(...)` for mutable borrow receiver
-- `fn (p *own T) name(...)` for owning receiver
+- `fn (p *T) name(...)` for owning receiver
+- `fn (p &T) name(...)` for immutable borrow receiver
+- `fn (p &mut T) name(...)` for mutable borrow receiver
 - there is no implicit `self`
 - method call syntax `x.name(...)` is sugar for passing the receiver as the first argument
-- when the receiver type is `*T` or `*mut T`, one level of auto-borrow is allowed for the duration of the call only
+- no implicit auto-borrow exists
 
 ## 15. Special Methods and Operators
 
@@ -677,7 +659,7 @@ Rules:
 - `spawn` may copy copy-by-default values and move move-by-default values
 - `send` is a built-in marker property derived structurally for types whose ownership may cross threads
 - borrows may not cross thread boundaries
-- `*own T` may cross thread boundaries only if `T` is `send`
+- `*T` may cross thread boundaries only if `T` is `send`
 - shared mutable state is only through `mutex T` and `atomic T`
 
 Mutex locking syntax:
@@ -703,7 +685,7 @@ Safe code guarantees:
 
 - no use-after-free
 - no double-free
-- no null dereference from `*T` or `*mut T`
+- no null dereference from `*T`, `&T`, or `&mut T`
 - no `none` unless the type is `?T`
 - no ignored error union without explicit discard
 - no data races
@@ -711,4 +693,4 @@ Safe code guarantees:
 - no read of provably uninitialized data
 - exhaustive `switch` on `enum` and `union`
 
-These guarantees exclude `unsafe`, `*raw T`, FFI, and explicit unchecked casts.
+These guarantees exclude `unsafe`, `^T`, FFI, and explicit unchecked casts.
