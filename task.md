@@ -132,6 +132,7 @@ Using a moved value is a compile-time error
 * Ownership must be consumed
 * Automatically at end of scope
 * Or via consuming function
+* Destructor will be called if present
 
 ---
 
