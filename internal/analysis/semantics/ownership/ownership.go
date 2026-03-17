@@ -585,12 +585,12 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 		switch v.Op {
 		case "copy":
 			a.checkValue(scope, v.Right)
-			if !a.isCopyableType(valueType(v.Right)) {
+			if ok, msg := a.canDeepCopyType(valueType(v.Right)); !ok {
 				loc := v.Loc()
 				a.addDiagnostic(
-					diagnostics.NewError(fmt.Sprintf("cannot copy value of type %s", valueType(v.Right).String())).
+					diagnostics.NewError(msg).
 						WithCode(diagnostics.ErrInvalidCopy).
-						WithPrimaryLabel(&loc, "this value does not support copying"),
+						WithPrimaryLabel(&loc, "`copy` requires a deep-cloneable value"),
 				)
 			}
 		case "&", "&mut":
@@ -1244,17 +1244,89 @@ func (a *analyzer) isMoveType(typ typeinfo.Type) bool {
 	}
 }
 
-func (a *analyzer) isCopyableType(typ typeinfo.Type) bool {
+func (a *analyzer) canDeepCopyType(typ typeinfo.Type) (bool, string) {
+	return a.canDeepCopyTypeSeen(typ, map[typeinfo.Type]struct{}{}, map[string]struct{}{})
+}
+
+func (a *analyzer) canDeepCopyTypeSeen(typ typeinfo.Type, seen map[typeinfo.Type]struct{}, seenNamed map[string]struct{}) (bool, string) {
 	if typ == nil || typeinfo.IsInvalid(typ) || typeinfo.IsUnknown(typ) {
-		return true
+		return true, ""
 	}
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil {
+		key := named.ModuleKey + "::" + named.Name
+		if _, ok := seenNamed[key]; ok {
+			return true, ""
+		}
+		seenNamed[key] = struct{}{}
+	}
+	if _, ok := seen[typ]; ok {
+		return true, ""
+	}
+	seen[typ] = struct{}{}
 	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		if t.Decl == nil {
+			return true, ""
+		}
+		owner := a.findModuleForType(t)
+		if owner == nil {
+			return true, ""
+		}
+		return a.canDeepCopyTypeSeen(syntaxType(owner, t.Decl.Type), seen, seenNamed)
 	case *typeinfo.PointerType:
-		return !t.IsOwn
-	case *typeinfo.RawPtrType, *typeinfo.RefType:
-		return true
+		if t.IsOwn {
+			return false, fmt.Sprintf("deep copy of owning pointer type %s is not implemented yet", typ.String())
+		}
+		return true, ""
+	case *typeinfo.RawPtrType:
+		return false, fmt.Sprintf("cannot deep copy raw pointer type %s", typ.String())
+	case *typeinfo.RefType:
+		return false, fmt.Sprintf("cannot deep copy reference type %s", typ.String())
+	case *typeinfo.OptionalType:
+		return a.canDeepCopyTypeSeen(t.Inner, seen, seenNamed)
+	case *typeinfo.ErrorUnionType:
+		if ok, msg := a.canDeepCopyTypeSeen(t.Error, seen, seenNamed); !ok {
+			return false, msg
+		}
+		return a.canDeepCopyTypeSeen(t.Value, seen, seenNamed)
+	case *typeinfo.ArrayType:
+		return a.canDeepCopyTypeSeen(t.Inner, seen, seenNamed)
+	case *typeinfo.SliceType:
+		return a.canDeepCopyTypeSeen(t.Inner, seen, seenNamed)
+	case *typeinfo.TupleType:
+		for _, elem := range t.Elems {
+			if ok, msg := a.canDeepCopyTypeSeen(elem, seen, seenNamed); !ok {
+				return false, msg
+			}
+		}
+		return true, ""
+	case *typeinfo.StructType:
+		for _, field := range t.OrderedFields {
+			if field == nil {
+				continue
+			}
+			if ok, msg := a.canDeepCopyTypeSeen(field.Type, seen, seenNamed); !ok {
+				return false, msg
+			}
+		}
+		for _, field := range t.OrderedStaticFields {
+			if field == nil {
+				continue
+			}
+			if ok, msg := a.canDeepCopyTypeSeen(field.Type, seen, seenNamed); !ok {
+				return false, msg
+			}
+		}
+		return true, ""
+	case *typeinfo.UnionType:
+		for _, member := range t.Members {
+			if ok, msg := a.canDeepCopyTypeSeen(member, seen, seenNamed); !ok {
+				return false, msg
+			}
+		}
+		return true, ""
 	default:
-		return true
+		return true, ""
 	}
 }
 

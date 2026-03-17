@@ -1475,13 +1475,37 @@ fn bad(c *Conn) void {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidCopy {
+		if diag.Code == diagnostics.ErrInvalidCopy && strings.Contains(diag.Message, "deep copy of owning pointer type") {
 			found = true
 			break
 		}
 	}
 	if !found {
 		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrInvalidCopy, result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsCopyOfRawPointer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn bad(p ^i32) void {
+    let d = copy p
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid copy diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidCopy && strings.Contains(diag.Message, "cannot deep copy raw pointer type") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected raw-pointer copy diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

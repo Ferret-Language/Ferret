@@ -414,6 +414,14 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 	right := c.typeOfExpr(scope, expr.Right, expected)
 	switch expr.Op {
 	case "copy":
+		if ok, msg := c.canDeepCopyType(right); !ok {
+			loc := expr.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(msg).
+					WithCode(diagnostics.ErrInvalidCopy).
+					WithPrimaryLabel(&loc, "`copy` requires a deep-cloneable value"),
+			)
+		}
 		c.info.BindNode(expr, right)
 		return right
 	case "comptime":
@@ -935,6 +943,90 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 		if i < len(fnType.ComptimeParams) && fnType.ComptimeParams[i] {
 			c.requireConstExpr(scope, arg, "argument to comptime parameter must be compile-time evaluable")
 		}
+	}
+}
+
+func (c *checker) canDeepCopyType(typ typeinfo.Type) (bool, string) {
+	return c.canDeepCopyTypeSeen(typ, map[typeinfo.Type]struct{}{}, map[string]struct{}{})
+}
+
+func (c *checker) canDeepCopyTypeSeen(typ typeinfo.Type, seen map[typeinfo.Type]struct{}, seenNamed map[string]struct{}) (bool, string) {
+	if typ == nil || typeinfo.IsInvalid(typ) || typeinfo.IsUnknown(typ) {
+		return true, ""
+	}
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil {
+		key := named.ModuleKey + "::" + named.Name
+		if _, ok := seenNamed[key]; ok {
+			return true, ""
+		}
+		seenNamed[key] = struct{}{}
+	}
+	if _, ok := seen[typ]; ok {
+		return true, ""
+	}
+	seen[typ] = struct{}{}
+	base := c.underlying(typ)
+	if base != nil && base != typ {
+		if _, ok := seen[base]; ok {
+			return true, ""
+		}
+		seen[base] = struct{}{}
+	}
+	switch t := base.(type) {
+	case *typeinfo.PointerType:
+		if t.IsOwn {
+			return false, fmt.Sprintf("deep copy of owning pointer type %s is not implemented yet", typ.String())
+		}
+		return true, ""
+	case *typeinfo.RawPtrType:
+		return false, fmt.Sprintf("cannot deep copy raw pointer type %s", typ.String())
+	case *typeinfo.RefType:
+		return false, fmt.Sprintf("cannot deep copy reference type %s", typ.String())
+	case *typeinfo.OptionalType:
+		return c.canDeepCopyTypeSeen(t.Inner, seen, seenNamed)
+	case *typeinfo.ErrorUnionType:
+		if ok, msg := c.canDeepCopyTypeSeen(t.Error, seen, seenNamed); !ok {
+			return false, msg
+		}
+		return c.canDeepCopyTypeSeen(t.Value, seen, seenNamed)
+	case *typeinfo.ArrayType:
+		return c.canDeepCopyTypeSeen(t.Inner, seen, seenNamed)
+	case *typeinfo.SliceType:
+		return c.canDeepCopyTypeSeen(t.Inner, seen, seenNamed)
+	case *typeinfo.TupleType:
+		for _, elem := range t.Elems {
+			if ok, msg := c.canDeepCopyTypeSeen(elem, seen, seenNamed); !ok {
+				return false, msg
+			}
+		}
+		return true, ""
+	case *typeinfo.StructType:
+		for _, field := range t.OrderedFields {
+			if field == nil {
+				continue
+			}
+			if ok, msg := c.canDeepCopyTypeSeen(field.Type, seen, seenNamed); !ok {
+				return false, msg
+			}
+		}
+		for _, field := range t.OrderedStaticFields {
+			if field == nil {
+				continue
+			}
+			if ok, msg := c.canDeepCopyTypeSeen(field.Type, seen, seenNamed); !ok {
+				return false, msg
+			}
+		}
+		return true, ""
+	case *typeinfo.UnionType:
+		for _, member := range t.Members {
+			if ok, msg := c.canDeepCopyTypeSeen(member, seen, seenNamed); !ok {
+				return false, msg
+			}
+		}
+		return true, ""
+	default:
+		return true, ""
 	}
 }
 
