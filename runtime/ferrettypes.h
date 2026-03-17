@@ -81,7 +81,7 @@ extern "C" {
  *   isize       │ ferret_isize   │ signed long    (pointer-sized)
  *   char        │ ferret_char    │ uint32_t       (Unicode scalar U+0000..U+10FFFF)
  *   bool        │ ferret_bool    │ uint8_t        (0 = false, 1 = true)
- *   *raw        │ ferret_raw     │ void *         (C void*, erased pointer)
+ *   ^T          │ ferret_raw     │ void *         (C void*, erased pointer)
  * ========================================================================= */
 
 typedef uint8_t       ferret_u8;
@@ -98,7 +98,7 @@ typedef unsigned long ferret_usize;   /* Ferret `usize` — pointer-sized unsign
 typedef signed   long ferret_isize;   /* Ferret `isize` — pointer-sized signed integer   */
 typedef ferret_u32    ferret_char;    /* Ferret `char`  — Unicode scalar value           */
 typedef ferret_u8     ferret_bool;    /* Ferret `bool`  — 0 = false, 1 = true            */
-typedef void         *ferret_raw;     /* Ferret `*raw`  — erased / untyped pointer       */
+typedef void         *ferret_raw;     /* Ferret `^T`    — erased / untyped raw pointer   */
 
 /* ferret_type_id — stable numeric identity assigned to every named Ferret type.
  * ID 0 is reserved (FERRET_TYPE_UNKNOWN).                                    */
@@ -190,7 +190,7 @@ typedef ferret_u32 FerretErrorCode;
  *   alignment as T and encodes `none` in that niche.
  *
  *   Current niche-optimized cases:
- *     ?*T / ?*raw T      → null pointer means none
+ *     ?*T / ?^T          → null pointer means none
  *     ?bool              → value 2 means none
  *     ?char              → value 0xFFFFFFFF means none
  *     ?enum / ?error     → value 0xFFFFFFFF means none
@@ -362,7 +362,8 @@ typedef struct { ferret_u32 tag; ferret_u32 _pad; FerretStr    value; } FerretRe
  *
  * A Ferret interface value is a pair of pointers:
  *   vtable — pointer to a compiler-generated vtable struct
- *   data   — pointer to the concrete value (heap-allocated or stack-pinned)
+ *   data   — pointer to the concrete value storage for the already-resolved
+ *            receiver form (`T`, `*T`, `&T`, or `&mut T`)
  *
  * Total size: 16 bytes, 8-byte aligned.
  *

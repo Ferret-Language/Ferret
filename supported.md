@@ -29,7 +29,9 @@ Status of language features through **both** the QBE and LLVM backends.
 | Named `struct` | ✅ |
 | Anonymous `struct` | ✅ |
 | Array `[T; N]` | ✅ |
-| Pointer `*T` / `*mut T` / `*raw T` / `*own T` | ✅ |
+| Owning pointer `*T` | ✅ |
+| Reference `&T` / `&mut T` | ✅ |
+| Raw pointer `^T` | ✅ |
 | Tuple | ⚠️ frontend only |
 | Named `enum` | ✅ |
 | Named `union` (tagged runtime model) | ✅ |
@@ -47,7 +49,7 @@ Status of language features through **both** the QBE and LLVM backends.
 | Top-level `fn` | ✅ |
 | External methods with receivers | ✅ |
 | `type Name struct { ... }` | ✅ |
-| `type Name move ...` | ✅ |
+| `type Name move ...` | ❌ removed |
 | `type Name enum { ... }` | ✅ |
 | `type Name union { ... }` | ✅ |
 | `type Name interface { ... }` | ✅ |
