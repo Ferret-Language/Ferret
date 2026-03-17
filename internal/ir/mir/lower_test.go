@@ -159,6 +159,88 @@ fn main() i32 {
 	t.Fatalf("expected normalized Bump call in MIR, got %#v", mainFn.Blocks)
 }
 
+func TestPipelineLowersInterfaceCoercionWithMutableReceiver(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Reader interface {
+    &mut read(buf []u8) i32
+}
+
+type File struct {
+    value i32 = 0
+}
+
+fn (f &mut File) read(buf []u8) i32 {
+    return f.value
+}
+
+fn main() i32 {
+    let mut f: File = .{ .value = 7 }
+    let r: Reader = &mut f
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			var value mir.Value
+			switch ins := instr.(type) {
+			case *mir.AssignInstr:
+				value = ins.Value
+			case *mir.ComputeInstr:
+				value = ins.Value
+			case *mir.EvalInstr:
+				value = ins.Value
+			}
+			if value == nil {
+				continue
+			}
+			iface, ok := value.(*mir.InterfaceValue)
+			if !ok {
+				continue
+			}
+			refType, ok := iface.ConcreteType.(*typeinfo.RefType)
+			if !ok || !refType.Mutable {
+				t.Fatalf("expected mutable reference concrete type, got %T %#v", iface.ConcreteType, iface.ConcreteType)
+			}
+			named, ok := refType.Inner.(*typeinfo.NamedType)
+			if !ok || named.Name != "File" {
+				t.Fatalf("expected &mut File concrete type, got %#v", iface.ConcreteType)
+			}
+			if len(iface.Methods) != 1 {
+				t.Fatalf("expected one interface method link, got %#v", iface.Methods)
+			}
+			path := iface.Methods[0].Path
+			if len(path) == 0 {
+				t.Fatalf("expected method link path, got %#v", iface.Methods[0])
+			}
+			last := path[len(path)-1]
+			if last != "File__read" && !strings.HasSuffix(last, "__File__read") {
+				t.Fatalf("expected File__read method link, got %#v", iface.Methods[0])
+			}
+			return
+		}
+	}
+	t.Fatalf("expected lowered interface coercion in MIR, got %#v", mainFn.Blocks)
+}
+
 func TestPipelineLowersStringLiteralDataAsRawPointer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
