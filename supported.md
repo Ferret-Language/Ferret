@@ -49,7 +49,6 @@ Status of language features through **both** the QBE and LLVM backends.
 | Top-level `fn` | ✅ |
 | External methods with receivers | ✅ |
 | `type Name struct { ... }` | ✅ |
-| `type Name move ...` | ❌ removed |
 | `type Name enum { ... }` | ✅ |
 | `type Name union { ... }` | ✅ |
 | `type Name interface { ... }` | ✅ |
