@@ -1837,6 +1837,99 @@ fn writePoint() void {
 	}
 }
 
+func TestTypecheckerUsesRawPointerTypesForRawAddress(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn main() void {
+    let mut p: Point = .{}
+    unsafe {
+        let r = @p
+        let m = @mut p
+        let x = *m
+        r
+        x
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	unsafeStmt := mainFn.Body.Stmts[1].(*ast.UnsafeStmt)
+	letR := unsafeStmt.Body.Stmts[0].(*ast.LetStmt)
+	letM := unsafeStmt.Body.Stmts[1].(*ast.LetStmt)
+	letX := unsafeStmt.Body.Stmts[2].(*ast.LetStmt)
+	rType, ok := result.Entry.Types.Nodes[letR.Value].(*typeinfo.RawPtrType)
+	rNamed, rok := rType.Inner.(*typeinfo.NamedType)
+	if !ok || !rok || rNamed.Name != "Point" {
+		t.Fatalf("expected RawPtrType for @p, got %#v", result.Entry.Types.Nodes[letR.Value])
+	}
+	mType, ok := result.Entry.Types.Nodes[letM.Value].(*typeinfo.RawPtrType)
+	mNamed, mok := mType.Inner.(*typeinfo.NamedType)
+	if !ok || !mok || mNamed.Name != "Point" {
+		t.Fatalf("expected RawPtrType for @mut p, got %#v", result.Entry.Types.Nodes[letM.Value])
+	}
+	if _, ok := result.Entry.Types.Nodes[letX.Value].(*typeinfo.NamedType); !ok {
+		t.Fatalf("expected dereference of raw pointer to produce named value type, got %#v", result.Entry.Types.Nodes[letX.Value])
+	}
+}
+
+func TestTypecheckerRejectsRawAddressOutsideUnsafe(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn main() void {
+    let p: Point = .{}
+    let r = @p
+    r
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected raw-address unsafe diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "raw address operator requires unsafe block") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected raw-address unsafe diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerTypesArrayIndexing(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main(items [3]i32) i32 {
+    let v = items[1]
+    return v
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letV := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[letV.Value], "i32") {
+		t.Fatalf("expected items[1] to typecheck as i32, got %#v", result.Entry.Types.Nodes[letV.Value])
+	}
+}
+
 func TestTypecheckerResolvesExplicitReferenceReceivers(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

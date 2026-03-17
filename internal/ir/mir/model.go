@@ -222,6 +222,7 @@ type AddrOfValue struct {
 	baseValue
 	Source  Value
 	Mutable bool
+	Raw     bool
 }
 
 func (*AddrOfValue) valueNode() {}

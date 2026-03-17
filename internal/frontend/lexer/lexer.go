@@ -76,6 +76,7 @@ func New(file, input string, diag *diagnostics.Bag) *Lexer {
 		{regexp.MustCompile(`%`), defaultHandler(tokens.PERCENT)},
 		{regexp.MustCompile(`!`), defaultHandler(tokens.BANG)},
 		{regexp.MustCompile(`\?`), defaultHandler(tokens.QUESTION)},
+		{regexp.MustCompile(`@`), defaultHandler(tokens.AT)},
 		{regexp.MustCompile(`&`), defaultHandler(tokens.AMP)}, {regexp.MustCompile(`^\|>`), defaultHandler(tokens.PIPE_ARROW)}, {regexp.MustCompile(`\|`), defaultHandler(tokens.BAR)}, {regexp.MustCompile(`^\^=`), defaultHandler(tokens.CARET_ASSIGN)},
 		{regexp.MustCompile(`^\^`), defaultHandler(tokens.CARET)}, {regexp.MustCompile(`~`), defaultHandler(tokens.TILDE)},
 		{regexp.MustCompile(`<`), defaultHandler(tokens.LT)},

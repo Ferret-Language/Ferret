@@ -1,0 +1,10 @@
+
+
+fn main() {
+    let mut a = 10
+    let b : i32 = a
+    let arr : [3]i32 = [1,2,3]
+    let n = arr[1]
+    print(a)
+    print(n)
+}

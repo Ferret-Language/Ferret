@@ -249,8 +249,15 @@ func formatValue(value Value) string {
 		return formatPrefix(v.Op, wrapValue(v.Right))
 	case *AddrOfValue:
 		kw := "addr_of"
+		if v.Raw {
+			kw = "raw_addr_of"
+		}
 		if v.Mutable {
-			kw = "addr_of_mut"
+			if v.Raw {
+				kw = "raw_addr_of_mut"
+			} else {
+				kw = "addr_of_mut"
+			}
 		}
 		return fmt.Sprintf("%s %s", kw, wrapValue(v.Source))
 	case *LoadValue:

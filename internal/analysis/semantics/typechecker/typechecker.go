@@ -443,6 +443,48 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 		typ := &typeinfo.RefType{Mutable: true, Inner: right}
 		c.info.BindNode(expr, typ)
 		return typ
+	case "@":
+		addressable, _ := c.exprAccess(scope, expr.Right)
+		if !addressable {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot take raw address of non-addressable value").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "`@` requires addressable access"),
+			)
+		}
+		if c.unsafeDepth == 0 {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("raw address operator requires unsafe block").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "wrap this address operation in `unsafe { ... }`"),
+			)
+		}
+		typ := &typeinfo.RawPtrType{Inner: right}
+		c.info.BindNode(expr, typ)
+		return typ
+	case "@mut":
+		addressable, mutable := c.exprAccess(scope, expr.Right)
+		if !addressable || !mutable {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot take mutable raw address from immutable value").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "`@mut` requires mutable, addressable access"),
+			)
+		}
+		if c.unsafeDepth == 0 {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("raw address operator requires unsafe block").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "wrap this address operation in `unsafe { ... }`"),
+			)
+		}
+		typ := &typeinfo.RawPtrType{Inner: right}
+		c.info.BindNode(expr, typ)
+		return typ
 	case "*":
 		switch ptr := right.(type) {
 		case *typeinfo.RefType:

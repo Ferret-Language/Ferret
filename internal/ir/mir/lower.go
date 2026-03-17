@@ -401,6 +401,10 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: false}
 		case "&mut":
 			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: true}
+		case "@":
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: false, Raw: true}
+		case "@mut":
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: true, Raw: true}
 		case "*":
 			return &LoadValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Pointer: lowerValue(lowerCtx, e.Right)}
 		default:

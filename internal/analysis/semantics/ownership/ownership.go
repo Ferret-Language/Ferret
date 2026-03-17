@@ -668,6 +668,9 @@ func (a *analyzer) checkAddrOfValue(scope *valueScope, value *mir.AddrOfValue) {
 		return
 	}
 	a.checkValue(scope, value.Source)
+	if value.Raw {
+		return
+	}
 	root, _, ok := a.borrowSourcePath(value.Source)
 	if !ok || !root.isLocal() || scope == nil {
 		return
@@ -1362,6 +1365,9 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowIn
 			}
 		}
 	case *mir.AddrOfValue:
+		if v.Raw {
+			return borrowInfo{}, false
+		}
 		root, _, ok := a.borrowSourcePath(v.Source)
 		if !ok {
 			return borrowInfo{}, false

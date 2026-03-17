@@ -241,6 +241,73 @@ fn main() i32 {
 	t.Fatalf("expected lowered interface coercion in MIR, got %#v", mainFn.Blocks)
 }
 
+func TestPipelineLowersRawAddressOperator(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn main() i32 {
+    let mut p: Point = .{}
+    unsafe {
+        let rp = @mut p
+        let x = (*rp).X
+        return x
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			var value mir.Value
+			var typ typeinfo.Type
+			switch ins := instr.(type) {
+			case *mir.BindInstr:
+				if ins.Name != "rp" {
+					continue
+				}
+				value, typ = ins.Value, ins.Type
+			case *mir.AssignInstr:
+				value = ins.Value
+			case *mir.ComputeInstr:
+				value, typ = ins.Value, ins.Type
+			default:
+				continue
+			}
+			addr, ok := value.(*mir.AddrOfValue)
+			if !ok || !addr.Raw || !addr.Mutable {
+				continue
+			}
+			if typ == nil {
+				typ = value.Type()
+			}
+			if _, ok := typ.(*typeinfo.RawPtrType); !ok {
+				t.Fatalf("expected raw pointer type, got %#v", typ)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected lowered raw address bind in MIR, got %#v", mainFn.Blocks)
+}
+
 func TestPipelineLowersStringLiteralDataAsRawPointer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `

@@ -52,6 +52,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Update dereference and field/index access rules so they operate correctly on owning pointers, references, and raw pointers.
 [*] Enforce that `^T` operations requiring safety are allowed only in `unsafe` contexts.
 [*] Add diagnostics for illegal reference usage where the current compiler still assumes pointer behavior.
+[*] Add unsafe raw-address operators `@expr` / `@mut expr` to construct `^T` values without overloading borrow syntax.
 
 ### Phase 4: Rework parameter and receiver semantics around one rule
 
