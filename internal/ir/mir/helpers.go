@@ -71,8 +71,12 @@ func structView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 }
 
 func derefForSelector(typ typeinfo.Type) typeinfo.Type {
-	if ptr, ok := typ.(*typeinfo.PointerType); ok {
-		return ptr.Inner
+	switch t := typ.(type) {
+	case *typeinfo.PointerType:
+		return t.Inner
+	case *typeinfo.RefType:
+		return t.Inner
+	default:
+		return typ
 	}
-	return typ
 }

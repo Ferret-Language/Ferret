@@ -1477,3 +1477,40 @@ func mustWriteType(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+func TestTypecheckerUsesReferenceTypesForAddressOf(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn main() i32 {
+    let mut p: Point = .{}
+    let r = &p
+    let m = &mut p
+    let x = *r
+    return x.X
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letR := mainFn.Body.Stmts[1].(*ast.LetStmt)
+	letM := mainFn.Body.Stmts[2].(*ast.LetStmt)
+	letX := mainFn.Body.Stmts[3].(*ast.LetStmt)
+	rType, ok := result.Entry.Types.Nodes[letR.Value].(*typeinfo.RefType)
+	if !ok || rType.Mutable {
+		t.Fatalf("expected immutable RefType for &p, got %#v", result.Entry.Types.Nodes[letR.Value])
+	}
+	mType, ok := result.Entry.Types.Nodes[letM.Value].(*typeinfo.RefType)
+	if !ok || !mType.Mutable {
+		t.Fatalf("expected mutable RefType for &mut p, got %#v", result.Entry.Types.Nodes[letM.Value])
+	}
+	if _, ok := result.Entry.Types.Nodes[letX.Value].(*typeinfo.NamedType); !ok {
+		t.Fatalf("expected dereference of ref to produce named value type, got %#v", result.Entry.Types.Nodes[letX.Value])
+	}
+}

@@ -299,15 +299,39 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 		c.info.BindNode(expr, right)
 		return right
 	case "&":
-		typ := &typeinfo.PointerType{Inner: right}
+		typ := &typeinfo.RefType{Inner: right}
 		c.info.BindNode(expr, typ)
 		return typ
 	case "&mut":
-		typ := &typeinfo.PointerType{IsMut: true, Inner: right}
+		typ := &typeinfo.RefType{Mutable: true, Inner: right}
 		c.info.BindNode(expr, typ)
 		return typ
 	case "*":
-		if ptr, ok := right.(*typeinfo.PointerType); ok {
+		switch ptr := right.(type) {
+		case *typeinfo.RefType:
+			c.info.BindNode(expr, ptr.Inner)
+			return ptr.Inner
+		case *typeinfo.RawPtrType:
+			if c.unsafeDepth == 0 {
+				loc := expr.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("raw pointer dereference requires unsafe block").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(&loc, "wrap this dereference in `unsafe { ... }`"),
+				)
+			}
+			if ptr.Inner == nil {
+				loc := expr.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("cannot dereference untyped raw pointer").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(&loc, "cast this raw pointer to a typed pointer first"),
+				)
+				return typeinfo.InvalidType{}
+			}
+			c.info.BindNode(expr, ptr.Inner)
+			return ptr.Inner
+		case *typeinfo.PointerType:
 			if ptr.IsRaw && c.unsafeDepth == 0 {
 				loc := expr.Location
 				c.ctx.Diagnostics.Add(
@@ -1313,10 +1337,14 @@ func (c *checker) structView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 }
 
 func (c *checker) derefForSelector(typ typeinfo.Type) typeinfo.Type {
-	if ptr, ok := typ.(*typeinfo.PointerType); ok {
-		return ptr.Inner
+	switch t := typ.(type) {
+	case *typeinfo.PointerType:
+		return t.Inner
+	case *typeinfo.RefType:
+		return t.Inner
+	default:
+		return typ
 	}
-	return typ
 }
 
 func (c *checker) orderedStructFields(st *typeinfo.StructType) []*typeinfo.StructField {
