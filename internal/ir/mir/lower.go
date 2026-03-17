@@ -437,18 +437,6 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 				}
 				if named := lowerReceiverNamed(sel.Left.Type()); named != nil {
 					receiver := lowerValue(lowerCtx, sel.Left)
-					// Auto-borrow: if the typechecker determined the method needs a
-					// pointer receiver but the call-site has a plain value, emit
-					// an address-of (the ImplicitReceiver type carries the pointer kind).
-					if fnType, ok := sel.Type().(*typeinfo.FuncType); ok && fnType.ImplicitReceiver != nil {
-						if ptrType, ok := fnType.ImplicitReceiver.(*typeinfo.PointerType); ok {
-							receiver = &AddrOfValue{
-								baseValue: baseValue{Location: sel.Loc(), ExprType: ptrType},
-								Source:    receiver,
-								Mutable:   ptrType.IsMut,
-							}
-						}
-					}
 					path := lowerMethodSymbolPath(lowerCtx, named, sel.Name)
 					callee := &NameValue{
 						baseValue: baseValue{Location: sel.Loc(), ExprType: sel.Type()},

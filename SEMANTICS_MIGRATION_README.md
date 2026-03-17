@@ -57,7 +57,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [ ] Update function parameter semantics so `T`, `*T`, `&T`, and `&mut T` fully define copy/move/borrow behavior.
 [*] Replace old receiver matching keys (`*T`, `*mut T`, `*own T`) with the new receiver forms (`T`, `*T`, `&T`, `&mut T`).
 [*] Remove old method-call auto-borrow behavior that was designed for pointer receivers.
-[ ] Revisit call-site lowering so receiver passing is just ordinary first-parameter lowering under the new rules.
+[*] Revisit call-site lowering so receiver passing is just ordinary first-parameter lowering under the new rules.
 [*] Update constructor/destructor special cases if they still exist after the receiver model change.
 [*] Add focused tests for each receiver form and each allowed/disallowed call pattern.
 

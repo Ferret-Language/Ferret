@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
 	compiler "compiler/internal/driver"
@@ -99,6 +100,63 @@ fn main() i32 {
 	if !strings.Contains(text, "X i32 = 0") || !strings.Contains(text, "Y i32 = 0") {
 		t.Fatalf("expected field defaults in mir dump, got %q", text)
 	}
+}
+
+func TestPipelineNormalizesMethodReceiverAsFirstArgument(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn (p &mut Point) Bump() i32 {
+    return p.X + 1
+}
+
+fn main() i32 {
+    let mut p: Point = .{ .X = 1 }
+    return (&mut p).Bump()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			compute, ok := instr.(*mir.ComputeInstr)
+			if !ok {
+				continue
+			}
+			call, ok := compute.Value.(*mir.CallValue)
+			if !ok || !hasCallNamed(call, "Bump") {
+				continue
+			}
+			if len(call.Args) == 0 {
+				t.Fatalf("expected normalized receiver arg, got %#v", call)
+			}
+			refType, ok := call.Args[0].Type().(*typeinfo.RefType)
+			if !ok || !refType.Mutable {
+				t.Fatalf("expected explicit mutable ref receiver as first argument, got %T %#v", call.Args[0].Type(), call.Args[0].Type())
+			}
+			return
+		}
+	}
+	t.Fatalf("expected normalized Bump call in MIR, got %#v", mainFn.Blocks)
 }
 
 func TestPipelinePreservesAnnotatedUnionLocalTypeInMIR(t *testing.T) {
