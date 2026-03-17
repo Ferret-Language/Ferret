@@ -1146,3 +1146,26 @@ fn (n &Node) peek() &Node {
 		t.Fatalf("expected immutable ref result type, got %#v", fn.Result)
 	}
 }
+
+func TestParseInferredArrayLengthType(t *testing.T) {
+	src := `
+fn main() {
+    let values: [_]i32 = [1, 2, 3]
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	letStmt := fn.Body.Stmts[0].(*ast.LetStmt)
+	arr, ok := letStmt.Type.(*ast.ArrayType)
+	if !ok {
+		t.Fatalf("expected array type, got %T", letStmt.Type)
+	}
+	size, ok := arr.Size.(*ast.Ident)
+	if !ok || size.Text() != "_" {
+		t.Fatalf("expected inferred array length marker, got %#v", arr.Size)
+	}
+}

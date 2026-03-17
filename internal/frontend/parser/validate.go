@@ -168,7 +168,9 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 		p.validateType(t.Error)
 		p.validateType(t.Value)
 	case *ast.ArrayType:
-		p.validateExpr(t.Size)
+		if ident, ok := t.Size.(*ast.Ident); !ok || ident.Text() != "_" {
+			p.validateExpr(t.Size)
+		}
 		p.validateType(t.Inner)
 	case *ast.TupleType:
 		for _, elem := range t.Elems {

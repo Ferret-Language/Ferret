@@ -18,6 +18,7 @@ type analyzer struct {
 	usedImports map[*binding.ImportBinding]bool
 	usedSymbols map[*symbols.Symbol]int
 	declNodes   map[ast.Node]struct{}
+	writeNodes  map[ast.Node]struct{}
 }
 
 func AnalyzeModules(ctx *context.CompilerContext, mods []*context.Module) {
@@ -39,6 +40,7 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 		usedImports: make(map[*binding.ImportBinding]bool),
 		usedSymbols: make(map[*symbols.Symbol]int),
 		declNodes:   make(map[ast.Node]struct{}),
+		writeNodes:  make(map[ast.Node]struct{}),
 	}
 	a.collectDeclNodes()
 	a.collectUses()
@@ -140,6 +142,7 @@ func (a *analyzer) collectDeclNodesStmt(stmt ast.Stmt) {
 		if s == nil {
 			return
 		}
+		a.markWriteTarget(s.Left)
 		a.collectDeclNodesExpr(s.Left)
 		a.collectDeclNodesExpr(s.Right)
 	case *ast.IfStmt:
@@ -223,6 +226,15 @@ func (a *analyzer) collectDeclNodesStmt(stmt ast.Stmt) {
 			return
 		}
 		a.collectDeclNodesStmt(s.Body)
+	}
+}
+
+func (a *analyzer) markWriteTarget(expr ast.Expr) {
+	if a == nil || expr == nil {
+		return
+	}
+	if ident, ok := expr.(*ast.Ident); ok {
+		a.writeNodes[ident] = struct{}{}
 	}
 }
 
@@ -320,6 +332,9 @@ func (a *analyzer) collectUses() {
 	}
 	for node, resolution := range a.mod.Bindings.Nodes {
 		if _, ok := a.declNodes[node]; ok {
+			continue
+		}
+		if _, ok := a.writeNodes[node]; ok {
 			continue
 		}
 		if resolution == nil {

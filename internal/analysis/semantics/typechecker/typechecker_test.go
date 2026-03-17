@@ -1930,10 +1930,11 @@ fn main(items [3]i32) i32 {
 	}
 }
 
-func TestTypecheckerTypesSliceIndexing(t *testing.T) {
+func TestTypecheckerInfersArrayLengthFromUnderscoreType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main(items []i32) i32 {
+fn main() i32 {
+    let items: [_]i32 = [1, 2, 3]
     let v = items[1]
     return v
 }
@@ -1944,9 +1945,57 @@ fn main(items []i32) i32 {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 	mainFn := findTypeFunc(t, result.Entry.AST, "main")
-	letV := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	letItems := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	itemsRes := result.Entry.Bindings.Nodes[letItems.Name]
+	itemsType := result.Entry.Types.Symbols[itemsRes.Symbol]
+	arr, ok := itemsType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 3 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected items type [3]i32, got %T %#v", itemsType, itemsType)
+	}
+	letV := mainFn.Body.Stmts[1].(*ast.LetStmt)
 	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[letV.Value], "i32") {
 		t.Fatalf("expected items[1] to typecheck as i32, got %#v", result.Entry.Types.Nodes[letV.Value])
+	}
+}
+
+func TestTypecheckerRejectsSliceLiteralsAsNotImplemented(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let items: []i32 = [1, 2, 3]
+    return items[0]
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected slice literal not implemented diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "slice literals are not yet implemented") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected slice literal not implemented diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsDiscardAssignment(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let a = 10
+    _ = a
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

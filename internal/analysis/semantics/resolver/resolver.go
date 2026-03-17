@@ -227,7 +227,9 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, s.Value)
 	case *ast.AssignStmt:
-		r.resolveExpr(scope, s.Left)
+		if ident, ok := s.Left.(*ast.Ident); !ok || ident.Text() != "_" {
+			r.resolveExpr(scope, s.Left)
+		}
 		r.resolveExpr(scope, s.Right)
 	case *ast.IfStmt:
 		r.resolveExpr(scope, s.Cond)
@@ -501,7 +503,9 @@ func (r *resolver) resolveType(scope *table.Scope, typ ast.TypeExpr) {
 		r.resolveType(scope, t.Error)
 		r.resolveType(scope, t.Value)
 	case *ast.ArrayType:
-		r.resolveExpr(scope, t.Size)
+		if ident, ok := t.Size.(*ast.Ident); !ok || ident.Text() != "_" {
+			r.resolveExpr(scope, t.Size)
+		}
 		r.resolveType(scope, t.Inner)
 	case *ast.TupleType:
 		for _, elem := range t.Elems {

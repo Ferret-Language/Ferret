@@ -7,7 +7,7 @@ import (
 
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 )
 
 func TestUsageWarnsUnusedImport(t *testing.T) {
@@ -180,6 +180,51 @@ fn main() i32 {
 	}
 	if !foundUnusedFunction {
 		t.Fatalf("expected unused function warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestUsageDoesNotCountAssignmentTargetAsUse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+    let mut a = 10
+    a = 12
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedLocal && diag.Message == `unused local "a"` {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected unused local warning for write-only assignment, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestUsageTreatsDiscardAssignmentAsUse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+    let a = 10
+    _ = a
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedLocal && diag.Message == `unused local "a"` {
+			t.Fatalf("did not expect unused warning after discard assignment, got %#v", result.Diagnostics.Diagnostics())
+		}
 	}
 }
 

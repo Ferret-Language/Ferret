@@ -46,7 +46,13 @@ func (p *Parser) parseType() ast.TypeExpr {
 			p.advance()
 			return &ast.SliceType{Inner: p.parseType(), Location: p.locFrom(start)}
 		}
-		size := p.parseExpr(precLowest)
+		var size ast.Expr
+		if p.at(tokens.IDENT) && p.current().Literal == "_" {
+			size = &ast.Ident{Path: []string{"_"}, Location: p.locFrom(p.current().Start)}
+			p.advance()
+		} else {
+			size = p.parseExpr(precLowest)
+		}
 		p.expect(tokens.RBRACK, "expected ']' after array size")
 		return &ast.ArrayType{Size: size, Inner: p.parseType(), Location: p.locFrom(start)}
 	case tokens.LPAREN:

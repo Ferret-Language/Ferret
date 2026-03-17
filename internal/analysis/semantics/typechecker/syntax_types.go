@@ -189,6 +189,9 @@ func (c *checker) arrayLength(expr ast.Expr) int64 {
 	if expr == nil {
 		return -1
 	}
+	if ident, ok := expr.(*ast.Ident); ok && ident.Text() == "_" {
+		return -2
+	}
 	lit, ok := expr.(*ast.NumberLit)
 	if !ok {
 		return -1

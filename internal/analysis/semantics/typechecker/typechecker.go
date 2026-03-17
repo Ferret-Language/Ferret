@@ -27,12 +27,12 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if d.Value != nil {
 			value = c.typeOfExpr(nil, d.Value, declared)
 		}
-		finalType := declared
-		if finalType == nil {
-			finalType = value
-		}
+		finalType := c.resolveDeclaredValueType(declared, value)
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
+		}
+		if d.Type != nil && declared != nil && !typeinfo.Equal(declared, finalType) {
+			c.info.BindNode(d.Type, finalType)
 		}
 		if declared != nil && d.Value != nil {
 			c.checkAssignable(d.Value.Loc(), declared, value)
@@ -52,12 +52,12 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if d.Value != nil {
 			value = c.typeOfExpr(nil, d.Value, declared)
 		}
-		finalType := declared
-		if finalType == nil {
-			finalType = value
-		}
+		finalType := c.resolveDeclaredValueType(declared, value)
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
+		}
+		if d.Type != nil && declared != nil && !typeinfo.Equal(declared, finalType) {
+			c.info.BindNode(d.Type, finalType)
 		}
 		if declared != nil && d.Value != nil {
 			c.checkAssignable(d.Value.Loc(), declared, value)
@@ -141,6 +141,18 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 	case *ast.TupleType, *ast.ArrayType, *ast.OptionalType, *ast.ErrorUnionType:
 		c.checkHeapStoredReference(d.Name.Loc(), &typeinfo.PointerType{Inner: declType})
 	}
+}
+
+func (c *checker) resolveDeclaredValueType(declared, value typeinfo.Type) typeinfo.Type {
+	if arr, ok := declared.(*typeinfo.ArrayType); ok && arr != nil && arr.Len == -2 {
+		if concrete, ok := value.(*typeinfo.ArrayType); ok && concrete != nil && typeinfo.Equal(arr.Inner, concrete.Inner) {
+			return concrete
+		}
+	}
+	if declared != nil {
+		return declared
+	}
+	return value
 }
 
 func (c *checker) checkModuleBindingType(loc source.Location, typ typeinfo.Type) {
@@ -1333,6 +1345,10 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 	base := c.underlying(expected)
 	// Array literal: positional elements matching element type.
 	if arrType, ok := base.(*typeinfo.ArrayType); ok {
+		actual := arrType
+		if arrType.Len == -2 {
+			actual = &typeinfo.ArrayType{Inner: arrType.Inner, Len: int64(len(expr.Items))}
+		}
 		for i, item := range expr.Items {
 			if item.Name != nil {
 				loc := item.Name.Location
@@ -1343,7 +1359,7 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 				)
 				continue
 			}
-			if arrType.Len >= 0 && int64(i) >= arrType.Len {
+			if actual.Len >= 0 && int64(i) >= actual.Len {
 				loc := expr.Location
 				c.ctx.Diagnostics.Add(
 					diagnostics.NewError("too many elements in array literal").
@@ -1352,11 +1368,21 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 				)
 				break
 			}
-			got := c.typeOfExpr(scope, item.Value, arrType.Inner)
-			c.checkAssignable(item.Value.Loc(), arrType.Inner, got)
+			got := c.typeOfExpr(scope, item.Value, actual.Inner)
+			c.checkAssignable(item.Value.Loc(), actual.Inner, got)
 		}
+		c.info.BindNode(expr, actual)
+		return actual
+	}
+	if _, ok := base.(*typeinfo.SliceType); ok {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("slice literals are not yet implemented").
+				WithCode(diagnostics.ErrInvalidType).
+				WithPrimaryLabel(&loc, "use an array literal or a slice-producing function for now"),
+		)
 		c.info.BindNode(expr, expected)
-		return expected
+		return typeinfo.InvalidType{}
 	}
 	structType, ok := base.(*typeinfo.StructType)
 	if !ok {

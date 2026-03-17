@@ -120,6 +120,9 @@ func (t *ArrayType) String() string {
 	if t == nil {
 		return "[?]<nil>"
 	}
+	if t.Len == -2 {
+		return "[_]" + typeString(t.Inner)
+	}
 	if t.Len < 0 {
 		return "[?]" + typeString(t.Inner)
 	}
@@ -347,6 +350,13 @@ func Assignable(dst, src Type) bool {
 	}
 	if opt, ok := dst.(*OptionalType); ok && src != nil {
 		return Assignable(opt.Inner, src)
+	}
+	if arrDst, ok := dst.(*ArrayType); ok {
+		if arrSrc, ok := src.(*ArrayType); ok {
+			if arrDst.Len == -2 && Equal(arrDst.Inner, arrSrc.Inner) {
+				return true
+			}
+		}
 	}
 	return false
 }
