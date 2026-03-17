@@ -159,6 +159,55 @@ fn main() i32 {
 	t.Fatalf("expected normalized Bump call in MIR, got %#v", mainFn.Blocks)
 }
 
+func TestPipelineLowersStringLiteralDataAsRawPointer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn main() str {
+    return "hi"
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			compute, ok := instr.(*mir.ComputeInstr)
+			if !ok {
+				continue
+			}
+			comp, ok := compute.Value.(*mir.CompositeValue)
+			if !ok {
+				continue
+			}
+			for _, item := range comp.Items {
+				if item.Name != "ptr" {
+					continue
+				}
+				if _, ok := item.Value.Type().(*typeinfo.RawPtrType); !ok {
+					t.Fatalf("expected string ptr item to lower as raw pointer, got %T %#v", item.Value.Type(), item.Value.Type())
+				}
+				return
+			}
+		}
+	}
+	t.Fatalf("expected lowered string composite in MIR, got %#v", mainFn.Blocks)
+}
+
 func TestPipelinePreservesAnnotatedUnionLocalTypeInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `

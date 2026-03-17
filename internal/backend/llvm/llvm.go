@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"compiler/internal/analysis/layout/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	"compiler/internal/frontend/ast"
@@ -351,6 +351,9 @@ func (d *debugState) getType(state *moduleState, typ typeinfo.Type) int {
 			return d.getUnknownType()
 		}
 	case *typeinfo.PointerType:
+		innerID := d.getType(state, t.Inner)
+		return d.getPointerType(innerID)
+	case *typeinfo.RawPtrType:
 		innerID := d.getType(state, t.Inner)
 		return d.getPointerType(innerID)
 	case *typeinfo.StringType:
@@ -3885,7 +3888,7 @@ func lowerGlobalStringLike(state *moduleState, comp *mir.CompositeValue) (string
 	for _, item := range comp.Items {
 		items[item.Name] = item.Value
 	}
-	ptrLit, err := lowerGlobalValue(state, &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}, items["ptr"])
+	ptrLit, err := lowerGlobalValue(state, &typeinfo.RawPtrType{Inner: &typeinfo.BuiltinType{Name: "u8"}}, items["ptr"])
 	if err != nil {
 		return "", err
 	}
@@ -3961,7 +3964,7 @@ func aggregateSizeAlignOfPrimitive(typ typeinfo.Type) (int64, int64, error) {
 		case "u64", "i64", "usize", "isize", "f64":
 			return 8, 8, nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RawPtrType:
 		return 8, 8, nil
 	}
 	return 0, 0, fmt.Errorf("not a primitive type")

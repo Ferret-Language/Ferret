@@ -381,7 +381,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.StringLit:
 		if _, isString := e.Type().(*typeinfo.StringType); isString {
 			// String literal as str: produce a { ptr, len } composite.
-			ptrType := &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
+			ptrType := &typeinfo.RawPtrType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
 			ptrVal := &StringValue{baseValue: baseValue{Location: e.Loc(), ExprType: ptrType}, Value: e.Value}
 			lenVal := &NumberValue{baseValue: baseValue{ExprType: &typeinfo.BuiltinType{Name: "usize"}}, Value: strconv.FormatUint(uint64(len(e.Value)), 10)}
 			return &CompositeValue{

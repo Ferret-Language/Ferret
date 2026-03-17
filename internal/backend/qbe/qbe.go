@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"compiler/internal/analysis/layout/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	"compiler/internal/frontend/ast"
@@ -1107,16 +1107,29 @@ func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.T
 	return strings.Join(lines, "\n\t"), nil
 }
 
+func qbePointerInner(t typeinfo.Type) (typeinfo.Type, bool) {
+	switch pt := t.(type) {
+	case *typeinfo.PointerType:
+		return pt.Inner, true
+	case *typeinfo.RawPtrType:
+		return pt.Inner, true
+	default:
+		return nil, false
+	}
+}
+
 // lowerQBEIndexAddress computes ptr = base + index * elemSize.
 func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
 	switch bt := baseType.(type) {
 	case *typeinfo.ArrayType:
 		elemType = bt.Inner
-	case *typeinfo.PointerType:
-		elemType = bt.Inner
 	default:
-		return nil, "", fmt.Errorf("cannot index into %T", baseType)
+		var ok bool
+		elemType, ok = qbePointerInner(baseType)
+		if !ok {
+			return nil, "", fmt.Errorf("cannot index into %T", baseType)
+		}
 	}
 	elemSize, _, err := qbeScalarSizeAlign(elemType)
 	if err != nil {
@@ -2081,7 +2094,7 @@ func lowerGlobalStringLike(state *moduleState, comp *mir.CompositeValue) (string
 	for _, item := range comp.Items {
 		items[item.Name] = item.Value
 	}
-	ptrTok, ptrLit, err := qbeDataItem(state, &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}, items["ptr"])
+	ptrTok, ptrLit, err := qbeDataItem(state, &typeinfo.RawPtrType{Inner: &typeinfo.BuiltinType{Name: "u8"}}, items["ptr"])
 	if err != nil {
 		return "", err
 	}
@@ -2920,7 +2933,7 @@ func qbeExtType(typ typeinfo.Type) (string, error) {
 		case "f64":
 			return "d", nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RawPtrType:
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported aggregate member type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -2941,7 +2954,7 @@ func qbeBaseType(typ typeinfo.Type) (string, error) {
 		case "void":
 			return "", nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RawPtrType:
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported qbe base type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3011,7 +3024,7 @@ func qbeLoadOp(typ typeinfo.Type) (string, string, error) {
 		case "f64":
 			return "loadd", "d", nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RawPtrType:
 		return "loadl", "l", nil
 	}
 	return "", "", fmt.Errorf("unsupported load type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3034,7 +3047,7 @@ func qbeStoreOp(typ typeinfo.Type) (string, error) {
 		case "f64":
 			return "stored", nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RawPtrType:
 		return "storel", nil
 	}
 	return "", fmt.Errorf("unsupported store type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3051,7 +3064,7 @@ func qbeNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
 		default:
 			return lit, nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RawPtrType:
 		return lit, nil
 	}
 	return "", fmt.Errorf("unsupported numeric literal type %s", typeinfo.FormatType(typeStringer{typ}))
