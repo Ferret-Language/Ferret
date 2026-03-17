@@ -416,9 +416,6 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 	case "copy":
 		c.info.BindNode(expr, right)
 		return right
-	case "take":
-		c.info.BindNode(expr, right)
-		return right
 	case "comptime":
 		c.requireConstExpr(scope, expr.Right, "`comptime` expression must be compile-time evaluable")
 		c.info.BindNode(expr, right)

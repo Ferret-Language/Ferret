@@ -263,6 +263,19 @@ fn ClonePoint(p Point) Point {
 	}
 }
 
+func TestParserRejectsTakePrefixExpression(t *testing.T) {
+	src := `
+fn MovePoint(p *Point) *Point {
+    return take p
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "`take` is no longer supported") {
+		t.Fatalf("expected take rejection diagnostic, got %v", diag.All())
+	}
+}
+
 func TestParseBuiltinDeclarationWithDocComment(t *testing.T) {
 	src := `
 /// Returns the current panic payload as a string.

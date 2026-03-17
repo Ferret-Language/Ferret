@@ -593,18 +593,6 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 						WithPrimaryLabel(&loc, "this value does not support copying"),
 				)
 			}
-		case "take":
-			a.checkValue(scope, v.Right)
-			if !a.isMoveType(valueType(v.Right)) {
-				loc := v.Loc()
-				a.addDiagnostic(
-					diagnostics.NewError(fmt.Sprintf("cannot take value of type %s", valueType(v.Right).String())).
-						WithCode(diagnostics.ErrInvalidOperation).
-						WithPrimaryLabel(&loc, "`take` requires a move value"),
-				)
-				return
-			}
-			a.consumeMoveValue(scope, v.Right, valueType(v.Right))
 		case "&", "&mut":
 			a.checkValue(scope, v.Right)
 		default:
@@ -852,7 +840,7 @@ func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ type
 	}
 	switch v := value.(type) {
 	case *mir.UnaryValue:
-		if v.Op == "copy" || v.Op == "take" {
+		if v.Op == "copy" {
 			return
 		}
 	case *mir.InterfaceValue:

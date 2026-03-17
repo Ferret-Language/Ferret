@@ -23,13 +23,6 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 
 ## Incremental Migration Phases
 
-### Phase 0: Freeze the migration boundary
-
-[*] Decide to migrate `Ferret-compiler-v2` only and ignore the legacy `Ferret` compiler.
-[*] Add this migration document to the repository and keep it updated as work progresses.
-[ ] Add a temporary tracker section to `TODO.md` or a linked issue so implementation progress stays synchronized with this plan.
-[ ] Avoid broad backend rewrites before the semantic surface is stabilized.
-
 ### Phase 1: Introduce the new surface syntax and type model
 
 [*] Replace the old pointer AST/type model with explicit categories for owning pointer, reference, mutable reference, and raw pointer.
@@ -48,7 +41,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [ ] Remove structural move-by-default behavior for structs, tuples, arrays, unions, interfaces, optionals, and error unions.
 [*] Remove dependence on move-marked named types from semantic analysis.
 [ ] Decide whether `copy` remains as optional explicit syntax or is removed entirely.
-[ ] Remove or redefine `take` so it no longer carries the old move-model assumptions.
+[*] Remove or redefine `take` so it no longer carries the old move-model assumptions.
 [*] Update ownership tests to match the new move/copy rules.
 
 ### Phase 3: Separate references from pointers

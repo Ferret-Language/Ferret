@@ -102,8 +102,9 @@ func (p *Parser) parsePrefix() ast.Expr {
 		tok := p.advance()
 		return &ast.PrefixExpr{Op: tok.Literal, Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
 	case tokens.TAKE:
+		p.errorHere("`take` is no longer supported")
 		p.advance()
-		return &ast.PrefixExpr{Op: "take", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+		return p.parseExpr(precPrefix)
 	case tokens.COMPTIME:
 		p.advance()
 		return &ast.PrefixExpr{Op: "comptime", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
