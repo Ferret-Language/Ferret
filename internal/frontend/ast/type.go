@@ -35,13 +35,6 @@ type RawPtrType struct {
 func (*RawPtrType) typeNode()              {}
 func (t *RawPtrType) Loc() source.Location { return t.Location }
 
-type SelfType struct {
-	Location source.Location
-}
-
-func (*SelfType) typeNode()              {}
-func (t *SelfType) Loc() source.Location { return t.Location }
-
 type OptionalType struct {
 	Inner    TypeExpr
 	Location source.Location
@@ -95,7 +88,6 @@ func (t *StructType) Loc() source.Location { return t.Location }
 
 type InterfaceMethod struct {
 	Receiver string
-	Static   bool
 	Name     *Ident
 	Params   []Param
 	Result   TypeExpr

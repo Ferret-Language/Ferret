@@ -29,8 +29,6 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		}
 		decl, _ := resolution.Symbol.Node.(*ast.TypeDecl)
 		return &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}
-	case *ast.SelfType:
-		return &typeinfo.SelfType{}
 	case *ast.PointerType:
 		inner := c.typeFromSyntax(mod, t.Inner)
 		return &typeinfo.PointerType{Inner: inner}
@@ -115,7 +113,6 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.InterfaceType:
 		methods := make(map[string]*typeinfo.FuncType)
 		methodReceivers := make(map[string]string)
-		methodStatic := make(map[string]bool)
 		orderedMethods := make([]*typeinfo.InterfaceMethod, 0, len(t.Methods))
 		for _, method := range t.Methods {
 			if method == nil {
@@ -135,10 +132,9 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			name := method.Name.Text()
 			methods[name] = fnType
 			methodReceivers[name] = method.Receiver
-			methodStatic[name] = method.Static
-			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Receiver: method.Receiver, Static: method.Static, Type: fnType})
+			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Receiver: method.Receiver, Type: fnType})
 		}
-		return &typeinfo.InterfaceType{Methods: methods, MethodReceivers: methodReceivers, MethodStatic: methodStatic, OrderedMethods: orderedMethods}
+		return &typeinfo.InterfaceType{Methods: methods, MethodReceivers: methodReceivers, OrderedMethods: orderedMethods}
 	default:
 		return typeinfo.UnknownType{}
 	}

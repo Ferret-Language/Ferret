@@ -57,7 +57,6 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Keep existing slice type/indexing paths working where the compiler/runtime already relies on them, but reject slice literals with a clear "not yet implemented" diagnostic until slice construction semantics are designed properly.
 [*] Allow `_ = value` as an explicit discard assignment and stop counting plain assignment targets as value uses in unused-local analysis.
 [*] Warn when `let mut` bindings are never modified and suggest removing `mut`.
-[*] Add attached method syntax with `Type.Method(...)` for instance methods, `Type::Method(...)` for static methods, and `self` / `&self` / `&mut self` / `*self` parameter forms.
 
 ### Phase 4: Rework parameter and receiver semantics around one rule
 
@@ -67,12 +66,11 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Revisit call-site lowering so receiver passing is just ordinary first-parameter lowering under the new rules.
 [*] Update constructor/destructor special cases if they still exist after the receiver model change.
 [*] Add focused tests for each receiver form and each allowed/disallowed call pattern.
-[*] Accept and lower attached methods declared as `Type.Method(...)` and `Type::Method(...)`, while desugaring `self` receiver forms onto the existing semantic receiver model.
 
 ### Phase 5: Redesign interface method signatures
 
 [*] Extend interface AST nodes to store receiver modifier explicitly.
-[*] Update interface parsing so declarations use `read(&mut self, buf []u8) i32`-style self parameters and preserve static-vs-instance method identity.
+[*] Update interface parsing so declarations like `&mut read(buf []u8) i32` are accepted and preserved.
 [*] Extend semantic interface method types so receiver modifier participates in identity.
 [*] Update interface satisfaction checks to require name, receiver modifier, parameters, and result to all match.
 [*] Update collector/method-set indexing so interface matching can query receiver-form-specific methods precisely.

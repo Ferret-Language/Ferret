@@ -118,7 +118,6 @@ func lowerInterfaceTypeDecl(decl *hir.InterfaceTypeDecl) *InterfaceTypeDecl {
 		}
 		entry := &InterfaceMethodDecl{
 			Receiver: method.Receiver,
-			Static:   method.Static,
 			Name:     method.Name,
 			Result:   method.Result,
 			Location: method.Location,
@@ -825,7 +824,7 @@ func canonicalResolvedPath(c *lowerContext, resolution *binding.Resolution) []st
 		return nil
 	}
 	name := resolution.Symbol.Name
-	if (resolution.Symbol.Kind == symbols.SymbolStatic || resolution.Symbol.Kind == symbols.SymbolFunc) && resolution.Symbol.OwnerType != "" {
+	if resolution.Symbol.Kind == symbols.SymbolStatic && resolution.Symbol.OwnerType != "" {
 		name = resolution.Symbol.OwnerType + "__" + name
 	}
 	if resolution.ImportPath == "" || resolution.ImportPath == c.importPath {
@@ -1064,13 +1063,7 @@ func lowerMethodSymbolPath(c *lowerContext, named *typeinfo.NamedType, methodNam
 }
 
 func lowerFunctionLinkName(fn *hir.Func) string {
-	if fn == nil {
-		return ""
-	}
-	if fn.OwnerType != "" {
-		return lowerMethodLinkLeaf(fn.OwnerType, fn.Name)
-	}
-	if fn.Receiver == nil {
+	if fn == nil || fn.Receiver == nil {
 		return ""
 	}
 	if named := lowerReceiverNamed(fn.Receiver.Type); named != nil {

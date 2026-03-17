@@ -306,20 +306,6 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 			c.checkDestructorDecl(d, recvType)
 		}
 	}
-	if d.IsStatic && d.OwnerType != nil {
-		ownerType := c.typeFromSyntax(c.mod, d.OwnerType)
-		c.info.BindNode(d.OwnerType, ownerType)
-		if named, ok := ownerType.(*typeinfo.NamedType); ok {
-			if owner := c.findModuleForType(named); owner != nil && owner.Key != c.mod.Key {
-				loc := d.OwnerType.Loc()
-				c.ctx.Diagnostics.Add(
-					diagnostics.NewError("cross-module method declarations are not allowed").
-						WithCode(diagnostics.ErrInvalidOperation).
-						WithPrimaryLabel(&loc, "declare static methods in the same module as their owner type"),
-				)
-			}
-		}
-	}
 	for _, param := range d.Params {
 		paramType := c.typeFromSyntax(c.mod, param.Type)
 		if param.Type != nil {
@@ -1959,14 +1945,8 @@ func (c *checker) implementsInterface(src typeinfo.Type, iface *typeinfo.Interfa
 		if method == nil || method.Type == nil {
 			continue
 		}
-		want := c.instantiateSelfFuncType(method.Type, src)
-		var got *typeinfo.FuncType
-		if method.Static {
-			_, got = c.lookupStaticMethod(src, method.Name)
-		} else {
-			_, got = c.lookupMethodWithReceiver(src, method.Receiver, method.Name)
-		}
-		if got == nil || !c.interfaceMethodCompatible(want, got) {
+		_, got := c.lookupMethodWithReceiver(src, method.Receiver, method.Name)
+		if got == nil || !c.interfaceMethodCompatible(method.Type, got) {
 			return false
 		}
 	}
@@ -1988,17 +1968,17 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 			gotMethod := srcIface.Methods[method.Name]
 			if gotMethod == nil {
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Static, method.Receiver, method.Name, method.Type))).
+					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Receiver, method.Name, method.Type))).
 						WithCode(diagnostics.ErrTypeMismatch).
 						WithPrimaryLabel(&loc, "this interface is missing a required method"),
 				)
 				return
 			}
-			if srcIface.MethodReceivers[method.Name] != method.Receiver || srcIface.MethodStatic[method.Name] != method.Static || !c.interfaceMethodCompatible(method.Type, gotMethod) {
+			if srcIface.MethodReceivers[method.Name] != method.Receiver || !c.interfaceMethodCompatible(method.Type, gotMethod) {
 				c.ctx.Diagnostics.Add(
 					diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: method %s has incompatible signature", gotName, expectedName, method.Name)).
 						WithCode(diagnostics.ErrTypeMismatch).
-						WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Static, method.Receiver, method.Name, method.Type), interfaceMethodString(srcIface.MethodStatic[method.Name], srcIface.MethodReceivers[method.Name], method.Name, gotMethod))),
+						WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Receiver, method.Name, method.Type), interfaceMethodString(srcIface.MethodReceivers[method.Name], method.Name, gotMethod))),
 				)
 				return
 			}
@@ -2010,26 +1990,20 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 		if method == nil || method.Type == nil {
 			continue
 		}
-		want := c.instantiateSelfFuncType(method.Type, got)
-		var gotMethod *typeinfo.FuncType
-		if method.Static {
-			_, gotMethod = c.lookupStaticMethod(got, method.Name)
-		} else {
-			_, gotMethod = c.lookupMethodWithReceiver(got, method.Receiver, method.Name)
-		}
+		_, gotMethod := c.lookupMethodWithReceiver(got, method.Receiver, method.Name)
 		if gotMethod == nil {
 			c.ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Static, method.Receiver, method.Name, want))).
+				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: missing method %s", gotName, expectedName, interfaceMethodString(method.Receiver, method.Name, method.Type))).
 					WithCode(diagnostics.ErrTypeMismatch).
 					WithPrimaryLabel(&loc, "this type is missing a required method"),
 			)
 			return
 		}
-		if !c.interfaceMethodCompatible(want, gotMethod) {
+		if !c.interfaceMethodCompatible(method.Type, gotMethod) {
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError(fmt.Sprintf("type %s does not implement %s: method %s has incompatible signature", gotName, expectedName, method.Name)).
 					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Static, method.Receiver, method.Name, want), interfaceMethodString(method.Static, method.Receiver, method.Name, gotMethod))),
+					WithPrimaryLabel(&loc, fmt.Sprintf("expected %s, got %s", interfaceMethodString(method.Receiver, method.Name, method.Type), interfaceMethodString(method.Receiver, method.Name, gotMethod))),
 			)
 			return
 		}
@@ -2037,29 +2011,18 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 	c.reportTypeMismatch(loc, expected, got)
 }
 
-func interfaceMethodString(static bool, receiver, name string, fn *typeinfo.FuncType) string {
+func interfaceMethodString(receiver, name string, fn *typeinfo.FuncType) string {
 	if fn == nil {
-		if static {
-			return name + "()"
-		}
-		return name + "(" + receiver + "self)"
+		return receiver + name + "()"
 	}
 	params := make([]string, 0, len(fn.Params))
 	for _, param := range fn.Params {
 		params = append(params, param.String())
 	}
-	head := name + "("
-	if !static {
-		head += receiver + "self"
-		if len(params) > 0 {
-			head += ", "
-		}
-	}
-	head += strings.Join(params, ", ") + ")"
 	if fn.Result == nil || typeinfo.IsBuiltinNamed(fn.Result, "void") {
-		return head
+		return fmt.Sprintf("%s%s(%s)", receiver, name, strings.Join(params, ", "))
 	}
-	return fmt.Sprintf("%s %s", head, fn.Result.String())
+	return fmt.Sprintf("%s%s(%s) %s", receiver, name, strings.Join(params, ", "), fn.Result.String())
 }
 
 func (c *checker) interfaceSatisfies(src, target *typeinfo.InterfaceType) bool {
@@ -2071,57 +2034,11 @@ func (c *checker) interfaceSatisfies(src, target *typeinfo.InterfaceType) bool {
 			continue
 		}
 		got := src.Methods[method.Name]
-		if got == nil || src.MethodReceivers[method.Name] != method.Receiver || src.MethodStatic[method.Name] != method.Static || !c.interfaceMethodCompatible(method.Type, got) {
+		if got == nil || src.MethodReceivers[method.Name] != method.Receiver || !c.interfaceMethodCompatible(method.Type, got) {
 			return false
 		}
 	}
 	return true
-}
-
-func (c *checker) instantiateSelfFuncType(fn *typeinfo.FuncType, owner typeinfo.Type) *typeinfo.FuncType {
-	if fn == nil {
-		return nil
-	}
-	params := make([]typeinfo.Type, 0, len(fn.Params))
-	for _, param := range fn.Params {
-		params = append(params, c.instantiateSelfType(param, owner))
-	}
-	comptime := append([]bool(nil), fn.ComptimeParams...)
-	return &typeinfo.FuncType{
-		IsUnsafe:       fn.IsUnsafe,
-		Params:         params,
-		ComptimeParams: comptime,
-		Result:         c.instantiateSelfType(fn.Result, owner),
-	}
-}
-
-func (c *checker) instantiateSelfType(typ, owner typeinfo.Type) typeinfo.Type {
-	switch t := typ.(type) {
-	case *typeinfo.SelfType:
-		return owner
-	case *typeinfo.PointerType:
-		return &typeinfo.PointerType{Inner: c.instantiateSelfType(t.Inner, owner)}
-	case *typeinfo.RefType:
-		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.instantiateSelfType(t.Inner, owner)}
-	case *typeinfo.RawPtrType:
-		return &typeinfo.RawPtrType{Inner: c.instantiateSelfType(t.Inner, owner)}
-	case *typeinfo.OptionalType:
-		return &typeinfo.OptionalType{Inner: c.instantiateSelfType(t.Inner, owner)}
-	case *typeinfo.ErrorUnionType:
-		return &typeinfo.ErrorUnionType{Error: c.instantiateSelfType(t.Error, owner), Value: c.instantiateSelfType(t.Value, owner)}
-	case *typeinfo.ArrayType:
-		return &typeinfo.ArrayType{Inner: c.instantiateSelfType(t.Inner, owner), Len: t.Len}
-	case *typeinfo.SliceType:
-		return &typeinfo.SliceType{Inner: c.instantiateSelfType(t.Inner, owner)}
-	case *typeinfo.TupleType:
-		elems := make([]typeinfo.Type, 0, len(t.Elems))
-		for _, elem := range t.Elems {
-			elems = append(elems, c.instantiateSelfType(elem, owner))
-		}
-		return &typeinfo.TupleType{Elems: elems}
-	default:
-		return typ
-	}
 }
 
 func (c *checker) reportUnsupportedTypeTest(loc source.Location, msg, help string) (bool, bool) {

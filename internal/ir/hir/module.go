@@ -47,7 +47,6 @@ type InterfaceTypeDecl struct {
 
 type InterfaceMethodDecl struct {
 	Receiver string
-	Static   bool
 	Name     string
 	Params   []*Param
 	Result   typeinfo.Type
@@ -78,8 +77,6 @@ type Global struct {
 
 type Func struct {
 	Name       string
-	OwnerType  string
-	IsStatic   bool
 	IsUnsafe   bool
 	IsBuiltin  bool
 	IsExtern   bool

@@ -42,8 +42,8 @@ type Point struct {
     y i32 = 0
     static origin Point = .{}
 }
-fn Point.len2(self) i32 {
-    if self == .{ .x = 1, .y = 2 } {
+fn (p Point) len2() i32 {
+    if p == .{ .x = 1, .y = 2 } {
         return 1
     }
     return 0
@@ -72,11 +72,8 @@ fn Point.len2(self) i32 {
 	if !ok {
 		t.Fatalf("expected func decl, got %T", mod.Decls[1])
 	}
-	if fn.OwnerType == nil || len(fn.OwnerType.Path) != 1 || fn.OwnerType.Path[0] != "Point" {
-		t.Fatalf("expected owner type Point, got %#v", fn.OwnerType)
-	}
-	if fn.Receiver == nil || fn.Receiver.Name.Text() != "self" {
-		t.Fatalf("expected synthesized self receiver, got %#v", fn.Receiver)
+	if fn.Receiver == nil || fn.Receiver.Name.Text() != "p" {
+		t.Fatalf("expected receiver p, got %#v", fn.Receiver)
 	}
 }
 
@@ -107,11 +104,10 @@ type Handle move enum {
 func TestParseInterfaceReceiverModifiers(t *testing.T) {
 	src := `
 type Reader interface {
-    read(&self, buf []u8) i32
-    peek(self) u8
-    refill(&mut self) i32
-    close(*self) void
-    New() self
+    read(buf []u8) i32
+    &peek() u8
+    &mut refill() i32
+    *close() void
 }
 `
 
@@ -127,23 +123,17 @@ type Reader interface {
 	if !ok {
 		t.Fatalf("expected interface type, got %T", typ.Type)
 	}
-	if got := iface.Methods[0].Receiver; got != "&" {
-		t.Fatalf("expected & receiver, got %q", got)
-	}
-	if got := iface.Methods[1].Receiver; got != "" {
+	if got := iface.Methods[0].Receiver; got != "" {
 		t.Fatalf("expected value receiver, got %q", got)
+	}
+	if got := iface.Methods[1].Receiver; got != "&" {
+		t.Fatalf("expected & receiver, got %q", got)
 	}
 	if got := iface.Methods[2].Receiver; got != "&mut " {
 		t.Fatalf("expected &mut receiver, got %q", got)
 	}
 	if got := iface.Methods[3].Receiver; got != "*" {
 		t.Fatalf("expected * receiver, got %q", got)
-	}
-	if !iface.Methods[4].Static {
-		t.Fatalf("expected static method")
-	}
-	if _, ok := iface.Methods[4].Result.(*ast.SelfType); !ok {
-		t.Fatalf("expected self result, got %T", iface.Methods[4].Result)
 	}
 }
 
@@ -1112,8 +1102,8 @@ type Node struct {
     data ^u8
 }
 
-fn Node.peek(&self) &self {
-    return self.view
+fn (n &Node) peek() &Node {
+    return n.view
 }
 `
 
@@ -1147,9 +1137,6 @@ fn Node.peek(&self) &self {
 	if !ok {
 		t.Fatalf("expected func decl, got %T", mod.Decls[1])
 	}
-	if fn.OwnerType == nil || len(fn.OwnerType.Path) != 1 || fn.OwnerType.Path[0] != "Node" {
-		t.Fatalf("expected owner type Node, got %#v", fn.OwnerType)
-	}
 	recv, ok := fn.Receiver.Type.(*ast.RefType)
 	if !ok || recv.Mutable {
 		t.Fatalf("expected immutable receiver ref type, got %#v", fn.Receiver.Type)
@@ -1157,9 +1144,6 @@ fn Node.peek(&self) &self {
 	ret, ok := fn.Result.(*ast.RefType)
 	if !ok || ret.Mutable {
 		t.Fatalf("expected immutable ref result type, got %#v", fn.Result)
-	}
-	if named, ok := ret.Inner.(*ast.NamedType); !ok || len(named.Path) != 1 || named.Path[0] != "Node" {
-		t.Fatalf("expected rewritten self result, got %#v", ret.Inner)
 	}
 }
 
@@ -1169,6 +1153,7 @@ fn main() {
     let values: [_]i32 = [1, 2, 3]
 }
 `
+
 	mod, diag := parseTestModule(t, src)
 	if got := diag.All(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
@@ -1182,44 +1167,5 @@ fn main() {
 	size, ok := arr.Size.(*ast.Ident)
 	if !ok || size.Text() != "_" {
 		t.Fatalf("expected inferred array length marker, got %#v", arr.Size)
-	}
-}
-
-func TestParseStaticMethodAndSelfTypes(t *testing.T) {
-	src := `
-type Circle struct {
-    radius i32
-}
-
-fn Circle.Draw(&self, times i32) &self {
-    return self
-}
-
-fn Circle::New() self {
-    return .{}
-}
-`
-
-	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", got)
-	}
-	draw := mod.Decls[1].(*ast.FuncDecl)
-	if draw.OwnerType == nil || len(draw.OwnerType.Path) != 1 || draw.OwnerType.Path[0] != "Circle" || draw.IsStatic {
-		t.Fatalf("expected attached instance method, got %#v", draw)
-	}
-	recv, ok := draw.Receiver.Type.(*ast.RefType)
-	if !ok || recv.Mutable {
-		t.Fatalf("expected immutable receiver ref type, got %#v", draw.Receiver.Type)
-	}
-	if named, ok := recv.Inner.(*ast.NamedType); !ok || len(named.Path) != 1 || named.Path[0] != "Circle" {
-		t.Fatalf("expected receiver rewritten to Circle, got %#v", recv.Inner)
-	}
-	staticNew := mod.Decls[2].(*ast.FuncDecl)
-	if staticNew.OwnerType == nil || len(staticNew.OwnerType.Path) != 1 || staticNew.OwnerType.Path[0] != "Circle" || !staticNew.IsStatic {
-		t.Fatalf("expected static attached method, got %#v", staticNew)
-	}
-	if named, ok := staticNew.Result.(*ast.NamedType); !ok || len(named.Path) != 1 || named.Path[0] != "Circle" {
-		t.Fatalf("expected self result rewritten to Circle, got %#v", staticNew.Result)
 	}
 }

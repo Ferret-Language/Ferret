@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"compiler/internal/core/diagnostics"
-	compiler "compiler/internal/driver"
+	"compiler/internal/driver"
 	"compiler/internal/ir/mir"
 )
 
@@ -189,14 +189,14 @@ func TestPipelineSimplifiesStaticIsCondition(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String(self) str
+    String() str
 }
 
 type Name struct {
     value i32 = 0
 }
 
-fn Name.String(self) str {
+fn (n Name) String() str {
     return 1 as str
 }
 
