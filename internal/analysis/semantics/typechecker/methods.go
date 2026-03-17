@@ -128,9 +128,6 @@ func (c *checker) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		if t.IsRaw {
-			return "^" + named.Name, true
-		}
 		return "*" + named.Name, true
 	default:
 		return "", false

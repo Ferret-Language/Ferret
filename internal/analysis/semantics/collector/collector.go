@@ -174,9 +174,6 @@ func receiverTypeName(typ ast.TypeExpr) string {
 		}
 		return t.Path[len(t.Path)-1]
 	case *ast.PointerType:
-		if t.IsRaw {
-			return "^" + receiverTypeName(t.Inner)
-		}
 		return "*" + receiverTypeName(t.Inner)
 	case *ast.RefType:
 		prefix := "&"

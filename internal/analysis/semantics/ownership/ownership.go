@@ -1239,7 +1239,8 @@ func (a *analyzer) isMoveType(typ typeinfo.Type) bool {
 	}
 	switch t := typ.(type) {
 	case *typeinfo.PointerType:
-		return t.IsOwn
+		_ = t
+		return true
 	case *typeinfo.RawPtrType, *typeinfo.RefType, *typeinfo.BuiltinType, *typeinfo.EnumType, *typeinfo.NamedType:
 		return false
 	default:
@@ -1277,10 +1278,7 @@ func (a *analyzer) canDeepCopyTypeSeen(typ typeinfo.Type, seen map[typeinfo.Type
 		}
 		return a.canDeepCopyTypeSeen(syntaxType(owner, t.Decl.Type), seen, seenNamed)
 	case *typeinfo.PointerType:
-		if t.IsOwn {
-			return false, fmt.Sprintf("deep copy of owning pointer type %s is not implemented yet", typ.String())
-		}
-		return true, ""
+		return false, fmt.Sprintf("deep copy of owning pointer type %s is not implemented yet", typ.String())
 	case *typeinfo.RawPtrType:
 		return false, fmt.Sprintf("cannot deep copy raw pointer type %s", typ.String())
 	case *typeinfo.RefType:
@@ -1644,9 +1642,6 @@ func (a *analyzer) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		if t.IsRaw {
-			return "^" + named.Name, true
-		}
 		return "*" + named.Name, true
 	default:
 		return "", false
@@ -1677,7 +1672,8 @@ func (a *analyzer) valueAccess(scope *valueScope, value mir.Value) (addressable 
 	case *mir.LoadValue:
 		switch t := valueType(v).(type) {
 		case *typeinfo.PointerType:
-			return true, t.IsMut || t.IsOwn
+			_ = t
+			return true, true
 		default:
 			return true, false
 		}
@@ -1687,7 +1683,8 @@ func (a *analyzer) valueAccess(scope *valueScope, value mir.Value) (addressable 
 		if v.Op == "*" {
 			switch t := valueType(v).(type) {
 			case *typeinfo.PointerType:
-				return true, t.IsMut || t.IsOwn
+				_ = t
+				return true, true
 			default:
 				return true, false
 			}

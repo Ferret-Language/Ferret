@@ -161,7 +161,7 @@ func (c *checker) checkHeapStoredReference(loc source.Location, typ typeinfo.Typ
 		return
 	}
 	ptr, ok := typ.(*typeinfo.PointerType)
-	if !ok || ptr == nil || !ptr.IsOwn {
+	if !ok || ptr == nil {
 		return
 	}
 	if c.typeContainsReference(ptr.Inner) {
@@ -1438,7 +1438,7 @@ func (c *checker) checkDestructorDecl(fn *ast.FuncDecl, recvType typeinfo.Type) 
 
 func (c *checker) isExactLifecycleReceiver(recvType typeinfo.Type, typeName string, constructor bool) bool {
 	ptr, ok := recvType.(*typeinfo.PointerType)
-	if !ok || ptr == nil || ptr.IsRaw || !ptr.IsOwn {
+	if !ok || ptr == nil {
 		return false
 	}
 	named, ok := ptr.Inner.(*typeinfo.NamedType)
