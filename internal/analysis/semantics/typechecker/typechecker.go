@@ -815,22 +815,6 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 		}
 	}
 
-	// If the call-site has a plain value type but the method was found via a
-	// pointer-receiver key ("*T" or "*mut T"), record the pointer type on a
-	// per-call-site copy of the FuncType so MIR lowering can emit auto-borrow.
-	if sym != nil {
-		if _, callerIsValue := receiverType.(*typeinfo.NamedType); callerIsValue {
-			rt := sym.ReceiverType // e.g. "*mut Point" or "*Point"
-			if len(rt) > 0 && rt[0] == '*' {
-				isMut := len(rt) > 4 && rt[:5] == "*mut "
-				recvPtrType := &typeinfo.PointerType{IsMut: isMut, Inner: receiverType}
-				copy := *methodType
-				copy.ImplicitReceiver = recvPtrType
-				methodType = &copy
-			}
-		}
-	}
-
 	c.info.BindNode(selector, methodType)
 	c.typecheckCallArgs(scope, call, methodType)
 	c.info.BindNode(call, methodType.Result)
@@ -1161,7 +1145,7 @@ func (c *checker) checkConstructorDecl(fn *ast.FuncDecl, recvType typeinfo.Type)
 	if !c.isExactLifecycleReceiver(recvType, fn.Name.Text(), true) {
 		loc := fn.Receiver.Loc()
 		c.ctx.Diagnostics.Add(
-			diagnostics.NewError("constructor receiver must be exactly `*mut Type`").
+			diagnostics.NewError("constructor receiver must be exactly `*Type`").
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(&loc, "constructors initialize only their exact owning type in place"),
 		)
@@ -1191,7 +1175,7 @@ func (c *checker) checkDestructorDecl(fn *ast.FuncDecl, recvType typeinfo.Type) 
 	if !c.isExactLifecycleReceiver(recvType, fn.Name.Text(), false) {
 		loc := fn.Receiver.Loc()
 		c.ctx.Diagnostics.Add(
-			diagnostics.NewError("destructor receiver must be exactly `*own Type`").
+			diagnostics.NewError("destructor receiver must be exactly `*Type`").
 				WithCode(diagnostics.ErrInvalidOperation).
 				WithPrimaryLabel(&loc, "destructors consume only their exact owning type"),
 		)
@@ -1210,15 +1194,6 @@ func (c *checker) isExactLifecycleReceiver(recvType typeinfo.Type, typeName stri
 	ptr, ok := recvType.(*typeinfo.PointerType)
 	if !ok || ptr == nil || ptr.IsRaw {
 		return false
-	}
-	if constructor {
-		if !ptr.IsMut || ptr.IsOwn {
-			return false
-		}
-	} else {
-		if !ptr.IsOwn || ptr.IsMut {
-			return false
-		}
 	}
 	named, ok := ptr.Inner.(*typeinfo.NamedType)
 	if !ok || named == nil || named.Decl == nil {
@@ -1241,7 +1216,7 @@ func (c *checker) lookupConstructorType(named *typeinfo.NamedType) *typeinfo.Fun
 	if owner == nil || owner.MethodSets == nil {
 		return nil
 	}
-	methods := owner.MethodSets["*mut "+named.Name]
+	methods := owner.MethodSets["*"+named.Name]
 	if methods == nil {
 		return nil
 	}

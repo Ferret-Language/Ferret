@@ -230,7 +230,7 @@ func pipelineMethodLinkLeaf(sym *symbols.Symbol) string {
 		return sym.Name
 	}
 	base := sym.ReceiverType
-	for _, prefix := range []string{"&mut ", "&", "*mut ", "*own ", "*raw mut ", "*raw ", "*"} {
+	for _, prefix := range []string{"&mut ", "&", "^", "*"} {
 		base = strings.TrimPrefix(base, prefix)
 	}
 	if base == "" {
@@ -259,12 +259,12 @@ func pipelineMethodCandidateKeys(baseName, methodName string) []string {
 		return nil
 	}
 	if methodName == "~"+baseName {
-		return []string{"*own " + baseName}
+		return []string{"*" + baseName}
 	}
 	if methodName == baseName {
-		return []string{"*mut " + baseName}
+		return []string{"*" + baseName}
 	}
-	return []string{baseName, "&" + baseName, "&mut " + baseName, "*" + baseName, "*mut " + baseName, "*own " + baseName}
+	return []string{baseName, "&" + baseName, "&mut " + baseName, "*" + baseName}
 }
 
 func (p *Pipeline) finalizeFinalPasses() {

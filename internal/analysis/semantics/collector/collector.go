@@ -174,17 +174,10 @@ func receiverTypeName(typ ast.TypeExpr) string {
 		}
 		return t.Path[len(t.Path)-1]
 	case *ast.PointerType:
-		prefix := "*"
-		if t.IsOwn {
-			prefix += "own "
-		}
 		if t.IsRaw {
-			prefix += "raw "
+			return "^" + receiverTypeName(t.Inner)
 		}
-		if t.IsMut {
-			prefix += "mut "
-		}
-		return prefix + receiverTypeName(t.Inner)
+		return "*" + receiverTypeName(t.Inner)
 	case *ast.RefType:
 		prefix := "&"
 		if t.Mutable {

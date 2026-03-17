@@ -473,7 +473,7 @@ type Point struct {
     static Counter i32 = 0
 }
 
-fn (_ *mut Point) Point() {
+fn (_ *Point) Point() {
     Point::Counter = Point::Counter + 1
 }
 
@@ -835,7 +835,7 @@ type Point struct {
     X i32 = 0
 }
 
-fn (p *mut Point) Point(x i32) {
+fn (p *Point) Point(x i32) {
     p.X = x
 }
 `)
@@ -856,14 +856,14 @@ fn (p *mut Point) Point(x i32) {
 	}
 }
 
-func TestTypecheckerRejectsNonExactConstructorReceiver(t *testing.T) {
+func TestTypecheckerRejectsNonOwningConstructorReceiver(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
     X i32 = 0
 }
 
-fn (p *Point) Point() {
+fn (p &mut Point) Point() {
 }
 `)
 
@@ -890,7 +890,7 @@ type Point struct {
     X i32 = 0
 }
 
-fn (p *mut Point) ~Point(x i32) i32 {
+fn (p *Point) ~Point(x i32) i32 {
     return x
 }
 `)
@@ -917,7 +917,7 @@ type Point struct {
     X i32 = 0
 }
 
-fn (p *mut Point) Point() {
+fn (p *Point) Point() {
     p.X = 1
 }
 
@@ -950,14 +950,14 @@ type Point struct {
     X i32 = 0
 }
 
-fn (p *mut Point) Point() {
+fn (p *Point) Point() {
     p.X = 1
 }
 
 fn main() i32 {
-    let mut p: Point = .{}
+    let p: *Point
     p.Point()
-    return p.X
+    return 0
 }
 `)
 
@@ -1251,14 +1251,47 @@ fn (p *Point) Len() i32 {
 
 fn main() i32 {
     let p: Point = .{ .X = 3, .Y = 4 }
-    let q = copy p
-    return q.Len2() + p.Len()
+    let q: *Point
+    return p.Len2() + q.Len()
 }
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsPointerMethodCallOnValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn (p *Point) Len() i32 {
+    return p.X
+}
+
+fn main() i32 {
+    let p: Point = .{}
+    return p.Len()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected pointer receiver method diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrMethodNotFound {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrMethodNotFound, result.Diagnostics.Diagnostics())
 	}
 }
 

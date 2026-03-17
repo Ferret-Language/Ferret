@@ -8,7 +8,7 @@ import (
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 )
 
 func TestCollectorBuildsModuleScopeAndMethodSets(t *testing.T) {
@@ -30,7 +30,7 @@ fn Build() i32 {
     return 1
 }
 
-fn (p *mut Point) Shift(dx i32) {
+fn (p *Point) Shift(dx i32) {
 }
 `)
 
@@ -63,9 +63,9 @@ fn (p *mut Point) Shift(dx i32) {
 	if !ok || funcSym.Kind != symbols.SymbolFunc || !funcSym.Exported {
 		t.Fatalf("expected exported function symbol, got %#v", funcSym)
 	}
-	methods := result.Entry.MethodSets["*mut Point"]
+	methods := result.Entry.MethodSets["*Point"]
 	if len(methods) != 1 {
-		t.Fatalf("expected one method for *mut Point, got %#v", methods)
+		t.Fatalf("expected one method for *Point, got %#v", methods)
 	}
 	if methods["Shift"].Kind != symbols.SymbolMethod {
 		t.Fatalf("expected method symbol, got %#v", methods["Shift"])

@@ -78,12 +78,6 @@ func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName strin
 	switch t := receiverType.(type) {
 	case *typeinfo.NamedType:
 		add(baseName)
-		if addressable {
-			add("*" + baseName)
-			if mutable {
-				add("*mut " + baseName)
-			}
-		}
 	case *typeinfo.RefType:
 		if exact, ok := c.receiverKeyFromType(t); ok {
 			add(exact)
@@ -94,12 +88,6 @@ func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName strin
 	case *typeinfo.PointerType:
 		if exact, ok := c.receiverKeyFromType(t); ok {
 			add(exact)
-		}
-		if t.IsOwn {
-			add("*mut " + baseName)
-			add("*" + baseName)
-		} else if t.IsMut {
-			add("*" + baseName)
 		}
 	}
 	return keys
@@ -139,17 +127,10 @@ func (c *checker) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		prefix := "*"
-		if t.IsOwn {
-			prefix += "own "
-		}
 		if t.IsRaw {
-			prefix += "raw "
+			return "^" + named.Name, true
 		}
-		if t.IsMut {
-			prefix += "mut "
-		}
-		return prefix + named.Name, true
+		return "*" + named.Name, true
 	default:
 		return "", false
 	}
