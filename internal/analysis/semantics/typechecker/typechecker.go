@@ -764,7 +764,7 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 	sym, methodType := c.lookupMethod(receiverType, selector.Name.Text(), addressable, mutable)
 	if methodType == nil {
 		if c.canHaveMethods(receiverType) {
-			// If the method exists but only on a *mut receiver and the variable
+			// If the method exists but only on a mutable receiver and the variable
 			// is immutable, emit a more helpful diagnostic instead of the
 			// generic "has no method" message.
 			if !mutable && addressable {
@@ -773,7 +773,7 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 					c.ctx.Diagnostics.Add(
 						diagnostics.NewError(fmt.Sprintf("cannot call method %q on immutable %s", selector.Name.Text(), receiverType.String())).
 							WithCode(diagnostics.ErrMethodNotFound).
-							WithPrimaryLabel(&loc, "this method requires a mutable receiver (*mut)").
+							WithPrimaryLabel(&loc, "this method requires mutable receiver access").
 							WithNote("declare the variable with `let mut` to allow mutable method calls"),
 					)
 					return typeinfo.InvalidType{}, true

@@ -7,10 +7,10 @@ import (
 
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 )
 
-func TestOwnershipPhaseReportsUseAfterMove(t *testing.T) {
+func TestOwnershipPhaseAllowsPlainStructCopy(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
@@ -37,15 +37,11 @@ fn main() i32 {
 	if result.Entry.CFG == nil {
 		t.Fatal("expected CFG")
 	}
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected ownership diagnostic")
-	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag.Code == diagnostics.ErrUseAfterMove {
-			return
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
 		}
 	}
-	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
 }
 
 func TestOwnershipPhaseConsumesOwningReceiver(t *testing.T) {
@@ -74,7 +70,7 @@ fn run(c *own Conn) void {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
 }
 
-func TestOwnershipPhaseReportsUseAfterMoveThroughLoop(t *testing.T) {
+func TestOwnershipPhaseAllowsPlainStructCopyThroughLoop(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
@@ -97,10 +93,9 @@ fn main() i32 {
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag.Code == diagnostics.ErrUseAfterMove {
-			return
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
 		}
 	}
-	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
 }
 
 func TestOwnershipPhaseAllowsLoopReinitialization(t *testing.T) {
@@ -208,7 +203,7 @@ fn borrow(c *own Conn) *Conn {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrBorrowEscape, result.Diagnostics.Diagnostics())
 }
 
-func TestOwnershipPhaseTreatsMoveMarkedEnumAsMoveOnly(t *testing.T) {
+func TestOwnershipPhaseIgnoresMoveMarkedEnumForCopySemantics(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Handle move enum {
@@ -237,13 +232,12 @@ fn main() i32 {
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag.Code == diagnostics.ErrUseAfterMove {
-			return
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
 		}
 	}
-	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
 }
 
-func TestOwnershipPhaseRejectsCopyOfMoveMarkedEnum(t *testing.T) {
+func TestOwnershipPhaseAllowsCopyOfMoveMarkedEnum(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Handle move enum {
@@ -269,12 +263,9 @@ fn main() i32 {
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidCopy {
-			return
-		}
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrInvalidCopy, result.Diagnostics.Diagnostics())
 }
 
 func TestOwnershipPhaseRejectsWholeValueUseAfterFieldMove(t *testing.T) {

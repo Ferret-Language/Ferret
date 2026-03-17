@@ -63,6 +63,13 @@ func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName strin
 				add("*mut " + baseName)
 			}
 		}
+	case *typeinfo.RefType:
+		if exact, ok := c.receiverKeyFromType(t); ok {
+			add(exact)
+		}
+		if t.Mutable {
+			add("&" + baseName)
+		}
 	case *typeinfo.PointerType:
 		if exact, ok := c.receiverKeyFromType(t); ok {
 			add(exact)
@@ -81,6 +88,9 @@ func (c *checker) receiverBaseNamedType(typ typeinfo.Type) (*typeinfo.NamedType,
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		return t, true
+	case *typeinfo.RefType:
+		named, ok := t.Inner.(*typeinfo.NamedType)
+		return named, ok
 	case *typeinfo.PointerType:
 		named, ok := t.Inner.(*typeinfo.NamedType)
 		return named, ok
@@ -93,6 +103,16 @@ func (c *checker) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		return t.Name, true
+	case *typeinfo.RefType:
+		named, ok := t.Inner.(*typeinfo.NamedType)
+		if !ok {
+			return "", false
+		}
+		prefix := "&"
+		if t.Mutable {
+			prefix = "&mut "
+		}
+		return prefix + named.Name, true
 	case *typeinfo.PointerType:
 		named, ok := t.Inner.(*typeinfo.NamedType)
 		if !ok {

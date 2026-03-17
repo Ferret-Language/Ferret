@@ -1,7 +1,7 @@
 package mir
 
 import (
-	"compiler/internal/analysis/cfg/model"
+	cfg "compiler/internal/analysis/cfg/model"
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -968,7 +968,7 @@ func blockID(block *cfg.Block) int {
 	return block.ID
 }
 
-// lowerReceiverNamed unwraps pointer types to get the underlying NamedType for a method receiver.
+// lowerReceiverNamed unwraps receiver view types to get the underlying NamedType for a method receiver.
 func lowerReceiverNamed(typ typeinfo.Type) *typeinfo.NamedType {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
@@ -978,6 +978,8 @@ func lowerReceiverNamed(typ typeinfo.Type) *typeinfo.NamedType {
 			}
 		}
 		return t
+	case *typeinfo.RefType:
+		return lowerReceiverNamed(t.Inner)
 	case *typeinfo.PointerType:
 		return lowerReceiverNamed(t.Inner)
 	}

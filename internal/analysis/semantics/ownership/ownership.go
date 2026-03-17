@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"compiler/internal/analysis/cfg/model"
+	cfg "compiler/internal/analysis/cfg/model"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
@@ -1197,19 +1197,12 @@ func (a *analyzer) isMoveType(typ typeinfo.Type) bool {
 		return false
 	}
 	switch t := typ.(type) {
-	case *typeinfo.BuiltinType:
-		return false
-	case *typeinfo.EnumType:
-		return false
 	case *typeinfo.PointerType:
 		return t.IsOwn
-	case *typeinfo.NamedType:
-		if typeinfo.NamedTypeIsMove(t) {
-			return true
-		}
-		return a.isMoveType(a.underlying(t))
+	case *typeinfo.RawPtrType, *typeinfo.RefType, *typeinfo.BuiltinType, *typeinfo.EnumType, *typeinfo.NamedType:
+		return false
 	default:
-		return true
+		return false
 	}
 }
 
@@ -1218,46 +1211,12 @@ func (a *analyzer) isCopyableType(typ typeinfo.Type) bool {
 		return true
 	}
 	switch t := typ.(type) {
-	case *typeinfo.BuiltinType:
-		return true
-	case *typeinfo.EnumType:
-		return true
 	case *typeinfo.PointerType:
 		return !t.IsOwn
-	case *typeinfo.NamedType:
-		if typeinfo.NamedTypeIsMove(t) {
-			return false
-		}
-		return a.isCopyableType(a.underlying(t))
-	case *typeinfo.OptionalType:
-		return a.isCopyableType(t.Inner)
-	case *typeinfo.ErrorUnionType:
-		return a.isCopyableType(t.Error) && a.isCopyableType(t.Value)
-	case *typeinfo.ArrayType:
-		return a.isCopyableType(t.Inner)
-	case *typeinfo.TupleType:
-		for _, elem := range t.Elems {
-			if !a.isCopyableType(elem) {
-				return false
-			}
-		}
-		return true
-	case *typeinfo.StructType:
-		for _, field := range t.OrderedFields {
-			if field == nil || !a.isCopyableType(field.Type) {
-				return false
-			}
-		}
-		return true
-	case *typeinfo.UnionType:
-		for _, member := range t.Members {
-			if !a.isCopyableType(member) {
-				return false
-			}
-		}
+	case *typeinfo.RawPtrType, *typeinfo.RefType:
 		return true
 	default:
-		return false
+		return true
 	}
 }
 
@@ -1511,6 +1470,13 @@ func (a *analyzer) methodCandidateKeys(receiverType typeinfo.Type, baseName stri
 				add("*mut " + baseName)
 			}
 		}
+	case *typeinfo.RefType:
+		if exact, ok := a.receiverKeyFromType(t); ok {
+			add(exact)
+		}
+		if t.Mutable {
+			add("&" + baseName)
+		}
 	case *typeinfo.PointerType:
 		if exact, ok := a.receiverKeyFromType(t); ok {
 			add(exact)
@@ -1529,6 +1495,9 @@ func (a *analyzer) receiverBaseNamedType(typ typeinfo.Type) (*typeinfo.NamedType
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		return t, true
+	case *typeinfo.RefType:
+		named, ok := t.Inner.(*typeinfo.NamedType)
+		return named, ok
 	case *typeinfo.PointerType:
 		named, ok := t.Inner.(*typeinfo.NamedType)
 		return named, ok
@@ -1541,6 +1510,16 @@ func (a *analyzer) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		return t.Name, true
+	case *typeinfo.RefType:
+		named, ok := t.Inner.(*typeinfo.NamedType)
+		if !ok {
+			return "", false
+		}
+		prefix := "&"
+		if t.Mutable {
+			prefix = "&mut "
+		}
+		return prefix + named.Name, true
 	case *typeinfo.PointerType:
 		named, ok := t.Inner.(*typeinfo.NamedType)
 		if !ok {

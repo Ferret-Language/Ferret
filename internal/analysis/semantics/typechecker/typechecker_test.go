@@ -9,7 +9,7 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 )
 
@@ -1222,7 +1222,7 @@ fn main() i32 {
 	}
 }
 
-func TestTypecheckerReportsUseAfterMoveFromLetBinding(t *testing.T) {
+func TestTypecheckerAllowsPlainStructCopyFromLetBinding(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
@@ -1237,18 +1237,8 @@ fn main() i32 {
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected use-after-move diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrUseAfterMove {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -1512,5 +1502,34 @@ fn main() i32 {
 	}
 	if _, ok := result.Entry.Types.Nodes[letX.Value].(*typeinfo.NamedType); !ok {
 		t.Fatalf("expected dereference of ref to produce named value type, got %#v", result.Entry.Types.Nodes[letX.Value])
+	}
+}
+
+func TestTypecheckerResolvesExplicitReferenceReceivers(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn (p &Point) Read() i32 {
+    return p.X
+}
+
+fn (p &mut Point) Bump() i32 {
+    return p.X + 1
+}
+
+fn main() i32 {
+    let mut p: Point = .{ .X = 1 }
+    let r = &p
+    let m = &mut p
+    return r.Read() + m.Bump()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
