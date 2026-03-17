@@ -299,14 +299,10 @@ func formatTypeDecl(decl *TypeDecl) string {
 	if decl == nil {
 		return ""
 	}
-	movePrefix := ""
-	if decl.IsMove {
-		movePrefix = " move"
-	}
 	switch {
 	case decl.Struct != nil:
 		var b strings.Builder
-		fmt.Fprintf(&b, "type %s%s struct {", decl.Name, movePrefix)
+		fmt.Fprintf(&b, "type %s struct {", decl.Name)
 		if len(decl.Struct.Fields) > 0 || len(decl.Struct.StaticFields) > 0 {
 			b.WriteByte('\n')
 			for _, field := range decl.Struct.Fields {
@@ -338,7 +334,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 		return b.String()
 	case decl.Interface != nil:
 		var b strings.Builder
-		fmt.Fprintf(&b, "type %s%s interface {", decl.Name, movePrefix)
+		fmt.Fprintf(&b, "type %s interface {", decl.Name)
 		if len(decl.Interface.Methods) > 0 {
 			b.WriteByte('\n')
 			for _, method := range decl.Interface.Methods {
@@ -361,15 +357,15 @@ func formatTypeDecl(decl *TypeDecl) string {
 		b.WriteString(" }")
 		return b.String()
 	case decl.Enum != nil:
-		return fmt.Sprintf("type %s%s enum { %s }", decl.Name, movePrefix, strings.Join(decl.Enum.Variants, ", "))
+		return fmt.Sprintf("type %s enum { %s }", decl.Name, strings.Join(decl.Enum.Variants, ", "))
 	case decl.Union != nil:
 		parts := make([]string, 0, len(decl.Union.Members))
 		for _, member := range decl.Union.Members {
 			parts = append(parts, renderType(member))
 		}
-		return fmt.Sprintf("type %s%s union { %s }", decl.Name, movePrefix, strings.Join(parts, ", "))
+		return fmt.Sprintf("type %s union { %s }", decl.Name, strings.Join(parts, ", "))
 	case decl.Error != nil:
-		return fmt.Sprintf("type %s%s error { %s }", decl.Name, movePrefix, strings.Join(decl.Error.Members, ", "))
+		return fmt.Sprintf("type %s error { %s }", decl.Name, strings.Join(decl.Error.Members, ", "))
 	default:
 		return fmt.Sprintf("type %s %s", decl.Name, renderType(decl.Underlying))
 	}

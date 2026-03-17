@@ -54,10 +54,6 @@ func (t *NamedType) String() string {
 	return t.ModuleKey + "::" + t.Name
 }
 
-func NamedTypeIsMove(t *NamedType) bool {
-	return t != nil && t.Decl != nil && t.Decl.IsMove
-}
-
 type PointerType struct {
 	IsOwn bool
 	IsRaw bool

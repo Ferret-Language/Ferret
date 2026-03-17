@@ -30,12 +30,13 @@ func (p *Parser) parseImportDecl() *ast.ImportDecl {
 func (p *Parser) parseTypeDecl(attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.TYPE, "expected 'type'").Start
 	nameTok := p.expectIdent("expected type name")
-	isMove := p.match(tokens.MOVE)
+	if p.match(tokens.MOVE) {
+		p.errorHere("`type Name move ...` is no longer supported")
+	}
 	spec := p.parseTypeSpec()
 	return &ast.TypeDecl{
 		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 		Attrs:    attrs,
-		IsMove:   isMove,
 		Type:     spec,
 		Location: p.locFrom(start),
 	}

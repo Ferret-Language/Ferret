@@ -287,10 +287,10 @@ fn run() void {
 	}
 }
 
-func TestOwnershipPhaseIgnoresMoveMarkedEnumForCopySemantics(t *testing.T) {
+func TestOwnershipPhaseAllowsPlainEnumCopySemantics(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
-type Handle move enum {
+type Handle enum {
     stdin,
     stdout,
 }
@@ -321,10 +321,10 @@ fn main() i32 {
 	}
 }
 
-func TestOwnershipPhaseAllowsCopyOfMoveMarkedEnum(t *testing.T) {
+func TestOwnershipPhaseAllowsExplicitCopyOfPlainEnum(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
-type Handle move enum {
+type Handle enum {
     stdin,
     stdout,
 }

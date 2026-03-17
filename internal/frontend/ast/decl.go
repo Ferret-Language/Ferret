@@ -37,7 +37,6 @@ func (d *LetDecl) Loc() source.Location { return d.Location }
 type TypeDecl struct {
 	Name     *Ident
 	Attrs    []Attribute
-	IsMove   bool
 	Type     TypeExpr
 	Location source.Location
 }

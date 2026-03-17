@@ -35,7 +35,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Replace the old pointer AST/type model with explicit categories for owning pointer, reference, mutable reference, and raw pointer.
 [*] Update the lexer/parser so the accepted type forms become `T`, `*T`, `&T`, `&mut T`, and `^T`.
 [*] Remove parser support for old safe pointer spellings `*mut T`, `*own T`, and `*raw T`.
-[ ] Remove parser support for `type Name move ...`.
+[*] Remove parser support for `type Name move ...`.
 [*] Update AST debug/dump output to reflect the new type forms.
 [*] Update type lowering in the typechecker so syntax maps to the new semantic types.
 [*] Update type formatting and equality logic to reflect the new type identities.

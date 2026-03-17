@@ -77,7 +77,7 @@ fn (p Point) len2() i32 {
 	}
 }
 
-func TestParseMoveTypeDecl(t *testing.T) {
+func TestParserRejectsMoveTypeDecl(t *testing.T) {
 	src := `
 type Handle move enum {
     stdin,
@@ -86,21 +86,18 @@ type Handle move enum {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", got)
-	}
 	if len(mod.Decls) != 1 {
 		t.Fatalf("expected 1 decl, got %d", len(mod.Decls))
 	}
-	typ, ok := mod.Decls[0].(*ast.TypeDecl)
-	if !ok {
-		t.Fatalf("expected type decl, got %T", mod.Decls[0])
+	found := false
+	for _, d := range diag.All() {
+		if strings.Contains(d.Message, "`type Name move ...` is no longer supported") {
+			found = true
+			break
+		}
 	}
-	if !typ.IsMove {
-		t.Fatal("expected move-marked type declaration")
-	}
-	if _, ok := typ.Type.(*ast.EnumType); !ok {
-		t.Fatalf("expected enum type, got %T", typ.Type)
+	if !found {
+		t.Fatalf("expected move-type rejection diagnostic, got %v", diag.All())
 	}
 }
 
@@ -143,7 +140,7 @@ type Reader interface {
 func TestParseIfAttributeOnTypeDecl(t *testing.T) {
 	src := `
 #[if(target_os, "linux")]
-type Handle move enum {
+type Handle enum {
     stdin,
     stdout,
 }
