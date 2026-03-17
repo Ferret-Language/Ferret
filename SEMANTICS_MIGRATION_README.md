@@ -100,8 +100,8 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 
 ### Phase 9: Adapt backends and runtime contracts
 
-[ ] Audit LLVM and QBE lowering for assumptions about old pointer kinds, interface receiver layout, and auto-borrowed calls.
-[ ] Update backend type lowering for owning pointers, references, and raw pointers as separate semantic categories.
+[*] Audit LLVM and QBE lowering for assumptions about old pointer kinds, interface receiver layout, and auto-borrowed calls.
+[*] Update backend type lowering for owning pointers, references, and raw pointers as separate semantic categories.
 [ ] Revisit interface lowering if receiver modifiers affect wrapper generation or dispatch layout.
 [ ] Revisit runtime headers/comments so they describe the new semantics accurately.
 [ ] Keep backend changes minimal until HIR/MIR semantics are stable.

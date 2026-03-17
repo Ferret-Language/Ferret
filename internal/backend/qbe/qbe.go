@@ -781,7 +781,7 @@ func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, err
 	if builtin, ok := arg.Type().(*typeinfo.BuiltinType); ok {
 		return lowerBuiltinPrintPrimitive(state, arg, builtin.Name)
 	}
-	if _, ok := arg.Type().(*typeinfo.PointerType); ok {
+	if qbeIsPointerLike(arg.Type()) {
 		val, err := lowerValue(state, arg)
 		if err != nil {
 			return "", err
@@ -790,6 +790,24 @@ func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, err
 	}
 	sym := emitQBEStringConstant(state, arg.Type().String())
 	return fmt.Sprintf("call $global__print_type(l $%s)", sym), nil
+}
+
+func qbePointerInner(t typeinfo.Type) (typeinfo.Type, bool) {
+	switch pt := unwrapNamed(t).(type) {
+	case *typeinfo.PointerType:
+		return pt.Inner, true
+	case *typeinfo.RefType:
+		return pt.Inner, true
+	case *typeinfo.RawPtrType:
+		return pt.Inner, true
+	default:
+		return nil, false
+	}
+}
+
+func qbeIsPointerLike(t typeinfo.Type) bool {
+	_, ok := qbePointerInner(t)
+	return ok
 }
 
 func lowerBuiltinPrintPrimitive(state *moduleState, arg mir.Value, name string) (string, error) {
@@ -1107,17 +1125,6 @@ func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.T
 	return strings.Join(lines, "\n\t"), nil
 }
 
-func qbePointerInner(t typeinfo.Type) (typeinfo.Type, bool) {
-	switch pt := t.(type) {
-	case *typeinfo.PointerType:
-		return pt.Inner, true
-	case *typeinfo.RawPtrType:
-		return pt.Inner, true
-	default:
-		return nil, false
-	}
-}
-
 // lowerQBEIndexAddress computes ptr = base + index * elemSize.
 func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
@@ -1322,7 +1329,7 @@ func qbeScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
 		case "u64", "i64", "usize", "isize", "f64":
 			return 8, 8, nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return 8, 8, nil
 	}
 	return 0, 0, fmt.Errorf("not a scalar type: %s", typ)
@@ -1663,8 +1670,8 @@ func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, me
 
 func qbeInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type, link mir.InterfaceMethodLink, method *mir.InterfaceMethodDecl) (string, string, error) {
 	callee := concrete
-	if ptr, ok := concrete.(*typeinfo.PointerType); ok {
-		abi, err := qbeABIType(state, ptr)
+	if qbeIsPointerLike(concrete) {
+		abi, err := qbeABIType(state, concrete)
 		if err != nil {
 			return "", "", err
 		}
@@ -1750,7 +1757,7 @@ func isUnionAggregate(typ typeinfo.Type) bool {
 
 func optionalUsesNiche(typ typeinfo.Type) bool {
 	switch t := unwrapNamed(typ).(type) {
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType:
 		return true
 	case *typeinfo.BuiltinType:
 		switch t.Name {
@@ -2504,7 +2511,7 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 			return fmt.Sprintf("%s %s", op, srcVal), nil
 		}
 	}
-	if _, ok := dst.(*typeinfo.PointerType); ok {
+	if qbeIsPointerLike(dst) {
 		return "copy " + srcVal, nil
 	}
 	return "", fmt.Errorf("unsupported cast from %s to %s", typeinfo.FormatType(typeStringer{v.Left.Type()}), typeinfo.FormatType(typeStringer{v.Type()}))
@@ -2933,7 +2940,7 @@ func qbeExtType(typ typeinfo.Type) (string, error) {
 		case "f64":
 			return "d", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported aggregate member type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -2954,7 +2961,7 @@ func qbeBaseType(typ typeinfo.Type) (string, error) {
 		case "void":
 			return "", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported qbe base type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3024,7 +3031,7 @@ func qbeLoadOp(typ typeinfo.Type) (string, string, error) {
 		case "f64":
 			return "loadd", "d", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return "loadl", "l", nil
 	}
 	return "", "", fmt.Errorf("unsupported load type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3047,7 +3054,7 @@ func qbeStoreOp(typ typeinfo.Type) (string, error) {
 		case "f64":
 			return "stored", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return "storel", nil
 	}
 	return "", fmt.Errorf("unsupported store type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3064,7 +3071,7 @@ func qbeNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
 		default:
 			return lit, nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return lit, nil
 	}
 	return "", fmt.Errorf("unsupported numeric literal type %s", typeinfo.FormatType(typeStringer{typ}))

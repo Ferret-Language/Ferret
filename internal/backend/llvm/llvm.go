@@ -353,6 +353,9 @@ func (d *debugState) getType(state *moduleState, typ typeinfo.Type) int {
 	case *typeinfo.PointerType:
 		innerID := d.getType(state, t.Inner)
 		return d.getPointerType(innerID)
+	case *typeinfo.RefType:
+		innerID := d.getType(state, t.Inner)
+		return d.getPointerType(innerID)
 	case *typeinfo.RawPtrType:
 		innerID := d.getType(state, t.Inner)
 		return d.getPointerType(innerID)
@@ -1734,17 +1737,37 @@ func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.T
 	return strings.Join(lines, "\n"), nil
 }
 
+func llvmPointerInner(typ typeinfo.Type) (typeinfo.Type, bool) {
+	switch t := unwrapNamed(typ).(type) {
+	case *typeinfo.PointerType:
+		return t.Inner, true
+	case *typeinfo.RawPtrType:
+		return t.Inner, true
+	case *typeinfo.RefType:
+		return t.Inner, true
+	default:
+		return nil, false
+	}
+}
+
+func llvmIsPointerLike(typ typeinfo.Type) bool {
+	_, ok := llvmPointerInner(typ)
+	return ok
+}
+
 // lowerIndexAddress computes the pointer to arr[index].
-// baseType must be *typeinfo.ArrayType or *typeinfo.PointerType.
+// baseType must be *typeinfo.ArrayType or a pointer-like type.
 func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
 	switch bt := baseType.(type) {
 	case *typeinfo.ArrayType:
 		elemType = bt.Inner
-	case *typeinfo.PointerType:
-		elemType = bt.Inner
 	default:
-		return nil, "", fmt.Errorf("cannot index into %T", baseType)
+		var ok bool
+		elemType, ok = llvmPointerInner(baseType)
+		if !ok {
+			return nil, "", fmt.Errorf("cannot index into %T", baseType)
+		}
 	}
 	elemIRType, err := llvmBaseType(elemType)
 	if err != nil {
@@ -2064,7 +2087,7 @@ func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, err
 	if builtin, ok := arg.Type().(*typeinfo.BuiltinType); ok {
 		return lowerBuiltinPrintPrimitive(state, arg, builtin.Name)
 	}
-	if _, ok := arg.Type().(*typeinfo.PointerType); ok {
+	if llvmIsPointerLike(arg.Type()) {
 		val, err := lowerValue(state, arg)
 		if err != nil {
 			return "", err
@@ -2952,8 +2975,7 @@ func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, m
 }
 
 func llvmInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type) (string, []string, error) {
-	if ptr, ok := concrete.(*typeinfo.PointerType); ok {
-		_ = ptr
+	if llvmIsPointerLike(concrete) {
 		return "ptr %data", nil, nil
 	}
 	if isAggregateType(state, concrete) {
@@ -3503,7 +3525,7 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 			return op, nil
 		}
 	}
-	if _, ok := dst.(*typeinfo.PointerType); ok {
+	if llvmIsPointerLike(dst) {
 		return llvmCopyExpr("ptr", srcVal)
 	}
 	return "", fmt.Errorf("unsupported cast from %s to %s", src, dst)
@@ -3964,7 +3986,7 @@ func aggregateSizeAlignOfPrimitive(typ typeinfo.Type) (int64, int64, error) {
 		case "u64", "i64", "usize", "isize", "f64":
 			return 8, 8, nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return 8, 8, nil
 	}
 	return 0, 0, fmt.Errorf("not a primitive type")
@@ -4053,6 +4075,10 @@ func lookupStructLayout(state *moduleState, typ typeinfo.Type) (*layout.StructLa
 		}
 		return info.Struct, nil
 	case *typeinfo.PointerType:
+		return lookupStructLayout(state, t.Inner)
+	case *typeinfo.RefType:
+		return lookupStructLayout(state, t.Inner)
+	case *typeinfo.RawPtrType:
 		return lookupStructLayout(state, t.Inner)
 	default:
 		return nil, fmt.Errorf("unsupported struct base type %s", typ)
@@ -4357,7 +4383,7 @@ func llvmTypeBits(name string) int {
 
 func llvmNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
 	typ = unwrapNamed(typ)
-	if _, ok := typ.(*typeinfo.PointerType); ok {
+	if llvmIsPointerLike(typ) {
 		return lit, nil
 	}
 	b, ok := typ.(*typeinfo.BuiltinType)
