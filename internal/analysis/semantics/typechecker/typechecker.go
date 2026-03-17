@@ -306,6 +306,20 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 			c.checkDestructorDecl(d, recvType)
 		}
 	}
+	if d.IsStatic && d.OwnerType != nil {
+		ownerType := c.typeFromSyntax(c.mod, d.OwnerType)
+		c.info.BindNode(d.OwnerType, ownerType)
+		if named, ok := ownerType.(*typeinfo.NamedType); ok {
+			if owner := c.findModuleForType(named); owner != nil && owner.Key != c.mod.Key {
+				loc := d.OwnerType.Loc()
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("cross-module method declarations are not allowed").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(&loc, "declare static methods in the same module as their owner type"),
+				)
+			}
+		}
+	}
 	for _, param := range d.Params {
 		paramType := c.typeFromSyntax(c.mod, param.Type)
 		if param.Type != nil {

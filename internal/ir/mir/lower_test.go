@@ -163,15 +163,15 @@ func TestPipelineLowersInterfaceCoercionWithMutableReceiver(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Reader interface {
-    &mut read(buf []u8) i32
+    read(&mut self, buf []u8) i32
 }
 
 type File struct {
     value i32 = 0
 }
 
-fn (f &mut File) read(buf []u8) i32 {
-    return f.value
+fn File::read(&mut self, buf []u8) i32 {
+    return self.value
 }
 
 fn main() i32 {

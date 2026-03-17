@@ -8,7 +8,7 @@ import (
 
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/hir"
 )
 
@@ -22,7 +22,7 @@ type Point struct {
 let mut GlobalPoint: Point = .{ .X = 1 }
 
 fn main() i32 {
-    let p = copy GlobalPoint
+    let p = GlobalPoint
     return p.X
 }
 `)

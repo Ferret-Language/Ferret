@@ -77,6 +77,8 @@ type Global struct {
 
 type Func struct {
 	Name       string
+	OwnerType  string
+	IsStatic   bool
 	IsUnsafe   bool
 	IsBuiltin  bool
 	IsExtern   bool

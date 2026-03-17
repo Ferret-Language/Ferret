@@ -255,18 +255,18 @@ fn main() i32 {
 	}
 }
 
-func TestTypecheckerAllowsValueToSatisfyInterfacePointerMethod(t *testing.T) {
+func TestTypecheckerAllowsValueToSatisfyInterfaceValueMethod(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
     X i32 = 0
 }
 
-fn (_ *Point) Show() {
+fn Point::Show(self) {
 }
 
 type Shape interface {
-    *Show()
+    Show(self)
 }
 
 fn main() i32 {
@@ -763,14 +763,14 @@ func TestTypecheckerRejectsConcreteTypeWithWrongInterfaceReceiverModifier(t *tes
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Reader interface {
-    &mut read(buf []u8) i32
+    read(&mut self, buf []u8) i32
 }
 
 type File struct {
     value i32 = 0
 }
 
-fn (f &File) read(buf []u8) i32 {
+fn File::read(&self, buf []u8) i32 {
     return 0
 }
 

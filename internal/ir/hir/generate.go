@@ -407,6 +407,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 
 	fn := &Func{
 		Name:       d.Name.Text(),
+		IsStatic:   d.IsStatic,
 		IsUnsafe:   d.IsUnsafe,
 		IsBuiltin:  d.IsBuiltin,
 		IsExtern:   d.IsExtern,
@@ -416,6 +417,9 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 		LocalCount: len(g.localIDs),
 		Location:   d.Location,
 		Source:     d,
+	}
+	if d.OwnerType != nil && len(d.OwnerType.Path) > 0 {
+		fn.OwnerType = d.OwnerType.Path[len(d.OwnerType.Path)-1]
 	}
 	if d.IsDestructor {
 		fn.Name = "~" + d.Name.Text()

@@ -36,6 +36,19 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 			declare(ctx, scope, sym)
 			collectTypeMembers(ctx, typeMembers, d)
 		case *ast.FuncDecl:
+			if d.IsStatic && d.OwnerType != nil && len(d.OwnerType.Path) > 0 {
+				typeName := d.OwnerType.Path[len(d.OwnerType.Path)-1]
+				members := typeMembers[typeName]
+				if members == nil {
+					members = make(map[string]*symbols.Symbol)
+					typeMembers[typeName] = members
+				}
+				sym := symbols.New(d.Name.Text(), symbols.SymbolFunc, d)
+				sym.Location = d.Name.Loc()
+				sym.OwnerType = typeName
+				declareTypeMember(ctx, typeName, members, sym)
+				continue
+			}
 			if d.Receiver == nil {
 				name := d.Name.Text()
 				if d.IsDestructor {

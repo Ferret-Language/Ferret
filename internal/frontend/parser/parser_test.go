@@ -42,8 +42,8 @@ type Point struct {
     y i32 = 0
     static origin Point = .{}
 }
-fn (p Point) len2() i32 {
-    if p == .{ .x = 1, .y = 2 } {
+fn Point::len2(self) i32 {
+    if self == .{ .x = 1, .y = 2 } {
         return 1
     }
     return 0
@@ -72,8 +72,14 @@ fn (p Point) len2() i32 {
 	if !ok {
 		t.Fatalf("expected func decl, got %T", mod.Decls[1])
 	}
-	if fn.Receiver == nil || fn.Receiver.Name.Text() != "p" {
-		t.Fatalf("expected receiver p, got %#v", fn.Receiver)
+	if fn.OwnerType == nil || len(fn.OwnerType.Path) == 0 || fn.OwnerType.Path[len(fn.OwnerType.Path)-1] != "Point" {
+		t.Fatalf("expected owner type Point, got %#v", fn.OwnerType)
+	}
+	if fn.IsStatic {
+		t.Fatalf("expected instance method")
+	}
+	if fn.Receiver == nil || fn.Receiver.Name.Text() != "self" {
+		t.Fatalf("expected receiver self, got %#v", fn.Receiver)
 	}
 }
 
@@ -104,10 +110,11 @@ type Handle move enum {
 func TestParseInterfaceReceiverModifiers(t *testing.T) {
 	src := `
 type Reader interface {
-    read(buf []u8) i32
-    &peek() u8
-    &mut refill() i32
-    *close() void
+    read(self, buf []u8) i32
+    peek(&self) u8
+    refill(&mut self) i32
+    close(*self) void
+    New() Reader
 }
 `
 
@@ -134,6 +141,9 @@ type Reader interface {
 	}
 	if got := iface.Methods[3].Receiver; got != "*" {
 		t.Fatalf("expected * receiver, got %q", got)
+	}
+	if !iface.Methods[4].Static {
+		t.Fatalf("expected static method")
 	}
 }
 
@@ -1102,8 +1112,8 @@ type Node struct {
     data ^u8
 }
 
-fn (n &Node) peek() &Node {
-    return n.view
+fn Node::peek(&self) &Node {
+    return self.view
 }
 `
 
@@ -1137,6 +1147,9 @@ fn (n &Node) peek() &Node {
 	if !ok {
 		t.Fatalf("expected func decl, got %T", mod.Decls[1])
 	}
+	if fn.OwnerType == nil || len(fn.OwnerType.Path) == 0 || fn.OwnerType.Path[len(fn.OwnerType.Path)-1] != "Node" {
+		t.Fatalf("expected owner type Node, got %#v", fn.OwnerType)
+	}
 	recv, ok := fn.Receiver.Type.(*ast.RefType)
 	if !ok || recv.Mutable {
 		t.Fatalf("expected immutable receiver ref type, got %#v", fn.Receiver.Type)
@@ -1167,5 +1180,47 @@ fn main() {
 	size, ok := arr.Size.(*ast.Ident)
 	if !ok || size.Text() != "_" {
 		t.Fatalf("expected inferred array length marker, got %#v", arr.Size)
+	}
+}
+
+func TestParseStaticAttachedMethod(t *testing.T) {
+	src := `
+type Point struct {}
+
+fn Point::New() Point {
+    return .{}
+}
+`
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[1].(*ast.FuncDecl)
+	if fn.OwnerType == nil || len(fn.OwnerType.Path) == 0 || fn.OwnerType.Path[len(fn.OwnerType.Path)-1] != "Point" || !fn.IsStatic {
+		t.Fatalf("expected static attached method, got %#v", fn)
+	}
+	if fn.Receiver != nil {
+		t.Fatalf("expected no receiver for static method, got %#v", fn.Receiver)
+	}
+}
+
+func TestParseAttachedMethodWarnsOnNonSelfName(t *testing.T) {
+	src := `
+type Point struct {}
+
+fn Point::Len(this) i32 {
+    return 0
+}
+`
+	_, diag := parseTestModule(t, src)
+	found := false
+	for _, d := range diag.All() {
+		if d.Code == diagnostics.WarnNonSelfReceiverName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected non-self receiver warning, got %v", diag.All())
 	}
 }

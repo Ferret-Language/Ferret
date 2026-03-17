@@ -88,6 +88,7 @@ func (t *StructType) Loc() source.Location { return t.Location }
 
 type InterfaceMethod struct {
 	Receiver string
+	Static   bool
 	Name     *Ident
 	Params   []Param
 	Result   TypeExpr

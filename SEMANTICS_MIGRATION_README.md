@@ -57,6 +57,8 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Keep existing slice type/indexing paths working where the compiler/runtime already relies on them, but reject slice literals with a clear "not yet implemented" diagnostic until slice construction semantics are designed properly.
 [*] Allow `_ = value` as an explicit discard assignment and stop counting plain assignment targets as value uses in unused-local analysis.
 [*] Warn when `let mut` bindings are never modified and suggest removing `mut`.
+[*] Support attached methods with unified `fn Type::Name(...)` syntax, where the first parameter slot decides instance vs static method behavior.
+[*] Warn when attached-method receiver binders use names other than `self`, while still accepting them for compatibility.
 
 ### Phase 4: Rework parameter and receiver semantics around one rule
 
@@ -66,11 +68,12 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Revisit call-site lowering so receiver passing is just ordinary first-parameter lowering under the new rules.
 [*] Update constructor/destructor special cases if they still exist after the receiver model change.
 [*] Add focused tests for each receiver form and each allowed/disallowed call pattern.
+[*] Accept `fn Type::Method(self|&self|&mut self|*self, ...)` and `fn Type::Method(...)` without changing the underlying receiver-based semantic pipeline more than necessary.
 
 ### Phase 5: Redesign interface method signatures
 
 [*] Extend interface AST nodes to store receiver modifier explicitly.
-[*] Update interface parsing so declarations like `&mut read(buf []u8) i32` are accepted and preserved.
+[*] Update interface parsing so declarations use the same first-parameter receiver forms, e.g. `read(&mut self, buf []u8) i32`.
 [*] Extend semantic interface method types so receiver modifier participates in identity.
 [*] Update interface satisfaction checks to require name, receiver modifier, parameters, and result to all match.
 [*] Update collector/method-set indexing so interface matching can query receiver-form-specific methods precisely.
