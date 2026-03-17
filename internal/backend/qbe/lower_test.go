@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/internal/analysis/layout/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"
 	"compiler/internal/backend/registry"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
 )
 
@@ -168,7 +168,7 @@ type Point struct {
 let mut GlobalPoint: Point = .{ .X = 1, .Y = 2 }
 
 fn main() i32 {
-    let mut p = copy GlobalPoint
+    let mut p = GlobalPoint
     if p.X > 0 {
         p.X = p.X + 1
     }
@@ -724,6 +724,37 @@ fn main(flag bool) i32 {
 		"ceqw %_ld3, 1",
 		"ret 1",
 		"ret 2",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerSliceIndexToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main(items []i32) i32 {
+    let n = items[1]
+    return n
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"loadl %items",
+		"=l add %_slice_data",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)

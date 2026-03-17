@@ -1113,6 +1113,9 @@ func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.T
 
 // lowerIndexLoad lowers arr[index] as an rvalue via QBE load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
+	if _, ok := unwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
+		return lowerSliceIndexLoad(state, targetName, targetType, idx)
+	}
 	lines, addr, err := lowerQBEIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())
 	if err != nil {
 		return "", err
@@ -1122,6 +1125,42 @@ func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.T
 		return "", err
 	}
 	lines = append(lines, fmt.Sprintf("%s =%s %s %s", qbeLocalName(targetName), resultType, op, addr))
+	return strings.Join(lines, "\n\t"), nil
+}
+
+func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
+	baseExpr, err := lowerValue(state, idx.Base)
+	if err != nil {
+		return "", err
+	}
+	indexExpr, err := lowerValue(state, idx.Index)
+	if err != nil {
+		return "", err
+	}
+	elemType := targetType
+	elemSize, _, err := qbeScalarSizeAlign(elemType)
+	if err != nil {
+		elemSize, _, err = aggregateSizeAlign(state, elemType)
+		if err != nil {
+			return "", fmt.Errorf("cannot compute size of indexed element type %s", elemType)
+		}
+	}
+	op, resultType, err := qbeLoadOp(targetType)
+	if err != nil {
+		return "", err
+	}
+	lines := make([]string, 0, 5)
+	dataPtr := freshTemp(state, "slice_data")
+	lines = append(lines, fmt.Sprintf("%s =l loadl %s", dataPtr, baseExpr))
+	scaled := indexExpr
+	if elemSize != 1 {
+		scaledTmp := freshTemp(state, "idx")
+		lines = append(lines, fmt.Sprintf("%s =l mul %s, %d", scaledTmp, indexExpr, elemSize))
+		scaled = scaledTmp
+	}
+	elemPtr := freshTemp(state, "elem")
+	lines = append(lines, fmt.Sprintf("%s =l add %s, %s", elemPtr, dataPtr, scaled))
+	lines = append(lines, fmt.Sprintf("%s =%s %s %s", qbeLocalName(targetName), resultType, op, elemPtr))
 	return strings.Join(lines, "\n\t"), nil
 }
 
@@ -1269,8 +1308,13 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 		var elemType typeinfo.Type
 		if arr, ok := baseType.(*typeinfo.ArrayType); ok {
 			elemType = arr.Inner
+		} else if sl, ok := baseType.(*typeinfo.SliceType); ok {
+			elemType = sl.Inner
+			dataPtr := freshTemp(state, "slice_data")
+			baseLines = append(baseLines, fmt.Sprintf("%s =l loadl %s", dataPtr, basePtr))
+			basePtr = dataPtr
 		} else {
-			return nil, "", fmt.Errorf("IndexPlace base is not an array: %T", baseType)
+			return nil, "", fmt.Errorf("IndexPlace base is not an array or slice: %T", baseType)
 		}
 		elemSize, _, err := qbeScalarSizeAlign(elemType)
 		if err != nil {

@@ -1725,6 +1725,9 @@ func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.T
 
 // lowerIndexLoad lowers arr[index] as an rvalue load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
+	if _, ok := unwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
+		return lowerSliceIndexLoad(state, targetName, targetType, idx)
+	}
 	lines, addr, err := lowerIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())
 	if err != nil {
 		return "", err
@@ -1734,6 +1737,31 @@ func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.T
 		return "", err
 	}
 	lines = append(lines, fmt.Sprintf("%s = load %s, ptr %s", llvmLocalName(targetName), irType, addr))
+	return strings.Join(lines, "\n"), nil
+}
+
+func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
+	baseExpr, err := lowerValue(state, idx.Base)
+	if err != nil {
+		return "", err
+	}
+	indexExpr, err := lowerValue(state, idx.Index)
+	if err != nil {
+		return "", err
+	}
+	elemIRType, err := llvmBaseType(targetType)
+	if err != nil {
+		return "", err
+	}
+	dataPtr := freshTemp(state, "slice_data")
+	elemPtr := freshTemp(state, "elem")
+	loadElem := freshTemp(state, "idx")
+	lines := []string{
+		fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, baseExpr),
+		fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", elemPtr, elemIRType, dataPtr, indexExpr),
+		fmt.Sprintf("%s = load %s, ptr %s", loadElem, elemIRType, elemPtr),
+		fmt.Sprintf("%s = or %s 0, %s", llvmLocalName(targetName), elemIRType, loadElem),
+	}
 	return strings.Join(lines, "\n"), nil
 }
 
@@ -1887,8 +1915,16 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 			if err != nil {
 				return nil, "", err
 			}
+		} else if sl, ok := baseType.(*typeinfo.SliceType); ok {
+			elemIRType, err = llvmBaseType(sl.Inner)
+			if err != nil {
+				return nil, "", err
+			}
+			dataPtr := freshTemp(state, "slice_data")
+			baseLines = append(baseLines, fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, basePtr))
+			basePtr = dataPtr
 		} else {
-			return nil, "", fmt.Errorf("IndexPlace base is not an array: %T", baseType)
+			return nil, "", fmt.Errorf("IndexPlace base is not an array or slice: %T", baseType)
 		}
 		idxVal, err := lowerValue(state, p.Index)
 		if err != nil {

@@ -1281,6 +1281,10 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 		c.info.BindNode(expr, arr.Inner)
 		return arr.Inner
 	}
+	if sl, ok := base.(*typeinfo.SliceType); ok {
+		c.info.BindNode(expr, sl.Inner)
+		return sl.Inner
+	}
 	// Pointer indexing: *T[i] → T
 	if ptr, ok := base.(*typeinfo.PointerType); ok {
 		c.info.BindNode(expr, ptr.Inner)
@@ -1311,7 +1315,7 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 	c.ctx.Diagnostics.Add(
 		diagnostics.NewError(fmt.Sprintf("cannot index into %s", baseTyp.String())).
 			WithCode(diagnostics.ErrInvalidOperation).
-			WithPrimaryLabel(&loc, "not an array or pointer type"),
+			WithPrimaryLabel(&loc, "not an array, slice, or pointer type"),
 	)
 	return typeinfo.InvalidType{}
 }

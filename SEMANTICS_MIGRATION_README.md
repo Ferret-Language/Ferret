@@ -53,6 +53,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Enforce that `^T` operations requiring safety are allowed only in `unsafe` contexts.
 [*] Add diagnostics for illegal reference usage where the current compiler still assumes pointer behavior.
 [*] Add unsafe raw-address operators `@expr` / `@mut expr` to construct `^T` values without overloading borrow syntax.
+[*] Keep array and slice indexing working through typechecking, MIR lowering, and both native backends.
 
 ### Phase 4: Rework parameter and receiver semantics around one rule
 
