@@ -49,7 +49,8 @@ func (c *checker) lookupMethodWithReceiver(receiverType typeinfo.Type, receiver 
 	if owner == nil || owner.MethodSets == nil {
 		return nil, nil
 	}
-	methods := owner.MethodSets[receiver+baseNamed.Name]
+	key := receiver + baseNamed.Name
+	methods := owner.MethodSets[key]
 	if methods == nil {
 		return nil, nil
 	}

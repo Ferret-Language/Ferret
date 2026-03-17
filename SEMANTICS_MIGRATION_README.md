@@ -74,7 +74,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Update interface parsing so declarations like `&mut read(buf []u8) i32` are accepted and preserved.
 [*] Extend semantic interface method types so receiver modifier participates in identity.
 [*] Update interface satisfaction checks to require name, receiver modifier, parameters, and result to all match.
-[ ] Update collector/method-set indexing so interface matching can query receiver-form-specific methods precisely.
+[*] Update collector/method-set indexing so interface matching can query receiver-form-specific methods precisely.
 [*] Update HIR/MIR interface type declarations to keep receiver modifier information.
 [*] Add tests for interface satisfaction success/failure based on receiver modifier.
 

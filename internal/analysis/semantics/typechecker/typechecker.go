@@ -1324,7 +1324,11 @@ func (c *checker) lookupConstructorType(named *typeinfo.NamedType) *typeinfo.Fun
 	if owner == nil || owner.MethodSets == nil {
 		return nil
 	}
-	methods := owner.MethodSets["*"+named.Name]
+	key, ok := c.receiverKeyFromType(&typeinfo.PointerType{IsOwn: true, Inner: named})
+	if !ok {
+		return nil
+	}
+	methods := owner.MethodSets[key]
 	if methods == nil {
 		return nil
 	}

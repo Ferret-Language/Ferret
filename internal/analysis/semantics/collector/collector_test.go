@@ -136,6 +136,49 @@ fn (p *Point) Len() i32 {
 	}
 }
 
+func TestCollectorKeepsReceiverFormMethodSetsSeparate(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn (p Point) Copy() i32 {
+    return p.X
+}
+
+fn (p &Point) Read() i32 {
+    return p.X
+}
+
+fn (p &mut Point) Bump() i32 {
+    return p.X + 1
+}
+
+fn (p *Point) Take() i32 {
+    return p.X
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
+	}
+	methodSets := result.Entry.MethodSets
+	if methodSets["Point"]["Copy"].Kind != symbols.SymbolMethod {
+		t.Fatalf("expected value receiver method set, got %#v", methodSets["Point"])
+	}
+	if methodSets["&Point"]["Read"].Kind != symbols.SymbolMethod {
+		t.Fatalf("expected immutable ref receiver method set, got %#v", methodSets["&Point"])
+	}
+	if methodSets["&mut Point"]["Bump"].Kind != symbols.SymbolMethod {
+		t.Fatalf("expected mutable ref receiver method set, got %#v", methodSets["&mut Point"])
+	}
+	if methodSets["*Point"]["Take"].Kind != symbols.SymbolMethod {
+		t.Fatalf("expected owning receiver method set, got %#v", methodSets["*Point"])
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
