@@ -50,11 +50,11 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 [*] Update prefix expression typing so `&` and `&mut` produce reference types, not pointer types.
 [*] Update dereference and field/index access rules so they operate correctly on owning pointers, references, and raw pointers.
 [*] Enforce that `^T` operations requiring safety are allowed only in `unsafe` contexts.
-[ ] Add diagnostics for illegal reference usage where the current compiler still assumes pointer behavior.
+[*] Add diagnostics for illegal reference usage where the current compiler still assumes pointer behavior.
 
 ### Phase 4: Rework parameter and receiver semantics around one rule
 
-[ ] Update function parameter semantics so `T`, `*T`, `&T`, and `&mut T` fully define copy/move/borrow behavior.
+[*] Update function parameter semantics so `T`, `*T`, `&T`, and `&mut T` fully define copy/move/borrow behavior.
 [*] Replace old receiver matching keys (`*T`, `*mut T`, `*own T`) with the new receiver forms (`T`, `*T`, `&T`, `&mut T`).
 [*] Remove old method-call auto-borrow behavior that was designed for pointer receivers.
 [*] Revisit call-site lowering so receiver passing is just ordinary first-parameter lowering under the new rules.

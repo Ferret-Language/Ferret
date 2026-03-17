@@ -1071,6 +1071,102 @@ fn bump(p &Point) void {
 	}
 }
 
+func TestTypecheckerRejectsMutableReferenceFromImmutableBinding(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn main() void {
+    let p: Point = .{}
+    let m = &mut p
+    m
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected mutable reference creation diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "cannot create mutable reference from immutable value") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected mutable reference creation diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsPlainValueForBorrowParameter(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn read(p &Point) i32 {
+    return p.X
+}
+
+fn main() i32 {
+    let p: Point = .{}
+    return read(p)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected borrow parameter diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "borrow parameter requires explicit reference argument") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected borrow parameter diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsPlainImmutableValueForMutableBorrowParameter(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X i32 = 0
+}
+
+fn bump(p &mut Point) i32 {
+    return p.X
+}
+
+fn main() i32 {
+    let p: Point = .{}
+    return bump(p)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected mutable borrow parameter diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "mutable borrow parameter requires explicit `&mut` argument") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected mutable borrow parameter diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerUsesBuiltInBoolConstants(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

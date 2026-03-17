@@ -433,6 +433,15 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 		c.info.BindNode(expr, typ)
 		return typ
 	case "&mut":
+		addressable, mutable := c.exprAccess(scope, expr.Right)
+		if !addressable || !mutable {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot create mutable reference from immutable value").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "`&mut` requires mutable, addressable access"),
+			)
+		}
 		typ := &typeinfo.RefType{Mutable: true, Inner: right}
 		c.info.BindNode(expr, typ)
 		return typ
@@ -938,12 +947,52 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 		}
 		argType := c.typeOfExpr(scope, arg, expected)
 		if expected != nil {
+			if !c.checkReferenceArg(scope, arg, expected, argType) {
+				continue
+			}
 			c.checkAssignable(arg.Loc(), expected, argType)
 		}
 		if i < len(fnType.ComptimeParams) && fnType.ComptimeParams[i] {
 			c.requireConstExpr(scope, arg, "argument to comptime parameter must be compile-time evaluable")
 		}
 	}
+}
+
+func (c *checker) checkReferenceArg(scope *refineScope, arg ast.Expr, expected, got typeinfo.Type) bool {
+	refExpected, ok := expected.(*typeinfo.RefType)
+	if !ok || refExpected == nil {
+		return true
+	}
+	refGot, gotRef := got.(*typeinfo.RefType)
+	if gotRef {
+		if refExpected.Mutable && !refGot.Mutable {
+			loc := arg.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("mutable borrow parameter requires `&mut` argument").
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, "pass a mutable reference here"),
+			)
+			return false
+		}
+		return true
+	}
+	loc := arg.Loc()
+	msg := "borrow parameter requires explicit reference argument"
+	label := "pass `&value` here"
+	if refExpected.Mutable {
+		msg = "mutable borrow parameter requires explicit `&mut` argument"
+		label = "pass `&mut value` here"
+		addressable, mutable := c.exprAccess(scope, arg)
+		if !addressable || !mutable {
+			label = "`&mut` arguments require mutable, addressable access"
+		}
+	}
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError(msg).
+			WithCode(diagnostics.ErrTypeMismatch).
+			WithPrimaryLabel(&loc, label),
+	)
+	return false
 }
 
 func (c *checker) canDeepCopyType(typ typeinfo.Type) (bool, string) {
