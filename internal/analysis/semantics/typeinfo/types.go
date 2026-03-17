@@ -208,10 +208,6 @@ type FuncType struct {
 	Params         []Type
 	ComptimeParams []bool
 	Result         Type
-	// ImplicitReceiver is set when a synthetic call needs an explicit receiver
-	// type during lowering, such as deferred destructor cleanup.
-	// MIR lowering uses this to emit an automatic address-of for the receiver.
-	ImplicitReceiver Type
 }
 
 func (t *FuncType) String() string {

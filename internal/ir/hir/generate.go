@@ -591,8 +591,7 @@ func (g *generator) generateAutoDestructorDefer(stmt ast.Stmt) Stmt {
 	call.Location = letStmt.Location
 	call.Source = nil
 	call.Callee.(*SelectorExpr).ExprType = &typeinfo.FuncType{
-		Result:           &typeinfo.BuiltinType{Name: "void"},
-		ImplicitReceiver: &typeinfo.PointerType{IsOwn: true, Inner: ident.ExprType},
+		Result: &typeinfo.BuiltinType{Name: "void"},
 	}
 	call.Callee.(*SelectorExpr).Location = letStmt.Location
 	deferred := &DeferStmt{Body: &ExprStmt{Value: call}}
