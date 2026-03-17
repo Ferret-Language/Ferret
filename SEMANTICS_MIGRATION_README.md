@@ -108,7 +108,7 @@ This plan targets `Ferret-compiler-v2/compiler` only.
 
 ### Phase 10: Cleanup, compatibility removal, and stabilization
 
-[ ] Remove old syntax, old tests, and dead compatibility code once the new model is working end-to-end.
+[*] Remove old syntax, old tests, and dead compatibility code once the new model is working end-to-end.
 [ ] Update `supported.md`, `LANG_V0_1_CORE.md`, `COMPILER_GUIDELINES.md`, and other docs to match the new semantics.
 [ ] Add end-to-end examples demonstrating `*T`, `&T`, `&mut T`, and `^T`.
 [ ] Run and fix parser, typechecker, ownership, MIR, and backend test suites.

@@ -92,9 +92,9 @@ These decisions are already part of the language design and should not drift acc
 - `!!` is the error propagation syntax
 - pointer ownership is explicit:
   - `*T`
-  - `*mut T`
-  - `*own T`
-  - `*raw T`
+  - `&T`
+  - `&mut T`
+  - `^T`
 - `defer` and `panic` are part of the core control-flow model
 - builtin functions are declared in `ferret_libs_dev/global.ferr`
 - stdlib source modules are declared in `ferret_libs_dev/std/*.ferr`

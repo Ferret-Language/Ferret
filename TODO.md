@@ -157,7 +157,7 @@ Current focus: keep MIR/backend contracts stable while tightening `match`, union
 - [x] contextual typing for `.{ ... }`
 - [x] pointer rules
 - [x] method call lookup on typed receivers
-- [x] basic receiver compatibility for value, `*T`, and `*mut T` calls
+- [x] explicit receiver-form method lookup for `T`, `*T`, `&T`, and `&mut T`
 - [x] return statement value checking
 - [x] basic `const` / `comptime` evaluation constraints
 - [x] visibility rules from naming convention
