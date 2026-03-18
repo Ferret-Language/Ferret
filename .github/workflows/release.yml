@@ -146,6 +146,8 @@ jobs:
           path: |
             dist/ferret-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
             dist/ferret-${{ matrix.os }}-${{ matrix.arch }}.zip
+            dist/ferret-toolchain-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+            dist/ferret-toolchain-${{ matrix.os }}-${{ matrix.arch }}.zip
           if-no-files-found: ignore
 
   publish:
