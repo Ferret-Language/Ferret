@@ -41,28 +41,40 @@ function Ensure-UserPathContains([string]$pathEntry) {
     [Environment]::SetEnvironmentVariable("Path", $userPath, "User")
 }
 
-$assetName = "ferret-windows-$(Get-ArchName).zip"
+$archName = Get-ArchName
+$coreAssetName = "ferret-windows-$archName.zip"
+$toolchainAssetName = "ferret-toolchain-windows-$archName.zip"
 $apiUrl = Get-ReleaseApiUrl -repoName $Repo -ver $Version
 
 Write-Host "Resolving release from $apiUrl"
 $release = Invoke-RestMethod -Uri $apiUrl -Headers @{ "User-Agent" = "ferret-installer" }
-$asset = $release.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1
-if (-not $asset) {
-    throw "Could not find release asset '$assetName' in $Repo ($Version)."
+$coreAsset = $release.assets | Where-Object { $_.name -eq $coreAssetName } | Select-Object -First 1
+if (-not $coreAsset) {
+    throw "Could not find release asset '$coreAssetName' in $Repo ($Version)."
+}
+$toolchainAsset = $release.assets | Where-Object { $_.name -eq $toolchainAssetName } | Select-Object -First 1
+if (-not $toolchainAsset) {
+    throw "Could not find release asset '$toolchainAssetName' in $Repo ($Version)."
 }
 
 $tmpDir = Join-Path $env:TEMP ("ferret-install-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tmpDir | Out-Null
 try {
-    $zipPath = Join-Path $tmpDir $assetName
-    Write-Host "Downloading $($asset.browser_download_url)"
-    Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath
+    $coreZipPath = Join-Path $tmpDir $coreAssetName
+    $toolchainZipPath = Join-Path $tmpDir $toolchainAssetName
+    Write-Host "Downloading $($coreAsset.browser_download_url)"
+    Invoke-WebRequest -Uri $coreAsset.browser_download_url -OutFile $coreZipPath
+    Write-Host "Downloading $($toolchainAsset.browser_download_url)"
+    Invoke-WebRequest -Uri $toolchainAsset.browser_download_url -OutFile $toolchainZipPath
 
     if (Test-Path $InstallDir) {
         Remove-Item -Recurse -Force $InstallDir
     }
     New-Item -ItemType Directory -Path $InstallDir | Out-Null
-    Expand-Archive -Path $zipPath -DestinationPath $InstallDir -Force
+    Expand-Archive -Path $coreZipPath -DestinationPath $InstallDir -Force
+    $toolchainDir = Join-Path $InstallDir "toolchain"
+    New-Item -ItemType Directory -Path $toolchainDir -Force | Out-Null
+    Expand-Archive -Path $toolchainZipPath -DestinationPath $toolchainDir -Force
 
     $binDir = Join-Path $InstallDir "bin"
     $ferretExe = Join-Path $binDir "ferret.exe"

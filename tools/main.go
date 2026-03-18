@@ -37,16 +37,28 @@ func run() error {
 		}
 	}
 
-	bundlePath := filepath.Join(root, "build")
-	if err := createReleaseBundle(root, bundlePath); err != nil {
+	buildDir := filepath.Join(root, "build")
+	if err := os.RemoveAll(buildDir); err != nil {
+		return fmt.Errorf("clean build dir: %w", err)
+	}
+	if err := os.MkdirAll(buildDir, 0o755); err != nil {
+		return fmt.Errorf("create build dir: %w", err)
+	}
+
+	coreBundlePath := filepath.Join(buildDir, "core")
+	if err := createCoreBundle(root, coreBundlePath); err != nil {
 		return err
 	}
-	fmt.Printf("packaged %s\n", bundlePath)
+
+	toolchainBundlePath := filepath.Join(buildDir, "toolchain")
+	if err := createToolchainBundle(toolchainBundlePath); err != nil {
+		return err
+	}
+	fmt.Printf("packaged %s and %s\n", coreBundlePath, toolchainBundlePath)
 	return nil
 }
 
-func createReleaseBundle(root, bundleDir string) error {
-
+func createCoreBundle(root, bundleDir string) error {
 	if err := os.RemoveAll(bundleDir); err != nil {
 		return fmt.Errorf("clean bundle dir: %w", err)
 	}
@@ -73,8 +85,28 @@ func createReleaseBundle(root, bundleDir string) error {
 		return err
 	}
 
-	toolchainBinDir := filepath.Join(bundleDir, "toolchain", "bin")
-	toolchainLibDir := filepath.Join(bundleDir, "toolchain", "lib")
+	for _, file := range []string{"README.md", "LICENSE"} {
+		src := filepath.Join(root, file)
+		if info, err := os.Stat(src); err == nil && !info.IsDir() {
+			if err := copyFile(src, filepath.Join(bundleDir, file)); err != nil {
+				return fmt.Errorf("copy %s: %w", file, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+func createToolchainBundle(bundleDir string) error {
+	if err := os.RemoveAll(bundleDir); err != nil {
+		return fmt.Errorf("clean toolchain bundle dir: %w", err)
+	}
+	if err := os.MkdirAll(bundleDir, 0o755); err != nil {
+		return fmt.Errorf("create toolchain bundle dir: %w", err)
+	}
+
+	toolchainBinDir := filepath.Join(bundleDir, "bin")
+	toolchainLibDir := filepath.Join(bundleDir, "lib")
 	if err := os.MkdirAll(toolchainBinDir, 0o755); err != nil {
 		return fmt.Errorf("create toolchain/bin dir: %w", err)
 	}
@@ -123,15 +155,6 @@ func createReleaseBundle(root, bundleDir string) error {
 	}
 	if err := copyToolchainSharedLibraries(toolchainLibDir, binaries); err != nil {
 		return err
-	}
-
-	for _, file := range []string{"README.md", "LICENSE"} {
-		src := filepath.Join(root, file)
-		if info, err := os.Stat(src); err == nil && !info.IsDir() {
-			if err := copyFile(src, filepath.Join(bundleDir, file)); err != nil {
-				return fmt.Errorf("copy %s: %w", file, err)
-			}
-		}
 	}
 
 	return nil
@@ -349,6 +372,9 @@ func copyToolchainSharedLibraries(toolchainLibDir string, binaries []string) err
 	}
 	sort.Strings(paths)
 	for _, src := range paths {
+		if skipBundledSharedLibrary(src) {
+			continue
+		}
 		dst := filepath.Join(toolchainLibDir, filepath.Base(src))
 		if err := copyFile(src, dst); err != nil {
 			return fmt.Errorf("copy toolchain shared lib %s: %w", src, err)
@@ -410,6 +436,18 @@ func dependenciesFromLdd(binary string) ([]string, error) {
 		deps = append(deps, candidate)
 	}
 	return deps, nil
+}
+
+func skipBundledSharedLibrary(path string) bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	base := filepath.Base(path)
+	switch base {
+	case "libc.so.6", "libm.so.6", "libpthread.so.0", "librt.so.1", "libdl.so.2", "libresolv.so.2", "libutil.so.1", "libnsl.so.1", "libcrypt.so.1":
+		return true
+	}
+	return strings.HasPrefix(base, "ld-linux")
 }
 
 func dependenciesFromOtool(binary string) ([]string, error) {

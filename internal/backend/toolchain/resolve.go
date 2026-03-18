@@ -83,45 +83,9 @@ func EnvForBinary(binary string, baseEnv []string) []string {
 func candidateToolchainBinDirs() []string {
 	dirs := make([]string, 0, 16)
 
-	if env := strings.TrimSpace(os.Getenv(envToolchainDir)); env != "" {
-		dirs = append(dirs,
-			filepath.Join(env, "bin"),
-			env,
-		)
-	}
-
-	if execPath, err := os.Executable(); err == nil {
-		execDir := filepath.Dir(execPath)
-		dirs = append(dirs,
-			filepath.Join(execDir, "..", "toolchain", "bin"),
-			filepath.Join(execDir, "toolchain", "bin"),
-		)
-	}
-
-	if wd, err := os.Getwd(); err == nil {
-		for current := wd; ; current = filepath.Dir(current) {
-			dirs = append(dirs, filepath.Join(current, "toolchain", "bin"))
-			parent := filepath.Dir(current)
-			if parent == current {
-				break
-			}
-		}
-	}
-
-	seen := make(map[string]struct{}, len(dirs))
-	unique := make([]string, 0, len(dirs))
-	for _, dir := range dirs {
-		if dir == "" {
-			continue
-		}
-		clean := filepath.Clean(dir)
-		if _, ok := seen[clean]; ok {
-			continue
-		}
-		seen[clean] = struct{}{}
-		unique = append(unique, clean)
-	}
-	return unique
+	dirs = append(dirs, envToolchainBinDirs()...)
+	dirs = append(dirs, autoToolchainBinDirs()...)
+	return uniqueDirs(dirs)
 }
 
 func candidateToolchainLibDirs(binary string) []string {
@@ -135,12 +99,55 @@ func candidateToolchainLibDirs(binary string) []string {
 		)
 	}
 
-	if env := strings.TrimSpace(os.Getenv(envToolchainDir)); env != "" {
+	dirs = append(dirs, envToolchainLibDirs()...)
+	if binary == "" || isBinaryFromAutoToolchain(binary) {
+		dirs = append(dirs, autoToolchainLibDirs()...)
+	}
+	return uniqueDirs(dirs)
+}
+
+func envToolchainBinDirs() []string {
+	env := strings.TrimSpace(os.Getenv(envToolchainDir))
+	if env == "" {
+		return nil
+	}
+	return []string{
+		filepath.Join(env, "bin"),
+		env,
+	}
+}
+
+func envToolchainLibDirs() []string {
+	env := strings.TrimSpace(os.Getenv(envToolchainDir))
+	if env == "" {
+		return nil
+	}
+	return []string{filepath.Join(env, "lib")}
+}
+
+func autoToolchainBinDirs() []string {
+	dirs := make([]string, 0, 16)
+	if execPath, err := os.Executable(); err == nil {
+		execDir := filepath.Dir(execPath)
 		dirs = append(dirs,
-			filepath.Join(env, "lib"),
+			filepath.Join(execDir, "..", "toolchain", "bin"),
+			filepath.Join(execDir, "toolchain", "bin"),
 		)
 	}
+	if wd, err := os.Getwd(); err == nil {
+		for current := wd; ; current = filepath.Dir(current) {
+			dirs = append(dirs, filepath.Join(current, "toolchain", "bin"))
+			parent := filepath.Dir(current)
+			if parent == current {
+				break
+			}
+		}
+	}
+	return dirs
+}
 
+func autoToolchainLibDirs() []string {
+	dirs := make([]string, 0, 16)
 	if execPath, err := os.Executable(); err == nil {
 		execDir := filepath.Dir(execPath)
 		dirs = append(dirs,
@@ -148,7 +155,6 @@ func candidateToolchainLibDirs(binary string) []string {
 			filepath.Join(execDir, "toolchain", "lib"),
 		)
 	}
-
 	if wd, err := os.Getwd(); err == nil {
 		for current := wd; ; current = filepath.Dir(current) {
 			dirs = append(dirs, filepath.Join(current, "toolchain", "lib"))
@@ -158,8 +164,20 @@ func candidateToolchainLibDirs(binary string) []string {
 			}
 		}
 	}
-
 	return dirs
+}
+
+func isBinaryFromAutoToolchain(binary string) bool {
+	if binary == "" {
+		return false
+	}
+	binDir := filepath.Clean(filepath.Dir(binary))
+	for _, dir := range uniqueDirs(autoToolchainBinDirs()) {
+		if binDir == dir {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeNames(names []string) []string {
@@ -242,6 +260,23 @@ func uniqueExistingDirs(dirs []string) []string {
 		}
 		info, err := os.Stat(clean)
 		if err != nil || !info.IsDir() {
+			continue
+		}
+		seen[clean] = struct{}{}
+		out = append(out, clean)
+	}
+	return out
+}
+
+func uniqueDirs(dirs []string) []string {
+	seen := make(map[string]struct{}, len(dirs))
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		clean := filepath.Clean(dir)
+		if _, ok := seen[clean]; ok {
 			continue
 		}
 		seen[clean] = struct{}{}
