@@ -38,7 +38,13 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.25.0"
+          check-latest: true
+
+      - name: Verify Go toolchain
+        run: |
+          which go
+          go version
 
       - name: Install LLVM toolchain (linux)
         if: matrix.os == 'linux'
