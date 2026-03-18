@@ -158,13 +158,19 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 	switch t := typ.(type) {
 	case *ast.PointerType:
 		p.validateType(t.Inner)
+	case *ast.RefType:
+		p.validateType(t.Inner)
+	case *ast.RawPtrType:
+		p.validateType(t.Inner)
 	case *ast.OptionalType:
 		p.validateType(t.Inner)
 	case *ast.ErrorUnionType:
 		p.validateType(t.Error)
 		p.validateType(t.Value)
 	case *ast.ArrayType:
-		p.validateExpr(t.Size)
+		if ident, ok := t.Size.(*ast.Ident); !ok || ident.Text() != "_" {
+			p.validateExpr(t.Size)
+		}
 		p.validateType(t.Inner)
 	case *ast.TupleType:
 		for _, elem := range t.Elems {
@@ -173,23 +179,6 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 	case *ast.StructType:
 		seenFields := make(map[string]source.Location)
 		for _, field := range t.Fields {
-			if field == nil {
-				continue
-			}
-			name := field.Name.Text()
-			if prev, ok := seenFields[name]; ok {
-				p.reportDuplicateDeclName(
-					fmt.Sprintf("duplicate field %q", name),
-					field.Location,
-					prev,
-				)
-			} else {
-				seenFields[name] = field.Location
-			}
-			p.validateType(field.Type)
-			p.validateExpr(field.Default)
-		}
-		for _, field := range t.StaticFields {
 			if field == nil {
 				continue
 			}
@@ -328,7 +317,15 @@ func renderType(typ ast.TypeExpr) string {
 	case *ast.NamedType:
 		return fmt.Sprintf("named:%v", t.Path)
 	case *ast.PointerType:
-		return fmt.Sprintf("ptr(own=%t,raw=%t,mut=%t,%s)", t.IsOwn, t.IsRaw, t.IsMut, renderType(t.Inner))
+		return fmt.Sprintf("ptr(%s)", renderType(t.Inner))
+	case *ast.RefType:
+		prefix := "&"
+		if t.Mutable {
+			prefix = "&mut "
+		}
+		return prefix + renderType(t.Inner)
+	case *ast.RawPtrType:
+		return "^" + renderType(t.Inner)
 	case *ast.OptionalType:
 		return "?" + renderType(t.Inner)
 	case *ast.ErrorUnionType:

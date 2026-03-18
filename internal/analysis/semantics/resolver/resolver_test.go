@@ -9,7 +9,7 @@ import (
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 )
 
@@ -19,22 +19,21 @@ func TestResolverBindsQualifiedPaths(t *testing.T) {
 import "util/build" as build
 
 type Point struct {
-    x i32 = 0
+    X: i32 = 0
 }
 
 fn main() i32 {
     let p: Point = .{}
-    return build::Origin().x
+    return build::Point::Origin().X
 }
 `)
 	mustWriteResolver(t, filepath.Join(root, "util", "build.ferr"), `
 type Point struct {
-    x i32 = 0
-    static Origin Point = .{}
+    X: i32 = 0
 }
 
-fn Origin() Point {
-    return Point::Origin
+fn Point::Origin() Point {
+    return .{}
 }
 `)
 
@@ -74,26 +73,6 @@ fn Origin() Point {
 		t.Fatalf("expected fully resolved symbol, got %#v", resolution.Remaining)
 	}
 
-	utilMod := findModuleByImportPath(t, result.Modules, "util/build")
-	originFn := findFunc(t, utilMod.AST, "Origin")
-	utilRet, ok := originFn.Body.Stmts[0].(*ast.ReturnStmt)
-	if !ok {
-		t.Fatalf("expected return stmt, got %T", originFn.Body.Stmts[0])
-	}
-	typeMember, ok := utilRet.Value.(*ast.Ident)
-	if !ok {
-		t.Fatalf("expected qualified type ident, got %T", utilRet.Value)
-	}
-	utilResolution, ok := utilMod.Bindings.Nodes[typeMember]
-	if !ok {
-		t.Fatal("expected type-qualified binding")
-	}
-	if utilResolution.Kind != binding.ResolutionSymbol || utilResolution.Symbol == nil || utilResolution.Symbol.Name != "Origin" {
-		t.Fatalf("expected static field Origin resolution, got %#v", utilResolution)
-	}
-	if len(utilResolution.Remaining) != 0 {
-		t.Fatalf("expected fully resolved static member, got %#v", utilResolution.Remaining)
-	}
 }
 
 func TestResolverBindsImportedTypeMembers(t *testing.T) {
@@ -134,7 +113,7 @@ type Color enum {
 func TestResolverBindsLabels(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
-fn run(items [3]i32) void {
+fn run(items: [3]i32) void {
     outer: for items |v| {
         inner: while 1 < 2 {
             break outer
@@ -168,14 +147,14 @@ func TestResolverBindsDeclarationIdents(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    x i32 = 0
+    x: i32 = 0
 }
 
-fn (p Point) get() i32 {
+fn (p: Point) get() i32 {
     return p.x
 }
 
-fn run(items [3]i32) void {
+fn run(items: [3]i32) void {
     let x = 1
     const y = 2
     for items |i, v| {
@@ -300,7 +279,7 @@ fn main() i32 {
 }
 `)
 	mustWriteResolver(t, filepath.Join(root, "ferret_libs_dev", "std", "math.ferr"), `
-fn ClampToZero(value i32) i32 {
+fn ClampToZero(value: i32) i32 {
     return value
 }
 `)
@@ -369,7 +348,10 @@ fn main() i32 {
 `)
 	mustWriteResolver(t, filepath.Join(root, "util", "build.ferr"), `
 type Point struct {
-    static origin i32 = 1
+}
+
+fn Point::origin() i32 {
+    return 1
 }
 `)
 

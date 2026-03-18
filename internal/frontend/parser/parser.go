@@ -385,7 +385,7 @@ func (p *Parser) parseNamePath() []string {
 
 func (p *Parser) startsType() bool {
 	switch p.current().Kind {
-	case tokens.IDENT, tokens.QUESTION, tokens.OWN, tokens.RAW, tokens.ASTERISK,
+	case tokens.IDENT, tokens.QUESTION, tokens.AMP, tokens.CARET, tokens.ASTERISK,
 		tokens.LBRACK, tokens.LPAREN, tokens.STRUCT, tokens.INTERFACE, tokens.ENUM,
 		tokens.UNION, tokens.ERROR:
 		return true

@@ -1,9 +1,0 @@
-type Point struct {
-    x i32 = 0
-    y i32 = 0
-}
-
-fn build() Point {
-    let p: Point = .{ .x = 1, 2 }
-    return p
-}

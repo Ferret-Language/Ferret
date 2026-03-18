@@ -6,9 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
 )
 
@@ -16,14 +17,14 @@ func TestPipelineGeneratesMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
-    Y i32 = 0
+    X: i32 = 0
+    Y: i32 = 0
 }
 
 let mut GlobalPoint: Point = .{ .X = 1, .Y = 2 }
 
 fn main() i32 {
-    let mut p = copy GlobalPoint
+    let mut p = GlobalPoint
     if p.X > 0 {
         p.X = p.X + 1
     }
@@ -96,9 +97,322 @@ fn main() i32 {
 	if !strings.Contains(text, "type Point struct") {
 		t.Fatalf("expected type declaration in mir dump, got %q", text)
 	}
-	if !strings.Contains(text, "X i32 = 0") || !strings.Contains(text, "Y i32 = 0") {
+	if !strings.Contains(text, "X: i32 = 0") || !strings.Contains(text, "Y: i32 = 0") {
 		t.Fatalf("expected field defaults in mir dump, got %q", text)
 	}
+}
+
+func TestPipelineNormalizesMethodReceiverAsFirstArgument(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn (p: &mut Point) Bump() i32 {
+    return p.X + 1
+}
+
+fn main() i32 {
+    let mut p: Point = .{ .X = 1 }
+    return (&mut p).Bump()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			compute, ok := instr.(*mir.ComputeInstr)
+			if !ok {
+				continue
+			}
+			call, ok := compute.Value.(*mir.CallValue)
+			if !ok || !hasCallNamed(call, "Bump") {
+				continue
+			}
+			if len(call.Args) == 0 {
+				t.Fatalf("expected normalized receiver arg, got %#v", call)
+			}
+			refType, ok := call.Args[0].Type().(*typeinfo.RefType)
+			if !ok || !refType.Mutable {
+				t.Fatalf("expected explicit mutable ref receiver as first argument, got %T %#v", call.Args[0].Type(), call.Args[0].Type())
+			}
+			return
+		}
+	}
+	t.Fatalf("expected normalized Bump call in MIR, got %#v", mainFn.Blocks)
+}
+
+func TestPipelineNormalizesAttachedReferenceReceiverFromValueCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn Point::Bump(&mut self) i32 {
+    self.X++
+    return self.X
+}
+
+fn main() i32 {
+    let mut p: Point = .{ .X = 1 }
+    return p.Bump()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			compute, ok := instr.(*mir.ComputeInstr)
+			if !ok {
+				continue
+			}
+			call, ok := compute.Value.(*mir.CallValue)
+			if !ok || !hasCallNamed(call, "Bump") {
+				continue
+			}
+			if len(call.Args) == 0 {
+				t.Fatalf("expected normalized receiver arg, got %#v", call)
+			}
+			refType, ok := call.Args[0].Type().(*typeinfo.RefType)
+			if !ok || !refType.Mutable {
+				t.Fatalf("expected implicit mutable ref receiver as first argument, got %T %#v", call.Args[0].Type(), call.Args[0].Type())
+			}
+			return
+		}
+	}
+	t.Fatalf("expected normalized Bump call in MIR, got %#v", mainFn.Blocks)
+}
+
+func TestPipelineLowersInterfaceCoercionWithMutableReceiver(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Reader interface {
+    read(&mut self, buf: []u8) i32
+}
+
+type File struct {
+    value: i32 = 0
+}
+
+fn File::read(&mut self, buf: []u8) i32 {
+    return self.value
+}
+
+fn main() i32 {
+    let mut f: File = .{ .value = 7 }
+    let r: Reader = &mut f
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			var value mir.Value
+			switch ins := instr.(type) {
+			case *mir.AssignInstr:
+				value = ins.Value
+			case *mir.ComputeInstr:
+				value = ins.Value
+			case *mir.EvalInstr:
+				value = ins.Value
+			}
+			if value == nil {
+				continue
+			}
+			iface, ok := value.(*mir.InterfaceValue)
+			if !ok {
+				continue
+			}
+			refType, ok := iface.ConcreteType.(*typeinfo.RefType)
+			if !ok || !refType.Mutable {
+				t.Fatalf("expected mutable reference concrete type, got %T %#v", iface.ConcreteType, iface.ConcreteType)
+			}
+			named, ok := refType.Inner.(*typeinfo.NamedType)
+			if !ok || named.Name != "File" {
+				t.Fatalf("expected &mut File concrete type, got %#v", iface.ConcreteType)
+			}
+			if len(iface.Methods) != 1 {
+				t.Fatalf("expected one interface method link, got %#v", iface.Methods)
+			}
+			path := iface.Methods[0].Path
+			if len(path) == 0 {
+				t.Fatalf("expected method link path, got %#v", iface.Methods[0])
+			}
+			last := path[len(path)-1]
+			if last != "File__read" && !strings.HasSuffix(last, "__File__read") {
+				t.Fatalf("expected File__read method link, got %#v", iface.Methods[0])
+			}
+			return
+		}
+	}
+	t.Fatalf("expected lowered interface coercion in MIR, got %#v", mainFn.Blocks)
+}
+
+func TestPipelineLowersRawAddressOperator(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn main() i32 {
+    let mut p: Point = .{}
+    unsafe {
+        let rp = @mut p
+        let x = (*rp).X
+        return x
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			var value mir.Value
+			var typ typeinfo.Type
+			switch ins := instr.(type) {
+			case *mir.BindInstr:
+				if ins.Name != "rp" {
+					continue
+				}
+				value, typ = ins.Value, ins.Type
+			case *mir.AssignInstr:
+				value = ins.Value
+			case *mir.ComputeInstr:
+				value, typ = ins.Value, ins.Type
+			default:
+				continue
+			}
+			addr, ok := value.(*mir.AddrOfValue)
+			if !ok || !addr.Raw || !addr.Mutable {
+				continue
+			}
+			if typ == nil {
+				typ = value.Type()
+			}
+			if _, ok := typ.(*typeinfo.RawPtrType); !ok {
+				t.Fatalf("expected raw pointer type, got %#v", typ)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected lowered raw address bind in MIR, got %#v", mainFn.Blocks)
+}
+
+func TestPipelineLowersStringLiteralDataAsRawPointer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn main() str {
+    return "hi"
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			compute, ok := instr.(*mir.ComputeInstr)
+			if !ok {
+				continue
+			}
+			comp, ok := compute.Value.(*mir.CompositeValue)
+			if !ok {
+				continue
+			}
+			for _, item := range comp.Items {
+				if item.Name != "ptr" {
+					continue
+				}
+				if _, ok := item.Value.Type().(*typeinfo.RawPtrType); !ok {
+					t.Fatalf("expected string ptr item to lower as raw pointer, got %T %#v", item.Value.Type(), item.Value.Type())
+				}
+				return
+			}
+		}
+	}
+	t.Fatalf("expected lowered string composite in MIR, got %#v", mainFn.Blocks)
 }
 
 func TestPipelinePreservesAnnotatedUnionLocalTypeInMIR(t *testing.T) {
@@ -126,8 +440,8 @@ fn main() i32 {
 	if len(fn.Locals) != 1 {
 		t.Fatalf("expected one MIR local, got %#v", fn.Locals)
 	}
-	if got := fn.Locals[0].Type.String(); got != "local:main::Token" {
-		t.Fatalf("expected MIR local type local:main::Token, got %q", got)
+	if got := fn.Locals[0].Type.String(); got != "Token" {
+		t.Fatalf("expected MIR local type Token, got %q", got)
 	}
 	text := mir.FormatModule(result.Entry.MIR)
 	if !strings.Contains(text, "value: Token") {
@@ -139,10 +453,10 @@ func TestPipelineGeneratesExplicitAddrOfAndLoadInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn probe(p *own Point) void {
+fn probe(p: *Point) void {
     let q = &*p
     q
 }
@@ -275,26 +589,29 @@ fn run() i32 {
 	}
 }
 
-func TestPipelineLowersStaticFieldConstructorAndDestructorToMIR(t *testing.T) {
+func TestPipelineDoesNotLowerImplicitLifecycleHooksToMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
-    Y i32 = 0
-    static Origin Point = .{}
+    X: i32 = 0
+    Y: i32 = 0
 }
 
-fn (p *mut Point) Point() {
+fn Point::New() Point {
+    return .{}
+}
+
+fn (p: *Point) Bump() {
 	p.Y = p.Y + 1
 }
 
-fn (p *own Point) ~Point() void {
-    p.X = 0
+fn Point::Drop(*self) void {
+    _ = self
 }
 
 fn main() i32 {
 	let p: Point = .{ .X = 3, .Y = 4 }
-    let q = Point::Origin
+    let q: Point = .{}
     return p.X + q.X
 }
 `)
@@ -305,17 +622,6 @@ fn main() i32 {
 	}
 	if result.Entry == nil || result.Entry.MIR == nil {
 		t.Fatalf("expected MIR module, got %#v", result.Entry)
-	}
-
-	foundStaticGlobal := false
-	for _, global := range result.Entry.MIR.Globals {
-		if global != nil && global.Name == "Point__Origin" {
-			foundStaticGlobal = true
-			break
-		}
-	}
-	if !foundStaticGlobal {
-		t.Fatalf("expected synthesized static global Point__Origin, got %#v", result.Entry.MIR.Globals)
 	}
 
 	var mainFn *mir.Function
@@ -329,35 +635,19 @@ fn main() i32 {
 		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
 	}
 
-	foundImplicitConstructor := false
-	foundDestructorDefer := false
 	for _, block := range mainFn.Blocks {
 		for _, instr := range block.Instructions {
 			switch ins := instr.(type) {
 			case *mir.AssignInstr:
-				if comp, ok := ins.Value.(*mir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
-					foundImplicitConstructor = true
-				}
+				_ = ins
 			case *mir.ComputeInstr:
-				if comp, ok := ins.Value.(*mir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
-					foundImplicitConstructor = true
-				}
+				_ = ins
 			case *mir.EvalInstr:
-				if comp, ok := ins.Value.(*mir.CompositeValue); ok && hasConstructorPath(comp, "Point") {
-					foundImplicitConstructor = true
-				}
+				_ = ins
 			case *mir.DeferInstr:
-				if deferContainsCallNamed(ins, "~Point") {
-					foundDestructorDefer = true
-				}
+				t.Fatalf("did not expect implicit defer in MIR, got %#v", ins)
 			}
 		}
-	}
-	if !foundImplicitConstructor {
-		t.Fatal("expected implicit constructor metadata on lowered composite literal")
-	}
-	if !foundDestructorDefer {
-		t.Fatal("expected destructor defer in lowered MIR")
 	}
 }
 

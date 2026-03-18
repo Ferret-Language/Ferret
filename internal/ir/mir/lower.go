@@ -1,7 +1,7 @@
 package mir
 
 import (
-	"compiler/internal/analysis/cfg/model"
+	cfg "compiler/internal/analysis/cfg/model"
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -52,7 +52,6 @@ func lowerTypeDecl(decl *hir.TypeDecl) *TypeDecl {
 	}
 	out := &TypeDecl{
 		Name:       decl.Name,
-		IsMove:     decl.IsMove,
 		Named:      decl.Named,
 		Underlying: decl.Underlying,
 		Location:   decl.Location,
@@ -80,25 +79,13 @@ func lowerStructTypeDecl(decl *hir.StructTypeDecl) *StructTypeDecl {
 		return nil
 	}
 	out := &StructTypeDecl{
-		Fields:       make([]*StructFieldDecl, 0, len(decl.Fields)),
-		StaticFields: make([]*StructFieldDecl, 0, len(decl.StaticFields)),
+		Fields: make([]*StructFieldDecl, 0, len(decl.Fields)),
 	}
 	for _, field := range decl.Fields {
 		if field == nil {
 			continue
 		}
 		out.Fields = append(out.Fields, &StructFieldDecl{
-			Name:     field.Name,
-			Type:     field.Type,
-			Default:  lowerValue(nil, field.Default),
-			Location: field.Location,
-		})
-	}
-	for _, field := range decl.StaticFields {
-		if field == nil {
-			continue
-		}
-		out.StaticFields = append(out.StaticFields, &StructFieldDecl{
 			Name:     field.Name,
 			Type:     field.Type,
 			Default:  lowerValue(nil, field.Default),
@@ -114,10 +101,12 @@ func lowerInterfaceTypeDecl(decl *hir.InterfaceTypeDecl) *InterfaceTypeDecl {
 	}
 	out := &InterfaceTypeDecl{Methods: make([]*InterfaceMethodDecl, 0, len(decl.Methods))}
 	for _, method := range decl.Methods {
-		if method == nil {
+		if method == nil || method.Static {
 			continue
 		}
 		entry := &InterfaceMethodDecl{
+			Receiver: method.Receiver,
+			Static:   method.Static,
 			Name:     method.Name,
 			Result:   method.Result,
 			Location: method.Location,
@@ -196,6 +185,7 @@ func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts 
 			Name:       param.Name,
 			LocalID:    param.LocalID,
 			Type:       param.Type,
+			IsMutable:  param.IsMutable,
 			IsComptime: param.IsComptime,
 			Location:   param.Location,
 		})
@@ -237,6 +227,9 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 	case *hir.ExprStmt:
 		return &EvalInstr{baseInstr: baseInstr{Location: s.Loc()}, Value: lowerValue(lowerCtx, s.Value)}
 	case *hir.AssignStmt:
+		if ident, ok := s.Left.(*hir.Ident); ok && len(ident.Path) == 1 && ident.Path[0] == "_" {
+			return &EvalInstr{baseInstr: baseInstr{Location: s.Loc()}, Value: lowerValue(lowerCtx, s.Right)}
+		}
 		if target := lowerAssignableTarget(lowerCtx, s.Left); target != nil {
 			return &StoreInstr{baseInstr: baseInstr{Location: s.Loc()}, Target: target, Value: lowerCoercedValue(lowerCtx, s.Right, s.Left.Type())}
 		}
@@ -381,7 +374,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.StringLit:
 		if _, isString := e.Type().(*typeinfo.StringType); isString {
 			// String literal as str: produce a { ptr, len } composite.
-			ptrType := &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
+			ptrType := &typeinfo.RawPtrType{Inner: &typeinfo.BuiltinType{Name: "u8"}}
 			ptrVal := &StringValue{baseValue: baseValue{Location: e.Loc(), ExprType: ptrType}, Value: e.Value}
 			lenVal := &NumberValue{baseValue: baseValue{ExprType: &typeinfo.BuiltinType{Name: "usize"}}, Value: strconv.FormatUint(uint64(len(e.Value)), 10)}
 			return &CompositeValue{
@@ -398,9 +391,13 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.PrefixExpr:
 		switch e.Op {
 		case "&":
-			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: false}
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: false}
 		case "&mut":
-			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerValue(lowerCtx, e.Right), Mutable: true}
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: true}
+		case "@":
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: false, Raw: true}
+		case "@mut":
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: true, Raw: true}
 		case "*":
 			return &LoadValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Pointer: lowerValue(lowerCtx, e.Right)}
 		default:
@@ -436,19 +433,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 					return out
 				}
 				if named := lowerReceiverNamed(sel.Left.Type()); named != nil {
-					receiver := lowerValue(lowerCtx, sel.Left)
-					// Auto-borrow: if the typechecker determined the method needs a
-					// pointer receiver but the call-site has a plain value, emit
-					// an address-of (the ImplicitReceiver type carries the pointer kind).
-					if fnType, ok := sel.Type().(*typeinfo.FuncType); ok && fnType.ImplicitReceiver != nil {
-						if ptrType, ok := fnType.ImplicitReceiver.(*typeinfo.PointerType); ok {
-							receiver = &AddrOfValue{
-								baseValue: baseValue{Location: sel.Loc(), ExprType: ptrType},
-								Source:    receiver,
-								Mutable:   ptrType.IsMut,
-							}
-						}
-					}
+					receiver := lowerMethodReceiverValue(lowerCtx, sel.Left, e.MethodReceiver)
 					path := lowerMethodSymbolPath(lowerCtx, named, sel.Name)
 					callee := &NameValue{
 						baseValue: baseValue{Location: sel.Loc(), ExprType: sel.Type()},
@@ -458,7 +443,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 						baseValue:    baseValue{Location: e.Loc(), ExprType: e.Type()},
 						Callee:       callee,
 						Args:         make([]Value, 0, 1+len(e.Args)),
-						ReceiverType: sel.Left.Type(),
+						ReceiverType: e.MethodReceiver,
 					}
 					out.Args = append(out.Args, receiver)
 					for _, arg := range e.Args {
@@ -810,6 +795,33 @@ func lookupErrorOrdinal(typ typeinfo.Type, name string) (int, bool) {
 	return 0, false
 }
 
+func lowerAddrSource(c *lowerContext, expr hir.Expr) Value {
+	if expr == nil {
+		return nil
+	}
+	if resolved := lowerResolvedName(c, expr.SourceExpr(), expr.Loc(), expr.Type()); resolved != nil {
+		return resolved
+	}
+	return lowerValue(c, expr)
+}
+
+func lowerMethodReceiverValue(c *lowerContext, expr hir.Expr, receiverType typeinfo.Type) Value {
+	if expr == nil {
+		return nil
+	}
+	if receiverType == nil || typeinfo.Equal(expr.Type(), receiverType) {
+		return lowerValue(c, expr)
+	}
+	if ref, ok := receiverType.(*typeinfo.RefType); ok {
+		return &AddrOfValue{
+			baseValue: baseValue{Location: expr.Loc(), ExprType: receiverType},
+			Source:    lowerAddrSource(c, expr),
+			Mutable:   ref.Mutable,
+		}
+	}
+	return lowerValue(c, expr)
+}
+
 func lowerNameValue(c *lowerContext, source ast.Expr, loc source.Location, typ typeinfo.Type, fallback []string) Value {
 	if resolved := lowerResolvedName(c, source, loc, typ); resolved != nil {
 		return resolved
@@ -822,7 +834,7 @@ func canonicalResolvedPath(c *lowerContext, resolution *binding.Resolution) []st
 		return nil
 	}
 	name := resolution.Symbol.Name
-	if resolution.Symbol.Kind == symbols.SymbolStatic && resolution.Symbol.OwnerType != "" {
+	if (resolution.Symbol.Kind == symbols.SymbolStatic || resolution.Symbol.Kind == symbols.SymbolFunc) && resolution.Symbol.OwnerType != "" {
 		name = resolution.Symbol.OwnerType + "__" + name
 	}
 	if resolution.ImportPath == "" || resolution.ImportPath == c.importPath {
@@ -836,6 +848,10 @@ func canonicalResolvedPath(c *lowerContext, resolution *binding.Resolution) []st
 func lowerStructView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 	switch t := typ.(type) {
 	case *typeinfo.PointerType:
+		return lowerStructView(t.Inner)
+	case *typeinfo.RefType:
+		return lowerStructView(t.Inner)
+	case *typeinfo.RawPtrType:
 		return lowerStructView(t.Inner)
 	case *typeinfo.NamedType:
 		if t.Decl == nil {
@@ -968,7 +984,7 @@ func blockID(block *cfg.Block) int {
 	return block.ID
 }
 
-// lowerReceiverNamed unwraps pointer types to get the underlying NamedType for a method receiver.
+// lowerReceiverNamed unwraps receiver view types to get the underlying NamedType for a method receiver.
 func lowerReceiverNamed(typ typeinfo.Type) *typeinfo.NamedType {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
@@ -978,6 +994,8 @@ func lowerReceiverNamed(typ typeinfo.Type) *typeinfo.NamedType {
 			}
 		}
 		return t
+	case *typeinfo.RefType:
+		return lowerReceiverNamed(t.Inner)
 	case *typeinfo.PointerType:
 		return lowerReceiverNamed(t.Inner)
 	}
@@ -985,7 +1003,7 @@ func lowerReceiverNamed(typ typeinfo.Type) *typeinfo.NamedType {
 }
 
 func lowerInterfaceCoercion(lowerCtx *lowerContext, source, target typeinfo.Type) ([]InterfaceMethodLink, typeinfo.Type, bool) {
-	targetIface, ok := lowerInterfaceMethodNames(target)
+	targetIface, ok := lowerInterfaceMethods(target)
 	if !ok {
 		return nil, nil, false
 	}
@@ -996,7 +1014,11 @@ func lowerInterfaceCoercion(lowerCtx *lowerContext, source, target typeinfo.Type
 		return nil, nil, false
 	}
 	out := make([]InterfaceMethodLink, 0, len(targetIface))
-	for _, name := range targetIface {
+	for _, method := range targetIface {
+		if method == nil || method.Static {
+			continue
+		}
+		name := method.Name.Text()
 		path, ok := lowerCtx.lookupMethod(source, name)
 		if !ok || len(path) == 0 {
 			return nil, nil, false
@@ -1006,7 +1028,7 @@ func lowerInterfaceCoercion(lowerCtx *lowerContext, source, target typeinfo.Type
 	return out, source, true
 }
 
-func lowerInterfaceMethodNames(typ typeinfo.Type) ([]string, bool) {
+func lowerInterfaceMethods(typ typeinfo.Type) ([]*ast.InterfaceMethod, bool) {
 	named, ok := typ.(*typeinfo.NamedType)
 	if !ok || named == nil || named.Decl == nil {
 		return nil, false
@@ -1015,10 +1037,10 @@ func lowerInterfaceMethodNames(typ typeinfo.Type) ([]string, bool) {
 	if !ok || ifaceDecl == nil {
 		return nil, false
 	}
-	out := make([]string, 0, len(ifaceDecl.Methods))
+	out := make([]*ast.InterfaceMethod, 0, len(ifaceDecl.Methods))
 	for _, method := range ifaceDecl.Methods {
 		if method != nil && method.Name != nil {
-			out = append(out, method.Name.Text())
+			out = append(out, method)
 		}
 	}
 	return out, true
@@ -1059,7 +1081,13 @@ func lowerMethodSymbolPath(c *lowerContext, named *typeinfo.NamedType, methodNam
 }
 
 func lowerFunctionLinkName(fn *hir.Func) string {
-	if fn == nil || fn.Receiver == nil {
+	if fn == nil {
+		return ""
+	}
+	if fn.OwnerType != "" {
+		return lowerMethodLinkLeaf(fn.OwnerType, fn.Name)
+	}
+	if fn.Receiver == nil {
 		return ""
 	}
 	if named := lowerReceiverNamed(fn.Receiver.Type); named != nil {

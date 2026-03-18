@@ -18,7 +18,6 @@ type Module struct {
 
 type TypeDecl struct {
 	Name       string
-	IsMove     bool
 	Named      *typeinfo.NamedType
 	Underlying typeinfo.Type
 	Struct     *StructTypeDecl
@@ -31,8 +30,7 @@ type TypeDecl struct {
 }
 
 type StructTypeDecl struct {
-	Fields       []*StructFieldDecl
-	StaticFields []*StructFieldDecl
+	Fields []*StructFieldDecl
 }
 
 type StructFieldDecl struct {
@@ -47,6 +45,8 @@ type InterfaceTypeDecl struct {
 }
 
 type InterfaceMethodDecl struct {
+	Receiver string
+	Static   bool
 	Name     string
 	Params   []*Param
 	Result   typeinfo.Type
@@ -77,6 +77,8 @@ type Global struct {
 
 type Func struct {
 	Name       string
+	OwnerType  string
+	IsStatic   bool
 	IsUnsafe   bool
 	IsBuiltin  bool
 	IsExtern   bool
@@ -96,6 +98,7 @@ type Param struct {
 	Name       string
 	LocalID    int
 	Type       typeinfo.Type
+	IsMutable  bool
 	IsComptime bool
 	Location   source.Location
 }

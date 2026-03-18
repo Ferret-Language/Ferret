@@ -38,12 +38,11 @@ func findDiagnosticWithMessage(diag *diagnostics.Bag, substr string) *diagnostic
 func TestParseMethodReceiverAndLiteral(t *testing.T) {
 	src := `
 type Point struct {
-    x i32 = 0
-    y i32 = 0
-    static origin Point = .{}
+    x: i32 = 0
+    y: i32 = 0
 }
-fn (p Point) len2() i32 {
-    if p == .{ .x = 1, .y = 2 } {
+fn Point::len2(self) i32 {
+    if self == .{ .x = 1, .y = 2 } {
         return 1
     }
     return 0
@@ -65,19 +64,25 @@ fn (p Point) len2() i32 {
 	if !ok {
 		t.Fatalf("expected struct type, got %T", typ.Type)
 	}
-	if len(st.Fields) != 2 || len(st.StaticFields) != 1 {
-		t.Fatalf("expected 2 instance fields and 1 static field, got %#v", st)
+	if len(st.Fields) != 2 {
+		t.Fatalf("expected 2 instance fields, got %#v", st)
 	}
 	fn, ok := mod.Decls[1].(*ast.FuncDecl)
 	if !ok {
 		t.Fatalf("expected func decl, got %T", mod.Decls[1])
 	}
-	if fn.Receiver == nil || fn.Receiver.Name.Text() != "p" {
-		t.Fatalf("expected receiver p, got %#v", fn.Receiver)
+	if fn.OwnerType == nil || len(fn.OwnerType.Path) == 0 || fn.OwnerType.Path[len(fn.OwnerType.Path)-1] != "Point" {
+		t.Fatalf("expected owner type Point, got %#v", fn.OwnerType)
+	}
+	if fn.IsStatic {
+		t.Fatalf("expected instance method")
+	}
+	if fn.Receiver == nil || fn.Receiver.Name.Text() != "self" {
+		t.Fatalf("expected receiver self, got %#v", fn.Receiver)
 	}
 }
 
-func TestParseMoveTypeDecl(t *testing.T) {
+func TestParserRejectsMoveTypeDecl(t *testing.T) {
 	src := `
 type Handle move enum {
     stdin,
@@ -86,28 +91,65 @@ type Handle move enum {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", got)
-	}
 	if len(mod.Decls) != 1 {
 		t.Fatalf("expected 1 decl, got %d", len(mod.Decls))
+	}
+	found := false
+	for _, d := range diag.All() {
+		if strings.Contains(d.Message, "`type Name move ...` is no longer supported") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected move-type rejection diagnostic, got %v", diag.All())
+	}
+}
+
+func TestParseInterfaceReceiverModifiers(t *testing.T) {
+	src := `
+type Reader interface {
+    read(self, buf: []u8) i32
+    peek(&self) u8
+    refill(&mut self) i32
+    close(*self) void
+    New() Reader
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	typ, ok := mod.Decls[0].(*ast.TypeDecl)
 	if !ok {
 		t.Fatalf("expected type decl, got %T", mod.Decls[0])
 	}
-	if !typ.IsMove {
-		t.Fatal("expected move-marked type declaration")
+	iface, ok := typ.Type.(*ast.InterfaceType)
+	if !ok {
+		t.Fatalf("expected interface type, got %T", typ.Type)
 	}
-	if _, ok := typ.Type.(*ast.EnumType); !ok {
-		t.Fatalf("expected enum type, got %T", typ.Type)
+	if got := iface.Methods[0].Receiver; got != "" {
+		t.Fatalf("expected value receiver, got %q", got)
+	}
+	if got := iface.Methods[1].Receiver; got != "&" {
+		t.Fatalf("expected & receiver, got %q", got)
+	}
+	if got := iface.Methods[2].Receiver; got != "&mut " {
+		t.Fatalf("expected &mut receiver, got %q", got)
+	}
+	if got := iface.Methods[3].Receiver; got != "*" {
+		t.Fatalf("expected * receiver, got %q", got)
+	}
+	if !iface.Methods[4].Static {
+		t.Fatalf("expected static method")
 	}
 }
 
 func TestParseIfAttributeOnTypeDecl(t *testing.T) {
 	src := `
 #[if(target_os, "linux")]
-type Handle move enum {
+type Handle enum {
     stdin,
     stdout,
 }
@@ -126,22 +168,32 @@ type Handle move enum {
 	}
 }
 
-func TestParsePointerQualifiers(t *testing.T) {
-	src := `
-type Buf struct {
-    data *own u8
-    ptr *raw mut u8
-    maybe ?*own u8
-}
+func TestParserRejectsLegacyPointerQualifiers(t *testing.T) {
+	tests := []struct {
+		name    string
+		src     string
+		message string
+	}{
+		{name: "own", src: "type Buf struct { data *own u8 }", message: "`*own T` is no longer supported; use `*T`"},
+		{name: "mut", src: "fn (b *mut Buf) grow() void {}", message: "`*mut T` is no longer supported; use `*T` or `&mut T`"},
+		{name: "raw", src: "type Buf struct { ptr *raw u8 }", message: "`*raw T` is no longer supported; use `^T`"},
+		{name: "raw mut", src: "type Buf struct { ptr *raw mut u8 }", message: "`*raw mut T` is no longer supported; use `^T`"},
+	}
 
-fn (b *mut Buf) grow(n usize) Oom!*own u8 {
-    return b.ptr
-}
-`
-
-	_, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, diag := parseTestModule(t, tt.src)
+			found := false
+			for _, d := range diag.All() {
+				if strings.Contains(d.Message, tt.message) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("expected %q diagnostic, got %v", tt.message, diag.All())
+			}
+		})
 	}
 }
 
@@ -150,7 +202,7 @@ func TestParseLetMutConstAndComptime(t *testing.T) {
 let mut GlobalCount: i32 = 0
 const BuildMode = "debug"
 
-fn add(comptime T Type, x T) T {
+fn add(comptime T: Type, x: T) T {
     let mut a: i32
     let b = comptime 1 + 2
     const local = 3
@@ -180,6 +232,9 @@ fn add(comptime T Type, x T) T {
 	if len(fn.Params) != 2 || !fn.Params[0].IsComptime {
 		t.Fatalf("expected first param to be comptime, got %#v", fn.Params)
 	}
+	if fn.Params[1].IsMut {
+		t.Fatalf("did not expect second param to be mutable, got %#v", fn.Params[1])
+	}
 	if len(fn.Body.Stmts) != 4 {
 		t.Fatalf("expected 4 statements, got %d", len(fn.Body.Stmts))
 	}
@@ -205,9 +260,29 @@ fn add(comptime T Type, x T) T {
 	}
 }
 
+func TestParseMutableParameter(t *testing.T) {
+	src := `
+fn set(mut x: i32, y: i32) i32 {
+    return x
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	if len(fn.Params) != 2 || !fn.Params[0].IsMut || fn.Params[1].IsMut {
+		t.Fatalf("expected only first param to be mutable, got %#v", fn.Params)
+	}
+}
+
 func TestParseCopyPrefixExpression(t *testing.T) {
 	src := `
-fn ClonePoint(p Point) Point {
+fn ClonePoint(p: Point) Point {
     return copy p
 }
 `
@@ -227,6 +302,19 @@ fn ClonePoint(p Point) Point {
 	prefix, ok := ret.Value.(*ast.PrefixExpr)
 	if !ok || prefix.Op != "copy" {
 		t.Fatalf("expected `copy` prefix expr, got %#v", ret.Value)
+	}
+}
+
+func TestParserRejectsTakePrefixExpression(t *testing.T) {
+	src := `
+fn MovePoint(p: *Point) *Point {
+    return take p
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "`take` is no longer supported") {
+		t.Fatalf("expected take rejection diagnostic, got %v", diag.All())
 	}
 }
 
@@ -270,7 +358,7 @@ func TestParseExternDeclarationWithLinkName(t *testing.T) {
 	src := `
 /// Writes a string to stdout.
 #[extern("ferret_io_println")]
-fn Println(text string) void;
+fn Println(text: string) void;
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -297,7 +385,7 @@ fn Println(text string) void;
 
 func TestParseCastExpression(t *testing.T) {
 	src := `
-fn CastIt(x i32) i8 {
+fn CastIt(x: i32) i8 {
     return x as i8
 }
 `
@@ -559,39 +647,34 @@ fn run() i32 {
 	}
 }
 
-func TestParseImportAliasAndDestructor(t *testing.T) {
+func TestParseImportAliasAndRejectRemovedDestructorSyntax(t *testing.T) {
 	src := `
 import "json/parser" as json
 
 type Conn struct {}
 
-fn (c *mut Conn) Conn(fd i32) {
+fn (c: *Conn) Conn(fd: i32) {
 }
 
-fn (c *own Conn) ~Conn() {
+fn (c: *Conn) ~Conn() {
 }
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", got)
-	}
 	if len(mod.Imports) != 1 || mod.Imports[0].Alias.Text() != "json" {
 		t.Fatalf("expected aliased import, got %#v", mod.Imports)
 	}
-	ctor, ok := mod.Decls[1].(*ast.FuncDecl)
-	if !ok || !ctor.IsConstructor || ctor.Name.Text() != "Conn" {
-		t.Fatalf("expected constructor method, got %#v", mod.Decls[1])
+	if got := diag.All(); len(got) == 0 {
+		t.Fatal("expected removed destructor syntax diagnostic")
 	}
-	fn, ok := mod.Decls[2].(*ast.FuncDecl)
-	if !ok || !fn.IsDestructor || fn.Name.Text() != "Conn" {
-		t.Fatalf("expected destructor method, got %#v", mod.Decls[2])
+	if !hasDiagnosticMessage(diag, "special destructor syntax has been removed") {
+		t.Fatalf("expected removed destructor syntax diagnostic, got %v", diag.All())
 	}
 }
 
 func TestParseElseIfDeferLockUnsafeAndBuiltins(t *testing.T) {
 	src := `
-fn run(m Mutex, cond bool) void {
+fn run(m: Mutex, cond: bool) void {
     if cond {
         defer release m
     } else if cond {
@@ -641,11 +724,11 @@ fn run(m Mutex, cond bool) void {
 
 func TestParseUnsafeBlockAndUnsafeFunctionCall(t *testing.T) {
 	src := `
-unsafe fn Read(ptr *raw i32) i32 {
+unsafe fn Read(ptr: ^i32) i32 {
     return *ptr
 }
 
-fn run(ptr *raw i32) i32 {
+fn run(ptr: ^i32) i32 {
     let x: i32
     unsafe {
         x = Read(ptr)
@@ -704,7 +787,7 @@ fn run(ptr *raw i32) i32 {
 
 func TestParseCatchExpressionForms(t *testing.T) {
 	src := `
-fn run(path string) i32 {
+fn run(path: string) i32 {
     let file = open(path) catch |err| {
         log(err)
         return 0
@@ -732,7 +815,7 @@ fn run(path string) i32 {
 
 func TestParseIsExpression(t *testing.T) {
 	src := `
-fn run(x i32) bool {
+fn run(x: i32) bool {
     return x is i32
 }
 `
@@ -759,7 +842,7 @@ fn run(x i32) bool {
 
 func TestParseMatchTypeArm(t *testing.T) {
 	src := `
-fn run(value Token) i32 {
+fn run(value: Token) i32 {
     match value {
         is i32 => {
             return value
@@ -790,7 +873,7 @@ fn run(value Token) i32 {
 
 func TestParseMatchExpression(t *testing.T) {
 	src := `
-fn run(value Token) i32 {
+fn run(value: Token) i32 {
     let out = match value {
         is i32 => value
         _ => 0
@@ -837,9 +920,8 @@ fn build() Point {
 func TestParserRejectsDuplicateTypeMembers(t *testing.T) {
 	src := `
 type Point struct {
-    x i32
-    static x i32
-    x i32
+    x: i32
+    x: i32
 }
 
 type Shape interface {
@@ -864,8 +946,8 @@ type Token union {
 `
 
 	_, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 6 {
-		t.Fatalf("expected 6 diagnostics, got %d: %v", len(got), got)
+	if got := diag.All(); len(got) != 5 {
+		t.Fatalf("expected 5 diagnostics, got %d: %v", len(got), got)
 	}
 	for _, substr := range []string{
 		`duplicate field "x"`,
@@ -880,11 +962,24 @@ type Token union {
 	}
 }
 
+func TestParserRejectsStaticStructFields(t *testing.T) {
+	src := `
+type Point struct {
+    static: x i32
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "static struct fields are not supported") {
+		t.Fatalf("expected static-field rejection diagnostic, got %v", diag.All())
+	}
+}
+
 func TestParserRecoversStructBodyMembers(t *testing.T) {
 	src := `
 type Point struct {
-    x =
-    y i32 = 1
+    x: =
+    y: i32 = 1
 }
 
 fn build() i32 {
@@ -1034,5 +1129,165 @@ fn main() {
 	}
 	if hasDiagnosticMessage(diag, "expected '}'") {
 		t.Fatalf("unexpected cascading expected '}' diagnostic: %v", diag.All())
+	}
+}
+
+func TestParseNewReferenceAndRawTypes(t *testing.T) {
+	src := `
+type Node struct {
+    next: *Node
+    view: &Node
+    edit: &mut Node
+    data: ^u8
+}
+
+fn Node::peek(&self) &Node {
+    return self.view
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	typ, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok {
+		t.Fatalf("expected type decl, got %T", mod.Decls[0])
+	}
+	st, ok := typ.Type.(*ast.StructType)
+	if !ok {
+		t.Fatalf("expected struct type, got %T", typ.Type)
+	}
+	if _, ok := st.Fields[0].Type.(*ast.PointerType); !ok {
+		t.Fatalf("expected owning pointer type, got %T", st.Fields[0].Type)
+	}
+	ref, ok := st.Fields[1].Type.(*ast.RefType)
+	if !ok || ref.Mutable {
+		t.Fatalf("expected immutable ref type, got %#v", st.Fields[1].Type)
+	}
+	mutRef, ok := st.Fields[2].Type.(*ast.RefType)
+	if !ok || !mutRef.Mutable {
+		t.Fatalf("expected mutable ref type, got %#v", st.Fields[2].Type)
+	}
+	if _, ok := st.Fields[3].Type.(*ast.RawPtrType); !ok {
+		t.Fatalf("expected raw ptr type, got %T", st.Fields[3].Type)
+	}
+	fn, ok := mod.Decls[1].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[1])
+	}
+	if fn.OwnerType == nil || len(fn.OwnerType.Path) == 0 || fn.OwnerType.Path[len(fn.OwnerType.Path)-1] != "Node" {
+		t.Fatalf("expected owner type Node, got %#v", fn.OwnerType)
+	}
+	recv, ok := fn.Receiver.Type.(*ast.RefType)
+	if !ok || recv.Mutable {
+		t.Fatalf("expected immutable receiver ref type, got %#v", fn.Receiver.Type)
+	}
+	ret, ok := fn.Result.(*ast.RefType)
+	if !ok || ret.Mutable {
+		t.Fatalf("expected immutable ref result type, got %#v", fn.Result)
+	}
+}
+
+func TestParseInferredArrayLengthType(t *testing.T) {
+	src := `
+fn main() {
+    let values: [_]i32 = [1, 2, 3]
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	letStmt := fn.Body.Stmts[0].(*ast.LetStmt)
+	arr, ok := letStmt.Type.(*ast.ArrayType)
+	if !ok {
+		t.Fatalf("expected array type, got %T", letStmt.Type)
+	}
+	size, ok := arr.Size.(*ast.Ident)
+	if !ok || size.Text() != "_" {
+		t.Fatalf("expected inferred array length marker, got %#v", arr.Size)
+	}
+}
+
+func TestParseStaticAttachedMethod(t *testing.T) {
+	src := `
+type Point struct {}
+
+fn Point::New() Point {
+    return .{}
+}
+`
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[1].(*ast.FuncDecl)
+	if fn.OwnerType == nil || len(fn.OwnerType.Path) == 0 || fn.OwnerType.Path[len(fn.OwnerType.Path)-1] != "Point" || !fn.IsStatic {
+		t.Fatalf("expected static attached method, got %#v", fn)
+	}
+	if fn.Receiver != nil {
+		t.Fatalf("expected no receiver for static method, got %#v", fn.Receiver)
+	}
+}
+
+func TestParseSelfTypeAndTypedCompositeLiteral(t *testing.T) {
+	src := `
+type Shape interface {
+    New() Self
+    Draw(&self)
+}
+
+type Point struct {
+    X: i32 = 0
+}
+
+fn Point::Clone(&self) Self {
+    return .Point{}
+}
+`
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	iface := mod.Decls[0].(*ast.TypeDecl).Type.(*ast.InterfaceType)
+	if _, ok := iface.Methods[0].Result.(*ast.SelfType); !ok {
+		t.Fatalf("expected Self return type, got %#v", iface.Methods[0].Result)
+	}
+	fn := mod.Decls[2].(*ast.FuncDecl)
+	if _, ok := fn.Result.(*ast.SelfType); !ok {
+		t.Fatalf("expected Self method result, got %#v", fn.Result)
+	}
+	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	lit, ok := ret.Value.(*ast.CompositeLit)
+	if !ok {
+		t.Fatalf("expected composite literal, got %T", ret.Value)
+	}
+	named, ok := lit.Type.(*ast.NamedType)
+	if !ok || len(named.Path) != 1 || named.Path[0] != "Point" {
+		t.Fatalf("expected typed composite literal .Point{}, got %#v", lit.Type)
+	}
+}
+
+func TestParseAttachedMethodWarnsOnNonSelfName(t *testing.T) {
+	src := `
+type Point struct {}
+
+fn Point::Len(this) i32 {
+    return 0
+}
+`
+	_, diag := parseTestModule(t, src)
+	found := false
+	for _, d := range diag.All() {
+		if d.Code == diagnostics.WarnNonSelfReceiverName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected non-self receiver warning, got %v", diag.All())
 	}
 }

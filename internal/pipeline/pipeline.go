@@ -8,8 +8,8 @@ import (
 	"sync"
 
 	"compiler/internal/analysis/attrfilter"
-	"compiler/internal/analysis/cfg/analysis"
-	"compiler/internal/analysis/layout/analysis"
+	cfganalysis "compiler/internal/analysis/cfg/analysis"
+	layoutanalysis "compiler/internal/analysis/layout/analysis"
 	"compiler/internal/analysis/semantics/collector"
 	"compiler/internal/analysis/semantics/ownership"
 	"compiler/internal/analysis/semantics/resolver"
@@ -230,7 +230,7 @@ func pipelineMethodLinkLeaf(sym *symbols.Symbol) string {
 		return sym.Name
 	}
 	base := sym.ReceiverType
-	for _, prefix := range []string{"*mut ", "*own ", "*raw mut ", "*raw ", "*"} {
+	for _, prefix := range []string{"&mut ", "&", "^", "*"} {
 		base = strings.TrimPrefix(base, prefix)
 	}
 	if base == "" {
@@ -243,6 +243,9 @@ func pipelineBaseNamed(typ typeinfo.Type) (*typeinfo.NamedType, bool) {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		return t, true
+	case *typeinfo.RefType:
+		named, ok := t.Inner.(*typeinfo.NamedType)
+		return named, ok
 	case *typeinfo.PointerType:
 		named, ok := t.Inner.(*typeinfo.NamedType)
 		return named, ok
@@ -256,12 +259,12 @@ func pipelineMethodCandidateKeys(baseName, methodName string) []string {
 		return nil
 	}
 	if methodName == "~"+baseName {
-		return []string{"*own " + baseName}
+		return []string{"*" + baseName}
 	}
 	if methodName == baseName {
-		return []string{"*mut " + baseName}
+		return []string{"*" + baseName}
 	}
-	return []string{baseName, "*" + baseName, "*mut " + baseName, "*own " + baseName}
+	return []string{baseName, "&" + baseName, "&mut " + baseName, "*" + baseName}
 }
 
 func (p *Pipeline) finalizeFinalPasses() {

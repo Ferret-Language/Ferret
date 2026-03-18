@@ -38,6 +38,10 @@ type StringType struct{}
 
 func (*StringType) String() string { return "str" }
 
+type SelfType struct{}
+
+func (*SelfType) String() string { return "Self" }
+
 type NamedType struct {
 	ModuleKey string
 	Name      string
@@ -48,20 +52,10 @@ func (t *NamedType) String() string {
 	if t == nil {
 		return "<nil>"
 	}
-	if t.ModuleKey == "" {
-		return t.Name
-	}
-	return t.ModuleKey + "::" + t.Name
-}
-
-func NamedTypeIsMove(t *NamedType) bool {
-	return t != nil && t.Decl != nil && t.Decl.IsMove
+	return t.Name
 }
 
 type PointerType struct {
-	IsOwn bool
-	IsRaw bool
-	IsMut bool
 	Inner Type
 }
 
@@ -69,21 +63,38 @@ func (t *PointerType) String() string {
 	if t == nil {
 		return "<nil>"
 	}
-	prefix := "*"
-	suffix := ""
-	if t.IsOwn {
-		suffix += "own "
+	return "*" + typeString(t.Inner)
+}
+
+type RefType struct {
+	Mutable bool
+	Inner   Type
+}
+
+func (t *RefType) String() string {
+	if t == nil {
+		return "<nil>"
 	}
-	if t.IsRaw {
-		suffix += "raw "
+	prefix := "&"
+	if t.Mutable {
+		prefix = "&mut "
 	}
-	if t.IsMut {
-		suffix += "mut "
+	return prefix + typeString(t.Inner)
+}
+
+type RawPtrType struct {
+	Inner Type
+}
+
+func (t *RawPtrType) String() string {
+	if t == nil {
+		return "<nil>"
 	}
-	if t.IsRaw && t.Inner == nil {
-		return strings.TrimSpace(prefix + suffix)
+	if t.Inner == nil {
+		return "^void"
 	}
-	return prefix + suffix + typeString(t.Inner)
+	return "^" + typeString(t.Inner)
+
 }
 
 type OptionalType struct {
@@ -109,6 +120,9 @@ type ArrayType struct {
 func (t *ArrayType) String() string {
 	if t == nil {
 		return "[?]<nil>"
+	}
+	if t.Len == -2 {
+		return "[_]" + typeString(t.Inner)
 	}
 	if t.Len < 0 {
 		return "[?]" + typeString(t.Inner)
@@ -141,15 +155,14 @@ func (t *TupleType) String() string {
 
 type StructField struct {
 	Name       string
+	IsPub      bool
 	Type       Type
 	HasDefault bool
 }
 
 type StructType struct {
-	Fields              map[string]*StructField
-	OrderedFields       []*StructField
-	StaticFields        map[string]*StructField
-	OrderedStaticFields []*StructField
+	Fields        map[string]*StructField
+	OrderedFields []*StructField
 }
 
 func (t *StructType) String() string { return "struct" }
@@ -177,8 +190,10 @@ type UnionType struct {
 func (t *UnionType) String() string { return "union" }
 
 type InterfaceType struct {
-	Methods        map[string]*FuncType
-	OrderedMethods []*InterfaceMethod
+	Methods         map[string]*FuncType
+	MethodReceivers map[string]string
+	MethodStatic    map[string]bool
+	OrderedMethods  []*InterfaceMethod
 }
 
 func (t *InterfaceType) String() string { return "interface" }
@@ -186,12 +201,9 @@ func (t *InterfaceType) String() string { return "interface" }
 type FuncType struct {
 	IsUnsafe       bool
 	Params         []Type
+	MutParams      []bool
 	ComptimeParams []bool
 	Result         Type
-	// ImplicitReceiver is set when a method call is resolved against a pointer
-	// receiver (*T or *mut T) but the call-site expression is a plain value.
-	// MIR lowering uses this to emit an automatic address-of for the receiver.
-	ImplicitReceiver Type
 }
 
 func (t *FuncType) String() string {
@@ -269,12 +281,21 @@ func Equal(a, b Type) bool {
 	case *StringType:
 		_, ok := b.(*StringType)
 		return ok
+	case *SelfType:
+		_, ok := b.(*SelfType)
+		return ok
 	case *NamedType:
 		bt, ok := b.(*NamedType)
 		return ok && at.ModuleKey == bt.ModuleKey && at.Name == bt.Name
 	case *PointerType:
 		bt, ok := b.(*PointerType)
-		return ok && at.IsOwn == bt.IsOwn && at.IsRaw == bt.IsRaw && at.IsMut == bt.IsMut && Equal(at.Inner, bt.Inner)
+		return ok && Equal(at.Inner, bt.Inner)
+	case *RefType:
+		bt, ok := b.(*RefType)
+		return ok && at.Mutable == bt.Mutable && Equal(at.Inner, bt.Inner)
+	case *RawPtrType:
+		bt, ok := b.(*RawPtrType)
+		return ok && Equal(at.Inner, bt.Inner)
 	case *OptionalType:
 		bt, ok := b.(*OptionalType)
 		return ok && Equal(at.Inner, bt.Inner)
@@ -300,11 +321,16 @@ func Equal(a, b Type) bool {
 		return true
 	case *FuncType:
 		bt, ok := b.(*FuncType)
-		if !ok || at.IsUnsafe != bt.IsUnsafe || len(at.Params) != len(bt.Params) || len(at.ComptimeParams) != len(bt.ComptimeParams) || !Equal(at.Result, bt.Result) {
+		if !ok || at.IsUnsafe != bt.IsUnsafe || len(at.Params) != len(bt.Params) || len(at.MutParams) != len(bt.MutParams) || len(at.ComptimeParams) != len(bt.ComptimeParams) || !Equal(at.Result, bt.Result) {
 			return false
 		}
 		for i := range at.Params {
 			if !Equal(at.Params[i], bt.Params[i]) {
+				return false
+			}
+		}
+		for i := range at.MutParams {
+			if at.MutParams[i] != bt.MutParams[i] {
 				return false
 			}
 		}
@@ -334,6 +360,13 @@ func Assignable(dst, src Type) bool {
 	}
 	if opt, ok := dst.(*OptionalType); ok && src != nil {
 		return Assignable(opt.Inner, src)
+	}
+	if arrDst, ok := dst.(*ArrayType); ok {
+		if arrSrc, ok := src.(*ArrayType); ok {
+			if arrDst.Len == -2 && Equal(arrDst.Inner, arrSrc.Inner) {
+				return true
+			}
+		}
 	}
 	return false
 }

@@ -11,15 +11,36 @@ func (*NamedType) typeNode()              {}
 func (t *NamedType) Loc() source.Location { return t.Location }
 
 type PointerType struct {
-	IsOwn    bool
-	IsRaw    bool
-	IsMut    bool
 	Inner    TypeExpr
 	Location source.Location
 }
 
 func (*PointerType) typeNode()              {}
 func (t *PointerType) Loc() source.Location { return t.Location }
+
+type RefType struct {
+	Mutable  bool
+	Inner    TypeExpr
+	Location source.Location
+}
+
+func (*RefType) typeNode()              {}
+func (t *RefType) Loc() source.Location { return t.Location }
+
+type RawPtrType struct {
+	Inner    TypeExpr
+	Location source.Location
+}
+
+func (*RawPtrType) typeNode()              {}
+func (t *RawPtrType) Loc() source.Location { return t.Location }
+
+type SelfType struct {
+	Location source.Location
+}
+
+func (*SelfType) typeNode()              {}
+func (t *SelfType) Loc() source.Location { return t.Location }
 
 type OptionalType struct {
 	Inner    TypeExpr
@@ -64,15 +85,16 @@ func (*TupleType) typeNode()              {}
 func (t *TupleType) Loc() source.Location { return t.Location }
 
 type StructType struct {
-	Fields       []*FieldDecl
-	StaticFields []*StaticFieldDecl
-	Location     source.Location
+	Fields   []*FieldDecl
+	Location source.Location
 }
 
 func (*StructType) typeNode()              {}
 func (t *StructType) Loc() source.Location { return t.Location }
 
 type InterfaceMethod struct {
+	Receiver string
+	Static   bool
 	Name     *Ident
 	Params   []Param
 	Result   TypeExpr

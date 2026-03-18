@@ -7,13 +7,13 @@ import (
 
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 )
 
 func TestUsageWarnsUnusedImport(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
-fn Println(text str) void;
+fn Println(text: str) void;
 `)
 	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `import "std/io"
 
@@ -81,7 +81,7 @@ fn main() i32 {
 func TestUsageDoesNotWarnUsedOrExportedSymbols(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
-fn Println(text str) void;
+fn Println(text: str) void;
 `)
 	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `import "std/io"
 
@@ -114,7 +114,7 @@ fn main() i32 {
 
 func TestUsageWarnsUnusedLocalsAndParametersInUsedFunction(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn helper(x i32, y i32, z i32) i32 {
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn helper(x: i32, y: i32, z: i32) i32 {
     let alive = x
     let dead = y
     return alive
@@ -153,7 +153,7 @@ fn main() i32 {
 
 func TestUsageSkipsLocalWarningsInUnusedFunction(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn helper(x i32, y i32) i32 {
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn helper(x: i32, y: i32) i32 {
     let dead = y
     return x
 }
@@ -180,6 +180,181 @@ fn main() i32 {
 	}
 	if !foundUnusedFunction {
 		t.Fatalf("expected unused function warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestUsageDoesNotCountAssignmentTargetAsUse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+    let mut a = 10
+    a = 12
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedLocal && diag.Message == `unused local "a"` {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected unused local warning for write-only assignment, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestUsageTreatsDiscardAssignmentAsUse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+    let a = 10
+    _ = a
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedLocal && diag.Message == `unused local "a"` {
+			t.Fatalf("did not expect unused warning after discard assignment, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
+func TestUsageWarnsWhenMutableBindingIsNeverModified(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+    let mut a = 10
+    _ = a
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnmodifiedMutable && diag.Message == `"a" is never modified` {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected never-modified mutable warning, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestUsageDoesNotWarnWhenMutableBindingIsAssigned(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+    let mut a = 10
+    a = 12
+    _ = a
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnmodifiedMutable && diag.Message == `"a" is never modified` {
+			t.Fatalf("did not expect never-modified mutable warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
+func TestUsageDoesNotWarnWhenMutableBindingIsUsedByMutableMethodCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn Point::Incr(&mut self) void {
+    self.X++
+}
+
+fn main() void {
+    let mut p: Point = .{ .X = 1 }
+    p.Incr()
+    _ = p
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnmodifiedMutable && diag.Message == `"p" is never modified` {
+			t.Fatalf("did not expect never-modified mutable warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+		if diag.Code == diagnostics.WarnUnusedLocal && diag.Message == `unused local "p"` {
+			t.Fatalf("did not expect unused local warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
+func TestUsageDoesNotWarnWhenMutableBindingIsPassedToMutParam(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `
+fn bump(mut value: i32) void {
+    value = value + 1
+}
+
+fn main() void {
+    let mut a = 10
+    bump(a)
+    _ = a
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnmodifiedMutable && diag.Message == `"a" is never modified` {
+			t.Fatalf("did not expect never-modified mutable warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+		if diag.Code == diagnostics.WarnUnusedLocal && diag.Message == `unused local "a"` {
+			t.Fatalf("did not expect unused local warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
+func TestUsageDoesNotWarnOnUnusedSelfReceiver(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `
+type Point struct {}
+
+fn Point::Show(&self) void {}
+
+fn main() void {
+    let p: Point = .{}
+    p.Show()
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedParameter && diag.Message == `unused parameter "self"` {
+			t.Fatalf("did not expect unused self receiver warning, got %#v", result.Diagnostics.Diagnostics())
+		}
 	}
 }
 

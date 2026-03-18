@@ -37,7 +37,6 @@ func (d *LetDecl) Loc() source.Location { return d.Location }
 type TypeDecl struct {
 	Name     *Ident
 	Attrs    []Attribute
-	IsMove   bool
 	Type     TypeExpr
 	Location source.Location
 }
@@ -55,6 +54,7 @@ func (r *Receiver) Loc() source.Location { return r.Location }
 
 type Param struct {
 	Name       *Ident
+	IsMut      bool
 	IsComptime bool
 	Type       TypeExpr
 	Location   source.Location
@@ -62,6 +62,8 @@ type Param struct {
 
 type FuncDecl struct {
 	Receiver      *Receiver
+	OwnerType     *NamedType
+	IsStatic      bool
 	Name          *Ident
 	Doc           *CommentGroup
 	Attrs         []Attribute
@@ -88,12 +90,3 @@ type FieldDecl struct {
 }
 
 func (d *FieldDecl) Loc() source.Location { return d.Location }
-
-type StaticFieldDecl struct {
-	Name     *Ident
-	Type     TypeExpr
-	Default  Expr
-	Location source.Location
-}
-
-func (d *StaticFieldDecl) Loc() source.Location { return d.Location }

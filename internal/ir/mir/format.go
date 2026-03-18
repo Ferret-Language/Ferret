@@ -63,15 +63,20 @@ func formatFunction(b *strings.Builder, fn *Function) {
 	if fn.IsUnsafe {
 		b.WriteString("unsafe ")
 	}
-	fmt.Fprintf(b, "fn %s", fn.Name)
-	b.WriteByte('(')
-	for i, param := range fn.Params {
-		if i > 0 {
-			b.WriteString(", ")
+	name := prettyFunctionName(fn)
+	if strings.Contains(name, "::") && len(fn.Params) > 0 {
+		fmt.Fprintf(b, "fn %s%s", name, formatMethodParams(fn.Params))
+	} else {
+		fmt.Fprintf(b, "fn %s", name)
+		b.WriteByte('(')
+		for i, param := range fn.Params {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(formatParam(param))
 		}
-		b.WriteString(formatParam(param))
+		b.WriteByte(')')
 	}
-	b.WriteByte(')')
 	if fn.Blocks == nil {
 		fmt.Fprintf(b, " %s;\n", renderType(fn.Result))
 		return
@@ -124,7 +129,55 @@ func formatParam(param *Param) string {
 	if param.IsComptime {
 		prefix += "comptime "
 	}
-	return fmt.Sprintf("%s%s %s", prefix, param.Name, renderType(param.Type))
+	return fmt.Sprintf("%s%s: %s", prefix, param.Name, renderType(param.Type))
+}
+
+func formatMethodParams(params []*Param) string {
+	var b strings.Builder
+	b.WriteByte('(')
+	for i, param := range params {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		if i == 0 {
+			b.WriteString(formatReceiverParam(param))
+			continue
+		}
+		b.WriteString(formatParam(param))
+	}
+	b.WriteByte(')')
+	return b.String()
+}
+
+func formatReceiverParam(param *Param) string {
+	if param == nil {
+		return ""
+	}
+	switch t := param.Type.(type) {
+	case *typeinfo.PointerType:
+		_ = t
+		return "*self"
+	case *typeinfo.RefType:
+		if t.Mutable {
+			return "&mut self"
+		}
+		return "&self"
+	default:
+		return "self"
+	}
+}
+
+func prettyFunctionName(fn *Function) string {
+	if fn == nil {
+		return ""
+	}
+	if fn.LinkName != "" && strings.Contains(fn.LinkName, "__") {
+		parts := strings.SplitN(fn.LinkName, "__", 2)
+		if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+			return parts[0] + "::" + parts[1]
+		}
+	}
+	return fn.Name
 }
 
 func formatInstr(instr Instr) string {
@@ -249,8 +302,15 @@ func formatValue(value Value) string {
 		return formatPrefix(v.Op, wrapValue(v.Right))
 	case *AddrOfValue:
 		kw := "addr_of"
+		if v.Raw {
+			kw = "raw_addr_of"
+		}
 		if v.Mutable {
-			kw = "addr_of_mut"
+			if v.Raw {
+				kw = "raw_addr_of_mut"
+			} else {
+				kw = "addr_of_mut"
+			}
 		}
 		return fmt.Sprintf("%s %s", kw, wrapValue(v.Source))
 	case *LoadValue:
@@ -299,33 +359,18 @@ func formatTypeDecl(decl *TypeDecl) string {
 	if decl == nil {
 		return ""
 	}
-	movePrefix := ""
-	if decl.IsMove {
-		movePrefix = " move"
-	}
 	switch {
 	case decl.Struct != nil:
 		var b strings.Builder
-		fmt.Fprintf(&b, "type %s%s struct {", decl.Name, movePrefix)
-		if len(decl.Struct.Fields) > 0 || len(decl.Struct.StaticFields) > 0 {
+		fmt.Fprintf(&b, "type %s struct {", decl.Name)
+		if len(decl.Struct.Fields) > 0 {
 			b.WriteByte('\n')
 			for _, field := range decl.Struct.Fields {
 				if field == nil {
 					continue
 				}
 				b.WriteString("    ")
-				fmt.Fprintf(&b, "%s %s", field.Name, renderType(field.Type))
-				if field.Default != nil {
-					fmt.Fprintf(&b, " = %s", formatValue(field.Default))
-				}
-				b.WriteByte('\n')
-			}
-			for _, field := range decl.Struct.StaticFields {
-				if field == nil {
-					continue
-				}
-				b.WriteString("    ")
-				fmt.Fprintf(&b, "static %s %s", field.Name, renderType(field.Type))
+				fmt.Fprintf(&b, "%s: %s", field.Name, renderType(field.Type))
 				if field.Default != nil {
 					fmt.Fprintf(&b, " = %s", formatValue(field.Default))
 				}
@@ -338,7 +383,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 		return b.String()
 	case decl.Interface != nil:
 		var b strings.Builder
-		fmt.Fprintf(&b, "type %s%s interface {", decl.Name, movePrefix)
+		fmt.Fprintf(&b, "type %s interface {", decl.Name)
 		if len(decl.Interface.Methods) > 0 {
 			b.WriteByte('\n')
 			for _, method := range decl.Interface.Methods {
@@ -346,14 +391,11 @@ func formatTypeDecl(decl *TypeDecl) string {
 					continue
 				}
 				b.WriteString("    ")
-				fmt.Fprintf(&b, "%s(", method.Name)
-				for i, param := range method.Params {
-					if i > 0 {
-						b.WriteString(", ")
-					}
-					b.WriteString(formatParam(param))
+				fmt.Fprintf(&b, "%s%s", method.Name, formatInterfaceParamsMIR(method.Receiver, method.Params))
+				if method.Result != nil {
+					fmt.Fprintf(&b, " %s", renderType(method.Result))
 				}
-				fmt.Fprintf(&b, ") %s\n", renderType(method.Result))
+				b.WriteByte('\n')
 			}
 			b.WriteByte('}')
 			return b.String()
@@ -361,18 +403,47 @@ func formatTypeDecl(decl *TypeDecl) string {
 		b.WriteString(" }")
 		return b.String()
 	case decl.Enum != nil:
-		return fmt.Sprintf("type %s%s enum { %s }", decl.Name, movePrefix, strings.Join(decl.Enum.Variants, ", "))
+		return fmt.Sprintf("type %s enum { %s }", decl.Name, strings.Join(decl.Enum.Variants, ", "))
 	case decl.Union != nil:
 		parts := make([]string, 0, len(decl.Union.Members))
 		for _, member := range decl.Union.Members {
 			parts = append(parts, renderType(member))
 		}
-		return fmt.Sprintf("type %s%s union { %s }", decl.Name, movePrefix, strings.Join(parts, ", "))
+		return fmt.Sprintf("type %s union { %s }", decl.Name, strings.Join(parts, ", "))
 	case decl.Error != nil:
-		return fmt.Sprintf("type %s%s error { %s }", decl.Name, movePrefix, strings.Join(decl.Error.Members, ", "))
+		return fmt.Sprintf("type %s error { %s }", decl.Name, strings.Join(decl.Error.Members, ", "))
 	default:
 		return fmt.Sprintf("type %s %s", decl.Name, renderType(decl.Underlying))
 	}
+}
+
+func formatInterfaceParamsMIR(receiver string, params []*Param) string {
+	var b strings.Builder
+	b.WriteByte('(')
+	wrote := false
+	switch receiver {
+	case "&":
+		b.WriteString("&self")
+		wrote = true
+	case "&mut ":
+		b.WriteString("&mut self")
+		wrote = true
+	case "*":
+		b.WriteString("*self")
+		wrote = true
+	}
+	for _, param := range params {
+		if param == nil {
+			continue
+		}
+		if wrote {
+			b.WriteString(", ")
+		}
+		b.WriteString(formatParam(param))
+		wrote = true
+	}
+	b.WriteByte(')')
+	return b.String()
 }
 
 var currentFnForFormat *Function
@@ -442,7 +513,7 @@ func renderType(typ fmt.Stringer) string {
 
 func formatPrefix(op, right string) string {
 	switch op {
-	case "copy", "take", "comptime", "unsafe":
+	case "copy", "comptime", "unsafe":
 		return op + " " + right
 	default:
 		return op + right

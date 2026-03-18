@@ -159,6 +159,9 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 			}
 		}
 	case *ast.FuncDecl:
+		if d.OwnerType != nil {
+			r.resolveType(scope, d.OwnerType)
+		}
 		if d.Receiver != nil {
 			r.resolveType(scope, d.Receiver.Type)
 		}
@@ -184,7 +187,7 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 			r.resolveType(scope, param.Type)
 			sym := symbols.New(param.Name.Text(), symbols.SymbolParam, nil)
 			sym.Location = param.Name.Loc()
-			sym.Mutable = false
+			sym.Mutable = param.IsMut
 			declared := r.declareLocal(funcScope, sym)
 			r.info.AddFunctionLocal(d, declared)
 			r.bindDeclIdent(param.Name, declared)
@@ -227,7 +230,9 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 	case *ast.ExprStmt:
 		r.resolveExpr(scope, s.Value)
 	case *ast.AssignStmt:
-		r.resolveExpr(scope, s.Left)
+		if ident, ok := s.Left.(*ast.Ident); !ok || ident.Text() != "_" {
+			r.resolveExpr(scope, s.Left)
+		}
 		r.resolveExpr(scope, s.Right)
 	case *ast.IfStmt:
 		r.resolveExpr(scope, s.Cond)
@@ -314,6 +319,13 @@ func (r *resolver) addFunctionLocal(sym *symbols.Symbol) {
 func (r *resolver) lookupFunctionSymbol(fn *ast.FuncDecl) (*symbols.Symbol, bool) {
 	if r == nil || r.mod == nil || fn == nil {
 		return nil, false
+	}
+	if fn.IsStatic && fn.OwnerType != nil && r.mod.TypeMembers != nil && len(fn.OwnerType.Path) > 0 {
+		if members := r.mod.TypeMembers[fn.OwnerType.Path[len(fn.OwnerType.Path)-1]]; members != nil {
+			if sym := members[fn.Name.Text()]; sym != nil {
+				return sym, true
+			}
+		}
 	}
 	if fn.Receiver == nil && r.mod.ModuleScope != nil {
 		if sym, ok := r.mod.ModuleScope.LookupLocal(fn.Name.Text()); ok {
@@ -474,6 +486,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		}
 		r.resolveExpr(scope, e.Fallback)
 	case *ast.CompositeLit:
+		r.resolveType(scope, e.Type)
 		for _, item := range e.Items {
 			r.resolveExpr(scope, item.Value)
 		}
@@ -491,13 +504,19 @@ func (r *resolver) resolveType(scope *table.Scope, typ ast.TypeExpr) {
 		r.resolveTypePath(scope, t)
 	case *ast.PointerType:
 		r.resolveType(scope, t.Inner)
+	case *ast.RefType:
+		r.resolveType(scope, t.Inner)
+	case *ast.RawPtrType:
+		r.resolveType(scope, t.Inner)
 	case *ast.OptionalType:
 		r.resolveType(scope, t.Inner)
 	case *ast.ErrorUnionType:
 		r.resolveType(scope, t.Error)
 		r.resolveType(scope, t.Value)
 	case *ast.ArrayType:
-		r.resolveExpr(scope, t.Size)
+		if ident, ok := t.Size.(*ast.Ident); !ok || ident.Text() != "_" {
+			r.resolveExpr(scope, t.Size)
+		}
 		r.resolveType(scope, t.Inner)
 	case *ast.TupleType:
 		for _, elem := range t.Elems {
@@ -505,13 +524,6 @@ func (r *resolver) resolveType(scope *table.Scope, typ ast.TypeExpr) {
 		}
 	case *ast.StructType:
 		for _, field := range t.Fields {
-			if field == nil {
-				continue
-			}
-			r.resolveType(scope, field.Type)
-			r.resolveExpr(scope, field.Default)
-		}
-		for _, field := range t.StaticFields {
 			if field == nil {
 				continue
 			}
@@ -732,7 +744,7 @@ func (r *resolver) resolveModulePath(imp *binding.ImportBinding, remaining []str
 		r.reportMissingInModule(node.Loc(), remaining[0], target.ImportPath)
 		return nil, false
 	}
-	if !sym.Exported {
+	if !sym.IsPub {
 		r.reportNotExportedFromModule(node.Loc(), sym.Name, target.ImportPath)
 		return nil, false
 	}
@@ -743,7 +755,7 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 	if sym == nil {
 		return nil, false
 	}
-	if requireExported && !sym.Exported {
+	if requireExported && !sym.IsPub {
 		modulePath := ""
 		if mod != nil {
 			modulePath = mod.ImportPath
@@ -779,7 +791,7 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 		r.reportMissingInType(node.Loc(), remaining[0], sym.Name)
 		return nil, false
 	}
-	if requireExported && !member.Exported {
+	if requireExported && !member.IsPub {
 		owner := sym.Name
 		if mod != nil && mod.ImportPath != "" {
 			owner = mod.ImportPath + "::" + owner

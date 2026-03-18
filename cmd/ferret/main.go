@@ -12,7 +12,7 @@ import (
 
 	"compiler/cmd/ferret/cli"
 	"compiler/colors"
-	"compiler/internal/analysis/layout/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"
 	"compiler/internal/backend/llvm"
 	"compiler/internal/backend/qbe"
@@ -21,7 +21,7 @@ import (
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/manifest"
 	"compiler/internal/core/project"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/hir"
 	"compiler/internal/ir/mir"
@@ -193,20 +193,20 @@ func emitKeepGenArtifacts(result compiler.Result, backendName, outDir string) er
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	if err := emitASTDump(result, filepath.Join(outDir, "ast.json")); err != nil {
+	if err := emitModuleASTDumps(result, outDir); err != nil {
 		return err
 	}
-	if err := emitTextDump(result, outDir, ".hir", func(mod *context.Module) string {
+	if err := emitModuleTextDumps(result, outDir, ".hir", func(mod *context.Module) string {
 		return hir.FormatModule(mod.HIR)
 	}); err != nil {
 		return err
 	}
-	if err := emitTextDump(result, outDir, ".mir", func(mod *context.Module) string {
+	if err := emitModuleTextDumps(result, outDir, ".mir", func(mod *context.Module) string {
 		return mir.FormatModule(mod.MIR)
 	}); err != nil {
 		return err
 	}
-	if err := emitBackend(result, backendName, outDir); err != nil {
+	if err := emitBackendModules(result, backendName, outDir); err != nil {
 		return err
 	}
 	return nil
@@ -452,6 +452,34 @@ func emitASTDump(result compiler.Result, outPath string) error {
 	return os.WriteFile(outPath, append(data, '\n'), 0o644)
 }
 
+func emitModuleASTDumps(result compiler.Result, outDir string) error {
+	for _, mod := range artifactModules(result) {
+		if mod == nil || mod.AST == nil {
+			continue
+		}
+		payload := map[string]any{
+			"import_path":  mod.ImportPath,
+			"file_path":    mod.FilePath,
+			"origin":       string(mod.Origin),
+			"phase":        mod.Phase.String(),
+			"dependencies": append([]string(nil), mod.Dependencies...),
+			"ast":          safeDebugModule(mod.AST),
+		}
+		data, err := json.MarshalIndent(payload, "", "  ")
+		if err != nil {
+			return fmt.Errorf("marshal ast dump for %s: %w", mod.ImportPath, err)
+		}
+		target, err := moduleArtifactPath(mod, outDir, ".ast.json")
+		if err != nil {
+			return err
+		}
+		if err := writeTextFile(target, string(data)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func emitTextDump(result compiler.Result, outPath, ext string, render func(*context.Module) string) error {
 	mods := dumpModules(result)
 	if len(mods) == 0 {
@@ -470,6 +498,26 @@ func emitTextDump(result compiler.Result, outPath, ext string, render func(*cont
 			continue
 		}
 		target, err := dumpTargetPath(result, mod, outPath, ext)
+		if err != nil {
+			return err
+		}
+		if err := writeTextFile(target, content); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func emitModuleTextDumps(result compiler.Result, outDir, ext string, render func(*context.Module) string) error {
+	for _, mod := range artifactModules(result) {
+		if mod == nil {
+			continue
+		}
+		content := render(mod)
+		if content == "" {
+			continue
+		}
+		target, err := moduleArtifactPath(mod, outDir, ext)
 		if err != nil {
 			return err
 		}
@@ -575,6 +623,36 @@ func emitBackend(result compiler.Result, targetText, outPath string) error {
 	return nil
 }
 
+func emitBackendModules(result compiler.Result, targetText, outDir string) error {
+	target := backend.Target(strings.ToLower(strings.TrimSpace(targetText)))
+	lowerer, err := registry.New(target)
+	if err != nil {
+		return err
+	}
+	for _, mod := range artifactModules(result) {
+		if mod == nil || mod.MIR == nil || mod.Layout == nil {
+			continue
+		}
+		artifact, err := lowerer.LowerModule(&backend.Unit{
+			Module:  mod.MIR,
+			Layout:  mod.Layout,
+			Layouts: backendLayouts(result),
+			Modules: backendModules(result),
+		})
+		if err != nil {
+			return fmt.Errorf("backend %s lower %s: %w", target, mod.ImportPath, err)
+		}
+		targetPath, err := moduleArtifactPath(mod, outDir, artifact.FileExt)
+		if err != nil {
+			return err
+		}
+		if err := writeTextFile(targetPath, artifact.Text); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func backendTargetPath(result compiler.Result, mod *context.Module, outPath, ext string) (string, error) {
 	if mod == nil {
 		return "", fmt.Errorf("nil module")
@@ -590,6 +668,21 @@ func backendTargetPath(result compiler.Result, mod *context.Module, outPath, ext
 	}
 	rel := filepath.FromSlash(mod.ImportPath) + ext
 	return filepath.Join(outPath, rel), nil
+}
+
+func artifactModules(result compiler.Result) []*context.Module {
+	return allModulesForBuild(result)
+}
+
+func moduleArtifactPath(mod *context.Module, outDir, ext string) (string, error) {
+	if mod == nil {
+		return "", fmt.Errorf("nil module")
+	}
+	if outDir == "" {
+		return "", fmt.Errorf("empty artifact output directory")
+	}
+	rel := filepath.FromSlash(mod.ImportPath) + ext
+	return filepath.Join(outDir, rel), nil
 }
 
 func backendLayouts(result compiler.Result) map[string]*layout.Module {

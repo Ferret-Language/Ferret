@@ -6,17 +6,17 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/internal/analysis/layout/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"
 	"compiler/internal/backend/registry"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
 )
 
 func TestLowerScalarFunctionToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn add(a i32, b i32) i32 {
+fn add(a: i32, b: i32) i32 {
     let sum = a + b
     return sum
 }
@@ -88,7 +88,7 @@ fn main() i32 {
 func TestLowerMatchToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(x i32) i32 {
+fn main(x: i32) i32 {
     match x {
         0 => { return 1 }
         _ => { return 2 }
@@ -161,14 +161,14 @@ func TestLowerStructFieldAccessToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
-    Y i32 = 0
+    X: i32 = 0
+    Y: i32 = 0
 }
 
 let mut GlobalPoint: Point = .{ .X = 1, .Y = 2 }
 
 fn main() i32 {
-    let mut p = copy GlobalPoint
+    let mut p = GlobalPoint
     if p.X > 0 {
         p.X = p.X + 1
     }
@@ -233,11 +233,58 @@ fn main() i32 {
 	}
 }
 
+func TestLowerAggregateLoadAssignmentToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Conn struct {}
+
+fn run(mut c: *Conn) void {
+    let r = &*c
+    r
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	if _, err := lowerer.LowerModule(testUnit(result)); err != nil {
+		t.Fatalf("lower qbe aggregate load: %v", err)
+	}
+}
+
+func TestLowerReceiverFieldReadToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    Value: i32 = 0
+}
+
+fn Point::Incr(&mut self) void {
+    self.Value = self.Value + 1
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	if _, err := lowerer.LowerModule(testUnit(result)); err != nil {
+		t.Fatalf("lower qbe receiver field read: %v", err)
+	}
+}
+
 func TestLowerExternFunctionCallToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 #[extern("ferret_math_abs_i32")]
-fn AbsI32(value i32) i32;
+fn AbsI32(value: i32) i32;
 
 fn main() i32 {
     return AbsI32(-1)
@@ -264,8 +311,8 @@ func TestLowerImportedStructTypeToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "math", "vec2.ferr"), `
 type Vec2 struct {
-    X i32 = 0
-    Y i32 = 0
+    X: i32 = 0
+    Y: i32 = 0
 }
 
 fn Origin() Vec2 {
@@ -375,6 +422,44 @@ fn main() i32 {
 	}
 }
 
+func TestLowerRawAddressLocalToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let a = 10
+    unsafe {
+        let p = @a
+        print(p)
+    }
+    return 0
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%a_slot =l alloc4 4",
+		"storew %_asgn1, %a_slot",
+		"%p =l copy %a_slot",
+		"call $global__print_ptr(l %p)",
+		"ret 0",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerUnionExtractCastToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
@@ -383,7 +468,7 @@ type Token union {
     i64,
 }
 
-fn main(flag bool) i32 {
+fn main(flag: bool) i32 {
     let mut value: Token = 1
     if flag {
         value = 2 as i64
@@ -499,11 +584,11 @@ func TestLowerMethodCallToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
-    Y i32 = 0
+    X: i32 = 0
+    Y: i32 = 0
 }
 
-fn (p Point) Len2() i32 {
+fn (p: Point) Len2() i32 {
     return p.X * p.X + p.Y * p.Y
 }
 
@@ -539,14 +624,14 @@ func TestLowerInterfaceDispatchToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
-fn (n Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 
@@ -570,8 +655,8 @@ fn main() str {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"data $vtable__local__main__Stringer__main__Name = { l $ifacewrap__local__main__Stringer__main__Name__String }",
-		"function :__ferret_slice $ifacewrap__local__main__Stringer__main__Name__String(l %data)",
+		"data $vtable__local__main__Stringer__Name = { l $ifacewrap__local__main__Stringer__Name__String }",
+		"function :__ferret_slice $ifacewrap__local__main__Stringer__Name__String(l %data)",
 		"%s =l alloc8 16",
 		"%_iface_fn",
 		"call %_iface_fn",
@@ -586,14 +671,14 @@ func TestLowerImportedInterfaceDispatchToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "util", "name.ferr"), `
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
 fn Origin() Name {
     return .{ .value = 7 }
 }
 
-fn (n Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 `)
@@ -601,7 +686,7 @@ fn (n Name) String() str {
 import "util/name"
 
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 fn main() str {
@@ -625,7 +710,7 @@ fn main() str {
 	text := artifact.Text
 	for _, want := range []string{
 		"type :local__main__Stringer = { l, l }",
-		"data $vtable__local__main__Stringer__util__name__Name = { l $ifacewrap__local__main__Stringer__util__name__Name__String }",
+		"data $vtable__local__main__Stringer__Name = { l $ifacewrap__local__main__Stringer__Name__String }",
 		"call $util__name__Name__String(",
 	} {
 		if !strings.Contains(text, want) {
@@ -638,14 +723,14 @@ func TestLowerGlobalInterfaceValueToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
-fn (n Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 
@@ -671,7 +756,7 @@ fn main() str {
 	text := artifact.Text
 	for _, want := range []string{
 		"data $main__GlobalName = { w 1 }",
-		"data $main__GlobalStringer = { l $main__GlobalName, l $vtable__local__main__Stringer__main__Name }",
+		"data $main__GlobalStringer = { l $main__GlobalName, l $vtable__local__main__Stringer__Name }",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)
@@ -691,7 +776,7 @@ type Color enum {
 let mut RuntimeColor: Color = Color::Red
 const DefaultColor = Color::Green
 
-fn main(flag bool) i32 {
+fn main(flag: bool) i32 {
     let mut value = Color::Blue
     if flag {
         value = RuntimeColor
@@ -724,6 +809,37 @@ fn main(flag bool) i32 {
 		"ceqw %_ld3, 1",
 		"ret 1",
 		"ret 2",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerSliceIndexToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main(items: []i32) i32 {
+    let n = items[1]
+    return n
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"loadl %items",
+		"=l add %_slice_data",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)

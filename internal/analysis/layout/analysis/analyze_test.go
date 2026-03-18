@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 )
 
 func TestLayoutComputesStructOffsets(t *testing.T) {
@@ -117,7 +117,7 @@ fn main() i32 {
 func TestLayoutUsesNicheForOptionalPointer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Holder struct {
-    Value ?*raw i32
+    Value ?^i32
 }
 
 fn main() i32 {
@@ -133,11 +133,11 @@ fn main() i32 {
 	if !ok || holder == nil || holder.Struct == nil {
 		t.Fatalf("expected Holder layout, got %#v", result.Entry.Layout)
 	}
-	if holder.Size != 8 || holder.Align != 8 {
-		t.Fatalf("expected Holder size=8 align=8, got size=%d align=%d", holder.Size, holder.Align)
+	if holder.Size != 4 || holder.Align != 4 {
+		t.Fatalf("expected Holder size=4 align=4, got size=%d align=%d", holder.Size, holder.Align)
 	}
-	if got := holder.Struct.Fields[0].Size; got != 8 {
-		t.Fatalf("expected optional pointer field size=8, got %d", got)
+	if got := holder.Struct.Fields[0].Size; got != 4 {
+		t.Fatalf("expected optional raw pointer field size=4, got %d", got)
 	}
 }
 

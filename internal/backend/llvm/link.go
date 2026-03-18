@@ -125,7 +125,7 @@ func llvmBaseType(typ typeinfo.Type) (string, error) {
 		case "void":
 			return "void", nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return "ptr", nil
 	case *typeinfo.OptionalType:
 		if optionalUsesNiche(base.Inner) {
@@ -137,7 +137,7 @@ func llvmBaseType(typ typeinfo.Type) (string, error) {
 
 func optionalUsesNiche(typ typeinfo.Type) bool {
 	switch t := unwrapNamed(typ).(type) {
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return true
 	case *typeinfo.BuiltinType:
 		switch t.Name {

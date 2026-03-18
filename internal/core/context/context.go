@@ -12,8 +12,8 @@ import (
 	"strings"
 	"sync"
 
-	"compiler/internal/analysis/cfg/model"
-	"compiler/internal/analysis/layout/model"
+	cfg "compiler/internal/analysis/cfg/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
@@ -146,7 +146,7 @@ func declarePredeclaredConst(scope *table.Scope, name string) {
 		return
 	}
 	sym := symbols.New(name, symbols.SymbolConst, nil)
-	sym.Exported = true
+	sym.IsPub = true
 	_ = scope.Declare(sym)
 }
 

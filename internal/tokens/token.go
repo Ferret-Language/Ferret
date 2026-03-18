@@ -33,6 +33,7 @@ const (
 	MINUS_MINUS  Kind = "--"
 	BANG         Kind = "!"
 	QUESTION     Kind = "?"
+	AT           Kind = "@"
 	AMP          Kind = "&"
 	TILDE        Kind = "~"
 	LT           Kind = "<"

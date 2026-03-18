@@ -8,7 +8,7 @@ import (
 
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/hir"
 )
 
@@ -16,13 +16,13 @@ func TestPipelineGeneratesHIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 let mut GlobalPoint: Point = .{ .X = 1 }
 
 fn main() i32 {
-    let p = copy GlobalPoint
+    let p = GlobalPoint
     return p.X
 }
 `)
@@ -67,7 +67,7 @@ fn main() i32 {
 	if text == "" || !contains(text, "type Point struct") {
 		t.Fatalf("expected type declaration in hir dump, got %q", text)
 	}
-	if !contains(text, "X i32 = 0") {
+	if !contains(text, "X: i32 = 0") {
 		t.Fatalf("expected field default in hir dump, got %q", text)
 	}
 }

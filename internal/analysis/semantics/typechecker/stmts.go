@@ -28,12 +28,12 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		if s.Value != nil {
 			value = c.typeOfExpr(scope, s.Value, declared)
 		}
-		finalType := declared
-		if finalType == nil {
-			finalType = value
-		}
+		finalType := c.resolveDeclaredValueType(declared, value)
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
+		}
+		if s.Type != nil && declared != nil && !typeinfo.Equal(declared, finalType) {
+			c.info.BindNode(s.Type, finalType)
 		}
 		if declared != nil && s.Value != nil && !c.checkAssignable(s.Value.Loc(), declared, value) {
 		}
@@ -46,12 +46,12 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 			c.info.BindNode(s.Type, declared)
 		}
 		value := c.typeOfExpr(scope, s.Value, declared)
-		finalType := declared
-		if finalType == nil {
-			finalType = value
-		}
+		finalType := c.resolveDeclaredValueType(declared, value)
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
+		}
+		if s.Type != nil && declared != nil && !typeinfo.Equal(declared, finalType) {
+			c.info.BindNode(s.Type, finalType)
 		}
 		if declared != nil && s.Value != nil && !c.checkAssignable(s.Value.Loc(), declared, value) {
 		}
@@ -63,6 +63,10 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 	case *ast.ExprStmt:
 		c.typeOfExpr(scope, s.Value, nil)
 	case *ast.AssignStmt:
+		if ident, ok := s.Left.(*ast.Ident); ok && ident.Text() == "_" {
+			c.typeOfExpr(scope, s.Right, nil)
+			return
+		}
 		leftType := c.typeOfAssignmentTargetExpr(scope, s.Left)
 		rightType := c.typeOfExpr(scope, s.Right, leftType)
 		if !c.checkAssignable(s.Right.Loc(), leftType, rightType) {
@@ -217,6 +221,37 @@ func (c *checker) checkAssignmentTarget(scope *refineScope, left ast.Expr) {
 				diagnostics.NewError(fmt.Sprintf("cannot assign to immutable symbol %q", res.Symbol.Name)).
 					WithCode(diagnostics.ErrConstantReassignment).
 					WithPrimaryLabel(&loc, "symbol must be mutable"),
+			)
+		}
+	case *ast.SelectorExpr, *ast.IndexExpr:
+		addressable, mutable := c.exprAccess(scope, left)
+		if !addressable {
+			return
+		}
+		if !mutable {
+			loc := left.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot assign through immutable access path").
+					WithCode(diagnostics.ErrConstantReassignment).
+					WithPrimaryLabel(&loc, "this assignment target requires mutable access").
+					WithNote("declare the base binding with `let mut` or use `&mut`"),
+			)
+		}
+	case *ast.PrefixExpr:
+		if e.Op != "*" {
+			return
+		}
+		addressable, mutable := c.exprAccess(scope, left)
+		if !addressable {
+			return
+		}
+		if !mutable {
+			loc := left.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot assign through immutable access path").
+					WithCode(diagnostics.ErrConstantReassignment).
+					WithPrimaryLabel(&loc, "this assignment target requires mutable access").
+					WithNote("declare the base binding with `let mut` or use `&mut`"),
 			)
 		}
 	}

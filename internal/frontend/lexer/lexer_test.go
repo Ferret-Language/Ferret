@@ -8,7 +8,7 @@ import (
 )
 
 func TestLexCompositeLiteralAndReceiverTokens(t *testing.T) {
-	src := `fn (p *mut Point) shift(dx i32) { let q: Point = .{ .x = 1 } }`
+	src := `fn (p *Point) shift(dx i32) { let q: Point = .{ .x = 1 } }`
 	diag := diagnostics.NewBag()
 	out := New("test.ferr", src, diag).Lex()
 	if len(diag.All()) != 0 {

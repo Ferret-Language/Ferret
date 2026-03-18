@@ -98,12 +98,20 @@ func (p *Parser) parsePrefix() ast.Expr {
 			op = "&mut"
 		}
 		return &ast.PrefixExpr{Op: op, Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+	case tokens.AT:
+		p.advance()
+		op := "@"
+		if p.match(tokens.MUT) {
+			op = "@mut"
+		}
+		return &ast.PrefixExpr{Op: op, Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
 	case tokens.ASTERISK, tokens.MINUS, tokens.BANG, tokens.QUESTION:
 		tok := p.advance()
 		return &ast.PrefixExpr{Op: tok.Literal, Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
 	case tokens.TAKE:
+		p.errorHere("`take` is no longer supported")
 		p.advance()
-		return &ast.PrefixExpr{Op: "take", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+		return p.parseExpr(precPrefix)
 	case tokens.COMPTIME:
 		p.advance()
 		return &ast.PrefixExpr{Op: "comptime", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
@@ -135,6 +143,12 @@ func (p *Parser) parseArrayLit() ast.Expr {
 
 func (p *Parser) parseCompositeLit() ast.Expr {
 	start := p.expect(tokens.DOT, "expected '.'").Start
+	var literalType ast.TypeExpr
+	if !p.at(tokens.LBRACE) {
+		typeStart := p.current().Start
+		path := p.parseNamePath()
+		literalType = &ast.NamedType{Path: path, Location: p.locFrom(typeStart)}
+	}
 	p.expect(tokens.LBRACE, "expected '{' after '.'")
 	items := make([]ast.CompositeItem, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
@@ -159,7 +173,7 @@ func (p *Parser) parseCompositeLit() ast.Expr {
 		}
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
-	return &ast.CompositeLit{Items: items, Location: p.locFrom(start)}
+	return &ast.CompositeLit{Type: literalType, Items: items, Location: p.locFrom(start)}
 }
 
 func (p *Parser) atCompositeFieldBoundary() bool {
@@ -339,7 +353,7 @@ func precedence(kind tokens.Kind) int {
 func (p *Parser) startsExpr() bool {
 	switch p.current().Kind {
 	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.NONE,
-		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
+		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.AT, tokens.ASTERISK,
 		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME, tokens.UNSAFE, tokens.MATCH:
 		return true
 	default:

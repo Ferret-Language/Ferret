@@ -6,8 +6,10 @@ import (
 )
 
 type InterfaceMethod struct {
-	Name string
-	Type *FuncType
+	Receiver string
+	Static   bool
+	Name     string
+	Type     *FuncType
 }
 
 func FormatType(t fmt.Stringer) string {
@@ -22,19 +24,13 @@ func FormatNamedDecl(name string, underlying Type) string {
 	case *StructType:
 		var b strings.Builder
 		fmt.Fprintf(&b, "type %s struct {", name)
-		if len(t.OrderedFields) > 0 || len(t.OrderedStaticFields) > 0 {
+		if len(t.OrderedFields) > 0 {
 			b.WriteByte('\n')
 			for _, field := range t.OrderedFields {
 				if field == nil {
 					continue
 				}
 				fmt.Fprintf(&b, "    %s %s\n", field.Name, FormatType(field.Type))
-			}
-			for _, field := range t.OrderedStaticFields {
-				if field == nil {
-					continue
-				}
-				fmt.Fprintf(&b, "    static %s %s\n", field.Name, FormatType(field.Type))
 			}
 			b.WriteString("}")
 			return b.String()
@@ -50,7 +46,7 @@ func FormatNamedDecl(name string, underlying Type) string {
 				if method == nil || method.Type == nil {
 					continue
 				}
-				fmt.Fprintf(&b, "    %s%s\n", method.Name, formatSignature(method.Type))
+				fmt.Fprintf(&b, "    %s%s%s\n", method.Receiver, method.Name, formatSignature(method.Type))
 			}
 			b.WriteString("}")
 			return b.String()
@@ -79,8 +75,11 @@ func formatSignature(fn *FuncType) string {
 	parts := make([]string, 0, len(fn.Params))
 	for i, param := range fn.Params {
 		prefix := ""
+		if i < len(fn.MutParams) && fn.MutParams[i] {
+			prefix += "mut "
+		}
 		if i < len(fn.ComptimeParams) && fn.ComptimeParams[i] {
-			prefix = "comptime "
+			prefix += "comptime "
 		}
 		parts = append(parts, prefix+FormatType(param))
 	}

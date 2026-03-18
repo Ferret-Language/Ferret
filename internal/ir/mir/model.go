@@ -16,7 +16,6 @@ type Module struct {
 
 type TypeDecl struct {
 	Name       string
-	IsMove     bool
 	Named      *typeinfo.NamedType
 	Underlying typeinfo.Type
 	Struct     *StructTypeDecl
@@ -28,8 +27,7 @@ type TypeDecl struct {
 }
 
 type StructTypeDecl struct {
-	Fields       []*StructFieldDecl
-	StaticFields []*StructFieldDecl
+	Fields []*StructFieldDecl
 }
 
 type StructFieldDecl struct {
@@ -44,6 +42,8 @@ type InterfaceTypeDecl struct {
 }
 
 type InterfaceMethodDecl struct {
+	Receiver string
+	Static   bool
 	Name     string
 	Params   []*Param
 	Result   typeinfo.Type
@@ -222,6 +222,7 @@ type AddrOfValue struct {
 	baseValue
 	Source  Value
 	Mutable bool
+	Raw     bool
 }
 
 func (*AddrOfValue) valueNode() {}

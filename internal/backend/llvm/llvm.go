@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"compiler/internal/analysis/layout/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	"compiler/internal/frontend/ast"
@@ -351,6 +351,12 @@ func (d *debugState) getType(state *moduleState, typ typeinfo.Type) int {
 			return d.getUnknownType()
 		}
 	case *typeinfo.PointerType:
+		innerID := d.getType(state, t.Inner)
+		return d.getPointerType(innerID)
+	case *typeinfo.RefType:
+		innerID := d.getType(state, t.Inner)
+		return d.getPointerType(innerID)
+	case *typeinfo.RawPtrType:
 		innerID := d.getType(state, t.Inner)
 		return d.getPointerType(innerID)
 	case *typeinfo.StringType:
@@ -1514,6 +1520,9 @@ func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mi
 	if field, ok := value.(*mir.FieldLoadValue); ok {
 		return lowerFieldLoad(state, name, typ, field)
 	}
+	if field, ok := value.(*mir.FieldValue); ok {
+		return lowerResolvedFieldValueLoad(state, name, typ, field)
+	}
 	if idx, ok := value.(*mir.IndexValue); ok {
 		return lowerIndexLoad(state, name, typ, idx)
 	}
@@ -1717,8 +1726,51 @@ func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.T
 	return strings.Join(lines, "\n"), nil
 }
 
+func lowerFieldValueLoad(state *moduleState, targetName string, targetType typeinfo.Type, base mir.Value, fieldIndex int) (string, error) {
+	lines, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
+	if err != nil {
+		return "", err
+	}
+	irType, err := llvmBaseType(targetType)
+	if err != nil {
+		return "", err
+	}
+	lines = append(lines, fmt.Sprintf("%s = load %s, ptr %s", llvmLocalName(targetName), irType, addr))
+	return strings.Join(lines, "\n"), nil
+}
+
+func lowerResolvedFieldValueLoad(state *moduleState, targetName string, targetType typeinfo.Type, field *mir.FieldValue) (string, error) {
+	if field == nil {
+		return "", fmt.Errorf("nil field value")
+	}
+	fieldIndex, err := llvmResolveFieldIndex(state, llvmFieldBaseType(state, field.Base), field.FieldIndex, field.MemberName)
+	if err != nil {
+		return "", err
+	}
+	return lowerFieldValueLoad(state, targetName, targetType, field.Base, fieldIndex)
+}
+
+func llvmResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldIndex int, memberName string) (int, error) {
+	if fieldIndex >= 0 {
+		return fieldIndex, nil
+	}
+	structLayout, err := lookupStructLayout(state, baseType)
+	if err != nil {
+		return -1, err
+	}
+	for _, field := range structLayout.Fields {
+		if field != nil && field.Name == memberName {
+			return field.SemanticIndex, nil
+		}
+	}
+	return -1, fmt.Errorf("unknown field %q", memberName)
+}
+
 // lowerIndexLoad lowers arr[index] as an rvalue load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
+	if _, ok := unwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
+		return lowerSliceIndexLoad(state, targetName, targetType, idx)
+	}
 	lines, addr, err := lowerIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())
 	if err != nil {
 		return "", err
@@ -1731,17 +1783,62 @@ func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.T
 	return strings.Join(lines, "\n"), nil
 }
 
+func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
+	baseExpr, err := lowerValue(state, idx.Base)
+	if err != nil {
+		return "", err
+	}
+	indexExpr, err := lowerValue(state, idx.Index)
+	if err != nil {
+		return "", err
+	}
+	elemIRType, err := llvmBaseType(targetType)
+	if err != nil {
+		return "", err
+	}
+	dataPtr := freshTemp(state, "slice_data")
+	elemPtr := freshTemp(state, "elem")
+	loadElem := freshTemp(state, "idx")
+	lines := []string{
+		fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, baseExpr),
+		fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", elemPtr, elemIRType, dataPtr, indexExpr),
+		fmt.Sprintf("%s = load %s, ptr %s", loadElem, elemIRType, elemPtr),
+		fmt.Sprintf("%s = or %s 0, %s", llvmLocalName(targetName), elemIRType, loadElem),
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+func llvmPointerInner(typ typeinfo.Type) (typeinfo.Type, bool) {
+	switch t := unwrapNamed(typ).(type) {
+	case *typeinfo.PointerType:
+		return t.Inner, true
+	case *typeinfo.RawPtrType:
+		return t.Inner, true
+	case *typeinfo.RefType:
+		return t.Inner, true
+	default:
+		return nil, false
+	}
+}
+
+func llvmIsPointerLike(typ typeinfo.Type) bool {
+	_, ok := llvmPointerInner(typ)
+	return ok
+}
+
 // lowerIndexAddress computes the pointer to arr[index].
-// baseType must be *typeinfo.ArrayType or *typeinfo.PointerType.
+// baseType must be *typeinfo.ArrayType or a pointer-like type.
 func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
 	switch bt := baseType.(type) {
 	case *typeinfo.ArrayType:
 		elemType = bt.Inner
-	case *typeinfo.PointerType:
-		elemType = bt.Inner
 	default:
-		return nil, "", fmt.Errorf("cannot index into %T", baseType)
+		var ok bool
+		elemType, ok = llvmPointerInner(baseType)
+		if !ok {
+			return nil, "", fmt.Errorf("cannot index into %T", baseType)
+		}
 	}
 	elemIRType, err := llvmBaseType(elemType)
 	if err != nil {
@@ -1861,8 +1958,16 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 			if err != nil {
 				return nil, "", err
 			}
+		} else if sl, ok := baseType.(*typeinfo.SliceType); ok {
+			elemIRType, err = llvmBaseType(sl.Inner)
+			if err != nil {
+				return nil, "", err
+			}
+			dataPtr := freshTemp(state, "slice_data")
+			baseLines = append(baseLines, fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, basePtr))
+			basePtr = dataPtr
 		} else {
-			return nil, "", fmt.Errorf("IndexPlace base is not an array: %T", baseType)
+			return nil, "", fmt.Errorf("IndexPlace base is not an array or slice: %T", baseType)
 		}
 		idxVal, err := lowerValue(state, p.Index)
 		if err != nil {
@@ -2061,7 +2166,7 @@ func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, err
 	if builtin, ok := arg.Type().(*typeinfo.BuiltinType); ok {
 		return lowerBuiltinPrintPrimitive(state, arg, builtin.Name)
 	}
-	if _, ok := arg.Type().(*typeinfo.PointerType); ok {
+	if llvmIsPointerLike(arg.Type()) {
 		val, err := lowerValue(state, arg)
 		if err != nil {
 			return "", err
@@ -2291,7 +2396,7 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 		return strings.Join(lines, "\n"), nil
 	case *mir.CallValue:
 		return lowerAggregateCallValue(state, agg, v)
-	case *mir.LocalValue, *mir.NameValue:
+	case *mir.LocalValue, *mir.NameValue, *mir.LoadValue, *mir.FieldLoadValue:
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
 			return "", err
@@ -2949,8 +3054,7 @@ func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, m
 }
 
 func llvmInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type) (string, []string, error) {
-	if ptr, ok := concrete.(*typeinfo.PointerType); ok {
-		_ = ptr
+	if llvmIsPointerLike(concrete) {
 		return "ptr %data", nil, nil
 	}
 	if isAggregateType(state, concrete) {
@@ -3009,6 +3113,14 @@ func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
 		return lowerValue(state, v)
 	case *mir.NameValue:
 		return lowerValue(state, v)
+	case *mir.LoadValue:
+		return lowerValue(state, v.Pointer)
+	case *mir.FieldLoadValue:
+		_, addr, _, err := lowerFieldAddress(state, v.Base, v.FieldIndex)
+		if err != nil {
+			return "", err
+		}
+		return addr, nil
 	default:
 		return "", fmt.Errorf("unsupported aggregate source %T", value)
 	}
@@ -3247,11 +3359,41 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
 	case *mir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
+	case *mir.FieldValue:
+		fieldIndex, err := llvmResolveFieldIndex(state, llvmFieldBaseType(state, v.Base), v.FieldIndex, v.MemberName)
+		if err != nil {
+			return "", err
+		}
+		lines, addr, fieldType, err := lowerFieldAddress(state, v.Base, fieldIndex)
+		if err != nil {
+			return "", err
+		}
+		irType, err := llvmBaseType(fieldType)
+		if err != nil {
+			return "", err
+		}
+		tmp := freshTemp(state, "fld")
+		state.pendingLines = append(state.pendingLines, lines...)
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, addr))
+		return tmp, nil
 	case *mir.IndexValue:
 		return "", fmt.Errorf("index value must be lowered in assignment context")
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
+}
+
+func llvmFieldBaseType(state *moduleState, value mir.Value) typeinfo.Type {
+	if value == nil {
+		return nil
+	}
+	if typ := value.Type(); typ != nil {
+		return typ
+	}
+	if local, ok := value.(*mir.LocalValue); ok {
+		return localTypeByID(state.fn, local.LocalID)
+	}
+	return nil
 }
 
 func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
@@ -3500,7 +3642,7 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 			return op, nil
 		}
 	}
-	if _, ok := dst.(*typeinfo.PointerType); ok {
+	if llvmIsPointerLike(dst) {
 		return llvmCopyExpr("ptr", srcVal)
 	}
 	return "", fmt.Errorf("unsupported cast from %s to %s", src, dst)
@@ -3775,7 +3917,7 @@ func entryPrelude(state *moduleState) []string {
 	// 2. Alloca non-param aggregate locals.
 	aggIDs := make([]int, 0, len(state.aggLocals))
 	for id, agg := range state.aggLocals {
-		if agg == nil || agg.Size == 0 {
+		if agg == nil {
 			continue
 		}
 		if _, ok := state.aggParams[id]; ok {
@@ -3815,12 +3957,18 @@ func entryPrelude(state *moduleState) []string {
 
 	for _, id := range aggIDs {
 		agg := state.aggLocals[id]
-		typeName, err := llvmABITypeName(state, agg.Type)
-		if err != nil {
-			continue
+		typeName := "i8"
+		align := int64(1)
+		if agg.Size > 0 {
+			var err error
+			typeName, err = llvmABITypeName(state, agg.Type)
+			if err != nil {
+				typeName = fmt.Sprintf("[%d x i8]", agg.Size)
+			}
+			align = normalizeAlign(agg.Align)
 		}
 		lines = append(lines, fmt.Sprintf("%s = alloca %s, align %d",
-			llvmLocalName(agg.PtrName), typeName, normalizeAlign(agg.Align)))
+			llvmLocalName(agg.PtrName), typeName, align))
 	}
 
 	return lines
@@ -3885,7 +4033,7 @@ func lowerGlobalStringLike(state *moduleState, comp *mir.CompositeValue) (string
 	for _, item := range comp.Items {
 		items[item.Name] = item.Value
 	}
-	ptrLit, err := lowerGlobalValue(state, &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}, items["ptr"])
+	ptrLit, err := lowerGlobalValue(state, &typeinfo.RawPtrType{Inner: &typeinfo.BuiltinType{Name: "u8"}}, items["ptr"])
 	if err != nil {
 		return "", err
 	}
@@ -3961,7 +4109,7 @@ func aggregateSizeAlignOfPrimitive(typ typeinfo.Type) (int64, int64, error) {
 		case "u64", "i64", "usize", "isize", "f64":
 			return 8, 8, nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return 8, 8, nil
 	}
 	return 0, 0, fmt.Errorf("not a primitive type")
@@ -4050,6 +4198,10 @@ func lookupStructLayout(state *moduleState, typ typeinfo.Type) (*layout.StructLa
 		}
 		return info.Struct, nil
 	case *typeinfo.PointerType:
+		return lookupStructLayout(state, t.Inner)
+	case *typeinfo.RefType:
+		return lookupStructLayout(state, t.Inner)
+	case *typeinfo.RawPtrType:
 		return lookupStructLayout(state, t.Inner)
 	default:
 		return nil, fmt.Errorf("unsupported struct base type %s", typ)
@@ -4354,7 +4506,7 @@ func llvmTypeBits(name string) int {
 
 func llvmNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
 	typ = unwrapNamed(typ)
-	if _, ok := typ.(*typeinfo.PointerType); ok {
+	if llvmIsPointerLike(typ) {
 		return lit, nil
 	}
 	b, ok := typ.(*typeinfo.BuiltinType)

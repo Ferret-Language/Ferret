@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"compiler/internal/analysis/layout/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"
 	"compiler/internal/backend/registry"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
 )
 
@@ -17,14 +17,14 @@ func TestLowerInterfaceDispatchToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
-fn (n Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 
@@ -49,8 +49,8 @@ fn main() str {
 	text := artifact.Text
 	for _, want := range []string{
 		"%local__main__Stringer = type { ptr, ptr }",
-		"@vtable__local__main__Stringer__main__Name = private unnamed_addr constant [1 x ptr]",
-		"define { ptr, i64 } @ifacewrap__local__main__Stringer__main__Name__String(ptr %data)",
+		"@vtable__local__main__Stringer__Name = private unnamed_addr constant [1 x ptr]",
+		"define { ptr, i64 } @ifacewrap__local__main__Stringer__Name__String(ptr %data)",
 		"%_iface_fnslot",
 		"%_iface_fn",
 		"call { ptr, i64 } %_iface_fn",
@@ -65,14 +65,14 @@ func TestLowerImportedInterfaceDispatchToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "util", "name.ferr"), `
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
 fn Origin() Name {
     return .{ .value = 7 }
 }
 
-fn (n Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 `)
@@ -80,7 +80,7 @@ fn (n Name) String() str {
 import "util/name"
 
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 fn main() str {
@@ -103,8 +103,8 @@ fn main() str {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"@vtable__local__main__Stringer__util__name__Name",
-		"@ifacewrap__local__main__Stringer__util__name__Name__String",
+		"@vtable__local__main__Stringer__Name",
+		"@ifacewrap__local__main__Stringer__Name__String",
 		"@util__name__Name__String",
 	} {
 		if !strings.Contains(text, want) {
@@ -117,14 +117,14 @@ func TestLowerGlobalInterfaceValueToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String(self) str
 }
 
 type Name struct {
-    value i32 = 0
+    value: i32 = 0
 }
 
-fn (n Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 
@@ -151,11 +151,123 @@ fn main() str {
 	for _, want := range []string{
 		"@main__GlobalName = global %local__main__Name",
 		"@main__GlobalStringer = global %local__main__Stringer",
-		"@vtable__local__main__Stringer__main__Name",
+		"@vtable__local__main__Stringer__Name",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
 		}
+	}
+}
+
+func TestLowerLocalArrayLiteralAndIndexToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let arr: [3]i32 = [1, 2, 3]
+    let n = arr[1]
+    return n
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%arr = alloca [12 x i8], align 4",
+		"store i32 1, ptr %arr",
+		"getelementptr inbounds i8, ptr %arr, i64 4",
+		"getelementptr inbounds i32, ptr %arr, i64 1",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerSliceIndexToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main(items: []i32) i32 {
+    let n = items[1]
+    return n
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"load ptr, ptr %items",
+		"getelementptr inbounds i32, ptr %_slice_data",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerAggregateLoadAssignmentToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Conn struct {}
+
+fn run(mut c: *Conn) void {
+    let r = &*c
+    r
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	if _, err := lowerer.LowerModule(testUnit(result)); err != nil {
+		t.Fatalf("lower llvm aggregate load: %v", err)
+	}
+}
+
+func TestLowerReceiverFieldReadToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    Value: i32 = 0
+}
+
+fn Point::Incr(&mut self) void {
+    self.Value = self.Value + 1
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	if _, err := lowerer.LowerModule(testUnit(result)); err != nil {
+		t.Fatalf("lower llvm receiver field read: %v", err)
 	}
 }
 
@@ -199,6 +311,43 @@ fn main() i32 {
 	}
 }
 
+func TestLowerRawAddressLocalToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let a = 10
+    unsafe {
+        let p = @a
+        print(p)
+    }
+    return 0
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%a_alloca = alloca i32",
+		"store i32 %_asgn1, ptr %a_alloca",
+		"call void @global__print_ptr(ptr %_ld3)",
+		"ret i32 0",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerUnionExtractCastToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
@@ -207,7 +356,7 @@ type Token union {
     i64,
 }
 
-fn main(flag bool) i32 {
+fn main(flag: bool) i32 {
     let mut value: Token = 1
     if flag {
         value = 2 as i64

@@ -85,10 +85,6 @@ func (c *checker) synthesizeSymbolType(mod *context.Module, sym *symbols.Symbol)
 				return typeinfo.UndefinedType{}
 			}
 		}
-	case symbols.SymbolStatic:
-		if field, ok := sym.Node.(*ast.StaticFieldDecl); ok {
-			return c.typeFromSyntax(mod, field.Type)
-		}
 	case symbols.SymbolVariant, symbols.SymbolError:
 		if ownerName, ok := c.findTypeMemberOwner(mod, sym); ok {
 			return &typeinfo.NamedType{
@@ -105,17 +101,24 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 	if fn == nil {
 		return &typeinfo.FuncType{Result: &typeinfo.BuiltinType{Name: "void"}}
 	}
+	var selfType typeinfo.Type
+	if fn.OwnerType != nil {
+		selfType = c.typeFromSyntax(mod, fn.OwnerType)
+	}
 	params := make([]typeinfo.Type, 0, len(fn.Params))
+	mutParams := make([]bool, 0, len(fn.Params))
 	comptimeParams := make([]bool, 0, len(fn.Params))
 	for _, param := range fn.Params {
-		params = append(params, c.typeFromSyntax(mod, param.Type))
+		params = append(params, c.instantiateSelfType(c.typeFromSyntax(mod, param.Type), selfType))
+		mutParams = append(mutParams, param.IsMut)
 		comptimeParams = append(comptimeParams, param.IsComptime)
 	}
 	return &typeinfo.FuncType{
 		IsUnsafe:       fn.IsUnsafe,
 		Params:         params,
+		MutParams:      mutParams,
 		ComptimeParams: comptimeParams,
-		Result:         c.funcResultType(mod, fn),
+		Result:         c.instantiateSelfType(c.funcResultType(mod, fn), selfType),
 	}
 }
 

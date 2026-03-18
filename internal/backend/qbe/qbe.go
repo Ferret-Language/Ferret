@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"compiler/internal/analysis/layout/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	"compiler/internal/frontend/ast"
@@ -572,6 +572,9 @@ func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mi
 	if field, ok := value.(*mir.FieldLoadValue); ok {
 		return lowerFieldLoad(state, name, typ, field)
 	}
+	if field, ok := value.(*mir.FieldValue); ok {
+		return lowerResolvedFieldValueLoad(state, name, typ, field)
+	}
 	if idx, ok := value.(*mir.IndexValue); ok {
 		return lowerIndexLoad(state, name, typ, idx)
 	}
@@ -781,7 +784,7 @@ func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, err
 	if builtin, ok := arg.Type().(*typeinfo.BuiltinType); ok {
 		return lowerBuiltinPrintPrimitive(state, arg, builtin.Name)
 	}
-	if _, ok := arg.Type().(*typeinfo.PointerType); ok {
+	if qbeIsPointerLike(arg.Type()) {
 		val, err := lowerValue(state, arg)
 		if err != nil {
 			return "", err
@@ -790,6 +793,24 @@ func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, err
 	}
 	sym := emitQBEStringConstant(state, arg.Type().String())
 	return fmt.Sprintf("call $global__print_type(l $%s)", sym), nil
+}
+
+func qbePointerInner(t typeinfo.Type) (typeinfo.Type, bool) {
+	switch pt := unwrapNamed(t).(type) {
+	case *typeinfo.PointerType:
+		return pt.Inner, true
+	case *typeinfo.RefType:
+		return pt.Inner, true
+	case *typeinfo.RawPtrType:
+		return pt.Inner, true
+	default:
+		return nil, false
+	}
+}
+
+func qbeIsPointerLike(t typeinfo.Type) bool {
+	_, ok := qbePointerInner(t)
+	return ok
 }
 
 func lowerBuiltinPrintPrimitive(state *moduleState, arg mir.Value, name string) (string, error) {
@@ -1093,8 +1114,51 @@ func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.T
 	return strings.Join(lines, "\n\t"), nil
 }
 
+func lowerFieldValueLoad(state *moduleState, targetName string, targetType typeinfo.Type, base mir.Value, fieldIndex int) (string, error) {
+	lines, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
+	if err != nil {
+		return "", err
+	}
+	op, resultType, err := qbeLoadOp(targetType)
+	if err != nil {
+		return "", err
+	}
+	lines = append(lines, fmt.Sprintf("%s =%s %s %s", qbeLocalName(targetName), resultType, op, addr))
+	return strings.Join(lines, "\n\t"), nil
+}
+
+func lowerResolvedFieldValueLoad(state *moduleState, targetName string, targetType typeinfo.Type, field *mir.FieldValue) (string, error) {
+	if field == nil {
+		return "", fmt.Errorf("nil field value")
+	}
+	fieldIndex, err := qbeResolveFieldIndex(state, qbeFieldBaseType(state, field.Base), field.FieldIndex, field.MemberName)
+	if err != nil {
+		return "", err
+	}
+	return lowerFieldValueLoad(state, targetName, targetType, field.Base, fieldIndex)
+}
+
+func qbeResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldIndex int, memberName string) (int, error) {
+	if fieldIndex >= 0 {
+		return fieldIndex, nil
+	}
+	structLayout, err := lookupStructLayout(state, baseType)
+	if err != nil {
+		return -1, err
+	}
+	for _, field := range structLayout.Fields {
+		if field != nil && field.Name == memberName {
+			return field.SemanticIndex, nil
+		}
+	}
+	return -1, fmt.Errorf("unknown field %q", memberName)
+}
+
 // lowerIndexLoad lowers arr[index] as an rvalue via QBE load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
+	if _, ok := unwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
+		return lowerSliceIndexLoad(state, targetName, targetType, idx)
+	}
 	lines, addr, err := lowerQBEIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())
 	if err != nil {
 		return "", err
@@ -1107,16 +1171,54 @@ func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.T
 	return strings.Join(lines, "\n\t"), nil
 }
 
+func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
+	baseExpr, err := lowerValue(state, idx.Base)
+	if err != nil {
+		return "", err
+	}
+	indexExpr, err := lowerValue(state, idx.Index)
+	if err != nil {
+		return "", err
+	}
+	elemType := targetType
+	elemSize, _, err := qbeScalarSizeAlign(elemType)
+	if err != nil {
+		elemSize, _, err = aggregateSizeAlign(state, elemType)
+		if err != nil {
+			return "", fmt.Errorf("cannot compute size of indexed element type %s", elemType)
+		}
+	}
+	op, resultType, err := qbeLoadOp(targetType)
+	if err != nil {
+		return "", err
+	}
+	lines := make([]string, 0, 5)
+	dataPtr := freshTemp(state, "slice_data")
+	lines = append(lines, fmt.Sprintf("%s =l loadl %s", dataPtr, baseExpr))
+	scaled := indexExpr
+	if elemSize != 1 {
+		scaledTmp := freshTemp(state, "idx")
+		lines = append(lines, fmt.Sprintf("%s =l mul %s, %d", scaledTmp, indexExpr, elemSize))
+		scaled = scaledTmp
+	}
+	elemPtr := freshTemp(state, "elem")
+	lines = append(lines, fmt.Sprintf("%s =l add %s, %s", elemPtr, dataPtr, scaled))
+	lines = append(lines, fmt.Sprintf("%s =%s %s %s", qbeLocalName(targetName), resultType, op, elemPtr))
+	return strings.Join(lines, "\n\t"), nil
+}
+
 // lowerQBEIndexAddress computes ptr = base + index * elemSize.
 func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
 	switch bt := baseType.(type) {
 	case *typeinfo.ArrayType:
 		elemType = bt.Inner
-	case *typeinfo.PointerType:
-		elemType = bt.Inner
 	default:
-		return nil, "", fmt.Errorf("cannot index into %T", baseType)
+		var ok bool
+		elemType, ok = qbePointerInner(baseType)
+		if !ok {
+			return nil, "", fmt.Errorf("cannot index into %T", baseType)
+		}
 	}
 	elemSize, _, err := qbeScalarSizeAlign(elemType)
 	if err != nil {
@@ -1249,8 +1351,13 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 		var elemType typeinfo.Type
 		if arr, ok := baseType.(*typeinfo.ArrayType); ok {
 			elemType = arr.Inner
+		} else if sl, ok := baseType.(*typeinfo.SliceType); ok {
+			elemType = sl.Inner
+			dataPtr := freshTemp(state, "slice_data")
+			baseLines = append(baseLines, fmt.Sprintf("%s =l loadl %s", dataPtr, basePtr))
+			basePtr = dataPtr
 		} else {
-			return nil, "", fmt.Errorf("IndexPlace base is not an array: %T", baseType)
+			return nil, "", fmt.Errorf("IndexPlace base is not an array or slice: %T", baseType)
 		}
 		elemSize, _, err := qbeScalarSizeAlign(elemType)
 		if err != nil {
@@ -1309,7 +1416,7 @@ func qbeScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
 		case "u64", "i64", "usize", "isize", "f64":
 			return 8, 8, nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return 8, 8, nil
 	}
 	return 0, 0, fmt.Errorf("not a scalar type: %s", typ)
@@ -1397,7 +1504,7 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 		return strings.Join(lines, "\n\t"), nil
 	case *mir.CallValue:
 		return lowerAggregateCall(state, agg, v)
-	case *mir.LocalValue, *mir.NameValue:
+	case *mir.LocalValue, *mir.NameValue, *mir.LoadValue, *mir.FieldLoadValue:
 		src, err := lowerAggregateSource(state, value)
 		if err != nil {
 			return "", err
@@ -1650,8 +1757,8 @@ func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, me
 
 func qbeInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type, link mir.InterfaceMethodLink, method *mir.InterfaceMethodDecl) (string, string, error) {
 	callee := concrete
-	if ptr, ok := concrete.(*typeinfo.PointerType); ok {
-		abi, err := qbeABIType(state, ptr)
+	if qbeIsPointerLike(concrete) {
+		abi, err := qbeABIType(state, concrete)
 		if err != nil {
 			return "", "", err
 		}
@@ -1737,7 +1844,7 @@ func isUnionAggregate(typ typeinfo.Type) bool {
 
 func optionalUsesNiche(typ typeinfo.Type) bool {
 	switch t := unwrapNamed(typ).(type) {
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return true
 	case *typeinfo.BuiltinType:
 		switch t.Name {
@@ -2027,6 +2134,14 @@ func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
 		return lowerValue(state, v)
 	case *mir.NameValue:
 		return lowerValue(state, v)
+	case *mir.LoadValue:
+		return lowerValue(state, v.Pointer)
+	case *mir.FieldLoadValue:
+		_, addr, _, err := lowerFieldAddress(state, v.Base, v.FieldIndex)
+		if err != nil {
+			return "", err
+		}
+		return addr, nil
 	default:
 		return "", fmt.Errorf("unsupported aggregate source %T", value)
 	}
@@ -2081,7 +2196,7 @@ func lowerGlobalStringLike(state *moduleState, comp *mir.CompositeValue) (string
 	for _, item := range comp.Items {
 		items[item.Name] = item.Value
 	}
-	ptrTok, ptrLit, err := qbeDataItem(state, &typeinfo.PointerType{Inner: &typeinfo.BuiltinType{Name: "u8"}}, items["ptr"])
+	ptrTok, ptrLit, err := qbeDataItem(state, &typeinfo.RawPtrType{Inner: &typeinfo.BuiltinType{Name: "u8"}}, items["ptr"])
 	if err != nil {
 		return "", err
 	}
@@ -2149,7 +2264,7 @@ func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 			state.aggLocals[local.ID] = agg
 			continue
 		}
-		if !local.Mutable {
+		if !local.Mutable && !qbeLocalAddressTaken(fn, local) {
 			continue
 		}
 		qtype, err := qbeBaseType(local.Type)
@@ -2172,6 +2287,137 @@ func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 	return nil
 }
 
+func qbeLocalAddressTaken(fn *mir.Function, local *mir.Local) bool {
+	if fn == nil || local == nil {
+		return false
+	}
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, instr := range block.Instructions {
+			if qbeInstrHasAddrOfLocal(instr, local) {
+				return true
+			}
+		}
+		if qbeTermHasAddrOfLocal(block.Terminator, local) {
+			return true
+		}
+	}
+	return false
+}
+
+func qbeInstrHasAddrOfLocal(instr mir.Instr, local *mir.Local) bool {
+	switch ins := instr.(type) {
+	case *mir.BindInstr:
+		return qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.ComputeInstr:
+		return qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.AssignInstr:
+		return qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.StoreInstr:
+		return qbePlaceHasAddrOfLocal(ins.Target, local) || qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.StoreFieldInstr:
+		return qbeValueHasAddrOfLocal(ins.Base, local) || qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.EvalInstr:
+		return qbeValueHasAddrOfLocal(ins.Value, local)
+	case *mir.DeferInstr:
+		for _, nested := range ins.Body {
+			if qbeInstrHasAddrOfLocal(nested, local) {
+				return true
+			}
+		}
+	case *mir.LockInstr:
+		return qbeValueHasAddrOfLocal(ins.Value, local)
+	}
+	return false
+}
+
+func qbeTermHasAddrOfLocal(term mir.Terminator, local *mir.Local) bool {
+	switch t := term.(type) {
+	case *mir.BranchTerm:
+		return qbeValueHasAddrOfLocal(t.Cond, local)
+	case *mir.SwitchTerm:
+		if qbeValueHasAddrOfLocal(t.Value, local) {
+			return true
+		}
+		for _, c := range t.Cases {
+			if qbeValueHasAddrOfLocal(c.Expr, local) {
+				return true
+			}
+		}
+	case *mir.ReturnTerm:
+		return qbeValueHasAddrOfLocal(t.Value, local)
+	case *mir.PanicTerm:
+		return qbeValueHasAddrOfLocal(t.Value, local)
+	}
+	return false
+}
+
+func qbePlaceHasAddrOfLocal(place mir.Place, local *mir.Local) bool {
+	switch p := place.(type) {
+	case *mir.FieldPlace:
+		return qbePlaceHasAddrOfLocal(p.Base, local)
+	case *mir.IndexPlace:
+		return qbePlaceHasAddrOfLocal(p.Base, local) || qbeValueHasAddrOfLocal(p.Index, local)
+	case *mir.DerefPlace:
+		return qbeValueHasAddrOfLocal(p.Pointer, local)
+	default:
+		return false
+	}
+}
+
+func qbeValueHasAddrOfLocal(v mir.Value, local *mir.Local) bool {
+	switch val := v.(type) {
+	case *mir.AddrOfValue:
+		switch src := val.Source.(type) {
+		case *mir.LocalValue:
+			if src.LocalID == local.ID {
+				return true
+			}
+		case *mir.NameValue:
+			return len(src.Path) == 1 && src.Path[0] == local.Name
+		}
+		return qbeValueHasAddrOfLocal(val.Source, local)
+	case *mir.UnaryValue:
+		return qbeValueHasAddrOfLocal(val.Right, local)
+	case *mir.LoadValue:
+		return qbeValueHasAddrOfLocal(val.Pointer, local)
+	case *mir.BinaryValue:
+		return qbeValueHasAddrOfLocal(val.Left, local) || qbeValueHasAddrOfLocal(val.Right, local)
+	case *mir.PostfixValue:
+		return qbeValueHasAddrOfLocal(val.Left, local)
+	case *mir.CallValue:
+		if qbeValueHasAddrOfLocal(val.Callee, local) {
+			return true
+		}
+		for _, arg := range val.Args {
+			if qbeValueHasAddrOfLocal(arg, local) {
+				return true
+			}
+		}
+	case *mir.FieldLoadValue:
+		return qbeValueHasAddrOfLocal(val.Base, local)
+	case *mir.FieldValue:
+		return qbeValueHasAddrOfLocal(val.Base, local)
+	case *mir.CastValue:
+		return qbeValueHasAddrOfLocal(val.Left, local)
+	case *mir.TypeTestValue:
+		return qbeValueHasAddrOfLocal(val.Left, local)
+	case *mir.CompositeValue:
+		for _, item := range val.Items {
+			if qbeValueHasAddrOfLocal(item.Value, local) {
+				return true
+			}
+		}
+	case *mir.InterfaceValue:
+		return qbeValueHasAddrOfLocal(val.Value, local)
+	case *mir.IndexValue:
+		return qbeValueHasAddrOfLocal(val.Base, local) || qbeValueHasAddrOfLocal(val.Index, local)
+	}
+	return false
+}
+
 func entryPrelude(state *moduleState) []string {
 	if state == nil || state.fn == nil {
 		return nil
@@ -2183,7 +2429,7 @@ func entryPrelude(state *moduleState) []string {
 	sort.Ints(scalarIDs)
 	aggIDs := make([]int, 0, len(state.aggLocals))
 	for id, agg := range state.aggLocals {
-		if agg == nil || agg.Size == 0 {
+		if agg == nil {
 			continue
 		}
 		if _, ok := state.aggParams[id]; ok {
@@ -2199,7 +2445,13 @@ func entryPrelude(state *moduleState) []string {
 	}
 	for _, id := range aggIDs {
 		agg := state.aggLocals[id]
-		lines = append(lines, fmt.Sprintf("%s =l alloc%d %d", qbeLocalName(agg.PtrName), normalizeQBEAlign(agg.Align), agg.Size))
+		size := agg.Size
+		align := agg.Align
+		if size == 0 {
+			size = 1
+			align = 1
+		}
+		lines = append(lines, fmt.Sprintf("%s =l alloc%d %d", qbeLocalName(agg.PtrName), normalizeQBEAlign(align), size))
 	}
 	return lines
 }
@@ -2323,11 +2575,41 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
 	case *mir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
+	case *mir.FieldValue:
+		fieldIndex, err := qbeResolveFieldIndex(state, qbeFieldBaseType(state, v.Base), v.FieldIndex, v.MemberName)
+		if err != nil {
+			return "", err
+		}
+		lines, addr, _, err := lowerFieldAddress(state, v.Base, fieldIndex)
+		if err != nil {
+			return "", err
+		}
+		op, resultType, err := qbeLoadOp(v.Type())
+		if err != nil {
+			return "", err
+		}
+		tmp := freshTemp(state, "fld")
+		state.pendingLines = append(state.pendingLines, lines...)
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, resultType, op, addr))
+		return tmp, nil
 	case *mir.IndexValue:
 		return "", fmt.Errorf("index value must be lowered in assignment context")
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
+}
+
+func qbeFieldBaseType(state *moduleState, value mir.Value) typeinfo.Type {
+	if value == nil {
+		return nil
+	}
+	if typ := value.Type(); typ != nil {
+		return typ
+	}
+	if local, ok := value.(*mir.LocalValue); ok {
+		return localTypeByID(state.fn, local.LocalID)
+	}
+	return nil
 }
 
 func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
@@ -2491,7 +2773,7 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 			return fmt.Sprintf("%s %s", op, srcVal), nil
 		}
 	}
-	if _, ok := dst.(*typeinfo.PointerType); ok {
+	if qbeIsPointerLike(dst) {
 		return "copy " + srcVal, nil
 	}
 	return "", fmt.Errorf("unsupported cast from %s to %s", typeinfo.FormatType(typeStringer{v.Left.Type()}), typeinfo.FormatType(typeStringer{v.Type()}))
@@ -2859,6 +3141,10 @@ func lookupStructLayout(state *moduleState, typ typeinfo.Type) (*layout.StructLa
 		return info.Struct, nil
 	case *typeinfo.PointerType:
 		return lookupStructLayout(state, t.Inner)
+	case *typeinfo.RefType:
+		return lookupStructLayout(state, t.Inner)
+	case *typeinfo.RawPtrType:
+		return lookupStructLayout(state, t.Inner)
 	default:
 		return nil, fmt.Errorf("unsupported struct base type %s", typeinfo.FormatType(typeStringer{typ}))
 	}
@@ -2920,7 +3206,7 @@ func qbeExtType(typ typeinfo.Type) (string, error) {
 		case "f64":
 			return "d", nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported aggregate member type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -2941,7 +3227,7 @@ func qbeBaseType(typ typeinfo.Type) (string, error) {
 		case "void":
 			return "", nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported qbe base type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3011,7 +3297,7 @@ func qbeLoadOp(typ typeinfo.Type) (string, string, error) {
 		case "f64":
 			return "loadd", "d", nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return "loadl", "l", nil
 	}
 	return "", "", fmt.Errorf("unsupported load type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3034,7 +3320,7 @@ func qbeStoreOp(typ typeinfo.Type) (string, error) {
 		case "f64":
 			return "stored", nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return "storel", nil
 	}
 	return "", fmt.Errorf("unsupported store type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3051,7 +3337,7 @@ func qbeNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
 		default:
 			return lit, nil
 		}
-	case *typeinfo.PointerType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return lit, nil
 	}
 	return "", fmt.Errorf("unsupported numeric literal type %s", typeinfo.FormatType(typeStringer{typ}))

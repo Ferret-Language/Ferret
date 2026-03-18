@@ -87,4 +87,6 @@ const (
 	WarnUnusedPrivateBinding   = "W0010"
 	WarnUnusedParameter        = "W0011"
 	WarnUnusedLocal            = "W0012"
+	WarnUnmodifiedMutable      = "W0013"
+	WarnNonSelfReceiverName    = "W0014"
 )

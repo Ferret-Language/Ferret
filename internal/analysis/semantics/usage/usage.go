@@ -1,6 +1,7 @@
 package usage
 
 import (
+	"compiler/internal/analysis/semantics/typeinfo"
 	"fmt"
 	"reflect"
 
@@ -17,7 +18,10 @@ type analyzer struct {
 	mod         *context.Module
 	usedImports map[*binding.ImportBinding]bool
 	usedSymbols map[*symbols.Symbol]int
+	written     map[*symbols.Symbol]int
 	declNodes   map[ast.Node]struct{}
+	writeNodes  map[ast.Node]struct{}
+	readWrites  map[ast.Node]struct{}
 }
 
 func AnalyzeModules(ctx *context.CompilerContext, mods []*context.Module) {
@@ -38,13 +42,17 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 		mod:         mod,
 		usedImports: make(map[*binding.ImportBinding]bool),
 		usedSymbols: make(map[*symbols.Symbol]int),
+		written:     make(map[*symbols.Symbol]int),
 		declNodes:   make(map[ast.Node]struct{}),
+		writeNodes:  make(map[ast.Node]struct{}),
+		readWrites:  make(map[ast.Node]struct{}),
 	}
 	a.collectDeclNodes()
 	a.collectUses()
 	a.reportUnusedImports()
 	a.reportUnusedModuleSymbols()
 	a.reportUnusedFunctionSymbols()
+	a.reportNeverModifiedMutableBindings()
 	mod.Phase = phase.PhaseUsageAnalyzed
 }
 
@@ -140,6 +148,7 @@ func (a *analyzer) collectDeclNodesStmt(stmt ast.Stmt) {
 		if s == nil {
 			return
 		}
+		a.markWriteTarget(s.Left)
 		a.collectDeclNodesExpr(s.Left)
 		a.collectDeclNodesExpr(s.Right)
 	case *ast.IfStmt:
@@ -226,6 +235,39 @@ func (a *analyzer) collectDeclNodesStmt(stmt ast.Stmt) {
 	}
 }
 
+func (a *analyzer) markWriteTarget(expr ast.Expr) {
+	a.markTarget(expr, false)
+}
+
+func (a *analyzer) markReadWriteTarget(expr ast.Expr) {
+	a.markTarget(expr, true)
+}
+
+func (a *analyzer) markTarget(expr ast.Expr, readWrite bool) {
+	if a == nil || expr == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.Ident:
+		ident := e
+		a.writeNodes[ident] = struct{}{}
+		if readWrite {
+			a.readWrites[ident] = struct{}{}
+		}
+	case *ast.SelectorExpr:
+		a.markTarget(e.Left, readWrite)
+	case *ast.IndexExpr:
+		a.markTarget(e.Left, readWrite)
+	case *ast.PrefixExpr:
+		switch e.Op {
+		case "*", "&", "&mut":
+			a.markTarget(e.Right, readWrite)
+		}
+	case *ast.CastExpr:
+		a.markTarget(e.Left, readWrite)
+	}
+}
+
 func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {
 	if expr == nil {
 		return
@@ -255,6 +297,7 @@ func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {
 		if e == nil {
 			return
 		}
+		a.markCallWrites(e)
 		a.collectDeclNodesExpr(e.Callee)
 		for _, arg := range e.Args {
 			a.collectDeclNodesExpr(arg)
@@ -314,11 +357,41 @@ func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {
 	}
 }
 
+func (a *analyzer) markCallWrites(call *ast.CallExpr) {
+	if a == nil || call == nil || a.mod == nil || a.mod.Types == nil {
+		return
+	}
+	if receiverType, ok := a.mod.Types.LookupMethodReceiver(call); ok {
+		if ref, ok := receiverType.(*typeinfo.RefType); ok && ref.Mutable {
+			if sel, ok := call.Callee.(*ast.SelectorExpr); ok {
+				a.markReadWriteTarget(sel.Left)
+			}
+		}
+	}
+	fnType, ok := a.mod.Types.Nodes[call.Callee].(*typeinfo.FuncType)
+	if !ok || fnType == nil {
+		return
+	}
+	for i, arg := range call.Args {
+		if i < len(fnType.MutParams) && fnType.MutParams[i] {
+			a.markReadWriteTarget(arg)
+		}
+	}
+}
+
 func (a *analyzer) collectUses() {
 	if a == nil || a.mod == nil || a.mod.Bindings == nil {
 		return
 	}
 	for node, resolution := range a.mod.Bindings.Nodes {
+		if _, ok := a.writeNodes[node]; ok {
+			if resolution != nil && resolution.Symbol != nil {
+				a.written[resolution.Symbol]++
+			}
+			if _, ok := a.readWrites[node]; !ok {
+				continue
+			}
+		}
 		if _, ok := a.declNodes[node]; ok {
 			continue
 		}
@@ -400,8 +473,100 @@ func (a *analyzer) reportUnusedFunctionSymbols() {
 	}
 }
 
+func (a *analyzer) reportNeverModifiedMutableBindings() {
+	if a == nil || a.mod == nil {
+		return
+	}
+	for _, decl := range a.mod.AST.Decls {
+		switch d := decl.(type) {
+		case *ast.LetDecl:
+			if d == nil || !d.IsMut {
+				continue
+			}
+			a.reportNeverModifiedDecl(d.Name)
+		case *ast.FuncDecl:
+			if d == nil || d.Body == nil || !a.shouldWarnInsideFunction(d) {
+				continue
+			}
+			a.reportNeverModifiedStmt(d.Body)
+		}
+	}
+}
+
+func (a *analyzer) reportNeverModifiedStmt(stmt ast.Stmt) {
+	if stmt == nil {
+		return
+	}
+	switch s := stmt.(type) {
+	case *ast.BlockStmt:
+		for _, child := range s.Stmts {
+			a.reportNeverModifiedStmt(child)
+		}
+	case *ast.LetStmt:
+		if s != nil && s.IsMut {
+			a.reportNeverModifiedDecl(s.Name)
+		}
+	case *ast.IfStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Then)
+			a.reportNeverModifiedStmt(s.Else)
+		}
+	case *ast.MatchStmt:
+		if s != nil {
+			for _, arm := range s.Arms {
+				if arm != nil {
+					a.reportNeverModifiedStmt(arm.Body)
+				}
+			}
+		}
+	case *ast.WhileStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Body)
+		}
+	case *ast.ForStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Body)
+		}
+	case *ast.LabelStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Stmt)
+		}
+	case *ast.DeferStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Body)
+		}
+	case *ast.LockStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Body)
+		}
+	case *ast.UnsafeStmt:
+		if s != nil {
+			a.reportNeverModifiedStmt(s.Body)
+		}
+	}
+}
+
+func (a *analyzer) reportNeverModifiedDecl(node ast.Node) {
+	if a == nil || node == nil {
+		return
+	}
+	resolution := a.mod.Bindings.Nodes[node]
+	if resolution == nil || resolution.Symbol == nil {
+		return
+	}
+	sym := resolution.Symbol
+	if sym.Name == "_" || a.usedSymbols[sym] == 0 || a.written[sym] > 0 {
+		return
+	}
+	a.ctx.Diagnostics.Add(
+		diagnostics.NewWarning(fmt.Sprintf("%q is never modified", sym.Name)).
+			WithCode(diagnostics.WarnUnmodifiedMutable).
+			WithPrimaryLabel(&sym.Location, "remove `mut` from this binding"),
+	)
+}
+
 func shouldWarnOnUnusedModuleSymbol(mod *context.Module, sym *symbols.Symbol) bool {
-	if mod == nil || sym == nil || sym.Exported {
+	if mod == nil || sym == nil || sym.IsPub {
 		return false
 	}
 	if sym.Name == "_" {
@@ -427,6 +592,9 @@ func shouldWarnOnUnusedModuleSymbol(mod *context.Module, sym *symbols.Symbol) bo
 
 func shouldWarnOnUnusedFunctionSymbol(sym *symbols.Symbol) bool {
 	if sym == nil || sym.Name == "_" {
+		return false
+	}
+	if sym.Kind == symbols.SymbolParam && sym.Name == "self" {
 		return false
 	}
 	switch sym.Kind {
@@ -468,7 +636,7 @@ func (a *analyzer) shouldWarnInsideFunction(fn *ast.FuncDecl) bool {
 	if sym == nil {
 		return true
 	}
-	if sym.Exported {
+	if sym.IsPub {
 		return true
 	}
 	if sym.Kind == symbols.SymbolFunc && sym.Name == "main" && a.mod.IsEntry {

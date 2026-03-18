@@ -42,7 +42,7 @@ func debugDecl(decl Decl) any {
 	case *ConstDecl:
 		return map[string]any{"kind": "ConstDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
 	case *TypeDecl:
-		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "is_move": d.IsMove, "type": debugType(d.Type), "loc": debugLoc(d.Location)}
+		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "type": debugType(d.Type), "loc": debugLoc(d.Location)}
 	case *FuncDecl:
 		params := make([]any, 0, len(d.Params))
 		for _, param := range d.Params {
@@ -51,6 +51,10 @@ func debugDecl(decl Decl) any {
 		var recv any
 		if d.Receiver != nil {
 			recv = map[string]any{"name": debugExpr(d.Receiver.Name), "type": debugType(d.Receiver.Type), "loc": debugLoc(d.Receiver.Location)}
+		}
+		var owner any
+		if d.OwnerType != nil {
+			owner = debugType(d.OwnerType)
 		}
 		return map[string]any{
 			"kind":           "FuncDecl",
@@ -61,6 +65,8 @@ func debugDecl(decl Decl) any {
 			"is_builtin":     d.IsBuiltin,
 			"is_extern":      d.IsExtern,
 			"extern_name":    d.ExternName,
+			"owner_type":     owner,
+			"is_static":      d.IsStatic,
 			"receiver":       recv,
 			"is_constructor": d.IsConstructor,
 			"is_destructor":  d.IsDestructor,
@@ -93,7 +99,7 @@ func debugAttrs(attrs []Attribute) []any {
 }
 
 func debugParam(p Param) any {
-	return map[string]any{"name": debugExpr(p.Name), "is_comptime": p.IsComptime, "type": debugType(p.Type), "loc": debugLoc(p.Location)}
+	return map[string]any{"name": debugExpr(p.Name), "is_mut": p.IsMut, "is_comptime": p.IsComptime, "type": debugType(p.Type), "loc": debugLoc(p.Location)}
 }
 
 func debugStmt(stmt Stmt) any {
@@ -218,7 +224,7 @@ func debugExpr(expr Expr) any {
 		for _, item := range e.Items {
 			items = append(items, map[string]any{"name": debugExpr(item.Name), "value": debugExpr(item.Value)})
 		}
-		return map[string]any{"kind": "CompositeLit", "items": items, "loc": debugLoc(e.Location)}
+		return map[string]any{"kind": "CompositeLit", "type": debugType(e.Type), "items": items, "loc": debugLoc(e.Location)}
 	case *IndexExpr:
 		return map[string]any{"kind": "IndexExpr", "left": debugExpr(e.Left), "index": debugExpr(e.Index), "loc": debugLoc(e.Location)}
 	default:
@@ -233,7 +239,13 @@ func debugType(typ TypeExpr) any {
 	case *NamedType:
 		return map[string]any{"kind": "NamedType", "path": t.Path, "loc": debugLoc(t.Location)}
 	case *PointerType:
-		return map[string]any{"kind": "PointerType", "is_own": t.IsOwn, "is_raw": t.IsRaw, "is_mut": t.IsMut, "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
+		return map[string]any{"kind": "PointerType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
+	case *RefType:
+		return map[string]any{"kind": "RefType", "mutable": t.Mutable, "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
+	case *RawPtrType:
+		return map[string]any{"kind": "RawPtrType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
+	case *SelfType:
+		return map[string]any{"kind": "SelfType", "loc": debugLoc(t.Location)}
 	case *OptionalType:
 		return map[string]any{"kind": "OptionalType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *ErrorUnionType:
@@ -251,11 +263,7 @@ func debugType(typ TypeExpr) any {
 		for _, field := range t.Fields {
 			fields = append(fields, debugField(field))
 		}
-		staticFields := make([]any, 0, len(t.StaticFields))
-		for _, field := range t.StaticFields {
-			staticFields = append(staticFields, debugStaticField(field))
-		}
-		return map[string]any{"kind": "StructType", "fields": fields, "static_fields": staticFields, "loc": debugLoc(t.Location)}
+		return map[string]any{"kind": "StructType", "fields": fields, "loc": debugLoc(t.Location)}
 	case *InterfaceType:
 		methods := make([]any, 0, len(t.Methods))
 		for _, method := range t.Methods {
@@ -267,7 +275,7 @@ func debugType(typ TypeExpr) any {
 			for _, param := range method.Params {
 				params = append(params, debugParam(param))
 			}
-			methods = append(methods, map[string]any{"name": debugExpr(method.Name), "params": params, "result": debugType(method.Result), "loc": debugLoc(method.Location)})
+			methods = append(methods, map[string]any{"receiver": method.Receiver, "static": method.Static, "name": debugExpr(method.Name), "params": params, "result": debugType(method.Result), "loc": debugLoc(method.Location)})
 		}
 		return map[string]any{"kind": "InterfaceType", "methods": methods, "loc": debugLoc(t.Location)}
 	case *EnumType:
@@ -302,13 +310,6 @@ func debugType(typ TypeExpr) any {
 }
 
 func debugField(field *FieldDecl) any {
-	if field == nil {
-		return nil
-	}
-	return map[string]any{"name": debugExpr(field.Name), "type": debugType(field.Type), "default": debugExpr(field.Default), "loc": debugLoc(field.Location)}
-}
-
-func debugStaticField(field *StaticFieldDecl) any {
 	if field == nil {
 		return nil
 	}

@@ -11,38 +11,48 @@ func (p *Parser) parseType() ast.TypeExpr {
 	case tokens.QUESTION:
 		p.advance()
 		return &ast.OptionalType{Inner: p.parseType(), Location: p.locFrom(start)}
+	case tokens.AMP:
+		p.advance()
+		ref := &ast.RefType{Location: p.locFrom(start)}
+		if p.match(tokens.MUT) {
+			ref.Mutable = true
+		}
+		ref.Inner = p.parseType()
+		return ref
+	case tokens.CARET:
+		p.advance()
+		return &ast.RawPtrType{Inner: p.parseType(), Location: p.locFrom(start)}
 	case tokens.ASTERISK:
 		p.advance()
-		ptr := &ast.PointerType{Location: p.locFrom(start)}
-		for {
-			switch p.current().Kind {
-			case tokens.OWN:
-				ptr.IsOwn = true
-				p.advance()
-			case tokens.RAW:
-				ptr.IsRaw = true
-				p.advance()
-			case tokens.MUT:
-				ptr.IsMut = true
-				p.advance()
-			default:
-				if ptr.IsRaw {
-					switch p.current().Kind {
-					case tokens.COMMA, tokens.RPAREN, tokens.SEMICOLON, tokens.EOF, tokens.RBRACE, tokens.RBRACK:
-						return ptr
-					}
-				}
-				ptr.Inner = p.parseType()
-				return ptr
+		switch p.current().Kind {
+		case tokens.OWN:
+			p.errorHere("`*own T` is no longer supported; use `*T`")
+			p.advance()
+		case tokens.MUT:
+			p.errorHere("`*mut T` is no longer supported; use `*T` or `&mut T`")
+			p.advance()
+		case tokens.RAW:
+			p.errorHere("`*raw T` is no longer supported; use `^T`")
+			p.advance()
+			if p.match(tokens.MUT) {
+				p.errorHere("`*raw mut T` is no longer supported; use `^T`")
 			}
+			return &ast.RawPtrType{Inner: p.parseType(), Location: p.locFrom(start)}
 		}
+		return &ast.PointerType{Inner: p.parseType(), Location: p.locFrom(start)}
 	case tokens.LBRACK:
 		p.advance()
 		if p.at(tokens.RBRACK) {
 			p.advance()
 			return &ast.SliceType{Inner: p.parseType(), Location: p.locFrom(start)}
 		}
-		size := p.parseExpr(precLowest)
+		var size ast.Expr
+		if p.at(tokens.IDENT) && p.current().Literal == "_" {
+			size = &ast.Ident{Path: []string{"_"}, Location: p.locFrom(p.current().Start)}
+			p.advance()
+		} else {
+			size = p.parseExpr(precLowest)
+		}
 		p.expect(tokens.RBRACK, "expected ']' after array size")
 		return &ast.ArrayType{Size: size, Inner: p.parseType(), Location: p.locFrom(start)}
 	case tokens.LPAREN:
@@ -50,6 +60,10 @@ func (p *Parser) parseType() ast.TypeExpr {
 	case tokens.STRUCT, tokens.INTERFACE, tokens.ENUM, tokens.UNION, tokens.ERROR:
 		return p.parseTypeSpec()
 	case tokens.IDENT:
+		if p.current().Literal == "Self" {
+			p.advance()
+			return &ast.SelfType{Location: p.locFrom(start)}
+		}
 		base := &ast.NamedType{Path: p.parseNamePath(), Location: p.locFrom(start)}
 		if p.match(tokens.BANG) {
 			return &ast.ErrorUnionType{Error: base, Value: p.parseType(), Location: p.locFrom(start)}

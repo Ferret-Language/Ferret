@@ -1,8 +1,0 @@
-{
-  "ast": null,
-  "file_path": "/home/fuad/Dev/Ferret-compiler-v2/compiler/struct_sample_test.ferr",
-  "import_path": "struct_sample_test",
-  "kind": "entry",
-  "origin": "local",
-  "phase": "layout_computed"
-}

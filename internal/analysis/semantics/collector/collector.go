@@ -36,6 +36,19 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 			declare(ctx, scope, sym)
 			collectTypeMembers(ctx, typeMembers, d)
 		case *ast.FuncDecl:
+			if d.IsStatic && d.OwnerType != nil && len(d.OwnerType.Path) > 0 {
+				typeName := d.OwnerType.Path[len(d.OwnerType.Path)-1]
+				members := typeMembers[typeName]
+				if members == nil {
+					members = make(map[string]*symbols.Symbol)
+					typeMembers[typeName] = members
+				}
+				sym := symbols.New(d.Name.Text(), symbols.SymbolFunc, d)
+				sym.Location = d.Name.Loc()
+				sym.OwnerType = typeName
+				declareTypeMember(ctx, typeName, members, sym)
+				continue
+			}
 			if d.Receiver == nil {
 				name := d.Name.Text()
 				if d.IsDestructor {
@@ -76,17 +89,6 @@ func collectTypeMembers(ctx *context.CompilerContext, typeMembers map[string]map
 	}
 
 	switch t := decl.Type.(type) {
-	case *ast.StructType:
-		for _, field := range t.StaticFields {
-			if field == nil {
-				continue
-			}
-			sym := symbols.New(field.Name.Text(), symbols.SymbolStatic, field)
-			sym.Mutable = true
-			sym.Location = field.Name.Loc()
-			sym.OwnerType = typeName
-			declareTypeMember(ctx, typeName, members, sym)
-		}
 	case *ast.EnumType:
 		for _, variant := range t.Variants {
 			if variant == nil {
@@ -174,17 +176,15 @@ func receiverTypeName(typ ast.TypeExpr) string {
 		}
 		return t.Path[len(t.Path)-1]
 	case *ast.PointerType:
-		prefix := "*"
-		if t.IsOwn {
-			prefix += "own "
-		}
-		if t.IsRaw {
-			prefix += "raw "
-		}
-		if t.IsMut {
-			prefix += "mut "
+		return "*" + receiverTypeName(t.Inner)
+	case *ast.RefType:
+		prefix := "&"
+		if t.Mutable {
+			prefix = "&mut "
 		}
 		return prefix + receiverTypeName(t.Inner)
+	case *ast.RawPtrType:
+		return "^" + receiverTypeName(t.Inner)
 	default:
 		return fmt.Sprintf("%T", typ)
 	}

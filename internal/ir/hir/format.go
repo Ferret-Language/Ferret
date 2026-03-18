@@ -53,15 +53,23 @@ func formatFunc(b *strings.Builder, fn *Func) {
 	if fn.IsUnsafe {
 		b.WriteString("unsafe ")
 	}
-	fmt.Fprintf(b, "fn %s%s", formatReceiver(fn.Receiver), fn.Name)
-	b.WriteByte('(')
-	for i, param := range fn.Params {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		b.WriteString(formatParam(param))
+	name := fn.Name
+	if fn.OwnerType != "" {
+		name = fn.OwnerType + "::" + name
 	}
-	b.WriteByte(')')
+	if fn.OwnerType != "" {
+		fmt.Fprintf(b, "fn %s%s", name, formatAttachedParams(fn.Receiver, fn.Params))
+	} else {
+		fmt.Fprintf(b, "fn %s%s", formatReceiver(fn.Receiver), name)
+		b.WriteByte('(')
+		for i, param := range fn.Params {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(formatParam(param))
+		}
+		b.WriteByte(')')
+	}
 	if fn.Result != nil {
 		fmt.Fprintf(b, " %s", typeString(fn.Result))
 	}
@@ -81,15 +89,58 @@ func formatReceiver(param *Param) string {
 	return fmt.Sprintf("(%s) ", formatParam(param))
 }
 
+func formatAttachedParams(receiver *Param, params []*Param) string {
+	var b strings.Builder
+	b.WriteByte('(')
+	wrote := false
+	if receiver != nil {
+		b.WriteString(formatReceiverArg(receiver))
+		wrote = true
+	}
+	for _, param := range params {
+		if param == nil {
+			continue
+		}
+		if wrote {
+			b.WriteString(", ")
+		}
+		b.WriteString(formatParam(param))
+		wrote = true
+	}
+	b.WriteByte(')')
+	return b.String()
+}
+
+func formatReceiverArg(param *Param) string {
+	if param == nil {
+		return ""
+	}
+	switch t := param.Type.(type) {
+	case *typeinfo.PointerType:
+		_ = t
+		return "*self"
+	case *typeinfo.RefType:
+		if t.Mutable {
+			return "&mut self"
+		}
+		return "&self"
+	default:
+		return "self"
+	}
+}
+
 func formatParam(param *Param) string {
 	if param == nil {
 		return ""
 	}
 	prefix := ""
-	if param.IsComptime {
-		prefix = "comptime "
+	if param.IsMutable {
+		prefix += "mut "
 	}
-	return fmt.Sprintf("%s%s %s", prefix, param.Name, typeString(param.Type))
+	if param.IsComptime {
+		prefix += "comptime "
+	}
+	return fmt.Sprintf("%s%s: %s", prefix, param.Name, typeString(param.Type))
 }
 
 func formatBlock(b *strings.Builder, block *BlockStmt, indent int) {
@@ -319,33 +370,18 @@ func formatTypeDecl(decl *TypeDecl) string {
 	if decl == nil {
 		return ""
 	}
-	movePrefix := ""
-	if decl.IsMove {
-		movePrefix = " move"
-	}
 	switch {
 	case decl.Struct != nil:
 		var b strings.Builder
-		fmt.Fprintf(&b, "type %s%s struct {", decl.Name, movePrefix)
-		if len(decl.Struct.Fields) > 0 || len(decl.Struct.StaticFields) > 0 {
+		fmt.Fprintf(&b, "type %s struct {", decl.Name)
+		if len(decl.Struct.Fields) > 0 {
 			b.WriteByte('\n')
 			for _, field := range decl.Struct.Fields {
 				if field == nil {
 					continue
 				}
 				indentLine(&b, 1)
-				fmt.Fprintf(&b, "%s %s", field.Name, typeString(field.Type))
-				if field.Default != nil {
-					fmt.Fprintf(&b, " = %s", formatExpr(field.Default))
-				}
-				b.WriteByte('\n')
-			}
-			for _, field := range decl.Struct.StaticFields {
-				if field == nil {
-					continue
-				}
-				indentLine(&b, 1)
-				fmt.Fprintf(&b, "static %s %s", field.Name, typeString(field.Type))
+				fmt.Fprintf(&b, "%s: %s", field.Name, typeString(field.Type))
 				if field.Default != nil {
 					fmt.Fprintf(&b, " = %s", formatExpr(field.Default))
 				}
@@ -358,7 +394,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 		return b.String()
 	case decl.Interface != nil:
 		var b strings.Builder
-		fmt.Fprintf(&b, "type %s%s interface {", decl.Name, movePrefix)
+		fmt.Fprintf(&b, "type %s interface {", decl.Name)
 		if len(decl.Interface.Methods) > 0 {
 			b.WriteByte('\n')
 			for _, method := range decl.Interface.Methods {
@@ -366,14 +402,11 @@ func formatTypeDecl(decl *TypeDecl) string {
 					continue
 				}
 				indentLine(&b, 1)
-				fmt.Fprintf(&b, "%s(", method.Name)
-				for i, param := range method.Params {
-					if i > 0 {
-						b.WriteString(", ")
-					}
-					b.WriteString(formatParam(param))
+				fmt.Fprintf(&b, "%s%s", method.Name, formatInterfaceParams(method.Receiver, method.Params))
+				if method.Result != nil {
+					fmt.Fprintf(&b, " %s", typeString(method.Result))
 				}
-				fmt.Fprintf(&b, ") %s\n", typeString(method.Result))
+				b.WriteByte('\n')
 			}
 			b.WriteByte('}')
 			return b.String()
@@ -381,18 +414,47 @@ func formatTypeDecl(decl *TypeDecl) string {
 		b.WriteString(" }")
 		return b.String()
 	case decl.Enum != nil:
-		return fmt.Sprintf("type %s%s enum { %s }", decl.Name, movePrefix, strings.Join(decl.Enum.Variants, ", "))
+		return fmt.Sprintf("type %s enum { %s }", decl.Name, strings.Join(decl.Enum.Variants, ", "))
 	case decl.Union != nil:
 		parts := make([]string, 0, len(decl.Union.Members))
 		for _, member := range decl.Union.Members {
 			parts = append(parts, typeString(member))
 		}
-		return fmt.Sprintf("type %s%s union { %s }", decl.Name, movePrefix, strings.Join(parts, ", "))
+		return fmt.Sprintf("type %s union { %s }", decl.Name, strings.Join(parts, ", "))
 	case decl.Error != nil:
-		return fmt.Sprintf("type %s%s error { %s }", decl.Name, movePrefix, strings.Join(decl.Error.Members, ", "))
+		return fmt.Sprintf("type %s error { %s }", decl.Name, strings.Join(decl.Error.Members, ", "))
 	default:
 		return fmt.Sprintf("type %s %s", decl.Name, typeString(decl.Underlying))
 	}
+}
+
+func formatInterfaceParams(receiver string, params []*Param) string {
+	var b strings.Builder
+	b.WriteByte('(')
+	wrote := false
+	switch receiver {
+	case "&":
+		b.WriteString("&self")
+		wrote = true
+	case "&mut ":
+		b.WriteString("&mut self")
+		wrote = true
+	case "*":
+		b.WriteString("*self")
+		wrote = true
+	}
+	for _, param := range params {
+		if param == nil {
+			continue
+		}
+		if wrote {
+			b.WriteString(", ")
+		}
+		b.WriteString(formatParam(param))
+		wrote = true
+	}
+	b.WriteByte(')')
+	return b.String()
 }
 
 func wrapExpr(expr Expr) string {
@@ -406,7 +468,7 @@ func wrapExpr(expr Expr) string {
 
 func formatPrefix(op, right string) string {
 	switch op {
-	case "copy", "take", "comptime", "unsafe":
+	case "copy", "comptime", "unsafe":
 		return op + " " + right
 	default:
 		return op + right

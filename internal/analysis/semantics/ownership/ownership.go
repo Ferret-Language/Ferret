@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"compiler/internal/analysis/cfg/model"
+	cfg "compiler/internal/analysis/cfg/model"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
@@ -24,7 +24,9 @@ type valueInfo struct {
 	movedPath string
 	movedSubs map[string]source.Location
 	frozen    int
+	mutBorrow bool
 	borrowOf  int
+	borrowMut bool
 	borrowLoc source.Location
 }
 
@@ -97,7 +99,9 @@ func (s *valueScope) TrimToLiveOut(live cfg.LocalSet) {
 		info.movedPath = ""
 		info.movedSubs = nil
 		info.frozen = 0
+		info.mutBorrow = false
 		info.borrowOf = -1
+		info.borrowMut = false
 		info.borrowLoc = source.Location{}
 	}
 }
@@ -139,7 +143,9 @@ func equalValueInfo(a, b *valueInfo) bool {
 		a.movedPath == b.movedPath &&
 		equalMovedSubs(a.movedSubs, b.movedSubs) &&
 		a.frozen == b.frozen &&
+		a.mutBorrow == b.mutBorrow &&
 		a.borrowOf == b.borrowOf &&
+		a.borrowMut == b.borrowMut &&
 		a.borrowLoc == b.borrowLoc
 }
 
@@ -176,8 +182,10 @@ func mergeValueInfo(a, b *valueInfo) *valueInfo {
 	if b.frozen > out.frozen {
 		out.frozen = b.frozen
 	}
+	out.mutBorrow = a.mutBorrow || b.mutBorrow
 	if a.borrowOf == b.borrowOf {
 		out.borrowOf = a.borrowOf
+		out.borrowMut = a.borrowMut || b.borrowMut
 		if a.borrowLoc.Start != nil {
 			out.borrowLoc = a.borrowLoc
 		} else {
@@ -185,6 +193,7 @@ func mergeValueInfo(a, b *valueInfo) *valueInfo {
 		}
 	} else {
 		out.borrowOf = -1
+		out.borrowMut = false
 		out.borrowLoc = source.Location{}
 	}
 	return &out
@@ -242,8 +251,9 @@ func ownerName(name string) ownerRef {
 func (o ownerRef) isLocal() bool { return o.localID >= 0 }
 
 type borrowInfo struct {
-	owner ownerRef
-	loc   source.Location
+	owner   ownerRef
+	loc     source.Location
+	mutable bool
 }
 
 type tempInfo struct {
@@ -260,6 +270,7 @@ type analyzer struct {
 	currentFn *mir.Function
 	temps     map[int]tempInfo
 	reported  map[string]struct{}
+	deferUses cfg.LocalSet
 }
 
 func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
@@ -330,7 +341,11 @@ func (a *analyzer) checkFunc(cfgFn *cfg.Function, mirFn *mir.Function) {
 		return
 	}
 	a.currentFn = mirFn
-	defer func() { a.currentFn = nil }()
+	a.deferUses = a.collectDeferredLocalUses(mirFn)
+	defer func() {
+		a.currentFn = nil
+		a.deferUses = nil
+	}()
 	blocks := make(map[int]*mir.Block, len(mirFn.Blocks))
 	for _, block := range mirFn.Blocks {
 		if block != nil {
@@ -409,8 +424,15 @@ func (a *analyzer) transferBlock(in *valueScope, cfgBlock *cfg.Block, mirBlock *
 	}
 	a.temps = make(map[int]tempInfo)
 	if mirBlock != nil {
+		liveAfter := a.blockLiveAfterInstrs(cfgBlock, mirBlock)
 		for _, instr := range mirBlock.Instructions {
+			_ = instr
+		}
+		for i, instr := range mirBlock.Instructions {
 			a.checkMIRInstr(state, instr)
+			if i < len(liveAfter) {
+				a.releaseDeadBorrows(state, liveAfter[i])
+			}
 		}
 		a.checkMIRTerm(state, mirBlock.Terminator)
 	} else {
@@ -423,6 +445,38 @@ func (a *analyzer) transferBlock(in *valueScope, cfgBlock *cfg.Block, mirBlock *
 	}
 	state.TrimToLiveOut(cfgBlock.LiveOut)
 	return state
+}
+
+func (a *analyzer) blockLiveAfterInstrs(cfgBlock *cfg.Block, mirBlock *mir.Block) []cfg.LocalSet {
+	if mirBlock == nil {
+		return nil
+	}
+	out := make([]cfg.LocalSet, len(mirBlock.Instructions))
+	future := cfg.NewLocalSet()
+	if cfgBlock != nil && cfgBlock.LiveOut != nil {
+		future = cfgBlock.LiveOut.Clone()
+	}
+	a.collectTermLocalUses(future, mirBlock.Terminator)
+	for i := len(mirBlock.Instructions) - 1; i >= 0; i-- {
+		out[i] = future.Clone()
+		a.collectInstrLocalUses(future, mirBlock.Instructions[i])
+	}
+	return out
+}
+
+func (a *analyzer) releaseDeadBorrows(scope *valueScope, keep cfg.LocalSet) {
+	if scope == nil {
+		return
+	}
+	for id, slot := range scope.values {
+		if slot == nil || slot.borrowOf < 0 {
+			continue
+		}
+		if keep.Has(id) || a.deferUses.Has(id) {
+			continue
+		}
+		a.releaseBorrowValue(scope, slot)
+	}
 }
 
 func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
@@ -492,26 +546,84 @@ func (a *analyzer) checkDeferredInstr(scope *valueScope, instr mir.Instr) {
 		return
 	case *mir.ComputeInstr:
 		a.checkComputedValue(scope, inst)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.BindInstr:
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.StoreInstr:
 		a.checkPlaceValue(scope, inst.Target)
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.AssignInstr:
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.StoreFieldInstr:
 		a.checkValue(scope, inst.Base)
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Base, "borrow cannot escape into defer")
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.EvalInstr:
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.DeferInstr:
 		for _, child := range inst.Body {
 			a.checkDeferredInstr(scope, child)
 		}
 	case *mir.LockInstr:
 		a.checkValue(scope, inst.Value)
+		a.reportBorrowEscapeIfNeeded(scope, inst.Value, "borrow cannot escape into defer")
 	case *mir.UnsafeInstr:
 		return
+	}
+}
+
+func (a *analyzer) collectDeferredLocalUses(fn *mir.Function) cfg.LocalSet {
+	used := cfg.NewLocalSet()
+	if fn == nil {
+		return used
+	}
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		for _, instr := range block.Instructions {
+			if deferInstr, ok := instr.(*mir.DeferInstr); ok {
+				a.collectDeferredInstrLocalUses(used, deferInstr)
+			}
+		}
+	}
+	return used
+}
+
+func (a *analyzer) collectDeferredInstrLocalUses(used cfg.LocalSet, instr *mir.DeferInstr) {
+	if used == nil || instr == nil {
+		return
+	}
+	for _, child := range instr.Body {
+		switch inst := child.(type) {
+		case nil:
+			continue
+		case *mir.ComputeInstr:
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.BindInstr:
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.StoreInstr:
+			a.collectPlaceLocalUses(used, inst.Target)
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.AssignInstr:
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.StoreFieldInstr:
+			a.collectValueLocalUses(used, inst.Base)
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.EvalInstr:
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.DeferInstr:
+			a.collectDeferredInstrLocalUses(used, inst)
+		case *mir.LockInstr:
+			a.collectValueLocalUses(used, inst.Value)
+		case *mir.UnsafeInstr:
+			continue
+		}
 	}
 }
 
@@ -536,6 +648,112 @@ func (a *analyzer) checkMIRTerm(scope *valueScope, term mir.Terminator) {
 		if t.Value != nil {
 			a.checkValue(scope, t.Value)
 		}
+	}
+}
+
+func (a *analyzer) collectInstrLocalUses(used cfg.LocalSet, instr mir.Instr) {
+	if used == nil || instr == nil {
+		return
+	}
+	switch inst := instr.(type) {
+	case *mir.ComputeInstr:
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.BindInstr:
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.StoreInstr:
+		a.collectPlaceLocalUses(used, inst.Target)
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.AssignInstr:
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.StoreFieldInstr:
+		a.collectValueLocalUses(used, inst.Base)
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.EvalInstr:
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.DeferInstr:
+		// Deferred bodies execute at scope end, not at this point.
+	case *mir.LockInstr:
+		a.collectValueLocalUses(used, inst.Value)
+	case *mir.UnsafeInstr:
+	}
+}
+
+func (a *analyzer) collectTermLocalUses(used cfg.LocalSet, term mir.Terminator) {
+	if used == nil || term == nil {
+		return
+	}
+	switch t := term.(type) {
+	case *mir.BranchTerm:
+		a.collectValueLocalUses(used, t.Cond)
+	case *mir.SwitchTerm:
+		a.collectValueLocalUses(used, t.Value)
+		for _, kase := range t.Cases {
+			a.collectValueLocalUses(used, kase.Expr)
+		}
+	case *mir.ReturnTerm:
+		a.collectValueLocalUses(used, t.Value)
+	case *mir.PanicTerm:
+		a.collectValueLocalUses(used, t.Value)
+	}
+}
+
+func (a *analyzer) collectPlaceLocalUses(used cfg.LocalSet, place mir.Place) {
+	if used == nil || place == nil {
+		return
+	}
+	switch p := place.(type) {
+	case *mir.LocalPlace:
+		// Pure local assignment target is not a read-use.
+	case *mir.FieldPlace:
+		a.collectPlaceLocalUses(used, p.Base)
+	case *mir.IndexPlace:
+		a.collectPlaceLocalUses(used, p.Base)
+		a.collectValueLocalUses(used, p.Index)
+	case *mir.DerefPlace:
+		a.collectValueLocalUses(used, p.Pointer)
+	}
+}
+
+func (a *analyzer) collectValueLocalUses(used cfg.LocalSet, value mir.Value) {
+	if used == nil || value == nil {
+		return
+	}
+	switch v := value.(type) {
+	case *mir.LocalValue:
+		used.Add(v.LocalID)
+	case *mir.AddrOfValue:
+		a.collectValueLocalUses(used, v.Source)
+	case *mir.LoadValue:
+		a.collectValueLocalUses(used, v.Pointer)
+	case *mir.UnaryValue:
+		a.collectValueLocalUses(used, v.Right)
+	case *mir.BinaryValue:
+		a.collectValueLocalUses(used, v.Left)
+		a.collectValueLocalUses(used, v.Right)
+	case *mir.PostfixValue:
+		a.collectValueLocalUses(used, v.Left)
+	case *mir.CallValue:
+		a.collectValueLocalUses(used, v.Callee)
+		for _, arg := range v.Args {
+			a.collectValueLocalUses(used, arg)
+		}
+	case *mir.FieldLoadValue:
+		a.collectValueLocalUses(used, v.Base)
+	case *mir.FieldValue:
+		a.collectValueLocalUses(used, v.Base)
+	case *mir.CastValue:
+		a.collectValueLocalUses(used, v.Left)
+	case *mir.TypeTestValue:
+		a.collectValueLocalUses(used, v.Left)
+	case *mir.CompositeValue:
+		for _, item := range v.Items {
+			a.collectValueLocalUses(used, item.Value)
+		}
+	case *mir.InterfaceValue:
+		a.collectValueLocalUses(used, v.Value)
+	case *mir.IndexValue:
+		a.collectValueLocalUses(used, v.Base)
+		a.collectValueLocalUses(used, v.Index)
 	}
 }
 
@@ -567,26 +785,12 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 		switch v.Op {
 		case "copy":
 			a.checkValue(scope, v.Right)
-			if !a.isCopyableType(valueType(v.Right)) {
-				loc := v.Loc()
-				a.addDiagnostic(
-					diagnostics.NewError(fmt.Sprintf("cannot copy value of type %s", valueType(v.Right).String())).
-						WithCode(diagnostics.ErrInvalidCopy).
-						WithPrimaryLabel(&loc, "this value does not support copying"),
-				)
-			}
-		case "take":
-			a.checkValue(scope, v.Right)
-			if !a.isMoveType(valueType(v.Right)) {
-				loc := v.Loc()
-				a.addDiagnostic(
-					diagnostics.NewError(fmt.Sprintf("cannot take value of type %s", valueType(v.Right).String())).
-						WithCode(diagnostics.ErrInvalidOperation).
-						WithPrimaryLabel(&loc, "`take` requires a move value"),
-				)
-				return
-			}
-			a.consumeMoveValue(scope, v.Right, valueType(v.Right))
+			loc := v.Loc()
+			a.addDiagnostic(
+				diagnostics.NewError("`copy` is not yet implemented").
+					WithCode(diagnostics.ErrInvalidCopy).
+					WithPrimaryLabel(&loc, "deep clone support has not been implemented yet"),
+			)
 		case "&", "&mut":
 			a.checkValue(scope, v.Right)
 		default:
@@ -664,6 +868,26 @@ func (a *analyzer) checkAddrOfValue(scope *valueScope, value *mir.AddrOfValue) {
 		return
 	}
 	a.checkValue(scope, value.Source)
+	if value.Raw {
+		return
+	}
+	root, _, ok := a.borrowSourcePath(value.Source)
+	if !ok || !root.isLocal() || scope == nil {
+		return
+	}
+	owner, _ := scope.Lookup(root.localID)
+	if owner == nil {
+		return
+	}
+	if value.Mutable {
+		if owner.frozen > 0 {
+			a.reportBorrowConflict(value.Loc(), root.localID, "cannot create mutable borrow while another borrow is live")
+		}
+		return
+	}
+	if owner.mutBorrow {
+		a.reportBorrowConflict(value.Loc(), root.localID, "cannot create immutable borrow while a mutable borrow is live")
+	}
 }
 
 func (a *analyzer) checkLoadValue(scope *valueScope, value *mir.LoadValue) {
@@ -817,7 +1041,7 @@ func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ type
 	}
 	switch v := value.(type) {
 	case *mir.UnaryValue:
-		if v.Op == "copy" || v.Op == "take" {
+		if v.Op == "copy" {
 			return
 		}
 	case *mir.InterfaceValue:
@@ -858,6 +1082,9 @@ func (a *analyzer) consumeLocalPath(scope *valueScope, root int, path string, lo
 		return
 	}
 	if path != "" {
+		if !a.isMoveType(a.pathType(info.typ, path)) {
+			return
+		}
 		if movedLoc, movedPath, ok := movedPathConflict(info, path); ok {
 			a.reportMovedPathUse(root, path, loc, movedLoc, movedPath)
 			return
@@ -956,10 +1183,21 @@ func (a *analyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, value mir
 	if owner == nil {
 		return
 	}
+	if info.mutable {
+		if owner.frozen > 0 {
+			a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create mutable borrow while another borrow is live")
+			return
+		}
+	} else if owner.mutBorrow {
+		a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create immutable borrow while a mutable borrow is live")
+		return
+	}
 	slot.borrowOf = info.owner.localID
+	slot.borrowMut = info.mutable
 	slot.borrowLoc = info.loc
-	if a.isMoveType(owner.typ) {
-		owner.frozen++
+	owner.frozen++
+	if info.mutable {
+		owner.mutBorrow = true
 	}
 }
 
@@ -969,8 +1207,12 @@ func (a *analyzer) releaseBorrowValue(scope *valueScope, slot *valueInfo) {
 	}
 	if owner, ok := scope.Lookup(slot.borrowOf); ok && owner != nil && owner.frozen > 0 {
 		owner.frozen--
+		if slot.borrowMut && owner.frozen == 0 {
+			owner.mutBorrow = false
+		}
 	}
 	slot.borrowOf = -1
+	slot.borrowMut = false
 	slot.borrowLoc = source.Location{}
 }
 
@@ -1197,67 +1439,88 @@ func (a *analyzer) isMoveType(typ typeinfo.Type) bool {
 		return false
 	}
 	switch t := typ.(type) {
-	case *typeinfo.BuiltinType:
-		return false
-	case *typeinfo.EnumType:
-		return false
 	case *typeinfo.PointerType:
-		return t.IsOwn
-	case *typeinfo.NamedType:
-		if typeinfo.NamedTypeIsMove(t) {
-			return true
-		}
-		return a.isMoveType(a.underlying(t))
-	default:
+		_ = t
 		return true
+	case *typeinfo.RawPtrType, *typeinfo.RefType, *typeinfo.BuiltinType, *typeinfo.EnumType, *typeinfo.NamedType:
+		return false
+	default:
+		return false
 	}
 }
 
-func (a *analyzer) isCopyableType(typ typeinfo.Type) bool {
+func (a *analyzer) canDeepCopyType(typ typeinfo.Type) (bool, string) {
+	return a.canDeepCopyTypeSeen(typ, map[typeinfo.Type]struct{}{}, map[string]struct{}{})
+}
+
+func (a *analyzer) canDeepCopyTypeSeen(typ typeinfo.Type, seen map[typeinfo.Type]struct{}, seenNamed map[string]struct{}) (bool, string) {
 	if typ == nil || typeinfo.IsInvalid(typ) || typeinfo.IsUnknown(typ) {
-		return true
+		return true, ""
 	}
-	switch t := typ.(type) {
-	case *typeinfo.BuiltinType:
-		return true
-	case *typeinfo.EnumType:
-		return true
-	case *typeinfo.PointerType:
-		return !t.IsOwn
-	case *typeinfo.NamedType:
-		if typeinfo.NamedTypeIsMove(t) {
-			return false
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil {
+		key := named.ModuleKey + "::" + named.Name
+		if _, ok := seenNamed[key]; ok {
+			return true, ""
 		}
-		return a.isCopyableType(a.underlying(t))
+		seenNamed[key] = struct{}{}
+	}
+	if _, ok := seen[typ]; ok {
+		return true, ""
+	}
+	seen[typ] = struct{}{}
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		if t.Decl == nil {
+			return true, ""
+		}
+		owner := a.findModuleForType(t)
+		if owner == nil {
+			return true, ""
+		}
+		return a.canDeepCopyTypeSeen(syntaxType(owner, t.Decl.Type), seen, seenNamed)
+	case *typeinfo.PointerType:
+		return false, fmt.Sprintf("deep copy of owning pointer type %s is not implemented yet", typ.String())
+	case *typeinfo.RawPtrType:
+		return false, fmt.Sprintf("cannot deep copy raw pointer type %s", typ.String())
+	case *typeinfo.RefType:
+		return false, fmt.Sprintf("cannot deep copy reference type %s", typ.String())
 	case *typeinfo.OptionalType:
-		return a.isCopyableType(t.Inner)
+		return a.canDeepCopyTypeSeen(t.Inner, seen, seenNamed)
 	case *typeinfo.ErrorUnionType:
-		return a.isCopyableType(t.Error) && a.isCopyableType(t.Value)
+		if ok, msg := a.canDeepCopyTypeSeen(t.Error, seen, seenNamed); !ok {
+			return false, msg
+		}
+		return a.canDeepCopyTypeSeen(t.Value, seen, seenNamed)
 	case *typeinfo.ArrayType:
-		return a.isCopyableType(t.Inner)
+		return a.canDeepCopyTypeSeen(t.Inner, seen, seenNamed)
+	case *typeinfo.SliceType:
+		return a.canDeepCopyTypeSeen(t.Inner, seen, seenNamed)
 	case *typeinfo.TupleType:
 		for _, elem := range t.Elems {
-			if !a.isCopyableType(elem) {
-				return false
+			if ok, msg := a.canDeepCopyTypeSeen(elem, seen, seenNamed); !ok {
+				return false, msg
 			}
 		}
-		return true
+		return true, ""
 	case *typeinfo.StructType:
 		for _, field := range t.OrderedFields {
-			if field == nil || !a.isCopyableType(field.Type) {
-				return false
+			if field == nil {
+				continue
+			}
+			if ok, msg := a.canDeepCopyTypeSeen(field.Type, seen, seenNamed); !ok {
+				return false, msg
 			}
 		}
-		return true
+		return true, ""
 	case *typeinfo.UnionType:
 		for _, member := range t.Members {
-			if !a.isCopyableType(member) {
-				return false
+			if ok, msg := a.canDeepCopyTypeSeen(member, seen, seenNamed); !ok {
+				return false, msg
 			}
 		}
-		return true
+		return true, ""
 	default:
-		return false
+		return true, ""
 	}
 }
 
@@ -1290,22 +1553,25 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowIn
 		}
 		if scope != nil {
 			if slot, _ := scope.Lookup(v.LocalID); slot != nil && slot.borrowOf >= 0 {
-				return borrowInfo{owner: ownerLocal(slot.borrowOf), loc: slot.borrowLoc}, true
+				return borrowInfo{owner: ownerLocal(slot.borrowOf), loc: slot.borrowLoc, mutable: slot.borrowMut}, true
 			}
 		}
 	case *mir.AddrOfValue:
+		if v.Raw {
+			return borrowInfo{}, false
+		}
 		root, _, ok := a.borrowSourcePath(v.Source)
 		if !ok {
 			return borrowInfo{}, false
 		}
-		return borrowInfo{owner: root, loc: v.Loc()}, true
+		return borrowInfo{owner: root, loc: v.Loc(), mutable: v.Mutable}, true
 	case *mir.UnaryValue:
 		if v.Op == "&" || v.Op == "&mut" {
 			root, _, ok := a.borrowSourcePath(v.Right)
 			if !ok {
 				return borrowInfo{}, false
 			}
-			return borrowInfo{owner: root, loc: v.Loc()}, true
+			return borrowInfo{owner: root, loc: v.Loc(), mutable: v.Op == "&mut"}, true
 		}
 	case *mir.InterfaceValue:
 		return a.borrowValueInfo(scope, v.Value)
@@ -1405,6 +1671,24 @@ func (a *analyzer) underlying(typ typeinfo.Type) typeinfo.Type {
 	return typ
 }
 
+func (a *analyzer) pathType(root typeinfo.Type, path string) typeinfo.Type {
+	if root == nil || path == "" {
+		return root
+	}
+	typ := root
+	for _, name := range splitPath(path) {
+		field := a.lookupStructField(typ, name)
+		if field == nil {
+			return typeinfo.UnknownType{}
+		}
+		typ = field.Type
+	}
+	if typ == nil {
+		return typeinfo.UnknownType{}
+	}
+	return typ
+}
+
 func (a *analyzer) findModuleForType(typ *typeinfo.NamedType) *context.Module {
 	if typ == nil {
 		return nil
@@ -1422,10 +1706,14 @@ func (a *analyzer) structView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 }
 
 func (a *analyzer) derefForSelector(typ typeinfo.Type) typeinfo.Type {
-	if ptr, ok := typ.(*typeinfo.PointerType); ok {
-		return ptr.Inner
+	switch t := typ.(type) {
+	case *typeinfo.PointerType:
+		return t.Inner
+	case *typeinfo.RefType:
+		return t.Inner
+	default:
+		return typ
 	}
-	return typ
 }
 
 func (a *analyzer) lookupStructField(typ typeinfo.Type, name string) *typeinfo.StructField {
@@ -1501,21 +1789,16 @@ func (a *analyzer) methodCandidateKeys(receiverType typeinfo.Type, baseName stri
 	switch t := receiverType.(type) {
 	case *typeinfo.NamedType:
 		add(baseName)
-		if addressable {
-			add("*" + baseName)
-			if mutable {
-				add("*mut " + baseName)
-			}
+	case *typeinfo.RefType:
+		if exact, ok := a.receiverKeyFromType(t); ok {
+			add(exact)
+		}
+		if t.Mutable {
+			add("&" + baseName)
 		}
 	case *typeinfo.PointerType:
 		if exact, ok := a.receiverKeyFromType(t); ok {
 			add(exact)
-		}
-		if t.IsOwn {
-			add("*mut " + baseName)
-			add("*" + baseName)
-		} else if t.IsMut {
-			add("*" + baseName)
 		}
 	}
 	return keys
@@ -1525,6 +1808,9 @@ func (a *analyzer) receiverBaseNamedType(typ typeinfo.Type) (*typeinfo.NamedType
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		return t, true
+	case *typeinfo.RefType:
+		named, ok := t.Inner.(*typeinfo.NamedType)
+		return named, ok
 	case *typeinfo.PointerType:
 		named, ok := t.Inner.(*typeinfo.NamedType)
 		return named, ok
@@ -1537,22 +1823,22 @@ func (a *analyzer) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		return t.Name, true
+	case *typeinfo.RefType:
+		named, ok := t.Inner.(*typeinfo.NamedType)
+		if !ok {
+			return "", false
+		}
+		prefix := "&"
+		if t.Mutable {
+			prefix = "&mut "
+		}
+		return prefix + named.Name, true
 	case *typeinfo.PointerType:
 		named, ok := t.Inner.(*typeinfo.NamedType)
 		if !ok {
 			return "", false
 		}
-		prefix := "*"
-		if t.IsOwn {
-			prefix += "own "
-		}
-		if t.IsRaw {
-			prefix += "raw "
-		}
-		if t.IsMut {
-			prefix += "mut "
-		}
-		return prefix + named.Name, true
+		return "*" + named.Name, true
 	default:
 		return "", false
 	}
@@ -1582,7 +1868,8 @@ func (a *analyzer) valueAccess(scope *valueScope, value mir.Value) (addressable 
 	case *mir.LoadValue:
 		switch t := valueType(v).(type) {
 		case *typeinfo.PointerType:
-			return true, t.IsMut || t.IsOwn
+			_ = t
+			return true, true
 		default:
 			return true, false
 		}
@@ -1592,7 +1879,8 @@ func (a *analyzer) valueAccess(scope *valueScope, value mir.Value) (addressable 
 		if v.Op == "*" {
 			switch t := valueType(v).(type) {
 			case *typeinfo.PointerType:
-				return true, t.IsMut || t.IsOwn
+				_ = t
+				return true, true
 			default:
 				return true, false
 			}

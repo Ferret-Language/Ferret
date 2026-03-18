@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/frontend/ast"
@@ -29,12 +30,19 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		}
 		decl, _ := resolution.Symbol.Node.(*ast.TypeDecl)
 		return &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}
+	case *ast.SelfType:
+		return &typeinfo.SelfType{}
 	case *ast.PointerType:
 		inner := c.typeFromSyntax(mod, t.Inner)
-		if t.IsRaw && (t.Inner == nil || typeinfo.IsBuiltinNamed(inner, "void")) {
+		return &typeinfo.PointerType{Inner: inner}
+	case *ast.RefType:
+		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.typeFromSyntax(mod, t.Inner)}
+	case *ast.RawPtrType:
+		inner := c.typeFromSyntax(mod, t.Inner)
+		if t.Inner == nil || typeinfo.IsBuiltinNamed(inner, "void") {
 			inner = nil
 		}
-		return &typeinfo.PointerType{IsOwn: t.IsOwn, IsRaw: t.IsRaw, IsMut: t.IsMut, Inner: inner}
+		return &typeinfo.RawPtrType{Inner: inner}
 	case *ast.OptionalType:
 		return &typeinfo.OptionalType{Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.ErrorUnionType:
@@ -52,27 +60,16 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.StructType:
 		fields := make(map[string]*typeinfo.StructField)
 		orderedFields := make([]*typeinfo.StructField, 0, len(t.Fields))
-		staticFields := make(map[string]*typeinfo.StructField)
-		orderedStaticFields := make([]*typeinfo.StructField, 0, len(t.StaticFields))
 		for _, field := range t.Fields {
 			if field == nil {
 				continue
 			}
 			fieldName := field.Name.Text()
-			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type), HasDefault: field.Default != nil}
+			structField := &typeinfo.StructField{Name: fieldName, IsPub: symbols.IsPubName(fieldName), Type: c.typeFromSyntax(mod, field.Type), HasDefault: field.Default != nil}
 			fields[fieldName] = structField
 			orderedFields = append(orderedFields, structField)
 		}
-		for _, field := range t.StaticFields {
-			if field == nil {
-				continue
-			}
-			fieldName := field.Name.Text()
-			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type), HasDefault: field.Default != nil}
-			staticFields[fieldName] = structField
-			orderedStaticFields = append(orderedStaticFields, structField)
-		}
-		return &typeinfo.StructType{Fields: fields, OrderedFields: orderedFields, StaticFields: staticFields, OrderedStaticFields: orderedStaticFields}
+		return &typeinfo.StructType{Fields: fields, OrderedFields: orderedFields}
 	case *ast.EnumType:
 		variants := make(map[string]struct{}, len(t.Variants))
 		orderedVariants := make([]string, 0, len(t.Variants))
@@ -107,27 +104,33 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		return &typeinfo.UnionType{Members: members}
 	case *ast.InterfaceType:
 		methods := make(map[string]*typeinfo.FuncType)
+		methodReceivers := make(map[string]string)
+		methodStatic := make(map[string]bool)
 		orderedMethods := make([]*typeinfo.InterfaceMethod, 0, len(t.Methods))
 		for _, method := range t.Methods {
 			if method == nil {
 				continue
 			}
 			params := make([]typeinfo.Type, 0, len(method.Params))
+			mutParams := make([]bool, 0, len(method.Params))
 			comptimeParams := make([]bool, 0, len(method.Params))
 			for _, param := range method.Params {
 				params = append(params, c.typeFromSyntax(mod, param.Type))
+				mutParams = append(mutParams, param.IsMut)
 				comptimeParams = append(comptimeParams, param.IsComptime)
 			}
 			result := c.typeFromSyntax(mod, method.Result)
 			if result == nil {
 				result = &typeinfo.BuiltinType{Name: "void"}
 			}
-			fnType := &typeinfo.FuncType{Params: params, ComptimeParams: comptimeParams, Result: result}
+			fnType := &typeinfo.FuncType{Params: params, MutParams: mutParams, ComptimeParams: comptimeParams, Result: result}
 			name := method.Name.Text()
 			methods[name] = fnType
-			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Type: fnType})
+			methodReceivers[name] = method.Receiver
+			methodStatic[name] = method.Static
+			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Receiver: method.Receiver, Static: method.Static, Type: fnType})
 		}
-		return &typeinfo.InterfaceType{Methods: methods, OrderedMethods: orderedMethods}
+		return &typeinfo.InterfaceType{Methods: methods, MethodReceivers: methodReceivers, MethodStatic: methodStatic, OrderedMethods: orderedMethods}
 	default:
 		return typeinfo.UnknownType{}
 	}
@@ -181,6 +184,9 @@ func (c *checker) lookupNamedUnionMemberType(mod *context.Module, unionDecl *ast
 func (c *checker) arrayLength(expr ast.Expr) int64 {
 	if expr == nil {
 		return -1
+	}
+	if ident, ok := expr.(*ast.Ident); ok && ident.Text() == "_" {
+		return -2
 	}
 	lit, ok := expr.(*ast.NumberLit)
 	if !ok {
