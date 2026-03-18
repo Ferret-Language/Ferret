@@ -44,7 +44,19 @@ jobs:
         if: matrix.os == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld
+          sudo apt-get install -y clang-18 lld-18
+          mkdir -p "$HOME/.local/llvm-bin"
+          ln -sf /usr/bin/clang-18 "$HOME/.local/llvm-bin/clang"
+          ln -sf /usr/bin/clang++-18 "$HOME/.local/llvm-bin/clang++"
+          ln -sf /usr/bin/lld-18 "$HOME/.local/llvm-bin/lld"
+          ln -sf /usr/bin/ld.lld-18 "$HOME/.local/llvm-bin/ld.lld"
+          echo "$HOME/.local/llvm-bin" >> "$GITHUB_PATH"
+
+      - name: Verify Linux clang version
+        if: matrix.os == 'linux'
+        run: |
+          clang --version
+          ld.lld --version
 
       - name: Setup MSYS2 toolchain
         if: matrix.os == 'windows'
