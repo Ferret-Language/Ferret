@@ -1192,7 +1192,7 @@ fn Node::peek(&self) &Node {
 func TestParseInferredArrayLengthType(t *testing.T) {
 	src := `
 fn main() {
-    let values: [_]i32 = [1, 2, 3]
+    let values: [_]i32 = [_]i32{1, 2, 3}
 }
 `
 
@@ -1209,6 +1209,18 @@ fn main() {
 	size, ok := arr.Size.(*ast.Ident)
 	if !ok || size.Text() != "_" {
 		t.Fatalf("expected inferred array length marker, got %#v", arr.Size)
+	}
+	lit, ok := letStmt.Value.(*ast.CompositeLit)
+	if !ok {
+		t.Fatalf("expected composite literal value, got %T", letStmt.Value)
+	}
+	litType, ok := lit.Type.(*ast.ArrayType)
+	if !ok {
+		t.Fatalf("expected typed array literal, got %#v", lit.Type)
+	}
+	litSize, ok := litType.Size.(*ast.Ident)
+	if !ok || litSize.Text() != "_" {
+		t.Fatalf("expected inferred array length marker on literal, got %#v", litType.Size)
 	}
 }
 

@@ -2048,7 +2048,7 @@ func TestTypecheckerInfersArrayLengthFromUnderscoreType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 fn main() i32 {
-    let items: [_]i32 = [1, 2, 3]
+    let items: [_]i32 = [_]i32{1, 2, 3}
     let v = items[1]
     return v
 }
@@ -2076,7 +2076,7 @@ func TestTypecheckerRejectsSliceLiteralsAsNotImplemented(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 fn main() i32 {
-    let items: []i32 = [1, 2, 3]
+    let items: []i32 = []i32{1, 2, 3}
     return items[0]
 }
 `)

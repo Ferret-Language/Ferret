@@ -88,7 +88,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case tokens.DOT:
 		return p.parseCompositeLit()
 	case tokens.LBRACK:
-		return p.parseArrayLit()
+		return p.parseBracketCompositeLit()
 	case tokens.MATCH:
 		return p.parseMatchExpr()
 	case tokens.AMP:
@@ -126,19 +126,22 @@ func (p *Parser) parsePrefix() ast.Expr {
 	}
 }
 
-// parseArrayLit parses [expr, expr, ...] as a positional CompositeLit.
-func (p *Parser) parseArrayLit() ast.Expr {
-	start := p.expect(tokens.LBRACK, "expected '['").Start
-	items := make([]ast.CompositeItem, 0)
-	for !p.at(tokens.RBRACK) && !p.at(tokens.EOF) {
-		value := p.parseExpr(precLowest)
-		items = append(items, ast.CompositeItem{Value: value})
-		if !p.consumeExprListSeparator(tokens.RBRACK, "array literal element") {
-			break
-		}
+// parseBracketCompositeLit parses typed bracket literals like:
+//
+//	[3]i32{1, 2, 3}
+//	[_]i32{1, 2, 3}
+//	[]i32{1, 2, 3}
+func (p *Parser) parseBracketCompositeLit() ast.Expr {
+	start := p.current().Start
+	literalType := p.parseType()
+	if !p.at(tokens.LBRACE) {
+		loc := p.locFrom(start)
+		p.errorAt(loc, "expected '{' after array or slice literal")
+		return &ast.BadExpr{Location: loc}
 	}
-	p.expect(tokens.RBRACK, "expected ']'")
-	return &ast.CompositeLit{Items: items, Location: p.locFrom(start)}
+	p.advance()
+	items := p.parseCompositeItems(tokens.RBRACE)
+	return &ast.CompositeLit{Type: literalType, Items: items, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseCompositeLit() ast.Expr {
@@ -150,8 +153,13 @@ func (p *Parser) parseCompositeLit() ast.Expr {
 		literalType = &ast.NamedType{Path: path, Location: p.locFrom(typeStart)}
 	}
 	p.expect(tokens.LBRACE, "expected '{' after '.'")
+	items := p.parseCompositeItems(tokens.RBRACE)
+	return &ast.CompositeLit{Type: literalType, Items: items, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseCompositeItems(end tokens.Kind) []ast.CompositeItem {
 	items := make([]ast.CompositeItem, 0)
-	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+	for !p.at(end) && !p.at(tokens.EOF) {
 		if p.match(tokens.DOT) {
 			nameTok := p.expectIdent("expected field name")
 			p.expect(tokens.ASSIGN, "expected '='")
@@ -168,12 +176,12 @@ func (p *Parser) parseCompositeLit() ast.Expr {
 			p.compositeValueDepth--
 			items = append(items, ast.CompositeItem{Value: value})
 		}
-		if !p.consumeExprListSeparator(tokens.RBRACE, "composite literal element") {
+		if !p.consumeExprListSeparator(end, "composite literal element") {
 			break
 		}
 	}
-	p.expect(tokens.RBRACE, "expected '}'")
-	return &ast.CompositeLit{Type: literalType, Items: items, Location: p.locFrom(start)}
+	p.expect(end, "expected '}'")
+	return items
 }
 
 func (p *Parser) atCompositeFieldBoundary() bool {

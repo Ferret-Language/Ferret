@@ -34,7 +34,7 @@ fn run2() void {
 fn main() {
     let mut a = 10
     let b : i32 = a
-    let arr : [_]i32 = [1,2,3]
+    let arr : [_]i32 = [_]i32{1,2,3}
     let n = arr[1]
     let mut c = 11
     //c = 13

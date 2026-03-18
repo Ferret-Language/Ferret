@@ -163,7 +163,7 @@ func TestLowerLocalArrayLiteralAndIndexToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 fn main() i32 {
-    let arr: [3]i32 = [1, 2, 3]
+    let arr: [3]i32 = [3]i32{1, 2, 3}
     let n = arr[1]
     return n
 }
