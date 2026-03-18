@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/frontend/ast"
@@ -64,7 +65,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				continue
 			}
 			fieldName := field.Name.Text()
-			structField := &typeinfo.StructField{Name: fieldName, Type: c.typeFromSyntax(mod, field.Type), HasDefault: field.Default != nil}
+			structField := &typeinfo.StructField{Name: fieldName, IsPub: symbols.IsPubName(fieldName), Type: c.typeFromSyntax(mod, field.Type), HasDefault: field.Default != nil}
 			fields[fieldName] = structField
 			orderedFields = append(orderedFields, structField)
 		}

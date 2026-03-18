@@ -744,7 +744,7 @@ func (r *resolver) resolveModulePath(imp *binding.ImportBinding, remaining []str
 		r.reportMissingInModule(node.Loc(), remaining[0], target.ImportPath)
 		return nil, false
 	}
-	if !sym.Exported {
+	if !sym.IsPub {
 		r.reportNotExportedFromModule(node.Loc(), sym.Name, target.ImportPath)
 		return nil, false
 	}
@@ -755,7 +755,7 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 	if sym == nil {
 		return nil, false
 	}
-	if requireExported && !sym.Exported {
+	if requireExported && !sym.IsPub {
 		modulePath := ""
 		if mod != nil {
 			modulePath = mod.ImportPath
@@ -791,7 +791,7 @@ func (r *resolver) resolveSymbolPath(mod *context.Module, sym *symbols.Symbol, r
 		r.reportMissingInType(node.Loc(), remaining[0], sym.Name)
 		return nil, false
 	}
-	if requireExported && !member.Exported {
+	if requireExported && !member.IsPub {
 		owner := sym.Name
 		if mod != nil && mod.ImportPath != "" {
 			owner = mod.ImportPath + "::" + owner

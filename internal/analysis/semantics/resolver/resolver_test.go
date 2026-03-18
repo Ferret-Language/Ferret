@@ -19,17 +19,17 @@ func TestResolverBindsQualifiedPaths(t *testing.T) {
 import "util/build" as build
 
 type Point struct {
-    x: i32 = 0
+    X: i32 = 0
 }
 
 fn main() i32 {
     let p: Point = .{}
-    return build::Point::Origin().x
+    return build::Point::Origin().X
 }
 `)
 	mustWriteResolver(t, filepath.Join(root, "util", "build.ferr"), `
 type Point struct {
-    x: i32 = 0
+    X: i32 = 0
 }
 
 fn Point::Origin() Point {

@@ -155,6 +155,7 @@ func (t *TupleType) String() string {
 
 type StructField struct {
 	Name       string
+	IsPub      bool
 	Type       Type
 	HasDefault bool
 }

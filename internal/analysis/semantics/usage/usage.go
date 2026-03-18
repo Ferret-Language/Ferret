@@ -566,7 +566,7 @@ func (a *analyzer) reportNeverModifiedDecl(node ast.Node) {
 }
 
 func shouldWarnOnUnusedModuleSymbol(mod *context.Module, sym *symbols.Symbol) bool {
-	if mod == nil || sym == nil || sym.Exported {
+	if mod == nil || sym == nil || sym.IsPub {
 		return false
 	}
 	if sym.Name == "_" {
@@ -636,7 +636,7 @@ func (a *analyzer) shouldWarnInsideFunction(fn *ast.FuncDecl) bool {
 	if sym == nil {
 		return true
 	}
-	if sym.Exported {
+	if sym.IsPub {
 		return true
 	}
 	if sym.Kind == symbols.SymbolFunc && sym.Name == "main" && a.mod.IsEntry {

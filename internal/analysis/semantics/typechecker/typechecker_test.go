@@ -412,7 +412,7 @@ type Stringer interface {
 }
 
 type Name struct {
-    value: i32 = 0
+    Value: i32 = 0
 }
 
 fn Name::String(self) str {
@@ -420,7 +420,7 @@ fn Name::String(self) str {
 }
 
 fn main() str {
-    let n: Name = .{ .value = 1 }
+    let n: Name = .{ .Value = 1 }
     let s: Stringer = n
     return s.String()
 }
@@ -472,7 +472,7 @@ type Stringer interface {
 }
 
 type Name struct {
-    value: i32 = 0
+    Value: i32 = 0
 }
 
 fn (n: Name) String() str {
@@ -480,7 +480,7 @@ fn (n: Name) String() str {
 }
 
 fn main() i32 {
-    let n: Name = .{ .value = 1 }
+    let n: Name = .{ .Value = 1 }
     if n is Stringer {
         return 1
     }
@@ -988,6 +988,106 @@ fn main() void {
 	}
 	if !found {
 		t.Fatalf("expected immutable assignment diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsPrivateImportedStructFieldAccess(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "pkg.ferr"), `
+type Box struct {
+    hidden: i32 = 1
+    Visible: i32 = 2
+}
+`)
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+import "pkg"
+
+fn main() i32 {
+    let b: pkg::Box = .{}
+    return b.hidden
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected private field access diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrSymbolNotExported && strings.Contains(diag.Message, `"hidden" is not exported`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected private field export diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsPrivateSameModuleStructFieldAccessOutsideMethods(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Box struct {
+    hidden: i32 = 1
+}
+
+fn main() i32 {
+    let b: Box = .{}
+    return b.hidden
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsPrivateFieldAccessInsideOwnerMethods(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Box struct {
+    hidden: i32 = 1
+}
+
+fn Box::Read(&self) i32 {
+    return self.hidden
+}
+
+fn Box::Set(&mut self, value: i32) void {
+    self.hidden = value
+}
+
+fn main() i32 {
+    let mut b: Box = .{}
+    b.Set(3)
+    return b.Read()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsPrivateFieldInCompositeSameModule(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Box struct {
+    hidden: i32 = 1
+    Visible: i32 = 2
+}
+
+fn main() i32 {
+    let b: Box = .{ .hidden = 3, .Visible = 4 }
+    return b.Visible
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

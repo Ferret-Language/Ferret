@@ -1119,6 +1119,11 @@ func (c *checker) typeOfSelector(scope *refineScope, expr *ast.SelectorExpr) typ
 		)
 		return typeinfo.InvalidType{}
 	}
+	if !c.canAccessStructField(left, field) {
+		owner := c.structFieldOwnerName(left)
+		c.reportNotExportedFromType(expr.Location, expr.Name.Text(), owner)
+		return typeinfo.InvalidType{}
+	}
 	c.info.BindNode(expr, field.Type)
 	return field.Type
 }
@@ -1364,6 +1369,7 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 		c.info.BindNode(expr, expected)
 		return expected
 	}
+	ownerName := c.structFieldOwnerName(expected)
 	provided := make(map[string]struct{}, len(expr.Items))
 	var positional int
 	for _, item := range expr.Items {
@@ -1377,6 +1383,11 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 						WithCode(diagnostics.ErrUnknownField).
 						WithPrimaryLabel(&loc, "field does not exist on this type"),
 				)
+				continue
+			}
+			if !c.canAccessStructField(expected, field) {
+				loc := item.Name.Location
+				c.reportNotExportedFromType(loc, fieldName, ownerName)
 				continue
 			}
 			got := c.typeOfExpr(scope, item.Value, field.Type)
@@ -1395,6 +1406,12 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			continue
 		}
 		field := fields[positional]
+		if !c.canAccessStructField(expected, field) {
+			loc := expr.Location
+			c.reportNotExportedFromType(loc, field.Name, ownerName)
+			positional++
+			continue
+		}
 		got := c.typeOfExpr(scope, item.Value, field.Type)
 		c.checkAssignable(item.Value.Loc(), field.Type, got)
 		provided[field.Name] = struct{}{}
@@ -1639,6 +1656,28 @@ func (c *checker) lookupStructField(typ typeinfo.Type, name string) *typeinfo.St
 	return structType.Fields[name]
 }
 
+func (c *checker) canAccessStructField(typ typeinfo.Type, field *typeinfo.StructField) bool {
+	if field == nil || field.IsPub {
+		return true
+	}
+	named, ok := c.receiverBaseNamedType(c.derefForSelector(typ))
+	if !ok || named == nil {
+		return true
+	}
+	return named.ModuleKey == c.mod.Key
+}
+
+func (c *checker) structFieldOwnerName(typ typeinfo.Type) string {
+	named, ok := c.receiverBaseNamedType(c.derefForSelector(typ))
+	if !ok || named == nil {
+		return ""
+	}
+	if owner, ok := c.ctx.GetModule(named.ModuleKey); ok && owner != nil && owner.ImportPath != "" {
+		return owner.ImportPath + "::" + named.Name
+	}
+	return named.Name
+}
+
 func (c *checker) exprAccess(scope *refineScope, expr ast.Expr) (addressable bool, mutable bool) {
 	switch e := expr.(type) {
 	case *ast.Ident:
@@ -1781,6 +1820,18 @@ func (c *checker) reportMethodNotFound(loc source.Location, receiver typeinfo.Ty
 		diagnostics.NewError(fmt.Sprintf("type %s has no method %q", receiver.String(), name)).
 			WithCode(diagnostics.ErrMethodNotFound).
 			WithPrimaryLabel(&loc, "cannot resolve this method call"),
+	)
+}
+
+func (c *checker) reportNotExportedFromType(loc source.Location, name, owner string) {
+	msg := fmt.Sprintf("symbol %q is not exported", name)
+	if owner != "" {
+		msg = fmt.Sprintf("symbol %q is not exported from %q", name, owner)
+	}
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError(msg).
+			WithCode(diagnostics.ErrSymbolNotExported).
+			WithPrimaryLabel(&loc, "symbol is not exported by this type"),
 	)
 }
 

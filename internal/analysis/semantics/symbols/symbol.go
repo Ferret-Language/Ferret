@@ -28,7 +28,7 @@ const (
 type Symbol struct {
 	Name         string
 	Kind         Kind
-	Exported     bool
+	IsPub        bool
 	Location     source.Location
 	Node         ast.Node
 	ReceiverType string
@@ -47,13 +47,13 @@ func New(name string, kind Kind, node ast.Node) *Symbol {
 	return &Symbol{
 		Name:     name,
 		Kind:     kind,
-		Exported: isExported(name),
+		IsPub:    IsPubName(name),
 		Location: loc,
 		Node:     node,
 	}
 }
 
-func isExported(name string) bool {
+func IsPubName(name string) bool {
 	if name == "" {
 		return false
 	}
