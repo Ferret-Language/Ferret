@@ -123,6 +123,10 @@ ferret_raw global__str_data(const FerretStr *s);
  * Takes a reference (*str) so the fat-pointer is not copied. */
 ferret_usize global__str_len(const FerretStr *s);
 
+/* global__slice_len — returns the element count of a []T value.
+ * The element type is erased at the C boundary. */
+ferret_usize global__slice_len(const FerretSlicePtr *s);
+
 /* -------------------------------------------------------------------------
  * Explicit string conversion helpers.
  *

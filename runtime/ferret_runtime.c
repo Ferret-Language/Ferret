@@ -254,6 +254,10 @@ ferret_usize global__str_len(const FerretStr *s) {
     return s ? s->len : 0;
 }
 
+ferret_usize global__slice_len(const FerretSlicePtr *s) {
+    return s ? s->len : 0;
+}
+
 FerretSliceU8 global__str_bytes(const FerretStr *s) {
     FerretSliceU8 out = { (ferret_u8 *)0, 0 };
     if (s == NULL || s->ptr == NULL || s->len == 0) {

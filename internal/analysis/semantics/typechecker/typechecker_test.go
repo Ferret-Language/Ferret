@@ -2097,6 +2097,50 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerTypesLenForArrayAndSlice(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn lenArray() usize {
+    let items: [_]i32 = [_]i32{1, 2, 3}
+    return len(items)
+}
+
+fn lenSlice(items: []i32) usize {
+    return len(items)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsLenOnNonArraySlice(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() usize {
+    let x: i32 = 1
+    return len(x)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected len type diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "len expects an array or slice argument") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected len type diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerRejectsPrintingReferenceDirectly(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

@@ -540,6 +540,7 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 		"declare void @global__print_type(ptr)",
 		"declare ptr @global__str_data(ptr)",
 		"declare i64 @global__str_len(ptr)",
+		"declare i64 @global__slice_len(ptr)",
 		"declare { ptr, i64 } @global__str_bytes(ptr)",
 		"declare { ptr, i64 } @global__bytes_str(ptr)",
 		"declare { ptr, i64 } @global__str_chars(ptr)",
@@ -750,6 +751,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 	b.WriteString("declare { ptr, i64 } @global__recover()\n")
 	b.WriteString("declare ptr @global__str_data(ptr)\n")
 	b.WriteString("declare i64 @global__str_len(ptr)\n")
+	b.WriteString("declare i64 @global__slice_len(ptr)\n")
 	b.WriteString("declare { ptr, i64 } @global__str_bytes(ptr)\n")
 	b.WriteString("declare { ptr, i64 } @global__bytes_str(ptr)\n")
 	b.WriteString("declare { ptr, i64 } @global__str_chars(ptr)\n")
@@ -2066,6 +2068,9 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if isBuiltinPrintCall(call) {
 		return lowerBuiltinPrintCall(state, call)
 	}
+	if isBuiltinLenCall(call) {
+		return lowerBuiltinLenCall(state, targetName, call)
+	}
 
 	// Inline builtins: string_ptr and string_len have been removed.
 	// String literals are now *i8 — no special callee interception needed.
@@ -2117,7 +2122,7 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 			return "", err
 		}
 		retStr = tn
-	} else if targetType != nil {
+	} else if targetType != nil && !isVoidType(targetType) {
 		rt, err := llvmBaseType(targetType)
 		if err != nil {
 			return "", err
@@ -2146,6 +2151,46 @@ func isBuiltinPrintCall(call *mir.CallValue) bool {
 		return true
 	}
 	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "print"
+}
+
+func isBuiltinLenCall(call *mir.CallValue) bool {
+	if call == nil {
+		return false
+	}
+	callee, ok := call.Callee.(*mir.NameValue)
+	if !ok || callee == nil {
+		return false
+	}
+	if callee.LinkName == "global__len" {
+		return true
+	}
+	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "len"
+}
+
+func lowerBuiltinLenCall(state *moduleState, targetName string, call *mir.CallValue) (string, error) {
+	if call == nil || len(call.Args) != 1 {
+		return "", fmt.Errorf("builtin len expects exactly one argument")
+	}
+	if targetName == "" {
+		return "", nil
+	}
+	arg := call.Args[0]
+	if arg == nil {
+		return "", fmt.Errorf("builtin len argument is nil")
+	}
+	switch t := unwrapNamed(arg.Type()).(type) {
+	case *typeinfo.ArrayType:
+		return fmt.Sprintf("%s = add i64 0, %d", llvmLocalName(targetName), t.Len), nil
+	case *typeinfo.SliceType:
+		prefix, ptr, err := lowerAggregateValuePointer(state, arg)
+		if err != nil {
+			return "", err
+		}
+		callLine := fmt.Sprintf("%s = call i64 @global__slice_len(ptr %s)", llvmLocalName(targetName), ptr)
+		return joinLLVMLines(prefix, []string{callLine}), nil
+	default:
+		return "", fmt.Errorf("builtin len expects array or slice argument, got %s", arg.Type().String())
+	}
 }
 
 func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, error) {

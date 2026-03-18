@@ -714,6 +714,9 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if isBuiltinPrintCall(call) {
 		return lowerBuiltinPrintCall(state, call)
 	}
+	if isBuiltinLenCall(call) {
+		return lowerBuiltinLenCall(state, targetName, call)
+	}
 	args := make([]string, 0, len(call.Args))
 	for _, arg := range call.Args {
 		if isAggregateType(state, arg.Type()) {
@@ -741,6 +744,10 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if targetName == "" {
 		return callText, nil
 	}
+	if qbeIsVoidType(targetType) {
+		// void return: no assignment
+		return callText, nil
+	}
 	qtype, err := qbeBaseType(targetType)
 	if err != nil {
 		return "", err
@@ -764,6 +771,46 @@ func isBuiltinPrintCall(call *mir.CallValue) bool {
 		return true
 	}
 	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "print"
+}
+
+func isBuiltinLenCall(call *mir.CallValue) bool {
+	if call == nil {
+		return false
+	}
+	callee, ok := call.Callee.(*mir.NameValue)
+	if !ok || callee == nil {
+		return false
+	}
+	if callee.LinkName == "global__len" {
+		return true
+	}
+	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "len"
+}
+
+func lowerBuiltinLenCall(state *moduleState, targetName string, call *mir.CallValue) (string, error) {
+	if call == nil || len(call.Args) != 1 {
+		return "", fmt.Errorf("builtin len expects exactly one argument")
+	}
+	if targetName == "" {
+		return "", nil
+	}
+	arg := call.Args[0]
+	if arg == nil {
+		return "", fmt.Errorf("builtin len argument is nil")
+	}
+	switch t := unwrapNamed(arg.Type()).(type) {
+	case *typeinfo.ArrayType:
+		return fmt.Sprintf("%s =l copy %d", qbeLocalName(targetName), t.Len), nil
+	case *typeinfo.SliceType:
+		prefix, ptr, err := lowerAggregateValuePointer(state, arg)
+		if err != nil {
+			return "", err
+		}
+		callLine := fmt.Sprintf("%s =l call $global__slice_len(l %s)", qbeLocalName(targetName), ptr)
+		return joinQBELines(prefix, []string{callLine}), nil
+	default:
+		return "", fmt.Errorf("builtin len expects array or slice argument, got %s", arg.Type().String())
+	}
 }
 
 func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, error) {
@@ -3231,6 +3278,16 @@ func qbeBaseType(typ typeinfo.Type) (string, error) {
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported qbe base type %s", typeinfo.FormatType(typeStringer{typ}))
+}
+
+func qbeIsVoidType(typ typeinfo.Type) bool {
+	if typ == nil {
+		return true
+	}
+	if b, ok := typ.(*typeinfo.BuiltinType); ok {
+		return b.Name == "void"
+	}
+	return false
 }
 
 func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {

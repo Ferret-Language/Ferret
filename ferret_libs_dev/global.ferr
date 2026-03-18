@@ -23,6 +23,11 @@ fn recover() str;
 #[builtin]
 fn print(value: str) void;
 
+/// Returns the element count of an array or slice.
+/// This builtin is polymorphic in semantic analysis and accepts any []T or [N]T.
+#[builtin]
+fn len(value: []u8) usize;
+
 // ---------------------------------------------------------------------------
 // str field accessors
 //

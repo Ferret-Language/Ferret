@@ -791,6 +791,9 @@ func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr) typeinfo.Ty
 	if c.isBuiltinPrintCall(expr.Callee) {
 		return c.typeOfBuiltinPrint(scope, expr)
 	}
+	if c.isBuiltinLenCall(expr.Callee) {
+		return c.typeOfBuiltinLen(scope, expr)
+	}
 
 	if selector, ok := expr.Callee.(*ast.SelectorExpr); ok {
 		if typ, handled := c.typeOfMethodCall(scope, expr, selector); handled {
@@ -854,6 +857,44 @@ func (c *checker) isBuiltinPrintCall(callee ast.Expr) bool {
 		return false
 	}
 	if res.Symbol.Name != "print" {
+		return false
+	}
+	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
+	return ok && fn != nil && fn.IsBuiltin
+}
+
+func (c *checker) typeOfBuiltinLen(scope *refineScope, expr *ast.CallExpr) typeinfo.Type {
+	result := &typeinfo.BuiltinType{Name: "usize"}
+	if expr == nil {
+		return result
+	}
+	if len(expr.Args) != 1 {
+		c.reportWrongArgCount(expr.Location, 1, len(expr.Args))
+	}
+	if len(expr.Args) > 0 {
+		argType := c.typeOfExpr(scope, expr.Args[0], nil)
+		switch c.underlying(argType).(type) {
+		case *typeinfo.ArrayType, *typeinfo.SliceType:
+			// ok
+		default:
+			loc := expr.Args[0].Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("len expects an array or slice argument").
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(&loc, "this value is not an array or slice"),
+			)
+		}
+	}
+	c.info.BindNode(expr, result)
+	return result
+}
+
+func (c *checker) isBuiltinLenCall(callee ast.Expr) bool {
+	res := c.lookupResolution(callee)
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+		return false
+	}
+	if res.Symbol.Name != "len" {
 		return false
 	}
 	fn, ok := res.Symbol.Node.(*ast.FuncDecl)

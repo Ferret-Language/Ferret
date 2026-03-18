@@ -27,7 +27,7 @@ fn run2() void {
     p.Incr() // should only work if p is mutable
     let m = &mut p
     let r = &p
-    m
+    //m
     r
 }
 
@@ -41,4 +41,5 @@ fn main() {
     print(a)
     print(b)
     print(n)
+    print(len(arr))
 }
