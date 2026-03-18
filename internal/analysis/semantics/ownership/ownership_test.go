@@ -49,7 +49,7 @@ func TestOwnershipPhaseConsumesOwningReceiver(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn (c: *Conn) Close() void {
+fn Conn::Close(*self) void {
 }
 
 fn run(c: *Conn) void {

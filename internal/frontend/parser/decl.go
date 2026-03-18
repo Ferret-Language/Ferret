@@ -31,9 +31,6 @@ func (p *Parser) parseImportDecl() *ast.ImportDecl {
 func (p *Parser) parseTypeDecl(attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.TYPE, "expected 'type'").Start
 	nameTok := p.expectIdent("expected type name")
-	if p.match(tokens.MOVE) {
-		p.errorHere("`type Name move ...` is no longer supported")
-	}
 	spec := p.parseTypeSpec()
 	return &ast.TypeDecl{
 		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
@@ -99,6 +96,8 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 	if p.match(tokens.LPAREN) {
 		recv = p.parseReceiver()
 		p.expect(tokens.RPAREN, "expected ')' after receiver")
+		loc := p.locFrom(start)
+		p.errorAt(loc, "legacy receiver syntax has been removed; use attached method form `fn Type::Method(...)`")
 	} else if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.DCOLON {
 		owner = p.parseAttachedOwner()
 	}

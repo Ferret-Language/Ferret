@@ -12,9 +12,9 @@ import (
 func TestLayoutComputesStructOffsets(t *testing.T) {
 	root := t.TempDir()
 	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Point struct {
-    X i8
-    Y i64
-    Z i16
+    X: i8
+    Y: i64
+    Z: i16
 }
 
 fn main() i32 {
@@ -117,7 +117,7 @@ fn main() i32 {
 func TestLayoutUsesNicheForOptionalPointer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Holder struct {
-    Value ?^i32
+    Value: ?^i32
 }
 
 fn main() i32 {
@@ -144,7 +144,7 @@ fn main() i32 {
 func TestLayoutUsesNicheForOptionalBool(t *testing.T) {
 	root := t.TempDir()
 	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Flags struct {
-    Value ?bool
+    Value: ?bool
 }
 
 fn main() i32 {
@@ -176,7 +176,7 @@ func TestLayoutUsesNicheForOptionalEnum(t *testing.T) {
 }
 
 type Holder struct {
-    Value ?Color
+    Value: ?Color
 }
 
 fn main() i32 {

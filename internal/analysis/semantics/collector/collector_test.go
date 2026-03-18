@@ -18,7 +18,7 @@ let mut GlobalCount: i32 = 0
 const BuildMode = "debug"
 
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
 type Color enum {
@@ -29,7 +29,7 @@ fn Point::Origin() Point {
     return .{}
 }
 
-fn (p *Point) Shift(dx i32) {
+fn Point::Shift(*self, dx: i32) {
 }
 `)
 
@@ -103,11 +103,11 @@ func TestCollectorReportsDuplicateMethodsPerReceiver(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Point struct {}
 
-fn (p *Point) Len() i32 {
+fn Point::Len(*self) i32 {
     return 1
 }
 
-fn (p *Point) Len() i32 {
+fn Point::Len(*self) i32 {
     return 2
 }
 `)
@@ -132,23 +132,23 @@ func TestCollectorKeepsReceiverFormMethodSetsSeparate(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
-    X i32 = 0
+    X: i32 = 0
 }
 
-fn (p Point) Copy() i32 {
-    return p.X
+fn Point::Copy(self) i32 {
+    return self.X
 }
 
-fn (p &Point) Read() i32 {
-    return p.X
+fn Point::Read(&self) i32 {
+    return self.X
 }
 
-fn (p &mut Point) Bump() i32 {
-    return p.X + 1
+fn Point::Bump(&mut self) i32 {
+    return self.X + 1
 }
 
-fn (p *Point) Take() i32 {
-    return p.X
+fn Point::Take(*self) i32 {
+    return self.X
 }
 `)
 

@@ -108,10 +108,6 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case tokens.ASTERISK, tokens.MINUS, tokens.BANG, tokens.QUESTION:
 		tok := p.advance()
 		return &ast.PrefixExpr{Op: tok.Literal, Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
-	case tokens.TAKE:
-		p.errorHere("`take` is no longer supported")
-		p.advance()
-		return p.parseExpr(precPrefix)
 	case tokens.COMPTIME:
 		p.advance()
 		return &ast.PrefixExpr{Op: "comptime", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
@@ -294,11 +290,6 @@ func (p *Parser) parseMatchArms() []*ast.MatchArm {
 			p.advance()
 		} else if p.match(tokens.IS) {
 			typePattern = p.parseType()
-			if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.FATARROW {
-				bindTok := p.current()
-				p.errorAt(p.locOfToken(bindTok), "typed match arms no longer support a bound name; use the narrowed matched value directly")
-				p.advance()
-			}
 		} else {
 			pattern = p.parseExprUntil(precLowest, tokens.FATARROW)
 		}
@@ -362,7 +353,7 @@ func (p *Parser) startsExpr() bool {
 	switch p.current().Kind {
 	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.NONE,
 		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.AT, tokens.ASTERISK,
-		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.TAKE, tokens.COMPTIME, tokens.UNSAFE, tokens.MATCH:
+		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.COMPTIME, tokens.UNSAFE, tokens.MATCH:
 		return true
 	default:
 		return false

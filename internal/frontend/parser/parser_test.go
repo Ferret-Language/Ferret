@@ -82,27 +82,17 @@ fn Point::len2(self) i32 {
 	}
 }
 
-func TestParserRejectsMoveTypeDecl(t *testing.T) {
+func TestParserRejectsLegacyReceiverSyntax(t *testing.T) {
 	src := `
-type Handle move enum {
-    stdin,
-    stdout,
+type Point struct {}
+
+fn (p: Point) Len() i32 {
+    return 0
 }
 `
-
-	mod, diag := parseTestModule(t, src)
-	if len(mod.Decls) != 1 {
-		t.Fatalf("expected 1 decl, got %d", len(mod.Decls))
-	}
-	found := false
-	for _, d := range diag.All() {
-		if strings.Contains(d.Message, "`type Name move ...` is no longer supported") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected move-type rejection diagnostic, got %v", diag.All())
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "legacy receiver syntax has been removed") {
+		t.Fatalf("expected legacy receiver rejection diagnostic, got %v", diag.All())
 	}
 }
 
@@ -165,35 +155,6 @@ type Handle enum {
 	}
 	if len(typ.Attrs) != 1 || typ.Attrs[0].Name != "if" {
 		t.Fatalf("expected #[if(...)] attr on type decl, got %#v", typ.Attrs)
-	}
-}
-
-func TestParserRejectsLegacyPointerQualifiers(t *testing.T) {
-	tests := []struct {
-		name    string
-		src     string
-		message string
-	}{
-		{name: "own", src: "type Buf struct { data *own u8 }", message: "`*own T` is no longer supported; use `*T`"},
-		{name: "mut", src: "fn (b *mut Buf) grow() void {}", message: "`*mut T` is no longer supported; use `*T` or `&mut T`"},
-		{name: "raw", src: "type Buf struct { ptr *raw u8 }", message: "`*raw T` is no longer supported; use `^T`"},
-		{name: "raw mut", src: "type Buf struct { ptr *raw mut u8 }", message: "`*raw mut T` is no longer supported; use `^T`"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, diag := parseTestModule(t, tt.src)
-			found := false
-			for _, d := range diag.All() {
-				if strings.Contains(d.Message, tt.message) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Fatalf("expected %q diagnostic, got %v", tt.message, diag.All())
-			}
-		})
 	}
 }
 
@@ -302,19 +263,6 @@ fn ClonePoint(p: Point) Point {
 	prefix, ok := ret.Value.(*ast.PrefixExpr)
 	if !ok || prefix.Op != "copy" {
 		t.Fatalf("expected `copy` prefix expr, got %#v", ret.Value)
-	}
-}
-
-func TestParserRejectsTakePrefixExpression(t *testing.T) {
-	src := `
-fn MovePoint(p: *Point) *Point {
-    return take p
-}
-`
-
-	_, diag := parseTestModule(t, src)
-	if !hasDiagnosticMessage(diag, "`take` is no longer supported") {
-		t.Fatalf("expected take rejection diagnostic, got %v", diag.All())
 	}
 }
 
@@ -653,10 +601,10 @@ import "json/parser" as json
 
 type Conn struct {}
 
-fn (c: *Conn) Conn(fd: i32) {
+fn Conn::Conn(*self, fd: i32) {
 }
 
-fn (c: *Conn) ~Conn() {
+fn Conn::~Conn(*self) {
 }
 `
 

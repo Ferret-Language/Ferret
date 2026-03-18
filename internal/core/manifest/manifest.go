@@ -218,15 +218,15 @@ func Save(path string, file *File) error {
 
 	var builder strings.Builder
 	builder.WriteString("[package]\n")
-	builder.WriteString(fmt.Sprintf("name = %s\n", strconv.Quote(file.Package.Name)))
+	fmt.Fprintf(&builder, "name = %s\n", strconv.Quote(file.Package.Name))
 	if file.Package.Version != "" {
-		builder.WriteString(fmt.Sprintf("version = %s\n", strconv.Quote(file.Package.Version)))
+		fmt.Fprintf(&builder, "version = %s\n", strconv.Quote(file.Package.Version))
 	}
 	if file.Package.CompilerVersion != "" {
-		builder.WriteString(fmt.Sprintf("compiler = %s\n", strconv.Quote(file.Package.CompilerVersion)))
+		fmt.Fprintf(&builder, "compiler = %s\n", strconv.Quote(file.Package.CompilerVersion))
 	}
 	if file.Package.Entry != "" {
-		builder.WriteString(fmt.Sprintf("entry = %s\n", strconv.Quote(file.Package.Entry)))
+		fmt.Fprintf(&builder, "entry = %s\n", strconv.Quote(file.Package.Entry))
 	}
 
 	if len(file.Dependencies) > 0 {
@@ -238,15 +238,15 @@ func Save(path string, file *File) error {
 		sort.Strings(aliases)
 		for _, alias := range aliases {
 			dep := file.Dependencies[alias]
-			builder.WriteString(fmt.Sprintf("%s = %s\n", alias, strconv.Quote(renderDependency(dep))))
+			fmt.Fprintf(&builder, "%s = %s\n", alias, strconv.Quote(renderDependency(dep)))
 		}
 	}
 
 	if file.Dev.MockRemote || file.Dev.MockPath != "" {
 		builder.WriteString("\n[dev]\n")
-		builder.WriteString(fmt.Sprintf("mock_remote = %t\n", file.Dev.MockRemote))
+		fmt.Fprintf(&builder, "mock_remote = %t\n", file.Dev.MockRemote)
 		if file.Dev.MockPath != "" {
-			builder.WriteString(fmt.Sprintf("mock_path = %s\n", strconv.Quote(file.Dev.MockPath)))
+			fmt.Fprintf(&builder, "mock_path = %s\n", strconv.Quote(file.Dev.MockPath))
 		}
 	}
 

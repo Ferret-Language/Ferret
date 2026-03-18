@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"compiler/internal/analysis/cfg/model"
+	cfg "compiler/internal/analysis/cfg/model"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/hir"
 )
 
@@ -203,7 +203,7 @@ fn main() i32 {
 func TestCFGLivenessTracksStraightLineLocals(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn main(a i32) i32 {
+fn main(a: i32) i32 {
     let b = a
     let c = b
     return c
@@ -239,7 +239,7 @@ fn main(a i32) i32 {
 func TestCFGLivenessFlowsAcrossIfBranches(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn main(a i32, b i32) i32 {
+fn main(a: i32, b: i32) i32 {
     let x = a
     if b > 0 {
         return x
@@ -272,7 +272,7 @@ fn main(a i32, b i32) i32 {
 func TestCFGLivenessHandlesLoopBackEdge(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn main(n i32) i32 {
+fn main(n: i32) i32 {
     let mut m: i32 = n
     let mut x: i32 = 0
     while m > 0 {

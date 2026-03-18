@@ -475,7 +475,7 @@ type Name struct {
     Value: i32 = 0
 }
 
-fn (n: Name) String() str {
+fn Name::String(self) str {
     return 1 as str
 }
 
@@ -827,7 +827,7 @@ func TestTypecheckerRejectsCrossModuleMethodDeclaration(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 import "util/name"
 
-fn (n: name::Name) String() str {
+fn name::Name::String(self) str {
     return "x"
 }
 `)
@@ -860,8 +860,8 @@ type Point struct {
     X: i32 = 0
 }
 
-fn (p: *Point) Point(x: i32) {
-    p.X = x
+fn Point::Point(*self, x: i32) {
+    self.X = x
 }
 `)
 
@@ -878,7 +878,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn (p: &mut Point) Point() {
+fn Point::Point(&mut self) {
 }
 `)
 
@@ -895,7 +895,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn (p: *Point) ~Point(x: i32) i32 {
+fn Point::~Point(*self, x: i32) i32 {
     return x
 }
 `)
@@ -923,8 +923,8 @@ type Point struct {
     X: i32 = 0
 }
 
-fn (p: Point) Point() i32 {
-    return p.X
+fn Point::Point(self) i32 {
+    return self.X
 }
 
 fn main() i32 {
@@ -1545,12 +1545,12 @@ type Point struct {
     Y: i32 = 0
 }
 
-fn (p: Point) Len2() i32 {
-    return p.X * p.X + p.Y * p.Y
+fn Point::Len2(self) i32 {
+    return self.X * self.X + self.Y * self.Y
 }
 
-fn (p: *Point) Len() i32 {
-    return p.X * p.X + p.Y * p.Y
+fn Point::Len(*self) i32 {
+    return self.X * self.X + self.Y * self.Y
 }
 
 fn main() i32 {
@@ -1573,8 +1573,8 @@ type Point struct {
     X: i32 = 0
 }
 
-fn (p: *Point) Len() i32 {
-    return p.X
+fn Point::Len(*self) i32 {
+    return self.X
 }
 
 fn main() i32 {
@@ -2190,12 +2190,12 @@ type Point struct {
     X: i32 = 0
 }
 
-fn (p: &Point) Read() i32 {
-    return p.X
+fn Point::Read(&self) i32 {
+    return self.X
 }
 
-fn (p: &mut Point) Bump() i32 {
-    return p.X + 1
+fn Point::Bump(&mut self) i32 {
+    return self.X + 1
 }
 
 fn main() i32 {

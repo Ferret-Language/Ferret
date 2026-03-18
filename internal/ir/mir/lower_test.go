@@ -109,8 +109,8 @@ type Point struct {
     X: i32 = 0
 }
 
-fn (p: &mut Point) Bump() i32 {
-    return p.X + 1
+fn Point::Bump(&mut self) i32 {
+    return self.X + 1
 }
 
 fn main() i32 {
@@ -625,8 +625,8 @@ fn Point::New() Point {
     return .{}
 }
 
-fn (p: *Point) Bump() {
-	p.Y = p.Y + 1
+fn Point::Bump(*self) {
+	self.Y = self.Y + 1
 }
 
 fn Point::Drop(*self) void {

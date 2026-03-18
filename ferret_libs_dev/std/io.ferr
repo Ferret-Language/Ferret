@@ -60,15 +60,15 @@ type Writer struct {
 /// WriteStr writes the UTF-8 bytes of s to the writer.
 /// This is the idiomatic way to write a Ferret string.
 /// Returns the number of bytes written, or a negative value on error.
-fn (w: Writer) WriteStr(s: *str) isize {
-    return write(w.fd, str_data(s), str_len(s))
+fn Writer::WriteStr(self, s: *str) isize {
+    return write(self.fd, str_data(s), str_len(s))
 }
 
 /// WriteBytes writes count raw bytes from buf to the writer.
 /// Use this when you already have a raw pointer (e.g. from a C library).
 /// Returns the number of bytes written, or a negative value on error.
-fn (w: Writer) WriteBytes(buf: ^void, count: usize) isize {
-    return write(w.fd, buf, count)
+fn Writer::WriteBytes(self, buf: ^void, count: usize) isize {
+    return write(self.fd, buf, count)
 }
 
 // ---------------------------------------------------------------------------
@@ -83,8 +83,8 @@ type Reader struct {
 
 /// ReadBytes reads up to count bytes from the reader into buf.
 /// Returns the number of bytes read, 0 on EOF, or a negative value on error.
-fn (r: Reader) ReadBytes(buf: ^void, count: usize) isize {
-    return read(r.fd, buf, count)
+fn Reader::ReadBytes(self, buf: ^void, count: usize) isize {
+    return read(self.fd, buf, count)
 }
 
 // ---------------------------------------------------------------------------

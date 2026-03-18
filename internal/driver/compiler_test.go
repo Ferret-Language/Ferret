@@ -49,7 +49,7 @@ name = "json"
 func TestParsePathResolvesStdlibWithoutManifest(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
-fn Println(text str) void;
+fn Println(text: str) void;
 `)
 	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/io"
 
@@ -83,7 +83,7 @@ fn main() void {
 func TestParsePathTypechecksExternStdlibSignature(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
-fn Println(text str) void;
+fn Println(text: str) void;
 `)
 	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/io"
 

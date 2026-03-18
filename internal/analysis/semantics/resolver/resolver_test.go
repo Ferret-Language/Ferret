@@ -150,8 +150,8 @@ type Point struct {
     x: i32 = 0
 }
 
-fn (p: Point) get() i32 {
-    return p.x
+fn Point::get(self) i32 {
+    return self.x
 }
 
 fn run(items: [3]i32) void {
@@ -175,8 +175,8 @@ fn run(items: [3]i32) void {
 	if getFn.Receiver == nil || getFn.Receiver.Name == nil {
 		t.Fatalf("expected get() receiver")
 	}
-	if res := result.Entry.Bindings.Nodes[getFn.Receiver.Name]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "p" {
-		t.Fatalf("expected receiver decl binding for p, got %#v", res)
+	if res := result.Entry.Bindings.Nodes[getFn.Receiver.Name]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "self" {
+		t.Fatalf("expected receiver decl binding for self, got %#v", res)
 	}
 
 	runFn := findFunc(t, result.Entry.AST, "run")

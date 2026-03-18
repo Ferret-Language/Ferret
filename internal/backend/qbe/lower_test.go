@@ -639,8 +639,8 @@ type Point struct {
     Y: i32 = 0
 }
 
-fn (p: Point) Len2() i32 {
-    return p.X * p.X + p.Y * p.Y
+fn Point::Len2(self) i32 {
+    return self.X * self.X + self.Y * self.Y
 }
 
 fn main() i32 {
@@ -662,7 +662,7 @@ fn main() i32 {
 	}
 	text := artifact.Text
 	// Method should be emitted with receiver as first parameter.
-	if !strings.Contains(text, "function w $Point__Len2(l %p)") {
+	if !strings.Contains(text, "function w $Point__Len2(l %") {
 		t.Fatalf("expected receiver parameter in Len2 signature, got:\n%s", text)
 	}
 	// Call site should pass receiver as first argument.

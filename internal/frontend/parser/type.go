@@ -24,21 +24,6 @@ func (p *Parser) parseType() ast.TypeExpr {
 		return &ast.RawPtrType{Inner: p.parseType(), Location: p.locFrom(start)}
 	case tokens.ASTERISK:
 		p.advance()
-		switch p.current().Kind {
-		case tokens.OWN:
-			p.errorHere("`*own T` is no longer supported; use `*T`")
-			p.advance()
-		case tokens.MUT:
-			p.errorHere("`*mut T` is no longer supported; use `*T` or `&mut T`")
-			p.advance()
-		case tokens.RAW:
-			p.errorHere("`*raw T` is no longer supported; use `^T`")
-			p.advance()
-			if p.match(tokens.MUT) {
-				p.errorHere("`*raw mut T` is no longer supported; use `^T`")
-			}
-			return &ast.RawPtrType{Inner: p.parseType(), Location: p.locFrom(start)}
-		}
 		return &ast.PointerType{Inner: p.parseType(), Location: p.locFrom(start)}
 	case tokens.LBRACK:
 		p.advance()
