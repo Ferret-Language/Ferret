@@ -2,13 +2,12 @@ package cli
 
 import (
 	"bufio"
+	"compiler/internal/driver"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 )
-
-const compilerVersion = "0.1.0"
 
 func InitCommand(args []string) error {
 	if _, err := os.Stat("fer.ret"); err == nil {
@@ -50,17 +49,14 @@ func InitCommand(args []string) error {
 
 	content := fmt.Sprintf(`[package]
 name = %q
-version = "0.1.0"
+version = "0.0.1"
 description = %q
 author = %q
 compiler = "<=%s"
 	entry = "main.ferr"
 
 [dependencies]
-# Add dependencies here
-# neighbor-pkg = "../neighbor-pkg"
-# remote-pkg = "github.com/user/repo@v1.0.0"
-`, projectName, description, author, compilerVersion)
+`, projectName, description, author, compiler.CompilerVersion)
 
 	if err := os.WriteFile("fer.ret", []byte(content), 0o644); err != nil {
 		return err
