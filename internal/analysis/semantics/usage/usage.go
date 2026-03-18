@@ -260,12 +260,51 @@ func (a *analyzer) markTarget(expr ast.Expr, readWrite bool) {
 		a.markTarget(e.Left, readWrite)
 	case *ast.PrefixExpr:
 		switch e.Op {
-		case "*", "&", "&mut":
+		case "*":
+			a.markTarget(e.Right, true)
+			a.markBorrowSourceTarget(e.Right, true)
+		case "&", "&mut":
 			a.markTarget(e.Right, readWrite)
 		}
 	case *ast.CastExpr:
 		a.markTarget(e.Left, readWrite)
 	}
+}
+
+func (a *analyzer) markBorrowSourceTarget(expr ast.Expr, readWrite bool) {
+	if a == nil || a.mod == nil || a.mod.Bindings == nil || expr == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.Ident:
+		resolution := a.mod.Bindings.Nodes[e]
+		if resolution == nil || resolution.Symbol == nil {
+			return
+		}
+		switch node := resolution.Symbol.Node.(type) {
+		case *ast.LetStmt:
+			a.markMutBorrowInitTarget(node.Value, readWrite)
+		case *ast.LetDecl:
+			a.markMutBorrowInitTarget(node.Value, readWrite)
+		case *ast.ConstStmt:
+			a.markMutBorrowInitTarget(node.Value, readWrite)
+		case *ast.ConstDecl:
+			a.markMutBorrowInitTarget(node.Value, readWrite)
+		}
+	case *ast.CastExpr:
+		a.markBorrowSourceTarget(e.Left, readWrite)
+	}
+}
+
+func (a *analyzer) markMutBorrowInitTarget(expr ast.Expr, readWrite bool) {
+	if a == nil || expr == nil {
+		return
+	}
+	prefix, ok := expr.(*ast.PrefixExpr)
+	if !ok || prefix == nil || prefix.Op != "&mut" {
+		return
+	}
+	a.markTarget(prefix.Right, readWrite)
 }
 
 func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {

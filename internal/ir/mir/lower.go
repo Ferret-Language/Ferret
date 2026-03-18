@@ -799,6 +799,12 @@ func lowerAddrSource(c *lowerContext, expr hir.Expr) Value {
 	if expr == nil {
 		return nil
 	}
+	if ident, ok := expr.(*hir.Ident); ok && ident.LocalID >= 0 {
+		return &LocalValue{
+			baseValue: baseValue{Location: ident.Loc(), ExprType: ident.Type()},
+			LocalID:   ident.LocalID,
+		}
+	}
 	if resolved := lowerResolvedName(c, expr.SourceExpr(), expr.Loc(), expr.Type()); resolved != nil {
 		return resolved
 	}

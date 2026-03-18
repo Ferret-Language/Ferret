@@ -334,6 +334,27 @@ fn main() void {
 	}
 }
 
+func TestUsageDoesNotWarnWhenMutableBindingIsModifiedThroughMutRef(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() void {
+    let mut x = 10;
+    let y = &mut x;
+    *y = 12;
+    _ = x
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnmodifiedMutable && diag.Message == `"x" is never modified` {
+			t.Fatalf("did not expect never-modified mutable warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
 func TestUsageDoesNotWarnOnUnusedSelfReceiver(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `

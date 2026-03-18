@@ -40,6 +40,9 @@ func simplifyFunction(diag *diagnostics.Bag, fn *Function) {
 			case *AssignInstr:
 				i.Value = simplifyValue(i.Value, consts)
 				updateConstBinding(fn, consts, i.TargetID, i.Value)
+				if valueMayMutateMemory(i.Value) {
+					clear(consts)
+				}
 				out = append(out, i)
 			case *ComputeInstr:
 				i.Value = simplifyValue(i.Value, consts)
@@ -50,26 +53,41 @@ func simplifyFunction(diag *diagnostics.Bag, fn *Function) {
 						Value:     i.Value,
 					}
 					updateConstBinding(fn, consts, i.TargetID, i.Value)
+					if valueMayMutateMemory(i.Value) {
+						clear(consts)
+					}
 					out = append(out, assign)
 					continue
 				}
 				delete(consts, i.TargetID)
+				if valueMayMutateMemory(i.Value) {
+					clear(consts)
+				}
 				out = append(out, i)
 			case *StoreInstr:
 				i.Value = simplifyValue(i.Value, consts)
+				clear(consts)
 				out = append(out, i)
 			case *StoreFieldInstr:
 				i.Base = simplifyValue(i.Base, consts)
 				i.Value = simplifyValue(i.Value, consts)
+				clear(consts)
 				out = append(out, i)
 			case *EvalInstr:
 				i.Value = simplifyValue(i.Value, consts)
+				if valueMayMutateMemory(i.Value) {
+					clear(consts)
+				}
 				out = append(out, i)
 			case *BindInstr:
 				i.Value = simplifyValue(i.Value, consts)
+				if valueMayMutateMemory(i.Value) {
+					clear(consts)
+				}
 				out = append(out, i)
 			case *LockInstr:
 				i.Value = simplifyValue(i.Value, consts)
+				clear(consts)
 				out = append(out, i)
 			case *DeferInstr:
 				for j, child := range i.Body {
@@ -284,7 +302,7 @@ func simplifyValue(value Value, consts map[int]Value) Value {
 		v.Left = simplifyValue(v.Left, consts)
 		return v
 	case *AddrOfValue:
-		v.Source = simplifyValue(v.Source, consts)
+		v.Source = simplifyAddrSource(v.Source, consts)
 		return v
 	case *LoadValue:
 		v.Pointer = simplifyValue(v.Pointer, consts)
@@ -338,6 +356,46 @@ func updateConstBinding(fn *Function, consts map[int]Value, localID int, value V
 		return
 	}
 	delete(consts, localID)
+}
+
+func valueMayMutateMemory(value Value) bool {
+	switch v := value.(type) {
+	case nil, *BoolValue, *NumberValue, *StringValue, *NoneValue, *NameValue, *LocalValue, *TempValue:
+		return false
+	case *UnaryValue:
+		return valueMayMutateMemory(v.Right)
+	case *BinaryValue:
+		return valueMayMutateMemory(v.Left) || valueMayMutateMemory(v.Right)
+	case *PostfixValue:
+		return valueMayMutateMemory(v.Left)
+	case *AddrOfValue:
+		return v.Mutable || valueMayMutateMemory(v.Source)
+	case *LoadValue:
+		return valueMayMutateMemory(v.Pointer)
+	case *CallValue:
+		return true
+	case *FieldLoadValue:
+		return valueMayMutateMemory(v.Base)
+	case *FieldValue:
+		return valueMayMutateMemory(v.Base)
+	case *CastValue:
+		return valueMayMutateMemory(v.Left)
+	case *TypeTestValue:
+		return valueMayMutateMemory(v.Left)
+	case *CompositeValue:
+		for _, item := range v.Items {
+			if valueMayMutateMemory(item.Value) {
+				return true
+			}
+		}
+		return false
+	case *InterfaceValue:
+		return valueMayMutateMemory(v.Value)
+	case *IndexValue:
+		return valueMayMutateMemory(v.Base) || valueMayMutateMemory(v.Index)
+	default:
+		return true
+	}
 }
 
 func isFoldedConst(value Value) bool {
@@ -1051,7 +1109,7 @@ func replaceLocalInValue(value Value, localID int, replacement Value) Value {
 		v.Left = replaceLocalInValue(v.Left, localID, replacement)
 		return v
 	case *AddrOfValue:
-		v.Source = replaceLocalInValue(v.Source, localID, replacement)
+		v.Source = replaceLocalInAddrSource(v.Source, localID, replacement)
 		return v
 	case *LoadValue:
 		v.Pointer = replaceLocalInValue(v.Pointer, localID, replacement)
@@ -1085,6 +1143,68 @@ func replaceLocalInValue(value Value, localID int, replacement Value) Value {
 		return v
 	default:
 		return value
+	}
+}
+
+func simplifyAddrSource(value Value, consts map[int]Value) Value {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case *LocalValue, *NameValue:
+		// Addressable roots must stay roots; folding `x` into `10` breaks `&mut x`.
+		return v
+	case *FieldLoadValue:
+		v.Base = simplifyAddrSource(v.Base, consts)
+		return v
+	case *FieldValue:
+		v.Base = simplifyAddrSource(v.Base, consts)
+		return v
+	case *IndexValue:
+		v.Base = simplifyAddrSource(v.Base, consts)
+		v.Index = simplifyValue(v.Index, consts)
+		return v
+	case *LoadValue:
+		v.Pointer = simplifyValue(v.Pointer, consts)
+		return v
+	case *CastValue:
+		v.Left = simplifyAddrSource(v.Left, consts)
+		return v
+	default:
+		return simplifyValue(value, consts)
+	}
+}
+
+func replaceLocalInAddrSource(value Value, localID int, replacement Value) Value {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case *LocalValue:
+		if v.LocalID == localID {
+			if repl, ok := replacement.(*LocalValue); ok {
+				return cloneSimpleValue(repl)
+			}
+		}
+		return v
+	case *NameValue:
+		return v
+	case *FieldLoadValue:
+		v.Base = replaceLocalInAddrSource(v.Base, localID, replacement)
+		return v
+	case *FieldValue:
+		v.Base = replaceLocalInAddrSource(v.Base, localID, replacement)
+		return v
+	case *IndexValue:
+		v.Base = replaceLocalInAddrSource(v.Base, localID, replacement)
+		v.Index = replaceLocalInValue(v.Index, localID, replacement)
+		return v
+	case *LoadValue:
+		v.Pointer = replaceLocalInValue(v.Pointer, localID, replacement)
+		return v
+	case *CastValue:
+		v.Left = replaceLocalInAddrSource(v.Left, localID, replacement)
+		return v
+	default:
+		return replaceLocalInValue(value, localID, replacement)
 	}
 }
 

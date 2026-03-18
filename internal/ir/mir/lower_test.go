@@ -478,6 +478,30 @@ fn probe(p: *Point) void {
 	}
 }
 
+func TestPipelinePreservesAddrOfLocalInsteadOfFoldingToConstant(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn main() void {
+    let mut x = 10;
+    let y = &mut x;
+    *y = 12;
+    _ = *y;
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if strings.Contains(text, "addr_of_mut 10") {
+		t.Fatalf("did not expect addr_of of folded constant, got %q", text)
+	}
+	if !strings.Contains(text, "addr_of_mut x") {
+		t.Fatalf("expected addr_of_mut x in MIR dump, got %q", text)
+	}
+}
+
 func TestPipelineLowersPanicToMIRTerminator(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `

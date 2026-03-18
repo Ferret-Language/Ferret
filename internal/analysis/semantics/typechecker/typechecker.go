@@ -834,7 +834,15 @@ func (c *checker) typeOfBuiltinPrint(scope *refineScope, expr *ast.CallExpr) typ
 		c.reportWrongArgCount(expr.Location, 1, len(expr.Args))
 	}
 	if len(expr.Args) > 0 {
-		_ = c.typeOfExpr(scope, expr.Args[0], nil)
+		argType := c.typeOfExpr(scope, expr.Args[0], nil)
+		if _, ok := argType.(*typeinfo.RefType); ok {
+			loc := expr.Args[0].Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot print a reference value directly").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "dereference it with `*` to print the pointee value"),
+			)
+		}
 	}
 	c.info.BindNode(expr, result)
 	return result

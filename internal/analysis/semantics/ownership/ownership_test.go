@@ -303,6 +303,29 @@ fn run(mut c: *Conn) void {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrBorrowConflict, result.Diagnostics.Diagnostics())
 }
 
+func TestOwnershipPhaseRejectsUseWhileMutableBorrowBindingIsStillLive(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+fn run() void {
+    let mut x = 10
+    let y = &mut x
+    print(x)
+    print(*y)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrBorrowConflict {
+			return
+		}
+	}
+	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrBorrowConflict, result.Diagnostics.Diagnostics())
+}
+
 func TestOwnershipPhaseAllowsMultipleImmutableBorrows(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `

@@ -30,6 +30,8 @@ func (p *Parser) parseStmt() ast.Stmt {
 		return p.parseLabelStmt()
 	}
 	switch p.current().Kind {
+	case tokens.LBRACE:
+		return p.parseBlock()
 	case tokens.LET:
 		return p.parseLetStmt()
 	case tokens.CONST:

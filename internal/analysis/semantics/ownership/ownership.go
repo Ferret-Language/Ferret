@@ -772,10 +772,12 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 	case nil, *mir.NumberValue, *mir.BoolValue, *mir.StringValue, *mir.NoneValue:
 		return
 	case *mir.LocalValue:
+		a.checkDirectValueBorrowConflict(scope, v)
 		a.requireActiveLocal(scope, v)
 	case *mir.NameValue:
 		a.requireActiveValue(scope, v)
 	case *mir.FieldLoadValue:
+		a.checkDirectValueBorrowConflict(scope, v)
 		a.checkFieldLoadValue(scope, v)
 	case *mir.AddrOfValue:
 		a.checkAddrOfValue(scope, v)
@@ -804,6 +806,7 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 	case *mir.CallValue:
 		a.checkCall(scope, v)
 	case *mir.FieldValue:
+		a.checkDirectValueBorrowConflict(scope, v)
 		a.checkFieldValue(scope, v)
 	case *mir.CastValue:
 		a.checkValue(scope, v.Left)
@@ -813,6 +816,19 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 		}
 	case *mir.InterfaceValue:
 		a.checkValue(scope, v.Value)
+	}
+}
+
+func (a *analyzer) checkDirectValueBorrowConflict(scope *valueScope, value mir.Value) {
+	if scope == nil || value == nil {
+		return
+	}
+	root, _, ok := a.localValuePath(value)
+	if !ok {
+		return
+	}
+	if a.hasActiveMutableBorrowOf(scope, root) {
+		a.reportBorrowConflict(value.Loc(), root, "cannot use value while a mutable borrow is live")
 	}
 }
 
@@ -1379,6 +1395,10 @@ func (a *analyzer) requireActivePath(scope *valueScope, root int, path string, l
 		a.reportMovedPathUse(root, path, loc, info.moveLoc, info.movedPath)
 		return
 	}
+	if info.mutBorrow || a.hasActiveMutableBorrowOf(scope, root) {
+		a.reportBorrowConflict(loc, root, "cannot use value while a mutable borrow is live")
+		return
+	}
 	if path == "" {
 		if len(info.movedSubs) > 0 {
 			a.reportPartialMoveUse(root, loc, info)
@@ -1388,6 +1408,21 @@ func (a *analyzer) requireActivePath(scope *valueScope, root int, path string, l
 	if movedLoc, movedPath, ok := movedPathConflict(info, path); ok {
 		a.reportMovedPathUse(root, path, loc, movedLoc, movedPath)
 	}
+}
+
+func (a *analyzer) hasActiveMutableBorrowOf(scope *valueScope, root int) bool {
+	if scope == nil || root < 0 {
+		return false
+	}
+	for _, slot := range scope.values {
+		if slot == nil {
+			continue
+		}
+		if slot.borrowOf == root && slot.borrowMut {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *analyzer) reportPartialMoveUse(root int, loc source.Location, info *valueInfo) {

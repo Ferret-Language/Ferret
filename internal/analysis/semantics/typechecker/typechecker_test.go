@@ -2097,6 +2097,32 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerRejectsPrintingReferenceDirectly(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() void {
+    let mut x = 10
+    let y = &mut x
+    print(y)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected direct reference print diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "cannot print a reference value directly") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected direct reference print diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsDiscardAssignment(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
