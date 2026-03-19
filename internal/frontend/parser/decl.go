@@ -117,13 +117,11 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 	if p.startsType() {
 		result = p.parseType()
 	}
-	isBuiltin := hasAttr(attrs, "builtin")
-	externName := externAttrName(attrs, nameTok.Literal)
-	isExtern := externName != ""
+	isExtern, externName := foreignAttr(attrs)
 	var body *ast.BlockStmt
 	if p.at(tokens.LBRACE) {
 		body = p.parseBlock()
-	} else if isBuiltin || isExtern {
+	} else if isExtern {
 		p.match(tokens.SEMICOLON)
 	} else {
 		p.errorHere("expected function body")
@@ -136,7 +134,6 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		Doc:           doc,
 		Attrs:         attrs,
 		IsUnsafe:      isUnsafe,
-		IsBuiltin:     isBuiltin,
 		IsExtern:      isExtern,
 		ExternName:    externName,
 		IsConstructor: isConstructor,
@@ -168,17 +165,19 @@ func hasAttr(attrs []ast.Attribute, name string) bool {
 	return false
 }
 
-func externAttrName(attrs []ast.Attribute, fallback string) string {
+func foreignAttr(attrs []ast.Attribute) (bool, string) {
+	seen := false
+	linkName := ""
 	for _, attr := range attrs {
-		if attr.Name != "extern" {
+		if attr.Name != "extern" && attr.Name != "builtin" {
 			continue
 		}
+		seen = true
 		if len(attr.Args) > 0 && attr.Args[0] != "" {
-			return attr.Args[0]
+			linkName = attr.Args[0]
 		}
-		return fallback
 	}
-	return ""
+	return seen, linkName
 }
 
 func receiverNamedType(typ ast.TypeExpr) string {

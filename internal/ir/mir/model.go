@@ -75,7 +75,6 @@ type Function struct {
 	Name       string
 	LinkName   string
 	IsUnsafe   bool
-	IsBuiltin  bool
 	IsExtern   bool
 	ExternName string
 	Params     []*Param

@@ -294,8 +294,11 @@ fn recover() string;
 	if len(fn.Attrs) != 1 || fn.Attrs[0].Name != "builtin" {
 		t.Fatalf("expected #[builtin] attribute, got %#v", fn.Attrs)
 	}
-	if !fn.IsBuiltin {
-		t.Fatal("expected builtin declaration to be marked builtin")
+	if !fn.IsExtern {
+		t.Fatal("expected builtin declaration to also be marked foreign/extern")
+	}
+	if fn.ExternName != "" {
+		t.Fatalf("expected builtin declaration without link override to use default mangling, got %q", fn.ExternName)
 	}
 	if fn.Body != nil {
 		t.Fatalf("expected builtin declaration to have no body, got %#v", fn.Body)
@@ -320,14 +323,33 @@ fn Println(text: string) void;
 	if !fn.IsExtern || fn.ExternName != "ferret_io_println" {
 		t.Fatalf("expected extern declaration with link name, got %#v", fn)
 	}
-	if fn.IsBuiltin {
-		t.Fatalf("extern declaration must not be builtin: %#v", fn)
-	}
 	if fn.Body != nil {
 		t.Fatalf("expected extern declaration to have no body, got %#v", fn.Body)
 	}
 	if len(fn.Attrs) != 1 || len(fn.Attrs[0].Args) != 1 || fn.Attrs[0].Args[0] != "ferret_io_println" {
 		t.Fatalf("unexpected extern attribute payload: %#v", fn.Attrs)
+	}
+}
+
+func TestParseExternDeclarationWithoutLinkNameUsesDefaultMangle(t *testing.T) {
+	src := `
+#[extern]
+fn Tick() void;
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	if !fn.IsExtern {
+		t.Fatalf("expected extern declaration, got %#v", fn)
+	}
+	if fn.ExternName != "" {
+		t.Fatalf("expected extern declaration without link name override, got %q", fn.ExternName)
 	}
 }
 

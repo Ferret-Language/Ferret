@@ -80,7 +80,6 @@ type Func struct {
 	OwnerType  string
 	IsStatic   bool
 	IsUnsafe   bool
-	IsBuiltin  bool
 	IsExtern   bool
 	ExternName string
 	Receiver   *Param

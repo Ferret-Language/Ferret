@@ -44,11 +44,12 @@ func FormatModule(mod *Module) string {
 }
 
 func formatFunc(b *strings.Builder, fn *Func) {
-	if fn.IsBuiltin {
-		b.WriteString("#[builtin]\n")
-	}
 	if fn.IsExtern {
-		fmt.Fprintf(b, "#[extern(%q)]\n", fn.ExternName)
+		if fn.ExternName == "" {
+			b.WriteString("#[extern]\n")
+		} else {
+			fmt.Fprintf(b, "#[extern(%q)]\n", fn.ExternName)
+		}
 	}
 	if fn.IsUnsafe {
 		b.WriteString("unsafe ")

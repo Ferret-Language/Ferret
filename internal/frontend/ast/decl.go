@@ -68,7 +68,6 @@ type FuncDecl struct {
 	Doc           *CommentGroup
 	Attrs         []Attribute
 	IsUnsafe      bool
-	IsBuiltin     bool
 	IsExtern      bool
 	ExternName    string
 	IsConstructor bool

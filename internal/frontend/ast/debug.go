@@ -62,7 +62,6 @@ func debugDecl(decl Decl) any {
 			"doc":            debugDoc(d.Doc),
 			"attrs":          debugAttrs(d.Attrs),
 			"is_unsafe":      d.IsUnsafe,
-			"is_builtin":     d.IsBuiltin,
 			"is_extern":      d.IsExtern,
 			"extern_name":    d.ExternName,
 			"owner_type":     owner,

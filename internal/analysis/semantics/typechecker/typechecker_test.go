@@ -2141,7 +2141,7 @@ fn main() usize {
 	}
 }
 
-func TestTypecheckerRejectsPrintingReferenceDirectly(t *testing.T) {
+func TestTypecheckerAllowsPrintingReferenceViaAny(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 fn main() void {
@@ -2152,18 +2152,8 @@ fn main() void {
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected direct reference print diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "cannot print a reference value directly") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected direct reference print diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

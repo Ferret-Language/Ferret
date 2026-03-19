@@ -788,10 +788,7 @@ func (c *checker) typeOfPostfix(scope *refineScope, expr *ast.PostfixExpr) typei
 }
 
 func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr) typeinfo.Type {
-	if c.isBuiltinPrintCall(expr.Callee) {
-		return c.typeOfBuiltinPrint(scope, expr)
-	}
-	if c.isBuiltinLenCall(expr.Callee) {
+	if c.isForeignLenCall(expr.Callee) {
 		return c.typeOfBuiltinLen(scope, expr)
 	}
 
@@ -828,45 +825,14 @@ func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr) typeinfo.Ty
 	return fnType.Result
 }
 
-func (c *checker) typeOfBuiltinPrint(scope *refineScope, expr *ast.CallExpr) typeinfo.Type {
-	result := &typeinfo.BuiltinType{Name: "void"}
-	if expr == nil {
-		return result
-	}
-	if len(expr.Args) != 1 {
-		c.reportWrongArgCount(expr.Location, 1, len(expr.Args))
-	}
-	if len(expr.Args) > 0 {
-		argType := c.typeOfExpr(scope, expr.Args[0], nil)
-		if _, ok := argType.(*typeinfo.RefType); ok {
-			loc := expr.Args[0].Loc()
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("cannot print a reference value directly").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "dereference it with `*` to print the pointee value"),
-			)
-		}
-	}
-	c.info.BindNode(expr, result)
-	return result
-}
-
-func (c *checker) isBuiltinPrintCall(callee ast.Expr) bool {
-	res := c.lookupResolution(callee)
-	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
-		return false
-	}
-	if res.Symbol.Name != "print" {
-		return false
-	}
-	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
-	return ok && fn != nil && fn.IsBuiltin
-}
-
 func (c *checker) typeOfBuiltinLen(scope *refineScope, expr *ast.CallExpr) typeinfo.Type {
 	result := &typeinfo.BuiltinType{Name: "usize"}
 	if expr == nil {
 		return result
+	}
+	// Keep callee type info available for tooling hover (e.g. on `len`).
+	if expr.Callee != nil {
+		_ = c.typeOfExpr(scope, expr.Callee, nil)
 	}
 	if len(expr.Args) != 1 {
 		c.reportWrongArgCount(expr.Location, 1, len(expr.Args))
@@ -889,7 +855,7 @@ func (c *checker) typeOfBuiltinLen(scope *refineScope, expr *ast.CallExpr) typei
 	return result
 }
 
-func (c *checker) isBuiltinLenCall(callee ast.Expr) bool {
+func (c *checker) isForeignLenCall(callee ast.Expr) bool {
 	res := c.lookupResolution(callee)
 	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 		return false
@@ -898,7 +864,7 @@ func (c *checker) isBuiltinLenCall(callee ast.Expr) bool {
 		return false
 	}
 	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
-	return ok && fn != nil && fn.IsBuiltin
+	return ok && fn != nil && fn.IsExtern
 }
 
 func (c *checker) typeOfCatch(scope *refineScope, expr *ast.CatchExpr) typeinfo.Type {

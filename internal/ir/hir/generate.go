@@ -362,7 +362,6 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 		Name:       d.Name.Text(),
 		IsStatic:   d.IsStatic,
 		IsUnsafe:   d.IsUnsafe,
-		IsBuiltin:  d.IsBuiltin,
 		IsExtern:   d.IsExtern,
 		ExternName: d.ExternName,
 		Result:     syntaxType(g.types, d.Result),

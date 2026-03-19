@@ -54,11 +54,12 @@ func formatFunction(b *strings.Builder, fn *Function) {
 	defer func() { currentFnForFormat = nil }()
 	currentBlockLabels = blockLabels(fn)
 	defer func() { currentBlockLabels = nil }()
-	if fn.IsBuiltin {
-		b.WriteString("#[builtin]\n")
-	}
 	if fn.IsExtern {
-		fmt.Fprintf(b, "#[extern(%q)]\n", fn.ExternName)
+		if fn.ExternName == "" {
+			b.WriteString("#[extern]\n")
+		} else {
+			fmt.Fprintf(b, "#[extern(%q)]\n", fn.ExternName)
+		}
 	}
 	if fn.IsUnsafe {
 		b.WriteString("unsafe ")

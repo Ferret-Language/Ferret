@@ -10,23 +10,31 @@
 // Use it at FFI boundaries where C expects `void *`. Use an unsafe cast to
 // convert to a typed pointer: `unsafe raw_ptr as ^u8`.
 //
-// `recover` is a builtin function. Panic lowering goes straight to the
+// `recover` is a foreign function declaration. Panic lowering goes straight to the
 // runtime hook `global__panic` and is not callable from source.
 
 /// Returns the panic message of the current panic as a str.
 /// When there is no active panic, returns an empty str (data=nil, len=0).
-#[builtin]
+#[extern]
 fn recover() str;
 
-/// Temporary generic print builtin.
+/// `Any` is the canonical empty-interface "accepts all types" surface.
+/// Use it at API boundaries that intentionally accept arbitrary concrete values.
+type Any interface {}
+
+/// Temporary generic print declaration.
 /// Accepts any single value and prints a best-effort textual form to stdout.
-#[builtin]
-fn print(value: str) void;
+#[extern]
+fn print(value: Any) void;
 
 /// Returns the element count of an array or slice.
-/// This builtin is polymorphic in semantic analysis and accepts any []T or [N]T.
-#[builtin]
+/// This foreign declaration is polymorphic in semantic analysis and accepts any []T or [N]T.
+#[extern]
 fn len(value: []u8) usize;
+
+/// Internal helper used by lowering of len on slice values.
+#[extern]
+fn slice_len(value: ^void) usize;
 
 // ---------------------------------------------------------------------------
 // str field accessors
@@ -37,33 +45,43 @@ fn len(value: []u8) usize;
 
 /// Returns the raw byte pointer that backs s.
 /// Valid only as long as s is live. Do not store without care.
-#[builtin]
+#[extern]
 fn str_data(s: *str) ^void;
 
 /// Returns the byte length of s (number of UTF-8 code units / bytes).
-#[builtin]
+#[extern]
 fn str_len(s: *str) usize;
 
 /// Copies the UTF-8 bytes of s into a fresh []u8 slice.
-#[builtin]
+#[extern]
 fn str_bytes(s: *str) []u8;
 
 /// Copies the bytes of a []u8 slice into a fresh str value.
-#[builtin]
+#[extern]
 fn bytes_str(bytes: *[]u8) str;
 
 /// Decodes the UTF-8 bytes of s into a fresh []char slice.
-#[builtin]
+#[extern]
 fn str_chars(s: *str) []char;
 
 /// Encodes a []char slice into a fresh UTF-8 str value.
-#[builtin]
+#[extern]
 fn chars_str(chars: *[]char) str;
 
 /// Copies s into a newly allocated NUL-terminated C string.
 /// The returned pointer can be passed to C APIs and freed with free().
-#[builtin]
+#[extern]
 fn str_cstr(s: *str) ^void;
+
+/// Internal helpers used by numeric-to-string cast lowering.
+#[extern]
+fn i64_str(value: i64) str;
+
+#[extern]
+fn u64_str(value: u64) str;
+
+#[extern]
+fn f64_str(value: f64) str;
 
 // ---------------------------------------------------------------------------
 // Memory management (libc)
