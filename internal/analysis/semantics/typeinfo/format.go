@@ -3,6 +3,8 @@ package typeinfo
 import (
 	"fmt"
 	"strings"
+
+	"compiler/internal/frontend/ast"
 )
 
 type InterfaceMethod struct {
@@ -85,6 +87,64 @@ func FormatFuncSignature(name string, fn *FuncType) string {
 	return prefix + formatTypeParams(fn.TypeParams) + formatSignature(fn)
 }
 
+func FormatFuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
+	if fn == nil || fn.Name == nil {
+		return FormatFuncSignature("", fnType)
+	}
+	if fnType == nil {
+		return fn.Signature()
+	}
+	var b strings.Builder
+	prefix := "fn"
+	if fnType.IsUnsafe {
+		prefix = "unsafe fn"
+	}
+	b.WriteString(prefix)
+	if name := formatFuncDeclName(fn); name != "" {
+		b.WriteByte(' ')
+		b.WriteString(name)
+	}
+	b.WriteByte('(')
+	wrote := false
+	paramIndex := 0
+	if fn.Receiver != nil {
+		b.WriteString(ast.ReceiverString(fn.Receiver))
+		wrote = true
+	}
+	for i, param := range fn.Params {
+		if wrote {
+			b.WriteString(", ")
+		}
+		if param.IsMut {
+			b.WriteString("mut ")
+		}
+		if param.IsComptime {
+			b.WriteString("comptime ")
+		}
+		if param.Name != nil && param.Name.Text() != "" {
+			b.WriteString(param.Name.Text())
+		} else {
+			b.WriteString("_")
+		}
+		if i < len(fnType.Params) {
+			b.WriteString(": ")
+			b.WriteString(FormatType(fnType.Params[i]))
+			paramIndex = i + 1
+		}
+		wrote = true
+	}
+	for ; paramIndex < len(fnType.Params); paramIndex++ {
+		if wrote {
+			b.WriteString(", ")
+		}
+		b.WriteString(FormatType(fnType.Params[paramIndex]))
+		wrote = true
+	}
+	b.WriteString(") ")
+	b.WriteString(FormatType(fnType.Result))
+	return b.String()
+}
+
 func formatSignature(fn *FuncType) string {
 	if fn == nil {
 		return "()"
@@ -125,4 +185,15 @@ func formatTypeParams(params []*TypeParam) string {
 		return ""
 	}
 	return "<" + strings.Join(parts, ", ") + ">"
+}
+
+func formatFuncDeclName(fn *ast.FuncDecl) string {
+	if fn == nil || fn.Name == nil {
+		return ""
+	}
+	name := fn.Name.Text()
+	if fn.OwnerType != nil && len(fn.OwnerType.Path) > 0 {
+		return strings.Join(fn.OwnerType.Path, "::") + "::" + name
+	}
+	return name
 }

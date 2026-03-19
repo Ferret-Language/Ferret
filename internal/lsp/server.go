@@ -828,6 +828,9 @@ func symbolFunctionSignature(sym *symbols.Symbol, fnType *typeinfo.FuncType) str
 		return ""
 	}
 	if fn, ok := sym.Node.(*ast.FuncDecl); ok && fn != nil {
+		if fnType != nil && len(fn.TypeParams) > 0 && len(fnType.TypeParams) == 0 {
+			return typeinfo.FormatFuncDeclSignature(fn, fnType)
+		}
 		return fn.Signature()
 	}
 	if fnType != nil && sym.Name != "" {
