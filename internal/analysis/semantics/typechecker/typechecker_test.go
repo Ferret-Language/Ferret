@@ -192,6 +192,152 @@ fn Identity<T>(value: T) T {
 	}
 }
 
+func TestTypecheckerInfersGenericExternCallResult(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+#[extern]
+fn Identity<T>(value: T) T;
+
+fn main() i32 {
+    return Identity(1)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	ret := mainFn.Body.Stmts[0].(*ast.ReturnStmt)
+	call, ok := ret.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expr, got %T", ret.Value)
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[call], "i32") {
+		t.Fatalf("expected inferred call result i32, got %#v", result.Entry.Types.Nodes[call])
+	}
+	calleeType, ok := result.Entry.Types.Nodes[call.Callee].(*typeinfo.FuncType)
+	if !ok {
+		t.Fatalf("expected instantiated callee type, got %T", result.Entry.Types.Nodes[call.Callee])
+	}
+	if len(calleeType.TypeParams) != 0 {
+		t.Fatalf("expected instantiated callee to have no remaining type params, got %#v", calleeType.TypeParams)
+	}
+	if !typeinfo.IsBuiltinNamed(calleeType.Params[0], "i32") || !typeinfo.IsBuiltinNamed(calleeType.Result, "i32") {
+		t.Fatalf("expected instantiated Identity(i32) -> i32, got %#v", calleeType)
+	}
+}
+
+func TestTypecheckerRejectsGenericConstraintMismatch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Reader interface {
+    Read(&self) i32
+}
+
+#[extern]
+fn Use<T: Reader>(value: T) void;
+
+fn main() void {
+    Use(1)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected generic constraint diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "does not implement") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected interface constraint mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsMethodsFromTypeParamInterfaceConstraint(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Reader interface {
+    Read(&self) i32
+}
+
+fn ReadValue<T: Reader>(value: T) i32 {
+    return value.Read()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	fn := findTypeFunc(t, result.Entry.AST, "ReadValue")
+	ret := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	call, ok := ret.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected method call, got %T", ret.Value)
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[call], "i32") {
+		t.Fatalf("expected constrained method call result i32, got %#v", result.Entry.Types.Nodes[call])
+	}
+}
+
+func TestTypecheckerReportsUnsupportedGenericOperationAtCallSite(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32
+}
+
+fn Add<T>(a: T, b: T) T {
+    return a + b
+}
+
+fn main() void {
+    let p: Point = .{ .X = 1 }
+    Add(p, p)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected generic call-site diagnostic")
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	callStmt, ok := mainFn.Body.Stmts[1].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected expr stmt call, got %T", mainFn.Body.Stmts[1])
+	}
+	call, ok := callStmt.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expr, got %T", callStmt.Value)
+	}
+
+	foundCallSite := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code != diagnostics.ErrInvalidOperation || len(diag.Labels) == 0 || diag.Labels[0].Location == nil || diag.Labels[0].Location.Start == nil {
+			continue
+		}
+		if strings.Contains(diag.Message, "instantiated generic call requires valid operation") &&
+			diag.Labels[0].Location.Start.Line == call.Location.Start.Line {
+			foundCallSite = true
+		}
+		if strings.Contains(diag.Message, "invalid binary operation T") {
+			t.Fatalf("expected no generic-body binary-op diagnostic, got %#v", diag)
+		}
+	}
+	if !foundCallSite {
+		t.Fatalf("expected call-site generic instantiation diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsImplicitNumericWidening(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

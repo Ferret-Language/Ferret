@@ -447,6 +447,12 @@ func IsImplicitNumericWidening(dst, src Type) bool {
 }
 
 func CommonNumericType(a, b Type) Type {
+	if _, _, ok := NumericInfo(a); !ok {
+		return nil
+	}
+	if _, _, ok := NumericInfo(b); !ok {
+		return nil
+	}
 	if Equal(a, b) {
 		return a
 	}

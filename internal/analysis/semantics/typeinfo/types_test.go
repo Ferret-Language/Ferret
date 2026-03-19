@@ -32,3 +32,14 @@ func TestEqualRefAndRawTypes(t *testing.T) {
 		t.Fatal("expected raw ptr types to compare equal")
 	}
 }
+
+func TestCommonNumericTypeRejectsNonNumericEqualTypes(t *testing.T) {
+	typeParam := &TypeParam{Name: "T"}
+	if got := CommonNumericType(typeParam, typeParam); got != nil {
+		t.Fatalf("expected no numeric common type for type param, got %#v", got)
+	}
+	point := &NamedType{ModuleKey: "main", Name: "Point"}
+	if got := CommonNumericType(point, point); got != nil {
+		t.Fatalf("expected no numeric common type for named type, got %#v", got)
+	}
+}

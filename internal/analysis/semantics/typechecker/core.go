@@ -42,13 +42,15 @@ func (s *refineScope) Lookup(sym *symbols.Symbol) (typeinfo.Type, bool) {
 }
 
 type checker struct {
-	ctx             *context.CompilerContext
-	mod             *context.Module
-	info            *typeinfo.ModuleInfo
-	currentResult   typeinfo.Type
-	unsafeDepth     int
-	deferDepth      int
-	typeParamScopes []map[string]*typeinfo.TypeParam
+	ctx                        *context.CompilerContext
+	mod                        *context.Module
+	info                       *typeinfo.ModuleInfo
+	currentResult              typeinfo.Type
+	unsafeDepth                int
+	deferDepth                 int
+	typeParamScopes            []map[string]*typeinfo.TypeParam
+	currentGenericFunc         *symbols.Symbol
+	currentGenericRequirements []*typeinfo.GenericRequirement
 }
 
 func (c *checker) pushTypeParams(mod *context.Module, owner ast.Node, params []ast.TypeParam) []*typeinfo.TypeParam {

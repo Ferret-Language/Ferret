@@ -2,22 +2,39 @@ package typeinfo
 
 import (
 	"compiler/internal/analysis/semantics/symbols"
+	"compiler/internal/core/source"
 	"compiler/internal/frontend/ast"
 )
 
+type GenericRequirementKind string
+
+const (
+	GenericRequirementBinaryOp GenericRequirementKind = "binary_op"
+)
+
+type GenericRequirement struct {
+	Kind     GenericRequirementKind
+	Location source.Location
+	Op       string
+	Left     Type
+	Right    Type
+}
+
 type ModuleInfo struct {
-	Nodes           map[ast.Node]Type
-	Symbols         map[*symbols.Symbol]Type
-	Bools           map[ast.Node]bool
-	MethodReceivers map[ast.Node]Type
+	Nodes               map[ast.Node]Type
+	Symbols             map[*symbols.Symbol]Type
+	Bools               map[ast.Node]bool
+	MethodReceivers     map[ast.Node]Type
+	GenericRequirements map[*symbols.Symbol][]*GenericRequirement
 }
 
 func NewModuleInfo() *ModuleInfo {
 	return &ModuleInfo{
-		Nodes:           make(map[ast.Node]Type),
-		Symbols:         make(map[*symbols.Symbol]Type),
-		Bools:           make(map[ast.Node]bool),
-		MethodReceivers: make(map[ast.Node]Type),
+		Nodes:               make(map[ast.Node]Type),
+		Symbols:             make(map[*symbols.Symbol]Type),
+		Bools:               make(map[ast.Node]bool),
+		MethodReceivers:     make(map[ast.Node]Type),
+		GenericRequirements: make(map[*symbols.Symbol][]*GenericRequirement),
 	}
 }
 
@@ -63,4 +80,23 @@ func (m *ModuleInfo) LookupMethodReceiver(node ast.Node) (Type, bool) {
 	}
 	typ, ok := m.MethodReceivers[node]
 	return typ, ok
+}
+
+func (m *ModuleInfo) BindGenericRequirements(sym *symbols.Symbol, requirements []*GenericRequirement) {
+	if m == nil || sym == nil {
+		return
+	}
+	if len(requirements) == 0 {
+		delete(m.GenericRequirements, sym)
+		return
+	}
+	m.GenericRequirements[sym] = requirements
+}
+
+func (m *ModuleInfo) LookupGenericRequirements(sym *symbols.Symbol) ([]*GenericRequirement, bool) {
+	if m == nil || sym == nil {
+		return nil, false
+	}
+	reqs, ok := m.GenericRequirements[sym]
+	return reqs, ok
 }

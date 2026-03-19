@@ -465,6 +465,46 @@ func TestHoverBuiltinCallsShowFunctionSignatures(t *testing.T) {
 	}
 }
 
+func TestHoverGenericCallShowsInstantiatedSignature(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "fn add<T>(a: T, b: T) T {\n    return a + b\n}\n\nfn main() i32 {\n    let x = 1\n    let y = 2\n    return add(x, y)\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    return add(x, y)")
+	if !ok {
+		t.Fatal("failed to find add call")
+	}
+	char += len("    return a")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn add(a: i32, b: i32) i32") {
+		t.Fatalf("expected instantiated generic signature in hover, got %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "<T>") {
+		t.Fatalf("expected call-site hover to hide generic declaration form, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.ferr")

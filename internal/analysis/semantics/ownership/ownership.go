@@ -1002,7 +1002,7 @@ func (a *analyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field
 	if structField := a.lookupStructField(receiverType, name); structField != nil {
 		return false
 	}
-	if iface, ok := a.underlying(receiverType).(*typeinfo.InterfaceType); ok {
+	if iface, ok := a.interfaceView(receiverType); ok {
 		method := iface.Methods[name]
 		if method == nil {
 			return true
@@ -1766,8 +1766,25 @@ func (a *analyzer) canHaveMethods(typ typeinfo.Type) bool {
 	if _, ok := a.receiverBaseNamedType(typ); ok {
 		return true
 	}
-	_, ok := a.underlying(typ).(*typeinfo.InterfaceType)
+	_, ok := a.interfaceView(typ)
 	return ok
+}
+
+func (a *analyzer) interfaceView(typ typeinfo.Type) (*typeinfo.InterfaceType, bool) {
+	if typ == nil {
+		return nil, false
+	}
+	if iface, ok := a.underlying(typ).(*typeinfo.InterfaceType); ok {
+		return iface, true
+	}
+	typeParam, ok := typ.(*typeinfo.TypeParam)
+	if !ok || typeParam == nil || typeParam.Constraint == nil {
+		return nil, false
+	}
+	if iface, ok := a.underlying(typeParam.Constraint).(*typeinfo.InterfaceType); ok {
+		return iface, true
+	}
+	return nil, false
 }
 
 func (a *analyzer) lookupMethod(receiverType typeinfo.Type, name string, addressable bool, mutable bool) (*symbols.Symbol, *typeinfo.FuncType) {
