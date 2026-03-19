@@ -100,7 +100,7 @@ func FormatFuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 		prefix = "unsafe fn"
 	}
 	b.WriteString(prefix)
-	if name := formatFuncDeclName(fn); name != "" {
+	if name := ast.FuncDeclName(fn); name != "" {
 		b.WriteByte(' ')
 		b.WriteString(name)
 	}
@@ -185,15 +185,4 @@ func formatTypeParams(params []*TypeParam) string {
 		return ""
 	}
 	return "<" + strings.Join(parts, ", ") + ">"
-}
-
-func formatFuncDeclName(fn *ast.FuncDecl) string {
-	if fn == nil || fn.Name == nil {
-		return ""
-	}
-	name := fn.Name.Text()
-	if fn.OwnerType != nil && len(fn.OwnerType.Path) > 0 {
-		return strings.Join(fn.OwnerType.Path, "::") + "::" + name
-	}
-	return name
 }

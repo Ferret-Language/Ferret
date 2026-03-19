@@ -140,6 +140,17 @@ func typeParamListString(params []TypeParam) string {
 	return "<" + strings.Join(parts, ", ") + ">"
 }
 
+func FuncDeclName(fn *FuncDecl) string {
+	if fn == nil || fn.Name == nil {
+		return ""
+	}
+	name := fn.Name.Text()
+	if fn.OwnerType != nil && len(fn.OwnerType.Path) > 0 {
+		return strings.Join(fn.OwnerType.Path, "::") + "::" + name
+	}
+	return name
+}
+
 func FuncSignature(fn *FuncDecl) string {
 	if fn == nil || fn.Name == nil {
 		return "fn <unknown>() void"
@@ -148,10 +159,7 @@ func FuncSignature(fn *FuncDecl) string {
 	if fn.IsUnsafe {
 		prefix = "unsafe fn"
 	}
-	name := fn.Name.Text()
-	if fn.OwnerType != nil && len(fn.OwnerType.Path) > 0 {
-		name = strings.Join(fn.OwnerType.Path, "::") + "::" + name
-	}
+	name := FuncDeclName(fn)
 	name += typeParamListString(fn.TypeParams)
 
 	params := make([]string, 0, len(fn.Params)+1)

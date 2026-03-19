@@ -220,16 +220,10 @@ type FuncType struct {
 	Result         Type
 }
 
+// String returns the canonical textual form for function types, including
+// parameter modifiers such as `mut` and `comptime`.
 func (t *FuncType) String() string {
-	parts := make([]string, 0, len(t.Params))
-	for _, param := range t.Params {
-		parts = append(parts, typeString(param))
-	}
-	prefix := "fn"
-	if t.IsUnsafe {
-		prefix = "unsafe fn"
-	}
-	return fmt.Sprintf("%s%s(%s) %s", prefix, formatTypeParams(t.TypeParams), strings.Join(parts, ", "), typeString(t.Result))
+	return FormatFuncSignature("", t)
 }
 
 func typeString(t Type) string {

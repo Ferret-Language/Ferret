@@ -49,3 +49,20 @@ func TestFormatFuncDeclSignature(t *testing.T) {
 		t.Fatalf("unexpected declaration signature:\nwant: %q\ngot:  %q", want, got)
 	}
 }
+
+func TestFuncTypeStringUsesCanonicalFormatter(t *testing.T) {
+	fn := &FuncType{
+		IsUnsafe:       true,
+		TypeParams:     []*TypeParam{{Name: "T"}},
+		Params:         []Type{&BuiltinType{Name: "i32"}, &BuiltinType{Name: "i64"}},
+		MutParams:      []bool{false, true},
+		ComptimeParams: []bool{true, false},
+		Result:         &BuiltinType{Name: "bool"},
+	}
+
+	got := fn.String()
+	want := "unsafe fn<T>(comptime i32, mut i64) bool"
+	if got != want {
+		t.Fatalf("unexpected canonical func type string:\nwant: %q\ngot:  %q", want, got)
+	}
+}

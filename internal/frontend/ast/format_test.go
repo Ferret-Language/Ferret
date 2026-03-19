@@ -37,6 +37,17 @@ func TestFuncDeclSignatureIncludesTypeParams(t *testing.T) {
 	}
 }
 
+func TestFuncDeclNameIncludesOwnerType(t *testing.T) {
+	fn := &FuncDecl{
+		OwnerType: &NamedType{Path: []string{"math", "Point"}},
+		Name:      &Ident{Path: []string{"Calc"}},
+	}
+
+	if got := FuncDeclName(fn); got != "math::Point::Calc" {
+		t.Fatalf("unexpected function name: %q", got)
+	}
+}
+
 func TestTypeDeclTextStructIncludesFields(t *testing.T) {
 	decl := &TypeDecl{
 		Name: &Ident{Path: []string{"Point"}},
