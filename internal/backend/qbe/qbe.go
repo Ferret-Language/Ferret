@@ -2692,6 +2692,8 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 
 	srcBuiltin, srcIsBuiltin := src.(*typeinfo.BuiltinType)
 	dstBuiltin, dstIsBuiltin := dst.(*typeinfo.BuiltinType)
+	_, srcIsRawPtr := src.(*typeinfo.RawPtrType)
+	_, dstIsRawPtr := dst.(*typeinfo.RawPtrType)
 	if srcIsBuiltin && dstIsBuiltin {
 		if srcBuiltin.Name == dstBuiltin.Name {
 			return "copy " + srcVal, nil
@@ -2701,6 +2703,24 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 		}
 		if op, ok := qbeFloatCastOp(srcBuiltin.Name, dstBuiltin.Name); ok {
 			return fmt.Sprintf("%s %s", op, srcVal), nil
+		}
+	}
+	if srcIsBuiltin && dstIsRawPtr {
+		switch srcBuiltin.Name {
+		case "u8", "u16", "u32", "bool", "char":
+			return fmt.Sprintf("extuw %s", srcVal), nil
+		case "i8", "i16", "i32":
+			return fmt.Sprintf("extsw %s", srcVal), nil
+		case "u64", "i64", "usize", "isize":
+			return "copy " + srcVal, nil
+		}
+	}
+	if srcIsRawPtr && dstIsBuiltin {
+		switch dstBuiltin.Name {
+		case "i64", "u64", "usize", "isize":
+			return "copy " + srcVal, nil
+		case "i8", "u8", "bool", "i16", "u16", "i32", "u32", "char":
+			return "copy " + srcVal, nil
 		}
 	}
 	if qbeIsPointerLike(dst) {

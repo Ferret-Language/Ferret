@@ -514,6 +514,33 @@ fn main(flag: bool) i32 {
 	}
 }
 
+func TestLowerIntegerToRawPointerCastToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main() ^void {
+    unsafe {
+        return 0 as ^void
+    }
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "getelementptr i8, ptr null, i64 0") {
+		t.Fatalf("expected raw pointer zero cast to lower to a null pointer expression:\n%s", text)
+	}
+}
+
 func TestLowerOptionalMatchNoneToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `

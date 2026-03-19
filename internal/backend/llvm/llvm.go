@@ -3759,6 +3759,8 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 
 	srcBuiltin, srcIsBuiltin := src.(*typeinfo.BuiltinType)
 	dstBuiltin, dstIsBuiltin := dst.(*typeinfo.BuiltinType)
+	_, srcIsRawPtr := src.(*typeinfo.RawPtrType)
+	_, dstIsRawPtr := dst.(*typeinfo.RawPtrType)
 
 	if srcIsBuiltin && dstIsBuiltin {
 		if srcBuiltin.Name == dstBuiltin.Name {
@@ -3771,6 +3773,23 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 		if op, ok := llvmFloatCastOp(srcBuiltin.Name, dstBuiltin.Name, srcVal); ok {
 			return op, nil
 		}
+	}
+	if srcIsBuiltin && dstIsRawPtr {
+		srcIR, err := llvmBaseType(src)
+		if err != nil {
+			return "", err
+		}
+		if srcVal == "0" {
+			return llvmCopyExpr("ptr", "null")
+		}
+		return fmt.Sprintf("inttoptr %s %s to ptr", srcIR, srcVal), nil
+	}
+	if srcIsRawPtr && dstIsBuiltin {
+		dstIR, err := llvmBaseType(dst)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("ptrtoint ptr %s to %s", srcVal, dstIR), nil
 	}
 	if llvmIsPointerLike(dst) {
 		return llvmCopyExpr("ptr", srcVal)
