@@ -13,6 +13,10 @@ type Point struct {
     Value: i32 = 0
 }
 
+fn Point::New() Self {
+    return .{}
+}
+
 fn Point::Draw(&self) {
     print("I am Point")
 }

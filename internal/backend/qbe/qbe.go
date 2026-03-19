@@ -43,6 +43,7 @@ type moduleState struct {
 	modulePrefix      string
 	aggLocals         map[int]*aggregateLocal
 	aggParams         map[int]struct{}
+	scalarParams      map[int]struct{}
 	scalarLocals      map[int]*scalarAllocaLocal
 	nextTemp          int
 	nextStrConst      int              // counter for unnamed string constant globals
@@ -2171,14 +2172,17 @@ func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 	state.fn = fn
 	state.aggLocals = make(map[int]*aggregateLocal)
 	state.aggParams = make(map[int]struct{})
+	state.scalarParams = make(map[int]struct{})
 	state.scalarLocals = make(map[int]*scalarAllocaLocal)
 	state.tempValues = make(map[int]mir.Value)
 	state.nextTemp = 0
 	state.pendingLines = nil
+	paramIDs := make(map[int]struct{}, len(fn.Params))
 	for _, param := range fn.Params {
 		if param == nil {
 			continue
 		}
+		paramIDs[param.LocalID] = struct{}{}
 		if isAggregateType(state, param.Type) {
 			state.aggParams[param.LocalID] = struct{}{}
 		}
@@ -2223,6 +2227,9 @@ func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 			PtrName: local.Name + "_slot",
 			QType:   qtype,
 			Align:   alignUpInt64(size, align),
+		}
+		if _, ok := paramIDs[local.ID]; ok {
+			state.scalarParams[local.ID] = struct{}{}
 		}
 	}
 	return nil
@@ -2383,6 +2390,12 @@ func entryPrelude(state *moduleState) []string {
 	for _, id := range scalarIDs {
 		sc := state.scalarLocals[id]
 		lines = append(lines, fmt.Sprintf("%s =l alloc%d %d", qbeLocalName(sc.PtrName), normalizeQBEAlign(sc.Align), sc.Align))
+		if _, ok := state.scalarParams[id]; ok {
+			storeOp, err := qbeStoreOp(sc.Type)
+			if err == nil {
+				lines = append(lines, fmt.Sprintf("%s %s, %s", storeOp, qbeLocalName(sc.Name), qbeLocalName(sc.PtrName)))
+			}
+		}
 	}
 	for _, id := range aggIDs {
 		agg := state.aggLocals[id]
@@ -3204,13 +3217,16 @@ func qbeIsVoidType(typ typeinfo.Type) bool {
 	if typ == nil {
 		return true
 	}
-	if b, ok := typ.(*typeinfo.BuiltinType); ok {
+	if b, ok := unwrapNamed(typ).(*typeinfo.BuiltinType); ok {
 		return b.Name == "void"
 	}
 	return false
 }
 
 func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
+	if qbeIsVoidType(typ) {
+		return "", nil
+	}
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		if info, err := lookupNamedLayout(state, t); err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(t) || namedIsInterface(t)) {
