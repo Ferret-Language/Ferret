@@ -362,6 +362,109 @@ func TestHoverNamedTypeShowsFieldsAndMethods(t *testing.T) {
 	}
 }
 
+func TestHoverFunctionCallShowsNamedSignature(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "fn run2() void {\n}\n\nfn main() {\n    run2()\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    run2()")
+	if !ok {
+		t.Fatal("failed to find run2() call position")
+	}
+	char += 4 // position the cursor on the function name
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn run2() void") {
+		t.Fatalf("expected named function signature in hover, got %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "fn() void") {
+		t.Fatalf("expected no anonymous function signature in hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverBuiltinCallsShowFunctionSignatures(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "fn main() {\n    let xs: [3]i32 = [1, 2, 3]\n    print(\"ok\")\n    len(xs)\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	printLine, printChar, ok := findPosition(src, "    print(\"ok\")")
+	if !ok {
+		t.Fatal("failed to find print call")
+	}
+	printChar += 4
+
+	printReq := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: printLine, Character: printChar},
+		}),
+	}
+	s.handleRequest(printReq)
+	printHover := decodeHoverResult(t, out.String())
+	if printHover == nil {
+		t.Fatal("expected hover result for print")
+	}
+	if !strings.Contains(printHover.Contents.Value, "fn print(") {
+		t.Fatalf("expected print signature in hover, got %q", printHover.Contents.Value)
+	}
+
+	out.Reset()
+	lenLine, lenChar, ok := findPosition(src, "    len(xs)")
+	if !ok {
+		t.Fatal("failed to find len call")
+	}
+	lenChar += 4
+
+	lenReq := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("2"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: lenLine, Character: lenChar},
+		}),
+	}
+	s.handleRequest(lenReq)
+	lenHover := decodeHoverResult(t, out.String())
+	if lenHover == nil {
+		t.Fatal("expected hover result for len")
+	}
+	if !strings.Contains(lenHover.Contents.Value, "fn len(") || !strings.Contains(lenHover.Contents.Value, "usize") {
+		t.Fatalf("expected len signature in hover, got %q", lenHover.Contents.Value)
+	}
+}
+
 func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.ferr")

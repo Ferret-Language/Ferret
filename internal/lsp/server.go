@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 
+	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
@@ -753,6 +754,9 @@ func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Modu
 	if typ == nil {
 		return ""
 	}
+	if sig := renderNodeFunctionSignature(node, typ, mod, info); sig != "" {
+		return asFerretCodeBlock(sig)
+	}
 	if selector, ok := node.(*ast.SelectorExpr); ok {
 		if fnType, ok := typ.(*typeinfo.FuncType); ok {
 			receiver := ""
@@ -771,14 +775,75 @@ func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Modu
 	return renderTypeHoverMarkdown(typ, mod, modulesByKey)
 }
 
+func renderNodeFunctionSignature(node ast.Node, typ typeinfo.Type, mod *context.Module, info *typeinfo.ModuleInfo) string {
+	fnType, ok := typ.(*typeinfo.FuncType)
+	if !ok || node == nil {
+		return ""
+	}
+	if sym := resolvedSymbolForNode(mod, node); sym != nil {
+		if sig := symbolFunctionSignature(sym, fnType); sig != "" {
+			return sig
+		}
+		if sym.Name != "" {
+			return typeinfo.FormatFuncSignature(sym.Name, fnType)
+		}
+	}
+	switch n := node.(type) {
+	case *ast.Ident:
+		name := n.Text()
+		if name != "" {
+			return typeinfo.FormatFuncSignature(name, fnType)
+		}
+	case *ast.SelectorExpr:
+		receiver := ""
+		if info != nil && n.Left != nil {
+			if leftType, ok := info.Nodes[n.Left]; ok {
+				receiver = typeinfo.FormatType(leftType)
+			}
+		}
+		name := n.Name.Text()
+		if receiver != "" {
+			name = receiver + "::" + name
+		}
+		if name != "" {
+			return typeinfo.FormatFuncSignature(name, fnType)
+		}
+	}
+	return ""
+}
+
+func resolvedSymbolForNode(mod *context.Module, node ast.Node) *symbols.Symbol {
+	if mod == nil || mod.Bindings == nil || node == nil {
+		return nil
+	}
+	res := mod.Bindings.Nodes[node]
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+		return nil
+	}
+	return res.Symbol
+}
+
+func symbolFunctionSignature(sym *symbols.Symbol, fnType *typeinfo.FuncType) string {
+	if sym == nil {
+		return ""
+	}
+	if fn, ok := sym.Node.(*ast.FuncDecl); ok && fn != nil {
+		return fn.Signature()
+	}
+	if fnType != nil && sym.Name != "" {
+		return typeinfo.FormatFuncSignature(sym.Name, fnType)
+	}
+	return ""
+}
+
 func renderSymbolHoverMarkdown(sym *symbols.Symbol, typ typeinfo.Type, mod *context.Module, modulesByKey map[string]*context.Module) string {
 	if sym == nil {
 		return renderTypeHoverMarkdown(typ, mod, modulesByKey)
 	}
 	switch sym.Kind {
 	case symbols.SymbolFunc, symbols.SymbolMethod:
-		if fn, ok := sym.Node.(*ast.FuncDecl); ok {
-			return asFerretCodeBlock(fn.Signature())
+		if sig := symbolFunctionSignature(sym, nil); sig != "" {
+			return asFerretCodeBlock(sig)
 		}
 		if fnType, ok := typ.(*typeinfo.FuncType); ok {
 			return asFerretCodeBlock(typeinfo.FormatFuncSignature(sym.Name, fnType))
