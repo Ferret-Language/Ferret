@@ -4,6 +4,7 @@ import "compiler/internal/core/source"
 
 type NamedType struct {
 	Path     []string
+	TypeArgs []TypeExpr
 	Location source.Location
 }
 

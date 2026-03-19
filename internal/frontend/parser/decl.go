@@ -100,7 +100,7 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		p.expect(tokens.RPAREN, "expected ')' after receiver")
 		loc := p.locFrom(start)
 		p.errorAt(loc, "legacy receiver syntax has been removed; use attached method form `fn Type::Method(...)`")
-	} else if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.DCOLON {
+	} else if p.hasAttachedOwnerAhead() {
 		owner = p.parseAttachedOwner()
 	}
 	if p.at(tokens.TILDE) {
@@ -177,12 +177,86 @@ func (p *Parser) parseTypeParams() []ast.TypeParam {
 func (p *Parser) parseAttachedOwner() *ast.NamedType {
 	start := p.current().Start
 	path := []string{p.expectIdent("expected attached method owner type").Literal}
-	for p.at(tokens.DCOLON) && p.peekN(1).Kind == tokens.IDENT && p.peekN(2).Kind == tokens.DCOLON {
+	var typeArgs []ast.TypeExpr
+	for p.at(tokens.DCOLON) && p.peekN(1).Kind == tokens.IDENT {
+		scan := p.pos + 2
+		if scan < len(p.toks) && p.toks[scan].Kind == tokens.LT {
+			depth := 0
+			for ; scan < len(p.toks); scan++ {
+				switch p.toks[scan].Kind {
+				case tokens.LT:
+					depth++
+				case tokens.GT:
+					depth--
+					if depth == 0 {
+						scan++
+						goto scannedOwner
+					}
+				}
+			}
+			break
+		}
+	scannedOwner:
+		if scan >= len(p.toks) || p.toks[scan].Kind != tokens.DCOLON {
+			break
+		}
 		p.advance()
 		path = append(path, p.expectIdent("expected attached method owner segment").Literal)
+		if p.at(tokens.LT) {
+			typeArgs = p.parseAngleTypeArgs("type argument")
+		}
+	}
+	owner := &ast.NamedType{Path: path, TypeArgs: typeArgs, Location: p.locFrom(start)}
+	if len(owner.TypeArgs) == 0 && p.at(tokens.LT) {
+		owner.TypeArgs = p.parseAngleTypeArgs("type argument")
 	}
 	p.expect(tokens.DCOLON, "expected '::' after attached method owner")
-	return &ast.NamedType{Path: path, Location: p.locFrom(start)}
+	return owner
+}
+
+func (p *Parser) hasAttachedOwnerAhead() bool {
+	if !p.at(tokens.IDENT) {
+		return false
+	}
+	i := p.pos + 1
+	if i >= len(p.toks) {
+		return false
+	}
+	// Optional owner type arguments: Type<...>::Method
+	if p.toks[i].Kind == tokens.LT {
+		depth := 0
+		for ; i < len(p.toks); i++ {
+			switch p.toks[i].Kind {
+			case tokens.LT:
+				depth++
+			case tokens.GT:
+				depth--
+				if depth == 0 {
+					i++
+					goto ownerEnd
+				}
+			}
+		}
+		return false
+	}
+ownerEnd:
+	if i >= len(p.toks) || p.toks[i].Kind != tokens.DCOLON {
+		return false
+	}
+	if i+1 < len(p.toks) && p.toks[i+1].Kind == tokens.TILDE {
+		return true
+	}
+	if i+1 >= len(p.toks) || p.toks[i+1].Kind != tokens.IDENT {
+		return false
+	}
+	// If the symbol after :: is followed by :: or <, it's still part of owner path.
+	if i+2 < len(p.toks) {
+		switch p.toks[i+2].Kind {
+		case tokens.DCOLON, tokens.LT:
+			return true
+		}
+	}
+	return true
 }
 
 func hasAttr(attrs []ast.Attribute, name string) bool {
@@ -270,7 +344,11 @@ func cloneNamedType(t *ast.NamedType) *ast.NamedType {
 	}
 	path := make([]string, len(t.Path))
 	copy(path, t.Path)
-	return &ast.NamedType{Path: path, Location: t.Location}
+	typeArgs := make([]ast.TypeExpr, 0, len(t.TypeArgs))
+	for _, arg := range t.TypeArgs {
+		typeArgs = append(typeArgs, arg)
+	}
+	return &ast.NamedType{Path: path, TypeArgs: typeArgs, Location: t.Location}
 }
 
 func (p *Parser) parseAttachedMethodParams(owner *ast.NamedType) (*ast.Receiver, []ast.Param, bool) {

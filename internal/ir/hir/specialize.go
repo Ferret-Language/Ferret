@@ -4,6 +4,7 @@ import (
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/frontend/ast"
 	"strconv"
 	"strings"
 )
@@ -13,11 +14,13 @@ func Specialize(mod *Module, types *typeinfo.ModuleInfo, bindings *binding.Modul
 		return mod
 	}
 	p := &specializer{
-		module:    mod,
-		types:     types,
-		bindings:  bindings,
-		templates: make(map[symbols.SymbolID]*Func),
-		requests:  make(map[string]*specializationRequest),
+		module:        mod,
+		types:         types,
+		bindings:      bindings,
+		templates:     make(map[symbols.SymbolID]*Func),
+		requests:      make(map[string]*specializationRequest),
+		typeTemplates: make(map[string]*TypeDecl),
+		typeRequests:  make(map[string]*typeSpecializationRequest),
 	}
 	for _, fn := range mod.Functions {
 		if p.isTemplate(fn) {
@@ -27,7 +30,13 @@ func Specialize(mod *Module, types *typeinfo.ModuleInfo, bindings *binding.Modul
 			}
 		}
 	}
-	if len(p.templates) == 0 {
+	for _, decl := range mod.Types {
+		if p.isTypeTemplate(decl) {
+			key := decl.Named.ModuleKey + "::" + decl.Name
+			p.typeTemplates[key] = decl
+		}
+	}
+	if len(p.templates) == 0 && len(p.typeTemplates) == 0 {
 		return mod
 	}
 
@@ -36,9 +45,15 @@ func Specialize(mod *Module, types *typeinfo.ModuleInfo, bindings *binding.Modul
 		ImportPath: mod.ImportPath,
 		FilePath:   mod.FilePath,
 		Source:     mod.Source,
-		Types:      append([]*TypeDecl(nil), mod.Types...),
+		Types:      make([]*TypeDecl, 0, len(mod.Types)),
 		Globals:    make([]*Global, 0, len(mod.Globals)),
 		Functions:  make([]*Func, 0, len(mod.Functions)),
+	}
+	for _, decl := range mod.Types {
+		if p.isTypeTemplate(decl) {
+			continue
+		}
+		out.Types = append(out.Types, p.cloneTypeDecl(decl, nil, ""))
 	}
 	for _, global := range mod.Globals {
 		out.Globals = append(out.Globals, p.cloneGlobal(global, nil))
@@ -57,6 +72,14 @@ func Specialize(mod *Module, types *typeinfo.ModuleInfo, bindings *binding.Modul
 		req.emitted = true
 		out.Functions = append(out.Functions, p.cloneFunc(req.template, req.bindings, req.name))
 	}
+	for i := 0; i < len(p.typePending); i++ {
+		req := p.typePending[i]
+		if req == nil || req.emitted {
+			continue
+		}
+		req.emitted = true
+		out.Types = append(out.Types, p.specializeTypeDecl(req))
+	}
 	return out
 }
 
@@ -67,6 +90,10 @@ type specializer struct {
 	templates map[symbols.SymbolID]*Func
 	requests  map[string]*specializationRequest
 	pending   []*specializationRequest
+
+	typeTemplates map[string]*TypeDecl
+	typeRequests  map[string]*typeSpecializationRequest
+	typePending   []*typeSpecializationRequest
 }
 
 type specializationRequest struct {
@@ -76,8 +103,20 @@ type specializationRequest struct {
 	emitted  bool
 }
 
+type typeSpecializationRequest struct {
+	template *TypeDecl
+	name     string
+	bindings map[*typeinfo.TypeParam]typeinfo.Type
+	decl     *TypeDecl
+	emitted  bool
+}
+
 func (s *specializer) isTemplate(fn *Func) bool {
-	return fn != nil && fn.Source != nil && len(fn.Source.TypeParams) > 0 && !fn.IsExtern && fn.Body != nil && fn.Receiver == nil && fn.OwnerType == ""
+	return fn != nil && fn.Source != nil && len(fn.Source.TypeParams) > 0 && !fn.IsExtern && fn.Body != nil
+}
+
+func (s *specializer) isTypeTemplate(decl *TypeDecl) bool {
+	return decl != nil && decl.Source != nil && len(decl.Source.TypeParams) > 0
 }
 
 func (s *specializer) cloneGlobal(global *Global, bindings map[*typeinfo.TypeParam]typeinfo.Type) *Global {
@@ -88,6 +127,84 @@ func (s *specializer) cloneGlobal(global *Global, bindings map[*typeinfo.TypePar
 	out.Type = s.substituteType(global.Type, bindings)
 	out.Value = s.cloneExpr(global.Value, bindings)
 	return &out
+}
+
+func (s *specializer) cloneTypeDecl(decl *TypeDecl, bindings map[*typeinfo.TypeParam]typeinfo.Type, name string) *TypeDecl {
+	if decl == nil {
+		return nil
+	}
+	out := *decl
+	if name != "" {
+		out.Name = name
+	}
+	if decl.Named != nil {
+		named := *decl.Named
+		named.Name = out.Name
+		named.TypeArgs = nil
+		out.Named = &named
+	}
+	out.Underlying = s.substituteType(decl.Underlying, bindings)
+	if decl.Struct != nil {
+		st := &StructTypeDecl{Fields: make([]*StructFieldDecl, 0, len(decl.Struct.Fields))}
+		for _, field := range decl.Struct.Fields {
+			if field == nil {
+				continue
+			}
+			copy := *field
+			copy.Type = s.substituteType(field.Type, bindings)
+			copy.Default = s.cloneExpr(field.Default, bindings)
+			st.Fields = append(st.Fields, &copy)
+		}
+		out.Struct = st
+	}
+	if decl.Interface != nil {
+		iface := &InterfaceTypeDecl{Methods: make([]*InterfaceMethodDecl, 0, len(decl.Interface.Methods))}
+		for _, method := range decl.Interface.Methods {
+			if method == nil {
+				continue
+			}
+			copy := *method
+			copy.Result = s.substituteType(method.Result, bindings)
+			copy.Params = make([]*Param, 0, len(method.Params))
+			for _, param := range method.Params {
+				if param == nil {
+					continue
+				}
+				paramCopy := *param
+				paramCopy.Type = s.substituteType(param.Type, bindings)
+				copy.Params = append(copy.Params, &paramCopy)
+			}
+			iface.Methods = append(iface.Methods, &copy)
+		}
+		out.Interface = iface
+	}
+	if decl.Union != nil {
+		union := &UnionTypeDecl{Members: make([]typeinfo.Type, 0, len(decl.Union.Members))}
+		for _, member := range decl.Union.Members {
+			union.Members = append(union.Members, s.substituteType(member, bindings))
+		}
+		out.Union = union
+	}
+	return &out
+}
+
+func (s *specializer) specializeTypeDecl(req *typeSpecializationRequest) *TypeDecl {
+	if req == nil || req.template == nil {
+		return nil
+	}
+	if req.decl != nil {
+		return req.decl
+	}
+	decl := s.cloneTypeDecl(req.template, req.bindings, req.name)
+	if decl == nil {
+		return nil
+	}
+	decl.Source = nil
+	if decl.Named != nil {
+		decl.Named.Decl = nil
+	}
+	req.decl = decl
+	return decl
 }
 
 func (s *specializer) cloneFunc(fn *Func, bindings map[*typeinfo.TypeParam]typeinfo.Type, name string) *Func {
@@ -280,7 +397,14 @@ func (s *specializer) cloneExpr(expr Expr, bindings map[*typeinfo.TypeParam]type
 		for _, arg := range ex.Args {
 			out.Args = append(out.Args, s.cloneExpr(arg, bindings))
 		}
+		clonedCallee := s.cloneExpr(ex.Callee, bindings)
 		if name, fnType, ok := s.specializedCallName(ex, bindings); ok {
+			if sel, ok := clonedCallee.(*SelectorExpr); ok {
+				sel.Name = name
+				sel.ExprType = fnType
+				out.Callee = sel
+				return &out
+			}
 			out.Callee = &Ident{
 				baseExpr: baseExpr{ExprType: fnType, Location: ex.Callee.Loc()},
 				Path:     []string{name},
@@ -288,7 +412,7 @@ func (s *specializer) cloneExpr(expr Expr, bindings map[*typeinfo.TypeParam]type
 			}
 			return &out
 		}
-		out.Callee = s.cloneExpr(ex.Callee, bindings)
+		out.Callee = clonedCallee
 		return &out
 	case *ConstructorCallExpr:
 		out := *ex
@@ -388,7 +512,10 @@ func (s *specializer) requestSpecialization(template *Func, fnType *typeinfo.Fun
 		return nil
 	}
 	name := specializedFuncName(template, bindings)
-	key := name
+	key := name + "#" + template.OwnerType
+	if template.Receiver != nil && template.Receiver.Type != nil {
+		key += "#" + template.Receiver.Type.String()
+	}
 	if req, ok := s.requests[key]; ok {
 		return req
 	}
@@ -460,6 +587,14 @@ func inferTypeBindings(pattern, actual typeinfo.Type, bindings map[*typeinfo.Typ
 				inferTypeBindings(p.Elems[i], got.Elems[i], bindings)
 			}
 		}
+	case *typeinfo.NamedType:
+		got, ok := actual.(*typeinfo.NamedType)
+		if !ok || p.Name != got.Name || len(p.TypeArgs) != len(got.TypeArgs) {
+			return
+		}
+		for i := range p.TypeArgs {
+			inferTypeBindings(p.TypeArgs[i], got.TypeArgs[i], bindings)
+		}
 	}
 }
 
@@ -520,6 +655,82 @@ func lookupTypeBinding(bindings map[*typeinfo.TypeParam]typeinfo.Type, name stri
 	return nil
 }
 
+func (s *specializer) requestTypeSpecialization(named *typeinfo.NamedType) *typeSpecializationRequest {
+	if named == nil || named.Decl == nil || len(named.Decl.TypeParams) == 0 || len(named.TypeArgs) == 0 {
+		return nil
+	}
+	key := named.ModuleKey + "::" + named.Name
+	template := s.typeTemplates[key]
+	if template == nil {
+		return nil
+	}
+	if len(named.TypeArgs) != len(named.Decl.TypeParams) {
+		return nil
+	}
+	bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(named.Decl.TypeParams))
+	for i, param := range named.Decl.TypeParams {
+		if param.Name == nil {
+			continue
+		}
+		bindings[&typeinfo.TypeParam{Name: param.Name.Text(), Owner: named.Decl}] = named.TypeArgs[i]
+	}
+	name := specializedTypeName(template, bindings)
+	requestKey := named.ModuleKey + "::" + name
+	if req, ok := s.typeRequests[requestKey]; ok {
+		return req
+	}
+	req := &typeSpecializationRequest{
+		template: template,
+		name:     name,
+		bindings: bindings,
+	}
+	s.typeRequests[requestKey] = req
+	s.typePending = append(s.typePending, req)
+	return req
+}
+
+func specializedTypeName(template *TypeDecl, bindings map[*typeinfo.TypeParam]typeinfo.Type) string {
+	if template == nil || template.Source == nil {
+		return ""
+	}
+	args := make([]typeinfo.Type, 0, len(template.Source.TypeParams))
+	for _, param := range template.Source.TypeParams {
+		name := ""
+		if param.Name != nil {
+			name = param.Name.Text()
+		}
+		args = append(args, lookupTypeBinding(bindings, name))
+	}
+	return specializedTypeNameFromArgs(template.Name, template.Source.TypeParams, args)
+}
+
+func specializedTypeNameFromArgs(baseName string, params []ast.TypeParam, args []typeinfo.Type) string {
+	if len(params) == 0 || len(args) == 0 {
+		return baseName
+	}
+	var b strings.Builder
+	b.WriteString(baseName)
+	b.WriteString("$")
+	for i, param := range params {
+		if i > 0 {
+			b.WriteString("_")
+		}
+		if param.Name == nil {
+			b.WriteString("arg")
+			b.WriteString(strconv.Itoa(i))
+		} else {
+			b.WriteString(param.Name.Text())
+		}
+		b.WriteString("_")
+		if i < len(args) {
+			b.WriteString(specializedTypeTag(args[i]))
+		} else {
+			b.WriteString("type")
+		}
+	}
+	return b.String()
+}
+
 func (s *specializer) substituteType(typ typeinfo.Type, bindings map[*typeinfo.TypeParam]typeinfo.Type) typeinfo.Type {
 	switch t := typ.(type) {
 	case nil:
@@ -552,6 +763,79 @@ func (s *specializer) substituteType(typ typeinfo.Type, bindings map[*typeinfo.T
 			elems = append(elems, s.substituteType(elem, bindings))
 		}
 		return &typeinfo.TupleType{Elems: elems}
+	case *typeinfo.NamedType:
+		out := &typeinfo.NamedType{
+			ModuleKey: t.ModuleKey,
+			Name:      t.Name,
+			Decl:      t.Decl,
+		}
+		if len(t.TypeArgs) > 0 {
+			out.TypeArgs = make([]typeinfo.Type, 0, len(t.TypeArgs))
+			for _, arg := range t.TypeArgs {
+				out.TypeArgs = append(out.TypeArgs, s.substituteType(arg, bindings))
+			}
+			req := s.requestTypeSpecialization(out)
+			if req != nil {
+				out.Name = req.name
+				out.TypeArgs = nil
+				out.Decl = nil
+			} else if out.Decl != nil && len(out.Decl.TypeParams) == len(out.TypeArgs) {
+				out.Name = specializedTypeNameFromArgs(out.Name, out.Decl.TypeParams, out.TypeArgs)
+				out.TypeArgs = nil
+				out.Decl = nil
+			}
+		}
+		return out
+	case *typeinfo.StructType:
+		fields := make(map[string]*typeinfo.StructField, len(t.Fields))
+		ordered := make([]*typeinfo.StructField, 0, len(t.OrderedFields))
+		for _, field := range t.OrderedFields {
+			if field == nil {
+				continue
+			}
+			copy := &typeinfo.StructField{
+				Name:       field.Name,
+				IsPub:      field.IsPub,
+				Type:       s.substituteType(field.Type, bindings),
+				HasDefault: field.HasDefault,
+			}
+			fields[copy.Name] = copy
+			ordered = append(ordered, copy)
+		}
+		return &typeinfo.StructType{Fields: fields, OrderedFields: ordered}
+	case *typeinfo.InterfaceType:
+		methods := make(map[string]*typeinfo.FuncType, len(t.Methods))
+		methodReceivers := make(map[string]typeinfo.ReceiverKind, len(t.MethodReceivers))
+		methodStatic := make(map[string]bool, len(t.MethodStatic))
+		ordered := make([]*typeinfo.InterfaceMethod, 0, len(t.OrderedMethods))
+		for _, method := range t.OrderedMethods {
+			if method == nil {
+				continue
+			}
+			fn, _ := s.substituteType(method.Type, bindings).(*typeinfo.FuncType)
+			copy := &typeinfo.InterfaceMethod{
+				Receiver: method.Receiver,
+				Static:   method.Static,
+				Name:     method.Name,
+				Type:     fn,
+			}
+			methods[copy.Name] = fn
+			methodReceivers[copy.Name] = copy.Receiver
+			methodStatic[copy.Name] = copy.Static
+			ordered = append(ordered, copy)
+		}
+		return &typeinfo.InterfaceType{
+			Methods:         methods,
+			MethodReceivers: methodReceivers,
+			MethodStatic:    methodStatic,
+			OrderedMethods:  ordered,
+		}
+	case *typeinfo.UnionType:
+		members := make([]typeinfo.Type, 0, len(t.Members))
+		for _, member := range t.Members {
+			members = append(members, s.substituteType(member, bindings))
+		}
+		return &typeinfo.UnionType{Members: members}
 	case *typeinfo.FuncType:
 		out := &typeinfo.FuncType{
 			IsUnsafe: t.IsUnsafe,

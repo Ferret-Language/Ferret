@@ -1066,7 +1066,7 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 	}
 
 	addressable, mutable := c.exprAccess(scope, selector.Left)
-	_, methodType, methodReceiver := c.lookupMethodDetailed(receiverType, selector.Name.Text(), addressable, mutable)
+	methodSym, methodType, methodReceiver := c.lookupMethodDetailed(receiverType, selector.Name.Text(), addressable, mutable)
 	if methodType == nil {
 		if c.canHaveMethods(receiverType) {
 			// If the method exists but only on a mutable receiver and the variable
@@ -1093,6 +1093,7 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 		c.info.BindMethodReceiver(call, methodReceiver)
 		c.info.BindMethodReceiver(selector, methodReceiver)
 	}
+	c.bindNodeSymbolResolution(selector, methodSym)
 	instantiated, argTypes, bindings, invalid := c.instantiateCallFuncType(scope, call, selector, methodType, expected)
 	if instantiated == nil {
 		instantiated = methodType
@@ -1366,6 +1367,82 @@ func (c *checker) substituteTypeParams(typ typeinfo.Type, bindings map[*typeinfo
 			elems = append(elems, c.substituteTypeParams(elem, bindings))
 		}
 		return &typeinfo.TupleType{Elems: elems}
+	case *typeinfo.NamedType:
+		out := &typeinfo.NamedType{
+			ModuleKey: t.ModuleKey,
+			Name:      t.Name,
+			Decl:      t.Decl,
+		}
+		if len(t.TypeArgs) > 0 {
+			out.TypeArgs = make([]typeinfo.Type, 0, len(t.TypeArgs))
+			for _, arg := range t.TypeArgs {
+				out.TypeArgs = append(out.TypeArgs, c.substituteTypeParams(arg, bindings))
+			}
+		}
+		return out
+	case *typeinfo.StructType:
+		fields := make(map[string]*typeinfo.StructField, len(t.Fields))
+		ordered := make([]*typeinfo.StructField, 0, len(t.OrderedFields))
+		for _, field := range t.OrderedFields {
+			if field == nil {
+				continue
+			}
+			copy := &typeinfo.StructField{
+				Name:       field.Name,
+				IsPub:      field.IsPub,
+				Type:       c.substituteTypeParams(field.Type, bindings),
+				HasDefault: field.HasDefault,
+			}
+			fields[copy.Name] = copy
+			ordered = append(ordered, copy)
+		}
+		return &typeinfo.StructType{Fields: fields, OrderedFields: ordered}
+	case *typeinfo.InterfaceType:
+		methods := make(map[string]*typeinfo.FuncType, len(t.Methods))
+		methodReceivers := make(map[string]typeinfo.ReceiverKind, len(t.MethodReceivers))
+		methodStatic := make(map[string]bool, len(t.MethodStatic))
+		ordered := make([]*typeinfo.InterfaceMethod, 0, len(t.OrderedMethods))
+		for _, method := range t.OrderedMethods {
+			if method == nil {
+				continue
+			}
+			fn, _ := c.substituteTypeParams(method.Type, bindings).(*typeinfo.FuncType)
+			copy := &typeinfo.InterfaceMethod{
+				Receiver: method.Receiver,
+				Static:   method.Static,
+				Name:     method.Name,
+				Type:     fn,
+			}
+			methods[copy.Name] = fn
+			methodReceivers[copy.Name] = copy.Receiver
+			methodStatic[copy.Name] = copy.Static
+			ordered = append(ordered, copy)
+		}
+		return &typeinfo.InterfaceType{
+			Methods:         methods,
+			MethodReceivers: methodReceivers,
+			MethodStatic:    methodStatic,
+			OrderedMethods:  ordered,
+		}
+	case *typeinfo.UnionType:
+		members := make([]typeinfo.Type, 0, len(t.Members))
+		for _, member := range t.Members {
+			members = append(members, c.substituteTypeParams(member, bindings))
+		}
+		return &typeinfo.UnionType{Members: members}
+	case *typeinfo.FuncType:
+		out := &typeinfo.FuncType{
+			IsUnsafe: t.IsUnsafe,
+			Result:   c.substituteTypeParams(t.Result, bindings),
+		}
+		for _, param := range t.Params {
+			out.Params = append(out.Params, typeinfo.ParamSpec{
+				Name:  param.Name,
+				Type:  c.substituteTypeParams(param.Type, bindings),
+				Flags: param.Flags,
+			})
+		}
+		return out
 	default:
 		return typ
 	}
@@ -1387,19 +1464,25 @@ func (c *checker) lookupTypeParamBinding(bindings map[*typeinfo.TypeParam]typein
 }
 
 func (c *checker) checkCallTypeParamConstraints(call *ast.CallExpr, params []*typeinfo.TypeParam, bindings map[*typeinfo.TypeParam]typeinfo.Type) {
+	if call == nil {
+		return
+	}
+	c.checkTypeParamConstraintsAt(call.Location, params, bindings)
+}
+
+func (c *checker) checkTypeParamConstraintsAt(loc source.Location, params []*typeinfo.TypeParam, bindings map[*typeinfo.TypeParam]typeinfo.Type) {
 	for _, param := range params {
 		if param == nil || param.Constraint == nil {
 			continue
 		}
 		actual := bindings[param]
-		if actual == nil || typeinfo.IsInvalid(actual) || typeinfo.IsUnknown(actual) {
+		if actual == nil || typeinfo.IsInvalid(actual) || typeinfo.IsUnknown(actual) || c.containsTypeParam(actual) {
 			continue
 		}
 		constraint := c.substituteTypeParams(param.Constraint, bindings)
 		if c.assignable(constraint, actual) {
 			continue
 		}
-		loc := call.Location
 		if iface, ok := c.interfaceView(constraint); ok {
 			c.reportInterfaceMismatch(loc, constraint, actual, iface)
 			continue
@@ -2084,6 +2167,18 @@ func (c *checker) underlying(typ typeinfo.Type) typeinfo.Type {
 		owner := c.findModuleForType(named)
 		if owner == nil {
 			owner = c.mod
+		}
+		if len(named.TypeArgs) > 0 && len(named.Decl.TypeParams) > 0 {
+			typeParams := c.pushTypeParams(owner, named.Decl, named.Decl.TypeParams)
+			declType := c.typeFromSyntax(owner, named.Decl.Type)
+			c.popTypeParams()
+			if len(typeParams) == len(named.TypeArgs) {
+				bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(typeParams))
+				for i, param := range typeParams {
+					bindings[param] = named.TypeArgs[i]
+				}
+				return c.substituteTypeParams(declType, bindings)
+			}
 		}
 		return c.typeFromSyntax(owner, named.Decl.Type)
 	}

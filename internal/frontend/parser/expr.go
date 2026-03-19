@@ -152,7 +152,11 @@ func (p *Parser) parseCompositeLit() ast.Expr {
 	if !p.at(tokens.LBRACE) {
 		typeStart := p.current().Start
 		path := p.parseNamePath()
-		literalType = &ast.NamedType{Path: path, Location: p.locFrom(typeStart)}
+		named := &ast.NamedType{Path: path, Location: p.locFrom(typeStart)}
+		if p.at(tokens.LT) {
+			named.TypeArgs = p.parseAngleTypeArgs("type argument")
+		}
+		literalType = named
 	}
 	p.expect(tokens.LBRACE, "expected '{' after '.'")
 	items := p.parseCompositeItems(tokens.RBRACE)
@@ -240,15 +244,7 @@ func (p *Parser) parseCallWithTypeArgs(left ast.Expr) ast.Expr {
 
 func (p *Parser) parseCallWithAngleTypeArgs(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
-	p.expect(tokens.LT, "expected '<'")
-	typeArgs := make([]ast.TypeExpr, 0)
-	for !p.at(tokens.GT) && !p.at(tokens.EOF) {
-		typeArgs = append(typeArgs, p.parseType())
-		if !p.consumeTypeListSeparator(tokens.GT, "type argument") {
-			break
-		}
-	}
-	p.expect(tokens.GT, "expected '>' after type arguments")
+	typeArgs := p.parseAngleTypeArgs("type argument")
 	call, _ := p.parseCall(left).(*ast.CallExpr)
 	call.TypeArgs = typeArgs
 	call.Location = p.makeExprLoc(start)

@@ -253,7 +253,11 @@ func debugType(typ TypeExpr) any {
 	case nil:
 		return nil
 	case *NamedType:
-		return map[string]any{"kind": "NamedType", "path": t.Path, "loc": debugLoc(t.Location)}
+		typeArgs := make([]any, 0, len(t.TypeArgs))
+		for _, arg := range t.TypeArgs {
+			typeArgs = append(typeArgs, debugType(arg))
+		}
+		return map[string]any{"kind": "NamedType", "path": t.Path, "type_args": typeArgs, "loc": debugLoc(t.Location)}
 	case *PointerType:
 		return map[string]any{"kind": "PointerType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *RefType:

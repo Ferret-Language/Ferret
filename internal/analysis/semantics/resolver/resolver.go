@@ -510,6 +510,9 @@ func (r *resolver) resolveType(scope *table.Scope, typ ast.TypeExpr) {
 	case nil:
 		return
 	case *ast.NamedType:
+		for _, arg := range t.TypeArgs {
+			r.resolveType(scope, arg)
+		}
 		r.resolveTypePath(scope, t)
 	case *ast.PointerType:
 		r.resolveType(scope, t.Inner)

@@ -60,11 +60,19 @@ type NamedType struct {
 	ModuleKey string
 	Name      string
 	Decl      *ast.TypeDecl
+	TypeArgs  []Type
 }
 
 func (t *NamedType) String() string {
 	if t == nil {
 		return "<nil>"
+	}
+	if len(t.TypeArgs) > 0 {
+		args := make([]string, 0, len(t.TypeArgs))
+		for _, arg := range t.TypeArgs {
+			args = append(args, typeString(arg))
+		}
+		return t.Name + "<" + strings.Join(args, ", ") + ">"
 	}
 	return t.Name
 }
@@ -390,7 +398,15 @@ func Equal(a, b Type) bool {
 		return at.Name == bt.Name
 	case *NamedType:
 		bt, ok := b.(*NamedType)
-		return ok && at.ModuleKey == bt.ModuleKey && at.Name == bt.Name
+		if !ok || at.ModuleKey != bt.ModuleKey || at.Name != bt.Name || len(at.TypeArgs) != len(bt.TypeArgs) {
+			return false
+		}
+		for i := range at.TypeArgs {
+			if !Equal(at.TypeArgs[i], bt.TypeArgs[i]) {
+				return false
+			}
+		}
+		return true
 	case *PointerType:
 		bt, ok := b.(*PointerType)
 		return ok && Equal(at.Inner, bt.Inner)

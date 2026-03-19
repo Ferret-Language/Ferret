@@ -4,9 +4,11 @@ import (
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
+	"compiler/internal/core/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
 	"compiler/internal/utils/numeric"
+	"fmt"
 )
 
 func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinfo.Type {
@@ -14,6 +16,26 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case nil:
 		return nil
 	case *ast.NamedType:
+		if len(t.TypeArgs) > 0 && len(t.Path) == 1 {
+			if tokens.IsBuiltinType(t.Path[0]) {
+				loc := t.Loc()
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("type %q is not generic", t.Path[0])).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(&loc, "remove type arguments from this non-generic type"),
+				)
+				return typeinfo.InvalidType{}
+			}
+			if _, ok := c.lookupTypeParam(t.Path[0]); ok {
+				loc := t.Loc()
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("type parameter %q cannot take type arguments", t.Path[0])).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(&loc, "remove type arguments from this type parameter"),
+				)
+				return typeinfo.InvalidType{}
+			}
+		}
 		if len(t.Path) == 1 && tokens.IsBuiltinType(t.Path[0]) {
 			if t.Path[0] == "str" {
 				return &typeinfo.StringType{}
@@ -34,7 +56,57 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			owner = mod
 		}
 		decl, _ := resolution.Symbol.Node.(*ast.TypeDecl)
-		return &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}
+		named := &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}
+		if len(t.TypeArgs) == 0 {
+			if decl != nil && len(decl.TypeParams) > 0 {
+				loc := t.Loc()
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("missing type arguments for generic type %q", resolution.Symbol.Name)).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(&loc, "supply concrete type arguments here"),
+				)
+				return typeinfo.InvalidType{}
+			}
+			return named
+		}
+		if decl == nil {
+			return typeinfo.InvalidType{}
+		}
+		if len(decl.TypeParams) == 0 {
+			loc := t.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("type %q is not generic", resolution.Symbol.Name)).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, "remove type arguments from this non-generic type"),
+			)
+			return typeinfo.InvalidType{}
+		}
+		args := make([]typeinfo.Type, 0, len(t.TypeArgs))
+		for _, arg := range t.TypeArgs {
+			argType := c.typeFromSyntax(mod, arg)
+			c.info.BindNode(arg, argType)
+			args = append(args, argType)
+		}
+		if len(args) != len(decl.TypeParams) {
+			loc := t.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("expected %d type arguments for %s, got %d", len(decl.TypeParams), resolution.Symbol.Name, len(args))).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, "fix the number of type arguments"),
+			)
+			return typeinfo.InvalidType{}
+		}
+		typeParams := c.pushTypeParams(owner, decl, decl.TypeParams)
+		bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(typeParams))
+		for i, param := range typeParams {
+			if i < len(args) {
+				bindings[param] = args[i]
+			}
+		}
+		c.checkTypeParamConstraintsAt(t.Loc(), typeParams, bindings)
+		c.popTypeParams()
+		named.TypeArgs = args
+		return named
 	case *ast.SelfType:
 		return &typeinfo.SelfType{}
 	case *ast.PointerType:

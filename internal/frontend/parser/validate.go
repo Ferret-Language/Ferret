@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/source"
@@ -181,6 +182,10 @@ func (p *Parser) validateExpr(expr ast.Expr) {
 
 func (p *Parser) validateType(typ ast.TypeExpr) {
 	switch t := typ.(type) {
+	case *ast.NamedType:
+		for _, arg := range t.TypeArgs {
+			p.validateType(arg)
+		}
 	case *ast.PointerType:
 		p.validateType(t.Inner)
 	case *ast.RefType:
@@ -340,7 +345,14 @@ func renderType(typ ast.TypeExpr) string {
 	case nil:
 		return "<nil>"
 	case *ast.NamedType:
-		return fmt.Sprintf("named:%v", t.Path)
+		if len(t.TypeArgs) == 0 {
+			return fmt.Sprintf("named:%v", t.Path)
+		}
+		args := make([]string, 0, len(t.TypeArgs))
+		for _, arg := range t.TypeArgs {
+			args = append(args, renderType(arg))
+		}
+		return fmt.Sprintf("named:%v<%s>", t.Path, strings.Join(args, ","))
 	case *ast.PointerType:
 		return fmt.Sprintf("ptr(%s)", renderType(t.Inner))
 	case *ast.RefType:

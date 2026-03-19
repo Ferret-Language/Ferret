@@ -29,7 +29,14 @@ fn main() i32 {
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
 	}
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
@@ -86,11 +93,19 @@ fn main() i32 {
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
 	}
 	if result.Entry == nil || result.Entry.LoweredHIR == nil {
 		t.Fatal("expected lowered HIR module")
 	}
+
 	var mainFn *hir.Func
 	var specialized *hir.Func
 	for _, fn := range result.Entry.LoweredHIR.Functions {
@@ -123,6 +138,97 @@ fn main() i32 {
 	}
 	if len(callee.Path) != 1 || callee.Path[0] != specialized.Name {
 		t.Fatalf("expected call rewritten to specialized function %q, got %#v", specialized.Name, callee.Path)
+	}
+}
+
+func TestPipelineSpecializesGenericMethodsAndTypes(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+type Box<T> struct {
+    Value: T
+}
+
+type Point struct {
+    X: i32
+}
+
+fn Point::Echo<T>(&self, value: T) T {
+    return value
+}
+
+fn main() i32 {
+    let b: Box<i32> = .{ .Value = 7 }
+    let p: Point = .{ .X = 1 }
+    return p.Echo(b.Value)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+
+	var specializedType *hir.TypeDecl
+	for _, decl := range result.Entry.LoweredHIR.Types {
+		if decl == nil {
+			continue
+		}
+		if decl.Name == "Box" {
+			t.Fatalf("expected generic type template to be removed from lowered HIR, got %#v", decl.Name)
+		}
+		if strings.HasPrefix(decl.Name, "Box$") {
+			specializedType = decl
+		}
+	}
+	if specializedType == nil || specializedType.Struct == nil || len(specializedType.Struct.Fields) != 1 {
+		t.Fatalf("expected specialized Box type decl, got %#v", result.Entry.LoweredHIR.Types)
+	}
+	if specializedType.Struct.Fields[0] == nil || specializedType.Struct.Fields[0].Type == nil || specializedType.Struct.Fields[0].Type.String() != "i32" {
+		t.Fatalf("expected specialized Box field type i32, got %#v", specializedType.Struct.Fields[0])
+	}
+
+	var mainFn *hir.Func
+	var specializedMethod *hir.Func
+	for _, fn := range result.Entry.LoweredHIR.Functions {
+		if fn == nil {
+			continue
+		}
+		switch {
+		case fn.Name == "main":
+			mainFn = fn
+		case strings.HasPrefix(fn.Name, "Echo$"):
+			specializedMethod = fn
+		case fn.Name == "Echo" && fn.Receiver != nil:
+			t.Fatalf("expected generic method template to be removed from lowered HIR, got %#v", fn.Name)
+		}
+	}
+	if mainFn == nil || specializedMethod == nil {
+		t.Fatalf("expected main and specialized method functions, got %#v", result.Entry.LoweredHIR.Functions)
+	}
+	ret, ok := mainFn.Body.Stmts[2].(*hir.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected lowered return stmt, got %T", mainFn.Body.Stmts[2])
+	}
+	call, ok := ret.Value.(*hir.CallExpr)
+	if !ok {
+		t.Fatalf("expected method call expr, got %T", ret.Value)
+	}
+	callee, ok := call.Callee.(*hir.SelectorExpr)
+	if !ok {
+		t.Fatalf("expected selector callee for method call, got %T", call.Callee)
+	}
+	if callee.Name != specializedMethod.Name {
+		t.Fatalf("expected selector rewritten to specialized method %q, got %q", specializedMethod.Name, callee.Name)
 	}
 }
 

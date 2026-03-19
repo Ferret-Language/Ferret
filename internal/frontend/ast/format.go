@@ -8,7 +8,15 @@ func TypeString(typ TypeExpr) string {
 	case nil:
 		return "void"
 	case *NamedType:
-		return strings.Join(t.Path, "::")
+		name := strings.Join(t.Path, "::")
+		if len(t.TypeArgs) == 0 {
+			return name
+		}
+		args := make([]string, 0, len(t.TypeArgs))
+		for _, arg := range t.TypeArgs {
+			args = append(args, TypeString(arg))
+		}
+		return name + "<" + strings.Join(args, ", ") + ">"
 	case *PointerType:
 		return "*" + TypeString(t.Inner)
 	case *RefType:

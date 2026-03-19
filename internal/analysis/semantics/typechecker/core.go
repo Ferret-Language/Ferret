@@ -143,6 +143,24 @@ func (c *checker) declSymbol(node ast.Node) *symbols.Symbol {
 	return res.Symbol
 }
 
+func (c *checker) bindNodeSymbolResolution(node ast.Node, sym *symbols.Symbol) {
+	if c == nil || c.mod == nil || c.mod.Bindings == nil || node == nil || sym == nil {
+		return
+	}
+	moduleKey := c.mod.Key
+	importPath := c.mod.ImportPath
+	if owner := c.findModuleForSymbol(sym); owner != nil {
+		moduleKey = owner.Key
+		importPath = owner.ImportPath
+	}
+	c.mod.Bindings.BindNode(node, &binding.Resolution{
+		Kind:       binding.ResolutionSymbol,
+		Symbol:     sym,
+		ModuleKey:  moduleKey,
+		ImportPath: importPath,
+	})
+}
+
 func CheckModule(ctx *context.CompilerContext, mod *context.Module) {
 	if ctx == nil || mod == nil || mod.AST == nil || mod.Bindings == nil {
 		return

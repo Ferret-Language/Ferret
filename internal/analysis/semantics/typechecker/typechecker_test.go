@@ -192,6 +192,39 @@ fn Identity<T>(value: T) T {
 	}
 }
 
+func TestTypecheckerHandlesGenericTypeArguments(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Box<T> struct {
+    Value: T
+}
+
+fn main() i32 {
+    let b: Box<i32> = .{ .Value = 7 }
+    return b.Value
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letB := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	boxType, ok := result.Entry.Types.Nodes[letB.Type].(*typeinfo.NamedType)
+	if !ok {
+		t.Fatalf("expected named type for Box<i32>, got %T", result.Entry.Types.Nodes[letB.Type])
+	}
+	if boxType.Name != "Box" || len(boxType.TypeArgs) != 1 || !typeinfo.IsBuiltinNamed(boxType.TypeArgs[0], "i32") {
+		t.Fatalf("expected Box<i32>, got %#v", boxType)
+	}
+	ret := mainFn.Body.Stmts[1].(*ast.ReturnStmt)
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[ret.Value], "i32") {
+		t.Fatalf("expected selector type i32, got %#v", result.Entry.Types.Nodes[ret.Value])
+	}
+}
+
 func TestTypecheckerInfersGenericExternCallResult(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

@@ -50,6 +50,9 @@ func (p *Parser) parseType() ast.TypeExpr {
 			return &ast.SelfType{Location: p.locFrom(start)}
 		}
 		base := &ast.NamedType{Path: p.parseNamePath(), Location: p.locFrom(start)}
+		if p.at(tokens.LT) {
+			base.TypeArgs = p.parseAngleTypeArgs("type argument")
+		}
 		if p.match(tokens.BANG) {
 			return &ast.ErrorUnionType{Error: base, Value: p.parseType(), Location: p.locFrom(start)}
 		}
@@ -73,4 +76,17 @@ func (p *Parser) parseTupleType() ast.TypeExpr {
 	}
 	p.expect(tokens.RPAREN, "expected ')'")
 	return &ast.TupleType{Elems: elems, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseAngleTypeArgs(itemKind string) []ast.TypeExpr {
+	p.expect(tokens.LT, "expected '<'")
+	args := make([]ast.TypeExpr, 0)
+	for !p.at(tokens.GT) && !p.at(tokens.EOF) {
+		args = append(args, p.parseType())
+		if !p.consumeTypeListSeparator(tokens.GT, itemKind) {
+			break
+		}
+	}
+	p.expect(tokens.GT, "expected '>' after type arguments")
+	return args
 }
