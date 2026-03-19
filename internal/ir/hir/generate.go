@@ -20,8 +20,8 @@ type generator struct {
 	lookupMethod MethodLookup
 
 	currentFn  *ast.FuncDecl
-	localNames map[*symbols.Symbol]string
-	localIDs   map[*symbols.Symbol]int
+	localNames map[symbols.SymbolID]string
+	localIDs   map[symbols.SymbolID]int
 	usedNames  map[string]struct{}
 }
 
@@ -36,7 +36,7 @@ func Generate(key, importPath, filePath string, astMod *ast.Module, types *typei
 		types:        types,
 		bindings:     bindings,
 		lookupMethod: lookupMethod,
-		localNames:   make(map[*symbols.Symbol]string),
+		localNames:   make(map[symbols.SymbolID]string),
 	}
 	out := &Module{
 		Key:        key,
@@ -87,8 +87,8 @@ func (g *generator) isFunctionLocal(sym *symbols.Symbol) bool {
 func (g *generator) beginFunction(fn *ast.FuncDecl) {
 	g.currentFn = fn
 	g.usedNames = make(map[string]struct{})
-	g.localNames = make(map[*symbols.Symbol]string)
-	g.localIDs = make(map[*symbols.Symbol]int)
+	g.localNames = make(map[symbols.SymbolID]string)
+	g.localIDs = make(map[symbols.SymbolID]int)
 
 	if fn == nil || g.bindings == nil {
 		return
@@ -102,10 +102,10 @@ func (g *generator) beginFunction(fn *ast.FuncDecl) {
 		if sym.Kind == symbols.SymbolConst {
 			continue
 		}
-		if _, ok := g.localIDs[sym]; ok {
+		if _, ok := g.localIDs[sym.ID]; ok {
 			continue
 		}
-		g.localIDs[sym] = len(g.localIDs)
+		g.localIDs[sym.ID] = len(g.localIDs)
 	}
 }
 
@@ -120,7 +120,7 @@ func (g *generator) mangleLocal(sym *symbols.Symbol) string {
 	if g == nil || sym == nil {
 		return ""
 	}
-	if cached, ok := g.localNames[sym]; ok && cached != "" {
+	if cached, ok := g.localNames[sym.ID]; ok && cached != "" {
 		return cached
 	}
 
@@ -132,7 +132,7 @@ func (g *generator) mangleLocal(sym *symbols.Symbol) string {
 	}
 	if _, exists := g.usedNames[out]; !exists {
 		g.usedNames[out] = struct{}{}
-		g.localNames[sym] = out
+		g.localNames[sym.ID] = out
 		return out
 	}
 
@@ -149,7 +149,7 @@ func (g *generator) mangleLocal(sym *symbols.Symbol) string {
 		out += "_"
 	}
 	g.usedNames[out] = struct{}{}
-	g.localNames[sym] = out
+	g.localNames[sym.ID] = out
 	return out
 }
 
@@ -175,7 +175,7 @@ func (g *generator) localIDFromIdent(ident *ast.Ident) (int, bool) {
 	if !ok || !g.isFunctionLocal(sym) {
 		return -1, false
 	}
-	id, ok := g.localIDs[sym]
+	id, ok := g.localIDs[sym.ID]
 	if !ok {
 		return -1, false
 	}
@@ -578,7 +578,7 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		if len(path) == 1 && g.currentFn != nil {
 			if sym, ok := g.localSymbol(e); ok && g.isFunctionLocal(sym) {
 				path[0] = g.mangleLocal(sym)
-				if id, ok := g.localIDs[sym]; ok {
+				if id, ok := g.localIDs[sym.ID]; ok {
 					localID = id
 				}
 			}

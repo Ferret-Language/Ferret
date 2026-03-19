@@ -741,7 +741,8 @@ func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modu
 		}
 		collect(renderNodeHoverMarkdown(node, typ, mod, info, modulesByKey), node.Loc(), 1)
 	}
-	for sym, typ := range info.Symbols {
+	for id, typ := range info.Symbols {
+		sym := info.SymbolIndex[id]
 		if sym == nil {
 			continue
 		}

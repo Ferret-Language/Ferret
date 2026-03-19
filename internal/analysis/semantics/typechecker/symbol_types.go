@@ -11,11 +11,11 @@ func (c *checker) typeOfSymbol(sym *symbols.Symbol) typeinfo.Type {
 	if sym == nil {
 		return typeinfo.InvalidType{}
 	}
-	if typ, ok := c.info.Symbols[sym]; ok {
+	if typ, ok := c.info.Symbols[sym.ID]; ok {
 		return typ
 	}
 	if owner := c.findModuleForSymbol(sym); owner != nil && owner != c.mod && owner.Types != nil {
-		if typ, ok := owner.Types.Symbols[sym]; ok {
+		if typ, ok := owner.Types.Symbols[sym.ID]; ok {
 			return typ
 		}
 	}

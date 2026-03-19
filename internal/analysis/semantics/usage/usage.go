@@ -17,8 +17,8 @@ type analyzer struct {
 	ctx         *context.CompilerContext
 	mod         *context.Module
 	usedImports map[*binding.ImportBinding]bool
-	usedSymbols map[*symbols.Symbol]int
-	written     map[*symbols.Symbol]int
+	usedSymbols map[symbols.SymbolID]int
+	written     map[symbols.SymbolID]int
 	declNodes   map[ast.Node]struct{}
 	writeNodes  map[ast.Node]struct{}
 	readWrites  map[ast.Node]struct{}
@@ -41,8 +41,8 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 		ctx:         ctx,
 		mod:         mod,
 		usedImports: make(map[*binding.ImportBinding]bool),
-		usedSymbols: make(map[*symbols.Symbol]int),
-		written:     make(map[*symbols.Symbol]int),
+		usedSymbols: make(map[symbols.SymbolID]int),
+		written:     make(map[symbols.SymbolID]int),
 		declNodes:   make(map[ast.Node]struct{}),
 		writeNodes:  make(map[ast.Node]struct{}),
 		readWrites:  make(map[ast.Node]struct{}),
@@ -425,7 +425,7 @@ func (a *analyzer) collectUses() {
 	for node, resolution := range a.mod.Bindings.Nodes {
 		if _, ok := a.writeNodes[node]; ok {
 			if resolution != nil && resolution.Symbol != nil {
-				a.written[resolution.Symbol]++
+				a.written[resolution.Symbol.ID]++
 			}
 			if _, ok := a.readWrites[node]; !ok {
 				continue
@@ -438,7 +438,7 @@ func (a *analyzer) collectUses() {
 			continue
 		}
 		if resolution.Symbol != nil {
-			a.usedSymbols[resolution.Symbol]++
+			a.usedSymbols[resolution.Symbol.ID]++
 		}
 		path := nodePath(node)
 		if len(path) < 2 {
@@ -475,7 +475,7 @@ func (a *analyzer) reportUnusedModuleSymbols() {
 		if !shouldWarnOnUnusedModuleSymbol(a.mod, sym) {
 			continue
 		}
-		if a.usedSymbols[sym] > 0 {
+		if a.usedSymbols[sym.ID] > 0 {
 			continue
 		}
 		msg, code, label := unusedSymbolDiagnostic(sym)
@@ -499,7 +499,7 @@ func (a *analyzer) reportUnusedFunctionSymbols() {
 			if !shouldWarnOnUnusedFunctionSymbol(sym) {
 				continue
 			}
-			if a.usedSymbols[sym] > 0 {
+			if a.usedSymbols[sym.ID] > 0 {
 				continue
 			}
 			msg, code, label := unusedFunctionSymbolDiagnostic(sym)
@@ -594,7 +594,7 @@ func (a *analyzer) reportNeverModifiedDecl(node ast.Node) {
 		return
 	}
 	sym := resolution.Symbol
-	if sym.Name == "_" || a.usedSymbols[sym] == 0 || a.written[sym] > 0 {
+	if sym.Name == "_" || a.usedSymbols[sym.ID] == 0 || a.written[sym.ID] > 0 {
 		return
 	}
 	a.ctx.Diagnostics.Add(
@@ -684,7 +684,7 @@ func (a *analyzer) shouldWarnInsideFunction(fn *ast.FuncDecl) bool {
 	if fn.IsConstructor || fn.IsDestructor {
 		return true
 	}
-	return a.usedSymbols[sym] > 0
+	return a.usedSymbols[sym.ID] > 0
 }
 
 func nodePath(node ast.Node) []string {

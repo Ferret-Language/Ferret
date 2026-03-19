@@ -22,19 +22,21 @@ type GenericRequirement struct {
 
 type ModuleInfo struct {
 	Nodes               map[ast.Node]Type
-	Symbols             map[*symbols.Symbol]Type
+	Symbols             map[symbols.SymbolID]Type
+	SymbolIndex         map[symbols.SymbolID]*symbols.Symbol
 	Bools               map[ast.Node]bool
 	MethodReceivers     map[ast.Node]Type
-	GenericRequirements map[*symbols.Symbol][]*GenericRequirement
+	GenericRequirements map[symbols.SymbolID][]*GenericRequirement
 }
 
 func NewModuleInfo() *ModuleInfo {
 	return &ModuleInfo{
 		Nodes:               make(map[ast.Node]Type),
-		Symbols:             make(map[*symbols.Symbol]Type),
+		Symbols:             make(map[symbols.SymbolID]Type),
+		SymbolIndex:         make(map[symbols.SymbolID]*symbols.Symbol),
 		Bools:               make(map[ast.Node]bool),
 		MethodReceivers:     make(map[ast.Node]Type),
-		GenericRequirements: make(map[*symbols.Symbol][]*GenericRequirement),
+		GenericRequirements: make(map[symbols.SymbolID][]*GenericRequirement),
 	}
 }
 
@@ -49,7 +51,8 @@ func (m *ModuleInfo) BindSymbol(sym *symbols.Symbol, typ Type) {
 	if m == nil || sym == nil || typ == nil {
 		return
 	}
-	m.Symbols[sym] = typ
+	m.Symbols[sym.ID] = typ
+	m.SymbolIndex[sym.ID] = sym
 }
 
 func (m *ModuleInfo) BindBool(node ast.Node, value bool) {
@@ -87,16 +90,16 @@ func (m *ModuleInfo) BindGenericRequirements(sym *symbols.Symbol, requirements [
 		return
 	}
 	if len(requirements) == 0 {
-		delete(m.GenericRequirements, sym)
+		delete(m.GenericRequirements, sym.ID)
 		return
 	}
-	m.GenericRequirements[sym] = requirements
+	m.GenericRequirements[sym.ID] = requirements
 }
 
 func (m *ModuleInfo) LookupGenericRequirements(sym *symbols.Symbol) ([]*GenericRequirement, bool) {
 	if m == nil || sym == nil {
 		return nil, false
 	}
-	reqs, ok := m.GenericRequirements[sym]
+	reqs, ok := m.GenericRequirements[sym.ID]
 	return reqs, ok
 }

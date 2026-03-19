@@ -16,14 +16,14 @@ func Specialize(mod *Module, types *typeinfo.ModuleInfo, bindings *binding.Modul
 		module:    mod,
 		types:     types,
 		bindings:  bindings,
-		templates: make(map[*symbols.Symbol]*Func),
+		templates: make(map[symbols.SymbolID]*Func),
 		requests:  make(map[string]*specializationRequest),
 	}
 	for _, fn := range mod.Functions {
 		if p.isTemplate(fn) {
 			sym := bindings.FunctionSymbols[fn.Source]
 			if sym != nil {
-				p.templates[sym] = fn
+				p.templates[sym.ID] = fn
 			}
 		}
 	}
@@ -64,7 +64,7 @@ type specializer struct {
 	module    *Module
 	types     *typeinfo.ModuleInfo
 	bindings  *binding.ModuleInfo
-	templates map[*symbols.Symbol]*Func
+	templates map[symbols.SymbolID]*Func
 	requests  map[string]*specializationRequest
 	pending   []*specializationRequest
 }
@@ -364,7 +364,7 @@ func (s *specializer) specializedCallName(expr *CallExpr, bindings map[*typeinfo
 	if resolution == nil || resolution.Kind != binding.ResolutionSymbol || resolution.Symbol == nil {
 		return "", nil, false
 	}
-	template := s.templates[resolution.Symbol]
+	template := s.templates[resolution.Symbol.ID]
 	if template == nil {
 		return "", nil, false
 	}

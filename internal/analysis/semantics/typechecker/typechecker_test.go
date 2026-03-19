@@ -177,9 +177,9 @@ fn Identity<T>(value: T) T {
 	}
 
 	fn := findTypeFunc(t, result.Entry.AST, "Identity")
-	fnType, ok := result.Entry.Types.Symbols[result.Entry.Bindings.FunctionSymbols[fn]].(*typeinfo.FuncType)
+	fnType, ok := result.Entry.Types.Symbols[result.Entry.Bindings.FunctionSymbols[fn].ID].(*typeinfo.FuncType)
 	if !ok {
-		t.Fatalf("expected function type, got %T", result.Entry.Types.Symbols[result.Entry.Bindings.FunctionSymbols[fn]])
+		t.Fatalf("expected function type, got %T", result.Entry.Types.Symbols[result.Entry.Bindings.FunctionSymbols[fn].ID])
 	}
 	if len(fnType.TypeParams) != 1 || fnType.TypeParams[0].Name != "T" {
 		t.Fatalf("expected Identity<T>, got %#v", fnType.TypeParams)
@@ -2031,7 +2031,7 @@ fn run(items: [3]i32) i32 {
 	if paramRes == nil || paramRes.Symbol == nil {
 		t.Fatalf("expected param resolution for items, got %#v", paramRes)
 	}
-	paramType := result.Entry.Types.Symbols[paramRes.Symbol]
+	paramType := result.Entry.Types.Symbols[paramRes.Symbol.ID]
 	arr, ok := paramType.(*typeinfo.ArrayType)
 	if !ok || arr.Len != 3 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
 		t.Fatalf("expected items type [3]i32, got %T %#v", paramType, paramType)
@@ -2043,7 +2043,7 @@ fn run(items: [3]i32) i32 {
 	if rRes == nil || rRes.Symbol == nil {
 		t.Fatalf("expected let resolution for r, got %#v", rRes)
 	}
-	rType := result.Entry.Types.Symbols[rRes.Symbol]
+	rType := result.Entry.Types.Symbols[rRes.Symbol.ID]
 	errUnion, ok := rType.(*typeinfo.ErrorUnionType)
 	if !ok || !typeinfo.IsBuiltinNamed(errUnion.Value, "i32") {
 		t.Fatalf("expected r type MyErr!i32, got %T %#v", rType, rType)
@@ -2059,7 +2059,7 @@ fn run(items: [3]i32) i32 {
 	if xRes == nil || xRes.Symbol == nil {
 		t.Fatalf("expected let resolution for x, got %#v", xRes)
 	}
-	xType := result.Entry.Types.Symbols[xRes.Symbol]
+	xType := result.Entry.Types.Symbols[xRes.Symbol.ID]
 	if !typeinfo.IsBuiltinNamed(xType, "i32") {
 		t.Fatalf("expected x type i32, got %T %#v", xType, xType)
 	}
@@ -2071,7 +2071,7 @@ fn run(items: [3]i32) i32 {
 	if payloadRes == nil || payloadRes.Symbol == nil {
 		t.Fatalf("expected catch payload resolution for e, got %#v", payloadRes)
 	}
-	payloadType := result.Entry.Types.Symbols[payloadRes.Symbol]
+	payloadType := result.Entry.Types.Symbols[payloadRes.Symbol.ID]
 	payloadNamed, ok := payloadType.(*typeinfo.NamedType)
 	if !ok || payloadNamed.Name != "MyErr" {
 		t.Fatalf("expected catch payload type MyErr, got %T %#v", payloadType, payloadType)
@@ -2253,7 +2253,7 @@ fn main() i32 {
 	mainFn := findTypeFunc(t, result.Entry.AST, "main")
 	letItems := mainFn.Body.Stmts[0].(*ast.LetStmt)
 	itemsRes := result.Entry.Bindings.Nodes[letItems.Name]
-	itemsType := result.Entry.Types.Symbols[itemsRes.Symbol]
+	itemsType := result.Entry.Types.Symbols[itemsRes.Symbol.ID]
 	arr, ok := itemsType.(*typeinfo.ArrayType)
 	if !ok || arr.Len != 3 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
 		t.Fatalf("expected items type [3]i32, got %T %#v", itemsType, itemsType)

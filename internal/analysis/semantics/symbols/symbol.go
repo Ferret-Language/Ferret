@@ -1,6 +1,7 @@
 package symbols
 
 import (
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
@@ -8,6 +9,10 @@ import (
 	"compiler/internal/core/source"
 	"compiler/internal/frontend/ast"
 )
+
+type SymbolID uint64
+
+var nextSymbolID uint64
 
 type Kind string
 
@@ -27,6 +32,7 @@ const (
 )
 
 type Symbol struct {
+	ID        SymbolID
 	Name      string
 	Kind      Kind
 	IsPub     bool
@@ -46,6 +52,7 @@ func New(name string, kind Kind, node ast.Node) *Symbol {
 		loc = node.Loc()
 	}
 	return &Symbol{
+		ID:       SymbolID(atomic.AddUint64(&nextSymbolID, 1)),
 		Name:     name,
 		Kind:     kind,
 		IsPub:    IsPubName(name),

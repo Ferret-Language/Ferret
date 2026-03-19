@@ -1808,7 +1808,7 @@ func (a *analyzer) lookupMethod(receiverType typeinfo.Type, name string, address
 		if owner.Types == nil {
 			continue
 		}
-		if typ, ok := owner.Types.Symbols[sym].(*typeinfo.FuncType); ok {
+		if typ, ok := owner.Types.Symbols[sym.ID].(*typeinfo.FuncType); ok {
 			return sym, typ
 		}
 	}

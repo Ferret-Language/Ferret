@@ -15,18 +15,18 @@ import (
 // Base types always live in `Module.Types` and are keyed by `*symbols.Symbol`.
 type refineScope struct {
 	parent *refineScope
-	types  map[*symbols.Symbol]typeinfo.Type
+	types  map[symbols.SymbolID]typeinfo.Type
 }
 
 func newRefineScope(parent *refineScope) *refineScope {
-	return &refineScope{parent: parent, types: make(map[*symbols.Symbol]typeinfo.Type)}
+	return &refineScope{parent: parent, types: make(map[symbols.SymbolID]typeinfo.Type)}
 }
 
 func (s *refineScope) Set(sym *symbols.Symbol, typ typeinfo.Type) {
 	if s == nil || sym == nil || typ == nil {
 		return
 	}
-	s.types[sym] = typ
+	s.types[sym.ID] = typ
 }
 
 func (s *refineScope) Lookup(sym *symbols.Symbol) (typeinfo.Type, bool) {
@@ -34,7 +34,7 @@ func (s *refineScope) Lookup(sym *symbols.Symbol) (typeinfo.Type, bool) {
 		return nil, false
 	}
 	for scope := s; scope != nil; scope = scope.parent {
-		if typ, ok := scope.types[sym]; ok {
+		if typ, ok := scope.types[sym.ID]; ok {
 			return typ, true
 		}
 	}
