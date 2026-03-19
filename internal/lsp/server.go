@@ -781,6 +781,15 @@ func renderNodeFunctionSignature(node ast.Node, typ typeinfo.Type, mod *context.
 	if !ok || node == nil {
 		return ""
 	}
+	if selector, ok := node.(*ast.SelectorExpr); ok && info != nil {
+		if methodReceiver, ok := info.LookupMethodReceiver(selector); ok && methodReceiver != nil {
+			name := selector.Name.Text()
+			if baseNamed, ok := typeinfo.ReceiverBaseNamedType(methodReceiver); ok && baseNamed != nil {
+				name = baseNamed.Name + "::" + name
+			}
+			return typeinfo.FormatMethodSignature(name, methodReceiver, fnType)
+		}
+	}
 	if sym := resolvedSymbolForNode(mod, node); sym != nil {
 		if sig := symbolFunctionSignature(sym, fnType); sig != "" {
 			return sig
@@ -796,15 +805,6 @@ func renderNodeFunctionSignature(node ast.Node, typ typeinfo.Type, mod *context.
 			return typeinfo.FormatFuncSignature(name, fnType)
 		}
 	case *ast.SelectorExpr:
-		if info != nil {
-			if methodReceiver, ok := info.LookupMethodReceiver(n); ok && methodReceiver != nil {
-				name := n.Name.Text()
-				if baseNamed, ok := typeinfo.ReceiverBaseNamedType(methodReceiver); ok && baseNamed != nil {
-					name = baseNamed.Name + "::" + name
-				}
-				return typeinfo.FormatMethodSignature(name, methodReceiver, fnType)
-			}
-		}
 		receiver := ""
 		if info != nil && n.Left != nil {
 			if leftType, ok := info.Nodes[n.Left]; ok {
