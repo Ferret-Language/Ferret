@@ -13,30 +13,80 @@ type Point struct {
     Value: i32 = 0
 }
 
-fn Point::Incr(&mut self) {
-    self.Value++
+fn Point::Draw(&self) {
+    print("I am Point")
+}
+
+fn Point::Incr(&mut self, cx: i32) {
+    self.Value += cx
 }
 
 fn Point::Calc(&self) i32 {
     return self.Value
 }
 
-fn run2() void {
+fn run2() {
     let mut p: Point = .{}
     p.Calc()
-    p.Incr() // should only work if p is mutable
+    p.Incr(1) // should only work if p is mutable
     let m = &mut p
     let r = &p
     //m
     r
+    //return 0
 }
 
+type Shape interface {
+    Draw(&self)
+}
+
+fn drawShape(s: Shape) {
+    s.Draw()
+}
+
+type any interface{}
+
+fn add<T>(a: T, b: T) T {
+    return a + b
+}
+
+// program entry point
 fn main() {
     let mut a = 10
     let b : i32 = a
     let arr : [_]i32 = [_]i32{1,2,3}
     let n = arr[1]
     let mut c = 11
+    if c > 10 {
+        print("c is more than 10")
+    } else {
+        print("c is less than 10")
+    }
+    
+    // run2() catch |err| {
+        
+    // }
+    
+    let p = .Point{}
+    drawShape(p)
+
+    let ax : any = p
+    
+    let num1 = 24
+    let num2 = 53
+    let res = add(num1, num2)
+    print(res)
+    
+    print("--- loop start ---")
+    while c > 0 {
+        print(c)
+        c--
+        if c != 0 {
+            print("------")
+        }
+    }
+    print("--- loop end ---")
+    
     //c = 13
     print(a)
     print(b)
