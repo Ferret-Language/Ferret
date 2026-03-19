@@ -965,7 +965,7 @@ func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallVa
 		methodName = name.Path[len(name.Path)-1]
 	}
 	if methodName != "" && !typeinfo.IsInvalid(receiverType) && !typeinfo.IsUnknown(receiverType) {
-		if baseNamed, ok := a.receiverBaseNamedType(receiverType); ok && baseNamed != nil {
+		if baseNamed, ok := typeinfo.ReceiverBaseNamedType(receiverType); ok && baseNamed != nil {
 			prefix := baseNamed.Name + "__"
 			methodName = strings.TrimPrefix(methodName, prefix)
 		}
@@ -1763,7 +1763,7 @@ func (a *analyzer) canHaveMethods(typ typeinfo.Type) bool {
 	if typ == nil {
 		return false
 	}
-	if _, ok := a.receiverBaseNamedType(typ); ok {
+	if _, ok := typeinfo.ReceiverBaseNamedType(typ); ok {
 		return true
 	}
 	_, ok := a.interfaceView(typ)
@@ -1788,7 +1788,7 @@ func (a *analyzer) interfaceView(typ typeinfo.Type) (*typeinfo.InterfaceType, bo
 }
 
 func (a *analyzer) lookupMethod(receiverType typeinfo.Type, name string, addressable bool, mutable bool) (*symbols.Symbol, *typeinfo.FuncType) {
-	baseNamed, ok := a.receiverBaseNamedType(receiverType)
+	baseNamed, ok := typeinfo.ReceiverBaseNamedType(receiverType)
 	if !ok {
 		return nil, nil
 	}
@@ -1842,58 +1842,18 @@ func (a *analyzer) methodCandidateKeys(receiverType typeinfo.Type, baseName stri
 	case *typeinfo.NamedType:
 		add(baseName)
 	case *typeinfo.RefType:
-		if exact, ok := a.receiverKeyFromType(t); ok {
+		if exact, ok := typeinfo.ReceiverKeyFromType(t); ok {
 			add(exact)
 		}
 		if t.Mutable {
 			add("&" + baseName)
 		}
 	case *typeinfo.PointerType:
-		if exact, ok := a.receiverKeyFromType(t); ok {
+		if exact, ok := typeinfo.ReceiverKeyFromType(t); ok {
 			add(exact)
 		}
 	}
 	return keys
-}
-
-func (a *analyzer) receiverBaseNamedType(typ typeinfo.Type) (*typeinfo.NamedType, bool) {
-	switch t := typ.(type) {
-	case *typeinfo.NamedType:
-		return t, true
-	case *typeinfo.RefType:
-		named, ok := t.Inner.(*typeinfo.NamedType)
-		return named, ok
-	case *typeinfo.PointerType:
-		named, ok := t.Inner.(*typeinfo.NamedType)
-		return named, ok
-	default:
-		return nil, false
-	}
-}
-
-func (a *analyzer) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
-	switch t := typ.(type) {
-	case *typeinfo.NamedType:
-		return t.Name, true
-	case *typeinfo.RefType:
-		named, ok := t.Inner.(*typeinfo.NamedType)
-		if !ok {
-			return "", false
-		}
-		prefix := "&"
-		if t.Mutable {
-			prefix = "&mut "
-		}
-		return prefix + named.Name, true
-	case *typeinfo.PointerType:
-		named, ok := t.Inner.(*typeinfo.NamedType)
-		if !ok {
-			return "", false
-		}
-		return "*" + named.Name, true
-	default:
-		return "", false
-	}
 }
 
 func (a *analyzer) valueAccess(scope *valueScope, value mir.Value) (addressable bool, mutable bool) {

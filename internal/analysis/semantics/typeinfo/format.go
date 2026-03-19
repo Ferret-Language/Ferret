@@ -156,6 +156,40 @@ func FormatFuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 	return b.String()
 }
 
+func FormatMethodSignature(name string, receiver Type, fn *FuncType) string {
+	if receiver == nil {
+		return FormatFuncSignature(name, fn)
+	}
+	if fn == nil {
+		fn = &FuncType{}
+	}
+	var b strings.Builder
+	prefix := "fn"
+	if fn.IsUnsafe {
+		prefix = "unsafe fn"
+	}
+	b.WriteString(prefix)
+	if name != "" {
+		b.WriteByte(' ')
+		b.WriteString(name)
+	}
+	params := []string{ast.FormatReceiverText("self", FormatType(receiver))}
+	for i, param := range fn.Params {
+		prefix := ""
+		if i < len(fn.MutParams) && fn.MutParams[i] {
+			prefix += "mut "
+		}
+		if i < len(fn.ComptimeParams) && fn.ComptimeParams[i] {
+			prefix += "comptime "
+		}
+		params = append(params, prefix+FormatType(param))
+	}
+	b.WriteString(ast.FormatParamList(params))
+	b.WriteByte(' ')
+	b.WriteString(FormatType(fn.Result))
+	return b.String()
+}
+
 func formatSignature(fn *FuncType) string {
 	if fn == nil {
 		return "()"

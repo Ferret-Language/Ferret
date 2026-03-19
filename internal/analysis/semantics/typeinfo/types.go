@@ -226,6 +226,97 @@ func (t *FuncType) String() string {
 	return FormatFuncSignature("", t)
 }
 
+func ReceiverBaseNamedType(typ Type) (*NamedType, bool) {
+	named, _, ok := receiverNamedAndPrefix(typ)
+	return named, ok
+}
+
+func ReceiverKeyFromType(typ Type) (string, bool) {
+	named, prefix, ok := receiverNamedAndPrefix(typ)
+	if !ok {
+		return "", false
+	}
+	return prefix + named.Name, true
+}
+
+func ApplyReceiverShape(base Type, receiver string) Type {
+	if base == nil {
+		return nil
+	}
+	switch receiver {
+	case "":
+		return base
+	case "&":
+		return &RefType{Inner: base}
+	case "&mut ":
+		return &RefType{Mutable: true, Inner: base}
+	case "*":
+		return &PointerType{Inner: base}
+	case "^":
+		return &RawPtrType{Inner: base}
+	default:
+		return base
+	}
+}
+
+func ReceiverTypeFromKey(named *NamedType, key string) Type {
+	if named == nil {
+		return nil
+	}
+	prefix, ok := receiverPrefixForKey(named.Name, key)
+	if !ok {
+		return nil
+	}
+	return ApplyReceiverShape(named, prefix)
+}
+
+func receiverNamedAndPrefix(typ Type) (*NamedType, string, bool) {
+	switch t := typ.(type) {
+	case *NamedType:
+		return t, "", true
+	case *RefType:
+		named, ok := t.Inner.(*NamedType)
+		if !ok {
+			return nil, "", false
+		}
+		if t.Mutable {
+			return named, "&mut ", true
+		}
+		return named, "&", true
+	case *PointerType:
+		named, ok := t.Inner.(*NamedType)
+		if !ok {
+			return nil, "", false
+		}
+		return named, "*", true
+	case *RawPtrType:
+		named, ok := t.Inner.(*NamedType)
+		if !ok {
+			return nil, "", false
+		}
+		return named, "^", true
+	default:
+		return nil, "", false
+	}
+}
+
+func receiverPrefixForKey(baseName, key string) (string, bool) {
+	switch  key{
+	case baseName:
+		return "", true
+	case "&" + baseName:
+		return "&", true
+	case "&mut " + baseName:
+		return "&mut ", true
+	case "*" + baseName:
+		return "*", true
+	case "^" + baseName:
+		return "^", true
+	default:
+		return "", false
+	}
+}
+
 func typeString(t Type) string {
 	if t == nil {
 		return "void"

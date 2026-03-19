@@ -290,7 +290,7 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		if recvType == nil {
 			recvType = typeinfo.UnknownType{}
 		}
-		if named, ok := c.receiverBaseNamedType(recvType); ok {
+		if named, ok := typeinfo.ReceiverBaseNamedType(recvType); ok {
 			if owner := c.findModuleForType(named); owner != nil && owner.Key != c.mod.Key {
 				loc := d.Receiver.Type.Loc()
 				c.ctx.Diagnostics.Add(
@@ -1025,6 +1025,10 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 			c.reportMethodNotFound(selector.Location, receiverType, selector.Name.Text())
 			return typeinfo.InvalidType{}, true
 		}
+		if methodReceiver := c.interfaceMethodReceiverType(receiverType, iface.MethodReceivers[selector.Name.Text()]); methodReceiver != nil {
+			c.info.BindMethodReceiver(call, methodReceiver)
+			c.info.BindMethodReceiver(selector, methodReceiver)
+		}
 		instantiated, argTypes, invalid := c.instantiateCallFuncType(scope, call, selector, method, expected)
 		if instantiated == nil {
 			instantiated = method
@@ -1065,6 +1069,7 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 	}
 	if methodReceiver != nil {
 		c.info.BindMethodReceiver(call, methodReceiver)
+		c.info.BindMethodReceiver(selector, methodReceiver)
 	}
 	instantiated, argTypes, invalid := c.instantiateCallFuncType(scope, call, selector, methodType, expected)
 	if instantiated == nil {
@@ -1955,7 +1960,7 @@ func (c *checker) lookupConstructorType(named *typeinfo.NamedType) *typeinfo.Fun
 	if owner == nil || owner.MethodSets == nil {
 		return nil
 	}
-	key, ok := c.receiverKeyFromType(&typeinfo.PointerType{Inner: named})
+	key, ok := typeinfo.ReceiverKeyFromType(&typeinfo.PointerType{Inner: named})
 	if !ok {
 		return nil
 	}
@@ -2094,7 +2099,7 @@ func (c *checker) canAccessStructField(typ typeinfo.Type, field *typeinfo.Struct
 	if field == nil || field.IsPub {
 		return true
 	}
-	named, ok := c.receiverBaseNamedType(c.derefForSelector(typ))
+	named, ok := typeinfo.ReceiverBaseNamedType(c.derefForSelector(typ))
 	if !ok || named == nil {
 		return true
 	}
@@ -2102,7 +2107,7 @@ func (c *checker) canAccessStructField(typ typeinfo.Type, field *typeinfo.Struct
 }
 
 func (c *checker) structFieldOwnerName(typ typeinfo.Type) string {
-	named, ok := c.receiverBaseNamedType(c.derefForSelector(typ))
+	named, ok := typeinfo.ReceiverBaseNamedType(c.derefForSelector(typ))
 	if !ok || named == nil {
 		return ""
 	}

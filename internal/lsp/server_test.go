@@ -505,6 +505,43 @@ func TestHoverGenericCallShowsInstantiatedSignature(t *testing.T) {
 	}
 }
 
+func TestHoverInterfaceMethodCallShowsSelfReceiver(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Shape interface {\n    Draw(&self)\n}\n\nfn drawShape(s: Shape) void {\n    s.Draw()\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    s.Draw()")
+	if !ok {
+		t.Fatal("failed to find method call")
+	}
+	char += len("    s.")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn Shape::Draw(&self) void") {
+		t.Fatalf("expected method hover to include self receiver, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.ferr")

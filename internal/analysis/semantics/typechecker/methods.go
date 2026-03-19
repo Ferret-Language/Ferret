@@ -9,7 +9,7 @@ func (c *checker) canHaveMethods(typ typeinfo.Type) bool {
 	if typ == nil {
 		return false
 	}
-	if _, ok := c.receiverBaseNamedType(typ); ok {
+	if _, ok := typeinfo.ReceiverBaseNamedType(typ); ok {
 		return true
 	}
 	_, ok := c.interfaceView(typ)
@@ -39,7 +39,7 @@ func (c *checker) lookupMethod(receiverType typeinfo.Type, name string, addressa
 }
 
 func (c *checker) lookupMethodDetailed(receiverType typeinfo.Type, name string, addressable bool, mutable bool) (*symbols.Symbol, *typeinfo.FuncType, typeinfo.Type) {
-	baseNamed, ok := c.receiverBaseNamedType(receiverType)
+	baseNamed, ok := typeinfo.ReceiverBaseNamedType(receiverType)
 	if !ok {
 		return nil, nil, nil
 	}
@@ -57,13 +57,13 @@ func (c *checker) lookupMethodDetailed(receiverType typeinfo.Type, name string, 
 			continue
 		}
 		fnType, _ := c.typeOfSymbol(sym).(*typeinfo.FuncType)
-		return sym, fnType, c.receiverTypeFromKey(baseNamed, key)
+		return sym, fnType, typeinfo.ReceiverTypeFromKey(baseNamed, key)
 	}
 	return nil, nil, nil
 }
 
 func (c *checker) lookupMethodWithReceiver(receiverType typeinfo.Type, receiver string, name string) (*symbols.Symbol, *typeinfo.FuncType) {
-	baseNamed, ok := c.receiverBaseNamedType(receiverType)
+	baseNamed, ok := typeinfo.ReceiverBaseNamedType(receiverType)
 	if !ok {
 		return nil, nil
 	}
@@ -105,6 +105,10 @@ func (c *checker) lookupStaticMethod(ownerType typeinfo.Type, name string) (*sym
 	return sym, fnType
 }
 
+func (c *checker) interfaceMethodReceiverType(receiverType typeinfo.Type, receiver string) typeinfo.Type {
+	return typeinfo.ApplyReceiverShape(receiverType, receiver)
+}
+
 func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName string, addressable bool, mutable bool) []string {
 	keys := make([]string, 0, 4)
 	seen := make(map[string]struct{})
@@ -129,74 +133,16 @@ func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName strin
 			}
 		}
 	case *typeinfo.RefType:
-		if exact, ok := c.receiverKeyFromType(t); ok {
+		if exact, ok := typeinfo.ReceiverKeyFromType(t); ok {
 			add(exact)
 		}
 		if t.Mutable {
 			add("&" + baseName)
 		}
 	case *typeinfo.PointerType:
-		if exact, ok := c.receiverKeyFromType(t); ok {
+		if exact, ok := typeinfo.ReceiverKeyFromType(t); ok {
 			add(exact)
 		}
 	}
 	return keys
-}
-
-func (c *checker) receiverTypeFromKey(named *typeinfo.NamedType, key string) typeinfo.Type {
-	if named == nil {
-		return nil
-	}
-	switch {
-	case key == named.Name:
-		return named
-	case key == "&"+named.Name:
-		return &typeinfo.RefType{Inner: named}
-	case key == "&mut "+named.Name:
-		return &typeinfo.RefType{Mutable: true, Inner: named}
-	case key == "*"+named.Name:
-		return &typeinfo.PointerType{Inner: named}
-	default:
-		return nil
-	}
-}
-
-func (c *checker) receiverBaseNamedType(typ typeinfo.Type) (*typeinfo.NamedType, bool) {
-	switch t := typ.(type) {
-	case *typeinfo.NamedType:
-		return t, true
-	case *typeinfo.RefType:
-		named, ok := t.Inner.(*typeinfo.NamedType)
-		return named, ok
-	case *typeinfo.PointerType:
-		named, ok := t.Inner.(*typeinfo.NamedType)
-		return named, ok
-	default:
-		return nil, false
-	}
-}
-
-func (c *checker) receiverKeyFromType(typ typeinfo.Type) (string, bool) {
-	switch t := typ.(type) {
-	case *typeinfo.NamedType:
-		return t.Name, true
-	case *typeinfo.RefType:
-		named, ok := t.Inner.(*typeinfo.NamedType)
-		if !ok {
-			return "", false
-		}
-		prefix := "&"
-		if t.Mutable {
-			prefix = "&mut "
-		}
-		return prefix + named.Name, true
-	case *typeinfo.PointerType:
-		named, ok := t.Inner.(*typeinfo.NamedType)
-		if !ok {
-			return "", false
-		}
-		return "*" + named.Name, true
-	default:
-		return "", false
-	}
 }
