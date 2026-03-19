@@ -176,7 +176,7 @@ func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	typechecker.CheckModule(p.ctx, mod)
 	mod.HIR = hir.Generate(mod.Key, mod.ImportPath, mod.FilePath, mod.AST, mod.Types, mod.Bindings, p.lookupMethodPath(mod.ImportPath))
 	mod.Phase = phase.PhaseHIRGenerated
-	mod.LoweredHIR = hir.Lower(mod.HIR)
+	mod.LoweredHIR = hir.Specialize(hir.Lower(mod.HIR), mod.Types, mod.Bindings)
 	mod.Phase = phase.PhaseHIRLowered
 	cfganalysis.AnalyzeModule(p.ctx, mod)
 	mod.MIR = mir.LowerModule(mod.CFG, mod.HIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupMethodPath(mod.ImportPath))

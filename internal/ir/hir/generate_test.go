@@ -72,6 +72,60 @@ fn main() i32 {
 	}
 }
 
+func TestPipelineSpecializesGenericTopLevelFunctions(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+fn add<T>(a: T, b: T) T {
+    return a + b
+}
+
+fn main() i32 {
+    return add(1, 2)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+	var mainFn *hir.Func
+	var specialized *hir.Func
+	for _, fn := range result.Entry.LoweredHIR.Functions {
+		if fn == nil {
+			continue
+		}
+		switch {
+		case fn.Name == "main":
+			mainFn = fn
+		case strings.HasPrefix(fn.Name, "add$"):
+			specialized = fn
+		case fn.Name == "add":
+			t.Fatalf("expected generic template function to be removed from lowered HIR, got %#v", fn.Name)
+		}
+	}
+	if mainFn == nil || specialized == nil {
+		t.Fatalf("expected main and specialized add functions, got %#v", result.Entry.LoweredHIR.Functions)
+	}
+	ret, ok := mainFn.Body.Stmts[0].(*hir.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected lowered return stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	call, ok := ret.Value.(*hir.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expr, got %T", ret.Value)
+	}
+	callee, ok := call.Callee.(*hir.Ident)
+	if !ok {
+		t.Fatalf("expected specialized callee ident, got %T", call.Callee)
+	}
+	if len(callee.Path) != 1 || callee.Path[0] != specialized.Name {
+		t.Fatalf("expected call rewritten to specialized function %q, got %#v", specialized.Name, callee.Path)
+	}
+}
+
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func mustWriteHIR(t *testing.T, path, content string) {
