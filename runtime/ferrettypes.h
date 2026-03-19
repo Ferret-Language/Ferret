@@ -21,7 +21,7 @@
  *   5. Optional  (?T)
  *   6. Error-union  (E!T)
  *   7. Union
- *   8. Interface  (dynamic dispatch fat-pointer)
+ *   8. Interface / Any  (dynamic dispatch fat-pointer)
  *   9. Generic slice macro (FERRET_SLICE_OF)
  *
  * Layout rules (derived from layoutanalysis/analyze.go)
@@ -46,7 +46,7 @@
  *
  * • Enums and error-sets are a bare 4-byte tag with no payload.
  * • Slices are fat pointers { T *ptr; uintptr_t len }.
- * • Interfaces are fat pointers { void *vtable; void *data }.
+ * • Interfaces/Any are fat pointers { void *data; const void *vtable }.
  */
 
 #ifndef FERRET_TYPES_H
@@ -54,6 +54,12 @@
 
 #include <stdint.h>
 #include <stddef.h>
+
+#if defined(__cplusplus)
+#define FERRET_STATIC_ASSERT(cond, msg) static_assert((cond), msg)
+#else
+#define FERRET_STATIC_ASSERT(cond, msg) _Static_assert((cond), msg)
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -358,14 +364,15 @@ typedef struct { ferret_u32 tag; ferret_u32 _pad; FerretStr    value; } FerretRe
 #define FERRET_UNION_VARIANT(ptr, member) ((ptr)->member)
 
 /* =========================================================================
- * 8. Interface  (dynamic dispatch fat-pointer)
+ * 8. Interface / Any  (dynamic dispatch fat-pointer)
  *
- * A Ferret interface value is a pair of pointers:
- *   vtable — pointer to a compiler-generated vtable struct
+ * A Ferret interface value (and empty-interface `any`) is a pair of pointers:
  *   data   — pointer to the concrete value storage for the already-resolved
  *            receiver form (`T`, `*T`, `&T`, or `&mut T`)
+ *   vtable — pointer to a compiler-generated vtable struct whose first slot
+ *            points at a `FerretTypeInfo` record, followed by method entries
  *
- * Total size: 16 bytes, 8-byte aligned.
+ * Total size: two pointer-width fields.
  *
  * The vtable layout is compiler-internal; from C you can call interface
  * methods only if you know the concrete type and cast accordingly.
@@ -374,13 +381,29 @@ typedef struct { ferret_u32 tag; ferret_u32 _pad; FerretStr    value; } FerretRe
  *
  * Example — passing an interface to a Ferret function from C:
  *   // Construct manually only if you implement the vtable in C.
- *   FerretInterface iface = { &my_vtable, &my_concrete_value };
+ *   FerretInterface iface = { &my_concrete_value, &my_vtable };
  * ========================================================================= */
 
 typedef struct {
+    void       *data;     /* pointer to the concrete value                    */
     const void *vtable;   /* pointer to compiler-generated vtable (read-only) */
-    void       *data;     /* pointer to the concrete value                   */
 } FerretInterface;
+
+/* FerretAny is the C ABI surface for Ferret empty-interface values.
+ * Use this in #[extern] signatures when the Ferret side uses:
+ *   type Any interface {}
+ *   fn f(x: Any) ...
+ */
+typedef FerretInterface FerretAny;
+
+FERRET_STATIC_ASSERT(sizeof(FerretInterface) == (sizeof(void *) * 2u),
+                     "FerretInterface must be exactly two pointers");
+FERRET_STATIC_ASSERT(offsetof(FerretInterface, data) == 0u,
+                     "FerretInterface.data must be the first field");
+FERRET_STATIC_ASSERT(offsetof(FerretInterface, vtable) == sizeof(void *),
+                     "FerretInterface.vtable must follow data");
+FERRET_STATIC_ASSERT(sizeof(FerretAny) == sizeof(FerretInterface),
+                     "FerretAny must match FerretInterface ABI exactly");
 
 /* =========================================================================
  * 9. Generic slice macro  (FERRET_SLICE_OF)

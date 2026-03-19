@@ -1,0 +1,110 @@
+package backend
+
+import (
+	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/frontend/ast"
+)
+
+const (
+	RuntimeTypeUnknown = 0
+	RuntimeTypeBool    = 1
+	RuntimeTypeI8      = 2
+	RuntimeTypeI16     = 3
+	RuntimeTypeI32     = 4
+	RuntimeTypeI64     = 5
+	RuntimeTypeIsize   = 6
+	RuntimeTypeU8      = 7
+	RuntimeTypeU16     = 8
+	RuntimeTypeU32     = 9
+	RuntimeTypeU64     = 10
+	RuntimeTypeUsize   = 11
+	RuntimeTypeF32     = 12
+	RuntimeTypeF64     = 13
+	RuntimeTypeChar    = 14
+	RuntimeTypeString  = 15
+)
+
+const (
+	RuntimeTypeFlagPointer   = 1 << 0
+	RuntimeTypeFlagNamed     = 1 << 1
+	RuntimeTypeFlagInterface = 1 << 2
+	RuntimeTypeFlagSlice     = 1 << 3
+)
+
+type RuntimeTypeDescriptor struct {
+	Name  string
+	ID    uint32
+	Flags uint32
+}
+
+func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
+	desc := RuntimeTypeDescriptor{
+		Name: typeString(typ),
+	}
+	if typ == nil {
+		return desc
+	}
+
+	inspect := typ
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil {
+		desc.Flags |= RuntimeTypeFlagNamed
+		if named.Decl != nil {
+			switch named.Decl.Type.(type) {
+			case *ast.EnumType, *ast.ErrorType:
+				inspect = &typeinfo.BuiltinType{Name: "i32"}
+			case *ast.InterfaceType:
+				desc.Flags |= RuntimeTypeFlagInterface
+			}
+		}
+	}
+
+	switch t := inspect.(type) {
+	case *typeinfo.StringType:
+		desc.ID = RuntimeTypeString
+	case *typeinfo.BuiltinType:
+		switch t.Name {
+		case "bool":
+			desc.ID = RuntimeTypeBool
+		case "i8":
+			desc.ID = RuntimeTypeI8
+		case "i16":
+			desc.ID = RuntimeTypeI16
+		case "i32":
+			desc.ID = RuntimeTypeI32
+		case "i64":
+			desc.ID = RuntimeTypeI64
+		case "isize":
+			desc.ID = RuntimeTypeIsize
+		case "u8":
+			desc.ID = RuntimeTypeU8
+		case "u16":
+			desc.ID = RuntimeTypeU16
+		case "u32":
+			desc.ID = RuntimeTypeU32
+		case "u64":
+			desc.ID = RuntimeTypeU64
+		case "usize":
+			desc.ID = RuntimeTypeUsize
+		case "f32":
+			desc.ID = RuntimeTypeF32
+		case "f64":
+			desc.ID = RuntimeTypeF64
+		case "char":
+			desc.ID = RuntimeTypeChar
+		}
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+		desc.Flags |= RuntimeTypeFlagPointer
+	case *typeinfo.InterfaceType:
+		desc.Flags |= RuntimeTypeFlagInterface
+	case *typeinfo.SliceType:
+		desc.Flags |= RuntimeTypeFlagSlice
+	}
+	return desc
+}
+
+func typeString(typ typeinfo.Type) string {
+	if typ == nil {
+		return "void"
+	}
+	return typ.String()
+}

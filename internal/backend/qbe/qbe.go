@@ -1495,11 +1495,7 @@ func lowerInterfaceCall(state *moduleState, targetName string, targetType typein
 		fmt.Sprintf("%s =l add %s, 8", vtAddr, slotPtr),
 		fmt.Sprintf("%s =l loadl %s", vtTmp, vtAddr),
 	}
-	if methodIndex > 0 {
-		lines = append(lines, fmt.Sprintf("%s =l add %s, %d", fnSlot, vtTmp, methodIndex*8))
-	} else {
-		lines = append(lines, fmt.Sprintf("%s =l copy %s", fnSlot, vtTmp))
-	}
+	lines = append(lines, fmt.Sprintf("%s =l add %s, %d", fnSlot, vtTmp, (methodIndex+1)*8))
 	lines = append(lines, fmt.Sprintf("%s =l loadl %s", fnTmp, fnSlot))
 
 	args := []string{fmt.Sprintf("l %s", dataTmp)}
@@ -1583,7 +1579,12 @@ func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *m
 		return "", err
 	}
 	sym := sanitizeIdent("vtable__" + qbeTypeName(state, targetNamed) + "__" + sanitizeType(value.ConcreteType))
-	entries := make([]string, 0, len(methods.Methods))
+	typeInfoSym, err := emitQBERuntimeTypeInfo(state, sym+"__typeinfo", value.ConcreteType)
+	if err != nil {
+		return "", err
+	}
+	entries := make([]string, 0, len(methods.Methods)+1)
+	entries = append(entries, "l $"+typeInfoSym)
 	for i, method := range methods.Methods {
 		if method == nil {
 			continue
@@ -1600,6 +1601,25 @@ func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *m
 	fmt.Fprintf(state.deferredB, "data $%s = { %s }\n", sym, strings.Join(entries, ", "))
 	state.interfaceVTables[key] = sym
 	return sym, nil
+}
+
+func emitQBERuntimeTypeInfo(state *moduleState, sym string, typ typeinfo.Type) (string, error) {
+	desc := backend.DescribeRuntimeType(typ)
+	nameSym := sym + "__name"
+	fmt.Fprintf(state.deferredB, "data $%s = { b %q, b 0 }\n", nameSym, desc.Name)
+	size, align, err := qbeRuntimeTypeSizeAlign(state, typ)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(state.deferredB, "data $%s = { w %d, z 4, l $%s, l %d, l %d, w %d, z 4 }\n", sym, desc.ID, nameSym, size, align, desc.Flags)
+	return sym, nil
+}
+
+func qbeRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, error) {
+	if isAggregateType(state, typ) {
+		return aggregateSizeAlign(state, typ)
+	}
+	return qbeScalarSizeAlign(typ)
 }
 
 func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {

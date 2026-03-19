@@ -736,7 +736,7 @@ fn main() str {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"data $vtable__local__main__Stringer__Name = { l $ifacewrap__local__main__Stringer__Name__String }",
+		"data $vtable__local__main__Stringer__Name = { l $vtable__local__main__Stringer__Name__typeinfo, l $ifacewrap__local__main__Stringer__Name__String }",
 		"function :__ferret_slice $ifacewrap__local__main__Stringer__Name__String(l %data)",
 		"%s =l alloc8 16",
 		"%_iface_fn",
@@ -791,7 +791,7 @@ fn main() str {
 	text := artifact.Text
 	for _, want := range []string{
 		"type :local__main__Stringer = { l, l }",
-		"data $vtable__local__main__Stringer__Name = { l $ifacewrap__local__main__Stringer__Name__String }",
+		"data $vtable__local__main__Stringer__Name = { l $vtable__local__main__Stringer__Name__typeinfo, l $ifacewrap__local__main__Stringer__Name__String }",
 		"call $util__name__Name__String(",
 	} {
 		if !strings.Contains(text, want) {

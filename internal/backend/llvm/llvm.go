@@ -495,6 +495,11 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 		}
 		// We need a temporary state only to resolve return types.
 		tmpState := newModuleStateWithDebug(unit, allLayouts, dbg)
+		callDecls, err := collectExternCallDecls(tmpState, unit.Module, seenExterns)
+		if err != nil {
+			return "", fmt.Errorf("collect extern call declarations [%s]: %w", unit.Module.ImportPath, err)
+		}
+		declLines = append(declLines, callDecls...)
 		for _, fn := range externFunctionsForUnit(unit) {
 			if fn == nil || !fn.IsExtern || fn.LinkName == "" {
 				continue
@@ -522,11 +527,6 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 			// Use variadic signature so we don't need param type info.
 			declLines = append(declLines, fmt.Sprintf("declare %s @%s(...)", retStr, sym))
 		}
-		callDecls, err := collectExternCallDecls(tmpState, unit.Module, seenExterns)
-		if err != nil {
-			return "", fmt.Errorf("collect extern call declarations [%s]: %w", unit.Module.ImportPath, err)
-		}
-		declLines = append(declLines, callDecls...)
 	}
 
 	// Always declare Ferret runtime functions used by compiler-emitted code.
@@ -696,19 +696,37 @@ func collectExternCallDecls(state *moduleState, mod *mir.Module, seenExterns map
 		return nil, nil
 	}
 	decls := make([]string, 0)
-	add := func(sym string, result typeinfo.Type) error {
+	addCall := func(sym string, call *mir.CallValue) error {
 		if sym == "" {
 			return nil
 		}
 		if _, ok := seenExterns[sym]; ok {
 			return nil
 		}
-		ret, err := llvmExternReturnType(state, result)
+		ret, err := llvmExternReturnType(state, call.Type())
 		if err != nil {
 			return err
 		}
+		params := make([]string, 0, len(call.Args))
+		for _, arg := range call.Args {
+			if arg == nil {
+				params = append(params, "ptr")
+				continue
+			}
+			if isAggregateType(state, arg.Type()) {
+				params = append(params, "ptr")
+				continue
+			}
+			irType, terr := llvmBaseType(arg.Type())
+			if terr != nil {
+				decls = append(decls, fmt.Sprintf("declare %s @%s(...)", ret, sym))
+				seenExterns[sym] = struct{}{}
+				return nil
+			}
+			params = append(params, irType)
+		}
 		seenExterns[sym] = struct{}{}
-		decls = append(decls, fmt.Sprintf("declare %s @%s(...)", ret, sym))
+		decls = append(decls, fmt.Sprintf("declare %s @%s(%s)", ret, sym, strings.Join(params, ", ")))
 		return nil
 	}
 	var walkValue func(value mir.Value) error
@@ -734,7 +752,7 @@ func collectExternCallDecls(state *moduleState, mod *mir.Module, seenExterns map
 			return walkValue(v.Pointer)
 		case *mir.CallValue:
 			if callee, ok := v.Callee.(*mir.NameValue); ok && callee.LinkName != "" {
-				if err := add(sanitizeIdent(callee.LinkName), v.Type()); err != nil {
+				if err := addCall(sanitizeIdent(callee.LinkName), v); err != nil {
 					return err
 				}
 			}
@@ -952,6 +970,14 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		b.WriteByte('\n')
 	}
 	seenExterns := make(map[string]struct{})
+	callDecls, err := collectExternCallDecls(state, unit.Module, seenExterns)
+	if err != nil {
+		return nil, err
+	}
+	for _, decl := range callDecls {
+		b.WriteString(decl)
+		b.WriteByte('\n')
+	}
 	for _, fn := range externFunctionsForUnit(unit) {
 		if fn == nil || !fn.IsExtern || fn.LinkName == "" {
 			continue
@@ -965,14 +991,6 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 			return nil, err
 		}
 		seenExterns[sym] = struct{}{}
-		b.WriteString(decl)
-		b.WriteByte('\n')
-	}
-	callDecls, err := collectExternCallDecls(state, unit.Module, seenExterns)
-	if err != nil {
-		return nil, err
-	}
-	for _, decl := range callDecls {
 		b.WriteString(decl)
 		b.WriteByte('\n')
 	}
@@ -2265,8 +2283,23 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	// String literals are now *i8 — no special callee interception needed.
 
 	args := make([]string, 0, len(call.Args))
+	externLinked := false
+	if callee, ok := call.Callee.(*mir.NameValue); ok && callee != nil && callee.LinkName != "" {
+		externLinked = true
+	}
 	for _, arg := range call.Args {
 		if isAggregateType(state, arg.Type()) {
+			if externLinked {
+				prefix, ptr, terr := lowerInterfaceConcretePointer(state, arg, arg.Type())
+				if terr != nil {
+					return "", terr
+				}
+				if len(prefix) != 0 {
+					state.pendingLines = append(state.pendingLines, prefix...)
+				}
+				args = append(args, fmt.Sprintf("ptr %s", ptr))
+				continue
+			}
 			typeName, terr := llvmABITypeName(state, arg.Type())
 			if terr != nil {
 				return "", terr
@@ -2598,8 +2631,23 @@ func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *mir.
 		return lowerConstructorCall(state, llvmLocalName(agg.PtrName), call, callee)
 	}
 	args := make([]string, 0, len(call.Args))
+	externLinked := false
+	if callee, ok := call.Callee.(*mir.NameValue); ok && callee != nil && callee.LinkName != "" {
+		externLinked = true
+	}
 	for _, arg := range call.Args {
 		if isAggregateType(state, arg.Type()) {
+			if externLinked {
+				prefix, ptr, terr := lowerInterfaceConcretePointer(state, arg, arg.Type())
+				if terr != nil {
+					return "", terr
+				}
+				if len(prefix) != 0 {
+					state.pendingLines = append(state.pendingLines, prefix...)
+				}
+				args = append(args, fmt.Sprintf("ptr %s", ptr))
+				continue
+			}
 			typeName, terr := llvmABITypeName(state, arg.Type())
 			if terr != nil {
 				return "", terr
@@ -2876,7 +2924,7 @@ func lowerInterfaceCall(state *moduleState, targetName string, targetType typein
 		fmt.Sprintf("%s = load ptr, ptr %s", dataTmp, slotPtr),
 		fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", vtAddr, slotPtr),
 		fmt.Sprintf("%s = load ptr, ptr %s", vtTmp, vtAddr),
-		fmt.Sprintf("%s = getelementptr inbounds ptr, ptr %s, i64 %d", fnSlot, vtTmp, index),
+		fmt.Sprintf("%s = getelementptr inbounds ptr, ptr %s, i64 %d", fnSlot, vtTmp, index+1),
 		fmt.Sprintf("%s = load ptr, ptr %s", fnTmp, fnSlot),
 	}
 	args := []string{fmt.Sprintf("ptr %s", dataTmp)}
@@ -2994,7 +3042,12 @@ func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *
 		return "", 0, err
 	}
 	sym := sanitizeIdent("vtable__" + llvmTypeName(state, targetNamed) + "__" + sanitizeType(value.ConcreteType))
-	entries := make([]string, 0, len(iface.Methods))
+	typeInfoSym, err := emitLLVMRuntimeTypeInfo(state, sym+"__typeinfo", value.ConcreteType)
+	if err != nil {
+		return "", 0, err
+	}
+	entries := make([]string, 0, len(iface.Methods)+1)
+	entries = append(entries, "ptr @"+typeInfoSym)
 	for i, method := range iface.Methods {
 		if method == nil {
 			continue
@@ -3008,9 +3061,34 @@ func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *
 		}
 		entries = append(entries, "ptr @"+wrap)
 	}
-	fmt.Fprintf(state.deferredB, "@%s = private unnamed_addr constant [%d x ptr] [%s]\n", sym, len(iface.Methods), strings.Join(entries, ", "))
+	fmt.Fprintf(state.deferredB, "@%s = private unnamed_addr constant [%d x ptr] [%s]\n", sym, len(entries), strings.Join(entries, ", "))
 	state.interfaceVTables[key] = sym
-	return sym, len(iface.Methods), nil
+	return sym, len(entries), nil
+}
+
+func emitLLVMRuntimeTypeInfo(state *moduleState, sym string, typ typeinfo.Type) (string, error) {
+	desc := backend.DescribeRuntimeType(typ)
+	nameSym := emitStringConstant(state, desc.Name)
+	size, align, err := llvmRuntimeTypeSizeAlign(state, typ)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(state.deferredB,
+		"@%s = private unnamed_addr constant { i32, ptr, i64, i64, i32 } { i32 %d, ptr @%s, i64 %d, i64 %d, i32 %d }\n",
+		sym, desc.ID, nameSym, size, align, desc.Flags)
+	return sym, nil
+}
+
+func llvmRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, error) {
+	if isAggregateType(state, typ) {
+		return aggregateSizeAlign(state, typ)
+	}
+	irType, err := llvmBaseType(typ)
+	if err != nil {
+		return 0, 0, err
+	}
+	size := irTypeSize(irType)
+	return size, irTypeAlign(irType), nil
 }
 
 func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
@@ -4723,6 +4801,21 @@ func normalizeAlign(align int64) int64 {
 }
 
 func irTypeAlign(irType string) int64 {
+	switch irType {
+	case "i8":
+		return 1
+	case "i16":
+		return 2
+	case "i32", "float":
+		return 4
+	case "i64", "double", "ptr":
+		return 8
+	default:
+		return 4
+	}
+}
+
+func irTypeSize(irType string) int64 {
 	switch irType {
 	case "i8":
 		return 1

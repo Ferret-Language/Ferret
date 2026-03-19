@@ -49,7 +49,8 @@ fn main() str {
 	text := artifact.Text
 	for _, want := range []string{
 		"%local__main__Stringer = type { ptr, ptr }",
-		"@vtable__local__main__Stringer__Name = private unnamed_addr constant [1 x ptr]",
+		"@vtable__local__main__Stringer__Name = private unnamed_addr constant [2 x ptr]",
+		"@vtable__local__main__Stringer__Name__typeinfo = private unnamed_addr constant { i32, ptr, i64, i64, i32 }",
 		"define { ptr, i64 } @ifacewrap__local__main__Stringer__Name__String(ptr %data)",
 		"%_iface_fnslot",
 		"%_iface_fn",
@@ -151,7 +152,7 @@ fn main() str {
 	for _, want := range []string{
 		"@main__GlobalName = global %local__main__Name",
 		"@main__GlobalStringer = global %local__main__Stringer",
-		"@main__GlobalStringer = global %local__main__Stringer { ptr @main__GlobalName, ptr getelementptr inbounds ([1 x ptr], ptr @vtable__local__main__Stringer__Name",
+		"@main__GlobalStringer = global %local__main__Stringer { ptr @main__GlobalName, ptr getelementptr inbounds ([2 x ptr], ptr @vtable__local__main__Stringer__Name",
 		"@vtable__local__main__Stringer__Name",
 	} {
 		if !strings.Contains(text, want) {
@@ -180,7 +181,7 @@ fn main() void {
 		t.Fatalf("lower llvm: %v", err)
 	}
 	text := artifact.Text
-	if !strings.Contains(text, "declare void @ferret_global_print(...)") {
+	if !strings.Contains(text, "declare void @ferret_global_print(ptr)") {
 		t.Fatalf("expected declaration for prelude extern print call:\n%s", text)
 	}
 	if !strings.Contains(text, "call void @ferret_global_print(") {
@@ -300,8 +301,8 @@ fn main(items: []i32) usize {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"declare i64 @ferret_global_len(...)",
-		"call i64 @ferret_global_len(ptr byval({ ptr, i64 }) align 8 %items)",
+		"declare i64 @ferret_global_len(ptr)",
+		"call i64 @ferret_global_len(ptr %items)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

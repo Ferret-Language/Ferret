@@ -5,9 +5,9 @@
  * the tiny C runtime support library (ferret_runtime.c).  Backend lowering
  * must conform to this ABI when synthesising calls to runtime symbols.
  *
- * Rule: the runtime NEVER does type dispatch.  All interface/union/enum
- * dispatch is compiler-emitted static IR.  The runtime only handles
- * unrecoverable failure paths.
+ * Rule: the runtime keeps dynamic behavior minimal. Interface/union/enum
+ * method dispatch remains compiler-emitted static IR; the runtime only
+ * performs narrow Any-based helper dispatch such as `print`.
  *
  * Companion header
  * ----------------
@@ -27,16 +27,37 @@ extern "C" {
 #endif
 
 /* -------------------------------------------------------------------------
- * Type-info record emitted by the backend once per named type into .rodata.
- * Future use: typeof(), reflection, generic specialisation names.
+ * Type-info record emitted by the backend into .rodata and referenced by
+ * interface/Any vtables.
  * -------------------------------------------------------------------------*/
 typedef struct {
     ferret_type_id   id;
     const ferret_i8 *name;    /* null-terminated display name (C string)  */
     ferret_usize     size;    /* sizeof the type in bytes                 */
     ferret_usize     align;   /* alignof the type in bytes                */
-    ferret_u32       flags;   /* reserved, must be zero for now           */
+    ferret_u32       flags;   /* runtime classification bits              */
 } FerretTypeInfo;
+
+#define FERRET_TYPE_BOOL   1u
+#define FERRET_TYPE_I8     2u
+#define FERRET_TYPE_I16    3u
+#define FERRET_TYPE_I32    4u
+#define FERRET_TYPE_I64    5u
+#define FERRET_TYPE_ISIZE  6u
+#define FERRET_TYPE_U8     7u
+#define FERRET_TYPE_U16    8u
+#define FERRET_TYPE_U32    9u
+#define FERRET_TYPE_U64    10u
+#define FERRET_TYPE_USIZE  11u
+#define FERRET_TYPE_F32    12u
+#define FERRET_TYPE_F64    13u
+#define FERRET_TYPE_CHAR   14u
+#define FERRET_TYPE_STR    15u
+
+#define FERRET_TYPE_FLAG_POINTER   (1u << 0)
+#define FERRET_TYPE_FLAG_NAMED     (1u << 1)
+#define FERRET_TYPE_FLAG_INTERFACE (1u << 2)
+#define FERRET_TYPE_FLAG_SLICE     (1u << 3)
 
 /* `FerretAny` (declared in ferrettypes.h) is the stable ABI type for empty
  * interface values across C helpers and runtime-adjacent extern functions. */
