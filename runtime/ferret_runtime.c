@@ -4,9 +4,9 @@
  * Compiled and linked with every Ferret program.  Provides the small set of
  * primitives that cannot be written in pure Ferret:
  *
- *   global__panic          — `#[builtin] fn panic(msg str)` implementation
+ *   global__panic          — panic keyword implementation hook
  *   ferret__panic          — abort with a message (`panic <msg>` keyword)
- *   global__recover        — return current panic message as str, or empty str
+ *   ferret_global_recover  — return current panic message as str, or empty str
  *   ferret__interface_panic — abort on a bad interface downcast (stub)
  *
  * Everything else (malloc/free, I/O, string building) is accessed through
@@ -179,86 +179,49 @@ static ferret_usize ferret__utf8_encode(ferret_char codepoint, ferret_u8 out[4])
 }
 
 /* -------------------------------------------------------------------------
- * global__recover
+ * ferret_global_recover
  *
  * Stub — real implementation requires per-thread panic state storage, which
  * lands alongside the defer/recover pass.  For now returns an empty FerretStr.
  * -------------------------------------------------------------------------*/
-FerretStr global__recover(void) {
+FerretStr ferret_global_recover(void) {
     FerretStr empty = { (const ferret_u8 *)0, 0 };
     return empty;
 }
 
-void global__print_str(const FerretStr *s) {
-    if (s && s->ptr && s->len > 0) {
-        fwrite(s->ptr, 1, (size_t)s->len, stdout);
+void ferret_global_print(const FerretAny *value) {
+    if (value == NULL) {
+        fputs("<any:nil>\n", stdout);
+        fflush(stdout);
+        return;
     }
-    fputc('\n', stdout);
-    fflush(stdout);
-}
-
-void global__print_bool(ferret_bool value) {
-    fputs(value ? "true" : "false", stdout);
-    fputc('\n', stdout);
-    fflush(stdout);
-}
-
-void global__print_i64(ferret_i64 value) {
-    fprintf(stdout, "%lld\n", (long long)value);
-    fflush(stdout);
-}
-
-void global__print_u64(ferret_u64 value) {
-    fprintf(stdout, "%llu\n", (unsigned long long)value);
-    fflush(stdout);
-}
-
-void global__print_f64(ferret_f64 value) {
-    fprintf(stdout, "%.17g\n", (double)value);
-    fflush(stdout);
-}
-
-void global__print_char(ferret_char value) {
-    ferret_u8 out[4];
-    ferret_usize len = ferret__utf8_encode(value, out);
-    fwrite(out, 1, (size_t)len, stdout);
-    fputc('\n', stdout);
-    fflush(stdout);
-}
-
-void global__print_ptr(ferret_raw value) {
-    fprintf(stdout, "%p\n", value);
-    fflush(stdout);
-}
-
-void global__print_type(const ferret_i8 *type_name) {
-    fputc('<', stdout);
-    if (type_name != NULL) {
-        fputs((const char *)type_name, stdout);
-    }
-    fputs(">\n", stdout);
+    fprintf(stdout, "<any %p>\n", value->data);
     fflush(stdout);
 }
 
 /* -------------------------------------------------------------------------
- * global__str_data / global__str_len
+ * ferret_global_str_data / ferret_global_str_len
  *
  * Field accessors for the str fat-pointer.
  * The caller retains ownership of the str; these functions never free it.
  * -------------------------------------------------------------------------*/
-ferret_raw global__str_data(const FerretStr *s) {
+ferret_raw ferret_global_str_data(const FerretStr *s) {
     return s ? (ferret_raw)s->ptr : (ferret_raw)0;
 }
 
-ferret_usize global__str_len(const FerretStr *s) {
+ferret_usize ferret_global_str_len(const FerretStr *s) {
     return s ? s->len : 0;
 }
 
-ferret_usize global__slice_len(const FerretSlicePtr *s) {
+ferret_usize ferret_global_slice_len(const FerretSlicePtr *s) {
     return s ? s->len : 0;
 }
 
-FerretSliceU8 global__str_bytes(const FerretStr *s) {
+ferret_usize ferret_global_len(const FerretSlicePtr *s) {
+    return ferret_global_slice_len(s);
+}
+
+FerretSliceU8 ferret_global_str_bytes(const FerretStr *s) {
     FerretSliceU8 out = { (ferret_u8 *)0, 0 };
     if (s == NULL || s->ptr == NULL || s->len == 0) {
         return out;
@@ -274,7 +237,7 @@ FerretSliceU8 global__str_bytes(const FerretStr *s) {
     return out;
 }
 
-FerretStr global__bytes_str(const FerretSliceU8 *bytes) {
+FerretStr ferret_global_bytes_str(const FerretSliceU8 *bytes) {
     FerretStr out = { (const ferret_u8 *)0, 0 };
     if (bytes == NULL || bytes->ptr == NULL || bytes->len == 0) {
         return out;
@@ -290,7 +253,7 @@ FerretStr global__bytes_str(const FerretSliceU8 *bytes) {
     return out;
 }
 
-FerretSliceChar global__str_chars(const FerretStr *s) {
+FerretSliceChar ferret_global_str_chars(const FerretStr *s) {
     FerretSliceChar out = { (ferret_char *)0, 0 };
     if (s == NULL || s->ptr == NULL || s->len == 0) {
         return out;
@@ -321,7 +284,7 @@ FerretSliceChar global__str_chars(const FerretStr *s) {
     return out;
 }
 
-FerretStr global__chars_str(const FerretSliceChar *chars) {
+FerretStr ferret_global_chars_str(const FerretSliceChar *chars) {
     FerretStr out = { (const ferret_u8 *)0, 0 };
     if (chars == NULL || chars->ptr == NULL || chars->len == 0) {
         return out;
@@ -359,7 +322,7 @@ FerretStr global__chars_str(const FerretSliceChar *chars) {
     return out;
 }
 
-ferret_raw global__str_cstr(const FerretStr *s) {
+ferret_raw ferret_global_str_cstr(const FerretStr *s) {
     ferret_u8 *buf;
 
     if (s == NULL || s->ptr == NULL || s->len == 0) {
@@ -379,19 +342,19 @@ ferret_raw global__str_cstr(const FerretStr *s) {
     return (ferret_raw)buf;
 }
 
-FerretStr global__i64_str(ferret_i64 value) {
+FerretStr ferret_global_i64_str(ferret_i64 value) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%lld", (long long)value);
     return ferret__owned_str_from_cstr(buf);
 }
 
-FerretStr global__u64_str(ferret_u64 value) {
+FerretStr ferret_global_u64_str(ferret_u64 value) {
     char buf[32];
     snprintf(buf, sizeof(buf), "%llu", (unsigned long long)value);
     return ferret__owned_str_from_cstr(buf);
 }
 
-FerretStr global__f64_str(ferret_f64 value) {
+FerretStr ferret_global_f64_str(ferret_f64 value) {
     char buf[64];
     snprintf(buf, sizeof(buf), "%.17g", (double)value);
     return ferret__owned_str_from_cstr(buf);

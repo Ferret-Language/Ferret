@@ -274,7 +274,7 @@ fn main() usize {
 		t.Fatalf("lower llvm: %v", err)
 	}
 	text := artifact.Text
-	if !strings.Contains(text, "add i64 0, 3") {
+	if !strings.Contains(text, "ret i64 3") {
 		t.Fatalf("expected array len constant lowering in llvm output:\n%s", text)
 	}
 }
@@ -300,8 +300,8 @@ fn main(items: []i32) usize {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"declare i64 @ferret_global_slice_len",
-		"call i64 @ferret_global_slice_len(ptr %items)",
+		"declare i64 @ferret_global_len(...)",
+		"call i64 @ferret_global_len(ptr byval({ ptr, i64 }) align 8 %items)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

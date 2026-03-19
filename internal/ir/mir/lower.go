@@ -150,9 +150,8 @@ func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts 
 	lowerCtx := newLowerContext(fn.Source, bindings, globalConsts, importPath, lookupMethod)
 	out := &Function{
 		Name:       fn.Name,
-		LinkName:   lowerFunctionLinkName(fn.Source),
+		LinkName:   lowerFunctionLinkName(importPath, fn.Source),
 		IsUnsafe:   fn.Source.IsUnsafe,
-		IsBuiltin:  fn.Source.IsBuiltin,
 		IsExtern:   fn.Source.IsExtern,
 		ExternName: fn.Source.ExternName,
 		Result:     fn.Source.Result,
@@ -408,6 +407,9 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.PostfixExpr:
 		return &PostfixValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left), Op: e.Op}
 	case *hir.CallExpr:
+		if staticLen, ok := lowerStaticLenCallValue(lowerCtx, e); ok {
+			return staticLen
+		}
 		// Normalize method calls (instance.Method(...)) to direct function calls
 		// by prepending the receiver as the first argument, e.g. p.Len2() → Len2(p).
 		if sel, ok := e.Callee.(*hir.SelectorExpr); ok {
@@ -721,6 +723,46 @@ func (c *lowerContext) lookupResolution(source ast.Expr) (*binding.Resolution, b
 	return resolution, true
 }
 
+func lowerStaticLenCallValue(c *lowerContext, call *hir.CallExpr) (Value, bool) {
+	if call == nil || len(call.Args) != 1 {
+		return nil, false
+	}
+	if !lowerIsForeignLenCall(c, call.Callee) {
+		return nil, false
+	}
+	n, ok := lowerArrayLen(call.Args[0].Type())
+	if !ok {
+		return nil, false
+	}
+	return &NumberValue{
+		baseValue: baseValue{Location: call.Loc(), ExprType: call.Type()},
+		Value:     strconv.FormatInt(n, 10),
+	}, true
+}
+
+func lowerIsForeignLenCall(c *lowerContext, callee hir.Expr) bool {
+	if c == nil || callee == nil || callee.SourceExpr() == nil {
+		return false
+	}
+	resolution, ok := c.lookupResolution(callee.SourceExpr())
+	if !ok || resolution.Kind != binding.ResolutionSymbol || resolution.Symbol == nil {
+		return false
+	}
+	if resolution.Symbol.Name != "len" {
+		return false
+	}
+	fn, ok := resolution.Symbol.Node.(*ast.FuncDecl)
+	return ok && fn != nil && fn.IsExtern
+}
+
+func lowerArrayLen(typ typeinfo.Type) (int64, bool) {
+	arrayType, ok := typ.(*typeinfo.ArrayType)
+	if !ok || arrayType == nil {
+		return 0, false
+	}
+	return arrayType.Len, true
+}
+
 func lowerResolvedName(c *lowerContext, source ast.Expr, loc source.Location, typ typeinfo.Type) Value {
 	if c == nil || source == nil {
 		return nil
@@ -737,8 +779,8 @@ func lowerResolvedName(c *lowerContext, source ast.Expr, loc source.Location, ty
 		Path:      canonicalResolvedPath(c, resolution),
 	}
 	if fn, ok := resolution.Symbol.Node.(*ast.FuncDecl); ok {
-		if fn.IsExtern && fn.ExternName != "" {
-			out.LinkName = fn.ExternName
+		if fn.IsExtern {
+			out.LinkName = lowerResolvedExternLinkName(c, resolution, fn)
 		}
 	}
 	return out
@@ -1086,9 +1128,15 @@ func lowerMethodSymbolPath(c *lowerContext, named *typeinfo.NamedType, methodNam
 	return append(parts, leaf)
 }
 
-func lowerFunctionLinkName(fn *hir.Func) string {
+func lowerFunctionLinkName(importPath string, fn *hir.Func) string {
 	if fn == nil {
 		return ""
+	}
+	if fn.IsExtern {
+		if fn.ExternName != "" {
+			return fn.ExternName
+		}
+		return lowerExternLinkName(importPath, lowerExternOwnerNameHir(fn), fn.Name)
 	}
 	if fn.OwnerType != "" {
 		return lowerMethodLinkLeaf(fn.OwnerType, fn.Name)
@@ -1107,4 +1155,97 @@ func lowerMethodLinkLeaf(typeName, methodName string) string {
 		return methodName
 	}
 	return typeName + "__" + methodName
+}
+
+func lowerResolvedExternLinkName(c *lowerContext, resolution *binding.Resolution, fn *ast.FuncDecl) string {
+	if fn == nil {
+		return ""
+	}
+	if fn.ExternName != "" {
+		return fn.ExternName
+	}
+	importPath := ""
+	if resolution != nil {
+		importPath = resolution.ImportPath
+	}
+	if importPath == "" && c != nil {
+		importPath = c.importPath
+	}
+	return lowerExternLinkName(importPath, lowerExternOwnerNameAst(fn), fn.Name.Text())
+}
+
+func lowerExternOwnerNameHir(fn *hir.Func) string {
+	if fn == nil {
+		return ""
+	}
+	if fn.OwnerType != "" {
+		return fn.OwnerType
+	}
+	if fn.Receiver == nil {
+		return ""
+	}
+	if named := lowerReceiverNamed(fn.Receiver.Type); named != nil {
+		return named.Name
+	}
+	return ""
+}
+
+func lowerExternOwnerNameAst(fn *ast.FuncDecl) string {
+	if fn == nil {
+		return ""
+	}
+	if fn.OwnerType != nil && len(fn.OwnerType.Path) > 0 {
+		return fn.OwnerType.Path[len(fn.OwnerType.Path)-1]
+	}
+	if fn.Receiver == nil {
+		return ""
+	}
+	return lowerReceiverNamedTypeExpr(fn.Receiver.Type)
+}
+
+func lowerReceiverNamedTypeExpr(typ ast.TypeExpr) string {
+	switch t := typ.(type) {
+	case *ast.NamedType:
+		if len(t.Path) == 0 {
+			return ""
+		}
+		return t.Path[len(t.Path)-1]
+	case *ast.PointerType:
+		return lowerReceiverNamedTypeExpr(t.Inner)
+	case *ast.RefType:
+		return lowerReceiverNamedTypeExpr(t.Inner)
+	case *ast.RawPtrType:
+		return lowerReceiverNamedTypeExpr(t.Inner)
+	default:
+		return ""
+	}
+}
+
+func lowerExternLinkName(importPath, ownerName, funcName string) string {
+	var b strings.Builder
+	b.WriteString("ferret")
+	appendExternManglePart(&b, importPath)
+	appendExternManglePart(&b, ownerName)
+	appendExternManglePart(&b, funcName)
+	return b.String()
+}
+
+func appendExternManglePart(b *strings.Builder, s string) {
+	if b == nil || s == "" {
+		return
+	}
+	b.WriteByte('_')
+	lastUnderscore := false
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			lastUnderscore = false
+			continue
+		}
+		if !lastUnderscore {
+			b.WriteByte('_')
+			lastUnderscore = true
+		}
+	}
 }

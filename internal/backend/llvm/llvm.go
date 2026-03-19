@@ -2260,9 +2260,6 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 		}
 		return lowerConstructorCallDiscard(state, targetType, call, callee)
 	}
-	if isBuiltinLenCall(call) {
-		return lowerBuiltinLenCall(state, targetName, call)
-	}
 
 	// Inline builtins: string_ptr and string_len have been removed.
 	// String literals are now *i8 — no special callee interception needed.
@@ -2329,98 +2326,6 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 		return callText, nil
 	}
 	return fmt.Sprintf("%s = %s", llvmLocalName(targetName), callText), nil
-}
-
-func isBuiltinLenCall(call *mir.CallValue) bool {
-	if call == nil {
-		return false
-	}
-	callee, ok := call.Callee.(*mir.NameValue)
-	if !ok || callee == nil {
-		return false
-	}
-	if callee.LinkName == "global__len" {
-		return true
-	}
-	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "len"
-}
-
-func lowerBuiltinLenCall(state *moduleState, targetName string, call *mir.CallValue) (string, error) {
-	if call == nil || len(call.Args) != 1 {
-		return "", fmt.Errorf("builtin len expects exactly one argument")
-	}
-	if targetName == "" {
-		return "", nil
-	}
-	arg := call.Args[0]
-	if arg == nil {
-		return "", fmt.Errorf("builtin len argument is nil")
-	}
-	switch t := unwrapNamed(arg.Type()).(type) {
-	case *typeinfo.ArrayType:
-		return fmt.Sprintf("%s = add i64 0, %d", llvmLocalName(targetName), t.Len), nil
-	case *typeinfo.SliceType:
-		prefix, ptr, err := lowerAggregateValuePointer(state, arg)
-		if err != nil {
-			return "", err
-		}
-		callLine := fmt.Sprintf("%s = call i64 @ferret_global_slice_len(ptr %s)", llvmLocalName(targetName), ptr)
-		return joinLLVMLines(prefix, []string{callLine}), nil
-	default:
-		return "", fmt.Errorf("builtin len expects array or slice argument, got %s", arg.Type().String())
-	}
-}
-
-func lowerAggregateValuePointer(state *moduleState, value mir.Value) ([]string, string, error) {
-	if value == nil {
-		return nil, "", fmt.Errorf("nil aggregate value")
-	}
-	switch v := value.(type) {
-	case *mir.LocalValue:
-		if agg, ok := state.aggLocals[v.LocalID]; ok {
-			return nil, llvmLocalName(agg.PtrName), nil
-		}
-	case *mir.NameValue:
-		if v.LinkName != "" {
-			return nil, "@" + sanitizeIdent(v.LinkName), nil
-		}
-		return nil, "@" + llvmSymbol(state, v.Path), nil
-	}
-	if !isAggregateType(state, value.Type()) {
-		return nil, "", fmt.Errorf("value %T is not aggregate", value)
-	}
-	typeName, err := llvmABITypeName(state, value.Type())
-	if err != nil {
-		return nil, "", err
-	}
-	_, align, err := aggregateSizeAlign(state, value.Type())
-	if err != nil {
-		return nil, "", err
-	}
-	tmp := freshTemp(state, "print_agg")
-	agg := &aggregateLocal{PtrName: strings.TrimPrefix(tmp, "%"), Type: value.Type(), Align: align}
-	assign, err := lowerAggregateAssign(state, agg, value)
-	if err != nil {
-		return nil, "", err
-	}
-	lines := []string{fmt.Sprintf("%s = alloca %s, align %d", tmp, typeName, align)}
-	if assign != "" {
-		lines = append(lines, strings.Split(assign, "\n")...)
-	}
-	return lines, tmp, nil
-}
-
-func joinLLVMLines(lines ...[]string) string {
-	flat := make([]string, 0)
-	for _, group := range lines {
-		for _, line := range group {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			flat = append(flat, line)
-		}
-	}
-	return strings.Join(flat, "\n")
 }
 
 func lowerAggregateCall(state *moduleState, agg *aggregateLocal, callee, argsStr string) (string, error) {

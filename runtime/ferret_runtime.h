@@ -14,6 +14,7 @@
  *   ferrettypes.h — C mirrors of all Ferret types (primitives, str, optional,
  *                    error-union, union, enum, interface, typed slices).
  *                    Already included below; no need to include both.
+ *                    Includes `FerretAny` alias for empty-interface values.
  */
 
 #ifndef FERRET_RUNTIME_H
@@ -37,12 +38,15 @@ typedef struct {
     ferret_u32       flags;   /* reserved, must be zero for now           */
 } FerretTypeInfo;
 
+/* `FerretAny` (declared in ferrettypes.h) is the stable ABI type for empty
+ * interface values across C helpers and runtime-adjacent extern functions. */
+
 /* -------------------------------------------------------------------------
  * Panic / recover surface — called by compiler-emitted code and Ferret source.
  *
- *   global__panic           — `panic(msg str)` call from Ferret source
+ *   global__panic           — `panic(msg str)` keyword lowering hook
  *   ferret__panic           — compiler-internal panic with a C string
- *   ferret__recover         — `recover()` builtin
+ *   ferret_global_recover   — `recover()` extern from global.ferr
  *   ferret__interface_panic — bad interface downcast (stub, ABI frozen)
  * -------------------------------------------------------------------------*/
 
@@ -80,52 +84,47 @@ __attribute__((noreturn))
 void ferret__interface_panic(const ferret_i8 *expected_iface, const ferret_i8 *got_type);
 
 /*
- * global__recover — called by `recover()` expressions.
+ * ferret_global_recover — called by `recover()` expressions.
  *
  * Returns the current panic message as a FerretStr, or an empty FerretStr
  * (ptr=NULL, len=0) when called outside of a panic context.
  * Implemented in ferret_runtime.c.
  */
-FerretStr global__recover(void);
+FerretStr ferret_global_recover(void);
 
 /* -------------------------------------------------------------------------
- * Temporary generic print helpers.
- *
- * Compiler-emitted `print(x)` calls lower to one of these concrete helpers
- * based on the static type of `x`.
+ * Generic Any-based print entrypoint.
  * -------------------------------------------------------------------------*/
 
-void global__print_str(const FerretStr *s);
-void global__print_bool(ferret_bool value);
-void global__print_i64(ferret_i64 value);
-void global__print_u64(ferret_u64 value);
-void global__print_f64(ferret_f64 value);
-void global__print_char(ferret_char value);
-void global__print_ptr(ferret_raw value);
-void global__print_type(const ferret_i8 *type_name);
+void ferret_global_print(const FerretAny *value);
 
 /* -------------------------------------------------------------------------
  * str_data / str_len  — extract fields from a str fat-pointer.
  *
- * These back the #[builtin] fn str_data(s *str) *raw
- * and #[builtin] fn str_len(s *str) usize declarations in global.ferr.
+ * These back the #[extern] fn str_data(s *str) *raw
+ * and #[extern] fn str_len(s *str) usize declarations in global.ferr.
  *
  * Using them via a function call is safe; the caller keeps the str alive
  * for the duration of any use of the returned pointer.
  * -------------------------------------------------------------------------*/
 
-/* global__str_data — returns the data pointer of a str as *raw.
+/* ferret_global_str_data — returns the data pointer of a str as *raw.
  * Suitable for passing directly to POSIX write/read/memcpy etc.
  * Takes a reference (*str) so the fat-pointer is not copied. */
-ferret_raw global__str_data(const FerretStr *s);
+ferret_raw ferret_global_str_data(const FerretStr *s);
 
-/* global__str_len — returns the byte-length field of a str value.
+/* ferret_global_str_len — returns the byte-length field of a str value.
  * Takes a reference (*str) so the fat-pointer is not copied. */
-ferret_usize global__str_len(const FerretStr *s);
+ferret_usize ferret_global_str_len(const FerretStr *s);
 
-/* global__slice_len — returns the element count of a []T value.
+/* ferret_global_slice_len — returns the element count of a []T value.
  * The element type is erased at the C boundary. */
-ferret_usize global__slice_len(const FerretSlicePtr *s);
+ferret_usize ferret_global_slice_len(const FerretSlicePtr *s);
+
+/* ferret_global_len — default extern target for global::len.
+ * Currently this accepts the slice ABI and returns the element count.
+ * Array len is folded to constants during MIR lowering. */
+ferret_usize ferret_global_len(const FerretSlicePtr *s);
 
 /* -------------------------------------------------------------------------
  * Explicit string conversion helpers.
@@ -141,14 +140,14 @@ ferret_usize global__slice_len(const FerretSlicePtr *s);
  * them with the ordinary `free` extern when appropriate.
  * -------------------------------------------------------------------------*/
 
-FerretSliceU8 global__str_bytes(const FerretStr *s);
-FerretStr global__bytes_str(const FerretSliceU8 *bytes);
-FerretSliceChar global__str_chars(const FerretStr *s);
-FerretStr global__chars_str(const FerretSliceChar *chars);
-ferret_raw global__str_cstr(const FerretStr *s);
-FerretStr global__i64_str(ferret_i64 value);
-FerretStr global__u64_str(ferret_u64 value);
-FerretStr global__f64_str(ferret_f64 value);
+FerretSliceU8 ferret_global_str_bytes(const FerretStr *s);
+FerretStr ferret_global_bytes_str(const FerretSliceU8 *bytes);
+FerretSliceChar ferret_global_str_chars(const FerretStr *s);
+FerretStr ferret_global_chars_str(const FerretSliceChar *chars);
+ferret_raw ferret_global_str_cstr(const FerretStr *s);
+FerretStr ferret_global_i64_str(ferret_i64 value);
+FerretStr ferret_global_u64_str(ferret_u64 value);
+FerretStr ferret_global_f64_str(ferret_f64 value);
 
 /* -------------------------------------------------------------------------
  * std/os helpers

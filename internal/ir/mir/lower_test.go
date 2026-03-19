@@ -217,6 +217,52 @@ fn main() i32 {
 	t.Fatalf("expected normalized Bump call in MIR, got %#v", mainFn.Blocks)
 }
 
+func TestPipelineLowersArrayLenToStaticValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn main() usize {
+    let items: [_]i32 = [_]i32{1, 2, 3}
+    return len(items)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			compute, ok := instr.(*mir.ComputeInstr)
+			if !ok {
+				continue
+			}
+			call, ok := compute.Value.(*mir.CallValue)
+			if ok && hasCallNamed(call, "len") {
+				t.Fatalf("expected len(array) to be lowered without runtime call, got %#v", call)
+			}
+		}
+		if term, ok := block.Terminator.(*mir.ReturnTerm); ok {
+			if number, ok := term.Value.(*mir.NumberValue); ok && number.Value == "3" {
+				return
+			}
+		}
+	}
+	t.Fatalf("expected static len(array) return value, got:\n%s", mir.FormatModule(result.Entry.MIR))
+}
+
 func TestPipelineLowersInterfaceCoercionWithMutableReceiver(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `

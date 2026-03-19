@@ -110,7 +110,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 	}
 	written := 0
 	for _, fn := range unit.Module.Functions {
-		if fn == nil || fn.IsBuiltin || fn.IsExtern {
+		if fn == nil || fn.IsExtern {
 			continue
 		}
 		if written > 0 {
@@ -145,6 +145,9 @@ func SourceFS() fs.FS {
 func emitTypes(b *strings.Builder, state *moduleState, types []*mir.TypeDecl) error {
 	// Always emit the built-in slice aggregate type used for str.
 	b.WriteString("type :__ferret_slice = { l, l }\n")
+	// Canonical interface aggregate shape used for named interfaces without
+	// imported layout metadata (e.g. prelude Any).
+	b.WriteString("type :__ferret_iface = { l, l }\n")
 	seen := make(map[string]struct{})
 	lines := make([]string, 0)
 	emitDecls := func(decls []*mir.TypeDecl) error {
@@ -711,12 +714,6 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 		}
 		return lowerConstructorCallDiscard(state, targetType, call, callee)
 	}
-	if isBuiltinPrintCall(call) {
-		return lowerBuiltinPrintCall(state, call)
-	}
-	if isBuiltinLenCall(call) {
-		return lowerBuiltinLenCall(state, targetName, call)
-	}
 	args := make([]string, 0, len(call.Args))
 	for _, arg := range call.Args {
 		if isAggregateType(state, arg.Type()) {
@@ -759,89 +756,6 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	return fmt.Sprintf("%s =%s %s", qbeLocalName(targetName), qtype, callText), nil
 }
 
-func isBuiltinPrintCall(call *mir.CallValue) bool {
-	if call == nil {
-		return false
-	}
-	callee, ok := call.Callee.(*mir.NameValue)
-	if !ok || callee == nil {
-		return false
-	}
-	if callee.LinkName == "global__print" {
-		return true
-	}
-	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "print"
-}
-
-func isBuiltinLenCall(call *mir.CallValue) bool {
-	if call == nil {
-		return false
-	}
-	callee, ok := call.Callee.(*mir.NameValue)
-	if !ok || callee == nil {
-		return false
-	}
-	if callee.LinkName == "global__len" {
-		return true
-	}
-	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "len"
-}
-
-func lowerBuiltinLenCall(state *moduleState, targetName string, call *mir.CallValue) (string, error) {
-	if call == nil || len(call.Args) != 1 {
-		return "", fmt.Errorf("builtin len expects exactly one argument")
-	}
-	if targetName == "" {
-		return "", nil
-	}
-	arg := call.Args[0]
-	if arg == nil {
-		return "", fmt.Errorf("builtin len argument is nil")
-	}
-	switch t := unwrapNamed(arg.Type()).(type) {
-	case *typeinfo.ArrayType:
-		return fmt.Sprintf("%s =l copy %d", qbeLocalName(targetName), t.Len), nil
-	case *typeinfo.SliceType:
-		prefix, ptr, err := lowerAggregateValuePointer(state, arg)
-		if err != nil {
-			return "", err
-		}
-		callLine := fmt.Sprintf("%s =l call $global__slice_len(l %s)", qbeLocalName(targetName), ptr)
-		return joinQBELines(prefix, []string{callLine}), nil
-	default:
-		return "", fmt.Errorf("builtin len expects array or slice argument, got %s", arg.Type().String())
-	}
-}
-
-func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, error) {
-	if call == nil || len(call.Args) != 1 {
-		return "", fmt.Errorf("builtin print expects exactly one argument")
-	}
-	arg := call.Args[0]
-	if arg == nil {
-		return "", fmt.Errorf("builtin print argument is nil")
-	}
-	if _, ok := arg.Type().(*typeinfo.StringType); ok {
-		prefix, ptr, err := lowerAggregateValuePointer(state, arg)
-		if err != nil {
-			return "", err
-		}
-		return joinQBELines(prefix, []string{fmt.Sprintf("call $global__print_str(l %s)", ptr)}), nil
-	}
-	if builtin, ok := arg.Type().(*typeinfo.BuiltinType); ok {
-		return lowerBuiltinPrintPrimitive(state, arg, builtin.Name)
-	}
-	if qbeIsPointerLike(arg.Type()) {
-		val, err := lowerValue(state, arg)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("call $global__print_ptr(l %s)", val), nil
-	}
-	sym := emitQBEStringConstant(state, arg.Type().String())
-	return fmt.Sprintf("call $global__print_type(l $%s)", sym), nil
-}
-
 func qbePointerInner(t typeinfo.Type) (typeinfo.Type, bool) {
 	switch pt := unwrapNamed(t).(type) {
 	case *typeinfo.PointerType:
@@ -858,59 +772,6 @@ func qbePointerInner(t typeinfo.Type) (typeinfo.Type, bool) {
 func qbeIsPointerLike(t typeinfo.Type) bool {
 	_, ok := qbePointerInner(t)
 	return ok
-}
-
-func lowerBuiltinPrintPrimitive(state *moduleState, arg mir.Value, name string) (string, error) {
-	val, err := lowerValue(state, arg)
-	if err != nil {
-		return "", err
-	}
-	switch name {
-	case "bool":
-		return fmt.Sprintf("call $global__print_bool(w %s)", val), nil
-	case "i8", "i16", "i32", "i64", "isize":
-		return lowerBuiltinPrintIntCast(state, val, name, "i64", "$global__print_i64")
-	case "u8", "u16", "u32", "u64", "usize":
-		return lowerBuiltinPrintIntCast(state, val, name, "u64", "$global__print_u64")
-	case "f32", "f64":
-		return lowerBuiltinPrintFloatCast(state, val, name)
-	case "char":
-		return fmt.Sprintf("call $global__print_char(w %s)", val), nil
-	default:
-		sym := emitQBEStringConstant(state, arg.Type().String())
-		return fmt.Sprintf("call $global__print_type(l $%s)", sym), nil
-	}
-}
-
-func lowerBuiltinPrintIntCast(state *moduleState, value, srcName, dstName, callee string) (string, error) {
-	dstType := "l"
-	if srcName == dstName {
-		return fmt.Sprintf("call %s(%s %s)", callee, dstType, value), nil
-	}
-	op, ok := qbeIntCastOp(srcName, dstName)
-	if !ok {
-		return "", fmt.Errorf("unsupported print integer cast from %s to %s", srcName, dstName)
-	}
-	tmp := freshTemp(state, "print")
-	return joinQBELines([]string{
-		fmt.Sprintf("%s =l %s %s", tmp, op, value),
-		fmt.Sprintf("call %s(l %s)", callee, tmp),
-	}), nil
-}
-
-func lowerBuiltinPrintFloatCast(state *moduleState, value, srcName string) (string, error) {
-	if srcName == "f64" {
-		return fmt.Sprintf("call $global__print_f64(d %s)", value), nil
-	}
-	op, ok := qbeFloatCastOp(srcName, "f64")
-	if !ok {
-		return "", fmt.Errorf("unsupported print float cast from %s to f64", srcName)
-	}
-	tmp := freshTemp(state, "print")
-	return joinQBELines([]string{
-		fmt.Sprintf("%s =d %s %s", tmp, op, value),
-		fmt.Sprintf("call $global__print_f64(d %s)", tmp),
-	}), nil
 }
 
 func lowerAggregateValuePointer(state *moduleState, value mir.Value) ([]string, string, error) {
@@ -1583,9 +1444,6 @@ func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Typ
 
 func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concreteType typeinfo.Type) ([]string, string, error) {
 	switch v := value.(type) {
-	case *mir.LocalValue, *mir.NameValue:
-		ptr, err := lowerAddrOf(state, &mir.AddrOfValue{Source: value})
-		return nil, ptr, err
 	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
 			return lowerInterfaceConcretePointer(state, v.Right, concreteType)
@@ -1832,6 +1690,11 @@ func lookupInterfaceDecl(state *moduleState, typ typeinfo.Type) (*mir.InterfaceT
 	named, ok := typ.(*typeinfo.NamedType)
 	if !ok || named == nil {
 		return nil, nil, fmt.Errorf("interface type must be named")
+	}
+	if named.Decl != nil {
+		if ifaceDecl, ok := named.Decl.Type.(*ast.InterfaceType); ok && ifaceDecl != nil && len(ifaceDecl.Methods) == 0 {
+			return &mir.InterfaceTypeDecl{Methods: nil}, named, nil
+		}
 	}
 	var mod *mir.Module
 	if state.modules != nil {
@@ -2975,27 +2838,27 @@ func lowerStringCast(state *moduleState, value mir.Value) (string, error) {
 	switch srcBuiltin.Name {
 	case "i8", "i16", "i32":
 		op, _ := qbeIntCastOp(srcBuiltin.Name, "i64")
-		return fmt.Sprintf("call $global__i64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
+		return fmt.Sprintf("call $ferret_global_i64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
 	case "i64", "isize":
 		if srcBuiltin.Name == "isize" {
 			op, _ := qbeIntCastOp(srcBuiltin.Name, "i64")
-			return fmt.Sprintf("call $global__i64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
+			return fmt.Sprintf("call $ferret_global_i64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
 		}
-		return fmt.Sprintf("call $global__i64_str(l %s)", srcVal), nil
+		return fmt.Sprintf("call $ferret_global_i64_str(l %s)", srcVal), nil
 	case "u8", "u16", "u32", "bool", "char":
 		op, _ := qbeIntCastOp(srcBuiltin.Name, "u64")
-		return fmt.Sprintf("call $global__u64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
+		return fmt.Sprintf("call $ferret_global_u64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
 	case "u64", "usize":
 		if srcBuiltin.Name == "usize" {
 			op, _ := qbeIntCastOp(srcBuiltin.Name, "u64")
-			return fmt.Sprintf("call $global__u64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
+			return fmt.Sprintf("call $ferret_global_u64_str(l %s)", qbeOperandWithTemp(state, "l", joinQBEValue(op, srcVal))), nil
 		}
-		return fmt.Sprintf("call $global__u64_str(l %s)", srcVal), nil
+		return fmt.Sprintf("call $ferret_global_u64_str(l %s)", srcVal), nil
 	case "f32":
 		op, _ := qbeFloatCastOp("f32", "f64")
-		return fmt.Sprintf("call $global__f64_str(d %s)", qbeOperandWithTemp(state, "d", joinQBEValue(op, srcVal))), nil
+		return fmt.Sprintf("call $ferret_global_f64_str(d %s)", qbeOperandWithTemp(state, "d", joinQBEValue(op, srcVal))), nil
 	case "f64":
-		return fmt.Sprintf("call $global__f64_str(d %s)", srcVal), nil
+		return fmt.Sprintf("call $ferret_global_f64_str(d %s)", srcVal), nil
 	default:
 		return "", fmt.Errorf("unsupported string cast source %s", srcBuiltin.Name)
 	}
@@ -3139,6 +3002,9 @@ func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, er
 		}
 		return info.Size, info.Align, nil
 	case *typeinfo.NamedType:
+		if namedIsInterface(t) {
+			return 16, 8, nil
+		}
 		info, err := lookupNamedLayout(state, t)
 		if err != nil {
 			return 0, 0, err
@@ -3227,6 +3093,9 @@ func qbeAggregateSubType(state *moduleState, typ typeinfo.Type) (string, error) 
 		if err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named) || namedIsInterface(named)) {
 			return ":" + qbeTypeName(state, named), nil
 		}
+		if namedIsInterface(named) {
+			return ":__ferret_iface", nil
+		}
 	}
 	if opt, ok := typ.(*typeinfo.OptionalType); ok {
 		if !optionalUsesNiche(opt.Inner) {
@@ -3295,6 +3164,9 @@ func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
 	case *typeinfo.NamedType:
 		if info, err := lookupNamedLayout(state, t); err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(t) || namedIsInterface(t)) {
 			return ":" + qbeTypeName(state, t), nil
+		}
+		if namedIsInterface(t) {
+			return ":__ferret_iface", nil
 		}
 	case *typeinfo.OptionalType:
 		if !optionalUsesNiche(t.Inner) {

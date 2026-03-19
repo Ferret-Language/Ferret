@@ -277,7 +277,7 @@ fn main() usize {
 		t.Fatalf("lower qbe: %v", err)
 	}
 	text := artifact.Text
-	if !strings.Contains(text, "=l copy 3") {
+	if !strings.Contains(text, "ret 3") {
 		t.Fatalf("expected array len constant lowering in qbe output:\n%s", text)
 	}
 }
@@ -302,7 +302,7 @@ fn main(items: []i32) usize {
 		t.Fatalf("lower qbe: %v", err)
 	}
 	text := artifact.Text
-	if !strings.Contains(text, "call $global__slice_len(l %items)") {
+	if !strings.Contains(text, "call $ferret_global_len(l %items)") {
 		t.Fatalf("expected slice len runtime call in qbe output:\n%s", text)
 	}
 }
@@ -355,6 +355,36 @@ fn main() i32 {
 	}
 	if !strings.Contains(artifact.Text, "call $ferret_math_abs_i32(w -1)") {
 		t.Fatalf("expected extern link symbol in qbe output:\n%s", artifact.Text)
+	}
+}
+
+func TestLowerDefaultExternFunctionCallToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `
+#[extern]
+fn Println(text: str) void;
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+import "std/io"
+
+fn main() void {
+    io::Println("hello")
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	if !strings.Contains(artifact.Text, "call $ferret_std_io_Println(") {
+		t.Fatalf("expected default-mangled extern link symbol in qbe output:\n%s", artifact.Text)
 	}
 }
 
@@ -424,8 +454,8 @@ fn main() void {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"call $global__i64_str",
-		"call $global__print_str",
+		"call $ferret_global_i64_str",
+		"call $ferret_global_print(",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)
@@ -502,7 +532,7 @@ fn main() i32 {
 		"%a_slot =l alloc4 4",
 		"storew %_asgn1, %a_slot",
 		"%p =l copy %a_slot",
-		"call $global__print_ptr(l %p)",
+		"call $ferret_global_print(",
 		"ret 0",
 	} {
 		if !strings.Contains(text, want) {
