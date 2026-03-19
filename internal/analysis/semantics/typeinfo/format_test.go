@@ -69,3 +69,17 @@ func TestFuncTypeStringUsesCanonicalFormatter(t *testing.T) {
 		t.Fatalf("unexpected canonical func type string:\nwant: %q\ngot:  %q", want, got)
 	}
 }
+
+func TestFormatMethodSignatureIncludesSelf(t *testing.T) {
+	receiver := &RefType{Mutable: true, Inner: &NamedType{Name: "Point"}}
+	fn := &FuncType{
+		Params: []ParamSpec{{Type: &BuiltinType{Name: "i32"}}},
+		Result: &BuiltinType{Name: "void"},
+	}
+
+	got := FormatMethodSignature("Point::Calc", receiver, fn)
+	want := "fn Point::Calc(&mut self, i32) void"
+	if got != want {
+		t.Fatalf("unexpected method signature:\nwant: %q\ngot:  %q", want, got)
+	}
+}

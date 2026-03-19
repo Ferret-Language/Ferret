@@ -15,8 +15,8 @@ Current focus: remove duplicated formatting and signature-rendering code before 
 
 ## Validation
 
-- [ ] add focused regression tests for any extracted shared formatter so hover, AST signatures, and semantic signatures stay in sync
-- [ ] re-run full compiler, LSP, and backend tests after each cleanup slice
+- [*] add focused regression tests for any extracted shared formatter so hover, AST signatures, and semantic signatures stay in sync
+- [*] re-run full compiler, LSP, and backend tests after each cleanup slice
 
 ## Structured Semantic Keys
 
