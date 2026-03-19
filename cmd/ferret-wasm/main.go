@@ -12,7 +12,7 @@ import (
 	"syscall/js"
 
 	"compiler/internal/core/diagnostics"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
@@ -265,7 +265,7 @@ func emitMinimalMainWasm(mods []*ast.Module, diag *diagnostics.Bag) ([]byte, err
 	if fn.Receiver != nil {
 		addUnsupported(diag, fn, "method receivers are not supported for bridge entrypoint", "WASM0003")
 	}
-	if fn.IsExtern || fn.IsBuiltin || fn.Body == nil {
+	if fn.IsExtern || fn.Body == nil {
 		addUnsupported(diag, fn, "entry function 'main' must have a body", "WASM0004")
 	}
 	if len(fn.Params) != 0 {
