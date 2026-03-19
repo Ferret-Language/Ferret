@@ -7,14 +7,20 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
+	"compiler/internal/analysis/semantics/symbols"
+	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/source"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/frontend/lexer"
 	"compiler/internal/frontend/parser"
 	"compiler/internal/tokens"
@@ -30,6 +36,9 @@ var (
 	}
 	parseSource = func(path string, toks []tokens.Token, diag *diagnostics.Bag) {
 		_ = parser.Parse(path, toks, diag)
+	}
+	parseProject = func(path string) compiler.Result {
+		return compiler.ParsePath(path)
 	}
 )
 
@@ -79,6 +88,11 @@ type didCloseParams struct {
 	TextDocument textDocumentIdentifier `json:"textDocument"`
 }
 
+type hoverParams struct {
+	TextDocument textDocumentIdentifier `json:"textDocument"`
+	Position     lspPosition            `json:"position"`
+}
+
 type textDocumentIdentifier struct {
 	URI string `json:"uri"`
 }
@@ -123,9 +137,26 @@ type lspPosition struct {
 	Character int `json:"character"`
 }
 
+type markupContent struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+type hoverResult struct {
+	Contents markupContent `json:"contents"`
+	Range    *lspRange     `json:"range,omitempty"`
+}
+
 type openDocument struct {
 	Version int
 	Text    string
+}
+
+type hoverCacheEntry struct {
+	Mode      string
+	Version   int
+	FileStamp string
+	Index     *hoverIndex
 }
 
 type Server struct {
@@ -137,13 +168,15 @@ type Server struct {
 	isShuttingDown bool
 	shouldExit     bool
 	documents      map[string]openDocument
+	hoverCache     map[string]hoverCacheEntry
 }
 
 func Run(stdin io.Reader, stdout io.Writer) error {
 	s := &Server{
-		in:        bufio.NewReader(stdin),
-		out:       stdout,
-		documents: make(map[string]openDocument),
+		in:         bufio.NewReader(stdin),
+		out:        stdout,
+		documents:  make(map[string]openDocument),
+		hoverCache: make(map[string]hoverCacheEntry),
 	}
 	return s.serve()
 }
@@ -210,6 +243,8 @@ func (s *Server) handleRequest(req rpcRequest) {
 		s.handleDidSave(req.Params)
 	case "textDocument/didClose":
 		s.handleDidClose(req.Params)
+	case "textDocument/hover":
+		s.handleHover(req)
 	default:
 		if len(req.ID) > 0 {
 			s.writeError(req.ID, -32601, "method not found")
@@ -234,6 +269,7 @@ func (s *Server) handleInitialize(req rpcRequest) {
 					"includeText": true,
 				},
 			},
+			"hoverProvider": true,
 		},
 		"serverInfo": map[string]any{
 			"name":    "ferret-lsp",
@@ -250,7 +286,13 @@ func (s *Server) handleDidOpen(raw json.RawMessage) {
 	}
 	uri := params.TextDocument.URI
 	s.mu.Lock()
+	if s.documents == nil {
+		s.documents = make(map[string]openDocument)
+	}
 	s.documents[uri] = openDocument{Version: params.TextDocument.Version, Text: params.TextDocument.Text}
+	if s.hoverCache != nil {
+		delete(s.hoverCache, uri)
+	}
 	s.mu.Unlock()
 
 	path, err := uriToPath(uri)
@@ -274,7 +316,13 @@ func (s *Server) handleDidChange(raw json.RawMessage) {
 	uri := params.TextDocument.URI
 
 	s.mu.Lock()
+	if s.documents == nil {
+		s.documents = make(map[string]openDocument)
+	}
 	s.documents[uri] = openDocument{Version: params.TextDocument.Version, Text: text}
+	if s.hoverCache != nil {
+		delete(s.hoverCache, uri)
+	}
 	s.mu.Unlock()
 
 	path, err := uriToPath(uri)
@@ -315,9 +363,46 @@ func (s *Server) handleDidClose(raw json.RawMessage) {
 
 	s.mu.Lock()
 	delete(s.documents, params.TextDocument.URI)
+	if s.hoverCache != nil {
+		delete(s.hoverCache, params.TextDocument.URI)
+	}
 	s.mu.Unlock()
 
 	s.publishDiagnostics(params.TextDocument.URI, nil, nil)
+}
+
+func (s *Server) handleHover(req rpcRequest) {
+	if len(req.ID) == 0 {
+		return
+	}
+	params := hoverParams{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		s.writeResponse(req.ID, nil)
+		return
+	}
+	path, err := uriToPath(params.TextDocument.URI)
+	if err != nil || !isFerretSourcePath(path) {
+		s.writeResponse(req.ID, nil)
+		return
+	}
+	pos := source.Position{
+		Line:   params.Position.Line + 1,
+		Column: params.Position.Character + 1,
+	}
+	doc, hasDoc := s.documentState(params.TextDocument.URI)
+	index := s.getOrBuildHoverIndex(params.TextDocument.URI, path, doc, hasDoc)
+	hover := hoverFromIndex(index, pos)
+	s.writeResponse(req.ID, hover)
+}
+
+func (s *Server) documentState(uri string) (openDocument, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, ok := s.documents[uri]
+	if !ok {
+		return openDocument{}, false
+	}
+	return doc, true
 }
 
 func (s *Server) publishSyntaxDiagnostics(uri string, version int, text string) {
@@ -448,6 +533,567 @@ func isFerretSourcePath(path string) bool {
 		return false
 	}
 	return strings.EqualFold(filepath.Ext(path), compiler.FerretSourceExt)
+}
+
+type hoverCandidate struct {
+	markdown string
+	location source.Location
+	span     int
+	priority int
+}
+
+type hoverIndex struct {
+	candidates []hoverCandidate
+}
+
+func (s *Server) getOrBuildHoverIndex(uri, path string, doc openDocument, hasDoc bool) *hoverIndex {
+	if hasDoc {
+		s.mu.Lock()
+		if s.hoverCache == nil {
+			s.hoverCache = make(map[string]hoverCacheEntry)
+		}
+		if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "doc" && entry.Version == doc.Version && entry.Index != nil {
+			index := entry.Index
+			s.mu.Unlock()
+			return index
+		}
+		s.mu.Unlock()
+
+		index := buildHoverIndex(path, doc.Text, true)
+
+		s.mu.Lock()
+		if s.hoverCache == nil {
+			s.hoverCache = make(map[string]hoverCacheEntry)
+		}
+		s.hoverCache[uri] = hoverCacheEntry{
+			Mode:    "doc",
+			Version: doc.Version,
+			Index:   index,
+		}
+		s.mu.Unlock()
+		return index
+	}
+
+	stamp := fileStamp(path)
+
+	s.mu.Lock()
+	if s.hoverCache == nil {
+		s.hoverCache = make(map[string]hoverCacheEntry)
+	}
+	if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "file" && entry.FileStamp == stamp && entry.Index != nil {
+		index := entry.Index
+		s.mu.Unlock()
+		return index
+	}
+	s.mu.Unlock()
+
+	index := buildHoverIndex(path, "", false)
+
+	s.mu.Lock()
+	if s.hoverCache == nil {
+		s.hoverCache = make(map[string]hoverCacheEntry)
+	}
+	s.hoverCache[uri] = hoverCacheEntry{
+		Mode:      "file",
+		FileStamp: stamp,
+		Index:     index,
+	}
+	s.mu.Unlock()
+	return index
+}
+
+func fileStamp(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
+}
+
+func hoverFromIndex(index *hoverIndex, pos source.Position) *hoverResult {
+	if index == nil {
+		return nil
+	}
+	candidate, ok := findBestHoverCandidate(index, pos)
+	if !ok {
+		return nil
+	}
+	rng := locationToLSPRange(candidate.location)
+	return &hoverResult{
+		Contents: markupContent{
+			Kind:  "markdown",
+			Value: candidate.markdown,
+		},
+		Range: &rng,
+	}
+}
+
+func buildHoverIndex(path, text string, hasText bool) *hoverIndex {
+	result, parsedPath, cleanup := parseForHover(path, text, hasText)
+	defer cleanup()
+
+	mod := findModuleByPath(result, parsedPath)
+	if mod == nil || mod.Types == nil {
+		return &hoverIndex{}
+	}
+	modules := indexModulesByKey(result)
+	return &hoverIndex{candidates: collectHoverCandidates(mod, mod.Types, modules)}
+}
+
+func indexModulesByKey(result compiler.Result) map[string]*context.Module {
+	out := make(map[string]*context.Module)
+	if result.Entry != nil && result.Entry.Key != "" {
+		out[result.Entry.Key] = result.Entry
+	}
+	for _, mod := range result.Modules {
+		if mod == nil || mod.Key == "" {
+			continue
+		}
+		out[mod.Key] = mod
+	}
+	return out
+}
+
+func parseForHover(path, text string, hasText bool) (compiler.Result, string, func()) {
+	if !hasText {
+		return parseProject(path), path, func() {}
+	}
+	tempPath, err := writeHoverOverlay(path, text)
+	if err != nil {
+		return parseProject(path), path, func() {}
+	}
+	cleanup := func() { _ = os.Remove(tempPath) }
+	return parseProject(tempPath), tempPath, cleanup
+}
+
+func writeHoverOverlay(originalPath, text string) (string, error) {
+	dir := filepath.Dir(originalPath)
+	file, err := os.CreateTemp(dir, ".ferret-lsp-hover-*.ferr")
+	if err != nil {
+		return "", err
+	}
+	tempPath := file.Name()
+	if _, err := file.WriteString(text); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tempPath)
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tempPath)
+		return "", err
+	}
+	return tempPath, nil
+}
+
+func findModuleByPath(result compiler.Result, parsedPath string) *context.Module {
+	absTarget, err := filepath.Abs(parsedPath)
+	if err != nil {
+		absTarget = parsedPath
+	}
+	absTarget = filepath.Clean(absTarget)
+
+	if result.Entry != nil && sameFilePath(result.Entry.FilePath, absTarget) {
+		return result.Entry
+	}
+	for _, mod := range result.Modules {
+		if mod != nil && sameFilePath(mod.FilePath, absTarget) {
+			return mod
+		}
+	}
+	return result.Entry
+}
+
+func sameFilePath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	absA, err := filepath.Abs(a)
+	if err != nil {
+		absA = a
+	}
+	absB, err := filepath.Abs(b)
+	if err != nil {
+		absB = b
+	}
+	return filepath.Clean(absA) == filepath.Clean(absB)
+}
+
+func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module) []hoverCandidate {
+	if info == nil {
+		return nil
+	}
+	out := make([]hoverCandidate, 0, len(info.Nodes)+len(info.Symbols))
+	collect := func(markdown string, loc source.Location, priority int) {
+		if markdown == "" || loc.Start == nil {
+			return
+		}
+		out = append(out, hoverCandidate{
+			markdown: markdown,
+			location: loc,
+			span:     locationSpan(loc),
+			priority: priority,
+		})
+	}
+	for node, typ := range info.Nodes {
+		if node == nil {
+			continue
+		}
+		collect(renderNodeHoverMarkdown(node, typ, mod, info, modulesByKey), node.Loc(), 1)
+	}
+	for sym, typ := range info.Symbols {
+		if sym == nil {
+			continue
+		}
+		collect(renderSymbolHoverMarkdown(sym, typ, mod, modulesByKey), sym.Location, 0)
+	}
+	return out
+}
+
+func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module) string {
+	if typ == nil {
+		return ""
+	}
+	if selector, ok := node.(*ast.SelectorExpr); ok {
+		if fnType, ok := typ.(*typeinfo.FuncType); ok {
+			receiver := ""
+			if info != nil && selector.Left != nil {
+				if leftType, ok := info.Nodes[selector.Left]; ok {
+					receiver = typeinfo.FormatType(leftType)
+				}
+			}
+			name := selector.Name.Text()
+			if receiver != "" {
+				name = receiver + "::" + name
+			}
+			return asFerretCodeBlock(typeinfo.FormatFuncSignature(name, fnType))
+		}
+	}
+	return renderTypeHoverMarkdown(typ, mod, modulesByKey)
+}
+
+func renderSymbolHoverMarkdown(sym *symbols.Symbol, typ typeinfo.Type, mod *context.Module, modulesByKey map[string]*context.Module) string {
+	if sym == nil {
+		return renderTypeHoverMarkdown(typ, mod, modulesByKey)
+	}
+	switch sym.Kind {
+	case symbols.SymbolFunc, symbols.SymbolMethod:
+		if fn, ok := sym.Node.(*ast.FuncDecl); ok {
+			return asFerretCodeBlock(fn.Signature())
+		}
+		if fnType, ok := typ.(*typeinfo.FuncType); ok {
+			return asFerretCodeBlock(typeinfo.FormatFuncSignature(sym.Name, fnType))
+		}
+	case symbols.SymbolType:
+		if named, ok := typ.(*typeinfo.NamedType); ok {
+			return renderNamedTypeMarkdown(named, mod, modulesByKey)
+		}
+		if decl, ok := sym.Node.(*ast.TypeDecl); ok && decl != nil {
+			named := &typeinfo.NamedType{Name: sym.Name, Decl: decl}
+			if mod != nil {
+				named.ModuleKey = mod.Key
+			}
+			return renderNamedTypeMarkdown(named, mod, modulesByKey)
+		}
+	}
+	return renderTypeHoverMarkdown(typ, mod, modulesByKey)
+}
+
+func renderTypeHoverMarkdown(typ typeinfo.Type, mod *context.Module, modulesByKey map[string]*context.Module) string {
+	if typ == nil {
+		return ""
+	}
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		return renderNamedTypeMarkdown(t, mod, modulesByKey)
+	default:
+		rendered := typeinfo.FormatType(typ)
+		switch rendered {
+		case "", "<unknown>", "<invalid>":
+			rendered = ""
+		}
+		if named := underlyingNamedType(typ); named != nil {
+			details := renderNamedTypeMarkdown(named, mod, modulesByKey)
+			if rendered == "" {
+				return details
+			}
+			if details == "" {
+				return asFerretCodeBlock(rendered)
+			}
+			return asFerretCodeBlock(rendered) + "\n\n" + details
+		}
+		if rendered == "" {
+			return ""
+		}
+		return asFerretCodeBlock(rendered)
+	}
+}
+
+func underlyingNamedType(typ typeinfo.Type) *typeinfo.NamedType {
+	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		return t
+	case *typeinfo.RefType:
+		return underlyingNamedType(t.Inner)
+	case *typeinfo.PointerType:
+		return underlyingNamedType(t.Inner)
+	case *typeinfo.RawPtrType:
+		return underlyingNamedType(t.Inner)
+	case *typeinfo.OptionalType:
+		return underlyingNamedType(t.Inner)
+	case *typeinfo.ArrayType:
+		return underlyingNamedType(t.Inner)
+	case *typeinfo.SliceType:
+		return underlyingNamedType(t.Inner)
+	case *typeinfo.ErrorUnionType:
+		if named := underlyingNamedType(t.Value); named != nil {
+			return named
+		}
+		return underlyingNamedType(t.Error)
+	default:
+		return nil
+	}
+}
+
+func renderNamedTypeMarkdown(named *typeinfo.NamedType, mod *context.Module, modulesByKey map[string]*context.Module) string {
+	if named == nil {
+		return ""
+	}
+	owner := moduleForNamedType(named, mod, modulesByKey)
+	decl := named.Decl
+	if decl == nil {
+		decl = findTypeDecl(owner, named.Name)
+	}
+	if decl == nil {
+		return asFerretCodeBlock("type " + named.Name)
+	}
+
+	var b strings.Builder
+	b.WriteString(asFerretCodeBlock(decl.Text()))
+
+	instanceMethods, staticMethods := collectTypeMethodSignatures(owner, named.Name)
+	if len(instanceMethods) > 0 {
+		b.WriteString("\n\nInstance methods:\n")
+		b.WriteString(asFerretCodeBlock(strings.Join(instanceMethods, "\n")))
+	}
+	if len(staticMethods) > 0 {
+		b.WriteString("\n\nStatic methods:\n")
+		b.WriteString(asFerretCodeBlock(strings.Join(staticMethods, "\n")))
+	}
+	return b.String()
+}
+
+func moduleForNamedType(named *typeinfo.NamedType, fallback *context.Module, modulesByKey map[string]*context.Module) *context.Module {
+	if named != nil && named.ModuleKey != "" && modulesByKey != nil {
+		if owner, ok := modulesByKey[named.ModuleKey]; ok && owner != nil {
+			return owner
+		}
+	}
+	return fallback
+}
+
+func findTypeDecl(mod *context.Module, typeName string) *ast.TypeDecl {
+	if mod == nil || mod.AST == nil {
+		return nil
+	}
+	for _, decl := range mod.AST.Decls {
+		typeDecl, ok := decl.(*ast.TypeDecl)
+		if !ok || typeDecl == nil || typeDecl.Name == nil {
+			continue
+		}
+		if typeDecl.Name.Text() == typeName {
+			return typeDecl
+		}
+	}
+	return nil
+}
+
+func collectTypeMethodSignatures(mod *context.Module, typeName string) ([]string, []string) {
+	if mod == nil || typeName == "" {
+		return nil, nil
+	}
+	instanceSet := make(map[string]struct{})
+	staticSet := make(map[string]struct{})
+	instance := make([]string, 0)
+	static := make([]string, 0)
+
+	if mod.MethodSets != nil {
+		for receiver, methods := range mod.MethodSets {
+			if baseReceiverType(receiver) != typeName {
+				continue
+			}
+			for _, sym := range methods {
+				fn, ok := symbolFuncDecl(sym)
+				if !ok {
+					continue
+				}
+				sig := fn.Signature()
+				if _, exists := instanceSet[sig]; exists {
+					continue
+				}
+				instanceSet[sig] = struct{}{}
+				instance = append(instance, sig)
+			}
+		}
+	}
+	if mod.TypeMembers != nil {
+		for _, sym := range mod.TypeMembers[typeName] {
+			if sym == nil || sym.Kind != symbols.SymbolFunc {
+				continue
+			}
+			fn, ok := symbolFuncDecl(sym)
+			if !ok || !fn.IsStatic {
+				continue
+			}
+			sig := fn.Signature()
+			if _, exists := staticSet[sig]; exists {
+				continue
+			}
+			staticSet[sig] = struct{}{}
+			static = append(static, sig)
+		}
+	}
+
+	sort.Strings(instance)
+	sort.Strings(static)
+	return instance, static
+}
+
+func baseReceiverType(receiver string) string {
+	out := strings.TrimSpace(receiver)
+	for {
+		switch {
+		case strings.HasPrefix(out, "&mut "):
+			out = strings.TrimSpace(strings.TrimPrefix(out, "&mut "))
+		case strings.HasPrefix(out, "&"):
+			out = strings.TrimSpace(strings.TrimPrefix(out, "&"))
+		case strings.HasPrefix(out, "*"):
+			out = strings.TrimSpace(strings.TrimPrefix(out, "*"))
+		case strings.HasPrefix(out, "^"):
+			out = strings.TrimSpace(strings.TrimPrefix(out, "^"))
+		default:
+			return out
+		}
+	}
+}
+
+func symbolFuncDecl(sym *symbols.Symbol) (*ast.FuncDecl, bool) {
+	if sym == nil {
+		return nil, false
+	}
+	fn, ok := sym.Node.(*ast.FuncDecl)
+	return fn, ok
+}
+
+func asFerretCodeBlock(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return "```ferret\n" + text + "\n```"
+}
+
+func findBestHoverCandidate(index *hoverIndex, pos source.Position) (hoverCandidate, bool) {
+	if index == nil {
+		return hoverCandidate{}, false
+	}
+	best := hoverCandidate{}
+	found := false
+
+	consider := func(candidate hoverCandidate) {
+		if !locationContainsPosition(candidate.location, pos) {
+			return
+		}
+		if !found || candidate.span < best.span || (candidate.span == best.span && candidate.priority < best.priority) {
+			best = candidate
+			found = true
+		}
+	}
+
+	for _, candidate := range index.candidates {
+		consider(candidate)
+	}
+
+	return best, found
+}
+
+func locationContainsPosition(loc source.Location, pos source.Position) bool {
+	if loc.Start == nil {
+		return false
+	}
+	start := *loc.Start
+	end := start
+	if loc.End != nil {
+		end = *loc.End
+	}
+	if compareSourcePosition(pos, start) < 0 {
+		return false
+	}
+	if compareSourcePosition(start, end) == 0 {
+		return compareSourcePosition(pos, start) == 0
+	}
+	return compareSourcePosition(pos, end) < 0
+}
+
+func compareSourcePosition(a, b source.Position) int {
+	if a.Line < b.Line {
+		return -1
+	}
+	if a.Line > b.Line {
+		return 1
+	}
+	if a.Column < b.Column {
+		return -1
+	}
+	if a.Column > b.Column {
+		return 1
+	}
+	return 0
+}
+
+func locationSpan(loc source.Location) int {
+	if loc.Start == nil {
+		return int(^uint(0) >> 1)
+	}
+	start := *loc.Start
+	end := start
+	if loc.End != nil {
+		end = *loc.End
+	}
+	if start.Index > 0 && end.Index >= start.Index {
+		return end.Index - start.Index
+	}
+	if compareSourcePosition(end, start) < 0 {
+		return 0
+	}
+	lineSpan := end.Line - start.Line
+	colSpan := end.Column - start.Column
+	return lineSpan*10000 + colSpan
+}
+
+func locationToLSPRange(loc source.Location) lspRange {
+	startLine := 0
+	startCol := 0
+	endLine := 0
+	endCol := 0
+
+	if loc.Start != nil {
+		startLine = max(loc.Start.Line-1, 0)
+		startCol = max(loc.Start.Column-1, 0)
+		endLine = startLine
+		endCol = startCol
+	}
+	if loc.End != nil {
+		endLine = max(loc.End.Line-1, 0)
+		endCol = max(loc.End.Column-1, 0)
+		if endLine < startLine || (endLine == startLine && endCol < startCol) {
+			endLine = startLine
+			endCol = startCol
+		}
+	}
+
+	return lspRange{
+		Start: lspPosition{Line: startLine, Character: startCol},
+		End:   lspPosition{Line: endLine, Character: endCol},
+	}
 }
 
 func (s *Server) readMessage() ([]byte, error) {

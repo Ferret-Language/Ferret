@@ -3,12 +3,17 @@ package lsp
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/source"
+	compiler "compiler/internal/driver"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
 )
 
@@ -83,4 +88,391 @@ func TestPublishSyntaxDiagnosticsRecoversFromParserPanic(t *testing.T) {
 	if !strings.Contains(params.Diagnostics[0].Message, "internal error") {
 		t.Fatalf("expected internal error diagnostic, got %q", params.Diagnostics[0].Message)
 	}
+}
+
+func TestInitializeAdvertisesHoverProvider(t *testing.T) {
+	var out bytes.Buffer
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "initialize",
+		Params:  mustRawJSON(t, initializeParams{}),
+	}
+	s.handleRequest(req)
+
+	resp := decodeSingleResponse(t, out.String())
+	if resp.Error != nil {
+		t.Fatalf("unexpected initialize error: %#v", resp.Error)
+	}
+	if resp.Result == nil {
+		t.Fatal("expected initialize result")
+	}
+
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal initialize result: %v", err)
+	}
+	var payload struct {
+		Capabilities map[string]json.RawMessage `json:"capabilities"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("failed to unmarshal initialize result: %v", err)
+	}
+	if len(payload.Capabilities) == 0 {
+		t.Fatal("expected capabilities object")
+	}
+
+	var hoverProvider bool
+	if err := json.Unmarshal(payload.Capabilities["hoverProvider"], &hoverProvider); err != nil {
+		t.Fatalf("failed to decode hoverProvider: %v", err)
+	}
+	if !hoverProvider {
+		t.Fatal("expected hoverProvider=true")
+	}
+}
+
+func TestHoverReturnsTypeFromSavedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "fn main() {\n    let x = 1\n    x\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+	uri := "file://" + filepath.ToSlash(path)
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 2, Character: 4},
+		}),
+	}
+	s.handleRequest(req)
+
+	resp := decodeSingleResponse(t, out.String())
+	if resp.Error != nil {
+		t.Fatalf("unexpected hover error: %#v", resp.Error)
+	}
+	if resp.Result == nil {
+		t.Fatal("expected hover result")
+	}
+
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal hover result: %v", err)
+	}
+	var hover hoverResult
+	if err := json.Unmarshal(raw, &hover); err != nil {
+		t.Fatalf("failed to unmarshal hover result: %v", err)
+	}
+	if !strings.Contains(hover.Contents.Value, "i32") {
+		t.Fatalf("expected i32 hover, got %q", hover.Contents.Value)
+	}
+	if hover.Range == nil {
+		t.Fatal("expected hover range")
+	}
+}
+
+func TestHoverUsesOpenDocumentOverlayText(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	onDisk := "fn main() {\n    let x = 1\n    x\n}\n"
+	overlay := "fn main() {\n    let x = \"hi\"\n    x\n}\n"
+	if err := os.WriteFile(path, []byte(onDisk), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{
+		out: &out,
+		documents: map[string]openDocument{
+			uri: {Version: 2, Text: overlay},
+		},
+	}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 2, Character: 4},
+		}),
+	}
+	s.handleRequest(req)
+
+	resp := decodeSingleResponse(t, out.String())
+	if resp.Error != nil {
+		t.Fatalf("unexpected hover error: %#v", resp.Error)
+	}
+	if resp.Result == nil {
+		t.Fatal("expected hover result")
+	}
+
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal hover result: %v", err)
+	}
+	var hover hoverResult
+	if err := json.Unmarshal(raw, &hover); err != nil {
+		t.Fatalf("failed to unmarshal hover result: %v", err)
+	}
+	if !strings.Contains(hover.Contents.Value, "str") {
+		t.Fatalf("expected str hover from overlay, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverCachesByOpenDocumentVersion(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	calls := 0
+	parseProject = func(path string) compiler.Result {
+		calls++
+		return fakeHoverResult(path, "i32")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	if err := os.WriteFile(path, []byte("fn main() {}"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	var out bytes.Buffer
+	s := &Server{
+		out: &out,
+		documents: map[string]openDocument{
+			uri: {Version: 1, Text: "fn main() {}"},
+		},
+		hoverCache: make(map[string]hoverCacheEntry),
+	}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 0, Character: 0},
+		}),
+	}
+	s.handleRequest(req)
+	s.handleRequest(req)
+
+	if calls != 1 {
+		t.Fatalf("expected one parse for repeated hover on same version, got %d", calls)
+	}
+
+	s.mu.Lock()
+	s.documents[uri] = openDocument{Version: 2, Text: "fn main() { let x = 1 }"}
+	s.mu.Unlock()
+	s.handleRequest(req)
+
+	if calls != 2 {
+		t.Fatalf("expected cache invalidation after version change, got %d parses", calls)
+	}
+}
+
+func TestHoverMethodDeclarationShowsFullSignature(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Point struct {\n    X: i32\n}\n\nfn Point::Calc(&self) i32 {\n    return self.X\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "Calc")
+	if !ok {
+		t.Fatal("failed to find Calc position")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil response payload: %q", out.String())
+	}
+	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) i32") {
+		t.Fatalf("expected full method signature in hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverNamedTypeShowsFieldsAndMethods(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Point struct {\n    X: i32\n    Y: i32 = 2\n}\n\nfn Point::Calc(&self) i32 {\n    return self.X\n}\n\nfn main() {\n    let p: Point = .{}\n    p.Calc()\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "Point =")
+	if !ok {
+		t.Fatal("failed to find Point usage position")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "type Point struct") {
+		t.Fatalf("expected type declaration header in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "X: i32") || !strings.Contains(hover.Contents.Value, "Y: i32 = 2") {
+		t.Fatalf("expected struct fields in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) i32") {
+		t.Fatalf("expected type methods in hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Point struct {\n    Value: i32 = 7\n}\n\nfn Point::Calc(&self) i32 {\n    return self.Value\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "self.Value")
+	if !ok {
+		t.Fatal("failed to find self position")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "&Point") {
+		t.Fatalf("expected wrapper type in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "type Point struct") || !strings.Contains(hover.Contents.Value, "Value: i32 = 7") {
+		t.Fatalf("expected expanded named type in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) i32") {
+		t.Fatalf("expected method listing in hover, got %q", hover.Contents.Value)
+	}
+}
+
+func fakeHoverResult(path string, typeName string) compiler.Result {
+	start := source.Position{Line: 1, Column: 1, Index: 0}
+	end := source.Position{Line: 1, Column: 2, Index: 1}
+	loc := source.NewLocation(path, start, end)
+	ident := &ast.Ident{Path: []string{"x"}, Location: loc}
+
+	info := typeinfo.NewModuleInfo()
+	info.BindNode(ident, &typeinfo.BuiltinType{Name: typeName})
+
+	mod := &context.Module{
+		FilePath: path,
+		Types:    info,
+	}
+	return compiler.Result{
+		Entry:   mod,
+		Modules: []*context.Module{mod},
+	}
+}
+
+func mustRawJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("failed to marshal json: %v", err)
+	}
+	return raw
+}
+
+func decodeSingleResponse(t *testing.T, framed string) rpcResponse {
+	t.Helper()
+	parts := strings.SplitN(framed, "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		t.Fatalf("expected framed LSP message, got: %q", framed)
+	}
+	var resp rpcResponse
+	if err := json.Unmarshal([]byte(parts[1]), &resp); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	return resp
+}
+
+func decodeHoverResult(t *testing.T, framed string) *hoverResult {
+	t.Helper()
+	resp := decodeSingleResponse(t, framed)
+	if resp.Error != nil {
+		t.Fatalf("unexpected hover error: %#v", resp.Error)
+	}
+	if resp.Result == nil {
+		return nil
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal hover result: %v", err)
+	}
+	var hover hoverResult
+	if err := json.Unmarshal(raw, &hover); err != nil {
+		t.Fatalf("failed to unmarshal hover result: %v", err)
+	}
+	return &hover
+}
+
+func findPosition(text, needle string) (int, int, bool) {
+	lines := strings.Split(text, "\n")
+	for lineIdx, line := range lines {
+		idx := strings.Index(line, needle)
+		if idx >= 0 {
+			return lineIdx, idx, true
+		}
+	}
+	return 0, 0, false
 }

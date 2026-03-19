@@ -68,6 +68,23 @@ func FormatNamedDecl(name string, underlying Type) string {
 	}
 }
 
+func FormatFuncSignature(name string, fn *FuncType) string {
+	if fn == nil {
+		if name == "" {
+			return "fn() void"
+		}
+		return "fn " + name + "() void"
+	}
+	prefix := "fn"
+	if fn.IsUnsafe {
+		prefix = "unsafe fn"
+	}
+	if name != "" {
+		return fmt.Sprintf("%s %s%s", prefix, name, formatSignature(fn))
+	}
+	return prefix + formatSignature(fn)
+}
+
 func formatSignature(fn *FuncType) string {
 	if fn == nil {
 		return "()"

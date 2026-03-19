@@ -109,6 +109,11 @@ func CheckModule(ctx *context.CompilerContext, mod *context.Module) {
 			c.info.BindSymbol(sym, c.typeOfSymbol(sym))
 		}
 	}
+	for _, methods := range mod.MethodSets {
+		for _, sym := range methods {
+			c.info.BindSymbol(sym, c.typeOfSymbol(sym))
+		}
+	}
 
 	for _, decl := range mod.AST.Decls {
 		c.checkDecl(decl)
