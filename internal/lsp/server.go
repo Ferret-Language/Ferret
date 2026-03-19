@@ -1035,24 +1035,6 @@ func collectTypeMethodSignatures(mod *context.Module, typeName string) ([]string
 	return instance, static
 }
 
-func baseReceiverType(receiver string) string {
-	out := strings.TrimSpace(receiver)
-	for {
-		switch {
-		case strings.HasPrefix(out, "&mut "):
-			out = strings.TrimSpace(strings.TrimPrefix(out, "&mut "))
-		case strings.HasPrefix(out, "&"):
-			out = strings.TrimSpace(strings.TrimPrefix(out, "&"))
-		case strings.HasPrefix(out, "*"):
-			out = strings.TrimSpace(strings.TrimPrefix(out, "*"))
-		case strings.HasPrefix(out, "^"):
-			out = strings.TrimSpace(strings.TrimPrefix(out, "^"))
-		default:
-			return out
-		}
-	}
-}
-
 func symbolFuncDecl(sym *symbols.Symbol) (*ast.FuncDecl, bool) {
 	if sym == nil {
 		return nil, false
