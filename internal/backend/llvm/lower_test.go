@@ -151,11 +151,40 @@ fn main() str {
 	for _, want := range []string{
 		"@main__GlobalName = global %local__main__Name",
 		"@main__GlobalStringer = global %local__main__Stringer",
+		"@main__GlobalStringer = global %local__main__Stringer { ptr @main__GlobalName, ptr getelementptr inbounds ([1 x ptr], ptr @vtable__local__main__Stringer__Name",
 		"@vtable__local__main__Stringer__Name",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
 		}
+	}
+}
+
+func TestLowerDeclaresPreludeExternCallSymbolsToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main() void {
+    print("ok")
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "declare void @ferret_global_print(...)") {
+		t.Fatalf("expected declaration for prelude extern print call:\n%s", text)
+	}
+	if !strings.Contains(text, "call void @ferret_global_print(") {
+		t.Fatalf("expected lowered call to ferret_global_print:\n%s", text)
 	}
 }
 
@@ -271,8 +300,8 @@ fn main(items: []i32) usize {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"declare i64 @global__slice_len(ptr)",
-		"call i64 @global__slice_len(ptr %items)",
+		"declare i64 @ferret_global_slice_len",
+		"call i64 @ferret_global_slice_len(ptr %items)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
@@ -395,8 +424,44 @@ fn main() i32 {
 	for _, want := range []string{
 		"%a_alloca = alloca i32",
 		"store i32 %_asgn1, ptr %a_alloca",
-		"call void @global__print_ptr(ptr %_ld3)",
+		"call void @ferret_global_print(",
 		"ret i32 0",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerDefaultExternFunctionCallToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `
+#[extern]
+fn Println(text: str) void;
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+import "std/io"
+
+fn main() void {
+    io::Println("hello")
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"declare void @ferret_std_io_Println",
+		"call void @ferret_std_io_Println(",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

@@ -804,10 +804,14 @@ func remapValueLocals(value Value, idMap map[int]int) {
 		remapValueLocals(v.Base, idMap)
 	case *CastValue:
 		remapValueLocals(v.Left, idMap)
+	case *TypeTestValue:
+		remapValueLocals(v.Left, idMap)
 	case *CompositeValue:
 		for _, item := range v.Items {
 			remapValueLocals(item.Value, idMap)
 		}
+	case *InterfaceValue:
+		remapValueLocals(v.Value, idMap)
 	case *IndexValue:
 		remapValueLocals(v.Base, idMap)
 		remapValueLocals(v.Index, idMap)

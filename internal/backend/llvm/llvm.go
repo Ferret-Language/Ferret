@@ -495,11 +495,11 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 		}
 		// We need a temporary state only to resolve return types.
 		tmpState := newModuleStateWithDebug(unit, allLayouts, dbg)
-		for _, fn := range unit.Module.Functions {
-			if fn == nil || !fn.IsExtern || fn.ExternName == "" {
+		for _, fn := range externFunctionsForUnit(unit) {
+			if fn == nil || !fn.IsExtern || fn.LinkName == "" {
 				continue
 			}
-			sym := sanitizeIdent(fn.ExternName)
+			sym := sanitizeIdent(fn.LinkName)
 			if _, seen := seenExterns[sym]; seen {
 				continue
 			}
@@ -522,6 +522,11 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 			// Use variadic signature so we don't need param type info.
 			declLines = append(declLines, fmt.Sprintf("declare %s @%s(...)", retStr, sym))
 		}
+		callDecls, err := collectExternCallDecls(tmpState, unit.Module, seenExterns)
+		if err != nil {
+			return "", fmt.Errorf("collect extern call declarations [%s]: %w", unit.Module.ImportPath, err)
+		}
+		declLines = append(declLines, callDecls...)
 	}
 
 	// Always declare Ferret runtime functions used by compiler-emitted code.
@@ -529,26 +534,10 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 		"declare void @ferret__panic(ptr)",
 		"declare void @ferret__interface_panic(ptr, ptr)",
 		"declare void @global__panic(ptr)",
-		"declare { ptr, i64 } @global__recover()",
-		"declare void @global__print_str(ptr)",
-		"declare void @global__print_bool(i8)",
-		"declare void @global__print_i64(i64)",
-		"declare void @global__print_u64(i64)",
-		"declare void @global__print_f64(double)",
-		"declare void @global__print_char(i32)",
-		"declare void @global__print_ptr(ptr)",
-		"declare void @global__print_type(ptr)",
-		"declare ptr @global__str_data(ptr)",
-		"declare i64 @global__str_len(ptr)",
-		"declare i64 @global__slice_len(ptr)",
-		"declare { ptr, i64 } @global__str_bytes(ptr)",
-		"declare { ptr, i64 } @global__bytes_str(ptr)",
-		"declare { ptr, i64 } @global__str_chars(ptr)",
-		"declare { ptr, i64 } @global__chars_str(ptr)",
-		"declare ptr @global__str_cstr(ptr)",
-		"declare { ptr, i64 } @global__i64_str(i64)",
-		"declare { ptr, i64 } @global__u64_str(i64)",
-		"declare { ptr, i64 } @global__f64_str(double)",
+		"declare i64 @ferret_global_slice_len(ptr)",
+		"declare { ptr, i64 } @ferret_global_i64_str(i64)",
+		"declare { ptr, i64 } @ferret_global_u64_str(i64)",
+		"declare { ptr, i64 } @ferret_global_f64_str(double)",
 	}, declLines...)
 
 	// Pass 2: lower globals and functions for every unit, now with debug info.
@@ -582,7 +571,7 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 			return "", fmt.Errorf("lower program globals [%s]: %w", unit.Module.ImportPath, err)
 		}
 		for _, fn := range unit.Module.Functions {
-			if fn == nil || fn.IsBuiltin || fn.IsExtern {
+			if fn == nil || fn.IsExtern {
 				continue
 			}
 			// Capture function IR into a temp buffer so that any string constants
@@ -654,7 +643,7 @@ func implicitExternSymbol(decl string) string {
 
 // llvmExternDecl builds a "declare" line for an extern function.
 func llvmExternDecl(state *moduleState, fn *mir.Function) (string, error) {
-	sym := sanitizeIdent(fn.ExternName)
+	sym := sanitizeIdent(fn.LinkName)
 
 	var retStr string
 	if fn.Result == nil || isVoidType(fn.Result) {
@@ -673,30 +662,236 @@ func llvmExternDecl(state *moduleState, fn *mir.Function) (string, error) {
 		retStr = t
 	}
 
-	paramParts := make([]string, 0, len(fn.Params))
-	for _, param := range fn.Params {
-		if param == nil {
-			continue
+	// Extern signatures may be unavailable or incomplete in some standalone
+	// lowering paths. Emit a variadic declaration so typed call-sites stay valid
+	// while still binding to the intended symbol.
+	return fmt.Sprintf("declare %s @%s(...)", retStr, sym), nil
+}
+
+func externFunctionsForUnit(unit *backend.Unit) []*mir.Function {
+	if unit == nil {
+		return nil
+	}
+	out := make([]*mir.Function, 0)
+	seenMods := make(map[string]struct{})
+	appendFrom := func(mod *mir.Module) {
+		if mod == nil {
+			return
 		}
-		if isAggregateType(state, param.Type) {
-			t, err := llvmABITypeName(state, param.Type)
-			if err != nil {
-				return "", err
+		if _, ok := seenMods[mod.Key]; ok {
+			return
+		}
+		seenMods[mod.Key] = struct{}{}
+		out = append(out, mod.Functions...)
+	}
+	appendFrom(unit.Module)
+	for _, mod := range unit.Modules {
+		appendFrom(mod)
+	}
+	return out
+}
+
+func collectExternCallDecls(state *moduleState, mod *mir.Module, seenExterns map[string]struct{}) ([]string, error) {
+	if state == nil || mod == nil {
+		return nil, nil
+	}
+	decls := make([]string, 0)
+	add := func(sym string, result typeinfo.Type) error {
+		if sym == "" {
+			return nil
+		}
+		if _, ok := seenExterns[sym]; ok {
+			return nil
+		}
+		ret, err := llvmExternReturnType(state, result)
+		if err != nil {
+			return err
+		}
+		seenExterns[sym] = struct{}{}
+		decls = append(decls, fmt.Sprintf("declare %s @%s(...)", ret, sym))
+		return nil
+	}
+	var walkValue func(value mir.Value) error
+	var walkPlace func(place mir.Place) error
+	var walkInstr func(instr mir.Instr) error
+	var walkTerm func(term mir.Terminator) error
+	walkValue = func(value mir.Value) error {
+		switch v := value.(type) {
+		case nil, *mir.NameValue, *mir.LocalValue, *mir.NumberValue, *mir.BoolValue, *mir.StringValue, *mir.NoneValue:
+			return nil
+		case *mir.UnaryValue:
+			return walkValue(v.Right)
+		case *mir.BinaryValue:
+			if err := walkValue(v.Left); err != nil {
+				return err
 			}
-			_, align, err := aggregateSizeAlign(state, param.Type)
-			if err != nil {
-				return "", err
+			return walkValue(v.Right)
+		case *mir.PostfixValue:
+			return walkValue(v.Left)
+		case *mir.AddrOfValue:
+			return walkValue(v.Source)
+		case *mir.LoadValue:
+			return walkValue(v.Pointer)
+		case *mir.CallValue:
+			if callee, ok := v.Callee.(*mir.NameValue); ok && callee.LinkName != "" {
+				if err := add(sanitizeIdent(callee.LinkName), v.Type()); err != nil {
+					return err
+				}
 			}
-			paramParts = append(paramParts, fmt.Sprintf("ptr byval(%s) align %d", t, align))
-		} else {
-			t, err := llvmBaseType(param.Type)
-			if err != nil {
-				return "", err
+			if err := walkValue(v.Callee); err != nil {
+				return err
 			}
-			paramParts = append(paramParts, t)
+			for _, arg := range v.Args {
+				if err := walkValue(arg); err != nil {
+					return err
+				}
+			}
+			return nil
+		case *mir.FieldLoadValue:
+			return walkValue(v.Base)
+		case *mir.FieldValue:
+			return walkValue(v.Base)
+		case *mir.CastValue:
+			return walkValue(v.Left)
+		case *mir.TypeTestValue:
+			return walkValue(v.Left)
+		case *mir.CompositeValue:
+			for _, item := range v.Items {
+				if err := walkValue(item.Value); err != nil {
+					return err
+				}
+			}
+			return nil
+		case *mir.InterfaceValue:
+			return walkValue(v.Value)
+		case *mir.IndexValue:
+			if err := walkValue(v.Base); err != nil {
+				return err
+			}
+			return walkValue(v.Index)
+		default:
+			return nil
 		}
 	}
-	return fmt.Sprintf("declare %s @%s(%s)", retStr, sym, strings.Join(paramParts, ", ")), nil
+	walkPlace = func(place mir.Place) error {
+		switch p := place.(type) {
+		case nil, *mir.LocalPlace:
+			return nil
+		case *mir.FieldPlace:
+			return walkPlace(p.Base)
+		case *mir.IndexPlace:
+			if err := walkPlace(p.Base); err != nil {
+				return err
+			}
+			return walkValue(p.Index)
+		case *mir.DerefPlace:
+			return walkValue(p.Pointer)
+		default:
+			return nil
+		}
+	}
+	walkInstr = func(instr mir.Instr) error {
+		switch i := instr.(type) {
+		case nil:
+			return nil
+		case *mir.AssignInstr:
+			return walkValue(i.Value)
+		case *mir.ComputeInstr:
+			return walkValue(i.Value)
+		case *mir.StoreInstr:
+			if err := walkPlace(i.Target); err != nil {
+				return err
+			}
+			return walkValue(i.Value)
+		case *mir.StoreFieldInstr:
+			if err := walkValue(i.Base); err != nil {
+				return err
+			}
+			return walkValue(i.Value)
+		case *mir.EvalInstr:
+			return walkValue(i.Value)
+		case *mir.BindInstr:
+			return walkValue(i.Value)
+		case *mir.LockInstr:
+			return walkValue(i.Value)
+		case *mir.DeferInstr:
+			for _, child := range i.Body {
+				if err := walkInstr(child); err != nil {
+					return err
+				}
+			}
+			return nil
+		default:
+			return nil
+		}
+	}
+	walkTerm = func(term mir.Terminator) error {
+		switch t := term.(type) {
+		case nil:
+			return nil
+		case *mir.BranchTerm:
+			return walkValue(t.Cond)
+		case *mir.SwitchTerm:
+			if err := walkValue(t.Value); err != nil {
+				return err
+			}
+			for _, kase := range t.Cases {
+				if err := walkValue(kase.Expr); err != nil {
+					return err
+				}
+			}
+			return nil
+		case *mir.ReturnTerm:
+			return walkValue(t.Value)
+		case *mir.PanicTerm:
+			return walkValue(t.Value)
+		default:
+			return nil
+		}
+	}
+	for _, global := range mod.Globals {
+		if global == nil {
+			continue
+		}
+		if err := walkValue(global.Init); err != nil {
+			return nil, err
+		}
+	}
+	for _, fn := range mod.Functions {
+		if fn == nil {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			if block == nil {
+				continue
+			}
+			for _, instr := range block.Instructions {
+				if err := walkInstr(instr); err != nil {
+					return nil, err
+				}
+			}
+			if err := walkTerm(block.Terminator); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return decls, nil
+}
+
+func llvmExternReturnType(state *moduleState, result typeinfo.Type) (string, error) {
+	if result == nil || isVoidType(result) {
+		return "void", nil
+	}
+	if isAggregateType(state, result) {
+		if ret, err := llvmABITypeName(state, result); err == nil {
+			return ret, nil
+		}
+		return "ptr", nil
+	}
+	if ret, err := llvmBaseType(result); err == nil {
+		return ret, nil
+	}
+	return "ptr", nil
 }
 
 // newModuleStateWithDebug constructs a moduleState that shares the given
@@ -748,28 +943,20 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 	b.WriteString("declare void @ferret__panic(ptr)\n")
 	b.WriteString("declare void @ferret__interface_panic(ptr, ptr)\n")
 	b.WriteString("declare void @global__panic(ptr)\n")
-	b.WriteString("declare { ptr, i64 } @global__recover()\n")
-	b.WriteString("declare ptr @global__str_data(ptr)\n")
-	b.WriteString("declare i64 @global__str_len(ptr)\n")
-	b.WriteString("declare i64 @global__slice_len(ptr)\n")
-	b.WriteString("declare { ptr, i64 } @global__str_bytes(ptr)\n")
-	b.WriteString("declare { ptr, i64 } @global__bytes_str(ptr)\n")
-	b.WriteString("declare { ptr, i64 } @global__str_chars(ptr)\n")
-	b.WriteString("declare { ptr, i64 } @global__chars_str(ptr)\n")
-	b.WriteString("declare ptr @global__str_cstr(ptr)\n")
-	b.WriteString("declare { ptr, i64 } @global__i64_str(i64)\n")
-	b.WriteString("declare { ptr, i64 } @global__u64_str(i64)\n")
-	b.WriteString("declare { ptr, i64 } @global__f64_str(double)\n")
+	b.WriteString("declare i64 @ferret_global_slice_len(ptr)\n")
+	b.WriteString("declare { ptr, i64 } @ferret_global_i64_str(i64)\n")
+	b.WriteString("declare { ptr, i64 } @ferret_global_u64_str(i64)\n")
+	b.WriteString("declare { ptr, i64 } @ferret_global_f64_str(double)\n")
 	for _, decl := range implicitExternDecls() {
 		b.WriteString(decl)
 		b.WriteByte('\n')
 	}
 	seenExterns := make(map[string]struct{})
-	for _, fn := range unit.Module.Functions {
-		if fn == nil || !fn.IsExtern || fn.ExternName == "" {
+	for _, fn := range externFunctionsForUnit(unit) {
+		if fn == nil || !fn.IsExtern || fn.LinkName == "" {
 			continue
 		}
-		sym := sanitizeIdent(fn.ExternName)
+		sym := sanitizeIdent(fn.LinkName)
 		if _, ok := seenExterns[sym]; ok {
 			continue
 		}
@@ -778,6 +965,14 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 			return nil, err
 		}
 		seenExterns[sym] = struct{}{}
+		b.WriteString(decl)
+		b.WriteByte('\n')
+	}
+	callDecls, err := collectExternCallDecls(state, unit.Module, seenExterns)
+	if err != nil {
+		return nil, err
+	}
+	for _, decl := range callDecls {
 		b.WriteString(decl)
 		b.WriteByte('\n')
 	}
@@ -797,7 +992,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 	}
 	written := 0
 	for _, fn := range unit.Module.Functions {
-		if fn == nil || fn.IsBuiltin || fn.IsExtern {
+		if fn == nil || fn.IsExtern {
 			continue
 		}
 		if written > 0 {
@@ -2065,9 +2260,6 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 		}
 		return lowerConstructorCallDiscard(state, targetType, call, callee)
 	}
-	if isBuiltinPrintCall(call) {
-		return lowerBuiltinPrintCall(state, call)
-	}
 	if isBuiltinLenCall(call) {
 		return lowerBuiltinLenCall(state, targetName, call)
 	}
@@ -2139,20 +2331,6 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	return fmt.Sprintf("%s = %s", llvmLocalName(targetName), callText), nil
 }
 
-func isBuiltinPrintCall(call *mir.CallValue) bool {
-	if call == nil {
-		return false
-	}
-	callee, ok := call.Callee.(*mir.NameValue)
-	if !ok || callee == nil {
-		return false
-	}
-	if callee.LinkName == "global__print" {
-		return true
-	}
-	return len(callee.Path) == 2 && callee.Path[0] == "global" && callee.Path[1] == "print"
-}
-
 func isBuiltinLenCall(call *mir.CallValue) bool {
 	if call == nil {
 		return false
@@ -2186,92 +2364,11 @@ func lowerBuiltinLenCall(state *moduleState, targetName string, call *mir.CallVa
 		if err != nil {
 			return "", err
 		}
-		callLine := fmt.Sprintf("%s = call i64 @global__slice_len(ptr %s)", llvmLocalName(targetName), ptr)
+		callLine := fmt.Sprintf("%s = call i64 @ferret_global_slice_len(ptr %s)", llvmLocalName(targetName), ptr)
 		return joinLLVMLines(prefix, []string{callLine}), nil
 	default:
 		return "", fmt.Errorf("builtin len expects array or slice argument, got %s", arg.Type().String())
 	}
-}
-
-func lowerBuiltinPrintCall(state *moduleState, call *mir.CallValue) (string, error) {
-	if call == nil || len(call.Args) != 1 {
-		return "", fmt.Errorf("builtin print expects exactly one argument")
-	}
-	arg := call.Args[0]
-	if arg == nil {
-		return "", fmt.Errorf("builtin print argument is nil")
-	}
-	if _, ok := arg.Type().(*typeinfo.StringType); ok {
-		prefix, ptr, err := lowerAggregateValuePointer(state, arg)
-		if err != nil {
-			return "", err
-		}
-		return joinLLVMLines(prefix, []string{fmt.Sprintf("call void @global__print_str(ptr %s)", ptr)}), nil
-	}
-	if builtin, ok := arg.Type().(*typeinfo.BuiltinType); ok {
-		return lowerBuiltinPrintPrimitive(state, arg, builtin.Name)
-	}
-	if llvmIsPointerLike(arg.Type()) {
-		val, err := lowerValue(state, arg)
-		if err != nil {
-			return "", err
-		}
-		return fmt.Sprintf("call void @global__print_ptr(ptr %s)", val), nil
-	}
-	sym := emitStringConstant(state, arg.Type().String())
-	return fmt.Sprintf("call void @global__print_type(ptr @%s)", sym), nil
-}
-
-func lowerBuiltinPrintPrimitive(state *moduleState, arg mir.Value, name string) (string, error) {
-	val, err := lowerValue(state, arg)
-	if err != nil {
-		return "", err
-	}
-	switch name {
-	case "bool":
-		return fmt.Sprintf("call void @global__print_bool(i8 %s)", val), nil
-	case "i8", "i16", "i32", "i64", "isize":
-		return lowerBuiltinPrintIntCast(state, val, name, "i64", "@global__print_i64")
-	case "u8", "u16", "u32", "u64", "usize":
-		return lowerBuiltinPrintIntCast(state, val, name, "u64", "@global__print_u64")
-	case "f32", "f64":
-		return lowerBuiltinPrintFloatCast(state, val, name)
-	case "char":
-		return fmt.Sprintf("call void @global__print_char(i32 %s)", val), nil
-	default:
-		sym := emitStringConstant(state, arg.Type().String())
-		return fmt.Sprintf("call void @global__print_type(ptr @%s)", sym), nil
-	}
-}
-
-func lowerBuiltinPrintIntCast(state *moduleState, value, srcName, dstName, callee string) (string, error) {
-	if srcName == dstName {
-		return fmt.Sprintf("call void %s(i64 %s)", callee, value), nil
-	}
-	castExpr, ok := llvmIntCastOp(state, srcName, dstName, value)
-	if !ok {
-		return "", fmt.Errorf("unsupported print integer cast from %s to %s", srcName, dstName)
-	}
-	tmp := freshTemp(state, "print")
-	return joinLLVMLines([]string{
-		fmt.Sprintf("%s = %s", tmp, castExpr),
-		fmt.Sprintf("call void %s(i64 %s)", callee, tmp),
-	}), nil
-}
-
-func lowerBuiltinPrintFloatCast(state *moduleState, value, srcName string) (string, error) {
-	if srcName == "f64" {
-		return fmt.Sprintf("call void @global__print_f64(double %s)", value), nil
-	}
-	castExpr, ok := llvmFloatCastOp(srcName, "f64", value)
-	if !ok {
-		return "", fmt.Errorf("unsupported print float cast from %s to f64", srcName)
-	}
-	tmp := freshTemp(state, "print")
-	return joinLLVMLines([]string{
-		fmt.Sprintf("%s = %s", tmp, castExpr),
-		fmt.Sprintf("call void @global__print_f64(double %s)", tmp),
-	}), nil
 }
 
 func lowerAggregateValuePointer(state *moduleState, value mir.Value) ([]string, string, error) {
@@ -3121,6 +3218,11 @@ func lookupInterfaceDecl(state *moduleState, typ typeinfo.Type) (*mir.InterfaceT
 	if !ok || named == nil {
 		return nil, nil, fmt.Errorf("interface type must be named")
 	}
+	if named.Decl != nil {
+		if ifaceDecl, ok := named.Decl.Type.(*ast.InterfaceType); ok && ifaceDecl != nil && len(ifaceDecl.Methods) == 0 {
+			return &mir.InterfaceTypeDecl{Methods: nil}, named, nil
+		}
+	}
 	var mod *mir.Module
 	if state.modules != nil {
 		mod = state.modules[named.ModuleKey]
@@ -3842,27 +3944,27 @@ func lowerStringCast(state *moduleState, value mir.Value) (string, error) {
 	switch srcBuiltin.Name {
 	case "i8", "i16", "i32":
 		castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "i64", srcVal)
-		return fmt.Sprintf("call { ptr, i64 } @global__i64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
+		return fmt.Sprintf("call { ptr, i64 } @ferret_global_i64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
 	case "i64", "isize":
 		if srcBuiltin.Name == "isize" {
 			castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "i64", srcVal)
-			return fmt.Sprintf("call { ptr, i64 } @global__i64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
+			return fmt.Sprintf("call { ptr, i64 } @ferret_global_i64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
 		}
-		return fmt.Sprintf("call { ptr, i64 } @global__i64_str(i64 %s)", srcVal), nil
+		return fmt.Sprintf("call { ptr, i64 } @ferret_global_i64_str(i64 %s)", srcVal), nil
 	case "u8", "u16", "u32", "bool", "char":
 		castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "u64", srcVal)
-		return fmt.Sprintf("call { ptr, i64 } @global__u64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
+		return fmt.Sprintf("call { ptr, i64 } @ferret_global_u64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
 	case "u64", "usize":
 		if srcBuiltin.Name == "usize" {
 			castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "u64", srcVal)
-			return fmt.Sprintf("call { ptr, i64 } @global__u64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
+			return fmt.Sprintf("call { ptr, i64 } @ferret_global_u64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
 		}
-		return fmt.Sprintf("call { ptr, i64 } @global__u64_str(i64 %s)", srcVal), nil
+		return fmt.Sprintf("call { ptr, i64 } @ferret_global_u64_str(i64 %s)", srcVal), nil
 	case "f32":
 		castExpr, _ := llvmFloatCastOp("f32", "f64", srcVal)
-		return fmt.Sprintf("call { ptr, i64 } @global__f64_str(%s)", operandWithTemp(state, "double", castExpr)), nil
+		return fmt.Sprintf("call { ptr, i64 } @ferret_global_f64_str(%s)", operandWithTemp(state, "double", castExpr)), nil
 	case "f64":
-		return fmt.Sprintf("call { ptr, i64 } @global__f64_str(double %s)", srcVal), nil
+		return fmt.Sprintf("call { ptr, i64 } @ferret_global_f64_str(double %s)", srcVal), nil
 	default:
 		return "", fmt.Errorf("unsupported string cast source %s", srcBuiltin.Name)
 	}
@@ -4195,6 +4297,9 @@ func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, er
 		}
 		return info.Size, info.Align, nil
 	case *typeinfo.NamedType:
+		if namedIsInterface(t) {
+			return 16, 8, nil
+		}
 		info, err := lookupNamedLayout(state, t)
 		if err != nil {
 			return 0, 0, err
@@ -4316,6 +4421,9 @@ func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
 	if named, ok := typ.(*typeinfo.NamedType); ok {
 		if info, err := lookupNamedLayout(state, named); err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named) || namedIsInterface(named)) {
 			return "%" + llvmTypeName(state, named), nil
+		}
+		if namedIsInterface(named) {
+			return "{ ptr, ptr }", nil
 		}
 	}
 	if opt, ok := typ.(*typeinfo.OptionalType); ok {
