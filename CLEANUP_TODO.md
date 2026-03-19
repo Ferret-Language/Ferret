@@ -26,6 +26,6 @@ Current focus: remove duplicated formatting and signature-rendering code before 
 - [*] replace method-set string keys with a structured `ReceiverKey`
 - [*] replace `FuncType` parallel param arrays with shared structured param specs
 - [*] replace symbol mutable/receiver metadata with shared semantic metadata fields
-- [ ] remove remaining receiver string encode/decode helpers once `ReceiverKey` is the storage format
+- [*] remove remaining receiver string encode/decode helpers once `ReceiverKey` is the storage format
 - [ ] audit symbol/type lookup paths that still key behavior from formatted strings and move them to structured identifiers where practical
 - [ ] keep string formatting only at diagnostics, hover, debug, and pretty-print boundaries

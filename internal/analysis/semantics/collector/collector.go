@@ -60,7 +60,7 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 				declare(ctx, scope, sym)
 				continue
 			}
-			recvKey, _ := receiverKey(d.Receiver.Type)
+			recvKey := receiverKey(d.Receiver.Type)
 			name := d.Name.Text()
 			if d.IsDestructor {
 				name = "~" + name
@@ -169,34 +169,32 @@ func reportDuplicateMethod(ctx *context.CompilerContext, sym, prev *symbols.Symb
 	ctx.Diagnostics.Add(diag)
 }
 
-func receiverKey(typ ast.TypeExpr) (typeinfo.ReceiverKey, string) {
+func receiverKey(typ ast.TypeExpr) typeinfo.ReceiverKey {
 	switch t := typ.(type) {
 	case *ast.NamedType:
 		if len(t.Path) == 0 {
-			return typeinfo.ReceiverKey{TypeName: "<anon>"}, "<anon>"
+			return typeinfo.ReceiverKey{TypeName: "<anon>"}
 		}
 		name := t.Path[len(t.Path)-1]
-		return typeinfo.ReceiverKey{TypeName: name}, name
+		return typeinfo.ReceiverKey{TypeName: name}
 	case *ast.PointerType:
-		key, text := receiverKey(t.Inner)
+		key := receiverKey(t.Inner)
 		key.Kind = typeinfo.ReceiverPtr
-		return key, "*" + text
+		return key
 	case *ast.RefType:
-		key, text := receiverKey(t.Inner)
-		prefix := "&"
+		key := receiverKey(t.Inner)
 		if t.Mutable {
 			key.Kind = typeinfo.ReceiverRefMut
-			prefix = "&mut "
 		} else {
 			key.Kind = typeinfo.ReceiverRef
 		}
-		return key, prefix + text
+		return key
 	case *ast.RawPtrType:
-		key, text := receiverKey(t.Inner)
+		key := receiverKey(t.Inner)
 		key.Kind = typeinfo.ReceiverRawPtr
-		return key, "^" + text
+		return key
 	default:
 		text := fmt.Sprintf("%T", typ)
-		return typeinfo.ReceiverKey{TypeName: text}, text
+		return typeinfo.ReceiverKey{TypeName: text}
 	}
 }
