@@ -2,6 +2,7 @@ package hir
 
 import (
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/frontend/ast"
 	"fmt"
 	"strings"
 )
@@ -61,15 +62,7 @@ func formatFunc(b *strings.Builder, fn *Func) {
 	if fn.OwnerType != "" {
 		fmt.Fprintf(b, "fn %s%s", name, formatAttachedParams(fn.Receiver, fn.Params))
 	} else {
-		fmt.Fprintf(b, "fn %s%s", formatReceiver(fn.Receiver), name)
-		b.WriteByte('(')
-		for i, param := range fn.Params {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(formatParam(param))
-		}
-		b.WriteByte(')')
+		fmt.Fprintf(b, "fn %s%s%s", formatReceiverPrefix(fn.Receiver), name, ast.FormatParamList(formatParams(fn.Params)))
 	}
 	if fn.Result != nil {
 		fmt.Fprintf(b, " %s", typeString(fn.Result))
@@ -83,7 +76,7 @@ func formatFunc(b *strings.Builder, fn *Func) {
 	b.WriteByte('\n')
 }
 
-func formatReceiver(param *Param) string {
+func formatReceiverPrefix(param *Param) string {
 	if param == nil {
 		return ""
 	}
@@ -91,57 +84,35 @@ func formatReceiver(param *Param) string {
 }
 
 func formatAttachedParams(receiver *Param, params []*Param) string {
-	var b strings.Builder
-	b.WriteByte('(')
-	wrote := false
+	items := make([]string, 0, len(params)+1)
 	if receiver != nil {
-		b.WriteString(formatReceiverArg(receiver))
-		wrote = true
+		items = append(items, ast.FormatReceiverText("self", typeString(receiver.Type)))
 	}
 	for _, param := range params {
 		if param == nil {
 			continue
 		}
-		if wrote {
-			b.WriteString(", ")
-		}
-		b.WriteString(formatParam(param))
-		wrote = true
+		items = append(items, formatParam(param))
 	}
-	b.WriteByte(')')
-	return b.String()
-}
-
-func formatReceiverArg(param *Param) string {
-	if param == nil {
-		return ""
-	}
-	switch t := param.Type.(type) {
-	case *typeinfo.PointerType:
-		_ = t
-		return "*self"
-	case *typeinfo.RefType:
-		if t.Mutable {
-			return "&mut self"
-		}
-		return "&self"
-	default:
-		return "self"
-	}
+	return ast.FormatParamList(items)
 }
 
 func formatParam(param *Param) string {
 	if param == nil {
 		return ""
 	}
-	prefix := ""
-	if param.IsMutable {
-		prefix += "mut "
+	return ast.FormatNamedParamText(param.Name, typeString(param.Type), param.IsMutable, param.IsComptime)
+}
+
+func formatParams(params []*Param) []string {
+	items := make([]string, 0, len(params))
+	for _, param := range params {
+		if param == nil {
+			continue
+		}
+		items = append(items, formatParam(param))
 	}
-	if param.IsComptime {
-		prefix += "comptime "
-	}
-	return fmt.Sprintf("%s%s: %s", prefix, param.Name, typeString(param.Type))
+	return items
 }
 
 func formatBlock(b *strings.Builder, block *BlockStmt, indent int) {

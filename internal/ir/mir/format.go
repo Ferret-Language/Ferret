@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/frontend/ast"
 )
 
 func FormatModule(mod *Module) string {
@@ -68,15 +69,7 @@ func formatFunction(b *strings.Builder, fn *Function) {
 	if strings.Contains(name, "::") && len(fn.Params) > 0 {
 		fmt.Fprintf(b, "fn %s%s", name, formatMethodParams(fn.Params))
 	} else {
-		fmt.Fprintf(b, "fn %s", name)
-		b.WriteByte('(')
-		for i, param := range fn.Params {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(formatParam(param))
-		}
-		b.WriteByte(')')
+		fmt.Fprintf(b, "fn %s%s", name, ast.FormatParamList(formatParams(fn.Params)))
 	}
 	if fn.Blocks == nil {
 		fmt.Fprintf(b, " %s;\n", renderType(fn.Result))
@@ -123,49 +116,33 @@ func formatParam(param *Param) string {
 	if param == nil {
 		return ""
 	}
-	prefix := ""
-	if param.IsMutable {
-		prefix = "mut "
-	}
-	if param.IsComptime {
-		prefix += "comptime "
-	}
-	return fmt.Sprintf("%s%s: %s", prefix, param.Name, renderType(param.Type))
+	return ast.FormatNamedParamText(param.Name, renderType(param.Type), param.IsMutable, param.IsComptime)
 }
 
 func formatMethodParams(params []*Param) string {
-	var b strings.Builder
-	b.WriteByte('(')
+	items := make([]string, 0, len(params))
 	for i, param := range params {
-		if i > 0 {
-			b.WriteString(", ")
-		}
-		if i == 0 {
-			b.WriteString(formatReceiverParam(param))
+		if param == nil {
 			continue
 		}
-		b.WriteString(formatParam(param))
+		if i == 0 {
+			items = append(items, ast.FormatReceiverText("self", renderType(param.Type)))
+			continue
+		}
+		items = append(items, formatParam(param))
 	}
-	b.WriteByte(')')
-	return b.String()
+	return ast.FormatParamList(items)
 }
 
-func formatReceiverParam(param *Param) string {
-	if param == nil {
-		return ""
-	}
-	switch t := param.Type.(type) {
-	case *typeinfo.PointerType:
-		_ = t
-		return "*self"
-	case *typeinfo.RefType:
-		if t.Mutable {
-			return "&mut self"
+func formatParams(params []*Param) []string {
+	items := make([]string, 0, len(params))
+	for _, param := range params {
+		if param == nil {
+			continue
 		}
-		return "&self"
-	default:
-		return "self"
+		items = append(items, formatParam(param))
 	}
+	return items
 }
 
 func prettyFunctionName(fn *Function) string {

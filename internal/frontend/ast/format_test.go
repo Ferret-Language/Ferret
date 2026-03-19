@@ -48,6 +48,15 @@ func TestFuncDeclNameIncludesOwnerType(t *testing.T) {
 	}
 }
 
+func TestFormatReceiverTextAndParamList(t *testing.T) {
+	if got := FormatReceiverText("self", "&mut Point"); got != "&mut self" {
+		t.Fatalf("unexpected receiver text: %q", got)
+	}
+	if got := FormatParamList([]string{"&self", "x: i32"}); got != "(&self, x: i32)" {
+		t.Fatalf("unexpected param list: %q", got)
+	}
+}
+
 func TestTypeDeclTextStructIncludesFields(t *testing.T) {
 	decl := &TypeDecl{
 		Name: &Ident{Path: []string{"Point"}},

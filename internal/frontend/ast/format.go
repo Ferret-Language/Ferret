@@ -83,40 +83,57 @@ func ReceiverString(recv *Receiver) string {
 	if recv.Name != nil && recv.Name.Text() != "" {
 		name = recv.Name.Text()
 	}
+	return FormatReceiverText(name, TypeString(recv.Type))
+}
+
+func FormatNamedParamText(name, typeText string, isMut, isComptime bool) string {
+	var b strings.Builder
+	if isComptime {
+		b.WriteString("comptime ")
+	}
+	if isMut {
+		b.WriteString("mut ")
+	}
+	if name == "" {
+		name = "_"
+	}
+	b.WriteString(name)
+	b.WriteString(": ")
+	b.WriteString(typeText)
+	return b.String()
+}
+
+func FormatReceiverText(name, typeText string) string {
+	if name == "" {
+		name = "self"
+	}
 	if name == "self" {
-		switch t := recv.Type.(type) {
-		case *RefType:
-			if t.Mutable {
-				return "&mut self"
-			}
+		switch {
+		case strings.HasPrefix(typeText, "&mut "):
+			return "&mut self"
+		case strings.HasPrefix(typeText, "&"):
 			return "&self"
-		case *PointerType:
+		case strings.HasPrefix(typeText, "*"):
 			return "*self"
-		case *RawPtrType:
+		case strings.HasPrefix(typeText, "^"):
 			return "^self"
-		case *NamedType:
+		case typeText != "":
 			return "self"
 		}
 	}
-	return name + ": " + TypeString(recv.Type)
+	return name + ": " + typeText
+}
+
+func FormatParamList(items []string) string {
+	return "(" + strings.Join(items, ", ") + ")"
 }
 
 func ParamString(param Param) string {
-	var b strings.Builder
-	if param.IsComptime {
-		b.WriteString("comptime ")
-	}
-	if param.IsMut {
-		b.WriteString("mut ")
-	}
 	name := "_"
 	if param.Name != nil && param.Name.Text() != "" {
 		name = param.Name.Text()
 	}
-	b.WriteString(name)
-	b.WriteString(": ")
-	b.WriteString(TypeString(param.Type))
-	return b.String()
+	return FormatNamedParamText(name, TypeString(param.Type), param.IsMut, param.IsComptime)
 }
 
 func TypeParamString(param TypeParam) string {
@@ -174,7 +191,7 @@ func FuncSignature(fn *FuncDecl) string {
 	if fn.Result != nil {
 		result = TypeString(fn.Result)
 	}
-	return prefix + " " + name + "(" + strings.Join(params, ", ") + ") " + result
+	return prefix + " " + name + FormatParamList(params) + " " + result
 }
 
 func interfaceMethodSignature(method *InterfaceMethod) string {
@@ -192,7 +209,7 @@ func interfaceMethodSignature(method *InterfaceMethod) string {
 	if method.Result != nil {
 		result = TypeString(method.Result)
 	}
-	return method.Name.Text() + "(" + strings.Join(params, ", ") + ") " + result
+	return method.Name.Text() + FormatParamList(params) + " " + result
 }
 
 func TypeDeclString(decl *TypeDecl) string {
