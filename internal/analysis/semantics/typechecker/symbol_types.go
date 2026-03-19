@@ -101,6 +101,8 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 	if fn == nil {
 		return &typeinfo.FuncType{Result: &typeinfo.BuiltinType{Name: "void"}}
 	}
+	typeParams := c.pushTypeParams(mod, fn, fn.TypeParams)
+	defer c.popTypeParams()
 	var selfType typeinfo.Type
 	if fn.OwnerType != nil {
 		selfType = c.typeFromSyntax(mod, fn.OwnerType)
@@ -115,6 +117,7 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 	}
 	return &typeinfo.FuncType{
 		IsUnsafe:       fn.IsUnsafe,
+		TypeParams:     typeParams,
 		Params:         params,
 		MutParams:      mutParams,
 		ComptimeParams: comptimeParams,

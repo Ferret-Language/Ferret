@@ -241,6 +241,44 @@ fn set(mut x: i32, y: i32) i32 {
 	}
 }
 
+func TestParseDeclarationTypeParams(t *testing.T) {
+	src := `
+type Box<T> struct {
+    Value: T
+}
+
+fn Map<T, U: any>(value: T) U {
+    return value as U
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	box, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok {
+		t.Fatalf("expected type decl, got %T", mod.Decls[0])
+	}
+	if len(box.TypeParams) != 1 || box.TypeParams[0].Name.Text() != "T" {
+		t.Fatalf("expected Box<T>, got %#v", box.TypeParams)
+	}
+	fn, ok := mod.Decls[1].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[1])
+	}
+	if len(fn.TypeParams) != 2 {
+		t.Fatalf("expected 2 type params, got %#v", fn.TypeParams)
+	}
+	if fn.TypeParams[0].Name.Text() != "T" {
+		t.Fatalf("expected first type param T, got %#v", fn.TypeParams[0])
+	}
+	constraint, ok := fn.TypeParams[1].Constraint.(*ast.NamedType)
+	if !ok || len(constraint.Path) != 1 || constraint.Path[0] != "any" {
+		t.Fatalf("expected U constraint any, got %#v", fn.TypeParams[1].Constraint)
+	}
+}
+
 func TestParseCopyPrefixExpression(t *testing.T) {
 	src := `
 fn ClonePoint(p: Point) Point {

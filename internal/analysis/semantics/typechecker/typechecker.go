@@ -79,6 +79,14 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 	if d == nil {
 		return
 	}
+	typeParams := c.pushTypeParams(c.mod, d, d.TypeParams)
+	defer c.popTypeParams()
+	for i, param := range d.TypeParams {
+		if i >= len(typeParams) {
+			continue
+		}
+		c.info.BindNode(param.Name, typeParams[i])
+	}
 	declType := c.typeFromSyntax(c.mod, d.Type)
 	if d.Type != nil {
 		c.info.BindNode(d.Type, declType)
@@ -243,6 +251,14 @@ func (c *checker) typeContainsReferenceSeen(typ typeinfo.Type, seen map[typeinfo
 func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 	if d == nil {
 		return
+	}
+	typeParams := c.pushTypeParams(c.mod, d, d.TypeParams)
+	defer c.popTypeParams()
+	for i, param := range d.TypeParams {
+		if i >= len(typeParams) {
+			continue
+		}
+		c.info.BindNode(param.Name, typeParams[i])
 	}
 	var selfType typeinfo.Type
 	if d.OwnerType != nil {

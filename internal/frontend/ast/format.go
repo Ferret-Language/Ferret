@@ -119,6 +119,27 @@ func ParamString(param Param) string {
 	return b.String()
 }
 
+func TypeParamString(param TypeParam) string {
+	if param.Name == nil || param.Name.Text() == "" {
+		return "_"
+	}
+	if param.Constraint == nil {
+		return param.Name.Text()
+	}
+	return param.Name.Text() + ": " + TypeString(param.Constraint)
+}
+
+func typeParamListString(params []TypeParam) string {
+	if len(params) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(params))
+	for _, param := range params {
+		parts = append(parts, TypeParamString(param))
+	}
+	return "<" + strings.Join(parts, ", ") + ">"
+}
+
 func FuncSignature(fn *FuncDecl) string {
 	if fn == nil || fn.Name == nil {
 		return "fn <unknown>() void"
@@ -131,6 +152,7 @@ func FuncSignature(fn *FuncDecl) string {
 	if fn.OwnerType != nil && len(fn.OwnerType.Path) > 0 {
 		name = strings.Join(fn.OwnerType.Path, "::") + "::" + name
 	}
+	name += typeParamListString(fn.TypeParams)
 
 	params := make([]string, 0, len(fn.Params)+1)
 	if fn.Receiver != nil {
@@ -169,7 +191,7 @@ func TypeDeclString(decl *TypeDecl) string {
 	if decl == nil || decl.Name == nil {
 		return "type <unknown>"
 	}
-	name := decl.Name.Text()
+	name := decl.Name.Text() + typeParamListString(decl.TypeParams)
 	switch t := decl.Type.(type) {
 	case *StructType:
 		var b strings.Builder
@@ -233,6 +255,10 @@ func TypeDeclString(decl *TypeDecl) string {
 
 func (p Param) Text() string {
 	return ParamString(p)
+}
+
+func (p TypeParam) Text() string {
+	return TypeParamString(p)
 }
 
 func (r *Receiver) Text() string {

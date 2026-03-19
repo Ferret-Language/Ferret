@@ -42,12 +42,62 @@ func (s *refineScope) Lookup(sym *symbols.Symbol) (typeinfo.Type, bool) {
 }
 
 type checker struct {
-	ctx           *context.CompilerContext
-	mod           *context.Module
-	info          *typeinfo.ModuleInfo
-	currentResult typeinfo.Type
-	unsafeDepth   int
-	deferDepth    int
+	ctx             *context.CompilerContext
+	mod             *context.Module
+	info            *typeinfo.ModuleInfo
+	currentResult   typeinfo.Type
+	unsafeDepth     int
+	deferDepth      int
+	typeParamScopes []map[string]*typeinfo.TypeParam
+}
+
+func (c *checker) pushTypeParams(mod *context.Module, owner ast.Node, params []ast.TypeParam) []*typeinfo.TypeParam {
+	if len(params) == 0 {
+		return nil
+	}
+	scope := make(map[string]*typeinfo.TypeParam, len(params))
+	typeParams := make([]*typeinfo.TypeParam, 0, len(params))
+	for _, param := range params {
+		if param.Name == nil || param.Name.Text() == "" {
+			continue
+		}
+		tp := &typeinfo.TypeParam{Name: param.Name.Text(), Owner: owner}
+		scope[tp.Name] = tp
+		typeParams = append(typeParams, tp)
+		if c.info != nil {
+			c.info.BindNode(param.Name, tp)
+		}
+	}
+	c.typeParamScopes = append(c.typeParamScopes, scope)
+	for _, param := range params {
+		if param.Name == nil || param.Name.Text() == "" {
+			continue
+		}
+		tp := scope[param.Name.Text()]
+		if param.Constraint != nil {
+			tp.Constraint = c.typeFromSyntax(mod, param.Constraint)
+			if c.info != nil {
+				c.info.BindNode(param.Constraint, tp.Constraint)
+			}
+		}
+	}
+	return typeParams
+}
+
+func (c *checker) popTypeParams() {
+	if len(c.typeParamScopes) == 0 {
+		return
+	}
+	c.typeParamScopes = c.typeParamScopes[:len(c.typeParamScopes)-1]
+}
+
+func (c *checker) lookupTypeParam(name string) (*typeinfo.TypeParam, bool) {
+	for i := len(c.typeParamScopes) - 1; i >= 0; i-- {
+		if tp, ok := c.typeParamScopes[i][name]; ok {
+			return tp, true
+		}
+	}
+	return nil, false
 }
 
 func (c *checker) symbolMutable(sym *symbols.Symbol) bool {

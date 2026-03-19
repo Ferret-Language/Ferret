@@ -42,12 +42,13 @@ func debugDecl(decl Decl) any {
 	case *ConstDecl:
 		return map[string]any{"kind": "ConstDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
 	case *TypeDecl:
-		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "type": debugType(d.Type), "loc": debugLoc(d.Location)}
+		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "type_params": debugTypeParams(d.TypeParams), "attrs": debugAttrs(d.Attrs), "type": debugType(d.Type), "loc": debugLoc(d.Location)}
 	case *FuncDecl:
 		params := make([]any, 0, len(d.Params))
 		for _, param := range d.Params {
 			params = append(params, debugParam(param))
 		}
+		typeParams := debugTypeParams(d.TypeParams)
 		var recv any
 		if d.Receiver != nil {
 			recv = map[string]any{"name": debugExpr(d.Receiver.Name), "type": debugType(d.Receiver.Type), "loc": debugLoc(d.Receiver.Location)}
@@ -69,6 +70,7 @@ func debugDecl(decl Decl) any {
 			"receiver":       recv,
 			"is_constructor": d.IsConstructor,
 			"is_destructor":  d.IsDestructor,
+			"type_params":    typeParams,
 			"params":         params,
 			"result":         debugType(d.Result),
 			"body":           debugStmt(d.Body),
@@ -99,6 +101,21 @@ func debugAttrs(attrs []Attribute) []any {
 
 func debugParam(p Param) any {
 	return map[string]any{"name": debugExpr(p.Name), "is_mut": p.IsMut, "is_comptime": p.IsComptime, "type": debugType(p.Type), "loc": debugLoc(p.Location)}
+}
+
+func debugTypeParams(params []TypeParam) []any {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make([]any, 0, len(params))
+	for _, param := range params {
+		out = append(out, map[string]any{
+			"name":       debugExpr(param.Name),
+			"constraint": debugType(param.Constraint),
+			"loc":        debugLoc(param.Location),
+		})
+	}
+	return out
 }
 
 func debugStmt(stmt Stmt) any {

@@ -18,6 +18,25 @@ func TestFuncDeclSignature(t *testing.T) {
 	}
 }
 
+func TestFuncDeclSignatureIncludesTypeParams(t *testing.T) {
+	fn := &FuncDecl{
+		Name: &Ident{Path: []string{"Map"}},
+		TypeParams: []TypeParam{
+			{Name: &Ident{Path: []string{"T"}}},
+			{Name: &Ident{Path: []string{"U"}}, Constraint: &NamedType{Path: []string{"any"}}},
+		},
+		Params: []Param{
+			{Name: &Ident{Path: []string{"value"}}, Type: &NamedType{Path: []string{"T"}}},
+		},
+		Result: &NamedType{Path: []string{"U"}},
+	}
+
+	want := "fn Map<T, U: any>(value: T) U"
+	if got := fn.Signature(); got != want {
+		t.Fatalf("unexpected signature:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
 func TestTypeDeclTextStructIncludesFields(t *testing.T) {
 	decl := &TypeDecl{
 		Name: &Ident{Path: []string{"Point"}},
@@ -37,6 +56,28 @@ func TestTypeDeclTextStructIncludesFields(t *testing.T) {
 	}
 
 	want := "type Point struct {\n    X: i32\n    Y: i32 = 0\n}"
+	if got := decl.Text(); got != want {
+		t.Fatalf("unexpected type text:\nwant:\n%s\n\ngot:\n%s", want, got)
+	}
+}
+
+func TestTypeDeclTextIncludesTypeParams(t *testing.T) {
+	decl := &TypeDecl{
+		Name: &Ident{Path: []string{"Box"}},
+		TypeParams: []TypeParam{
+			{Name: &Ident{Path: []string{"T"}}},
+		},
+		Type: &StructType{
+			Fields: []*FieldDecl{
+				{
+					Name: &Ident{Path: []string{"Value"}},
+					Type: &NamedType{Path: []string{"T"}},
+				},
+			},
+		},
+	}
+
+	want := "type Box<T> struct {\n    Value: T\n}"
 	if got := decl.Text(); got != want {
 		t.Fatalf("unexpected type text:\nwant:\n%s\n\ngot:\n%s", want, got)
 	}

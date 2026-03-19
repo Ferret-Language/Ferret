@@ -27,13 +27,38 @@ func (p *Parser) validateDecl(decl ast.Decl) {
 		p.validateExpr(d.Value)
 		p.validateType(d.Type)
 	case *ast.TypeDecl:
+		p.validateTypeParams(d.TypeParams)
 		p.validateType(d.Type)
 	case *ast.FuncDecl:
+		p.validateTypeParams(d.TypeParams)
 		p.validateType(d.Result)
 		for _, param := range d.Params {
 			p.validateType(param.Type)
 		}
 		p.validateStmt(d.Body)
+	}
+}
+
+func (p *Parser) validateTypeParams(params []ast.TypeParam) {
+	if len(params) == 0 {
+		return
+	}
+	seen := make(map[string]source.Location, len(params))
+	for _, param := range params {
+		if param.Name == nil {
+			continue
+		}
+		name := param.Name.Text()
+		if prev, ok := seen[name]; ok {
+			p.reportDuplicateDeclName(
+				fmt.Sprintf("duplicate type parameter %q", name),
+				param.Location,
+				prev,
+			)
+		} else {
+			seen[name] = param.Location
+		}
+		p.validateType(param.Constraint)
 	}
 }
 

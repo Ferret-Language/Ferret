@@ -269,6 +269,24 @@ fn run() i32 {
 	}
 }
 
+func TestResolverAllowsDeclarationTypeParams(t *testing.T) {
+	root := t.TempDir()
+	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+type Box<T> struct {
+    Value: T
+}
+
+fn Identity<T>(value: T) T {
+    return value
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestResolverReportsMissingSymbolInImportedModule(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `

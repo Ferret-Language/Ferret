@@ -18,12 +18,13 @@ import (
 )
 
 type resolver struct {
-	ctx       *context.CompilerContext
-	mod       *context.Module
-	info      *binding.ModuleInfo
-	labels    []*binding.LabelBinding
-	loopDepth int
-	currentFn *ast.FuncDecl
+	ctx             *context.CompilerContext
+	mod             *context.Module
+	info            *binding.ModuleInfo
+	labels          []*binding.LabelBinding
+	loopDepth       int
+	currentFn       *ast.FuncDecl
+	typeParamScopes []map[string]struct{}
 }
 
 func (r *resolver) bindDeclIdent(ident *ast.Ident, sym *symbols.Symbol) {
@@ -152,6 +153,8 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 			}
 		}
 	case *ast.TypeDecl:
+		r.pushTypeParams(scope, d.TypeParams)
+		defer r.popTypeParams()
 		r.resolveType(scope, d.Type)
 		if d.Name != nil && r.mod.ModuleScope != nil {
 			if sym, ok := r.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {
@@ -174,6 +177,8 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 		prevFn := r.currentFn
 		r.currentFn = d
 		defer func() { r.currentFn = prevFn }()
+		r.pushTypeParams(scope, d.TypeParams)
+		defer r.popTypeParams()
 		funcScope := table.New(scope)
 		if d.Receiver != nil {
 			sym := symbols.New(d.Receiver.Name.Text(), symbols.SymbolParam, nil)
@@ -577,6 +582,9 @@ func (r *resolver) resolveTypePath(scope *table.Scope, typ *ast.NamedType) {
 		if isPredeclaredType(typ.Path[0]) {
 			return
 		}
+		if r.hasTypeParam(typ.Path[0]) {
+			return
+		}
 		if sym, ok := scope.Lookup(typ.Path[0]); ok && sym.Kind == symbols.SymbolType {
 			moduleKey := r.mod.Key
 			importPath := r.mod.ImportPath
@@ -597,6 +605,38 @@ func (r *resolver) resolveTypePath(scope *table.Scope, typ *ast.NamedType) {
 	}
 
 	r.resolveQualifiedPath(scope, typ.Path, typ, true)
+}
+
+func (r *resolver) pushTypeParams(scope *table.Scope, params []ast.TypeParam) {
+	if len(params) == 0 {
+		return
+	}
+	typeParamScope := make(map[string]struct{}, len(params))
+	for _, param := range params {
+		if param.Name != nil && param.Name.Text() != "" {
+			typeParamScope[param.Name.Text()] = struct{}{}
+		}
+	}
+	r.typeParamScopes = append(r.typeParamScopes, typeParamScope)
+	for _, param := range params {
+		r.resolveType(scope, param.Constraint)
+	}
+}
+
+func (r *resolver) popTypeParams() {
+	if len(r.typeParamScopes) == 0 {
+		return
+	}
+	r.typeParamScopes = r.typeParamScopes[:len(r.typeParamScopes)-1]
+}
+
+func (r *resolver) hasTypeParam(name string) bool {
+	for i := len(r.typeParamScopes) - 1; i >= 0; i-- {
+		if _, ok := r.typeParamScopes[i][name]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *resolver) resolveUnionMemberTypePath(scope *table.Scope, typ *ast.NamedType) (*binding.Resolution, bool) {

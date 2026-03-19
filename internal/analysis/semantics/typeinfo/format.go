@@ -80,9 +80,9 @@ func FormatFuncSignature(name string, fn *FuncType) string {
 		prefix = "unsafe fn"
 	}
 	if name != "" {
-		return fmt.Sprintf("%s %s%s", prefix, name, formatSignature(fn))
+		return fmt.Sprintf("%s %s%s%s", prefix, name, formatTypeParams(fn.TypeParams), formatSignature(fn))
 	}
-	return prefix + formatSignature(fn)
+	return prefix + formatTypeParams(fn.TypeParams) + formatSignature(fn)
 }
 
 func formatSignature(fn *FuncType) string {
@@ -101,4 +101,28 @@ func formatSignature(fn *FuncType) string {
 		parts = append(parts, prefix+FormatType(param))
 	}
 	return fmt.Sprintf("(%s) %s", strings.Join(parts, ", "), FormatType(fn.Result))
+}
+
+func formatTypeParams(params []*TypeParam) string {
+	if len(params) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(params))
+	for _, param := range params {
+		if param == nil {
+			continue
+		}
+		text := param.Name
+		if text == "" {
+			text = "_"
+		}
+		if param.Constraint != nil {
+			text += ": " + FormatType(param.Constraint)
+		}
+		parts = append(parts, text)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "<" + strings.Join(parts, ", ") + ">"
 }

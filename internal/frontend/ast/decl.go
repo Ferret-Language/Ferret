@@ -35,10 +35,11 @@ func (*LetDecl) declNode()              {}
 func (d *LetDecl) Loc() source.Location { return d.Location }
 
 type TypeDecl struct {
-	Name     *Ident
-	Attrs    []Attribute
-	Type     TypeExpr
-	Location source.Location
+	Name       *Ident
+	TypeParams []TypeParam
+	Attrs      []Attribute
+	Type       TypeExpr
+	Location   source.Location
 }
 
 func (*TypeDecl) declNode()              {}
@@ -60,11 +61,20 @@ type Param struct {
 	Location   source.Location
 }
 
+type TypeParam struct {
+	Name       *Ident
+	Constraint TypeExpr
+	Location   source.Location
+}
+
+func (p *TypeParam) Loc() source.Location { return p.Location }
+
 type FuncDecl struct {
 	Receiver      *Receiver
 	OwnerType     *NamedType
 	IsStatic      bool
 	Name          *Ident
+	TypeParams    []TypeParam
 	Doc           *CommentGroup
 	Attrs         []Attribute
 	IsUnsafe      bool

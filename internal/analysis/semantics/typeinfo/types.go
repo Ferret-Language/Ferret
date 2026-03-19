@@ -42,6 +42,19 @@ type SelfType struct{}
 
 func (*SelfType) String() string { return "Self" }
 
+type TypeParam struct {
+	Name       string
+	Constraint Type
+	Owner      ast.Node
+}
+
+func (t *TypeParam) String() string {
+	if t == nil || t.Name == "" {
+		return "<type-param>"
+	}
+	return t.Name
+}
+
 type NamedType struct {
 	ModuleKey string
 	Name      string
@@ -200,6 +213,7 @@ func (t *InterfaceType) String() string { return "interface" }
 
 type FuncType struct {
 	IsUnsafe       bool
+	TypeParams     []*TypeParam
 	Params         []Type
 	MutParams      []bool
 	ComptimeParams []bool
@@ -215,7 +229,7 @@ func (t *FuncType) String() string {
 	if t.IsUnsafe {
 		prefix = "unsafe fn"
 	}
-	return fmt.Sprintf("%s(%s) %s", prefix, strings.Join(parts, ", "), typeString(t.Result))
+	return fmt.Sprintf("%s%s(%s) %s", prefix, formatTypeParams(t.TypeParams), strings.Join(parts, ", "), typeString(t.Result))
 }
 
 func typeString(t Type) string {
@@ -284,6 +298,15 @@ func Equal(a, b Type) bool {
 	case *SelfType:
 		_, ok := b.(*SelfType)
 		return ok
+	case *TypeParam:
+		bt, ok := b.(*TypeParam)
+		if !ok {
+			return false
+		}
+		if at.Owner != nil || bt.Owner != nil {
+			return at.Owner == bt.Owner && at.Name == bt.Name
+		}
+		return at.Name == bt.Name
 	case *NamedType:
 		bt, ok := b.(*NamedType)
 		return ok && at.ModuleKey == bt.ModuleKey && at.Name == bt.Name
@@ -321,8 +344,13 @@ func Equal(a, b Type) bool {
 		return true
 	case *FuncType:
 		bt, ok := b.(*FuncType)
-		if !ok || at.IsUnsafe != bt.IsUnsafe || len(at.Params) != len(bt.Params) || len(at.MutParams) != len(bt.MutParams) || len(at.ComptimeParams) != len(bt.ComptimeParams) || !Equal(at.Result, bt.Result) {
+		if !ok || at.IsUnsafe != bt.IsUnsafe || len(at.TypeParams) != len(bt.TypeParams) || len(at.Params) != len(bt.Params) || len(at.MutParams) != len(bt.MutParams) || len(at.ComptimeParams) != len(bt.ComptimeParams) || !Equal(at.Result, bt.Result) {
 			return false
+		}
+		for i := range at.TypeParams {
+			if !Equal(at.TypeParams[i], bt.TypeParams[i]) {
+				return false
+			}
 		}
 		for i := range at.Params {
 			if !Equal(at.Params[i], bt.Params[i]) {

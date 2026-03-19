@@ -31,12 +31,14 @@ func (p *Parser) parseImportDecl() *ast.ImportDecl {
 func (p *Parser) parseTypeDecl(attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.TYPE, "expected 'type'").Start
 	nameTok := p.expectIdent("expected type name")
+	typeParams := p.parseTypeParams()
 	spec := p.parseTypeSpec()
 	return &ast.TypeDecl{
-		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
-		Attrs:    attrs,
-		Type:     spec,
-		Location: p.locFrom(start),
+		Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		TypeParams: typeParams,
+		Attrs:      attrs,
+		Type:       spec,
+		Location:   p.locFrom(start),
 	}
 }
 
@@ -107,6 +109,7 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		p.errorAt(loc, "special destructor syntax has been removed; use an ordinary method name like `Drop`")
 	}
 	nameTok := p.expectIdent("expected function or method name")
+	typeParams := p.parseTypeParams()
 	isConstructor := false
 	if owner != nil {
 		recv, params, isStaticMethod = p.parseAttachedMethodParams(owner)
@@ -131,6 +134,7 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		OwnerType:     owner,
 		IsStatic:      isStaticMethod,
 		Name:          &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		TypeParams:    typeParams,
 		Doc:           doc,
 		Attrs:         attrs,
 		IsUnsafe:      isUnsafe,
@@ -143,6 +147,31 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		Body:          body,
 		Location:      p.locFrom(start),
 	}
+}
+
+func (p *Parser) parseTypeParams() []ast.TypeParam {
+	if !p.match(tokens.LT) {
+		return nil
+	}
+	params := make([]ast.TypeParam, 0)
+	for !p.at(tokens.GT) && !p.at(tokens.EOF) {
+		start := p.current().Start
+		nameTok := p.expectIdent("expected type parameter name")
+		var constraint ast.TypeExpr
+		if p.match(tokens.COLON) {
+			constraint = p.parseType()
+		}
+		params = append(params, ast.TypeParam{
+			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+			Constraint: constraint,
+			Location:   p.locFrom(start),
+		})
+		if !p.consumeTypeListSeparator(tokens.GT, "type parameter") {
+			break
+		}
+	}
+	p.expect(tokens.GT, "expected '>' after type parameters")
+	return params
 }
 
 func (p *Parser) parseAttachedOwner() *ast.NamedType {

@@ -20,6 +20,11 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			}
 			return &typeinfo.BuiltinType{Name: t.Path[0]}
 		}
+		if len(t.Path) == 1 {
+			if typeParam, ok := c.lookupTypeParam(t.Path[0]); ok {
+				return typeParam
+			}
+		}
 		resolution := c.lookupTypeResolution(mod, t)
 		if resolution == nil || resolution.Symbol == nil {
 			return typeinfo.InvalidType{}

@@ -146,6 +146,52 @@ fn main() i64 {
 	}
 }
 
+func TestTypecheckerPreservesDeclarationTypeParams(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Box<T> struct {
+    Value: T
+}
+
+fn Identity<T>(value: T) T {
+    return value
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	box := result.Entry.AST.Decls[0].(*ast.TypeDecl)
+	boxType, ok := result.Entry.Types.Nodes[box.Type].(*typeinfo.StructType)
+	if !ok {
+		t.Fatalf("expected struct type, got %T", result.Entry.Types.Nodes[box.Type])
+	}
+	field := boxType.Fields["Value"]
+	if field == nil {
+		t.Fatalf("expected Value field in %#v", boxType.Fields)
+	}
+	if _, ok := field.Type.(*typeinfo.TypeParam); !ok {
+		t.Fatalf("expected Value field type param, got %T", field.Type)
+	}
+
+	fn := findTypeFunc(t, result.Entry.AST, "Identity")
+	fnType, ok := result.Entry.Types.Symbols[result.Entry.Bindings.FunctionSymbols[fn]].(*typeinfo.FuncType)
+	if !ok {
+		t.Fatalf("expected function type, got %T", result.Entry.Types.Symbols[result.Entry.Bindings.FunctionSymbols[fn]])
+	}
+	if len(fnType.TypeParams) != 1 || fnType.TypeParams[0].Name != "T" {
+		t.Fatalf("expected Identity<T>, got %#v", fnType.TypeParams)
+	}
+	if _, ok := fnType.Params[0].(*typeinfo.TypeParam); !ok {
+		t.Fatalf("expected param type param, got %T", fnType.Params[0])
+	}
+	if _, ok := fnType.Result.(*typeinfo.TypeParam); !ok {
+		t.Fatalf("expected result type param, got %T", fnType.Result)
+	}
+}
+
 func TestTypecheckerAllowsImplicitNumericWidening(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
