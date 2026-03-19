@@ -1,5 +1,7 @@
 package mir
 
+import "compiler/internal/analysis/semantics/typeinfo"
+
 func DebugModule(mod *Module) any {
 	if mod == nil {
 		return nil
@@ -192,8 +194,5 @@ func debugPlace(place Place) any {
 }
 
 func typeString(t interface{ String() string }) string {
-	if t == nil {
-		return "void"
-	}
-	return t.String()
+	return typeinfo.DefaultPrinter.Type(t)
 }

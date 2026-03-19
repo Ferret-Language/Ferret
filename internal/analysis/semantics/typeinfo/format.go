@@ -14,14 +14,42 @@ type InterfaceMethod struct {
 	Type     *FuncType
 }
 
-func FormatType(t fmt.Stringer) string {
+type Printer struct {
+	StripLocalPrefix string
+}
+
+var DefaultPrinter Printer
+
+func (p Printer) WithLocalStrip(importPath string) Printer {
+	p.StripLocalPrefix = importPath
+	return p
+}
+
+func (p Printer) Type(t fmt.Stringer) string {
 	if t == nil {
 		return "void"
 	}
-	return t.String()
+	text := t.String()
+	if p.StripLocalPrefix != "" {
+		prefix := "local:" + p.StripLocalPrefix + "::"
+		text = strings.ReplaceAll(text, prefix, "")
+	}
+	return text
 }
 
-func FormatNamedDecl(name string, underlying Type) string {
+func (p Printer) ReceiverText(name string, receiver Type) string {
+	return ast.FormatReceiverText(name, p.Type(receiver))
+}
+
+func (p Printer) NamedParamText(name string, typ Type, mutable, comptime bool) string {
+	return ast.FormatNamedParamText(name, p.Type(typ), mutable, comptime)
+}
+
+func (p Printer) ParamList(params []string) string {
+	return ast.FormatParamList(params)
+}
+
+func (p Printer) NamedDecl(name string, underlying Type) string {
 	switch t := underlying.(type) {
 	case *StructType:
 		var b strings.Builder
@@ -32,7 +60,7 @@ func FormatNamedDecl(name string, underlying Type) string {
 				if field == nil {
 					continue
 				}
-				fmt.Fprintf(&b, "    %s %s\n", field.Name, FormatType(field.Type))
+				fmt.Fprintf(&b, "    %s %s\n", field.Name, p.Type(field.Type))
 			}
 			b.WriteString("}")
 			return b.String()
@@ -57,9 +85,9 @@ func FormatNamedDecl(name string, underlying Type) string {
 					if param.Flags.Comptime() {
 						prefix += "comptime "
 					}
-					params = append(params, prefix+FormatType(param.Type))
+					params = append(params, prefix+p.Type(param.Type))
 				}
-				fmt.Fprintf(&b, "    %s\n", ast.FormatInterfaceMethodSignatureText(method.Name, method.Receiver.Prefix(), params, FormatType(method.Type.Result)))
+				fmt.Fprintf(&b, "    %s\n", ast.FormatInterfaceMethodSignatureText(method.Name, method.Receiver.Prefix(), params, p.Type(method.Type.Result)))
 			}
 			b.WriteString("}")
 			return b.String()
@@ -73,15 +101,15 @@ func FormatNamedDecl(name string, underlying Type) string {
 	case *UnionType:
 		parts := make([]string, 0, len(t.Members))
 		for _, member := range t.Members {
-			parts = append(parts, FormatType(member))
+			parts = append(parts, p.Type(member))
 		}
 		return fmt.Sprintf("type %s union { %s }", name, strings.Join(parts, ", "))
 	default:
-		return fmt.Sprintf("type %s %s", name, FormatType(underlying))
+		return fmt.Sprintf("type %s %s", name, p.Type(underlying))
 	}
 }
 
-func FormatFuncSignature(name string, fn *FuncType) string {
+func (p Printer) FuncSignature(name string, fn *FuncType) string {
 	if fn == nil {
 		if name == "" {
 			return "fn() void"
@@ -93,14 +121,14 @@ func FormatFuncSignature(name string, fn *FuncType) string {
 		prefix = "unsafe fn"
 	}
 	if name != "" {
-		return fmt.Sprintf("%s %s%s%s", prefix, name, formatTypeParams(fn.TypeParams), formatSignature(fn))
+		return fmt.Sprintf("%s %s%s%s", prefix, name, p.formatTypeParams(fn.TypeParams), p.formatSignature(fn))
 	}
-	return prefix + formatTypeParams(fn.TypeParams) + formatSignature(fn)
+	return prefix + p.formatTypeParams(fn.TypeParams) + p.formatSignature(fn)
 }
 
-func FormatFuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
+func (p Printer) FuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 	if fn == nil || fn.Name == nil {
-		return FormatFuncSignature("", fnType)
+		return p.FuncSignature("", fnType)
 	}
 	if fnType == nil {
 		return fn.Signature()
@@ -139,7 +167,7 @@ func FormatFuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 		}
 		if i < len(fnType.Params) {
 			b.WriteString(": ")
-			b.WriteString(FormatType(fnType.Params[i].Type))
+			b.WriteString(p.Type(fnType.Params[i].Type))
 			paramIndex = i + 1
 		}
 		wrote = true
@@ -148,17 +176,17 @@ func FormatFuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 		if wrote {
 			b.WriteString(", ")
 		}
-		b.WriteString(FormatType(fnType.Params[paramIndex].Type))
+		b.WriteString(p.Type(fnType.Params[paramIndex].Type))
 		wrote = true
 	}
 	b.WriteString(") ")
-	b.WriteString(FormatType(fnType.Result))
+	b.WriteString(p.Type(fnType.Result))
 	return b.String()
 }
 
-func FormatMethodSignature(name string, receiver Type, fn *FuncType) string {
+func (p Printer) MethodSignature(name string, receiver Type, fn *FuncType) string {
 	if receiver == nil {
-		return FormatFuncSignature(name, fn)
+		return p.FuncSignature(name, fn)
 	}
 	if fn == nil {
 		fn = &FuncType{}
@@ -173,7 +201,7 @@ func FormatMethodSignature(name string, receiver Type, fn *FuncType) string {
 		b.WriteByte(' ')
 		b.WriteString(name)
 	}
-	params := []string{ast.FormatReceiverText("self", FormatType(receiver))}
+	params := []string{p.ReceiverText("self", receiver)}
 	for _, param := range fn.Params {
 		prefix := ""
 		if param.Flags.Mutable() {
@@ -182,15 +210,15 @@ func FormatMethodSignature(name string, receiver Type, fn *FuncType) string {
 		if param.Flags.Comptime() {
 			prefix += "comptime "
 		}
-		params = append(params, prefix+FormatType(param.Type))
+		params = append(params, prefix+p.Type(param.Type))
 	}
-	b.WriteString(ast.FormatParamList(params))
+	b.WriteString(p.ParamList(params))
 	b.WriteByte(' ')
-	b.WriteString(FormatType(fn.Result))
+	b.WriteString(p.Type(fn.Result))
 	return b.String()
 }
 
-func formatSignature(fn *FuncType) string {
+func (p Printer) formatSignature(fn *FuncType) string {
 	if fn == nil {
 		return "()"
 	}
@@ -203,12 +231,12 @@ func formatSignature(fn *FuncType) string {
 		if param.Flags.Comptime() {
 			prefix += "comptime "
 		}
-		parts = append(parts, prefix+FormatType(param.Type))
+		parts = append(parts, prefix+p.Type(param.Type))
 	}
-	return fmt.Sprintf("(%s) %s", strings.Join(parts, ", "), FormatType(fn.Result))
+	return fmt.Sprintf("(%s) %s", strings.Join(parts, ", "), p.Type(fn.Result))
 }
 
-func formatTypeParams(params []*TypeParam) string {
+func (p Printer) formatTypeParams(params []*TypeParam) string {
 	if len(params) == 0 {
 		return ""
 	}
@@ -222,7 +250,7 @@ func formatTypeParams(params []*TypeParam) string {
 			text = "_"
 		}
 		if param.Constraint != nil {
-			text += ": " + FormatType(param.Constraint)
+			text += ": " + p.Type(param.Constraint)
 		}
 		parts = append(parts, text)
 	}
@@ -230,4 +258,24 @@ func formatTypeParams(params []*TypeParam) string {
 		return ""
 	}
 	return "<" + strings.Join(parts, ", ") + ">"
+}
+
+func FormatType(t fmt.Stringer) string {
+	return DefaultPrinter.Type(t)
+}
+
+func FormatNamedDecl(name string, underlying Type) string {
+	return DefaultPrinter.NamedDecl(name, underlying)
+}
+
+func FormatFuncSignature(name string, fn *FuncType) string {
+	return DefaultPrinter.FuncSignature(name, fn)
+}
+
+func FormatFuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
+	return DefaultPrinter.FuncDeclSignature(fn, fnType)
+}
+
+func FormatMethodSignature(name string, receiver Type, fn *FuncType) string {
+	return DefaultPrinter.MethodSignature(name, receiver, fn)
 }

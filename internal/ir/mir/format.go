@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"compiler/internal/analysis/semantics/typeinfo"
-	"compiler/internal/frontend/ast"
 )
 
 func FormatModule(mod *Module) string {
@@ -69,7 +68,7 @@ func formatFunction(b *strings.Builder, fn *Function) {
 	if strings.Contains(name, "::") && len(fn.Params) > 0 {
 		fmt.Fprintf(b, "fn %s%s", name, formatMethodParams(fn.Params))
 	} else {
-		fmt.Fprintf(b, "fn %s%s", name, ast.FormatParamList(formatParams(fn.Params)))
+		fmt.Fprintf(b, "fn %s%s", name, typeinfo.DefaultPrinter.ParamList(formatParams(fn.Params)))
 	}
 	if fn.Blocks == nil {
 		fmt.Fprintf(b, " %s;\n", renderType(fn.Result))
@@ -116,7 +115,7 @@ func formatParam(param *Param) string {
 	if param == nil {
 		return ""
 	}
-	return ast.FormatNamedParamText(param.Name, renderType(param.Type), param.IsMutable, param.IsComptime)
+	return typeinfo.DefaultPrinter.NamedParamText(param.Name, param.Type, param.IsMutable, param.IsComptime)
 }
 
 func formatMethodParams(params []*Param) string {
@@ -126,12 +125,12 @@ func formatMethodParams(params []*Param) string {
 			continue
 		}
 		if i == 0 {
-			items = append(items, ast.FormatReceiverText("self", renderType(param.Type)))
+			items = append(items, typeinfo.DefaultPrinter.ReceiverText("self", param.Type))
 			continue
 		}
 		items = append(items, formatParam(param))
 	}
-	return ast.FormatParamList(items)
+	return typeinfo.DefaultPrinter.ParamList(items)
 }
 
 func formatParams(params []*Param) []string {
@@ -481,12 +480,10 @@ func renderType(typ fmt.Stringer) string {
 	if typ == nil {
 		return "void"
 	}
-	text := typeinfo.FormatType(typ)
 	if currentModuleForFormat != nil {
-		prefix := "local:" + currentModuleForFormat.ImportPath + "::"
-		text = strings.ReplaceAll(text, prefix, "")
+		return typeinfo.DefaultPrinter.WithLocalStrip(currentModuleForFormat.ImportPath).Type(typ)
 	}
-	return text
+	return typeinfo.DefaultPrinter.Type(typ)
 }
 
 func formatPrefix(op, right string) string {

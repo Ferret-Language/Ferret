@@ -2,7 +2,6 @@ package hir
 
 import (
 	"compiler/internal/analysis/semantics/typeinfo"
-	"compiler/internal/frontend/ast"
 	"fmt"
 	"strings"
 )
@@ -62,7 +61,7 @@ func formatFunc(b *strings.Builder, fn *Func) {
 	if fn.OwnerType != "" {
 		fmt.Fprintf(b, "fn %s%s", name, formatAttachedParams(fn.Receiver, fn.Params))
 	} else {
-		fmt.Fprintf(b, "fn %s%s%s", formatReceiverPrefix(fn.Receiver), name, ast.FormatParamList(formatParams(fn.Params)))
+		fmt.Fprintf(b, "fn %s%s%s", formatReceiverPrefix(fn.Receiver), name, typeinfo.DefaultPrinter.ParamList(formatParams(fn.Params)))
 	}
 	if fn.Result != nil {
 		fmt.Fprintf(b, " %s", typeString(fn.Result))
@@ -86,7 +85,7 @@ func formatReceiverPrefix(param *Param) string {
 func formatAttachedParams(receiver *Param, params []*Param) string {
 	items := make([]string, 0, len(params)+1)
 	if receiver != nil {
-		items = append(items, ast.FormatReceiverText("self", typeString(receiver.Type)))
+		items = append(items, typeinfo.DefaultPrinter.ReceiverText("self", receiver.Type))
 	}
 	for _, param := range params {
 		if param == nil {
@@ -94,14 +93,14 @@ func formatAttachedParams(receiver *Param, params []*Param) string {
 		}
 		items = append(items, formatParam(param))
 	}
-	return ast.FormatParamList(items)
+	return typeinfo.DefaultPrinter.ParamList(items)
 }
 
 func formatParam(param *Param) string {
 	if param == nil {
 		return ""
 	}
-	return ast.FormatNamedParamText(param.Name, typeString(param.Type), param.IsMutable, param.IsComptime)
+	return typeinfo.DefaultPrinter.NamedParamText(param.Name, param.Type, param.IsMutable, param.IsComptime)
 }
 
 func formatParams(params []*Param) []string {
@@ -460,7 +459,7 @@ func globalKeyword(global *Global) string {
 	return "let"
 }
 
-func typeString(typ fmt.Stringer) string { return typeinfo.FormatType(typ) }
+func typeString(typ fmt.Stringer) string { return typeinfo.DefaultPrinter.Type(typ) }
 
 func indentLine(b *strings.Builder, indent int) {
 	for i := 0; i < indent; i++ {

@@ -39,7 +39,7 @@ type RuntimeTypeDescriptor struct {
 
 func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
 	desc := RuntimeTypeDescriptor{
-		Name: typeString(typ),
+		Name: typeinfo.DefaultPrinter.Type(typ),
 	}
 	if typ == nil {
 		return desc
@@ -100,11 +100,4 @@ func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
 		desc.Flags |= RuntimeTypeFlagSlice
 	}
 	return desc
-}
-
-func typeString(typ typeinfo.Type) string {
-	if typ == nil {
-		return "void"
-	}
-	return typ.String()
 }
