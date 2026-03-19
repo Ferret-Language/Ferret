@@ -52,15 +52,15 @@ type rpcRequest struct {
 
 type rpcResponse struct {
 	JSONRPC string      `json:"jsonrpc"`
-	ID      interface{} `json:"id,omitempty"`
-	Result  interface{} `json:"result,omitempty"`
+	ID      any `json:"id,omitempty"`
+	Result  any `json:"result,omitempty"`
 	Error   *rpcError   `json:"error,omitempty"`
 }
 
 type rpcNotification struct {
 	JSONRPC string      `json:"jsonrpc"`
 	Method  string      `json:"method"`
-	Params  interface{} `json:"params,omitempty"`
+	Params  any `json:"params,omitempty"`
 }
 
 type rpcError struct {
@@ -1191,7 +1191,7 @@ func (s *Server) readMessage() ([]byte, error) {
 	return payload, nil
 }
 
-func (s *Server) writeResponse(id json.RawMessage, result interface{}) {
+func (s *Server) writeResponse(id json.RawMessage, result any) {
 	if len(id) == 0 {
 		return
 	}
@@ -1215,12 +1215,12 @@ func (s *Server) writeError(id json.RawMessage, code int, message string) {
 	s.write(resp)
 }
 
-func (s *Server) writeNotification(method string, params interface{}) {
+func (s *Server) writeNotification(method string, params any) {
 	n := rpcNotification{JSONRPC: "2.0", Method: method, Params: params}
 	s.write(n)
 }
 
-func (s *Server) write(v interface{}) {
+func (s *Server) write(v any) {
 	body, err := json.Marshal(v)
 	if err != nil {
 		return
@@ -1234,7 +1234,7 @@ func (s *Server) write(v interface{}) {
 	_, _ = s.out.Write(buf.Bytes())
 }
 
-func decodeID(raw json.RawMessage) interface{} {
+func decodeID(raw json.RawMessage) any {
 	var numeric float64
 	if err := json.Unmarshal(raw, &numeric); err == nil {
 		if float64(int(numeric)) == numeric {
