@@ -194,14 +194,21 @@ func FuncSignature(fn *FuncDecl) string {
 	return prefix + " " + name + FormatParamList(params) + " " + result
 }
 
+func FormatInterfaceMethodSignatureText(name, receiver string, params []string, result string) string {
+	if receiver != "" {
+		params = append([]string{receiver + "self"}, params...)
+	}
+	if result == "" {
+		result = "void"
+	}
+	return name + FormatParamList(params) + " " + result
+}
+
 func interfaceMethodSignature(method *InterfaceMethod) string {
 	if method == nil || method.Name == nil {
 		return ""
 	}
 	params := make([]string, 0, len(method.Params)+1)
-	if method.Receiver != "" {
-		params = append(params, method.Receiver+"self")
-	}
 	for _, param := range method.Params {
 		params = append(params, ParamString(param))
 	}
@@ -209,7 +216,7 @@ func interfaceMethodSignature(method *InterfaceMethod) string {
 	if method.Result != nil {
 		result = TypeString(method.Result)
 	}
-	return method.Name.Text() + FormatParamList(params) + " " + result
+	return FormatInterfaceMethodSignatureText(method.Name.Text(), method.Receiver, params, result)
 }
 
 func TypeDeclString(decl *TypeDecl) string {

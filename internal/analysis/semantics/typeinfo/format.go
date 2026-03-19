@@ -48,7 +48,18 @@ func FormatNamedDecl(name string, underlying Type) string {
 				if method == nil || method.Type == nil {
 					continue
 				}
-				fmt.Fprintf(&b, "    %s%s%s\n", method.Receiver, method.Name, formatSignature(method.Type))
+				params := make([]string, 0, len(method.Type.Params))
+				for i, param := range method.Type.Params {
+					prefix := ""
+					if i < len(method.Type.MutParams) && method.Type.MutParams[i] {
+						prefix += "mut "
+					}
+					if i < len(method.Type.ComptimeParams) && method.Type.ComptimeParams[i] {
+						prefix += "comptime "
+					}
+					params = append(params, prefix+FormatType(param))
+				}
+				fmt.Fprintf(&b, "    %s\n", ast.FormatInterfaceMethodSignatureText(method.Name, method.Receiver, params, FormatType(method.Type.Result)))
 			}
 			b.WriteString("}")
 			return b.String()

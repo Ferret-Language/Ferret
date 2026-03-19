@@ -11,7 +11,7 @@ Current focus: remove duplicated formatting and signature-rendering code before 
 - [*] decide whether param modifiers like `mut` and `comptime` belong in canonical function-type string output or only in explicit formatter helpers
 - [*] reduce duplicated parameter-formatting logic between AST, HIR, and MIR printers
 - [*] reduce duplicated receiver and method-header formatting between AST, LSP, HIR, and MIR printers
-- [ ] reduce duplicated interface-method signature formatting between AST and semantic type rendering
+- [*] reduce duplicated interface-method signature formatting between AST and semantic type rendering
 
 ## Validation
 
