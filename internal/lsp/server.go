@@ -51,16 +51,16 @@ type rpcRequest struct {
 }
 
 type rpcResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      any `json:"id,omitempty"`
-	Result  any `json:"result,omitempty"`
-	Error   *rpcError   `json:"error,omitempty"`
+	JSONRPC string    `json:"jsonrpc"`
+	ID      any       `json:"id,omitempty"`
+	Result  any       `json:"result,omitempty"`
+	Error   *rpcError `json:"error,omitempty"`
 }
 
 type rpcNotification struct {
-	JSONRPC string      `json:"jsonrpc"`
-	Method  string      `json:"method"`
-	Params  any `json:"params,omitempty"`
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params,omitempty"`
 }
 
 type rpcError struct {
@@ -763,14 +763,14 @@ func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Modu
 			receiver := ""
 			if info != nil && selector.Left != nil {
 				if leftType, ok := info.Nodes[selector.Left]; ok {
-					receiver = typeinfo.FormatType(leftType)
+					receiver = typeinfo.DefaultPrinter.Type(leftType)
 				}
 			}
 			name := selector.Name.Text()
 			if receiver != "" {
 				name = receiver + "::" + name
 			}
-			return asFerretCodeBlock(typeinfo.FormatFuncSignature(name, fnType))
+			return asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(name, fnType))
 		}
 	}
 	return renderTypeHoverMarkdown(typ, mod, modulesByKey)
@@ -787,7 +787,7 @@ func renderNodeFunctionSignature(node ast.Node, typ typeinfo.Type, mod *context.
 			if baseNamed, ok := typeinfo.ReceiverBaseNamedType(methodReceiver); ok && baseNamed != nil {
 				name = baseNamed.Name + "::" + name
 			}
-			return typeinfo.FormatMethodSignature(name, methodReceiver, fnType)
+			return typeinfo.DefaultPrinter.MethodSignature(name, methodReceiver, fnType)
 		}
 	}
 	if sym := resolvedSymbolForNode(mod, node); sym != nil {
@@ -795,20 +795,20 @@ func renderNodeFunctionSignature(node ast.Node, typ typeinfo.Type, mod *context.
 			return sig
 		}
 		if sym.Name != "" {
-			return typeinfo.FormatFuncSignature(sym.Name, fnType)
+			return typeinfo.DefaultPrinter.FuncSignature(sym.Name, fnType)
 		}
 	}
 	switch n := node.(type) {
 	case *ast.Ident:
 		name := n.Text()
 		if name != "" {
-			return typeinfo.FormatFuncSignature(name, fnType)
+			return typeinfo.DefaultPrinter.FuncSignature(name, fnType)
 		}
 	case *ast.SelectorExpr:
 		receiver := ""
 		if info != nil && n.Left != nil {
 			if leftType, ok := info.Nodes[n.Left]; ok {
-				receiver = typeinfo.FormatType(leftType)
+				receiver = typeinfo.DefaultPrinter.Type(leftType)
 			}
 		}
 		name := n.Name.Text()
@@ -816,7 +816,7 @@ func renderNodeFunctionSignature(node ast.Node, typ typeinfo.Type, mod *context.
 			name = receiver + "::" + name
 		}
 		if name != "" {
-			return typeinfo.FormatFuncSignature(name, fnType)
+			return typeinfo.DefaultPrinter.FuncSignature(name, fnType)
 		}
 	}
 	return ""
@@ -839,12 +839,12 @@ func symbolFunctionSignature(sym *symbols.Symbol, fnType *typeinfo.FuncType) str
 	}
 	if fn, ok := sym.Node.(*ast.FuncDecl); ok && fn != nil {
 		if fnType != nil && len(fn.TypeParams) > 0 && len(fnType.TypeParams) == 0 {
-			return typeinfo.FormatFuncDeclSignature(fn, fnType)
+			return typeinfo.DefaultPrinter.FuncDeclSignature(fn, fnType)
 		}
 		return fn.Signature()
 	}
 	if fnType != nil && sym.Name != "" {
-		return typeinfo.FormatFuncSignature(sym.Name, fnType)
+		return typeinfo.DefaultPrinter.FuncSignature(sym.Name, fnType)
 	}
 	return ""
 }
@@ -859,7 +859,7 @@ func renderSymbolHoverMarkdown(sym *symbols.Symbol, typ typeinfo.Type, mod *cont
 			return asFerretCodeBlock(sig)
 		}
 		if fnType, ok := typ.(*typeinfo.FuncType); ok {
-			return asFerretCodeBlock(typeinfo.FormatFuncSignature(sym.Name, fnType))
+			return asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(sym.Name, fnType))
 		}
 	case symbols.SymbolType:
 		if named, ok := typ.(*typeinfo.NamedType); ok {
@@ -884,7 +884,7 @@ func renderTypeHoverMarkdown(typ typeinfo.Type, mod *context.Module, modulesByKe
 	case *typeinfo.NamedType:
 		return renderNamedTypeMarkdown(t, mod, modulesByKey)
 	default:
-		rendered := typeinfo.FormatType(typ)
+		rendered := typeinfo.DefaultPrinter.Type(typ)
 		switch rendered {
 		case "", "<unknown>", "<invalid>":
 			rendered = ""
