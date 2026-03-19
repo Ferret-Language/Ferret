@@ -4,6 +4,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/core/source"
 	"compiler/internal/frontend/ast"
 )
@@ -26,17 +27,17 @@ const (
 )
 
 type Symbol struct {
-	Name         string
-	Kind         Kind
-	IsPub        bool
-	Location     source.Location
-	Node         ast.Node
-	ReceiverType string
-	OwnerType    string
+	Name      string
+	Kind      Kind
+	IsPub     bool
+	Location  source.Location
+	Node      ast.Node
+	Receiver  semmeta.ReceiverKey
+	OwnerType string
 	// Mutable is a binder property for locals/params that don't have a dedicated AST node
 	// with mutability flags (e.g. for/lock/catch binders). For LetDecl/LetStmt, prefer
 	// the AST node's `IsMut` when available.
-	Mutable bool
+	Flags semmeta.ValueFlags
 }
 
 func New(name string, kind Kind, node ast.Node) *Symbol {

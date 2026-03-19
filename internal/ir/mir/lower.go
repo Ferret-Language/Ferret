@@ -428,7 +428,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 					for _, arg := range e.Args {
 						expected := typeinfo.Type(nil)
 						if fnType != nil && len(out.Args)-1 < len(fnType.Params) {
-							expected = fnType.Params[len(out.Args)-1]
+							expected = fnType.Params[len(out.Args)-1].Type
 						}
 						out.Args = append(out.Args, lowerCoercedValue(lowerCtx, arg, expected))
 					}
@@ -463,7 +463,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		for _, arg := range e.Args {
 			expected := typeinfo.Type(nil)
 			if fnType != nil && len(out.Args) < len(fnType.Params) {
-				expected = fnType.Params[len(out.Args)]
+				expected = fnType.Params[len(out.Args)].Type
 			}
 			out.Args = append(out.Args, lowerCoercedValue(lowerCtx, arg, expected))
 		}

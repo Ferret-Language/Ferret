@@ -411,7 +411,7 @@ func inferSpecializationBindings(template *Func, instantiated *typeinfo.FuncType
 		if param == nil || i >= len(instantiated.Params) {
 			continue
 		}
-		inferTypeBindings(param.Type, instantiated.Params[i], out)
+		inferTypeBindings(param.Type, instantiated.Params[i].Type, out)
 	}
 	inferTypeBindings(template.Result, instantiated.Result, out)
 	return out
@@ -554,13 +554,15 @@ func (s *specializer) substituteType(typ typeinfo.Type, bindings map[*typeinfo.T
 		return &typeinfo.TupleType{Elems: elems}
 	case *typeinfo.FuncType:
 		out := &typeinfo.FuncType{
-			IsUnsafe:       t.IsUnsafe,
-			MutParams:      append([]bool(nil), t.MutParams...),
-			ComptimeParams: append([]bool(nil), t.ComptimeParams...),
-			Result:         s.substituteType(t.Result, bindings),
+			IsUnsafe: t.IsUnsafe,
+			Result:   s.substituteType(t.Result, bindings),
 		}
 		for _, param := range t.Params {
-			out.Params = append(out.Params, s.substituteType(param, bindings))
+			out.Params = append(out.Params, typeinfo.ParamSpec{
+				Name:  param.Name,
+				Type:  s.substituteType(param.Type, bindings),
+				Flags: param.Flags,
+			})
 		}
 		return out
 	default:

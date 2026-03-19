@@ -72,7 +72,7 @@ type Module struct {
 	Phase        phase.ModulePhase
 	Dependencies []string
 	ModuleScope  *table.Scope
-	MethodSets   map[string]map[string]*symbols.Symbol
+	MethodSets   map[typeinfo.ReceiverKey]map[string]*symbols.Symbol
 	TypeMembers  map[string]map[string]*symbols.Symbol
 	Bindings     *binding.ModuleInfo
 	Types        *typeinfo.ModuleInfo

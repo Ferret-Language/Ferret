@@ -8,7 +8,7 @@ import (
 )
 
 type InterfaceMethod struct {
-	Receiver string
+	Receiver ReceiverKind
 	Static   bool
 	Name     string
 	Type     *FuncType
@@ -49,17 +49,17 @@ func FormatNamedDecl(name string, underlying Type) string {
 					continue
 				}
 				params := make([]string, 0, len(method.Type.Params))
-				for i, param := range method.Type.Params {
+				for _, param := range method.Type.Params {
 					prefix := ""
-					if i < len(method.Type.MutParams) && method.Type.MutParams[i] {
+					if param.Flags.Mutable() {
 						prefix += "mut "
 					}
-					if i < len(method.Type.ComptimeParams) && method.Type.ComptimeParams[i] {
+					if param.Flags.Comptime() {
 						prefix += "comptime "
 					}
-					params = append(params, prefix+FormatType(param))
+					params = append(params, prefix+FormatType(param.Type))
 				}
-				fmt.Fprintf(&b, "    %s\n", ast.FormatInterfaceMethodSignatureText(method.Name, method.Receiver, params, FormatType(method.Type.Result)))
+				fmt.Fprintf(&b, "    %s\n", ast.FormatInterfaceMethodSignatureText(method.Name, method.Receiver.Prefix(), params, FormatType(method.Type.Result)))
 			}
 			b.WriteString("}")
 			return b.String()
@@ -139,7 +139,7 @@ func FormatFuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 		}
 		if i < len(fnType.Params) {
 			b.WriteString(": ")
-			b.WriteString(FormatType(fnType.Params[i]))
+			b.WriteString(FormatType(fnType.Params[i].Type))
 			paramIndex = i + 1
 		}
 		wrote = true
@@ -148,7 +148,7 @@ func FormatFuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 		if wrote {
 			b.WriteString(", ")
 		}
-		b.WriteString(FormatType(fnType.Params[paramIndex]))
+		b.WriteString(FormatType(fnType.Params[paramIndex].Type))
 		wrote = true
 	}
 	b.WriteString(") ")
@@ -174,15 +174,15 @@ func FormatMethodSignature(name string, receiver Type, fn *FuncType) string {
 		b.WriteString(name)
 	}
 	params := []string{ast.FormatReceiverText("self", FormatType(receiver))}
-	for i, param := range fn.Params {
+	for _, param := range fn.Params {
 		prefix := ""
-		if i < len(fn.MutParams) && fn.MutParams[i] {
+		if param.Flags.Mutable() {
 			prefix += "mut "
 		}
-		if i < len(fn.ComptimeParams) && fn.ComptimeParams[i] {
+		if param.Flags.Comptime() {
 			prefix += "comptime "
 		}
-		params = append(params, prefix+FormatType(param))
+		params = append(params, prefix+FormatType(param.Type))
 	}
 	b.WriteString(ast.FormatParamList(params))
 	b.WriteByte(' ')
@@ -195,15 +195,15 @@ func formatSignature(fn *FuncType) string {
 		return "()"
 	}
 	parts := make([]string, 0, len(fn.Params))
-	for i, param := range fn.Params {
+	for _, param := range fn.Params {
 		prefix := ""
-		if i < len(fn.MutParams) && fn.MutParams[i] {
+		if param.Flags.Mutable() {
 			prefix += "mut "
 		}
-		if i < len(fn.ComptimeParams) && fn.ComptimeParams[i] {
+		if param.Flags.Comptime() {
 			prefix += "comptime "
 		}
-		parts = append(parts, prefix+FormatType(param))
+		parts = append(parts, prefix+FormatType(param.Type))
 	}
 	return fmt.Sprintf("(%s) %s", strings.Join(parts, ", "), FormatType(fn.Result))
 }

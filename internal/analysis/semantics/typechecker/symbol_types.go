@@ -107,21 +107,30 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 	if fn.OwnerType != nil {
 		selfType = c.typeFromSyntax(mod, fn.OwnerType)
 	}
-	params := make([]typeinfo.Type, 0, len(fn.Params))
-	mutParams := make([]bool, 0, len(fn.Params))
-	comptimeParams := make([]bool, 0, len(fn.Params))
+	params := make([]typeinfo.ParamSpec, 0, len(fn.Params))
 	for _, param := range fn.Params {
-		params = append(params, c.instantiateSelfType(c.typeFromSyntax(mod, param.Type), selfType))
-		mutParams = append(mutParams, param.IsMut)
-		comptimeParams = append(comptimeParams, param.IsComptime)
+		flags := typeinfo.ValueFlags(0)
+		if param.IsMut {
+			flags |= typeinfo.FlagMutable
+		}
+		if param.IsComptime {
+			flags |= typeinfo.FlagComptime
+		}
+		name := ""
+		if param.Name != nil {
+			name = param.Name.Text()
+		}
+		params = append(params, typeinfo.ParamSpec{
+			Name:  name,
+			Type:  c.instantiateSelfType(c.typeFromSyntax(mod, param.Type), selfType),
+			Flags: flags,
+		})
 	}
 	return &typeinfo.FuncType{
-		IsUnsafe:       fn.IsUnsafe,
-		TypeParams:     typeParams,
-		Params:         params,
-		MutParams:      mutParams,
-		ComptimeParams: comptimeParams,
-		Result:         c.instantiateSelfType(c.funcResultType(mod, fn), selfType),
+		IsUnsafe:   fn.IsUnsafe,
+		TypeParams: typeParams,
+		Params:     params,
+		Result:     c.instantiateSelfType(c.funcResultType(mod, fn), selfType),
 	}
 }
 

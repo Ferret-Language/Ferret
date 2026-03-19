@@ -774,21 +774,11 @@ func hirInterfaceMethodCompatible(expected, got *typeinfo.FuncType) bool {
 	if expected.IsUnsafe != got.IsUnsafe {
 		return false
 	}
-	if len(expected.Params) != len(got.Params) || len(expected.MutParams) != len(got.MutParams) || len(expected.ComptimeParams) != len(got.ComptimeParams) {
+	if len(expected.Params) != len(got.Params) {
 		return false
 	}
 	for i := range expected.Params {
-		if !typeinfo.Equal(expected.Params[i], got.Params[i]) {
-			return false
-		}
-	}
-	for i := range expected.MutParams {
-		if expected.MutParams[i] != got.MutParams[i] {
-			return false
-		}
-	}
-	for i := range expected.ComptimeParams {
-		if expected.ComptimeParams[i] != got.ComptimeParams[i] {
+		if !typeinfo.Equal(expected.Params[i].Type, got.Params[i].Type) || expected.Params[i].Flags != got.Params[i].Flags {
 			return false
 		}
 	}

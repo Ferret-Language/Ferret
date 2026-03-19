@@ -109,31 +109,39 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		return &typeinfo.UnionType{Members: members}
 	case *ast.InterfaceType:
 		methods := make(map[string]*typeinfo.FuncType)
-		methodReceivers := make(map[string]string)
+		methodReceivers := make(map[string]typeinfo.ReceiverKind)
 		methodStatic := make(map[string]bool)
 		orderedMethods := make([]*typeinfo.InterfaceMethod, 0, len(t.Methods))
 		for _, method := range t.Methods {
 			if method == nil {
 				continue
 			}
-			params := make([]typeinfo.Type, 0, len(method.Params))
-			mutParams := make([]bool, 0, len(method.Params))
-			comptimeParams := make([]bool, 0, len(method.Params))
+			params := make([]typeinfo.ParamSpec, 0, len(method.Params))
 			for _, param := range method.Params {
-				params = append(params, c.typeFromSyntax(mod, param.Type))
-				mutParams = append(mutParams, param.IsMut)
-				comptimeParams = append(comptimeParams, param.IsComptime)
+				flags := typeinfo.ValueFlags(0)
+				if param.IsMut {
+					flags |= typeinfo.FlagMutable
+				}
+				if param.IsComptime {
+					flags |= typeinfo.FlagComptime
+				}
+				name := ""
+				if param.Name != nil {
+					name = param.Name.Text()
+				}
+				params = append(params, typeinfo.ParamSpec{Name: name, Type: c.typeFromSyntax(mod, param.Type), Flags: flags})
 			}
 			result := c.typeFromSyntax(mod, method.Result)
 			if result == nil {
 				result = &typeinfo.BuiltinType{Name: "void"}
 			}
-			fnType := &typeinfo.FuncType{Params: params, MutParams: mutParams, ComptimeParams: comptimeParams, Result: result}
+			fnType := &typeinfo.FuncType{Params: params, Result: result}
 			name := method.Name.Text()
+			receiverKind := typeinfo.ReceiverKindFromSyntax(method.Receiver)
 			methods[name] = fnType
-			methodReceivers[name] = method.Receiver
+			methodReceivers[name] = receiverKind
 			methodStatic[name] = method.Static
-			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Receiver: method.Receiver, Static: method.Static, Type: fnType})
+			orderedMethods = append(orderedMethods, &typeinfo.InterfaceMethod{Name: name, Receiver: receiverKind, Static: method.Static, Type: fnType})
 		}
 		return &typeinfo.InterfaceType{Methods: methods, MethodReceivers: methodReceivers, MethodStatic: methodStatic, OrderedMethods: orderedMethods}
 	default:

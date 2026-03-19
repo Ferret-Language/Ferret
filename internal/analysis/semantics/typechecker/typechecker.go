@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"compiler/internal/analysis/semantics/binding"
+	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
@@ -327,7 +328,12 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		}
 		c.bindDeclSymbol(param.Name, paramType)
 		if sym := c.declSymbol(param.Name); sym != nil {
-			sym.Mutable = param.IsMut
+			if param.IsMut {
+				sym.Flags |= semmeta.FlagMutable
+			}
+			if param.IsComptime {
+				sym.Flags |= semmeta.FlagComptime
+			}
 		}
 		// No base-type environment: locals/params are typed via Bindings+Types.
 	}
@@ -1095,14 +1101,14 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 	for i, arg := range call.Args {
 		var expected typeinfo.Type
 		if i < len(fnType.Params) {
-			expected = fnType.Params[i]
+			expected = fnType.Params[i].Type
 		}
 		argType := c.lookupOrTypeExpr(scope, arg, expected, argTypes, i)
 		if expected != nil {
 			if !c.checkReferenceArg(scope, arg, expected, argType) {
 				continue
 			}
-			if i < len(fnType.MutParams) && fnType.MutParams[i] {
+			if i < len(fnType.Params) && fnType.Params[i].Flags.Mutable() {
 				addressable, mutable := c.exprAccess(scope, arg)
 				if !addressable || !mutable {
 					loc := arg.Loc()
@@ -1116,7 +1122,7 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 			}
 			c.checkAssignable(arg.Loc(), expected, argType)
 		}
-		if i < len(fnType.ComptimeParams) && fnType.ComptimeParams[i] {
+		if i < len(fnType.Params) && fnType.Params[i].Flags.Comptime() {
 			c.requireConstExpr(scope, arg, "argument to comptime parameter must be compile-time evaluable")
 		}
 	}
@@ -1159,7 +1165,7 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 		argType := c.typeOfExpr(scope, arg, nil)
 		argTypes = append(argTypes, argType)
 		if i < len(fnType.Params) {
-			c.inferTypeParamBindings(fnType.Params[i], argType, bindings)
+			c.inferTypeParamBindings(fnType.Params[i].Type, argType, bindings)
 		}
 	}
 	if expected != nil {
@@ -1194,14 +1200,16 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 	c.checkCallTypeParamConstraints(call, fnType.TypeParams, bindings)
 
 	instantiated := &typeinfo.FuncType{
-		IsUnsafe:       fnType.IsUnsafe,
-		Params:         make([]typeinfo.Type, 0, len(fnType.Params)),
-		MutParams:      append([]bool(nil), fnType.MutParams...),
-		ComptimeParams: append([]bool(nil), fnType.ComptimeParams...),
-		Result:         c.substituteTypeParams(fnType.Result, bindings),
+		IsUnsafe: fnType.IsUnsafe,
+		Params:   make([]typeinfo.ParamSpec, 0, len(fnType.Params)),
+		Result:   c.substituteTypeParams(fnType.Result, bindings),
 	}
 	for _, param := range fnType.Params {
-		instantiated.Params = append(instantiated.Params, c.substituteTypeParams(param, bindings))
+		instantiated.Params = append(instantiated.Params, typeinfo.ParamSpec{
+			Name:  param.Name,
+			Type:  c.substituteTypeParams(param.Type, bindings),
+			Flags: param.Flags,
+		})
 	}
 	if callee != nil {
 		c.info.BindNode(callee, instantiated)
@@ -2492,20 +2500,20 @@ func (c *checker) reportInterfaceMismatch(loc source.Location, expected, got typ
 	c.reportTypeMismatch(loc, expected, got)
 }
 
-func interfaceMethodString(isStatic bool, receiver, name string, fn *typeinfo.FuncType) string {
+func interfaceMethodString(isStatic bool, receiver typeinfo.ReceiverKind, name string, fn *typeinfo.FuncType) string {
 	if fn == nil {
 		if isStatic {
 			return name + "()"
 		}
-		return fmt.Sprintf("%s(%sself)", name, receiver)
+		return fmt.Sprintf("%s(%sself)", name, receiver.Prefix())
 	}
 	params := make([]string, 0, len(fn.Params))
 	for _, param := range fn.Params {
-		params = append(params, param.String())
+		params = append(params, param.Type.String())
 	}
 	sigParams := strings.Join(params, ", ")
 	if !isStatic {
-		selfParam := receiver + "self"
+		selfParam := receiver.Prefix() + "self"
 		if sigParams == "" {
 			sigParams = selfParam
 		} else {
@@ -2538,18 +2546,18 @@ func (c *checker) instantiateSelfFuncType(fn *typeinfo.FuncType, selfType typein
 	if fn == nil {
 		return nil
 	}
-	params := make([]typeinfo.Type, 0, len(fn.Params))
+	params := make([]typeinfo.ParamSpec, 0, len(fn.Params))
 	for _, param := range fn.Params {
-		params = append(params, c.instantiateSelfType(param, selfType))
+		params = append(params, typeinfo.ParamSpec{
+			Name:  param.Name,
+			Type:  c.instantiateSelfType(param.Type, selfType),
+			Flags: param.Flags,
+		})
 	}
-	mutParams := append([]bool(nil), fn.MutParams...)
-	comptime := append([]bool(nil), fn.ComptimeParams...)
 	return &typeinfo.FuncType{
-		IsUnsafe:       fn.IsUnsafe,
-		Params:         params,
-		MutParams:      mutParams,
-		ComptimeParams: comptime,
-		Result:         c.instantiateSelfType(fn.Result, selfType),
+		IsUnsafe: fn.IsUnsafe,
+		Params:   params,
+		Result:   c.instantiateSelfType(fn.Result, selfType),
 	}
 }
 
@@ -2602,21 +2610,11 @@ func (c *checker) interfaceMethodCompatible(expected, got *typeinfo.FuncType) bo
 	if expected.IsUnsafe != got.IsUnsafe {
 		return false
 	}
-	if len(expected.Params) != len(got.Params) || len(expected.MutParams) != len(got.MutParams) || len(expected.ComptimeParams) != len(got.ComptimeParams) {
+	if len(expected.Params) != len(got.Params) {
 		return false
 	}
 	for i := range expected.Params {
-		if !typeinfo.Equal(expected.Params[i], got.Params[i]) {
-			return false
-		}
-	}
-	for i := range expected.MutParams {
-		if expected.MutParams[i] != got.MutParams[i] {
-			return false
-		}
-	}
-	for i := range expected.ComptimeParams {
-		if expected.ComptimeParams[i] != got.ComptimeParams[i] {
+		if !typeinfo.Equal(expected.Params[i].Type, got.Params[i].Type) || expected.Params[i].Flags != got.Params[i].Flags {
 			return false
 		}
 	}

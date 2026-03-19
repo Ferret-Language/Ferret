@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/frontend/ast"
 )
 
@@ -204,20 +205,36 @@ func (t *UnionType) String() string { return "union" }
 
 type InterfaceType struct {
 	Methods         map[string]*FuncType
-	MethodReceivers map[string]string
+	MethodReceivers map[string]ReceiverKind
 	MethodStatic    map[string]bool
 	OrderedMethods  []*InterfaceMethod
 }
 
 func (t *InterfaceType) String() string { return "interface" }
 
+type ValueFlags = semmeta.ValueFlags
+type ParamSpec = semmeta.ValueSpec[Type]
+type ReceiverKind = semmeta.ReceiverKind
+type ReceiverKey = semmeta.ReceiverKey
+
+const (
+	FlagMutable  = semmeta.FlagMutable
+	FlagComptime = semmeta.FlagComptime
+
+	ReceiverValue  = semmeta.ReceiverValue
+	ReceiverRef    = semmeta.ReceiverRef
+	ReceiverRefMut = semmeta.ReceiverRefMut
+	ReceiverPtr    = semmeta.ReceiverPtr
+	ReceiverRawPtr = semmeta.ReceiverRawPtr
+)
+
+var ReceiverKindFromSyntax = semmeta.ReceiverKindFromSyntax
+
 type FuncType struct {
-	IsUnsafe       bool
-	TypeParams     []*TypeParam
-	Params         []Type
-	MutParams      []bool
-	ComptimeParams []bool
-	Result         Type
+	IsUnsafe   bool
+	TypeParams []*TypeParam
+	Params     []ParamSpec
+	Result     Type
 }
 
 // String returns the canonical textual form for function types, including
@@ -227,93 +244,72 @@ func (t *FuncType) String() string {
 }
 
 func ReceiverBaseNamedType(typ Type) (*NamedType, bool) {
-	named, _, ok := receiverNamedAndPrefix(typ)
+	named, _, ok := receiverNamedAndKind(typ)
 	return named, ok
 }
 
-func ReceiverKeyFromType(typ Type) (string, bool) {
-	named, prefix, ok := receiverNamedAndPrefix(typ)
+func ReceiverKeyFromType(typ Type) (ReceiverKey, bool) {
+	named, kind, ok := receiverNamedAndKind(typ)
 	if !ok {
-		return "", false
+		return ReceiverKey{}, false
 	}
-	return prefix + named.Name, true
+	return ReceiverKey{Kind: kind, TypeName: named.Name}, true
 }
 
-func ApplyReceiverShape(base Type, receiver string) Type {
+func ApplyReceiverShape(base Type, kind ReceiverKind) Type {
 	if base == nil {
 		return nil
 	}
-	switch receiver {
-	case "":
+	switch kind {
+	case ReceiverValue:
 		return base
-	case "&":
+	case ReceiverRef:
 		return &RefType{Inner: base}
-	case "&mut ":
+	case ReceiverRefMut:
 		return &RefType{Mutable: true, Inner: base}
-	case "*":
+	case ReceiverPtr:
 		return &PointerType{Inner: base}
-	case "^":
+	case ReceiverRawPtr:
 		return &RawPtrType{Inner: base}
 	default:
 		return base
 	}
 }
 
-func ReceiverTypeFromKey(named *NamedType, key string) Type {
-	if named == nil {
+func ReceiverTypeFromKey(named *NamedType, key ReceiverKey) Type {
+	if named == nil || key.TypeName != named.Name {
 		return nil
 	}
-	prefix, ok := receiverPrefixForKey(named.Name, key)
-	if !ok {
-		return nil
-	}
-	return ApplyReceiverShape(named, prefix)
+	return ApplyReceiverShape(named, key.Kind)
 }
 
-func receiverNamedAndPrefix(typ Type) (*NamedType, string, bool) {
+func receiverNamedAndKind(typ Type) (*NamedType, ReceiverKind, bool) {
 	switch t := typ.(type) {
 	case *NamedType:
-		return t, "", true
+		return t, ReceiverValue, true
 	case *RefType:
 		named, ok := t.Inner.(*NamedType)
 		if !ok {
-			return nil, "", false
+			return nil, ReceiverValue, false
 		}
 		if t.Mutable {
-			return named, "&mut ", true
+			return named, ReceiverRefMut, true
 		}
-		return named, "&", true
+		return named, ReceiverRef, true
 	case *PointerType:
 		named, ok := t.Inner.(*NamedType)
 		if !ok {
-			return nil, "", false
+			return nil, ReceiverValue, false
 		}
-		return named, "*", true
+		return named, ReceiverPtr, true
 	case *RawPtrType:
 		named, ok := t.Inner.(*NamedType)
 		if !ok {
-			return nil, "", false
+			return nil, ReceiverValue, false
 		}
-		return named, "^", true
+		return named, ReceiverRawPtr, true
 	default:
-		return nil, "", false
-	}
-}
-
-func receiverPrefixForKey(baseName, key string) (string, bool) {
-	switch  key{
-	case baseName:
-		return "", true
-	case "&" + baseName:
-		return "&", true
-	case "&mut " + baseName:
-		return "&mut ", true
-	case "*" + baseName:
-		return "*", true
-	case "^" + baseName:
-		return "^", true
-	default:
-		return "", false
+		return nil, ReceiverValue, false
 	}
 }
 
@@ -429,7 +425,7 @@ func Equal(a, b Type) bool {
 		return true
 	case *FuncType:
 		bt, ok := b.(*FuncType)
-		if !ok || at.IsUnsafe != bt.IsUnsafe || len(at.TypeParams) != len(bt.TypeParams) || len(at.Params) != len(bt.Params) || len(at.MutParams) != len(bt.MutParams) || len(at.ComptimeParams) != len(bt.ComptimeParams) || !Equal(at.Result, bt.Result) {
+		if !ok || at.IsUnsafe != bt.IsUnsafe || len(at.TypeParams) != len(bt.TypeParams) || len(at.Params) != len(bt.Params) || !Equal(at.Result, bt.Result) {
 			return false
 		}
 		for i := range at.TypeParams {
@@ -438,17 +434,7 @@ func Equal(a, b Type) bool {
 			}
 		}
 		for i := range at.Params {
-			if !Equal(at.Params[i], bt.Params[i]) {
-				return false
-			}
-		}
-		for i := range at.MutParams {
-			if at.MutParams[i] != bt.MutParams[i] {
-				return false
-			}
-		}
-		for i := range at.ComptimeParams {
-			if at.ComptimeParams[i] != bt.ComptimeParams[i] {
+			if !Equal(at.Params[i].Type, bt.Params[i].Type) || at.Params[i].Flags != bt.Params[i].Flags {
 				return false
 			}
 		}

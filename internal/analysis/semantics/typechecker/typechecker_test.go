@@ -184,8 +184,8 @@ fn Identity<T>(value: T) T {
 	if len(fnType.TypeParams) != 1 || fnType.TypeParams[0].Name != "T" {
 		t.Fatalf("expected Identity<T>, got %#v", fnType.TypeParams)
 	}
-	if _, ok := fnType.Params[0].(*typeinfo.TypeParam); !ok {
-		t.Fatalf("expected param type param, got %T", fnType.Params[0])
+	if _, ok := fnType.Params[0].Type.(*typeinfo.TypeParam); !ok {
+		t.Fatalf("expected param type param, got %T", fnType.Params[0].Type)
 	}
 	if _, ok := fnType.Result.(*typeinfo.TypeParam); !ok {
 		t.Fatalf("expected result type param, got %T", fnType.Result)
@@ -224,7 +224,7 @@ fn main() i32 {
 	if len(calleeType.TypeParams) != 0 {
 		t.Fatalf("expected instantiated callee to have no remaining type params, got %#v", calleeType.TypeParams)
 	}
-	if !typeinfo.IsBuiltinNamed(calleeType.Params[0], "i32") || !typeinfo.IsBuiltinNamed(calleeType.Result, "i32") {
+	if !typeinfo.IsBuiltinNamed(calleeType.Params[0].Type, "i32") || !typeinfo.IsBuiltinNamed(calleeType.Result, "i32") {
 		t.Fatalf("expected instantiated Identity(i32) -> i32, got %#v", calleeType)
 	}
 }

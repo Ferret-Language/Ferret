@@ -5,6 +5,7 @@ import (
 
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
@@ -17,7 +18,7 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 	}
 
 	scope := table.New(ctx.Universe)
-	methodSets := make(map[string]map[string]*symbols.Symbol)
+	methodSets := make(map[typeinfo.ReceiverKey]map[string]*symbols.Symbol)
 	typeMembers := make(map[string]map[string]*symbols.Symbol)
 
 	for _, decl := range mod.AST.Decls {
@@ -59,15 +60,15 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 				declare(ctx, scope, sym)
 				continue
 			}
-			recvName := receiverTypeName(d.Receiver.Type)
+			recvKey, _ := receiverKey(d.Receiver.Type)
 			name := d.Name.Text()
 			if d.IsDestructor {
 				name = "~" + name
 			}
 			sym := symbols.New(name, symbols.SymbolMethod, d)
 			sym.Location = d.Name.Loc()
-			sym.ReceiverType = recvName
-			declareMethod(ctx, methodSets, recvName, sym)
+			sym.Receiver = recvKey
+			declareMethod(ctx, methodSets, recvKey, sym)
 		}
 	}
 
@@ -120,7 +121,7 @@ func declare(ctx *context.CompilerContext, scope *table.Scope, sym *symbols.Symb
 	reportDuplicate(ctx, sym, prev)
 }
 
-func declareMethod(ctx *context.CompilerContext, methodSets map[string]map[string]*symbols.Symbol, recv string, sym *symbols.Symbol) {
+func declareMethod(ctx *context.CompilerContext, methodSets map[typeinfo.ReceiverKey]map[string]*symbols.Symbol, recv typeinfo.ReceiverKey, sym *symbols.Symbol) {
 	if methodSets[recv] == nil {
 		methodSets[recv] = make(map[string]*symbols.Symbol)
 	}
@@ -159,7 +160,7 @@ func reportDuplicate(ctx *context.CompilerContext, sym, prev *symbols.Symbol) {
 }
 
 func reportDuplicateMethod(ctx *context.CompilerContext, sym, prev *symbols.Symbol) {
-	diag := diagnostics.NewError(fmt.Sprintf("duplicate method %q for receiver %q", sym.Name, sym.ReceiverType)).
+	diag := diagnostics.NewError(fmt.Sprintf("duplicate method %q for receiver %q", sym.Name, sym.Receiver.String())).
 		WithCode(diagnostics.ErrRedeclaredSymbol).
 		WithPrimaryLabel(&sym.Location, "duplicate method declaration")
 	if prev != nil {
@@ -168,24 +169,34 @@ func reportDuplicateMethod(ctx *context.CompilerContext, sym, prev *symbols.Symb
 	ctx.Diagnostics.Add(diag)
 }
 
-func receiverTypeName(typ ast.TypeExpr) string {
+func receiverKey(typ ast.TypeExpr) (typeinfo.ReceiverKey, string) {
 	switch t := typ.(type) {
 	case *ast.NamedType:
 		if len(t.Path) == 0 {
-			return "<anon>"
+			return typeinfo.ReceiverKey{TypeName: "<anon>"}, "<anon>"
 		}
-		return t.Path[len(t.Path)-1]
+		name := t.Path[len(t.Path)-1]
+		return typeinfo.ReceiverKey{TypeName: name}, name
 	case *ast.PointerType:
-		return "*" + receiverTypeName(t.Inner)
+		key, text := receiverKey(t.Inner)
+		key.Kind = typeinfo.ReceiverPtr
+		return key, "*" + text
 	case *ast.RefType:
+		key, text := receiverKey(t.Inner)
 		prefix := "&"
 		if t.Mutable {
+			key.Kind = typeinfo.ReceiverRefMut
 			prefix = "&mut "
+		} else {
+			key.Kind = typeinfo.ReceiverRef
 		}
-		return prefix + receiverTypeName(t.Inner)
+		return key, prefix + text
 	case *ast.RawPtrType:
-		return "^" + receiverTypeName(t.Inner)
+		key, text := receiverKey(t.Inner)
+		key.Kind = typeinfo.ReceiverRawPtr
+		return key, "^" + text
 	default:
-		return fmt.Sprintf("%T", typ)
+		text := fmt.Sprintf("%T", typ)
+		return typeinfo.ReceiverKey{TypeName: text}, text
 	}
 }

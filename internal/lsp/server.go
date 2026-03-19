@@ -995,7 +995,7 @@ func collectTypeMethodSignatures(mod *context.Module, typeName string) ([]string
 
 	if mod.MethodSets != nil {
 		for receiver, methods := range mod.MethodSets {
-			if baseReceiverType(receiver) != typeName {
+			if receiver.TypeName != typeName {
 				continue
 			}
 			for _, sym := range methods {

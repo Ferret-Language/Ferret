@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"compiler/internal/analysis/semantics/binding"
+	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/core/context"
@@ -183,7 +184,7 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 		if d.Receiver != nil {
 			sym := symbols.New(d.Receiver.Name.Text(), symbols.SymbolParam, nil)
 			sym.Location = d.Receiver.Name.Loc()
-			sym.Mutable = true
+			sym.Flags |= semmeta.FlagMutable
 			declared := r.declareLocal(funcScope, sym)
 			r.info.AddFunctionLocal(d, declared)
 			r.bindDeclIdent(d.Receiver.Name, declared)
@@ -192,7 +193,12 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 			r.resolveType(scope, param.Type)
 			sym := symbols.New(param.Name.Text(), symbols.SymbolParam, nil)
 			sym.Location = param.Name.Loc()
-			sym.Mutable = param.IsMut
+			if param.IsMut {
+				sym.Flags |= semmeta.FlagMutable
+			}
+			if param.IsComptime {
+				sym.Flags |= semmeta.FlagComptime
+			}
 			declared := r.declareLocal(funcScope, sym)
 			r.info.AddFunctionLocal(d, declared)
 			r.bindDeclIdent(param.Name, declared)
@@ -217,7 +223,9 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.resolveExpr(scope, s.Value)
 		sym := symbols.New(s.Name.Text(), symbols.SymbolVar, s)
 		sym.Location = s.Name.Loc()
-		sym.Mutable = s.IsMut
+		if s.IsMut {
+			sym.Flags |= semmeta.FlagMutable
+		}
 		declared := r.declareLocal(scope, sym)
 		r.addFunctionLocal(declared)
 		r.bindDeclIdent(s.Name, declared)
@@ -226,7 +234,6 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.resolveExpr(scope, s.Value)
 		sym := symbols.New(s.Name.Text(), symbols.SymbolConst, s)
 		sym.Location = s.Name.Loc()
-		sym.Mutable = false
 		declared := r.declareLocal(scope, sym)
 		r.addFunctionLocal(declared)
 		r.bindDeclIdent(s.Name, declared)
@@ -268,7 +275,6 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		if s.Index != nil {
 			sym := symbols.New(s.Index.Text(), symbols.SymbolVar, nil)
 			sym.Location = s.Index.Loc()
-			sym.Mutable = false
 			declared := r.declareLocal(loopScope, sym)
 			r.addFunctionLocal(declared)
 			r.bindDeclIdent(s.Index, declared)
@@ -276,7 +282,6 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		if s.Value != nil {
 			sym := symbols.New(s.Value.Text(), symbols.SymbolVar, nil)
 			sym.Location = s.Value.Loc()
-			sym.Mutable = false
 			declared := r.declareLocal(loopScope, sym)
 			r.addFunctionLocal(declared)
 			r.bindDeclIdent(s.Value, declared)
@@ -304,7 +309,7 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		lockScope := table.New(scope)
 		sym := symbols.New(s.Name.Text(), symbols.SymbolVar, s)
 		sym.Location = s.Name.Loc()
-		sym.Mutable = true
+		sym.Flags |= semmeta.FlagMutable
 		declared := r.declareLocal(lockScope, sym)
 		r.addFunctionLocal(declared)
 		r.bindDeclIdent(s.Name, declared)
@@ -481,7 +486,6 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 			if e.Payload != nil {
 				sym := symbols.New(e.Payload.Text(), symbols.SymbolVar, nil)
 				sym.Location = e.Payload.Loc()
-				sym.Mutable = false
 				declared := r.declareLocal(handlerScope, sym)
 				r.addFunctionLocal(declared)
 				r.bindDeclIdent(e.Payload, declared)

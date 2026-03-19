@@ -412,7 +412,7 @@ func (a *analyzer) markCallWrites(call *ast.CallExpr) {
 		return
 	}
 	for i, arg := range call.Args {
-		if i < len(fnType.MutParams) && fnType.MutParams[i] {
+		if i < len(fnType.Params) && fnType.Params[i].Flags.Mutable() {
 			a.markReadWriteTarget(arg)
 		}
 	}

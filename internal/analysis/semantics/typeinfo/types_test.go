@@ -51,15 +51,15 @@ func TestReceiverHelpers(t *testing.T) {
 		t.Fatalf("expected ref receiver base Point, got %#v, %v", got, ok)
 	}
 
-	if got, ok := ReceiverKeyFromType(&PointerType{Inner: point}); !ok || got != "*Point" {
-		t.Fatalf("expected *Point receiver key, got %q, %v", got, ok)
+	if got, ok := ReceiverKeyFromType(&PointerType{Inner: point}); !ok || got != (ReceiverKey{Kind: ReceiverPtr, TypeName: "Point"}) {
+		t.Fatalf("expected *Point receiver key, got %#v, %v", got, ok)
 	}
 
-	if got := ApplyReceiverShape(point, "&mut "); got.String() != "&mut Point" {
+	if got := ApplyReceiverShape(point, ReceiverRefMut); got.String() != "&mut Point" {
 		t.Fatalf("expected &mut Point receiver shape, got %s", got.String())
 	}
 
-	if got := ReceiverTypeFromKey(point, "&Point"); got == nil || got.String() != "&Point" {
+	if got := ReceiverTypeFromKey(point, ReceiverKey{Kind: ReceiverRef, TypeName: "Point"}); got == nil || got.String() != "&Point" {
 		if got == nil {
 			t.Fatal("expected receiver type from key, got nil")
 		}

@@ -8,12 +8,13 @@ import (
 
 func TestFormatFuncSignature(t *testing.T) {
 	fn := &FuncType{
-		IsUnsafe:       true,
-		TypeParams:     []*TypeParam{{Name: "T"}, {Name: "U", Constraint: &BuiltinType{Name: "bool"}}},
-		Params:         []Type{&BuiltinType{Name: "i32"}, &BuiltinType{Name: "i64"}},
-		MutParams:      []bool{false, true},
-		ComptimeParams: []bool{true, false},
-		Result:         &BuiltinType{Name: "bool"},
+		IsUnsafe:   true,
+		TypeParams: []*TypeParam{{Name: "T"}, {Name: "U", Constraint: &BuiltinType{Name: "bool"}}},
+		Params: []ParamSpec{
+			{Type: &BuiltinType{Name: "i32"}, Flags: FlagComptime},
+			{Type: &BuiltinType{Name: "i64"}, Flags: FlagMutable},
+		},
+		Result: &BuiltinType{Name: "bool"},
 	}
 
 	got := FormatFuncSignature("Point::Calc", fn)
@@ -37,10 +38,11 @@ func TestFormatFuncDeclSignature(t *testing.T) {
 		},
 	}
 	fnType := &FuncType{
-		Params:         []Type{&BuiltinType{Name: "i32"}, &BuiltinType{Name: "bool"}},
-		MutParams:      []bool{true, false},
-		ComptimeParams: []bool{false, true},
-		Result:         &BuiltinType{Name: "void"},
+		Params: []ParamSpec{
+			{Type: &BuiltinType{Name: "i32"}, Flags: FlagMutable},
+			{Type: &BuiltinType{Name: "bool"}, Flags: FlagComptime},
+		},
+		Result: &BuiltinType{Name: "void"},
 	}
 
 	got := FormatFuncDeclSignature(fn, fnType)
@@ -52,12 +54,13 @@ func TestFormatFuncDeclSignature(t *testing.T) {
 
 func TestFuncTypeStringUsesCanonicalFormatter(t *testing.T) {
 	fn := &FuncType{
-		IsUnsafe:       true,
-		TypeParams:     []*TypeParam{{Name: "T"}},
-		Params:         []Type{&BuiltinType{Name: "i32"}, &BuiltinType{Name: "i64"}},
-		MutParams:      []bool{false, true},
-		ComptimeParams: []bool{true, false},
-		Result:         &BuiltinType{Name: "bool"},
+		IsUnsafe:   true,
+		TypeParams: []*TypeParam{{Name: "T"}},
+		Params: []ParamSpec{
+			{Type: &BuiltinType{Name: "i32"}, Flags: FlagComptime},
+			{Type: &BuiltinType{Name: "i64"}, Flags: FlagMutable},
+		},
+		Result: &BuiltinType{Name: "bool"},
 	}
 
 	got := fn.String()

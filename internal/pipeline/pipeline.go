@@ -223,16 +223,13 @@ func (p *Pipeline) lookupMethodPath(currentImportPath string) hir.MethodLookup {
 }
 
 func pipelineMethodLinkLeaf(sym *symbols.Symbol) string {
-	if sym == nil || sym.ReceiverType == "" {
+	if sym == nil || sym.Receiver.TypeName == "" {
 		if sym == nil {
 			return ""
 		}
 		return sym.Name
 	}
-	base := sym.ReceiverType
-	for _, prefix := range []string{"&mut ", "&", "^", "*"} {
-		base = strings.TrimPrefix(base, prefix)
-	}
+	base := sym.Receiver.TypeName
 	if base == "" {
 		return sym.Name
 	}
@@ -254,17 +251,22 @@ func pipelineBaseNamed(typ typeinfo.Type) (*typeinfo.NamedType, bool) {
 	}
 }
 
-func pipelineMethodCandidateKeys(baseName, methodName string) []string {
+func pipelineMethodCandidateKeys(baseName, methodName string) []typeinfo.ReceiverKey {
 	if baseName == "" || methodName == "" {
 		return nil
 	}
 	if methodName == "~"+baseName {
-		return []string{"*" + baseName}
+		return []typeinfo.ReceiverKey{{Kind: typeinfo.ReceiverPtr, TypeName: baseName}}
 	}
 	if methodName == baseName {
-		return []string{"*" + baseName}
+		return []typeinfo.ReceiverKey{{Kind: typeinfo.ReceiverPtr, TypeName: baseName}}
 	}
-	return []string{baseName, "&" + baseName, "&mut " + baseName, "*" + baseName}
+	return []typeinfo.ReceiverKey{
+		{TypeName: baseName},
+		{Kind: typeinfo.ReceiverRef, TypeName: baseName},
+		{Kind: typeinfo.ReceiverRefMut, TypeName: baseName},
+		{Kind: typeinfo.ReceiverPtr, TypeName: baseName},
+	}
 }
 
 func (p *Pipeline) finalizeFinalPasses() {

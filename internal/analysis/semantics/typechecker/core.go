@@ -117,7 +117,7 @@ func (c *checker) symbolMutable(sym *symbols.Symbol) bool {
 	case *ast.ConstDecl, *ast.ConstStmt:
 		return false
 	default:
-		return sym.Mutable
+		return sym.Flags.Mutable()
 	}
 }
 

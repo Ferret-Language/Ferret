@@ -947,7 +947,7 @@ func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
 	for i, arg := range call.Args {
 		a.checkValue(scope, arg)
 		if i < len(fnType.Params) {
-			a.consumeMoveValue(scope, arg, fnType.Params[i])
+			a.consumeMoveValue(scope, arg, fnType.Params[i].Type)
 		}
 	}
 }
@@ -975,7 +975,7 @@ func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallVa
 			for i, arg := range call.Args[1:] {
 				a.checkValue(scope, arg)
 				if i < len(methodType.Params) {
-					a.consumeMoveValue(scope, arg, methodType.Params[i])
+					a.consumeMoveValue(scope, arg, methodType.Params[i].Type)
 				}
 			}
 			if methodSym != nil {
@@ -1010,7 +1010,7 @@ func (a *analyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field
 		for i, arg := range call.Args {
 			a.checkValue(scope, arg)
 			if i < len(method.Params) {
-				a.consumeMoveValue(scope, arg, method.Params[i])
+				a.consumeMoveValue(scope, arg, method.Params[i].Type)
 			}
 		}
 		return true
@@ -1023,7 +1023,7 @@ func (a *analyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field
 	for i, arg := range call.Args {
 		a.checkValue(scope, arg)
 		if i < len(methodType.Params) {
-			a.consumeMoveValue(scope, arg, methodType.Params[i])
+			a.consumeMoveValue(scope, arg, methodType.Params[i].Type)
 		}
 	}
 	if methodSym != nil {
@@ -1825,11 +1825,11 @@ func (a *analyzer) receiverConsumes(mod *context.Module, fn *ast.FuncDecl) bool 
 	return a.isMoveType(syntaxType(mod, fn.Receiver.Type))
 }
 
-func (a *analyzer) methodCandidateKeys(receiverType typeinfo.Type, baseName string, addressable bool, mutable bool) []string {
-	keys := make([]string, 0, 4)
-	seen := make(map[string]struct{})
-	add := func(key string) {
-		if key == "" {
+func (a *analyzer) methodCandidateKeys(receiverType typeinfo.Type, baseName string, addressable bool, mutable bool) []typeinfo.ReceiverKey {
+	keys := make([]typeinfo.ReceiverKey, 0, 4)
+	seen := make(map[typeinfo.ReceiverKey]struct{})
+	add := func(key typeinfo.ReceiverKey) {
+		if key.TypeName == "" {
 			return
 		}
 		if _, ok := seen[key]; ok {
@@ -1840,13 +1840,13 @@ func (a *analyzer) methodCandidateKeys(receiverType typeinfo.Type, baseName stri
 	}
 	switch t := receiverType.(type) {
 	case *typeinfo.NamedType:
-		add(baseName)
+		add(typeinfo.ReceiverKey{TypeName: baseName})
 	case *typeinfo.RefType:
 		if exact, ok := typeinfo.ReceiverKeyFromType(t); ok {
 			add(exact)
 		}
 		if t.Mutable {
-			add("&" + baseName)
+			add(typeinfo.ReceiverKey{Kind: typeinfo.ReceiverRef, TypeName: baseName})
 		}
 	case *typeinfo.PointerType:
 		if exact, ok := typeinfo.ReceiverKeyFromType(t); ok {

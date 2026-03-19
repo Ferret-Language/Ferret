@@ -62,7 +62,7 @@ func (c *checker) lookupMethodDetailed(receiverType typeinfo.Type, name string, 
 	return nil, nil, nil
 }
 
-func (c *checker) lookupMethodWithReceiver(receiverType typeinfo.Type, receiver string, name string) (*symbols.Symbol, *typeinfo.FuncType) {
+func (c *checker) lookupMethodWithReceiver(receiverType typeinfo.Type, receiver typeinfo.ReceiverKind, name string) (*symbols.Symbol, *typeinfo.FuncType) {
 	baseNamed, ok := typeinfo.ReceiverBaseNamedType(receiverType)
 	if !ok {
 		return nil, nil
@@ -71,7 +71,7 @@ func (c *checker) lookupMethodWithReceiver(receiverType typeinfo.Type, receiver 
 	if owner == nil || owner.MethodSets == nil {
 		return nil, nil
 	}
-	key := receiver + baseNamed.Name
+	key := typeinfo.ReceiverKey{Kind: receiver, TypeName: baseNamed.Name}
 	methods := owner.MethodSets[key]
 	if methods == nil {
 		return nil, nil
@@ -105,15 +105,15 @@ func (c *checker) lookupStaticMethod(ownerType typeinfo.Type, name string) (*sym
 	return sym, fnType
 }
 
-func (c *checker) interfaceMethodReceiverType(receiverType typeinfo.Type, receiver string) typeinfo.Type {
+func (c *checker) interfaceMethodReceiverType(receiverType typeinfo.Type, receiver typeinfo.ReceiverKind) typeinfo.Type {
 	return typeinfo.ApplyReceiverShape(receiverType, receiver)
 }
 
-func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName string, addressable bool, mutable bool) []string {
-	keys := make([]string, 0, 4)
-	seen := make(map[string]struct{})
-	add := func(key string) {
-		if key == "" {
+func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName string, addressable bool, mutable bool) []typeinfo.ReceiverKey {
+	keys := make([]typeinfo.ReceiverKey, 0, 4)
+	seen := make(map[typeinfo.ReceiverKey]struct{})
+	add := func(key typeinfo.ReceiverKey) {
+		if key.TypeName == "" {
 			return
 		}
 		if _, ok := seen[key]; ok {
@@ -125,11 +125,11 @@ func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName strin
 
 	switch t := receiverType.(type) {
 	case *typeinfo.NamedType:
-		add(baseName)
+		add(typeinfo.ReceiverKey{TypeName: baseName})
 		if addressable {
-			add("&" + baseName)
+			add(typeinfo.ReceiverKey{Kind: typeinfo.ReceiverRef, TypeName: baseName})
 			if mutable {
-				add("&mut " + baseName)
+				add(typeinfo.ReceiverKey{Kind: typeinfo.ReceiverRefMut, TypeName: baseName})
 			}
 		}
 	case *typeinfo.RefType:
@@ -137,7 +137,7 @@ func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName strin
 			add(exact)
 		}
 		if t.Mutable {
-			add("&" + baseName)
+			add(typeinfo.ReceiverKey{Kind: typeinfo.ReceiverRef, TypeName: baseName})
 		}
 	case *typeinfo.PointerType:
 		if exact, ok := typeinfo.ReceiverKeyFromType(t); ok {

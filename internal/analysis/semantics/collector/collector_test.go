@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"compiler/internal/analysis/semantics/symbols"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
 	compiler "compiler/internal/driver"
@@ -58,7 +59,7 @@ fn Point::Shift(*self, dx: i32) {
 	if !ok || typeSym.Kind != symbols.SymbolType {
 		t.Fatalf("expected type symbol, got %#v", typeSym)
 	}
-	methods := result.Entry.MethodSets["*Point"]
+	methods := result.Entry.MethodSets[typeinfo.ReceiverKey{Kind: typeinfo.ReceiverPtr, TypeName: "Point"}]
 	if len(methods) != 1 {
 		t.Fatalf("expected one method for *Point, got %#v", methods)
 	}
@@ -157,17 +158,17 @@ fn Point::Take(*self) i32 {
 		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
 	}
 	methodSets := result.Entry.MethodSets
-	if methodSets["Point"]["Copy"].Kind != symbols.SymbolMethod {
-		t.Fatalf("expected value receiver method set, got %#v", methodSets["Point"])
+	if methodSets[typeinfo.ReceiverKey{TypeName: "Point"}]["Copy"].Kind != symbols.SymbolMethod {
+		t.Fatalf("expected value receiver method set, got %#v", methodSets[typeinfo.ReceiverKey{TypeName: "Point"}])
 	}
-	if methodSets["&Point"]["Read"].Kind != symbols.SymbolMethod {
-		t.Fatalf("expected immutable ref receiver method set, got %#v", methodSets["&Point"])
+	if methodSets[typeinfo.ReceiverKey{Kind: typeinfo.ReceiverRef, TypeName: "Point"}]["Read"].Kind != symbols.SymbolMethod {
+		t.Fatalf("expected immutable ref receiver method set, got %#v", methodSets[typeinfo.ReceiverKey{Kind: typeinfo.ReceiverRef, TypeName: "Point"}])
 	}
-	if methodSets["&mut Point"]["Bump"].Kind != symbols.SymbolMethod {
-		t.Fatalf("expected mutable ref receiver method set, got %#v", methodSets["&mut Point"])
+	if methodSets[typeinfo.ReceiverKey{Kind: typeinfo.ReceiverRefMut, TypeName: "Point"}]["Bump"].Kind != symbols.SymbolMethod {
+		t.Fatalf("expected mutable ref receiver method set, got %#v", methodSets[typeinfo.ReceiverKey{Kind: typeinfo.ReceiverRefMut, TypeName: "Point"}])
 	}
-	if methodSets["*Point"]["Take"].Kind != symbols.SymbolMethod {
-		t.Fatalf("expected owning receiver method set, got %#v", methodSets["*Point"])
+	if methodSets[typeinfo.ReceiverKey{Kind: typeinfo.ReceiverPtr, TypeName: "Point"}]["Take"].Kind != symbols.SymbolMethod {
+		t.Fatalf("expected owning receiver method set, got %#v", methodSets[typeinfo.ReceiverKey{Kind: typeinfo.ReceiverPtr, TypeName: "Point"}])
 	}
 }
 
