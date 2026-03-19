@@ -21,6 +21,17 @@ var sourceTree embed.FS
 
 type lowerer struct{}
 
+type interfaceVTableKey struct {
+	iface    *typeinfo.NamedType
+	concrete typeinfo.Type
+}
+
+type interfaceWrapperKey struct {
+	iface    *typeinfo.NamedType
+	concrete typeinfo.Type
+	method   string
+}
+
 type moduleState struct {
 	mod               *mir.Module
 	layout            *layout.Module
@@ -37,8 +48,8 @@ type moduleState struct {
 	nextStrConst      int              // counter for unnamed string constant globals
 	deferredB         *strings.Builder // deferred data sections (string literals used in functions)
 	pendingLines      []string
-	interfaceVTables  map[string]string
-	interfaceWrappers map[string]struct{}
+	interfaceVTables  map[interfaceVTableKey]string
+	interfaceWrappers map[interfaceWrapperKey]struct{}
 	tempValues        map[int]mir.Value
 }
 
@@ -78,8 +89,8 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		globals:           make(map[string]struct{}),
 		modulePrefix:      sanitizePath(unit.Module.ImportPath),
 		deferredB:         &strings.Builder{},
-		interfaceVTables:  make(map[string]string),
-		interfaceWrappers: make(map[string]struct{}),
+		interfaceVTables:  make(map[interfaceVTableKey]string),
+		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
 		tempValues:        make(map[int]mir.Value),
 	}
 	for _, fn := range unit.Module.Functions {
@@ -1570,7 +1581,7 @@ func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *m
 	if !ok || targetNamed == nil {
 		return "", fmt.Errorf("interface target must be named")
 	}
-	key := targetNamed.String() + "|" + typeinfo.FormatType(typeStringer{value.ConcreteType})
+	key := interfaceVTableKey{iface: targetNamed, concrete: value.ConcreteType}
 	if sym, ok := state.interfaceVTables[key]; ok {
 		return sym, nil
 	}
@@ -1623,7 +1634,7 @@ func qbeRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int6
 }
 
 func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
-	key := iface.String() + "|" + sanitizeType(concrete) + "|" + method.Name
+	key := interfaceWrapperKey{iface: iface, concrete: concrete, method: method.Name}
 	name := sanitizeIdent("ifacewrap__" + qbeTypeName(state, iface) + "__" + sanitizeType(concrete) + "__" + method.Name)
 	if _, ok := state.interfaceWrappers[key]; ok {
 		return name, nil

@@ -19,6 +19,17 @@ import (
 
 type lowerer struct{}
 
+type interfaceVTableKey struct {
+	iface    *typeinfo.NamedType
+	concrete typeinfo.Type
+}
+
+type interfaceWrapperKey struct {
+	iface    *typeinfo.NamedType
+	concrete typeinfo.Type
+	method   string
+}
+
 type moduleState struct {
 	mod               *mir.Module
 	layout            *layout.Module
@@ -35,8 +46,8 @@ type moduleState struct {
 	nextStrConst      int              // counter for unnamed string constant globals
 	deferredB         *strings.Builder // deferred global definitions (e.g. string literals used in functions)
 	pendingLines      []string         // extra load instructions to flush before each emitted line
-	interfaceVTables  map[string]string
-	interfaceWrappers map[string]struct{}
+	interfaceVTables  map[interfaceVTableKey]string
+	interfaceWrappers map[interfaceWrapperKey]struct{}
 	tempValues        map[int]mir.Value
 	debug             *debugState // nil if debug info is disabled
 	fnScopeID         int         // DISubprogram metadata ID for the current function
@@ -932,8 +943,8 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		globals:           make(map[string]struct{}),
 		modulePrefix:      sanitizePath(unit.Module.ImportPath),
 		deferredB:         &strings.Builder{},
-		interfaceVTables:  make(map[string]string),
-		interfaceWrappers: make(map[string]struct{}),
+		interfaceVTables:  make(map[interfaceVTableKey]string),
+		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
 		tempValues:        make(map[int]mir.Value),
 	}
 	for _, fn := range unit.Module.Functions {
@@ -3030,7 +3041,7 @@ func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *
 	if !ok || targetNamed == nil {
 		return "", 0, fmt.Errorf("interface target must be named")
 	}
-	key := targetNamed.String() + "|" + sanitizeType(value.ConcreteType)
+	key := interfaceVTableKey{iface: targetNamed, concrete: value.ConcreteType}
 	if sym, ok := state.interfaceVTables[key]; ok {
 		if iface, _, err := lookupInterfaceDecl(state, target); err == nil && iface != nil {
 			return sym, len(iface.Methods), nil
@@ -3092,7 +3103,7 @@ func llvmRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int
 }
 
 func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
-	key := iface.String() + "|" + sanitizeType(concrete) + "|" + method.Name
+	key := interfaceWrapperKey{iface: iface, concrete: concrete, method: method.Name}
 	name := sanitizeIdent("ifacewrap__" + llvmTypeName(state, iface) + "__" + sanitizeType(concrete) + "__" + method.Name)
 	if _, ok := state.interfaceWrappers[key]; ok {
 		return name, nil
