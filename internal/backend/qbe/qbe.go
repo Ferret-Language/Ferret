@@ -22,13 +22,13 @@ var sourceTree embed.FS
 type lowerer struct{}
 
 type interfaceVTableKey struct {
-	iface    *typeinfo.NamedType
-	concrete typeinfo.Type
+	iface    string
+	concrete string
 }
 
 type interfaceWrapperKey struct {
-	iface    *typeinfo.NamedType
-	concrete typeinfo.Type
+	iface    string
+	concrete string
 	method   string
 }
 
@@ -1581,7 +1581,7 @@ func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *m
 	if !ok || targetNamed == nil {
 		return "", fmt.Errorf("interface target must be named")
 	}
-	key := interfaceVTableKey{iface: targetNamed, concrete: value.ConcreteType}
+	key := interfaceVTableKey{iface: typeinfo.DefaultPrinter.Type(targetNamed), concrete: typeinfo.DefaultPrinter.Type(value.ConcreteType)}
 	if sym, ok := state.interfaceVTables[key]; ok {
 		return sym, nil
 	}
@@ -1634,7 +1634,7 @@ func qbeRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int6
 }
 
 func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
-	key := interfaceWrapperKey{iface: iface, concrete: concrete, method: method.Name}
+	key := interfaceWrapperKey{iface: typeinfo.DefaultPrinter.Type(iface), concrete: typeinfo.DefaultPrinter.Type(concrete), method: method.Name}
 	name := sanitizeIdent("ifacewrap__" + qbeTypeName(state, iface) + "__" + sanitizeType(concrete) + "__" + method.Name)
 	if _, ok := state.interfaceWrappers[key]; ok {
 		return name, nil

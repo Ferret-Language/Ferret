@@ -20,13 +20,13 @@ import (
 type lowerer struct{}
 
 type interfaceVTableKey struct {
-	iface    *typeinfo.NamedType
-	concrete typeinfo.Type
+	iface    string
+	concrete string
 }
 
 type interfaceWrapperKey struct {
-	iface    *typeinfo.NamedType
-	concrete typeinfo.Type
+	iface    string
+	concrete string
 	method   string
 }
 
@@ -3041,7 +3041,7 @@ func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *
 	if !ok || targetNamed == nil {
 		return "", 0, fmt.Errorf("interface target must be named")
 	}
-	key := interfaceVTableKey{iface: targetNamed, concrete: value.ConcreteType}
+	key := interfaceVTableKey{iface: typeinfo.DefaultPrinter.Type(targetNamed), concrete: typeinfo.DefaultPrinter.Type(value.ConcreteType)}
 	if sym, ok := state.interfaceVTables[key]; ok {
 		if iface, _, err := lookupInterfaceDecl(state, target); err == nil && iface != nil {
 			return sym, len(iface.Methods), nil
@@ -3103,7 +3103,7 @@ func llvmRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int
 }
 
 func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
-	key := interfaceWrapperKey{iface: iface, concrete: concrete, method: method.Name}
+	key := interfaceWrapperKey{iface: typeinfo.DefaultPrinter.Type(iface), concrete: typeinfo.DefaultPrinter.Type(concrete), method: method.Name}
 	name := sanitizeIdent("ifacewrap__" + llvmTypeName(state, iface) + "__" + sanitizeType(concrete) + "__" + method.Name)
 	if _, ok := state.interfaceWrappers[key]; ok {
 		return name, nil
