@@ -179,7 +179,7 @@ func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	mod.LoweredHIR = hir.Specialize(hir.Lower(mod.HIR), mod.Types, mod.Bindings)
 	mod.Phase = phase.PhaseHIRLowered
 	cfganalysis.AnalyzeModule(p.ctx, mod)
-	mod.MIR = mir.LowerModule(mod.CFG, mod.HIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupMethodPath(mod.ImportPath))
+	mod.MIR = mir.LowerModule(mod.CFG, mod.LoweredHIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupMethodPath(mod.ImportPath))
 	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseMIRGenerated
 	mir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)
@@ -287,10 +287,10 @@ func (p *Pipeline) buildGlobalConstMap() map[ast.Node]hir.Expr {
 	}
 	out := make(map[ast.Node]hir.Expr)
 	for _, mod := range p.ctx.Modules() {
-		if mod == nil || mod.HIR == nil {
+		if mod == nil || mod.LoweredHIR == nil {
 			continue
 		}
-		for _, global := range mod.HIR.Globals {
+		for _, global := range mod.LoweredHIR.Globals {
 			if global == nil || !global.Constant || global.Source == nil || global.Value == nil {
 				continue
 			}

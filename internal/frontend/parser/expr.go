@@ -27,13 +27,19 @@ func (p *Parser) parseExpr(precedence int) ast.Expr {
 
 func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Expr {
 	left := p.parsePrefix()
-	for !p.at(tokens.SEMICOLON) && !p.at(tokens.RBRACE) && !p.at(tokens.EOF) && !p.atAny(stopKinds...) && precedence < p.currentPrecedence() {
+	for !p.at(tokens.SEMICOLON) && !p.at(tokens.RBRACE) && !p.at(tokens.EOF) && !p.atAny(stopKinds...) && precedence < p.currentPrecedenceForExpr(left) {
 		if p.compositeValueDepth > 0 && precedence == precLowest && p.atCompositeFieldBoundary() {
 			return left
 		}
 		switch p.current().Kind {
+		case tokens.LT:
+			if p.hasGenericAngleCallAhead(left) {
+				left = p.parseCallWithAngleTypeArgs(left)
+			} else {
+				left = p.parseBinary(left)
+			}
 		case tokens.PLUS, tokens.MINUS, tokens.ASTERISK, tokens.SLASH, tokens.PERCENT,
-			tokens.EQ, tokens.NEQ, tokens.LT, tokens.LE, tokens.GT, tokens.GE,
+			tokens.EQ, tokens.NEQ, tokens.LE, tokens.GT, tokens.GE,
 			tokens.ANDAND, tokens.OROR, tokens.QQ:
 			left = p.parseBinary(left)
 		case tokens.CATCH:
@@ -232,6 +238,23 @@ func (p *Parser) parseCallWithTypeArgs(left ast.Expr) ast.Expr {
 	return call
 }
 
+func (p *Parser) parseCallWithAngleTypeArgs(left ast.Expr) ast.Expr {
+	start := *left.Loc().Start
+	p.expect(tokens.LT, "expected '<'")
+	typeArgs := make([]ast.TypeExpr, 0)
+	for !p.at(tokens.GT) && !p.at(tokens.EOF) {
+		typeArgs = append(typeArgs, p.parseType())
+		if !p.consumeTypeListSeparator(tokens.GT, "type argument") {
+			break
+		}
+	}
+	p.expect(tokens.GT, "expected '>' after type arguments")
+	call, _ := p.parseCall(left).(*ast.CallExpr)
+	call.TypeArgs = typeArgs
+	call.Location = p.makeExprLoc(start)
+	return call
+}
+
 func (p *Parser) parseArgList() []ast.Expr {
 	p.expect(tokens.LPAREN, "expected '('")
 	args := make([]ast.Expr, 0)
@@ -318,6 +341,13 @@ func (p *Parser) parseMatchArms() []*ast.MatchArm {
 
 func (p *Parser) currentPrecedence() int {
 	return precedence(p.current().Kind)
+}
+
+func (p *Parser) currentPrecedenceForExpr(left ast.Expr) int {
+	if p.at(tokens.LT) && p.hasGenericAngleCallAhead(left) {
+		return precPostfix
+	}
+	return p.currentPrecedence()
 }
 
 func precedence(kind tokens.Kind) int {

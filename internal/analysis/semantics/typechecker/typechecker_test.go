@@ -338,6 +338,37 @@ fn main() void {
 	}
 }
 
+func TestTypecheckerReportsExplicitGenericTypeArgConflictClearly(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn Add<T>(a: T, b: T) T {
+    return a + b
+}
+
+fn main() i32 {
+    return Add<bool>(1, 2)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected explicit generic type argument conflict diagnostic")
+	}
+
+	foundMismatch := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch {
+			foundMismatch = true
+		}
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "instantiated generic call requires valid operation") {
+			t.Fatalf("expected no secondary generic operation diagnostic when call args already mismatch, got %#v", diag)
+		}
+	}
+	if !foundMismatch {
+		t.Fatalf("expected standard type mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsImplicitNumericWidening(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

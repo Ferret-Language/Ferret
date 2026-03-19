@@ -3,7 +3,7 @@ package layoutanalysis
 import (
 	"fmt"
 
-	"compiler/internal/analysis/layout/model"
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/core/phase"
@@ -46,18 +46,19 @@ func AnalyzeModules(ctx *context.CompilerContext, mods []*context.Module) {
 }
 
 func (a *analyzer) analyzeModule(mod *context.Module) {
-	if mod == nil || mod.HIR == nil {
+	if mod == nil || mod.LoweredHIR == nil {
 		return
 	}
+	hirMod := mod.LoweredHIR
 	lm := &layout.Module{
 		Key:        mod.Key,
 		ImportPath: mod.ImportPath,
 		FilePath:   mod.FilePath,
-		Types:      make([]*layout.TypeLayout, 0, len(mod.HIR.Types)),
-		Named:      make(map[string]*layout.TypeLayout, len(mod.HIR.Types)),
+		Types:      make([]*layout.TypeLayout, 0, len(hirMod.Types)),
+		Named:      make(map[string]*layout.TypeLayout, len(hirMod.Types)),
 	}
 	a.modules[mod.Key] = lm
-	for _, decl := range mod.HIR.Types {
+	for _, decl := range hirMod.Types {
 		if decl == nil || decl.Named == nil {
 			continue
 		}
@@ -128,13 +129,13 @@ func (a *analyzer) findUnderlyingType(named *typeinfo.NamedType) typeinfo.Type {
 		return named
 	}
 	mod, ok := a.ctx.GetModule(named.ModuleKey)
-	if !ok || mod == nil || mod.HIR == nil {
+	if !ok || mod == nil || mod.LoweredHIR == nil {
 		if named.Decl != nil {
 			return named
 		}
 		return named
 	}
-	for _, decl := range mod.HIR.Types {
+	for _, decl := range mod.LoweredHIR.Types {
 		if decl != nil && decl.Name == named.Name && decl.Underlying != nil {
 			return decl.Underlying
 		}

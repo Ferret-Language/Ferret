@@ -197,6 +197,9 @@ func emitKeepGenArtifacts(result compiler.Result, backendName, outDir string) er
 		return err
 	}
 	if err := emitModuleTextDumps(result, outDir, ".hir", func(mod *context.Module) string {
+		if mod.LoweredHIR != nil {
+			return hir.FormatModule(mod.LoweredHIR)
+		}
 		return hir.FormatModule(mod.HIR)
 	}); err != nil {
 		return err

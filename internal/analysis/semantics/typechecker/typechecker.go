@@ -917,7 +917,7 @@ func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr, expected ty
 				WithPrimaryLabel(&loc, "wrap this call in `unsafe { ... }`"),
 		)
 	}
-	instantiated, argTypes, invalid := c.instantiateCallFuncType(scope, expr, expr.Callee, fnType, expected)
+	instantiated, argTypes, bindings, invalid := c.instantiateCallFuncType(scope, expr, expr.Callee, fnType, expected)
 	if instantiated == nil {
 		instantiated = fnType
 	}
@@ -926,7 +926,15 @@ func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr, expected ty
 		c.info.BindNode(expr, typ)
 		return typ
 	}
-	c.typecheckCallArgs(scope, expr, instantiated, argTypes)
+	callInvalid := c.typecheckCallArgs(scope, expr, instantiated, argTypes)
+	if !callInvalid && c.checkInstantiatedGenericRequirements(expr, expr.Callee, bindings) {
+		callInvalid = true
+	}
+	if callInvalid {
+		typ := typeinfo.InvalidType{}
+		c.info.BindNode(expr, typ)
+		return typ
+	}
 	c.info.BindNode(expr, instantiated.Result)
 	return instantiated.Result
 }
@@ -1035,7 +1043,7 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 			c.info.BindMethodReceiver(call, methodReceiver)
 			c.info.BindMethodReceiver(selector, methodReceiver)
 		}
-		instantiated, argTypes, invalid := c.instantiateCallFuncType(scope, call, selector, method, expected)
+		instantiated, argTypes, bindings, invalid := c.instantiateCallFuncType(scope, call, selector, method, expected)
 		if instantiated == nil {
 			instantiated = method
 		}
@@ -1044,7 +1052,15 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 			c.info.BindNode(call, typ)
 			return typ, true
 		}
-		c.typecheckCallArgs(scope, call, instantiated, argTypes)
+		callInvalid := c.typecheckCallArgs(scope, call, instantiated, argTypes)
+		if !callInvalid && c.checkInstantiatedGenericRequirements(call, selector, bindings) {
+			callInvalid = true
+		}
+		if callInvalid {
+			typ := typeinfo.InvalidType{}
+			c.info.BindNode(call, typ)
+			return typ, true
+		}
 		c.info.BindNode(call, instantiated.Result)
 		return instantiated.Result, true
 	}
@@ -1077,7 +1093,7 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 		c.info.BindMethodReceiver(call, methodReceiver)
 		c.info.BindMethodReceiver(selector, methodReceiver)
 	}
-	instantiated, argTypes, invalid := c.instantiateCallFuncType(scope, call, selector, methodType, expected)
+	instantiated, argTypes, bindings, invalid := c.instantiateCallFuncType(scope, call, selector, methodType, expected)
 	if instantiated == nil {
 		instantiated = methodType
 	}
@@ -1086,17 +1102,27 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 		c.info.BindNode(call, typ)
 		return typ, true
 	}
-	c.typecheckCallArgs(scope, call, instantiated, argTypes)
+	callInvalid := c.typecheckCallArgs(scope, call, instantiated, argTypes)
+	if !callInvalid && c.checkInstantiatedGenericRequirements(call, selector, bindings) {
+		callInvalid = true
+	}
+	if callInvalid {
+		typ := typeinfo.InvalidType{}
+		c.info.BindNode(call, typ)
+		return typ, true
+	}
 	c.info.BindNode(call, instantiated.Result)
 	return instantiated.Result, true
 }
 
-func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnType *typeinfo.FuncType, argTypes []typeinfo.Type) {
+func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnType *typeinfo.FuncType, argTypes []typeinfo.Type) bool {
+	invalid := false
 	if fnType == nil {
-		return
+		return false
 	}
 	if len(call.Args) != len(fnType.Params) {
 		c.reportWrongArgCount(call.Location, len(fnType.Params), len(call.Args))
+		invalid = true
 	}
 	for i, arg := range call.Args {
 		var expected typeinfo.Type
@@ -1106,6 +1132,7 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 		argType := c.lookupOrTypeExpr(scope, arg, expected, argTypes, i)
 		if expected != nil {
 			if !c.checkReferenceArg(scope, arg, expected, argType) {
+				invalid = true
 				continue
 			}
 			if i < len(fnType.Params) && fnType.Params[i].Flags.Mutable() {
@@ -1117,15 +1144,19 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 							WithCode(diagnostics.ErrTypeMismatch).
 							WithPrimaryLabel(&loc, "pass a mutable binding here"),
 					)
+					invalid = true
 					continue
 				}
 			}
-			c.checkAssignable(arg.Loc(), expected, argType)
+			if !c.checkAssignable(arg.Loc(), expected, argType) {
+				invalid = true
+			}
 		}
 		if i < len(fnType.Params) && fnType.Params[i].Flags.Comptime() {
 			c.requireConstExpr(scope, arg, "argument to comptime parameter must be compile-time evaluable")
 		}
 	}
+	return invalid
 }
 
 func (c *checker) lookupOrTypeExpr(scope *refineScope, expr ast.Expr, expected typeinfo.Type, precomputed []typeinfo.Type, index int) typeinfo.Type {
@@ -1135,9 +1166,9 @@ func (c *checker) lookupOrTypeExpr(scope *refineScope, expr ast.Expr, expected t
 	return c.typeOfExpr(scope, expr, expected)
 }
 
-func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr, callee ast.Node, fnType *typeinfo.FuncType, expected typeinfo.Type) (*typeinfo.FuncType, []typeinfo.Type, bool) {
+func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr, callee ast.Node, fnType *typeinfo.FuncType, expected typeinfo.Type) (*typeinfo.FuncType, []typeinfo.Type, map[*typeinfo.TypeParam]typeinfo.Type, bool) {
 	if fnType == nil {
-		return nil, nil, false
+		return nil, nil, nil, false
 	}
 	if len(fnType.TypeParams) == 0 {
 		if len(call.TypeArgs) > 0 {
@@ -1152,7 +1183,7 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 		if callee != nil {
 			c.info.BindNode(callee, fnType)
 		}
-		return fnType, nil, false
+		return fnType, nil, nil, false
 	}
 
 	bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(fnType.TypeParams))
@@ -1161,14 +1192,15 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 	}
 
 	argTypes := make([]typeinfo.Type, 0, len(call.Args))
+	inferFromArgs := len(call.TypeArgs) == 0 || len(call.TypeArgs) < len(fnType.TypeParams)
 	for i, arg := range call.Args {
 		argType := c.typeOfExpr(scope, arg, nil)
 		argTypes = append(argTypes, argType)
-		if i < len(fnType.Params) {
+		if inferFromArgs && i < len(fnType.Params) {
 			c.inferTypeParamBindings(fnType.Params[i].Type, argType, bindings)
 		}
 	}
-	if expected != nil {
+	if inferFromArgs && expected != nil {
 		c.inferTypeParamBindings(fnType.Result, expected, bindings)
 	}
 
@@ -1214,13 +1246,10 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 	if callee != nil {
 		c.info.BindNode(callee, instantiated)
 	}
-	if c.checkInstantiatedGenericRequirements(call, callee, bindings) {
-		return instantiated, argTypes, true
-	}
 	if missing {
-		return instantiated, argTypes, false
+		return instantiated, argTypes, bindings, false
 	}
-	return instantiated, argTypes, false
+	return instantiated, argTypes, bindings, false
 }
 
 func (c *checker) bindCallTypeArgs(call *ast.CallExpr) {
@@ -1405,6 +1434,9 @@ func (c *checker) checkInstantiatedGenericRequirements(call *ast.CallExpr, calle
 		case typeinfo.GenericRequirementBinaryOp:
 			left := c.substituteTypeParams(req.Left, bindings)
 			right := c.substituteTypeParams(req.Right, bindings)
+			if left == nil || right == nil || typeinfo.IsInvalid(left) || typeinfo.IsInvalid(right) || typeinfo.IsUnknown(left) || typeinfo.IsUnknown(right) {
+				continue
+			}
 			if result, handled := c.binaryResult(req.Op, left, right); handled && result != nil {
 				continue
 			}

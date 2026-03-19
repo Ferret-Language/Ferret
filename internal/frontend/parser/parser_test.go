@@ -279,6 +279,42 @@ fn Map<T, U: any>(value: T) U {
 	}
 }
 
+func TestParseGenericCallWithAngleTypeArgs(t *testing.T) {
+	src := `
+fn add<T>(a: T, b: T) T {
+    return a
+}
+
+fn main() i32 {
+    return add<i32>(1, 2)
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[1].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected main function, got %T", mod.Decls[1])
+	}
+	ret, ok := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return statement, got %T", fn.Body.Stmts[0])
+	}
+	call, ok := ret.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expression, got %T", ret.Value)
+	}
+	if len(call.TypeArgs) != 1 {
+		t.Fatalf("expected 1 type argument, got %d", len(call.TypeArgs))
+	}
+	arg, ok := call.TypeArgs[0].(*ast.NamedType)
+	if !ok || len(arg.Path) != 1 || arg.Path[0] != "i32" {
+		t.Fatalf("expected type argument i32, got %#v", call.TypeArgs[0])
+	}
+}
+
 func TestParseCopyPrefixExpression(t *testing.T) {
 	src := `
 fn ClonePoint(p: Point) Point {

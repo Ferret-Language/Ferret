@@ -216,6 +216,37 @@ func (p *Parser) hasGenericCallAhead() bool {
 	return false
 }
 
+// hasGenericAngleCallAhead reports whether the '<' at the current position
+// begins a generic-call type-argument list in the form `<...>(...)`.
+func (p *Parser) hasGenericAngleCallAhead(left ast.Expr) bool {
+	if left == nil || !p.at(tokens.LT) {
+		return false
+	}
+	// Disambiguate from comparison expressions: require tight syntax `callee<...>(...)`.
+	if loc := left.Loc(); loc.End == nil || loc.End.Index != p.current().Start.Index {
+		return false
+	}
+	depth := 0
+	for i := p.pos; i < len(p.toks); i++ {
+		switch p.toks[i].Kind {
+		case tokens.LT:
+			depth++
+		case tokens.GT:
+			depth--
+			if depth == 0 {
+				next := i + 1
+				return next < len(p.toks) && p.toks[next].Kind == tokens.LPAREN
+			}
+			if depth < 0 {
+				return false
+			}
+		case tokens.EOF:
+			return false
+		}
+	}
+	return false
+}
+
 func (p *Parser) match(kinds ...tokens.Kind) bool {
 	if slices.ContainsFunc(kinds, p.at) {
 		p.advance()
