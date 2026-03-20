@@ -71,10 +71,10 @@ fn main() i32 {
 		t.Fatalf("expected typed lowered return value, got %#v", ret.Value)
 	}
 	text := hir.FormatModule(result.Entry.HIR)
-	if text == "" || !contains(text, "type Point struct") {
+	if text == "" || !strings.Contains(text, "type Point struct") {
 		t.Fatalf("expected type declaration in hir dump, got %q", text)
 	}
-	if !contains(text, "X: i32 = 0") {
+	if !strings.Contains(text, "X: i32 = 0") {
 		t.Fatalf("expected field default in hir dump, got %q", text)
 	}
 }
@@ -658,7 +658,118 @@ fn main() {
 	}
 }
 
-func contains(s, sub string) bool { return strings.Contains(s, sub) }
+func TestPipelineCrossModuleSpecializesImportedGenericFunction(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "util", "math.ferr"), `
+fn Pick<T>(value: T) T {
+    return value
+}
+
+fn UsePickI32() i32 {
+    return Pick(1)
+}
+
+fn UsePickI64() i64 {
+    return Pick(2 as i64)
+}
+`)
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+import "util/math"
+
+fn main() i32 {
+    return math::UsePickI32() + (math::UsePickI64() as i32)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	specialized := make(map[string]struct{})
+	for _, mod := range append(result.Modules, result.Entry) {
+		if mod == nil || mod.LoweredHIR == nil {
+			continue
+		}
+		for _, fn := range mod.LoweredHIR.Functions {
+			if fn == nil || !strings.HasPrefix(fn.Name, "Pick$") {
+				continue
+			}
+			specialized[fn.Name] = struct{}{}
+		}
+	}
+	if len(specialized) != 2 {
+		t.Fatalf("expected 2 imported Pick specializations, got %d: %#v", len(specialized), specialized)
+	}
+}
+
+func TestPipelineCrossModuleSpecializesImportedGenericTypeMethod(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "util", "box.ferr"), `
+type Box<T> struct {
+    Value: T
+}
+
+fn Box<T>::Get(&self) T {
+    return self.Value
+}
+
+fn UseBoxGet() i32 {
+    let b: Box<i32> = .{ .Value = 7 }
+    return b.Get()
+}
+`)
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+import "util/box"
+
+fn main() i32 {
+    return box::UseBoxGet()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	typeNames := make(map[string]struct{})
+	methodNames := make(map[string]struct{})
+	for _, mod := range append(result.Modules, result.Entry) {
+		if mod == nil || mod.LoweredHIR == nil {
+			continue
+		}
+		for _, decl := range mod.LoweredHIR.Types {
+			if decl == nil || !strings.HasPrefix(decl.Name, "Box$") {
+				continue
+			}
+			typeNames[decl.Name] = struct{}{}
+		}
+		for _, fn := range mod.LoweredHIR.Functions {
+			if fn == nil || !strings.HasPrefix(fn.Name, "Get$") {
+				continue
+			}
+			methodNames[fn.Name] = struct{}{}
+		}
+	}
+	if len(typeNames) == 0 {
+		t.Fatalf("expected imported Box specialization, got %#v", typeNames)
+	}
+	if len(methodNames) == 0 {
+		t.Fatalf("expected imported Get specialization, got %#v", methodNames)
+	}
+}
 
 func mustWriteHIR(t *testing.T, path, content string) {
 	t.Helper()
