@@ -1138,147 +1138,153 @@ func (s *specializer) substituteTypeWithoutTypeSpecialization(typ typeinfo.Type,
 }
 
 func (s *specializer) substituteTypeInternal(typ typeinfo.Type, bindings map[*typeinfo.TypeParam]typeinfo.Type, specializeNamed bool) typeinfo.Type {
+	out := typeinfo.InstantiateType(typ, bindings)
+	if !specializeNamed {
+		return out
+	}
+	return s.specializeNamedTypeRefs(out, make(map[typeinfo.Type]struct{}))
+}
+
+func (s *specializer) specializeNamedTypeRefs(typ typeinfo.Type, seen map[typeinfo.Type]struct{}) typeinfo.Type {
 	switch t := typ.(type) {
 	case nil:
 		return nil
-	case *typeinfo.TypeParam:
-		if bound := lookupBoundType(bindings, t); bound != nil {
-			return bound
-		}
-		return typ
 	case *typeinfo.PointerType:
-		return &typeinfo.PointerType{Inner: s.substituteTypeInternal(t.Inner, bindings, specializeNamed)}
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
+		t.Inner = s.specializeNamedTypeRefs(t.Inner, seen)
+		return t
 	case *typeinfo.RefType:
-		return &typeinfo.RefType{Mutable: t.Mutable, Inner: s.substituteTypeInternal(t.Inner, bindings, specializeNamed)}
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
+		t.Inner = s.specializeNamedTypeRefs(t.Inner, seen)
+		return t
 	case *typeinfo.RawPtrType:
-		return &typeinfo.RawPtrType{Inner: s.substituteTypeInternal(t.Inner, bindings, specializeNamed)}
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
+		t.Inner = s.specializeNamedTypeRefs(t.Inner, seen)
+		return t
 	case *typeinfo.OptionalType:
-		return &typeinfo.OptionalType{Inner: s.substituteTypeInternal(t.Inner, bindings, specializeNamed)}
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
+		t.Inner = s.specializeNamedTypeRefs(t.Inner, seen)
+		return t
 	case *typeinfo.ErrorUnionType:
-		return &typeinfo.ErrorUnionType{
-			Error: s.substituteTypeInternal(t.Error, bindings, specializeNamed),
-			Value: s.substituteTypeInternal(t.Value, bindings, specializeNamed),
+		if _, ok := seen[t]; ok {
+			return t
 		}
+		seen[t] = struct{}{}
+		t.Error = s.specializeNamedTypeRefs(t.Error, seen)
+		t.Value = s.specializeNamedTypeRefs(t.Value, seen)
+		return t
 	case *typeinfo.ArrayType:
-		return &typeinfo.ArrayType{Inner: s.substituteTypeInternal(t.Inner, bindings, specializeNamed), Len: t.Len}
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
+		t.Inner = s.specializeNamedTypeRefs(t.Inner, seen)
+		return t
 	case *typeinfo.SliceType:
-		return &typeinfo.SliceType{Inner: s.substituteTypeInternal(t.Inner, bindings, specializeNamed)}
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
+		t.Inner = s.specializeNamedTypeRefs(t.Inner, seen)
+		return t
 	case *typeinfo.TupleType:
-		elems := make([]typeinfo.Type, 0, len(t.Elems))
-		for _, elem := range t.Elems {
-			elems = append(elems, s.substituteTypeInternal(elem, bindings, specializeNamed))
+		if _, ok := seen[t]; ok {
+			return t
 		}
-		return &typeinfo.TupleType{Elems: elems}
+		seen[t] = struct{}{}
+		for i, elem := range t.Elems {
+			t.Elems[i] = s.specializeNamedTypeRefs(elem, seen)
+		}
+		return t
 	case *typeinfo.NamedType:
-		out := &typeinfo.NamedType{
-			ModuleKey: t.ModuleKey,
-			Name:      t.Name,
-			Decl:      t.Decl,
+		if _, ok := seen[t]; ok {
+			return t
 		}
+		seen[t] = struct{}{}
 		if len(t.TypeArgs) > 0 {
-			out.TypeArgs = make([]typeinfo.Type, 0, len(t.TypeArgs))
-			for _, arg := range t.TypeArgs {
-				out.TypeArgs = append(out.TypeArgs, s.substituteTypeInternal(arg, bindings, specializeNamed))
+			for i, arg := range t.TypeArgs {
+				t.TypeArgs[i] = s.specializeNamedTypeRefs(arg, seen)
 			}
-			if specializeNamed {
-				req := s.requestTypeSpecialization(out)
-				if req != nil {
-					out.Name = req.name
-				} else if out.Decl != nil && len(out.Decl.TypeParams) == len(out.TypeArgs) {
-					out.Name = specializedTypeNameFromArgs(out.Name, out.Decl.TypeParams, out.TypeArgs)
+			req := s.requestTypeSpecialization(t)
+			if req != nil {
+				t.Name = req.name
+			} else if t.Decl != nil && len(t.Decl.TypeParams) == len(t.TypeArgs) {
+				baseName := t.Name
+				if t.Decl.Name != nil && t.Decl.Name.Text() != "" {
+					baseName = t.Decl.Name.Text()
 				}
+				t.Name = specializedTypeNameFromArgs(baseName, t.Decl.TypeParams, t.TypeArgs)
 			}
 		}
-		return out
+		return t
 	case *typeinfo.StructType:
-		fields := make(map[string]*typeinfo.StructField, len(t.Fields))
-		ordered := make([]*typeinfo.StructField, 0, len(t.OrderedFields))
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
 		for _, field := range t.OrderedFields {
 			if field == nil {
 				continue
 			}
-			copy := &typeinfo.StructField{
-				Name:       field.Name,
-				IsPub:      field.IsPub,
-				Type:       s.substituteTypeInternal(field.Type, bindings, specializeNamed),
-				HasDefault: field.HasDefault,
-			}
-			fields[copy.Name] = copy
-			ordered = append(ordered, copy)
+			field.Type = s.specializeNamedTypeRefs(field.Type, seen)
 		}
-		return &typeinfo.StructType{Fields: fields, OrderedFields: ordered}
+		return t
 	case *typeinfo.InterfaceType:
-		methods := make(map[string]*typeinfo.FuncType, len(t.Methods))
-		methodReceivers := make(map[string]typeinfo.ReceiverKind, len(t.MethodReceivers))
-		methodStatic := make(map[string]bool, len(t.MethodStatic))
-		ordered := make([]*typeinfo.InterfaceMethod, 0, len(t.OrderedMethods))
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
 		for _, method := range t.OrderedMethods {
 			if method == nil {
 				continue
 			}
-			fn, _ := s.substituteTypeInternal(method.Type, bindings, specializeNamed).(*typeinfo.FuncType)
-			copy := &typeinfo.InterfaceMethod{
-				Receiver: method.Receiver,
-				Static:   method.Static,
-				Name:     method.Name,
-				Type:     fn,
+			if method.Type != nil {
+				if fn, ok := s.specializeNamedTypeRefs(method.Type, seen).(*typeinfo.FuncType); ok {
+					method.Type = fn
+				}
 			}
-			methods[copy.Name] = fn
-			methodReceivers[copy.Name] = copy.Receiver
-			methodStatic[copy.Name] = copy.Static
-			ordered = append(ordered, copy)
 		}
-		return &typeinfo.InterfaceType{
-			Methods:         methods,
-			MethodReceivers: methodReceivers,
-			MethodStatic:    methodStatic,
-			OrderedMethods:  ordered,
-		}
+		return t
 	case *typeinfo.UnionType:
-		members := make([]typeinfo.Type, 0, len(t.Members))
-		for _, member := range t.Members {
-			members = append(members, s.substituteTypeInternal(member, bindings, specializeNamed))
+		if _, ok := seen[t]; ok {
+			return t
 		}
-		return &typeinfo.UnionType{Members: members}
+		seen[t] = struct{}{}
+		for i, member := range t.Members {
+			t.Members[i] = s.specializeNamedTypeRefs(member, seen)
+		}
+		return t
 	case *typeinfo.FuncType:
-		out := &typeinfo.FuncType{
-			IsUnsafe: t.IsUnsafe,
-			Result:   s.substituteTypeInternal(t.Result, bindings, specializeNamed),
+		if _, ok := seen[t]; ok {
+			return t
 		}
-		for _, param := range t.Params {
-			out.Params = append(out.Params, typeinfo.ParamSpec{
-				Name:  param.Name,
-				Type:  s.substituteTypeInternal(param.Type, bindings, specializeNamed),
-				Flags: param.Flags,
-			})
+		seen[t] = struct{}{}
+		t.Result = s.specializeNamedTypeRefs(t.Result, seen)
+		for i := range t.Params {
+			t.Params[i].Type = s.specializeNamedTypeRefs(t.Params[i].Type, seen)
 		}
-		return out
+		for _, param := range t.TypeParams {
+			if param == nil {
+				continue
+			}
+			param.Constraint = s.specializeNamedTypeRefs(param.Constraint, seen)
+		}
+		return t
 	default:
 		return typ
 	}
-}
-
-func lookupBoundType(bindings map[*typeinfo.TypeParam]typeinfo.Type, target *typeinfo.TypeParam) typeinfo.Type {
-	if target == nil {
-		return nil
-	}
-	if bound := bindings[target]; bound != nil {
-		return bound
-	}
-	for param, bound := range bindings {
-		if typeinfo.Equal(param, target) {
-			return bound
-		}
-	}
-	if target.Name == "" {
-		return nil
-	}
-	for param, bound := range bindings {
-		if param != nil && param.Name == target.Name {
-			return bound
-		}
-	}
-	return nil
 }
 
 func (s *specializer) specializeBinaryType(expr *BinaryExpr, bindings map[*typeinfo.TypeParam]typeinfo.Type, left, right Expr) typeinfo.Type {

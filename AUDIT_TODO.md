@@ -9,7 +9,7 @@ Status key: `[ ]` pending, `[*]` done
   - done in `internal/ir/hir/specialize.go` + collision regression in `internal/ir/hir/generate_test.go`
 - [*] remove raw backend panic path in QBE (`SourceFS`) and propagate errors
   - done in `internal/backend/qbe/qbe.go`, `internal/backend/qbe/toolchain.go`, `internal/backend/qbe/qbe_test.go`
-- [ ] unify recursive type substitution between `typeinfo.InstantiateType` and `hir.specializer.substituteTypeInternal`
+- [*] unify recursive type substitution between `typeinfo.InstantiateType` and `hir.specializer.substituteTypeInternal`
 - [ ] extract backend-neutral lowering helpers shared by LLVM/QBE (start with panic/aggregate/type-to-ABI helpers)
 - [ ] add cross-backend generic specialization tests (LLVM + QBE parity for constrained owner methods)
 - [ ] add mangling collision test suite beyond the current `t_i32` vs `(i32)` case
