@@ -124,10 +124,7 @@ func (l *lowerer) lowerStmtList(stmt Stmt) []Stmt {
 	case *WhileStmt:
 		return l.lowerWhileStmt(s)
 	case *ForStmt:
-		prelude, iterable := l.lowerExpr(s.Iterable)
-		out := &ForStmt{Iterable: iterable, IndexName: s.IndexName, IndexID: s.IndexID, ValueName: s.ValueName, ValueID: s.ValueID, Body: l.lowerBlock(s.Body)}
-		SetStmtLocation(out, s.Loc())
-		return append(prelude, out)
+		return l.lowerForStmt(s)
 	case *LoopStmt:
 		var stmts []Stmt
 		if s.Init != nil {
@@ -222,6 +219,80 @@ func (l *lowerer) lowerWhileStmt(s *WhileStmt) []Stmt {
 	out := &LoopStmt{Body: loopBody}
 	SetStmtLocation(out, s.Loc())
 	return []Stmt{out}
+}
+
+func (l *lowerer) lowerForStmt(s *ForStmt) []Stmt {
+	prelude, iterable := l.lowerExpr(s.Iterable)
+	arrayType, ok := iterable.Type().(*typeinfo.ArrayType)
+	if !ok {
+		out := &ForStmt{Iterable: iterable, IndexName: s.IndexName, IndexID: s.IndexID, ValueName: s.ValueName, ValueID: s.ValueID, Body: l.lowerBlock(s.Body)}
+		SetStmtLocation(out, s.Loc())
+		return append(prelude, out)
+	}
+
+	iterName, iterID := l.nextTempLocal()
+	indexName, indexID := l.nextTempLocal()
+
+	iterDecl := &LetStmt{Name: iterName, LocalID: iterID, Mutable: false, Type: iterable.Type(), Value: iterable}
+	SetStmtLocation(iterDecl, s.Iterable.Loc())
+
+	zero := &NumberLit{Value: "0"}
+	zero.ExprType = &typeinfo.BuiltinType{Name: "usize"}
+	zero.Location = s.Loc()
+	zero.Source = s.Iterable.SourceExpr()
+	indexDecl := &LetStmt{Name: indexName, LocalID: indexID, Mutable: true, Type: zero.Type(), Value: zero}
+	SetStmtLocation(indexDecl, s.Loc())
+
+	indexIdent := makeTempIdent(indexName, indexID, zero.Type(), s.Loc())
+
+	limit := &NumberLit{Value: itoa(int(arrayType.Len))}
+	limit.ExprType = zero.Type()
+	limit.Location = s.Loc()
+
+	cond := &BinaryExpr{Left: indexIdent, Op: "<", Right: limit}
+	cond.ExprType = &typeinfo.BuiltinType{Name: "bool"}
+	cond.Location = s.Loc()
+
+	body := &BlockStmt{}
+	SetStmtLocation(body, s.Loc())
+	if s.IndexName != "" {
+		indexValue := makeTempIdent(indexName, indexID, zero.Type(), s.Loc())
+		indexBind := &LetStmt{Name: s.IndexName, LocalID: s.IndexID, Mutable: false, Type: zero.Type(), Value: indexValue}
+		SetStmtLocation(indexBind, s.Loc())
+		body.Stmts = append(body.Stmts, indexBind)
+	}
+	if s.ValueName != "" {
+		valueIndex := makeTempIdent(indexName, indexID, zero.Type(), s.Loc())
+		valueExpr := &IndexExpr{Left: makeTempIdent(iterName, iterID, iterable.Type(), s.Iterable.Loc()), Index: valueIndex}
+		valueExpr.ExprType = arrayType.Inner
+		valueExpr.Location = s.Loc()
+		valueBind := &LetStmt{Name: s.ValueName, LocalID: s.ValueID, Mutable: false, Type: arrayType.Inner, Value: valueExpr}
+		SetStmtLocation(valueBind, s.Loc())
+		body.Stmts = append(body.Stmts, valueBind)
+	}
+	if loweredBody := l.lowerBlock(s.Body); loweredBody != nil {
+		body.Stmts = append(body.Stmts, loweredBody.Stmts...)
+	}
+
+	postLeft := makeTempIdent(indexName, indexID, zero.Type(), s.Loc())
+	postRight := &BinaryExpr{
+		Left:  makeTempIdent(indexName, indexID, zero.Type(), s.Loc()),
+		Op:    "+",
+		Right: &NumberLit{Value: "1"},
+	}
+	postRight.ExprType = zero.Type()
+	postRight.Location = s.Loc()
+	postRight.Right.(*NumberLit).ExprType = zero.Type()
+	postRight.Right.(*NumberLit).Location = s.Loc()
+	post := &AssignStmt{Left: postLeft, Right: postRight}
+	SetStmtLocation(post, s.Loc())
+
+	loop := &LoopStmt{Cond: cond, Post: post, Body: body}
+	SetStmtLocation(loop, s.Loc())
+
+	stmts := append([]Stmt{}, prelude...)
+	stmts = append(stmts, iterDecl, indexDecl, loop)
+	return stmts
 }
 
 func (l *lowerer) lowerExpr(expr Expr) ([]Stmt, Expr) {

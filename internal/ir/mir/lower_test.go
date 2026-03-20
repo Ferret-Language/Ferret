@@ -263,6 +263,61 @@ fn main() usize {
 	t.Fatalf("expected static len(array) return value, got:\n%s", mir.FormatModule(result.Entry.MIR))
 }
 
+func TestPipelineLowersForLoopIndexUpdateToHiddenCounter(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn main() void {
+    let items: [3]i32 = [3]i32{1, 2, 3}
+    for items |v| {
+        print(v)
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			store, ok := instr.(*mir.StoreInstr)
+			if !ok {
+				continue
+			}
+			deref, ok := store.Target.(*mir.DerefPlace)
+			if !ok {
+				continue
+			}
+			addr, ok := deref.Pointer.(*mir.AddrOfValue)
+			if !ok {
+				continue
+			}
+			local, ok := addr.Source.(*mir.LocalValue)
+			if !ok {
+				continue
+			}
+			if _, ok := local.Type().(*typeinfo.ArrayType); ok {
+				t.Fatalf("for-loop counter update targeted iterable storage instead of hidden index: %#v", instr)
+			}
+		}
+	}
+}
+
 func TestPipelineLowersInterfaceCoercionWithMutableReceiver(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `

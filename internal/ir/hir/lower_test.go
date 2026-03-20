@@ -41,11 +41,39 @@ fn main(items: [3]i32) i32 {
 		t.Fatal("expected CFG")
 	}
 	fn := result.Entry.LoweredHIR.Functions[0]
-	if _, ok := fn.Body.Stmts[1].(*hir.LoopStmt); !ok {
-		t.Fatalf("expected while to lower to loop, got %T", fn.Body.Stmts[1])
+	loops := 0
+	var walkStmt func(hir.Stmt)
+	walkStmt = func(stmt hir.Stmt) {
+		switch s := stmt.(type) {
+		case nil:
+			return
+		case *hir.BlockStmt:
+			for _, child := range s.Stmts {
+				walkStmt(child)
+			}
+		case *hir.ForStmt:
+			t.Fatalf("expected lowered HIR to eliminate for loops, got %T", s)
+		case *hir.LoopStmt:
+			loops++
+			walkStmt(s.Init)
+			walkStmt(s.Post)
+			walkStmt(s.Body)
+		case *hir.IfStmt:
+			walkStmt(s.Then)
+			walkStmt(s.Else)
+		case *hir.LabelStmt:
+			walkStmt(s.Stmt)
+		case *hir.DeferStmt:
+			walkStmt(s.Body)
+		case *hir.LockStmt:
+			walkStmt(s.Body)
+		case *hir.UnsafeStmt:
+			walkStmt(s.Body)
+		}
 	}
-	if _, ok := fn.Body.Stmts[2].(*hir.ForStmt); !ok {
-		t.Fatalf("expected for to keep iterator form, got %T", fn.Body.Stmts[2])
+	walkStmt(fn.Body)
+	if loops < 2 {
+		t.Fatalf("expected while and for to lower to loops, found %d loop(s)", loops)
 	}
 }
 
