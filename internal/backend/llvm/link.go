@@ -135,18 +135,7 @@ func llvmBaseType(typ typeinfo.Type) (string, error) {
 }
 
 func optionalUsesNiche(typ typeinfo.Type) bool {
-	switch t := unwrapNamed(typ).(type) {
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
-		return true
-	case *typeinfo.BuiltinType:
-		switch t.Name {
-		case "bool", "char":
-			return true
-		}
-	case *typeinfo.EnumType, *typeinfo.ErrorSetType:
-		return true
-	}
-	return false
+	return backend.OptionalUsesNiche(typ)
 }
 
 func unwrapNamed(typ typeinfo.Type) typeinfo.Type {

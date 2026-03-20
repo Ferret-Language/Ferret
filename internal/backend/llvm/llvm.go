@@ -4434,27 +4434,22 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 
 // llvmABITypeName returns the LLVM type name for function signatures, calls, globals.
 func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
-	if named, ok := typ.(*typeinfo.NamedType); ok {
-		if info, err := lookupNamedLayout(state, named); err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named) || namedIsInterface(named)) {
-			return "%" + llvmTypeName(state, named), nil
+	switch backend.ClassifyABIType(typ, func(named *typeinfo.NamedType) bool {
+		info, err := lookupNamedLayout(state, named)
+		return err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named) || namedIsInterface(named))
+	}) {
+	case backend.ABITypeNamedLayout:
+		named := typ.(*typeinfo.NamedType)
+		return "%" + llvmTypeName(state, named), nil
+	case backend.ABITypeNamedInterface:
+		return "{ ptr, ptr }", nil
+	case backend.ABITypeOptionalAggregate:
+		info, err := llvmUnionLayoutInfo(state, typ)
+		if err != nil {
+			return "", err
 		}
-		if namedIsInterface(named) {
-			return "{ ptr, ptr }", nil
-		}
-	}
-	if opt, ok := typ.(*typeinfo.OptionalType); ok {
-		if !optionalUsesNiche(opt.Inner) {
-			info, err := llvmUnionLayoutInfo(state, typ)
-			if err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("[%d x i8]", info.Size), nil
-		}
-	}
-	if _, ok := typ.(*typeinfo.StringType); ok {
-		return "{ ptr, i64 }", nil
-	}
-	if _, ok := typ.(*typeinfo.SliceType); ok {
+		return fmt.Sprintf("[%d x i8]", info.Size), nil
+	case backend.ABITypeSliceLike:
 		return "{ ptr, i64 }", nil
 	}
 	return llvmBaseType(typ)

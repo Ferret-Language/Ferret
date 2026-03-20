@@ -1791,18 +1791,7 @@ func isUnionAggregate(typ typeinfo.Type) bool {
 }
 
 func optionalUsesNiche(typ typeinfo.Type) bool {
-	switch t := unwrapNamed(typ).(type) {
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
-		return true
-	case *typeinfo.BuiltinType:
-		switch t.Name {
-		case "bool", "char":
-			return true
-		}
-	case *typeinfo.EnumType, *typeinfo.ErrorSetType:
-		return true
-	}
-	return false
+	return backend.OptionalUsesNiche(typ)
 }
 
 func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) (string, error) {
@@ -3224,22 +3213,18 @@ func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
 	if qbeIsVoidType(typ) {
 		return "", nil
 	}
-	switch t := typ.(type) {
-	case *typeinfo.NamedType:
-		if info, err := lookupNamedLayout(state, t); err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(t) || namedIsInterface(t)) {
-			return ":" + qbeTypeName(state, t), nil
-		}
-		if namedIsInterface(t) {
-			return ":__ferret_iface", nil
-		}
-	case *typeinfo.OptionalType:
-		if !optionalUsesNiche(t.Inner) {
-			return fmt.Sprintf(":__ferret_opt_%d", mustAggregateSize(state, typ)), nil
-		}
-	case *typeinfo.StringType:
-		return ":__ferret_slice", nil
-	case *typeinfo.SliceType:
-		_ = t
+	switch backend.ClassifyABIType(typ, func(named *typeinfo.NamedType) bool {
+		info, err := lookupNamedLayout(state, named)
+		return err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named) || namedIsInterface(named))
+	}) {
+	case backend.ABITypeNamedLayout:
+		named := typ.(*typeinfo.NamedType)
+		return ":" + qbeTypeName(state, named), nil
+	case backend.ABITypeNamedInterface:
+		return ":__ferret_iface", nil
+	case backend.ABITypeOptionalAggregate:
+		return fmt.Sprintf(":__ferret_opt_%d", mustAggregateSize(state, typ)), nil
+	case backend.ABITypeSliceLike:
 		return ":__ferret_slice", nil
 	}
 	return qbeBaseType(typ)
