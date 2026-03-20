@@ -17,7 +17,10 @@ Status key: `[ ]` pending, `[*]` done
   - [*] shared ABI shape classification extracted to `internal/backend/abi.go` and consumed by `llvmABITypeName`/`qbeABIType`
 - [*] add cross-backend generic specialization tests (LLVM + QBE parity for constrained owner methods)
   - added `internal/backend/parity_test.go` covering constrained owner static method specialization on both targets
-- [ ] add mangling collision test suite beyond the current `t_i32` vs `(i32)` case
+- [*] add mangling collision test suite beyond the current `t_i32` vs `(i32)` case
+  - added coverage for owner static-method specializations across multiple owner type args
+  - added coverage for cross-module same-name type arguments in generic function specialization
+  - added coverage for cross-module same-name type arguments in generic type specialization
 
 ## Medium Priority
 

@@ -499,6 +499,165 @@ fn main() void {
 	}
 }
 
+func TestPipelineKeepsDistinctStaticOwnerMethodSpecializationsForDifferentOwnerArgs(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+type Box<T> struct {}
+
+fn Box<T>::Id(v: T) T {
+    return v
+}
+
+fn main() i32 {
+    let a = Box<i32>::Id(1)
+    let b = Box<i64>::Id(2)
+    return a + (b as i32)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+	methodNames := make(map[string]struct{})
+	for _, fn := range result.Entry.LoweredHIR.Functions {
+		if fn == nil {
+			continue
+		}
+		if !strings.HasPrefix(fn.Name, "Id$") {
+			continue
+		}
+		methodNames[fn.Name] = struct{}{}
+	}
+	if len(methodNames) != 2 {
+		t.Fatalf("expected 2 distinct Id specializations, got %d: %#v", len(methodNames), methodNames)
+	}
+}
+
+func TestPipelineKeepsDistinctFunctionSpecializationsForCrossModuleSameTypeName(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "lib", "a.ferr"), `
+type Data struct {}
+
+fn Make() Data {
+    return .{}
+}
+`)
+	mustWriteHIR(t, filepath.Join(root, "lib", "b.ferr"), `
+type Data struct {}
+
+fn Make() Data {
+    return .{}
+}
+`)
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+import "lib/a"
+import "lib/b"
+
+fn use<T>(value: T) {
+    value
+}
+
+fn main() {
+    use(a::Make())
+    use(b::Make())
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+	names := make(map[string]struct{})
+	for _, fn := range result.Entry.LoweredHIR.Functions {
+		if fn == nil || !strings.HasPrefix(fn.Name, "use$") {
+			continue
+		}
+		names[fn.Name] = struct{}{}
+	}
+	if len(names) != 2 {
+		t.Fatalf("expected 2 distinct use specializations, got %d: %#v", len(names), names)
+	}
+}
+
+func TestPipelineKeepsDistinctTypeSpecializationsForCrossModuleSameTypeName(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "lib", "a.ferr"), `
+type Data struct {}
+
+fn Make() Data {
+    return .{}
+}
+`)
+	mustWriteHIR(t, filepath.Join(root, "lib", "b.ferr"), `
+type Data struct {}
+
+fn Make() Data {
+    return .{}
+}
+`)
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+import "lib/a"
+import "lib/b"
+
+type Wrap<T> struct {
+    Value: T
+}
+
+fn main() {
+    let wa: Wrap<a::Data> = .{ .Value = a::Make() }
+    let wb: Wrap<b::Data> = .{ .Value = b::Make() }
+    wa
+    wb
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+	names := make(map[string]struct{})
+	for _, decl := range result.Entry.LoweredHIR.Types {
+		if decl == nil || !strings.HasPrefix(decl.Name, "Wrap$") {
+			continue
+		}
+		names[decl.Name] = struct{}{}
+	}
+	if len(names) != 2 {
+		t.Fatalf("expected 2 distinct Wrap specializations, got %d: %#v", len(names), names)
+	}
+}
+
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func mustWriteHIR(t *testing.T, path, content string) {
