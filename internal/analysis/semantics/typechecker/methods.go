@@ -117,40 +117,13 @@ func (c *checker) instantiateOwnerMethodType(ownerNamed *typeinfo.NamedType, sym
 	if fnDecl == nil || fnDecl.OwnerType == nil {
 		return fnType
 	}
-	ownerDecl := ownerNamed.Decl
-	if ownerDecl == nil || len(ownerDecl.TypeParams) == 0 || len(ownerNamed.TypeArgs) == 0 || len(ownerDecl.TypeParams) != len(ownerNamed.TypeArgs) {
+	bindings := typeinfo.OwnerTypeBindings(ownerNamed)
+	if len(bindings) == 0 {
 		return fnType
 	}
-	bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(ownerDecl.TypeParams))
-	for i, param := range ownerDecl.TypeParams {
-		if param.Name == nil {
-			continue
-		}
-		bindings[&typeinfo.TypeParam{Name: param.Name.Text(), Owner: ownerDecl}] = ownerNamed.TypeArgs[i]
-	}
-	out := &typeinfo.FuncType{
-		IsUnsafe: fnType.IsUnsafe,
-		Result:   c.substituteTypeParams(fnType.Result, bindings),
-		Params:   make([]typeinfo.ParamSpec, 0, len(fnType.Params)),
-	}
-	for _, param := range fnType.Params {
-		out.Params = append(out.Params, typeinfo.ParamSpec{
-			Name:  param.Name,
-			Type:  c.substituteTypeParams(param.Type, bindings),
-			Flags: param.Flags,
-		})
-	}
-	out.TypeParams = make([]*typeinfo.TypeParam, 0, len(fnType.TypeParams))
-	for _, param := range fnType.TypeParams {
-		if param == nil {
-			continue
-		}
-		if c.lookupTypeParamBinding(bindings, param) != nil {
-			continue
-		}
-		copy := *param
-		copy.Constraint = c.substituteTypeParams(param.Constraint, bindings)
-		out.TypeParams = append(out.TypeParams, &copy)
+	out := typeinfo.InstantiateFuncType(fnType, bindings)
+	if out == nil {
+		return fnType
 	}
 	return out
 }

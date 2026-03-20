@@ -362,6 +362,52 @@ func TestHoverNamedTypeShowsFieldsAndMethods(t *testing.T) {
 	}
 }
 
+func TestHoverGenericNamedTypeShowsConcreteFieldsAndMethods(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Point<T> struct {\n    Value: T\n}\n\nfn Point<T>::Calc(&self) T {\n    return self.Value\n}\n\nfn Point<T>::Incr(&mut self, dx: T) void {\n    self.Value += dx\n}\n\nfn main() void {\n    let p: Point<i32> = .{ .Value = 1 }\n    p\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    p")
+	if !ok {
+		t.Fatal("failed to find p position")
+	}
+	char += len("    ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "type Point<i32> struct") {
+		t.Fatalf("expected concrete generic type header in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "Value: i32") {
+		t.Fatalf("expected concrete generic field type in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) i32") {
+		t.Fatalf("expected concrete generic method result type in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "fn Point::Incr(&mut self, dx: i32) void") {
+		t.Fatalf("expected concrete generic method param type in hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverFunctionCallShowsNamedSignature(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.ferr")
@@ -502,6 +548,46 @@ func TestHoverGenericCallShowsInstantiatedSignature(t *testing.T) {
 	}
 	if strings.Contains(hover.Contents.Value, "<T>") {
 		t.Fatalf("expected call-site hover to hide generic declaration form, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverFunctionCallShowsDocComment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "/// Adds two numbers.\n/// Returns the sum.\nfn add(a: i32, b: i32) i32 {\n    return a + b\n}\n\nfn main() i32 {\n    return add(1, 2)\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    return add(1, 2)")
+	if !ok {
+		t.Fatal("failed to find add call")
+	}
+	char += len("    return ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn add(a: i32, b: i32) i32") {
+		t.Fatalf("expected function signature in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "Adds two numbers.") || !strings.Contains(hover.Contents.Value, "Returns the sum.") {
+		t.Fatalf("expected function doc comment in hover, got %q", hover.Contents.Value)
 	}
 }
 

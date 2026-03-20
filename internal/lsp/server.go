@@ -756,7 +756,7 @@ func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Modu
 		return ""
 	}
 	if sig := renderNodeFunctionSignature(node, typ, mod, info); sig != "" {
-		return asFerretCodeBlock(sig)
+		return appendHoverDoc(asFerretCodeBlock(sig), functionDocForNode(node, mod))
 	}
 	if selector, ok := node.(*ast.SelectorExpr); ok {
 		if fnType, ok := typ.(*typeinfo.FuncType); ok {
@@ -783,6 +783,11 @@ func renderNodeFunctionSignature(node ast.Node, typ typeinfo.Type, mod *context.
 	}
 	if selector, ok := node.(*ast.SelectorExpr); ok && info != nil {
 		if methodReceiver, ok := info.LookupMethodReceiver(selector); ok && methodReceiver != nil {
+			if sym := resolvedSymbolForNode(mod, node); sym != nil {
+				if sig := symbolFunctionSignature(sym, fnType); sig != "" {
+					return sig
+				}
+			}
 			name := selector.Name.Text()
 			if baseNamed, ok := typeinfo.ReceiverBaseNamedType(methodReceiver); ok && baseNamed != nil {
 				name = baseNamed.Name + "::" + name
@@ -856,10 +861,10 @@ func renderSymbolHoverMarkdown(sym *symbols.Symbol, typ typeinfo.Type, mod *cont
 	switch sym.Kind {
 	case symbols.SymbolFunc, symbols.SymbolMethod:
 		if sig := symbolFunctionSignature(sym, nil); sig != "" {
-			return asFerretCodeBlock(sig)
+			return appendHoverDoc(asFerretCodeBlock(sig), functionDocForSymbol(sym))
 		}
 		if fnType, ok := typ.(*typeinfo.FuncType); ok {
-			return asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(sym.Name, fnType))
+			return appendHoverDoc(asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(sym.Name, fnType)), functionDocForSymbol(sym))
 		}
 	case symbols.SymbolType:
 		if named, ok := typ.(*typeinfo.NamedType); ok {
@@ -946,9 +951,9 @@ func renderNamedTypeMarkdown(named *typeinfo.NamedType, mod *context.Module, mod
 	}
 
 	var b strings.Builder
-	b.WriteString(asFerretCodeBlock(decl.Text()))
+	b.WriteString(asFerretCodeBlock(renderNamedTypeDeclText(named, owner, decl)))
 
-	instanceMethods, staticMethods := collectTypeMethodSignatures(owner, named.Name)
+	instanceMethods, staticMethods := collectTypeMethodSignatures(owner, named)
 	if len(instanceMethods) > 0 {
 		b.WriteString("\n\nInstance methods:\n")
 		b.WriteString(asFerretCodeBlock(strings.Join(instanceMethods, "\n")))
@@ -985,10 +990,11 @@ func findTypeDecl(mod *context.Module, typeName string) *ast.TypeDecl {
 	return nil
 }
 
-func collectTypeMethodSignatures(mod *context.Module, typeName string) ([]string, []string) {
-	if mod == nil || typeName == "" {
+func collectTypeMethodSignatures(mod *context.Module, named *typeinfo.NamedType) ([]string, []string) {
+	if mod == nil || named == nil || named.Name == "" {
 		return nil, nil
 	}
+	typeName := named.Name
 	instanceSet := make(map[string]struct{})
 	staticSet := make(map[string]struct{})
 	instance := make([]string, 0)
@@ -1000,11 +1006,10 @@ func collectTypeMethodSignatures(mod *context.Module, typeName string) ([]string
 				continue
 			}
 			for _, sym := range methods {
-				fn, ok := symbolFuncDecl(sym)
-				if !ok {
+				sig := renderMethodSignatureForType(sym, mod, named)
+				if sig == "" {
 					continue
 				}
-				sig := fn.Signature()
 				if _, exists := instanceSet[sig]; exists {
 					continue
 				}
@@ -1022,7 +1027,10 @@ func collectTypeMethodSignatures(mod *context.Module, typeName string) ([]string
 			if !ok || !fn.IsStatic {
 				continue
 			}
-			sig := fn.Signature()
+			sig := renderMethodSignatureForType(sym, mod, named)
+			if sig == "" {
+				continue
+			}
 			if _, exists := staticSet[sig]; exists {
 				continue
 			}
@@ -1042,6 +1050,135 @@ func symbolFuncDecl(sym *symbols.Symbol) (*ast.FuncDecl, bool) {
 	}
 	fn, ok := sym.Node.(*ast.FuncDecl)
 	return fn, ok
+}
+
+func renderNamedTypeDeclText(named *typeinfo.NamedType, owner *context.Module, decl *ast.TypeDecl) string {
+	if named == nil || decl == nil {
+		return ""
+	}
+	structDecl, ok := decl.Type.(*ast.StructType)
+	if !ok || structDecl == nil {
+		return decl.Text()
+	}
+	typ := structTypeForNamed(owner, named, decl)
+	if typ == nil {
+		return decl.Text()
+	}
+	typeName := named.Name
+	if len(named.TypeArgs) > 0 {
+		args := make([]string, 0, len(named.TypeArgs))
+		for _, arg := range named.TypeArgs {
+			args = append(args, typeinfo.DefaultPrinter.Type(arg))
+		}
+		typeName += "<" + strings.Join(args, ", ") + ">"
+	}
+
+	var b strings.Builder
+	b.WriteString("type " + typeName + " struct {\n")
+	for _, field := range structDecl.Fields {
+		if field == nil || field.Name == nil {
+			continue
+		}
+		fieldType := ast.TypeString(field.Type)
+		if concrete := structFieldTypeByName(typ, field.Name.Text()); concrete != nil {
+			fieldType = typeinfo.DefaultPrinter.Type(concrete)
+		}
+		line := "    " + field.Name.Text() + ": " + fieldType
+		if field.Default != nil {
+			defaultValue := ast.ExprString(field.Default)
+			if defaultValue == "" || defaultValue == "_" {
+				defaultValue = "..."
+			}
+			line += " = " + defaultValue
+		}
+		b.WriteString(line + "\n")
+	}
+	b.WriteString("}")
+	return b.String()
+}
+
+func structTypeForNamed(owner *context.Module, named *typeinfo.NamedType, decl *ast.TypeDecl) *typeinfo.StructType {
+	if owner == nil || owner.Types == nil || named == nil || decl == nil {
+		return nil
+	}
+	base := owner.Types.Nodes[decl.Type]
+	if base == nil {
+		return nil
+	}
+	if bindings := typeinfo.OwnerTypeBindings(named); len(bindings) > 0 {
+		base = typeinfo.InstantiateType(base, bindings)
+	}
+	typ, _ := base.(*typeinfo.StructType)
+	return typ
+}
+
+func structFieldTypeByName(typ *typeinfo.StructType, name string) typeinfo.Type {
+	if typ == nil || typ.Fields == nil || name == "" {
+		return nil
+	}
+	field := typ.Fields[name]
+	if field == nil {
+		return nil
+	}
+	return field.Type
+}
+
+func renderMethodSignatureForType(sym *symbols.Symbol, mod *context.Module, named *typeinfo.NamedType) string {
+	fn, ok := symbolFuncDecl(sym)
+	if !ok || fn == nil {
+		return ""
+	}
+	if mod != nil && mod.Types != nil {
+		if fnType, ok := mod.Types.Symbols[sym.ID].(*typeinfo.FuncType); ok && fnType != nil {
+			if bindings := typeinfo.OwnerTypeBindings(named); len(bindings) > 0 {
+				fnType = typeinfo.InstantiateFuncType(fnType, bindings)
+			}
+			return typeinfo.DefaultPrinter.FuncDeclSignature(fn, fnType)
+		}
+	}
+	return fn.Signature()
+}
+
+func appendHoverDoc(markdown, doc string) string {
+	doc = strings.TrimSpace(doc)
+	if doc == "" {
+		return markdown
+	}
+	if markdown == "" {
+		return doc
+	}
+	return markdown + "\n\n" + doc
+}
+
+func functionDocForNode(node ast.Node, mod *context.Module) string {
+	if node == nil {
+		return ""
+	}
+	if fn, ok := node.(*ast.FuncDecl); ok {
+		return functionDocText(fn)
+	}
+	if sym := resolvedSymbolForNode(mod, node); sym != nil {
+		return functionDocForSymbol(sym)
+	}
+	return ""
+}
+
+func functionDocForSymbol(sym *symbols.Symbol) string {
+	if sym == nil {
+		return ""
+	}
+	fn, ok := sym.Node.(*ast.FuncDecl)
+	if !ok {
+		return ""
+	}
+	return functionDocText(fn)
+}
+
+func functionDocText(fn *ast.FuncDecl) string {
+	if fn == nil || fn.Doc == nil {
+		return ""
+	}
+	return strings.TrimSpace(fn.Doc.Text)
 }
 
 func asFerretCodeBlock(text string) string {
