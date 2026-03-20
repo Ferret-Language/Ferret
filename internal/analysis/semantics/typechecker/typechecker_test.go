@@ -506,6 +506,72 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerInfersOwnerTypeArgsForStaticGenericMethodCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Circle<T> struct {
+    Rad: T
+}
+
+fn Circle<T>::New(v: T) Self {
+    return .{ .Rad = v }
+}
+
+fn main() void {
+    let c = Circle::New(1)
+    c
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letC, ok := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	named, ok := result.Entry.Types.Nodes[letC.Value].(*typeinfo.NamedType)
+	if !ok || named == nil {
+		t.Fatalf("expected named type for Circle::New call, got %#v", result.Entry.Types.Nodes[letC.Value])
+	}
+	if named.Name != "Circle" || len(named.TypeArgs) != 1 || !typeinfo.IsBuiltinNamed(named.TypeArgs[0], "i32") {
+		t.Fatalf("expected inferred Circle<i32>, got %#v", named)
+	}
+}
+
+func TestTypecheckerInfersGenericCompositeLiteralTypeArgs(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point<T> struct {
+    Value: T
+}
+
+fn main() void {
+    let p = .Point{ .Value = 2 }
+    p
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letP, ok := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	named, ok := result.Entry.Types.Nodes[letP.Value].(*typeinfo.NamedType)
+	if !ok || named == nil {
+		t.Fatalf("expected named type for composite literal, got %#v", result.Entry.Types.Nodes[letP.Value])
+	}
+	if named.Name != "Point" || len(named.TypeArgs) != 1 || !typeinfo.IsBuiltinNamed(named.TypeArgs[0], "i32") {
+		t.Fatalf("expected inferred Point<i32>, got %#v", named)
+	}
+}
+
 func TestTypecheckerAllowsImplicitNumericWidening(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
