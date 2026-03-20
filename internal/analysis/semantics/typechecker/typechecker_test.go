@@ -425,6 +425,42 @@ fn ReadValue<T: Reader>(value: T) i32 {
 	}
 }
 
+func TestTypecheckerRejectsExplicitOwnerTypeArgsConstraintMismatch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Reader interface {
+    Read(&self) i32
+}
+
+type Box<T: Reader> struct {
+    Value: T
+}
+
+fn Box<T>::New(value: T) Self {
+    return .{ .Value = value }
+}
+
+fn main() void {
+    Box<i32>::New(1)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected owner type-argument constraint diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "does not implement") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected interface constraint mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerReportsUnsupportedGenericOperationAtCallSite(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

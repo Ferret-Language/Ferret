@@ -529,38 +529,52 @@ func (s *specializer) cloneExpr(expr Expr, bindings map[*typeinfo.TypeParam]type
 }
 
 func (s *specializer) specializedCallName(expr *CallExpr, bindings map[*typeinfo.TypeParam]typeinfo.Type) (string, *typeinfo.FuncType, bool) {
-	if expr == nil || expr.Callee == nil || expr.Callee.SourceExpr() == nil {
-		return "", nil, false
-	}
-	resolution := s.bindings.Nodes[expr.Callee.SourceExpr()]
-	if resolution == nil || resolution.Kind != binding.ResolutionSymbol || resolution.Symbol == nil {
-		return "", nil, false
-	}
-	template := s.templates[resolution.Symbol.ID]
-	if template == nil {
+	if expr == nil || expr.Callee == nil {
 		return "", nil, false
 	}
 	fnType, ok := s.substituteType(expr.Callee.Type(), bindings).(*typeinfo.FuncType)
 	if !ok || fnType == nil || len(fnType.TypeParams) != 0 {
 		return "", nil, false
 	}
-	receiverType := expr.MethodReceiver
+	resolution := s.bindings.Nodes[expr.Callee.SourceExpr()]
+	var template *Func
+	if resolution != nil && resolution.Kind == binding.ResolutionSymbol && resolution.Symbol != nil {
+		template = s.templates[resolution.Symbol.ID]
+	}
+	if template == nil {
+		if sel, ok := expr.Callee.(*SelectorExpr); ok && sel.Left != nil {
+			receiverType := s.substituteType(sel.Left.Type(), bindings)
+			if named, ok := typeinfo.ReceiverBaseNamedType(receiverType); ok && named != nil {
+				for _, candidate := range s.ownerMethodTemplates[ownerMethodTemplateKey(named)] {
+					if candidate == nil || candidate.Name != sel.Name || candidate.Receiver == nil {
+						continue
+					}
+					template = candidate
+					break
+				}
+			}
+		}
+	}
+	if template == nil {
+		return "", nil, false
+	}
+	receiverType := s.substituteType(expr.MethodReceiver, bindings)
 	if receiverType == nil && s.types != nil {
 		if source := expr.SourceExpr(); source != nil {
 			if inferred, ok := s.types.LookupMethodReceiver(source); ok {
-				receiverType = inferred
+				receiverType = s.substituteType(inferred, bindings)
 			}
 		}
 		if receiverType == nil && expr.Callee != nil && expr.Callee.SourceExpr() != nil {
 			if inferred, ok := s.types.LookupMethodReceiver(expr.Callee.SourceExpr()); ok {
-				receiverType = inferred
+				receiverType = s.substituteType(inferred, bindings)
 			}
 		}
 	}
 	if receiverType == nil && template.Receiver != nil {
 		if sel, ok := expr.Callee.(*SelectorExpr); ok && sel.Left != nil {
 			if key, ok := typeinfo.ReceiverKeyFromType(template.Receiver.Type); ok {
-				receiverType = typeinfo.ApplyReceiverShape(sel.Left.Type(), key.Kind)
+				receiverType = typeinfo.ApplyReceiverShape(s.substituteType(sel.Left.Type(), bindings), key.Kind)
 			}
 		}
 	}
@@ -676,7 +690,15 @@ func inferTypeBindings(pattern, actual typeinfo.Type, bindings map[*typeinfo.Typ
 		}
 	case *typeinfo.NamedType:
 		got, ok := actual.(*typeinfo.NamedType)
-		if !ok || p.Name != got.Name || len(p.TypeArgs) != len(got.TypeArgs) {
+		if !ok || p.ModuleKey != got.ModuleKey || len(p.TypeArgs) != len(got.TypeArgs) {
+			return
+		}
+		if p.Name != got.Name {
+			if p.Decl == nil || got.Decl == nil || p.Decl != got.Decl {
+				return
+			}
+		}
+		if len(p.TypeArgs) != len(got.TypeArgs) {
 			return
 		}
 		for i := range p.TypeArgs {
@@ -820,7 +842,7 @@ func (s *specializer) requestInterfaceMethodSpecializations(value Expr, expected
 	if !ok || named == nil {
 		return
 	}
-	methodTemplates := s.ownerMethodTemplates[named.ModuleKey+"::"+named.Name]
+	methodTemplates := s.ownerMethodTemplates[ownerMethodTemplateKey(named)]
 	if len(methodTemplates) == 0 {
 		return
 	}
@@ -845,6 +867,17 @@ func (s *specializer) requestInterfaceMethodSpecializations(value Expr, expected
 			break
 		}
 	}
+}
+
+func ownerMethodTemplateKey(named *typeinfo.NamedType) string {
+	if named == nil {
+		return ""
+	}
+	name := named.Name
+	if named.Decl != nil && named.Decl.Name != nil && named.Decl.Name.Text() != "" {
+		name = named.Decl.Name.Text()
+	}
+	return named.ModuleKey + "::" + name
 }
 
 func specializedTypeName(template *TypeDecl, bindings map[*typeinfo.TypeParam]typeinfo.Type) string {
@@ -958,12 +991,8 @@ func (s *specializer) substituteTypeInternal(typ typeinfo.Type, bindings map[*ty
 				req := s.requestTypeSpecialization(out)
 				if req != nil {
 					out.Name = req.name
-					out.TypeArgs = nil
-					out.Decl = nil
 				} else if out.Decl != nil && len(out.Decl.TypeParams) == len(out.TypeArgs) {
 					out.Name = specializedTypeNameFromArgs(out.Name, out.Decl.TypeParams, out.TypeArgs)
-					out.TypeArgs = nil
-					out.Decl = nil
 				}
 			}
 		}

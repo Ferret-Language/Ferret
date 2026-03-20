@@ -1036,7 +1036,7 @@ func renderTypeHoverMarkdown(typ typeinfo.Type, mod *context.Module, modulesByKe
 			rendered = ""
 		}
 		if named := underlyingNamedType(typ); named != nil {
-			details := renderNamedTypeMarkdown(named, mod, modulesByKey)
+			details := renderNamedTypeMarkdownWithSeen(named, mod, modulesByKey, make(map[string]struct{}), 1)
 			if rendered == "" {
 				return details
 			}
@@ -1079,9 +1079,22 @@ func underlyingNamedType(typ typeinfo.Type) *typeinfo.NamedType {
 }
 
 func renderNamedTypeMarkdown(named *typeinfo.NamedType, mod *context.Module, modulesByKey map[string]*context.Module) string {
+	return renderNamedTypeMarkdownWithSeen(named, mod, modulesByKey, make(map[string]struct{}), 0)
+}
+
+func renderNamedTypeMarkdownWithSeen(named *typeinfo.NamedType, mod *context.Module, modulesByKey map[string]*context.Module, seen map[string]struct{}, depth int) string {
 	if named == nil {
 		return ""
 	}
+	if depth >= 8 {
+		return asFerretCodeBlock("type " + named.String())
+	}
+	key := named.ModuleKey + "::" + named.String()
+	if _, ok := seen[key]; ok {
+		return asFerretCodeBlock("type " + named.String())
+	}
+	seen[key] = struct{}{}
+	defer delete(seen, key)
 	owner := moduleForNamedType(named, mod, modulesByKey)
 	decl := named.Decl
 	if decl == nil {

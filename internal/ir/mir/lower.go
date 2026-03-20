@@ -463,6 +463,11 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 				if named := lowerReceiverNamed(sel.Left.Type()); named != nil {
 					receiver := lowerMethodReceiverValue(lowerCtx, sel.Left, e.MethodReceiver)
 					path := lowerMethodSymbolPath(lowerCtx, named, sel.Name)
+					if lowerCtx.lookupMethod != nil {
+						if resolved, ok := lowerCtx.lookupMethod(sel.Left.Type(), sel.Name); ok && len(resolved) > 0 {
+							path = resolved
+						}
+					}
 					callee := &NameValue{
 						baseValue: baseValue{Location: sel.Loc(), ExprType: sel.Type()},
 						Path:      path,

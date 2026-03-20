@@ -450,6 +450,90 @@ fn main() void {
 	t.Fatalf("expected specialized interface coercion for Point<i32>::Draw, got %#v", mainFn.Blocks)
 }
 
+func TestPipelineLowersConstrainedGenericMethodCallWithSpecializedOwnerPath(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Shape interface {
+    Draw(&self)
+}
+
+type Circle<T> struct {
+    Rad: T
+}
+
+fn Circle<T>::New(v: T) Self {
+    return .{ .Rad = v }
+}
+
+fn Circle<T>::Draw(&self) {
+}
+
+fn drawShape<T: Shape>(s: T) void {
+    s.Draw()
+}
+
+fn main() void {
+    let cir = Circle<i32>::New(1)
+    drawShape(cir)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var drawShapeFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && strings.HasPrefix(fn.Name, "drawShape$") {
+			drawShapeFn = fn
+			break
+		}
+	}
+	if drawShapeFn == nil {
+		t.Fatalf("expected specialized drawShape function, got %#v", result.Entry.MIR.Functions)
+	}
+	found := false
+	for _, block := range drawShapeFn.Blocks {
+		for _, instr := range block.Instructions {
+			call, ok := instrValue(instr).(*mir.CallValue)
+			if !ok {
+				continue
+			}
+			callee, ok := call.Callee.(*mir.NameValue)
+			if !ok || len(callee.Path) == 0 {
+				continue
+			}
+			last := callee.Path[len(callee.Path)-1]
+			if strings.Contains(last, "Circle$T_i32__Draw$T_i32") {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected constrained generic call to use specialized Draw path, got blocks %#v\nmodule:\n%s", drawShapeFn.Blocks, mir.FormatModule(result.Entry.MIR))
+	}
+}
+
+func instrValue(instr mir.Instr) mir.Value {
+	switch ins := instr.(type) {
+	case *mir.AssignInstr:
+		return ins.Value
+	case *mir.ComputeInstr:
+		return ins.Value
+	case *mir.EvalInstr:
+		return ins.Value
+	default:
+		return nil
+	}
+}
+
 func TestPipelineLowersRawAddressOperator(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `

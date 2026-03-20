@@ -96,15 +96,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			)
 			return typeinfo.InvalidType{}
 		}
-		typeParams := c.pushTypeParams(owner, decl, decl.TypeParams)
-		bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(typeParams))
-		for i, param := range typeParams {
-			if i < len(args) {
-				bindings[param] = args[i]
-			}
-		}
-		c.checkTypeParamConstraintsAt(t.Loc(), typeParams, bindings)
-		c.popTypeParams()
+		c.checkTypeParamDeclConstraintsAt(t.Loc(), owner, decl, args)
 		named.TypeArgs = args
 		return named
 	case *ast.SelfType:

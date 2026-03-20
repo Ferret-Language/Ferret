@@ -1001,6 +1001,46 @@ func TestHoverLabels(t *testing.T) {
 	checkHover(line, char, "loop label outer")
 }
 
+func TestHoverRecursiveGenericTypeDoesNotLoop(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Node<T> struct {\n    Next: *Node<T>\n    Value: T\n}\n\nfn main() {\n    let n = .Node<i32>{}\n    n\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "let n =")
+	if !ok {
+		t.Fatal("failed to find local binding declaration")
+	}
+	char += len("let ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "type Node<i32> struct") {
+		t.Fatalf("expected recursive generic type hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "Next: *Node<i32>") {
+		t.Fatalf("expected instantiated recursive field type, got %q", hover.Contents.Value)
+	}
+}
+
 func fakeHoverResult(path string, typeName string) compiler.Result {
 	start := source.Position{Line: 1, Column: 1, Index: 0}
 	end := source.Position{Line: 1, Column: 2, Index: 1}

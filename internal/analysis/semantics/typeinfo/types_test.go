@@ -66,3 +66,26 @@ func TestReceiverHelpers(t *testing.T) {
 		t.Fatalf("expected &Point receiver type, got %s", got.String())
 	}
 }
+
+func TestInstantiateTypeHandlesRecursiveStruct(t *testing.T) {
+	node := &StructType{}
+	field := &StructField{Name: "Next", Type: &PointerType{Inner: node}}
+	node.OrderedFields = []*StructField{field}
+	node.Fields = map[string]*StructField{"Next": field}
+
+	inst, ok := InstantiateType(node, nil).(*StructType)
+	if !ok || inst == nil {
+		t.Fatalf("expected struct instantiation, got %#v", inst)
+	}
+	next := inst.Fields["Next"]
+	if next == nil {
+		t.Fatal("expected recursive field")
+	}
+	ptr, ok := next.Type.(*PointerType)
+	if !ok || ptr == nil {
+		t.Fatalf("expected pointer field, got %#v", next.Type)
+	}
+	if ptr.Inner != inst {
+		t.Fatalf("expected recursive pointer to instantiated struct, got %#v", ptr.Inner)
+	}
+}

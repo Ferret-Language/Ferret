@@ -67,6 +67,9 @@ func (t *NamedType) String() string {
 	if t == nil {
 		return "<nil>"
 	}
+	if strings.Contains(t.Name, "$") {
+		return t.Name
+	}
 	if len(t.TypeArgs) > 0 {
 		args := make([]string, 0, len(t.TypeArgs))
 		for _, arg := range t.TypeArgs {

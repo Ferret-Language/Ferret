@@ -471,6 +471,7 @@ func (c *checker) typeOfIdent(scope *refineScope, ident *ast.Ident, expected typ
 							}
 							typeArgs = append(typeArgs, argType)
 						}
+						c.checkTypeParamDeclConstraintsAt(ident.Location, ownerMod, ownerDecl, typeArgs)
 						ownerNamed := &typeinfo.NamedType{
 							ModuleKey: ownerMod.Key,
 							Name:      ownerDecl.Name.Text(),
@@ -1605,6 +1606,22 @@ func (c *checker) checkCallTypeParamConstraints(call *ast.CallExpr, params []*ty
 		return
 	}
 	c.checkTypeParamConstraintsAt(call.Location, params, bindings)
+}
+
+func (c *checker) checkTypeParamDeclConstraintsAt(loc source.Location, mod *context.Module, decl *ast.TypeDecl, args []typeinfo.Type) {
+	if c == nil || decl == nil || len(decl.TypeParams) == 0 {
+		return
+	}
+	typeParams := c.pushTypeParams(mod, decl, decl.TypeParams)
+	defer c.popTypeParams()
+	if len(typeParams) == 0 || len(typeParams) != len(args) {
+		return
+	}
+	bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(typeParams))
+	for i, param := range typeParams {
+		bindings[param] = args[i]
+	}
+	c.checkTypeParamConstraintsAt(loc, typeParams, bindings)
 }
 
 func (c *checker) checkTypeParamConstraintsAt(loc source.Location, params []*typeinfo.TypeParam, bindings map[*typeinfo.TypeParam]typeinfo.Type) {
