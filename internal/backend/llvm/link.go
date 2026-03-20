@@ -9,7 +9,6 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	"compiler/internal/backend/toolchain"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/mir"
 )
 
@@ -151,11 +150,5 @@ func optionalUsesNiche(typ typeinfo.Type) bool {
 }
 
 func unwrapNamed(typ typeinfo.Type) typeinfo.Type {
-	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
-		switch named.Decl.Type.(type) {
-		case *ast.EnumType, *ast.ErrorType:
-			return &typeinfo.BuiltinType{Name: "i32"}
-		}
-	}
-	return typ
+	return backend.UnwrapNamed(typ)
 }

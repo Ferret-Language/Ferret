@@ -3249,22 +3249,19 @@ func lookupInterfaceMethodDecl(state *moduleState, typ typeinfo.Type, name strin
 }
 
 func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
-	switch v := value.(type) {
-	case *mir.LocalValue:
-		return lowerValue(state, v)
-	case *mir.NameValue:
-		return lowerValue(state, v)
-	case *mir.LoadValue:
-		return lowerValue(state, v.Pointer)
-	case *mir.FieldLoadValue:
-		_, addr, _, err := lowerFieldAddress(state, v.Base, v.FieldIndex)
-		if err != nil {
-			return "", err
-		}
-		return addr, nil
-	default:
-		return "", fmt.Errorf("unsupported aggregate source %T", value)
-	}
+	return backend.ResolveAggregateSource(
+		value,
+		func(v *mir.LocalValue) (string, error) { return lowerValue(state, v) },
+		func(v *mir.NameValue) (string, error) { return lowerValue(state, v) },
+		func(v mir.Value) (string, error) { return lowerValue(state, v) },
+		func(base mir.Value, fieldIndex int) (string, error) {
+			_, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
+			if err != nil {
+				return "", err
+			}
+			return addr, nil
+		},
+	)
 }
 
 // ---------------------------------------------------------------------------
@@ -4464,19 +4461,11 @@ func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
 }
 
 func namedIsUnion(named *typeinfo.NamedType) bool {
-	if named == nil || named.Decl == nil {
-		return false
-	}
-	_, ok := named.Decl.Type.(*ast.UnionType)
-	return ok
+	return backend.IsNamedUnion(named)
 }
 
 func namedIsInterface(named *typeinfo.NamedType) bool {
-	if named == nil || named.Decl == nil {
-		return false
-	}
-	_, ok := named.Decl.Type.(*ast.InterfaceType)
-	return ok
+	return backend.IsNamedInterface(named)
 }
 
 // ---------------------------------------------------------------------------

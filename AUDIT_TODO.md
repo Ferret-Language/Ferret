@@ -12,6 +12,8 @@ Status key: `[ ]` pending, `[*]` done
 - [*] unify recursive type substitution between `typeinfo.InstantiateType` and `hir.specializer.substituteTypeInternal`
 - [ ] extract backend-neutral lowering helpers shared by LLVM/QBE (start with panic/aggregate/type-to-ABI helpers)
   - [*] panic payload classification/address fallback extracted to `internal/backend/panic.go` and wired in LLVM/QBE
+  - [*] aggregate source resolution extracted to `internal/backend/aggregate.go` and wired in LLVM/QBE
+  - [*] shared type-kind helpers (`UnwrapNamed`, `IsVoidType`, union/interface checks) extracted to `internal/backend/type_helpers.go`
 - [*] add cross-backend generic specialization tests (LLVM + QBE parity for constrained owner methods)
   - added `internal/backend/parity_test.go` covering constrained owner static method specialization on both targets
 - [ ] add mangling collision test suite beyond the current `t_i32` vs `(i32)` case
