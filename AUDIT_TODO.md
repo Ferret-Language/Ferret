@@ -42,9 +42,12 @@ Status key: `[ ]` pending, `[*]` done
 
 ## Low Priority / Cleanup
 
-- [ ] inline/remove wrapper `renderNamedTypeMarkdown` if it remains a pure delegate
-- [ ] inline/remove `substituteTypeWithoutTypeSpecialization` if it stays single-use
-- [ ] inline/remove `symbolFuncDecl` if call sites remain local and small
+- [*] inline/remove wrapper `renderNamedTypeMarkdown` if it remains a pure delegate
+  - kept as-is because it now contains named-type hover composition and is no longer a pure delegate
+- [*] inline/remove `substituteTypeWithoutTypeSpecialization` if it stays single-use
+  - inlined call to `substituteTypeInternal(..., false)` and removed the wrapper from `internal/ir/hir/specialize.go`
+- [*] inline/remove `symbolFuncDecl` if call sites remain local and small
+  - removed helper and inlined direct `*ast.FuncDecl` assertions at local call sites in `internal/lsp/server.go`
 
 ## Critical Coverage Gaps
 

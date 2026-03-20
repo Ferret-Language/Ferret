@@ -1063,7 +1063,7 @@ func (s *specializer) requestInterfaceMethodSpecializations(value Expr, expected
 	if !ok || ifaceDecl == nil {
 		return
 	}
-	sourceType := s.substituteTypeWithoutTypeSpecialization(value.Type(), bindings)
+	sourceType := s.substituteTypeInternal(value.Type(), bindings, false)
 	named, ok := typeinfo.ReceiverBaseNamedType(sourceType)
 	if !ok || named == nil {
 		return
@@ -1164,10 +1164,6 @@ func specializationBindings(decl *ast.TypeDecl, args []typeinfo.Type) map[*typei
 
 func (s *specializer) substituteType(typ typeinfo.Type, bindings map[*typeinfo.TypeParam]typeinfo.Type) typeinfo.Type {
 	return s.substituteTypeInternal(typ, bindings, true)
-}
-
-func (s *specializer) substituteTypeWithoutTypeSpecialization(typ typeinfo.Type, bindings map[*typeinfo.TypeParam]typeinfo.Type) typeinfo.Type {
-	return s.substituteTypeInternal(typ, bindings, false)
 }
 
 func (s *specializer) substituteTypeInternal(typ typeinfo.Type, bindings map[*typeinfo.TypeParam]typeinfo.Type, specializeNamed bool) typeinfo.Type {

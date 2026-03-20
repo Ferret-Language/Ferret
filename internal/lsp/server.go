@@ -1162,7 +1162,7 @@ func collectTypeMethodSignatures(mod *context.Module, named *typeinfo.NamedType)
 			if sym == nil || sym.Kind != symbols.SymbolFunc {
 				continue
 			}
-			fn, ok := symbolFuncDecl(sym)
+			fn, ok := sym.Node.(*ast.FuncDecl)
 			if !ok || !fn.IsStatic {
 				continue
 			}
@@ -1190,14 +1190,6 @@ func trimHoverMethodSignatures(methods []string, limit int) ([]string, int) {
 		return methods, 0
 	}
 	return methods[:limit], len(methods) - limit
-}
-
-func symbolFuncDecl(sym *symbols.Symbol) (*ast.FuncDecl, bool) {
-	if sym == nil {
-		return nil, false
-	}
-	fn, ok := sym.Node.(*ast.FuncDecl)
-	return fn, ok
 }
 
 func renderNamedTypeDeclText(named *typeinfo.NamedType, owner *context.Module, decl *ast.TypeDecl) string {
@@ -1292,7 +1284,7 @@ func structFieldTypeByName(typ *typeinfo.StructType, name string) typeinfo.Type 
 }
 
 func renderMethodSignatureForType(sym *symbols.Symbol, mod *context.Module, named *typeinfo.NamedType) string {
-	fn, ok := symbolFuncDecl(sym)
+	fn, ok := sym.Node.(*ast.FuncDecl)
 	if !ok || fn == nil {
 		return ""
 	}
