@@ -11,7 +11,9 @@ Status key: `[ ]` pending, `[*]` done
   - done in `internal/backend/qbe/qbe.go`, `internal/backend/qbe/toolchain.go`, `internal/backend/qbe/qbe_test.go`
 - [*] unify recursive type substitution between `typeinfo.InstantiateType` and `hir.specializer.substituteTypeInternal`
 - [ ] extract backend-neutral lowering helpers shared by LLVM/QBE (start with panic/aggregate/type-to-ABI helpers)
-- [ ] add cross-backend generic specialization tests (LLVM + QBE parity for constrained owner methods)
+  - [*] panic payload classification/address fallback extracted to `internal/backend/panic.go` and wired in LLVM/QBE
+- [*] add cross-backend generic specialization tests (LLVM + QBE parity for constrained owner methods)
+  - added `internal/backend/parity_test.go` covering constrained owner static method specialization on both targets
 - [ ] add mangling collision test suite beyond the current `t_i32` vs `(i32)` case
 
 ## Medium Priority

@@ -604,12 +604,13 @@ func (s *specializer) requestSpecializationWithBindings(template *Func, inferred
 		}
 		bindings[param] = bound
 	}
-	for _, name := range specializedFuncParamNames(template) {
+	paramNames := s.specializedFuncParamNames(template)
+	for _, name := range paramNames {
 		if lookupTypeBinding(bindings, name) == nil {
 			return nil
 		}
 	}
-	name := specializedFuncName(template, bindings)
+	name := specializedFuncName(template, bindings, paramNames)
 	key := name + "#" + template.OwnerType
 	if template.Receiver != nil && template.Receiver.Type != nil {
 		key += "#" + template.Receiver.Type.String()
@@ -707,11 +708,11 @@ func inferTypeBindings(pattern, actual typeinfo.Type, bindings map[*typeinfo.Typ
 	}
 }
 
-func specializedFuncName(template *Func, bindings map[*typeinfo.TypeParam]typeinfo.Type) string {
+func specializedFuncName(template *Func, bindings map[*typeinfo.TypeParam]typeinfo.Type, paramNames []string) string {
 	var b strings.Builder
 	b.WriteString(template.Name)
 	b.WriteString("$")
-	for i, name := range specializedFuncParamNames(template) {
+	for i, name := range paramNames {
 		if i > 0 {
 			b.WriteString("_")
 		}
@@ -722,12 +723,31 @@ func specializedFuncName(template *Func, bindings map[*typeinfo.TypeParam]typein
 	return b.String()
 }
 
-func specializedFuncParamNames(template *Func) []string {
+func (s *specializer) specializedFuncParamNames(template *Func) []string {
 	if template == nil {
 		return nil
 	}
 	names := make([]string, 0, len(template.Source.TypeParams)+2)
 	added := make(map[string]struct{}, len(template.Source.TypeParams)+2)
+	if template.OwnerType != "" {
+		for _, decl := range s.module.Types {
+			if decl == nil || decl.Name != template.OwnerType || decl.Source == nil {
+				continue
+			}
+			for _, param := range decl.Source.TypeParams {
+				if param.Name == nil {
+					continue
+				}
+				name := param.Name.Text()
+				if _, ok := added[name]; ok {
+					continue
+				}
+				added[name] = struct{}{}
+				names = append(names, name)
+			}
+			break
+		}
+	}
 	if template.Receiver != nil {
 		if named, ok := typeinfo.ReceiverBaseNamedType(template.Receiver.Type); ok && named != nil && named.Decl != nil {
 			for _, param := range named.Decl.TypeParams {
