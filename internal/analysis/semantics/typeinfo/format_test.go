@@ -83,3 +83,21 @@ func TestFormatMethodSignatureIncludesSelf(t *testing.T) {
 		t.Fatalf("unexpected method signature:\nwant: %q\ngot:  %q", want, got)
 	}
 }
+
+func TestFormatBindingDecl(t *testing.T) {
+	if got := FormatBindingDecl("let", "a", &BuiltinType{Name: "i32"}, FlagMutable); got != "let mut a: i32" {
+		t.Fatalf("unexpected let binding declaration: %q", got)
+	}
+	if got := FormatBindingDecl("const", "b", &BuiltinType{Name: "i32"}, 0); got != "const b: i32" {
+		t.Fatalf("unexpected const binding declaration: %q", got)
+	}
+	if got := FormatBindingDecl("parameter", "p", &BuiltinType{Name: "i32"}, FlagMutable|FlagComptime); got != "parameter mut comptime p: i32" {
+		t.Fatalf("unexpected parameter binding declaration: %q", got)
+	}
+}
+
+func TestFormatReceiverBindingDecl(t *testing.T) {
+	if got := FormatReceiverBindingDecl("self", ReceiverRefMut); got != "receiver self: &mut Self" {
+		t.Fatalf("unexpected receiver binding declaration: %q", got)
+	}
+}

@@ -218,6 +218,62 @@ func (p Printer) MethodSignature(name string, receiver Type, fn *FuncType) strin
 	return b.String()
 }
 
+func (p Printer) BindingDecl(kind, name string, typ Type, flags ValueFlags) string {
+	if name == "" {
+		name = "_"
+	}
+	typeText := p.Type(typ)
+	switch kind {
+	case "let":
+		var b strings.Builder
+		b.WriteString("let")
+		if flags.Mutable() {
+			b.WriteString(" mut")
+		}
+		b.WriteString(" ")
+		b.WriteString(name)
+		b.WriteString(": ")
+		b.WriteString(typeText)
+		return b.String()
+	case "const":
+		return "const " + name + ": " + typeText
+	case "parameter":
+		var b strings.Builder
+		b.WriteString("parameter")
+		if flags.Mutable() {
+			b.WriteString(" mut")
+		}
+		if flags.Comptime() {
+			b.WriteString(" comptime")
+		}
+		b.WriteString(" ")
+		b.WriteString(name)
+		b.WriteString(": ")
+		b.WriteString(typeText)
+		return b.String()
+	default:
+		return kind + " " + name + ": " + typeText
+	}
+}
+
+func (p Printer) ReceiverBindingDecl(name string, kind ReceiverKind) string {
+	if name == "" {
+		name = "self"
+	}
+	typeText := "Self"
+	switch kind {
+	case ReceiverRef:
+		typeText = "&Self"
+	case ReceiverRefMut:
+		typeText = "&mut Self"
+	case ReceiverPtr:
+		typeText = "*Self"
+	case ReceiverRawPtr:
+		typeText = "^Self"
+	}
+	return "receiver " + name + ": " + typeText
+}
+
 func (p Printer) formatSignature(fn *FuncType) string {
 	if fn == nil {
 		return "()"
@@ -278,4 +334,12 @@ func FormatFuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 
 func FormatMethodSignature(name string, receiver Type, fn *FuncType) string {
 	return DefaultPrinter.MethodSignature(name, receiver, fn)
+}
+
+func FormatBindingDecl(kind, name string, typ Type, flags ValueFlags) string {
+	return DefaultPrinter.BindingDecl(kind, name, typ, flags)
+}
+
+func FormatReceiverBindingDecl(name string, kind ReceiverKind) string {
+	return DefaultPrinter.ReceiverBindingDecl(name, kind)
 }

@@ -755,6 +755,7 @@ func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Modu
 	if typ == nil {
 		return ""
 	}
+	bindingDecl := renderBindingDeclForNode(node, typ, mod)
 	if sig := renderNodeFunctionSignature(node, typ, mod, info); sig != "" {
 		return appendHoverDoc(asFerretCodeBlock(sig), functionDocForNode(node, mod))
 	}
@@ -773,7 +774,7 @@ func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Modu
 			return asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(name, fnType))
 		}
 	}
-	return renderTypeHoverMarkdown(typ, mod, modulesByKey)
+	return joinBindingAndTypeHover(bindingDecl, renderTypeHoverMarkdown(typ, mod, modulesByKey))
 }
 
 func renderNodeFunctionSignature(node ast.Node, typ typeinfo.Type, mod *context.Module, info *typeinfo.ModuleInfo) string {
@@ -843,7 +844,7 @@ func symbolFunctionSignature(sym *symbols.Symbol, fnType *typeinfo.FuncType) str
 		return ""
 	}
 	if fn, ok := sym.Node.(*ast.FuncDecl); ok && fn != nil {
-		if fnType != nil && len(fn.TypeParams) > 0 && len(fnType.TypeParams) == 0 {
+		if fnType != nil {
 			return typeinfo.DefaultPrinter.FuncDeclSignature(fn, fnType)
 		}
 		return fn.Signature()
@@ -857,6 +858,9 @@ func symbolFunctionSignature(sym *symbols.Symbol, fnType *typeinfo.FuncType) str
 func renderSymbolHoverMarkdown(sym *symbols.Symbol, typ typeinfo.Type, mod *context.Module, modulesByKey map[string]*context.Module) string {
 	if sym == nil {
 		return renderTypeHoverMarkdown(typ, mod, modulesByKey)
+	}
+	if decl := renderBindingDeclForSymbol(sym, typ, mod); decl != "" {
+		return joinBindingAndTypeHover(decl, renderTypeHoverMarkdown(typ, mod, modulesByKey))
 	}
 	switch sym.Kind {
 	case symbols.SymbolFunc, symbols.SymbolMethod:
@@ -879,6 +883,124 @@ func renderSymbolHoverMarkdown(sym *symbols.Symbol, typ typeinfo.Type, mod *cont
 		}
 	}
 	return renderTypeHoverMarkdown(typ, mod, modulesByKey)
+}
+
+func joinBindingAndTypeHover(bindingDecl, typeMarkdown string) string {
+	bindingDecl = strings.TrimSpace(bindingDecl)
+	if bindingDecl == "" {
+		return typeMarkdown
+	}
+	bindingBlock := asFerretCodeBlock(bindingDecl)
+	if strings.TrimSpace(typeMarkdown) == "" {
+		return bindingBlock
+	}
+	return bindingBlock + "\n\n" + typeMarkdown
+}
+
+func renderBindingDeclForNode(node ast.Node, typ typeinfo.Type, mod *context.Module) string {
+	sym := resolvedSymbolForNode(mod, node)
+	return renderBindingDeclForSymbol(sym, typ, mod)
+}
+
+func renderBindingDeclForSymbol(sym *symbols.Symbol, typ typeinfo.Type, mod *context.Module) string {
+	if sym == nil || typ == nil {
+		return ""
+	}
+	switch sym.Kind {
+	case symbols.SymbolVar:
+		flags := typeinfo.ValueFlags(0)
+		if symbolIsMutable(sym) {
+			flags |= typeinfo.FlagMutable
+		}
+		return typeinfo.DefaultPrinter.BindingDecl("let", sym.Name, typ, flags)
+	case symbols.SymbolConst:
+		return typeinfo.DefaultPrinter.BindingDecl("const", sym.Name, typ, 0)
+	case symbols.SymbolParam:
+		if kind, ok := receiverKindForSymbol(sym, typ, mod); ok {
+			return typeinfo.DefaultPrinter.ReceiverBindingDecl(sym.Name, kind)
+		}
+		flags := typeinfo.ValueFlags(0)
+		if sym.Flags.Mutable() {
+			flags |= typeinfo.FlagMutable
+		}
+		if sym.Flags.Comptime() {
+			flags |= typeinfo.FlagComptime
+		}
+		return typeinfo.DefaultPrinter.BindingDecl("parameter", sym.Name, typ, flags)
+	default:
+		return ""
+	}
+}
+
+func symbolIsMutable(sym *symbols.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	switch n := sym.Node.(type) {
+	case *ast.LetStmt:
+		return n.IsMut
+	case *ast.LetDecl:
+		return n.IsMut
+	}
+	return sym.Flags.Mutable()
+}
+
+func receiverKindForSymbol(sym *symbols.Symbol, typ typeinfo.Type, mod *context.Module) (typeinfo.ReceiverKind, bool) {
+	if sym == nil {
+		return typeinfo.ReceiverValue, false
+	}
+	if recv := findReceiverForSymbol(mod, sym); recv != nil {
+		return receiverKindFromTypeExpr(recv.Type), true
+	}
+	if key, ok := typeinfo.ReceiverKeyFromType(typ); ok {
+		return key.Kind, true
+	}
+	return typeinfo.ReceiverValue, false
+}
+
+func findReceiverForSymbol(mod *context.Module, sym *symbols.Symbol) *ast.Receiver {
+	if mod == nil || mod.AST == nil || sym == nil || sym.Location.Start == nil {
+		return nil
+	}
+	for _, decl := range mod.AST.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn == nil || fn.Receiver == nil || fn.Receiver.Name == nil {
+			continue
+		}
+		if fn.Receiver.Name.Text() != sym.Name {
+			continue
+		}
+		if sameLocation(fn.Receiver.Name.Loc(), sym.Location) {
+			return fn.Receiver
+		}
+	}
+	return nil
+}
+
+func sameLocation(a, b source.Location) bool {
+	if a.Start == nil || b.Start == nil {
+		return false
+	}
+	if a.File != "" && b.File != "" && a.File != b.File {
+		return false
+	}
+	return a.Start.Index == b.Start.Index
+}
+
+func receiverKindFromTypeExpr(typ ast.TypeExpr) typeinfo.ReceiverKind {
+	switch t := typ.(type) {
+	case *ast.RefType:
+		if t.Mutable {
+			return typeinfo.ReceiverRefMut
+		}
+		return typeinfo.ReceiverRef
+	case *ast.PointerType:
+		return typeinfo.ReceiverPtr
+	case *ast.RawPtrType:
+		return typeinfo.ReceiverRawPtr
+	default:
+		return typeinfo.ReceiverValue
+	}
 }
 
 func renderTypeHoverMarkdown(typ typeinfo.Type, mod *context.Module, modulesByKey map[string]*context.Module) string {

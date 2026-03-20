@@ -551,6 +551,46 @@ func TestHoverGenericCallShowsInstantiatedSignature(t *testing.T) {
 	}
 }
 
+func TestHoverGenericStaticOwnerCallShowsInstantiatedSignature(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\nfn main() void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    let c = Circle<i32>::New(1)")
+	if !ok {
+		t.Fatal("failed to find static owner call")
+	}
+	char += len("    let c = Circle<i32>::")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn Circle::New(v: i32) Circle<i32>") {
+		t.Fatalf("expected instantiated static owner signature in hover, got %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "fn Circle::New(v: T) Self") {
+		t.Fatalf("expected no unresolved owner type parameter in hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverFunctionCallShowsDocComment(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.ferr")
@@ -660,6 +700,9 @@ func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 	if hover == nil {
 		t.Fatal("expected hover result")
 	}
+	if !strings.Contains(hover.Contents.Value, "receiver self: &Self") {
+		t.Fatalf("expected receiver binding declaration in hover, got %q", hover.Contents.Value)
+	}
 	if !strings.Contains(hover.Contents.Value, "&Point") {
 		t.Fatalf("expected wrapper type in hover, got %q", hover.Contents.Value)
 	}
@@ -669,6 +712,50 @@ func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) i32") {
 		t.Fatalf("expected method listing in hover, got %q", hover.Contents.Value)
 	}
+}
+
+func TestHoverBindingDeclarations(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Point struct {\n    Value: i32 = 7\n}\n\nfn Point::Calc(&self, mut dx: i32, comptime step: i32) i32 {\n    let mut a = dx\n    const b: i32 = step\n    return a + b + self.Value\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &bytes.Buffer{}, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	checkHover := func(anchor, expected string) {
+		t.Helper()
+		line, char, ok := findPosition(src, anchor)
+		if !ok {
+			t.Fatalf("failed to find anchor %q", anchor)
+		}
+		var out bytes.Buffer
+		s.out = &out
+		req := rpcRequest{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage("1"),
+			Method:  "textDocument/hover",
+			Params: mustRawJSON(t, hoverParams{
+				TextDocument: textDocumentIdentifier{URI: uri},
+				Position:     lspPosition{Line: line, Character: char},
+			}),
+		}
+		s.handleRequest(req)
+		hover := decodeHoverResult(t, out.String())
+		if hover == nil {
+			t.Fatalf("expected hover result for anchor %q", anchor)
+		}
+		if !strings.Contains(hover.Contents.Value, expected) {
+			t.Fatalf("expected hover to contain %q for anchor %q, got %q", expected, anchor, hover.Contents.Value)
+		}
+	}
+
+	checkHover("a = dx", "let mut a: i32")
+	checkHover("b: i32 = step", "const b: i32")
+	checkHover("dx: i32", "parameter mut dx: i32")
+	checkHover("self.Value", "receiver self: &Self")
 }
 
 func fakeHoverResult(path string, typeName string) compiler.Result {
