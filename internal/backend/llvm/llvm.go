@@ -3274,22 +3274,28 @@ func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
 // lowerPanicTerm emits a call to ferret__panic(ptr msg) followed by unreachable.
 // String literals are null-terminated *i8 constants; we pass the pointer directly.
 func lowerPanicTerm(state *moduleState, t *mir.PanicTerm) (string, error) {
-	switch v := t.Value.(type) {
-	case *mir.StringValue:
-		sym := emitStringConstant(state, v.Value)
+	payload, err := backend.ClassifyPanicPayload(t, func(typ typeinfo.Type) bool {
+		_, ok := unwrapNamed(typ).(*typeinfo.StringType)
+		return ok
+	})
+	if err != nil {
+		return "", err
+	}
+	switch payload.Kind {
+	case backend.PanicPayloadLiteralString:
+		sym := emitStringConstant(state, payload.Literal)
 		return fmt.Sprintf("call void @ferret__panic(ptr @%s)\nunreachable", sym), nil
-	default:
-		if _, ok := unwrapNamed(t.Value.Type()).(*typeinfo.StringType); ok {
-			addr, err := lowerAddrOf(state, &mir.AddrOfValue{Source: t.Value})
-			if err != nil {
-				if lv, valueErr := lowerValue(state, t.Value); valueErr == nil {
-					addr = lv
-				} else {
-					return "", fmt.Errorf("panic: unsupported string payload (%T): %w", t.Value, err)
-				}
-			}
-			return fmt.Sprintf("call void @global__panic(ptr %s)\nunreachable", addr), nil
+	case backend.PanicPayloadDynamicString:
+		addr, err := backend.ResolvePanicStringAddress(
+			payload.Value,
+			func(v mir.Value) (string, error) { return lowerAddrOf(state, &mir.AddrOfValue{Source: v}) },
+			func(v mir.Value) (string, error) { return lowerValue(state, v) },
+		)
+		if err != nil {
+			return "", err
 		}
+		return fmt.Sprintf("call void @global__panic(ptr %s)\nunreachable", addr), nil
+	default:
 		return "", fmt.Errorf("panic: unsupported payload type %T", t.Value)
 	}
 }
