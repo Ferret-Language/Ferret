@@ -24,9 +24,10 @@ Status key: `[ ]` pending, `[*]` done
 
 ## Medium Priority
 
-- [ ] convert diagnostics/emitter panic-based invariants into non-crashing internal compiler error flow
+- [*] convert diagnostics/emitter panic-based invariants into non-crashing internal compiler error flow
   - `internal/core/diagnostics/emitter.go`
   - `internal/core/diagnostics/diagnostic.go`
+  - now emits ICE-style internal notes instead of panicking for missing primary-secondary order and multi-primary render cases
 - [ ] reduce LSP/typeinfo duplication by moving named-type + method-list rendering into `typeinfo`
   - keep LSP as composition/index layer
 - [ ] centralize LLVM runtime declaration emission in one helper

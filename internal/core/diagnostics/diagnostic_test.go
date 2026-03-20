@@ -16,13 +16,25 @@ func TestWithSecondaryLabelRequiresPrimary(t *testing.T) {
 	d := NewError("boom")
 	loc := testLoc("a.ferr", 1, 1)
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic when adding secondary label without primary")
-		}
-	}()
-
 	d.WithSecondaryLabel(&loc, "context")
+	if d.Severity != Error {
+		t.Fatalf("expected severity error, got %v", d.Severity)
+	}
+	if d.Code != internalCompilerErrorCode {
+		t.Fatalf("expected code %q, got %q", internalCompilerErrorCode, d.Code)
+	}
+	if len(d.Labels) != 2 {
+		t.Fatalf("expected fallback primary + secondary labels, got %d", len(d.Labels))
+	}
+	if d.Labels[0].Style != Primary {
+		t.Fatalf("expected first label primary, got %v", d.Labels[0].Style)
+	}
+	if d.Labels[1].Style != Secondary {
+		t.Fatalf("expected second label secondary, got %v", d.Labels[1].Style)
+	}
+	if len(d.Texts) == 0 || d.Texts[0].Kind != "internal" {
+		t.Fatalf("expected internal diagnostic text, got %#v", d.Texts)
+	}
 }
 
 func TestWithCodeReplacementAddsOrderedExtra(t *testing.T) {

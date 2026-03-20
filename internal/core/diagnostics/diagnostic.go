@@ -84,6 +84,8 @@ type Diagnostic struct {
 	CodeHints []CodeHint
 }
 
+const internalCompilerErrorCode = "ICE0001"
+
 // CodeHintLine represents one rendered hint line with an optional diff prefix.
 // Prefix supports:
 //   - "+" for inserted code
@@ -215,12 +217,25 @@ func (d *Diagnostic) WithSecondaryLabel(loc *source.Location, message string) *D
 	}
 
 	if !hasPrimary {
-		// No primary label exists - cannot add secondary
-		// This is a programming error, so we should make it visible
-		panic("Cannot add secondary label without primary label. Call WithPrimaryLabel first.")
+		d.markInternalCompilerError("secondary label added without primary label; inserted fallback primary label")
+		d.WithPrimaryLabel(loc, "internal compiler error: missing primary label")
 	}
 
 	return d.WithLabel(loc, message, Secondary)
+}
+
+func (d *Diagnostic) markInternalCompilerError(message string) *Diagnostic {
+	if d == nil {
+		return d
+	}
+	d.Severity = Error
+	if d.Code == "" {
+		d.Code = internalCompilerErrorCode
+	}
+	if message != "" {
+		d.WithText("internal", message, colors.RED)
+	}
+	return d
 }
 
 // WithCodeHint adds a primary label and attaches a code hint to display.

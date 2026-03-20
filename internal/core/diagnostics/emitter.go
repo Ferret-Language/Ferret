@@ -284,8 +284,13 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 
 			for _, label := range labels {
 				if label.Style == Primary {
+					if primaryCount == 0 {
+						primaryLabel = label
+					} else {
+						label.Style = Secondary
+						secondaryLabels = append(secondaryLabels, label)
+					}
 					primaryCount++
-					primaryLabel = label
 				} else {
 					secondaryLabels = append(secondaryLabels, label)
 				}
@@ -298,13 +303,12 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 				for _, label := range labels {
 					e.printLabel(filepath, label, diag.Severity, nil)
 				}
-			} else if primaryCount > 1 {
-				labelStrs := []string{}
-				for _, label := range labels {
-					labelStrs = append(labelStrs, fmt.Sprintf("%v", label))
-				}
-				panic("INTERNAL COMPILER ERROR: Multiple primary labels in diagnostic!: " + strings.Join(labelStrs, ", "))
 			} else {
+				if primaryCount > 1 {
+					diag.markInternalCompilerError(
+						fmt.Sprintf("diagnostic has %d primary labels in %s; using first primary and treating the rest as secondary labels", primaryCount, filepath),
+					)
+				}
 				if len(secondaryLabels) == 0 {
 					e.printLabel(filepath, primaryLabel, diag.Severity, nil)
 				} else if len(secondaryLabels) == 1 &&
