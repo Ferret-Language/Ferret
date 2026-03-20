@@ -62,11 +62,17 @@ type Shape interface {
     This accepts any struct
     that implements shape
 */
-fn drawShape(s: Shape) {
+fn drawShape<T: Shape>(s: T) {
     s.Draw()
 }
 
 type any interface{}
+
+constraint numeric = union {
+    i32,
+    f32,
+    u32
+}
 
 fn add<T>(a: T, b: T) T {
     return a + b
@@ -76,6 +82,10 @@ fn mul_unused<T>(a: T, b: T) T {
     return a * b
 }
 
+fn add_numbers<T: numeric>(a: T, b: T) T {
+    return a + b
+}
+
 // program entry point
 // all here
 fn main() {
@@ -83,7 +93,7 @@ fn main() {
     let mut a = 10
     let b : i32 = a
     // array size is inferred
-    let arr : [_]i32 = [_]i32{1,2,3}
+    let arr : [_]i32 = [_]i32{23,46,67}
     let n = arr[1]
     let mut c = 5
     if c > 1 {
@@ -120,9 +130,22 @@ fn main() {
     }
     print("--- loop end ---")
 
+    print("###### For Loop ######")
+    
+    for arr | i, v | {
+        print(i)
+        print("-")
+        print(v)
+    }
+    
+    print("###### For Loop End ######")
     //c = 13
     print(a)
     print(b)
     print(n)
     print(len(arr))
+
+    print(add_numbers(1, 2))
+    print(add_numbers(1.4, 2.7))
+    print(add_numbers(1 as u32, 22 as u32))
 }
