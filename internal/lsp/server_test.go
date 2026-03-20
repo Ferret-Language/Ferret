@@ -758,6 +758,130 @@ func TestHoverBindingDeclarations(t *testing.T) {
 	checkHover("self.Value", "receiver self: &Self")
 }
 
+func TestHoverPointerParameterIsNotReceiver(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Conn struct {}\n\nfn run(mut c: *Conn) void {\n    c\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "mut c: *Conn")
+	if !ok {
+		t.Fatal("failed to find parameter declaration")
+	}
+	char += len("mut ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if strings.Contains(hover.Contents.Value, "receiver c:") {
+		t.Fatalf("did not expect receiver hover for normal parameter, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "parameter mut c: *Conn") {
+		t.Fatalf("expected parameter declaration hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverMethodOwnerTypeInDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Point<T> struct {\n    Value: T\n}\n\nfn Point<T>::Calc(&self) T {\n    return self.Value\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "Point<T>::Calc")
+	if !ok {
+		t.Fatal("failed to find method owner type")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "type Point<T> struct") {
+		t.Fatalf("expected owner type hover markdown, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverLabels(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "fn run() void {\nouter: while true {\n    break outer\n}\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &bytes.Buffer{}, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	checkHover := func(line, char int, expected string) {
+		t.Helper()
+		var out bytes.Buffer
+		s.out = &out
+		req := rpcRequest{
+			JSONRPC: "2.0",
+			ID:      json.RawMessage("1"),
+			Method:  "textDocument/hover",
+			Params: mustRawJSON(t, hoverParams{
+				TextDocument: textDocumentIdentifier{URI: uri},
+				Position:     lspPosition{Line: line, Character: char},
+			}),
+		}
+		s.handleRequest(req)
+		hover := decodeHoverResult(t, out.String())
+		if hover == nil {
+			t.Fatal("expected hover result")
+		}
+		if !strings.Contains(hover.Contents.Value, expected) {
+			t.Fatalf("expected hover to contain %q, got %q", expected, hover.Contents.Value)
+		}
+	}
+
+	line, char, ok := findPosition(src, "outer: while")
+	if !ok {
+		t.Fatal("failed to find label declaration")
+	}
+	checkHover(line, char, "loop label outer")
+
+	line, char, ok = findPosition(src, "break outer")
+	if !ok {
+		t.Fatal("failed to find label reference")
+	}
+	char += len("break ")
+	checkHover(line, char, "loop label outer")
+}
+
 func fakeHoverResult(path string, typeName string) compiler.Result {
 	start := source.Position{Line: 1, Column: 1, Index: 0}
 	end := source.Position{Line: 1, Column: 2, Index: 1}

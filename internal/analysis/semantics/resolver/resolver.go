@@ -314,6 +314,10 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.loopDepth--
 	case *ast.LabelStmt:
 		label := &binding.LabelBinding{Name: s.Name.Text(), Stmt: s.Stmt, Location: s.Name.Loc()}
+		r.info.BindLabel(s, label)
+		if s.Name != nil {
+			r.info.BindLabel(s.Name, label)
+		}
 		r.labels = append(r.labels, label)
 		r.resolveStmt(scope, s.Stmt)
 		r.labels = r.labels[:len(r.labels)-1]
@@ -410,6 +414,16 @@ func (r *resolver) resolveBreakLike(labelName string, node ast.Node, code string
 			return
 		}
 		r.info.BindLabel(node, label)
+		switch n := node.(type) {
+		case *ast.BreakStmt:
+			if n.Label != nil {
+				r.info.BindLabel(n.Label, label)
+			}
+		case *ast.ContinueStmt:
+			if n.Label != nil {
+				r.info.BindLabel(n.Label, label)
+			}
+		}
 		return
 	}
 	loc := breakLikeLocation(node)

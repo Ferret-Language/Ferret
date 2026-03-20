@@ -284,6 +284,7 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 	}
 	var selfType typeinfo.Type
 	funcScope := newRefineScope(nil)
+	var ownerType typeinfo.Type
 	if d.Receiver != nil {
 		recvType := c.syntaxType(c.mod, d.Receiver.Type)
 		if base, ok := typeinfo.ReceiverBaseNamedType(recvType); ok {
@@ -308,13 +309,17 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		}
 		c.bindDeclSymbol(d.Receiver.Name, recvType)
 		c.info.BindNode(d.Receiver, recvType)
+		if d.OwnerType != nil && selfType != nil {
+			ownerType = selfType
+			c.info.BindNode(d.OwnerType, ownerType)
+		}
 	}
 	if d.Receiver == nil && d.OwnerType != nil {
-		selfType = c.syntaxType(c.mod, d.OwnerType)
-	}
-	if d.IsStatic && d.OwnerType != nil {
-		ownerType := c.syntaxType(c.mod, d.OwnerType)
+		ownerType = c.syntaxType(c.mod, d.OwnerType)
 		c.info.BindNode(d.OwnerType, ownerType)
+		selfType = ownerType
+	}
+	if d.IsStatic && ownerType != nil {
 		if named, ok := ownerType.(*typeinfo.NamedType); ok {
 			if owner := c.findModuleForType(named); owner != nil && owner.Key != c.mod.Key {
 				loc := d.OwnerType.Loc()
@@ -1213,7 +1218,8 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 	if fnType == nil {
 		return nil, nil, nil, false
 	}
-	if len(fnType.TypeParams) == 0 {
+	genericParams := c.collectCallTypeParams(fnType)
+	if len(genericParams) == 0 {
 		if len(call.TypeArgs) > 0 {
 			c.bindCallTypeArgs(call)
 			loc := call.Location
@@ -1229,13 +1235,13 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 		return fnType, nil, nil, false
 	}
 
-	bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(fnType.TypeParams))
+	bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(genericParams))
 	if len(call.TypeArgs) > 0 {
 		c.bindExplicitTypeArgs(call, fnType, bindings)
 	}
 
 	argTypes := make([]typeinfo.Type, 0, len(call.Args))
-	inferFromArgs := len(call.TypeArgs) == 0 || len(call.TypeArgs) < len(fnType.TypeParams)
+	inferFromArgs := len(call.TypeArgs) == 0 || len(call.TypeArgs) < len(fnType.TypeParams) || len(genericParams) > len(fnType.TypeParams)
 	for i, arg := range call.Args {
 		argType := c.typeOfExpr(scope, arg, nil)
 		argTypes = append(argTypes, argType)
@@ -1248,7 +1254,7 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 	}
 
 	missing := false
-	for _, param := range fnType.TypeParams {
+	for _, param := range genericParams {
 		if typeinfo.IsInvalid(bindings[param]) {
 			missing = true
 			loc := call.Location
@@ -1272,7 +1278,7 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 		)
 		bindings[param] = typeinfo.UnknownType{}
 	}
-	c.checkCallTypeParamConstraints(call, fnType.TypeParams, bindings)
+	c.checkCallTypeParamConstraints(call, genericParams, bindings)
 
 	instantiated := &typeinfo.FuncType{
 		IsUnsafe: fnType.IsUnsafe,
@@ -1293,6 +1299,90 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 		return instantiated, argTypes, bindings, false
 	}
 	return instantiated, argTypes, bindings, false
+}
+
+func (c *checker) collectCallTypeParams(fnType *typeinfo.FuncType) []*typeinfo.TypeParam {
+	if fnType == nil {
+		return nil
+	}
+	params := make([]*typeinfo.TypeParam, 0, len(fnType.TypeParams))
+	add := func(param *typeinfo.TypeParam) {
+		if param == nil {
+			return
+		}
+		for _, existing := range params {
+			if typeinfo.Equal(existing, param) {
+				return
+			}
+		}
+		params = append(params, param)
+	}
+	for _, param := range fnType.TypeParams {
+		add(param)
+	}
+	for _, param := range fnType.Params {
+		c.collectTypeParams(param.Type, add)
+	}
+	c.collectTypeParams(fnType.Result, add)
+	return params
+}
+
+func (c *checker) collectTypeParams(typ typeinfo.Type, visit func(*typeinfo.TypeParam)) {
+	switch t := typ.(type) {
+	case nil:
+		return
+	case *typeinfo.TypeParam:
+		visit(t)
+	case *typeinfo.PointerType:
+		c.collectTypeParams(t.Inner, visit)
+	case *typeinfo.RefType:
+		c.collectTypeParams(t.Inner, visit)
+	case *typeinfo.RawPtrType:
+		c.collectTypeParams(t.Inner, visit)
+	case *typeinfo.OptionalType:
+		c.collectTypeParams(t.Inner, visit)
+	case *typeinfo.ErrorUnionType:
+		c.collectTypeParams(t.Error, visit)
+		c.collectTypeParams(t.Value, visit)
+	case *typeinfo.ArrayType:
+		c.collectTypeParams(t.Inner, visit)
+	case *typeinfo.SliceType:
+		c.collectTypeParams(t.Inner, visit)
+	case *typeinfo.TupleType:
+		for _, elem := range t.Elems {
+			c.collectTypeParams(elem, visit)
+		}
+	case *typeinfo.NamedType:
+		for _, arg := range t.TypeArgs {
+			c.collectTypeParams(arg, visit)
+		}
+	case *typeinfo.StructType:
+		for _, field := range t.OrderedFields {
+			if field == nil {
+				continue
+			}
+			c.collectTypeParams(field.Type, visit)
+		}
+	case *typeinfo.InterfaceType:
+		for _, method := range t.OrderedMethods {
+			if method == nil || method.Type == nil {
+				continue
+			}
+			c.collectTypeParams(method.Type, visit)
+		}
+	case *typeinfo.UnionType:
+		for _, member := range t.Members {
+			c.collectTypeParams(member, visit)
+		}
+	case *typeinfo.FuncType:
+		for _, param := range t.TypeParams {
+			visit(param)
+		}
+		for _, param := range t.Params {
+			c.collectTypeParams(param.Type, visit)
+		}
+		c.collectTypeParams(t.Result, visit)
+	}
 }
 
 func (c *checker) bindCallTypeArgs(call *ast.CallExpr) {
@@ -1370,6 +1460,14 @@ func (c *checker) inferTypeParamBindings(pattern, actual typeinfo.Type, bindings
 		}
 		for i := range p.Elems {
 			c.inferTypeParamBindings(p.Elems[i], got.Elems[i], bindings)
+		}
+	case *typeinfo.NamedType:
+		got, ok := actual.(*typeinfo.NamedType)
+		if !ok || p.Name != got.Name || p.ModuleKey != got.ModuleKey || len(p.TypeArgs) != len(got.TypeArgs) {
+			return
+		}
+		for i := range p.TypeArgs {
+			c.inferTypeParamBindings(p.TypeArgs[i], got.TypeArgs[i], bindings)
 		}
 	}
 }
@@ -1908,11 +2006,7 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 
 func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, expected typeinfo.Type) typeinfo.Type {
 	if expr != nil && expr.Type != nil {
-		explicit := c.typeFromSyntax(c.mod, expr.Type)
-		if expr.Type != nil {
-			c.info.BindNode(expr.Type, explicit)
-		}
-		expected = explicit
+		expected = c.resolveCompositeLiteralType(scope, expr, expected)
 	}
 	if expected == nil {
 		loc := expr.Location
@@ -2034,6 +2128,112 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 	}
 	c.info.BindNode(expr, expected)
 	return expected
+}
+
+func (c *checker) resolveCompositeLiteralType(scope *refineScope, expr *ast.CompositeLit, fallback typeinfo.Type) typeinfo.Type {
+	if expr == nil || expr.Type == nil {
+		return fallback
+	}
+	named, ok := expr.Type.(*ast.NamedType)
+	if !ok || named == nil || len(named.TypeArgs) > 0 {
+		explicit := c.typeFromSyntax(c.mod, expr.Type)
+		c.info.BindNode(expr.Type, explicit)
+		return explicit
+	}
+	resolution := c.lookupTypeResolution(c.mod, named)
+	if resolution == nil || resolution.Symbol == nil {
+		explicit := c.typeFromSyntax(c.mod, expr.Type)
+		c.info.BindNode(expr.Type, explicit)
+		return explicit
+	}
+	decl, _ := resolution.Symbol.Node.(*ast.TypeDecl)
+	if decl == nil || len(decl.TypeParams) == 0 {
+		explicit := c.typeFromSyntax(c.mod, expr.Type)
+		c.info.BindNode(expr.Type, explicit)
+		return explicit
+	}
+	owner := c.findModuleForSymbol(resolution.Symbol)
+	if owner == nil {
+		owner = c.mod
+	}
+	inferred, ok := c.inferCompositeNamedType(scope, expr, owner, decl, fallback)
+	if !ok {
+		loc := named.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("missing type arguments for generic type %q", resolution.Symbol.Name)).
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(&loc, "supply concrete type arguments here"),
+		)
+		c.info.BindNode(expr.Type, typeinfo.InvalidType{})
+		return typeinfo.InvalidType{}
+	}
+	c.info.BindNode(expr.Type, inferred)
+	return inferred
+}
+
+func (c *checker) inferCompositeNamedType(scope *refineScope, expr *ast.CompositeLit, owner *context.Module, decl *ast.TypeDecl, fallback typeinfo.Type) (*typeinfo.NamedType, bool) {
+	if c == nil || expr == nil || decl == nil || owner == nil || len(decl.TypeParams) == 0 {
+		return nil, false
+	}
+	typeParams := c.pushTypeParams(owner, decl, decl.TypeParams)
+	defer c.popTypeParams()
+	if len(typeParams) == 0 {
+		return nil, false
+	}
+	structType, ok := c.typeFromSyntax(owner, decl.Type).(*typeinfo.StructType)
+	if !ok || structType == nil {
+		return nil, false
+	}
+	bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(typeParams))
+	if namedExpected, ok := c.underlying(fallback).(*typeinfo.NamedType); ok && namedExpected != nil && namedExpected.Name == decl.Name.Text() && len(namedExpected.TypeArgs) == len(typeParams) {
+		for i, param := range typeParams {
+			bindings[param] = namedExpected.TypeArgs[i]
+		}
+	}
+
+	fields := c.orderedStructFields(structType)
+	fieldIndex := 0
+	for _, item := range expr.Items {
+		if item.Value == nil {
+			continue
+		}
+		var fieldType typeinfo.Type
+		if item.Name != nil {
+			field := structType.Fields[item.Name.Text()]
+			if field == nil {
+				continue
+			}
+			fieldType = field.Type
+		} else {
+			if fieldIndex >= len(fields) {
+				continue
+			}
+			field := fields[fieldIndex]
+			fieldIndex++
+			if field == nil {
+				continue
+			}
+			fieldType = field.Type
+		}
+		valueType := c.typeOfExpr(scope, item.Value, nil)
+		c.inferTypeParamBindings(fieldType, valueType, bindings)
+	}
+
+	args := make([]typeinfo.Type, 0, len(typeParams))
+	for _, param := range typeParams {
+		bound := bindings[param]
+		if bound == nil || typeinfo.IsInvalid(bound) || typeinfo.IsUnknown(bound) {
+			return nil, false
+		}
+		args = append(args, bound)
+	}
+	c.checkTypeParamConstraintsAt(expr.Location, typeParams, bindings)
+	return &typeinfo.NamedType{
+		ModuleKey: owner.Key,
+		Name:      decl.Name.Text(),
+		Decl:      decl,
+		TypeArgs:  args,
+	}, true
 }
 
 func (c *checker) checkConstructorDecl(fn *ast.FuncDecl, recvType typeinfo.Type) {

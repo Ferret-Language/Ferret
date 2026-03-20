@@ -748,7 +748,28 @@ func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modu
 		}
 		collect(renderSymbolHoverMarkdown(sym, typ, mod, modulesByKey), sym.Location, 0)
 	}
+	if mod != nil && mod.Bindings != nil {
+		for node, label := range mod.Bindings.Labels {
+			ident, ok := node.(*ast.Ident)
+			if !ok || ident == nil {
+				continue
+			}
+			collect(renderLabelHoverMarkdown(label), ident.Loc(), 2)
+		}
+	}
 	return out
+}
+
+func renderLabelHoverMarkdown(label *binding.LabelBinding) string {
+	if label == nil || label.Name == "" {
+		return ""
+	}
+	prefix := "label"
+	switch label.Stmt.(type) {
+	case *ast.WhileStmt, *ast.ForStmt:
+		prefix = "loop label"
+	}
+	return asFerretCodeBlock(prefix + " " + label.Name)
 }
 
 func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module) string {
@@ -951,9 +972,6 @@ func receiverKindForSymbol(sym *symbols.Symbol, typ typeinfo.Type, mod *context.
 	}
 	if recv := findReceiverForSymbol(mod, sym); recv != nil {
 		return receiverKindFromTypeExpr(recv.Type), true
-	}
-	if key, ok := typeinfo.ReceiverKeyFromType(typ); ok {
-		return key.Kind, true
 	}
 	return typeinfo.ReceiverValue, false
 }
