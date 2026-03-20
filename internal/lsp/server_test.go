@@ -591,6 +591,104 @@ func TestHoverGenericStaticOwnerCallShowsInstantiatedSignature(t *testing.T) {
 	}
 }
 
+func TestHoverCrossModuleGenericCallShowsInstantiatedSignature(t *testing.T) {
+	dir := t.TempDir()
+	modulePath := filepath.Join(dir, "util", "math.ferr")
+	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
+		t.Fatalf("failed to create module dir: %v", err)
+	}
+	moduleSrc := "fn Pick<T>(v: T) T {\n    return v\n}\n"
+	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
+		t.Fatalf("failed to write module source: %v", err)
+	}
+
+	path := filepath.Join(dir, "main.ferr")
+	src := "import \"util/math\"\n\nfn main() i32 {\n    return math::Pick(1)\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    return math::Pick(1)")
+	if !ok {
+		t.Fatal("failed to find imported generic call")
+	}
+	char += len("    return math::")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn Pick(v: i32) i32") {
+		t.Fatalf("expected cross-module instantiated generic signature in hover, got %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "<T>") {
+		t.Fatalf("expected no unresolved generic declaration form in hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverCrossModuleConstrainedGenericCallShowsInstantiatedSignature(t *testing.T) {
+	dir := t.TempDir()
+	modulePath := filepath.Join(dir, "util", "shape.ferr")
+	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
+		t.Fatalf("failed to create module dir: %v", err)
+	}
+	moduleSrc := "type Shape interface {\n    Draw(&self)\n}\n\ntype Circle struct {}\n\nfn Circle::Draw(&self) void {\n}\n\nfn DrawOne<T: Shape>(s: T) void {\n    s.Draw()\n}\n"
+	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
+		t.Fatalf("failed to write module source: %v", err)
+	}
+
+	path := filepath.Join(dir, "main.ferr")
+	src := "import \"util/shape\"\n\nfn main() void {\n    let c: shape::Circle = .{}\n    shape::DrawOne(c)\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    shape::DrawOne(c)")
+	if !ok {
+		t.Fatal("failed to find imported constrained generic call")
+	}
+	char += len("    shape::")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn DrawOne(s: Circle) void") {
+		t.Fatalf("expected constrained cross-module call hover to show instantiated type, got %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "fn DrawOne(s: T) void") {
+		t.Fatalf("expected no unresolved constrained type parameter in hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverFunctionCallShowsDocComment(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.ferr")

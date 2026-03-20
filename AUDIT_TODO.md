@@ -45,7 +45,8 @@ Status key: `[ ]` pending, `[*]` done
 
 - [*] add cross-module generic specialization tests (type/method specialization across imports)
   - added pipeline coverage in `internal/ir/hir/generate_test.go` for imported generic function and generic owner method specialization
-- [ ] add cross-module hover tests for imported generic/constrained symbols
+- [*] add cross-module hover tests for imported generic/constrained symbols
+  - added LSP coverage in `internal/lsp/server_test.go` for imported generic calls and imported constrained generic calls with instantiated hover signatures
 - [ ] add recursive generic/interface hover tests beyond current struct recursion case
 - [ ] add backend error-path tests asserting unsupported inputs return errors (no process panic)
 
