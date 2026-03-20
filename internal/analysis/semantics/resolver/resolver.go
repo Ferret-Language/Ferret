@@ -464,6 +464,9 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case nil:
 		return
 	case *ast.Ident:
+		for _, typ := range e.TypeArgs {
+			r.resolveType(scope, typ)
+		}
 		r.resolveExprPath(scope, e)
 	case *ast.PrefixExpr:
 		r.resolveExpr(scope, e.Right)

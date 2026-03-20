@@ -440,6 +440,19 @@ func (s *specializer) cloneExpr(expr Expr, bindings map[*typeinfo.TypeParam]type
 				out.Callee = sel
 				return &out
 			}
+			if ident, ok := clonedCallee.(*Ident); ok {
+				path := append([]string(nil), ident.Path...)
+				if len(path) == 0 {
+					path = []string{name}
+				} else {
+					path[len(path)-1] = name
+				}
+				ident.Path = path
+				ident.ExprType = fnType
+				ident.Source = nil
+				out.Callee = ident
+				return &out
+			}
 			out.Callee = &Ident{
 				baseExpr: baseExpr{ExprType: fnType, Location: ex.Callee.Loc()},
 				Path:     []string{name},

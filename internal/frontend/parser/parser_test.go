@@ -315,6 +315,56 @@ fn main() i32 {
 	}
 }
 
+func TestParseStaticMethodCallWithGenericOwnerTypeArgs(t *testing.T) {
+	src := `
+type Circle<T> struct {
+    Rad: T
+}
+
+fn Circle<T>::New(v: T) Self {
+    return .{ .Rad = v }
+}
+
+fn main() Circle<i32> {
+    return Circle<i32>::New(1)
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[2].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected main function, got %T", mod.Decls[2])
+	}
+	ret, ok := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return statement, got %T", fn.Body.Stmts[0])
+	}
+	call, ok := ret.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expression, got %T", ret.Value)
+	}
+	if len(call.TypeArgs) != 0 {
+		t.Fatalf("expected no function type args, got %d", len(call.TypeArgs))
+	}
+	callee, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		t.Fatalf("expected callee ident, got %T", call.Callee)
+	}
+	if got := callee.Text(); got != "Circle<i32>::New" {
+		t.Fatalf("expected callee Circle<i32>::New, got %q", got)
+	}
+	if len(callee.TypeArgs) != 1 {
+		t.Fatalf("expected 1 owner type arg, got %d", len(callee.TypeArgs))
+	}
+	arg, ok := callee.TypeArgs[0].(*ast.NamedType)
+	if !ok || len(arg.Path) != 1 || arg.Path[0] != "i32" {
+		t.Fatalf("expected owner type arg i32, got %#v", callee.TypeArgs[0])
+	}
+}
+
 func TestParseCopyPrefixExpression(t *testing.T) {
 	src := `
 fn ClonePoint(p: Point) Point {
@@ -1347,7 +1397,6 @@ fn Point::Len(this) i32 {
 		t.Fatalf("expected non-self receiver warning, got %v", diag.All())
 	}
 }
-
 
 func TestParseMutBorrowPrefixExpression(t *testing.T) {
 	src := `

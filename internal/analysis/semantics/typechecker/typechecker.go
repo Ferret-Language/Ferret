@@ -438,6 +438,45 @@ func (c *checker) typeOfIdent(scope *refineScope, ident *ast.Ident, expected typ
 			return typ
 		}
 		typ := c.typeOfSymbol(res.Symbol)
+		if fnType, ok := typ.(*typeinfo.FuncType); ok && len(ident.TypeArgs) > 0 {
+			fnDecl, _ := res.Symbol.Node.(*ast.FuncDecl)
+			if fnDecl != nil && fnDecl.OwnerType != nil {
+				symMod := c.findModuleForSymbol(res.Symbol)
+				if symMod == nil {
+					symMod = c.mod
+				}
+				ownerMod, ownerDecl := c.ownerTypeDeclForFunc(symMod, fnDecl)
+				if ownerMod == nil {
+					ownerMod = c.mod
+				}
+				if ownerDecl != nil && len(ownerDecl.TypeParams) > 0 {
+					if len(ident.TypeArgs) != len(ownerDecl.TypeParams) {
+						loc := ident.Location
+						c.ctx.Diagnostics.Add(
+							diagnostics.NewError(fmt.Sprintf("expected %d owner type arguments, got %d", len(ownerDecl.TypeParams), len(ident.TypeArgs))).
+								WithCode(diagnostics.ErrInvalidType).
+								WithPrimaryLabel(&loc, "owner type argument count does not match"),
+						)
+					} else {
+						typeArgs := make([]typeinfo.Type, 0, len(ident.TypeArgs))
+						for _, arg := range ident.TypeArgs {
+							argType := c.typeFromSyntax(ownerMod, arg)
+							if arg != nil {
+								c.info.BindNode(arg, argType)
+							}
+							typeArgs = append(typeArgs, argType)
+						}
+						ownerNamed := &typeinfo.NamedType{
+							ModuleKey: ownerMod.Key,
+							Name:      ownerDecl.Name.Text(),
+							Decl:      ownerDecl,
+							TypeArgs:  typeArgs,
+						}
+						typ = c.instantiateOwnerMethodType(ownerNamed, res.Symbol, fnType)
+					}
+				}
+			}
+		}
 		c.info.BindNode(ident, typ)
 		return typ
 	}

@@ -186,7 +186,11 @@ func debugExpr(expr Expr) any {
 	case nil:
 		return nil
 	case *Ident:
-		return map[string]any{"kind": "Ident", "path": e.Path, "loc": debugLoc(e.Location)}
+		typeArgs := make([]any, 0, len(e.TypeArgs))
+		for _, typ := range e.TypeArgs {
+			typeArgs = append(typeArgs, debugType(typ))
+		}
+		return map[string]any{"kind": "Ident", "path": e.Path, "type_args": typeArgs, "loc": debugLoc(e.Location)}
 	case *BadExpr:
 		return map[string]any{"kind": "BadExpr", "loc": debugLoc(e.Location)}
 	case *NumberLit:

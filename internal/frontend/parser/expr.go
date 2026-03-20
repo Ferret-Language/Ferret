@@ -33,7 +33,9 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 		}
 		switch p.current().Kind {
 		case tokens.LT:
-			if p.hasGenericAngleCallAhead(left) {
+			if p.hasGenericAngleTypeMemberAhead(left) {
+				left = p.parseIdentWithAngleTypeArgs(left)
+			} else if p.hasGenericAngleCallAhead(left) {
 				left = p.parseCallWithAngleTypeArgs(left)
 			} else {
 				left = p.parseBinary(left)
@@ -249,6 +251,21 @@ func (p *Parser) parseCallWithAngleTypeArgs(left ast.Expr) ast.Expr {
 	call.TypeArgs = typeArgs
 	call.Location = p.makeExprLoc(start)
 	return call
+}
+
+func (p *Parser) parseIdentWithAngleTypeArgs(left ast.Expr) ast.Expr {
+	ident, ok := left.(*ast.Ident)
+	if !ok || ident == nil {
+		return left
+	}
+	start := *ident.Loc().Start
+	typeArgs := p.parseAngleTypeArgs("type argument")
+	ident.TypeArgs = typeArgs
+	for p.match(tokens.DCOLON) {
+		ident.Path = append(ident.Path, p.expectIdent("expected identifier after ::").Literal)
+	}
+	ident.Location = p.makeExprLoc(start)
+	return ident
 }
 
 func (p *Parser) parseArgList() []ast.Expr {

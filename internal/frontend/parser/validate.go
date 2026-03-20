@@ -132,6 +132,10 @@ func (p *Parser) validateExpr(expr ast.Expr) {
 		return
 	}
 	switch e := expr.(type) {
+	case *ast.Ident:
+		for _, typeArg := range e.TypeArgs {
+			p.validateType(typeArg)
+		}
 	case *ast.PrefixExpr:
 		p.validateExpr(e.Right)
 	case *ast.BinaryExpr:

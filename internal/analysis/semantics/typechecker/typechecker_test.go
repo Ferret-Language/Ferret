@@ -257,13 +257,58 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerHandlesStaticMethodCallWithGenericOwnerTypeArgs(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Circle<T> struct {
+    Rad: T
+}
+
+fn Circle<T>::New(v: T) Self {
+    return .{ .Rad = v }
+}
+
+fn main() Circle<i32> {
+    return Circle<i32>::New(1)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	ret := mainFn.Body.Stmts[0].(*ast.ReturnStmt)
+	call, ok := ret.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expr, got %T", ret.Value)
+	}
+	retType := result.Entry.Types.Nodes[call]
+	named, ok := retType.(*typeinfo.NamedType)
+	if !ok || named.Name != "Circle" || len(named.TypeArgs) != 1 || !typeinfo.IsBuiltinNamed(named.TypeArgs[0], "i32") {
+		t.Fatalf("expected call result Circle<i32>, got %#v", retType)
+	}
+
+	calleeType, ok := result.Entry.Types.Nodes[call.Callee].(*typeinfo.FuncType)
+	if !ok {
+		t.Fatalf("expected instantiated callee type, got %T", result.Entry.Types.Nodes[call.Callee])
+	}
+	if len(calleeType.TypeParams) != 0 {
+		t.Fatalf("expected no remaining callee type params, got %#v", calleeType.TypeParams)
+	}
+	if len(calleeType.Params) != 1 || !typeinfo.IsBuiltinNamed(calleeType.Params[0].Type, "i32") {
+		t.Fatalf("expected New(i32), got %#v", calleeType.Params)
+	}
+}
+
 func TestTypecheckerReportsGenericOwnerMissingTypeArgsOnce(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
  type Point<T> struct {
      Value: T = 0
  }
- 
+
  fn Point::Calc(&self) i32 {
      return self.Value
  }

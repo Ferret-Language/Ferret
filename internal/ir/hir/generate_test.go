@@ -227,6 +227,71 @@ fn main() i32 {
 	}
 }
 
+func TestPipelineSpecializesGenericStaticOwnerMethodCallPath(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+type Circle<T> struct {
+    Rad: T
+}
+
+fn Circle<T>::New(v: T) Self {
+    return .{ .Rad = v }
+}
+
+fn main() void {
+    let _ = Circle<i32>::New(1)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+
+	var mainFn *hir.Func
+	var specialized *hir.Func
+	for _, fn := range result.Entry.LoweredHIR.Functions {
+		if fn == nil {
+			continue
+		}
+		switch {
+		case fn.Name == "main":
+			mainFn = fn
+		case strings.HasPrefix(fn.Name, "New$"):
+			specialized = fn
+		}
+	}
+	if mainFn == nil || specialized == nil {
+		t.Fatalf("expected main and specialized New function, got %#v", result.Entry.LoweredHIR.Functions)
+	}
+
+	letStmt, ok := mainFn.Body.Stmts[0].(*hir.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	call, ok := letStmt.Value.(*hir.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expr, got %T", letStmt.Value)
+	}
+	callee, ok := call.Callee.(*hir.Ident)
+	if !ok {
+		t.Fatalf("expected ident callee, got %T", call.Callee)
+	}
+	if len(callee.Path) != 2 || callee.Path[0] != "Circle" || callee.Path[1] != specialized.Name {
+		t.Fatalf("expected specialized static owner path Circle::%s, got %#v", specialized.Name, callee.Path)
+	}
+}
+
 func TestPipelineSpecializesGenericOwnerMethodMutation(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `

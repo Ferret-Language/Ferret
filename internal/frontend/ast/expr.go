@@ -7,6 +7,7 @@ import (
 
 type Ident struct {
 	Path     []string
+	TypeArgs []TypeExpr
 	Location source.Location
 }
 
@@ -16,7 +17,20 @@ func (e *Ident) Text() string {
 	if e == nil {
 		return ""
 	}
-	return strings.Join(e.Path, "::")
+	if len(e.TypeArgs) == 0 {
+		return strings.Join(e.Path, "::")
+	}
+	parts := append([]string(nil), e.Path...)
+	args := make([]string, 0, len(e.TypeArgs))
+	for _, arg := range e.TypeArgs {
+		args = append(args, TypeString(arg))
+	}
+	if len(parts) > 1 {
+		parts[len(parts)-2] = parts[len(parts)-2] + "<" + strings.Join(args, ", ") + ">"
+		return strings.Join(parts, "::")
+	}
+	parts[0] = parts[0] + "<" + strings.Join(args, ", ") + ">"
+	return strings.Join(parts, "::")
 }
 func (e *Ident) Last() string {
 	if e == nil || len(e.Path) == 0 {

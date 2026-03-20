@@ -247,6 +247,38 @@ func (p *Parser) hasGenericAngleCallAhead(left ast.Expr) bool {
 	return false
 }
 
+// hasGenericAngleTypeMemberAhead reports whether the '<' at the current
+// position begins owner type arguments in the form `Type<...>::Member`.
+func (p *Parser) hasGenericAngleTypeMemberAhead(left ast.Expr) bool {
+	ident, ok := left.(*ast.Ident)
+	if !ok || ident == nil || len(ident.Path) == 0 || !p.at(tokens.LT) {
+		return false
+	}
+	// Keep comparison parsing intact by requiring tight syntax `Type<...>::`.
+	if loc := left.Loc(); loc.End == nil || loc.End.Index != p.current().Start.Index {
+		return false
+	}
+	depth := 0
+	for i := p.pos; i < len(p.toks); i++ {
+		switch p.toks[i].Kind {
+		case tokens.LT:
+			depth++
+		case tokens.GT:
+			depth--
+			if depth == 0 {
+				next := i + 1
+				return next < len(p.toks) && p.toks[next].Kind == tokens.DCOLON
+			}
+			if depth < 0 {
+				return false
+			}
+		case tokens.EOF:
+			return false
+		}
+	}
+	return false
+}
+
 func (p *Parser) match(kinds ...tokens.Kind) bool {
 	if slices.ContainsFunc(kinds, p.at) {
 		p.advance()
