@@ -29,3 +29,7 @@ Current focus: remove duplicated formatting and signature-rendering code before 
 - [*] remove remaining receiver string encode/decode helpers once `ReceiverKey` is the storage format
 - [*] audit symbol/type lookup paths that still key behavior from formatted strings and move them to structured identifiers where practical
 - [*] keep string formatting only at diagnostics, hover, debug, and pretty-print boundaries
+
+## Generic Monomorph Naming
+
+- [*] replace string-sanitized generic specialization tags with structural type mangling to avoid collisions

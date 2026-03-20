@@ -758,31 +758,224 @@ func specializedFuncParamNames(template *Func) []string {
 }
 
 func specializedTypeTag(typ typeinfo.Type) string {
-	if typ == nil {
-		return "void"
+	var b strings.Builder
+	appendSpecializedTypeTag(&b, typ, make(map[typeinfo.Type]uint16))
+	text := b.String()
+	if text == "" {
+		return "type"
 	}
-	replacer := strings.NewReplacer(
-		" ", "_",
-		":", "_",
-		"/", "_",
-		"\\", "_",
-		"*", "ptr_",
-		"&", "ref_",
-		"^", "raw_",
-		"?", "opt_",
-		"[", "arr_",
-		"]", "_",
-		"(", "t_",
-		")", "_",
-		",", "_",
-		".", "_",
-	)
-	text := replacer.Replace(typ.String())
+	return text
+}
+
+func appendSpecializedTypeTag(b *strings.Builder, typ typeinfo.Type, seen map[typeinfo.Type]uint16) {
+	switch t := typ.(type) {
+	case nil:
+		b.WriteString("void")
+	case *typeinfo.BuiltinType:
+		b.WriteString(legacySpecializedTypeText(t.Name))
+	case *typeinfo.StringType:
+		b.WriteString("str")
+	case *typeinfo.SelfType:
+		b.WriteString("Self")
+	case *typeinfo.TypeParam:
+		if t.Name == "" {
+			b.WriteString("type")
+		} else {
+			b.WriteString(legacySpecializedTypeText(t.Name))
+		}
+	case *typeinfo.PointerType:
+		b.WriteString("ptr_")
+		appendSpecializedTypeTag(b, t.Inner, seen)
+	case *typeinfo.RefType:
+		if t.Mutable {
+			b.WriteString("refm_")
+		} else {
+			b.WriteString("ref_")
+		}
+		appendSpecializedTypeTag(b, t.Inner, seen)
+	case *typeinfo.RawPtrType:
+		b.WriteString("raw_")
+		appendSpecializedTypeTag(b, t.Inner, seen)
+	case *typeinfo.OptionalType:
+		b.WriteString("opt_")
+		appendSpecializedTypeTag(b, t.Inner, seen)
+	case *typeinfo.ErrorUnionType:
+		b.WriteString("eu_")
+		appendSpecializedTypeTag(b, t.Error, seen)
+		b.WriteString("_")
+		appendSpecializedTypeTag(b, t.Value, seen)
+	case *typeinfo.ArrayType:
+		b.WriteString("arr_")
+		b.WriteString(strconv.FormatInt(t.Len, 10))
+		b.WriteString("_")
+		appendSpecializedTypeTag(b, t.Inner, seen)
+	case *typeinfo.SliceType:
+		b.WriteString("slice_")
+		appendSpecializedTypeTag(b, t.Inner, seen)
+	case *typeinfo.TupleType:
+		b.WriteString("tuple_")
+		b.WriteString(strconv.Itoa(len(t.Elems)))
+		for _, elem := range t.Elems {
+			b.WriteString("_")
+			appendSpecializedTypeTag(b, elem, seen)
+		}
+	case *typeinfo.NamedType:
+		if id, ok := seen[t]; ok {
+			b.WriteString("rec_")
+			b.WriteString(strconv.FormatUint(uint64(id), 10))
+			return
+		}
+		seen[t] = uint16(len(seen))
+		b.WriteString("named_")
+		appendSpecializedTextSegment(b, t.ModuleKey)
+		b.WriteString("_")
+		appendSpecializedTextSegment(b, t.Name)
+		b.WriteString("_")
+		b.WriteString(strconv.Itoa(len(t.TypeArgs)))
+		for _, arg := range t.TypeArgs {
+			b.WriteString("_")
+			appendSpecializedTypeTag(b, arg, seen)
+		}
+	case *typeinfo.StructType:
+		if id, ok := seen[t]; ok {
+			b.WriteString("rec_")
+			b.WriteString(strconv.FormatUint(uint64(id), 10))
+			return
+		}
+		seen[t] = uint16(len(seen))
+		b.WriteString("struct_")
+		b.WriteString(strconv.Itoa(len(t.OrderedFields)))
+		for _, field := range t.OrderedFields {
+			if field == nil {
+				continue
+			}
+			b.WriteString("_")
+			appendSpecializedTextSegment(b, field.Name)
+			b.WriteString("_")
+			appendSpecializedTypeTag(b, field.Type, seen)
+		}
+	case *typeinfo.InterfaceType:
+		if id, ok := seen[t]; ok {
+			b.WriteString("rec_")
+			b.WriteString(strconv.FormatUint(uint64(id), 10))
+			return
+		}
+		seen[t] = uint16(len(seen))
+		b.WriteString("iface_")
+		b.WriteString(strconv.Itoa(len(t.OrderedMethods)))
+		for _, method := range t.OrderedMethods {
+			if method == nil {
+				continue
+			}
+			b.WriteString("_")
+			appendSpecializedTextSegment(b, method.Name)
+			b.WriteString("_")
+			b.WriteString(strconv.Itoa(int(method.Receiver)))
+			if method.Static {
+				b.WriteString("_s1")
+			} else {
+				b.WriteString("_s0")
+			}
+			b.WriteString("_")
+			appendSpecializedTypeTag(b, method.Type, seen)
+		}
+	case *typeinfo.UnionType:
+		if id, ok := seen[t]; ok {
+			b.WriteString("rec_")
+			b.WriteString(strconv.FormatUint(uint64(id), 10))
+			return
+		}
+		seen[t] = uint16(len(seen))
+		b.WriteString("union_")
+		b.WriteString(strconv.Itoa(len(t.Members)))
+		for _, member := range t.Members {
+			b.WriteString("_")
+			appendSpecializedTypeTag(b, member, seen)
+		}
+	case *typeinfo.EnumType:
+		b.WriteString("enum_")
+		b.WriteString(strconv.Itoa(len(t.OrderedVariants)))
+		for _, variant := range t.OrderedVariants {
+			b.WriteString("_")
+			appendSpecializedTextSegment(b, variant)
+		}
+	case *typeinfo.ErrorSetType:
+		b.WriteString("error_")
+		b.WriteString(strconv.Itoa(len(t.OrderedMembers)))
+		for _, member := range t.OrderedMembers {
+			b.WriteString("_")
+			appendSpecializedTextSegment(b, member)
+		}
+	case *typeinfo.FuncType:
+		if id, ok := seen[t]; ok {
+			b.WriteString("rec_")
+			b.WriteString(strconv.FormatUint(uint64(id), 10))
+			return
+		}
+		seen[t] = uint16(len(seen))
+		b.WriteString("fn_")
+		if t.IsUnsafe {
+			b.WriteString("u1")
+		} else {
+			b.WriteString("u0")
+		}
+		b.WriteString("_tp")
+		b.WriteString(strconv.Itoa(len(t.TypeParams)))
+		b.WriteString("_p")
+		b.WriteString(strconv.Itoa(len(t.Params)))
+		for _, param := range t.Params {
+			b.WriteString("_")
+			appendSpecializedTypeTag(b, param.Type, seen)
+		}
+		b.WriteString("_r_")
+		appendSpecializedTypeTag(b, t.Result, seen)
+	default:
+		b.WriteString(legacySpecializedTypeText(t.String()))
+	}
+}
+
+var legacySpecializedTypeReplacer = strings.NewReplacer(
+	" ", "_",
+	":", "_",
+	"/", "_",
+	"\\", "_",
+	"*", "ptr_",
+	"&", "ref_",
+	"^", "raw_",
+	"?", "opt_",
+	"[", "arr_",
+	"]", "_",
+	"(", "t_",
+	")", "_",
+	",", "_",
+	".", "_",
+)
+
+func legacySpecializedTypeText(text string) string {
+	text = legacySpecializedTypeReplacer.Replace(text)
 	text = strings.Trim(text, "_")
 	if text == "" {
 		return "type"
 	}
 	return text
+}
+
+func appendSpecializedTextSegment(b *strings.Builder, text string) {
+	b.WriteString(strconv.Itoa(len(text)))
+	if len(text) == 0 {
+		return
+	}
+	b.WriteByte('_')
+	for i := 0; i < len(text); i++ {
+		ch := text[i]
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' {
+			b.WriteByte(ch)
+			continue
+		}
+		b.WriteByte('x')
+		b.WriteString(strconv.FormatInt(int64(ch), 16))
+		b.WriteByte('x')
+	}
 }
 
 func lookupTypeBinding(bindings map[*typeinfo.TypeParam]typeinfo.Type, name string) typeinfo.Type {

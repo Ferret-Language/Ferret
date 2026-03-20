@@ -458,6 +458,47 @@ fn main() void {
 	}
 }
 
+func TestPipelineKeepsDistinctSpecializationsForNamedAndTupleTypeArgs(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+type t_i32 struct {}
+
+type Wrap<T> struct {}
+
+fn main() void {
+    let a: Wrap<t_i32> = .{}
+    let b: Wrap<(i32)> = .{}
+    a
+    b
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+	names := make(map[string]struct{})
+	for _, decl := range result.Entry.LoweredHIR.Types {
+		if decl == nil || !strings.HasPrefix(decl.Name, "Wrap$") {
+			continue
+		}
+		names[decl.Name] = struct{}{}
+	}
+	if len(names) != 2 {
+		t.Fatalf("expected 2 distinct Wrap specializations, got %d: %#v", len(names), names)
+	}
+}
+
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func mustWriteHIR(t *testing.T, path, content string) {
