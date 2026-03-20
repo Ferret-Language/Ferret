@@ -28,7 +28,7 @@ func (p *Parser) parseImportDecl() *ast.ImportDecl {
 	return &ast.ImportDecl{Path: pathExpr, Alias: aliasIdent, Location: p.locFrom(start)}
 }
 
-func (p *Parser) parseTypeDecl(attrs []ast.Attribute) ast.Decl {
+func (p *Parser) parseTypeDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.TYPE, "expected 'type'").Start
 	nameTok := p.expectIdent("expected type name")
 	typeParams := p.parseTypeParams()
@@ -36,13 +36,14 @@ func (p *Parser) parseTypeDecl(attrs []ast.Attribute) ast.Decl {
 	return &ast.TypeDecl{
 		Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 		TypeParams: typeParams,
+		Doc:        doc,
 		Attrs:      attrs,
 		Type:       spec,
 		Location:   p.locFrom(start),
 	}
 }
 
-func (p *Parser) parseLetDecl(attrs []ast.Attribute) ast.Decl {
+func (p *Parser) parseLetDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.LET, "expected 'let'").Start
 	isMut := p.match(tokens.MUT)
 	nameTok := p.expectIdent("expected variable name")
@@ -58,6 +59,7 @@ func (p *Parser) parseLetDecl(attrs []ast.Attribute) ast.Decl {
 	p.match(tokens.SEMICOLON)
 	return &ast.LetDecl{
 		Name:     &ast.Ident{Path: []string{name}, Location: p.locOfToken(nameTok)},
+		Doc:      doc,
 		Attrs:    attrs,
 		IsMut:    isMut,
 		Type:     typ,
@@ -66,7 +68,7 @@ func (p *Parser) parseLetDecl(attrs []ast.Attribute) ast.Decl {
 	}
 }
 
-func (p *Parser) parseConstDecl(attrs []ast.Attribute) ast.Decl {
+func (p *Parser) parseConstDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.CONST, "expected 'const'").Start
 	nameTok := p.expectIdent("expected constant name")
 	name := nameTok.Literal
@@ -81,6 +83,7 @@ func (p *Parser) parseConstDecl(attrs []ast.Attribute) ast.Decl {
 	p.match(tokens.SEMICOLON)
 	return &ast.ConstDecl{
 		Name:     &ast.Ident{Path: []string{name}, Location: p.locOfToken(nameTok)},
+		Doc:      doc,
 		Attrs:    attrs,
 		Type:     typ,
 		Value:    value,

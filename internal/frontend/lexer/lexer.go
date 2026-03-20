@@ -43,9 +43,8 @@ func New(file, input string, diag *diagnostics.Bag) *Lexer {
 	}
 	l.patterns = []regexPattern{
 		{regexp.MustCompile(`\s+`), skipHandler},
-		{regexp.MustCompile(`///[^\n\r]*`), docCommentHandler},
-		{regexp.MustCompile(`//[^\n\r]*`), skipHandler},
-		{regexp.MustCompile(`(?s)/\*.*?\*/`), skipHandler},
+		{regexp.MustCompile(`//[^\n\r]*`), lineCommentHandler},
+		{regexp.MustCompile(`(?s)/\*.*?\*/`), blockCommentHandler},
 		{regexp.MustCompile(`"(?:\\.|[^"\\])*"`), stringHandler},
 		{regexp.MustCompile(numeric.NumberPattern), numberHandler},
 		{regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`), identifierHandler},
@@ -112,11 +111,36 @@ func skipHandler(l *Lexer, re *regexp.Regexp) {
 	l.advanceBy(match)
 }
 
-func docCommentHandler(l *Lexer, re *regexp.Regexp) {
+func lineCommentHandler(l *Lexer, re *regexp.Regexp) {
 	match := re.FindString(l.remainder())
 	start := l.pos
 	l.advanceBy(match)
-	text := strings.TrimSpace(strings.TrimPrefix(match, "///"))
+	if !l.isStandaloneComment(start.Index) || !l.isDocCandidateAhead(l.pos.Index) {
+		return
+	}
+	prefix := "//"
+	if strings.HasPrefix(match, "///") {
+		prefix = "///"
+	}
+	text := strings.TrimSpace(strings.TrimPrefix(match, prefix))
+	l.push(tokens.Token{Kind: tokens.DOC_COMMENT, Literal: text, Start: start, End: l.pos})
+}
+
+func blockCommentHandler(l *Lexer, re *regexp.Regexp) {
+	match := re.FindString(l.remainder())
+	start := l.pos
+	l.advanceBy(match)
+	if !l.isStandaloneComment(start.Index) || !l.isDocCandidateAhead(l.pos.Index) {
+		return
+	}
+	content := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(match, "/*"), "*/"))
+	lines := strings.Split(content, "\n")
+	for i := range lines {
+		line := strings.TrimSpace(lines[i])
+		line = strings.TrimPrefix(line, "*")
+		lines[i] = strings.TrimSpace(line)
+	}
+	text := strings.Join(lines, "\n")
 	l.push(tokens.Token{Kind: tokens.DOC_COMMENT, Literal: text, Start: start, End: l.pos})
 }
 
@@ -182,6 +206,57 @@ func (l *Lexer) Tokenize() []tokens.Token {
 
 func (l *Lexer) push(t tokens.Token) {
 	l.toks = append(l.toks, t)
+}
+
+func (l *Lexer) isStandaloneComment(index int) bool {
+	if index <= 0 || index > len(l.input) {
+		return true
+	}
+	lineStart := strings.LastIndexByte(l.input[:index], '\n')
+	if lineStart < 0 {
+		lineStart = 0
+	} else {
+		lineStart++
+	}
+	return strings.TrimSpace(l.input[lineStart:index]) == ""
+}
+
+func (l *Lexer) isDocCandidateAhead(index int) bool {
+	i := index
+	for i < len(l.input) {
+		switch l.input[i] {
+		case ' ', '\t', '\r', '\n':
+			i++
+			continue
+		case '#':
+			return true
+		case '/':
+			if i+1 < len(l.input) && (l.input[i+1] == '/' || l.input[i+1] == '*') {
+				return true
+			}
+			return false
+		}
+		break
+	}
+	if i >= len(l.input) {
+		return false
+	}
+	start := i
+	for i < len(l.input) {
+		ch := l.input[i]
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' {
+			i++
+			continue
+		}
+		break
+	}
+	word := l.input[start:i]
+	switch word {
+	case "fn", "unsafe", "type", "let", "const", "import":
+		return true
+	default:
+		return false
+	}
 }
 
 func (l *Lexer) advanceBy(text string) {

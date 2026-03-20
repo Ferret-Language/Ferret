@@ -26,6 +26,7 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 }
 
 func (p *Parser) parseStmt() ast.Stmt {
+	doc := p.parseDocComment()
 	if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.COLON {
 		return p.parseLabelStmt()
 	}
@@ -33,9 +34,9 @@ func (p *Parser) parseStmt() ast.Stmt {
 	case tokens.LBRACE:
 		return p.parseBlock()
 	case tokens.LET:
-		return p.parseLetStmt()
+		return p.parseLetStmt(doc)
 	case tokens.CONST:
-		return p.parseConstStmt()
+		return p.parseConstStmt(doc)
 	case tokens.RETURN:
 		return p.parseReturnStmt()
 	case tokens.IF:
@@ -98,7 +99,7 @@ func (p *Parser) parseStmt() ast.Stmt {
 	return &ast.ExprStmt{Value: left, Location: left.Loc()}
 }
 
-func (p *Parser) parseLetStmt() ast.Stmt {
+func (p *Parser) parseLetStmt(doc *ast.CommentGroup) ast.Stmt {
 	start := p.advance().Start
 	isMut := p.match(tokens.MUT)
 	nameTok := p.expectIdent("expected variable name")
@@ -112,6 +113,7 @@ func (p *Parser) parseLetStmt() ast.Stmt {
 	}
 	return &ast.LetStmt{
 		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		Doc:      doc,
 		IsMut:    isMut,
 		Type:     typ,
 		Value:    value,
@@ -119,7 +121,7 @@ func (p *Parser) parseLetStmt() ast.Stmt {
 	}
 }
 
-func (p *Parser) parseConstStmt() ast.Stmt {
+func (p *Parser) parseConstStmt(doc *ast.CommentGroup) ast.Stmt {
 	start := p.advance().Start
 	nameTok := p.expectIdent("expected constant name")
 	var typ ast.TypeExpr
@@ -132,6 +134,7 @@ func (p *Parser) parseConstStmt() ast.Stmt {
 	}
 	return &ast.ConstStmt{
 		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		Doc:      doc,
 		Type:     typ,
 		Value:    value,
 		Location: p.locFrom(start),

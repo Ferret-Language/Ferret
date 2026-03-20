@@ -429,6 +429,157 @@ fn recover() string;
 	}
 }
 
+func TestParseDeclarationDocsFromLineAndBlockComments(t *testing.T) {
+	src := `
+// Point docs.
+type Point struct {}
+
+// mutable binding docs
+let mut x = 1
+
+/* constant docs */
+const Y = 2
+
+// Adds one.
+// Returns incremented value.
+fn addOne(v: i32) i32 {
+    return v + 1
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	if len(mod.Decls) != 4 {
+		t.Fatalf("expected 4 decls, got %d", len(mod.Decls))
+	}
+
+	typ, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok || typ.Doc == nil || !strings.Contains(typ.Doc.Text, "Point docs.") {
+		t.Fatalf("expected type doc from // comment, got %#v", mod.Decls[0])
+	}
+	letDecl, ok := mod.Decls[1].(*ast.LetDecl)
+	if !ok || letDecl.Doc == nil || !strings.Contains(letDecl.Doc.Text, "mutable binding docs") {
+		t.Fatalf("expected let doc from // comment, got %#v", mod.Decls[1])
+	}
+	constDecl, ok := mod.Decls[2].(*ast.ConstDecl)
+	if !ok || constDecl.Doc == nil || !strings.Contains(constDecl.Doc.Text, "constant docs") {
+		t.Fatalf("expected const doc from /* */ comment, got %#v", mod.Decls[2])
+	}
+	fn, ok := mod.Decls[3].(*ast.FuncDecl)
+	if !ok || fn.Doc == nil {
+		t.Fatalf("expected function doc from // comments, got %#v", mod.Decls[3])
+	}
+	if !strings.Contains(fn.Doc.Text, "Adds one.") || !strings.Contains(fn.Doc.Text, "Returns incremented value.") {
+		t.Fatalf("unexpected function doc text: %q", fn.Doc.Text)
+	}
+}
+
+func TestParseDocCommentGapDoesNotAttach(t *testing.T) {
+	src := `
+// this should not attach due to gap
+
+fn noDoc() void {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	if fn.Doc != nil {
+		t.Fatalf("expected no doc attachment across blank line, got %q", fn.Doc.Text)
+	}
+}
+
+func TestParseRegularCommentsRemainIgnored(t *testing.T) {
+	src := `
+fn main() void
+// comment between signature and body should be ignored
+{
+    let x = 1
+    // local comment should be ignored
+    x
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	if fn.Doc != nil {
+		t.Fatalf("expected function to have no doc, got %q", fn.Doc.Text)
+	}
+}
+
+func TestParseBlockDocCommentPreservesLines(t *testing.T) {
+	src := `
+/**
+ * block line 1
+ * block line 2
+ */
+fn f() void {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok || fn.Doc == nil {
+		t.Fatalf("expected function doc from block comment, got %#v", mod.Decls[0])
+	}
+	if !strings.Contains(fn.Doc.Text, "block line 1") || !strings.Contains(fn.Doc.Text, "block line 2") {
+		t.Fatalf("unexpected block doc text: %q", fn.Doc.Text)
+	}
+	if !strings.Contains(fn.Doc.Text, "\n") {
+		t.Fatalf("expected multiline block doc text, got %q", fn.Doc.Text)
+	}
+}
+
+func TestParseLocalBindingDocs(t *testing.T) {
+	src := `
+fn main() void {
+    // local mutable binding doc
+    let mut x = 1
+
+    /* local constant doc */
+    const y = 2
+
+    x
+    y
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	if len(fn.Body.Stmts) < 2 {
+		t.Fatalf("expected at least 2 statements, got %d", len(fn.Body.Stmts))
+	}
+	letStmt, ok := fn.Body.Stmts[0].(*ast.LetStmt)
+	if !ok || letStmt.Doc == nil || !strings.Contains(letStmt.Doc.Text, "local mutable binding doc") {
+		t.Fatalf("expected doc on local let binding, got %#v", fn.Body.Stmts[0])
+	}
+	constStmt, ok := fn.Body.Stmts[1].(*ast.ConstStmt)
+	if !ok || constStmt.Doc == nil || !strings.Contains(constStmt.Doc.Text, "local constant doc") {
+		t.Fatalf("expected doc on local const binding, got %#v", fn.Body.Stmts[1])
+	}
+}
+
 func TestParseExternDeclarationWithLinkName(t *testing.T) {
 	src := `
 /// Writes a string to stdout.

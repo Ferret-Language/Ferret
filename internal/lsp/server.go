@@ -778,7 +778,7 @@ func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Modu
 	}
 	bindingDecl := renderBindingDeclForNode(node, typ, mod)
 	if sig := renderNodeFunctionSignature(node, typ, mod, info); sig != "" {
-		return appendHoverDoc(asFerretCodeBlock(sig), functionDocForNode(node, mod))
+		return appendHoverDoc(asFerretCodeBlock(sig), declarationDocForNode(node, mod))
 	}
 	if selector, ok := node.(*ast.SelectorExpr); ok {
 		if fnType, ok := typ.(*typeinfo.FuncType); ok {
@@ -792,10 +792,10 @@ func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Modu
 			if receiver != "" {
 				name = receiver + "::" + name
 			}
-			return asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(name, fnType))
+			return appendHoverDoc(asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(name, fnType)), declarationDocForNode(node, mod))
 		}
 	}
-	return joinBindingAndTypeHover(bindingDecl, renderTypeHoverMarkdown(typ, mod, modulesByKey))
+	return appendHoverDoc(joinBindingAndTypeHover(bindingDecl, renderTypeHoverMarkdown(typ, mod, modulesByKey)), declarationDocForNode(node, mod))
 }
 
 func renderNodeFunctionSignature(node ast.Node, typ typeinfo.Type, mod *context.Module, info *typeinfo.ModuleInfo) string {
@@ -880,30 +880,31 @@ func renderSymbolHoverMarkdown(sym *symbols.Symbol, typ typeinfo.Type, mod *cont
 	if sym == nil {
 		return renderTypeHoverMarkdown(typ, mod, modulesByKey)
 	}
+	doc := declarationDocForSymbol(sym)
 	if decl := renderBindingDeclForSymbol(sym, typ, mod); decl != "" {
-		return joinBindingAndTypeHover(decl, renderTypeHoverMarkdown(typ, mod, modulesByKey))
+		return appendHoverDoc(joinBindingAndTypeHover(decl, renderTypeHoverMarkdown(typ, mod, modulesByKey)), doc)
 	}
 	switch sym.Kind {
 	case symbols.SymbolFunc, symbols.SymbolMethod:
 		if sig := symbolFunctionSignature(sym, nil); sig != "" {
-			return appendHoverDoc(asFerretCodeBlock(sig), functionDocForSymbol(sym))
+			return appendHoverDoc(asFerretCodeBlock(sig), doc)
 		}
 		if fnType, ok := typ.(*typeinfo.FuncType); ok {
-			return appendHoverDoc(asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(sym.Name, fnType)), functionDocForSymbol(sym))
+			return appendHoverDoc(asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(sym.Name, fnType)), doc)
 		}
 	case symbols.SymbolType:
 		if named, ok := typ.(*typeinfo.NamedType); ok {
-			return renderNamedTypeMarkdown(named, mod, modulesByKey)
+			return appendHoverDoc(renderNamedTypeMarkdown(named, mod, modulesByKey), doc)
 		}
 		if decl, ok := sym.Node.(*ast.TypeDecl); ok && decl != nil {
 			named := &typeinfo.NamedType{Name: sym.Name, Decl: decl}
 			if mod != nil {
 				named.ModuleKey = mod.Key
 			}
-			return renderNamedTypeMarkdown(named, mod, modulesByKey)
+			return appendHoverDoc(renderNamedTypeMarkdown(named, mod, modulesByKey), doc)
 		}
 	}
-	return renderTypeHoverMarkdown(typ, mod, modulesByKey)
+	return appendHoverDoc(renderTypeHoverMarkdown(typ, mod, modulesByKey), doc)
 }
 
 func joinBindingAndTypeHover(bindingDecl, typeMarkdown string) string {
@@ -1280,7 +1281,7 @@ func renderMethodSignatureForType(sym *symbols.Symbol, mod *context.Module, name
 }
 
 func appendHoverDoc(markdown, doc string) string {
-	doc = strings.TrimSpace(doc)
+	doc = formatHoverDoc(doc)
 	if doc == "" {
 		return markdown
 	}
@@ -1290,35 +1291,62 @@ func appendHoverDoc(markdown, doc string) string {
 	return markdown + "\n\n" + doc
 }
 
-func functionDocForNode(node ast.Node, mod *context.Module) string {
+func declarationDocForNode(node ast.Node, mod *context.Module) string {
 	if node == nil {
 		return ""
 	}
-	if fn, ok := node.(*ast.FuncDecl); ok {
-		return functionDocText(fn)
+	if doc := declarationDocFromAstNode(node); doc != "" {
+		return doc
 	}
 	if sym := resolvedSymbolForNode(mod, node); sym != nil {
-		return functionDocForSymbol(sym)
+		return declarationDocForSymbol(sym)
 	}
 	return ""
 }
 
-func functionDocForSymbol(sym *symbols.Symbol) string {
+func declarationDocForSymbol(sym *symbols.Symbol) string {
 	if sym == nil {
 		return ""
 	}
-	fn, ok := sym.Node.(*ast.FuncDecl)
-	if !ok {
-		return ""
-	}
-	return functionDocText(fn)
+	return declarationDocFromAstNode(sym.Node)
 }
 
-func functionDocText(fn *ast.FuncDecl) string {
-	if fn == nil || fn.Doc == nil {
+func declarationDocFromAstNode(node ast.Node) string {
+	switch n := node.(type) {
+	case *ast.FuncDecl:
+		return commentGroupText(n.Doc)
+	case *ast.TypeDecl:
+		return commentGroupText(n.Doc)
+	case *ast.ConstDecl:
+		return commentGroupText(n.Doc)
+	case *ast.LetDecl:
+		return commentGroupText(n.Doc)
+	case *ast.ConstStmt:
+		return commentGroupText(n.Doc)
+	case *ast.LetStmt:
+		return commentGroupText(n.Doc)
+	default:
 		return ""
 	}
-	return strings.TrimSpace(fn.Doc.Text)
+}
+
+func commentGroupText(group *ast.CommentGroup) string {
+	if group == nil {
+		return ""
+	}
+	return group.Text
+}
+
+func formatHoverDoc(doc string) string {
+	doc = strings.TrimSpace(doc)
+	if doc == "" {
+		return ""
+	}
+	lines := strings.Split(doc, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " \t")
+	}
+	return strings.Join(lines, "  \n")
 }
 
 func asFerretCodeBlock(text string) string {

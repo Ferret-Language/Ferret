@@ -67,11 +67,11 @@ func (p *Parser) parseDecl() ast.Decl {
 	attrs := p.parseAttributes()
 	switch p.current().Kind {
 	case tokens.LET:
-		return p.parseLetDecl(attrs)
+		return p.parseLetDecl(doc, attrs)
 	case tokens.CONST:
-		return p.parseConstDecl(attrs)
+		return p.parseConstDecl(doc, attrs)
 	case tokens.TYPE:
-		return p.parseTypeDecl(attrs)
+		return p.parseTypeDecl(doc, attrs)
 	case tokens.UNSAFE:
 		if p.peekN(1).Kind == tokens.FN {
 			return p.parseFuncDecl(doc, attrs)
@@ -85,8 +85,15 @@ func (p *Parser) parseDecl() ast.Decl {
 }
 
 func (p *Parser) skipDocCommentsBeforeImports() {
-	for p.at(tokens.DOC_COMMENT) && p.peekN(1).Kind == tokens.IMPORT {
-		p.advance()
+	if !p.at(tokens.DOC_COMMENT) {
+		return
+	}
+	i := p.pos
+	for i < len(p.toks) && p.toks[i].Kind == tokens.DOC_COMMENT {
+		i++
+	}
+	if i < len(p.toks) && p.toks[i].Kind == tokens.IMPORT {
+		p.pos = i
 	}
 }
 
@@ -95,9 +102,19 @@ func (p *Parser) parseDocComment() *ast.CommentGroup {
 		return nil
 	}
 	start := p.current().Start
+	endLine := p.current().End.Line
 	parts := make([]string, 0, 1)
 	for p.at(tokens.DOC_COMMENT) {
-		parts = append(parts, p.advance().Literal)
+		tok := p.advance()
+		if len(parts) > 0 && tok.Start.Line > endLine+1 {
+			start = tok.Start
+			parts = parts[:0]
+		}
+		parts = append(parts, tok.Literal)
+		endLine = tok.End.Line
+	}
+	if p.current().Kind != tokens.EOF && p.current().Start.Line > endLine+1 {
+		return nil
 	}
 	return &ast.CommentGroup{
 		Text:     strings.Join(parts, "\n"),

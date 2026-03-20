@@ -12,6 +12,7 @@ func (s *BlockStmt) Loc() source.Location { return s.Location }
 
 type LetStmt struct {
 	Name     *Ident
+	Doc      *CommentGroup
 	IsMut    bool
 	Type     TypeExpr
 	Value    Expr
@@ -23,6 +24,7 @@ func (s *LetStmt) Loc() source.Location { return s.Location }
 
 type ConstStmt struct {
 	Name     *Ident
+	Doc      *CommentGroup
 	Type     TypeExpr
 	Value    Expr
 	Location source.Location

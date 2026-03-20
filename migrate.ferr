@@ -1,15 +1,16 @@
 
-
+// basic demo struct
 type Conn struct {}
 
 fn run(mut c: *Conn) void {
+    // demo variable
     let m = &mut *c
     let r = &*c
     //m
     r
 }
 
-/// Point data structure
+// Point data structure
 type Point<T> struct {
     Value: T
 }
@@ -57,6 +58,10 @@ type Shape interface {
     Draw(&self)
 }
 
+/* 
+    This accepts any struct
+    that implements shape
+*/
 fn drawShape(s: Shape) {
     s.Draw()
 }
@@ -71,11 +76,13 @@ fn mul_unused<T>(a: T, b: T) T {
     return a * b
 }
 
-/// program entry point
-/// all here
+// program entry point
+// all here
 fn main() {
+    // numeric data
     let mut a = 10
     let b : i32 = a
+    // array size is inferred
     let arr : [_]i32 = [_]i32{1,2,3}
     let n = arr[1]
     let mut c = 5

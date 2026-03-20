@@ -631,6 +631,85 @@ func TestHoverFunctionCallShowsDocComment(t *testing.T) {
 	}
 }
 
+func TestHoverFunctionCallShowsLineCommentDocBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "// Adds two numbers.\n// Returns the sum.\nfn add(a: i32, b: i32) i32 {\n    return a + b\n}\n\nfn main() i32 {\n    return add(1, 2)\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    return add(1, 2)")
+	if !ok {
+		t.Fatal("failed to find add call")
+	}
+	char += len("    return ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "Adds two numbers.") || !strings.Contains(hover.Contents.Value, "Returns the sum.") {
+		t.Fatalf("expected function doc comment from // block in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "Adds two numbers.  \nReturns the sum.") {
+		t.Fatalf("expected preserved line breaks in hover doc markdown, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverTypeShowsDocCommentBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "// Point docs line 1.\n// Point docs line 2.\ntype Point struct {\n    Value: i32 = 0\n}\n\nfn main() void {\n    let p: Point = .{ .Value = 1 }\n    p\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "Point = .")
+	if !ok {
+		t.Fatal("failed to find Point usage")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "Point docs line 1.") || !strings.Contains(hover.Contents.Value, "Point docs line 2.") {
+		t.Fatalf("expected type doc comment in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "Point docs line 1.  \nPoint docs line 2.") {
+		t.Fatalf("expected preserved doc lines in type hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverInterfaceMethodCallShowsSelfReceiver(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.ferr")
@@ -756,6 +835,46 @@ func TestHoverBindingDeclarations(t *testing.T) {
 	checkHover("b: i32 = step", "const b: i32")
 	checkHover("dx: i32", "parameter mut dx: i32")
 	checkHover("self.Value", "receiver self: &Self")
+}
+
+func TestHoverLocalBindingShowsDocComment(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "fn run() void {\n    // local binding docs\n    // second line\n    let mut x = 1\n    x\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "let mut x = 1")
+	if !ok {
+		t.Fatal("failed to find local binding")
+	}
+	char += len("let mut ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "let mut x: i32") {
+		t.Fatalf("expected binding declaration in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "local binding docs") || !strings.Contains(hover.Contents.Value, "second line") {
+		t.Fatalf("expected local binding docs in hover, got %q", hover.Contents.Value)
+	}
 }
 
 func TestHoverPointerParameterIsNotReceiver(t *testing.T) {

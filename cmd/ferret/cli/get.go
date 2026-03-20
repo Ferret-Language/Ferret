@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"compiler/internal/core/manifest"
@@ -72,7 +73,7 @@ func installAllDependencies() error {
 }
 
 func installPackageRecursive(cachePath, repoPath, versionConstraint string, devConfig *manifest.DevConfig, lockfile *manifest.Lockfile, constraints map[string][]string, isDirect bool, parentPath string) error {
-	if !contains(constraints[repoPath], versionConstraint) {
+	if !slices.Contains(constraints[repoPath], versionConstraint) {
 		constraints[repoPath] = append(constraints[repoPath], versionConstraint)
 	}
 
@@ -81,7 +82,7 @@ func installPackageRecursive(cachePath, repoPath, versionConstraint string, devC
 		if err != nil || !matches {
 			return fmt.Errorf("version conflict for %s: %s does not satisfy %s", repoPath, entry.Version, versionConstraint)
 		}
-		if parentPath != "" && !contains(entry.UsedBy, parentPath) {
+		if parentPath != "" && !slices.Contains(entry.UsedBy, parentPath) {
 			lockfile.AddUsedBy(repoPath, parentPath)
 		}
 		return nil
