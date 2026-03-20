@@ -117,6 +117,11 @@ type typeSpecializationRequest struct {
 	emitted  bool
 }
 
+type typeParamBindingKey struct {
+	Name  string
+	Owner ast.Node
+}
+
 func (s *specializer) isTemplate(fn *Func) bool {
 	if fn == nil || fn.Source == nil || fn.IsExtern || fn.Body == nil {
 		return false
@@ -604,13 +609,13 @@ func (s *specializer) requestSpecializationWithBindings(template *Func, inferred
 		}
 		bindings[param] = bound
 	}
-	paramNames := s.specializedFuncParamNames(template)
-	for _, name := range paramNames {
-		if lookupTypeBinding(bindings, name) == nil {
+	paramKeys := s.specializedFuncParamKeys(template)
+	for _, key := range paramKeys {
+		if lookupTypeBinding(bindings, key) == nil {
 			return nil
 		}
 	}
-	name := specializedFuncName(template, bindings, paramNames)
+	name := specializedFuncName(template, bindings, paramKeys)
 	key := name + "#" + template.OwnerType
 	if template.Receiver != nil && template.Receiver.Type != nil {
 		key += "#" + template.Receiver.Type.String()
@@ -708,27 +713,38 @@ func inferTypeBindings(pattern, actual typeinfo.Type, bindings map[*typeinfo.Typ
 	}
 }
 
-func specializedFuncName(template *Func, bindings map[*typeinfo.TypeParam]typeinfo.Type, paramNames []string) string {
+func specializedFuncName(template *Func, bindings map[*typeinfo.TypeParam]typeinfo.Type, paramKeys []typeParamBindingKey) string {
 	var b strings.Builder
 	b.WriteString(template.Name)
 	b.WriteString("$")
-	for i, name := range paramNames {
+	for i, key := range paramKeys {
 		if i > 0 {
 			b.WriteString("_")
 		}
-		b.WriteString(name)
+		b.WriteString(key.Name)
 		b.WriteString("_")
-		b.WriteString(specializedTypeTag(lookupTypeBinding(bindings, name)))
+		b.WriteString(specializedTypeTag(lookupTypeBinding(bindings, key)))
 	}
 	return b.String()
 }
 
-func (s *specializer) specializedFuncParamNames(template *Func) []string {
+func (s *specializer) specializedFuncParamKeys(template *Func) []typeParamBindingKey {
 	if template == nil {
 		return nil
 	}
-	names := make([]string, 0, len(template.Source.TypeParams)+2)
-	added := make(map[string]struct{}, len(template.Source.TypeParams)+2)
+	keys := make([]typeParamBindingKey, 0, len(template.Source.TypeParams)+2)
+	added := make(map[typeParamBindingKey]struct{}, len(template.Source.TypeParams)+2)
+	add := func(name string, owner ast.Node) {
+		if name == "" {
+			return
+		}
+		key := typeParamBindingKey{Name: name, Owner: owner}
+		if _, ok := added[key]; ok {
+			return
+		}
+		added[key] = struct{}{}
+		keys = append(keys, key)
+	}
 	if template.OwnerType != "" {
 		for _, decl := range s.module.Types {
 			if decl == nil || decl.Name != template.OwnerType || decl.Source == nil {
@@ -738,12 +754,7 @@ func (s *specializer) specializedFuncParamNames(template *Func) []string {
 				if param.Name == nil {
 					continue
 				}
-				name := param.Name.Text()
-				if _, ok := added[name]; ok {
-					continue
-				}
-				added[name] = struct{}{}
-				names = append(names, name)
+				add(param.Name.Text(), decl.Source)
 			}
 			break
 		}
@@ -754,12 +765,7 @@ func (s *specializer) specializedFuncParamNames(template *Func) []string {
 				if param.Name == nil {
 					continue
 				}
-				name := param.Name.Text()
-				if _, ok := added[name]; ok {
-					continue
-				}
-				added[name] = struct{}{}
-				names = append(names, name)
+				add(param.Name.Text(), named.Decl)
 			}
 		}
 	}
@@ -768,13 +774,9 @@ func (s *specializer) specializedFuncParamNames(template *Func) []string {
 		if param.Name != nil {
 			name = param.Name.Text()
 		}
-		if _, ok := added[name]; ok {
-			continue
-		}
-		added[name] = struct{}{}
-		names = append(names, name)
+		add(name, template.Source)
 	}
-	return names
+	return keys
 }
 
 func specializedTypeTag(typ typeinfo.Type) string {
@@ -998,10 +1000,21 @@ func appendSpecializedTextSegment(b *strings.Builder, text string) {
 	}
 }
 
-func lookupTypeBinding(bindings map[*typeinfo.TypeParam]typeinfo.Type, name string) typeinfo.Type {
-	for param, bound := range bindings {
-		if param != nil && param.Name == name {
+func lookupTypeBinding(bindings map[*typeinfo.TypeParam]typeinfo.Type, key typeParamBindingKey) typeinfo.Type {
+	if key.Name == "" {
+		return nil
+	}
+	if bound := typeinfo.LookupTypeParamBinding(bindings, &typeinfo.TypeParam{Name: key.Name, Owner: key.Owner}); bound != nil {
+		return bound
+	}
+	if key.Owner == nil {
+		if bound := typeinfo.LookupTypeParamBinding(bindings, &typeinfo.TypeParam{Name: key.Name}); bound != nil {
 			return bound
+		}
+		for param, bound := range bindings {
+			if param != nil && param.Name == key.Name {
+				return bound
+			}
 		}
 	}
 	return nil
@@ -1103,7 +1116,7 @@ func specializedTypeName(template *TypeDecl, bindings map[*typeinfo.TypeParam]ty
 		if param.Name != nil {
 			name = param.Name.Text()
 		}
-		args = append(args, lookupTypeBinding(bindings, name))
+		args = append(args, lookupTypeBinding(bindings, typeParamBindingKey{Name: name, Owner: template.Source}))
 	}
 	return specializedTypeNameFromArgs(template.Name, template.Source.TypeParams, args)
 }

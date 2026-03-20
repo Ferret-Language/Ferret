@@ -28,7 +28,8 @@ import (
 )
 
 const (
-	textDocumentSyncFull = 1
+	textDocumentSyncFull   = 1
+	maxHoverMethodsPerKind = 32
 )
 
 var (
@@ -1094,9 +1095,12 @@ func renderNamedTypeMarkdown(named *typeinfo.NamedType, mod *context.Module, mod
 		block.DeclText = renderNamedTypeDeclText(named, owner, decl)
 	}
 
-	instanceMethods, staticMethods := collectTypeMethodSignatures(owner, named)
+	instanceMethods, staticMethods, omittedMethods := collectTypeMethodSignatures(owner, named)
 	block.InstanceMethods = instanceMethods
 	block.StaticMethods = staticMethods
+	if omittedMethods > 0 {
+		block.TruncationNote = fmt.Sprintf("_Hover truncated: omitted %d additional method signature(s)._", omittedMethods)
+	}
 	return typeinfo.FormatNamedTypeHoverMarkdown(block)
 }
 
@@ -1125,9 +1129,9 @@ func findTypeDecl(mod *context.Module, typeName string) *ast.TypeDecl {
 	return nil
 }
 
-func collectTypeMethodSignatures(mod *context.Module, named *typeinfo.NamedType) ([]string, []string) {
+func collectTypeMethodSignatures(mod *context.Module, named *typeinfo.NamedType) ([]string, []string, int) {
 	if mod == nil || named == nil || named.Name == "" {
-		return nil, nil
+		return nil, nil, 0
 	}
 	typeName := named.Name
 	instanceSet := make(map[string]struct{})
@@ -1176,7 +1180,16 @@ func collectTypeMethodSignatures(mod *context.Module, named *typeinfo.NamedType)
 
 	sort.Strings(instance)
 	sort.Strings(static)
-	return instance, static
+	instance, omittedInstance := trimHoverMethodSignatures(instance, maxHoverMethodsPerKind)
+	static, omittedStatic := trimHoverMethodSignatures(static, maxHoverMethodsPerKind)
+	return instance, static, omittedInstance + omittedStatic
+}
+
+func trimHoverMethodSignatures(methods []string, limit int) ([]string, int) {
+	if limit <= 0 || len(methods) <= limit {
+		return methods, 0
+	}
+	return methods[:limit], len(methods) - limit
 }
 
 func symbolFuncDecl(sym *symbols.Symbol) (*ast.FuncDecl, bool) {

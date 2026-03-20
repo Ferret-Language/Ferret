@@ -126,3 +126,14 @@ func TestFormatNamedTypeHoverMarkdown(t *testing.T) {
 		t.Fatalf("expected static method section, got %q", got)
 	}
 }
+
+func TestFormatNamedTypeHoverMarkdownIncludesTruncationNote(t *testing.T) {
+	got := FormatNamedTypeHoverMarkdown(NamedTypeHoverBlock{
+		DeclText:        "type Point struct {}",
+		TruncationNote:  "_Hover truncated: omitted 3 additional method signature(s)._",
+		InstanceMethods: []string{"fn Point::Calc(&self) i32"},
+	})
+	if !strings.Contains(got, "_Hover truncated: omitted 3 additional method signature(s)._") {
+		t.Fatalf("expected truncation note in hover markdown, got %q", got)
+	}
+}

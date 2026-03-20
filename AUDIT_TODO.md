@@ -31,9 +31,14 @@ Status key: `[ ]` pending, `[*]` done
 - [*] reduce LSP/typeinfo duplication by moving named-type + method-list rendering into `typeinfo`
   - keep LSP as composition/index layer
   - LSP now gathers concrete decl/method data while `typeinfo` owns named-type hover markdown block rendering
-- [ ] centralize LLVM runtime declaration emission in one helper
-- [ ] harden generic binding lookups to prefer owner-aware identity and minimize name-only fallback
-- [ ] improve hover truncation messaging when recursion/depth guard short-circuits output
+- [*] centralize LLVM runtime declaration emission in one helper
+  - runtime prelude declarations now come from shared `runtimeDecls()` in `internal/backend/llvm/llvm.go` for both single-module and program lowering paths
+- [*] harden generic binding lookups to prefer owner-aware identity and minimize name-only fallback
+  - HIR specialization now resolves type-parameter bindings via owner-aware keys (`typeParamBindingKey`) with name-only fallback only when owner context is missing
+  - added focused specialization tests in `internal/ir/hir/specialize_test.go`
+- [*] improve hover truncation messaging when recursion/depth guard short-circuits output
+  - named-type hover now includes explicit truncation notes when method lists are bounded
+  - added coverage in `internal/lsp/server_test.go` and `internal/analysis/semantics/typeinfo/format_test.go`
 
 ## Low Priority / Cleanup
 

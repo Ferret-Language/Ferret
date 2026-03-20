@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1176,6 +1177,54 @@ func TestHoverRecursiveGenericInterfaceDoesNotLoop(t *testing.T) {
 	}
 	if !strings.Contains(hover.Contents.Value, "Next(&self) Node<i32>") {
 		t.Fatalf("expected instantiated recursive interface method in hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverLargeMethodSetShowsTruncationNote(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	var srcBuilder strings.Builder
+	srcBuilder.WriteString("type Big struct {}\n\n")
+	totalMethods := maxHoverMethodsPerKind + 5
+	for i := 0; i < totalMethods; i++ {
+		srcBuilder.WriteString("fn Big::M")
+		srcBuilder.WriteString(strconv.Itoa(i))
+		srcBuilder.WriteString("(&self) void {\n}\n\n")
+	}
+	srcBuilder.WriteString("fn main() void {\n    let x: Big = .{}\n    x\n}\n")
+	src := srcBuilder.String()
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "Big = .")
+	if !ok {
+		t.Fatal("failed to find Big type usage")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "Hover truncated: omitted") {
+		t.Fatalf("expected truncation note in hover, got %q", hover.Contents.Value)
+	}
+	if got := strings.Count(hover.Contents.Value, "fn Big::M"); got >= totalMethods {
+		t.Fatalf("expected method list truncation in hover, got %d rendered methods", got)
 	}
 }
 

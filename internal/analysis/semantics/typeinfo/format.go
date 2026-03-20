@@ -18,6 +18,7 @@ type NamedTypeHoverBlock struct {
 	DeclText        string
 	InstanceMethods []string
 	StaticMethods   []string
+	TruncationNote  string
 }
 
 type Printer struct {
@@ -305,6 +306,12 @@ func (p Printer) NamedTypeHoverMarkdown(block NamedTypeHoverBlock) string {
 		}
 		b.WriteString("Static methods:\n")
 		b.WriteString(asFerretCodeBlock(strings.Join(block.StaticMethods, "\n")))
+	}
+	if note := strings.TrimSpace(block.TruncationNote); note != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(note)
 	}
 	return b.String()
 }
