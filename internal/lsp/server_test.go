@@ -91,7 +91,7 @@ func TestPublishSyntaxDiagnosticsRecoversFromParserPanic(t *testing.T) {
 	}
 }
 
-func TestInitializeAdvertisesHoverProvider(t *testing.T) {
+func TestInitializeAdvertisesHoverDefinitionAndDocumentSymbolProvider(t *testing.T) {
 	var out bytes.Buffer
 	s := &Server{out: &out, documents: make(map[string]openDocument)}
 
@@ -131,6 +131,22 @@ func TestInitializeAdvertisesHoverProvider(t *testing.T) {
 	}
 	if !hoverProvider {
 		t.Fatal("expected hoverProvider=true")
+	}
+
+	var definitionProvider bool
+	if err := json.Unmarshal(payload.Capabilities["definitionProvider"], &definitionProvider); err != nil {
+		t.Fatalf("failed to decode definitionProvider: %v", err)
+	}
+	if !definitionProvider {
+		t.Fatal("expected definitionProvider=true")
+	}
+
+	var documentSymbolProvider bool
+	if err := json.Unmarshal(payload.Capabilities["documentSymbolProvider"], &documentSymbolProvider); err != nil {
+		t.Fatalf("failed to decode documentSymbolProvider: %v", err)
+	}
+	if !documentSymbolProvider {
+		t.Fatal("expected documentSymbolProvider=true")
 	}
 }
 
@@ -228,6 +244,392 @@ func TestHoverUsesOpenDocumentOverlayText(t *testing.T) {
 	}
 	if !strings.Contains(hover.Contents.Value, "str") {
 		t.Fatalf("expected str hover from overlay, got %q", hover.Contents.Value)
+	}
+}
+
+func TestDefinitionReturnsFunctionDeclaration(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "fn run2() void {\n}\n\nfn main() {\n    run2()\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	declLine, declChar, ok := findPosition(src, "fn run2()")
+	if !ok {
+		t.Fatal("failed to find run2 declaration")
+	}
+	declChar += len("fn ")
+
+	line, char, ok := findPosition(src, "    run2()")
+	if !ok {
+		t.Fatal("failed to find run2 call")
+	}
+	char += len("    ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/definition",
+		Params: mustRawJSON(t, definitionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	loc := decodeDefinitionResult(t, out.String())
+	if loc == nil {
+		t.Fatal("expected definition result")
+	}
+	if loc.URI != uri {
+		t.Fatalf("expected same-file definition URI %q, got %q", uri, loc.URI)
+	}
+	if loc.Range.Start.Line != declLine || loc.Range.Start.Character != declChar {
+		t.Fatalf("expected definition start at %d:%d, got %d:%d", declLine, declChar, loc.Range.Start.Line, loc.Range.Start.Character)
+	}
+}
+
+func TestDefinitionCrossModuleFunction(t *testing.T) {
+	dir := t.TempDir()
+	modulePath := filepath.Join(dir, "util", "math.ferr")
+	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
+		t.Fatalf("failed to create module dir: %v", err)
+	}
+	moduleSrc := "fn Pick(v: i32) i32 {\n    return v\n}\n"
+	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
+		t.Fatalf("failed to write module source: %v", err)
+	}
+
+	path := filepath.Join(dir, "main.ferr")
+	src := "import \"util/math\"\n\nfn main() i32 {\n    return math::Pick(1)\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	declLine, declChar, ok := findPosition(moduleSrc, "fn Pick(")
+	if !ok {
+		t.Fatal("failed to find Pick declaration")
+	}
+	declChar += len("fn ")
+
+	line, char, ok := findPosition(src, "    return math::Pick(1)")
+	if !ok {
+		t.Fatal("failed to find Pick call")
+	}
+	char += len("    return math::")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	expectedURI := "file://" + filepath.ToSlash(modulePath)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/definition",
+		Params: mustRawJSON(t, definitionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	loc := decodeDefinitionResult(t, out.String())
+	if loc == nil {
+		t.Fatal("expected definition result")
+	}
+	if loc.URI != expectedURI {
+		t.Fatalf("expected cross-module URI %q, got %q", expectedURI, loc.URI)
+	}
+	if loc.Range.Start.Line != declLine || loc.Range.Start.Character != declChar {
+		t.Fatalf("expected definition start at %d:%d, got %d:%d", declLine, declChar, loc.Range.Start.Line, loc.Range.Start.Character)
+	}
+}
+
+func TestDefinitionOverlayReturnsOriginalFileURI(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	onDisk := "fn old() void {\n}\n\nfn main() {\n    old()\n}\n"
+	overlay := "fn run2() void {\n}\n\nfn main() {\n    run2()\n}\n"
+	if err := os.WriteFile(path, []byte(onDisk), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	declLine, declChar, ok := findPosition(overlay, "fn run2()")
+	if !ok {
+		t.Fatal("failed to find run2 declaration")
+	}
+	declChar += len("fn ")
+
+	line, char, ok := findPosition(overlay, "    run2()")
+	if !ok {
+		t.Fatal("failed to find run2 call")
+	}
+	char += len("    ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{
+		out:        &out,
+		hoverCache: make(map[string]hoverCacheEntry),
+		documents: map[string]openDocument{
+			uri: {Version: 3, Text: overlay},
+		},
+	}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/definition",
+		Params: mustRawJSON(t, definitionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	loc := decodeDefinitionResult(t, out.String())
+	if loc == nil {
+		t.Fatal("expected definition result")
+	}
+	if loc.URI != uri {
+		t.Fatalf("expected overlay definition URI %q, got %q", uri, loc.URI)
+	}
+	if loc.Range.Start.Line != declLine || loc.Range.Start.Character != declChar {
+		t.Fatalf("expected definition start at %d:%d, got %d:%d", declLine, declChar, loc.Range.Start.Line, loc.Range.Start.Character)
+	}
+}
+
+func TestDefinitionGenericStaticOwnerCallResolvesOwnerAndMethod(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\nfn main() void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	typeLine, typeChar, ok := findPosition(src, "type Circle<T> struct")
+	if !ok {
+		t.Fatal("failed to find type declaration")
+	}
+	typeChar += len("type ")
+
+	methodLine, methodChar, ok := findPosition(src, "fn Circle<T>::New(v: T) Self")
+	if !ok {
+		t.Fatal("failed to find method declaration")
+	}
+	methodChar += len("fn Circle<T>::")
+
+	line, char, ok := findPosition(src, "    let c = Circle<i32>::New(1)")
+	if !ok {
+		t.Fatal("failed to find static owner call")
+	}
+	circleChar := char + len("    let c = ")
+	newChar := char + len("    let c = Circle<i32>::")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	reqOwner := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/definition",
+		Params: mustRawJSON(t, definitionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: circleChar},
+		}),
+	}
+	s.handleRequest(reqOwner)
+	ownerLoc := decodeDefinitionResult(t, out.String())
+	if ownerLoc == nil {
+		t.Fatal("expected owner definition result")
+	}
+	if ownerLoc.URI != uri {
+		t.Fatalf("expected owner definition URI %q, got %q", uri, ownerLoc.URI)
+	}
+	if ownerLoc.Range.Start.Line != typeLine || ownerLoc.Range.Start.Character != typeChar {
+		t.Fatalf("expected owner definition at %d:%d, got %d:%d", typeLine, typeChar, ownerLoc.Range.Start.Line, ownerLoc.Range.Start.Character)
+	}
+
+	out.Reset()
+	reqMethod := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("2"),
+		Method:  "textDocument/definition",
+		Params: mustRawJSON(t, definitionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: newChar},
+		}),
+	}
+	s.handleRequest(reqMethod)
+	methodLoc := decodeDefinitionResult(t, out.String())
+	if methodLoc == nil {
+		t.Fatal("expected method definition result")
+	}
+	if methodLoc.URI != uri {
+		t.Fatalf("expected method definition URI %q, got %q", uri, methodLoc.URI)
+	}
+	if methodLoc.Range.Start.Line != methodLine || methodLoc.Range.Start.Character != methodChar {
+		t.Fatalf("expected method definition at %d:%d, got %d:%d", methodLine, methodChar, methodLoc.Range.Start.Line, methodLoc.Range.Start.Character)
+	}
+}
+
+func TestDocumentSymbolReturnsHierarchy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Point struct {\n    X: i32\n}\n\nfn Point::Calc(&self) i32 {\n    return self.X\n}\n\nfn run() void {\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/documentSymbol",
+		Params: mustRawJSON(t, documentSymbolParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+		}),
+	}
+	s.handleRequest(req)
+
+	symbols := decodeDocumentSymbolsResult(t, out.String())
+	if len(symbols) == 0 {
+		t.Fatal("expected document symbols")
+	}
+
+	var point *documentSymbol
+	var run *documentSymbol
+	for i := range symbols {
+		if symbols[i].Name == "Point" {
+			point = &symbols[i]
+		}
+		if symbols[i].Name == "run" {
+			run = &symbols[i]
+		}
+	}
+	if point == nil {
+		t.Fatalf("expected Point symbol, got %#v", symbols)
+	}
+	if point.Kind != symbolKindStruct {
+		t.Fatalf("expected Point kind struct, got %d", point.Kind)
+	}
+	if len(point.Children) == 0 {
+		t.Fatalf("expected Point children (field + method), got %#v", point.Children)
+	}
+	hasField := false
+	hasMethod := false
+	for _, child := range point.Children {
+		if child.Name == "X" && child.Kind == symbolKindField {
+			hasField = true
+		}
+		if child.Name == "Calc" && child.Kind == symbolKindMethod {
+			hasMethod = true
+		}
+	}
+	if !hasField || !hasMethod {
+		t.Fatalf("expected Point children to include field X and method Calc, got %#v", point.Children)
+	}
+	if run == nil || run.Kind != symbolKindFunction {
+		t.Fatalf("expected top-level run function symbol, got %#v", symbols)
+	}
+}
+
+func TestDocumentSymbolUsesSharedIndexCacheWithHover(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	calls := 0
+	parseProject = func(path string) compiler.Result {
+		calls++
+		return fakeHoverResult(path, "i32")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	if err := os.WriteFile(path, []byte("fn main() {}"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	var out bytes.Buffer
+	s := &Server{
+		out: &out,
+		documents: map[string]openDocument{
+			uri: {Version: 1, Text: "fn main() {}"},
+		},
+		hoverCache: make(map[string]hoverCacheEntry),
+	}
+
+	hoverReq := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 0, Character: 0},
+		}),
+	}
+	s.handleRequest(hoverReq)
+
+	out.Reset()
+	symbolReq := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("2"),
+		Method:  "textDocument/documentSymbol",
+		Params: mustRawJSON(t, documentSymbolParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+		}),
+	}
+	s.handleRequest(symbolReq)
+
+	if calls != 1 {
+		t.Fatalf("expected shared parse/cache between hover and documentSymbol, got %d parses", calls)
+	}
+}
+
+func TestDocumentSymbolWorksWithoutTypeInfo(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	parseProject = func(path string) compiler.Result {
+		return fakeDocumentSymbolResult(path)
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	if err := os.WriteFile(path, []byte("fn run() {}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{
+		out: &out,
+		documents: map[string]openDocument{
+			uri: {Version: 1, Text: "fn run() {}\n"},
+		},
+		hoverCache: make(map[string]hoverCacheEntry),
+	}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/documentSymbol",
+		Params: mustRawJSON(t, documentSymbolParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+		}),
+	}
+	s.handleRequest(req)
+
+	symbols := decodeDocumentSymbolsResult(t, out.String())
+	if len(symbols) != 1 || symbols[0].Name != "run" || symbols[0].Kind != symbolKindFunction {
+		t.Fatalf("expected function symbol from AST-only result, got %#v", symbols)
 	}
 }
 
@@ -589,6 +991,75 @@ func TestHoverGenericStaticOwnerCallShowsInstantiatedSignature(t *testing.T) {
 	}
 	if strings.Contains(hover.Contents.Value, "fn Circle::New(v: T) Self") {
 		t.Fatalf("expected no unresolved owner type parameter in hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverGenericStaticOwnerCallHasSegmentRanges(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\nfn main() void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    let c = Circle<i32>::New(1)")
+	if !ok {
+		t.Fatal("failed to find static owner call")
+	}
+	circleChar := char + len("    let c = ")
+	newChar := char + len("    let c = Circle<i32>::")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	reqOwner := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: circleChar},
+		}),
+	}
+	s.handleRequest(reqOwner)
+	ownerHover := decodeHoverResult(t, out.String())
+	if ownerHover == nil {
+		t.Fatal("expected owner hover result")
+	}
+	if ownerHover.Range == nil {
+		t.Fatal("expected owner hover range")
+	}
+	if ownerHover.Range.Start.Character != circleChar || ownerHover.Range.End.Character != circleChar+len("Circle") {
+		t.Fatalf("expected Circle segment range, got %#v", ownerHover.Range)
+	}
+	if !strings.Contains(ownerHover.Contents.Value, "type Circle") {
+		t.Fatalf("expected Circle type hover, got %q", ownerHover.Contents.Value)
+	}
+
+	out.Reset()
+	reqMethod := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("2"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: newChar},
+		}),
+	}
+	s.handleRequest(reqMethod)
+	methodHover := decodeHoverResult(t, out.String())
+	if methodHover == nil {
+		t.Fatal("expected method hover result")
+	}
+	if methodHover.Range == nil {
+		t.Fatal("expected method hover range")
+	}
+	if methodHover.Range.Start.Character != newChar || methodHover.Range.End.Character != newChar+len("New") {
+		t.Fatalf("expected New segment range, got %#v", methodHover.Range)
+	}
+	if !strings.Contains(methodHover.Contents.Value, "fn Circle::New(v: i32) Circle<i32>") {
+		t.Fatalf("expected instantiated static method hover, got %q", methodHover.Contents.Value)
 	}
 }
 
@@ -1284,6 +1755,25 @@ func fakeHoverResult(path string, typeName string) compiler.Result {
 	}
 }
 
+func fakeDocumentSymbolResult(path string) compiler.Result {
+	nameLoc := source.NewLocation(path, source.Position{Line: 1, Column: 4, Index: 3}, source.Position{Line: 1, Column: 7, Index: 6})
+	fnLoc := source.NewLocation(path, source.Position{Line: 1, Column: 1, Index: 0}, source.Position{Line: 1, Column: 12, Index: 11})
+	fn := &ast.FuncDecl{
+		Name:     &ast.Ident{Path: []string{"run"}, Location: nameLoc},
+		Body:     &ast.BlockStmt{Location: fnLoc},
+		Location: fnLoc,
+	}
+	mod := &context.Module{
+		FilePath: path,
+		AST:      &ast.Module{FilePath: path, Decls: []ast.Decl{fn}},
+		Types:    nil,
+	}
+	return compiler.Result{
+		Entry:   mod,
+		Modules: []*context.Module{mod},
+	}
+}
+
 func mustRawJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(v)
@@ -1324,6 +1814,43 @@ func decodeHoverResult(t *testing.T, framed string) *hoverResult {
 		t.Fatalf("failed to unmarshal hover result: %v", err)
 	}
 	return &hover
+}
+
+func decodeDefinitionResult(t *testing.T, framed string) *lspLocation {
+	t.Helper()
+	resp := decodeSingleResponse(t, framed)
+	if resp.Error != nil {
+		t.Fatalf("unexpected definition error: %#v", resp.Error)
+	}
+	if resp.Result == nil {
+		return nil
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal definition result: %v", err)
+	}
+	var loc lspLocation
+	if err := json.Unmarshal(raw, &loc); err != nil {
+		t.Fatalf("failed to unmarshal definition result: %v", err)
+	}
+	return &loc
+}
+
+func decodeDocumentSymbolsResult(t *testing.T, framed string) []documentSymbol {
+	t.Helper()
+	resp := decodeSingleResponse(t, framed)
+	if resp.Error != nil {
+		t.Fatalf("unexpected documentSymbol error: %#v", resp.Error)
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal documentSymbol result: %v", err)
+	}
+	var symbols []documentSymbol
+	if err := json.Unmarshal(raw, &symbols); err != nil {
+		t.Fatalf("failed to unmarshal documentSymbol result: %v", err)
+	}
+	return symbols
 }
 
 func findPosition(text, needle string) (int, int, bool) {

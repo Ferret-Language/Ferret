@@ -30,6 +30,17 @@ import (
 const (
 	textDocumentSyncFull   = 1
 	maxHoverMethodsPerKind = 32
+
+	symbolKindClass      = 5
+	symbolKindMethod     = 6
+	symbolKindField      = 8
+	symbolKindEnum       = 10
+	symbolKindInterface  = 11
+	symbolKindFunction   = 12
+	symbolKindVariable   = 13
+	symbolKindConstant   = 14
+	symbolKindEnumMember = 22
+	symbolKindStruct     = 23
 )
 
 var (
@@ -95,6 +106,15 @@ type hoverParams struct {
 	Position     lspPosition            `json:"position"`
 }
 
+type definitionParams struct {
+	TextDocument textDocumentIdentifier `json:"textDocument"`
+	Position     lspPosition            `json:"position"`
+}
+
+type documentSymbolParams struct {
+	TextDocument textDocumentIdentifier `json:"textDocument"`
+}
+
 type textDocumentIdentifier struct {
 	URI string `json:"uri"`
 }
@@ -132,6 +152,20 @@ type lspDiagnostic struct {
 type lspRange struct {
 	Start lspPosition `json:"start"`
 	End   lspPosition `json:"end"`
+}
+
+type lspLocation struct {
+	URI   string   `json:"uri"`
+	Range lspRange `json:"range"`
+}
+
+type documentSymbol struct {
+	Name           string           `json:"name"`
+	Detail         string           `json:"detail,omitempty"`
+	Kind           int              `json:"kind"`
+	Range          lspRange         `json:"range"`
+	SelectionRange lspRange         `json:"selectionRange"`
+	Children       []documentSymbol `json:"children,omitempty"`
 }
 
 type lspPosition struct {
@@ -247,6 +281,10 @@ func (s *Server) handleRequest(req rpcRequest) {
 		s.handleDidClose(req.Params)
 	case "textDocument/hover":
 		s.handleHover(req)
+	case "textDocument/definition":
+		s.handleDefinition(req)
+	case "textDocument/documentSymbol":
+		s.handleDocumentSymbol(req)
 	default:
 		if len(req.ID) > 0 {
 			s.writeError(req.ID, -32601, "method not found")
@@ -271,7 +309,9 @@ func (s *Server) handleInitialize(req rpcRequest) {
 					"includeText": true,
 				},
 			},
-			"hoverProvider": true,
+			"hoverProvider":          true,
+			"definitionProvider":     true,
+			"documentSymbolProvider": true,
 		},
 		"serverInfo": map[string]any{
 			"name":    "ferret-lsp",
@@ -395,6 +435,70 @@ func (s *Server) handleHover(req rpcRequest) {
 	index := s.getOrBuildHoverIndex(params.TextDocument.URI, path, doc, hasDoc)
 	hover := hoverFromIndex(index, pos)
 	s.writeResponse(req.ID, hover)
+}
+
+func (s *Server) handleDefinition(req rpcRequest) {
+	if len(req.ID) == 0 {
+		return
+	}
+	params := definitionParams{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		s.writeResponse(req.ID, nil)
+		return
+	}
+	path, err := uriToPath(params.TextDocument.URI)
+	if err != nil || !isFerretSourcePath(path) {
+		s.writeResponse(req.ID, nil)
+		return
+	}
+	pos := source.Position{
+		Line:   params.Position.Line + 1,
+		Column: params.Position.Character + 1,
+	}
+	doc, hasDoc := s.documentState(params.TextDocument.URI)
+	index := s.getOrBuildHoverIndex(params.TextDocument.URI, path, doc, hasDoc)
+	defLoc, ok := definitionFromIndex(index, pos)
+	if !ok || defLoc.Start == nil {
+		s.writeResponse(req.ID, nil)
+		return
+	}
+
+	defPath := path
+	if defLoc.Filename != nil && *defLoc.Filename != "" {
+		defPath = *defLoc.Filename
+	}
+	uri, err := pathToURI(defPath)
+	if err != nil {
+		s.writeResponse(req.ID, nil)
+		return
+	}
+	s.writeResponse(req.ID, lspLocation{
+		URI:   uri,
+		Range: locationToLSPRange(defLoc),
+	})
+}
+
+func (s *Server) handleDocumentSymbol(req rpcRequest) {
+	if len(req.ID) == 0 {
+		return
+	}
+	params := documentSymbolParams{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		s.writeResponse(req.ID, []documentSymbol{})
+		return
+	}
+	path, err := uriToPath(params.TextDocument.URI)
+	if err != nil || !isFerretSourcePath(path) {
+		s.writeResponse(req.ID, []documentSymbol{})
+		return
+	}
+	doc, hasDoc := s.documentState(params.TextDocument.URI)
+	index := s.getOrBuildHoverIndex(params.TextDocument.URI, path, doc, hasDoc)
+	if index == nil || len(index.documentSymbols) == 0 {
+		s.writeResponse(req.ID, []documentSymbol{})
+		return
+	}
+	s.writeResponse(req.ID, index.documentSymbols)
 }
 
 func (s *Server) documentState(uri string) (openDocument, bool) {
@@ -544,8 +648,16 @@ type hoverCandidate struct {
 	priority int
 }
 
+type definitionCandidate struct {
+	location source.Location
+	target   source.Location
+	span     int
+}
+
 type hoverIndex struct {
-	candidates []hoverCandidate
+	candidates           []hoverCandidate
+	definitionCandidates []definitionCandidate
+	documentSymbols      []documentSymbol
 }
 
 func (s *Server) getOrBuildHoverIndex(uri, path string, doc openDocument, hasDoc bool) *hoverIndex {
@@ -635,11 +747,23 @@ func buildHoverIndex(path, text string, hasText bool) *hoverIndex {
 	defer cleanup()
 
 	mod := findModuleByPath(result, parsedPath)
-	if mod == nil || mod.Types == nil {
+	if mod == nil {
 		return &hoverIndex{}
 	}
 	modules := indexModulesByKey(result)
-	return &hoverIndex{candidates: collectHoverCandidates(mod, mod.Types, modules)}
+	sourceText := text
+	if !hasText {
+		if bytes, err := os.ReadFile(path); err == nil {
+			sourceText = string(bytes)
+		}
+	}
+	hoverCandidates, defCandidates := collectHoverCandidates(mod, mod.Types, modules, sourceText, parsedPath, path)
+	docSymbols := collectDocumentSymbols(mod, mod.Types)
+	return &hoverIndex{
+		candidates:           hoverCandidates,
+		definitionCandidates: defCandidates,
+		documentSymbols:      docSymbols,
+	}
 }
 
 func indexModulesByKey(result compiler.Result) map[string]*context.Module {
@@ -720,11 +844,16 @@ func sameFilePath(a, b string) bool {
 	return filepath.Clean(absA) == filepath.Clean(absB)
 }
 
-func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module) []hoverCandidate {
-	if info == nil {
-		return nil
+func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module, sourceText, parsedPath, originalPath string) ([]hoverCandidate, []definitionCandidate) {
+	if mod == nil {
+		return nil, nil
 	}
-	out := make([]hoverCandidate, 0, len(info.Nodes)+len(info.Symbols))
+	hoverCap := 0
+	if info != nil {
+		hoverCap = len(info.Nodes) + len(info.Symbols)
+	}
+	out := make([]hoverCandidate, 0, hoverCap)
+	defs := make([]definitionCandidate, 0, hoverCap)
 	collect := func(markdown string, loc source.Location, priority int) {
 		if markdown == "" || loc.Start == nil {
 			return
@@ -736,29 +865,421 @@ func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modu
 			priority: priority,
 		})
 	}
-	for node, typ := range info.Nodes {
-		if node == nil {
-			continue
+	collectDef := func(loc, target source.Location) {
+		if loc.Start == nil || target.Start == nil {
+			return
 		}
-		collect(renderNodeHoverMarkdown(node, typ, mod, info, modulesByKey), node.Loc(), 1)
+		defs = append(defs, definitionCandidate{
+			location: loc,
+			target:   target,
+			span:     locationSpan(loc),
+		})
 	}
-	for id, typ := range info.Symbols {
-		sym := info.SymbolIndex[id]
-		if sym == nil {
-			continue
+	if info != nil {
+		for node, typ := range info.Nodes {
+			if node == nil {
+				continue
+			}
+			collect(renderNodeHoverMarkdown(node, typ, mod, info, modulesByKey), node.Loc(), 1)
 		}
-		collect(renderSymbolHoverMarkdown(sym, typ, mod, modulesByKey), sym.Location, 0)
+		for id, typ := range info.Symbols {
+			sym := info.SymbolIndex[id]
+			if sym == nil {
+				continue
+			}
+			collect(renderSymbolHoverMarkdown(sym, typ, mod, modulesByKey), sym.Location, 0)
+		}
 	}
 	if mod != nil && mod.Bindings != nil {
+		for node, res := range mod.Bindings.Nodes {
+			if node == nil || res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+				continue
+			}
+			collectDef(node.Loc(), normalizeLocationFile(res.Symbol.Location, parsedPath, originalPath))
+		}
 		for node, label := range mod.Bindings.Labels {
 			ident, ok := node.(*ast.Ident)
 			if !ok || ident == nil {
 				continue
 			}
 			collect(renderLabelHoverMarkdown(label), ident.Loc(), 2)
+			collectDef(ident.Loc(), normalizeLocationFile(label.Location, parsedPath, originalPath))
+		}
+		if info != nil {
+			pathHover, pathDefs := collectQualifiedPathCandidates(mod, info, modulesByKey, sourceText, parsedPath, originalPath)
+			out = append(out, pathHover...)
+			defs = append(defs, pathDefs...)
+		}
+	}
+	return out, defs
+}
+
+func collectQualifiedPathCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module, sourceText, parsedPath, originalPath string) ([]hoverCandidate, []definitionCandidate) {
+	if mod == nil || mod.Bindings == nil || info == nil || sourceText == "" {
+		return nil, nil
+	}
+	hoverOut := make([]hoverCandidate, 0)
+	defOut := make([]definitionCandidate, 0)
+	for node, res := range mod.Bindings.Nodes {
+		ident, ok := node.(*ast.Ident)
+		if !ok || ident == nil || len(ident.Path) < 2 || res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+			continue
+		}
+		segments := identifierPathSegmentLocations(ident, sourceText, originalPath)
+		if len(segments) != len(ident.Path) {
+			continue
+		}
+		memberLoc := segments[len(segments)-1]
+		memberType := info.Nodes[node]
+		memberMarkdown := renderNodeHoverMarkdown(node, memberType, mod, info, modulesByKey)
+		if memberMarkdown == "" {
+			memberOwner := moduleFromResolution(modulesByKey, mod, res.ModuleKey)
+			memberMarkdown = renderSymbolHoverMarkdown(res.Symbol, memberType, memberOwner, modulesByKey)
+		}
+		if memberMarkdown != "" {
+			hoverOut = append(hoverOut, hoverCandidate{
+				markdown: memberMarkdown,
+				location: memberLoc,
+				span:     locationSpan(memberLoc),
+				priority: 0,
+			})
+		}
+		memberTarget := normalizeLocationFile(res.Symbol.Location, parsedPath, originalPath)
+		if memberTarget.Start != nil {
+			defOut = append(defOut, definitionCandidate{
+				location: memberLoc,
+				target:   memberTarget,
+				span:     locationSpan(memberLoc),
+			})
+		}
+
+		ownerSym, ownerMod := ownerTypeSymbolForResolution(modulesByKey, mod, res)
+		if ownerSym == nil || len(segments) < 2 {
+			continue
+		}
+		ownerLoc := segments[len(segments)-2]
+		ownerType := concreteOwnerTypeForPath(ident, ownerSym, ownerMod, info)
+		ownerMarkdown := renderSymbolHoverMarkdown(ownerSym, ownerType, ownerMod, modulesByKey)
+		if ownerMarkdown != "" {
+			hoverOut = append(hoverOut, hoverCandidate{
+				markdown: ownerMarkdown,
+				location: ownerLoc,
+				span:     locationSpan(ownerLoc),
+				priority: 0,
+			})
+		}
+		ownerTarget := normalizeLocationFile(ownerSym.Location, parsedPath, originalPath)
+		if ownerTarget.Start != nil {
+			defOut = append(defOut, definitionCandidate{
+				location: ownerLoc,
+				target:   ownerTarget,
+				span:     locationSpan(ownerLoc),
+			})
+		}
+	}
+	return hoverOut, defOut
+}
+
+func collectDocumentSymbols(mod *context.Module, info *typeinfo.ModuleInfo) []documentSymbol {
+	if mod == nil || mod.AST == nil {
+		return nil
+	}
+	out := make([]documentSymbol, 0, len(mod.AST.Decls))
+	typeSymbolIndex := make(map[string]int)
+	pendingTypeMethods := make(map[string][]documentSymbol)
+
+	for _, decl := range mod.AST.Decls {
+		switch d := decl.(type) {
+		case *ast.TypeDecl:
+			if d == nil || d.Name == nil {
+				continue
+			}
+			sym := documentSymbolForTypeDecl(d)
+			typeName := d.Name.Text()
+			typeSymbolIndex[typeName] = len(out)
+			if pending := pendingTypeMethods[typeName]; len(pending) > 0 {
+				sym.Children = append(sym.Children, pending...)
+				delete(pendingTypeMethods, typeName)
+			}
+			out = append(out, sym)
+		case *ast.FuncDecl:
+			if d == nil || d.Name == nil {
+				continue
+			}
+			sym := documentSymbolForFuncDecl(d, mod, info)
+			if d.OwnerType != nil && len(d.OwnerType.Path) > 0 {
+				typeName := d.OwnerType.Path[len(d.OwnerType.Path)-1]
+				if idx, ok := typeSymbolIndex[typeName]; ok {
+					out[idx].Children = append(out[idx].Children, sym)
+				} else {
+					pendingTypeMethods[typeName] = append(pendingTypeMethods[typeName], sym)
+				}
+				continue
+			}
+			out = append(out, sym)
+		case *ast.ConstDecl:
+			if d == nil || d.Name == nil {
+				continue
+			}
+			detail := ""
+			if info != nil {
+				if typ := info.Nodes[d.Name]; typ != nil {
+					detail = typeinfo.DefaultPrinter.Type(typ)
+				}
+			}
+			out = append(out, makeDocumentSymbol(d.Name.Text(), symbolKindConstant, d.Loc(), d.Name.Loc(), detail, nil))
+		case *ast.LetDecl:
+			if d == nil || d.Name == nil {
+				continue
+			}
+			detail := ""
+			if info != nil {
+				if typ := info.Nodes[d.Name]; typ != nil {
+					detail = typeinfo.DefaultPrinter.Type(typ)
+				}
+			}
+			out = append(out, makeDocumentSymbol(d.Name.Text(), symbolKindVariable, d.Loc(), d.Name.Loc(), detail, nil))
+		}
+	}
+
+	// Gracefully expose attached methods even if the owner type symbol wasn't emitted.
+	if len(pendingTypeMethods) > 0 {
+		typeNames := make([]string, 0, len(pendingTypeMethods))
+		for name := range pendingTypeMethods {
+			typeNames = append(typeNames, name)
+		}
+		sort.Strings(typeNames)
+		for _, name := range typeNames {
+			out = append(out, pendingTypeMethods[name]...)
 		}
 	}
 	return out
+}
+
+func documentSymbolForTypeDecl(d *ast.TypeDecl) documentSymbol {
+	if d == nil || d.Name == nil {
+		return documentSymbol{}
+	}
+	kind := symbolKindClass
+	children := make([]documentSymbol, 0)
+	switch t := d.Type.(type) {
+	case *ast.StructType:
+		kind = symbolKindStruct
+		for _, field := range t.Fields {
+			if field == nil || field.Name == nil {
+				continue
+			}
+			detail := ast.TypeString(field.Type)
+			children = append(children, makeDocumentSymbol(field.Name.Text(), symbolKindField, field.Loc(), field.Name.Loc(), detail, nil))
+		}
+	case *ast.InterfaceType:
+		kind = symbolKindInterface
+		for _, method := range t.Methods {
+			if method == nil || method.Name == nil {
+				continue
+			}
+			detail := interfaceMethodDetail(method)
+			children = append(children, makeDocumentSymbol(method.Name.Text(), symbolKindMethod, method.Location, method.Name.Loc(), detail, nil))
+		}
+	case *ast.EnumType:
+		kind = symbolKindEnum
+		for _, variant := range t.Variants {
+			if variant == nil || variant.Name == nil {
+				continue
+			}
+			children = append(children, makeDocumentSymbol(variant.Name.Text(), symbolKindEnumMember, variant.Loc(), variant.Name.Loc(), "", nil))
+		}
+	case *ast.ErrorType:
+		kind = symbolKindEnum
+		for _, member := range t.Members {
+			if member == nil || member.Name == nil {
+				continue
+			}
+			children = append(children, makeDocumentSymbol(member.Name.Text(), symbolKindEnumMember, member.Loc(), member.Name.Loc(), "", nil))
+		}
+	}
+	return makeDocumentSymbol(d.Name.Text(), kind, d.Loc(), d.Name.Loc(), "", children)
+}
+
+func documentSymbolForFuncDecl(d *ast.FuncDecl, mod *context.Module, info *typeinfo.ModuleInfo) documentSymbol {
+	if d == nil || d.Name == nil {
+		return documentSymbol{}
+	}
+	kind := symbolKindFunction
+	if d.OwnerType != nil {
+		kind = symbolKindMethod
+	}
+	detail := functionDetailForOutline(d, mod, info)
+	return makeDocumentSymbol(d.Name.Text(), kind, d.Loc(), d.Name.Loc(), detail, nil)
+}
+
+func functionDetailForOutline(fn *ast.FuncDecl, mod *context.Module, info *typeinfo.ModuleInfo) string {
+	if fn == nil {
+		return ""
+	}
+	if mod != nil && mod.Bindings != nil && info != nil {
+		if sym := mod.Bindings.FunctionSymbols[fn]; sym != nil {
+			if fnType, ok := info.Symbols[sym.ID].(*typeinfo.FuncType); ok && fnType != nil {
+				return typeinfo.DefaultPrinter.FuncDeclSignature(fn, fnType)
+			}
+		}
+	}
+	return fn.Signature()
+}
+
+func interfaceMethodDetail(method *ast.InterfaceMethod) string {
+	if method == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(method.Params))
+	for _, param := range method.Params {
+		name := "_"
+		if param.Name != nil && param.Name.Text() != "" {
+			name = param.Name.Text()
+		}
+		text := name + ": " + ast.TypeString(param.Type)
+		if param.IsMut {
+			text = "mut " + text
+		}
+		if param.IsComptime {
+			text = "comptime " + text
+		}
+		parts = append(parts, text)
+	}
+	result := ast.TypeString(method.Result)
+	if result == "" {
+		result = "void"
+	}
+	return "fn " + method.Name.Text() + "(" + strings.Join(parts, ", ") + ") " + result
+}
+
+func makeDocumentSymbol(name string, kind int, fullLoc, selectLoc source.Location, detail string, children []documentSymbol) documentSymbol {
+	if selectLoc.Start == nil {
+		selectLoc = fullLoc
+	}
+	sym := documentSymbol{
+		Name:           name,
+		Detail:         detail,
+		Kind:           kind,
+		Range:          locationToLSPRange(fullLoc),
+		SelectionRange: locationToLSPRange(selectLoc),
+	}
+	if len(children) > 0 {
+		sym.Children = children
+	}
+	return sym
+}
+
+func moduleFromResolution(modulesByKey map[string]*context.Module, fallback *context.Module, moduleKey string) *context.Module {
+	if moduleKey != "" && modulesByKey != nil {
+		if mod := modulesByKey[moduleKey]; mod != nil {
+			return mod
+		}
+	}
+	return fallback
+}
+
+func ownerTypeSymbolForResolution(modulesByKey map[string]*context.Module, fallback *context.Module, res *binding.Resolution) (*symbols.Symbol, *context.Module) {
+	if res == nil || res.Symbol == nil || res.Symbol.OwnerType == "" {
+		return nil, nil
+	}
+	ownerMod := moduleFromResolution(modulesByKey, fallback, res.ModuleKey)
+	if ownerMod == nil || ownerMod.ModuleScope == nil {
+		return nil, ownerMod
+	}
+	sym, ok := ownerMod.ModuleScope.LookupLocal(res.Symbol.OwnerType)
+	if !ok || sym == nil || sym.Kind != symbols.SymbolType {
+		return nil, ownerMod
+	}
+	return sym, ownerMod
+}
+
+func concreteOwnerTypeForPath(ident *ast.Ident, ownerSym *symbols.Symbol, ownerMod *context.Module, info *typeinfo.ModuleInfo) typeinfo.Type {
+	if ownerSym == nil || ownerMod == nil || ownerMod.Types == nil {
+		return nil
+	}
+	base := ownerMod.Types.Symbols[ownerSym.ID]
+	if ident == nil || len(ident.TypeArgs) == 0 {
+		return base
+	}
+	decl, ok := ownerSym.Node.(*ast.TypeDecl)
+	if !ok || decl == nil {
+		return base
+	}
+	args := make([]typeinfo.Type, 0, len(ident.TypeArgs))
+	for _, arg := range ident.TypeArgs {
+		if info == nil {
+			return base
+		}
+		argType := info.Nodes[arg]
+		if argType == nil {
+			return base
+		}
+		args = append(args, argType)
+	}
+	return &typeinfo.NamedType{
+		ModuleKey: ownerMod.Key,
+		Name:      ownerSym.Name,
+		Decl:      decl,
+		TypeArgs:  args,
+	}
+}
+
+func identifierPathSegmentLocations(ident *ast.Ident, text, file string) []source.Location {
+	if ident == nil || len(ident.Path) == 0 || text == "" {
+		return nil
+	}
+	loc := ident.Loc()
+	if loc.Start == nil || loc.End == nil {
+		return nil
+	}
+	start := loc.Start.Index
+	end := loc.End.Index
+	if start < 0 || end < start || end > len(text) {
+		return nil
+	}
+	snippet := text[start:end]
+	pos := *loc.Start
+	cursor := 0
+	out := make([]source.Location, 0, len(ident.Path))
+	for _, segment := range ident.Path {
+		if segment == "" {
+			return nil
+		}
+		rel := strings.Index(snippet[cursor:], segment)
+		if rel < 0 {
+			return nil
+		}
+		segStartOffset := cursor + rel
+		if segStartOffset > cursor {
+			pos.Advance(snippet[cursor:segStartOffset])
+		}
+		segStart := pos
+		pos.Advance(segment)
+		segEnd := pos
+		out = append(out, source.NewLocation(file, segStart, segEnd))
+		cursor = segStartOffset + len(segment)
+	}
+	return out
+}
+
+func normalizeLocationFile(loc source.Location, parsedPath, originalPath string) source.Location {
+	if originalPath == "" || parsedPath == "" {
+		return loc
+	}
+	candidate := ""
+	if loc.Filename != nil {
+		candidate = *loc.Filename
+	} else if loc.File != "" {
+		candidate = loc.File
+	}
+	if candidate == "" || !sameFilePath(candidate, parsedPath) {
+		return loc
+	}
+	normalized := loc
+	normalized.File = originalPath
+	normalized.Filename = &normalized.File
+	return normalized
 }
 
 func renderLabelHoverMarkdown(label *binding.LabelBinding) string {
@@ -1399,6 +1920,32 @@ func findBestHoverCandidate(index *hoverIndex, pos source.Position) (hoverCandid
 	return best, found
 }
 
+func definitionFromIndex(index *hoverIndex, pos source.Position) (source.Location, bool) {
+	if index == nil {
+		return source.Location{}, false
+	}
+	best := source.Location{}
+	bestSpan := int(^uint(0) >> 1)
+	found := false
+
+	consider := func(candidate, target source.Location) {
+		if target.Start == nil || !locationContainsPosition(candidate, pos) {
+			return
+		}
+		span := locationSpan(candidate)
+		if !found || span < bestSpan {
+			best = target
+			bestSpan = span
+			found = true
+		}
+	}
+
+	for _, candidate := range index.definitionCandidates {
+		consider(candidate.location, candidate.target)
+	}
+	return best, found
+}
+
 func locationContainsPosition(loc source.Location, pos source.Position) bool {
 	if loc.Start == nil {
 		return false
@@ -1582,6 +2129,15 @@ func uriToPath(uri string) (string, error) {
 		return "", fmt.Errorf("unsupported uri scheme %q", u.Scheme)
 	}
 	return filepath.Clean(filepath.FromSlash(u.Path)), nil
+}
+
+func pathToURI(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
+	return u.String(), nil
 }
 
 func max(a, b int) int {
