@@ -166,9 +166,6 @@ func stringHandler(l *Lexer, re *regexp.Regexp) {
 	l.push(tokens.Token{Kind: tokens.STRING, Literal: unescapeString(inner), Start: start, End: l.pos})
 }
 
-// Lex is an alias so both names work.
-func (l *Lexer) Lex() []tokens.Token { return l.Tokenize() }
-
 func (l *Lexer) Tokenize() []tokens.Token {
 	for !l.atEOF() {
 		matched := false

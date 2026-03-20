@@ -26,7 +26,7 @@ func FormatModule(mod *Module) string {
 		if global == nil {
 			continue
 		}
-		fmt.Fprintf(&b, "%s %s: %s = %s\n", globalKeyword(global), global.Name, typeString(global.Type), formatExpr(global.Value))
+		fmt.Fprintf(&b, "%s %s: %s = %s\n", globalKeyword(global), global.Name, typeinfo.DefaultPrinter.Type(global.Type), formatExpr(global.Value))
 	}
 	if len(mod.Globals) > 0 && len(mod.Functions) > 0 {
 		b.WriteByte('\n')
@@ -64,7 +64,7 @@ func formatFunc(b *strings.Builder, fn *Func) {
 		fmt.Fprintf(b, "fn %s%s%s", formatReceiverPrefix(fn.Receiver), name, typeinfo.DefaultPrinter.ParamList(formatParams(fn.Params)))
 	}
 	if fn.Result != nil {
-		fmt.Fprintf(b, " %s", typeString(fn.Result))
+		fmt.Fprintf(b, " %s", typeinfo.DefaultPrinter.Type(fn.Result))
 	}
 	if fn.Body == nil {
 		b.WriteString(";\n")
@@ -142,7 +142,7 @@ func formatStmt(b *strings.Builder, stmt Stmt, indent int) {
 		}
 		fmt.Fprintf(b, " %s", s.Name)
 		if s.Type != nil {
-			fmt.Fprintf(b, ": %s", typeString(s.Type))
+			fmt.Fprintf(b, ": %s", typeinfo.DefaultPrinter.Type(s.Type))
 		}
 		if s.Value != nil {
 			fmt.Fprintf(b, " = %s", formatExpr(s.Value))
@@ -150,7 +150,7 @@ func formatStmt(b *strings.Builder, stmt Stmt, indent int) {
 	case *ConstStmt:
 		fmt.Fprintf(b, "const %s", s.Name)
 		if s.Type != nil {
-			fmt.Fprintf(b, ": %s", typeString(s.Type))
+			fmt.Fprintf(b, ": %s", typeinfo.DefaultPrinter.Type(s.Type))
 		}
 		if s.Value != nil {
 			fmt.Fprintf(b, " = %s", formatExpr(s.Value))
@@ -288,9 +288,9 @@ func formatExpr(expr Expr) string {
 	case *SelectorExpr:
 		return fmt.Sprintf("%s.%s", wrapExpr(e.Left), e.Name)
 	case *CastExpr:
-		return fmt.Sprintf("%s as %s", wrapExpr(e.Left), typeString(e.Type()))
+		return fmt.Sprintf("%s as %s", wrapExpr(e.Left), typeinfo.DefaultPrinter.Type(e.Type()))
 	case *IsExpr:
-		return fmt.Sprintf("%s is %s", wrapExpr(e.Left), typeString(e.Target))
+		return fmt.Sprintf("%s is %s", wrapExpr(e.Left), typeinfo.DefaultPrinter.Type(e.Target))
 	case *MatchExpr:
 		var b strings.Builder
 		fmt.Fprintf(&b, "match %s {\n", formatExpr(e.Value))
@@ -352,7 +352,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 					continue
 				}
 				indentLine(&b, 1)
-				fmt.Fprintf(&b, "%s: %s", field.Name, typeString(field.Type))
+				fmt.Fprintf(&b, "%s: %s", field.Name, typeinfo.DefaultPrinter.Type(field.Type))
 				if field.Default != nil {
 					fmt.Fprintf(&b, " = %s", formatExpr(field.Default))
 				}
@@ -375,7 +375,7 @@ func formatTypeDecl(decl *TypeDecl) string {
 				indentLine(&b, 1)
 				fmt.Fprintf(&b, "%s%s", method.Name, formatInterfaceParams(method.Receiver, method.Params))
 				if method.Result != nil {
-					fmt.Fprintf(&b, " %s", typeString(method.Result))
+					fmt.Fprintf(&b, " %s", typeinfo.DefaultPrinter.Type(method.Result))
 				}
 				b.WriteByte('\n')
 			}
@@ -389,13 +389,13 @@ func formatTypeDecl(decl *TypeDecl) string {
 	case decl.Union != nil:
 		parts := make([]string, 0, len(decl.Union.Members))
 		for _, member := range decl.Union.Members {
-			parts = append(parts, typeString(member))
+			parts = append(parts, typeinfo.DefaultPrinter.Type(member))
 		}
 		return fmt.Sprintf("type %s union { %s }", decl.Name, strings.Join(parts, ", "))
 	case decl.Error != nil:
 		return fmt.Sprintf("type %s error { %s }", decl.Name, strings.Join(decl.Error.Members, ", "))
 	default:
-		return fmt.Sprintf("type %s %s", decl.Name, typeString(decl.Underlying))
+		return fmt.Sprintf("type %s %s", decl.Name, typeinfo.DefaultPrinter.Type(decl.Underlying))
 	}
 }
 
@@ -458,8 +458,6 @@ func globalKeyword(global *Global) string {
 	}
 	return "let"
 }
-
-func typeString(typ fmt.Stringer) string { return typeinfo.DefaultPrinter.Type(typ) }
 
 func indentLine(b *strings.Builder, indent int) {
 	for i := 0; i < indent; i++ {

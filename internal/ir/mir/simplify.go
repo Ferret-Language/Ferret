@@ -3,6 +3,7 @@ package mir
 import (
 	"math/big"
 	"slices"
+	"strings"
 
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/diagnostics"
@@ -181,9 +182,7 @@ func eliminateDeadTempAssigns(fn *Function, block *Block) {
 			out = append(out, instr)
 		}
 	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
+	slices.Reverse(out)
 	block.Instructions = out
 }
 
@@ -529,20 +528,11 @@ func parseBigInt(raw string) (*big.Int, bool) {
 	if raw == "" {
 		return nil, false
 	}
-	if slices.ContainsFunc([]string{".", "e", "E", "i"}, func(s string) bool { return contains(raw, s) }) {
+	if strings.ContainsAny(raw, ".eEi") {
 		return nil, false
 	}
 	v, err := numeric.StringToBigInt(raw)
 	return v, err == nil
-}
-
-func contains(s, needle string) bool {
-	for i := 0; i+len(needle) <= len(s); i++ {
-		if s[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
 }
 
 func intValue(src *BinaryValue, v *big.Int) Value {
