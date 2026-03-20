@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	layout "compiler/internal/analysis/layout/model"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	"compiler/internal/backend/registry"
 	compiler "compiler/internal/driver"
@@ -619,6 +620,45 @@ fn main() i32 {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
 		}
+	}
+}
+
+func TestLowerUnsupportedFunctionResultTypeReturnsError(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    return 1
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatal("expected MIR entry module")
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatal("expected main function in MIR")
+	}
+	mainFn.Result = &typeinfo.TypeParam{Name: "T"}
+
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	_, err = lowerer.LowerModule(testUnit(result))
+	if err == nil {
+		t.Fatal("expected unsupported type lowering error")
+	}
+	if !strings.Contains(err.Error(), "unsupported llvm base type T") {
+		t.Fatalf("expected llvm unsupported type error, got %v", err)
 	}
 }
 

@@ -49,7 +49,8 @@ Status key: `[ ]` pending, `[*]` done
   - added LSP coverage in `internal/lsp/server_test.go` for imported generic calls and imported constrained generic calls with instantiated hover signatures
 - [*] add recursive generic/interface hover tests beyond current struct recursion case
   - added `TestHoverRecursiveGenericInterfaceDoesNotLoop` and concrete interface instantiation rendering for hover decl text
-- [ ] add backend error-path tests asserting unsupported inputs return errors (no process panic)
+- [*] add backend error-path tests asserting unsupported inputs return errors (no process panic)
+  - added LLVM/QBE lower tests that inject unsupported `TypeParam` function result types and assert explicit lowering errors
 
 ## Suggested Execution Order
 
