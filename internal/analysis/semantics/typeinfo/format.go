@@ -222,7 +222,7 @@ func (p Printer) BindingDecl(kind, name string, typ Type, flags ValueFlags) stri
 	if name == "" {
 		name = "_"
 	}
-	typeText := p.Type(typ)
+	typeText := p.bindingTypeText(typ)
 	switch kind {
 	case "let":
 		var b strings.Builder
@@ -254,6 +254,13 @@ func (p Printer) BindingDecl(kind, name string, typ Type, flags ValueFlags) stri
 	default:
 		return kind + " " + name + ": " + typeText
 	}
+}
+
+func (p Printer) bindingTypeText(typ Type) string {
+	if param, ok := typ.(*TypeParam); ok && param != nil && param.Constraint != nil {
+		return p.Type(param) + ": " + p.Type(param.Constraint)
+	}
+	return p.Type(typ)
 }
 
 func (p Printer) ReceiverBindingDecl(name string, kind ReceiverKind) string {

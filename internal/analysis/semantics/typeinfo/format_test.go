@@ -94,6 +94,9 @@ func TestFormatBindingDecl(t *testing.T) {
 	if got := FormatBindingDecl("parameter", "p", &BuiltinType{Name: "i32"}, FlagMutable|FlagComptime); got != "parameter mut comptime p: i32" {
 		t.Fatalf("unexpected parameter binding declaration: %q", got)
 	}
+	if got := FormatBindingDecl("parameter", "s", &TypeParam{Name: "T", Constraint: &NamedType{Name: "Shape"}}, 0); got != "parameter s: T: Shape" {
+		t.Fatalf("unexpected constrained parameter binding declaration: %q", got)
+	}
 }
 
 func TestFormatReceiverBindingDecl(t *testing.T) {

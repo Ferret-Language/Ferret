@@ -1041,6 +1041,43 @@ func TestHoverRecursiveGenericTypeDoesNotLoop(t *testing.T) {
 	}
 }
 
+func TestHoverConstrainedGenericParameterShowsConstraint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Shape interface {\n    Draw(&self)\n}\n\nfn drawShape<T: Shape>(s: T) {\n    s.Draw()\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "(s: T)")
+	if !ok {
+		t.Fatal("failed to find constrained parameter")
+	}
+	char++
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "parameter s: T: Shape") {
+		t.Fatalf("expected constrained parameter hover, got %q", hover.Contents.Value)
+	}
+}
+
 func fakeHoverResult(path string, typeName string) compiler.Result {
 	start := source.Position{Line: 1, Column: 1, Index: 0}
 	end := source.Position{Line: 1, Column: 2, Index: 1}
