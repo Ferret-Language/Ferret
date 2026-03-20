@@ -1264,7 +1264,16 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 		}
 	}
 	if inferFromArgs && expected != nil {
-		c.inferTypeParamBindings(fnType.Result, expected, bindings)
+		expectedBindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(genericParams))
+		c.inferTypeParamBindings(fnType.Result, expected, expectedBindings)
+		for _, param := range genericParams {
+			if bindings[param] != nil {
+				continue
+			}
+			if bound := c.lookupTypeParamBinding(expectedBindings, param); bound != nil {
+				bindings[param] = bound
+			}
+		}
 	}
 
 	missing := false
@@ -2448,7 +2457,15 @@ func (c *checker) lookupTypeResolution(mod *context.Module, node ast.Node) *bind
 }
 
 func (c *checker) underlying(typ typeinfo.Type) typeinfo.Type {
+	return c.underlyingSeen(typ, make(map[*ast.TypeDecl]struct{}))
+}
+
+func (c *checker) underlyingSeen(typ typeinfo.Type, seen map[*ast.TypeDecl]struct{}) typeinfo.Type {
 	if named, ok := typ.(*typeinfo.NamedType); ok && named.Decl != nil {
+		if _, ok := seen[named.Decl]; ok {
+			return typ
+		}
+		seen[named.Decl] = struct{}{}
 		owner := c.findModuleForType(named)
 		if owner == nil {
 			owner = c.mod
@@ -2462,10 +2479,10 @@ func (c *checker) underlying(typ typeinfo.Type) typeinfo.Type {
 				for i, param := range typeParams {
 					bindings[param] = named.TypeArgs[i]
 				}
-				return c.substituteTypeParams(declType, bindings)
+				return c.underlyingSeen(c.substituteTypeParams(declType, bindings), seen)
 			}
 		}
-		return c.typeFromSyntax(owner, named.Decl.Type)
+		return c.underlyingSeen(c.typeFromSyntax(owner, named.Decl.Type), seen)
 	}
 	return typ
 }

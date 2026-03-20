@@ -318,6 +318,81 @@ fn Use<T: numeric_writer>(value: T) void {}
 	}
 }
 
+func TestParseInlineConstraintLiterals(t *testing.T) {
+	src := `
+constraint W = Writer
+
+type Writer interface {
+    write(&self, []u8) i32
+}
+
+fn close_it<T: interface {
+    close(&self) void
+}>(x: T) void {}
+
+fn min<T: union {
+    i32,
+    i64
+}>(a: T, b: T) T {
+    return a
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	if len(mod.Decls) != 4 {
+		t.Fatalf("expected 4 declarations, got %d", len(mod.Decls))
+	}
+	fnInline, ok := mod.Decls[2].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected inline-constraint function, got %T", mod.Decls[2])
+	}
+	if _, ok := fnInline.TypeParams[0].Constraint.(*ast.InterfaceType); !ok {
+		t.Fatalf("expected inline interface constraint, got %T", fnInline.TypeParams[0].Constraint)
+	}
+	inlineIface := fnInline.TypeParams[0].Constraint.(*ast.InterfaceType)
+	if len(inlineIface.Methods) != 1 || inlineIface.Methods[0].Static || inlineIface.Methods[0].Receiver != "&" {
+		t.Fatalf("expected inline interface method to preserve explicit shared receiver, got %#v", inlineIface.Methods)
+	}
+	fnUnion, ok := mod.Decls[3].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected union-constraint function, got %T", mod.Decls[3])
+	}
+	unionConstraint, ok := fnUnion.TypeParams[0].Constraint.(*ast.UnionType)
+	if !ok {
+		t.Fatalf("expected inline union constraint, got %T", fnUnion.TypeParams[0].Constraint)
+	}
+	if len(unionConstraint.Members) != 2 {
+		t.Fatalf("expected 2 inline union members, got %#v", unionConstraint.Members)
+	}
+}
+
+func TestParseReceiverlessInterfaceMethodIsStatic(t *testing.T) {
+	src := `
+type Writer interface {
+    write([]u8) i32
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	typ, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok {
+		t.Fatalf("expected type decl, got %T", mod.Decls[0])
+	}
+	iface, ok := typ.Type.(*ast.InterfaceType)
+	if !ok {
+		t.Fatalf("expected interface type, got %T", typ.Type)
+	}
+	if len(iface.Methods) != 1 || !iface.Methods[0].Static || iface.Methods[0].Receiver != "" {
+		t.Fatalf("expected receiverless interface method to be static, got %#v", iface.Methods)
+	}
+}
+
 func TestParseGenericCallWithAngleTypeArgs(t *testing.T) {
 	src := `
 fn add<T>(a: T, b: T) T {
@@ -351,6 +426,23 @@ fn main() i32 {
 	arg, ok := call.TypeArgs[0].(*ast.NamedType)
 	if !ok || len(arg.Path) != 1 || arg.Path[0] != "i32" {
 		t.Fatalf("expected type argument i32, got %#v", call.TypeArgs[0])
+	}
+}
+
+func TestParseRejectsEmptyAngleTypeArgs(t *testing.T) {
+	src := `
+fn add<T>(a: T, b: T) T {
+    return a
+}
+
+fn main() i32 {
+    return add<>(1, 2)
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "expected at least one type argument") {
+		t.Fatalf("expected empty-angle type-argument diagnostic, got %v", diag.All())
 	}
 }
 
@@ -1243,19 +1335,6 @@ type Token union {
 		if !hasDiagnosticMessage(diag, substr) {
 			t.Fatalf("expected diagnostic containing %q, got %v", substr, diag.All())
 		}
-	}
-}
-
-func TestParserRejectsStaticStructFields(t *testing.T) {
-	src := `
-type Point struct {
-    static: x i32
-}
-`
-
-	_, diag := parseTestModule(t, src)
-	if !hasDiagnosticMessage(diag, "static struct fields are not supported") {
-		t.Fatalf("expected static-field rejection diagnostic, got %v", diag.All())
 	}
 }
 

@@ -90,7 +90,6 @@ const (
 	AS         Kind = "AS"
 	IS         Kind = "IS"
 	MUT        Kind = "MUT"
-	STATIC     Kind = "STATIC"
 	COMPTIME   Kind = "COMPTIME"
 	LOCK       Kind = "LOCK"
 	DEFER      Kind = "DEFER"
@@ -124,7 +123,6 @@ var keywords = map[string]Kind{
 	"as":         AS,
 	"is":         IS,
 	"mut":        MUT,
-	"static":     STATIC,
 	"comptime":   COMPTIME,
 	"lock":       LOCK,
 	"defer":      DEFER,

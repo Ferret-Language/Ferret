@@ -84,6 +84,12 @@ func (p *Parser) parseTupleType() ast.TypeExpr {
 func (p *Parser) parseAngleTypeArgs(itemKind string) []ast.TypeExpr {
 	p.expect(tokens.LT, "expected '<'")
 	args := make([]ast.TypeExpr, 0)
+	if p.at(tokens.GT) {
+		loc := p.locOfToken(p.current())
+		p.errorAt(loc, "expected at least one "+itemKind)
+		p.advance()
+		return args
+	}
 	for !p.at(tokens.GT) && !p.at(tokens.EOF) {
 		args = append(args, p.parseType())
 		if !p.consumeTypeListSeparator(tokens.GT, itemKind) {

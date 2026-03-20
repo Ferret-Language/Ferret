@@ -489,14 +489,11 @@ func (p *Parser) parseStructType() ast.TypeExpr {
 	p.expect(tokens.LBRACE, "expected '{'")
 	fields := make([]*ast.FieldDecl, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
-		if !p.at(tokens.STATIC) && !p.at(tokens.IDENT) {
+		fieldStart := p.current().Start
+		if !p.at(tokens.IDENT) {
 			p.errorHere("expected struct field")
 			p.synchronizeTypeBody(tokens.RBRACE)
 			continue
-		}
-		fieldStart := p.current().Start
-		if p.match(tokens.STATIC) {
-			p.errorAt(p.locFrom(fieldStart), "static struct fields are not supported")
 		}
 		nameTok := p.expectIdent("expected field name")
 		p.expect(tokens.COLON, "expected ':' after field name")
@@ -505,7 +502,7 @@ func (p *Parser) parseStructType() ast.TypeExpr {
 		if p.match(tokens.ASSIGN) {
 			def = p.parseExpr(precLowest)
 		}
-		p.match(tokens.SEMICOLON)
+		p.match(tokens.COMMA)
 		fields = append(fields, &ast.FieldDecl{
 			Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Type:     fieldType,
@@ -529,15 +526,15 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 		}
 		methodStart := p.current().Start
 		nameTok := p.expectIdent("expected interface method name")
-		receiver, params, isStatic := p.parseInterfaceMethodParams()
+		receiver, params, inferredStatic := p.parseInterfaceMethodParams()
 		var result ast.TypeExpr
 		if p.startsType() {
 			result = p.parseType()
 		}
-		p.match(tokens.SEMICOLON)
+		p.match(tokens.COMMA)
 		methods = append(methods, &ast.InterfaceMethod{
 			Receiver: receiver,
-			Static:   isStatic,
+			Static:   inferredStatic,
 			Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Params:   params,
 			Result:   result,
@@ -579,6 +576,7 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 			isStatic = false
 			nameTok := p.advance()
 			p.warnNonSelfReceiver(&ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)})
+			receiver = ""
 			if p.at(tokens.COMMA) {
 				p.advance()
 			}
@@ -588,11 +586,20 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
-		nameTok := p.expectIdent("expected parameter name")
-		p.expect(tokens.COLON, "expected ':' after parameter name")
-		paramType := p.parseType()
+		var (
+			paramName *ast.Ident
+			paramType ast.TypeExpr
+		)
+		if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.COLON {
+			nameTok := p.advance()
+			p.expect(tokens.COLON, "expected ':' after parameter name")
+			paramName = &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)}
+			paramType = p.parseType()
+		} else {
+			paramType = p.parseType()
+		}
 		params = append(params, ast.Param{
-			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+			Name:       paramName,
 			IsComptime: isComptime,
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
@@ -607,7 +614,7 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 
 func (p *Parser) synchronizeTypeBody(end tokens.Kind) {
 	for !p.at(tokens.EOF) {
-		if p.at(tokens.SEMICOLON) {
+		if p.at(tokens.COMMA) {
 			p.advance()
 			return
 		}
@@ -640,12 +647,29 @@ func (p *Parser) parseUnionType() ast.TypeExpr {
 	members := make([]ast.TypeExpr, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
 		members = append(members, p.parseType())
-		if !p.consumeTypeListSeparator(tokens.RBRACE, "union member") {
+		if !p.consumeUnionMemberSeparator() {
 			break
 		}
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
 	return &ast.UnionType{Members: members, Location: p.locFrom(start)}
+}
+
+func (p *Parser) consumeUnionMemberSeparator() bool {
+	if p.match(tokens.COMMA) {
+		return true
+	}
+	if p.at(tokens.RBRACE) || p.at(tokens.EOF) {
+		return false
+	}
+	// Ferret allows newline-separated union members without explicit separators.
+	if p.startsType() {
+		return true
+	}
+	tok := p.current()
+	loc := p.locOfToken(tok)
+	p.errorAt(loc, "expected ',' or '}' after union member")
+	return !p.at(tokens.RBRACE) && !p.at(tokens.EOF)
 }
 
 func (p *Parser) parseErrorType() ast.TypeExpr {

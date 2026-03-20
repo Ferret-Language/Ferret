@@ -283,8 +283,6 @@ func (s *Server) handleRequest(req rpcRequest) {
 		s.handleHover(req)
 	case "textDocument/definition":
 		s.handleDefinition(req)
-	case "textDocument/documentSymbol":
-		s.handleDocumentSymbol(req)
 	default:
 		if len(req.ID) > 0 {
 			s.writeError(req.ID, -32601, "method not found")
@@ -309,9 +307,8 @@ func (s *Server) handleInitialize(req rpcRequest) {
 					"includeText": true,
 				},
 			},
-			"hoverProvider":          true,
-			"definitionProvider":     true,
-			"documentSymbolProvider": true,
+			"hoverProvider":      true,
+			"definitionProvider": true,
 		},
 		"serverInfo": map[string]any{
 			"name":    "ferret-lsp",
@@ -478,6 +475,16 @@ func (s *Server) handleDefinition(req rpcRequest) {
 	})
 }
 
+func (s *Server) documentState(uri string) (openDocument, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, ok := s.documents[uri]
+	if !ok {
+		return openDocument{}, false
+	}
+	return doc, true
+}
+
 func (s *Server) handleDocumentSymbol(req rpcRequest) {
 	if len(req.ID) == 0 {
 		return
@@ -493,22 +500,16 @@ func (s *Server) handleDocumentSymbol(req rpcRequest) {
 		return
 	}
 	doc, hasDoc := s.documentState(params.TextDocument.URI)
-	index := s.getOrBuildHoverIndex(params.TextDocument.URI, path, doc, hasDoc)
-	if index == nil || len(index.documentSymbols) == 0 {
-		s.writeResponse(req.ID, []documentSymbol{})
+	if hasDoc {
+		s.writeResponse(req.ID, syntaxDocumentSymbols(path, doc.Text))
 		return
 	}
-	s.writeResponse(req.ID, index.documentSymbols)
-}
-
-func (s *Server) documentState(uri string) (openDocument, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	doc, ok := s.documents[uri]
-	if !ok {
-		return openDocument{}, false
+	bytes, err := os.ReadFile(path)
+	if err == nil {
+		s.writeResponse(req.ID, syntaxDocumentSymbols(path, string(bytes)))
+		return
 	}
-	return doc, true
+	s.writeResponse(req.ID, []documentSymbol{})
 }
 
 func (s *Server) publishSyntaxDiagnostics(uri string, version int, text string) {
@@ -764,6 +765,27 @@ func buildHoverIndex(path, text string, hasText bool) *hoverIndex {
 		definitionCandidates: defCandidates,
 		documentSymbols:      docSymbols,
 	}
+}
+
+func syntaxDocumentSymbols(path, text string) []documentSymbol {
+	if path == "" {
+		return nil
+	}
+	diagBag := diagnostics.NewBag()
+	var mod *ast.Module
+	func() {
+		defer func() {
+			if recover() != nil {
+				mod = nil
+			}
+		}()
+		toks := lexSource(path, text, diagBag)
+		mod = parser.Parse(path, toks, diagBag)
+	}()
+	if mod == nil {
+		return nil
+	}
+	return collectDocumentSymbols(&context.Module{FilePath: path, AST: mod}, nil)
 }
 
 func indexModulesByKey(result compiler.Result) map[string]*context.Module {

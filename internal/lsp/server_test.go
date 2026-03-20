@@ -141,12 +141,8 @@ func TestInitializeAdvertisesHoverDefinitionAndDocumentSymbolProvider(t *testing
 		t.Fatal("expected definitionProvider=true")
 	}
 
-	var documentSymbolProvider bool
-	if err := json.Unmarshal(payload.Capabilities["documentSymbolProvider"], &documentSymbolProvider); err != nil {
-		t.Fatalf("failed to decode documentSymbolProvider: %v", err)
-	}
-	if !documentSymbolProvider {
-		t.Fatal("expected documentSymbolProvider=true")
+	if _, ok := payload.Capabilities["documentSymbolProvider"]; ok {
+		t.Fatal("expected documentSymbolProvider to be omitted")
 	}
 }
 
@@ -244,6 +240,55 @@ func TestHoverUsesOpenDocumentOverlayText(t *testing.T) {
 	}
 	if !strings.Contains(hover.Contents.Value, "str") {
 		t.Fatalf("expected str hover from overlay, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverShowsExpandedNamedConstraint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "constraint numeric = union {\n    i32,\n    i64,\n}\n\nfn add_numbers<T: numeric>(a: T, b: T) T {\n    return a + b\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "fn add_numbers<T: numeric>")
+	if !ok {
+		t.Fatal("failed to find numeric use")
+	}
+	char += len("fn add_numbers<T: ")
+
+	var out bytes.Buffer
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+	uri := "file://" + filepath.ToSlash(path)
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	resp := decodeSingleResponse(t, out.String())
+	if resp.Error != nil {
+		t.Fatalf("unexpected hover error: %#v", resp.Error)
+	}
+	if resp.Result == nil {
+		t.Fatal("expected hover result")
+	}
+
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal hover result: %v", err)
+	}
+	var hover hoverResult
+	if err := json.Unmarshal(raw, &hover); err != nil {
+		t.Fatalf("failed to unmarshal hover result: %v", err)
+	}
+	if !strings.Contains(hover.Contents.Value, "constraint numeric = union { i32, i64 }") {
+		t.Fatalf("expected expanded constraint hover, got %q", hover.Contents.Value)
 	}
 }
 
@@ -474,162 +519,6 @@ func TestDefinitionGenericStaticOwnerCallResolvesOwnerAndMethod(t *testing.T) {
 	}
 	if methodLoc.Range.Start.Line != methodLine || methodLoc.Range.Start.Character != methodChar {
 		t.Fatalf("expected method definition at %d:%d, got %d:%d", methodLine, methodChar, methodLoc.Range.Start.Line, methodLoc.Range.Start.Character)
-	}
-}
-
-func TestDocumentSymbolReturnsHierarchy(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
-	src := "type Point struct {\n    X: i32\n}\n\nfn Point::Calc(&self) i32 {\n    return self.X\n}\n\nfn run() void {\n}\n"
-	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
-		t.Fatalf("failed to write source: %v", err)
-	}
-
-	var out bytes.Buffer
-	uri := "file://" + filepath.ToSlash(path)
-	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
-
-	req := rpcRequest{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage("1"),
-		Method:  "textDocument/documentSymbol",
-		Params: mustRawJSON(t, documentSymbolParams{
-			TextDocument: textDocumentIdentifier{URI: uri},
-		}),
-	}
-	s.handleRequest(req)
-
-	symbols := decodeDocumentSymbolsResult(t, out.String())
-	if len(symbols) == 0 {
-		t.Fatal("expected document symbols")
-	}
-
-	var point *documentSymbol
-	var run *documentSymbol
-	for i := range symbols {
-		if symbols[i].Name == "Point" {
-			point = &symbols[i]
-		}
-		if symbols[i].Name == "run" {
-			run = &symbols[i]
-		}
-	}
-	if point == nil {
-		t.Fatalf("expected Point symbol, got %#v", symbols)
-	}
-	if point.Kind != symbolKindStruct {
-		t.Fatalf("expected Point kind struct, got %d", point.Kind)
-	}
-	if len(point.Children) == 0 {
-		t.Fatalf("expected Point children (field + method), got %#v", point.Children)
-	}
-	hasField := false
-	hasMethod := false
-	for _, child := range point.Children {
-		if child.Name == "X" && child.Kind == symbolKindField {
-			hasField = true
-		}
-		if child.Name == "Calc" && child.Kind == symbolKindMethod {
-			hasMethod = true
-		}
-	}
-	if !hasField || !hasMethod {
-		t.Fatalf("expected Point children to include field X and method Calc, got %#v", point.Children)
-	}
-	if run == nil || run.Kind != symbolKindFunction {
-		t.Fatalf("expected top-level run function symbol, got %#v", symbols)
-	}
-}
-
-func TestDocumentSymbolUsesSharedIndexCacheWithHover(t *testing.T) {
-	oldParseProject := parseProject
-	defer func() { parseProject = oldParseProject }()
-
-	calls := 0
-	parseProject = func(path string) compiler.Result {
-		calls++
-		return fakeHoverResult(path, "i32")
-	}
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
-	if err := os.WriteFile(path, []byte("fn main() {}"), 0o644); err != nil {
-		t.Fatalf("failed to write source: %v", err)
-	}
-
-	uri := "file://" + filepath.ToSlash(path)
-	var out bytes.Buffer
-	s := &Server{
-		out: &out,
-		documents: map[string]openDocument{
-			uri: {Version: 1, Text: "fn main() {}"},
-		},
-		hoverCache: make(map[string]hoverCacheEntry),
-	}
-
-	hoverReq := rpcRequest{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage("1"),
-		Method:  "textDocument/hover",
-		Params: mustRawJSON(t, hoverParams{
-			TextDocument: textDocumentIdentifier{URI: uri},
-			Position:     lspPosition{Line: 0, Character: 0},
-		}),
-	}
-	s.handleRequest(hoverReq)
-
-	out.Reset()
-	symbolReq := rpcRequest{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage("2"),
-		Method:  "textDocument/documentSymbol",
-		Params: mustRawJSON(t, documentSymbolParams{
-			TextDocument: textDocumentIdentifier{URI: uri},
-		}),
-	}
-	s.handleRequest(symbolReq)
-
-	if calls != 1 {
-		t.Fatalf("expected shared parse/cache between hover and documentSymbol, got %d parses", calls)
-	}
-}
-
-func TestDocumentSymbolWorksWithoutTypeInfo(t *testing.T) {
-	oldParseProject := parseProject
-	defer func() { parseProject = oldParseProject }()
-
-	parseProject = func(path string) compiler.Result {
-		return fakeDocumentSymbolResult(path)
-	}
-
-	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
-	if err := os.WriteFile(path, []byte("fn run() {}\n"), 0o644); err != nil {
-		t.Fatalf("failed to write source: %v", err)
-	}
-
-	var out bytes.Buffer
-	uri := "file://" + filepath.ToSlash(path)
-	s := &Server{
-		out: &out,
-		documents: map[string]openDocument{
-			uri: {Version: 1, Text: "fn run() {}\n"},
-		},
-		hoverCache: make(map[string]hoverCacheEntry),
-	}
-	req := rpcRequest{
-		JSONRPC: "2.0",
-		ID:      json.RawMessage("1"),
-		Method:  "textDocument/documentSymbol",
-		Params: mustRawJSON(t, documentSymbolParams{
-			TextDocument: textDocumentIdentifier{URI: uri},
-		}),
-	}
-	s.handleRequest(req)
-
-	symbols := decodeDocumentSymbolsResult(t, out.String())
-	if len(symbols) != 1 || symbols[0].Name != "run" || symbols[0].Kind != symbolKindFunction {
-		t.Fatalf("expected function symbol from AST-only result, got %#v", symbols)
 	}
 }
 

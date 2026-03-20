@@ -402,13 +402,13 @@ func TestTypecheckerSupportsConstraintDeclarationIntersection(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 constraint reader = interface {
     Read(&self) i32
-};
+}
 
 constraint printable = interface {
     Print(&self) void
-};
+}
 
-constraint reader_printable = reader & printable;
+constraint reader_printable = reader & printable
 
 fn Use<T: reader_printable>(value: T) T {
     return value
@@ -424,7 +424,7 @@ fn Use<T: reader_printable>(value: T) T {
 func TestTypecheckerReportsConstraintDeclarationMismatch(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-constraint numeric = union { i32, i64 };
+constraint numeric = union { i32, i64 }
 
 fn Id<T: numeric>(v: T) T {
     return v
@@ -454,7 +454,7 @@ fn main() void {
 func TestTypecheckerRejectsConstraintAsConcreteType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-constraint numeric = union { i32, i64 };
+constraint numeric = union { i32, i64 }
 
 fn main() void {
     let x: numeric = 1
@@ -475,6 +475,76 @@ fn main() void {
 	}
 	if !found {
 		t.Fatalf("expected concrete-constraint usage diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerSupportsNamedAndInlineConstraints(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Writer interface {
+    write(&self, []u8) i32
+}
+
+constraint W = Writer
+
+type FileWriter struct {}
+
+fn FileWriter::write(&self, data: []u8) i32 {
+    data
+    return 0
+}
+
+fn write_all<T: W>(x: T) void {
+    x
+}
+
+fn close_it<T: interface {
+    close(&self) void
+}>(x: T) void {
+    x.close()
+}
+
+type Door struct {}
+
+fn Door::close(&self) void {}
+
+fn main() void {
+    let w = .FileWriter{}
+    let d = .Door{}
+    write_all(w)
+    close_it(d)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerDoesNotConflictNestedCallExpectedTypeInference(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+constraint numeric = union {
+    i32,
+    f32,
+    u32,
+}
+
+fn add_numbers<T: numeric>(a: T, b: T) T {
+    return a + b
+}
+
+fn main() void {
+    print(add_numbers(1, 2))
+    print(add_numbers(1.4, 2.7))
+    print(add_numbers(1, 2))
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -1040,24 +1110,6 @@ fn main() i32 {
 	}
 }
 
-func TestTypecheckerRejectsStaticStructField(t *testing.T) {
-	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-type Point struct {
-    X: i32 = 0
-    static: Counter i32 = 0
-}
-`)
-
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected static-struct-field diagnostic")
-	}
-	if !strings.Contains(result.Diagnostics.Diagnostics()[0].Message, "static struct fields are not supported") {
-		t.Fatalf("expected static-field rejection diagnostic, got %#v", result.Diagnostics.Diagnostics())
-	}
-}
-
 func TestTypecheckerAllowsRuntimeUnionTypeTest(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
@@ -1279,7 +1331,7 @@ fn main() i32 {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `missing method String() str`) {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, `missing method String`) {
 			found = true
 			break
 		}

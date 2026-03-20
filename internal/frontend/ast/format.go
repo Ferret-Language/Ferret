@@ -45,13 +45,61 @@ func TypeString(typ TypeExpr) string {
 		}
 		return "(" + strings.Join(parts, ", ") + ")"
 	case *StructType:
-		return "struct"
+		var b strings.Builder
+		b.WriteString("struct")
+		if len(t.Fields) == 0 {
+			b.WriteString(" {}")
+			return b.String()
+		}
+		b.WriteString(" {\n")
+		for _, field := range t.Fields {
+			if field == nil || field.Name == nil {
+				continue
+			}
+			line := "    " + field.Name.Text() + ": " + TypeString(field.Type)
+			if field.Default != nil {
+				defaultValue := ExprString(field.Default)
+				if defaultValue == "" || defaultValue == "_" {
+					defaultValue = "..."
+				}
+				line += " = " + defaultValue
+			}
+			b.WriteString(line + "\n")
+		}
+		b.WriteString("}")
+		return b.String()
 	case *InterfaceType:
-		return "interface"
+		var b strings.Builder
+		b.WriteString("interface")
+		if len(t.Methods) == 0 {
+			b.WriteString(" {}")
+			return b.String()
+		}
+		b.WriteString(" {\n")
+		for _, method := range t.Methods {
+			sig := interfaceMethodSignature(method)
+			if sig == "" {
+				continue
+			}
+			b.WriteString("    " + sig + "\n")
+		}
+		b.WriteString("}")
+		return b.String()
 	case *EnumType:
-		return "enum"
+		names := make([]string, 0, len(t.Variants))
+		for _, variant := range t.Variants {
+			if variant == nil || variant.Name == nil {
+				continue
+			}
+			names = append(names, variant.Name.Text())
+		}
+		return "enum { " + strings.Join(names, ", ") + " }"
 	case *UnionType:
-		return "union"
+		members := make([]string, 0, len(t.Members))
+		for _, member := range t.Members {
+			members = append(members, TypeString(member))
+		}
+		return "union { " + strings.Join(members, ", ") + " }"
 	case *IntersectionType:
 		parts := make([]string, 0, len(t.Terms))
 		for _, term := range t.Terms {
@@ -59,7 +107,14 @@ func TypeString(typ TypeExpr) string {
 		}
 		return strings.Join(parts, " & ")
 	case *ErrorType:
-		return "error"
+		names := make([]string, 0, len(t.Members))
+		for _, member := range t.Members {
+			if member == nil || member.Name == nil {
+				continue
+			}
+			names = append(names, member.Name.Text())
+		}
+		return "error { " + strings.Join(names, ", ") + " }"
 	default:
 		return "<unknown>"
 	}
