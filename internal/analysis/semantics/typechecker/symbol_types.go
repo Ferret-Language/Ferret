@@ -101,11 +101,21 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 	if fn == nil {
 		return &typeinfo.FuncType{Result: &typeinfo.BuiltinType{Name: "void"}}
 	}
+	ownerMod, ownerDecl := c.ownerTypeDeclForFunc(mod, fn)
+	if ownerDecl != nil && len(ownerDecl.TypeParams) > 0 {
+		c.pushTypeParams(ownerMod, ownerDecl, ownerDecl.TypeParams)
+		defer c.popTypeParams()
+	}
 	typeParams := c.pushTypeParams(mod, fn, fn.TypeParams)
 	defer c.popTypeParams()
 	var selfType typeinfo.Type
-	if fn.OwnerType != nil {
-		selfType = c.typeFromSyntax(mod, fn.OwnerType)
+	if fn.Receiver != nil {
+		recvType := c.syntaxType(mod, fn.Receiver.Type)
+		if base, ok := typeinfo.ReceiverBaseNamedType(recvType); ok {
+			selfType = base
+		}
+	} else if fn.OwnerType != nil {
+		selfType = c.syntaxType(mod, fn.OwnerType)
 	}
 	params := make([]typeinfo.ParamSpec, 0, len(fn.Params))
 	for _, param := range fn.Params {
@@ -122,7 +132,7 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 		}
 		params = append(params, typeinfo.ParamSpec{
 			Name:  name,
-			Type:  c.instantiateSelfType(c.typeFromSyntax(mod, param.Type), selfType),
+			Type:  c.instantiateSelfType(c.syntaxType(mod, param.Type), selfType),
 			Flags: flags,
 		})
 	}
@@ -138,5 +148,5 @@ func (c *checker) funcResultType(mod *context.Module, fn *ast.FuncDecl) typeinfo
 	if fn == nil || fn.Result == nil {
 		return &typeinfo.BuiltinType{Name: "void"}
 	}
-	return c.typeFromSyntax(mod, fn.Result)
+	return c.syntaxType(mod, fn.Result)
 }

@@ -20,6 +20,7 @@ type lowerContext struct {
 	importPath   string
 	lookupMethod hir.MethodLookup
 	resultType   typeinfo.Type
+	structTypes  map[string]*typeinfo.StructType
 }
 
 func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, lookupMethod hir.MethodLookup) *Module {
@@ -40,8 +41,9 @@ func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.Modul
 	for _, global := range hirMod.Globals {
 		out.Globals = append(out.Globals, lowerGlobal(global, bindings, globalConsts, hirMod.ImportPath, lookupMethod))
 	}
+	structTypes := collectNamedStructTypes(hirMod)
 	for _, fn := range cfgMod.Functions {
-		out.Functions = append(out.Functions, lowerFunction(fn, bindings, globalConsts, hirMod.ImportPath, lookupMethod))
+		out.Functions = append(out.Functions, lowerFunction(fn, bindings, globalConsts, hirMod.ImportPath, lookupMethod, structTypes))
 	}
 	return NormalizeModule(out)
 }
@@ -143,11 +145,35 @@ func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts 
 	}
 }
 
-func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *Function {
+func collectNamedStructTypes(mod *hir.Module) map[string]*typeinfo.StructType {
+	if mod == nil {
+		return nil
+	}
+	out := make(map[string]*typeinfo.StructType, len(mod.Types))
+	for _, decl := range mod.Types {
+		if decl == nil || decl.Struct == nil || decl.Named == nil {
+			continue
+		}
+		fields := make(map[string]*typeinfo.StructField, len(decl.Struct.Fields))
+		ordered := make([]*typeinfo.StructField, 0, len(decl.Struct.Fields))
+		for _, field := range decl.Struct.Fields {
+			if field == nil {
+				continue
+			}
+			entry := &typeinfo.StructField{Name: field.Name, Type: field.Type}
+			fields[entry.Name] = entry
+			ordered = append(ordered, entry)
+		}
+		out[decl.Named.Name] = &typeinfo.StructType{Fields: fields, OrderedFields: ordered}
+	}
+	return out
+}
+
+func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup, structTypes map[string]*typeinfo.StructType) *Function {
 	if fn == nil || fn.Source == nil {
 		return nil
 	}
-	lowerCtx := newLowerContext(fn.Source, bindings, globalConsts, importPath, lookupMethod)
+	lowerCtx := newLowerContext(fn.Source, bindings, globalConsts, importPath, lookupMethod, structTypes)
 	out := &Function{
 		Name:       fn.Name,
 		LinkName:   lowerFunctionLinkName(importPath, fn.Source),
@@ -652,7 +678,7 @@ func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
 	}
 }
 
-func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *lowerContext {
+func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup, structTypes map[string]*typeinfo.StructType) *lowerContext {
 	locals, consts := collectLocals(fn)
 	return &lowerContext{
 		locals:       locals,
@@ -662,6 +688,7 @@ func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts ma
 		importPath:   importPath,
 		lookupMethod: lookupMethod,
 		resultType:   fn.Result,
+		structTypes:  structTypes,
 	}
 }
 
@@ -673,7 +700,7 @@ func (c *lowerContext) fnResultType() typeinfo.Type {
 }
 
 func (c *lowerContext) fieldIndex(typ typeinfo.Type, name string) int {
-	structType, ok := lowerStructView(typ)
+	structType, ok := c.structView(typ)
 	if !ok {
 		return -1
 	}
@@ -683,6 +710,19 @@ func (c *lowerContext) fieldIndex(typ typeinfo.Type, name string) int {
 		}
 	}
 	return -1
+}
+
+func (c *lowerContext) structView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
+	structType, ok := lowerStructView(typ)
+	if ok {
+		return structType, true
+	}
+	named, ok := derefForSelector(typ).(*typeinfo.NamedType)
+	if !ok || named == nil || c == nil || c.structTypes == nil {
+		return nil, false
+	}
+	structType, ok = c.structTypes[named.Name]
+	return structType, ok
 }
 
 func (c *lowerContext) lookupConstExpr(name string, source ast.Expr) (hir.Expr, bool) {

@@ -225,6 +225,65 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerHandlesGenericOwnerMethod(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Box<T> struct {
+    Value: T
+}
+
+fn Box<T>::Get(&self) T {
+    return self.Value
+}
+
+fn main() i32 {
+    let b: Box<i32> = .{ .Value = 7 }
+    return b.Get()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	ret := mainFn.Body.Stmts[1].(*ast.ReturnStmt)
+	call, ok := ret.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expr, got %T", ret.Value)
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[call], "i32") {
+		t.Fatalf("expected instantiated method result i32, got %#v", result.Entry.Types.Nodes[call])
+	}
+}
+
+func TestTypecheckerReportsGenericOwnerMissingTypeArgsOnce(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+ type Point<T> struct {
+     Value: T = 0
+ }
+ 
+ fn Point::Calc(&self) i32 {
+     return self.Value
+ }
+ `)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected diagnostics")
+	}
+	count := 0
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "missing type arguments for generic type \"Point\"") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected one missing-type-args diagnostic for generic owner method, got %d: %#v", count, result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerInfersGenericExternCallResult(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

@@ -3,6 +3,7 @@ package typechecker
 import (
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/frontend/ast"
 )
 
 func (c *checker) canHaveMethods(typ typeinfo.Type) bool {
@@ -57,6 +58,7 @@ func (c *checker) lookupMethodDetailed(receiverType typeinfo.Type, name string, 
 			continue
 		}
 		fnType, _ := c.typeOfSymbol(sym).(*typeinfo.FuncType)
+		fnType = c.instantiateOwnerMethodType(baseNamed, sym, fnType)
 		return sym, fnType, typeinfo.ReceiverTypeFromKey(baseNamed, key)
 	}
 	return nil, nil, nil
@@ -81,6 +83,7 @@ func (c *checker) lookupMethodWithReceiver(receiverType typeinfo.Type, receiver 
 		return nil, nil
 	}
 	fnType, _ := c.typeOfSymbol(sym).(*typeinfo.FuncType)
+	fnType = c.instantiateOwnerMethodType(baseNamed, sym, fnType)
 	return sym, fnType
 }
 
@@ -102,7 +105,54 @@ func (c *checker) lookupStaticMethod(ownerType typeinfo.Type, name string) (*sym
 		return nil, nil
 	}
 	fnType, _ := c.typeOfSymbol(sym).(*typeinfo.FuncType)
+	fnType = c.instantiateOwnerMethodType(named, sym, fnType)
 	return sym, fnType
+}
+
+func (c *checker) instantiateOwnerMethodType(ownerNamed *typeinfo.NamedType, sym *symbols.Symbol, fnType *typeinfo.FuncType) *typeinfo.FuncType {
+	if c == nil || ownerNamed == nil || sym == nil || fnType == nil {
+		return fnType
+	}
+	fnDecl, _ := sym.Node.(*ast.FuncDecl)
+	if fnDecl == nil || fnDecl.OwnerType == nil {
+		return fnType
+	}
+	ownerDecl := ownerNamed.Decl
+	if ownerDecl == nil || len(ownerDecl.TypeParams) == 0 || len(ownerNamed.TypeArgs) == 0 || len(ownerDecl.TypeParams) != len(ownerNamed.TypeArgs) {
+		return fnType
+	}
+	bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(ownerDecl.TypeParams))
+	for i, param := range ownerDecl.TypeParams {
+		if param.Name == nil {
+			continue
+		}
+		bindings[&typeinfo.TypeParam{Name: param.Name.Text(), Owner: ownerDecl}] = ownerNamed.TypeArgs[i]
+	}
+	out := &typeinfo.FuncType{
+		IsUnsafe: fnType.IsUnsafe,
+		Result:   c.substituteTypeParams(fnType.Result, bindings),
+		Params:   make([]typeinfo.ParamSpec, 0, len(fnType.Params)),
+	}
+	for _, param := range fnType.Params {
+		out.Params = append(out.Params, typeinfo.ParamSpec{
+			Name:  param.Name,
+			Type:  c.substituteTypeParams(param.Type, bindings),
+			Flags: param.Flags,
+		})
+	}
+	out.TypeParams = make([]*typeinfo.TypeParam, 0, len(fnType.TypeParams))
+	for _, param := range fnType.TypeParams {
+		if param == nil {
+			continue
+		}
+		if c.lookupTypeParamBinding(bindings, param) != nil {
+			continue
+		}
+		copy := *param
+		copy.Constraint = c.substituteTypeParams(param.Constraint, bindings)
+		out.TypeParams = append(out.TypeParams, &copy)
+	}
+	return out
 }
 
 func (c *checker) interfaceMethodReceiverType(receiverType typeinfo.Type, receiver typeinfo.ReceiverKind) typeinfo.Type {

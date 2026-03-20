@@ -161,6 +161,44 @@ func (c *checker) bindNodeSymbolResolution(node ast.Node, sym *symbols.Symbol) {
 	})
 }
 
+func (c *checker) ownerTypeDeclForFunc(mod *context.Module, fn *ast.FuncDecl) (*context.Module, *ast.TypeDecl) {
+	if c == nil || fn == nil || fn.OwnerType == nil {
+		return nil, nil
+	}
+	ownerMod := mod
+	if ownerMod == nil {
+		ownerMod = c.mod
+	}
+	resolution := c.lookupTypeResolution(ownerMod, fn.OwnerType)
+	if resolution == nil || resolution.Symbol == nil {
+		return nil, nil
+	}
+	decl, _ := resolution.Symbol.Node.(*ast.TypeDecl)
+	if decl == nil {
+		return nil, nil
+	}
+	if symOwner := c.findModuleForSymbol(resolution.Symbol); symOwner != nil {
+		ownerMod = symOwner
+	}
+	return ownerMod, decl
+}
+
+func (c *checker) syntaxType(mod *context.Module, expr ast.TypeExpr) typeinfo.Type {
+	if c == nil || expr == nil {
+		return nil
+	}
+	if c.info != nil {
+		if typ, ok := c.info.Nodes[expr]; ok && typ != nil {
+			return typ
+		}
+	}
+	typ := c.typeFromSyntax(mod, expr)
+	if c.info != nil && typ != nil {
+		c.info.BindNode(expr, typ)
+	}
+	return typ
+}
+
 func CheckModule(ctx *context.CompilerContext, mod *context.Module) {
 	if ctx == nil || mod == nil || mod.AST == nil || mod.Bindings == nil {
 		return
@@ -171,17 +209,28 @@ func CheckModule(ctx *context.CompilerContext, mod *context.Module) {
 		info: typeinfo.NewModuleInfo(),
 	}
 
-	for _, sym := range mod.ModuleScope.Symbols() {
+	seenSymbols := make(map[symbols.SymbolID]struct{})
+	bindSymbol := func(sym *symbols.Symbol) {
+		if sym == nil {
+			return
+		}
+		if _, ok := seenSymbols[sym.ID]; ok {
+			return
+		}
+		seenSymbols[sym.ID] = struct{}{}
 		c.info.BindSymbol(sym, c.typeOfSymbol(sym))
+	}
+	for _, sym := range mod.ModuleScope.Symbols() {
+		bindSymbol(sym)
 	}
 	for _, members := range mod.TypeMembers {
 		for _, sym := range members {
-			c.info.BindSymbol(sym, c.typeOfSymbol(sym))
+			bindSymbol(sym)
 		}
 	}
 	for _, methods := range mod.MethodSets {
 		for _, sym := range methods {
-			c.info.BindSymbol(sym, c.typeOfSymbol(sym))
+			bindSymbol(sym)
 		}
 	}
 

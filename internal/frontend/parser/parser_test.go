@@ -1347,3 +1347,38 @@ fn Point::Len(this) i32 {
 		t.Fatalf("expected non-self receiver warning, got %v", diag.All())
 	}
 }
+
+
+func TestParseMutBorrowPrefixExpression(t *testing.T) {
+	src := `
+fn main() {
+    let mut p = 1
+    let m = &mut p
+    m
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	letStmt, ok := fn.Body.Stmts[1].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected second stmt to be let, got %T", fn.Body.Stmts[1])
+	}
+	prefix, ok := letStmt.Value.(*ast.PrefixExpr)
+	if !ok {
+		t.Fatalf("expected prefix expr, got %T", letStmt.Value)
+	}
+	if prefix.Op != "&mut" {
+		t.Fatalf("expected op &mut, got %q", prefix.Op)
+	}
+	ident, ok := prefix.Right.(*ast.Ident)
+	if !ok || len(ident.Path) != 1 || ident.Path[0] != "p" {
+		t.Fatalf("expected right operand p, got %#v", prefix.Right)
+	}
+}

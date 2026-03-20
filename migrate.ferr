@@ -9,28 +9,40 @@ fn run(mut c: *Conn) void {
     r
 }
 
-type Point struct {
-    Value: i32 = 0
+type Point<T> struct {
+    Value: T
 }
 
-fn Point::New() Self {
-    return .{}
+type Circle<T> struct {
+    Rad: T
 }
 
-fn Point::Draw(&self) {
+fn Circle<T>::New(v: T) Self {
+    return .{ .Rad = v }
+}
+
+fn Circle<T>::Draw(&self) {
+    print("I am circle")
+}
+
+fn Point<T>::New(v: T) Self {
+    return .{ .Value = v }
+}
+
+fn Point<T>::Draw(&self) {
     print("I am Point")
 }
 
-fn Point::Incr(&mut self, cx: i32) {
+fn Point<T>::Incr(&mut self, cx: T) {
     self.Value += cx
 }
 
-fn Point::Calc(&self) i32 {
+fn Point<T>::Calc(&self) T {
     return self.Value
 }
 
 fn run2() {
-    let mut p: Point = .{}
+    let mut p: Point<i32> = .{ .Value = 1 }
     p.Calc()
     p.Incr(1) // should only work if p is mutable
     let m = &mut p
@@ -54,25 +66,31 @@ fn add<T>(a: T, b: T) T {
     return a + b
 }
 
+fn mul_unused<T>(a: T, b: T) T {
+    return a * b
+}
+
 // program entry point
 fn main() {
     let mut a = 10
     let b : i32 = a
     let arr : [_]i32 = [_]i32{1,2,3}
     let n = arr[1]
-    let mut c = 11
-    if c > 10 {
-        print("c is more than 10")
+    let mut c = 5
+    if c > 1 {
+        print("c is more than 1")
     } else {
-        print("c is less than 10")
+        print("c is less than 1")
     }
     
     // run2() catch |err| {
         
     // }
     
-    let p = .Point{}
+    let p = .Point<i32>{ .Value = 2 }
+    let cir = .Circle<i32>{ .Rad = 1 }
     drawShape(p)
+    drawShape(cir)
 
     let ax : any = p
     

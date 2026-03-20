@@ -179,7 +179,7 @@ func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	mod.LoweredHIR = hir.Specialize(hir.Lower(mod.HIR), mod.Types, mod.Bindings)
 	mod.Phase = phase.PhaseHIRLowered
 	cfganalysis.AnalyzeModule(p.ctx, mod)
-	mod.MIR = mir.LowerModule(mod.CFG, mod.LoweredHIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupMethodPath(mod.ImportPath))
+	mod.MIR = mir.LowerModule(mod.CFG, mod.LoweredHIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupLoweredMethodPath(mod.ImportPath))
 	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseMIRGenerated
 	mir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)
@@ -212,14 +212,55 @@ func (p *Pipeline) lookupMethodPath(currentImportPath string) hir.MethodLookup {
 				continue
 			}
 			leaf := pipelineMethodLinkLeaf(sym)
-			if owner.ImportPath == "" || owner.ImportPath == currentImportPath {
-				return []string{leaf}, true
-			}
-			parts := strings.Split(owner.ImportPath, "/")
-			return append(parts, leaf), true
+			return pipelineMethodPath(owner.ImportPath, currentImportPath, leaf), true
 		}
 		return nil, false
 	}
+}
+
+func (p *Pipeline) lookupLoweredMethodPath(currentImportPath string) hir.MethodLookup {
+	return func(receiver typeinfo.Type, methodName string) ([]string, bool) {
+		if p == nil || p.ctx == nil || methodName == "" {
+			return nil, false
+		}
+		named, ok := pipelineBaseNamed(receiver)
+		if !ok || named == nil {
+			return nil, false
+		}
+		owner, ok := p.ctx.GetModule(named.ModuleKey)
+		if !ok || owner == nil || owner.LoweredHIR == nil {
+			return nil, false
+		}
+		var method *hir.Func
+		for _, fn := range owner.LoweredHIR.Functions {
+			if fn == nil || fn.OwnerType != named.Name {
+				continue
+			}
+			if fn.Name == methodName {
+				method = fn
+				break
+			}
+			if method == nil && strings.HasPrefix(fn.Name, methodName+"$") {
+				method = fn
+			}
+		}
+		if method == nil {
+			return nil, false
+		}
+		leaf := method.Name
+		if method.OwnerType != "" {
+			leaf = method.OwnerType + "__" + method.Name
+		}
+		return pipelineMethodPath(owner.ImportPath, currentImportPath, leaf), true
+	}
+}
+
+func pipelineMethodPath(ownerImportPath, currentImportPath, leaf string) []string {
+	if ownerImportPath == "" || ownerImportPath == currentImportPath {
+		return []string{leaf}
+	}
+	parts := strings.Split(ownerImportPath, "/")
+	return append(parts, leaf)
 }
 
 func pipelineMethodLinkLeaf(sym *symbols.Symbol) string {

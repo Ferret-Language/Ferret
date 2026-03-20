@@ -148,18 +148,13 @@ type Box<T> struct {
     Value: T
 }
 
-type Point struct {
-    X: i32
-}
-
-fn Point::Echo<T>(&self, value: T) T {
-    return value
+fn Box<T>::Get(&self) T {
+    return self.Value
 }
 
 fn main() i32 {
     let b: Box<i32> = .{ .Value = 7 }
-    let p: Point = .{ .X = 1 }
-    return p.Echo(b.Value)
+    return b.Get()
 }
 `)
 
@@ -206,18 +201,18 @@ fn main() i32 {
 		switch {
 		case fn.Name == "main":
 			mainFn = fn
-		case strings.HasPrefix(fn.Name, "Echo$"):
+		case strings.HasPrefix(fn.Name, "Get$"):
 			specializedMethod = fn
-		case fn.Name == "Echo" && fn.Receiver != nil:
+		case fn.Name == "Get" && fn.Receiver != nil:
 			t.Fatalf("expected generic method template to be removed from lowered HIR, got %#v", fn.Name)
 		}
 	}
 	if mainFn == nil || specializedMethod == nil {
 		t.Fatalf("expected main and specialized method functions, got %#v", result.Entry.LoweredHIR.Functions)
 	}
-	ret, ok := mainFn.Body.Stmts[2].(*hir.ReturnStmt)
+	ret, ok := mainFn.Body.Stmts[1].(*hir.ReturnStmt)
 	if !ok {
-		t.Fatalf("expected lowered return stmt, got %T", mainFn.Body.Stmts[2])
+		t.Fatalf("expected lowered return stmt, got %T", mainFn.Body.Stmts[1])
 	}
 	call, ok := ret.Value.(*hir.CallExpr)
 	if !ok {
@@ -232,6 +227,107 @@ fn main() i32 {
 	}
 }
 
+func TestPipelineSpecializesGenericOwnerMethodMutation(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+ type Point<T> struct {
+     Value: T
+ }
+
+ fn Point<T>::Incr(&mut self, cx: i32) {
+     self.Value += cx
+ }
+
+ fn main() void {
+     let mut p: Point<i32> = .{ .Value = 0 }
+     p.Incr(1)
+ }
+ `)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+	text := hir.FormatModule(result.Entry.LoweredHIR)
+	if !strings.Contains(text, "type Point$T_i32 struct") {
+		t.Fatalf("expected specialized concrete Point type, got %q", text)
+	}
+	if strings.Contains(text, "type Point$T_T struct") {
+		t.Fatalf("expected no unresolved generic Point specialization, got %q", text)
+	}
+	if !strings.Contains(text, "fn Point$T_i32::Incr$T_i32") {
+		t.Fatalf("expected concrete specialized mutating method, got %q", text)
+	}
+}
+
+func TestPipelineSpecializesOnlyRequiredGenericOwnerMethods(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+type Shape interface {
+    Draw(&self)
+}
+
+type Point<T> struct {
+    Value: T
+}
+
+fn Point<T>::New(v: T) Self {
+    return .{ .Value = v }
+}
+
+fn Point<T>::Draw(&self) {
+}
+
+fn Point<T>::Incr(&mut self, cx: T) {
+    self.Value += cx
+}
+
+fn drawShape(s: Shape) {
+    s.Draw()
+}
+
+fn main() void {
+    let p: Point<i32> = .{ .Value = 1 }
+    drawShape(p)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+	text := hir.FormatModule(result.Entry.LoweredHIR)
+	if !strings.Contains(text, "fn Point$T_i32::Draw$T_i32") {
+		t.Fatalf("expected required Draw specialization, got %q", text)
+	}
+	if strings.Contains(text, "fn Point$T_i32::New$T_i32") {
+		t.Fatalf("did not expect unused New specialization, got %q", text)
+	}
+	if strings.Contains(text, "fn Point$T_i32::Incr$T_i32") {
+		t.Fatalf("did not expect unused Incr specialization, got %q", text)
+	}
+}
+
 func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func mustWriteHIR(t *testing.T, path, content string) {
@@ -241,5 +337,79 @@ func mustWriteHIR(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHIRBorrowPrefixOpAndSpacing(t *testing.T) {
+	root := t.TempDir()
+	src := "fn main() {\n    let mut p = 1\n    let m = &mut p\n    m\n}\n"
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), src)
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.HIR == nil || len(result.Entry.HIR.Functions) == 0 {
+		t.Fatalf("expected HIR functions, got %#v", result.Entry)
+	}
+	mainFn := result.Entry.HIR.Functions[0]
+	letStmt, ok := mainFn.Body.Stmts[1].(*hir.LetStmt)
+	if !ok {
+		t.Fatalf("expected second stmt let, got %T", mainFn.Body.Stmts[1])
+	}
+	prefix, ok := letStmt.Value.(*hir.PrefixExpr)
+	if !ok {
+		t.Fatalf("expected prefix expr, got %T", letStmt.Value)
+	}
+	if prefix.Op != "&mut" {
+		t.Fatalf("expected op &mut, got %q", prefix.Op)
+	}
+	text := hir.FormatModule(result.Entry.HIR)
+	if !strings.Contains(text, "&mut p") {
+		t.Fatalf("expected spacing &mut p in HIR dump, got %q", text)
+	}
+	if result.Entry.LoweredHIR != nil {
+		loweredText := hir.FormatModule(result.Entry.LoweredHIR)
+		if !strings.Contains(loweredText, "&mut p") {
+			t.Fatalf("expected spacing &mut p in lowered HIR dump, got %q", loweredText)
+		}
+	}
+}
+
+func TestLoweredHIRGenericMutBorrowSpacing(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+type Point<T> struct {
+    Value: T
+}
+
+fn Point<T>::Incr(&mut self, cx: T) {
+    self.Value += cx
+}
+
+fn main() {
+    let mut p: Point<i32> = .{ .Value = 1 }
+    p.Incr(1)
+    let m = &mut p
+    m
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+	text := hir.FormatModule(result.Entry.LoweredHIR)
+	if !strings.Contains(text, "&mut p") {
+		t.Fatalf("expected spacing &mut p in generic lowered HIR dump, got %q", text)
 	}
 }

@@ -163,6 +163,11 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 			}
 		}
 	case *ast.FuncDecl:
+		ownerTypeParams := r.ownerTypeParamsForFunc(scope, d)
+		if len(ownerTypeParams) > 0 {
+			r.pushTypeParams(scope, ownerTypeParams)
+			defer r.popTypeParams()
+		}
 		if d.OwnerType != nil {
 			r.resolveType(scope, d.OwnerType)
 		}
@@ -206,6 +211,24 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 		r.resolveType(scope, d.Result)
 		r.resolveStmt(funcScope, d.Body)
 	}
+}
+
+func (r *resolver) ownerTypeParamsForFunc(scope *table.Scope, fn *ast.FuncDecl) []ast.TypeParam {
+	if r == nil || fn == nil || fn.OwnerType == nil {
+		return nil
+	}
+	sym, owner, ok := r.lookupTypeSymbolPath(scope, fn.OwnerType.Path)
+	if !ok || sym == nil {
+		return nil
+	}
+	if owner != nil && r.mod != nil && owner.Key != r.mod.Key {
+		return nil
+	}
+	decl, _ := sym.Node.(*ast.TypeDecl)
+	if decl == nil || len(decl.TypeParams) == 0 {
+		return nil
+	}
+	return decl.TypeParams
 }
 
 func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {

@@ -345,6 +345,111 @@ fn main() i32 {
 	t.Fatalf("expected lowered interface coercion in MIR, got %#v", mainFn.Blocks)
 }
 
+func TestPipelineLowersGenericOwnerInterfaceCallCoercion(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+type Shape interface {
+    Draw(&self)
+}
+
+type Point<T> struct {
+    Value: T
+}
+
+fn Point<T>::Draw(&self) {
+}
+
+fn drawShape(s: Shape) {
+    s.Draw()
+}
+
+fn main() void {
+    let p: Point<i32> = .{ .Value = 2 }
+    drawShape(p)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	findInterfaceLink := func(value mir.Value) bool {
+		ifaceArg, ok := value.(*mir.InterfaceValue)
+		if !ok || len(ifaceArg.Methods) != 1 {
+			return false
+		}
+		path := ifaceArg.Methods[0].Path
+		return len(path) > 0 && strings.HasSuffix(path[len(path)-1], "Point$T_i32__Draw$T_i32")
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			var value mir.Value
+			switch ins := instr.(type) {
+			case *mir.AssignInstr:
+				value = ins.Value
+			case *mir.ComputeInstr:
+				value = ins.Value
+			case *mir.EvalInstr:
+				value = ins.Value
+			default:
+				continue
+			}
+			if findInterfaceLink(value) {
+				return
+			}
+			call, ok := value.(*mir.CallValue)
+			if !ok {
+				continue
+			}
+			for _, arg := range call.Args {
+				if findInterfaceLink(arg) {
+					return
+				}
+				localArg, ok := arg.(*mir.LocalValue)
+				if !ok {
+					continue
+				}
+				for _, searchBlock := range mainFn.Blocks {
+					for _, searchInstr := range searchBlock.Instructions {
+						var assignedValue mir.Value
+						var targetID int
+						switch assign := searchInstr.(type) {
+						case *mir.AssignInstr:
+							assignedValue = assign.Value
+							targetID = assign.TargetID
+						case *mir.ComputeInstr:
+							assignedValue = assign.Value
+							targetID = assign.TargetID
+						default:
+							continue
+						}
+						if targetID != localArg.LocalID {
+							continue
+						}
+						if findInterfaceLink(assignedValue) {
+							return
+						}
+					}
+				}
+			}
+		}
+	}
+	t.Fatalf("expected specialized interface coercion for Point<i32>::Draw, got %#v", mainFn.Blocks)
+}
+
 func TestPipelineLowersRawAddressOperator(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `

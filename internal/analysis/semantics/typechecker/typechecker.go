@@ -253,11 +253,16 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 	if d == nil {
 		return
 	}
+	ownerMod, ownerDecl := c.ownerTypeDeclForFunc(c.mod, d)
+	if ownerDecl != nil && len(ownerDecl.TypeParams) > 0 {
+		c.pushTypeParams(ownerMod, ownerDecl, ownerDecl.TypeParams)
+		defer c.popTypeParams()
+	}
 	typeParams := c.pushTypeParams(c.mod, d, d.TypeParams)
 	defer c.popTypeParams()
 	prevGenericFunc := c.currentGenericFunc
 	prevGenericRequirements := c.currentGenericRequirements
-	if len(d.TypeParams) > 0 {
+	if len(d.TypeParams) > 0 || (ownerDecl != nil && len(ownerDecl.TypeParams) > 0) {
 		c.currentGenericFunc = c.declSymbol(d.Name)
 		if c.currentGenericFunc == nil && c.mod != nil && c.mod.Bindings != nil {
 			c.currentGenericFunc = c.mod.Bindings.FunctionSymbols[d]
@@ -278,12 +283,12 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		c.info.BindNode(param.Name, typeParams[i])
 	}
 	var selfType typeinfo.Type
-	if d.OwnerType != nil {
-		selfType = c.typeFromSyntax(c.mod, d.OwnerType)
-	}
 	funcScope := newRefineScope(nil)
 	if d.Receiver != nil {
-		recvType := c.typeFromSyntax(c.mod, d.Receiver.Type)
+		recvType := c.syntaxType(c.mod, d.Receiver.Type)
+		if base, ok := typeinfo.ReceiverBaseNamedType(recvType); ok {
+			selfType = base
+		}
 		if d.Receiver.Type != nil {
 			c.info.BindNode(d.Receiver.Type, recvType)
 		}
@@ -304,8 +309,11 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		c.bindDeclSymbol(d.Receiver.Name, recvType)
 		c.info.BindNode(d.Receiver, recvType)
 	}
+	if d.Receiver == nil && d.OwnerType != nil {
+		selfType = c.syntaxType(c.mod, d.OwnerType)
+	}
 	if d.IsStatic && d.OwnerType != nil {
-		ownerType := c.typeFromSyntax(c.mod, d.OwnerType)
+		ownerType := c.syntaxType(c.mod, d.OwnerType)
 		c.info.BindNode(d.OwnerType, ownerType)
 		if named, ok := ownerType.(*typeinfo.NamedType); ok {
 			if owner := c.findModuleForType(named); owner != nil && owner.Key != c.mod.Key {
@@ -319,7 +327,7 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		}
 	}
 	for _, param := range d.Params {
-		paramType := c.instantiateSelfType(c.typeFromSyntax(c.mod, param.Type), selfType)
+		paramType := c.instantiateSelfType(c.syntaxType(c.mod, param.Type), selfType)
 		if param.Type != nil {
 			c.info.BindNode(param.Type, paramType)
 		}
@@ -800,12 +808,7 @@ func (c *checker) containsTypeParam(typ typeinfo.Type) bool {
 	case *typeinfo.SliceType:
 		return c.containsTypeParam(t.Inner)
 	case *typeinfo.TupleType:
-		for _, elem := range t.Elems {
-			if c.containsTypeParam(elem) {
-				return true
-			}
-		}
-		return false
+		return slices.ContainsFunc(t.Elems, c.containsTypeParam)
 	default:
 		return false
 	}
@@ -1271,11 +1274,8 @@ func (c *checker) bindExplicitTypeArgs(call *ast.CallExpr, fnType *typeinfo.Func
 				WithPrimaryLabel(&loc, "type argument count does not match"),
 		)
 	}
-	limit := len(call.TypeArgs)
-	if limit > len(fnType.TypeParams) {
-		limit = len(fnType.TypeParams)
-	}
-	for i := 0; i < limit; i++ {
+	limit := min(len(call.TypeArgs), len(fnType.TypeParams))
+	for i := range limit {
 		bindings[fnType.TypeParams[i]] = c.typeFromSyntax(c.mod, call.TypeArgs[i])
 	}
 }
@@ -2057,7 +2057,7 @@ func (c *checker) checkDestructorDecl(fn *ast.FuncDecl, recvType typeinfo.Type) 
 	}
 }
 
-func (c *checker) isExactLifecycleReceiver(recvType typeinfo.Type, typeName string, constructor bool) bool {
+func (c *checker) isExactLifecycleReceiver(recvType typeinfo.Type, typeName string, _ bool) bool {
 	ptr, ok := recvType.(*typeinfo.PointerType)
 	if !ok || ptr == nil {
 		return false
@@ -2454,7 +2454,7 @@ func (c *checker) isConstExpr(scope *refineScope, expr ast.Expr) bool {
 	}
 }
 
-func (c *checker) isConstIdent(scope *refineScope, ident *ast.Ident) bool {
+func (c *checker) isConstIdent(_ *refineScope, ident *ast.Ident) bool {
 	if ident == nil || len(ident.Path) == 0 {
 		return false
 	}
