@@ -51,7 +51,11 @@ func ensureQBEBinary() (string, error) {
 		return "", fmt.Errorf("qbe toolchain: mkdir: %w", err)
 	}
 
-	if err := extractFS(SourceFS(), srcDir); err != nil {
+	srcFS, err := SourceFS()
+	if err != nil {
+		return "", fmt.Errorf("qbe toolchain: source fs: %w", err)
+	}
+	if err := extractFS(srcFS, srcDir); err != nil {
 		return "", fmt.Errorf("qbe toolchain: extract source: %w", err)
 	}
 

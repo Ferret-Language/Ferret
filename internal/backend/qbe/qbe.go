@@ -146,12 +146,12 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 	}, nil
 }
 
-func SourceFS() fs.FS {
+func SourceFS() (fs.FS, error) {
 	root, err := fs.Sub(sourceTree, "qbe-src")
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	return root
+	return root, nil
 }
 
 func emitTypes(b *strings.Builder, state *moduleState, types []*mir.TypeDecl) error {
