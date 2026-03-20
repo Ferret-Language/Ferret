@@ -37,12 +37,13 @@ func (*LetDecl) declNode()              {}
 func (d *LetDecl) Loc() source.Location { return d.Location }
 
 type TypeDecl struct {
-	Name       *Ident
-	TypeParams []TypeParam
-	Doc        *CommentGroup
-	Attrs      []Attribute
-	Type       TypeExpr
-	Location   source.Location
+	Name         *Ident
+	TypeParams   []TypeParam
+	Doc          *CommentGroup
+	Attrs        []Attribute
+	IsConstraint bool
+	Type         TypeExpr
+	Location     source.Location
 }
 
 func (*TypeDecl) declNode()              {}

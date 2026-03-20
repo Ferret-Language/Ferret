@@ -198,6 +198,8 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 		p.validateType(t.Inner)
 	case *ast.OptionalType:
 		p.validateType(t.Inner)
+	case *ast.ApproxType:
+		p.validateType(t.Inner)
 	case *ast.ErrorUnionType:
 		p.validateType(t.Error)
 		p.validateType(t.Value)
@@ -298,6 +300,10 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 			} else {
 				seen[key] = member
 			}
+		}
+	case *ast.IntersectionType:
+		for _, term := range t.Terms {
+			p.validateType(term)
 		}
 	}
 }

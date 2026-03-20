@@ -128,6 +128,12 @@ type OptionalType struct {
 
 func (t *OptionalType) String() string { return "?" + typeString(t.Inner) }
 
+type ApproxType struct {
+	Inner Type
+}
+
+func (t *ApproxType) String() string { return "~" + typeString(t.Inner) }
+
 type ErrorUnionType struct {
 	Error Type
 	Value Type
@@ -213,6 +219,24 @@ type UnionType struct {
 }
 
 func (t *UnionType) String() string { return "union" }
+
+type IntersectionType struct {
+	Members []Type
+}
+
+func (t *IntersectionType) String() string {
+	if t == nil {
+		return "<nil>"
+	}
+	if len(t.Members) == 0 {
+		return "<empty>"
+	}
+	parts := make([]string, 0, len(t.Members))
+	for _, member := range t.Members {
+		parts = append(parts, typeString(member))
+	}
+	return strings.Join(parts, " & ")
+}
 
 type InterfaceType struct {
 	Methods         map[string]*FuncType
@@ -422,6 +446,9 @@ func Equal(a, b Type) bool {
 	case *OptionalType:
 		bt, ok := b.(*OptionalType)
 		return ok && Equal(at.Inner, bt.Inner)
+	case *ApproxType:
+		bt, ok := b.(*ApproxType)
+		return ok && Equal(at.Inner, bt.Inner)
 	case *ErrorUnionType:
 		bt, ok := b.(*ErrorUnionType)
 		return ok && Equal(at.Error, bt.Error) && Equal(at.Value, bt.Value)
@@ -438,6 +465,17 @@ func Equal(a, b Type) bool {
 		}
 		for i := range at.Elems {
 			if !Equal(at.Elems[i], bt.Elems[i]) {
+				return false
+			}
+		}
+		return true
+	case *IntersectionType:
+		bt, ok := b.(*IntersectionType)
+		if !ok || len(at.Members) != len(bt.Members) {
+			return false
+		}
+		for i := range at.Members {
+			if !Equal(at.Members[i], bt.Members[i]) {
 				return false
 			}
 		}
@@ -478,6 +516,17 @@ func Assignable(dst, src Type) bool {
 	}
 	if opt, ok := dst.(*OptionalType); ok && src != nil {
 		return Assignable(opt.Inner, src)
+	}
+	if approx, ok := dst.(*ApproxType); ok && src != nil {
+		return Assignable(approx.Inner, src)
+	}
+	if inter, ok := dst.(*IntersectionType); ok {
+		for _, member := range inter.Members {
+			if !Assignable(member, src) {
+				return false
+			}
+		}
+		return true
 	}
 	if arrDst, ok := dst.(*ArrayType); ok {
 		if arrSrc, ok := src.(*ArrayType); ok {

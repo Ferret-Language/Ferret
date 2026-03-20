@@ -88,9 +88,18 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 		}
 		c.info.BindNode(param.Name, typeParams[i])
 	}
-	declType := c.typeFromSyntax(c.mod, d.Type)
+	resolveDeclType := func() typeinfo.Type { return c.typeFromSyntax(c.mod, d.Type) }
+	var declType typeinfo.Type
+	if d.IsConstraint {
+		declType = c.withConstraintContext(resolveDeclType)
+	} else {
+		declType = resolveDeclType()
+	}
 	if d.Type != nil {
 		c.info.BindNode(d.Type, declType)
+	}
+	if d.IsConstraint {
+		return
 	}
 	switch t := d.Type.(type) {
 	case *ast.StructType:
@@ -846,6 +855,8 @@ func (c *checker) containsTypeParam(typ typeinfo.Type) bool {
 		return c.containsTypeParam(t.Inner)
 	case *typeinfo.OptionalType:
 		return c.containsTypeParam(t.Inner)
+	case *typeinfo.ApproxType:
+		return c.containsTypeParam(t.Inner)
 	case *typeinfo.ErrorUnionType:
 		return c.containsTypeParam(t.Error) || c.containsTypeParam(t.Value)
 	case *typeinfo.ArrayType:
@@ -854,6 +865,8 @@ func (c *checker) containsTypeParam(typ typeinfo.Type) bool {
 		return c.containsTypeParam(t.Inner)
 	case *typeinfo.TupleType:
 		return slices.ContainsFunc(t.Elems, c.containsTypeParam)
+	case *typeinfo.IntersectionType:
+		return slices.ContainsFunc(t.Members, c.containsTypeParam)
 	default:
 		return false
 	}
@@ -1342,6 +1355,8 @@ func (c *checker) collectTypeParams(typ typeinfo.Type, visit func(*typeinfo.Type
 		c.collectTypeParams(t.Inner, visit)
 	case *typeinfo.OptionalType:
 		c.collectTypeParams(t.Inner, visit)
+	case *typeinfo.ApproxType:
+		c.collectTypeParams(t.Inner, visit)
 	case *typeinfo.ErrorUnionType:
 		c.collectTypeParams(t.Error, visit)
 		c.collectTypeParams(t.Value, visit)
@@ -1372,6 +1387,10 @@ func (c *checker) collectTypeParams(typ typeinfo.Type, visit func(*typeinfo.Type
 			c.collectTypeParams(method.Type, visit)
 		}
 	case *typeinfo.UnionType:
+		for _, member := range t.Members {
+			c.collectTypeParams(member, visit)
+		}
+	case *typeinfo.IntersectionType:
 		for _, member := range t.Members {
 			c.collectTypeParams(member, visit)
 		}
@@ -1441,6 +1460,8 @@ func (c *checker) inferTypeParamBindings(pattern, actual typeinfo.Type, bindings
 		if got, ok := actual.(*typeinfo.OptionalType); ok {
 			c.inferTypeParamBindings(p.Inner, got.Inner, bindings)
 		}
+	case *typeinfo.ApproxType:
+		c.inferTypeParamBindings(p.Inner, actual, bindings)
 	case *typeinfo.ErrorUnionType:
 		if got, ok := actual.(*typeinfo.ErrorUnionType); ok {
 			c.inferTypeParamBindings(p.Error, got.Error, bindings)
@@ -1490,6 +1511,8 @@ func (c *checker) substituteTypeParams(typ typeinfo.Type, bindings map[*typeinfo
 		return &typeinfo.RawPtrType{Inner: c.substituteTypeParams(t.Inner, bindings)}
 	case *typeinfo.OptionalType:
 		return &typeinfo.OptionalType{Inner: c.substituteTypeParams(t.Inner, bindings)}
+	case *typeinfo.ApproxType:
+		return &typeinfo.ApproxType{Inner: c.substituteTypeParams(t.Inner, bindings)}
 	case *typeinfo.ErrorUnionType:
 		return &typeinfo.ErrorUnionType{
 			Error: c.substituteTypeParams(t.Error, bindings),
@@ -1568,6 +1591,12 @@ func (c *checker) substituteTypeParams(typ typeinfo.Type, bindings map[*typeinfo
 			members = append(members, c.substituteTypeParams(member, bindings))
 		}
 		return &typeinfo.UnionType{Members: members}
+	case *typeinfo.IntersectionType:
+		members := make([]typeinfo.Type, 0, len(t.Members))
+		for _, member := range t.Members {
+			members = append(members, c.substituteTypeParams(member, bindings))
+		}
+		return &typeinfo.IntersectionType{Members: members}
 	case *typeinfo.FuncType:
 		out := &typeinfo.FuncType{
 			IsUnsafe: t.IsUnsafe,
@@ -2755,6 +2784,19 @@ func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Ty
 	if c.assignable(expected, got) {
 		return true
 	}
+	if inter, ok := c.underlying(expected).(*typeinfo.IntersectionType); ok && inter != nil {
+		for _, member := range inter.Members {
+			if c.assignable(member, got) {
+				continue
+			}
+			if iface, ok := c.underlying(member).(*typeinfo.InterfaceType); ok {
+				c.reportInterfaceMismatch(loc, member, got, iface)
+				return false
+			}
+			c.reportTypeMismatch(loc, member, got)
+			return false
+		}
+	}
 	if members, matches := c.unionAssignableMembers(expected, got); members != nil {
 		if matches == 0 {
 			c.ctx.Diagnostics.Add(
@@ -2784,6 +2826,24 @@ func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Ty
 
 func (c *checker) assignable(expected, got typeinfo.Type) bool {
 	if typeinfo.Assignable(expected, got) {
+		return true
+	}
+	if approx, ok := c.underlying(expected).(*typeinfo.ApproxType); ok && approx != nil {
+		if c.assignable(approx.Inner, got) {
+			return true
+		}
+		baseGot := c.underlying(got)
+		if baseGot != got {
+			return c.assignable(approx.Inner, baseGot)
+		}
+		return false
+	}
+	if inter, ok := c.underlying(expected).(*typeinfo.IntersectionType); ok && inter != nil {
+		for _, member := range inter.Members {
+			if !c.assignable(member, got) {
+				return false
+			}
+		}
 		return true
 	}
 	if iface, ok := c.underlying(expected).(*typeinfo.InterfaceType); ok && c.implementsInterface(got, iface) {
@@ -2959,6 +3019,8 @@ func (c *checker) instantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type
 		return &typeinfo.RawPtrType{Inner: c.instantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.OptionalType:
 		return &typeinfo.OptionalType{Inner: c.instantiateSelfType(t.Inner, selfType)}
+	case *typeinfo.ApproxType:
+		return &typeinfo.ApproxType{Inner: c.instantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.ErrorUnionType:
 		return &typeinfo.ErrorUnionType{Error: c.instantiateSelfType(t.Error, selfType), Value: c.instantiateSelfType(t.Value, selfType)}
 	case *typeinfo.ArrayType:
@@ -2971,6 +3033,12 @@ func (c *checker) instantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type
 			elems = append(elems, c.instantiateSelfType(elem, selfType))
 		}
 		return &typeinfo.TupleType{Elems: elems}
+	case *typeinfo.IntersectionType:
+		members := make([]typeinfo.Type, 0, len(t.Members))
+		for _, member := range t.Members {
+			members = append(members, c.instantiateSelfType(member, selfType))
+		}
+		return &typeinfo.IntersectionType{Members: members}
 	default:
 		return typ
 	}

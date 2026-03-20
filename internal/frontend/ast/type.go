@@ -51,6 +51,14 @@ type OptionalType struct {
 func (*OptionalType) typeNode()              {}
 func (t *OptionalType) Loc() source.Location { return t.Location }
 
+type ApproxType struct {
+	Inner    TypeExpr
+	Location source.Location
+}
+
+func (*ApproxType) typeNode()              {}
+func (t *ApproxType) Loc() source.Location { return t.Location }
+
 type ErrorUnionType struct {
 	Error    TypeExpr
 	Value    TypeExpr
@@ -132,6 +140,14 @@ type UnionType struct {
 
 func (*UnionType) typeNode()              {}
 func (t *UnionType) Loc() source.Location { return t.Location }
+
+type IntersectionType struct {
+	Terms    []TypeExpr
+	Location source.Location
+}
+
+func (*IntersectionType) typeNode()              {}
+func (t *IntersectionType) Loc() source.Location { return t.Location }
 
 type ErrorMember struct {
 	Name     *Ident

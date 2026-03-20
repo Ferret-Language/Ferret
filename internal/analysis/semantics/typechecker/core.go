@@ -51,6 +51,20 @@ type checker struct {
 	typeParamScopes            []map[string]*typeinfo.TypeParam
 	currentGenericFunc         *symbols.Symbol
 	currentGenericRequirements []*typeinfo.GenericRequirement
+	constraintContextDepth     int
+}
+
+func (c *checker) withConstraintContext(resolve func() typeinfo.Type) typeinfo.Type {
+	if c == nil || resolve == nil {
+		return nil
+	}
+	c.constraintContextDepth++
+	defer func() { c.constraintContextDepth-- }()
+	return resolve()
+}
+
+func (c *checker) inConstraintContext() bool {
+	return c != nil && c.constraintContextDepth > 0
 }
 
 func (c *checker) pushTypeParams(mod *context.Module, owner ast.Node, params []ast.TypeParam) []*typeinfo.TypeParam {
@@ -77,7 +91,9 @@ func (c *checker) pushTypeParams(mod *context.Module, owner ast.Node, params []a
 		}
 		tp := scope[param.Name.Text()]
 		if param.Constraint != nil {
-			tp.Constraint = c.typeFromSyntax(mod, param.Constraint)
+			tp.Constraint = c.withConstraintContext(func() typeinfo.Type {
+				return c.typeFromSyntax(mod, param.Constraint)
+			})
 			if c.info != nil {
 				c.info.BindNode(param.Constraint, tp.Constraint)
 			}

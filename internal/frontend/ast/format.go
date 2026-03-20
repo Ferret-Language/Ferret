@@ -30,6 +30,8 @@ func TypeString(typ TypeExpr) string {
 		return "Self"
 	case *OptionalType:
 		return "?" + TypeString(t.Inner)
+	case *ApproxType:
+		return "~" + TypeString(t.Inner)
 	case *ErrorUnionType:
 		return TypeString(t.Error) + "!" + TypeString(t.Value)
 	case *ArrayType:
@@ -50,6 +52,12 @@ func TypeString(typ TypeExpr) string {
 		return "enum"
 	case *UnionType:
 		return "union"
+	case *IntersectionType:
+		parts := make([]string, 0, len(t.Terms))
+		for _, term := range t.Terms {
+			parts = append(parts, TypeString(term))
+		}
+		return strings.Join(parts, " & ")
 	case *ErrorType:
 		return "error"
 	default:
@@ -232,6 +240,9 @@ func TypeDeclString(decl *TypeDecl) string {
 		return "type <unknown>"
 	}
 	name := decl.Name.Text() + typeParamListString(decl.TypeParams)
+	if decl.IsConstraint {
+		return "constraint " + name + " = " + TypeString(decl.Type)
+	}
 	switch t := decl.Type.(type) {
 	case *StructType:
 		var b strings.Builder

@@ -50,6 +50,9 @@ func Generate(key, importPath, filePath string, astMod *ast.Module, types *typei
 	for _, decl := range astMod.Decls {
 		switch d := decl.(type) {
 		case *ast.TypeDecl:
+			if d.IsConstraint {
+				continue
+			}
 			out.Types = append(out.Types, g.generateTypeDecl(d))
 		case *ast.LetDecl:
 			out.Globals = append(out.Globals, g.generateLetDecl(d))

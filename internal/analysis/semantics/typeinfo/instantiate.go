@@ -86,6 +86,14 @@ func instantiateType(typ Type, bindings map[*TypeParam]Type, seen map[Type]Type)
 		seen[t] = out
 		out.Inner = instantiateType(t.Inner, bindings, seen)
 		return out
+	case *ApproxType:
+		if cached := seen[t]; cached != nil {
+			return cached
+		}
+		out := &ApproxType{}
+		seen[t] = out
+		out.Inner = instantiateType(t.Inner, bindings, seen)
+		return out
 	case *ErrorUnionType:
 		if cached := seen[t]; cached != nil {
 			return cached
@@ -208,6 +216,18 @@ func instantiateType(typ Type, bindings map[*TypeParam]Type, seen map[Type]Type)
 			return cached
 		}
 		out := &UnionType{Members: make([]Type, 0, len(t.Members))}
+		seen[t] = out
+		members := make([]Type, 0, len(t.Members))
+		for _, member := range t.Members {
+			members = append(members, instantiateType(member, bindings, seen))
+		}
+		out.Members = members
+		return out
+	case *IntersectionType:
+		if cached := seen[t]; cached != nil {
+			return cached
+		}
+		out := &IntersectionType{Members: make([]Type, 0, len(t.Members))}
 		seen[t] = out
 		members := make([]Type, 0, len(t.Members))
 		for _, member := range t.Members {

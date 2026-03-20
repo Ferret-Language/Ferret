@@ -279,6 +279,45 @@ fn Map<T, U: any>(value: T) U {
 	}
 }
 
+func TestParseConstraintDeclarationAndIntersectionConstraint(t *testing.T) {
+	src := `
+constraint numeric = union { i32, i64 };
+constraint writer = interface { Write(&self, v: i32) void };
+constraint numeric_writer = numeric & writer;
+
+fn Use<T: numeric_writer>(value: T) void {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	if len(mod.Decls) != 4 {
+		t.Fatalf("expected 4 declarations, got %d", len(mod.Decls))
+	}
+	numeric, ok := mod.Decls[0].(*ast.TypeDecl)
+	if !ok || !numeric.IsConstraint {
+		t.Fatalf("expected first decl to be constraint type decl, got %#v", mod.Decls[0])
+	}
+	intersectionDecl, ok := mod.Decls[2].(*ast.TypeDecl)
+	if !ok || !intersectionDecl.IsConstraint {
+		t.Fatalf("expected third decl to be constraint type decl, got %#v", mod.Decls[2])
+	}
+	if _, ok := intersectionDecl.Type.(*ast.IntersectionType); !ok {
+		t.Fatalf("expected numeric_writer to parse as intersection type, got %T", intersectionDecl.Type)
+	}
+	fn, ok := mod.Decls[3].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[3])
+	}
+	if len(fn.TypeParams) != 1 {
+		t.Fatalf("expected one type parameter, got %d", len(fn.TypeParams))
+	}
+	if _, ok := fn.TypeParams[0].Constraint.(*ast.NamedType); !ok {
+		t.Fatalf("expected named type constraint, got %T", fn.TypeParams[0].Constraint)
+	}
+}
+
 func TestParseGenericCallWithAngleTypeArgs(t *testing.T) {
 	src := `
 fn add<T>(a: T, b: T) T {

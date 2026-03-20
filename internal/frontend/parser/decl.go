@@ -43,6 +43,22 @@ func (p *Parser) parseTypeDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 	}
 }
 
+func (p *Parser) parseConstraintDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
+	start := p.expect(tokens.CONSTRAINT, "expected 'constraint'").Start
+	nameTok := p.expectIdent("expected constraint name")
+	p.expect(tokens.ASSIGN, "expected '=' after constraint name")
+	value := p.parseConstraintTypeExpr()
+	p.match(tokens.SEMICOLON)
+	return &ast.TypeDecl{
+		Name:         &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		Doc:          doc,
+		Attrs:        attrs,
+		IsConstraint: true,
+		Type:         value,
+		Location:     p.locFrom(start),
+	}
+}
+
 func (p *Parser) parseLetDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.LET, "expected 'let'").Start
 	isMut := p.match(tokens.MUT)
@@ -162,7 +178,7 @@ func (p *Parser) parseTypeParams() []ast.TypeParam {
 		nameTok := p.expectIdent("expected type parameter name")
 		var constraint ast.TypeExpr
 		if p.match(tokens.COLON) {
-			constraint = p.parseType()
+			constraint = p.parseConstraintTypeExpr()
 		}
 		params = append(params, ast.TypeParam{
 			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
@@ -175,6 +191,19 @@ func (p *Parser) parseTypeParams() []ast.TypeParam {
 	}
 	p.expect(tokens.GT, "expected '>' after type parameters")
 	return params
+}
+
+func (p *Parser) parseConstraintTypeExpr() ast.TypeExpr {
+	start := p.current().Start
+	left := p.parseType()
+	terms := []ast.TypeExpr{left}
+	for p.match(tokens.AMP) {
+		terms = append(terms, p.parseType())
+	}
+	if len(terms) == 1 {
+		return left
+	}
+	return &ast.IntersectionType{Terms: terms, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseAttachedOwner() *ast.NamedType {

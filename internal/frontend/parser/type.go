@@ -11,6 +11,9 @@ func (p *Parser) parseType() ast.TypeExpr {
 	case tokens.QUESTION:
 		p.advance()
 		return &ast.OptionalType{Inner: p.parseType(), Location: p.locFrom(start)}
+	case tokens.TILDE:
+		p.advance()
+		return &ast.ApproxType{Inner: p.parseType(), Location: p.locFrom(start)}
 	case tokens.AMP:
 		p.advance()
 		ref := &ast.RefType{Location: p.locFrom(start)}

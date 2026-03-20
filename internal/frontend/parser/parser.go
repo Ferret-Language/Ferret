@@ -72,6 +72,8 @@ func (p *Parser) parseDecl() ast.Decl {
 		return p.parseConstDecl(doc, attrs)
 	case tokens.TYPE:
 		return p.parseTypeDecl(doc, attrs)
+	case tokens.CONSTRAINT:
+		return p.parseConstraintDecl(doc, attrs)
 	case tokens.UNSAFE:
 		if p.peekN(1).Kind == tokens.FN {
 			return p.parseFuncDecl(doc, attrs)
@@ -465,7 +467,7 @@ func (p *Parser) parseNamePath() []string {
 
 func (p *Parser) startsType() bool {
 	switch p.current().Kind {
-	case tokens.IDENT, tokens.QUESTION, tokens.AMP, tokens.CARET, tokens.ASTERISK,
+	case tokens.IDENT, tokens.QUESTION, tokens.AMP, tokens.CARET, tokens.ASTERISK, tokens.TILDE,
 		tokens.LBRACK, tokens.LPAREN, tokens.STRUCT, tokens.INTERFACE, tokens.ENUM,
 		tokens.UNION, tokens.ERROR:
 		return true
