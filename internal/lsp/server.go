@@ -1191,48 +1191,69 @@ func renderNamedTypeDeclText(named *typeinfo.NamedType, owner *context.Module, d
 	if named == nil || decl == nil {
 		return ""
 	}
-	structDecl, ok := decl.Type.(*ast.StructType)
-	if !ok || structDecl == nil {
-		return decl.Text()
-	}
-	typ := structTypeForNamed(owner, named, decl)
-	if typ == nil {
-		return decl.Text()
-	}
 	typeName := named.Name
-	if len(named.TypeArgs) > 0 {
-		args := make([]string, 0, len(named.TypeArgs))
-		for _, arg := range named.TypeArgs {
-			args = append(args, typeinfo.DefaultPrinter.Type(arg))
-		}
+	if args := namedTypeArgText(named); len(args) > 0 {
 		typeName += "<" + strings.Join(args, ", ") + ">"
 	}
+	resolved := declTypeForNamed(owner, named, decl)
+	switch typeDecl := decl.Type.(type) {
+	case *ast.StructType:
+		if typeDecl == nil {
+			return decl.Text()
+		}
+		typ, _ := resolved.(*typeinfo.StructType)
+		if typ == nil {
+			return decl.Text()
+		}
 
-	var b strings.Builder
-	b.WriteString("type " + typeName + " struct {\n")
-	for _, field := range structDecl.Fields {
-		if field == nil || field.Name == nil {
-			continue
-		}
-		fieldType := ast.TypeString(field.Type)
-		if concrete := structFieldTypeByName(typ, field.Name.Text()); concrete != nil {
-			fieldType = typeinfo.DefaultPrinter.Type(concrete)
-		}
-		line := "    " + field.Name.Text() + ": " + fieldType
-		if field.Default != nil {
-			defaultValue := ast.ExprString(field.Default)
-			if defaultValue == "" || defaultValue == "_" {
-				defaultValue = "..."
+		var b strings.Builder
+		b.WriteString("type " + typeName + " struct {\n")
+		for _, field := range typeDecl.Fields {
+			if field == nil || field.Name == nil {
+				continue
 			}
-			line += " = " + defaultValue
+			fieldType := ast.TypeString(field.Type)
+			if concrete := structFieldTypeByName(typ, field.Name.Text()); concrete != nil {
+				fieldType = typeinfo.DefaultPrinter.Type(concrete)
+			}
+			line := "    " + field.Name.Text() + ": " + fieldType
+			if field.Default != nil {
+				defaultValue := ast.ExprString(field.Default)
+				if defaultValue == "" || defaultValue == "_" {
+					defaultValue = "..."
+				}
+				line += " = " + defaultValue
+			}
+			b.WriteString(line + "\n")
 		}
-		b.WriteString(line + "\n")
+		b.WriteString("}")
+		return b.String()
+	case *ast.InterfaceType:
+		if typeDecl == nil {
+			return decl.Text()
+		}
+		typ, _ := resolved.(*typeinfo.InterfaceType)
+		if typ == nil {
+			return decl.Text()
+		}
+		return typeinfo.DefaultPrinter.NamedDecl(typeName, typ)
+	default:
+		return decl.Text()
 	}
-	b.WriteString("}")
-	return b.String()
 }
 
-func structTypeForNamed(owner *context.Module, named *typeinfo.NamedType, decl *ast.TypeDecl) *typeinfo.StructType {
+func namedTypeArgText(named *typeinfo.NamedType) []string {
+	if named == nil || len(named.TypeArgs) == 0 {
+		return nil
+	}
+	args := make([]string, 0, len(named.TypeArgs))
+	for _, arg := range named.TypeArgs {
+		args = append(args, typeinfo.DefaultPrinter.Type(arg))
+	}
+	return args
+}
+
+func declTypeForNamed(owner *context.Module, named *typeinfo.NamedType, decl *ast.TypeDecl) typeinfo.Type {
 	if owner == nil || owner.Types == nil || named == nil || decl == nil {
 		return nil
 	}
@@ -1243,8 +1264,7 @@ func structTypeForNamed(owner *context.Module, named *typeinfo.NamedType, decl *
 	if bindings := typeinfo.OwnerTypeBindings(named); len(bindings) > 0 {
 		base = typeinfo.InstantiateType(base, bindings)
 	}
-	typ, _ := base.(*typeinfo.StructType)
-	return typ
+	return base
 }
 
 func structFieldTypeByName(typ *typeinfo.StructType, name string) typeinfo.Type {

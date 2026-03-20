@@ -1139,6 +1139,46 @@ func TestHoverRecursiveGenericTypeDoesNotLoop(t *testing.T) {
 	}
 }
 
+func TestHoverRecursiveGenericInterfaceDoesNotLoop(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Node<T> interface {\n    Next(&self) Node<T>\n}\n\nfn use(n: Node<i32>) void {\n    n\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "n: Node<i32>")
+	if !ok {
+		t.Fatal("failed to find recursive generic interface parameter")
+	}
+	char += len("n: ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "Node<i32>") {
+		t.Fatalf("expected instantiated recursive interface type in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "Next(&self) Node<i32>") {
+		t.Fatalf("expected instantiated recursive interface method in hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverConstrainedGenericParameterShowsConstraint(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.ferr")
