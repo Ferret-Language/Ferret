@@ -1,6 +1,7 @@
 package typeinfo
 
 import (
+	"strings"
 	"testing"
 
 	"compiler/internal/frontend/ast"
@@ -102,5 +103,26 @@ func TestFormatBindingDecl(t *testing.T) {
 func TestFormatReceiverBindingDecl(t *testing.T) {
 	if got := FormatReceiverBindingDecl("self", ReceiverRefMut); got != "receiver self: &mut Self" {
 		t.Fatalf("unexpected receiver binding declaration: %q", got)
+	}
+}
+
+func TestFormatNamedTypeHoverMarkdown(t *testing.T) {
+	got := FormatNamedTypeHoverMarkdown(NamedTypeHoverBlock{
+		DeclText: "type Point struct {\n    Value: i32 = 7\n}",
+		InstanceMethods: []string{
+			"fn Point::Calc(&self) i32",
+		},
+		StaticMethods: []string{
+			"fn Point::New(v: i32) Point",
+		},
+	})
+	if !strings.Contains(got, "```ferret\ntype Point struct {\n    Value: i32 = 7\n}\n```") {
+		t.Fatalf("expected declaration code block, got %q", got)
+	}
+	if !strings.Contains(got, "Instance methods:\n```ferret\nfn Point::Calc(&self) i32\n```") {
+		t.Fatalf("expected instance method section, got %q", got)
+	}
+	if !strings.Contains(got, "Static methods:\n```ferret\nfn Point::New(v: i32) Point\n```") {
+		t.Fatalf("expected static method section, got %q", got)
 	}
 }

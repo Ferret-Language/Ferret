@@ -1036,7 +1036,7 @@ func renderTypeHoverMarkdown(typ typeinfo.Type, mod *context.Module, modulesByKe
 			rendered = ""
 		}
 		if named := underlyingNamedType(typ); named != nil {
-			details := renderNamedTypeMarkdownWithSeen(named, mod, modulesByKey, make(map[string]struct{}), 1)
+			details := renderNamedTypeMarkdown(named, mod, modulesByKey)
 			if rendered == "" {
 				return details
 			}
@@ -1079,44 +1079,25 @@ func underlyingNamedType(typ typeinfo.Type) *typeinfo.NamedType {
 }
 
 func renderNamedTypeMarkdown(named *typeinfo.NamedType, mod *context.Module, modulesByKey map[string]*context.Module) string {
-	return renderNamedTypeMarkdownWithSeen(named, mod, modulesByKey, make(map[string]struct{}), 0)
-}
-
-func renderNamedTypeMarkdownWithSeen(named *typeinfo.NamedType, mod *context.Module, modulesByKey map[string]*context.Module, seen map[string]struct{}, depth int) string {
 	if named == nil {
 		return ""
 	}
-	if depth >= 8 {
-		return asFerretCodeBlock("type " + named.String())
-	}
-	key := named.ModuleKey + "::" + named.String()
-	if _, ok := seen[key]; ok {
-		return asFerretCodeBlock("type " + named.String())
-	}
-	seen[key] = struct{}{}
-	defer delete(seen, key)
 	owner := moduleForNamedType(named, mod, modulesByKey)
 	decl := named.Decl
 	if decl == nil {
 		decl = findTypeDecl(owner, named.Name)
 	}
-	if decl == nil {
-		return asFerretCodeBlock("type " + named.Name)
+	block := typeinfo.NamedTypeHoverBlock{
+		DeclText: "type " + named.String(),
 	}
-
-	var b strings.Builder
-	b.WriteString(asFerretCodeBlock(renderNamedTypeDeclText(named, owner, decl)))
+	if decl != nil {
+		block.DeclText = renderNamedTypeDeclText(named, owner, decl)
+	}
 
 	instanceMethods, staticMethods := collectTypeMethodSignatures(owner, named)
-	if len(instanceMethods) > 0 {
-		b.WriteString("\n\nInstance methods:\n")
-		b.WriteString(asFerretCodeBlock(strings.Join(instanceMethods, "\n")))
-	}
-	if len(staticMethods) > 0 {
-		b.WriteString("\n\nStatic methods:\n")
-		b.WriteString(asFerretCodeBlock(strings.Join(staticMethods, "\n")))
-	}
-	return b.String()
+	block.InstanceMethods = instanceMethods
+	block.StaticMethods = staticMethods
+	return typeinfo.FormatNamedTypeHoverMarkdown(block)
 }
 
 func moduleForNamedType(named *typeinfo.NamedType, fallback *context.Module, modulesByKey map[string]*context.Module) *context.Module {

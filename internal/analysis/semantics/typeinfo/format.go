@@ -14,6 +14,12 @@ type InterfaceMethod struct {
 	Type     *FuncType
 }
 
+type NamedTypeHoverBlock struct {
+	DeclText        string
+	InstanceMethods []string
+	StaticMethods   []string
+}
+
 type Printer struct {
 	StripLocalPrefix string
 }
@@ -281,6 +287,28 @@ func (p Printer) ReceiverBindingDecl(name string, kind ReceiverKind) string {
 	return "receiver " + name + ": " + typeText
 }
 
+func (p Printer) NamedTypeHoverMarkdown(block NamedTypeHoverBlock) string {
+	var b strings.Builder
+	if strings.TrimSpace(block.DeclText) != "" {
+		b.WriteString(asFerretCodeBlock(block.DeclText))
+	}
+	if len(block.InstanceMethods) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("Instance methods:\n")
+		b.WriteString(asFerretCodeBlock(strings.Join(block.InstanceMethods, "\n")))
+	}
+	if len(block.StaticMethods) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString("Static methods:\n")
+		b.WriteString(asFerretCodeBlock(strings.Join(block.StaticMethods, "\n")))
+	}
+	return b.String()
+}
+
 func (p Printer) formatSignature(fn *FuncType) string {
 	if fn == nil {
 		return "()"
@@ -349,4 +377,15 @@ func FormatBindingDecl(kind, name string, typ Type, flags ValueFlags) string {
 
 func FormatReceiverBindingDecl(name string, kind ReceiverKind) string {
 	return DefaultPrinter.ReceiverBindingDecl(name, kind)
+}
+
+func FormatNamedTypeHoverMarkdown(block NamedTypeHoverBlock) string {
+	return DefaultPrinter.NamedTypeHoverMarkdown(block)
+}
+
+func asFerretCodeBlock(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return "```ferret\n" + text + "\n```"
 }

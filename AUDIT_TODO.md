@@ -28,8 +28,9 @@ Status key: `[ ]` pending, `[*]` done
   - `internal/core/diagnostics/emitter.go`
   - `internal/core/diagnostics/diagnostic.go`
   - now emits ICE-style internal notes instead of panicking for missing primary-secondary order and multi-primary render cases
-- [ ] reduce LSP/typeinfo duplication by moving named-type + method-list rendering into `typeinfo`
+- [*] reduce LSP/typeinfo duplication by moving named-type + method-list rendering into `typeinfo`
   - keep LSP as composition/index layer
+  - LSP now gathers concrete decl/method data while `typeinfo` owns named-type hover markdown block rendering
 - [ ] centralize LLVM runtime declaration emission in one helper
 - [ ] harden generic binding lookups to prefer owner-aware identity and minimize name-only fallback
 - [ ] improve hover truncation messaging when recursion/depth guard short-circuits output
