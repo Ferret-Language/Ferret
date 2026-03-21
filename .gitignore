@@ -3,6 +3,7 @@ a.out
 *.ll
 main.ferr
 *.ferr.tmp
+.tmp/
 app
 *.hir
 *.mir

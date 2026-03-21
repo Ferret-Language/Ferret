@@ -432,9 +432,7 @@ func (l *lowerer) lowerMatchExprArm(arm *MatchArm, resultName string, resultID i
 	if len(arm.Body.Stmts) == 0 {
 		return out
 	}
-	for _, stmt := range arm.Body.Stmts[:len(arm.Body.Stmts)-1] {
-		out.Body.Stmts = append(out.Body.Stmts, stmt)
-	}
+	out.Body.Stmts = append(out.Body.Stmts, arm.Body.Stmts[:len(arm.Body.Stmts)-1]...)
 	last := arm.Body.Stmts[len(arm.Body.Stmts)-1]
 	if hirStmtDefinitelyExits(last) {
 		out.Body.Stmts = append(out.Body.Stmts, last)

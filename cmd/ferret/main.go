@@ -442,19 +442,6 @@ func parsePathForCheck(path string) compiler.Result {
 	return compiler.ParseEntry(absPath)
 }
 
-func emitASTDump(result compiler.Result, outPath string) error {
-	payload := debugPayload(result)
-	data, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal ast dump: %w", err)
-	}
-	if outPath == "" {
-		_, err = os.Stdout.Write(append(data, '\n'))
-		return err
-	}
-	return os.WriteFile(outPath, append(data, '\n'), 0o644)
-}
-
 func emitModuleASTDumps(result compiler.Result, outDir string) error {
 	for _, mod := range artifactModules(result) {
 		if mod == nil || mod.AST == nil {
@@ -483,34 +470,6 @@ func emitModuleASTDumps(result compiler.Result, outDir string) error {
 	return nil
 }
 
-func emitTextDump(result compiler.Result, outPath, ext string, render func(*context.Module) string) error {
-	mods := dumpModules(result)
-	if len(mods) == 0 {
-		return nil
-	}
-	if result.Entry != nil && outPath != "" && !pathLooksLikeDir(outPath) {
-		content := render(result.Entry)
-		if content == "" {
-			return nil
-		}
-		return writeTextFile(ensureExt(outPath, ext), content)
-	}
-	for _, mod := range mods {
-		content := render(mod)
-		if content == "" {
-			continue
-		}
-		target, err := dumpTargetPath(result, mod, outPath, ext)
-		if err != nil {
-			return err
-		}
-		if err := writeTextFile(target, content); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func emitModuleTextDumps(result compiler.Result, outDir, ext string, render func(*context.Module) string) error {
 	for _, mod := range artifactModules(result) {
 		if mod == nil {
@@ -531,60 +490,6 @@ func emitModuleTextDumps(result compiler.Result, outDir, ext string, render func
 	return nil
 }
 
-func dumpModules(result compiler.Result) []*context.Module {
-	if result.Entry != nil {
-		return []*context.Module{result.Entry}
-	}
-	mods := make([]*context.Module, 0, len(result.Modules))
-	for _, mod := range result.Modules {
-		if mod != nil {
-			mods = append(mods, mod)
-		}
-	}
-	return mods
-}
-
-func dumpTargetPath(result compiler.Result, mod *context.Module, outPath, ext string) (string, error) {
-	if mod == nil {
-		return "", fmt.Errorf("nil module")
-	}
-	if outPath == "" {
-		return replaceExt(mod.FilePath, ext), nil
-	}
-	if result.Entry != nil {
-		if pathLooksLikeDir(outPath) {
-			return filepath.Join(outPath, filepath.Base(replaceExt(mod.FilePath, ext))), nil
-		}
-		return ensureExt(outPath, ext), nil
-	}
-	rel := filepath.FromSlash(mod.ImportPath) + ext
-	return filepath.Join(outPath, rel), nil
-}
-
-func ensureExt(path, ext string) string {
-	if filepath.Ext(path) == ext {
-		return path
-	}
-	return replaceExt(path, ext)
-}
-
-func pathLooksLikeDir(path string) bool {
-	if path == "" {
-		return false
-	}
-	if strings.HasSuffix(path, string(os.PathSeparator)) || strings.HasSuffix(path, "/") {
-		return true
-	}
-	if info, err := os.Stat(path); err == nil {
-		return info.IsDir()
-	}
-	return filepath.Ext(path) == ""
-}
-
-func replaceExt(path, ext string) string {
-	return strings.TrimSuffix(path, filepath.Ext(path)) + ext
-}
-
 func writeTextFile(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -593,37 +498,6 @@ func writeTextFile(path, content string) error {
 		content += "\n"
 	}
 	return os.WriteFile(path, []byte(content), 0o644)
-}
-
-func emitBackend(result compiler.Result, targetText, outPath string) error {
-	target := backend.Target(strings.ToLower(strings.TrimSpace(targetText)))
-	lowerer, err := registry.New(target)
-	if err != nil {
-		return err
-	}
-	mods := dumpModules(result)
-	for _, mod := range mods {
-		if mod == nil || mod.MIR == nil || mod.Layout == nil {
-			continue
-		}
-		artifact, err := lowerer.LowerModule(&backend.Unit{
-			Module:  mod.MIR,
-			Layout:  mod.Layout,
-			Layouts: backendLayouts(result),
-			Modules: backendModules(result),
-		})
-		if err != nil {
-			return fmt.Errorf("backend %s lower %s: %w", target, mod.ImportPath, err)
-		}
-		targetPath, err := backendTargetPath(result, mod, outPath, artifact.FileExt)
-		if err != nil {
-			return err
-		}
-		if err := writeTextFile(targetPath, artifact.Text); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func emitBackendModules(result compiler.Result, targetText, outDir string) error {
@@ -654,23 +528,6 @@ func emitBackendModules(result compiler.Result, targetText, outDir string) error
 		}
 	}
 	return nil
-}
-
-func backendTargetPath(result compiler.Result, mod *context.Module, outPath, ext string) (string, error) {
-	if mod == nil {
-		return "", fmt.Errorf("nil module")
-	}
-	if outPath == "" {
-		return replaceExt(mod.FilePath, ext), nil
-	}
-	if result.Entry != nil {
-		if pathLooksLikeDir(outPath) {
-			return filepath.Join(outPath, filepath.Base(replaceExt(mod.FilePath, ext))), nil
-		}
-		return ensureExt(outPath, ext), nil
-	}
-	rel := filepath.FromSlash(mod.ImportPath) + ext
-	return filepath.Join(outPath, rel), nil
 }
 
 func artifactModules(result compiler.Result) []*context.Module {
@@ -827,37 +684,6 @@ func allModulesForBuild(result compiler.Result) []*context.Module {
 		all = append(all, result.Entry)
 	}
 	return all
-}
-
-func debugPayload(result compiler.Result) any {
-	if result.Entry != nil {
-		return map[string]any{
-			"kind":        "entry",
-			"import_path": result.Entry.ImportPath,
-			"file_path":   result.Entry.FilePath,
-			"origin":      string(result.Entry.Origin),
-			"phase":       result.Entry.Phase.String(),
-			"ast":         safeDebugModule(result.Entry.AST),
-		}
-	}
-	modules := make([]any, 0, len(result.Modules))
-	for _, mod := range result.Modules {
-		if mod == nil {
-			continue
-		}
-		modules = append(modules, map[string]any{
-			"import_path":  mod.ImportPath,
-			"file_path":    mod.FilePath,
-			"origin":       string(mod.Origin),
-			"phase":        mod.Phase.String(),
-			"dependencies": append([]string(nil), mod.Dependencies...),
-			"ast":          safeDebugModule(mod.AST),
-		})
-	}
-	return map[string]any{
-		"kind":    "workspace",
-		"modules": modules,
-	}
 }
 
 func safeDebugModule(module *ast.Module) any {

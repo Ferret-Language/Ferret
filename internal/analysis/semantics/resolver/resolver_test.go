@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"compiler/internal/analysis/semantics/binding"
-	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
 	compiler "compiler/internal/driver"
@@ -416,17 +415,6 @@ fn run() void {
 	if !found {
 		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrInvalidBreak, result.Diagnostics.Diagnostics())
 	}
-}
-
-func findModuleByImportPath(t *testing.T, mods []*context.Module, importPath string) *context.Module {
-	t.Helper()
-	for _, mod := range mods {
-		if mod != nil && mod.ImportPath == importPath {
-			return mod
-		}
-	}
-	t.Fatalf("module %s not found", importPath)
-	return nil
 }
 
 func findFunc(t *testing.T, mod *ast.Module, name string) *ast.FuncDecl {

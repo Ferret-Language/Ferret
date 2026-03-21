@@ -291,15 +291,6 @@ ownerEnd:
 	return true
 }
 
-func hasAttr(attrs []ast.Attribute, name string) bool {
-	for _, attr := range attrs {
-		if attr.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 func foreignAttr(attrs []ast.Attribute) (bool, string) {
 	seen := false
 	linkName := ""
@@ -313,24 +304,6 @@ func foreignAttr(attrs []ast.Attribute) (bool, string) {
 		}
 	}
 	return seen, linkName
-}
-
-func receiverNamedType(typ ast.TypeExpr) string {
-	switch t := typ.(type) {
-	case *ast.NamedType:
-		if len(t.Path) == 0 {
-			return ""
-		}
-		return t.Path[len(t.Path)-1]
-	case *ast.PointerType:
-		return receiverNamedType(t.Inner)
-	case *ast.RefType:
-		return receiverNamedType(t.Inner)
-	case *ast.RawPtrType:
-		return receiverNamedType(t.Inner)
-	default:
-		return ""
-	}
 }
 
 func (p *Parser) parseReceiver() *ast.Receiver {
@@ -377,9 +350,7 @@ func cloneNamedType(t *ast.NamedType) *ast.NamedType {
 	path := make([]string, len(t.Path))
 	copy(path, t.Path)
 	typeArgs := make([]ast.TypeExpr, 0, len(t.TypeArgs))
-	for _, arg := range t.TypeArgs {
-		typeArgs = append(typeArgs, arg)
-	}
+	typeArgs = append(typeArgs, t.TypeArgs...)
 	return &ast.NamedType{Path: path, TypeArgs: typeArgs, Location: t.Location}
 }
 

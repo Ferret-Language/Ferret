@@ -112,13 +112,6 @@ func (g *generator) beginFunction(fn *ast.FuncDecl) {
 	}
 }
 
-func (g *generator) endFunction() {
-	g.currentFn = nil
-	g.usedNames = nil
-	g.localNames = nil
-	g.localIDs = nil
-}
-
 func (g *generator) mangleLocal(sym *symbols.Symbol) string {
 	if g == nil || sym == nil {
 		return ""
@@ -733,61 +726,6 @@ func isUnknownType(typ typeinfo.Type) bool {
 	return ok
 }
 
-func (g *generator) staticIsResult(left, target typeinfo.Type) bool {
-	if left == nil || target == nil {
-		return false
-	}
-	if typeinfo.Equal(left, target) {
-		return true
-	}
-	targetIface, ok := unwrapNamed(g.types, target).(*typeinfo.InterfaceType)
-	if !ok {
-		return false
-	}
-	if srcIface, ok := unwrapNamed(g.types, left).(*typeinfo.InterfaceType); ok {
-		for _, method := range targetIface.OrderedMethods {
-			if method == nil || method.Type == nil {
-				continue
-			}
-			got := srcIface.Methods[method.Name]
-			if got == nil || srcIface.MethodReceivers[method.Name] != method.Receiver || !hirInterfaceMethodCompatible(method.Type, got) {
-				return false
-			}
-		}
-		return true
-	}
-	if g.lookupMethod == nil {
-		return false
-	}
-	for _, method := range targetIface.OrderedMethods {
-		if method == nil {
-			continue
-		}
-		if _, ok := g.lookupMethod(left, method.Name); !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func hirInterfaceMethodCompatible(expected, got *typeinfo.FuncType) bool {
-	if expected == nil || got == nil {
-		return false
-	}
-	if expected.IsUnsafe != got.IsUnsafe {
-		return false
-	}
-	if len(expected.Params) != len(got.Params) {
-		return false
-	}
-	for i := range expected.Params {
-		if !typeinfo.Equal(expected.Params[i].Type, got.Params[i].Type) || expected.Params[i].Flags != got.Params[i].Flags {
-			return false
-		}
-	}
-	return typeinfo.Equal(expected.Result, got.Result)
-}
-
 func exprType(types *typeinfo.ModuleInfo, expr ast.Expr) typeinfo.Type {
 	if types == nil || expr == nil {
 		return typeinfo.UnknownType{}
@@ -872,18 +810,4 @@ func (g *generator) structLiteralFields(typ typeinfo.Type) ([]structLiteralField
 		fields = append(fields, structLiteralField{Name: field.Name.Text(), Default: field.Default})
 	}
 	return fields, true
-}
-
-func unwrapNamed(types *typeinfo.ModuleInfo, typ typeinfo.Type) typeinfo.Type {
-	named, ok := typ.(*typeinfo.NamedType)
-	if !ok || named == nil || named.Decl == nil {
-		return typ
-	}
-	if types == nil {
-		return typ
-	}
-	if underlying, ok := types.Nodes[named.Decl.Type]; ok && underlying != nil {
-		return underlying
-	}
-	return typ
 }

@@ -132,10 +132,6 @@ type definitionParams struct {
 	Position     lspPosition            `json:"position"`
 }
 
-type documentSymbolParams struct {
-	TextDocument textDocumentIdentifier `json:"textDocument"`
-}
-
 type completionParams struct {
 	TextDocument textDocumentIdentifier `json:"textDocument"`
 	Position     lspPosition            `json:"position"`
@@ -554,33 +550,6 @@ func (s *Server) documentState(uri string) (openDocument, bool) {
 	return doc, true
 }
 
-func (s *Server) handleDocumentSymbol(req rpcRequest) {
-	if len(req.ID) == 0 {
-		return
-	}
-	params := documentSymbolParams{}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		s.writeResponse(req.ID, []documentSymbol{})
-		return
-	}
-	path, err := uriToPath(params.TextDocument.URI)
-	if err != nil || !isFerretSourcePath(path) {
-		s.writeResponse(req.ID, []documentSymbol{})
-		return
-	}
-	doc, hasDoc := s.documentState(params.TextDocument.URI)
-	if hasDoc {
-		s.writeResponse(req.ID, syntaxDocumentSymbols(path, doc.Text))
-		return
-	}
-	bytes, err := os.ReadFile(path)
-	if err == nil {
-		s.writeResponse(req.ID, syntaxDocumentSymbols(path, string(bytes)))
-		return
-	}
-	s.writeResponse(req.ID, []documentSymbol{})
-}
-
 func (s *Server) publishSyntaxDiagnostics(uri string, version int, text string) {
 	path, err := uriToPath(uri)
 	if err != nil {
@@ -874,27 +843,6 @@ func buildHoverIndex(path, text string, hasText bool) *hoverIndex {
 	}
 }
 
-func syntaxDocumentSymbols(path, text string) []documentSymbol {
-	if path == "" {
-		return nil
-	}
-	diagBag := diagnostics.NewBag()
-	var mod *ast.Module
-	func() {
-		defer func() {
-			if recover() != nil {
-				mod = nil
-			}
-		}()
-		toks := lexSource(path, text, diagBag)
-		mod = parser.Parse(path, toks, diagBag)
-	}()
-	if mod == nil {
-		return nil
-	}
-	return collectDocumentSymbols(&context.Module{FilePath: path, AST: mod}, nil)
-}
-
 func indexModulesByKey(result compiler.Result) map[string]*context.Module {
 	out := make(map[string]*context.Module)
 	if result.Entry != nil && result.Entry.Key != "" {
@@ -1019,7 +967,7 @@ func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modu
 			collect(renderSymbolHoverMarkdown(sym, typ, mod, modulesByKey), sym.Location, 0)
 		}
 	}
-	if mod != nil && mod.Bindings != nil {
+	if mod.Bindings != nil {
 		for node, res := range mod.Bindings.Nodes {
 			if node == nil || res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 				continue

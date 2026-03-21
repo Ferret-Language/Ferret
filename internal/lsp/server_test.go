@@ -1801,25 +1801,6 @@ func fakeHoverResult(path string, typeName string) compiler.Result {
 	}
 }
 
-func fakeDocumentSymbolResult(path string) compiler.Result {
-	nameLoc := source.NewLocation(path, source.Position{Line: 1, Column: 4, Index: 3}, source.Position{Line: 1, Column: 7, Index: 6})
-	fnLoc := source.NewLocation(path, source.Position{Line: 1, Column: 1, Index: 0}, source.Position{Line: 1, Column: 12, Index: 11})
-	fn := &ast.FuncDecl{
-		Name:     &ast.Ident{Path: []string{"run"}, Location: nameLoc},
-		Body:     &ast.BlockStmt{Location: fnLoc},
-		Location: fnLoc,
-	}
-	mod := &context.Module{
-		FilePath: path,
-		AST:      &ast.Module{FilePath: path, Decls: []ast.Decl{fn}},
-		Types:    nil,
-	}
-	return compiler.Result{
-		Entry:   mod,
-		Modules: []*context.Module{mod},
-	}
-}
-
 func mustRawJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(v)
@@ -1897,23 +1878,6 @@ func decodeCompletionResult(t *testing.T, framed string) []completionItem {
 		t.Fatalf("failed to unmarshal completion result: %v", err)
 	}
 	return items
-}
-
-func decodeDocumentSymbolsResult(t *testing.T, framed string) []documentSymbol {
-	t.Helper()
-	resp := decodeSingleResponse(t, framed)
-	if resp.Error != nil {
-		t.Fatalf("unexpected documentSymbol error: %#v", resp.Error)
-	}
-	raw, err := json.Marshal(resp.Result)
-	if err != nil {
-		t.Fatalf("failed to marshal documentSymbol result: %v", err)
-	}
-	var symbols []documentSymbol
-	if err := json.Unmarshal(raw, &symbols); err != nil {
-		t.Fatalf("failed to unmarshal documentSymbol result: %v", err)
-	}
-	return symbols
 }
 
 func findPosition(text, needle string) (int, int, bool) {

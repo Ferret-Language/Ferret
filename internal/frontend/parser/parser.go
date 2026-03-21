@@ -1,7 +1,6 @@
 package parser
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 
@@ -474,8 +473,4 @@ func (p *Parser) startsType() bool {
 	default:
 		return false
 	}
-}
-
-func (p *Parser) unexpected(kind tokens.Kind) string {
-	return fmt.Sprintf("unexpected token %s", kind)
 }

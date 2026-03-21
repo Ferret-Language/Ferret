@@ -529,10 +529,10 @@ func binaryOpcode(op string) string {
 }
 
 func blockLabels(fn *Function) map[int]string {
-	labels := make(map[int]string, len(fn.Blocks))
 	if fn == nil {
-		return labels
+		return map[int]string{}
 	}
+	labels := make(map[int]string, len(fn.Blocks))
 	next := 1
 	for _, block := range fn.Blocks {
 		if block == nil {

@@ -1024,14 +1024,6 @@ fn main() i32 {
 	}
 }
 
-func hasConstructorPath(comp *mir.CompositeValue, name string) bool {
-	if comp == nil || len(comp.ConstructorPath) == 0 {
-		return false
-	}
-	last := comp.ConstructorPath[len(comp.ConstructorPath)-1]
-	return last == name || strings.HasSuffix(last, "__"+name)
-}
-
 func hasCallNamed(call *mir.CallValue, name string) bool {
 	if call == nil {
 		return false
@@ -1042,29 +1034,6 @@ func hasCallNamed(call *mir.CallValue, name string) bool {
 	}
 	last := callee.Path[len(callee.Path)-1]
 	return last == name || strings.HasSuffix(last, "__"+name)
-}
-
-func deferContainsCallNamed(instr *mir.DeferInstr, name string) bool {
-	if instr == nil {
-		return false
-	}
-	for _, child := range instr.Body {
-		switch body := child.(type) {
-		case *mir.EvalInstr:
-			if call, ok := body.Value.(*mir.CallValue); ok && hasCallNamed(call, name) {
-				return true
-			}
-		case *mir.ComputeInstr:
-			if call, ok := body.Value.(*mir.CallValue); ok && hasCallNamed(call, name) {
-				return true
-			}
-		case *mir.DeferInstr:
-			if deferContainsCallNamed(body, name) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func mustWriteIR(t *testing.T, path, content string) {

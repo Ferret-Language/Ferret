@@ -396,20 +396,6 @@ func (d *debugState) addLocalVariable(state *moduleState, name string, varType t
 		name, scopeID, fileID, line, typeID))
 }
 
-// appendDebugSuffix appends ", !dbg !N" to every non-empty, non-comment line
-// in a (possibly multi-line) LLVM IR instruction string.
-func appendDebugSuffix(ir string, suffix string) string {
-	parts := strings.Split(ir, "\n")
-	for i, p := range parts {
-		trimmed := strings.TrimSpace(p)
-		if trimmed == "" || strings.HasPrefix(trimmed, ";") {
-			continue
-		}
-		parts[i] = p + suffix
-	}
-	return strings.Join(parts, "\n")
-}
-
 // scalarAllocaLocal tracks an alloca-backed scalar local variable.
 // Unlike aggregate locals (which are always pointers), scalar locals
 // use alloca only to support reassignment (LLVM requires SSA).

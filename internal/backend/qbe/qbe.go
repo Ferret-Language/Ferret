@@ -821,19 +821,6 @@ func lowerAggregateValuePointer(state *moduleState, value mir.Value) ([]string, 
 	return lines, tmp, nil
 }
 
-func joinQBELines(lines ...[]string) string {
-	flat := make([]string, 0)
-	for _, group := range lines {
-		for _, line := range group {
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			flat = append(flat, line)
-		}
-	}
-	return strings.Join(flat, "\n\t")
-}
-
 func lowerConstructorCall(state *moduleState, dstPtr string, call *mir.CallValue, callee string) (string, error) {
 	args := make([]string, 0, len(call.Args)+1)
 	args = append(args, fmt.Sprintf("l %s", dstPtr))

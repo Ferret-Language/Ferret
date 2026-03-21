@@ -113,12 +113,6 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 	case *ast.ForStmt:
 		iterType := c.typeOfExpr(scope, s.Iterable, nil)
 		indexType, valueType := c.forBindingTypes(iterType)
-		if indexType == nil {
-			indexType = typeinfo.UnknownType{}
-		}
-		if valueType == nil {
-			valueType = typeinfo.UnknownType{}
-		}
 		if s.Index != nil {
 			c.bindDeclSymbol(s.Index, indexType)
 			// No base-type environment: locals/params are typed via Bindings+Types.

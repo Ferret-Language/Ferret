@@ -46,7 +46,7 @@ fn Point<T>::Calc(&self) T {
 fn run2() {
     let mut p: Point<i32> = .{ .Value = 1 }
     p.Calc()
-    p.Incr(1) // should only work if p is mutable
+    p.Incr(1)
     let m = &mut p
     let r = &p
     //m
