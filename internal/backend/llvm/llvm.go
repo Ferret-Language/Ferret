@@ -12,6 +12,7 @@ import (
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
+	becommon "compiler/internal/backend/common"
 	"compiler/internal/backend/symutil"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/mir"
@@ -4854,51 +4855,19 @@ func irTypeSize(irType string) int64 {
 // ---------------------------------------------------------------------------
 
 func findLocalByName(fn *mir.Function, name string) *mir.Local {
-	if fn == nil {
-		return nil
-	}
-	for _, local := range fn.Locals {
-		if local != nil && local.Name == name {
-			return local
-		}
-	}
-	return nil
+	return becommon.FindLocalByName(fn, name)
 }
 
 func findLocalByID(fn *mir.Function, id int) *mir.Local {
-	if fn == nil {
-		return nil
-	}
-	for _, local := range fn.Locals {
-		if local != nil && local.ID == id {
-			return local
-		}
-	}
-	return nil
+	return becommon.FindLocalByID(fn, id)
 }
 
 func localNameByID(fn *mir.Function, id int) string {
-	if fn == nil {
-		return fmt.Sprintf("t%d", id)
-	}
-	for _, local := range fn.Locals {
-		if local != nil && local.ID == id {
-			return local.Name
-		}
-	}
-	return fmt.Sprintf("t%d", id)
+	return becommon.LocalNameByID(fn, id)
 }
 
 func localTypeByID(fn *mir.Function, id int) typeinfo.Type {
-	if fn == nil {
-		return typeinfo.UnknownType{}
-	}
-	for _, local := range fn.Locals {
-		if local != nil && local.ID == id {
-			return local.Type
-		}
-	}
-	return typeinfo.UnknownType{}
+	return becommon.LocalTypeByID(fn, id)
 }
 
 // ---------------------------------------------------------------------------
@@ -4925,52 +4894,15 @@ func llvmStringLiteral(s string) string {
 // ---------------------------------------------------------------------------
 
 func sanitizePath(path string) string {
-	parts := strings.FieldsFunc(path, func(r rune) bool {
-		switch r {
-		case '/', ':', '.', '-', ' ':
-			return true
-		}
-		return false
-	})
-	if len(parts) == 0 {
-		return "mod"
-	}
-	for i := range parts {
-		parts[i] = sanitizeIdent(parts[i])
-	}
-	return strings.Join(parts, "__")
+	return becommon.SanitizePath(path)
 }
 
 func sanitizeType(typ typeinfo.Type) string {
-	return sanitizeIdent(strings.NewReplacer(
-		"local:", "",
-		"::", "__",
-		"*", "ptr_",
-		" ", "_",
-		"?", "opt_",
-		"!", "_",
-		"/", "__",
-	).Replace(typeinfo.FormatType(typ)))
+	return becommon.SanitizeType(typ)
 }
 
 func sanitizeIdent(s string) string {
-	if s == "" {
-		return "_"
-	}
-	var b strings.Builder
-	for i, r := range s {
-		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_' || (i > 0 && r >= '0' && r <= '9')
-		if ok {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('_')
-		}
-	}
-	out := b.String()
-	if out == "" {
-		return "_"
-	}
-	return out
+	return becommon.SanitizeIdent(s)
 }
 
 type typeStringer struct {
