@@ -9,7 +9,7 @@ import (
 	"compiler/internal/frontend/lexer"
 )
 
-func parseTestModule(t *testing.T, src string) (*ast.Module, *diagnostics.Bag) {
+func parseTestModule(t *testing.T, src string) (*ast.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	diag := diagnostics.NewDiagnosticBag("")
 	toks := lexer.New("test.ferr", src, diag).Tokenize()
@@ -17,7 +17,7 @@ func parseTestModule(t *testing.T, src string) (*ast.Module, *diagnostics.Bag) {
 	return mod, diag
 }
 
-func hasDiagnosticMessage(diag *diagnostics.Bag, substr string) bool {
+func hasDiagnosticMessage(diag *diagnostics.DiagnosticBag, substr string) bool {
 	for _, d := range diag.Diagnostics() {
 		if strings.Contains(d.Message, substr) {
 			return true
@@ -26,7 +26,7 @@ func hasDiagnosticMessage(diag *diagnostics.Bag, substr string) bool {
 	return false
 }
 
-func findDiagnosticWithMessage(diag *diagnostics.Bag, substr string) *diagnostics.Diagnostic {
+func findDiagnosticWithMessage(diag *diagnostics.DiagnosticBag, substr string) *diagnostics.Diagnostic {
 	for _, d := range diag.Diagnostics() {
 		if strings.Contains(d.Message, substr) {
 			return d

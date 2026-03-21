@@ -26,12 +26,12 @@ type Lexer struct {
 	file     string
 	input    string
 	pos      source.Position
-	diag     *diagnostics.Bag
+	diag     *diagnostics.DiagnosticBag
 	patterns []regexPattern
 	toks     []tokens.Token
 }
 
-func New(file, input string, diag *diagnostics.Bag) *Lexer {
+func New(file, input string, diag *diagnostics.DiagnosticBag) *Lexer {
 	if diag == nil {
 		diag = diagnostics.NewDiagnosticBag("")
 	}

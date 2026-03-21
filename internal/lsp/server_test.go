@@ -62,10 +62,10 @@ func TestPublishSyntaxDiagnosticsRecoversFromParserPanic(t *testing.T) {
 		parseSource = oldParse
 	}()
 
-	lexSource = func(path, text string, diag *diagnostics.Bag) []tokens.Token {
+	lexSource = func(path, text string, diag *diagnostics.DiagnosticBag) []tokens.Token {
 		return []tokens.Token{{Kind: tokens.EOF, Start: source.NewPosition(), End: source.NewPosition()}}
 	}
-	parseSource = func(path string, toks []tokens.Token, diag *diagnostics.Bag) {
+	parseSource = func(path string, toks []tokens.Token, diag *diagnostics.DiagnosticBag) {
 		panic("boom")
 	}
 

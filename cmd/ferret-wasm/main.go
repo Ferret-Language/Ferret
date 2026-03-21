@@ -235,7 +235,7 @@ func primaryOrFirstLabel(d *diagnostics.Diagnostic) *diagnostics.Label {
 	return &d.Labels[0]
 }
 
-func emitMinimalMainWasm(mods []*ast.Module, diag *diagnostics.Bag) ([]byte, error) {
+func emitMinimalMainWasm(mods []*ast.Module, diag *diagnostics.DiagnosticBag) ([]byte, error) {
 	mainFns := make([]*ast.FuncDecl, 0, 1)
 	for _, mod := range mods {
 		if mod == nil {
@@ -524,7 +524,7 @@ func encodeS32(v int32) []byte {
 	return buf
 }
 
-func addUnsupported(diag *diagnostics.Bag, loc ast.Node, msg, code string) {
+func addUnsupported(diag *diagnostics.DiagnosticBag, loc ast.Node, msg, code string) {
 	if loc == nil {
 		diag.Add(diagnostics.NewError(msg).WithCode(code))
 		return

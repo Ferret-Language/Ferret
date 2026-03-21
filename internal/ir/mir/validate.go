@@ -8,7 +8,7 @@ import (
 	"compiler/internal/core/source"
 )
 
-func ValidateModule(bag *diagnostics.Bag, mod *Module) bool {
+func ValidateModule(bag *diagnostics.DiagnosticBag, mod *Module) bool {
 	if mod == nil {
 		return true
 	}
@@ -21,7 +21,7 @@ func ValidateModule(bag *diagnostics.Bag, mod *Module) bool {
 	return ok
 }
 
-func validateFunction(bag *diagnostics.Bag, fn *Function) bool {
+func validateFunction(bag *diagnostics.DiagnosticBag, fn *Function) bool {
 	if fn == nil {
 		return true
 	}
@@ -82,7 +82,7 @@ func validateFunction(bag *diagnostics.Bag, fn *Function) bool {
 	return ok
 }
 
-func validateInstrValueShape(bag *diagnostics.Bag, instr Instr) bool {
+func validateInstrValueShape(bag *diagnostics.DiagnosticBag, instr Instr) bool {
 	switch i := instr.(type) {
 	case *BindInstr:
 		return requireSimpleValue(bag, i.Loc(), i.Value, "bind")
@@ -112,7 +112,7 @@ func validateInstrValueShape(bag *diagnostics.Bag, instr Instr) bool {
 	}
 }
 
-func validateTerminatorValueShape(bag *diagnostics.Bag, term Terminator) bool {
+func validateTerminatorValueShape(bag *diagnostics.DiagnosticBag, term Terminator) bool {
 	switch t := term.(type) {
 	case *BranchTerm:
 		return requireSimpleValue(bag, t.Loc(), t.Cond, "branch")
@@ -133,7 +133,7 @@ func validateTerminatorValueShape(bag *diagnostics.Bag, term Terminator) bool {
 	}
 }
 
-func requireSimpleValue(bag *diagnostics.Bag, loc source.Location, value Value, usage string) bool {
+func requireSimpleValue(bag *diagnostics.DiagnosticBag, loc source.Location, value Value, usage string) bool {
 	if isSimpleValue(value) {
 		return true
 	}
@@ -141,7 +141,7 @@ func requireSimpleValue(bag *diagnostics.Bag, loc source.Location, value Value, 
 	return false
 }
 
-func requireNormalizedCompute(bag *diagnostics.Bag, loc source.Location, value Value) bool {
+func requireNormalizedCompute(bag *diagnostics.DiagnosticBag, loc source.Location, value Value) bool {
 	if value == nil || isSimpleValue(value) {
 		reportMIRValidation(bag, loc, "compute instruction must hold a non-simple value")
 		return false
@@ -153,7 +153,7 @@ func requireNormalizedCompute(bag *diagnostics.Bag, loc source.Location, value V
 	return true
 }
 
-func requireNormalizedAssignable(bag *diagnostics.Bag, loc source.Location, value Value, usage string) bool {
+func requireNormalizedAssignable(bag *diagnostics.DiagnosticBag, loc source.Location, value Value, usage string) bool {
 	if value == nil || isSimpleValue(value) {
 		return true
 	}
@@ -239,7 +239,7 @@ func terminatorTargets(term Terminator) []int {
 	}
 }
 
-func reportMIRValidation(bag *diagnostics.Bag, loc source.Location, message string) {
+func reportMIRValidation(bag *diagnostics.DiagnosticBag, loc source.Location, message string) {
 	if bag == nil {
 		return
 	}

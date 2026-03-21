@@ -80,7 +80,7 @@ type Module struct {
 
 type CompilerContext struct {
 	Config      Config
-	Diagnostics *diagnostics.Bag
+	Diagnostics *diagnostics.DiagnosticBag
 	Universe    *table.Scope
 	Prelude     *Module
 
@@ -90,7 +90,7 @@ type CompilerContext struct {
 	dependencies map[string]map[string]struct{}
 }
 
-func New(rootDir, extension string, diag *diagnostics.Bag) *CompilerContext {
+func New(rootDir, extension string, diag *diagnostics.DiagnosticBag) *CompilerContext {
 	return NewWithConfig(Config{
 		RootDir:         filepath.Clean(rootDir),
 		Extension:       extension,
@@ -98,7 +98,7 @@ func New(rootDir, extension string, diag *diagnostics.Bag) *CompilerContext {
 	}, diag)
 }
 
-func NewWithConfig(cfg Config, diag *diagnostics.Bag) *CompilerContext {
+func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext {
 	if diag == nil {
 		diag = diagnostics.NewDiagnosticBag("")
 	}

@@ -65,10 +65,10 @@ var (
 	memberPattern       = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)?$`)
 	staticMemberPattern = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*(?:<[^>\n]*>)?)::([A-Za-z_][A-Za-z0-9_]*)?$`)
 
-	lexSource = func(path, text string, diag *diagnostics.Bag) []tokens.Token {
+	lexSource = func(path, text string, diag *diagnostics.DiagnosticBag) []tokens.Token {
 		return lexer.New(path, text, diag).Tokenize()
 	}
-	parseSource = func(path string, toks []tokens.Token, diag *diagnostics.Bag) {
+	parseSource = func(path string, toks []tokens.Token, diag *diagnostics.DiagnosticBag) {
 		_ = parser.Parse(path, toks, diag)
 	}
 	parseProject = func(path string) compiler.Result {

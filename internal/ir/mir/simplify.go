@@ -10,7 +10,7 @@ import (
 	"compiler/internal/utils/numeric"
 )
 
-func SimplifyModule(diag *diagnostics.Bag, mod *Module) *Module {
+func SimplifyModule(diag *diagnostics.DiagnosticBag, mod *Module) *Module {
 	if mod == nil {
 		return nil
 	}
@@ -26,7 +26,7 @@ func SimplifyModule(diag *diagnostics.Bag, mod *Module) *Module {
 	return mod
 }
 
-func simplifyFunction(diag *diagnostics.Bag, fn *Function) {
+func simplifyFunction(diag *diagnostics.DiagnosticBag, fn *Function) {
 	if fn == nil {
 		return
 	}
@@ -216,7 +216,7 @@ func simplifyDeferredInstr(instr Instr) Instr {
 	return instr
 }
 
-func simplifyTerminator(diag *diagnostics.Bag, term Terminator, consts map[int]Value) Terminator {
+func simplifyTerminator(diag *diagnostics.DiagnosticBag, term Terminator, consts map[int]Value) Terminator {
 	switch t := term.(type) {
 	case nil:
 		return nil
@@ -253,7 +253,7 @@ func simplifyTerminator(diag *diagnostics.Bag, term Terminator, consts map[int]V
 	}
 }
 
-func reportConstantCondition(diag *diagnostics.Bag, value Value, truth bool) {
+func reportConstantCondition(diag *diagnostics.DiagnosticBag, value Value, truth bool) {
 	if diag == nil || value == nil {
 		return
 	}

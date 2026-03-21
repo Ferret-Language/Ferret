@@ -20,7 +20,7 @@ type Result struct {
 	Entry         *context.Module
 	Modules       []*context.Module
 	Module        *ast.Module
-	Diagnostics   *diagnostics.Bag
+	Diagnostics   *diagnostics.DiagnosticBag
 	CompilerState *context.CompilerContext
 }
 
@@ -29,7 +29,7 @@ type Compiler struct {
 	pipeline *pipeline.Pipeline
 }
 
-func New(rootDir, extension string, diag *diagnostics.Bag) *Compiler {
+func New(rootDir, extension string, diag *diagnostics.DiagnosticBag) *Compiler {
 	ctx := context.New(rootDir, extension, diag)
 	if err := prelude.Load(ctx); err != nil {
 		ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
@@ -37,7 +37,7 @@ func New(rootDir, extension string, diag *diagnostics.Bag) *Compiler {
 	return &Compiler{ctx: ctx, pipeline: pipeline.New(ctx)}
 }
 
-func NewWithConfig(cfg context.Config, diag *diagnostics.Bag) *Compiler {
+func NewWithConfig(cfg context.Config, diag *diagnostics.DiagnosticBag) *Compiler {
 	ctx := context.NewWithConfig(cfg, diag)
 	if err := prelude.Load(ctx); err != nil {
 		ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))

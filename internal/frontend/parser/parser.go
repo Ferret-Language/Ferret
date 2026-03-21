@@ -15,14 +15,14 @@ type Parser struct {
 	toks                []tokens.Token
 	pos                 int
 	compositeValueDepth int
-	diag                *diagnostics.Bag
+	diag                *diagnostics.DiagnosticBag
 }
 
-func Parse(file string, toks []tokens.Token, diag *diagnostics.Bag) *ast.Module {
+func Parse(file string, toks []tokens.Token, diag *diagnostics.DiagnosticBag) *ast.Module {
 	return New(file, toks, diag).ParseModule()
 }
 
-func New(file string, toks []tokens.Token, diag *diagnostics.Bag) *Parser {
+func New(file string, toks []tokens.Token, diag *diagnostics.DiagnosticBag) *Parser {
 	if diag == nil {
 		diag = diagnostics.NewDiagnosticBag("")
 	}
