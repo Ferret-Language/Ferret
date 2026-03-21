@@ -4,6 +4,7 @@ import (
 	"compiler/internal/core/source"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
+	"slices"
 )
 
 const (
@@ -21,13 +22,9 @@ const (
 	precPostfix
 )
 
-func (p *Parser) parseExpr(precedence int) ast.Expr {
-	return p.parseExprUntil(precedence)
-}
-
 func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Expr {
 	left := p.parsePrefix()
-	for !p.at(tokens.SEMICOLON) && !p.at(tokens.RBRACE) && !p.at(tokens.EOF) && !p.atAny(stopKinds...) && precedence < p.currentPrecedenceForExpr(left) {
+	for !p.at(tokens.SEMICOLON) && !p.at(tokens.RBRACE) && !p.at(tokens.EOF) && !slices.ContainsFunc(stopKinds, p.at) && precedence < p.currentPrecedenceForExpr(left) {
 		if p.compositeValueDepth > 0 && precedence == precLowest && p.atCompositeFieldBoundary() {
 			return left
 		}
@@ -76,7 +73,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case tokens.IDENT:
 		if p.current().Literal == "copy" {
 			p.advance()
-			return &ast.PrefixExpr{Op: "copy", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+			return &ast.PrefixExpr{Op: "copy", Right: p.parseExprUntil(precPrefix), Location: p.locFrom(start)}
 		}
 		return &ast.Ident{Path: p.parseNamePath(), Location: p.locFrom(start)}
 	case tokens.NUMBER:
@@ -90,7 +87,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return &ast.NoneLit{Location: p.locFrom(start)}
 	case tokens.LPAREN:
 		p.advance()
-		expr := p.parseExpr(precLowest)
+		expr := p.parseExprUntil(precLowest)
 		p.expect(tokens.RPAREN, "expected ')'")
 		return expr
 	case tokens.DOT:
@@ -105,16 +102,16 @@ func (p *Parser) parsePrefix() ast.Expr {
 		if p.match(tokens.MUT) {
 			op = "&mut"
 		}
-		return &ast.PrefixExpr{Op: op, Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+		return &ast.PrefixExpr{Op: op, Right: p.parseExprUntil(precPrefix), Location: p.locFrom(start)}
 	case tokens.ASTERISK, tokens.MINUS, tokens.BANG, tokens.QUESTION:
 		tok := p.advance()
-		return &ast.PrefixExpr{Op: tok.Literal, Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+		return &ast.PrefixExpr{Op: tok.Literal, Right: p.parseExprUntil(precPrefix), Location: p.locFrom(start)}
 	case tokens.COMPTIME:
 		p.advance()
-		return &ast.PrefixExpr{Op: "comptime", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+		return &ast.PrefixExpr{Op: "comptime", Right: p.parseExprUntil(precPrefix), Location: p.locFrom(start)}
 	case tokens.UNSAFE:
 		p.advance()
-		return &ast.PrefixExpr{Op: "unsafe", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+		return &ast.PrefixExpr{Op: "unsafe", Right: p.parseExprUntil(precPrefix), Location: p.locFrom(start)}
 	case tokens.AT:
 		loc := p.locFrom(start)
 		p.errorAt(loc, "raw address syntax `@` was removed; use `&` or `&mut` with a raw-pointer expected type inside `unsafe`")
@@ -170,10 +167,10 @@ func (p *Parser) parseCompositeItems(end tokens.Kind) []ast.CompositeItem {
 	items := make([]ast.CompositeItem, 0)
 	for !p.at(end) && !p.at(tokens.EOF) {
 		if p.match(tokens.DOT) {
-			nameTok := p.expectIdent("expected field name")
+			nameTok := p.expect(tokens.IDENT, "expected field name")
 			p.expect(tokens.ASSIGN, "expected '='")
 			p.compositeValueDepth++
-			value := p.parseExpr(precLowest)
+			value := p.parseExprUntil(precLowest)
 			p.compositeValueDepth--
 			items = append(items, ast.CompositeItem{
 				Name:  &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
@@ -181,7 +178,7 @@ func (p *Parser) parseCompositeItems(end tokens.Kind) []ast.CompositeItem {
 			})
 		} else {
 			p.compositeValueDepth++
-			value := p.parseExpr(precLowest)
+			value := p.parseExprUntil(precLowest)
 			p.compositeValueDepth--
 			items = append(items, ast.CompositeItem{Value: value})
 		}
@@ -210,7 +207,7 @@ func (p *Parser) parseBinary(left ast.Expr) ast.Expr {
 		}
 	}
 	prec := precedence(tok.Kind)
-	right := p.parseExpr(prec)
+	right := p.parseExprUntil(prec)
 	return &ast.BinaryExpr{Left: left, Op: tok.Literal, Right: right, Location: p.makeExprLoc(*left.Loc().Start)}
 }
 
@@ -223,7 +220,7 @@ func (p *Parser) parseCall(left ast.Expr) ast.Expr {
 func (p *Parser) parseIndexExpr(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
 	p.expect(tokens.LBRACK, "expected '[' for index expression")
-	index := p.parseExpr(precLowest)
+	index := p.parseExprUntil(precLowest)
 	p.expect(tokens.RBRACK, "expected ']' after index")
 	return &ast.IndexExpr{Left: left, Index: index, Location: p.makeExprLoc(start)}
 }
@@ -263,7 +260,7 @@ func (p *Parser) parseIdentWithAngleTypeArgs(left ast.Expr) ast.Expr {
 	typeArgs := p.parseAngleTypeArgs("type argument")
 	ident.TypeArgs = typeArgs
 	for p.match(tokens.DCOLON) {
-		ident.Path = append(ident.Path, p.expectIdent("expected identifier after ::").Literal)
+		ident.Path = append(ident.Path, p.expect(tokens.IDENT, "expected identifier after ::").Literal)
 	}
 	ident.Location = p.makeExprLoc(start)
 	return ident
@@ -273,7 +270,7 @@ func (p *Parser) parseArgList() []ast.Expr {
 	p.expect(tokens.LPAREN, "expected '('")
 	args := make([]ast.Expr, 0)
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
-		args = append(args, p.parseExpr(precLowest))
+		args = append(args, p.parseExprUntil(precLowest))
 		if !p.consumeExprListSeparator(tokens.RPAREN, "argument") {
 			break
 		}
@@ -285,7 +282,7 @@ func (p *Parser) parseArgList() []ast.Expr {
 func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
 	p.expect(tokens.DOT, "expected '.'")
-	nameTok := p.expectIdent("expected selector name")
+	nameTok := p.expect(tokens.IDENT, "expected selector name")
 	return &ast.SelectorExpr{
 		Left:     left,
 		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
@@ -309,7 +306,7 @@ func (p *Parser) parseIs(left ast.Expr) ast.Expr {
 
 func (p *Parser) parseMatchExpr() ast.Expr {
 	start := p.advance().Start
-	value := p.parseExpr(precLowest)
+	value := p.parseExprUntil(precLowest)
 	arms := p.parseMatchArms()
 	return &ast.MatchExpr{Value: value, Arms: arms, Location: p.locFrom(start)}
 }
@@ -335,7 +332,7 @@ func (p *Parser) parseMatchArms() []*ast.MatchArm {
 		if p.at(tokens.LBRACE) {
 			body = p.parseBlock()
 		} else {
-			bodyExpr := p.parseExpr(precLowest)
+			bodyExpr := p.parseExprUntil(precLowest)
 			body = &ast.BlockStmt{
 				Stmts:    []ast.Stmt{&ast.ExprStmt{Value: bodyExpr, Location: bodyExpr.Loc()}},
 				Location: bodyExpr.Loc(),
@@ -408,7 +405,7 @@ func (p *Parser) parseCatch(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
 	p.expect(tokens.CATCH, "expected 'catch'")
 	if p.match(tokens.BAR) {
-		nameTok := p.expectIdent("expected catch payload name")
+		nameTok := p.expect(tokens.IDENT, "expected catch payload name")
 		p.expect(tokens.BAR, "expected closing '|' after catch payload")
 		handler := p.parseBlock()
 		return &ast.CatchExpr{
@@ -418,7 +415,7 @@ func (p *Parser) parseCatch(left ast.Expr) ast.Expr {
 			Location: p.makeExprLoc(start),
 		}
 	}
-	fallback := p.parseExpr(precCatch)
+	fallback := p.parseExprUntil(precCatch)
 	return &ast.CatchExpr{
 		Left:     left,
 		Fallback: fallback,

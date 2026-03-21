@@ -12,7 +12,6 @@ import (
 	"compiler/internal/backend"
 	becommon "compiler/internal/backend/common"
 	"compiler/internal/backend/symutil"
-	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/mir"
 )
 
@@ -220,7 +219,7 @@ func emitTypes(b *strings.Builder, state *moduleState, types []*mir.TypeDecl) er
 }
 
 func lowerTypeDecl(state *moduleState, decl *mir.TypeDecl) (string, error) {
-	layoutInfo, err := lookupNamedLayout(state, decl.Named)
+	layoutInfo, err := becommon.LookupNamedLayoutFromState(state.layouts, state.layout, state.mod, decl.Named, "qbe")
 	if err != nil {
 		return "", err
 	}
@@ -635,11 +634,11 @@ func lowerAggregateCompare(state *moduleState, targetName string, targetType typ
 	if _, err := qbeBaseType(targetType); err != nil {
 		return "", true, err
 	}
-	leftStruct, err := lookupStructLayout(state, bin.Left.Type())
+	leftStruct, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, bin.Left.Type(), "qbe")
 	if err != nil {
 		return "", true, err
 	}
-	rightStruct, err := lookupStructLayout(state, bin.Right.Type())
+	rightStruct, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, bin.Right.Type(), "qbe")
 	if err != nil {
 		return "", true, err
 	}
@@ -1063,7 +1062,7 @@ func qbeResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldIndex
 	if fieldIndex >= 0 {
 		return fieldIndex, nil
 	}
-	structLayout, err := lookupStructLayout(state, baseType)
+	structLayout, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, baseType, "qbe")
 	if err != nil {
 		return -1, err
 	}
@@ -1248,7 +1247,7 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 			return nil, "", err
 		}
 		baseType := qbePlaceType(state, p.Base)
-		sl, err := lookupStructLayout(state, baseType)
+		sl, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, baseType, "qbe")
 		if err != nil {
 			return nil, "", err
 		}
@@ -1369,7 +1368,7 @@ func lowerStoreField(state *moduleState, instr *mir.StoreFieldInstr) (string, er
 }
 
 func lowerFieldAddress(state *moduleState, base mir.Value, fieldIndex int) ([]string, string, typeinfo.Type, error) {
-	structLayout, err := lookupStructLayout(state, base.Type())
+	structLayout, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, base.Type(), "qbe")
 	if err != nil {
 		return nil, "", nil, err
 	}
@@ -1494,7 +1493,7 @@ func lowerInterfaceCall(state *moduleState, targetName string, targetType typein
 	if err != nil {
 		return "", err
 	}
-	method, methodIndex, err := lookupInterfaceMethodDecl(state, recv.Type(), field.MemberName)
+	method, methodIndex, err := becommon.LookupInterfaceMethodDecl(state.mod, state.modules, recv.Type(), field.MemberName, "qbe")
 	if err != nil {
 		return "", err
 	}
@@ -1587,7 +1586,7 @@ func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *m
 	if sym, ok := state.interfaceVTables[key]; ok {
 		return sym, nil
 	}
-	methods, _, err := lookupInterfaceDecl(state, target)
+	methods, _, err := becommon.LookupInterfaceDecl(state.mod, state.modules, target, "qbe")
 	if err != nil {
 		return "", err
 	}
@@ -1717,47 +1716,6 @@ func qbeInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type, link mi
 	_ = method
 	_ = link
 	return fmt.Sprintf("%s %s", abi, tmp), fmt.Sprintf("%s =%s %s %%data", tmp, qtype, op), nil
-}
-
-func lookupInterfaceDecl(state *moduleState, typ typeinfo.Type) (*mir.InterfaceTypeDecl, *typeinfo.NamedType, error) {
-	named, ok := typ.(*typeinfo.NamedType)
-	if !ok || named == nil {
-		return nil, nil, fmt.Errorf("interface type must be named")
-	}
-	if named.Decl != nil {
-		if ifaceDecl, ok := named.Decl.Type.(*ast.InterfaceType); ok && ifaceDecl != nil && len(ifaceDecl.Methods) == 0 {
-			return &mir.InterfaceTypeDecl{Methods: nil}, named, nil
-		}
-	}
-	var mod *mir.Module
-	if state.modules != nil {
-		mod = state.modules[named.ModuleKey]
-	}
-	if mod == nil {
-		mod = state.mod
-	}
-	if mod == nil {
-		return nil, nil, fmt.Errorf("module for interface %s is not available", named.String())
-	}
-	for _, decl := range mod.Types {
-		if decl != nil && decl.Named != nil && decl.Named.Name == named.Name && decl.Interface != nil {
-			return decl.Interface, decl.Named, nil
-		}
-	}
-	return nil, nil, fmt.Errorf("interface type %s is not available in qbe backend", named.String())
-}
-
-func lookupInterfaceMethodDecl(state *moduleState, typ typeinfo.Type, name string) (*mir.InterfaceMethodDecl, int, error) {
-	iface, _, err := lookupInterfaceDecl(state, typ)
-	if err != nil {
-		return nil, -1, err
-	}
-	for i, method := range iface.Methods {
-		if method != nil && method.Name == name {
-			return method, i, nil
-		}
-	}
-	return nil, -1, fmt.Errorf("interface method %s not found", name)
 }
 
 func isUnionAggregate(typ typeinfo.Type) bool {
@@ -1999,7 +1957,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 			ptrLowered, base, tmp, base, lenLowered, tmp), nil
 	}
 
-	structLayout, err := lookupStructLayout(state, agg.Type)
+	structLayout, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, agg.Type, "qbe")
 	if err != nil {
 		return "", err
 	}
@@ -2067,7 +2025,7 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *mir.Compo
 	if _, ok := typ.(*typeinfo.SliceType); ok {
 		return lowerGlobalStringLike(state, comp)
 	}
-	structLayout, err := lookupStructLayout(state, typ)
+	structLayout, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, typ, "qbe")
 	if err != nil {
 		return "", err
 	}
@@ -2759,7 +2717,7 @@ type backendUnionLayout struct {
 func unionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLayout, error) {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
-		info, err := lookupNamedLayout(state, t)
+		info, err := becommon.LookupNamedLayoutFromState(state.layouts, state.layout, state.mod, t, "qbe")
 		if err != nil {
 			return nil, err
 		}
@@ -2966,28 +2924,8 @@ func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, er
 			return info.Size, info.Align, nil
 		},
 		LookupNamed: func(named *typeinfo.NamedType) (*layout.TypeLayout, error) {
-			return lookupNamedLayout(state, named)
+			return becommon.LookupNamedLayoutFromState(state.layouts, state.layout, state.mod, named, "qbe")
 		},
-	}, typ)
-}
-
-func lookupNamedLayout(state *moduleState, named *typeinfo.NamedType) (*layout.TypeLayout, error) {
-	layouts := map[string]*layout.Module(nil)
-	var currentLayout *layout.Module
-	currentModuleKey := ""
-	if state != nil {
-		layouts = state.layouts
-		currentLayout = state.layout
-		if state.mod != nil {
-			currentModuleKey = state.mod.Key
-		}
-	}
-	return backend.LookupNamedLayout(layouts, currentLayout, currentModuleKey, named, "qbe")
-}
-
-func lookupStructLayout(state *moduleState, typ typeinfo.Type) (*layout.StructLayout, error) {
-	return backend.LookupStructLayout(func(named *typeinfo.NamedType) (*layout.TypeLayout, error) {
-		return lookupNamedLayout(state, named)
 	}, typ)
 }
 
@@ -3017,7 +2955,7 @@ func qbeStructBody(state *moduleState, st *layout.StructLayout) (string, error) 
 
 func qbeAggregateSubType(state *moduleState, typ typeinfo.Type) (string, error) {
 	if named, ok := typ.(*typeinfo.NamedType); ok {
-		info, err := lookupNamedLayout(state, named)
+		info, err := becommon.LookupNamedLayoutFromState(state.layouts, state.layout, state.mod, named, "qbe")
 		if err == nil && info != nil && info.Known && (info.Struct != nil || backend.IsNamedUnion(named) || backend.IsNamedInterface(named)) {
 			return ":" + qbeTypeName(state, named), nil
 		}
@@ -3082,7 +3020,7 @@ func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
 		return "", nil
 	}
 	switch backend.ClassifyABIType(typ, func(named *typeinfo.NamedType) bool {
-		info, err := lookupNamedLayout(state, named)
+		info, err := becommon.LookupNamedLayoutFromState(state.layouts, state.layout, state.mod, named, "qbe")
 		return err == nil && info != nil && info.Known && (info.Struct != nil || backend.IsNamedUnion(named) || backend.IsNamedInterface(named))
 	}) {
 	case backend.ABITypeNamedLayout:

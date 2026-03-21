@@ -67,15 +67,15 @@ func (p *Parser) parseStmt() ast.Stmt {
 	}
 
 	startPos := p.pos
-	left := p.parseExpr(precLowest)
+	left := p.parseExprUntil(precLowest)
 	if p.match(tokens.ASSIGN) {
-		right := p.parseExpr(precLowest)
+		right := p.parseExprUntil(precLowest)
 		return &ast.AssignStmt{Left: left, Right: right, Location: sourceSpan(left.Loc(), right.Loc())}
 	}
 	// Compound assignment: desugar x += y  →  x = x + y
 	if op, ok := compoundAssignOp(p.current().Kind); ok {
 		p.advance()
-		right := p.parseExpr(precLowest)
+		right := p.parseExprUntil(precLowest)
 		loc := sourceSpan(left.Loc(), right.Loc())
 		rhs := &ast.BinaryExpr{Left: left, Op: op, Right: right, Location: loc}
 		return &ast.AssignStmt{Left: left, Right: rhs, Location: loc}
@@ -102,14 +102,14 @@ func (p *Parser) parseStmt() ast.Stmt {
 func (p *Parser) parseLetStmt(doc *ast.CommentGroup) ast.Stmt {
 	start := p.advance().Start
 	isMut := p.match(tokens.MUT)
-	nameTok := p.expectIdent("expected variable name")
+	nameTok := p.expect(tokens.IDENT, "expected variable name")
 	var typ ast.TypeExpr
 	if p.match(tokens.COLON) {
 		typ = p.parseType()
 	}
 	var value ast.Expr
 	if p.match(tokens.ASSIGN) {
-		value = p.parseExpr(precLowest)
+		value = p.parseExprUntil(precLowest)
 	}
 	return &ast.LetStmt{
 		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
@@ -123,14 +123,14 @@ func (p *Parser) parseLetStmt(doc *ast.CommentGroup) ast.Stmt {
 
 func (p *Parser) parseConstStmt(doc *ast.CommentGroup) ast.Stmt {
 	start := p.advance().Start
-	nameTok := p.expectIdent("expected constant name")
+	nameTok := p.expect(tokens.IDENT, "expected constant name")
 	var typ ast.TypeExpr
 	if p.match(tokens.COLON) {
 		typ = p.parseType()
 	}
 	var value ast.Expr
 	if p.match(tokens.ASSIGN) {
-		value = p.parseExpr(precLowest)
+		value = p.parseExprUntil(precLowest)
 	}
 	return &ast.ConstStmt{
 		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
@@ -145,14 +145,14 @@ func (p *Parser) parseReturnStmt() ast.Stmt {
 	start := p.advance().Start
 	var value ast.Expr
 	if !p.at(tokens.SEMICOLON) && !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
-		value = p.parseExpr(precLowest)
+		value = p.parseExprUntil(precLowest)
 	}
 	return &ast.ReturnStmt{Value: value, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseIfStmt() ast.Stmt {
 	start := p.advance().Start
-	cond := p.parseExpr(precLowest)
+	cond := p.parseExprUntil(precLowest)
 	thenBlock := p.parseBlock()
 	var elseStmt ast.Stmt
 	if p.match(tokens.ELSE) {
@@ -167,7 +167,7 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 
 func (p *Parser) parseWhileStmt() ast.Stmt {
 	start := p.advance().Start
-	cond := p.parseExpr(precLowest)
+	cond := p.parseExprUntil(precLowest)
 	body := p.parseBlock()
 	return &ast.WhileStmt{Cond: cond, Body: body, Location: p.locFrom(start)}
 }
@@ -176,12 +176,12 @@ func (p *Parser) parseForStmt() ast.Stmt {
 	start := p.advance().Start
 	iterable := p.parseExprUntil(precLowest, tokens.BAR)
 	p.expect(tokens.BAR, "expected '|' after for iterable")
-	firstTok := p.expectIdent("expected loop binding name")
+	firstTok := p.expect(tokens.IDENT, "expected loop binding name")
 	valueIdent := &ast.Ident{Path: []string{firstTok.Literal}, Location: p.locOfToken(firstTok)}
 	var indexIdent *ast.Ident
 	if p.match(tokens.COMMA) {
 		indexIdent = valueIdent
-		valueTok := p.expectIdent("expected loop value binding name")
+		valueTok := p.expect(tokens.IDENT, "expected loop value binding name")
 		valueIdent = &ast.Ident{Path: []string{valueTok.Literal}, Location: p.locOfToken(valueTok)}
 	}
 	p.expect(tokens.BAR, "expected closing '|' after loop bindings")
@@ -205,7 +205,7 @@ func (p *Parser) parseDeferStmt() ast.Stmt {
 
 func (p *Parser) parseReleaseStmt() ast.Stmt {
 	start := p.advance().Start
-	value := p.parseExpr(precLowest)
+	value := p.parseExprUntil(precLowest)
 	return &ast.ReleaseStmt{Value: value, Location: p.locFrom(start)}
 }
 
@@ -215,11 +215,11 @@ func (p *Parser) parsePanicStmt() ast.Stmt {
 	if p.match(tokens.LPAREN) {
 		p.errorAt(p.locFrom(start), "panic payload must not use parentheses")
 		if !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
-			value = p.parseExpr(precLowest)
+			value = p.parseExprUntil(precLowest)
 		}
 		p.expect(tokens.RPAREN, "expected ')' after panic payload")
 	} else {
-		value = p.parseExpr(precLowest)
+		value = p.parseExprUntil(precLowest)
 	}
 	if value == nil {
 		p.errorAt(p.locFrom(start), "panic requires a payload")
@@ -231,7 +231,7 @@ func (p *Parser) parseLockStmt() ast.Stmt {
 	start := p.advance().Start
 	value := p.parseExprUntil(precLowest, tokens.AS)
 	p.expect(tokens.AS, "expected 'as' in lock statement")
-	nameTok := p.expectIdent("expected lock guard name")
+	nameTok := p.expect(tokens.IDENT, "expected lock guard name")
 	body := p.parseBlock()
 	return &ast.LockStmt{
 		Value:    value,
@@ -269,7 +269,7 @@ func (p *Parser) parseContinueStmt() ast.Stmt {
 
 func (p *Parser) parseLabelStmt() ast.Stmt {
 	start := p.current().Start
-	nameTok := p.expectIdent("expected label name")
+	nameTok := p.expect(tokens.IDENT, "expected label name")
 	p.expect(tokens.COLON, "expected ':' after label")
 	stmt := p.parseStmt()
 	return &ast.LabelStmt{

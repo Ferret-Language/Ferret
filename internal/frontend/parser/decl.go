@@ -21,7 +21,7 @@ func (p *Parser) parseImportDecl() *ast.ImportDecl {
 	}
 	var aliasIdent *ast.Ident
 	if p.match(tokens.AS) {
-		aliasTok := p.expectIdent("expected import alias")
+		aliasTok := p.expect(tokens.IDENT, "expected import alias")
 		aliasIdent = &ast.Ident{Path: []string{aliasTok.Literal}, Location: p.locOfToken(aliasTok)}
 	}
 	p.match(tokens.SEMICOLON)
@@ -30,7 +30,7 @@ func (p *Parser) parseImportDecl() *ast.ImportDecl {
 
 func (p *Parser) parseTypeDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.TYPE, "expected 'type'").Start
-	nameTok := p.expectIdent("expected type name")
+	nameTok := p.expect(tokens.IDENT, "expected type name")
 	typeParams := p.parseTypeParams()
 	spec := p.parseTypeSpec()
 	return &ast.TypeDecl{
@@ -45,7 +45,7 @@ func (p *Parser) parseTypeDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 
 func (p *Parser) parseConstraintDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.CONSTRAINT, "expected 'constraint'").Start
-	nameTok := p.expectIdent("expected constraint name")
+	nameTok := p.expect(tokens.IDENT, "expected constraint name")
 	p.expect(tokens.ASSIGN, "expected '=' after constraint name")
 	value := p.parseConstraintTypeExpr()
 	p.match(tokens.SEMICOLON)
@@ -62,7 +62,7 @@ func (p *Parser) parseConstraintDecl(doc *ast.CommentGroup, attrs []ast.Attribut
 func (p *Parser) parseLetDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.LET, "expected 'let'").Start
 	isMut := p.match(tokens.MUT)
-	nameTok := p.expectIdent("expected variable name")
+	nameTok := p.expect(tokens.IDENT, "expected variable name")
 	name := nameTok.Literal
 	var typ ast.TypeExpr
 	if p.match(tokens.COLON) {
@@ -70,7 +70,7 @@ func (p *Parser) parseLetDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.
 	}
 	var value ast.Expr
 	if p.match(tokens.ASSIGN) {
-		value = p.parseExpr(precLowest)
+		value = p.parseExprUntil(precLowest)
 	}
 	p.match(tokens.SEMICOLON)
 	return &ast.LetDecl{
@@ -86,7 +86,7 @@ func (p *Parser) parseLetDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.
 
 func (p *Parser) parseConstDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.CONST, "expected 'const'").Start
-	nameTok := p.expectIdent("expected constant name")
+	nameTok := p.expect(tokens.IDENT, "expected constant name")
 	name := nameTok.Literal
 	var typ ast.TypeExpr
 	if p.match(tokens.COLON) {
@@ -94,7 +94,7 @@ func (p *Parser) parseConstDecl(doc *ast.CommentGroup, attrs []ast.Attribute) as
 	}
 	var value ast.Expr
 	if p.match(tokens.ASSIGN) {
-		value = p.parseExpr(precLowest)
+		value = p.parseExprUntil(precLowest)
 	}
 	p.match(tokens.SEMICOLON)
 	return &ast.ConstDecl{
@@ -127,7 +127,7 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		p.advance()
 		p.errorAt(loc, "special destructor syntax has been removed; use an ordinary method name like `Drop`")
 	}
-	nameTok := p.expectIdent("expected function or method name")
+	nameTok := p.expect(tokens.IDENT, "expected function or method name")
 	typeParams := p.parseTypeParams()
 	isConstructor := false
 	if owner != nil {
@@ -175,7 +175,7 @@ func (p *Parser) parseTypeParams() []ast.TypeParam {
 	params := make([]ast.TypeParam, 0)
 	for !p.at(tokens.GT) && !p.at(tokens.EOF) {
 		start := p.current().Start
-		nameTok := p.expectIdent("expected type parameter name")
+		nameTok := p.expect(tokens.IDENT, "expected type parameter name")
 		var constraint ast.TypeExpr
 		if p.match(tokens.COLON) {
 			constraint = p.parseConstraintTypeExpr()
@@ -208,7 +208,7 @@ func (p *Parser) parseConstraintTypeExpr() ast.TypeExpr {
 
 func (p *Parser) parseAttachedOwner() *ast.NamedType {
 	start := p.current().Start
-	path := []string{p.expectIdent("expected attached method owner type").Literal}
+	path := []string{p.expect(tokens.IDENT, "expected attached method owner type").Literal}
 	var typeArgs []ast.TypeExpr
 	for p.at(tokens.DCOLON) && p.peekN(1).Kind == tokens.IDENT {
 		scan := p.pos + 2
@@ -233,7 +233,7 @@ func (p *Parser) parseAttachedOwner() *ast.NamedType {
 			break
 		}
 		p.advance()
-		path = append(path, p.expectIdent("expected attached method owner segment").Literal)
+		path = append(path, p.expect(tokens.IDENT, "expected attached method owner segment").Literal)
 		if p.at(tokens.LT) {
 			typeArgs = p.parseAngleTypeArgs("type argument")
 		}
@@ -308,7 +308,7 @@ func foreignAttr(attrs []ast.Attribute) (bool, string) {
 
 func (p *Parser) parseReceiver() *ast.Receiver {
 	start := p.current().Start
-	nameTok := p.expectIdent("expected receiver name")
+	nameTok := p.expect(tokens.IDENT, "expected receiver name")
 	p.expect(tokens.COLON, "expected ':' after receiver name")
 	recvType := p.parseType()
 	return &ast.Receiver{
@@ -325,7 +325,7 @@ func (p *Parser) parseParams() []ast.Param {
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
 		isMut := p.match(tokens.MUT)
-		nameTok := p.expectIdent("expected parameter name")
+		nameTok := p.expect(tokens.IDENT, "expected parameter name")
 		p.expect(tokens.COLON, "expected ':' after parameter name")
 		paramType := p.parseType()
 		params = append(params, ast.Param{
@@ -365,7 +365,7 @@ func (p *Parser) parseAttachedMethodParams(owner *ast.NamedType) (*ast.Receiver,
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
 		isMut := p.match(tokens.MUT)
-		nameTok := p.expectIdent("expected parameter name")
+		nameTok := p.expect(tokens.IDENT, "expected parameter name")
 		p.expect(tokens.COLON, "expected ':' after parameter name")
 		paramType := p.parseType()
 		params = append(params, ast.Param{
@@ -391,7 +391,7 @@ func (p *Parser) parseAttachedReceiver(owner *ast.NamedType) (*ast.Receiver, boo
 	case tokens.AMP:
 		p.advance()
 		mutable := p.match(tokens.MUT)
-		nameTok := p.expectIdent("expected receiver name")
+		nameTok := p.expect(tokens.IDENT, "expected receiver name")
 		recv := &ast.Receiver{
 			Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Type:     &ast.RefType{Mutable: mutable, Inner: cloneNamedType(owner), Location: p.locFrom(start)},
@@ -401,7 +401,7 @@ func (p *Parser) parseAttachedReceiver(owner *ast.NamedType) (*ast.Receiver, boo
 		return recv, false
 	case tokens.ASTERISK:
 		p.advance()
-		nameTok := p.expectIdent("expected receiver name")
+		nameTok := p.expect(tokens.IDENT, "expected receiver name")
 		recv := &ast.Receiver{
 			Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Type:     &ast.PointerType{Inner: cloneNamedType(owner), Location: p.locFrom(start)},
@@ -412,7 +412,7 @@ func (p *Parser) parseAttachedReceiver(owner *ast.NamedType) (*ast.Receiver, boo
 	case tokens.CARET:
 		p.advance()
 		isConst := p.match(tokens.CONST)
-		nameTok := p.expectIdent("expected receiver name")
+		nameTok := p.expect(tokens.IDENT, "expected receiver name")
 		recv := &ast.Receiver{
 			Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Type:     &ast.RawPtrType{Const: isConst, Inner: cloneNamedType(owner), Location: p.locFrom(start)},
@@ -477,12 +477,12 @@ func (p *Parser) parseStructType() ast.TypeExpr {
 			p.synchronizeTypeBody(tokens.RBRACE)
 			continue
 		}
-		nameTok := p.expectIdent("expected field name")
+		nameTok := p.expect(tokens.IDENT, "expected field name")
 		p.expect(tokens.COLON, "expected ':' after field name")
 		fieldType := p.parseType()
 		var def ast.Expr
 		if p.match(tokens.ASSIGN) {
-			def = p.parseExpr(precLowest)
+			def = p.parseExprUntil(precLowest)
 		}
 		p.match(tokens.COMMA)
 		fields = append(fields, &ast.FieldDecl{
@@ -507,7 +507,7 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 			continue
 		}
 		methodStart := p.current().Start
-		nameTok := p.expectIdent("expected interface method name")
+		nameTok := p.expect(tokens.IDENT, "expected interface method name")
 		receiver, params, inferredStatic := p.parseInterfaceMethodParams()
 		var result ast.TypeExpr
 		if p.startsType() {
@@ -539,7 +539,7 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 		if p.match(tokens.MUT) {
 			receiver = "&mut "
 		}
-		nameTok := p.expectIdent("expected receiver name")
+		nameTok := p.expect(tokens.IDENT, "expected receiver name")
 		p.warnNonSelfReceiver(&ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)})
 		if p.at(tokens.COMMA) {
 			p.advance()
@@ -547,7 +547,7 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 	case tokens.ASTERISK:
 		isStatic = false
 		p.advance()
-		nameTok := p.expectIdent("expected receiver name")
+		nameTok := p.expect(tokens.IDENT, "expected receiver name")
 		p.warnNonSelfReceiver(&ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)})
 		receiver = "*"
 		if p.at(tokens.COMMA) {
@@ -560,7 +560,7 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 		if p.match(tokens.CONST) {
 			receiver = "^const "
 		}
-		nameTok := p.expectIdent("expected receiver name")
+		nameTok := p.expect(tokens.IDENT, "expected receiver name")
 		p.warnNonSelfReceiver(&ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)})
 		if p.at(tokens.COMMA) {
 			p.advance()
@@ -625,7 +625,7 @@ func (p *Parser) parseEnumType() ast.TypeExpr {
 	variants := make([]*ast.EnumVariant, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
 		variantStart := p.current().Start
-		nameTok := p.expectIdent("expected enum variant")
+		nameTok := p.expect(tokens.IDENT, "expected enum variant")
 		variants = append(variants, &ast.EnumVariant{Name: &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)}, Location: p.locFrom(variantStart)})
 		if !p.consumeExprListSeparator(tokens.RBRACE, "enum variant") {
 			break
@@ -672,7 +672,7 @@ func (p *Parser) parseErrorType() ast.TypeExpr {
 	members := make([]*ast.ErrorMember, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
 		memberStart := p.current().Start
-		nameTok := p.expectIdent("expected error member")
+		nameTok := p.expect(tokens.IDENT, "expected error member")
 		members = append(members, &ast.ErrorMember{Name: &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)}, Location: p.locFrom(memberStart)})
 		if !p.consumeExprListSeparator(tokens.RBRACE, "error member") {
 			break

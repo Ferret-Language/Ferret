@@ -44,7 +44,7 @@ func (p *Parser) parseType() ast.TypeExpr {
 			size = &ast.Ident{Path: []string{"_"}, Location: p.locFrom(p.current().Start)}
 			p.advance()
 		} else {
-			size = p.parseExpr(precLowest)
+			size = p.parseExprUntil(precLowest)
 		}
 		p.expect(tokens.RBRACK, "expected ']' after array size")
 		return &ast.ArrayType{Size: size, Inner: p.parseType(), Location: p.locFrom(start)}

@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"strings"
 
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/backend"
+	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/mir"
 )
 
@@ -107,4 +110,58 @@ func SanitizeIdent(s string) string {
 		return "_"
 	}
 	return out
+}
+
+func LookupInterfaceDecl(current *mir.Module, modules map[string]*mir.Module, typ typeinfo.Type, backendName string) (*mir.InterfaceTypeDecl, *typeinfo.NamedType, error) {
+	named, ok := typ.(*typeinfo.NamedType)
+	if !ok || named == nil {
+		return nil, nil, fmt.Errorf("interface type must be named")
+	}
+	if named.Decl != nil {
+		if ifaceDecl, ok := named.Decl.Type.(*ast.InterfaceType); ok && ifaceDecl != nil && len(ifaceDecl.Methods) == 0 {
+			return &mir.InterfaceTypeDecl{Methods: nil}, named, nil
+		}
+	}
+	mod := current
+	if modules != nil {
+		if owner := modules[named.ModuleKey]; owner != nil {
+			mod = owner
+		}
+	}
+	if mod == nil {
+		return nil, nil, fmt.Errorf("module for interface %s is not available", named.String())
+	}
+	for _, decl := range mod.Types {
+		if decl != nil && decl.Named != nil && decl.Named.Name == named.Name && decl.Interface != nil {
+			return decl.Interface, decl.Named, nil
+		}
+	}
+	return nil, nil, fmt.Errorf("interface type %s is not available in %s backend", named.String(), backendName)
+}
+
+func LookupInterfaceMethodDecl(current *mir.Module, modules map[string]*mir.Module, typ typeinfo.Type, name string, backendName string) (*mir.InterfaceMethodDecl, int, error) {
+	iface, _, err := LookupInterfaceDecl(current, modules, typ, backendName)
+	if err != nil {
+		return nil, -1, err
+	}
+	for i, method := range iface.Methods {
+		if method != nil && method.Name == name {
+			return method, i, nil
+		}
+	}
+	return nil, -1, fmt.Errorf("interface method %s not found", name)
+}
+
+func LookupNamedLayoutFromState(layouts map[string]*layout.Module, currentLayout *layout.Module, currentModule *mir.Module, named *typeinfo.NamedType, backendName string) (*layout.TypeLayout, error) {
+	currentModuleKey := ""
+	if currentModule != nil {
+		currentModuleKey = currentModule.Key
+	}
+	return backend.LookupNamedLayout(layouts, currentLayout, currentModuleKey, named, backendName)
+}
+
+func LookupStructLayoutFromState(layouts map[string]*layout.Module, currentLayout *layout.Module, currentModule *mir.Module, typ typeinfo.Type, backendName string) (*layout.StructLayout, error) {
+	return backend.LookupStructLayout(func(named *typeinfo.NamedType) (*layout.TypeLayout, error) {
+		return LookupNamedLayoutFromState(layouts, currentLayout, currentModule, named, backendName)
+	}, typ)
 }

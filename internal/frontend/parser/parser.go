@@ -203,10 +203,6 @@ func (p *Parser) at(kind tokens.Kind) bool {
 	return p.current().Kind == kind
 }
 
-func (p *Parser) atAny(kinds ...tokens.Kind) bool {
-	return slices.ContainsFunc(kinds, p.at)
-}
-
 // hasGenericCallAhead reports whether the '[' at the current position begins a
 // generic-call type-argument list, i.e. whether the matching ']' is
 // immediately followed by '('.  If it is NOT followed by '(', the '[...]' is
@@ -311,10 +307,6 @@ func (p *Parser) expect(kind tokens.Kind, message string) tokens.Token {
 	}
 	p.errorExpected(message)
 	return p.current()
-}
-
-func (p *Parser) expectIdent(message string) tokens.Token {
-	return p.expect(tokens.IDENT, message)
 }
 
 func (p *Parser) locFrom(start source.Position) source.Location {
@@ -457,9 +449,9 @@ func (p *Parser) consumeListSeparator(end tokens.Kind, itemName string, canStart
 }
 
 func (p *Parser) parseNamePath() []string {
-	path := []string{p.expectIdent("expected identifier").Literal}
+	path := []string{p.expect(tokens.IDENT, "expected identifier").Literal}
 	for p.match(tokens.DCOLON) {
-		path = append(path, p.expectIdent("expected identifier after ::").Literal)
+		path = append(path, p.expect(tokens.IDENT, "expected identifier after ::").Literal)
 	}
 	return path
 }
