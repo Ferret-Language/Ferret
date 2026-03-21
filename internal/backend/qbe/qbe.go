@@ -2979,99 +2979,40 @@ func isAggregateType(state *moduleState, typ typeinfo.Type) bool {
 }
 
 func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, error) {
-	switch t := typ.(type) {
-	case *typeinfo.BuiltinType:
-		return 0, 0, fmt.Errorf("unsupported aggregate builtin %s", t.Name)
-	case *typeinfo.ArrayType:
-		if t.Len < 0 {
-			return 0, 0, fmt.Errorf("array with unknown length")
-		}
-		elemSize, elemAlign, err := qbeScalarSizeAlign(t.Inner)
-		if err != nil {
-			// try inner as aggregate
-			inner, innerAl, err2 := aggregateSizeAlign(state, t.Inner)
-			if err2 != nil {
-				return 0, 0, fmt.Errorf("unsupported array element type %s", t.Inner)
+	return backend.AggregateSizeAlign(backend.AggregateLayoutContext{
+		BackendName:     "qbe",
+		ScalarSizeAlign: qbeScalarSizeAlign,
+		OptionalSizeFunc: func(optional typeinfo.Type) (int64, int64, error) {
+			info, err := unionLayoutInfo(state, optional)
+			if err != nil {
+				return 0, 0, err
 			}
-			stride := alignUpInt64(inner, innerAl)
-			return stride * t.Len, innerAl, nil
-		}
-		stride := alignUpInt64(elemSize, elemAlign)
-		return stride * t.Len, elemAlign, nil
-	case *typeinfo.StringType:
-		return 16, 8, nil
-	case *typeinfo.SliceType:
-		// str / []T: { ptr *T, len usize } — 16 bytes, 8-byte aligned.
-		return 16, 8, nil
-	case *typeinfo.OptionalType:
-		if optionalUsesNiche(t.Inner) {
-			return 0, 0, fmt.Errorf("optional %s uses niche layout", t.Inner)
-		}
-		info, err := unionLayoutInfo(state, typ)
-		if err != nil {
-			return 0, 0, err
-		}
-		return info.Size, info.Align, nil
-	case *typeinfo.NamedType:
-		if namedIsInterface(t) {
-			return 16, 8, nil
-		}
-		info, err := lookupNamedLayout(state, t)
-		if err != nil {
-			return 0, 0, err
-		}
-		if info == nil || !info.Known {
-			return 0, 0, fmt.Errorf("unknown aggregate layout for %s", t.String())
-		}
-		return info.Size, info.Align, nil
-	default:
-		return 0, 0, fmt.Errorf("unsupported aggregate type %s", typeinfo.FormatType(typeStringer{typ}))
-	}
+			return info.Size, info.Align, nil
+		},
+		LookupNamed: func(named *typeinfo.NamedType) (*layout.TypeLayout, error) {
+			return lookupNamedLayout(state, named)
+		},
+	}, typ)
 }
 
 func lookupNamedLayout(state *moduleState, named *typeinfo.NamedType) (*layout.TypeLayout, error) {
-	if named == nil {
-		return nil, fmt.Errorf("nil named type")
-	}
+	layouts := map[string]*layout.Module(nil)
+	var currentLayout *layout.Module
+	currentModuleKey := ""
 	if state != nil {
-		if state.layouts != nil {
-			if lm, ok := state.layouts[named.ModuleKey]; ok && lm != nil {
-				if info, ok := lm.Lookup(named.Name); ok {
-					return info, nil
-				}
-			}
-		}
-		if state.layout != nil && state.mod != nil && named.ModuleKey == state.mod.Key {
-			if info, ok := state.layout.Lookup(named.Name); ok {
-				return info, nil
-			}
+		layouts = state.layouts
+		currentLayout = state.layout
+		if state.mod != nil {
+			currentModuleKey = state.mod.Key
 		}
 	}
-	return nil, fmt.Errorf("layout for named type %s is not available in qbe backend", named.String())
+	return backend.LookupNamedLayout(layouts, currentLayout, currentModuleKey, named, "qbe")
 }
 
 func lookupStructLayout(state *moduleState, typ typeinfo.Type) (*layout.StructLayout, error) {
-	switch t := typ.(type) {
-	case *typeinfo.BuiltinType:
-		return nil, fmt.Errorf("builtin %s is not a struct layout", t.Name)
-	case *typeinfo.NamedType:
-		info, err := lookupNamedLayout(state, t)
-		if err != nil {
-			return nil, err
-		}
-		if info == nil || info.Struct == nil {
-			return nil, fmt.Errorf("type %s is not a struct layout", t.String())
-		}
-		return info.Struct, nil
-	case *typeinfo.PointerType:
-		return lookupStructLayout(state, t.Inner)
-	case *typeinfo.RefType:
-		return lookupStructLayout(state, t.Inner)
-	case *typeinfo.RawPtrType:
-		return lookupStructLayout(state, t.Inner)
-	default:
-		return nil, fmt.Errorf("unsupported struct base type %s", typeinfo.FormatType(typeStringer{typ}))
-	}
+	return backend.LookupStructLayout(func(named *typeinfo.NamedType) (*layout.TypeLayout, error) {
+		return lookupNamedLayout(state, named)
+	}, typ)
 }
 
 func qbeStructBody(state *moduleState, st *layout.StructLayout) (string, error) {
