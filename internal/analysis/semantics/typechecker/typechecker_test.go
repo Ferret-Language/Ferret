@@ -11,6 +11,7 @@ import (
 	"compiler/internal/core/phase"
 	compiler "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/ir/mir"
 )
 
 func TestTypecheckerChecksWorkspaceExampleSubset(t *testing.T) {
@@ -2353,13 +2354,15 @@ fn main() i32 {
 func TestTypecheckerRejectsNonConstComptimeArgument(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+#[extern("clock")]
+fn clock() i32;
+
 fn id(comptime T: i32, x: i32) i32 {
     return x
 }
 
 fn main() i32 {
-    let x = 1
-    return id(x, 2)
+    return id(clock(), 2)
 }
 `)
 
@@ -2376,6 +2379,375 @@ fn main() i32 {
 	}
 	if !found {
 		t.Fatalf("expected comptime-argument diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerComptimePrefixExpressionFoldsInMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let x = 1
+    let y = comptime x + 2
+    return y
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected comptime prefix to fold, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR for comptime fold, got %#v", result.Entry)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "y = 3") || !strings.Contains(text, "return 3") {
+		t.Fatalf("expected folded comptime value in MIR, got %q", text)
+	}
+}
+
+func TestTypecheckerComptimeEvaluatesFunctionCallWithLoop(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn getVal() i32 {
+    let mut i = 0
+    let mut sum = 0
+    while i < 5 {
+        sum = sum + i
+        i = i + 1
+    }
+    return sum
+}
+
+fn main() i32 {
+    let val = comptime getVal()
+    return val
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected comptime function call to evaluate, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR for comptime fold, got %#v", result.Entry)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "val = 10") || !strings.Contains(text, "return 10") {
+		t.Fatalf("expected folded comptime value 10 in MIR, got %q", text)
+	}
+	if strings.Contains(text, "= getVal()") {
+		t.Fatalf("expected no runtime getVal call residue after comptime fold, got %q", text)
+	}
+}
+
+func TestTypecheckerRejectsComptimeOnExternCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+#[extern("clock")]
+fn clock() i64;
+
+fn main() i64 {
+    let now = comptime clock()
+    return now
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected comptime extern-call diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && diag.Message == "`comptime` expression must be compile-time evaluable" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected comptime extern-call diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerComptimePanicReportsCompileError(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn assertNonZero(x: i32) i32 {
+    if x == 0 {
+        panic "x must not be zero"
+    }
+    return x
+}
+
+fn main() i32 {
+    let v = comptime assertNonZero(0)
+    return v
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected compile-time panic diagnostic")
+	}
+	foundPanic := false
+	foundGeneric := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "compile-time panic: x must not be zero") {
+			foundPanic = true
+		}
+		if diag.Code == diagnostics.ErrTypeMismatch && diag.Message == "`comptime` expression must be compile-time evaluable" {
+			foundGeneric = true
+		}
+	}
+	if !foundPanic {
+		t.Fatalf("expected compile-time panic diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if foundGeneric {
+		t.Fatalf("expected no generic comptime evaluable diagnostic when panic is reported, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerComptimeAssertPatternWorks(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn assert(comptime cond: bool, comptime msg: str) void {
+    if !cond {
+        panic msg
+    }
+}
+
+fn main() void {
+    comptime {
+        assert(1 + 1 == 2, "math broke")
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		if result.Entry != nil && result.Entry.MIR != nil {
+			t.Log(mir.FormatModule(result.Entry.MIR))
+		}
+		for _, d := range result.Diagnostics.Diagnostics() {
+			t.Logf("diag: %s %q", d.Code, d.Message)
+		}
+		t.Fatalf("expected comptime assert pattern to typecheck, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerCompileErrorRequiresComptimeContext(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() void {
+    compile_error("boom")
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected compile_error context diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "compile_error can only be used in comptime context") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected compile_error context diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerComptimeCompileErrorReportsMessage(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn assert(comptime cond: bool, comptime msg: str) void {
+    if !cond {
+        comptime {
+            compile_error(msg)
+        }
+    }
+}
+
+fn main() void {
+    comptime {
+        assert(false, "boom")
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected compile_error diagnostic")
+	}
+	foundMessage := false
+	foundGeneric := false
+	foundDeferred := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "compile-time error: boom") {
+			foundMessage = true
+		}
+		if diag.Code == diagnostics.ErrTypeMismatch && diag.Message == "`comptime` expression must be compile-time evaluable" {
+			foundGeneric = true
+		}
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "compile_error message must be compile-time evaluable") {
+			foundDeferred = true
+		}
+	}
+	if !foundMessage {
+		t.Fatalf("expected compile_error message diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if foundGeneric {
+		t.Fatalf("expected no generic comptime evaluable diagnostic when compile_error is reported, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if foundDeferred {
+		t.Fatalf("expected no deferred-evaluation compile_error message diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerComptimeEvaluatesArrayIndexAndForLoop(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn edgeSum() i32 {
+    let arr: [3]i32 = [3]i32{1, 2, 3}
+    return arr[0] + arr[2]
+}
+
+fn sumWithFor() i32 {
+    let arr: [4]i32 = [4]i32{1, 2, 3, 4}
+    let mut sum = 0
+    for arr |value| {
+        sum = sum + value
+    }
+    return sum
+}
+
+fn main() i32 {
+    let a = comptime edgeSum()
+    let b = comptime sumWithFor()
+    return a + b
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected comptime array/index + for evaluation, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR for comptime fold, got %#v", result.Entry)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "a = 4") || !strings.Contains(text, "b = 10") {
+		t.Fatalf("expected folded comptime values in MIR, got %q", text)
+	}
+	if strings.Contains(text, "= edgeSum()") || strings.Contains(text, "= sumWithFor()") {
+		t.Fatalf("expected no runtime call residues after comptime fold, got %q", text)
+	}
+}
+
+func TestTypecheckerComptimeEvaluatesTupleAggregateAndIndex(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn tuplePick() i32 {
+    let p: (i32, i32) = .{1, 2}
+    return p[0] + p[1]
+}
+
+fn main() i32 {
+    let v = comptime tuplePick()
+    return v
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected comptime tuple aggregate/index evaluation, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR for comptime fold, got %#v", result.Entry)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "v = 3") || !strings.Contains(text, "return 3") {
+		t.Fatalf("expected folded comptime tuple value in MIR, got %q", text)
+	}
+	if strings.Contains(text, "= tuplePick()") {
+		t.Fatalf("expected no runtime tuplePick call residue after comptime fold, got %q", text)
+	}
+}
+
+func TestTypecheckerComptimeEvaluatesMethodCallOnStruct(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Counter struct {
+    Value: i32
+}
+
+fn Counter::Inc(&mut self, by: i32) i32 {
+    self.Value = self.Value + by
+    return self.Value
+}
+
+fn build() i32 {
+    let mut c: Counter = .{ .Value = 1 }
+    let n = c.Inc(2)
+    return c.Value + n
+}
+
+fn main() i32 {
+    let v = comptime build()
+    return v
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected comptime method call evaluation, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR for comptime fold, got %#v", result.Entry)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "v = 6") || !strings.Contains(text, "return 6") {
+		t.Fatalf("expected folded comptime value 6 in MIR, got %q", text)
+	}
+}
+
+func TestTypecheckerComptimeEvaluatesCrossModuleCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "counter.ferr"), `
+type Counter struct {
+    Value: i32
+}
+
+fn Counter::Inc(&mut self, by: i32) i32 {
+    self.Value = self.Value + by
+    return self.Value
+}
+
+fn MakeAndInc() i32 {
+    let mut c: Counter = .{ .Value = 3 }
+    return c.Inc(4)
+}
+`)
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+import "counter"
+
+fn main() i32 {
+    let v = comptime counter::MakeAndInc()
+    return v
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected cross-module comptime evaluation, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR for comptime fold, got %#v", result.Entry)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "v = 7") || !strings.Contains(text, "return 7") {
+		t.Fatalf("expected folded comptime value 7 in MIR, got %q", text)
 	}
 }
 

@@ -512,6 +512,13 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 		c.info.BindNode(expr, unsafeType)
 		return unsafeType
 	}
+	if expr != nil && expr.Op == "comptime" {
+		c.comptimeDepth++
+		comptimeType := c.typeOfExpr(scope, expr.Right, expected)
+		c.comptimeDepth--
+		c.info.BindNode(expr, comptimeType)
+		return comptimeType
+	}
 	right := c.typeOfExpr(scope, expr.Right, expected)
 	switch expr.Op {
 	case "copy":
@@ -521,10 +528,6 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 				WithCode(diagnostics.ErrInvalidCopy).
 				WithPrimaryLabel(&loc, "deep clone support has not been implemented yet"),
 		)
-		c.info.BindNode(expr, right)
-		return right
-	case "comptime":
-		c.requireConstExpr(scope, expr.Right, "`comptime` expression must be compile-time evaluable")
 		c.info.BindNode(expr, right)
 		return right
 	case "&":
@@ -936,6 +939,9 @@ func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr, expected ty
 	if c.isForeignLenCall(expr.Callee) {
 		return c.typeOfBuiltinLen(scope, expr)
 	}
+	if c.isForeignCompileErrorCall(expr.Callee) {
+		return c.typeOfBuiltinCompileError(scope, expr)
+	}
 
 	if selector, ok := expr.Callee.(*ast.SelectorExpr); ok {
 		if typ, handled := c.typeOfMethodCall(scope, expr, selector, expected); handled {
@@ -1017,12 +1023,51 @@ func (c *checker) typeOfBuiltinLen(scope *refineScope, expr *ast.CallExpr) typei
 	return result
 }
 
+func (c *checker) typeOfBuiltinCompileError(scope *refineScope, expr *ast.CallExpr) typeinfo.Type {
+	result := &typeinfo.BuiltinType{Name: "void"}
+	if expr == nil {
+		return result
+	}
+	if expr.Callee != nil {
+		_ = c.typeOfExpr(scope, expr.Callee, nil)
+	}
+	if c.comptimeDepth == 0 {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("compile_error can only be used in comptime context").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "wrap this call in `comptime { ... }` or use `comptime <expr>`"),
+		)
+	}
+	if len(expr.Args) != 1 {
+		c.reportWrongArgCount(expr.Location, 1, len(expr.Args))
+	}
+	if len(expr.Args) > 0 {
+		msgType := c.typeOfExpr(scope, expr.Args[0], &typeinfo.StringType{})
+		c.checkAssignable(expr.Args[0].Loc(), &typeinfo.StringType{}, msgType)
+	}
+	c.info.BindNode(expr, result)
+	return result
+}
+
 func (c *checker) isForeignLenCall(callee ast.Expr) bool {
 	res := c.lookupResolution(callee)
 	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 		return false
 	}
 	if res.Symbol.Name != "len" {
+		return false
+	}
+	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
+	return ok && fn != nil && fn.IsExtern
+}
+
+func (c *checker) isForeignCompileErrorCall(callee ast.Expr) bool {
+	res := c.lookupResolution(callee)
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+		return false
+	}
+	if res.Symbol.Name != "compile_error" {
 		return false
 	}
 	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
@@ -1216,9 +1261,6 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 			if !c.checkAssignable(arg.Loc(), expected, argType) {
 				invalid = true
 			}
-		}
-		if i < len(fnType.Params) && fnType.Params[i].Flags.Comptime() {
-			c.requireConstExpr(scope, arg, "argument to comptime parameter must be compile-time evaluable")
 		}
 	}
 	return invalid
@@ -1974,6 +2016,40 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 		c.info.BindNode(expr, sl.Inner)
 		return sl.Inner
 	}
+	if tuple, ok := base.(*typeinfo.TupleType); ok {
+		lit, ok := expr.Index.(*ast.NumberLit)
+		if !ok || lit == nil || numeric.IsFloat(lit.Value) {
+			loc := expr.Index.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("tuple index must be a non-negative integer literal").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "use a tuple element literal index like 0 or 1"),
+			)
+			return typeinfo.InvalidType{}
+		}
+		idxBig, err := numeric.StringToBigInt(lit.Value)
+		if err != nil || idxBig.Sign() < 0 || !idxBig.IsInt64() {
+			loc := expr.Index.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("tuple index must be a non-negative integer literal").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "use a tuple element literal index like 0 or 1"),
+			)
+			return typeinfo.InvalidType{}
+		}
+		idx := int(idxBig.Int64())
+		if idx >= len(tuple.Elems) {
+			loc := expr.Index.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("tuple index out of bounds").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "this tuple does not have that element index"),
+			)
+			return typeinfo.InvalidType{}
+		}
+		c.info.BindNode(expr, tuple.Elems[idx])
+		return tuple.Elems[idx]
+	}
 	// Pointer indexing: *T[i] → T
 	if ptr, ok := base.(*typeinfo.PointerType); ok {
 		c.info.BindNode(expr, ptr.Inner)
@@ -2063,6 +2139,40 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 		)
 		c.info.BindNode(expr, expected)
 		return typeinfo.InvalidType{}
+	}
+	if tupleType, ok := base.(*typeinfo.TupleType); ok {
+		for i, item := range expr.Items {
+			if item.Name != nil {
+				loc := item.Name.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("tuple literal does not support named elements").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(&loc, "use positional tuple elements"),
+				)
+				continue
+			}
+			if i >= len(tupleType.Elems) {
+				loc := item.Value.Loc()
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("too many elements in tuple literal").
+						WithCode(diagnostics.ErrExtraField).
+						WithPrimaryLabel(&loc, "extra tuple element"),
+				)
+				continue
+			}
+			got := c.typeOfExpr(scope, item.Value, tupleType.Elems[i])
+			c.checkAssignable(item.Value.Loc(), tupleType.Elems[i], got)
+		}
+		if len(expr.Items) < len(tupleType.Elems) {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("missing required tuple element(s) in composite literal").
+					WithCode(diagnostics.ErrMissingField).
+					WithPrimaryLabel(&loc, "provide values for all tuple elements"),
+			)
+		}
+		c.info.BindNode(expr, expected)
+		return expected
 	}
 	structType, ok := base.(*typeinfo.StructType)
 	if !ok {

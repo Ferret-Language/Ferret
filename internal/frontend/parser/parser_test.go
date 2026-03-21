@@ -229,6 +229,49 @@ fn add(comptime T: Type, x: T) T {
 	}
 }
 
+func TestParseComptimeBlockRewritesExpressionStatements(t *testing.T) {
+	src := `
+fn main() void {
+    comptime {
+        assert(1 + 1 == 2, "math ok")
+    }
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	if len(mod.Decls) != 1 {
+		t.Fatalf("expected 1 decl, got %d", len(mod.Decls))
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	if len(fn.Body.Stmts) != 1 {
+		t.Fatalf("expected one top-level stmt in body, got %d", len(fn.Body.Stmts))
+	}
+	block, ok := fn.Body.Stmts[0].(*ast.BlockStmt)
+	if !ok {
+		t.Fatalf("expected comptime block to lower into block stmt, got %T", fn.Body.Stmts[0])
+	}
+	if len(block.Stmts) != 1 {
+		t.Fatalf("expected one stmt in comptime block, got %d", len(block.Stmts))
+	}
+	exprStmt, ok := block.Stmts[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected expr stmt in comptime block, got %T", block.Stmts[0])
+	}
+	prefix, ok := exprStmt.Value.(*ast.PrefixExpr)
+	if !ok || prefix.Op != "comptime" {
+		t.Fatalf("expected comptime prefix expr, got %#v", exprStmt.Value)
+	}
+	if _, ok := prefix.Right.(*ast.CallExpr); !ok {
+		t.Fatalf("expected wrapped call expression, got %T", prefix.Right)
+	}
+}
+
 func TestParseUnsafePrefixExpression(t *testing.T) {
 	src := `
 unsafe fn danger() i32 { return 1 }

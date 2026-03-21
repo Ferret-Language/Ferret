@@ -181,12 +181,86 @@ func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	cfganalysis.AnalyzeModule(p.ctx, mod)
 	mod.MIR = mir.LowerModule(mod.CFG, mod.LoweredHIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupLoweredMethodPath(mod.ImportPath))
 	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
+	mir.EvaluateComptime(p.ctx.Diagnostics, mod.MIR, p.lookupMIRFunction)
 	mod.Phase = phase.PhaseMIRGenerated
 	ownership.AnalyzeModule(p.ctx, mod)
 	mod.Phase = phase.PhaseOwnershipAnalyzed
 	mir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)
 	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseConstEvaluated
+}
+
+func (p *Pipeline) lookupMIRFunction(current *mir.Module, callee *mir.NameValue) (*mir.Module, *mir.Function, bool) {
+	if p == nil || p.ctx == nil || callee == nil {
+		return nil, nil, false
+	}
+	leaf := ""
+	if len(callee.Path) > 0 {
+		leaf = callee.Path[len(callee.Path)-1]
+	}
+	modulePath := ""
+	if len(callee.Path) > 1 {
+		modulePath = strings.Join(callee.Path[:len(callee.Path)-1], "/")
+	}
+	candidates := make([]*mir.Module, 0, 8)
+	if modulePath != "" {
+		for _, mod := range p.ctx.Modules() {
+			if mod == nil || mod.MIR == nil || mod.ImportPath != modulePath {
+				continue
+			}
+			candidates = append(candidates, mod.MIR)
+		}
+	}
+	if len(candidates) == 0 && current != nil {
+		candidates = append(candidates, current)
+	}
+	for _, mod := range p.ctx.Modules() {
+		if mod == nil || mod.MIR == nil {
+			continue
+		}
+		if current != nil && mod.MIR == current {
+			continue
+		}
+		if modulePath != "" && mod.ImportPath == modulePath {
+			continue
+		}
+		candidates = append(candidates, mod.MIR)
+	}
+	for _, mod := range candidates {
+		if fn, ok := lookupFunctionInMIRModule(mod, callee, leaf); ok {
+			return mod, fn, true
+		}
+	}
+	return nil, nil, false
+}
+
+func lookupFunctionInMIRModule(mod *mir.Module, callee *mir.NameValue, leaf string) (*mir.Function, bool) {
+	if mod == nil || callee == nil {
+		return nil, false
+	}
+	for _, fn := range mod.Functions {
+		if fn == nil {
+			continue
+		}
+		if callee.LinkName != "" && fn.LinkName == callee.LinkName {
+			return fn, true
+		}
+		if leaf != "" {
+			if fn.LinkName == leaf || strings.HasSuffix(fn.LinkName, "__"+leaf) {
+				return fn, true
+			}
+		}
+		if fn.Name == leaf || fn.Name == strings.Join(callee.Path, "::") {
+			return fn, true
+		}
+		if owner, method, ok := strings.Cut(fn.Name, "::"); ok {
+			methodLeaf := owner + "__" + method
+			if methodLeaf == leaf || method == leaf {
+				return fn, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func (p *Pipeline) lookupMethodPath(currentImportPath string) hir.MethodLookup {

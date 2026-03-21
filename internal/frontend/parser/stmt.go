@@ -60,6 +60,10 @@ func (p *Parser) parseStmt() ast.Stmt {
 		if p.peekN(1).Kind == tokens.LBRACE {
 			return p.parseUnsafeStmt()
 		}
+	case tokens.COMPTIME:
+		if p.peekN(1).Kind == tokens.LBRACE {
+			return p.parseComptimeStmt()
+		}
 	case tokens.BREAK:
 		return p.parseBreakStmt()
 	case tokens.CONTINUE:
@@ -245,6 +249,41 @@ func (p *Parser) parseUnsafeStmt() ast.Stmt {
 	start := p.advance().Start
 	body := p.parseBlock()
 	return &ast.UnsafeStmt{Body: body, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseComptimeStmt() ast.Stmt {
+	start := p.advance().Start
+	body := p.parseBlock()
+	out := &ast.BlockStmt{Stmts: make([]ast.Stmt, 0, len(body.Stmts)), Location: p.locFrom(start)}
+	for _, stmt := range body.Stmts {
+		out.Stmts = append(out.Stmts, p.rewriteComptimeStmt(stmt))
+	}
+	return out
+}
+
+func (p *Parser) rewriteComptimeStmt(stmt ast.Stmt) ast.Stmt {
+	switch s := stmt.(type) {
+	case nil:
+		return nil
+	case *ast.ExprStmt:
+		if s.Value == nil {
+			return s
+		}
+		return &ast.ExprStmt{
+			Value:    &ast.PrefixExpr{Op: "comptime", Right: s.Value, Location: s.Value.Loc()},
+			Location: s.Location,
+		}
+	case *ast.BlockStmt:
+		out := &ast.BlockStmt{Stmts: make([]ast.Stmt, 0, len(s.Stmts)), Location: s.Location}
+		for _, child := range s.Stmts {
+			out.Stmts = append(out.Stmts, p.rewriteComptimeStmt(child))
+		}
+		return out
+	default:
+		loc := s.Loc()
+		p.errorAt(loc, "comptime block currently supports expression statements only")
+		return s
+	}
 }
 
 func (p *Parser) parseBreakStmt() ast.Stmt {

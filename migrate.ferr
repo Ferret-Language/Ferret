@@ -1,3 +1,5 @@
+import "std/os"
+import "helper"
 
 // basic demo struct
 type Conn struct {}
@@ -135,11 +137,14 @@ fn main() {
     print("--- loop end ---")
 
     print("###### For Loop ######")
+
+    let mut sum = 0
     
     for arr | i, v | {
         print(i)
         print("-")
         print(v)
+        sum += v
     }
     
     print("###### For Loop End ######")
@@ -154,4 +159,6 @@ fn main() {
     print(add_numbers(1 as u32, 22 as u32))
 
     unsafe danger()
+    print(sum)
+    print(os::Platform())
 }

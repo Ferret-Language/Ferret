@@ -47,6 +47,7 @@ type checker struct {
 	info                       *typeinfo.ModuleInfo
 	currentResult              typeinfo.Type
 	unsafeDepth                int
+	comptimeDepth              int
 	deferDepth                 int
 	typeParamScopes            []map[string]*typeinfo.TypeParam
 	currentGenericFunc         *symbols.Symbol
