@@ -86,6 +86,10 @@ fn add_numbers<T: numeric>(a: T, b: T) T {
     return a + b
 }
 
+unsafe fn danger() {
+    print("Danger!!!")
+}
+
 // program entry point
 // all here
 fn main() {
@@ -148,4 +152,6 @@ fn main() {
     print(add_numbers(1, 2))
     print(add_numbers(1.4, 2.7))
     print(add_numbers(1 as u32, 22 as u32))
+
+    unsafe danger()
 }

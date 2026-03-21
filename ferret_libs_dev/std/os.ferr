@@ -9,13 +9,16 @@
 /// The runtime implementations are small C wrappers linked from
 /// ferret_runtime.a.  They do not allocate unless a future implementation
 /// explicitly needs to.
-
+///
 /// Returns the number of logical CPUs currently available to the process.
 #[extern("ferret_os_cpu_count")]
 fn CPUCount() usize;
 
 /// Returns a canonical lowercase platform name such as:
-/// "linux", "windows", "darwin", "freebsd".
+/// - linux
+/// - windows
+/// - darwin
+/// - freebsd
 #[extern("ferret_os_platform")]
 fn Platform() str;
 
