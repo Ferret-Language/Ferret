@@ -7,7 +7,6 @@ import (
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
-	"compiler/internal/backend/symutil"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/mir"
 )
@@ -87,7 +86,7 @@ func BuildModuleSymbolTables(mod *mir.Module) (modulePrefix string, functions, g
 		importPath = mod.ImportPath
 	}
 	modulePrefix = SanitizePath(importPath)
-	localPrefix := symutil.LocalModulePrefix(importPath)
+	localPrefix := LocalModulePrefix(importPath)
 	if mod == nil {
 		return modulePrefix, functions, globals
 	}
@@ -96,7 +95,7 @@ func BuildModuleSymbolTables(mod *mir.Module) (modulePrefix string, functions, g
 			continue
 		}
 		functions[fn.Name] = struct{}{}
-		symutil.AddLinkLeafAlias(functions, localPrefix, fn.LinkName)
+		AddLinkLeafAlias(functions, localPrefix, fn.LinkName)
 	}
 	for _, g := range mod.Globals {
 		if g != nil {

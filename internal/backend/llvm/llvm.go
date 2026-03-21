@@ -13,7 +13,6 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	becommon "compiler/internal/backend/common"
-	"compiler/internal/backend/symutil"
 	"compiler/internal/ir/mir"
 	"compiler/internal/utils/numeric"
 )
@@ -4621,7 +4620,7 @@ func llvmSymbol(state *moduleState, path []string) string {
 		return name
 	}
 	if len(path) == 2 && state != nil {
-		if localMethod, ok := symutil.ResolveStaticOwnerLocalName(path, state.functions, state.globals); ok {
+		if localMethod, ok := becommon.ResolveStaticOwnerLocalName(path, state.functions, state.globals); ok {
 			return state.modulePrefix + "__" + becommon.SanitizeIdent(localMethod)
 		}
 	}

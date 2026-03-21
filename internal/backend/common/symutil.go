@@ -1,4 +1,4 @@
-package symutil
+package common
 
 import "strings"
 
