@@ -925,34 +925,31 @@ func newModuleStateWithDebug(unit *backend.Unit, allLayouts map[string]*layout.M
 // newModuleState constructs a moduleState for the given unit, using allLayouts
 // as the cross-module layout map.
 func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *moduleState {
+	if unit == nil || unit.Module == nil {
+		return &moduleState{
+			layouts:           allLayouts,
+			functions:         make(map[string]struct{}),
+			globals:           make(map[string]struct{}),
+			modulePrefix:      becommon.SanitizePath(""),
+			deferredB:         &strings.Builder{},
+			interfaceVTables:  make(map[interfaceVTableKey]string),
+			interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
+			tempValues:        make(map[int]mir.Value),
+		}
+	}
+	modulePrefix, functions, globals := becommon.BuildModuleSymbolTables(unit.Module)
 	state := &moduleState{
 		mod:               unit.Module,
 		layout:            unit.Layout,
 		layouts:           allLayouts,
 		modules:           unit.Modules,
-		functions:         make(map[string]struct{}),
-		globals:           make(map[string]struct{}),
-		modulePrefix:      becommon.SanitizePath(unit.Module.ImportPath),
+		functions:         functions,
+		globals:           globals,
+		modulePrefix:      modulePrefix,
 		deferredB:         &strings.Builder{},
 		interfaceVTables:  make(map[interfaceVTableKey]string),
 		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
 		tempValues:        make(map[int]mir.Value),
-	}
-	importPath := ""
-	if unit != nil && unit.Module != nil {
-		importPath = unit.Module.ImportPath
-	}
-	localPrefix := symutil.LocalModulePrefix(importPath)
-	for _, fn := range unit.Module.Functions {
-		if fn != nil {
-			state.functions[fn.Name] = struct{}{}
-			symutil.AddLinkLeafAlias(state.functions, localPrefix, fn.LinkName)
-		}
-	}
-	for _, g := range unit.Module.Globals {
-		if g != nil {
-			state.globals[g.Name] = struct{}{}
-		}
 	}
 	return state
 }

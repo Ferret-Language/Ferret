@@ -82,34 +82,20 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 	if err := backend.ValidateUnit(unit); err != nil {
 		return nil, err
 	}
+	mod := unit.Module
+	modulePrefix, functions, globals := becommon.BuildModuleSymbolTables(mod)
 	state := &moduleState{
-		mod:               unit.Module,
+		mod:               mod,
 		layout:            unit.Layout,
 		layouts:           unit.Layouts,
 		modules:           unit.Modules,
-		functions:         make(map[string]struct{}),
-		globals:           make(map[string]struct{}),
-		modulePrefix:      becommon.SanitizePath(unit.Module.ImportPath),
+		functions:         functions,
+		globals:           globals,
+		modulePrefix:      modulePrefix,
 		deferredB:         &strings.Builder{},
 		interfaceVTables:  make(map[interfaceVTableKey]string),
 		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
 		tempValues:        make(map[int]mir.Value),
-	}
-	importPath := ""
-	if unit != nil && unit.Module != nil {
-		importPath = unit.Module.ImportPath
-	}
-	localPrefix := symutil.LocalModulePrefix(importPath)
-	for _, fn := range unit.Module.Functions {
-		if fn != nil {
-			state.functions[fn.Name] = struct{}{}
-			symutil.AddLinkLeafAlias(state.functions, localPrefix, fn.LinkName)
-		}
-	}
-	for _, g := range unit.Module.Globals {
-		if g != nil {
-			state.globals[g.Name] = struct{}{}
-		}
 	}
 
 	var b strings.Builder

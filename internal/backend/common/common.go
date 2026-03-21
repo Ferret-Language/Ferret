@@ -7,6 +7,7 @@ import (
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
+	"compiler/internal/backend/symutil"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/mir"
 )
@@ -74,6 +75,35 @@ func SanitizePath(path string) string {
 		parts[i] = SanitizeIdent(parts[i])
 	}
 	return strings.Join(parts, "__")
+}
+
+// BuildModuleSymbolTables returns the backend-local symbol tables used for
+// fast function/global lookups and static owner method resolution.
+func BuildModuleSymbolTables(mod *mir.Module) (modulePrefix string, functions, globals map[string]struct{}) {
+	functions = make(map[string]struct{})
+	globals = make(map[string]struct{})
+	importPath := ""
+	if mod != nil {
+		importPath = mod.ImportPath
+	}
+	modulePrefix = SanitizePath(importPath)
+	localPrefix := symutil.LocalModulePrefix(importPath)
+	if mod == nil {
+		return modulePrefix, functions, globals
+	}
+	for _, fn := range mod.Functions {
+		if fn == nil {
+			continue
+		}
+		functions[fn.Name] = struct{}{}
+		symutil.AddLinkLeafAlias(functions, localPrefix, fn.LinkName)
+	}
+	for _, g := range mod.Globals {
+		if g != nil {
+			globals[g.Name] = struct{}{}
+		}
+	}
+	return modulePrefix, functions, globals
 }
 
 func SanitizeType(typ typeinfo.Type) string {
