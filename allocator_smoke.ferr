@@ -1,0 +1,65 @@
+import "std/mem"
+
+fn is_non_null(p: ^void) bool {
+    unsafe {
+        let addr = p as usize
+        return addr != 0
+    }
+}
+
+fn assert_non_null(label: str, p: ^void) void {
+    if !is_non_null(p) {
+        panic label
+    }
+}
+
+fn main() void {
+    let sys = mem::System()
+    let p1 = sys.Alloc(64)
+    print(p1)
+    assert_non_null("system alloc failed", p1)
+    let p2 = sys.AllocZeroed(64)
+    assert_non_null("system alloczeroed failed", p2)
+    let p3 = sys.Realloc(p1, 128)
+    assert_non_null("system realloc failed", p3)
+    sys.Free(p2)
+    sys.Free(p3)
+    //print(p3)
+    print("ok: system allocator")
+
+    let page = mem::Page()
+    let q1 = page.Alloc(1000)
+    assert_non_null("page alloc failed", q1)
+    let q2 = page.AllocZeroed(1000)
+    assert_non_null("page alloczeroed failed", q2)
+    let q3 = page.Realloc(q1, 7000)
+    assert_non_null("page realloc failed", q3)
+    page.Free(q2)
+    page.Free(q3)
+    print("ok: page allocator")
+
+    let mut arena = mem::Arena(16)
+    let a1 = arena.Alloc(8)
+    assert_non_null("arena alloc a1 failed", a1)
+    let a2 = arena.Alloc(8)
+    assert_non_null("arena alloc a2 failed", a2)
+    let a3 = arena.Alloc(64)
+    assert_non_null("arena grow alloc failed", a3)
+    let a4 = arena.AllocZeroed(16)
+    assert_non_null("arena alloczeroed failed", a4)
+    let a5 = arena.Realloc(a1, 12)
+    assert_non_null("arena realloc failed", a5)
+    arena.Free(a2)
+    arena.Reset()
+    let a6 = arena.Alloc(4)
+    assert_non_null("arena alloc after reset failed", a6)
+    arena.Release()
+    print("ok: arena allocator")
+
+    let p4 = mem::Alloc(sys, 32)
+    assert_non_null("interface alloc failed", p4)
+    mem::Free(sys, p4)
+    print("ok: allocator interface forwarding")
+
+    print("allocator smoke test: PASS")
+}

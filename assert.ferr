@@ -1,0 +1,17 @@
+
+
+fn assert(comptime cond: bool, comptime msg: str) void {
+    if cond == false {
+        panic msg
+    } 
+    
+}
+
+
+fn main() {
+    
+    print("checking")
+
+    comptime assert(1 == 2, "equal")
+    //comptime assert(1 == 2, "not equal")    
+}
