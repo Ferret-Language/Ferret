@@ -30,6 +30,7 @@ import (
 const (
 	textDocumentSyncFull   = 1
 	maxHoverMethodsPerKind = 32
+	diagTagUnnecessary     = 1
 
 	symbolKindClass      = 5
 	symbolKindMethod     = 6
@@ -147,6 +148,7 @@ type lspDiagnostic struct {
 	Code     string   `json:"code,omitempty"`
 	Source   string   `json:"source,omitempty"`
 	Message  string   `json:"message"`
+	Tags     []int    `json:"tags,omitempty"`
 }
 
 type lspRange struct {
@@ -590,9 +592,29 @@ func convertDiagnostics(diags []*diagnostics.Diagnostic, targetPath string) []ls
 			Code:     diag.Code,
 			Source:   "ferret",
 			Message:  msg,
+			Tags:     diagnosticTags(diag),
 		})
 	}
 	return out
+}
+
+func diagnosticTags(diag *diagnostics.Diagnostic) []int {
+	if diag == nil {
+		return nil
+	}
+	switch diag.Code {
+	case diagnostics.WarnUnusedImport,
+		diagnostics.WarnUnusedPrivateFunction,
+		diagnostics.WarnUnusedPrivateType,
+		diagnostics.WarnUnusedPrivateBinding,
+		diagnostics.WarnUnusedParameter,
+		diagnostics.WarnUnusedLocal,
+		diagnostics.WarnUnmodifiedMutable,
+		diagnostics.InfoUnnecessarySemicolon:
+		return []int{diagTagUnnecessary}
+	default:
+		return nil
+	}
 }
 
 func primaryLabel(diag *diagnostics.Diagnostic) *diagnostics.Label {

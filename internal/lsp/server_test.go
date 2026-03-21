@@ -37,6 +37,23 @@ func TestConvertDiagnosticsPreservesZeroWidthRange(t *testing.T) {
 	}
 }
 
+func TestConvertDiagnosticsMarksUnusedWarningsAsUnnecessary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "main.ferr")
+	at := source.Position{Line: 1, Column: 1}
+	loc := source.NewLocation(path, at, at)
+	d := diagnostics.NewWarning("unused local").
+		WithCode(diagnostics.WarnUnusedLocal).
+		WithPrimaryLabel(&loc, "unused")
+
+	out := convertDiagnostics([]*diagnostics.Diagnostic{d}, path)
+	if len(out) != 1 {
+		t.Fatalf("expected 1 diagnostic, got %d", len(out))
+	}
+	if len(out[0].Tags) != 1 || out[0].Tags[0] != diagTagUnnecessary {
+		t.Fatalf("expected unnecessary diagnostic tag, got %#v", out[0].Tags)
+	}
+}
+
 func TestPublishSyntaxDiagnosticsRecoversFromParserPanic(t *testing.T) {
 	oldLex := lexSource
 	oldParse := parseSource

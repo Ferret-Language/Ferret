@@ -589,7 +589,7 @@ func instrValue(instr mir.Instr) mir.Value {
 	}
 }
 
-func TestPipelineLowersRawAddressOperator(t *testing.T) {
+func TestPipelineLowersRawAddressCoercion(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
@@ -599,7 +599,7 @@ type Point struct {
 fn main() i32 {
     let mut p: Point = .{}
     unsafe {
-        let rp = @mut p
+        let rp: ^Point = &mut p
         let x = (*rp).X
         return x
     }

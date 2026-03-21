@@ -505,6 +505,13 @@ func (c *checker) typeOfIdent(scope *refineScope, ident *ast.Ident, expected typ
 }
 
 func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expected typeinfo.Type) typeinfo.Type {
+	if expr != nil && expr.Op == "unsafe" {
+		c.unsafeDepth++
+		unsafeType := c.typeOfExpr(scope, expr.Right, expected)
+		c.unsafeDepth--
+		c.info.BindNode(expr, unsafeType)
+		return unsafeType
+	}
 	right := c.typeOfExpr(scope, expr.Right, expected)
 	switch expr.Op {
 	case "copy":
@@ -521,6 +528,19 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 		c.info.BindNode(expr, right)
 		return right
 	case "&":
+		if _, ok := c.underlying(expected).(*typeinfo.RawPtrType); ok {
+			if c.unsafeDepth == 0 {
+				loc := expr.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("raw address operator requires unsafe block").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(&loc, "wrap this address operation in `unsafe { ... }`"),
+				)
+			}
+			typ := &typeinfo.RawPtrType{Const: true, Inner: right}
+			c.info.BindNode(expr, typ)
+			return typ
+		}
 		typ := &typeinfo.RefType{Inner: right}
 		c.info.BindNode(expr, typ)
 		return typ
@@ -534,49 +554,20 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 					WithPrimaryLabel(&loc, "`&mut` requires mutable, addressable access"),
 			)
 		}
+		if raw, ok := c.underlying(expected).(*typeinfo.RawPtrType); ok {
+			if c.unsafeDepth == 0 {
+				loc := expr.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("raw address operator requires unsafe block").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(&loc, "wrap this address operation in `unsafe { ... }`"),
+				)
+			}
+			typ := &typeinfo.RawPtrType{Const: raw.Const, Inner: right}
+			c.info.BindNode(expr, typ)
+			return typ
+		}
 		typ := &typeinfo.RefType{Mutable: true, Inner: right}
-		c.info.BindNode(expr, typ)
-		return typ
-	case "@":
-		addressable, _ := c.exprAccess(scope, expr.Right)
-		if !addressable {
-			loc := expr.Location
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("cannot take raw address of non-addressable value").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "`@` requires addressable access"),
-			)
-		}
-		if c.unsafeDepth == 0 {
-			loc := expr.Location
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("raw address operator requires unsafe block").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "wrap this address operation in `unsafe { ... }`"),
-			)
-		}
-		typ := &typeinfo.RawPtrType{Inner: right}
-		c.info.BindNode(expr, typ)
-		return typ
-	case "@mut":
-		addressable, mutable := c.exprAccess(scope, expr.Right)
-		if !addressable || !mutable {
-			loc := expr.Location
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("cannot take mutable raw address from immutable value").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "`@mut` requires mutable, addressable access"),
-			)
-		}
-		if c.unsafeDepth == 0 {
-			loc := expr.Location
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("raw address operator requires unsafe block").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "wrap this address operation in `unsafe { ... }`"),
-			)
-		}
-		typ := &typeinfo.RawPtrType{Inner: right}
 		c.info.BindNode(expr, typ)
 		return typ
 	case "*":
@@ -1108,6 +1099,14 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 		if instantiated == nil {
 			instantiated = method
 		}
+		if instantiated.IsUnsafe && c.unsafeDepth == 0 {
+			loc := selector.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("unsafe function call requires unsafe block").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "wrap this call in `unsafe { ... }`"),
+			)
+		}
 		if invalid {
 			typ := typeinfo.InvalidType{}
 			c.info.BindNode(call, typ)
@@ -1158,6 +1157,14 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 	instantiated, argTypes, bindings, invalid := c.instantiateCallFuncType(scope, call, selector, methodType, expected)
 	if instantiated == nil {
 		instantiated = methodType
+	}
+	if instantiated.IsUnsafe && c.unsafeDepth == 0 {
+		loc := selector.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("unsafe function call requires unsafe block").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "wrap this call in `unsafe { ... }`"),
+		)
 	}
 	if invalid {
 		typ := typeinfo.InvalidType{}
@@ -1853,6 +1860,26 @@ func (c *checker) canDeepCopyTypeSeen(typ typeinfo.Type, seen map[typeinfo.Type]
 func (c *checker) typeOfSelector(scope *refineScope, expr *ast.SelectorExpr) typeinfo.Type {
 	left := c.typeOfExpr(scope, expr.Left, nil)
 	base := c.derefForSelector(left)
+	if raw, ok := c.underlying(left).(*typeinfo.RawPtrType); ok {
+		if c.unsafeDepth == 0 {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("raw pointer field access requires unsafe block").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "wrap this field access in `unsafe { ... }`"),
+			)
+		}
+		if raw.Inner == nil {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("cannot access field through untyped raw pointer").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "cast this raw pointer to a typed pointer first"),
+			)
+			return typeinfo.InvalidType{}
+		}
+		base = raw.Inner
+	}
 	structType, ok := c.structView(base)
 	if !ok {
 		loc := expr.Location
@@ -1873,8 +1900,8 @@ func (c *checker) typeOfSelector(scope *refineScope, expr *ast.SelectorExpr) typ
 		)
 		return typeinfo.InvalidType{}
 	}
-	if !c.canAccessStructField(left, field) {
-		owner := c.structFieldOwnerName(left)
+	if !c.canAccessStructField(base, field) {
+		owner := c.structFieldOwnerName(base)
 		c.reportNotExportedFromType(expr.Location, expr.Name.Text(), owner)
 		return typeinfo.InvalidType{}
 	}
@@ -2575,6 +2602,20 @@ func (c *checker) exprAccess(scope *refineScope, expr ast.Expr) (addressable boo
 			return true, c.symbolMutable(res.Symbol)
 		}
 	case *ast.SelectorExpr:
+		leftType, ok := c.info.Nodes[e.Left]
+		if !ok {
+			leftType = c.typeOfExpr(scope, e.Left, nil)
+		}
+		if raw, ok := c.underlying(leftType).(*typeinfo.RawPtrType); ok {
+			if raw.Inner == nil {
+				return false, false
+			}
+			if raw.Const {
+				return true, false
+			}
+			_, leftMutable := c.exprAccess(scope, e.Left)
+			return true, leftMutable
+		}
 		return c.exprAccess(scope, e.Left)
 	case *ast.IndexExpr:
 		return c.exprAccess(scope, e.Left)
@@ -2587,6 +2628,15 @@ func (c *checker) exprAccess(scope *refineScope, expr ast.Expr) (addressable boo
 		case *typeinfo.RefType:
 			return true, t.Mutable
 		case *typeinfo.PointerType:
+			_, rightMutable := c.exprAccess(scope, e.Right)
+			return true, rightMutable
+		case *typeinfo.RawPtrType:
+			if t.Inner == nil {
+				return false, false
+			}
+			if t.Const {
+				return true, false
+			}
 			_, rightMutable := c.exprAccess(scope, e.Right)
 			return true, rightMutable
 		default:

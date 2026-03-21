@@ -229,6 +229,52 @@ fn add(comptime T: Type, x: T) T {
 	}
 }
 
+func TestParseUnsafePrefixExpression(t *testing.T) {
+	src := `
+unsafe fn danger() i32 { return 1 }
+
+fn main() i32 {
+    let x = unsafe danger()
+    return x
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.All(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	if len(mod.Decls) != 2 {
+		t.Fatalf("expected 2 decls, got %d", len(mod.Decls))
+	}
+	fn, ok := mod.Decls[1].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[1])
+	}
+	letStmt, ok := fn.Body.Stmts[0].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected let statement, got %T", fn.Body.Stmts[0])
+	}
+	prefix, ok := letStmt.Value.(*ast.PrefixExpr)
+	if !ok || prefix.Op != "unsafe" {
+		t.Fatalf("expected unsafe prefix expression, got %#v", letStmt.Value)
+	}
+}
+
+func TestParseRejectsLegacyRawAddressSyntax(t *testing.T) {
+	src := `
+fn main() void {
+    let mut x: i32 = 1
+    let p = @x
+    p
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "raw address syntax `@` was removed") {
+		t.Fatalf("expected legacy raw address rejection diagnostic, got %v", diag.All())
+	}
+}
+
 func TestParseMutableParameter(t *testing.T) {
 	src := `
 fn set(mut x: i32, y: i32) i32 {

@@ -2546,7 +2546,7 @@ fn writePoint() void {
 	}
 }
 
-func TestTypecheckerUsesRawPointerTypesForRawAddress(t *testing.T) {
+func TestTypecheckerUsesRawPointerTypesForRawCoercion(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
@@ -2556,8 +2556,8 @@ type Point struct {
 fn main() void {
     let mut p: Point = .{}
     unsafe {
-        let r = @p
-        let m = @mut p
+        let r: ^const Point = &p
+        let m: ^Point = &mut p
         let x = *m
         r
         x
@@ -2576,20 +2576,20 @@ fn main() void {
 	letX := unsafeStmt.Body.Stmts[2].(*ast.LetStmt)
 	rType, ok := result.Entry.Types.Nodes[letR.Value].(*typeinfo.RawPtrType)
 	rNamed, rok := rType.Inner.(*typeinfo.NamedType)
-	if !ok || !rok || rNamed.Name != "Point" {
-		t.Fatalf("expected RawPtrType for @p, got %#v", result.Entry.Types.Nodes[letR.Value])
+	if !ok || !rok || rNamed.Name != "Point" || !rType.Const {
+		t.Fatalf("expected const RawPtrType for &p coercion, got %#v", result.Entry.Types.Nodes[letR.Value])
 	}
 	mType, ok := result.Entry.Types.Nodes[letM.Value].(*typeinfo.RawPtrType)
 	mNamed, mok := mType.Inner.(*typeinfo.NamedType)
-	if !ok || !mok || mNamed.Name != "Point" {
-		t.Fatalf("expected RawPtrType for @mut p, got %#v", result.Entry.Types.Nodes[letM.Value])
+	if !ok || !mok || mNamed.Name != "Point" || mType.Const {
+		t.Fatalf("expected mutable RawPtrType for &mut p coercion, got %#v", result.Entry.Types.Nodes[letM.Value])
 	}
 	if _, ok := result.Entry.Types.Nodes[letX.Value].(*typeinfo.NamedType); !ok {
 		t.Fatalf("expected dereference of raw pointer to produce named value type, got %#v", result.Entry.Types.Nodes[letX.Value])
 	}
 }
 
-func TestTypecheckerRejectsRawAddressOutsideUnsafe(t *testing.T) {
+func TestTypecheckerRejectsRawCoercionOutsideUnsafe(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
@@ -2598,14 +2598,138 @@ type Point struct {
 
 fn main() void {
     let p: Point = .{}
-    let r = @p
+    let r: ^const Point = &p
     r
 }
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
 	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected raw-address unsafe diagnostic")
+		t.Fatal("expected raw-coercion unsafe diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "raw address operator requires unsafe block") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected raw-coercion unsafe diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerCoercesRefToConstRawWhenExpected(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn takeConstRaw(rp: ^const Point) void {
+    unsafe {
+        rp.X
+    }
+}
+
+fn main() void {
+    let p: Point = .{}
+    unsafe {
+        takeConstRaw(&p)
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerCoercesMutRefToRawWhenExpected(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn readRaw(rp: ^Point) i32 {
+    unsafe {
+        return rp.X
+    }
+}
+
+fn main() void {
+    let mut p: Point = .{}
+    unsafe {
+        readRaw(&mut p)
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsImmutableRefToMutableRaw(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn readRaw(rp: ^Point) i32 {
+    unsafe {
+        return rp.X
+    }
+}
+
+fn main() void {
+    let p: Point = .{}
+    unsafe {
+        readRaw(&p)
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected type mismatch for immutable ref to mutable raw pointer")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "expected ^Point, got ^const Point") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected immutable-to-mutable raw mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsRefToRawOutsideUnsafeWhenExpected(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn takeConstRaw(rp: ^const Point) void {
+    rp
+}
+
+fn main() void {
+    let p: Point = .{}
+    takeConstRaw(&p)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected unsafe diagnostic for implicit raw pointer creation")
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -2616,6 +2740,157 @@ fn main() void {
 	}
 	if !found {
 		t.Fatalf("expected raw-address unsafe diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRequiresUnsafeForUnsafeFunctionCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+unsafe fn dangerous() void {}
+
+fn main() void {
+    dangerous()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected unsafe call diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "unsafe function call requires unsafe block") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected unsafe call diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsUnsafePrefixExpressionForUnsafeCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+unsafe fn dangerous() i32 {
+    return 1
+}
+
+fn main() i32 {
+    return unsafe dangerous()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRequiresUnsafeForUnsafeMethodCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {}
+
+unsafe fn Point::Run(&self) void {}
+
+fn main() void {
+    let p: Point = .{}
+    p.Run()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected unsafe method call diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "unsafe function call requires unsafe block") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected unsafe method call diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsRawFieldAccessOutsideUnsafe(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn read(rp: ^Point) i32 {
+    return rp.X
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected raw-field unsafe diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "raw pointer field access requires unsafe block") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected raw-field unsafe diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsAssignThroughConstRawPointer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn write(mut rp: ^const Point) void {
+    unsafe {
+        rp.X = 1
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected immutable-access assignment diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrConstantReassignment && strings.Contains(diag.Message, "cannot assign through immutable access path") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected immutable-access assignment diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsAssignThroughMutableRawPointerInUnsafe(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn write(mut rp: ^Point) void {
+    unsafe {
+        rp.X = 1
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

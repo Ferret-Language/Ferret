@@ -439,7 +439,7 @@ func wrapExpr(expr Expr) string {
 
 func formatPrefix(op, right string) string {
 	switch op {
-	case "copy", "comptime", "unsafe", "take", "&mut", "@mut":
+	case "copy", "comptime", "unsafe", "take", "&mut":
 		return op + " " + right
 	default:
 		return op + right

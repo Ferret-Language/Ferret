@@ -180,6 +180,112 @@ fn main() void {
 	}
 }
 
+func TestParsePathResolvesStdlibMemWithoutManifest(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.ferr"), `
+type Allocator interface {
+    Alloc(&self, size: usize) ^void
+    Free(&self, ptr: ^void) void
+}
+
+type CAllocator struct {}
+
+fn CAllocator::Alloc(&self, size: usize) ^void {
+    return malloc(size)
+}
+
+fn CAllocator::Free(&self, ptr: ^void) void {
+    free(ptr)
+}
+
+fn System() CAllocator {
+    return .{}
+}
+
+fn Alloc(a: Allocator, size: usize) ^void {
+    return a.Alloc(size)
+}
+
+fn Free(a: Allocator, ptr: ^void) void {
+    a.Free(ptr)
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/mem"
+
+fn main() void {
+    let a = mem::System()
+    let p = mem::Alloc(a, 16)
+    mem::Free(a, p)
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
+	}
+	if len(result.Modules) != 2 {
+		t.Fatalf("expected 2 modules, got %d", len(result.Modules))
+	}
+	foundMain := false
+	foundStd := false
+	for _, mod := range result.Modules {
+		switch mod.Key {
+		case "local:main":
+			foundMain = true
+		case "stdlib:std/mem":
+			foundStd = true
+		}
+	}
+	if !foundMain || !foundStd {
+		t.Fatalf("expected main and std/mem modules, got %#v", []string{result.Modules[0].Key, result.Modules[1].Key})
+	}
+}
+
+func TestParsePathTypechecksStdlibMemSignature(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.ferr"), `
+type Allocator interface {
+    Alloc(&self, size: usize) ^void
+}
+
+type CAllocator struct {}
+
+fn CAllocator::Alloc(&self, size: usize) ^void {
+    return malloc(size)
+}
+
+fn System() CAllocator {
+    return .{}
+}
+
+fn Alloc(a: Allocator, size: usize) ^void {
+    return a.Alloc(size)
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/mem"
+
+fn main() void {
+    let a = mem::System()
+    mem::Alloc(a, "bad")
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected stdlib mem signature type error")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected type mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestIfAttributeFiltersTopLevelDeclarations(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `

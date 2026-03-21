@@ -106,19 +106,20 @@ func (p *Parser) parsePrefix() ast.Expr {
 			op = "&mut"
 		}
 		return &ast.PrefixExpr{Op: op, Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
-	case tokens.AT:
-		p.advance()
-		op := "@"
-		if p.match(tokens.MUT) {
-			op = "@mut"
-		}
-		return &ast.PrefixExpr{Op: op, Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
 	case tokens.ASTERISK, tokens.MINUS, tokens.BANG, tokens.QUESTION:
 		tok := p.advance()
 		return &ast.PrefixExpr{Op: tok.Literal, Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
 	case tokens.COMPTIME:
 		p.advance()
 		return &ast.PrefixExpr{Op: "comptime", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+	case tokens.UNSAFE:
+		p.advance()
+		return &ast.PrefixExpr{Op: "unsafe", Right: p.parseExpr(precPrefix), Location: p.locFrom(start)}
+	case tokens.AT:
+		loc := p.locFrom(start)
+		p.errorAt(loc, "raw address syntax `@` was removed; use `&` or `&mut` with a raw-pointer expected type inside `unsafe`")
+		p.advance()
+		return &ast.BadExpr{Location: loc}
 	default:
 		loc := source.NewLocation(p.file, start, p.current().End)
 		p.errorAt(loc, "expected expression")
@@ -395,7 +396,7 @@ func precedence(kind tokens.Kind) int {
 func (p *Parser) startsExpr() bool {
 	switch p.current().Kind {
 	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.NONE,
-		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.AT, tokens.ASTERISK,
+		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
 		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.COMPTIME, tokens.UNSAFE, tokens.MATCH:
 		return true
 	default:

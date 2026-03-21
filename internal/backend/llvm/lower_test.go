@@ -404,7 +404,7 @@ func TestLowerRawAddressLocalToLLVM(t *testing.T) {
 fn main() i32 {
     let a = 10
     unsafe {
-        let p = @a
+        let p: ^const i32 = &a
         print(p)
     }
     return 0

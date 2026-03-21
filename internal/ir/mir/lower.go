@@ -415,14 +415,16 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		return &NoneValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}}
 	case *hir.PrefixExpr:
 		switch e.Op {
+		case "unsafe":
+			// `unsafe <expr>` is a typechecking context marker; runtime value is
+			// exactly the wrapped expression.
+			return lowerValue(lowerCtx, e.Right)
 		case "&":
-			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: false}
+			_, isRaw := e.Type().(*typeinfo.RawPtrType)
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: false, Raw: isRaw}
 		case "&mut":
-			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: true}
-		case "@":
-			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: false, Raw: true}
-		case "@mut":
-			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: true, Raw: true}
+			_, isRaw := e.Type().(*typeinfo.RawPtrType)
+			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: true, Raw: isRaw}
 		case "*":
 			return &LoadValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Pointer: lowerValue(lowerCtx, e.Right)}
 		default:
