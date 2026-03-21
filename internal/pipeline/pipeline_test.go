@@ -23,7 +23,7 @@ fn build() i32 {
 }
 `)
 
-	diag := diagnostics.NewBag()
+	diag := diagnostics.NewDiagnosticBag("")
 	c := compiler.New(root, ".ferr", diag)
 	first := c.ParseEntry(filepath.Join(root, "main.ferr"))
 	if first.Diagnostics.HasErrors() {
@@ -55,7 +55,7 @@ fn a() i32 { return 1 }
 fn b() i32 { return 2 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "a.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "a.ferr"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected cycle diagnostic")
 	}
@@ -86,7 +86,7 @@ fn build() i32 {
 	mustWrite(t, filepath.Join(root, "extra.ferr"), `const BuildMode = "debug"
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseWorkspace()
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseWorkspace()
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
 	}
@@ -112,7 +112,7 @@ fn b() i32 { return 2 }
 `)
 	mustWrite(t, filepath.Join(root, "main.ferr"), `fn main() i32 { return 0 }`)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseWorkspace()
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseWorkspace()
 	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected cycle diagnostic")
 	}
@@ -135,7 +135,7 @@ func TestPipelineRejectsRelativeImports(t *testing.T) {
 fn main() i32 { return 0 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected import path diagnostic")
 	}

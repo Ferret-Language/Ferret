@@ -115,7 +115,7 @@ func main() {
 			}
 		}
 
-		diag := diagnostics.NewBag()
+		diag := diagnostics.NewDiagnosticBag("")
 		ferretFileCount := 0
 		parsedModules := make([]*ast.Module, 0, len(files))
 		seenContent := make(map[string]struct{}, len(files))

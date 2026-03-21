@@ -100,7 +100,7 @@ func New(rootDir, extension string, diag *diagnostics.Bag) *CompilerContext {
 
 func NewWithConfig(cfg Config, diag *diagnostics.Bag) *CompilerContext {
 	if diag == nil {
-		diag = diagnostics.NewBag()
+		diag = diagnostics.NewDiagnosticBag("")
 	}
 	if cfg.Extension == "" {
 		cfg.Extension = ".ferr"

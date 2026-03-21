@@ -27,7 +27,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -91,7 +91,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -158,7 +158,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -243,7 +243,7 @@ fn main() void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -308,7 +308,7 @@ fn main() void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -374,7 +374,7 @@ func TestPipelineSpecializesGenericOwnerMethodMutation(t *testing.T) {
  }
  `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -432,7 +432,7 @@ fn main() void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -473,7 +473,7 @@ fn main() void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -515,7 +515,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -574,7 +574,7 @@ fn main() {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -632,7 +632,7 @@ fn main() {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -681,7 +681,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -733,7 +733,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -785,7 +785,7 @@ func TestHIRBorrowPrefixOpAndSpacing(t *testing.T) {
 	root := t.TempDir()
 	src := "fn main() {\n    let mut p = 1\n    let m = &mut p\n    m\n}\n"
 	mustWriteHIR(t, filepath.Join(root, "main.ferr"), src)
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -835,7 +835,7 @@ fn main() {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {

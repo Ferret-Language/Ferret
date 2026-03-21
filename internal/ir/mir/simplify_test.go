@@ -19,7 +19,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -48,7 +48,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -79,7 +79,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -109,7 +109,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -134,12 +134,12 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 	found := false
-	for _, diag := range result.Diagnostics.All() {
+	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag == nil {
 			continue
 		}
@@ -149,7 +149,7 @@ fn main() i32 {
 		}
 	}
 	if !found {
-		t.Fatalf("expected constant true warning, got %#v", result.Diagnostics.All())
+		t.Fatalf("expected constant true warning, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -166,12 +166,12 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 	found := false
-	for _, diag := range result.Diagnostics.All() {
+	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag == nil {
 			continue
 		}
@@ -181,7 +181,7 @@ fn main() i32 {
 		}
 	}
 	if !found {
-		t.Fatalf("expected constant false warning, got %#v", result.Diagnostics.All())
+		t.Fatalf("expected constant false warning, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -209,7 +209,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}

@@ -11,14 +11,14 @@ import (
 
 func parseTestModule(t *testing.T, src string) (*ast.Module, *diagnostics.Bag) {
 	t.Helper()
-	diag := diagnostics.NewBag()
+	diag := diagnostics.NewDiagnosticBag("")
 	toks := lexer.New("test.ferr", src, diag).Tokenize()
 	mod := New("test.ferr", toks, diag).ParseModule()
 	return mod, diag
 }
 
 func hasDiagnosticMessage(diag *diagnostics.Bag, substr string) bool {
-	for _, d := range diag.All() {
+	for _, d := range diag.Diagnostics() {
 		if strings.Contains(d.Message, substr) {
 			return true
 		}
@@ -27,7 +27,7 @@ func hasDiagnosticMessage(diag *diagnostics.Bag, substr string) bool {
 }
 
 func findDiagnosticWithMessage(diag *diagnostics.Bag, substr string) *diagnostics.Diagnostic {
-	for _, d := range diag.All() {
+	for _, d := range diag.Diagnostics() {
 		if strings.Contains(d.Message, substr) {
 			return d
 		}
@@ -50,7 +50,7 @@ fn Point::len2(self) i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	if len(mod.Decls) != 2 {
@@ -92,7 +92,7 @@ fn (p: Point) Len() i32 {
 `
 	_, diag := parseTestModule(t, src)
 	if !hasDiagnosticMessage(diag, "legacy receiver syntax has been removed") {
-		t.Fatalf("expected legacy receiver rejection diagnostic, got %v", diag.All())
+		t.Fatalf("expected legacy receiver rejection diagnostic, got %v", diag.Diagnostics())
 	}
 }
 
@@ -110,7 +110,7 @@ type Reader interface {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	typ, ok := mod.Decls[0].(*ast.TypeDecl)
@@ -154,7 +154,7 @@ type Handle enum {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	typ, ok := mod.Decls[0].(*ast.TypeDecl)
@@ -180,7 +180,7 @@ fn add(comptime T: Type, x: T) T {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	if len(mod.Decls) != 3 {
@@ -240,7 +240,7 @@ fn main() i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	if len(mod.Decls) != 2 {
@@ -271,7 +271,7 @@ fn main() void {
 
 	_, diag := parseTestModule(t, src)
 	if !hasDiagnosticMessage(diag, "raw address syntax `@` was removed") {
-		t.Fatalf("expected legacy raw address rejection diagnostic, got %v", diag.All())
+		t.Fatalf("expected legacy raw address rejection diagnostic, got %v", diag.Diagnostics())
 	}
 }
 
@@ -283,7 +283,7 @@ fn set(mut x: i32, y: i32) i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -307,7 +307,7 @@ fn Map<T, U: any>(value: T) U {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	box, ok := mod.Decls[0].(*ast.TypeDecl)
@@ -343,7 +343,7 @@ fn Use<T: numeric_writer>(value: T) void {}
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	if len(mod.Decls) != 4 {
@@ -393,7 +393,7 @@ fn min<T: union {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	if len(mod.Decls) != 4 {
@@ -431,7 +431,7 @@ type Writer interface {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	typ, ok := mod.Decls[0].(*ast.TypeDecl)
@@ -459,7 +459,7 @@ fn main() i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[1].(*ast.FuncDecl)
@@ -496,7 +496,7 @@ fn main() i32 {
 
 	_, diag := parseTestModule(t, src)
 	if !hasDiagnosticMessage(diag, "expected at least one type argument") {
-		t.Fatalf("expected empty-angle type-argument diagnostic, got %v", diag.All())
+		t.Fatalf("expected empty-angle type-argument diagnostic, got %v", diag.Diagnostics())
 	}
 }
 
@@ -516,7 +516,7 @@ fn main() Circle<i32> {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[2].(*ast.FuncDecl)
@@ -558,7 +558,7 @@ fn ClonePoint(p: Point) Point {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -584,7 +584,7 @@ fn recover() string;
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	if len(mod.Decls) != 1 {
@@ -633,7 +633,7 @@ fn addOne(v: i32) i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	if len(mod.Decls) != 4 {
@@ -669,7 +669,7 @@ fn noDoc() void {}
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -693,7 +693,7 @@ fn main() void
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -715,7 +715,7 @@ fn f() void {}
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -745,7 +745,7 @@ fn main() void {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -773,7 +773,7 @@ fn Println(text: string) void;
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -798,7 +798,7 @@ fn Tick() void;
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -821,7 +821,7 @@ fn CastIt(x: i32) i8 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn := mod.Decls[0].(*ast.FuncDecl)
@@ -854,7 +854,7 @@ fn run() i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -909,7 +909,7 @@ fn run() i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -947,11 +947,11 @@ fn run() void {
 `
 
 	_, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) == 0 {
+	if got := diag.Diagnostics(); len(got) == 0 {
 		t.Fatalf("expected diagnostic, got none")
 	}
 	if !hasDiagnosticMessage(diag, "expected '|' after for iterable") {
-		t.Fatalf("expected invalid for binding diagnostic, got %v", diag.All())
+		t.Fatalf("expected invalid for binding diagnostic, got %v", diag.Diagnostics())
 	}
 }
 
@@ -968,7 +968,7 @@ fn run() void {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -1010,7 +1010,7 @@ fn run() void {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 1 {
+	if got := diag.Diagnostics(); len(got) != 1 {
 		t.Fatalf("expected 1 diagnostic, got %d: %v", len(got), got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -1052,7 +1052,7 @@ fn run() i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 1 {
+	if got := diag.Diagnostics(); len(got) != 1 {
 		t.Fatalf("expected 1 diagnostic, got %d: %v", len(got), got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -1094,11 +1094,11 @@ fn Conn::~Conn(*self) {
 	if len(mod.Imports) != 1 || mod.Imports[0].Alias.Text() != "json" {
 		t.Fatalf("expected aliased import, got %#v", mod.Imports)
 	}
-	if got := diag.All(); len(got) == 0 {
+	if got := diag.Diagnostics(); len(got) == 0 {
 		t.Fatal("expected removed destructor syntax diagnostic")
 	}
 	if !hasDiagnosticMessage(diag, "special destructor syntax has been removed") {
-		t.Fatalf("expected removed destructor syntax diagnostic, got %v", diag.All())
+		t.Fatalf("expected removed destructor syntax diagnostic, got %v", diag.Diagnostics())
 	}
 }
 
@@ -1118,7 +1118,7 @@ fn run(m: Mutex, cond: bool) void {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -1169,7 +1169,7 @@ fn run(ptr: ^i32) i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
@@ -1227,7 +1227,7 @@ fn run(path: string) i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn := mod.Decls[0].(*ast.FuncDecl)
@@ -1251,7 +1251,7 @@ fn run(x: i32) bool {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn := mod.Decls[0].(*ast.FuncDecl)
@@ -1285,7 +1285,7 @@ fn run(value: Token) i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn := mod.Decls[0].(*ast.FuncDecl)
@@ -1313,7 +1313,7 @@ fn run(value: Token) i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn := mod.Decls[0].(*ast.FuncDecl)
@@ -1339,11 +1339,11 @@ fn build() Point {
 `
 
 	_, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 1 {
+	if got := diag.Diagnostics(); len(got) != 1 {
 		t.Fatalf("expected 1 diagnostic, got %d: %v", len(got), got)
 	}
 	if !hasDiagnosticMessage(diag, "cannot mix named and positional composite elements") {
-		t.Fatalf("expected mixed composite literal diagnostic, got %v", diag.All())
+		t.Fatalf("expected mixed composite literal diagnostic, got %v", diag.Diagnostics())
 	}
 }
 
@@ -1376,7 +1376,7 @@ type Token union {
 `
 
 	_, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 5 {
+	if got := diag.Diagnostics(); len(got) != 5 {
 		t.Fatalf("expected 5 diagnostics, got %d: %v", len(got), got)
 	}
 	for _, substr := range []string{
@@ -1387,7 +1387,7 @@ type Token union {
 		`duplicate union member "named:[i32]"`,
 	} {
 		if !hasDiagnosticMessage(diag, substr) {
-			t.Fatalf("expected diagnostic containing %q, got %v", substr, diag.All())
+			t.Fatalf("expected diagnostic containing %q, got %v", substr, diag.Diagnostics())
 		}
 	}
 }
@@ -1405,7 +1405,7 @@ fn build() i32 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 1 {
+	if got := diag.Diagnostics(); len(got) != 1 {
 		t.Fatalf("expected 1 diagnostic, got %d: %v", len(got), got)
 	}
 	typ, ok := mod.Decls[0].(*ast.TypeDecl)
@@ -1439,11 +1439,11 @@ fn build() Point {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 1 {
+	if got := diag.Diagnostics(); len(got) != 1 {
 		t.Fatalf("expected 1 diagnostic, got %d: %v", len(got), got)
 	}
 	if !hasDiagnosticMessage(diag, "expected ',' or '}' after composite literal element") {
-		t.Fatalf("expected missing comma diagnostic, got %v", diag.All())
+		t.Fatalf("expected missing comma diagnostic, got %v", diag.Diagnostics())
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
 	if !ok {
@@ -1477,11 +1477,11 @@ fn run() void {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) < 1 {
+	if got := diag.Diagnostics(); len(got) < 1 {
 		t.Fatalf("expected at least 1 diagnostic, got %d: %v", len(got), got)
 	}
 	if !hasDiagnosticMessage(diag, "expected ',' or ')' after argument") {
-		t.Fatalf("expected missing argument comma diagnostic, got %v", diag.All())
+		t.Fatalf("expected missing argument comma diagnostic, got %v", diag.Diagnostics())
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
 	if !ok {
@@ -1518,7 +1518,7 @@ fn run() void {
 	_, diag := parseTestModule(t, src)
 	d := findDiagnosticWithMessage(diag, "expected ',' or ')' after argument")
 	if d == nil {
-		t.Fatalf("expected missing call closer diagnostic, got %v", diag.All())
+		t.Fatalf("expected missing call closer diagnostic, got %v", diag.Diagnostics())
 	}
 	if len(d.Labels) == 0 || d.Labels[0].Location == nil || d.Labels[0].Location.Start == nil || d.Labels[0].Location.End == nil {
 		t.Fatalf("expected diagnostic label location, got %#v", d.Labels)
@@ -1542,10 +1542,10 @@ fn main() {
 
 	_, diag := parseTestModule(t, src)
 	if !hasDiagnosticMessage(diag, "expected ',' or ')' after argument") {
-		t.Fatalf("expected missing call closer diagnostic, got %v", diag.All())
+		t.Fatalf("expected missing call closer diagnostic, got %v", diag.Diagnostics())
 	}
 	if hasDiagnosticMessage(diag, "expected '}'") {
-		t.Fatalf("unexpected cascading expected '}' diagnostic: %v", diag.All())
+		t.Fatalf("unexpected cascading expected '}' diagnostic: %v", diag.Diagnostics())
 	}
 }
 
@@ -1569,7 +1569,7 @@ fn Node::peekRaw(^const self) ^const u8 {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	typ, ok := mod.Decls[0].(*ast.TypeDecl)
@@ -1637,7 +1637,7 @@ fn main() {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn := mod.Decls[0].(*ast.FuncDecl)
@@ -1673,7 +1673,7 @@ fn Point::New() Point {
 }
 `
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn := mod.Decls[1].(*ast.FuncDecl)
@@ -1701,7 +1701,7 @@ fn Point::Clone(&self) Self {
 }
 `
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	iface := mod.Decls[0].(*ast.TypeDecl).Type.(*ast.InterfaceType)
@@ -1733,14 +1733,14 @@ fn Point::Len(this) i32 {
 `
 	_, diag := parseTestModule(t, src)
 	found := false
-	for _, d := range diag.All() {
+	for _, d := range diag.Diagnostics() {
 		if d.Code == diagnostics.WarnNonSelfReceiverName {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected non-self receiver warning, got %v", diag.All())
+		t.Fatalf("expected non-self receiver warning, got %v", diag.Diagnostics())
 	}
 }
 
@@ -1754,7 +1754,7 @@ fn main() {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.All(); len(got) != 0 {
+	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)

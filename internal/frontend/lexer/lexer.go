@@ -33,7 +33,7 @@ type Lexer struct {
 
 func New(file, input string, diag *diagnostics.Bag) *Lexer {
 	if diag == nil {
-		diag = diagnostics.NewBag()
+		diag = diagnostics.NewDiagnosticBag("")
 	}
 	l := &Lexer{
 		file:  file,

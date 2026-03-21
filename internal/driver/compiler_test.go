@@ -307,7 +307,7 @@ fn main() i32 {
 		TargetOS:        "linux",
 		TargetArch:      runtime.GOARCH,
 	}
-	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -337,7 +337,7 @@ fn main() i32 {
 		TargetOS:        "linux",
 		TargetArch:      runtime.GOARCH,
 	}
-	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -366,7 +366,7 @@ fn main() i32 {
 		DependencyRoots: map[string]string{},
 		TargetBackend:   "llvm",
 	}
-	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -387,7 +387,7 @@ fn main() i32 { return 0 }
 		Extension:       ".ferr",
 		DependencyRoots: map[string]string{},
 	}
-	result := NewWithConfig(cfg, diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid #[if(...)] diagnostic")
 	}

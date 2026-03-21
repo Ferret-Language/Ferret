@@ -24,7 +24,7 @@ func Parse(file string, toks []tokens.Token, diag *diagnostics.Bag) *ast.Module 
 
 func New(file string, toks []tokens.Token, diag *diagnostics.Bag) *Parser {
 	if diag == nil {
-		diag = diagnostics.NewBag()
+		diag = diagnostics.NewDiagnosticBag("")
 	}
 	return &Parser{file: file, toks: toks, diag: diag}
 }

@@ -9,10 +9,10 @@ import (
 
 func TestLexCompositeLiteralAndReceiverTokens(t *testing.T) {
 	src := `fn (p *Point) shift(dx i32) { let q: Point = .{ .x = 1 } }`
-	diag := diagnostics.NewBag()
+	diag := diagnostics.NewDiagnosticBag("")
 	out := New("test.ferr", src, diag).Tokenize()
-	if len(diag.All()) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", diag.All())
+	if len(diag.Diagnostics()) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", diag.Diagnostics())
 	}
 	foundDoubleDotStyle := false
 	for i := 0; i < len(out)-1; i++ {
@@ -41,10 +41,10 @@ func TestLexAllNumberForms(t *testing.T) {
 	}
 
 	for _, src := range cases {
-		diag := diagnostics.NewBag()
+		diag := diagnostics.NewDiagnosticBag("")
 		out := New("test.ferr", src, diag).Tokenize()
-		if len(diag.All()) != 0 {
-			t.Fatalf("%s: unexpected diagnostics: %v", src, diag.All())
+		if len(diag.Diagnostics()) != 0 {
+			t.Fatalf("%s: unexpected diagnostics: %v", src, diag.Diagnostics())
 		}
 		if len(out) < 2 {
 			t.Fatalf("%s: expected token and EOF, got %d tokens", src, len(out))
@@ -57,10 +57,10 @@ func TestLexAllNumberForms(t *testing.T) {
 
 func TestLexLoopControlKeywords(t *testing.T) {
 	src := `while cond { break; continue; }`
-	diag := diagnostics.NewBag()
+	diag := diagnostics.NewDiagnosticBag("")
 	out := New("test.ferr", src, diag).Tokenize()
-	if len(diag.All()) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", diag.All())
+	if len(diag.Diagnostics()) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", diag.Diagnostics())
 	}
 	if len(out) < 6 {
 		t.Fatalf("expected several tokens, got %d", len(out))

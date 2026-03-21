@@ -10,7 +10,7 @@ import (
 )
 
 func TestFilterModuleIfAndIfNot(t *testing.T) {
-	diag := diagnostics.NewBag()
+	diag := diagnostics.NewDiagnosticBag("")
 	ctx := context.NewWithConfig(context.Config{
 		TargetOS:      "linux",
 		TargetArch:    "amd64",
@@ -34,7 +34,7 @@ func TestFilterModuleIfAndIfNot(t *testing.T) {
 }
 
 func TestFilterModuleInvalidAttrReportsDiagnostic(t *testing.T) {
-	diag := diagnostics.NewBag()
+	diag := diagnostics.NewDiagnosticBag("")
 	ctx := context.NewWithConfig(context.Config{}, diag)
 	loc := source.NewLocation("main.ferr", source.NewPosition(), source.NewPosition())
 	mod := &context.Module{
@@ -60,7 +60,7 @@ func TestExplainConfig(t *testing.T) {
 	if ExplainConfig(nil) != "" {
 		t.Fatalf("expected empty config explanation for nil context")
 	}
-	ctx := context.NewWithConfig(context.Config{TargetOS: "linux", TargetArch: "amd64", TargetBackend: "qbe", BuildDebug: true}, diagnostics.NewBag())
+	ctx := context.NewWithConfig(context.Config{TargetOS: "linux", TargetArch: "amd64", TargetBackend: "qbe", BuildDebug: true}, diagnostics.NewDiagnosticBag(""))
 	text := ExplainConfig(ctx)
 	if text == "" || text == `target_os="", target_arch="", target_backend="", debug=false` {
 		t.Fatalf("unexpected explanation: %q", text)
