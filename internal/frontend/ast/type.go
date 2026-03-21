@@ -29,6 +29,7 @@ func (*RefType) typeNode()              {}
 func (t *RefType) Loc() source.Location { return t.Location }
 
 type RawPtrType struct {
+	Const    bool
 	Inner    TypeExpr
 	Location source.Location
 }

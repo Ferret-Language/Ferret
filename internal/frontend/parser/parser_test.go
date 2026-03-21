@@ -1502,6 +1502,7 @@ type Node struct {
     view: &Node
     edit: &mut Node
     data: ^u8
+    ro: ^const u8
 }
 
 fn Node::peek(&self) &Node {
@@ -1532,8 +1533,13 @@ fn Node::peek(&self) &Node {
 	if !ok || !mutRef.Mutable {
 		t.Fatalf("expected mutable ref type, got %#v", st.Fields[2].Type)
 	}
-	if _, ok := st.Fields[3].Type.(*ast.RawPtrType); !ok {
-		t.Fatalf("expected raw ptr type, got %T", st.Fields[3].Type)
+	raw, ok := st.Fields[3].Type.(*ast.RawPtrType)
+	if !ok || raw.Const {
+		t.Fatalf("expected mutable raw ptr type, got %#v", st.Fields[3].Type)
+	}
+	rawConst, ok := st.Fields[4].Type.(*ast.RawPtrType)
+	if !ok || !rawConst.Const {
+		t.Fatalf("expected const raw ptr type, got %#v", st.Fields[4].Type)
 	}
 	fn, ok := mod.Decls[1].(*ast.FuncDecl)
 	if !ok {

@@ -106,6 +106,12 @@ func TestFormatReceiverBindingDecl(t *testing.T) {
 	}
 }
 
+func TestFormatReceiverTextPreservesRawConst(t *testing.T) {
+	if got := ast.FormatReceiverText("self", "^const Point"); got != "^const self" {
+		t.Fatalf("unexpected raw const receiver text: %q", got)
+	}
+}
+
 func TestFormatNamedTypeHoverMarkdown(t *testing.T) {
 	got := FormatNamedTypeHoverMarkdown(NamedTypeHoverBlock{
 		DeclText: "type Point struct {\n    Value: i32 = 7\n}",

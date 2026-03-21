@@ -120,7 +120,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		if t.Inner == nil || typeinfo.IsBuiltinNamed(inner, "void") {
 			inner = nil
 		}
-		return &typeinfo.RawPtrType{Inner: inner}
+		return &typeinfo.RawPtrType{Const: t.Const, Inner: inner}
 	case *ast.OptionalType:
 		return &typeinfo.OptionalType{Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.ApproxType:

@@ -15,6 +15,10 @@ func TestRefAndRawTypeString(t *testing.T) {
 	if got := raw.String(); got != "^u8" {
 		t.Fatalf("expected ^u8, got %q", got)
 	}
+	rawConst := &RawPtrType{Const: true, Inner: &BuiltinType{Name: "u8"}}
+	if got := rawConst.String(); got != "^const u8" {
+		t.Fatalf("expected ^const u8, got %q", got)
+	}
 }
 
 func TestEqualRefAndRawTypes(t *testing.T) {
@@ -30,6 +34,9 @@ func TestEqualRefAndRawTypes(t *testing.T) {
 	rightRaw := &RawPtrType{Inner: &BuiltinType{Name: "u8"}}
 	if !Equal(leftRaw, rightRaw) {
 		t.Fatal("expected raw ptr types to compare equal")
+	}
+	if Equal(leftRaw, &RawPtrType{Const: true, Inner: &BuiltinType{Name: "u8"}}) {
+		t.Fatal("expected raw mutable and raw const ptrs to differ")
 	}
 }
 

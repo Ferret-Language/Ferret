@@ -24,7 +24,12 @@ func (p *Parser) parseType() ast.TypeExpr {
 		return ref
 	case tokens.CARET:
 		p.advance()
-		return &ast.RawPtrType{Inner: p.parseType(), Location: p.locFrom(start)}
+		raw := &ast.RawPtrType{Location: p.locFrom(start)}
+		if p.match(tokens.CONST) {
+			raw.Const = true
+		}
+		raw.Inner = p.parseType()
+		return raw
 	case tokens.ASTERISK:
 		p.advance()
 		return &ast.PointerType{Inner: p.parseType(), Location: p.locFrom(start)}

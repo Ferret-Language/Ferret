@@ -25,6 +25,9 @@ func TypeString(typ TypeExpr) string {
 		}
 		return "&" + TypeString(t.Inner)
 	case *RawPtrType:
+		if t.Const {
+			return "^const " + TypeString(t.Inner)
+		}
 		return "^" + TypeString(t.Inner)
 	case *SelfType:
 		return "Self"
@@ -187,6 +190,9 @@ func FormatReceiverText(name, typeText string) string {
 		case strings.HasPrefix(typeText, "*"):
 			return "*self"
 		case strings.HasPrefix(typeText, "^"):
+			if strings.HasPrefix(typeText, "^const ") {
+				return "^const self"
+			}
 			return "^self"
 		case typeText != "":
 			return "self"

@@ -108,6 +108,7 @@ func (t *RefType) String() string {
 }
 
 type RawPtrType struct {
+	Const bool
 	Inner Type
 }
 
@@ -115,10 +116,14 @@ func (t *RawPtrType) String() string {
 	if t == nil {
 		return "<nil>"
 	}
-	if t.Inner == nil {
-		return "^void"
+	prefix := "^"
+	if t.Const {
+		prefix = "^const "
 	}
-	return "^" + typeString(t.Inner)
+	if t.Inner == nil {
+		return prefix + "void"
+	}
+	return prefix + typeString(t.Inner)
 
 }
 
@@ -442,7 +447,7 @@ func Equal(a, b Type) bool {
 		return ok && at.Mutable == bt.Mutable && Equal(at.Inner, bt.Inner)
 	case *RawPtrType:
 		bt, ok := b.(*RawPtrType)
-		return ok && Equal(at.Inner, bt.Inner)
+		return ok && at.Const == bt.Const && Equal(at.Inner, bt.Inner)
 	case *OptionalType:
 		bt, ok := b.(*OptionalType)
 		return ok && Equal(at.Inner, bt.Inner)

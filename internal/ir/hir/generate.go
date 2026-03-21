@@ -418,7 +418,7 @@ func hirInstantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type {
 	case *typeinfo.RefType:
 		return &typeinfo.RefType{Mutable: t.Mutable, Inner: hirInstantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.RawPtrType:
-		return &typeinfo.RawPtrType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
+		return &typeinfo.RawPtrType{Const: t.Const, Inner: hirInstantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.OptionalType:
 		return &typeinfo.OptionalType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.ErrorUnionType:

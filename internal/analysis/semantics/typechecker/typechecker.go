@@ -1517,7 +1517,7 @@ func (c *checker) substituteTypeParams(typ typeinfo.Type, bindings map[*typeinfo
 	case *typeinfo.RefType:
 		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.substituteTypeParams(t.Inner, bindings)}
 	case *typeinfo.RawPtrType:
-		return &typeinfo.RawPtrType{Inner: c.substituteTypeParams(t.Inner, bindings)}
+		return &typeinfo.RawPtrType{Const: t.Const, Inner: c.substituteTypeParams(t.Inner, bindings)}
 	case *typeinfo.OptionalType:
 		return &typeinfo.OptionalType{Inner: c.substituteTypeParams(t.Inner, bindings)}
 	case *typeinfo.ApproxType:
@@ -3033,7 +3033,7 @@ func (c *checker) instantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type
 	case *typeinfo.RefType:
 		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.instantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.RawPtrType:
-		return &typeinfo.RawPtrType{Inner: c.instantiateSelfType(t.Inner, selfType)}
+		return &typeinfo.RawPtrType{Const: t.Const, Inner: c.instantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.OptionalType:
 		return &typeinfo.OptionalType{Inner: c.instantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.ApproxType:
