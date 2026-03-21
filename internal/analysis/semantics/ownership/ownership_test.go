@@ -118,8 +118,57 @@ fn main(items: [3]i32) i32 {
 	}
 }
 
+func TestOwnershipPhaseAllowsOwningParamRebindAfterMove(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+type Conn struct {}
+
+fn main(mut p: *Conn, mut q: *Conn) *Conn {
+    let tmp = p
+    p = q
+    return p
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove || diag.Code == diagnostics.ErrBorrowConflict {
+			t.Fatalf("unexpected ownership diagnostic %#v", diag)
+		}
+	}
+}
+
+func TestOwnershipPhaseAllowsOwningParamLoopRebindAfterMove(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+type Conn struct {}
+
+fn main(mut p: *Conn, mut q: *Conn) *Conn {
+    let mut i: i32 = 0
+    while i < 1 {
+        let tmp = p
+        p = q
+        i = i + 1
+    }
+    return p
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove || diag.Code == diagnostics.ErrBorrowConflict {
+			t.Fatalf("unexpected ownership diagnostic %#v", diag)
+		}
+	}
+}
+
 func TestOwnershipPhaseAllowsLoopReinitialization(t *testing.T) {
-	t.Skip("loop reinitialization after move needs stronger ownership data-flow than the current phase provides")
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
 type Point struct {
@@ -521,6 +570,31 @@ fn main(n: Node, replacement: *Node) i32 {
 			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
 		}
 	}
+}
+
+func TestOwnershipPhaseRejectsConditionalUseAfterMove(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+type Conn struct {}
+
+fn main(mut p: *Conn, cond: bool) *Conn {
+    if cond {
+        let x = p
+    }
+    return p
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewBag()).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			return
+		}
+	}
+	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
 }
 
 func mustWriteOwnership(t *testing.T, path, content string) {

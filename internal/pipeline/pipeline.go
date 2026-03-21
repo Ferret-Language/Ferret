@@ -182,11 +182,11 @@ func (p *Pipeline) runSemanticPasses(mod *context.Module) {
 	mod.MIR = mir.LowerModule(mod.CFG, mod.LoweredHIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupLoweredMethodPath(mod.ImportPath))
 	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseMIRGenerated
+	ownership.AnalyzeModule(p.ctx, mod)
+	mod.Phase = phase.PhaseOwnershipAnalyzed
 	mir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)
 	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseConstEvaluated
-	ownership.AnalyzeModule(p.ctx, mod)
-	mod.Phase = phase.PhaseOwnershipAnalyzed
 }
 
 func (p *Pipeline) lookupMethodPath(currentImportPath string) hir.MethodLookup {
