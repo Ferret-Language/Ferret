@@ -725,11 +725,11 @@ fn main() i32 {
 	}
 	text := artifact.Text
 	// Method should be emitted with receiver as first parameter.
-	if !strings.Contains(text, "function w $Point__Len2(l %") {
+	if !strings.Contains(text, "function w $main__Point__Len2(l %") {
 		t.Fatalf("expected receiver parameter in Len2 signature, got:\n%s", text)
 	}
 	// Call site should pass receiver as first argument.
-	if !strings.Contains(text, "call $Point__Len2(") {
+	if !strings.Contains(text, "call $main__Point__Len2(") {
 		t.Fatalf("expected direct method call in main, got:\n%s", text)
 	}
 }

@@ -1158,7 +1158,8 @@ func lowerIsInterfaceType(typ typeinfo.Type) bool {
 
 // lowerMethodSymbolPath builds the NameValue.Path for a method call.
 // ModuleKey format is "origin:importPath" (e.g. "local:math/vec2").
-// Same-module methods get a single-element path so qbeSymbol can add the module prefix.
+// Methods always carry their defining module path when available so calls
+// resolve to the same mangled symbol as method declarations.
 func lowerMethodSymbolPath(c *lowerContext, named *typeinfo.NamedType, methodName string) []string {
 	if named == nil {
 		return []string{methodName}
@@ -1168,7 +1169,10 @@ func lowerMethodSymbolPath(c *lowerContext, named *typeinfo.NamedType, methodNam
 	if _, after, ok := strings.Cut(named.ModuleKey, ":"); ok {
 		importPath = after
 	}
-	if importPath == "" || importPath == c.importPath {
+	if importPath == "" && c != nil {
+		importPath = c.importPath
+	}
+	if importPath == "" {
 		return []string{leaf}
 	}
 	parts := strings.Split(importPath, "/")
@@ -1186,13 +1190,21 @@ func lowerFunctionLinkName(importPath string, fn *hir.Func) string {
 		return lowerExternLinkName(importPath, lowerExternOwnerNameHir(fn), fn.Name)
 	}
 	if fn.OwnerType != "" {
-		return lowerMethodLinkLeaf(fn.OwnerType, fn.Name)
+		leaf := lowerMethodLinkLeaf(fn.OwnerType, fn.Name)
+		if importPath == "" {
+			return leaf
+		}
+		return strings.ReplaceAll(importPath, "/", "__") + "__" + leaf
 	}
 	if fn.Receiver == nil {
 		return ""
 	}
 	if named := lowerReceiverNamed(fn.Receiver.Type); named != nil {
-		return lowerMethodLinkLeaf(named.Name, fn.Name)
+		leaf := lowerMethodLinkLeaf(named.Name, fn.Name)
+		if importPath == "" {
+			return leaf
+		}
+		return strings.ReplaceAll(importPath, "/", "__") + "__" + leaf
 	}
 	return ""
 }

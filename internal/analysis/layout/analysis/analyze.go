@@ -155,6 +155,10 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 		return builtinLayout(t.Name)
 	case *typeinfo.PointerType:
 		return pointerSize, pointerAlign, true, nil
+	case *typeinfo.RefType:
+		return pointerSize, pointerAlign, true, nil
+	case *typeinfo.RawPtrType:
+		return pointerSize, pointerAlign, true, nil
 	case *typeinfo.StringType:
 		return 16, 8, true, nil
 	case *typeinfo.SliceType:

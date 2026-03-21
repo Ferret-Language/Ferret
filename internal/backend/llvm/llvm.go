@@ -12,6 +12,7 @@ import (
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
+	"compiler/internal/backend/symutil"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/ir/mir"
 	"compiler/internal/utils/numeric"
@@ -937,9 +938,15 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
 		tempValues:        make(map[int]mir.Value),
 	}
+	importPath := ""
+	if unit != nil && unit.Module != nil {
+		importPath = unit.Module.ImportPath
+	}
+	localPrefix := symutil.LocalModulePrefix(importPath)
 	for _, fn := range unit.Module.Functions {
 		if fn != nil {
 			state.functions[fn.Name] = struct{}{}
+			symutil.AddLinkLeafAlias(state.functions, localPrefix, fn.LinkName)
 		}
 	}
 	for _, g := range unit.Module.Globals {
@@ -4750,6 +4757,11 @@ func llvmSymbol(state *moduleState, path []string) string {
 			}
 		}
 		return name
+	}
+	if len(path) == 2 && state != nil {
+		if localMethod, ok := symutil.ResolveStaticOwnerLocalName(path, state.functions, state.globals); ok {
+			return state.modulePrefix + "__" + sanitizeIdent(localMethod)
+		}
 	}
 	clean := make([]string, 0, len(path))
 	for _, part := range path {

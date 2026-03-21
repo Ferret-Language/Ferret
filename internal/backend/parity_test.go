@@ -90,10 +90,10 @@ fn main() i32 {
 		}
 		if target == backend.TargetLLVM {
 			for _, want := range []string{
-				"define i32 @Box__Id_",
-				"define i64 @Box__Id_",
-				"call i32 @Box__Id_",
-				"call i64 @Box__Id_",
+				"define i32 @main__Box__Id_",
+				"define i64 @main__Box__Id_",
+				"call i32 @main__Box__Id_",
+				"call i64 @main__Box__Id_",
 			} {
 				if !strings.Contains(artifact.Text, want) {
 					t.Fatalf("target %s expected %q in lowered output:\n%s", target, want, artifact.Text)
@@ -102,9 +102,9 @@ fn main() i32 {
 		}
 		if target == backend.TargetQBE {
 			for _, want := range []string{
-				"function w $Box__Id_",
-				"function l $Box__Id_",
-				"call $Box__Id_",
+				"function w $main__Box__Id_",
+				"function l $main__Box__Id_",
+				"call $main__Box__Id_",
 			} {
 				if !strings.Contains(artifact.Text, want) {
 					t.Fatalf("target %s expected %q in lowered output:\n%s", target, want, artifact.Text)
