@@ -235,7 +235,7 @@ func (d *debugState) getOptionalType(state *moduleState, t *typeinfo.OptionalTyp
 		if sz, al, err := aggregateSizeAlignOfPrimitive(t.Inner); err == nil {
 			innerSize = sz * 8
 			innerAlign = al * 8
-		} else if sz, al, err2 := aggregateSizeAlign(state, t.Inner); err2 == nil {
+		} else if sz, al, err2 := backend.AggregateSizeAlign(aggregateLayoutContext(state), t.Inner); err2 == nil {
 			innerSize = sz * 8
 			innerAlign = al * 8
 		}
@@ -1162,7 +1162,7 @@ func lowerGlobal(state *moduleState, g *mir.Global) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("global %s: %w", g.Name, err)
 		}
-		size, _, err := aggregateSizeAlign(state, g.Type)
+		size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), g.Type)
 		if err != nil {
 			return "", fmt.Errorf("global %s: %w", g.Name, err)
 		}
@@ -1398,7 +1398,7 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *mir.Function) erro
 			if err != nil {
 				return fmt.Errorf("function %s param %s: %w", fn.Name, param.Name, err)
 			}
-			_, align, err := aggregateSizeAlign(state, param.Type)
+			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), param.Type)
 			if err != nil {
 				return fmt.Errorf("function %s param %s: %w", fn.Name, param.Name, err)
 			}
@@ -2042,13 +2042,36 @@ func llvmIsPointerLike(typ typeinfo.Type) bool {
 	return ok
 }
 
+func tupleElementLayoutForIndex(state *moduleState, tupleType *typeinfo.TupleType, index mir.Value) (*backend.TupleElementLayout, error) {
+	idx, ok := becommon.TupleIndexFromValue(index)
+	if !ok {
+		return nil, fmt.Errorf("tuple index must be a constant integer literal")
+	}
+	entries, _, _, err := backend.TupleLayout(aggregateLayoutContext(state), tupleType)
+	if err != nil {
+		return nil, err
+	}
+	if idx < 0 || idx >= len(entries) {
+		return nil, fmt.Errorf("tuple index %d out of range", idx)
+	}
+	return &entries[idx], nil
+}
+
 // lowerIndexAddress computes the pointer to arr[index].
 // baseType must be *typeinfo.ArrayType or a pointer-like type.
 func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
+	var tupleElem *backend.TupleElementLayout
 	switch bt := baseType.(type) {
 	case *typeinfo.ArrayType:
 		elemType = bt.Inner
+	case *typeinfo.TupleType:
+		entry, err := tupleElementLayoutForIndex(state, bt, index)
+		if err != nil {
+			return nil, "", err
+		}
+		tupleElem = entry
+		elemType = entry.Type
 	default:
 		var ok bool
 		elemType, ok = llvmPointerInner(baseType)
@@ -2056,11 +2079,19 @@ func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, base
 			return nil, "", fmt.Errorf("cannot index into %T", baseType)
 		}
 	}
-	elemIRType, err := llvmBaseType(elemType)
+	baseExpr, err := lowerValue(state, base)
 	if err != nil {
 		return nil, "", err
 	}
-	baseExpr, err := lowerValue(state, base)
+	if tupleElem != nil {
+		if tupleElem.Offset == 0 {
+			return nil, baseExpr, nil
+		}
+		addr := freshTemp(state, "elem")
+		line := fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", addr, baseExpr, tupleElem.Offset)
+		return []string{line}, addr, nil
+	}
+	elemIRType, err := llvmBaseType(elemType)
 	if err != nil {
 		return nil, "", err
 	}
@@ -2174,6 +2205,17 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 			if err != nil {
 				return nil, "", err
 			}
+		} else if tup, ok := baseType.(*typeinfo.TupleType); ok {
+			entry, err := tupleElementLayoutForIndex(state, tup, p.Index)
+			if err != nil {
+				return nil, "", err
+			}
+			if entry.Offset == 0 {
+				return baseLines, basePtr, nil
+			}
+			addrTmp := freshTemp(state, "elem")
+			gepLine := fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", addrTmp, basePtr, entry.Offset)
+			return append(baseLines, gepLine), addrTmp, nil
 		} else if sl, ok := baseType.(*typeinfo.SliceType); ok {
 			elemIRType, err = llvmBaseType(sl.Inner)
 			if err != nil {
@@ -2183,7 +2225,7 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 			baseLines = append(baseLines, fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, basePtr))
 			basePtr = dataPtr
 		} else {
-			return nil, "", fmt.Errorf("IndexPlace base is not an array or slice: %T", baseType)
+			return nil, "", fmt.Errorf("IndexPlace base is not an array, tuple, or slice: %T", baseType)
 		}
 		idxVal, err := lowerValue(state, p.Index)
 		if err != nil {
@@ -2206,9 +2248,30 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 
 // localTypeByPlaceID returns the type of the variable referenced by a place.
 func localTypeByPlaceID(state *moduleState, place mir.Place) typeinfo.Type {
-	if lp, ok := place.(*mir.LocalPlace); ok {
-		if state.fn != nil && lp.LocalID >= 0 && lp.LocalID < len(state.fn.Locals) {
-			return state.fn.Locals[lp.LocalID].Type
+	switch p := place.(type) {
+	case *mir.LocalPlace:
+		if state.fn != nil && p.LocalID >= 0 && p.LocalID < len(state.fn.Locals) {
+			return state.fn.Locals[p.LocalID].Type
+		}
+	case *mir.FieldPlace:
+		return localTypeByPlaceID(state, p.Base)
+	case *mir.IndexPlace:
+		return localTypeByPlaceID(state, p.Base)
+	case *mir.DerefPlace:
+		if addr, ok := p.Pointer.(*mir.AddrOfValue); ok && addr.Source != nil {
+			if typ := addr.Source.Type(); typ != nil {
+				return typ
+			}
+			switch src := addr.Source.(type) {
+			case *mir.LocalValue:
+				return becommon.LocalTypeByID(state.fn, src.LocalID)
+			case *mir.NameValue:
+				if len(src.Path) == 1 {
+					if local := becommon.FindLocalByName(state.fn, src.Path[0]); local != nil {
+						return local.Type
+					}
+				}
+			}
 		}
 	}
 	return nil
@@ -2305,7 +2368,7 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 			if terr != nil {
 				return "", terr
 			}
-			_, align, terr := aggregateSizeAlign(state, arg.Type())
+			_, align, terr := backend.AggregateSizeAlign(aggregateLayoutContext(state), arg.Type())
 			if terr != nil {
 				return "", terr
 			}
@@ -2384,7 +2447,7 @@ func lowerConstructorCall(state *moduleState, dstPtr string, call *mir.CallValue
 			if err != nil {
 				return "", err
 			}
-			_, align, err := aggregateSizeAlign(state, arg.Type())
+			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), arg.Type())
 			if err != nil {
 				return "", err
 			}
@@ -2423,7 +2486,7 @@ func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, c
 	if err != nil {
 		return "", err
 	}
-	_, align, err := aggregateSizeAlign(state, targetType)
+	_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), targetType)
 	if err != nil {
 		return "", err
 	}
@@ -2483,6 +2546,13 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 			return "", err
 		}
 		return llvmMemcpy(llvmLocalName(agg.PtrName), src, agg.Size, agg.Align), nil
+	case *mir.IndexValue:
+		lines, src, err := lowerIndexAddress(state, v.Base, v.Index, v.Base.Type())
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, llvmMemcpy(llvmLocalName(agg.PtrName), src, agg.Size, agg.Align))
+		return strings.Join(lines, "\n"), nil
 	case *mir.CompositeValue:
 		return lowerAggregateCompositeAssign(state, agg, v)
 	}
@@ -2534,7 +2604,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 		if err != nil {
 			return "", err
 		}
-		size, align, err := aggregateSizeAlign(state, agg.Type)
+		size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), agg.Type)
 		if err != nil {
 			return "", err
 		}
@@ -2545,7 +2615,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 		if err != nil {
 			return "", err
 		}
-		size, align, err := aggregateSizeAlign(state, value.Type())
+		size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), value.Type())
 		if err != nil {
 			return "", err
 		}
@@ -2653,7 +2723,7 @@ func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *mir.
 			if terr != nil {
 				return "", terr
 			}
-			_, align, terr := aggregateSizeAlign(state, arg.Type())
+			_, align, terr := backend.AggregateSizeAlign(aggregateLayoutContext(state), arg.Type())
 			if terr != nil {
 				return "", terr
 			}
@@ -2692,7 +2762,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		elemSize, elemAlign, err := aggregateSizeAlignOfPrimitive(arrType.Inner)
 		if err != nil {
 			// try inner as aggregate
-			innerSz, innerAl, err2 := aggregateSizeAlign(state, arrType.Inner)
+			innerSz, innerAl, err2 := backend.AggregateSizeAlign(aggregateLayoutContext(state), arrType.Inner)
 			if err2 != nil {
 				return "", fmt.Errorf("unsupported array element type in composite literal: %s", arrType.Inner)
 			}
@@ -2716,6 +2786,47 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 				tmp := freshTemp(state, "addr")
 				lines = append(lines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", tmp, llvmLocalName(agg.PtrName), offset))
 				addr = tmp
+			}
+			lines = append(lines, fmt.Sprintf("store %s %s, ptr %s", irType, lowered, addr))
+		}
+		return strings.Join(lines, "\n"), nil
+	}
+	if tupleType, ok := backend.UnwrapNamed(agg.Type).(*typeinfo.TupleType); ok {
+		entries, _, _, err := backend.TupleLayout(aggregateLayoutContext(state), tupleType)
+		if err != nil {
+			return "", err
+		}
+		lines := make([]string, 0, len(comp.Items)*3)
+		for i, item := range comp.Items {
+			if i >= len(entries) {
+				break
+			}
+			entry := entries[i]
+			addr := llvmLocalName(agg.PtrName)
+			if entry.Offset != 0 {
+				tmp := freshTemp(state, "addr")
+				lines = append(lines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", tmp, llvmLocalName(agg.PtrName), entry.Offset))
+				addr = tmp
+			}
+			if isAggregateType(state, entry.Type) {
+				src, err := lowerAggregateSource(state, item.Value)
+				if err != nil {
+					return "", err
+				}
+				size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), entry.Type)
+				if err != nil {
+					return "", err
+				}
+				lines = append(lines, llvmMemcpy(addr, src, size, align))
+				continue
+			}
+			irType, err := llvmBaseType(entry.Type)
+			if err != nil {
+				return "", err
+			}
+			lowered, err := lowerValue(state, item.Value)
+			if err != nil {
+				return "", err
 			}
 			lines = append(lines, fmt.Sprintf("store %s %s, ptr %s", irType, lowered, addr))
 		}
@@ -2868,7 +2979,7 @@ func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concrete
 		if err != nil {
 			return nil, "", err
 		}
-		_, align, err := aggregateSizeAlign(state, concreteType)
+		_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), concreteType)
 		if err != nil {
 			return nil, "", err
 		}
@@ -2942,7 +3053,7 @@ func lowerInterfaceCall(state *moduleState, targetName string, targetType typein
 			if err != nil {
 				return "", err
 			}
-			_, align, err := aggregateSizeAlign(state, expected)
+			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), expected)
 			if err != nil {
 				return "", err
 			}
@@ -3082,7 +3193,7 @@ func emitLLVMRuntimeTypeInfo(state *moduleState, sym string, typ typeinfo.Type) 
 
 func llvmRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, error) {
 	if isAggregateType(state, typ) {
-		return aggregateSizeAlign(state, typ)
+		return backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
 	}
 	irType, err := llvmBaseType(typ)
 	if err != nil {
@@ -3124,7 +3235,7 @@ func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, m
 			if err != nil {
 				return "", err
 			}
-			_, align, err := aggregateSizeAlign(state, param.Type)
+			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), param.Type)
 			if err != nil {
 				return "", err
 			}
@@ -3151,7 +3262,7 @@ func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, m
 			if err != nil {
 				return "", err
 			}
-			_, align, err := aggregateSizeAlign(state, param.Type)
+			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), param.Type)
 			if err != nil {
 				return "", err
 			}
@@ -3278,7 +3389,7 @@ func lowerTerm(state *moduleState, term mir.Terminator) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			_, align, err := aggregateSizeAlign(state, call.Type())
+			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), call.Type())
 			if err != nil {
 				return "", err
 			}
@@ -3811,7 +3922,7 @@ func llvmUnionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLa
 	case *typeinfo.OptionalType:
 		payloadSize, payloadAlign, err := aggregateSizeAlignOfPrimitive(t.Inner)
 		if err != nil {
-			payloadSize, payloadAlign, err = aggregateSizeAlign(state, t.Inner)
+			payloadSize, payloadAlign, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), t.Inner)
 			if err != nil {
 				return nil, err
 			}
@@ -3832,7 +3943,7 @@ func llvmUnionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLa
 		payloadSize := int64(0)
 		payloadAlign := int64(1)
 		for _, member := range t.Members {
-			size, align, err := aggregateSizeAlign(state, member)
+			size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), member)
 			if err != nil {
 				return nil, err
 			}
@@ -3989,7 +4100,7 @@ func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 				Type:    local.Type,
 				PtrName: local.Name,
 			}
-			size, align, err := aggregateSizeAlign(state, local.Type)
+			size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), local.Type)
 			if err != nil {
 				return err
 			}
@@ -4097,6 +4208,51 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *mir.Compo
 	if _, ok := typ.(*typeinfo.SliceType); ok {
 		return lowerGlobalStringLike(state, comp)
 	}
+	if tupleType, ok := backend.UnwrapNamed(typ).(*typeinfo.TupleType); ok {
+		entries, size, _, err := backend.TupleLayout(aggregateLayoutContext(state), tupleType)
+		if err != nil {
+			return "", err
+		}
+		parts := make([]string, 0, len(entries)*2)
+		offset := int64(0)
+		for i, entry := range entries {
+			if entry.Offset > offset {
+				parts = append(parts, fmt.Sprintf("[%d x i8] zeroinitializer", entry.Offset-offset))
+				offset = entry.Offset
+			}
+			if i >= len(comp.Items) {
+				parts = append(parts, fmt.Sprintf("[%d x i8] zeroinitializer", entry.Size))
+				offset += entry.Size
+				continue
+			}
+			if isAggregateType(state, entry.Type) {
+				body, err := lowerGlobalComposite(state, entry.Type, comp.Items[i].Value.(*mir.CompositeValue))
+				if err != nil {
+					return "", err
+				}
+				typeName, err := llvmABITypeName(state, entry.Type)
+				if err != nil {
+					return "", err
+				}
+				parts = append(parts, fmt.Sprintf("%s { %s }", typeName, body))
+			} else {
+				irType, err := llvmBaseType(entry.Type)
+				if err != nil {
+					return "", err
+				}
+				lit, err := lowerGlobalValue(state, entry.Type, comp.Items[i].Value)
+				if err != nil {
+					return "", err
+				}
+				parts = append(parts, fmt.Sprintf("%s %s", irType, lit))
+			}
+			offset += entry.Size
+		}
+		if size > offset {
+			parts = append(parts, fmt.Sprintf("[%d x i8] zeroinitializer", size-offset))
+		}
+		return strings.Join(parts, ", "), nil
+	}
 	structLayout, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, typ, "llvm")
 	if err != nil {
 		return "", err
@@ -4197,7 +4353,7 @@ func isAggregateType(state *moduleState, typ typeinfo.Type) bool {
 	if _, err := llvmBaseType(typ); err == nil {
 		return false
 	}
-	_, _, err := aggregateSizeAlign(state, typ)
+	_, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
 	return err == nil
 }
 
@@ -4220,8 +4376,8 @@ func aggregateSizeAlignOfPrimitive(typ typeinfo.Type) (int64, int64, error) {
 	return 0, 0, fmt.Errorf("not a primitive type")
 }
 
-func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, error) {
-	return backend.AggregateSizeAlign(backend.AggregateLayoutContext{
+func aggregateLayoutContext(state *moduleState) backend.AggregateLayoutContext {
+	return backend.AggregateLayoutContext{
 		BackendName:     "llvm",
 		ScalarSizeAlign: aggregateSizeAlignOfPrimitive,
 		OptionalSizeFunc: func(optional typeinfo.Type) (int64, int64, error) {
@@ -4234,7 +4390,7 @@ func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, er
 		LookupNamed: func(named *typeinfo.NamedType) (*layout.TypeLayout, error) {
 			return becommon.LookupNamedLayoutFromState(state.layouts, state.layout, state.mod, named, "llvm")
 		},
-	}, typ)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -4288,6 +4444,13 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 	if _, ok := typ.(*typeinfo.SliceType); ok {
 		return "{ ptr, i64 }", nil
 	}
+	if _, ok := backend.UnwrapNamed(typ).(*typeinfo.TupleType); ok {
+		size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("[%d x i8]", size), nil
+	}
 	return llvmBaseType(typ)
 }
 
@@ -4297,6 +4460,13 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 
 // llvmABITypeName returns the LLVM type name for function signatures, calls, globals.
 func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
+	if _, ok := backend.UnwrapNamed(typ).(*typeinfo.TupleType); ok {
+		size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("[%d x i8]", size), nil
+	}
 	switch backend.ClassifyABIType(typ, func(named *typeinfo.NamedType) bool {
 		info, err := becommon.LookupNamedLayoutFromState(state.layouts, state.layout, state.mod, named, "llvm")
 		return err == nil && info != nil && info.Known && (info.Struct != nil || backend.IsNamedUnion(named) || backend.IsNamedInterface(named))

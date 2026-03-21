@@ -778,6 +778,21 @@ func qbeIsPointerLike(t typeinfo.Type) bool {
 	return ok
 }
 
+func tupleElementLayoutForIndex(state *moduleState, tupleType *typeinfo.TupleType, index mir.Value) (*backend.TupleElementLayout, error) {
+	idx, ok := becommon.TupleIndexFromValue(index)
+	if !ok {
+		return nil, fmt.Errorf("tuple index must be a constant integer literal")
+	}
+	entries, _, _, err := backend.TupleLayout(aggregateLayoutContext(state), tupleType)
+	if err != nil {
+		return nil, err
+	}
+	if idx < 0 || idx >= len(entries) {
+		return nil, fmt.Errorf("tuple index %d out of range", idx)
+	}
+	return &entries[idx], nil
+}
+
 func lowerAggregateValuePointer(state *moduleState, value mir.Value) ([]string, string, error) {
 	if value == nil {
 		return nil, "", fmt.Errorf("nil aggregate value")
@@ -796,7 +811,7 @@ func lowerAggregateValuePointer(state *moduleState, value mir.Value) ([]string, 
 	if !isAggregateType(state, value.Type()) {
 		return nil, "", fmt.Errorf("value %T is not aggregate", value)
 	}
-	size, align, err := aggregateSizeAlign(state, value.Type())
+	size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), value.Type())
 	if err != nil {
 		return nil, "", err
 	}
@@ -852,7 +867,7 @@ func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, c
 	if targetType == nil || !isAggregateType(state, targetType) {
 		return "", fmt.Errorf("constructor call requires aggregate target")
 	}
-	size, align, err := aggregateSizeAlign(state, targetType)
+	size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), targetType)
 	if err != nil {
 		return "", err
 	}
@@ -918,7 +933,7 @@ func lowerTerm(state *moduleState, term mir.Terminator) (string, error) {
 			t.Value = alias
 		}
 		if call, ok := t.Value.(*mir.CallValue); ok && call.IsConstructor {
-			size, align, err := aggregateSizeAlign(state, call.Type())
+			size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), call.Type())
 			if err != nil {
 				return "", err
 			}
@@ -1088,7 +1103,7 @@ func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typei
 	elemType := targetType
 	elemSize, _, err := qbeScalarSizeAlign(elemType)
 	if err != nil {
-		elemSize, _, err = aggregateSizeAlign(state, elemType)
+		elemSize, _, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), elemType)
 		if err != nil {
 			return "", fmt.Errorf("cannot compute size of indexed element type %s", elemType)
 		}
@@ -1115,9 +1130,17 @@ func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typei
 // lowerQBEIndexAddress computes ptr = base + index * elemSize.
 func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
+	var tupleElem *backend.TupleElementLayout
 	switch bt := baseType.(type) {
 	case *typeinfo.ArrayType:
 		elemType = bt.Inner
+	case *typeinfo.TupleType:
+		entry, err := tupleElementLayoutForIndex(state, bt, index)
+		if err != nil {
+			return nil, "", err
+		}
+		tupleElem = entry
+		elemType = entry.Type
 	default:
 		var ok bool
 		elemType, ok = qbePointerInner(baseType)
@@ -1128,7 +1151,7 @@ func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, b
 	elemSize, _, err := qbeScalarSizeAlign(elemType)
 	if err != nil {
 		// try aggregate size
-		elemSize, _, err = aggregateSizeAlign(state, elemType)
+		elemSize, _, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), elemType)
 		if err != nil {
 			return nil, "", fmt.Errorf("cannot compute size of array element %s", elemType)
 		}
@@ -1136,6 +1159,13 @@ func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, b
 	baseExpr, err := lowerValue(state, base)
 	if err != nil {
 		return nil, "", err
+	}
+	if tupleElem != nil {
+		if tupleElem.Offset == 0 {
+			return nil, baseExpr, nil
+		}
+		addr := freshTemp(state, "elem")
+		return []string{fmt.Sprintf("%s =l add %s, %d", addr, baseExpr, tupleElem.Offset)}, addr, nil
 	}
 	indexExpr, err := lowerValue(state, index)
 	if err != nil {
@@ -1256,17 +1286,27 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 		var elemType typeinfo.Type
 		if arr, ok := baseType.(*typeinfo.ArrayType); ok {
 			elemType = arr.Inner
+		} else if tup, ok := baseType.(*typeinfo.TupleType); ok {
+			entry, err := tupleElementLayoutForIndex(state, tup, p.Index)
+			if err != nil {
+				return nil, "", err
+			}
+			if entry.Offset == 0 {
+				return baseLines, basePtr, nil
+			}
+			addrTmp := freshTemp(state, "elem")
+			return append(baseLines, fmt.Sprintf("%s =l add %s, %d", addrTmp, basePtr, entry.Offset)), addrTmp, nil
 		} else if sl, ok := baseType.(*typeinfo.SliceType); ok {
 			elemType = sl.Inner
 			dataPtr := freshTemp(state, "slice_data")
 			baseLines = append(baseLines, fmt.Sprintf("%s =l loadl %s", dataPtr, basePtr))
 			basePtr = dataPtr
 		} else {
-			return nil, "", fmt.Errorf("IndexPlace base is not an array or slice: %T", baseType)
+			return nil, "", fmt.Errorf("IndexPlace base is not an array, tuple, or slice: %T", baseType)
 		}
 		elemSize, _, err := qbeScalarSizeAlign(elemType)
 		if err != nil {
-			elemSize, _, err = aggregateSizeAlign(state, elemType)
+			elemSize, _, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), elemType)
 			if err != nil {
 				return nil, "", fmt.Errorf("cannot compute size of indexed element type %s", elemType)
 			}
@@ -1299,9 +1339,30 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 
 // qbePlaceType returns the type of variable at the root of a place.
 func qbePlaceType(state *moduleState, place mir.Place) typeinfo.Type {
-	if lp, ok := place.(*mir.LocalPlace); ok {
-		if state.fn != nil && lp.LocalID >= 0 && lp.LocalID < len(state.fn.Locals) {
-			return state.fn.Locals[lp.LocalID].Type
+	switch p := place.(type) {
+	case *mir.LocalPlace:
+		if state.fn != nil && p.LocalID >= 0 && p.LocalID < len(state.fn.Locals) {
+			return state.fn.Locals[p.LocalID].Type
+		}
+	case *mir.FieldPlace:
+		return qbePlaceType(state, p.Base)
+	case *mir.IndexPlace:
+		return qbePlaceType(state, p.Base)
+	case *mir.DerefPlace:
+		if addr, ok := p.Pointer.(*mir.AddrOfValue); ok && addr.Source != nil {
+			if typ := addr.Source.Type(); typ != nil {
+				return typ
+			}
+			switch src := addr.Source.(type) {
+			case *mir.LocalValue:
+				return becommon.LocalTypeByID(state.fn, src.LocalID)
+			case *mir.NameValue:
+				if len(src.Path) == 1 {
+					if local := becommon.FindLocalByName(state.fn, src.Path[0]); local != nil {
+						return local.Type
+					}
+				}
+			}
 		}
 	}
 	return nil
@@ -1614,7 +1675,7 @@ func emitQBERuntimeTypeInfo(state *moduleState, sym string, typ typeinfo.Type) (
 
 func qbeRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, error) {
 	if isAggregateType(state, typ) {
-		return aggregateSizeAlign(state, typ)
+		return backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
 	}
 	return qbeScalarSizeAlign(typ)
 }
@@ -1737,7 +1798,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 		if err != nil {
 			return "", err
 		}
-		size, align, err := aggregateSizeAlign(state, agg.Type)
+		size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), agg.Type)
 		if err != nil {
 			return "", err
 		}
@@ -1748,7 +1809,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 		if err != nil {
 			return "", err
 		}
-		size, _, err := aggregateSizeAlign(state, value.Type())
+		size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), value.Type())
 		if err != nil {
 			return "", err
 		}
@@ -1874,7 +1935,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		elemSize, elemAlign, err := qbeScalarSizeAlign(arrType.Inner)
 		if err != nil {
 			// try inner as aggregate
-			innerSz, innerAl, err2 := aggregateSizeAlign(state, arrType.Inner)
+			innerSz, innerAl, err2 := backend.AggregateSizeAlign(aggregateLayoutContext(state), arrType.Inner)
 			if err2 != nil {
 				return "", fmt.Errorf("unsupported array element type in composite literal: %s", arrType.Inner)
 			}
@@ -1898,6 +1959,47 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 				tmp := freshTemp(state, "addr")
 				lines = append(lines, fmt.Sprintf("%s =l add %s, %d", tmp, qbeLocalName(agg.PtrName), offset))
 				addr = tmp
+			}
+			lines = append(lines, fmt.Sprintf("%s %s, %s", op, lowered, addr))
+		}
+		return strings.Join(lines, "\n\t"), nil
+	}
+	if tupleType, ok := backend.UnwrapNamed(agg.Type).(*typeinfo.TupleType); ok {
+		entries, _, _, err := backend.TupleLayout(aggregateLayoutContext(state), tupleType)
+		if err != nil {
+			return "", err
+		}
+		lines := make([]string, 0, len(comp.Items)*3)
+		for i, item := range comp.Items {
+			if i >= len(entries) {
+				break
+			}
+			entry := entries[i]
+			addr := qbeLocalName(agg.PtrName)
+			if entry.Offset != 0 {
+				tmp := freshTemp(state, "addr")
+				lines = append(lines, fmt.Sprintf("%s =l add %s, %d", tmp, qbeLocalName(agg.PtrName), entry.Offset))
+				addr = tmp
+			}
+			if isAggregateType(state, entry.Type) {
+				src, err := lowerAggregateSource(state, item.Value)
+				if err != nil {
+					return "", err
+				}
+				size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), entry.Type)
+				if err != nil {
+					return "", err
+				}
+				lines = append(lines, fmt.Sprintf("blit %s, %s, %d", src, addr, size))
+				continue
+			}
+			op, err := qbeStoreOp(entry.Type)
+			if err != nil {
+				return "", err
+			}
+			lowered, err := lowerValue(state, item.Value)
+			if err != nil {
+				return "", err
 			}
 			lines = append(lines, fmt.Sprintf("%s %s, %s", op, lowered, addr))
 		}
@@ -2010,6 +2112,35 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *mir.Compo
 	if _, ok := typ.(*typeinfo.SliceType); ok {
 		return lowerGlobalStringLike(state, comp)
 	}
+	if tupleType, ok := backend.UnwrapNamed(typ).(*typeinfo.TupleType); ok {
+		entries, size, _, err := backend.TupleLayout(aggregateLayoutContext(state), tupleType)
+		if err != nil {
+			return "", err
+		}
+		parts := make([]string, 0, len(entries)*2)
+		offset := int64(0)
+		for i, entry := range entries {
+			if entry.Offset > offset {
+				parts = append(parts, fmt.Sprintf("z %d", entry.Offset-offset))
+				offset = entry.Offset
+			}
+			if i >= len(comp.Items) {
+				parts = append(parts, fmt.Sprintf("z %d", entry.Size))
+				offset += entry.Size
+				continue
+			}
+			tok, lit, err := qbeDataItem(state, entry.Type, comp.Items[i].Value)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, fmt.Sprintf("%s %s", tok, lit))
+			offset += entry.Size
+		}
+		if size > offset {
+			parts = append(parts, fmt.Sprintf("z %d", size-offset))
+		}
+		return strings.Join(parts, ", "), nil
+	}
 	structLayout, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, typ, "qbe")
 	if err != nil {
 		return "", err
@@ -2113,7 +2244,7 @@ func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 				PtrName: local.Name,
 			}
 			if _, ok := state.aggParams[local.ID]; !ok {
-				size, align, err := aggregateSizeAlign(state, local.Type)
+				size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), local.Type)
 				if err != nil {
 					return err
 				}
@@ -2718,7 +2849,7 @@ func unionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLayout
 	case *typeinfo.OptionalType:
 		payloadSize, payloadAlign, err := qbeScalarSizeAlign(t.Inner)
 		if err != nil {
-			payloadSize, payloadAlign, err = aggregateSizeAlign(state, t.Inner)
+			payloadSize, payloadAlign, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), t.Inner)
 			if err != nil {
 				return nil, err
 			}
@@ -2739,7 +2870,7 @@ func unionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLayout
 		payloadSize := int64(0)
 		payloadAlign := int64(1)
 		for _, member := range t.Members {
-			size, align, err := aggregateSizeAlign(state, member)
+			size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), member)
 			if err != nil {
 				return nil, err
 			}
@@ -2893,12 +3024,12 @@ func isAggregateType(state *moduleState, typ typeinfo.Type) bool {
 	if _, err := qbeBaseType(typ); err == nil {
 		return false
 	}
-	_, _, err := aggregateSizeAlign(state, typ)
+	_, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
 	return err == nil
 }
 
-func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, error) {
-	return backend.AggregateSizeAlign(backend.AggregateLayoutContext{
+func aggregateLayoutContext(state *moduleState) backend.AggregateLayoutContext {
+	return backend.AggregateLayoutContext{
 		BackendName:     "qbe",
 		ScalarSizeAlign: qbeScalarSizeAlign,
 		OptionalSizeFunc: func(optional typeinfo.Type) (int64, int64, error) {
@@ -2911,7 +3042,7 @@ func aggregateSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int64, er
 		LookupNamed: func(named *typeinfo.NamedType) (*layout.TypeLayout, error) {
 			return becommon.LookupNamedLayoutFromState(state.layouts, state.layout, state.mod, named, "qbe")
 		},
-	}, typ)
+	}
 }
 
 func qbeStructBody(state *moduleState, st *layout.StructLayout) (string, error) {
@@ -3022,7 +3153,7 @@ func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
 }
 
 func mustAggregateSize(state *moduleState, typ typeinfo.Type) int64 {
-	size, _, err := aggregateSizeAlign(state, typ)
+	size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
 	if err != nil {
 		return 0
 	}

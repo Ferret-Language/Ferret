@@ -14,6 +14,14 @@ type AggregateLayoutContext struct {
 	LookupNamed      func(*typeinfo.NamedType) (*layout.TypeLayout, error)
 }
 
+type TupleElementLayout struct {
+	Index  int
+	Type   typeinfo.Type
+	Offset int64
+	Size   int64
+	Align  int64
+}
+
 func AlignUpInt64(size, align int64) int64 {
 	if align <= 1 {
 		return size
@@ -73,6 +81,47 @@ func LookupStructLayout(
 	}
 }
 
+func aggregateElementSizeAlign(ctx AggregateLayoutContext, typ typeinfo.Type) (int64, int64, error) {
+	if ctx.ScalarSizeAlign != nil {
+		if size, align, err := ctx.ScalarSizeAlign(typ); err == nil {
+			return size, align, nil
+		}
+	}
+	return AggregateSizeAlign(ctx, typ)
+}
+
+func TupleLayout(ctx AggregateLayoutContext, tuple *typeinfo.TupleType) ([]TupleElementLayout, int64, int64, error) {
+	if tuple == nil {
+		return nil, 0, 0, fmt.Errorf("nil tuple type")
+	}
+	entries := make([]TupleElementLayout, 0, len(tuple.Elems))
+	size := int64(0)
+	align := int64(1)
+	for i, elem := range tuple.Elems {
+		elemSize, elemAlign, err := aggregateElementSizeAlign(ctx, elem)
+		if err != nil {
+			return nil, 0, 0, fmt.Errorf("unsupported tuple element %d type %s", i, typeinfo.FormatType(elem))
+		}
+		if elemAlign <= 0 {
+			elemAlign = 1
+		}
+		size = AlignUpInt64(size, elemAlign)
+		entries = append(entries, TupleElementLayout{
+			Index:  i,
+			Type:   elem,
+			Offset: size,
+			Size:   elemSize,
+			Align:  elemAlign,
+		})
+		size += elemSize
+		if elemAlign > align {
+			align = elemAlign
+		}
+	}
+	size = AlignUpInt64(size, align)
+	return entries, size, align, nil
+}
+
 func AggregateSizeAlign(ctx AggregateLayoutContext, typ typeinfo.Type) (int64, int64, error) {
 	switch t := typ.(type) {
 	case *typeinfo.BuiltinType:
@@ -81,20 +130,18 @@ func AggregateSizeAlign(ctx AggregateLayoutContext, typ typeinfo.Type) (int64, i
 		if t.Len < 0 {
 			return 0, 0, fmt.Errorf("array with unknown length")
 		}
-		if ctx.ScalarSizeAlign == nil {
-			return 0, 0, fmt.Errorf("aggregate size context missing scalar size resolver")
-		}
-		elemSize, elemAlign, elemErr := ctx.ScalarSizeAlign(t.Inner)
-		if elemErr != nil {
-			innerSize, innerAlign, err := AggregateSizeAlign(ctx, t.Inner)
-			if err != nil {
-				return 0, 0, fmt.Errorf("unsupported array element type %s", t.Inner)
-			}
-			stride := AlignUpInt64(innerSize, innerAlign)
-			return stride * t.Len, innerAlign, nil
+		elemSize, elemAlign, err := aggregateElementSizeAlign(ctx, t.Inner)
+		if err != nil {
+			return 0, 0, fmt.Errorf("unsupported array element type %s", t.Inner)
 		}
 		stride := AlignUpInt64(elemSize, elemAlign)
 		return stride * t.Len, elemAlign, nil
+	case *typeinfo.TupleType:
+		_, size, align, err := TupleLayout(ctx, t)
+		if err != nil {
+			return 0, 0, err
+		}
+		return size, align, nil
 	case *typeinfo.StringType:
 		return 16, 8, nil
 	case *typeinfo.SliceType:

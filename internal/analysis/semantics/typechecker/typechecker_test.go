@@ -2458,7 +2458,7 @@ fn main() i64 {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && diag.Message == "`comptime` expression must be compile-time evaluable" {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "`comptime` expression must be compile-time evaluable: call to clock cannot run at compile time") {
 			found = true
 			break
 		}
@@ -2490,9 +2490,17 @@ fn main() i32 {
 	}
 	foundPanic := false
 	foundGeneric := false
+	foundPrimaryCallSite := false
+	foundSecondaryPanicSite := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "compile-time panic: x must not be zero") {
 			foundPanic = true
+			if len(diag.Labels) > 0 && strings.Contains(diag.Labels[0].Message, "this comptime evaluation failed") {
+				foundPrimaryCallSite = true
+			}
+			if len(diag.Labels) > 1 && strings.Contains(diag.Labels[1].Message, "panic triggered during compile-time evaluation") {
+				foundSecondaryPanicSite = true
+			}
 		}
 		if diag.Code == diagnostics.ErrTypeMismatch && diag.Message == "`comptime` expression must be compile-time evaluable" {
 			foundGeneric = true
@@ -2503,6 +2511,12 @@ fn main() i32 {
 	}
 	if foundGeneric {
 		t.Fatalf("expected no generic comptime evaluable diagnostic when panic is reported, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if !foundPrimaryCallSite {
+		t.Fatalf("expected compile-time panic diagnostic to point at comptime call site, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if !foundSecondaryPanicSite {
+		t.Fatalf("expected compile-time panic diagnostic to retain inner panic site as secondary context, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -2531,6 +2545,36 @@ fn main() void {
 			t.Logf("diag: %s %q", d.Code, d.Message)
 		}
 		t.Fatalf("expected comptime assert pattern to typecheck, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerComptimeRequireAllowsPrintSideEffects(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn require(name: str, cond: bool) void {
+    if !cond {
+        print("FAIL:")
+        print(name)
+        panic "ctfe check failed"
+    }
+    print("ok:")
+    print(name)
+}
+
+fn tuplePick() i32 {
+    let p: (i32, i32) = .{1, 2}
+    return p[0] + p[1]
+}
+
+fn main() void {
+    let v = comptime tuplePick()
+    comptime require("comptime tuple index", v == 3)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected comptime require with print side effects to typecheck, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

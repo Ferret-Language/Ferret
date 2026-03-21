@@ -48,7 +48,9 @@ type ctfeEngine struct {
 	resolve        FunctionResolver
 	panicRaised    bool
 	panicMessage   string
+	failReason     string
 	ctfeCandidates map[int]bool
+	originStack    []source.Location
 }
 
 func (e *ctfeEngine) rewriteFunction(mod *Module, fn *Function) {
@@ -167,13 +169,20 @@ func (e *ctfeEngine) rewriteValue(mod *Module, fn *Function, value Value, defs m
 		if v.Op == "comptime" {
 			e.panicRaised = false
 			e.panicMessage = ""
+			e.failReason = ""
+			e.originStack = append(e.originStack, v.Location)
 			out, ok := e.evalValue(mod, fn, v.Right, nil, defs, 0, 0)
+			e.originStack = e.originStack[:len(e.originStack)-1]
 			if !ok {
 				if e.panicRaised {
 					return v
 				}
 				loc := v.Location
-				e.addError("`comptime` expression must be compile-time evaluable", diagnostics.ErrTypeMismatch, &loc, "this expression is not compile-time evaluable")
+				msg := "`comptime` expression must be compile-time evaluable"
+				if e.failReason != "" {
+					msg += ": " + e.failReason
+				}
+				e.addError(msg, diagnostics.ErrTypeMismatch, &loc, "this expression is not compile-time evaluable")
 				return v
 			}
 			if folded, ok := ctfeToMIRValue(out, v.ExprType, v.Location); ok {
@@ -248,14 +257,22 @@ func (e *ctfeEngine) checkComptimeCallArgs(mod *Module, fn *Function, call *Call
 		}
 		e.panicRaised = false
 		e.panicMessage = ""
+		e.failReason = ""
+		e.originStack = append(e.originStack, call.Args[i].Loc())
 		if _, ok := e.evalValue(mod, fn, call.Args[i], nil, defs, 0, 0); ok {
+			e.originStack = e.originStack[:len(e.originStack)-1]
 			continue
 		}
+		e.originStack = e.originStack[:len(e.originStack)-1]
 		if e.panicRaised {
 			continue
 		}
 		loc := call.Args[i].Loc()
-		e.addError("argument to comptime parameter must be compile-time evaluable", diagnostics.ErrTypeMismatch, &loc, "this expression is not compile-time evaluable")
+		msg := "argument to comptime parameter must be compile-time evaluable"
+		if e.failReason != "" {
+			msg += ": " + e.failReason
+		}
+		e.addError(msg, diagnostics.ErrTypeMismatch, &loc, "this expression is not compile-time evaluable")
 	}
 }
 
@@ -506,8 +523,19 @@ func (e *ctfeEngine) evalValue(mod *Module, fn *Function, value Value, locals ma
 			e.raiseCompileTimeError(v.Location, msg, "compile_error invoked during compile-time evaluation")
 			return ctfeValue{}, false
 		}
+		if callIsNoopCTFEIntrinsic(v) {
+			for _, arg := range v.Args {
+				if _, ok := e.evalValue(mod, fn, arg, locals, defs, depth, steps+1); !ok {
+					return ctfeValue{}, false
+				}
+			}
+			return ctfeValue{kind: ctfeNone}, true
+		}
 		target, owner, ok := e.resolveCall(mod, v)
 		if !ok || target == nil {
+			if name, ok := v.Callee.(*NameValue); ok && name != nil {
+				e.setFailureReason("call to " + strings.Join(name.Path, "::") + " cannot run at compile time")
+			}
 			return ctfeValue{}, false
 		}
 		args := make([]ctfeValue, 0, len(v.Args))
@@ -585,6 +613,8 @@ func (e *ctfeEngine) evalValue(mod *Module, fn *Function, value Value, locals ma
 			fields[idx] = fv
 		}
 		return ctfeValue{kind: ctfeObject, fields: fields}, true
+	case *InterfaceValue:
+		return e.evalValue(mod, fn, v.Value, locals, defs, depth, steps+1)
 	case *FieldLoadValue:
 		base, ok := e.evalValue(mod, fn, v.Base, locals, defs, depth, steps+1)
 		if !ok {
@@ -641,12 +671,22 @@ func (e *ctfeEngine) evalValue(mod *Module, fn *Function, value Value, locals ma
 		}
 		return ctfeIndexAt(base, int(index.intVal.Int64()), locals)
 	default:
+		e.setFailureReason("unsupported compile-time operation")
 		return ctfeValue{}, false
 	}
 }
 
 func (e *ctfeEngine) execFunction(mod *Module, fn *Function, args []ctfeValue, parent map[int]ctfeValue, depth int, steps int) (ctfeValue, bool) {
 	if fn == nil || mod == nil || depth > ctfeMaxCallDepth || steps > ctfeMaxEvalSteps {
+		if depth > ctfeMaxCallDepth {
+			e.setFailureReason("compile-time evaluation exceeded maximum call depth")
+		} else if steps > ctfeMaxEvalSteps {
+			e.setFailureReason("compile-time evaluation exceeded maximum step count")
+		}
+		return ctfeValue{}, false
+	}
+	if fn.IsExtern || len(fn.Blocks) == 0 || fn.EntryID < 0 {
+		e.setFailureReason("call to " + fn.Name + " cannot run at compile time")
 		return ctfeValue{}, false
 	}
 	blocks := make(map[int]*Block, len(fn.Blocks))
@@ -1141,6 +1181,20 @@ func (e *ctfeEngine) addError(message, code string, loc *source.Location, label 
 	e.diag.Add(d)
 }
 
+func (e *ctfeEngine) currentOrigin() *source.Location {
+	if e == nil || len(e.originStack) == 0 {
+		return nil
+	}
+	return &e.originStack[len(e.originStack)-1]
+}
+
+func (e *ctfeEngine) setFailureReason(reason string) {
+	if e == nil || e.panicRaised || e.failReason != "" || reason == "" {
+		return
+	}
+	e.failReason = reason
+}
+
 func callIsCompileErrorIntrinsic(call *CallValue) bool {
 	if call == nil {
 		return false
@@ -1150,6 +1204,22 @@ func callIsCompileErrorIntrinsic(call *CallValue) bool {
 		return false
 	}
 	return name.Path[len(name.Path)-1] == "compile_error"
+}
+
+func callIsNoopCTFEIntrinsic(call *CallValue) bool {
+	if call == nil {
+		return false
+	}
+	name, ok := call.Callee.(*NameValue)
+	if !ok || name == nil || len(name.Path) == 0 {
+		return false
+	}
+	switch name.Path[len(name.Path)-1] {
+	case "print":
+		return true
+	default:
+		return false
+	}
 }
 
 func (e *ctfeEngine) evalCompileErrorMessage(mod *Module, fn *Function, call *CallValue, locals map[int]ctfeValue, defs map[int]Value, depth int, steps int) (string, bool) {
@@ -1183,7 +1253,16 @@ func (e *ctfeEngine) raiseCompileTimeError(loc source.Location, message string, 
 		msg = "compile-time error"
 	}
 	e.panicMessage = msg
-	e.addError(msg, diagnostics.ErrInvalidOperation, &loc, label)
+	diag := diagnostics.NewError(msg).WithCode(diagnostics.ErrInvalidOperation)
+	if origin := e.currentOrigin(); origin != nil {
+		diag.WithPrimaryLabel(origin, "this comptime evaluation failed")
+		if origin.Filename == nil || loc.Filename == nil || *origin.Filename != *loc.Filename || origin.Start != loc.Start || origin.End != loc.End {
+			diag.WithSecondaryLabel(&loc, label)
+		}
+	} else {
+		diag.WithPrimaryLabel(&loc, label)
+	}
+	e.diag.Add(diag)
 }
 
 func (e *ctfeEngine) raiseCompileTimePanic(loc source.Location, payload ctfeValue, hasPayload bool) {

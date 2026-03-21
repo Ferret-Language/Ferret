@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	layout "compiler/internal/analysis/layout/model"
@@ -57,6 +58,22 @@ func LocalTypeByID(fn *mir.Function, id int) typeinfo.Type {
 		}
 	}
 	return typeinfo.UnknownType{}
+}
+
+func TupleIndexFromValue(value mir.Value) (int, bool) {
+	num, ok := value.(*mir.NumberValue)
+	if !ok || num == nil {
+		return 0, false
+	}
+	raw := strings.ReplaceAll(strings.TrimSpace(num.Value), "_", "")
+	if raw == "" || strings.ContainsAny(raw, ".eEiI") {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(raw, 0, 64)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return int(n), true
 }
 
 func SanitizePath(path string) string {

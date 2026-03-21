@@ -939,9 +939,6 @@ func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr, expected ty
 	if c.isForeignLenCall(expr.Callee) {
 		return c.typeOfBuiltinLen(scope, expr)
 	}
-	if c.isForeignCompileErrorCall(expr.Callee) {
-		return c.typeOfBuiltinCompileError(scope, expr)
-	}
 
 	if selector, ok := expr.Callee.(*ast.SelectorExpr); ok {
 		if typ, handled := c.typeOfMethodCall(scope, expr, selector, expected); handled {
@@ -1023,51 +1020,12 @@ func (c *checker) typeOfBuiltinLen(scope *refineScope, expr *ast.CallExpr) typei
 	return result
 }
 
-func (c *checker) typeOfBuiltinCompileError(scope *refineScope, expr *ast.CallExpr) typeinfo.Type {
-	result := &typeinfo.BuiltinType{Name: "void"}
-	if expr == nil {
-		return result
-	}
-	if expr.Callee != nil {
-		_ = c.typeOfExpr(scope, expr.Callee, nil)
-	}
-	if c.comptimeDepth == 0 {
-		loc := expr.Location
-		c.ctx.Diagnostics.Add(
-			diagnostics.NewError("compile_error can only be used in comptime context").
-				WithCode(diagnostics.ErrInvalidOperation).
-				WithPrimaryLabel(&loc, "wrap this call in `comptime { ... }` or use `comptime <expr>`"),
-		)
-	}
-	if len(expr.Args) != 1 {
-		c.reportWrongArgCount(expr.Location, 1, len(expr.Args))
-	}
-	if len(expr.Args) > 0 {
-		msgType := c.typeOfExpr(scope, expr.Args[0], &typeinfo.StringType{})
-		c.checkAssignable(expr.Args[0].Loc(), &typeinfo.StringType{}, msgType)
-	}
-	c.info.BindNode(expr, result)
-	return result
-}
-
 func (c *checker) isForeignLenCall(callee ast.Expr) bool {
 	res := c.lookupResolution(callee)
 	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 		return false
 	}
 	if res.Symbol.Name != "len" {
-		return false
-	}
-	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
-	return ok && fn != nil && fn.IsExtern
-}
-
-func (c *checker) isForeignCompileErrorCall(callee ast.Expr) bool {
-	res := c.lookupResolution(callee)
-	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
-		return false
-	}
-	if res.Symbol.Name != "compile_error" {
 		return false
 	}
 	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
