@@ -177,6 +177,9 @@ func (e *ctfeEngine) rewriteValue(mod *Module, fn *Function, value Value, defs m
 				if e.panicRaised {
 					return v
 				}
+				if ctfeDependsOnDeferredComptimeParam(fn, v.Right, defs, nil) {
+					return v
+				}
 				loc := v.Location
 				msg := "`comptime` expression must be compile-time evaluable"
 				if e.failReason != "" {
@@ -267,6 +270,9 @@ func (e *ctfeEngine) checkComptimeCallArgs(mod *Module, fn *Function, call *Call
 		if e.panicRaised {
 			continue
 		}
+		if ctfeDependsOnDeferredComptimeParam(fn, call.Args[i], defs, nil) {
+			continue
+		}
 		loc := call.Args[i].Loc()
 		msg := "argument to comptime parameter must be compile-time evaluable"
 		if e.failReason != "" {
@@ -289,6 +295,98 @@ func (e *ctfeEngine) resolveCall(mod *Module, call *CallValue) (*Function, *Modu
 		return nil, nil, false
 	}
 	return target, owner, true
+}
+
+func ctfeDependsOnDeferredComptimeParam(fn *Function, value Value, defs map[int]Value, seen map[int]bool) bool {
+	if fn == nil || value == nil {
+		return false
+	}
+	switch v := value.(type) {
+	case *NameValue:
+		if len(v.Path) != 1 {
+			return false
+		}
+		for _, param := range fn.Params {
+			if param != nil && param.Name == v.Path[0] {
+				return param.IsComptime
+			}
+		}
+		for _, local := range fn.Locals {
+			if local != nil && local.Name == v.Path[0] {
+				return ctfeDependsOnDeferredComptimeLocal(fn, local.ID, defs, seen)
+			}
+		}
+		return false
+	case *LocalValue:
+		return ctfeDependsOnDeferredComptimeLocal(fn, v.LocalID, defs, seen)
+	case *UnaryValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Right, defs, seen)
+	case *BinaryValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Left, defs, seen) ||
+			ctfeDependsOnDeferredComptimeParam(fn, v.Right, defs, seen)
+	case *PostfixValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Left, defs, seen)
+	case *AddrOfValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Source, defs, seen)
+	case *LoadValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Pointer, defs, seen)
+	case *CallValue:
+		if ctfeDependsOnDeferredComptimeParam(fn, v.Callee, defs, seen) {
+			return true
+		}
+		for _, arg := range v.Args {
+			if ctfeDependsOnDeferredComptimeParam(fn, arg, defs, seen) {
+				return true
+			}
+		}
+		return false
+	case *FieldLoadValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Base, defs, seen)
+	case *FieldValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Base, defs, seen)
+	case *CastValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Left, defs, seen)
+	case *TypeTestValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Left, defs, seen)
+	case *CompositeValue:
+		for _, item := range v.Items {
+			if ctfeDependsOnDeferredComptimeParam(fn, item.Value, defs, seen) {
+				return true
+			}
+		}
+		return false
+	case *InterfaceValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Value, defs, seen)
+	case *IndexValue:
+		return ctfeDependsOnDeferredComptimeParam(fn, v.Base, defs, seen) ||
+			ctfeDependsOnDeferredComptimeParam(fn, v.Index, defs, seen)
+	default:
+		return false
+	}
+}
+
+func ctfeDependsOnDeferredComptimeLocal(fn *Function, localID int, defs map[int]Value, seen map[int]bool) bool {
+	if localID < 0 {
+		return false
+	}
+	if seen == nil {
+		seen = make(map[int]bool)
+	}
+	if seen[localID] {
+		return false
+	}
+	seen[localID] = true
+	for _, param := range fn.Params {
+		if param != nil && param.LocalID == localID {
+			return param.IsComptime
+		}
+	}
+	if defs != nil {
+		if replacement, ok := defs[localID]; ok && replacement != nil {
+			return ctfeDependsOnDeferredComptimeParam(fn, replacement, defs, seen)
+		}
+	}
+	return false
 }
 
 func (e *ctfeEngine) markComptimeValueInputs(value Value, defs map[int]Value) {
@@ -1185,7 +1283,8 @@ func (e *ctfeEngine) currentOrigin() *source.Location {
 	if e == nil || len(e.originStack) == 0 {
 		return nil
 	}
-	return &e.originStack[len(e.originStack)-1]
+	loc := e.originStack[len(e.originStack)-1]
+	return &loc
 }
 
 func (e *ctfeEngine) setFailureReason(reason string) {

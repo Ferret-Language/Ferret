@@ -573,6 +573,21 @@ func lowerScalarAllocaAssign(state *moduleState, sc *scalarAllocaLocal, value mi
 }
 
 func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mir.Value) (string, error) {
+	if backend.IsVoidType(typ) {
+		if call, ok := value.(*mir.CallValue); ok {
+			return lowerCall(state, "", typ, call)
+		}
+		if un, ok := value.(*mir.UnaryValue); ok {
+			switch un.Op {
+			case "comptime", "copy", "take", "unsafe", "?":
+				if call, ok := un.Right.(*mir.CallValue); ok {
+					return lowerCall(state, "", typ, call)
+				}
+				return "", nil
+			}
+		}
+		return "", nil
+	}
 	if call, ok := value.(*mir.CallValue); ok {
 		return lowerCall(state, name, typ, call)
 	}
@@ -618,6 +633,48 @@ func lowerAggregateCompare(state *moduleState, targetName string, targetType typ
 	}
 	if _, err := qbeBaseType(targetType); err != nil {
 		return "", true, err
+	}
+	if _, ok := backend.UnwrapNamed(bin.Left.Type()).(*typeinfo.StringType); ok {
+		if _, ok := backend.UnwrapNamed(bin.Right.Type()).(*typeinfo.StringType); ok {
+			leftBase, err := lowerValue(state, bin.Left)
+			if err != nil {
+				return "", true, err
+			}
+			rightBase, err := lowerValue(state, bin.Right)
+			if err != nil {
+				return "", true, err
+			}
+			leftPtr := freshTemp(state, "str_ptr")
+			rightPtr := freshTemp(state, "str_ptr")
+			leftLenAddr := freshTemp(state, "str_len_addr")
+			rightLenAddr := freshTemp(state, "str_len_addr")
+			leftLen := freshTemp(state, "str_len")
+			rightLen := freshTemp(state, "str_len")
+			lenEq := freshTemp(state, "str_len_eq")
+			memcmpTmp := freshTemp(state, "str_cmp")
+			bytesEq := freshTemp(state, "str_bytes_eq")
+			result := freshTemp(state, "str_eq")
+			lines := []string{
+				fmt.Sprintf("%s =l loadl %s", leftPtr, leftBase),
+				fmt.Sprintf("%s =l loadl %s", rightPtr, rightBase),
+				fmt.Sprintf("%s =l add %s, 8", leftLenAddr, leftBase),
+				fmt.Sprintf("%s =l add %s, 8", rightLenAddr, rightBase),
+				fmt.Sprintf("%s =l loadl %s", leftLen, leftLenAddr),
+				fmt.Sprintf("%s =l loadl %s", rightLen, rightLenAddr),
+				fmt.Sprintf("%s =w ceql %s, %s", lenEq, leftLen, rightLen),
+				fmt.Sprintf("%s =w call $memcmp(l %s, l %s, l %s)", memcmpTmp, leftPtr, rightPtr, leftLen),
+				fmt.Sprintf("%s =w ceqw %s, 0", bytesEq, memcmpTmp),
+				fmt.Sprintf("%s =w and %s, %s", result, lenEq, bytesEq),
+			}
+			final := result
+			if bin.Op == "!=" {
+				neq := freshTemp(state, "str_ne")
+				lines = append(lines, fmt.Sprintf("%s =w xor %s, 1", neq, result))
+				final = neq
+			}
+			lines = append(lines, fmt.Sprintf("%s =w copy %s", qbeLocalName(targetName), final))
+			return strings.Join(lines, "\n\t"), true, nil
+		}
 	}
 	leftStruct, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, bin.Left.Type(), "qbe")
 	if err != nil {
@@ -1476,6 +1533,13 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 			return "", err
 		}
 		return fmt.Sprintf("blit %s, %s, %d", src, qbeLocalName(agg.PtrName), agg.Size), nil
+	case *mir.IndexValue:
+		lines, src, err := lowerQBEIndexAddress(state, v.Base, v.Index, v.Base.Type())
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, fmt.Sprintf("blit %s, %s, %d", src, qbeLocalName(agg.PtrName), agg.Size))
+		return strings.Join(lines, "\n\t"), nil
 	case *mir.CompositeValue:
 		return lowerAggregateCompositeAssign(state, agg, v)
 	}
@@ -1964,6 +2028,20 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		}
 		return strings.Join(lines, "\n\t"), nil
 	}
+	if _, ok := agg.Type.(*typeinfo.SliceType); ok {
+		lines, err := lowerAggregateValueToAddr(state, qbeLocalName(agg.PtrName), agg.Type, comp)
+		if err != nil {
+			return "", err
+		}
+		return strings.Join(lines, "\n\t"), nil
+	}
+	if _, ok := agg.Type.(*typeinfo.StringType); ok {
+		lines, err := lowerAggregateValueToAddr(state, qbeLocalName(agg.PtrName), agg.Type, comp)
+		if err != nil {
+			return "", err
+		}
+		return strings.Join(lines, "\n\t"), nil
+	}
 	if tupleType, ok := backend.UnwrapNamed(agg.Type).(*typeinfo.TupleType); ok {
 		entries, _, _, err := backend.TupleLayout(aggregateLayoutContext(state), tupleType)
 		if err != nil {
@@ -1982,15 +2060,11 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 				addr = tmp
 			}
 			if isAggregateType(state, entry.Type) {
-				src, err := lowerAggregateSource(state, item.Value)
+				valueLines, err := lowerAggregateValueToAddr(state, addr, entry.Type, item.Value)
 				if err != nil {
 					return "", err
 				}
-				size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), entry.Type)
-				if err != nil {
-					return "", err
-				}
-				lines = append(lines, fmt.Sprintf("blit %s, %s, %d", src, addr, size))
+				lines = append(lines, valueLines...)
 				continue
 			}
 			op, err := qbeStoreOp(entry.Type)
@@ -2004,44 +2078,6 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 			lines = append(lines, fmt.Sprintf("%s %s, %s", op, lowered, addr))
 		}
 		return strings.Join(lines, "\n\t"), nil
-	}
-
-	// String / slice literal: items "ptr" and "len" stored at offsets 0 and 8.
-	if _, ok := agg.Type.(*typeinfo.SliceType); ok {
-		items := make(map[string]mir.Value, len(comp.Items))
-		for _, item := range comp.Items {
-			items[item.Name] = item.Value
-		}
-		ptrLowered, err := lowerValue(state, items["ptr"])
-		if err != nil {
-			return "", err
-		}
-		lenLowered, err := lowerValue(state, items["len"])
-		if err != nil {
-			return "", err
-		}
-		base := qbeLocalName(agg.PtrName)
-		tmp := freshTemp(state, "len_addr")
-		return fmt.Sprintf("storel %s, %s\n\t%s =l add %s, 8\n\tstorel %s, %s",
-			ptrLowered, base, tmp, base, lenLowered, tmp), nil
-	}
-	if _, ok := agg.Type.(*typeinfo.StringType); ok {
-		items := make(map[string]mir.Value, len(comp.Items))
-		for _, item := range comp.Items {
-			items[item.Name] = item.Value
-		}
-		ptrLowered, err := lowerValue(state, items["ptr"])
-		if err != nil {
-			return "", err
-		}
-		lenLowered, err := lowerValue(state, items["len"])
-		if err != nil {
-			return "", err
-		}
-		base := qbeLocalName(agg.PtrName)
-		tmp := freshTemp(state, "len_addr")
-		return fmt.Sprintf("storel %s, %s\n\t%s =l add %s, 8\n\tstorel %s, %s",
-			ptrLowered, base, tmp, base, lenLowered, tmp), nil
 	}
 
 	structLayout, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, agg.Type, "qbe")
@@ -2087,6 +2123,76 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		}
 	}
 	return strings.Join(lines, "\n\t"), nil
+}
+
+func lowerAggregateValueToAddr(state *moduleState, addr string, typ typeinfo.Type, value mir.Value) ([]string, error) {
+	if _, ok := typ.(*typeinfo.SliceType); ok {
+		comp, ok := value.(*mir.CompositeValue)
+		if !ok {
+			return nil, fmt.Errorf("slice aggregate value must be composite")
+		}
+		items := make(map[string]mir.Value, len(comp.Items))
+		for _, item := range comp.Items {
+			items[item.Name] = item.Value
+		}
+		ptrLowered, err := lowerValue(state, items["ptr"])
+		if err != nil {
+			return nil, err
+		}
+		lenLowered, err := lowerValue(state, items["len"])
+		if err != nil {
+			return nil, err
+		}
+		tmp := freshTemp(state, "len_addr")
+		return []string{
+			fmt.Sprintf("storel %s, %s", ptrLowered, addr),
+			fmt.Sprintf("%s =l add %s, 8", tmp, addr),
+			fmt.Sprintf("storel %s, %s", lenLowered, tmp),
+		}, nil
+	}
+	if _, ok := typ.(*typeinfo.StringType); ok {
+		switch v := value.(type) {
+		case *mir.StringValue:
+			ptrLowered, err := lowerValue(state, v)
+			if err != nil {
+				return nil, err
+			}
+			tmp := freshTemp(state, "len_addr")
+			return []string{
+				fmt.Sprintf("storel %s, %s", ptrLowered, addr),
+				fmt.Sprintf("%s =l add %s, 8", tmp, addr),
+				fmt.Sprintf("storel %d, %s", len(v.Value), tmp),
+			}, nil
+		case *mir.CompositeValue:
+			items := make(map[string]mir.Value, len(v.Items))
+			for _, item := range v.Items {
+				items[item.Name] = item.Value
+			}
+			ptrLowered, err := lowerValue(state, items["ptr"])
+			if err != nil {
+				return nil, err
+			}
+			lenLowered, err := lowerValue(state, items["len"])
+			if err != nil {
+				return nil, err
+			}
+			tmp := freshTemp(state, "len_addr")
+			return []string{
+				fmt.Sprintf("storel %s, %s", ptrLowered, addr),
+				fmt.Sprintf("%s =l add %s, 8", tmp, addr),
+				fmt.Sprintf("storel %s, %s", lenLowered, tmp),
+			}, nil
+		}
+	}
+	src, err := lowerAggregateSource(state, value)
+	if err != nil {
+		return nil, err
+	}
+	size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
+	if err != nil {
+		return nil, err
+	}
+	return []string{fmt.Sprintf("blit %s, %s, %d", src, addr, size)}, nil
 }
 
 func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {

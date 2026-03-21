@@ -2372,7 +2372,7 @@ fn main() i32 {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && diag.Message == "argument to comptime parameter must be compile-time evaluable" {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "argument to comptime parameter must be compile-time evaluable") {
 			found = true
 			break
 		}
@@ -2548,6 +2548,77 @@ fn main() void {
 	}
 }
 
+func TestTypecheckerComptimeAssertWrapperWorks(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn assert(comptime cond: bool, comptime msg: str) void {
+    if !cond {
+        panic msg
+    }
+}
+
+fn static_assert(comptime cond: bool, comptime msg: str) void {
+    comptime assert(cond, msg)
+}
+
+fn main() void {
+    comptime static_assert(1 + 1 == 2, "math broke")
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		if result.Entry != nil && result.Entry.MIR != nil {
+			t.Log(mir.FormatModule(result.Entry.MIR))
+		}
+		for _, d := range result.Diagnostics.Diagnostics() {
+			t.Logf("diag: %s %q", d.Code, d.Message)
+		}
+		t.Fatalf("expected comptime assert wrapper pattern to typecheck, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerComptimePanicKeepsOriginalCallSiteWithFollowingComptimeExpr(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn assert(comptime cond: bool, comptime msg: str) void {
+    if !cond {
+        panic msg
+    }
+}
+
+fn static_assert(comptime cond: bool, comptime msg: str) void {
+    comptime assert(cond, msg)
+}
+
+fn main() void {
+    comptime static_assert(1 == 2, "error")
+    comptime assert(1 == 1, "ok")
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected compile-time panic diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code != diagnostics.ErrInvalidOperation || !strings.Contains(diag.Message, "compile-time panic: error") {
+			continue
+		}
+		if len(diag.Labels) == 0 || diag.Labels[0].Location == nil || diag.Labels[0].Location.Start == nil {
+			t.Fatalf("expected primary label on compile-time panic diagnostic, got %#v", diag)
+		}
+		if got := diag.Labels[0].Location.Start.Line; got != 13 {
+			t.Fatalf("expected primary label to stay on failing comptime call line 13, got line %d: %#v", got, diag)
+		}
+		found = true
+	}
+	if !found {
+		t.Fatalf("expected compile-time panic diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerComptimeRequireAllowsPrintSideEffects(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
@@ -2716,6 +2787,76 @@ fn main() i32 {
 	}
 	if strings.Contains(text, "= tuplePick()") {
 		t.Fatalf("expected no runtime tuplePick call residue after comptime fold, got %q", text)
+	}
+}
+
+func TestTypecheckerSupportsMixedTupleElementTypes(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let p: (i32, bool, str) = .{7, true, "ok"}
+    if !p[1] {
+        return 0
+    }
+    if p[2] != "ok" {
+        return 0
+    }
+    return p[0]
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected mixed tuple elements to typecheck, got %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letP := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	tupleType, ok := result.Entry.Types.Nodes[letP.Type].(*typeinfo.TupleType)
+	if !ok {
+		t.Fatalf("expected tuple type annotation, got %T", result.Entry.Types.Nodes[letP.Type])
+	}
+	if len(tupleType.Elems) != 3 {
+		t.Fatalf("expected 3 tuple elements, got %#v", tupleType.Elems)
+	}
+	if !typeinfo.IsBuiltinNamed(tupleType.Elems[0], "i32") {
+		t.Fatalf("expected first tuple element i32, got %#v", tupleType.Elems[0])
+	}
+	if !typeinfo.IsBuiltinNamed(tupleType.Elems[1], "bool") {
+		t.Fatalf("expected second tuple element bool, got %#v", tupleType.Elems[1])
+	}
+	if _, ok := tupleType.Elems[2].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected third tuple element str, got %#v", tupleType.Elems[2])
+	}
+}
+
+func TestTypecheckerComptimeEvaluatesMixedTupleAggregateAndIndex(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn tupleCheck() bool {
+    let p: (i32, bool, str) = .{7, true, "ok"}
+    return p[0] == 7 && p[1] && p[2] == "ok"
+}
+
+fn main() bool {
+    let v = comptime tupleCheck()
+    return v
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected comptime mixed tuple aggregate/index evaluation, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR for comptime fold, got %#v", result.Entry)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "v = true") || !strings.Contains(text, "return true") {
+		t.Fatalf("expected folded comptime mixed tuple value in MIR, got %q", text)
+	}
+	if strings.Contains(text, "= tupleCheck()") {
+		t.Fatalf("expected no runtime tupleCheck call residue after comptime fold, got %q", text)
 	}
 }
 
