@@ -108,7 +108,7 @@ func TestPublishSyntaxDiagnosticsRecoversFromParserPanic(t *testing.T) {
 	}
 }
 
-func TestInitializeAdvertisesHoverDefinitionAndDocumentSymbolProvider(t *testing.T) {
+func TestInitializeAdvertisesHoverDefinitionAndCompletionProvider(t *testing.T) {
 	var out bytes.Buffer
 	s := &Server{out: &out, documents: make(map[string]openDocument)}
 
@@ -156,6 +156,18 @@ func TestInitializeAdvertisesHoverDefinitionAndDocumentSymbolProvider(t *testing
 	}
 	if !definitionProvider {
 		t.Fatal("expected definitionProvider=true")
+	}
+
+	var completionProvider map[string]json.RawMessage
+	if err := json.Unmarshal(payload.Capabilities["completionProvider"], &completionProvider); err != nil {
+		t.Fatalf("failed to decode completionProvider: %v", err)
+	}
+	var triggerChars []string
+	if err := json.Unmarshal(completionProvider["triggerCharacters"], &triggerChars); err != nil {
+		t.Fatalf("failed to decode completion trigger characters: %v", err)
+	}
+	if len(triggerChars) == 0 {
+		t.Fatal("expected completion trigger characters")
 	}
 
 	if _, ok := payload.Capabilities["documentSymbolProvider"]; ok {
@@ -1642,6 +1654,134 @@ func TestHoverConstrainedGenericParameterShowsConstraint(t *testing.T) {
 	}
 }
 
+func TestCompletionReturnsVisibleSymbols(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "fn helper() void {}\n\nfn main() {\n    let value = 1\n    val\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    val")
+	if !ok {
+		t.Fatal("failed to find completion position")
+	}
+	char += len("    val")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/completion",
+		Params: mustRawJSON(t, completionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	items := decodeCompletionResult(t, out.String())
+	if len(items) == 0 {
+		t.Fatal("expected completion results")
+	}
+	foundValue := false
+	for _, item := range items {
+		if item.Label == "value" {
+			foundValue = true
+			break
+		}
+	}
+	if !foundValue {
+		t.Fatalf("expected local variable completion, got %#v", items)
+	}
+}
+
+func TestCompletionMemberAndStaticMember(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := "type Point struct {\n    Value: i32\n}\n\nfn Point::Draw(&self) void {\n}\n\n" +
+		"type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\n" +
+		"fn main() void {\n    let p: Point = .{ .Value = 1 }\n    p.Draw()\n    Circle<i32>::New(1)\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	memberLine, memberChar, ok := findPosition(src, "    p.Draw()")
+	if !ok {
+		t.Fatal("failed to find member completion position")
+	}
+	memberChar += len("    p.")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	memberReq := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/completion",
+		Params: mustRawJSON(t, completionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: memberLine, Character: memberChar},
+		}),
+	}
+	s.handleRequest(memberReq)
+
+	memberItems := decodeCompletionResult(t, out.String())
+	foundDraw := false
+	foundKeywordIf := false
+	for _, item := range memberItems {
+		if item.Label == "Draw" {
+			foundDraw = true
+		}
+		if item.Label == "if" {
+			foundKeywordIf = true
+		}
+	}
+	if !foundDraw {
+		t.Fatalf("expected instance method completion, got %#v", memberItems)
+	}
+	if foundKeywordIf {
+		t.Fatalf("did not expect keyword completion in member context, got %#v", memberItems)
+	}
+
+	out.Reset()
+	staticLine, staticChar, ok := findPosition(src, "    Circle<i32>::New(1)")
+	if !ok {
+		t.Fatal("failed to find static completion position")
+	}
+	staticChar += len("    Circle<i32>::")
+	staticReq := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("2"),
+		Method:  "textDocument/completion",
+		Params: mustRawJSON(t, completionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: staticLine, Character: staticChar},
+		}),
+	}
+	s.handleRequest(staticReq)
+
+	staticItems := decodeCompletionResult(t, out.String())
+	foundNew := false
+	foundStaticKeywordIf := false
+	for _, item := range staticItems {
+		if item.Label == "New" {
+			foundNew = true
+		}
+		if item.Label == "if" {
+			foundStaticKeywordIf = true
+		}
+	}
+	if !foundNew {
+		t.Fatalf("expected static method completion, got %#v", staticItems)
+	}
+	if foundStaticKeywordIf {
+		t.Fatalf("did not expect keyword completion in static member context, got %#v", staticItems)
+	}
+}
+
 func fakeHoverResult(path string, typeName string) compiler.Result {
 	start := source.Position{Line: 1, Column: 1, Index: 0}
 	end := source.Position{Line: 1, Column: 2, Index: 1}
@@ -1740,6 +1880,23 @@ func decodeDefinitionResult(t *testing.T, framed string) *lspLocation {
 		t.Fatalf("failed to unmarshal definition result: %v", err)
 	}
 	return &loc
+}
+
+func decodeCompletionResult(t *testing.T, framed string) []completionItem {
+	t.Helper()
+	resp := decodeSingleResponse(t, framed)
+	if resp.Error != nil {
+		t.Fatalf("unexpected completion error: %#v", resp.Error)
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal completion result: %v", err)
+	}
+	var items []completionItem
+	if err := json.Unmarshal(raw, &items); err != nil {
+		t.Fatalf("failed to unmarshal completion result: %v", err)
+	}
+	return items
 }
 
 func decodeDocumentSymbolsResult(t *testing.T, framed string) []documentSymbol {

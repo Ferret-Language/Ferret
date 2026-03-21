@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,7 @@ import (
 const (
 	textDocumentSyncFull   = 1
 	maxHoverMethodsPerKind = 32
+	maxCompletionItems     = 200
 	diagTagUnnecessary     = 1
 
 	symbolKindClass      = 5
@@ -42,9 +44,27 @@ const (
 	symbolKindConstant   = 14
 	symbolKindEnumMember = 22
 	symbolKindStruct     = 23
+
+	completionKindText          = 1
+	completionKindMethod        = 2
+	completionKindFunction      = 3
+	completionKindField         = 5
+	completionKindVariable      = 6
+	completionKindClass         = 7
+	completionKindInterface     = 8
+	completionKindModule        = 9
+	completionKindProperty      = 10
+	completionKindKeyword       = 14
+	completionKindConstant      = 21
+	completionKindStruct        = 22
+	completionKindTypeParameter = 25
 )
 
 var (
+	identPattern        = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*$`)
+	memberPattern       = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)?$`)
+	staticMemberPattern = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*(?:<[^>\n]*>)?)::([A-Za-z_][A-Za-z0-9_]*)?$`)
+
 	lexSource = func(path, text string, diag *diagnostics.Bag) []tokens.Token {
 		return lexer.New(path, text, diag).Tokenize()
 	}
@@ -116,6 +136,11 @@ type documentSymbolParams struct {
 	TextDocument textDocumentIdentifier `json:"textDocument"`
 }
 
+type completionParams struct {
+	TextDocument textDocumentIdentifier `json:"textDocument"`
+	Position     lspPosition            `json:"position"`
+}
+
 type textDocumentIdentifier struct {
 	URI string `json:"uri"`
 }
@@ -168,6 +193,13 @@ type documentSymbol struct {
 	Range          lspRange         `json:"range"`
 	SelectionRange lspRange         `json:"selectionRange"`
 	Children       []documentSymbol `json:"children,omitempty"`
+}
+
+type completionItem struct {
+	Label         string `json:"label"`
+	Kind          int    `json:"kind,omitempty"`
+	Detail        string `json:"detail,omitempty"`
+	Documentation string `json:"documentation,omitempty"`
 }
 
 type lspPosition struct {
@@ -285,6 +317,8 @@ func (s *Server) handleRequest(req rpcRequest) {
 		s.handleHover(req)
 	case "textDocument/definition":
 		s.handleDefinition(req)
+	case "textDocument/completion":
+		s.handleCompletion(req)
 	default:
 		if len(req.ID) > 0 {
 			s.writeError(req.ID, -32601, "method not found")
@@ -311,6 +345,9 @@ func (s *Server) handleInitialize(req rpcRequest) {
 			},
 			"hoverProvider":      true,
 			"definitionProvider": true,
+			"completionProvider": map[string]any{
+				"triggerCharacters": []string{".", ":"},
+			},
 		},
 		"serverInfo": map[string]any{
 			"name":    "ferret-lsp",
@@ -475,6 +512,36 @@ func (s *Server) handleDefinition(req rpcRequest) {
 		URI:   uri,
 		Range: locationToLSPRange(defLoc),
 	})
+}
+
+func (s *Server) handleCompletion(req rpcRequest) {
+	if len(req.ID) == 0 {
+		return
+	}
+	params := completionParams{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		s.writeResponse(req.ID, []completionItem{})
+		return
+	}
+	path, err := uriToPath(params.TextDocument.URI)
+	if err != nil || !isFerretSourcePath(path) {
+		s.writeResponse(req.ID, []completionItem{})
+		return
+	}
+	pos := source.Position{
+		Line:   params.Position.Line + 1,
+		Column: params.Position.Character + 1,
+	}
+	doc, hasDoc := s.documentState(params.TextDocument.URI)
+	index := s.getOrBuildHoverIndex(params.TextDocument.URI, path, doc, hasDoc)
+	sourceText := doc.Text
+	if !hasDoc {
+		if bytes, err := os.ReadFile(path); err == nil {
+			sourceText = string(bytes)
+		}
+	}
+	items := completionFromIndex(index, sourceText, pos)
+	s.writeResponse(req.ID, items)
 }
 
 func (s *Server) documentState(uri string) (openDocument, bool) {
@@ -677,10 +744,26 @@ type definitionCandidate struct {
 	span     int
 }
 
+type completionCandidate struct {
+	item     completionItem
+	location source.Location
+	scope    source.Location
+	name     string
+	typ      typeinfo.Type
+}
+
+type completionIndex struct {
+	keywords []completionItem
+	items    []completionCandidate
+	mod      *context.Module
+	modules  map[string]*context.Module
+}
+
 type hoverIndex struct {
 	candidates           []hoverCandidate
 	definitionCandidates []definitionCandidate
 	documentSymbols      []documentSymbol
+	completions          *completionIndex
 }
 
 func (s *Server) getOrBuildHoverIndex(uri, path string, doc openDocument, hasDoc bool) *hoverIndex {
@@ -782,10 +865,12 @@ func buildHoverIndex(path, text string, hasText bool) *hoverIndex {
 	}
 	hoverCandidates, defCandidates := collectHoverCandidates(mod, mod.Types, modules, sourceText, parsedPath, path)
 	docSymbols := collectDocumentSymbols(mod, mod.Types)
+	completions := collectCompletionIndex(mod, mod.Types, modules)
 	return &hoverIndex{
 		candidates:           hoverCandidates,
 		definitionCandidates: defCandidates,
 		documentSymbols:      docSymbols,
+		completions:          completions,
 	}
 }
 
@@ -1022,6 +1107,431 @@ func collectQualifiedPathCandidates(mod *context.Module, info *typeinfo.ModuleIn
 		}
 	}
 	return hoverOut, defOut
+}
+
+func completionFromIndex(index *hoverIndex, sourceText string, pos source.Position) []completionItem {
+	if index == nil || index.completions == nil {
+		return nil
+	}
+	comp := index.completions
+	ctx := completionContextAt(sourceText, pos)
+	candidates := visibleCompletionCandidatesAt(comp.items, pos)
+	items := make([]completionItem, 0)
+	if ctx.IsMember {
+		items = append(items, memberCompletionItemsForContext(comp, candidates, sourceText, pos)...)
+	} else {
+		items = make([]completionItem, 0, len(comp.keywords)+len(candidates))
+		items = append(items, comp.keywords...)
+		for _, candidate := range candidates {
+			items = append(items, candidate.item)
+		}
+	}
+	items = filterCompletionItemsByPrefix(items, ctx.Prefix)
+	items = dedupeCompletionItems(items)
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Label == items[j].Label {
+			return items[i].Kind < items[j].Kind
+		}
+		return items[i].Label < items[j].Label
+	})
+	if len(items) > maxCompletionItems {
+		items = items[:maxCompletionItems]
+	}
+	return items
+}
+
+func collectCompletionIndex(mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module) *completionIndex {
+	if mod == nil {
+		return &completionIndex{keywords: keywordCompletionItems()}
+	}
+	index := &completionIndex{
+		keywords: keywordCompletionItems(),
+		items:    make([]completionCandidate, 0),
+		mod:      mod,
+		modules:  modulesByKey,
+	}
+	addSymbol := func(sym *symbols.Symbol, scope source.Location) {
+		if sym == nil || sym.Name == "" {
+			return
+		}
+		item := completionItemForSymbol(sym, info, mod)
+		if item.Label == "" {
+			return
+		}
+		index.items = append(index.items, completionCandidate{
+			item:     item,
+			location: sym.Location,
+			scope:    scope,
+			name:     sym.Name,
+			typ:      symbolTypeForCompletion(sym, info),
+		})
+	}
+	if mod.ModuleScope != nil {
+		for _, sym := range mod.ModuleScope.Symbols() {
+			addSymbol(sym, source.Location{})
+		}
+	}
+	if mod.Bindings != nil {
+		for fn, locals := range mod.Bindings.FunctionLocals {
+			if fn == nil {
+				continue
+			}
+			scope := fn.Loc()
+			for _, sym := range locals {
+				addSymbol(sym, scope)
+			}
+			for _, typeParam := range fn.TypeParams {
+				if typeParam.Name == nil {
+					continue
+				}
+				typeName := typeParam.Name.Text()
+				if typeName == "" {
+					continue
+				}
+				item := completionItem{
+					Label: typeName,
+					Kind:  completionKindTypeParameter,
+				}
+				if typeParam.Constraint != nil {
+					item.Detail = "type parameter: " + typeName + ": " + ast.TypeString(typeParam.Constraint)
+				} else {
+					item.Detail = "type parameter: " + typeName
+				}
+				index.items = append(index.items, completionCandidate{
+					item:     item,
+					location: typeParam.Name.Loc(),
+					scope:    scope,
+					name:     typeName,
+					typ:      info.Nodes[typeParam.Name],
+				})
+			}
+		}
+	}
+	return index
+}
+
+func symbolTypeForCompletion(sym *symbols.Symbol, info *typeinfo.ModuleInfo) typeinfo.Type {
+	if sym == nil || info == nil {
+		return nil
+	}
+	return info.Symbols[sym.ID]
+}
+
+func completionItemForSymbol(sym *symbols.Symbol, info *typeinfo.ModuleInfo, mod *context.Module) completionItem {
+	item := completionItem{
+		Label: sym.Name,
+		Kind:  completionKindForSymbol(sym),
+	}
+	typ := symbolTypeForCompletion(sym, info)
+	if sig := symbolFunctionSignature(sym, nil); sig != "" {
+		item.Detail = sig
+	} else if fnType, ok := typ.(*typeinfo.FuncType); ok && fnType != nil {
+		item.Detail = typeinfo.DefaultPrinter.FuncSignature(sym.Name, fnType)
+	} else if typ != nil {
+		item.Detail = typeinfo.DefaultPrinter.Type(typ)
+	}
+	if decl := renderBindingDeclForSymbol(sym, typ, mod); decl != "" {
+		item.Detail = decl
+	}
+	if doc := declarationDocForSymbol(sym); doc != "" {
+		item.Documentation = doc
+	}
+	return item
+}
+
+func completionKindForSymbol(sym *symbols.Symbol) int {
+	if sym == nil {
+		return completionKindText
+	}
+	switch sym.Kind {
+	case symbols.SymbolFunc:
+		return completionKindFunction
+	case symbols.SymbolMethod:
+		return completionKindMethod
+	case symbols.SymbolType:
+		if decl, ok := sym.Node.(*ast.TypeDecl); ok && decl != nil {
+			switch decl.Type.(type) {
+			case *ast.StructType:
+				return completionKindStruct
+			case *ast.InterfaceType:
+				return completionKindInterface
+			default:
+				return completionKindClass
+			}
+		}
+		return completionKindClass
+	case symbols.SymbolConst:
+		return completionKindConstant
+	case symbols.SymbolVar, symbols.SymbolParam:
+		return completionKindVariable
+	case symbols.SymbolField:
+		return completionKindField
+	case symbols.SymbolImport:
+		return completionKindModule
+	default:
+		return completionKindText
+	}
+}
+
+func keywordCompletionItems() []completionItem {
+	keywords := []string{
+		"import", "const", "let", "mut", "fn", "type", "struct", "interface", "enum", "union",
+		"error", "constraint", "if", "else", "match", "for", "while", "break", "continue",
+		"return", "comptime", "catch", "is", "as", "defer", "release", "panic", "lock", "unsafe",
+		"self", "none", "true", "false",
+	}
+	items := make([]completionItem, 0, len(keywords))
+	for _, keyword := range keywords {
+		items = append(items, completionItem{Label: keyword, Kind: completionKindKeyword})
+	}
+	return items
+}
+
+func visibleCompletionCandidatesAt(items []completionCandidate, pos source.Position) []completionCandidate {
+	out := make([]completionCandidate, 0, len(items))
+	for _, item := range items {
+		if !locationIsVisibleAt(item.scope, pos) {
+			continue
+		}
+		if item.location.Start != nil && compareSourcePosition(*item.location.Start, pos) > 0 {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func locationIsVisibleAt(scope source.Location, pos source.Position) bool {
+	if scope.Start == nil {
+		return true
+	}
+	return locationContainsPosition(scope, pos)
+}
+
+type completionContext struct {
+	Base     string
+	Prefix   string
+	IsMember bool
+	IsStatic bool
+}
+
+func completionContextAt(sourceText string, pos source.Position) completionContext {
+	offset := sourceOffsetAtPosition(sourceText, pos)
+	if offset < 0 || offset > len(sourceText) {
+		return completionContext{}
+	}
+	lineStart := strings.LastIndex(sourceText[:offset], "\n")
+	if lineStart < 0 {
+		lineStart = 0
+	} else {
+		lineStart++
+	}
+	prefixText := sourceText[lineStart:offset]
+	if match := staticMemberPattern.FindStringSubmatch(prefixText); len(match) == 3 {
+		return completionContext{
+			Base:     strings.TrimSpace(match[1]),
+			Prefix:   match[2],
+			IsMember: true,
+			IsStatic: true,
+		}
+	}
+	if match := memberPattern.FindStringSubmatch(prefixText); len(match) == 3 {
+		return completionContext{
+			Base:     match[1],
+			Prefix:   match[2],
+			IsMember: true,
+		}
+	}
+	if ident := identPattern.FindString(prefixText); ident != "" {
+		return completionContext{Prefix: ident}
+	}
+	return completionContext{}
+}
+
+func sourceOffsetAtPosition(sourceText string, pos source.Position) int {
+	if sourceText == "" {
+		return 0
+	}
+	if pos.Line <= 1 {
+		column := max(pos.Column-1, 0)
+		if column > len(sourceText) {
+			return len(sourceText)
+		}
+		return column
+	}
+	line := 1
+	offset := 0
+	for offset < len(sourceText) && line < pos.Line {
+		next := strings.IndexByte(sourceText[offset:], '\n')
+		if next < 0 {
+			return len(sourceText)
+		}
+		offset += next + 1
+		line++
+	}
+	column := max(pos.Column-1, 0)
+	lineEnd := offset
+	for lineEnd < len(sourceText) && sourceText[lineEnd] != '\n' {
+		lineEnd++
+	}
+	if offset+column > lineEnd {
+		return lineEnd
+	}
+	return offset + column
+}
+
+func memberCompletionItemsForContext(index *completionIndex, visible []completionCandidate, sourceText string, pos source.Position) []completionItem {
+	if index == nil || index.mod == nil {
+		return nil
+	}
+	ctx := completionContextAt(sourceText, pos)
+	if !ctx.IsMember || ctx.Base == "" {
+		return nil
+	}
+	if ctx.IsStatic {
+		return staticMemberCompletionItems(index.mod, ctx.Base)
+	}
+	baseType := visibleSymbolType(ctx.Base, visible)
+	if baseType == nil {
+		return nil
+	}
+	return instanceMemberCompletionItems(index.mod, index.modules, baseType)
+}
+
+func visibleSymbolType(name string, visible []completionCandidate) typeinfo.Type {
+	for i := len(visible) - 1; i >= 0; i-- {
+		if visible[i].name == name && visible[i].typ != nil {
+			return visible[i].typ
+		}
+	}
+	return nil
+}
+
+func staticMemberCompletionItems(mod *context.Module, ownerText string) []completionItem {
+	if mod == nil || mod.TypeMembers == nil {
+		return nil
+	}
+	ownerName := ownerText
+	if idx := strings.Index(ownerName, "<"); idx >= 0 {
+		ownerName = ownerName[:idx]
+	}
+	members := mod.TypeMembers[ownerName]
+	if len(members) == 0 {
+		return nil
+	}
+	items := make([]completionItem, 0, len(members))
+	for _, sym := range members {
+		if sym == nil || sym.Kind != symbols.SymbolFunc {
+			continue
+		}
+		fn, ok := sym.Node.(*ast.FuncDecl)
+		if !ok || fn == nil || !fn.IsStatic {
+			continue
+		}
+		items = append(items, completionItem{
+			Label:         sym.Name,
+			Kind:          completionKindMethod,
+			Detail:        symbolFunctionSignature(sym, nil),
+			Documentation: declarationDocForSymbol(sym),
+		})
+	}
+	return items
+}
+
+func instanceMemberCompletionItems(mod *context.Module, modulesByKey map[string]*context.Module, baseType typeinfo.Type) []completionItem {
+	named := underlyingNamedType(baseType)
+	if named == nil {
+		return nil
+	}
+	owner := moduleForNamedType(named, mod, modulesByKey)
+	if owner == nil {
+		return nil
+	}
+	items := make([]completionItem, 0)
+	decl := named.Decl
+	if decl == nil {
+		decl = findTypeDecl(owner, named.Name)
+	}
+	resolved := declTypeForNamed(owner, named, decl)
+	if structType, ok := resolved.(*typeinfo.StructType); ok && structType != nil {
+		if decl != nil {
+			if declStruct, ok := decl.Type.(*ast.StructType); ok && declStruct != nil {
+				for _, field := range declStruct.Fields {
+					if field == nil || field.Name == nil {
+						continue
+					}
+					fieldType := structFieldTypeByName(structType, field.Name.Text())
+					items = append(items, completionItem{
+						Label:  field.Name.Text(),
+						Kind:   completionKindField,
+						Detail: typeinfo.DefaultPrinter.Type(fieldType),
+					})
+				}
+			}
+		} else {
+			for _, field := range structType.OrderedFields {
+				if field == nil || field.Name == "" {
+					continue
+				}
+				items = append(items, completionItem{
+					Label:  field.Name,
+					Kind:   completionKindField,
+					Detail: typeinfo.DefaultPrinter.Type(field.Type),
+				})
+			}
+		}
+	}
+	if owner.MethodSets != nil {
+		for receiver, methods := range owner.MethodSets {
+			if receiver.TypeName != named.Name {
+				continue
+			}
+			for _, sym := range methods {
+				if sym == nil {
+					continue
+				}
+				items = append(items, completionItem{
+					Label:         sym.Name,
+					Kind:          completionKindMethod,
+					Detail:        symbolFunctionSignature(sym, nil),
+					Documentation: declarationDocForSymbol(sym),
+				})
+			}
+		}
+	}
+	return items
+}
+
+func filterCompletionItemsByPrefix(items []completionItem, prefix string) []completionItem {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return items
+	}
+	prefixLower := strings.ToLower(prefix)
+	out := make([]completionItem, 0, len(items))
+	for _, item := range items {
+		if strings.HasPrefix(strings.ToLower(item.Label), prefixLower) {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func dedupeCompletionItems(items []completionItem) []completionItem {
+	if len(items) <= 1 {
+		return items
+	}
+	seen := make(map[string]struct{}, len(items))
+	out := make([]completionItem, 0, len(items))
+	for _, item := range items {
+		key := item.Label + "#" + strconv.Itoa(item.Kind)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, item)
+	}
+	return out
 }
 
 func collectDocumentSymbols(mod *context.Module, info *typeinfo.ModuleInfo) []documentSymbol {
