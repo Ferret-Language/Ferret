@@ -1782,6 +1782,135 @@ func TestCompletionMemberAndStaticMember(t *testing.T) {
 	}
 }
 
+func TestHoverImportAliasAndPathShowsModuleDoc(t *testing.T) {
+	dir := t.TempDir()
+	modulePath := filepath.Join(dir, "util", "os.ferr")
+	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
+		t.Fatalf("failed to create module dir: %v", err)
+	}
+	moduleSrc := "// OS helpers.\n// Module level docs.\nfn CpuCount() i32 {\n    return 1\n}\n"
+	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
+		t.Fatalf("failed to write module source: %v", err)
+	}
+
+	path := filepath.Join(dir, "main.ferr")
+	src := "import \"util/os\" as os\n\nfn main() void {\n    os::CpuCount()\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	pathLine, pathChar, ok := findPosition(src, "\"util/os\"")
+	if !ok {
+		t.Fatal("failed to find import path position")
+	}
+	pathChar++ // inside quotes
+	aliasLine, aliasChar, ok := findPosition(src, "as os")
+	if !ok {
+		t.Fatal("failed to find import alias position")
+	}
+	aliasChar += len("as ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	pathReq := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: pathLine, Character: pathChar},
+		}),
+	}
+	s.handleRequest(pathReq)
+	pathHover := decodeHoverResult(t, out.String())
+	if pathHover == nil {
+		t.Fatal("expected hover result for import path")
+	}
+	if !strings.Contains(pathHover.Contents.Value, "import \"util/os\"") {
+		t.Fatalf("expected import header in hover, got %q", pathHover.Contents.Value)
+	}
+	if !strings.Contains(pathHover.Contents.Value, "OS helpers.") || !strings.Contains(pathHover.Contents.Value, "Module level docs.") {
+		t.Fatalf("expected module doc in import path hover, got %q", pathHover.Contents.Value)
+	}
+
+	out.Reset()
+	aliasReq := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("2"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: aliasLine, Character: aliasChar},
+		}),
+	}
+	s.handleRequest(aliasReq)
+	aliasHover := decodeHoverResult(t, out.String())
+	if aliasHover == nil {
+		t.Fatal("expected hover result for import alias")
+	}
+	if !strings.Contains(aliasHover.Contents.Value, "OS helpers.") || !strings.Contains(aliasHover.Contents.Value, "Module level docs.") {
+		t.Fatalf("expected module doc in import alias hover, got %q", aliasHover.Contents.Value)
+	}
+}
+
+func TestCompletionModuleStaticMembersViaImportAlias(t *testing.T) {
+	dir := t.TempDir()
+	modulePath := filepath.Join(dir, "util", "os.ferr")
+	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
+		t.Fatalf("failed to create module dir: %v", err)
+	}
+	moduleSrc := "fn CpuCount() i32 {\n    return 1\n}\n\nconst Version: i32 = 1\n"
+	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
+		t.Fatalf("failed to write module source: %v", err)
+	}
+
+	path := filepath.Join(dir, "main.ferr")
+	src := "import \"util/os\"\n\nfn main() void {\n    os::CpuCount()\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    os::CpuCount()")
+	if !ok {
+		t.Fatal("failed to find completion position")
+	}
+	char += len("    os::")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/completion",
+		Params: mustRawJSON(t, completionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	items := decodeCompletionResult(t, out.String())
+	foundCPU := false
+	foundKeywordIf := false
+	for _, item := range items {
+		if item.Label == "CpuCount" {
+			foundCPU = true
+		}
+		if item.Label == "if" {
+			foundKeywordIf = true
+		}
+	}
+	if !foundCPU {
+		t.Fatalf("expected module member completion for os::, got %#v", items)
+	}
+	if foundKeywordIf {
+		t.Fatalf("did not expect keyword completion in module member context, got %#v", items)
+	}
+}
+
 func fakeHoverResult(path string, typeName string) compiler.Result {
 	start := source.Position{Line: 1, Column: 1, Index: 0}
 	end := source.Position{Line: 1, Column: 2, Index: 1}

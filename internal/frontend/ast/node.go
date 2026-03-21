@@ -28,6 +28,7 @@ type TypeExpr interface {
 
 type Module struct {
 	FilePath string
+	Doc      *CommentGroup
 	Imports  []*ImportDecl
 	Decls    []Decl
 }

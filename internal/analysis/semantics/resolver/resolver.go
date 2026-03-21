@@ -124,6 +124,17 @@ func (r *resolver) resolveImports() {
 		}
 		seen[key] = b
 		r.info.Imports = append(r.info.Imports, b)
+		moduleRes := &binding.Resolution{
+			Kind:       binding.ResolutionModule,
+			ModuleKey:  resolved.Key,
+			ImportPath: resolved.ImportPath,
+		}
+		if imp.Path != nil {
+			r.info.BindNode(imp.Path, moduleRes)
+		}
+		if imp.Alias != nil {
+			r.info.BindNode(imp.Alias, moduleRes)
+		}
 	}
 }
 

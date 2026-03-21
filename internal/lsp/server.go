@@ -969,10 +969,23 @@ func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modu
 	}
 	if mod.Bindings != nil {
 		for node, res := range mod.Bindings.Nodes {
-			if node == nil || res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+			if node == nil || res == nil {
 				continue
 			}
-			collectDef(node.Loc(), normalizeLocationFile(res.Symbol.Location, parsedPath, originalPath))
+			switch res.Kind {
+			case binding.ResolutionSymbol:
+				if res.Symbol == nil {
+					continue
+				}
+				collectDef(node.Loc(), normalizeLocationFile(res.Symbol.Location, parsedPath, originalPath))
+			case binding.ResolutionModule:
+				if markdown := renderModuleResolutionHoverMarkdown(res, modulesByKey); markdown != "" {
+					collect(markdown, node.Loc(), 1)
+				}
+				if moduleLoc := moduleDefinitionLocationFromResolution(res, modulesByKey); moduleLoc.Start != nil {
+					collectDef(node.Loc(), normalizeLocationFile(moduleLoc, parsedPath, originalPath))
+				}
+			}
 		}
 		for node, label := range mod.Bindings.Labels {
 			ident, ok := node.(*ast.Ident)
@@ -1337,7 +1350,9 @@ func memberCompletionItemsForContext(index *completionIndex, visible []completio
 		return nil
 	}
 	if ctx.IsStatic {
-		return staticMemberCompletionItems(index.mod, ctx.Base)
+		items := staticMemberCompletionItems(index.mod, ctx.Base)
+		items = append(items, moduleMemberCompletionItems(index.mod, index.modules, ctx.Base)...)
+		return items
 	}
 	baseType := visibleSymbolType(ctx.Base, visible)
 	if baseType == nil {
@@ -1382,6 +1397,48 @@ func staticMemberCompletionItems(mod *context.Module, ownerText string) []comple
 			Detail:        symbolFunctionSignature(sym, nil),
 			Documentation: declarationDocForSymbol(sym),
 		})
+	}
+	return items
+}
+
+func moduleMemberCompletionItems(mod *context.Module, modulesByKey map[string]*context.Module, ownerText string) []completionItem {
+	if mod == nil || mod.Bindings == nil || len(mod.Bindings.Imports) == 0 {
+		return nil
+	}
+	ownerName := strings.TrimSpace(ownerText)
+	if ownerName == "" {
+		return nil
+	}
+	if idx := strings.Index(ownerName, "<"); idx >= 0 {
+		ownerName = ownerName[:idx]
+	}
+	var imp *binding.ImportBinding
+	for _, b := range mod.Bindings.Imports {
+		if b == nil {
+			continue
+		}
+		if b.Key() == ownerName {
+			imp = b
+			break
+		}
+	}
+	if imp == nil {
+		return nil
+	}
+	target := moduleFromResolution(modulesByKey, nil, imp.ModuleKey)
+	if target == nil || target.ModuleScope == nil {
+		return nil
+	}
+	items := make([]completionItem, 0, len(target.ModuleScope.Symbols()))
+	for _, sym := range target.ModuleScope.Symbols() {
+		if sym == nil || !sym.IsPub {
+			continue
+		}
+		item := completionItemForSymbol(sym, target.Types, target)
+		if item.Label == "" {
+			continue
+		}
+		items = append(items, item)
 	}
 	return items
 }
@@ -1679,6 +1736,45 @@ func moduleFromResolution(modulesByKey map[string]*context.Module, fallback *con
 		}
 	}
 	return fallback
+}
+
+func renderModuleResolutionHoverMarkdown(res *binding.Resolution, modulesByKey map[string]*context.Module) string {
+	if res == nil {
+		return ""
+	}
+	target := moduleFromResolution(modulesByKey, nil, res.ModuleKey)
+	importPath := strings.TrimSpace(res.ImportPath)
+	if importPath == "" && target != nil {
+		importPath = target.ImportPath
+	}
+	if importPath == "" {
+		return ""
+	}
+	return appendHoverDoc(asFerretCodeBlock(`import "`+importPath+`"`), declarationDocForModule(target))
+}
+
+func moduleDefinitionLocationFromResolution(res *binding.Resolution, modulesByKey map[string]*context.Module) source.Location {
+	if res == nil {
+		return source.Location{}
+	}
+	target := moduleFromResolution(modulesByKey, nil, res.ModuleKey)
+	return moduleDefinitionLocation(target)
+}
+
+func moduleDefinitionLocation(mod *context.Module) source.Location {
+	if mod == nil || mod.AST == nil {
+		return source.Location{}
+	}
+	if mod.AST.Doc != nil {
+		return mod.AST.Doc.Location
+	}
+	if len(mod.AST.Imports) > 0 && mod.AST.Imports[0] != nil {
+		return mod.AST.Imports[0].Loc()
+	}
+	if len(mod.AST.Decls) > 0 && mod.AST.Decls[0] != nil {
+		return mod.AST.Decls[0].Loc()
+	}
+	return source.Location{}
 }
 
 func ownerTypeSymbolForResolution(modulesByKey map[string]*context.Module, fallback *context.Module, res *binding.Resolution) (*symbols.Symbol, *context.Module) {
@@ -2351,6 +2447,13 @@ func declarationDocForSymbol(sym *symbols.Symbol) string {
 		return ""
 	}
 	return declarationDocFromAstNode(sym.Node)
+}
+
+func declarationDocForModule(mod *context.Module) string {
+	if mod == nil || mod.AST == nil {
+		return ""
+	}
+	return commentGroupText(mod.AST.Doc)
 }
 
 func declarationDocFromAstNode(node ast.Node) string {

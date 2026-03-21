@@ -661,6 +661,26 @@ fn addOne(v: i32) i32 {
 	}
 }
 
+func TestParseModuleDocComment(t *testing.T) {
+	src := `// module docs line 1
+// module docs line 2
+import "std/os"
+
+fn main() void {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", diag.Diagnostics())
+	}
+	if mod == nil || mod.Doc == nil {
+		t.Fatal("expected module doc comment")
+	}
+	if !strings.Contains(mod.Doc.Text, "module docs line 1") || !strings.Contains(mod.Doc.Text, "module docs line 2") {
+		t.Fatalf("unexpected module doc text: %q", mod.Doc.Text)
+	}
+}
+
 func TestParseDocCommentGapDoesNotAttach(t *testing.T) {
 	src := `
 // this should not attach due to gap

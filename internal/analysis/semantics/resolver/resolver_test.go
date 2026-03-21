@@ -74,6 +74,41 @@ fn Point::Origin() Point {
 
 }
 
+func TestResolverBindsImportPathAndAliasAsModuleResolution(t *testing.T) {
+	root := t.TempDir()
+	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+import "util/build" as build
+
+fn main() void {}
+`)
+	mustWriteResolver(t, filepath.Join(root, "util", "build.ferr"), `
+fn Pick() i32 {
+    return 1
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.AST == nil || len(result.Entry.AST.Imports) != 1 {
+		t.Fatalf("expected one import in entry AST")
+	}
+	imp := result.Entry.AST.Imports[0]
+	if imp == nil || imp.Path == nil || imp.Alias == nil {
+		t.Fatalf("expected import path and alias nodes")
+	}
+
+	pathRes := result.Entry.Bindings.Nodes[imp.Path]
+	if pathRes == nil || pathRes.Kind != binding.ResolutionModule || pathRes.ImportPath != "util/build" {
+		t.Fatalf("expected module resolution for import path, got %#v", pathRes)
+	}
+	aliasRes := result.Entry.Bindings.Nodes[imp.Alias]
+	if aliasRes == nil || aliasRes.Kind != binding.ResolutionModule || aliasRes.ImportPath != "util/build" {
+		t.Fatalf("expected module resolution for import alias, got %#v", aliasRes)
+	}
+}
+
 func TestResolverBindsImportedTypeMembers(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `

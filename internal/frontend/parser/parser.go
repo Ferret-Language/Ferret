@@ -32,6 +32,7 @@ func New(file string, toks []tokens.Token, diag *diagnostics.DiagnosticBag) *Par
 func (p *Parser) ParseModule() *ast.Module {
 	mod := &ast.Module{
 		FilePath: p.file,
+		Doc:      p.leadingModuleDocComment(),
 		Imports:  make([]*ast.ImportDecl, 0),
 		Decls:    make([]ast.Decl, 0),
 	}
@@ -59,6 +60,29 @@ func (p *Parser) ParseModule() *ast.Module {
 	}
 	p.validateModule(mod)
 	return mod
+}
+
+func (p *Parser) leadingModuleDocComment() *ast.CommentGroup {
+	if !p.at(tokens.DOC_COMMENT) {
+		return nil
+	}
+	saved := p.pos
+	doc := p.parseDocComment()
+	next := p.current().Kind
+	p.pos = saved
+	if doc == nil || !isTopLevelStartToken(next) {
+		return nil
+	}
+	return doc
+}
+
+func isTopLevelStartToken(kind tokens.Kind) bool {
+	switch kind {
+	case tokens.EOF, tokens.IMPORT, tokens.LET, tokens.CONST, tokens.TYPE, tokens.CONSTRAINT, tokens.FN, tokens.UNSAFE, tokens.HASH:
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *Parser) parseDecl() ast.Decl {
