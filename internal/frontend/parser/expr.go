@@ -55,7 +55,7 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 			left = p.parseSelector(left)
 		case tokens.BB:
 			tok := p.advance()
-			left = &ast.PostfixExpr{Left: left, Op: tok.Literal, Location: p.makeExprLoc(*left.Loc().Start)}
+			left = &ast.PostfixExpr{Left: left, Op: tok.Literal, Location: source.NewLocation(p.file, *left.Loc().Start, p.previous().End)}
 		case tokens.AS:
 			left = p.parseCast(left)
 		case tokens.IS:
@@ -203,18 +203,18 @@ func (p *Parser) parseBinary(left ast.Expr) ast.Expr {
 			Left:     left,
 			Op:       tok.Literal,
 			Right:    &ast.BadExpr{Location: loc},
-			Location: p.makeExprLoc(*left.Loc().Start),
+			Location: source.NewLocation(p.file, *left.Loc().Start, p.previous().End),
 		}
 	}
 	prec := precedence(tok.Kind)
 	right := p.parseExprUntil(prec)
-	return &ast.BinaryExpr{Left: left, Op: tok.Literal, Right: right, Location: p.makeExprLoc(*left.Loc().Start)}
+	return &ast.BinaryExpr{Left: left, Op: tok.Literal, Right: right, Location: source.NewLocation(p.file, *left.Loc().Start, p.previous().End)}
 }
 
 func (p *Parser) parseCall(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
 	args := p.parseArgList()
-	return &ast.CallExpr{Callee: left, Args: args, Location: p.makeExprLoc(start)}
+	return &ast.CallExpr{Callee: left, Args: args, Location: source.NewLocation(p.file, start, p.previous().End)}
 }
 
 func (p *Parser) parseIndexExpr(left ast.Expr) ast.Expr {
@@ -222,7 +222,7 @@ func (p *Parser) parseIndexExpr(left ast.Expr) ast.Expr {
 	p.expect(tokens.LBRACK, "expected '[' for index expression")
 	index := p.parseExprUntil(precLowest)
 	p.expect(tokens.RBRACK, "expected ']' after index")
-	return &ast.IndexExpr{Left: left, Index: index, Location: p.makeExprLoc(start)}
+	return &ast.IndexExpr{Left: left, Index: index, Location: source.NewLocation(p.file, start, p.previous().End)}
 }
 
 func (p *Parser) parseCallWithTypeArgs(left ast.Expr) ast.Expr {
@@ -238,7 +238,7 @@ func (p *Parser) parseCallWithTypeArgs(left ast.Expr) ast.Expr {
 	p.expect(tokens.RBRACK, "expected ']' after type arguments")
 	call, _ := p.parseCall(left).(*ast.CallExpr)
 	call.TypeArgs = typeArgs
-	call.Location = p.makeExprLoc(start)
+	call.Location = source.NewLocation(p.file, start, p.previous().End)
 	return call
 }
 
@@ -247,7 +247,7 @@ func (p *Parser) parseCallWithAngleTypeArgs(left ast.Expr) ast.Expr {
 	typeArgs := p.parseAngleTypeArgs("type argument")
 	call, _ := p.parseCall(left).(*ast.CallExpr)
 	call.TypeArgs = typeArgs
-	call.Location = p.makeExprLoc(start)
+	call.Location = source.NewLocation(p.file, start, p.previous().End)
 	return call
 }
 
@@ -262,7 +262,7 @@ func (p *Parser) parseIdentWithAngleTypeArgs(left ast.Expr) ast.Expr {
 	for p.match(tokens.DCOLON) {
 		ident.Path = append(ident.Path, p.expect(tokens.IDENT, "expected identifier after ::").Literal)
 	}
-	ident.Location = p.makeExprLoc(start)
+	ident.Location = source.NewLocation(p.file, start, p.previous().End)
 	return ident
 }
 
@@ -286,7 +286,7 @@ func (p *Parser) parseSelector(left ast.Expr) ast.Expr {
 	return &ast.SelectorExpr{
 		Left:     left,
 		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
-		Location: p.makeExprLoc(start),
+		Location: source.NewLocation(p.file, start, p.previous().End),
 	}
 }
 
@@ -294,14 +294,14 @@ func (p *Parser) parseCast(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
 	p.expect(tokens.AS, "expected 'as'")
 	typ := p.parseType()
-	return &ast.CastExpr{Left: left, Type: typ, Location: p.makeExprLoc(start)}
+	return &ast.CastExpr{Left: left, Type: typ, Location: source.NewLocation(p.file, start, p.previous().End)}
 }
 
 func (p *Parser) parseIs(left ast.Expr) ast.Expr {
 	start := *left.Loc().Start
 	p.expect(tokens.IS, "expected 'is'")
 	typ := p.parseType()
-	return &ast.IsExpr{Left: left, Type: typ, Location: p.makeExprLoc(start)}
+	return &ast.IsExpr{Left: left, Type: typ, Location: source.NewLocation(p.file, start, p.previous().End)}
 }
 
 func (p *Parser) parseMatchExpr() ast.Expr {
@@ -412,14 +412,14 @@ func (p *Parser) parseCatch(left ast.Expr) ast.Expr {
 			Left:     left,
 			Payload:  &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Handler:  handler,
-			Location: p.makeExprLoc(start),
+			Location: source.NewLocation(p.file, start, p.previous().End),
 		}
 	}
 	fallback := p.parseExprUntil(precCatch)
 	return &ast.CatchExpr{
 		Left:     left,
 		Fallback: fallback,
-		Location: p.makeExprLoc(start),
+		Location: source.NewLocation(p.file, start, p.previous().End),
 	}
 }
 

@@ -321,10 +321,6 @@ func (p *Parser) locOfToken(tok tokens.Token) source.Location {
 	return source.NewLocation(p.file, tok.Start, tok.End)
 }
 
-func (p *Parser) makeExprLoc(start source.Position) source.Location {
-	return source.NewLocation(p.file, start, p.previous().End)
-}
-
 func (p *Parser) errorHere(message string) {
 	tok := p.current()
 	loc := source.NewLocation(p.file, tok.Start, tok.End)
