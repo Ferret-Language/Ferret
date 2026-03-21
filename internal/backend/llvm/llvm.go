@@ -223,7 +223,7 @@ func (d *debugState) getOptionalType(state *moduleState, t *typeinfo.OptionalTyp
 		return id
 	}
 	// Niche optionals (e.g. ?*T) have the same layout as the inner type.
-	if optionalUsesNiche(t.Inner) {
+	if backend.OptionalUsesNiche(t.Inner) {
 		d.compositeIDs[key] = innerID
 		return innerID
 	}
@@ -274,7 +274,7 @@ func (d *debugState) getNamedType(state *moduleState, named *typeinfo.NamedType)
 		return d.getUnknownType()
 	}
 	// Interface named types always have a fixed {data ptr, vtable ptr} layout.
-	if namedIsInterface(named) {
+	if backend.IsNamedInterface(named) {
 		id := d.getInterfaceType()
 		key := named.ModuleKey + "::" + named.Name
 		d.compositeIDs[key] = id
@@ -299,7 +299,7 @@ func (d *debugState) getNamedType(state *moduleState, named *typeinfo.NamedType)
 
 	name := named.Name
 	tag := "DW_TAG_structure_type"
-	if info.Union != nil || namedIsUnion(named) {
+	if info.Union != nil || backend.IsNamedUnion(named) {
 		tag = "DW_TAG_union_type"
 	}
 	elemsID := d.getEmptyTuple()
@@ -335,7 +335,7 @@ func (d *debugState) getType(state *moduleState, typ typeinfo.Type) int {
 	if named, ok := typ.(*typeinfo.NamedType); ok {
 		return d.getNamedType(state, named)
 	}
-	switch t := unwrapNamed(typ).(type) {
+	switch t := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch t.Name {
 		case "bool", "u8":
@@ -503,7 +503,7 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 			if fn == nil || !fn.IsExtern || fn.LinkName == "" {
 				continue
 			}
-			sym := sanitizeIdent(fn.LinkName)
+			sym := becommon.SanitizeIdent(fn.LinkName)
 			if _, seen := seenExterns[sym]; seen {
 				continue
 			}
@@ -646,7 +646,7 @@ func implicitExternSymbol(decl string) string {
 
 // llvmExternDecl builds a "declare" line for an extern function.
 func llvmExternDecl(state *moduleState, fn *mir.Function) (string, error) {
-	sym := sanitizeIdent(fn.LinkName)
+	sym := becommon.SanitizeIdent(fn.LinkName)
 
 	var retStr string
 	if fn.Result == nil || isVoidType(fn.Result) {
@@ -755,7 +755,7 @@ func collectExternCallDecls(state *moduleState, mod *mir.Module, seenExterns map
 			return walkValue(v.Pointer)
 		case *mir.CallValue:
 			if callee, ok := v.Callee.(*mir.NameValue); ok && callee.LinkName != "" {
-				if err := addCall(sanitizeIdent(callee.LinkName), v); err != nil {
+				if err := addCall(becommon.SanitizeIdent(callee.LinkName), v); err != nil {
 					return err
 				}
 			}
@@ -933,7 +933,7 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		modules:           unit.Modules,
 		functions:         make(map[string]struct{}),
 		globals:           make(map[string]struct{}),
-		modulePrefix:      sanitizePath(unit.Module.ImportPath),
+		modulePrefix:      becommon.SanitizePath(unit.Module.ImportPath),
 		deferredB:         &strings.Builder{},
 		interfaceVTables:  make(map[interfaceVTableKey]string),
 		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
@@ -988,7 +988,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		if fn == nil || !fn.IsExtern || fn.LinkName == "" {
 			continue
 		}
-		sym := sanitizeIdent(fn.LinkName)
+		sym := becommon.SanitizeIdent(fn.LinkName)
 		if _, ok := seenExterns[sym]; ok {
 			continue
 		}
@@ -1230,7 +1230,7 @@ func lowerGlobalInterfaceData(state *moduleState, ownerName string, init *mir.In
 	switch v := init.Value.(type) {
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return "@" + sanitizeIdent(v.LinkName), nil
+			return "@" + becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
 	case *mir.NumberValue:
@@ -1242,11 +1242,11 @@ func lowerGlobalInterfaceData(state *moduleState, ownerName string, init *mir.In
 		if err != nil {
 			return "", err
 		}
-		sym := sanitizeIdent(ownerName + "__iface_data")
+		sym := becommon.SanitizeIdent(ownerName + "__iface_data")
 		fmt.Fprintf(state.deferredB, "@%s = private global %s %s\n", sym, irType, lit)
 		return "@" + sym, nil
 	case *mir.BoolValue:
-		sym := sanitizeIdent(ownerName + "__iface_data")
+		sym := becommon.SanitizeIdent(ownerName + "__iface_data")
 		lit := "0"
 		if v.Value {
 			lit = "1"
@@ -1306,7 +1306,7 @@ func llvmUnionInitBytes(info *backendUnionLayout, init mir.Value) ([]byte, error
 		bytes = append(bytes, 0)
 		return bytes, nil
 	case *mir.NumberValue:
-		builtin, ok := unwrapNamed(v.Type()).(*typeinfo.BuiltinType)
+		builtin, ok := backend.UnwrapNamed(v.Type()).(*typeinfo.BuiltinType)
 		if !ok {
 			return nil, fmt.Errorf("unsupported union numeric initializer type %s", v.Type())
 		}
@@ -1373,7 +1373,7 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *mir.Function) erro
 	if name == "" {
 		name = llvmSymbol(state, []string{fn.Name})
 	} else {
-		name = sanitizeIdent(name)
+		name = becommon.SanitizeIdent(name)
 	}
 
 	// Build return type string.
@@ -1618,22 +1618,22 @@ func lowerInstr(state *moduleState, instr mir.Instr) (string, error) {
 	case *mir.BindInstr:
 		return lowerAssignLike(state, i.Name, i.Type, i.Value)
 	case *mir.AssignInstr:
-		if local := findLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
+		if local := becommon.FindLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
 			if field, ok := i.Value.(*mir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
 				state.tempValues[i.TargetID] = field
 				return "", nil
 			}
 		}
-		name := localNameByID(state.fn, i.TargetID)
-		return lowerAssignLike(state, name, localTypeByID(state.fn, i.TargetID), i.Value)
+		name := becommon.LocalNameByID(state.fn, i.TargetID)
+		return lowerAssignLike(state, name, becommon.LocalTypeByID(state.fn, i.TargetID), i.Value)
 	case *mir.ComputeInstr:
-		if local := findLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
+		if local := becommon.FindLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
 			if field, ok := i.Value.(*mir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
 				state.tempValues[i.TargetID] = field
 				return "", nil
 			}
 		}
-		name := localNameByID(state.fn, i.TargetID)
+		name := becommon.LocalNameByID(state.fn, i.TargetID)
 		return lowerAssignLike(state, name, i.Type, i.Value)
 	case *mir.StoreFieldInstr:
 		return lowerStoreField(state, i)
@@ -1659,7 +1659,7 @@ func lowerInstr(state *moduleState, instr mir.Instr) (string, error) {
 
 func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value mir.Value) (string, error) {
 	// Route scalar alloca targets: compute to a fresh temp then store.
-	local := findLocalByName(state.fn, name)
+	local := becommon.FindLocalByName(state.fn, name)
 	if local != nil {
 		if sc, ok := state.scalarLocals[local.ID]; ok {
 			return lowerScalarAllocaAssign(state, sc, typ, value)
@@ -1730,7 +1730,7 @@ func lowerScalarAllocaAssign(state *moduleState, sc *scalarAllocaLocal, typ type
 
 // lowerSSAAssign assigns a MIR value to a fresh SSA name (no alloca routing).
 func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mir.Value) (string, error) {
-	if local := findLocalByName(state.fn, name); local != nil {
+	if local := becommon.FindLocalByName(state.fn, name); local != nil {
 		if agg, ok := state.aggLocals[local.ID]; ok {
 			return lowerAggregateAssign(state, agg, value)
 		}
@@ -1989,7 +1989,7 @@ func llvmResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldInde
 
 // lowerIndexLoad lowers arr[index] as an rvalue load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
-	if _, ok := unwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
+	if _, ok := backend.UnwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
 		return lowerSliceIndexLoad(state, targetName, targetType, idx)
 	}
 	lines, addr, err := lowerIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())
@@ -2030,7 +2030,7 @@ func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typei
 }
 
 func llvmPointerInner(typ typeinfo.Type) (typeinfo.Type, bool) {
-	switch t := unwrapNamed(typ).(type) {
+	switch t := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.PointerType:
 		return t.Inner, true
 	case *typeinfo.RawPtrType:
@@ -2121,7 +2121,7 @@ func unionAggregateLocalForPlace(state *moduleState, place mir.Place) *aggregate
 				}
 			case *mir.NameValue:
 				if len(src.Path) == 1 {
-					if local := findLocalByName(state.fn, src.Path[0]); local != nil {
+					if local := becommon.FindLocalByName(state.fn, src.Path[0]); local != nil {
 						if agg, ok := state.aggLocals[local.ID]; ok && isUnionAggregate(agg.Type) {
 							return agg
 						}
@@ -2145,7 +2145,7 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 		if sc, ok := state.scalarLocals[p.LocalID]; ok {
 			return nil, sc.AllocaName, nil
 		}
-		return nil, llvmLocalName(localNameByID(state.fn, p.LocalID)), nil
+		return nil, llvmLocalName(becommon.LocalNameByID(state.fn, p.LocalID)), nil
 	case *mir.FieldPlace:
 		baseLines, basePtr, err := lowerPlaceAddr(state, p.Base)
 		if err != nil {
@@ -2276,7 +2276,7 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	}
 	if call.IsConstructor {
 		if targetName != "" {
-			if local := findLocalByName(state.fn, targetName); local != nil {
+			if local := becommon.FindLocalByName(state.fn, targetName); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
 					return lowerConstructorCall(state, llvmLocalName(agg.PtrName), call, callee)
 				}
@@ -2335,7 +2335,7 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 
 	// Target is an aggregate local → call returns struct by value, store to ptr.
 	if targetName != "" {
-		if local := findLocalByName(state.fn, targetName); local != nil {
+		if local := becommon.FindLocalByName(state.fn, targetName); local != nil {
 			if agg, ok := state.aggLocals[local.ID]; ok {
 				return lowerAggregateCall(state, agg, callee, argsStr)
 			}
@@ -2497,11 +2497,11 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 func isUnionAggregate(typ typeinfo.Type) bool {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
-		return namedIsUnion(t)
+		return backend.IsNamedUnion(t)
 	case *typeinfo.UnionType:
 		return true
 	case *typeinfo.OptionalType:
-		return !optionalUsesNiche(t.Inner)
+		return !backend.OptionalUsesNiche(t.Inner)
 	default:
 		return false
 	}
@@ -2510,7 +2510,7 @@ func isUnionAggregate(typ typeinfo.Type) bool {
 func isInterfaceAggregate(typ typeinfo.Type) bool {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
-		return namedIsInterface(t)
+		return backend.IsNamedInterface(t)
 	case *typeinfo.InterfaceType:
 		return true
 	default:
@@ -2529,7 +2529,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 			return lowerUnionAssign(state, agg, v.Left)
 		}
 	}
-	if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); ok {
+	if _, ok := backend.UnwrapNamed(agg.Type).(*typeinfo.OptionalType); ok {
 		if _, isNone := value.(*mir.NoneValue); isNone {
 			return fmt.Sprintf("store i32 0, ptr %s", llvmLocalName(agg.PtrName)), nil
 		}
@@ -2559,7 +2559,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 			return "", err
 		}
 		memberIndex := 1
-		if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
+		if _, ok := backend.UnwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
 			memberIndex, err = llvmUnionMemberIndex(info.Members, value.Type())
 			if err != nil {
 				return "", err
@@ -2580,7 +2580,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 		return "", err
 	}
 	memberIndex := 1
-	if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
+	if _, ok := backend.UnwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
 		memberIndex, err = llvmUnionMemberIndex(info.Members, value.Type())
 		if err != nil {
 			return "", err
@@ -2611,7 +2611,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 // enough for functional correctness).
 func emitStringConstant(state *moduleState, s string) string {
 	state.nextStrConst++
-	sym := fmt.Sprintf("__str%d_%s", state.nextStrConst, sanitizeIdent(state.modulePrefix))
+	sym := fmt.Sprintf("__str%d_%s", state.nextStrConst, becommon.SanitizeIdent(state.modulePrefix))
 	escaped := llvmStringLiteral(s)
 	// +1 for the null terminator we always add.
 	length := len(s) + 1
@@ -2704,7 +2704,7 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 			elemSize = innerSz
 			elemAlign = innerAl
 		}
-		stride := alignUpInt64(elemSize, elemAlign)
+		stride := backend.AlignUpInt64(elemSize, elemAlign)
 		irType, err := llvmBaseType(arrType.Inner)
 		if err != nil {
 			return "", err
@@ -2853,7 +2853,7 @@ func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concrete
 		}
 	case *mir.NameValue:
 		if len(v.Path) == 1 {
-			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
+			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
 					return nil, llvmLocalName(agg.PtrName), nil
 				}
@@ -2863,7 +2863,7 @@ func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concrete
 			}
 		}
 		if v.LinkName != "" {
-			return nil, "@" + sanitizeIdent(v.LinkName), nil
+			return nil, "@" + becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return nil, "@" + llvmSymbol(state, v.Path), nil
 	}
@@ -2989,7 +2989,7 @@ func lowerInterfaceCall(state *moduleState, targetName string, targetType typein
 		lines = append(lines, callText)
 		return strings.Join(lines, "\n"), nil
 	}
-	if local := findLocalByName(state.fn, targetName); local != nil {
+	if local := becommon.FindLocalByName(state.fn, targetName); local != nil {
 		if agg, ok := state.aggLocals[local.ID]; ok {
 			tmp := freshTemp(state, "iface_ret")
 			lines = append(lines,
@@ -3014,14 +3014,14 @@ func lowerInterfaceSlotPointer(state *moduleState, value mir.Value) (string, err
 		}
 	case *mir.NameValue:
 		if len(v.Path) == 1 {
-			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
+			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
 					return llvmLocalName(agg.PtrName), nil
 				}
 			}
 		}
 		if v.LinkName != "" {
-			return "@" + sanitizeIdent(v.LinkName), nil
+			return "@" + becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
 	}
@@ -3047,7 +3047,7 @@ func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *
 	if err != nil {
 		return "", 0, err
 	}
-	sym := sanitizeIdent("vtable__" + llvmTypeName(state, targetNamed) + "__" + sanitizeType(value.ConcreteType))
+	sym := becommon.SanitizeIdent("vtable__" + llvmTypeName(state, targetNamed) + "__" + becommon.SanitizeType(value.ConcreteType))
 	typeInfoSym, err := emitLLVMRuntimeTypeInfo(state, sym+"__typeinfo", value.ConcreteType)
 	if err != nil {
 		return "", 0, err
@@ -3099,7 +3099,7 @@ func llvmRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int
 
 func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
 	key := interfaceWrapperKey{iface: typeinfo.DefaultPrinter.Type(iface), concrete: typeinfo.DefaultPrinter.Type(concrete), method: method.Name}
-	name := sanitizeIdent("ifacewrap__" + llvmTypeName(state, iface) + "__" + sanitizeType(concrete) + "__" + method.Name)
+	name := becommon.SanitizeIdent("ifacewrap__" + llvmTypeName(state, iface) + "__" + becommon.SanitizeType(concrete) + "__" + method.Name)
 	if _, ok := state.interfaceWrappers[key]; ok {
 		return name, nil
 	}
@@ -3267,7 +3267,7 @@ func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
 // String literals are null-terminated *i8 constants; we pass the pointer directly.
 func lowerPanicTerm(state *moduleState, t *mir.PanicTerm) (string, error) {
 	payload, err := backend.ClassifyPanicPayload(t, func(typ typeinfo.Type) bool {
-		_, ok := unwrapNamed(typ).(*typeinfo.StringType)
+		_, ok := backend.UnwrapNamed(typ).(*typeinfo.StringType)
 		return ok
 	})
 	if err != nil {
@@ -3431,10 +3431,10 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				fmt.Sprintf("%s = load %s, ptr %s", tmp, sc.IRType, sc.AllocaName))
 			return tmp, nil
 		}
-		return llvmLocalName(localNameByID(state.fn, v.LocalID)), nil
+		return llvmLocalName(becommon.LocalNameByID(state.fn, v.LocalID)), nil
 	case *mir.NameValue:
 		if len(v.Path) == 1 {
-			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
+			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
 					return llvmLocalName(agg.PtrName), nil
 				}
@@ -3449,7 +3449,7 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		}
 		if _, ok := v.Type().(*typeinfo.FuncType); ok {
 			if v.LinkName != "" {
-				return "@" + sanitizeIdent(v.LinkName), nil
+				return "@" + becommon.SanitizeIdent(v.LinkName), nil
 			}
 			return "@" + llvmSymbol(state, v.Path), nil
 		}
@@ -3459,14 +3459,14 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				tmp := freshTemp(state, "ld")
 				sym := "@" + llvmSymbol(state, v.Path)
 				if v.LinkName != "" {
-					sym = "@" + sanitizeIdent(v.LinkName)
+					sym = "@" + becommon.SanitizeIdent(v.LinkName)
 				}
 				state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, sym))
 				return tmp, nil
 			}
 		}
 		if v.LinkName != "" {
-			return "@" + sanitizeIdent(v.LinkName), nil
+			return "@" + becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
 	case *mir.NumberValue:
@@ -3530,7 +3530,7 @@ func llvmFieldBaseType(state *moduleState, value mir.Value) typeinfo.Type {
 		return typ
 	}
 	if local, ok := value.(*mir.LocalValue); ok {
-		return localTypeByID(state.fn, local.LocalID)
+		return becommon.LocalTypeByID(state.fn, local.LocalID)
 	}
 	return nil
 }
@@ -3540,7 +3540,7 @@ func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 		return "", fmt.Errorf("nil type test")
 	}
 	if _, isNone := v.Left.(*mir.NoneValue); isNone {
-		if _, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
+		if _, ok := backend.UnwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
 			return "0", nil
 		}
 	}
@@ -3552,7 +3552,7 @@ func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 		return "", err
 	}
 	memberIndex := 0
-	if opt, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
+	if opt, ok := backend.UnwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
 		if !typeinfo.Equal(opt.Inner, v.Target) {
 			return "", fmt.Errorf("optional type test target %s does not match %s", typeinfo.FormatType(typeStringer{v.Target}), typeinfo.FormatType(typeStringer{opt.Inner}))
 		}
@@ -3588,7 +3588,7 @@ func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
 		return "", fmt.Errorf("addr_of on scalar SSA local not supported by llvm lowerer yet")
 	case *mir.NameValue:
 		if len(src.Path) == 1 {
-			if local := findLocalByName(state.fn, src.Path[0]); local != nil {
+			if local := becommon.FindLocalByName(state.fn, src.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
 					return llvmLocalName(agg.PtrName), nil
 				}
@@ -3599,7 +3599,7 @@ func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
 			}
 		}
 		if src.LinkName != "" {
-			return "@" + sanitizeIdent(src.LinkName), nil
+			return "@" + becommon.SanitizeIdent(src.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, src.Path), nil
 	default:
@@ -3674,7 +3674,7 @@ func lowerBinary(state *moduleState, v *mir.BinaryValue) (string, error) {
 // It emits: load tag → icmp ne 0 → load payload → select → returns the result.
 // The left operand must be an optional aggregate; the inner type must be scalar.
 func lowerCoalesce(state *moduleState, v *mir.BinaryValue) (string, error) {
-	opt, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType)
+	opt, ok := backend.UnwrapNamed(v.Left.Type()).(*typeinfo.OptionalType)
 	if !ok {
 		return "", fmt.Errorf("?? operator requires optional left operand, got %s", typeinfo.FormatType(typeStringer{v.Left.Type()}))
 	}
@@ -3740,7 +3740,7 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if v == nil || v.Left == nil {
 		return "", fmt.Errorf("invalid cast")
 	}
-	if _, ok := unwrapNamed(v.Type()).(*typeinfo.StringType); ok {
+	if _, ok := backend.UnwrapNamed(v.Type()).(*typeinfo.StringType); ok {
 		return lowerStringCast(state, v.Left)
 	}
 	if isUnionAggregate(v.Left.Type()) && !isAggregateType(state, v.Type()) {
@@ -3763,8 +3763,8 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	src := unwrapNamed(v.Left.Type())
-	dst := unwrapNamed(v.Type())
+	src := backend.UnwrapNamed(v.Left.Type())
+	dst := backend.UnwrapNamed(v.Type())
 
 	srcBuiltin, srcIsBuiltin := src.(*typeinfo.BuiltinType)
 	dstBuiltin, dstIsBuiltin := dst.(*typeinfo.BuiltinType)
@@ -3862,12 +3862,12 @@ func llvmUnionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLa
 				return nil, err
 			}
 		}
-		payloadOffset := alignUpInt64(4, payloadAlign)
+		payloadOffset := backend.AlignUpInt64(4, payloadAlign)
 		align := payloadAlign
 		if align < 4 {
 			align = 4
 		}
-		size := alignUpInt64(payloadOffset+payloadSize, align)
+		size := backend.AlignUpInt64(payloadOffset+payloadSize, align)
 		return &backendUnionLayout{
 			Size:          size,
 			Align:         align,
@@ -3889,12 +3889,12 @@ func llvmUnionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLa
 				payloadAlign = align
 			}
 		}
-		payloadOffset := alignUpInt64(4, payloadAlign)
+		payloadOffset := backend.AlignUpInt64(4, payloadAlign)
 		align := payloadAlign
 		if align < 4 {
 			align = 4
 		}
-		size := alignUpInt64(payloadOffset+payloadSize, align)
+		size := backend.AlignUpInt64(payloadOffset+payloadSize, align)
 		return &backendUnionLayout{Size: size, Align: align, PayloadOffset: payloadOffset, Members: t.Members}, nil
 	default:
 		return nil, fmt.Errorf("type %s has no union layout", typeinfo.FormatType(typeStringer{typ}))
@@ -3947,7 +3947,7 @@ func lowerStringCast(state *moduleState, value mir.Value) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	src := unwrapNamed(value.Type())
+	src := backend.UnwrapNamed(value.Type())
 	srcBuiltin, ok := src.(*typeinfo.BuiltinType)
 	if !ok {
 		return "", fmt.Errorf("unsupported string cast source %s", src)
@@ -3994,7 +3994,7 @@ func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return sanitizeIdent(v.LinkName), nil
+			return becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return llvmSymbol(state, v.Path), nil
 	default:
@@ -4053,7 +4053,7 @@ func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 		state.scalarLocals[local.ID] = &scalarAllocaLocal{
 			ID:         local.ID,
 			Name:       local.Name,
-			AllocaName: "%" + sanitizeIdent(local.Name) + "_alloca",
+			AllocaName: "%" + becommon.SanitizeIdent(local.Name) + "_alloca",
 			IRType:     irType,
 		}
 	}
@@ -4213,7 +4213,7 @@ func lowerGlobalValue(state *moduleState, typ typeinfo.Type, value mir.Value) (s
 		return "0", nil
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return "@" + sanitizeIdent(v.LinkName), nil
+			return "@" + becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
 	default:
@@ -4247,12 +4247,8 @@ func isAggregateType(state *moduleState, typ typeinfo.Type) bool {
 	return err == nil
 }
 
-func alignUpInt64(size, align int64) int64 {
-	return backend.AlignUpInt64(size, align)
-}
-
 func aggregateSizeAlignOfPrimitive(typ typeinfo.Type) (int64, int64, error) {
-	switch t := unwrapNamed(typ).(type) {
+	switch t := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch t.Name {
 		case "bool", "u8", "i8":
@@ -4344,7 +4340,7 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 		}
 	}
 	if opt, ok := typ.(*typeinfo.OptionalType); ok {
-		if !optionalUsesNiche(opt.Inner) {
+		if !backend.OptionalUsesNiche(opt.Inner) {
 			info, err := llvmUnionLayoutInfo(state, typ)
 			if err != nil {
 				return "", err
@@ -4369,7 +4365,7 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
 	switch backend.ClassifyABIType(typ, func(named *typeinfo.NamedType) bool {
 		info, err := lookupNamedLayout(state, named)
-		return err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named) || namedIsInterface(named))
+		return err == nil && info != nil && info.Known && (info.Struct != nil || backend.IsNamedUnion(named) || backend.IsNamedInterface(named))
 	}) {
 	case backend.ABITypeNamedLayout:
 		named := typ.(*typeinfo.NamedType)
@@ -4386,14 +4382,6 @@ func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
 		return "{ ptr, i64 }", nil
 	}
 	return llvmBaseType(typ)
-}
-
-func namedIsUnion(named *typeinfo.NamedType) bool {
-	return backend.IsNamedUnion(named)
-}
-
-func namedIsInterface(named *typeinfo.NamedType) bool {
-	return backend.IsNamedInterface(named)
 }
 
 // ---------------------------------------------------------------------------
@@ -4496,7 +4484,7 @@ func llvmCompareOp(op string, typ typeinfo.Type) (string, string, error) {
 }
 
 func llvmIsSigned(typ typeinfo.Type) bool {
-	b, ok := unwrapNamed(typ).(*typeinfo.BuiltinType)
+	b, ok := backend.UnwrapNamed(typ).(*typeinfo.BuiltinType)
 	if !ok {
 		return false
 	}
@@ -4594,7 +4582,7 @@ func llvmTypeBits(name string) int {
 // ---------------------------------------------------------------------------
 
 func llvmNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
-	typ = unwrapNamed(typ)
+	typ = backend.UnwrapNamed(typ)
 	if llvmIsPointerLike(typ) {
 		return lit, nil
 	}
@@ -4679,7 +4667,7 @@ func llvmSymbol(state *moduleState, path []string) string {
 		return "_"
 	}
 	if len(path) == 1 {
-		name := sanitizeIdent(path[0])
+		name := becommon.SanitizeIdent(path[0])
 		if state != nil {
 			// The entry point: main() in the main module is always @main
 			// so the C runtime can call it directly without a wrapper.
@@ -4699,12 +4687,12 @@ func llvmSymbol(state *moduleState, path []string) string {
 	}
 	if len(path) == 2 && state != nil {
 		if localMethod, ok := symutil.ResolveStaticOwnerLocalName(path, state.functions, state.globals); ok {
-			return state.modulePrefix + "__" + sanitizeIdent(localMethod)
+			return state.modulePrefix + "__" + becommon.SanitizeIdent(localMethod)
 		}
 	}
 	clean := make([]string, 0, len(path))
 	for _, part := range path {
-		clean = append(clean, sanitizeIdent(part))
+		clean = append(clean, becommon.SanitizeIdent(part))
 	}
 	return strings.Join(clean, "__")
 }
@@ -4717,11 +4705,11 @@ func llvmTypeName(state *moduleState, named *typeinfo.NamedType) string {
 	if moduleKey == "" && state != nil && state.mod != nil {
 		moduleKey = state.mod.Key
 	}
-	prefix := sanitizePath(moduleKey)
+	prefix := becommon.SanitizePath(moduleKey)
 	if prefix == "" {
 		prefix = state.modulePrefix
 	}
-	return prefix + "__" + sanitizeIdent(named.Name)
+	return prefix + "__" + becommon.SanitizeIdent(named.Name)
 }
 
 func llvmBlockLabel(fn *mir.Function, id int) string {
@@ -4735,7 +4723,7 @@ func llvmLocalName(name string) string {
 	if name == "" {
 		return "%_tmp"
 	}
-	return "%" + sanitizeIdent(name)
+	return "%" + becommon.SanitizeIdent(name)
 }
 
 func freshTemp(state *moduleState, prefix string) string {
@@ -4789,26 +4777,6 @@ func irTypeSize(irType string) int64 {
 }
 
 // ---------------------------------------------------------------------------
-// Local / function helpers
-// ---------------------------------------------------------------------------
-
-func findLocalByName(fn *mir.Function, name string) *mir.Local {
-	return becommon.FindLocalByName(fn, name)
-}
-
-func findLocalByID(fn *mir.Function, id int) *mir.Local {
-	return becommon.FindLocalByID(fn, id)
-}
-
-func localNameByID(fn *mir.Function, id int) string {
-	return becommon.LocalNameByID(fn, id)
-}
-
-func localTypeByID(fn *mir.Function, id int) typeinfo.Type {
-	return becommon.LocalTypeByID(fn, id)
-}
-
-// ---------------------------------------------------------------------------
 // String helper
 // ---------------------------------------------------------------------------
 
@@ -4825,22 +4793,6 @@ func llvmStringLiteral(s string) string {
 	}
 	b.WriteString("\\00\"")
 	return b.String()
-}
-
-// ---------------------------------------------------------------------------
-// Sanitizers
-// ---------------------------------------------------------------------------
-
-func sanitizePath(path string) string {
-	return becommon.SanitizePath(path)
-}
-
-func sanitizeType(typ typeinfo.Type) string {
-	return becommon.SanitizeType(typ)
-}
-
-func sanitizeIdent(s string) string {
-	return becommon.SanitizeIdent(s)
 }
 
 type typeStringer struct {

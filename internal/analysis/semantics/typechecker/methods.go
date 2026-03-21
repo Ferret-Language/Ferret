@@ -128,10 +128,6 @@ func (c *checker) instantiateOwnerMethodType(ownerNamed *typeinfo.NamedType, sym
 	return out
 }
 
-func (c *checker) interfaceMethodReceiverType(receiverType typeinfo.Type, receiver typeinfo.ReceiverKind) typeinfo.Type {
-	return typeinfo.ApplyReceiverShape(receiverType, receiver)
-}
-
 func (c *checker) methodCandidateKeys(receiverType typeinfo.Type, baseName string, addressable bool, mutable bool) []typeinfo.ReceiverKey {
 	keys := make([]typeinfo.ReceiverKey, 0, 4)
 	seen := make(map[typeinfo.ReceiverKey]struct{})

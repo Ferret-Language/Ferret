@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
@@ -218,7 +219,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			}
 			fnType := &typeinfo.FuncType{Params: params, Result: result}
 			name := method.Name.Text()
-			receiverKind := typeinfo.ReceiverKindFromSyntax(method.Receiver)
+			receiverKind := semmeta.ReceiverKindFromSyntax(method.Receiver)
 			methods[name] = fnType
 			methodReceivers[name] = receiverKind
 			methodStatic[name] = method.Static

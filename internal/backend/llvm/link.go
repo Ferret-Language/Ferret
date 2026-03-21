@@ -75,12 +75,6 @@ func CompileIR(llvmIR, outputPath string, opts CompileOptions) error {
 	return nil
 }
 
-// SanitizePath converts an import path into the module prefix used for LLVM
-// symbol names, e.g. "math/vec2" → "math__vec2".
-func SanitizePath(path string) string {
-	return sanitizePath(path)
-}
-
 // FunctionReturnLLVMType returns the LLVM IR type string for the function's
 // return type, or "void" for void/unknown.
 func FunctionReturnLLVMType(fn *mir.Function) string {
@@ -106,7 +100,7 @@ func FunctionReturnIsScalar(fn *mir.Function) bool {
 // llvmBaseType returns the LLVM IR base type string for a Ferret type.
 // Returns an error for aggregate (named struct) types.
 func llvmBaseType(typ typeinfo.Type) (string, error) {
-	switch base := unwrapNamed(typ).(type) {
+	switch base := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch base.Name {
 		case "bool", "u8", "i8":
@@ -127,17 +121,9 @@ func llvmBaseType(typ typeinfo.Type) (string, error) {
 	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return "ptr", nil
 	case *typeinfo.OptionalType:
-		if optionalUsesNiche(base.Inner) {
+		if backend.OptionalUsesNiche(base.Inner) {
 			return llvmBaseType(base.Inner)
 		}
 	}
 	return "", fmt.Errorf("unsupported llvm base type %s", typ)
-}
-
-func optionalUsesNiche(typ typeinfo.Type) bool {
-	return backend.OptionalUsesNiche(typ)
-}
-
-func unwrapNamed(typ typeinfo.Type) typeinfo.Type {
-	return backend.UnwrapNamed(typ)
 }

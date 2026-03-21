@@ -899,7 +899,7 @@ func (c *checker) inferNumberLiteralType(lit *ast.NumberLit, expected typeinfo.T
 }
 
 func (c *checker) numericLiteralFits(target typeinfo.Type, raw string) bool {
-	family, bits, ok := builtinNumericInfo(target)
+	family, bits, ok := typeinfo.NumericInfo(target)
 	if !ok {
 		return false
 	}
@@ -913,10 +913,6 @@ func (c *checker) numericLiteralFits(target typeinfo.Type, raw string) bool {
 		return false
 	}
 	return numeric.FitsIntegerLiteral(raw, bits, family == typeinfo.NumericSigned)
-}
-
-func builtinNumericInfo(t typeinfo.Type) (typeinfo.NumericFamily, int, bool) {
-	return typeinfo.NumericInfo(t)
 }
 
 func (c *checker) typeOfPostfix(scope *refineScope, expr *ast.PostfixExpr) typeinfo.Type {
@@ -1091,7 +1087,7 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 			c.reportMethodNotFound(selector.Location, receiverType, selector.Name.Text())
 			return typeinfo.InvalidType{}, true
 		}
-		if methodReceiver := c.interfaceMethodReceiverType(receiverType, iface.MethodReceivers[selector.Name.Text()]); methodReceiver != nil {
+		if methodReceiver := typeinfo.ApplyReceiverShape(receiverType, iface.MethodReceivers[selector.Name.Text()]); methodReceiver != nil {
 			c.info.BindMethodReceiver(call, methodReceiver)
 			c.info.BindMethodReceiver(selector, methodReceiver)
 		}

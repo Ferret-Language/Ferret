@@ -90,7 +90,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		modules:           unit.Modules,
 		functions:         make(map[string]struct{}),
 		globals:           make(map[string]struct{}),
-		modulePrefix:      sanitizePath(unit.Module.ImportPath),
+		modulePrefix:      becommon.SanitizePath(unit.Module.ImportPath),
 		deferredB:         &strings.Builder{},
 		interfaceVTables:  make(map[interfaceVTableKey]string),
 		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
@@ -319,7 +319,7 @@ func lowerGlobal(state *moduleState, g *mir.Global) (string, error) {
 func isInterfaceAggregate(typ typeinfo.Type) bool {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
-		return namedIsInterface(t)
+		return backend.IsNamedInterface(t)
 	case *typeinfo.InterfaceType:
 		return true
 	default:
@@ -348,11 +348,11 @@ func lowerGlobalInterface(state *moduleState, name string, target typeinfo.Type,
 }
 
 func lowerInterfaceGlobalData(state *moduleState, ownerName string, init *mir.InterfaceValue) (string, string, error) {
-	sym := sanitizeIdent(ownerName + "__iface_data")
+	sym := becommon.SanitizeIdent(ownerName + "__iface_data")
 	switch v := init.Value.(type) {
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return sanitizeIdent(v.LinkName), "", nil
+			return becommon.SanitizeIdent(v.LinkName), "", nil
 		}
 		return qbeSymbol(state, v.Path), "", nil
 	case *mir.NumberValue:
@@ -435,7 +435,7 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *mir.Function) erro
 	if name == "" {
 		name = qbeSymbol(state, []string{fn.Name})
 	} else {
-		name = sanitizeIdent(name)
+		name = becommon.SanitizeIdent(name)
 	}
 	// Export the entry point so the C runtime linker can find $main.
 	if name == "main" {
@@ -508,22 +508,22 @@ func lowerInstr(state *moduleState, instr mir.Instr) (string, error) {
 	case *mir.BindInstr:
 		return lowerAssignLike(state, i.Name, i.Type, i.Value)
 	case *mir.AssignInstr:
-		if local := findLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
+		if local := becommon.FindLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
 			if field, ok := i.Value.(*mir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
 				state.tempValues[i.TargetID] = field
 				return "", nil
 			}
 		}
-		name := localNameByID(state.fn, i.TargetID)
-		return lowerAssignLike(state, name, localTypeByID(state.fn, i.TargetID), i.Value)
+		name := becommon.LocalNameByID(state.fn, i.TargetID)
+		return lowerAssignLike(state, name, becommon.LocalTypeByID(state.fn, i.TargetID), i.Value)
 	case *mir.ComputeInstr:
-		if local := findLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
+		if local := becommon.FindLocalByID(state.fn, i.TargetID); local != nil && local.IsTemp {
 			if field, ok := i.Value.(*mir.FieldValue); ok && isInterfaceAggregate(field.Base.Type()) {
 				state.tempValues[i.TargetID] = field
 				return "", nil
 			}
 		}
-		name := localNameByID(state.fn, i.TargetID)
+		name := becommon.LocalNameByID(state.fn, i.TargetID)
 		return lowerAssignLike(state, name, i.Type, i.Value)
 	case *mir.StoreFieldInstr:
 		return lowerStoreField(state, i)
@@ -547,7 +547,7 @@ func lowerInstr(state *moduleState, instr mir.Instr) (string, error) {
 }
 
 func lowerAssignLike(state *moduleState, name string, typ typeinfo.Type, value mir.Value) (string, error) {
-	if local := findLocalByName(state.fn, name); local != nil {
+	if local := becommon.FindLocalByName(state.fn, name); local != nil {
 		if agg, ok := state.aggLocals[local.ID]; ok {
 			return lowerAggregateAssign(state, agg, value)
 		}
@@ -726,7 +726,7 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	}
 	if call.IsConstructor {
 		if targetName != "" {
-			if local := findLocalByName(state.fn, targetName); local != nil {
+			if local := becommon.FindLocalByName(state.fn, targetName); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
 					return lowerConstructorCall(state, qbeLocalName(agg.PtrName), call, callee)
 				}
@@ -761,7 +761,7 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if targetName == "" {
 		return callText, nil
 	}
-	if qbeIsVoidType(targetType) {
+	if backend.IsVoidType(targetType) {
 		// void return: no assignment
 		return callText, nil
 	}
@@ -777,7 +777,7 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 }
 
 func qbePointerInner(t typeinfo.Type) (typeinfo.Type, bool) {
-	switch pt := unwrapNamed(t).(type) {
+	switch pt := backend.UnwrapNamed(t).(type) {
 	case *typeinfo.PointerType:
 		return pt.Inner, true
 	case *typeinfo.RefType:
@@ -805,7 +805,7 @@ func lowerAggregateValuePointer(state *moduleState, value mir.Value) ([]string, 
 		}
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return nil, "$" + sanitizeIdent(v.LinkName), nil
+			return nil, "$" + becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return nil, "$" + qbeSymbol(state, v.Path), nil
 	}
@@ -884,7 +884,7 @@ func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, c
 // String literals are null-terminated *i8 constants; we pass the pointer directly.
 func lowerPanicTerm(state *moduleState, t *mir.PanicTerm) (string, error) {
 	payload, err := backend.ClassifyPanicPayload(t, func(typ typeinfo.Type) bool {
-		_, ok := unwrapNamed(typ).(*typeinfo.StringType)
+		_, ok := backend.UnwrapNamed(typ).(*typeinfo.StringType)
 		return ok
 	})
 	if err != nil {
@@ -1077,7 +1077,7 @@ func qbeResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldIndex
 
 // lowerIndexLoad lowers arr[index] as an rvalue via QBE load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
-	if _, ok := unwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
+	if _, ok := backend.UnwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
 		return lowerSliceIndexLoad(state, targetName, targetType, idx)
 	}
 	lines, addr, err := lowerQBEIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())
@@ -1217,7 +1217,7 @@ func unionAggregateLocalForPlace(state *moduleState, place mir.Place) *aggregate
 				}
 			case *mir.NameValue:
 				if len(src.Path) == 1 {
-					if local := findLocalByName(state.fn, src.Path[0]); local != nil {
+					if local := becommon.FindLocalByName(state.fn, src.Path[0]); local != nil {
 						if agg, ok := state.aggLocals[local.ID]; ok && isUnionAggregate(agg.Type) {
 							return agg
 						}
@@ -1241,7 +1241,7 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 		if sc, ok := state.scalarLocals[p.LocalID]; ok {
 			return nil, qbeLocalName(sc.PtrName), nil
 		}
-		return nil, qbeLocalName(localNameByID(state.fn, p.LocalID)), nil
+		return nil, qbeLocalName(becommon.LocalNameByID(state.fn, p.LocalID)), nil
 	case *mir.FieldPlace:
 		baseLines, basePtr, err := lowerQBEPlaceAddr(state, p.Base)
 		if err != nil {
@@ -1325,7 +1325,7 @@ func qbePlaceType(state *moduleState, place mir.Place) typeinfo.Type {
 
 // qbeScalarSizeAlign returns the size and alignment for scalar/pointer types.
 func qbeScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
-	switch t := unwrapNamed(typ).(type) {
+	switch t := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch t.Name {
 		case "bool", "u8", "i8":
@@ -1543,7 +1543,7 @@ func lowerInterfaceCall(state *moduleState, targetName string, targetType typein
 		lines = append(lines, callText)
 		return strings.Join(lines, "\n\t"), nil
 	}
-	if local := findLocalByName(state.fn, targetName); local != nil {
+	if local := becommon.FindLocalByName(state.fn, targetName); local != nil {
 		if agg, ok := state.aggLocals[local.ID]; ok {
 			tmp := freshTemp(state, "iface_ret")
 			lines = append(lines,
@@ -1568,7 +1568,7 @@ func lowerInterfaceSlotPointer(state *moduleState, value mir.Value) (string, err
 		}
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return "$" + sanitizeIdent(v.LinkName), nil
+			return "$" + becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return "$" + qbeSymbol(state, v.Path), nil
 	}
@@ -1591,7 +1591,7 @@ func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *m
 	if err != nil {
 		return "", err
 	}
-	sym := sanitizeIdent("vtable__" + qbeTypeName(state, targetNamed) + "__" + sanitizeType(value.ConcreteType))
+	sym := becommon.SanitizeIdent("vtable__" + qbeTypeName(state, targetNamed) + "__" + becommon.SanitizeType(value.ConcreteType))
 	typeInfoSym, err := emitQBERuntimeTypeInfo(state, sym+"__typeinfo", value.ConcreteType)
 	if err != nil {
 		return "", err
@@ -1637,7 +1637,7 @@ func qbeRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int6
 
 func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
 	key := interfaceWrapperKey{iface: typeinfo.DefaultPrinter.Type(iface), concrete: typeinfo.DefaultPrinter.Type(concrete), method: method.Name}
-	name := sanitizeIdent("ifacewrap__" + qbeTypeName(state, iface) + "__" + sanitizeType(concrete) + "__" + method.Name)
+	name := becommon.SanitizeIdent("ifacewrap__" + qbeTypeName(state, iface) + "__" + becommon.SanitizeType(concrete) + "__" + method.Name)
 	if _, ok := state.interfaceWrappers[key]; ok {
 		return name, nil
 	}
@@ -1760,25 +1760,17 @@ func lookupInterfaceMethodDecl(state *moduleState, typ typeinfo.Type, name strin
 	return nil, -1, fmt.Errorf("interface method %s not found", name)
 }
 
-func sanitizeType(typ typeinfo.Type) string {
-	return becommon.SanitizeType(typ)
-}
-
 func isUnionAggregate(typ typeinfo.Type) bool {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
-		return namedIsUnion(t)
+		return backend.IsNamedUnion(t)
 	case *typeinfo.UnionType:
 		return true
 	case *typeinfo.OptionalType:
-		return !optionalUsesNiche(t.Inner)
+		return !backend.OptionalUsesNiche(t.Inner)
 	default:
 		return false
 	}
-}
-
-func optionalUsesNiche(typ typeinfo.Type) bool {
-	return backend.OptionalUsesNiche(typ)
 }
 
 func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) (string, error) {
@@ -1792,7 +1784,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 			return lowerUnionAssign(state, agg, v.Left)
 		}
 	}
-	if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); ok {
+	if _, ok := backend.UnwrapNamed(agg.Type).(*typeinfo.OptionalType); ok {
 		if _, isNone := value.(*mir.NoneValue); isNone {
 			return fmt.Sprintf("storew 0, %s", qbeLocalName(agg.PtrName)), nil
 		}
@@ -1822,7 +1814,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 			return "", err
 		}
 		memberIndex := 1
-		if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
+		if _, ok := backend.UnwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
 			memberIndex, err = unionMemberIndex(info.Members, value.Type())
 			if err != nil {
 				return "", err
@@ -1851,7 +1843,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 		return "", err
 	}
 	memberIndex := 1
-	if _, ok := unwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
+	if _, ok := backend.UnwrapNamed(agg.Type).(*typeinfo.OptionalType); !ok {
 		memberIndex, err = unionMemberIndex(info.Members, value.Type())
 		if err != nil {
 			return "", err
@@ -1882,7 +1874,7 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 func emitQBEStringConstant(state *moduleState, s string) string {
 	idx := state.nextStrConst
 	state.nextStrConst++
-	sym := fmt.Sprintf("__ferret_str%d_%s", idx, sanitizeIdent(state.modulePrefix))
+	sym := fmt.Sprintf("__ferret_str%d_%s", idx, becommon.SanitizeIdent(state.modulePrefix))
 	// QBE data: bytes of the string followed by a NUL terminator.
 	fmt.Fprintf(state.deferredB, "data $%s = { b %q, b 0 }\n", sym, s)
 	return sym
@@ -2139,7 +2131,7 @@ func qbeDataItem(state *moduleState, typ typeinfo.Type, value mir.Value) (string
 		return "b", "0", nil
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return "l", "$" + sanitizeIdent(v.LinkName), nil
+			return "l", "$" + becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return "l", "$" + qbeSymbol(state, v.Path), nil
 	default:
@@ -2406,10 +2398,10 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, qbeLocalName(sc.PtrName)))
 			return tmp, nil
 		}
-		return qbeLocalName(localNameByID(state.fn, v.LocalID)), nil
+		return qbeLocalName(becommon.LocalNameByID(state.fn, v.LocalID)), nil
 	case *mir.NameValue:
 		if len(v.Path) == 1 {
-			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
+			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
 				if value, ok := state.tempValues[local.ID]; ok && value != nil {
 					return lowerValue(state, value)
 				}
@@ -2430,7 +2422,7 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		}
 		if _, ok := v.Type().(*typeinfo.FuncType); ok {
 			if v.LinkName != "" {
-				return "$" + sanitizeIdent(v.LinkName), nil
+				return "$" + becommon.SanitizeIdent(v.LinkName), nil
 			}
 			return "$" + qbeSymbol(state, v.Path), nil
 		}
@@ -2440,14 +2432,14 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				tmp := freshTemp(state, "ld")
 				sym := "$" + qbeSymbol(state, v.Path)
 				if v.LinkName != "" {
-					sym = "$" + sanitizeIdent(v.LinkName)
+					sym = "$" + becommon.SanitizeIdent(v.LinkName)
 				}
 				state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, sym))
 				return tmp, nil
 			}
 		}
 		if v.LinkName != "" {
-			return "$" + sanitizeIdent(v.LinkName), nil
+			return "$" + becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return "$" + qbeSymbol(state, v.Path), nil
 	case *mir.NumberValue:
@@ -2540,7 +2532,7 @@ func qbeFieldBaseType(state *moduleState, value mir.Value) typeinfo.Type {
 		return typ
 	}
 	if local, ok := value.(*mir.LocalValue); ok {
-		return localTypeByID(state.fn, local.LocalID)
+		return becommon.LocalTypeByID(state.fn, local.LocalID)
 	}
 	return nil
 }
@@ -2550,7 +2542,7 @@ func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 		return "", fmt.Errorf("nil type test")
 	}
 	if _, isNone := v.Left.(*mir.NoneValue); isNone {
-		if _, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
+		if _, ok := backend.UnwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
 			return "0", nil
 		}
 	}
@@ -2562,7 +2554,7 @@ func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 		return "", err
 	}
 	memberIndex := 0
-	if opt, ok := unwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
+	if opt, ok := backend.UnwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
 		if !typeinfo.Equal(opt.Inner, v.Target) {
 			return "", fmt.Errorf("optional type test target %s does not match %s", typeinfo.FormatType(typeStringer{v.Target}), typeinfo.FormatType(typeStringer{opt.Inner}))
 		}
@@ -2596,7 +2588,7 @@ func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
 		return "", fmt.Errorf("addr_of on scalar local is not supported by qbe lowerer yet")
 	case *mir.NameValue:
 		if len(src.Path) == 1 {
-			if local := findLocalByName(state.fn, src.Path[0]); local != nil {
+			if local := becommon.FindLocalByName(state.fn, src.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
 					return qbeLocalName(agg.PtrName), nil
 				}
@@ -2607,7 +2599,7 @@ func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
 			}
 		}
 		if src.LinkName != "" {
-			return "$" + sanitizeIdent(src.LinkName), nil
+			return "$" + becommon.SanitizeIdent(src.LinkName), nil
 		}
 		return "$" + qbeSymbol(state, src.Path), nil
 	default:
@@ -2667,7 +2659,7 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if v == nil || v.Left == nil {
 		return "", fmt.Errorf("invalid cast")
 	}
-	if _, ok := unwrapNamed(v.Type()).(*typeinfo.StringType); ok {
+	if _, ok := backend.UnwrapNamed(v.Type()).(*typeinfo.StringType); ok {
 		return lowerStringCast(state, v.Left)
 	}
 	if isUnionAggregate(v.Left.Type()) && !isAggregateType(state, v.Type()) {
@@ -2690,8 +2682,8 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	src := unwrapNamed(v.Left.Type())
-	dst := unwrapNamed(v.Type())
+	src := backend.UnwrapNamed(v.Left.Type())
+	dst := backend.UnwrapNamed(v.Type())
 
 	srcBuiltin, srcIsBuiltin := src.(*typeinfo.BuiltinType)
 	dstBuiltin, dstIsBuiltin := dst.(*typeinfo.BuiltinType)
@@ -2873,7 +2865,7 @@ func lowerStringCast(state *moduleState, value mir.Value) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	src := unwrapNamed(value.Type())
+	src := backend.UnwrapNamed(value.Type())
 	srcBuiltin, ok := src.(*typeinfo.BuiltinType)
 	if !ok {
 		return "", fmt.Errorf("unsupported string cast source %s", typeinfo.FormatType(typeStringer{value.Type()}))
@@ -2927,20 +2919,12 @@ func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return "$" + sanitizeIdent(v.LinkName), nil
+			return "$" + becommon.SanitizeIdent(v.LinkName), nil
 		}
 		return "$" + qbeSymbol(state, v.Path), nil
 	default:
 		return "", fmt.Errorf("unsupported call callee %T", value)
 	}
-}
-
-func findLocalByName(fn *mir.Function, name string) *mir.Local {
-	return becommon.FindLocalByName(fn, name)
-}
-
-func findLocalByID(fn *mir.Function, id int) *mir.Local {
-	return becommon.FindLocalByID(fn, id)
 }
 
 func resolveQBETempValue(state *moduleState, value mir.Value) (mir.Value, bool) {
@@ -2950,21 +2934,13 @@ func resolveQBETempValue(state *moduleState, value mir.Value) (mir.Value, bool) 
 		return repl, ok && repl != nil
 	case *mir.NameValue:
 		if len(v.Path) == 1 {
-			if local := findLocalByName(state.fn, v.Path[0]); local != nil {
+			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
 				repl, ok := state.tempValues[local.ID]
 				return repl, ok && repl != nil
 			}
 		}
 	}
 	return nil, false
-}
-
-func localNameByID(fn *mir.Function, id int) string {
-	return becommon.LocalNameByID(fn, id)
-}
-
-func localTypeByID(fn *mir.Function, id int) typeinfo.Type {
-	return becommon.LocalTypeByID(fn, id)
 }
 
 func isAggregateType(state *moduleState, typ typeinfo.Type) bool {
@@ -3042,15 +3018,15 @@ func qbeStructBody(state *moduleState, st *layout.StructLayout) (string, error) 
 func qbeAggregateSubType(state *moduleState, typ typeinfo.Type) (string, error) {
 	if named, ok := typ.(*typeinfo.NamedType); ok {
 		info, err := lookupNamedLayout(state, named)
-		if err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named) || namedIsInterface(named)) {
+		if err == nil && info != nil && info.Known && (info.Struct != nil || backend.IsNamedUnion(named) || backend.IsNamedInterface(named)) {
 			return ":" + qbeTypeName(state, named), nil
 		}
-		if namedIsInterface(named) {
+		if backend.IsNamedInterface(named) {
 			return ":__ferret_iface", nil
 		}
 	}
 	if opt, ok := typ.(*typeinfo.OptionalType); ok {
-		if !optionalUsesNiche(opt.Inner) {
+		if !backend.OptionalUsesNiche(opt.Inner) {
 			return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
 		}
 	}
@@ -3058,7 +3034,7 @@ func qbeAggregateSubType(state *moduleState, typ typeinfo.Type) (string, error) 
 }
 
 func qbeExtType(typ typeinfo.Type) (string, error) {
-	switch base := unwrapNamed(typ).(type) {
+	switch base := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch base.Name {
 		case "bool", "u8", "i8":
@@ -3081,7 +3057,7 @@ func qbeExtType(typ typeinfo.Type) (string, error) {
 }
 
 func qbeBaseType(typ typeinfo.Type) (string, error) {
-	switch base := unwrapNamed(typ).(type) {
+	switch base := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch base.Name {
 		case "bool", "i8", "i16", "i32", "u8", "u16", "u32", "char":
@@ -3101,17 +3077,13 @@ func qbeBaseType(typ typeinfo.Type) (string, error) {
 	return "", fmt.Errorf("unsupported qbe base type %s", typeinfo.FormatType(typeStringer{typ}))
 }
 
-func qbeIsVoidType(typ typeinfo.Type) bool {
-	return backend.IsVoidType(typ)
-}
-
 func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
-	if qbeIsVoidType(typ) {
+	if backend.IsVoidType(typ) {
 		return "", nil
 	}
 	switch backend.ClassifyABIType(typ, func(named *typeinfo.NamedType) bool {
 		info, err := lookupNamedLayout(state, named)
-		return err == nil && info != nil && info.Known && (info.Struct != nil || namedIsUnion(named) || namedIsInterface(named))
+		return err == nil && info != nil && info.Known && (info.Struct != nil || backend.IsNamedUnion(named) || backend.IsNamedInterface(named))
 	}) {
 	case backend.ABITypeNamedLayout:
 		named := typ.(*typeinfo.NamedType)
@@ -3134,16 +3106,8 @@ func mustAggregateSize(state *moduleState, typ typeinfo.Type) int64 {
 	return size
 }
 
-func namedIsUnion(named *typeinfo.NamedType) bool {
-	return backend.IsNamedUnion(named)
-}
-
-func namedIsInterface(named *typeinfo.NamedType) bool {
-	return backend.IsNamedInterface(named)
-}
-
 func qbeLoadOp(typ typeinfo.Type) (string, string, error) {
-	switch base := unwrapNamed(typ).(type) {
+	switch base := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch base.Name {
 		case "bool", "u8":
@@ -3170,7 +3134,7 @@ func qbeLoadOp(typ typeinfo.Type) (string, string, error) {
 }
 
 func qbeStoreOp(typ typeinfo.Type) (string, error) {
-	switch base := unwrapNamed(typ).(type) {
+	switch base := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch base.Name {
 		case "bool", "u8", "i8":
@@ -3193,7 +3157,7 @@ func qbeStoreOp(typ typeinfo.Type) (string, error) {
 }
 
 func qbeNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
-	switch base := unwrapNamed(typ).(type) {
+	switch base := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
 		switch base.Name {
 		case "f32":
@@ -3421,7 +3385,7 @@ func qbeSymbol(state *moduleState, path []string) string {
 		return ""
 	}
 	if len(path) == 1 {
-		name := sanitizeIdent(path[0])
+		name := becommon.SanitizeIdent(path[0])
 		if state != nil {
 			if _, ok := state.functions[path[0]]; ok {
 				// Entry module: emit $main directly so the C runtime can call it
@@ -3439,12 +3403,12 @@ func qbeSymbol(state *moduleState, path []string) string {
 	}
 	if len(path) == 2 && state != nil {
 		if localMethod, ok := symutil.ResolveStaticOwnerLocalName(path, state.functions, state.globals); ok {
-			return state.modulePrefix + "__" + sanitizeIdent(localMethod)
+			return state.modulePrefix + "__" + becommon.SanitizeIdent(localMethod)
 		}
 	}
 	clean := make([]string, 0, len(path))
 	for _, part := range path {
-		clean = append(clean, sanitizeIdent(part))
+		clean = append(clean, becommon.SanitizeIdent(part))
 	}
 	return strings.Join(clean, "__")
 }
@@ -3457,11 +3421,11 @@ func qbeTypeName(state *moduleState, named *typeinfo.NamedType) string {
 	if moduleKey == "" && state != nil && state.mod != nil {
 		moduleKey = state.mod.Key
 	}
-	prefix := sanitizePath(moduleKey)
+	prefix := becommon.SanitizePath(moduleKey)
 	if prefix == "" {
 		prefix = state.modulePrefix
 	}
-	return prefix + "__" + sanitizeIdent(named.Name)
+	return prefix + "__" + becommon.SanitizeIdent(named.Name)
 }
 
 func qbeBlockLabel(fn *mir.Function, id int) string {
@@ -3475,7 +3439,7 @@ func qbeLocalName(name string) string {
 	if name == "" {
 		return "%tmp"
 	}
-	return "%" + sanitizeIdent(name)
+	return "%" + becommon.SanitizeIdent(name)
 }
 
 func freshTemp(state *moduleState, prefix string) string {
@@ -3499,12 +3463,6 @@ func normalizeQBEAlign(align int64) int64 {
 	}
 }
 
-// SanitizePath converts a module import path into the module prefix used in
-// QBE symbol names, e.g. "math/vec2" → "math__vec2".
-func SanitizePath(path string) string {
-	return sanitizePath(path)
-}
-
 // FunctionReturnQBEType returns the QBE base type letter for the function's
 // return type ("w", "l", "s", "d") or "" for void/unknown.
 func FunctionReturnQBEType(fn *mir.Function) string {
@@ -3516,18 +3474,6 @@ func FunctionReturnQBEType(fn *mir.Function) string {
 		return ""
 	}
 	return base
-}
-
-func sanitizePath(path string) string {
-	return becommon.SanitizePath(path)
-}
-
-func sanitizeIdent(s string) string {
-	return becommon.SanitizeIdent(s)
-}
-
-func unwrapNamed(t typeinfo.Type) typeinfo.Type {
-	return backend.UnwrapNamed(t)
 }
 
 type typeStringer struct {

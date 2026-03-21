@@ -1,6 +1,7 @@
 package qbe
 
 import (
+	becommon "compiler/internal/backend/common"
 	"compiler/internal/ir/mir"
 	"fmt"
 	"strings"
@@ -32,7 +33,7 @@ func MainWrapper(mod *mir.Module) (string, error) {
 		return "", fmt.Errorf("entry wrapper: module %q has no 'main' function", mod.ImportPath)
 	}
 
-	prefix := SanitizePath(mod.ImportPath)
+	prefix := becommon.SanitizePath(mod.ImportPath)
 	// Entry module named "main": $main is already exported directly.
 	if prefix == "main" {
 		return "", nil

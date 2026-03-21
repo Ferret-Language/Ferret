@@ -443,7 +443,7 @@ func parsePathForCheck(path string) compiler.Result {
 }
 
 func emitModuleASTDumps(result compiler.Result, outDir string) error {
-	for _, mod := range artifactModules(result) {
+	for _, mod := range allModulesForBuild(result) {
 		if mod == nil || mod.AST == nil {
 			continue
 		}
@@ -471,7 +471,7 @@ func emitModuleASTDumps(result compiler.Result, outDir string) error {
 }
 
 func emitModuleTextDumps(result compiler.Result, outDir, ext string, render func(*context.Module) string) error {
-	for _, mod := range artifactModules(result) {
+	for _, mod := range allModulesForBuild(result) {
 		if mod == nil {
 			continue
 		}
@@ -506,7 +506,7 @@ func emitBackendModules(result compiler.Result, targetText, outDir string) error
 	if err != nil {
 		return err
 	}
-	for _, mod := range artifactModules(result) {
+	for _, mod := range allModulesForBuild(result) {
 		if mod == nil || mod.MIR == nil || mod.Layout == nil {
 			continue
 		}
@@ -528,10 +528,6 @@ func emitBackendModules(result compiler.Result, targetText, outDir string) error
 		}
 	}
 	return nil
-}
-
-func artifactModules(result compiler.Result) []*context.Module {
-	return allModulesForBuild(result)
 }
 
 func moduleArtifactPath(mod *context.Module, outDir, ext string) (string, error) {

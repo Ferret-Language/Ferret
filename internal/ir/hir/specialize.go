@@ -2,6 +2,7 @@ package hir
 
 import (
 	"compiler/internal/analysis/semantics/binding"
+	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/frontend/ast"
@@ -1080,7 +1081,7 @@ func (s *specializer) requestInterfaceMethodSpecializations(value Expr, expected
 		if method == nil || method.Static || method.Name == nil {
 			continue
 		}
-		wantReceiver := typeinfo.ReceiverKindFromSyntax(method.Receiver)
+		wantReceiver := semmeta.ReceiverKindFromSyntax(method.Receiver)
 		for _, candidate := range methodTemplates {
 			if candidate == nil || candidate.Name != method.Name.Text() || candidate.Receiver == nil {
 				continue

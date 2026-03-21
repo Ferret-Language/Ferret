@@ -268,8 +268,6 @@ const (
 	ReceiverRawPtr = semmeta.ReceiverRawPtr
 )
 
-var ReceiverKindFromSyntax = semmeta.ReceiverKindFromSyntax
-
 type FuncType struct {
 	IsUnsafe   bool
 	TypeParams []*TypeParam
