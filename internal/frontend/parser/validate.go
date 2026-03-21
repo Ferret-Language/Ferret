@@ -372,6 +372,9 @@ func renderType(typ ast.TypeExpr) string {
 		}
 		return prefix + renderType(t.Inner)
 	case *ast.RawPtrType:
+		if t.Const {
+			return "^const " + renderType(t.Inner)
+		}
 		return "^" + renderType(t.Inner)
 	case *ast.OptionalType:
 		return "?" + renderType(t.Inner)

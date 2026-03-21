@@ -103,6 +103,8 @@ type Reader interface {
     peek(&self) u8
     refill(&mut self) i32
     close(*self) void
+    raw(^self) void
+    rawConst(^const self, buf: []u8) i32
     New() Reader
 }
 `
@@ -131,7 +133,13 @@ type Reader interface {
 	if got := iface.Methods[3].Receiver; got != "*" {
 		t.Fatalf("expected * receiver, got %q", got)
 	}
-	if !iface.Methods[4].Static {
+	if got := iface.Methods[4].Receiver; got != "^" {
+		t.Fatalf("expected ^ receiver, got %q", got)
+	}
+	if got := iface.Methods[5].Receiver; got != "^const " {
+		t.Fatalf("expected ^const receiver, got %q", got)
+	}
+	if !iface.Methods[6].Static {
 		t.Fatalf("expected static method")
 	}
 }
@@ -1508,6 +1516,10 @@ type Node struct {
 fn Node::peek(&self) &Node {
     return self.view
 }
+
+fn Node::peekRaw(^const self) ^const u8 {
+    return self.ro
+}
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -1555,6 +1567,19 @@ fn Node::peek(&self) &Node {
 	ret, ok := fn.Result.(*ast.RefType)
 	if !ok || ret.Mutable {
 		t.Fatalf("expected immutable ref result type, got %#v", fn.Result)
+	}
+
+	rawFn, ok := mod.Decls[2].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected raw func decl, got %T", mod.Decls[2])
+	}
+	rawRecv, ok := rawFn.Receiver.Type.(*ast.RawPtrType)
+	if !ok || !rawRecv.Const {
+		t.Fatalf("expected const raw receiver type, got %#v", rawFn.Receiver.Type)
+	}
+	rawRet, ok := rawFn.Result.(*ast.RawPtrType)
+	if !ok || !rawRet.Const {
+		t.Fatalf("expected const raw result type, got %#v", rawFn.Result)
 	}
 }
 

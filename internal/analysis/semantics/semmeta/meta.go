@@ -41,6 +41,8 @@ func ReceiverKindFromSyntax(receiver string) ReceiverKind {
 		return ReceiverPtr
 	case "^":
 		return ReceiverRawPtr
+	case "^const ":
+		return ReceiverRawPtr
 	default:
 		return ReceiverValue
 	}

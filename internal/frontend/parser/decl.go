@@ -438,6 +438,17 @@ func (p *Parser) parseAttachedReceiver(owner *ast.NamedType) (*ast.Receiver, boo
 		}
 		p.warnNonSelfReceiver(recv.Name)
 		return recv, false
+	case tokens.CARET:
+		p.advance()
+		isConst := p.match(tokens.CONST)
+		nameTok := p.expectIdent("expected receiver name")
+		recv := &ast.Receiver{
+			Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+			Type:     &ast.RawPtrType{Const: isConst, Inner: cloneNamedType(owner), Location: p.locFrom(start)},
+			Location: p.locFrom(start),
+		}
+		p.warnNonSelfReceiver(recv.Name)
+		return recv, false
 	case tokens.IDENT:
 		if p.peekN(1).Kind != tokens.COMMA && p.peekN(1).Kind != tokens.RPAREN {
 			return nil, true
@@ -568,6 +579,18 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 		nameTok := p.expectIdent("expected receiver name")
 		p.warnNonSelfReceiver(&ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)})
 		receiver = "*"
+		if p.at(tokens.COMMA) {
+			p.advance()
+		}
+	case tokens.CARET:
+		isStatic = false
+		p.advance()
+		receiver = "^"
+		if p.match(tokens.CONST) {
+			receiver = "^const "
+		}
+		nameTok := p.expectIdent("expected receiver name")
+		p.warnNonSelfReceiver(&ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)})
 		if p.at(tokens.COMMA) {
 			p.advance()
 		}
