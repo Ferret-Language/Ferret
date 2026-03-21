@@ -78,7 +78,7 @@ func (p *Parser) parseTupleType() ast.TypeExpr {
 	elems := make([]ast.TypeExpr, 0)
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
 		elems = append(elems, p.parseType())
-		if !p.consumeTypeListSeparator(tokens.RPAREN, "tuple element") {
+		if !p.consumeListSeparator(tokens.RPAREN, "tuple element", p.startsType()) {
 			break
 		}
 	}
@@ -97,7 +97,7 @@ func (p *Parser) parseAngleTypeArgs(itemKind string) []ast.TypeExpr {
 	}
 	for !p.at(tokens.GT) && !p.at(tokens.EOF) {
 		args = append(args, p.parseType())
-		if !p.consumeTypeListSeparator(tokens.GT, itemKind) {
+		if !p.consumeListSeparator(tokens.GT, itemKind, p.startsType()) {
 			break
 		}
 	}

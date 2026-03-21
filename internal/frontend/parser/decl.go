@@ -185,7 +185,7 @@ func (p *Parser) parseTypeParams() []ast.TypeParam {
 			Constraint: constraint,
 			Location:   p.locFrom(start),
 		})
-		if !p.consumeTypeListSeparator(tokens.GT, "type parameter") {
+		if !p.consumeListSeparator(tokens.GT, "type parameter", p.startsType()) {
 			break
 		}
 	}
@@ -335,7 +335,7 @@ func (p *Parser) parseParams() []ast.Param {
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
 		})
-		if !p.consumeExprListSeparator(tokens.RPAREN, "parameter") {
+		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
 			break
 		}
 	}
@@ -375,7 +375,7 @@ func (p *Parser) parseAttachedMethodParams(owner *ast.NamedType) (*ast.Receiver,
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
 		})
-		if !p.consumeExprListSeparator(tokens.RPAREN, "parameter") {
+		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
 			break
 		}
 	}
@@ -598,7 +598,7 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
 		})
-		if !p.consumeExprListSeparator(tokens.RPAREN, "parameter") {
+		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
 			break
 		}
 	}
@@ -627,7 +627,7 @@ func (p *Parser) parseEnumType() ast.TypeExpr {
 		variantStart := p.current().Start
 		nameTok := p.expect(tokens.IDENT, "expected enum variant")
 		variants = append(variants, &ast.EnumVariant{Name: &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)}, Location: p.locFrom(variantStart)})
-		if !p.consumeExprListSeparator(tokens.RBRACE, "enum variant") {
+		if !p.consumeListSeparator(tokens.RBRACE, "enum variant", p.startsExpr()) {
 			break
 		}
 	}
@@ -674,7 +674,7 @@ func (p *Parser) parseErrorType() ast.TypeExpr {
 		memberStart := p.current().Start
 		nameTok := p.expect(tokens.IDENT, "expected error member")
 		members = append(members, &ast.ErrorMember{Name: &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)}, Location: p.locFrom(memberStart)})
-		if !p.consumeExprListSeparator(tokens.RBRACE, "error member") {
+		if !p.consumeListSeparator(tokens.RBRACE, "error member", p.startsExpr()) {
 			break
 		}
 	}

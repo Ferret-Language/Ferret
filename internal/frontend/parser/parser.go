@@ -391,14 +391,6 @@ func (p *Parser) advanceUntil(kinds ...tokens.Kind) {
 	}
 }
 
-func (p *Parser) consumeExprListSeparator(end tokens.Kind, itemName string) bool {
-	return p.consumeListSeparator(end, itemName, p.startsExpr())
-}
-
-func (p *Parser) consumeTypeListSeparator(end tokens.Kind, itemName string) bool {
-	return p.consumeListSeparator(end, itemName, p.startsType())
-}
-
 func (p *Parser) isRecoveryBoundary(kind tokens.Kind) bool {
 	switch kind {
 	case tokens.RBRACE,

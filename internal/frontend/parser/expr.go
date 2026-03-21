@@ -182,7 +182,7 @@ func (p *Parser) parseCompositeItems(end tokens.Kind) []ast.CompositeItem {
 			p.compositeValueDepth--
 			items = append(items, ast.CompositeItem{Value: value})
 		}
-		if !p.consumeExprListSeparator(end, "composite literal element") {
+		if !p.consumeListSeparator(end, "composite literal element", p.startsExpr()) {
 			break
 		}
 	}
@@ -231,7 +231,7 @@ func (p *Parser) parseCallWithTypeArgs(left ast.Expr) ast.Expr {
 	typeArgs := make([]ast.TypeExpr, 0)
 	for !p.at(tokens.RBRACK) && !p.at(tokens.EOF) {
 		typeArgs = append(typeArgs, p.parseType())
-		if !p.consumeTypeListSeparator(tokens.RBRACK, "type argument") {
+		if !p.consumeListSeparator(tokens.RBRACK, "type argument", p.startsType()) {
 			break
 		}
 	}
@@ -271,7 +271,7 @@ func (p *Parser) parseArgList() []ast.Expr {
 	args := make([]ast.Expr, 0)
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
 		args = append(args, p.parseExprUntil(precLowest))
-		if !p.consumeExprListSeparator(tokens.RPAREN, "argument") {
+		if !p.consumeListSeparator(tokens.RPAREN, "argument", p.startsExpr()) {
 			break
 		}
 	}
