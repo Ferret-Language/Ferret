@@ -321,26 +321,46 @@ func (p *Parser) parseReceiver() *ast.Receiver {
 func (p *Parser) parseParams() []ast.Param {
 	p.expect(tokens.LPAREN, "expected '('")
 	params := make([]ast.Param, 0)
+	seenVariadic := false
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+		if seenVariadic {
+			loc := p.locOfToken(p.current())
+			p.errorAt(loc, "variadic parameter must be the last parameter")
+		}
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
 		isMut := p.match(tokens.MUT)
 		nameTok := p.expect(tokens.IDENT, "expected parameter name")
 		p.expect(tokens.COLON, "expected ':' after parameter name")
-		paramType := p.parseType()
+		paramType, isVariadic := p.parseParamType()
 		params = append(params, ast.Param{
 			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			IsMut:      isMut,
 			IsComptime: isComptime,
+			IsVariadic: isVariadic,
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
 		})
+		if isVariadic {
+			seenVariadic = true
+		}
 		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
 			break
 		}
 	}
 	p.expect(tokens.RPAREN, "expected ')'")
 	return params
+}
+
+func (p *Parser) parseParamType() (ast.TypeExpr, bool) {
+	if !p.at(tokens.ELLIPSIS) {
+		return p.parseType(), false
+	}
+	start := p.current().Start
+	p.advance()
+	mutable := p.match(tokens.MUT)
+	inner := p.parseType()
+	return &ast.SliceType{Mutable: mutable, Inner: inner, Location: p.locFrom(start)}, true
 }
 
 func cloneNamedType(t *ast.NamedType) *ast.NamedType {
@@ -358,23 +378,32 @@ func (p *Parser) parseAttachedMethodParams(owner *ast.NamedType) (*ast.Receiver,
 	p.expect(tokens.LPAREN, "expected '('")
 	recv, isStatic := p.parseAttachedReceiver(owner)
 	params := make([]ast.Param, 0)
+	seenVariadic := false
 	if recv != nil && p.at(tokens.COMMA) {
 		p.advance()
 	}
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+		if seenVariadic {
+			loc := p.locOfToken(p.current())
+			p.errorAt(loc, "variadic parameter must be the last parameter")
+		}
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
 		isMut := p.match(tokens.MUT)
 		nameTok := p.expect(tokens.IDENT, "expected parameter name")
 		p.expect(tokens.COLON, "expected ':' after parameter name")
-		paramType := p.parseType()
+		paramType, isVariadic := p.parseParamType()
 		params = append(params, ast.Param{
 			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			IsMut:      isMut,
 			IsComptime: isComptime,
+			IsVariadic: isVariadic,
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
 		})
+		if isVariadic {
+			seenVariadic = true
+		}
 		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
 			break
 		}
@@ -577,27 +606,37 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 		}
 	}
 	params := make([]ast.Param, 0)
+	seenVariadic := false
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+		if seenVariadic {
+			loc := p.locOfToken(p.current())
+			p.errorAt(loc, "variadic parameter must be the last parameter")
+		}
 		paramStart := p.current().Start
 		isComptime := p.match(tokens.COMPTIME)
 		var (
-			paramName *ast.Ident
-			paramType ast.TypeExpr
+			paramName  *ast.Ident
+			paramType  ast.TypeExpr
+			isVariadic bool
 		)
 		if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.COLON {
 			nameTok := p.advance()
 			p.expect(tokens.COLON, "expected ':' after parameter name")
 			paramName = &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)}
-			paramType = p.parseType()
+			paramType, isVariadic = p.parseParamType()
 		} else {
-			paramType = p.parseType()
+			paramType, isVariadic = p.parseParamType()
 		}
 		params = append(params, ast.Param{
 			Name:       paramName,
 			IsComptime: isComptime,
+			IsVariadic: isVariadic,
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
 		})
+		if isVariadic {
+			seenVariadic = true
+		}
 		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
 			break
 		}

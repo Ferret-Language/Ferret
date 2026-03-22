@@ -174,7 +174,11 @@ func (p Printer) FuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 		}
 		if i < len(fnType.Params) {
 			b.WriteString(": ")
-			b.WriteString(p.Type(fnType.Params[i].Type))
+			if fnType.Params[i].Flags.Variadic() {
+				b.WriteString(p.variadicTypeText(fnType.Params[i].Type))
+			} else {
+				b.WriteString(p.Type(fnType.Params[i].Type))
+			}
 			paramIndex = i + 1
 		}
 		wrote = true
@@ -183,7 +187,11 @@ func (p Printer) FuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 		if wrote {
 			b.WriteString(", ")
 		}
-		b.WriteString(p.Type(fnType.Params[paramIndex].Type))
+		if fnType.Params[paramIndex].Flags.Variadic() {
+			b.WriteString(p.variadicTypeText(fnType.Params[paramIndex].Type))
+		} else {
+			b.WriteString(p.Type(fnType.Params[paramIndex].Type))
+		}
 		wrote = true
 	}
 	b.WriteString(") ")
@@ -217,12 +225,27 @@ func (p Printer) MethodSignature(name string, receiver Type, fn *FuncType) strin
 		if param.Flags.Comptime() {
 			prefix += "comptime "
 		}
-		params = append(params, prefix+p.Type(param.Type))
+		typeText := p.Type(param.Type)
+		if param.Flags.Variadic() {
+			typeText = p.variadicTypeText(param.Type)
+		}
+		params = append(params, prefix+typeText)
 	}
 	b.WriteString(p.ParamList(params))
 	b.WriteByte(' ')
 	b.WriteString(p.Type(fn.Result))
 	return b.String()
+}
+
+func (p Printer) variadicTypeText(typ Type) string {
+	if slice, ok := typ.(*SliceType); ok && slice != nil {
+		prefix := "..."
+		if slice.Mutable {
+			prefix += "mut "
+		}
+		return prefix + p.Type(slice.Inner)
+	}
+	return "..." + p.Type(typ)
 }
 
 func (p Printer) BindingDecl(kind, name string, typ Type, flags ValueFlags) string {

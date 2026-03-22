@@ -126,6 +126,9 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 		if param.IsComptime {
 			flags |= typeinfo.FlagComptime
 		}
+		if param.IsVariadic {
+			flags |= typeinfo.FlagVariadic
+		}
 		name := ""
 		if param.Name != nil {
 			name = param.Name.Text()

@@ -939,6 +939,14 @@ func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr, expected ty
 	if c.isForeignLenCall(expr.Callee) {
 		return c.typeOfBuiltinLen(scope, expr)
 	}
+	if c.isCompileErrorCall(expr.Callee) && c.comptimeDepth == 0 {
+		loc := expr.Callee.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("compile_error can only be used in comptime context").
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "wrap this call in `comptime { ... }`"),
+		)
+	}
 
 	if selector, ok := expr.Callee.(*ast.SelectorExpr); ok {
 		if typ, handled := c.typeOfMethodCall(scope, expr, selector, expected); handled {
@@ -1030,6 +1038,14 @@ func (c *checker) isForeignLenCall(callee ast.Expr) bool {
 	}
 	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
 	return ok && fn != nil && fn.IsExtern
+}
+
+func (c *checker) isCompileErrorCall(callee ast.Expr) bool {
+	res := c.lookupResolution(callee)
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+		return false
+	}
+	return res.Symbol.Name == "compile_error"
 }
 
 func (c *checker) typeOfCatch(scope *refineScope, expr *ast.CatchExpr) typeinfo.Type {
@@ -1188,13 +1204,21 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 	if fnType == nil {
 		return false
 	}
-	if len(call.Args) != len(fnType.Params) {
+	variadicIndex, variadicElem, variadic := c.variadicParamInfo(fnType)
+	if variadic {
+		if len(call.Args) < variadicIndex {
+			c.reportWrongArgCountAtLeast(call.Location, variadicIndex, len(call.Args))
+			invalid = true
+		}
+	} else if len(call.Args) != len(fnType.Params) {
 		c.reportWrongArgCount(call.Location, len(fnType.Params), len(call.Args))
 		invalid = true
 	}
 	for i, arg := range call.Args {
 		var expected typeinfo.Type
-		if i < len(fnType.Params) {
+		if variadic && i >= variadicIndex {
+			expected = variadicElem
+		} else if i < len(fnType.Params) {
 			expected = fnType.Params[i].Type
 		}
 		argType := c.lookupOrTypeExpr(scope, arg, expected, argTypes, i)
@@ -1246,11 +1270,20 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 
 	argTypes := make([]typeinfo.Type, 0, len(call.Args))
 	inferFromArgs := len(call.TypeArgs) == 0 || len(call.TypeArgs) < len(fnType.TypeParams) || len(genericParams) > len(fnType.TypeParams)
+	variadicIndex, variadicElem, variadic := c.variadicParamInfo(fnType)
 	for i, arg := range call.Args {
 		argType := c.typeOfExpr(scope, arg, nil)
 		argTypes = append(argTypes, argType)
-		if inferFromArgs && i < len(fnType.Params) {
-			c.inferTypeParamBindings(fnType.Params[i].Type, argType, bindings)
+		if inferFromArgs {
+			var pattern typeinfo.Type
+			if variadic && i >= variadicIndex {
+				pattern = variadicElem
+			} else if i < len(fnType.Params) {
+				pattern = fnType.Params[i].Type
+			}
+			if pattern != nil {
+				c.inferTypeParamBindings(pattern, argType, bindings)
+			}
 		}
 	}
 	if inferFromArgs && expected != nil {
@@ -1338,6 +1371,21 @@ func (c *checker) collectCallTypeParams(fnType *typeinfo.FuncType) []*typeinfo.T
 	}
 	c.collectTypeParams(fnType.Result, add)
 	return params
+}
+
+func (c *checker) variadicParamInfo(fnType *typeinfo.FuncType) (index int, elem typeinfo.Type, ok bool) {
+	if fnType == nil || len(fnType.Params) == 0 {
+		return -1, nil, false
+	}
+	last := len(fnType.Params) - 1
+	param := fnType.Params[last]
+	if !param.Flags.Variadic() {
+		return -1, nil, false
+	}
+	if slice, isSlice := c.underlying(param.Type).(*typeinfo.SliceType); isSlice {
+		return last, slice.Inner, true
+	}
+	return last, param.Type, true
 }
 
 func (c *checker) collectTypeParams(typ typeinfo.Type, visit func(*typeinfo.TypeParam)) {
@@ -3095,6 +3143,14 @@ func (c *checker) unionAssignableMembers(expected, got typeinfo.Type) ([]typeinf
 func (c *checker) reportWrongArgCount(loc source.Location, expected, got int) {
 	c.ctx.Diagnostics.Add(
 		diagnostics.NewError(fmt.Sprintf("wrong argument count: expected %d, got %d", expected, got)).
+			WithCode(diagnostics.ErrWrongArgumentCount).
+			WithPrimaryLabel(&loc, "argument count does not match"),
+	)
+}
+
+func (c *checker) reportWrongArgCountAtLeast(loc source.Location, expectedMin, got int) {
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError(fmt.Sprintf("wrong argument count: expected at least %d, got %d", expectedMin, got)).
 			WithCode(diagnostics.ErrWrongArgumentCount).
 			WithPrimaryLabel(&loc, "argument count does not match"),
 	)

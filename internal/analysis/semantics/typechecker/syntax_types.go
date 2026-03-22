@@ -207,6 +207,9 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 				if param.IsComptime {
 					flags |= typeinfo.FlagComptime
 				}
+				if param.IsVariadic {
+					flags |= typeinfo.FlagVariadic
+				}
 				name := ""
 				if param.Name != nil {
 					name = param.Name.Text()

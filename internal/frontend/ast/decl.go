@@ -61,6 +61,7 @@ type Param struct {
 	Name       *Ident
 	IsMut      bool
 	IsComptime bool
+	IsVariadic bool
 	Type       TypeExpr
 	Location   source.Location
 }

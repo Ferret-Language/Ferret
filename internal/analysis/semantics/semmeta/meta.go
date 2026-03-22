@@ -5,6 +5,7 @@ type ValueFlags uint8
 const (
 	FlagMutable ValueFlags = 1 << iota
 	FlagComptime
+	FlagVariadic
 )
 
 func (f ValueFlags) Mutable() bool {
@@ -13,6 +14,10 @@ func (f ValueFlags) Mutable() bool {
 
 func (f ValueFlags) Comptime() bool {
 	return f&FlagComptime != 0
+}
+
+func (f ValueFlags) Variadic() bool {
+	return f&FlagVariadic != 0
 }
 
 type ValueSpec[T any] struct {

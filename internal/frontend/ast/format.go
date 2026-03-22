@@ -213,7 +213,19 @@ func ParamString(param Param) string {
 	if param.Name != nil && param.Name.Text() != "" {
 		name = param.Name.Text()
 	}
-	return FormatNamedParamText(name, TypeString(param.Type), param.IsMut, param.IsComptime)
+	typeText := TypeString(param.Type)
+	if param.IsVariadic {
+		if slice, ok := param.Type.(*SliceType); ok && slice != nil {
+			typeText = "..."
+			if slice.Mutable {
+				typeText += "mut "
+			}
+			typeText += TypeString(slice.Inner)
+		} else {
+			typeText = "..." + typeText
+		}
+	}
+	return FormatNamedParamText(name, typeText, param.IsMut, param.IsComptime)
 }
 
 func TypeParamString(param TypeParam) string {

@@ -355,6 +355,56 @@ func TestUsageDoesNotWarnWhenMutableBindingIsModifiedThroughMutRef(t *testing.T)
 	}
 }
 
+func TestUsageDoesNotWarnOnMutableSliceElementMutation(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `
+fn fill(items: []mut i32) void {
+    items[0] = 9
+}
+
+fn main() void {
+    let mut items: [3]i32 = [3]i32{1, 2, 3}
+    fill(items)
+    _ = items
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedParameter && diag.Message == `unused parameter "items"` {
+			t.Fatalf("did not expect unused parameter warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+		if diag.Code == diagnostics.WarnUnmodifiedMutable && diag.Message == `"items" is never modified` {
+			t.Fatalf("did not expect never-modified mutable warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+		if diag.Code == diagnostics.WarnUnusedLocal && diag.Message == `unused local "items"` {
+			t.Fatalf("did not expect unused local warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
+func TestUsageDoesNotWarnOnDirectMutableSliceElementAssignment(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `
+fn main(items: []mut i32) void {
+    items[0] = 9
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedParameter && diag.Message == `unused parameter "items"` {
+			t.Fatalf("did not expect unused parameter warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
 func TestUsageDoesNotWarnOnUnusedSelfReceiver(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `

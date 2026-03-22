@@ -36,6 +36,11 @@ fn len(value: []u8) usize;
 #[extern]
 fn slice_len(value: ^void) usize;
 
+/// Reports a compile-time error with the provided message.
+/// Valid only when evaluated in a comptime context.
+#[extern]
+fn compile_error(comptime message: str) void;
+
 // ---------------------------------------------------------------------------
 // str field accessors
 //

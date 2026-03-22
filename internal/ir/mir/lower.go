@@ -478,13 +478,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 					if typed, ok := e.Callee.Type().(*typeinfo.FuncType); ok {
 						fnType = typed
 					}
-					for _, arg := range e.Args {
-						expected := typeinfo.Type(nil)
-						if fnType != nil && len(out.Args)-1 < len(fnType.Params) {
-							expected = fnType.Params[len(out.Args)-1].Type
-						}
-						out.Args = append(out.Args, lowerCoercedValue(lowerCtx, arg, expected))
-					}
+					out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType)...)
 					return out
 				}
 				if named := lowerReceiverNamed(sel.Left.Type()); named != nil {
@@ -506,9 +500,11 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 						ReceiverType: e.MethodReceiver,
 					}
 					out.Args = append(out.Args, receiver)
-					for _, arg := range e.Args {
-						out.Args = append(out.Args, lowerValue(lowerCtx, arg))
+					var fnType *typeinfo.FuncType
+					if typed, ok := e.Callee.Type().(*typeinfo.FuncType); ok {
+						fnType = typed
 					}
+					out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType)...)
 					return out
 				}
 			}
@@ -518,13 +514,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		if typed, ok := e.Callee.Type().(*typeinfo.FuncType); ok {
 			fnType = typed
 		}
-		for _, arg := range e.Args {
-			expected := typeinfo.Type(nil)
-			if fnType != nil && len(out.Args) < len(fnType.Params) {
-				expected = fnType.Params[len(out.Args)].Type
-			}
-			out.Args = append(out.Args, lowerCoercedValue(lowerCtx, arg, expected))
-		}
+		out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType)...)
 		return out
 	case *hir.ConstructorCallExpr:
 		callee := &NameValue{
@@ -565,6 +555,62 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	default:
 		return nil
 	}
+}
+
+func lowerCallArgs(lowerCtx *lowerContext, loc source.Location, args []hir.Expr, fnType *typeinfo.FuncType) []Value {
+	if len(args) == 0 {
+		if fnType != nil && len(fnType.Params) > 0 && fnType.Params[len(fnType.Params)-1].Flags.Variadic() {
+			last := fnType.Params[len(fnType.Params)-1]
+			return []Value{
+				&CompositeValue{
+					baseValue: baseValue{Location: loc, ExprType: last.Type},
+				},
+			}
+		}
+		return nil
+	}
+	if fnType == nil || len(fnType.Params) == 0 {
+		out := make([]Value, 0, len(args))
+		for _, arg := range args {
+			out = append(out, lowerValue(lowerCtx, arg))
+		}
+		return out
+	}
+
+	last := len(fnType.Params) - 1
+	if !fnType.Params[last].Flags.Variadic() {
+		out := make([]Value, 0, len(args))
+		for i, arg := range args {
+			if i < len(fnType.Params) {
+				out = append(out, lowerCoercedValue(lowerCtx, arg, fnType.Params[i].Type))
+				continue
+			}
+			out = append(out, lowerValue(lowerCtx, arg))
+		}
+		return out
+	}
+
+	out := make([]Value, 0, len(fnType.Params))
+	for i := 0; i < last && i < len(args); i++ {
+		out = append(out, lowerCoercedValue(lowerCtx, args[i], fnType.Params[i].Type))
+	}
+
+	variadicParam := fnType.Params[last]
+	variadicElem := variadicParam.Type
+	if slice, ok := variadicParam.Type.(*typeinfo.SliceType); ok {
+		variadicElem = slice.Inner
+	}
+	variadicItems := make([]CompositeItem, 0, max(0, len(args)-last))
+	for i := last; i < len(args); i++ {
+		variadicItems = append(variadicItems, CompositeItem{
+			Value: lowerCoercedValue(lowerCtx, args[i], variadicElem),
+		})
+	}
+	out = append(out, &CompositeValue{
+		baseValue: baseValue{Location: loc, ExprType: variadicParam.Type},
+		Items:     variadicItems,
+	})
+	return out
 }
 
 func collectLocals(fn *hir.Func) ([]*Local, map[string]hir.Expr) {

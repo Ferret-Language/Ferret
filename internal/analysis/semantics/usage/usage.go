@@ -255,9 +255,9 @@ func (a *analyzer) markTarget(expr ast.Expr, readWrite bool) {
 			a.readWrites[ident] = struct{}{}
 		}
 	case *ast.SelectorExpr:
-		a.markTarget(e.Left, readWrite)
+		a.markTarget(e.Left, true)
 	case *ast.IndexExpr:
-		a.markTarget(e.Left, readWrite)
+		a.markTarget(e.Left, true)
 	case *ast.PrefixExpr:
 		switch e.Op {
 		case "*":
@@ -411,10 +411,47 @@ func (a *analyzer) markCallWrites(call *ast.CallExpr) {
 	if !ok || fnType == nil {
 		return
 	}
+	variadicIndex := -1
+	if len(fnType.Params) > 0 && fnType.Params[len(fnType.Params)-1].Flags.Variadic() {
+		variadicIndex = len(fnType.Params) - 1
+	}
 	for i, arg := range call.Args {
-		if i < len(fnType.Params) && fnType.Params[i].Flags.Mutable() {
+		paramIndex := i
+		if variadicIndex >= 0 && i >= variadicIndex {
+			paramIndex = variadicIndex
+		}
+		if paramIndex < len(fnType.Params) && a.paramRequiresMutableAccess(fnType.Params[paramIndex]) {
 			a.markReadWriteTarget(arg)
 		}
+	}
+}
+
+func (a *analyzer) paramRequiresMutableAccess(param typeinfo.ParamSpec) bool {
+	if param.Flags.Mutable() {
+		return true
+	}
+	return a.typeRequiresMutableAccess(param.Type)
+}
+
+func (a *analyzer) typeRequiresMutableAccess(typ typeinfo.Type) bool {
+	switch t := typ.(type) {
+	case *typeinfo.RefType:
+		return t.Mutable
+	case *typeinfo.SliceType:
+		return t.Mutable
+	case *typeinfo.ApproxType:
+		return a.typeRequiresMutableAccess(t.Inner)
+	case *typeinfo.NamedType:
+		if t.Decl == nil || t.Decl.Type == nil || a == nil || a.mod == nil || a.mod.Types == nil {
+			return false
+		}
+		resolved, ok := a.mod.Types.Nodes[t.Decl.Type]
+		if !ok {
+			return false
+		}
+		return a.typeRequiresMutableAccess(resolved)
+	default:
+		return false
 	}
 }
 
