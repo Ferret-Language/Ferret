@@ -2,6 +2,9 @@ package mir
 
 import (
 	"fmt"
+
+	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/source"
 )
 
 type normalizer struct {
@@ -108,10 +111,16 @@ func (n *normalizer) normalizeInstr(fn *Function, instr Instr) []Instr {
 		i.Value = value
 		return append(temps, i)
 	case *AssignInstr:
+		if normalizeLocalHasVoidType(fn, i.TargetID) {
+			return n.normalizeVoidEffectInstr(fn, i.Location, i.Value)
+		}
 		temps, value := n.normalizeValueInline(fn, i.Value)
 		i.Value = value
 		return append(temps, i)
 	case *ComputeInstr:
+		if normalizeLocalHasVoidType(fn, i.TargetID) || isVoidMIRType(i.Type) {
+			return n.normalizeVoidEffectInstr(fn, i.Location, i.Value)
+		}
 		temps, value := n.normalizeValue(fn, i.Value)
 		i.Value = value
 		return append(temps, i)
@@ -126,7 +135,7 @@ func (n *normalizer) normalizeInstr(fn *Function, instr Instr) []Instr {
 		i.Value = value
 		return append(append(baseTemps, valueTemps...), i)
 	case *EvalInstr:
-		temps, value := n.normalizeValue(fn, i.Value)
+		temps, value := n.normalizeValueInline(fn, i.Value)
 		i.Value = value
 		return append(temps, i)
 	case *DeferInstr:
@@ -275,7 +284,13 @@ func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, V
 	case nil, *NameValue, *LocalValue, *NumberValue, *BoolValue, *StringValue, *NoneValue:
 		return nil, v
 	case *UnaryValue:
-		temps, right := n.normalizeValue(fn, v.Right)
+		var temps []Instr
+		var right Value
+		if isVoidMIRType(v.Type()) && isVoidEffectWrapperOp(v.Op) {
+			temps, right = n.normalizeValueInline(fn, v.Right)
+		} else {
+			temps, right = n.normalizeValue(fn, v.Right)
+		}
 		copy := *v
 		copy.Right = right
 		return temps, &copy
@@ -367,6 +382,53 @@ func (n *normalizer) wrapComputed(fn *Function, value Value, temps []Instr) ([]I
 	temp := n.newTemp(fn, value)
 	instr := &ComputeInstr{baseInstr: baseInstr{Location: value.Loc()}, TargetID: temp.LocalID, Type: value.Type(), Value: value}
 	return append(temps, instr), temp
+}
+
+func (n *normalizer) normalizeVoidEffectInstr(fn *Function, loc source.Location, value Value) []Instr {
+	effect, ok := unwrapVoidEffectValue(value)
+	if !ok {
+		return nil
+	}
+	temps, normalized := n.normalizeValueInline(fn, effect)
+	return append(temps, &EvalInstr{baseInstr: baseInstr{Location: loc}, Value: normalized})
+}
+
+func normalizeLocalHasVoidType(fn *Function, id int) bool {
+	if fn == nil || id < 0 || id >= len(fn.Locals) || fn.Locals[id] == nil {
+		return false
+	}
+	return isVoidMIRType(fn.Locals[id].Type)
+}
+
+func isVoidMIRType(typ typeinfo.Type) bool {
+	return typ != nil && typeinfo.IsBuiltinNamed(typ, "void")
+}
+
+func unwrapVoidEffectValue(value Value) (Value, bool) {
+	switch v := value.(type) {
+	case nil:
+		return nil, false
+	case *CallValue:
+		return v, true
+	case *UnaryValue:
+		switch v.Op {
+		case "comptime", "copy", "take", "unsafe", "?":
+			return unwrapVoidEffectValue(v.Right)
+		default:
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+}
+
+func isVoidEffectWrapperOp(op string) bool {
+	switch op {
+	case "comptime", "copy", "take", "unsafe", "?":
+		return true
+	default:
+		return false
+	}
 }
 
 func (n *normalizer) newTemp(fn *Function, value Value) *LocalValue {

@@ -1725,21 +1725,6 @@ func lowerScalarAllocaAssign(state *moduleState, sc *scalarAllocaLocal, typ type
 
 // lowerSSAAssign assigns a MIR value to a fresh SSA name (no alloca routing).
 func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mir.Value) (string, error) {
-	if backend.IsVoidType(typ) {
-		if call, ok := value.(*mir.CallValue); ok {
-			return lowerCall(state, "", typ, call)
-		}
-		if un, ok := value.(*mir.UnaryValue); ok {
-			switch un.Op {
-			case "comptime", "copy", "take", "unsafe", "?":
-				if call, ok := un.Right.(*mir.CallValue); ok {
-					return lowerCall(state, "", typ, call)
-				}
-				return "", nil
-			}
-		}
-		return "", nil
-	}
 	if local := becommon.FindLocalByName(state.fn, name); local != nil {
 		if agg, ok := state.aggLocals[local.ID]; ok {
 			return lowerAggregateAssign(state, agg, value)

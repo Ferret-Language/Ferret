@@ -31,6 +31,11 @@ fn tuplePick() i32 {
     return p[0] + p[1]
 }
 
+fn mixedTupleCheck() bool {
+    let p: (i32, bool, str) = .{7, true, "ok"}
+    return p[0] == 7 && p[1] && p[2] == "ok"
+}
+
 type Counter struct {
     Value: i32
 }
@@ -60,11 +65,16 @@ fn passComptimeArg(comptime x: i32) i32 {
     return x
 }
 
-fn assert(comptime cond: bool, comptime msg: str) void {
+fn assert(comptime cond: bool, comptime msg: str) {
     if !cond {
         panic msg
     }
 }
+
+fn static_assert(comptime cond: bool, comptime msg: str) {
+    comptime assert(cond, msg)
+}
+
 
 fn edgeSum() i32 {
     let arr: [3]i32 = [3]i32{1, 2, 3}
@@ -99,10 +109,12 @@ fn main() {
     let e = comptime edgeSum()             // 4
     let f = comptime sumWithFor()          // 10
     let g = comptime tuplePick()           // 3
+    let h = comptime mixedTupleCheck()     // true
 
-    comptime {
-        assert(a != b, "math broke")
-    }
+    static_assert(a != b, "math broke")
+
+    comptime static_assert(1 == 2, "error")
+    comptime assert(1 == 6, "error")
 
     require("comptime literal expression", a == 3)
     require("comptime function with while", b == 10)
@@ -111,6 +123,7 @@ fn main() {
     require("comptime array index", e == 4)
     require("comptime for loop", f == 10)
     require("comptime tuple index", g == 3)
+    require("comptime mixed tuple index", h)
 
     print("ctfe smoke: PASS")
 }

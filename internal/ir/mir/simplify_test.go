@@ -222,3 +222,43 @@ fn main() i32 {
 		t.Fatalf("expected folded true branch in MIR, got %q", text)
 	}
 }
+
+func TestPipelineElidesVoidTempsFromComptimeWrapper(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn assert(comptime cond: bool, comptime msg: str) void {
+    if !cond {
+        panic msg
+    }
+}
+
+fn static_assert(comptime cond: bool, comptime msg: str) void {
+    comptime assert(cond, msg)
+}
+
+fn main() void {
+    comptime static_assert(1 + 1 == 2, "math broke")
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil || len(result.Entry.MIR.Functions) == 0 {
+		t.Fatalf("expected MIR for comptime wrapper fold, got %#v", result.Entry)
+	}
+
+	text := mir.FormatModule(result.Entry.MIR)
+	if strings.Contains(text, "void [temp]") {
+		t.Fatalf("expected no temporary void locals after simplification, got %q", text)
+	}
+	mainIdx := strings.Index(text, "fn main() void {")
+	if mainIdx < 0 {
+		t.Fatalf("expected main function in MIR, got %q", text)
+	}
+	mainText := text[mainIdx:]
+	if strings.Contains(mainText, "static_assert(") || strings.Contains(mainText, "assert(") || strings.Contains(mainText, "comptime ") {
+		t.Fatalf("expected no runtime assert residue in main after comptime fold, got %q", mainText)
+	}
+}

@@ -96,7 +96,7 @@ func validateInstrValueShape(bag *diagnostics.DiagnosticBag, instr Instr) bool {
 		ok := requireSimpleValue(bag, i.Loc(), i.Base, "store_field base")
 		return requireSimpleValue(bag, i.Loc(), i.Value, "store_field") && ok
 	case *EvalInstr:
-		return requireSimpleValue(bag, i.Loc(), i.Value, "eval")
+		return requireNormalizedAssignable(bag, i.Loc(), i.Value, "eval")
 	case *DeferInstr:
 		ok := true
 		for _, child := range i.Body {
@@ -167,6 +167,11 @@ func requireNormalizedAssignable(bag *diagnostics.DiagnosticBag, loc source.Loca
 func childrenAreSimple(value Value) bool {
 	switch v := value.(type) {
 	case *UnaryValue:
+		if isVoidEffectWrapperOp(v.Op) {
+			if call, ok := v.Right.(*CallValue); ok {
+				return childrenAreSimple(call)
+			}
+		}
 		return isSimpleValue(v.Right)
 	case *AddrOfValue:
 		return isSimpleValue(v.Source)
