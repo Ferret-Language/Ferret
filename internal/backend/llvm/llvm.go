@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	layout "compiler/internal/analysis/layout/model"
+	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	becommon "compiler/internal/backend/common"
@@ -3225,7 +3226,7 @@ func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *
 	key := interfaceVTableKey{iface: typeinfo.DefaultPrinter.Type(targetNamed), concrete: typeinfo.DefaultPrinter.Type(value.ConcreteType)}
 	if sym, ok := state.interfaceVTables[key]; ok {
 		if iface, _, err := becommon.LookupInterfaceDecl(state.mod, state.modules, target, "llvm"); err == nil && iface != nil {
-			return sym, len(iface.Methods), nil
+			return sym, len(iface.Methods) + 1, nil
 		}
 		return sym, 0, nil
 	}
@@ -3330,7 +3331,8 @@ func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, m
 	}
 	callArgs := make([]string, 0, 1+len(argNames))
 	body := make([]string, 0, 8)
-	recvArg, recvPrep, err := llvmInterfaceReceiverArg(state, concrete)
+	receiverType := typeinfo.ApplyReceiverShape(concrete, semmeta.ReceiverKindFromSyntax(method.Receiver))
+	recvArg, recvPrep, err := llvmInterfaceReceiverArg(state, concrete, receiverType)
 	if err != nil {
 		return "", err
 	}
@@ -3370,20 +3372,31 @@ func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, m
 	return name, nil
 }
 
-func llvmInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type) (string, []string, error) {
-	if llvmIsPointerLike(concrete) {
-		return "ptr %data", nil, nil
+func llvmInterfaceReceiverArg(state *moduleState, concrete, receiverType typeinfo.Type) (string, []string, error) {
+	target := receiverType
+	if target == nil {
+		target = concrete
 	}
-	if isAggregateType(state, concrete) {
-		typeName, err := llvmABITypeName(state, concrete)
+	if isAggregateType(state, target) {
+		if !isAggregateType(state, concrete) {
+			return "", nil, fmt.Errorf("interface receiver mismatch: expected aggregate receiver %s for concrete %s", typeinfo.FormatType(typeStringer{target}), typeinfo.FormatType(typeStringer{concrete}))
+		}
+		typeName, err := llvmABITypeName(state, target)
 		if err != nil {
 			return "", nil, err
 		}
-		return fmt.Sprintf("%s %%recv", typeName), []string{fmt.Sprintf("%%recv = load %s, ptr %%data", typeName)}, nil
+		_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), target)
+		if err != nil {
+			return "", nil, err
+		}
+		return fmt.Sprintf("ptr byval(%s) align %d %%data", typeName, align), nil, nil
 	}
-	irType, err := llvmBaseType(concrete)
+	irType, err := llvmBaseType(target)
 	if err != nil {
 		return "", nil, err
+	}
+	if isAggregateType(state, concrete) && irType == "ptr" {
+		return "ptr %data", nil, nil
 	}
 	return fmt.Sprintf("%s %%recv", irType), []string{fmt.Sprintf("%%recv = load %s, ptr %%data", irType)}, nil
 }

@@ -1,0 +1,72 @@
+import "std/mem"
+import "status_test/lib"
+
+fn assert_eq_i32(label: str, got: i32, want: i32) void {
+    if got != want {
+        panic label
+    }
+}
+
+fn assert_non_null(label: str, p: ^void) void {
+    unsafe {
+        if (p as usize) == 0 {
+            panic label
+        }
+    }
+}
+
+fn main() void {
+    // Works: cross-module generic function (inferred + explicit type args).
+    let a = lib::Id(7)
+    let b = lib::Id<i32>(9)
+    assert_eq_i32("lib::Id inferred", a, 7)
+    assert_eq_i32("lib::Id explicit", b, 9)
+
+    // Works: cross-module generic type + instance methods.
+    // Construction goes through helper for now (see unsupported note below).
+    let mut box = lib::MakeBox(10)
+    assert_eq_i32("Box/Get", box.Get(), 10)
+    box.Set(15)
+    assert_eq_i32("Box::Set", box.Get(), 15)
+
+    // Works: generic helper returning a generic type from another module.
+    let box2 = lib::MakeBox(23)
+    assert_eq_i32("MakeBox", box2.Get(), 23)
+
+    // Works: allocator API (system allocator + typed wrappers).
+    let sys = mem::System()
+    let p = mem::AllocAs<i32>(sys, 4)
+    unsafe {
+        if (p as usize) == 0 {
+            panic "AllocAs returned null"
+        }
+    }
+    mem::FreeAs<i32>(sys, p)
+
+    // Works: allocator interface forwarding for alloc/free.
+    let raw = mem::Alloc(sys, 16)
+    assert_non_null("mem::Alloc returned null", raw)
+    mem::Free(sys, raw)
+
+    // Works: cross-module static generic owner-method call.
+    let b3 = lib::Box<i32>::New(99)
+    assert_eq_i32("Box::New", b3.Get(), 99)
+
+    // Works: allocator interface Realloc forwarding.
+    let r1 = mem::Alloc(sys, 8)
+    let r2 = mem::Realloc(sys, r1, 32)
+    assert_non_null("mem::Realloc returned null", r2)
+    mem::Free(sys, r2)
+
+    // Works: typed Realloc forwarding.
+    let t1 = mem::AllocAs<i32>(sys, 4)
+    let t2 = mem::ReallocAs<i32>(sys, t1, 8)
+    unsafe {
+        if (t2 as usize) == 0 {
+            panic "mem::ReallocAs returned null"
+        }
+    }
+    mem::FreeAs<i32>(sys, t2)
+
+    print("status smoke: PASS")
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	layout "compiler/internal/analysis/layout/model"
+	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	becommon "compiler/internal/backend/common"
@@ -1752,7 +1753,8 @@ func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, me
 	}
 	var body []string
 	callArgs := make([]string, 0, 1+len(argNames))
-	recvArg, recvPrep, err := qbeInterfaceReceiverArg(state, concrete, link, method)
+	receiverType := typeinfo.ApplyReceiverShape(concrete, semmeta.ReceiverKindFromSyntax(method.Receiver))
+	recvArg, recvPrep, err := qbeInterfaceReceiverArg(state, concrete, receiverType)
 	if err != nil {
 		return "", err
 	}
@@ -1787,29 +1789,32 @@ func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, me
 	return name, nil
 }
 
-func qbeInterfaceReceiverArg(state *moduleState, concrete typeinfo.Type, link mir.InterfaceMethodLink, method *mir.InterfaceMethodDecl) (string, string, error) {
-	callee := concrete
-	if qbeIsPointerLike(concrete) {
-		abi, err := qbeABIType(state, concrete)
-		if err != nil {
-			return "", "", err
-		}
-		return fmt.Sprintf("%s %%data", abi), "", nil
+func qbeInterfaceReceiverArg(state *moduleState, concrete, receiverType typeinfo.Type) (string, string, error) {
+	target := receiverType
+	if target == nil {
+		target = concrete
 	}
-	abi, err := qbeABIType(state, callee)
+	abi, err := qbeABIType(state, target)
 	if err != nil {
 		return "", "", err
 	}
-	if isAggregateType(state, callee) {
+	if isAggregateType(state, target) {
+		if !isAggregateType(state, concrete) {
+			return "", "", fmt.Errorf("interface receiver mismatch: expected aggregate receiver %s for concrete %s", typeinfo.FormatType(typeStringer{target}), typeinfo.FormatType(typeStringer{concrete}))
+		}
 		return fmt.Sprintf("%s %%data", abi), "", nil
 	}
-	op, qtype, err := qbeLoadOp(callee)
+	if isAggregateType(state, concrete) {
+		if abi == "l" {
+			return "l %data", "", nil
+		}
+		return "", "", fmt.Errorf("interface receiver mismatch: aggregate concrete %s requires pointer receiver, got %s", typeinfo.FormatType(typeStringer{concrete}), typeinfo.FormatType(typeStringer{target}))
+	}
+	op, qtype, err := qbeLoadOp(target)
 	if err != nil {
 		return "", "", err
 	}
 	tmp := "%recv"
-	_ = method
-	_ = link
 	return fmt.Sprintf("%s %s", abi, tmp), fmt.Sprintf("%s =%s %s %%data", tmp, qtype, op), nil
 }
 

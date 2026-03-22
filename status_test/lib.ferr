@@ -1,0 +1,23 @@
+type Box<T> struct {
+    Value: T
+}
+
+fn Id<T>(v: T) T {
+    return v
+}
+
+fn MakeBox<T>(v: T) Box<T> {
+    return Box<T>::New(v)
+}
+
+fn Box<T>::New(v: T) Box<T> {
+    return .{ .Value = v }
+}
+
+fn Box<T>::Get(&self) T {
+    return self.Value
+}
+
+fn Box<T>::Set(&mut self, v: T) void {
+    self.Value = v
+}

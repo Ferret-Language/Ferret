@@ -6,6 +6,7 @@ import (
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/frontend/ast"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -641,7 +642,21 @@ func (s *specializer) specializedCalleePath(currentPath []string, leaf string, s
 	if resolution.ImportPath == "" || resolution.ImportPath == s.module.ImportPath {
 		return path
 	}
-	return append(strings.Split(resolution.ImportPath, "/"), leaf)
+	importParts := strings.Split(resolution.ImportPath, "/")
+	tail := path
+	if len(path) > 0 {
+		// Preserve owner qualifiers for static owner calls by only stripping the
+		// leading local/import alias portion before re-rooting to importPath.
+		if len(path) >= len(importParts) && slices.Equal(path[:len(importParts)], importParts) {
+			tail = path[len(importParts):]
+		} else if len(path) > 1 {
+			tail = path[1:]
+		}
+	}
+	if len(tail) == 0 {
+		tail = []string{leaf}
+	}
+	return append(append([]string(nil), importParts...), tail...)
 }
 
 func (s *specializer) specializedCallName(expr *CallExpr, bindings map[*typeinfo.TypeParam]typeinfo.Type) (string, *typeinfo.FuncType, bool) {

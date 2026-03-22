@@ -834,6 +834,47 @@ fn main() i32 {
 	}
 }
 
+func TestPipelineCrossModuleSpecializesDirectImportedGenericStaticOwnerMethod(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "util", "box.ferr"), `
+type Box<T> struct {
+    Value: T
+}
+
+fn Box<T>::New(v: T) Box<T> {
+    return .{ .Value = v }
+}
+`)
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+import "util/box"
+
+fn main() i32 {
+    let b = box::Box<i32>::New(7)
+    return b.Value
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatalf("expected entry lowered HIR module, got %#v", result.Entry)
+	}
+	entryText := hir.FormatModule(result.Entry.LoweredHIR)
+	if !strings.Contains(entryText, "Box::New$") {
+		t.Fatalf("expected caller HIR to call specialized static owner New, got %q", entryText)
+	}
+}
+
 func TestPipelineCrossModuleSpecializesImportedGenericTypeMethod(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "util", "box.ferr"), `
