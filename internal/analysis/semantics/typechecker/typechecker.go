@@ -1203,19 +1203,6 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 				invalid = true
 				continue
 			}
-			if i < len(fnType.Params) && fnType.Params[i].Flags.Mutable() {
-				addressable, mutable := c.exprAccess(scope, arg)
-				if !addressable || !mutable {
-					loc := arg.Loc()
-					c.ctx.Diagnostics.Add(
-						diagnostics.NewError("mutable parameter requires mutable argument binding").
-							WithCode(diagnostics.ErrTypeMismatch).
-							WithPrimaryLabel(&loc, "pass a mutable binding here"),
-					)
-					invalid = true
-					continue
-				}
-			}
 			if !c.checkAssignable(arg.Loc(), expected, argType) {
 				invalid = true
 			}
@@ -1874,6 +1861,17 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 	dstUnderlying := c.underlying(target)
 	_, srcIsRawPtr := srcUnderlying.(*typeinfo.RawPtrType)
 	_, dstIsRawPtr := dstUnderlying.(*typeinfo.RawPtrType)
+	_, srcIsOwnerPtr := srcUnderlying.(*typeinfo.PointerType)
+	_, dstIsOwnerPtr := dstUnderlying.(*typeinfo.PointerType)
+	if (srcIsRawPtr && dstIsOwnerPtr) || (srcIsOwnerPtr && dstIsRawPtr) {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot cast %s to %s", sourceType.String(), target.String())).
+				WithCode(diagnostics.ErrInvalidCast).
+				WithPrimaryLabel(&loc, "conversion between raw pointers and owning pointers is disallowed; use unsafe std/mem::Adopt or std/mem::Expose"),
+		)
+		return typeinfo.InvalidType{}
+	}
 	if srcIsRawPtr || dstIsRawPtr {
 		if c.unsafeDepth > 0 {
 			c.info.BindNode(expr, target)

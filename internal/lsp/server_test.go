@@ -1855,6 +1855,49 @@ func TestHoverImportAliasAndPathShowsModuleDoc(t *testing.T) {
 	}
 }
 
+func TestHoverCastRawOwnerBoundaryShowsAdoptExposeGuidance(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.ferr")
+	src := `
+fn main() void {
+    unsafe {
+        let raw = 0 as ^i32
+        let own = raw as *i32
+        own
+    }
+}
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+	line, char, ok := findPosition(src, "as *i32")
+	if !ok {
+		t.Fatal("failed to find cast position")
+	}
+	char += 1
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "std/mem::Adopt") || !strings.Contains(hover.Contents.Value, "std/mem::Expose") {
+		t.Fatalf("expected ownership-boundary cast guidance in hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestCompletionModuleStaticMembersViaImportAlias(t *testing.T) {
 	dir := t.TempDir()
 	modulePath := filepath.Join(dir, "util", "os.ferr")

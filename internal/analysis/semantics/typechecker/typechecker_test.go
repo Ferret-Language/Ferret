@@ -1724,10 +1724,11 @@ fn bump(p: &mut Point) void {
 	}
 }
 
-func TestTypecheckerRejectsImmutableArgumentForMutableParameter(t *testing.T) {
+func TestTypecheckerAllowsByValueMutableParameterWithImmutableArgument(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 fn mutate(mut x: i32) i32 {
+    x = x + 1
     return x
 }
 
@@ -1738,18 +1739,8 @@ fn main() i32 {
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected mutable parameter argument diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "mutable parameter requires mutable argument binding") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected mutable parameter argument diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -2958,6 +2949,125 @@ fn main() i32 {
 	}
 	if !found {
 		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrInvalidCast, result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsRawToOwningPointerCast(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() void {
+    unsafe {
+        let rp = 0 as ^void
+        let own = rp as *i32
+        own
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid raw-to-owning cast diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidCast && strings.Contains(diag.Message, "cannot cast ^void to *i32") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected raw-to-owning cast diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerSuggestsOwnershipBoundaryAPIsForRawOwnerCasts(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() void {
+    unsafe {
+        let rp = 0 as ^i32
+        let own = rp as *i32
+        own
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid raw-to-owning cast diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code != diagnostics.ErrInvalidCast {
+			continue
+		}
+		for _, label := range diag.Labels {
+			if strings.Contains(label.Message, "std/mem::Adopt") && strings.Contains(label.Message, "std/mem::Expose") {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected ownership-boundary API guidance in cast diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsOwningPointerToRawCast(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn use_ptr(p: *i32) void {
+    unsafe {
+        let raw = p as ^i32
+        raw
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid owning-to-raw cast diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidCast && strings.Contains(diag.Message, "cannot cast *i32 to ^i32") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected owning-to-raw cast diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAcceptsAdoptExposeCalls(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "mem.ferr"), `
+#[extern]
+fn Expose<T>(owner: *T) ^T;
+
+#[extern]
+fn Adopt<T>(raw: ^T) *T;
+`)
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+import "mem"
+
+fn main() void {
+    unsafe {
+        let raw = 0 as ^i32
+        let own = mem::Adopt(raw)
+        let back = mem::Expose(own)
+        back
+    }
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

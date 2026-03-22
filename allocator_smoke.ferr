@@ -49,7 +49,7 @@ fn main() void {
     assert_non_null("arena alloczeroed failed", a4)
     let a5 = arena.Realloc(a1, 12)
     assert_non_null("arena realloc failed", a5)
-    arena.Free(a2)
+    // Arena is region-based; individual Free is intentionally not used.
     arena.Reset()
     let a6 = arena.Alloc(4)
     assert_non_null("arena alloc after reset failed", a6)

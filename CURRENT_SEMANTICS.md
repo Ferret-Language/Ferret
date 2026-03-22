@@ -197,6 +197,10 @@ Current intent/behavior:
 - used for owned heap storage
 - dereferenced with `*`
 - method receiver form `*self` means consuming/owning receiver semantics
+- explicit casts between `*T` and `^T` are rejected
+- ownership boundary crossing uses explicit unsafe library APIs:
+  - `mem::Expose(*T) ^T`
+  - `mem::Adopt(^T) *T`
 
 ### Immutable Reference
 
@@ -229,9 +233,8 @@ Current behavior:
 Current behavior:
 
 - unsafe
-- created explicitly with raw-address operators:
-  - `@expr`
-  - `@mut expr`
+- created from `&expr` / `&mut expr` only when a raw-pointer type is expected, and only inside `unsafe`
+- can be converted to/from owning pointer only through `std/mem` explicit APIs (`Adopt` / `Expose`)
 - intended for FFI / low-level pointer work
 
 ---
@@ -242,17 +245,13 @@ Current expression syntax:
 
 - `&x` -> `&T`
 - `&mut x` -> `&mut T`
-- `@x` -> `^T` in `unsafe`
-- `@mut x` -> `^T` in `unsafe`
+- `&x` / `&mut x` may coerce to `^const T` / `^T` in `unsafe` when the expected type is raw-pointer
 - `*p` -> dereference
 
 Important distinction:
 
-- `&` / `&mut` are borrow operators
-- `@` / `@mut` are raw address operators
+- `&` / `&mut` are borrow operators first; raw-pointer creation is a type-directed coercion path
 - `*` is dereference
-
-This is intended to keep borrow and raw-address concepts separate.
 
 ---
 
@@ -305,7 +304,8 @@ fn bump(mut x: i32) void {
 Rules:
 
 - parameters may be declared `mut`
-- calling a function with a `mut` parameter currently requires a mutable argument binding
+- `mut` on a by-value parameter controls mutability of the local parameter binding inside the callee
+- caller-side mutable bindings are not required for plain by-value `mut` parameters
 
 ### Reference Mutability
 
@@ -595,7 +595,7 @@ Examples:
 
 ```ferret
 unsafe {
-    let p = @x
+    let p: ^const Point = &x
 }
 ```
 
@@ -628,3 +628,44 @@ Current Ferret semantics are best summarized as:
 - visibility is currently case-based
 - constructors/destructors are ordinary methods/functions now, not special language features
 - slices and strings exist, but their final design is still being finalized
+
+---
+
+## 22. Quick Reference
+
+### Raw Coercion
+
+```ferret
+let x: i32 = 1
+unsafe {
+    let rp: ^const i32 = &x
+    rp
+}
+```
+
+### Owner/Raw Boundary
+
+```ferret
+import "std/mem"
+
+unsafe {
+    let raw: ^u8 = ...
+    let owner = mem::Adopt(raw)
+    let back = mem::Expose(owner)
+    back
+}
+```
+
+### By-value `mut` Parameter
+
+```ferret
+fn bump(mut x: i32) i32 {
+    x = x + 1
+    return x
+}
+
+fn main() i32 {
+    let x = 1
+    return bump(x) // caller binding does not need `mut`
+}
+```

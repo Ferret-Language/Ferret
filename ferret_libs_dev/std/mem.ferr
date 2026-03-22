@@ -16,6 +16,20 @@ type Allocator interface {
     Free(&self, ptr: ^void) void
 }
 
+/// Expose converts an owning pointer into a raw pointer without changing bits.
+///
+/// This is an explicit ownership-boundary API; use inside `unsafe` when handing
+/// ownership-managed values to low-level/FFI code.
+#[extern]
+fn Expose<T>(owner: *T) ^T;
+
+/// Adopt converts a raw pointer into an owning pointer without changing bits.
+///
+/// This is an explicit ownership-boundary API; use inside `unsafe` only when
+/// provenance is trusted (allocator + lifetime contract are compatible).
+#[extern]
+fn Adopt<T>(raw: ^T) *T;
+
 /// CAllocator is the default system allocator backed by libc.
 type CAllocator struct {}
 

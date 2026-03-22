@@ -182,6 +182,17 @@ FerretStr ferret_os_arch(void);
 FerretStr ferret_os_name(void);
 ferret_bool ferret_os_debug(void);
 
+/* -------------------------------------------------------------------------
+ * std/mem ownership-boundary helpers
+ *
+ * These are explicit, unsafe boundary functions used by std/mem::Adopt/Expose.
+ * They are bit-preserving pointer reinterpretations; callers are responsible
+ * for allocator/lifetime correctness when crossing between raw and owner APIs.
+ * -------------------------------------------------------------------------*/
+
+ferret_raw ferret_std_mem_Expose(ferret_raw owner);
+ferret_raw ferret_std_mem_Adopt(ferret_raw raw);
+
 #ifdef __cplusplus
 }
 #endif

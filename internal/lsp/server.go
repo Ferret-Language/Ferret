@@ -1001,7 +1001,176 @@ func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modu
 			defs = append(defs, pathDefs...)
 		}
 	}
+	out = append(out, collectOwnershipCastSyntaxHoverCandidates(mod, info)...)
 	return out, defs
+}
+
+func collectOwnershipCastSyntaxHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo) []hoverCandidate {
+	if mod == nil || mod.AST == nil {
+		return nil
+	}
+	out := make([]hoverCandidate, 0)
+	for _, decl := range mod.AST.Decls {
+		collectOwnershipCastFromDecl(decl, info, &out)
+	}
+	return out
+}
+
+func collectOwnershipCastFromDecl(decl ast.Decl, info *typeinfo.ModuleInfo, out *[]hoverCandidate) {
+	if decl == nil {
+		return
+	}
+	switch d := decl.(type) {
+	case *ast.ConstDecl:
+		collectOwnershipCastFromExpr(d.Value, info, out)
+	case *ast.LetDecl:
+		collectOwnershipCastFromExpr(d.Value, info, out)
+	case *ast.FuncDecl:
+		collectOwnershipCastFromStmt(d.Body, info, out)
+	case *ast.TypeDecl:
+		structType, ok := d.Type.(*ast.StructType)
+		if !ok || structType == nil {
+			return
+		}
+		for _, field := range structType.Fields {
+			if field == nil {
+				continue
+			}
+			collectOwnershipCastFromExpr(field.Default, info, out)
+		}
+	}
+}
+
+func collectOwnershipCastFromStmt(stmt ast.Stmt, info *typeinfo.ModuleInfo, out *[]hoverCandidate) {
+	if stmt == nil {
+		return
+	}
+	switch s := stmt.(type) {
+	case *ast.BlockStmt:
+		for _, nested := range s.Stmts {
+			collectOwnershipCastFromStmt(nested, info, out)
+		}
+	case *ast.LetStmt:
+		collectOwnershipCastFromExpr(s.Value, info, out)
+	case *ast.ConstStmt:
+		collectOwnershipCastFromExpr(s.Value, info, out)
+	case *ast.ReturnStmt:
+		collectOwnershipCastFromExpr(s.Value, info, out)
+	case *ast.ExprStmt:
+		collectOwnershipCastFromExpr(s.Value, info, out)
+	case *ast.AssignStmt:
+		collectOwnershipCastFromExpr(s.Left, info, out)
+		collectOwnershipCastFromExpr(s.Right, info, out)
+	case *ast.IfStmt:
+		collectOwnershipCastFromExpr(s.Cond, info, out)
+		collectOwnershipCastFromStmt(s.Then, info, out)
+		collectOwnershipCastFromStmt(s.Else, info, out)
+	case *ast.MatchStmt:
+		collectOwnershipCastFromExpr(s.Value, info, out)
+		for _, arm := range s.Arms {
+			if arm == nil {
+				continue
+			}
+			collectOwnershipCastFromExpr(arm.Pattern, info, out)
+			collectOwnershipCastFromStmt(arm.Body, info, out)
+		}
+	case *ast.WhileStmt:
+		collectOwnershipCastFromExpr(s.Cond, info, out)
+		collectOwnershipCastFromStmt(s.Body, info, out)
+	case *ast.ForStmt:
+		collectOwnershipCastFromExpr(s.Iterable, info, out)
+		collectOwnershipCastFromStmt(s.Body, info, out)
+	case *ast.LabelStmt:
+		collectOwnershipCastFromStmt(s.Stmt, info, out)
+	case *ast.DeferStmt:
+		collectOwnershipCastFromStmt(s.Body, info, out)
+	case *ast.ReleaseStmt:
+		collectOwnershipCastFromExpr(s.Value, info, out)
+	case *ast.PanicStmt:
+		collectOwnershipCastFromExpr(s.Value, info, out)
+	case *ast.LockStmt:
+		collectOwnershipCastFromExpr(s.Value, info, out)
+		collectOwnershipCastFromStmt(s.Body, info, out)
+	case *ast.UnsafeStmt:
+		collectOwnershipCastFromStmt(s.Body, info, out)
+	}
+}
+
+func collectOwnershipCastFromExpr(expr ast.Expr, info *typeinfo.ModuleInfo, out *[]hoverCandidate) {
+	if expr == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.PrefixExpr:
+		collectOwnershipCastFromExpr(e.Right, info, out)
+	case *ast.BinaryExpr:
+		collectOwnershipCastFromExpr(e.Left, info, out)
+		collectOwnershipCastFromExpr(e.Right, info, out)
+	case *ast.PostfixExpr:
+		collectOwnershipCastFromExpr(e.Left, info, out)
+	case *ast.CallExpr:
+		collectOwnershipCastFromExpr(e.Callee, info, out)
+		for _, arg := range e.Args {
+			collectOwnershipCastFromExpr(arg, info, out)
+		}
+	case *ast.SelectorExpr:
+		collectOwnershipCastFromExpr(e.Left, info, out)
+	case *ast.CastExpr:
+		if note := ownershipBoundaryCastNoteForExpr(e, info); note != "" {
+			loc := e.Loc()
+			*out = append(*out, hoverCandidate{
+				markdown: note,
+				location: loc,
+				span:     locationSpan(loc),
+				priority: 3,
+			})
+		}
+		collectOwnershipCastFromExpr(e.Left, info, out)
+	case *ast.IsExpr:
+		collectOwnershipCastFromExpr(e.Left, info, out)
+	case *ast.MatchExpr:
+		collectOwnershipCastFromExpr(e.Value, info, out)
+		for _, arm := range e.Arms {
+			if arm == nil {
+				continue
+			}
+			collectOwnershipCastFromExpr(arm.Pattern, info, out)
+			collectOwnershipCastFromStmt(arm.Body, info, out)
+		}
+	case *ast.CatchExpr:
+		collectOwnershipCastFromExpr(e.Left, info, out)
+		collectOwnershipCastFromExpr(e.Fallback, info, out)
+		collectOwnershipCastFromStmt(e.Handler, info, out)
+	case *ast.CompositeLit:
+		for _, item := range e.Items {
+			collectOwnershipCastFromExpr(item.Value, info, out)
+		}
+	case *ast.IndexExpr:
+		collectOwnershipCastFromExpr(e.Left, info, out)
+		collectOwnershipCastFromExpr(e.Index, info, out)
+	}
+}
+
+func ownershipBoundaryCastNoteForExpr(cast *ast.CastExpr, info *typeinfo.ModuleInfo) string {
+	if cast == nil {
+		return ""
+	}
+	if note := renderOwnershipBoundaryCastHoverNote(cast, info); note != "" {
+		return note
+	}
+	if !isOwnershipPointerTypeExpr(cast.Type) {
+		return ""
+	}
+	return ownershipBoundaryCastHoverNoteText()
+}
+
+func isOwnershipPointerTypeExpr(typ ast.TypeExpr) bool {
+	switch typ.(type) {
+	case *ast.PointerType, *ast.RawPtrType:
+		return true
+	default:
+		return false
+	}
 }
 
 func collectQualifiedPathCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module, sourceText, parsedPath, originalPath string) ([]hoverCandidate, []definitionCandidate) {
@@ -1893,12 +2062,13 @@ func renderLabelHoverMarkdown(label *binding.LabelBinding) string {
 }
 
 func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module) string {
+	ownershipNote := renderOwnershipBoundaryCastHoverNote(node, info)
 	if typ == nil {
-		return ""
+		return appendHoverNote("", ownershipNote)
 	}
 	bindingDecl := renderBindingDeclForNode(node, typ, mod)
 	if sig := renderNodeFunctionSignature(node, typ, mod, info); sig != "" {
-		return appendHoverDoc(asFerretCodeBlock(sig), declarationDocForNode(node, mod))
+		return appendHoverNote(appendHoverDoc(asFerretCodeBlock(sig), declarationDocForNode(node, mod)), ownershipNote)
 	}
 	if selector, ok := node.(*ast.SelectorExpr); ok {
 		if fnType, ok := typ.(*typeinfo.FuncType); ok {
@@ -1912,10 +2082,41 @@ func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Modu
 			if receiver != "" {
 				name = receiver + "::" + name
 			}
-			return appendHoverDoc(asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(name, fnType)), declarationDocForNode(node, mod))
+			return appendHoverNote(appendHoverDoc(asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(name, fnType)), declarationDocForNode(node, mod)), ownershipNote)
 		}
 	}
-	return appendHoverDoc(joinBindingAndTypeHover(bindingDecl, renderTypeHoverMarkdown(typ, mod, modulesByKey)), declarationDocForNode(node, mod))
+	return appendHoverNote(appendHoverDoc(joinBindingAndTypeHover(bindingDecl, renderTypeHoverMarkdown(typ, mod, modulesByKey)), declarationDocForNode(node, mod)), ownershipNote)
+}
+
+func renderOwnershipBoundaryCastHoverNote(node ast.Node, info *typeinfo.ModuleInfo) string {
+	cast, ok := node.(*ast.CastExpr)
+	if !ok || cast == nil || info == nil {
+		return ""
+	}
+	sourceType := info.Nodes[cast.Left]
+	targetType := info.Nodes[cast.Type]
+	if sourceType == nil || targetType == nil {
+		return ""
+	}
+	if !isRawOwnerBoundaryCast(sourceType, targetType) {
+		return ""
+	}
+	return ownershipBoundaryCastHoverNoteText()
+}
+
+func ownershipBoundaryCastHoverNoteText() string {
+	return "_`^T` and `*T` are distinct ownership domains. Use `unsafe std/mem::Adopt(^T)` or `unsafe std/mem::Expose(*T)`._"
+}
+
+func isRawOwnerBoundaryCast(sourceType, targetType typeinfo.Type) bool {
+	if sourceType == nil || targetType == nil {
+		return false
+	}
+	_, srcRaw := sourceType.(*typeinfo.RawPtrType)
+	_, srcOwner := sourceType.(*typeinfo.PointerType)
+	_, dstRaw := targetType.(*typeinfo.RawPtrType)
+	_, dstOwner := targetType.(*typeinfo.PointerType)
+	return (srcRaw && dstOwner) || (srcOwner && dstRaw)
 }
 
 func renderNodeFunctionSignature(node ast.Node, typ typeinfo.Type, mod *context.Module, info *typeinfo.ModuleInfo) string {
@@ -2427,6 +2628,17 @@ func appendHoverDoc(markdown, doc string) string {
 		return doc
 	}
 	return markdown + "\n\n" + doc
+}
+
+func appendHoverNote(markdown, note string) string {
+	note = strings.TrimSpace(note)
+	if note == "" {
+		return markdown
+	}
+	if strings.TrimSpace(markdown) == "" {
+		return note
+	}
+	return markdown + "\n\n" + note
 }
 
 func declarationDocForNode(node ast.Node, mod *context.Module) string {
