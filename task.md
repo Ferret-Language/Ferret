@@ -16,10 +16,11 @@ Files:
 
 ## Track B: Allocator Surface
 
-- [ ] Add typed allocator helpers in `std/mem` (safe wrappers around raw allocation paths) consistent with current pointer model.
-- [ ] Blocker note: cross-module generic functions with bodies are currently unstable for this surface; keep typed helper API pending until generic lowering is fixed.
+- [*] Add typed allocator helpers in `std/mem` (safe wrappers around raw allocation paths) consistent with current pointer model.
+- [*] Resolve blocker: cross-module generic functions with bodies are now specialized across modules before backend lowering.
 - [*] Verify arena API semantics stay region-style (`Free` no-op, `Reset` reuse, `Release` final free) and document usage constraints.
 - [*] Add/extend smoke tests for typed allocation helpers and arena lifecycle misuse cases.
+- [ ] Follow-up: investigate runtime crash path for allocator-interface `Realloc(...)` calls (observed in dedicated typed/realloc smoke runs).
 
 Files:
 - `ferret_libs_dev/std/mem.ferr`

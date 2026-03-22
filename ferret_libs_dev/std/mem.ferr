@@ -188,9 +188,23 @@ fn Alloc(a: Allocator, size: usize) ^void {
     return a.Alloc(size)
 }
 
+/// AllocAs forwards allocation and returns a typed raw pointer.
+fn AllocAs<T>(a: Allocator, size: usize) ^T {
+    unsafe {
+        return Alloc(a, size) as ^T
+    }
+}
+
 /// AllocZeroed forwards zeroed allocation through any allocator implementation.
 fn AllocZeroed(a: Allocator, size: usize) ^void {
     return a.AllocZeroed(size)
+}
+
+/// AllocZeroedAs forwards zeroed allocation and returns a typed raw pointer.
+fn AllocZeroedAs<T>(a: Allocator, size: usize) ^T {
+    unsafe {
+        return AllocZeroed(a, size) as ^T
+    }
 }
 
 /// Realloc forwards resize through any allocator implementation.
@@ -198,7 +212,44 @@ fn Realloc(a: Allocator, ptr: ^void, size: usize) ^void {
     return a.Realloc(ptr, size)
 }
 
+/// ReallocAs forwards resize for typed raw pointers.
+fn ReallocAs<T>(a: Allocator, ptr: ^T, size: usize) ^T {
+    unsafe {
+        return Realloc(a, ptr as ^void, size) as ^T
+    }
+}
+
 /// Free forwards deallocation through any allocator implementation.
 fn Free(a: Allocator, ptr: ^void) void {
     a.Free(ptr)
+}
+
+/// FreeAs forwards deallocation for typed raw pointers.
+fn FreeAs<T>(a: Allocator, ptr: ^T) void {
+    unsafe {
+        Free(a, ptr as ^void)
+    }
+}
+
+/// AllocOwnedAs allocates bytes and adopts them as an owning pointer.
+fn AllocOwnedAs<T>(a: Allocator, size: usize) *T {
+    unsafe {
+        return Adopt(Alloc(a, size) as ^T)
+    }
+}
+
+/// ReallocOwnedAs resizes an owning pointer and returns a re-adopted owner.
+fn ReallocOwnedAs<T>(a: Allocator, ptr: *T, size: usize) *T {
+    unsafe {
+        let raw = Expose(ptr)
+        let next = Realloc(a, raw as ^void, size)
+        return Adopt(next as ^T)
+    }
+}
+
+/// FreeOwned releases an owning pointer through an allocator boundary.
+fn FreeOwned<T>(a: Allocator, ptr: *T) void {
+    unsafe {
+        Free(a, Expose(ptr) as ^void)
+    }
 }

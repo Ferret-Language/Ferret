@@ -14,82 +14,17 @@ func Specialize(mod *Module, types *typeinfo.ModuleInfo, bindings *binding.Modul
 	if mod == nil || types == nil || bindings == nil {
 		return mod
 	}
-	p := &specializer{
-		module:               mod,
-		types:                types,
-		bindings:             bindings,
-		templates:            make(map[symbols.SymbolID]*Func),
-		requests:             make(map[string]*specializationRequest),
-		ownerMethodTemplates: make(map[string][]*Func),
-		typeTemplates:        make(map[string]*TypeDecl),
-		typeRequests:         make(map[string]*typeSpecializationRequest),
-	}
-	for _, fn := range mod.Functions {
-		if p.isTemplate(fn) {
-			sym := bindings.FunctionSymbols[fn.Source]
-			if sym != nil {
-				p.templates[sym.ID] = fn
-			}
-			if fn.OwnerType != "" {
-				ownerKey := mod.Key + "::" + fn.OwnerType
-				p.ownerMethodTemplates[ownerKey] = append(p.ownerMethodTemplates[ownerKey], fn)
-			}
-		}
-	}
-	for _, decl := range mod.Types {
-		if p.isTypeTemplate(decl) {
-			key := decl.Named.ModuleKey + "::" + decl.Name
-			p.typeTemplates[key] = decl
-		}
-	}
+	p := newSpecializer(mod, types, bindings, nil)
 	if len(p.templates) == 0 && len(p.typeTemplates) == 0 {
 		return mod
 	}
-
-	out := &Module{
-		Key:        mod.Key,
-		ImportPath: mod.ImportPath,
-		FilePath:   mod.FilePath,
-		Source:     mod.Source,
-		Types:      make([]*TypeDecl, 0, len(mod.Types)),
-		Globals:    make([]*Global, 0, len(mod.Globals)),
-		Functions:  make([]*Func, 0, len(mod.Functions)),
-	}
-	for _, decl := range mod.Types {
-		if p.isTypeTemplate(decl) {
-			continue
-		}
-		out.Types = append(out.Types, p.cloneTypeDecl(decl, nil, ""))
-	}
-	for _, global := range mod.Globals {
-		out.Globals = append(out.Globals, p.cloneGlobal(global, nil))
-	}
-	for _, fn := range mod.Functions {
-		if p.isTemplate(fn) {
-			continue
-		}
-		out.Functions = append(out.Functions, p.cloneFunc(fn, nil, ""))
-	}
-	for i := 0; i < len(p.pending); i++ {
-		req := p.pending[i]
-		if req == nil || req.emitted {
-			continue
-		}
-		req.emitted = true
-		out.Functions = append(out.Functions, p.cloneFunc(req.template, req.bindings, req.name))
-	}
-	for i := 0; i < len(p.typePending); i++ {
-		req := p.typePending[i]
-		if req == nil || req.emitted {
-			continue
-		}
-		req.emitted = true
-		out.Types = append(out.Types, p.specializeTypeDecl(req))
-	}
-	return out
+	p.seedBaseOutput()
+	p.drainPending()
+	return p.out
 }
 
 type specializer struct {
+	project              *projectSpecializer
 	module               *Module
 	types                *typeinfo.ModuleInfo
 	bindings             *binding.ModuleInfo
@@ -101,6 +36,14 @@ type specializer struct {
 	typeTemplates map[string]*TypeDecl
 	typeRequests  map[string]*typeSpecializationRequest
 	typePending   []*typeSpecializationRequest
+	out           *Module
+}
+
+type projectSpecializer struct {
+	specializers        map[string]*specializer
+	ordered             []*specializer
+	templateBySymbol    map[symbols.SymbolID]*specializer
+	typeTemplateByOwner map[string]*specializer
 }
 
 type specializationRequest struct {
@@ -121,6 +64,159 @@ type typeSpecializationRequest struct {
 type typeParamBindingKey struct {
 	Name  string
 	Owner ast.Node
+}
+
+func SpecializeModules(modules []*Module, typesByModule map[string]*typeinfo.ModuleInfo, bindingsByModule map[string]*binding.ModuleInfo) map[string]*Module {
+	project := &projectSpecializer{
+		specializers:        make(map[string]*specializer),
+		ordered:             make([]*specializer, 0, len(modules)),
+		templateBySymbol:    make(map[symbols.SymbolID]*specializer),
+		typeTemplateByOwner: make(map[string]*specializer),
+	}
+	for _, mod := range modules {
+		if mod == nil || mod.Key == "" {
+			continue
+		}
+		types := typesByModule[mod.Key]
+		bindings := bindingsByModule[mod.Key]
+		spec := newSpecializer(mod, types, bindings, project)
+		project.specializers[mod.Key] = spec
+		project.ordered = append(project.ordered, spec)
+	}
+	for _, spec := range project.ordered {
+		spec.seedBaseOutput()
+	}
+	for {
+		progress := false
+		for _, spec := range project.ordered {
+			if spec.drainPending() {
+				progress = true
+			}
+		}
+		if !progress {
+			break
+		}
+	}
+	out := make(map[string]*Module, len(project.ordered))
+	for _, spec := range project.ordered {
+		if spec == nil || spec.module == nil {
+			continue
+		}
+		if spec.out != nil {
+			out[spec.module.Key] = spec.out
+		} else {
+			out[spec.module.Key] = spec.module
+		}
+	}
+	return out
+}
+
+func newSpecializer(mod *Module, types *typeinfo.ModuleInfo, bindings *binding.ModuleInfo, project *projectSpecializer) *specializer {
+	p := &specializer{
+		project:              project,
+		module:               mod,
+		types:                types,
+		bindings:             bindings,
+		templates:            make(map[symbols.SymbolID]*Func),
+		requests:             make(map[string]*specializationRequest),
+		ownerMethodTemplates: make(map[string][]*Func),
+		typeTemplates:        make(map[string]*TypeDecl),
+		typeRequests:         make(map[string]*typeSpecializationRequest),
+	}
+	if mod == nil {
+		return p
+	}
+	for _, fn := range mod.Functions {
+		if !p.isTemplate(fn) {
+			continue
+		}
+		sym := (*symbols.Symbol)(nil)
+		if bindings != nil && fn.Source != nil {
+			sym = bindings.FunctionSymbols[fn.Source]
+		}
+		if sym != nil {
+			p.templates[sym.ID] = fn
+			if project != nil {
+				project.templateBySymbol[sym.ID] = p
+			}
+		}
+		if fn.OwnerType != "" {
+			ownerKey := mod.Key + "::" + fn.OwnerType
+			p.ownerMethodTemplates[ownerKey] = append(p.ownerMethodTemplates[ownerKey], fn)
+		}
+	}
+	for _, decl := range mod.Types {
+		if !p.isTypeTemplate(decl) {
+			continue
+		}
+		moduleKey := mod.Key
+		if decl.Named != nil && decl.Named.ModuleKey != "" {
+			moduleKey = decl.Named.ModuleKey
+		}
+		key := moduleKey + "::" + decl.Name
+		p.typeTemplates[key] = decl
+		if project != nil {
+			project.typeTemplateByOwner[key] = p
+		}
+	}
+	return p
+}
+
+func (s *specializer) seedBaseOutput() {
+	if s == nil || s.module == nil {
+		return
+	}
+	out := &Module{
+		Key:        s.module.Key,
+		ImportPath: s.module.ImportPath,
+		FilePath:   s.module.FilePath,
+		Source:     s.module.Source,
+		Types:      make([]*TypeDecl, 0, len(s.module.Types)),
+		Globals:    make([]*Global, 0, len(s.module.Globals)),
+		Functions:  make([]*Func, 0, len(s.module.Functions)),
+	}
+	for _, decl := range s.module.Types {
+		if s.isTypeTemplate(decl) {
+			continue
+		}
+		out.Types = append(out.Types, s.cloneTypeDecl(decl, nil, ""))
+	}
+	for _, global := range s.module.Globals {
+		out.Globals = append(out.Globals, s.cloneGlobal(global, nil))
+	}
+	for _, fn := range s.module.Functions {
+		if s.isTemplate(fn) {
+			continue
+		}
+		out.Functions = append(out.Functions, s.cloneFunc(fn, nil, ""))
+	}
+	s.out = out
+}
+
+func (s *specializer) drainPending() bool {
+	if s == nil || s.out == nil {
+		return false
+	}
+	progress := false
+	for i := 0; i < len(s.pending); i++ {
+		req := s.pending[i]
+		if req == nil || req.emitted {
+			continue
+		}
+		req.emitted = true
+		progress = true
+		s.out.Functions = append(s.out.Functions, s.cloneFunc(req.template, req.bindings, req.name))
+	}
+	for i := 0; i < len(s.typePending); i++ {
+		req := s.typePending[i]
+		if req == nil || req.emitted {
+			continue
+		}
+		req.emitted = true
+		progress = true
+		s.out.Types = append(s.out.Types, s.specializeTypeDecl(req))
+	}
+	return progress
 }
 
 func (s *specializer) isTemplate(fn *Func) bool {
@@ -447,13 +543,7 @@ func (s *specializer) cloneExpr(expr Expr, bindings map[*typeinfo.TypeParam]type
 				return &out
 			}
 			if ident, ok := clonedCallee.(*Ident); ok {
-				path := append([]string(nil), ident.Path...)
-				if len(path) == 0 {
-					path = []string{name}
-				} else {
-					path[len(path)-1] = name
-				}
-				ident.Path = path
+				ident.Path = s.specializedCalleePath(ident.Path, name, ex.Callee.SourceExpr())
 				ident.ExprType = fnType
 				ident.Source = nil
 				out.Callee = ident
@@ -534,6 +624,26 @@ func (s *specializer) cloneExpr(expr Expr, bindings map[*typeinfo.TypeParam]type
 	}
 }
 
+func (s *specializer) specializedCalleePath(currentPath []string, leaf string, sourceExpr ast.Expr) []string {
+	path := append([]string(nil), currentPath...)
+	if len(path) == 0 {
+		path = []string{leaf}
+	} else {
+		path[len(path)-1] = leaf
+	}
+	if s == nil || s.bindings == nil || sourceExpr == nil || s.module == nil {
+		return path
+	}
+	resolution := s.bindings.Nodes[sourceExpr]
+	if resolution == nil || resolution.Kind != binding.ResolutionSymbol {
+		return path
+	}
+	if resolution.ImportPath == "" || resolution.ImportPath == s.module.ImportPath {
+		return path
+	}
+	return append(strings.Split(resolution.ImportPath, "/"), leaf)
+}
+
 func (s *specializer) specializedCallName(expr *CallExpr, bindings map[*typeinfo.TypeParam]typeinfo.Type) (string, *typeinfo.FuncType, bool) {
 	if expr == nil || expr.Callee == nil {
 		return "", nil, false
@@ -542,16 +652,22 @@ func (s *specializer) specializedCallName(expr *CallExpr, bindings map[*typeinfo
 	if !ok || fnType == nil || len(fnType.TypeParams) != 0 {
 		return "", nil, false
 	}
-	resolution := s.bindings.Nodes[expr.Callee.SourceExpr()]
+	var resolution *binding.Resolution
+	if s.bindings != nil && expr.Callee != nil {
+		resolution = s.bindings.Nodes[expr.Callee.SourceExpr()]
+	}
+	owner := s
 	var template *Func
 	if resolution != nil && resolution.Kind == binding.ResolutionSymbol && resolution.Symbol != nil {
-		template = s.templates[resolution.Symbol.ID]
+		owner, template = s.templateOwnerBySymbolID(resolution.Symbol.ID)
 	}
 	if template == nil {
 		if sel, ok := expr.Callee.(*SelectorExpr); ok && sel.Left != nil {
 			receiverType := s.substituteType(sel.Left.Type(), bindings)
 			if named, ok := typeinfo.ReceiverBaseNamedType(receiverType); ok && named != nil {
-				for _, candidate := range s.ownerMethodTemplates[ownerMethodTemplateKey(named)] {
+				var candidates []*Func
+				owner, candidates = s.methodTemplatesForNamed(named)
+				for _, candidate := range candidates {
 					if candidate == nil || candidate.Name != sel.Name || candidate.Receiver == nil {
 						continue
 					}
@@ -584,11 +700,39 @@ func (s *specializer) specializedCallName(expr *CallExpr, bindings map[*typeinfo
 			}
 		}
 	}
-	req := s.requestSpecialization(template, fnType, receiverType)
+	req := owner.requestSpecialization(template, fnType, receiverType)
 	if req == nil {
 		return "", nil, false
 	}
 	return req.name, fnType, true
+}
+
+func (s *specializer) templateOwnerBySymbolID(id symbols.SymbolID) (*specializer, *Func) {
+	if template := s.templates[id]; template != nil {
+		return s, template
+	}
+	if s.project == nil {
+		return nil, nil
+	}
+	owner := s.project.templateBySymbol[id]
+	if owner == nil {
+		return nil, nil
+	}
+	return owner, owner.templates[id]
+}
+
+func (s *specializer) methodTemplatesForNamed(named *typeinfo.NamedType) (*specializer, []*Func) {
+	if named == nil {
+		return nil, nil
+	}
+	owner := s
+	if s.project != nil && named.ModuleKey != "" {
+		if candidate := s.project.specializers[named.ModuleKey]; candidate != nil {
+			owner = candidate
+		}
+	}
+	key := ownerMethodTemplateKey(named)
+	return owner, owner.ownerMethodTemplates[key]
 }
 
 func (s *specializer) requestSpecialization(template *Func, fnType *typeinfo.FuncType, receiverType typeinfo.Type) *specializationRequest {
@@ -1026,7 +1170,14 @@ func (s *specializer) requestTypeSpecialization(named *typeinfo.NamedType) *type
 		return nil
 	}
 	key := named.ModuleKey + "::" + named.Name
-	template := s.typeTemplates[key]
+	owner := s
+	template := owner.typeTemplates[key]
+	if template == nil && s.project != nil {
+		if candidate := s.project.typeTemplateByOwner[key]; candidate != nil {
+			owner = candidate
+			template = owner.typeTemplates[key]
+		}
+	}
 	if template == nil {
 		return nil
 	}
@@ -1039,7 +1190,7 @@ func (s *specializer) requestTypeSpecialization(named *typeinfo.NamedType) *type
 	}
 	name := specializedTypeName(template, bindings)
 	requestKey := named.ModuleKey + "::" + name
-	if req, ok := s.typeRequests[requestKey]; ok {
+	if req, ok := owner.typeRequests[requestKey]; ok {
 		return req
 	}
 	req := &typeSpecializationRequest{
@@ -1047,8 +1198,8 @@ func (s *specializer) requestTypeSpecialization(named *typeinfo.NamedType) *type
 		name:     name,
 		bindings: bindings,
 	}
-	s.typeRequests[requestKey] = req
-	s.typePending = append(s.typePending, req)
+	owner.typeRequests[requestKey] = req
+	owner.typePending = append(owner.typePending, req)
 	return req
 }
 
@@ -1069,7 +1220,7 @@ func (s *specializer) requestInterfaceMethodSpecializations(value Expr, expected
 	if !ok || named == nil {
 		return
 	}
-	methodTemplates := s.ownerMethodTemplates[ownerMethodTemplateKey(named)]
+	owner, methodTemplates := s.methodTemplatesForNamed(named)
 	if len(methodTemplates) == 0 {
 		return
 	}
@@ -1090,7 +1241,7 @@ func (s *specializer) requestInterfaceMethodSpecializations(value Expr, expected
 			if !ok || key.Kind != wantReceiver || len(candidate.Source.TypeParams) != 0 {
 				continue
 			}
-			s.requestSpecializationWithBindings(candidate, ownerBindings)
+			owner.requestSpecializationWithBindings(candidate, ownerBindings)
 			break
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
 	compiler "compiler/internal/driver"
@@ -706,6 +707,130 @@ fn main() i32 {
 	}
 	if len(specialized) != 2 {
 		t.Fatalf("expected 2 imported Pick specializations, got %d: %#v", len(specialized), specialized)
+	}
+}
+
+func TestPipelineCrossModuleSpecializesDirectImportedGenericFunctionCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "util", "math.ferr"), `
+fn Pick<T>(value: T) T {
+    return value
+}
+`)
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+import "util/math"
+
+fn main() i32 {
+    return math::Pick(1)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+
+	var mathMod *context.Module
+	for _, mod := range append(result.Modules, result.Entry) {
+		if mod != nil && mod.ImportPath == "util/math" {
+			mathMod = mod
+			break
+		}
+	}
+	if mathMod == nil || mathMod.LoweredHIR == nil {
+		t.Fatalf("expected util/math lowered HIR module, got %#v", mathMod)
+	}
+	foundSpecialized := false
+	for _, fn := range mathMod.LoweredHIR.Functions {
+		if fn != nil && strings.HasPrefix(fn.Name, "Pick$") {
+			foundSpecialized = true
+			break
+		}
+	}
+	if !foundSpecialized {
+		t.Fatalf("expected direct imported generic function specialization in owner module, got %#v", mathMod.LoweredHIR.Functions)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatalf("expected entry lowered HIR module, got %#v", result.Entry)
+	}
+	entryText := hir.FormatModule(result.Entry.LoweredHIR)
+	if !strings.Contains(entryText, "Pick$") {
+		t.Fatalf("expected caller HIR to call specialized Pick, got %q", entryText)
+	}
+}
+
+func TestPipelineCrossModuleSpecializesDirectImportedGenericTypeMethod(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "util", "box.ferr"), `
+type Box<T> struct {
+    Value: T
+}
+
+fn Box<T>::Get(&self) T {
+    return self.Value
+}
+`)
+	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+import "util/box"
+
+fn main() i32 {
+    let b: box::Box<i32> = .{ .Value = 7 }
+    return b.Get()
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+
+	var boxMod *context.Module
+	for _, mod := range append(result.Modules, result.Entry) {
+		if mod != nil && mod.ImportPath == "util/box" {
+			boxMod = mod
+			break
+		}
+	}
+	if boxMod == nil || boxMod.LoweredHIR == nil {
+		t.Fatalf("expected util/box lowered HIR module, got %#v", boxMod)
+	}
+	foundTypeSpecialized := false
+	foundMethodSpecialized := false
+	for _, decl := range boxMod.LoweredHIR.Types {
+		if decl != nil && strings.HasPrefix(decl.Name, "Box$") {
+			foundTypeSpecialized = true
+			break
+		}
+	}
+	for _, fn := range boxMod.LoweredHIR.Functions {
+		if fn != nil && strings.HasPrefix(fn.Name, "Get$") {
+			foundMethodSpecialized = true
+			break
+		}
+	}
+	if !foundTypeSpecialized || !foundMethodSpecialized {
+		t.Fatalf("expected direct imported generic type+method specializations, got types=%#v funcs=%#v", boxMod.LoweredHIR.Types, boxMod.LoweredHIR.Functions)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatalf("expected entry lowered HIR module, got %#v", result.Entry)
+	}
+	entryText := hir.FormatModule(result.Entry.LoweredHIR)
+	if !strings.Contains(entryText, "Get$") {
+		t.Fatalf("expected caller HIR to call specialized Get, got %q", entryText)
 	}
 }
 

@@ -1,0 +1,30 @@
+import "std/mem"
+
+fn is_non_null(p: ^void) bool {
+    unsafe {
+        return (p as usize) != 0
+    }
+}
+
+fn assert_raw_non_null<T>(label: str, p: ^T) void {
+    unsafe {
+        if !is_non_null(p as ^void) {
+            panic label
+        }
+    }
+}
+
+fn main() void {
+    let sys = mem::System()
+
+    let p1 = mem::AllocAs<i32>(sys, 4)
+    assert_raw_non_null("AllocAs failed", p1)
+    let p2 = mem::AllocZeroedAs<i32>(sys, 4)
+    assert_raw_non_null("AllocZeroedAs failed", p2)
+    let p3 = mem::ReallocAs<i32>(sys, p1, 8)
+    assert_raw_non_null("ReallocAs failed", p3)
+    mem::FreeAs<i32>(sys, p2)
+    mem::FreeAs<i32>(sys, p3)
+
+    print("allocator typed smoke: PASS")
+}

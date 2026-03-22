@@ -10,6 +10,7 @@ import (
 	"compiler/internal/analysis/attrfilter"
 	cfganalysis "compiler/internal/analysis/cfg/analysis"
 	layoutanalysis "compiler/internal/analysis/layout/analysis"
+	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/collector"
 	"compiler/internal/analysis/semantics/ownership"
 	"compiler/internal/analysis/semantics/resolver"
@@ -165,19 +166,58 @@ func (p *Pipeline) runAllSemanticPasses() error {
 		if mod == nil || mod.Phase < phase.PhaseParsed {
 			continue
 		}
-		p.runSemanticPasses(mod)
+		p.runSemanticFrontPasses(mod)
+	}
+	p.runHIRLoweringAndSpecialization(sorted)
+	for _, mod := range sorted {
+		if mod == nil || mod.Phase < phase.PhaseHIRLowered {
+			continue
+		}
+		p.runSemanticBackPasses(mod)
 	}
 	return nil
 }
 
-// runSemanticPasses runs all post-parse compilation passes for a single module.
-func (p *Pipeline) runSemanticPasses(mod *context.Module) {
+func (p *Pipeline) runSemanticFrontPasses(mod *context.Module) {
 	resolver.ResolveModule(p.ctx, mod)
 	typechecker.CheckModule(p.ctx, mod)
 	mod.HIR = hir.Generate(mod.Key, mod.ImportPath, mod.FilePath, mod.AST, mod.Types, mod.Bindings, p.lookupMethodPath(mod.ImportPath))
 	mod.Phase = phase.PhaseHIRGenerated
-	mod.LoweredHIR = hir.Specialize(hir.Lower(mod.HIR), mod.Types, mod.Bindings)
-	mod.Phase = phase.PhaseHIRLowered
+}
+
+func (p *Pipeline) runHIRLoweringAndSpecialization(sorted []*context.Module) {
+	if p == nil || p.ctx == nil {
+		return
+	}
+	lowered := make([]*hir.Module, 0, len(sorted))
+	typeInfos := make(map[string]*typeinfo.ModuleInfo, len(sorted))
+	bindingInfos := make(map[string]*binding.ModuleInfo, len(sorted))
+	for _, mod := range sorted {
+		if mod == nil || mod.Phase < phase.PhaseHIRGenerated || mod.HIR == nil {
+			continue
+		}
+		base := hir.Lower(mod.HIR)
+		lowered = append(lowered, base)
+		typeInfos[mod.Key] = mod.Types
+		bindingInfos[mod.Key] = mod.Bindings
+	}
+	specialized := hir.SpecializeModules(lowered, typeInfos, bindingInfos)
+	for _, mod := range sorted {
+		if mod == nil || mod.Phase < phase.PhaseHIRGenerated {
+			continue
+		}
+		if spec, ok := specialized[mod.Key]; ok && spec != nil {
+			mod.LoweredHIR = spec
+		} else if mod.HIR != nil {
+			mod.LoweredHIR = hir.Specialize(hir.Lower(mod.HIR), mod.Types, mod.Bindings)
+		}
+		if mod.LoweredHIR != nil {
+			mod.Phase = phase.PhaseHIRLowered
+		}
+	}
+}
+
+func (p *Pipeline) runSemanticBackPasses(mod *context.Module) {
 	cfganalysis.AnalyzeModule(p.ctx, mod)
 	mod.MIR = mir.LowerModule(mod.CFG, mod.LoweredHIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupLoweredMethodPath(mod.ImportPath))
 	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
