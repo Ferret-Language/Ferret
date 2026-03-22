@@ -16,7 +16,8 @@ Ferret currently uses these semantic categories:
 - `*T` = owning heap pointer
 - `&T` = immutable borrowed reference
 - `&mut T` = mutable borrowed reference
-- `^T` = raw pointer
+- `^T` = raw mutable pointer
+- `^const T` = raw const pointer
 
 Current design intent:
 
@@ -70,6 +71,7 @@ Other builtin type forms:
 - arrays: `[N]T`
 - inferred-length arrays: `[_]T`
 - slices: `[]T`
+- mutable slices: `[]mut T`
 - tuples: `(T1, T2, ...)`
 - optional: `?T`
 - error union: `E!T`
@@ -77,7 +79,9 @@ Other builtin type forms:
 Current status notes:
 
 - tuples exist in the frontend/type system but are not a fully settled surface
-- slices exist semantically and in backend support paths, but slice literal construction is not finalized
+- slices exist semantically and in backend support paths
+- typed slice literals are implemented in the current compiler, including `[]T{...}` and `[]mut T{...}`
+- array/slice indexing now gets compile-time out-of-bounds diagnostics where provable and runtime panic checks otherwise
 - `str` exists and works, but its final semantic design is still under discussion
 
 ---
@@ -226,13 +230,16 @@ Current behavior:
 - mutable writes go through `*ref`
 - direct use of the original value while a live mutable borrow is still active is rejected
 
-### Raw Pointer
+### Raw Pointers
 
-`^T` is a raw pointer.
+`^T` / `^const T` are raw pointers.
 
 Current behavior:
 
 - unsafe
+- `^T` is the mutable raw form
+- `^const T` is the const raw form
+- there is no separate `^mut T` syntax
 - created from `&expr` / `&mut expr` only when a raw-pointer type is expected, and only inside `unsafe`
 - can be converted to/from owning pointer only through `std/mem` explicit APIs (`Adopt` / `Expose`)
 - intended for FFI / low-level pointer work
@@ -246,6 +253,7 @@ Current expression syntax:
 - `&x` -> `&T`
 - `&mut x` -> `&mut T`
 - `&x` / `&mut x` may coerce to `^const T` / `^T` in `unsafe` when the expected type is raw-pointer
+- there is no dedicated raw-address operator
 - `*p` -> dereference
 
 Important distinction:
@@ -496,21 +504,25 @@ Note:
 
 ## 15. Slices
 
-Current slice type:
+Current slice types:
 
 - `[]T`
+- `[]mut T`
 
 Current implementation status:
 
 - slice type exists
 - slice indexing exists in typechecking and backend paths
 - slice literals are implemented in typed form, e.g. `[]i32{1, 2, 3}`
+- mutable typed slice literals are implemented, e.g. `[]mut i32{1, 2, 3}`
 - empty slice literals (`[]T{}`) produce zero-length slices
 - non-empty slice literals lower to a temporary backing buffer and carry `{ptr, len}`
+- `[]mut T` coerces one-way to `[]T`
+- array/slice indexing performs runtime bounds checks unless the compiler can prove the index is out of range at compile time
 
 This area is still under active design discussion.
 
-The compiler currently has slice support in the type system and lowering paths, but the final surface semantics are not yet settled.
+The compiler currently has working slice support in the type system and lowering paths, but the final higher-level surface semantics are not yet settled.
 
 ---
 

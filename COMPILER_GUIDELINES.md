@@ -85,7 +85,7 @@ These decisions are already part of the language design and should not drift acc
 - dependency imports are resolved by manifest alias on the first path segment
 - a non-aliased import binds the last path segment in source, for example `import "util/build"` binds `build`
 - Zig-style literals are used: `.{ ... }`
-- methods are declared outside types using receivers: `fn (p Point) name(...)`
+- methods are declared outside types using attached-method syntax: `fn Point::Name(&self)`
 - there is no implicit `self`
 - `?T` is built-in optional
 - `E!T` is built-in error union

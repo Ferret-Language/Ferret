@@ -2,6 +2,12 @@
 
 This document defines a small, restrictive core. The goal is to keep the type, ownership, and parsing rules predictable.
 
+Important note:
+
+- this file is a draft design document and is no longer the exact source of truth for implemented syntax/semantics
+- for current compiler behavior, see `CURRENT_SEMANTICS.md`
+- attached methods, slices, and pointer/raw-pointer details have evolved since this draft started
+
 ## 1. Goals
 
 - No GC
@@ -173,23 +179,11 @@ Rules:
 
 ### Constructors And Destructors
 
-Named types use constructor and destructor names in the C++ style.
+This section is stale relative to the current compiler.
 
-- constructor name matches the type name
-- destructor name is `~Type`
-- static methods are not part of the language
-
-Examples:
-
-```go
-fn (p *Point) Point() {}
-fn (p *Point) ~Point() {}
-```
-
-Parser rule:
-
-- a function with a receiver is a constructor if its name matches the receiver base type
-- a function with a receiver is a destructor if it is spelled `~Type`
+- current Ferret uses attached methods such as `fn Point::Name(&self)`
+- constructor/destructor handling from this draft should not be treated as implemented language truth
+- see `CURRENT_SEMANTICS.md` for the current callable/ownership model
 
 ## 4. Type Forms
 
@@ -200,7 +194,7 @@ The core type forms are:
 - Arrays: `[N]T`
 - Owning pointers: `*T`
 - References: `&T`, `&mut T`
-- Raw pointers: `^T`
+- Raw pointers: `^T`, `^const T`
 - Optional: `?T`
 - Error union: `E!T`
 - Structs, enums, unions, interfaces
@@ -210,7 +204,8 @@ Interpretation:
 - `*T` is the unique non-null owner of one heap allocation
 - `&T` is a non-owning non-null immutable reference
 - `&mut T` is a non-owning non-null mutable reference
-- `^T` is an unchecked raw pointer and requires `unsafe` to dereference
+- `^T` is an unchecked mutable raw pointer and requires `unsafe` to dereference
+- `^const T` is an unchecked const raw pointer and requires `unsafe` for raw-sensitive operations
 - `?T` is the only way to represent absence
 - `E!T` is a value-or-error type where `E` is a named `error` type
 
@@ -483,39 +478,33 @@ All non-defaulted fields must be initialized.
 
 ## 14. Methods and Static Members
 
-Static fields are declared inside the type body. Methods are declared at top level with a receiver, like Go.
+This section is stale relative to the current compiler surface syntax.
 
-```go
+The current compiler uses attached methods, for example:
+
+```ferret
 type Point struct {
-    x i32 = 0
-    y i32 = 0
-
-    static origin Point = .{}
+    X: i32 = 0
+    Y: i32 = 0
 }
 
-fn (p Point) len2() i32 {
-    return p.x * p.x + p.y * p.y
+fn Point::Len2(&self) i32 {
+    return self.X * self.X + self.Y * self.Y
 }
 
-fn (p &mut Point) shift(dx i32, dy i32) {
-    p.x += dx
-    p.y += dy
+fn Point::Shift(&mut self, dx: i32, dy: i32) void {
+    self.X += dx
+    self.Y += dy
 }
 ```
 
-Rules:
+Current receiver forms are:
 
-- static field initializers must be compile-time constants in v0.1
-- mutable static fields are `unsafe`
-- static methods do not exist
-- receiver forms are:
-- `fn (p T) name(...)` for by-value receiver
-- `fn (p *T) name(...)` for owning receiver
-- `fn (p &T) name(...)` for immutable borrow receiver
-- `fn (p &mut T) name(...)` for mutable borrow receiver
-- there is no implicit `self`
-- method call syntax `x.name(...)` is sugar for passing the receiver as the first argument
-- no implicit auto-borrow exists
+- `fn Type::Name(self)` for by-value receiver
+- `fn Type::Name(*self)` for owning receiver
+- `fn Type::Name(&self)` for immutable borrow receiver
+- `fn Type::Name(&mut self)` for mutable borrow receiver
+- `fn Type::Name(^self)` / `fn Type::Name(^const self)` for raw-pointer receiver forms where needed
 
 ## 15. Special Methods and Operators
 
@@ -539,8 +528,8 @@ type Point struct {
     y i32
 }
 
-fn (p Point) _add(other Point) Point {
-    return .{ .x = p.x + other.x, .y = p.y + other.y }
+fn Point::_add(self, other: Point) Point {
+    return .{ .x = self.x + other.x, .y = self.y + other.y }
 }
 ```
 

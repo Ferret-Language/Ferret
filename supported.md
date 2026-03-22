@@ -28,10 +28,11 @@ Status of language features through **both** the QBE and LLVM backends.
 |------|:---:|
 | Named `struct` | ✅ |
 | Anonymous `struct` | ✅ |
-| Array `[T; N]` | ✅ |
+| Array `[N]T` | ✅ |
 | Owning pointer `*T` | ✅ |
 | Reference `&T` / `&mut T` | ✅ |
-| Raw pointer `^T` | ✅ |
+| Raw pointer `^T` / `^const T` | ✅ |
+| Slice `[]T` / `[]mut T` | ✅ |
 | Tuple | ⚠️ frontend only |
 | Named `enum` | ✅ |
 | Named `union` (tagged runtime model) | ✅ |
@@ -80,15 +81,15 @@ Status of language features through **both** the QBE and LLVM backends.
 | `x as T` numeric casts | ✅ |
 | `number as str` | ✅ |
 | Union member selection/extraction casts | ✅ |
-| `&x` address-of | ✅ |
+| `&x` / `&mut x` borrow and raw-pointer coercion | ✅ |
 | `*p` pointer dereference (read) | ✅ |
 | `f(args)` function call | ✅ |
 | `recv.method(args)` method call | ✅ |
 | `Module::func(args)` cross-module call | ✅ |
 | `.{ .Field = val }` composite literal | ✅ |
 | `expr.field` field access (read) | ✅ |
-| `arr[i]` array index (read) | ✅ |
-| `copy expr` | ✅ |
+| `arr[i]` / `slice[i]` index (read, bounds-checked) | ✅ |
+| `copy expr` | ❌ not yet |
 | `comptime expr` | ⚠️ frontend / const-fold only |
 | `catch` fallback | ⚠️ frontend only |
 | `!!` force-unwrap | ⚠️ frontend only |
@@ -106,7 +107,7 @@ Status of language features through **both** the QBE and LLVM backends.
 | `let x = expr` / `let x: T = expr` | ✅ |
 | `x = expr` assignment | ✅ |
 | `x.field = expr` field store | ✅ |
-| `x[i] = expr` index store | ✅ |
+| `x[i] = expr` index store (bounds-checked) | ✅ |
 | `unsafe { *p = expr }` pointer store | ✅ |
 | Compound assignment | ✅ |
 | `x++` / `x--` | ✅ |
