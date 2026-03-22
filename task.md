@@ -19,7 +19,7 @@ Files:
 - [ ] Add typed allocator helpers in `std/mem` (safe wrappers around raw allocation paths) consistent with current pointer model.
 - [ ] Blocker note: cross-module generic functions with bodies are currently unstable for this surface; keep typed helper API pending until generic lowering is fixed.
 - [*] Verify arena API semantics stay region-style (`Free` no-op, `Reset` reuse, `Release` final free) and document usage constraints.
-- [ ] Add/extend smoke tests for typed allocation helpers and arena lifecycle misuse cases.
+- [*] Add/extend smoke tests for typed allocation helpers and arena lifecycle misuse cases.
 
 Files:
 - `ferret_libs_dev/std/mem.ferr`

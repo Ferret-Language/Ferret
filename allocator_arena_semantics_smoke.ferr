@@ -1,0 +1,39 @@
+import "std/mem"
+
+fn is_non_null(p: ^void) bool {
+    unsafe {
+        return (p as usize) != 0
+    }
+}
+
+fn must_non_null(label: str, p: ^void) void {
+    if !is_non_null(p) {
+        panic label
+    }
+}
+
+fn main() void {
+    let mut arena = mem::Arena(8)
+
+    let p1 = arena.Alloc(8)
+    must_non_null("arena alloc p1 failed", p1)
+
+    // Arena free is intentionally a no-op.
+    arena.Free(p1)
+
+    let p2 = arena.Alloc(8)
+    must_non_null("arena alloc p2 failed", p2)
+
+    // Reset should keep capacity and allow new allocations.
+    arena.Reset()
+    let p3 = arena.Alloc(8)
+    must_non_null("arena alloc after reset failed", p3)
+
+    // Release should free backing memory and leave arena reusable.
+    arena.Release()
+    let p4 = arena.Alloc(8)
+    must_non_null("arena alloc after release failed", p4)
+    arena.Release()
+
+    print("arena semantics smoke: PASS")
+}
