@@ -253,6 +253,49 @@ fn run(items: [3]i32) void {
 	}
 }
 
+func TestResolverBindsSpreadArgumentIdent(t *testing.T) {
+	root := t.TempDir()
+	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+fn sum(nums: ...i32) i32 {
+    return nums[0]
+}
+
+fn run(items: []i32) i32 {
+    return sum(items...)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	runFn := findFunc(t, result.Entry.AST, "run")
+	if len(runFn.Params) != 1 || runFn.Params[0].Name == nil {
+		t.Fatalf("expected run(items ...) param")
+	}
+	ret, ok := runFn.Body.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return stmt, got %T", runFn.Body.Stmts[0])
+	}
+	call, ok := ret.Value.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		t.Fatalf("expected call with one spread arg, got %T %#v", ret.Value, ret.Value)
+	}
+	spread, ok := call.Args[0].(*ast.SpreadExpr)
+	if !ok {
+		t.Fatalf("expected spread arg, got %T", call.Args[0])
+	}
+	argIdent, ok := spread.Right.(*ast.Ident)
+	if !ok {
+		t.Fatalf("expected spread right ident, got %T", spread.Right)
+	}
+	res := result.Entry.Bindings.Nodes[argIdent]
+	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "items" {
+		t.Fatalf("expected spread right to resolve to param items, got %#v", res)
+	}
+}
+
 func TestResolverReportsUndefinedSymbol(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `

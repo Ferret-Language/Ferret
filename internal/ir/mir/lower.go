@@ -413,7 +413,13 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 			}
 		}
 		if e.LocalID >= 0 {
-			return &LocalValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, LocalID: e.LocalID}
+			localType := e.Type()
+			if typeinfo.IsUnknown(localType) && lowerCtx != nil && e.LocalID < len(lowerCtx.locals) {
+				if local := lowerCtx.locals[e.LocalID]; local != nil && local.Type != nil {
+					localType = local.Type
+				}
+			}
+			return &LocalValue{baseValue: baseValue{Location: e.Loc(), ExprType: localType}, LocalID: e.LocalID}
 		}
 		if lowerCtx == nil {
 			return &NameValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Path: append([]string(nil), e.Path...)}
@@ -558,6 +564,13 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 }
 
 func lowerCallArgs(lowerCtx *lowerContext, loc source.Location, args []hir.Expr, fnType *typeinfo.FuncType) []Value {
+	unwrapSpread := func(arg hir.Expr) (hir.Expr, bool) {
+		if pref, ok := arg.(*hir.PrefixExpr); ok && pref != nil && pref.Op == "..." {
+			return pref.Right, true
+		}
+		return arg, false
+	}
+
 	if len(args) == 0 {
 		if fnType != nil && len(fnType.Params) > 0 && fnType.Params[len(fnType.Params)-1].Flags.Variadic() {
 			last := fnType.Params[len(fnType.Params)-1]
@@ -572,7 +585,8 @@ func lowerCallArgs(lowerCtx *lowerContext, loc source.Location, args []hir.Expr,
 	if fnType == nil || len(fnType.Params) == 0 {
 		out := make([]Value, 0, len(args))
 		for _, arg := range args {
-			out = append(out, lowerValue(lowerCtx, arg))
+			value, _ := unwrapSpread(arg)
+			out = append(out, lowerValue(lowerCtx, value))
 		}
 		return out
 	}
@@ -581,29 +595,39 @@ func lowerCallArgs(lowerCtx *lowerContext, loc source.Location, args []hir.Expr,
 	if !fnType.Params[last].Flags.Variadic() {
 		out := make([]Value, 0, len(args))
 		for i, arg := range args {
+			value, _ := unwrapSpread(arg)
 			if i < len(fnType.Params) {
-				out = append(out, lowerCoercedValue(lowerCtx, arg, fnType.Params[i].Type))
+				out = append(out, lowerCoercedValue(lowerCtx, value, fnType.Params[i].Type))
 				continue
 			}
-			out = append(out, lowerValue(lowerCtx, arg))
+			out = append(out, lowerValue(lowerCtx, value))
 		}
 		return out
 	}
 
 	out := make([]Value, 0, len(fnType.Params))
 	for i := 0; i < last && i < len(args); i++ {
-		out = append(out, lowerCoercedValue(lowerCtx, args[i], fnType.Params[i].Type))
+		value, _ := unwrapSpread(args[i])
+		out = append(out, lowerCoercedValue(lowerCtx, value, fnType.Params[i].Type))
 	}
 
 	variadicParam := fnType.Params[last]
+	if len(args) == last+1 {
+		if spreadValue, ok := unwrapSpread(args[last]); ok {
+			out = append(out, lowerCoercedValue(lowerCtx, spreadValue, variadicParam.Type))
+			return out
+		}
+	}
+
 	variadicElem := variadicParam.Type
 	if slice, ok := variadicParam.Type.(*typeinfo.SliceType); ok {
 		variadicElem = slice.Inner
 	}
 	variadicItems := make([]CompositeItem, 0, max(0, len(args)-last))
 	for i := last; i < len(args); i++ {
+		value, _ := unwrapSpread(args[i])
 		variadicItems = append(variadicItems, CompositeItem{
-			Value: lowerCoercedValue(lowerCtx, args[i], variadicElem),
+			Value: lowerCoercedValue(lowerCtx, value, variadicElem),
 		})
 	}
 	out = append(out, &CompositeValue{
@@ -960,8 +984,14 @@ func lowerAddrSource(c *lowerContext, expr hir.Expr) Value {
 		return nil
 	}
 	if ident, ok := expr.(*hir.Ident); ok && ident.LocalID >= 0 {
+		localType := ident.Type()
+		if typeinfo.IsUnknown(localType) && c != nil && ident.LocalID < len(c.locals) {
+			if local := c.locals[ident.LocalID]; local != nil && local.Type != nil {
+				localType = local.Type
+			}
+		}
 		return &LocalValue{
-			baseValue: baseValue{Location: ident.Loc(), ExprType: ident.Type()},
+			baseValue: baseValue{Location: ident.Loc(), ExprType: localType},
 			LocalID:   ident.LocalID,
 		}
 	}
@@ -992,7 +1022,11 @@ func lowerNameValue(c *lowerContext, source ast.Expr, loc source.Location, typ t
 	if resolved := lowerResolvedName(c, source, loc, typ); resolved != nil {
 		return resolved
 	}
-	return &NameValue{baseValue: baseValue{Location: loc, ExprType: typ}, Path: append([]string(nil), fallback...)}
+	name := &NameValue{baseValue: baseValue{Location: loc, ExprType: typ}, Path: append([]string(nil), fallback...)}
+	if len(fallback) == 2 && fallback[0] == "global" && fallback[1] == "len" {
+		name.LinkName = "ferret_global_slice_len"
+	}
+	return name
 }
 
 func canonicalResolvedPath(c *lowerContext, resolution *binding.Resolution) []string {

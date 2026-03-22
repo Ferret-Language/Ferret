@@ -495,6 +495,8 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		r.resolveExprPath(scope, e)
 	case *ast.PrefixExpr:
 		r.resolveExpr(scope, e.Right)
+	case *ast.SpreadExpr:
+		r.resolveExpr(scope, e.Right)
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, e.Left)
 		r.resolveExpr(scope, e.Right)
