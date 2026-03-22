@@ -269,8 +269,26 @@ func (p *Parser) parseIdentWithAngleTypeArgs(left ast.Expr) ast.Expr {
 func (p *Parser) parseArgList() []ast.Expr {
 	p.expect(tokens.LPAREN, "expected '('")
 	args := make([]ast.Expr, 0)
+	seenSpread := false
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
-		args = append(args, p.parseExprUntil(precLowest))
+		arg := p.parseExprUntil(precLowest)
+		if p.match(tokens.ELLIPSIS) {
+			arg = &ast.SpreadExpr{
+				Right:    arg,
+				Location: source.NewLocation(p.file, *arg.Loc().Start, p.previous().End),
+			}
+			if seenSpread {
+				p.errorAt(arg.Loc(), "only one spread argument is allowed")
+			}
+			seenSpread = true
+			if !p.at(tokens.RPAREN) {
+				p.errorAt(arg.Loc(), "spread argument must be the last argument")
+			}
+		}
+		if seenSpread && !p.at(tokens.RPAREN) {
+			p.errorAt(arg.Loc(), "spread argument must be the last argument")
+		}
+		args = append(args, arg)
 		if !p.consumeListSeparator(tokens.RPAREN, "argument", p.startsExpr()) {
 			break
 		}

@@ -304,8 +304,8 @@ fn main(items: []i32) usize {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"declare i64 @ferret_global_len(ptr)",
-		"call i64 @ferret_global_len(ptr %items)",
+		"declare i64 @ferret_global_slice_len(ptr)",
+		"call i64 @ferret_global_slice_len(ptr %items)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
@@ -333,7 +333,7 @@ fn main(s: str) usize {
 		t.Fatalf("lower llvm: %v", err)
 	}
 	text := artifact.Text
-	if !strings.Contains(text, "call i64 @ferret_global_len(ptr %s)") {
+	if !strings.Contains(text, "call i64 @ferret_global_slice_len(ptr %s)") {
 		t.Fatalf("expected string len runtime call in llvm output:\n%s", text)
 	}
 }

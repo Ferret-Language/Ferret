@@ -223,8 +223,23 @@ func (l *lowerer) lowerWhileStmt(s *WhileStmt) []Stmt {
 
 func (l *lowerer) lowerForStmt(s *ForStmt) []Stmt {
 	prelude, iterable := l.lowerExpr(s.Iterable)
-	arrayType, ok := iterable.Type().(*typeinfo.ArrayType)
-	if !ok {
+	elemType := typeinfo.Type(nil)
+	limitExpr := Expr(nil)
+	limitType := &typeinfo.BuiltinType{Name: "usize"}
+	sliceIter := false
+
+	if arrayType, ok := iterable.Type().(*typeinfo.ArrayType); ok {
+		elemType = arrayType.Inner
+		limit := &NumberLit{Value: itoa(int(arrayType.Len))}
+		limit.ExprType = limitType
+		limit.Location = s.Loc()
+		limitExpr = limit
+	} else if sliceType, ok := iterable.Type().(*typeinfo.SliceType); ok {
+		elemType = sliceType.Inner
+		sliceIter = true
+	}
+
+	if elemType == nil {
 		out := &ForStmt{Iterable: iterable, IndexName: s.IndexName, IndexID: s.IndexID, ValueName: s.ValueName, ValueID: s.ValueID, Body: l.lowerBlock(s.Body)}
 		SetStmtLocation(out, s.Loc())
 		return append(prelude, out)
@@ -236,8 +251,26 @@ func (l *lowerer) lowerForStmt(s *ForStmt) []Stmt {
 	iterDecl := &LetStmt{Name: iterName, LocalID: iterID, Mutable: false, Type: iterable.Type(), Value: iterable}
 	SetStmtLocation(iterDecl, s.Iterable.Loc())
 
+	if sliceIter {
+		callee := &Ident{Path: []string{"global", "len"}, LocalID: -1}
+		callee.ExprType = &typeinfo.FuncType{
+			Params: []typeinfo.ParamSpec{
+				{Type: iterable.Type()},
+			},
+			Result: limitType,
+		}
+		callee.Location = s.Loc()
+		limit := &CallExpr{
+			Callee: callee,
+			Args:   []Expr{makeTempIdent(iterName, iterID, iterable.Type(), s.Iterable.Loc())},
+		}
+		limit.ExprType = limitType
+		limit.Location = s.Loc()
+		limitExpr = limit
+	}
+
 	zero := &NumberLit{Value: "0"}
-	zero.ExprType = &typeinfo.BuiltinType{Name: "usize"}
+	zero.ExprType = limitType
 	zero.Location = s.Loc()
 	zero.Source = s.Iterable.SourceExpr()
 	indexDecl := &LetStmt{Name: indexName, LocalID: indexID, Mutable: true, Type: zero.Type(), Value: zero}
@@ -245,11 +278,7 @@ func (l *lowerer) lowerForStmt(s *ForStmt) []Stmt {
 
 	indexIdent := makeTempIdent(indexName, indexID, zero.Type(), s.Loc())
 
-	limit := &NumberLit{Value: itoa(int(arrayType.Len))}
-	limit.ExprType = zero.Type()
-	limit.Location = s.Loc()
-
-	cond := &BinaryExpr{Left: indexIdent, Op: "<", Right: limit}
+	cond := &BinaryExpr{Left: indexIdent, Op: "<", Right: limitExpr}
 	cond.ExprType = &typeinfo.BuiltinType{Name: "bool"}
 	cond.Location = s.Loc()
 
@@ -264,9 +293,9 @@ func (l *lowerer) lowerForStmt(s *ForStmt) []Stmt {
 	if s.ValueName != "" {
 		valueIndex := makeTempIdent(indexName, indexID, zero.Type(), s.Loc())
 		valueExpr := &IndexExpr{Left: makeTempIdent(iterName, iterID, iterable.Type(), s.Iterable.Loc()), Index: valueIndex}
-		valueExpr.ExprType = arrayType.Inner
+		valueExpr.ExprType = elemType
 		valueExpr.Location = s.Loc()
-		valueBind := &LetStmt{Name: s.ValueName, LocalID: s.ValueID, Mutable: false, Type: arrayType.Inner, Value: valueExpr}
+		valueBind := &LetStmt{Name: s.ValueName, LocalID: s.ValueID, Mutable: false, Type: elemType, Value: valueExpr}
 		SetStmtLocation(valueBind, s.Loc())
 		body.Stmts = append(body.Stmts, valueBind)
 	}

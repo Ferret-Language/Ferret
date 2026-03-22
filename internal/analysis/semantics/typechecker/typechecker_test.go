@@ -3632,6 +3632,103 @@ fn main() i32 {
 	}
 }
 
+func TestTypecheckerAllowsForOverSlice(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn sum(items: []i32) i32 {
+    let mut total = 0
+    for items |v| {
+        total += v
+    }
+    return total
+}
+
+fn main() i32 {
+    let items: []i32 = []i32{1, 2, 3}
+    return sum(items)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsVariadicCalls(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn sum(nums: ...i32) i32 {
+    let mut total = 0
+    for nums |v| {
+        total += v
+    }
+    return total
+}
+
+fn main() i32 {
+    return sum(1, 2, 3, 4)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsSpreadIntoVariadicCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn sum(nums: ...i32) i32 {
+    let mut total = 0
+    for nums |v| {
+        total += v
+    }
+    return total
+}
+
+fn main() i32 {
+    let items: []i32 = []i32{1, 2, 3}
+    return sum(items...)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsSpreadOnNonVariadicCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn sum(items: []i32) i32 {
+    return items[0]
+}
+
+fn main() i32 {
+    let items: []i32 = []i32{1, 2, 3}
+    return sum(items...)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected spread-on-non-variadic diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "spread argument requires a variadic parameter") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected spread-on-non-variadic diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerTypesMutableSliceLiteral(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `

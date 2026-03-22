@@ -14,7 +14,7 @@ func SplitSliceComposite(comp *mir.CompositeValue) (ptr mir.Value, length mir.Va
 		return nil, nil, nil, fmt.Errorf("slice aggregate value must be composite")
 	}
 	if len(comp.Items) == 0 {
-		return nil, nil, nil, nil
+		return nil, nil, []mir.Value{}, nil
 	}
 
 	hasNamed := false

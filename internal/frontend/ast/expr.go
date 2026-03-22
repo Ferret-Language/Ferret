@@ -78,6 +78,14 @@ type PrefixExpr struct {
 func (*PrefixExpr) exprNode()              {}
 func (e *PrefixExpr) Loc() source.Location { return e.Location }
 
+type SpreadExpr struct {
+	Right    Expr
+	Location source.Location
+}
+
+func (*SpreadExpr) exprNode()              {}
+func (e *SpreadExpr) Loc() source.Location { return e.Location }
+
 type BinaryExpr struct {
 	Left     Expr
 	Op       string

@@ -169,6 +169,100 @@ fn fill(buf: []mut i32) void {}
 	}
 }
 
+func TestParseVariadicParams(t *testing.T) {
+	src := `
+fn collect(nums: ...i32) void {}
+fn collectMut(nums: ...mut i32) void {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	if len(mod.Decls) != 2 {
+		t.Fatalf("expected 2 decls, got %d", len(mod.Decls))
+	}
+
+	fnA, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected first decl func, got %T", mod.Decls[0])
+	}
+	if len(fnA.Params) != 1 || !fnA.Params[0].IsVariadic {
+		t.Fatalf("expected variadic param, got %#v", fnA.Params)
+	}
+	if got := ast.ParamString(fnA.Params[0]); got != "nums: ...i32" {
+		t.Fatalf("unexpected variadic readonly param string %q", got)
+	}
+
+	fnB, ok := mod.Decls[1].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected second decl func, got %T", mod.Decls[1])
+	}
+	if len(fnB.Params) != 1 || !fnB.Params[0].IsVariadic {
+		t.Fatalf("expected variadic mutable param, got %#v", fnB.Params)
+	}
+	if got := ast.ParamString(fnB.Params[0]); got != "nums: ...mut i32" {
+		t.Fatalf("unexpected variadic mutable param string %q", got)
+	}
+}
+
+func TestParserRejectsNonTrailingVariadicParam(t *testing.T) {
+	src := `
+fn bad(nums: ...i32, fallback: i32) void {}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "variadic parameter must be the last parameter") {
+		t.Fatalf("expected non-trailing variadic diagnostic, got %v", diag.Diagnostics())
+	}
+}
+
+func TestParseSpreadArgument(t *testing.T) {
+	src := `
+fn add(nums: ...i32) void {}
+
+fn main() void {
+    let xs: []i32 = []i32{1, 2, 3}
+    add(xs...)
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	mainFn, ok := mod.Decls[1].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected second decl to be main func, got %T", mod.Decls[1])
+	}
+	callStmt, ok := mainFn.Body.Stmts[1].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected expr stmt call, got %T", mainFn.Body.Stmts[1])
+	}
+	call, ok := callStmt.Value.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		t.Fatalf("expected call with one arg, got %#v", callStmt.Value)
+	}
+	if _, ok := call.Args[0].(*ast.SpreadExpr); !ok {
+		t.Fatalf("expected spread arg, got %T", call.Args[0])
+	}
+}
+
+func TestParserRejectsNonTrailingSpreadArgument(t *testing.T) {
+	src := `
+fn add(nums: ...i32) void {}
+
+fn main() void {
+    let xs: []i32 = []i32{1, 2, 3}
+    add(xs..., 1)
+}
+`
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "spread argument must be the last argument") {
+		t.Fatalf("expected non-trailing spread diagnostic, got %v", diag.Diagnostics())
+	}
+}
+
 func TestParseIfAttributeOnTypeDecl(t *testing.T) {
 	src := `
 #[if(target_os, "linux")]

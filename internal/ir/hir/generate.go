@@ -598,6 +598,11 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		out := &PrefixExpr{Op: e.Op, Right: g.generateExpr(e.Right)}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
+	case *ast.SpreadExpr:
+		spreadType := exprType(g.types, e.Right)
+		out := &PrefixExpr{Op: "...", Right: g.generateExpr(e.Right)}
+		out.ExprType, out.Location, out.Source = spreadType, e.Location, e
+		return out
 	case *ast.BinaryExpr:
 		out := &BinaryExpr{Left: g.generateExpr(e.Left), Op: e.Op, Right: g.generateExpr(e.Right)}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e

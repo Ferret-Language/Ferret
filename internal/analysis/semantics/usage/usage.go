@@ -321,6 +321,11 @@ func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {
 			return
 		}
 		a.collectDeclNodesExpr(e.Right)
+	case *ast.SpreadExpr:
+		if e == nil {
+			return
+		}
+		a.collectDeclNodesExpr(e.Right)
 	case *ast.BinaryExpr:
 		if e == nil {
 			return
@@ -416,12 +421,16 @@ func (a *analyzer) markCallWrites(call *ast.CallExpr) {
 		variadicIndex = len(fnType.Params) - 1
 	}
 	for i, arg := range call.Args {
+		value := arg
+		if spread, ok := arg.(*ast.SpreadExpr); ok && spread != nil {
+			value = spread.Right
+		}
 		paramIndex := i
 		if variadicIndex >= 0 && i >= variadicIndex {
 			paramIndex = variadicIndex
 		}
 		if paramIndex < len(fnType.Params) && a.paramRequiresMutableAccess(fnType.Params[paramIndex]) {
-			a.markReadWriteTarget(arg)
+			a.markReadWriteTarget(value)
 		}
 	}
 }

@@ -402,6 +402,10 @@ func (c *checker) typeOfExpr(scope *refineScope, expr ast.Expr, expected typeinf
 		return c.typeOfIdent(scope, e, expected)
 	case *ast.PrefixExpr:
 		return c.typeOfPrefix(scope, e, expected)
+	case *ast.SpreadExpr:
+		typ := c.typeOfExpr(scope, e.Right, expected)
+		c.info.BindNode(e, typ)
+		return typ
 	case *ast.BinaryExpr:
 		return c.typeOfBinary(scope, e)
 	case *ast.CatchExpr:
@@ -1215,19 +1219,59 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 		invalid = true
 	}
 	for i, arg := range call.Args {
+		value := arg
+		spread := false
+		if spreadArg, ok := arg.(*ast.SpreadExpr); ok {
+			value = spreadArg.Right
+			spread = true
+		}
 		var expected typeinfo.Type
 		if variadic && i >= variadicIndex {
-			expected = variadicElem
+			if spread {
+				expected = fnType.Params[variadicIndex].Type
+				if i != variadicIndex {
+					loc := arg.Loc()
+					c.ctx.Diagnostics.Add(
+						diagnostics.NewError("spread argument must start the variadic tail").
+							WithCode(diagnostics.ErrInvalidOperation).
+							WithPrimaryLabel(&loc, "use `arr...` in place of the variadic tail"),
+					)
+					invalid = true
+				}
+			} else {
+				expected = variadicElem
+			}
 		} else if i < len(fnType.Params) {
 			expected = fnType.Params[i].Type
 		}
-		argType := c.lookupOrTypeExpr(scope, arg, expected, argTypes, i)
+		if spread && !variadic {
+			loc := arg.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("spread argument requires a variadic parameter").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "this call target is not variadic"),
+			)
+			invalid = true
+		}
+		if spread && variadic && i < variadicIndex {
+			loc := arg.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("spread argument is only valid for variadic parameters").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "use spread at the variadic parameter position"),
+			)
+			invalid = true
+		}
+		argType := c.lookupOrTypeExpr(scope, value, expected, argTypes, i)
+		if spread {
+			c.info.BindNode(arg, argType)
+		}
 		if expected != nil {
-			if !c.checkReferenceArg(scope, arg, expected, argType) {
+			if !c.checkReferenceArg(scope, value, expected, argType) {
 				invalid = true
 				continue
 			}
-			if !c.checkExprAssignable(scope, arg, expected, argType) {
+			if !c.checkExprAssignable(scope, value, expected, argType) {
 				invalid = true
 			}
 		}
@@ -1272,12 +1316,22 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 	inferFromArgs := len(call.TypeArgs) == 0 || len(call.TypeArgs) < len(fnType.TypeParams) || len(genericParams) > len(fnType.TypeParams)
 	variadicIndex, variadicElem, variadic := c.variadicParamInfo(fnType)
 	for i, arg := range call.Args {
-		argType := c.typeOfExpr(scope, arg, nil)
+		value := arg
+		spread := false
+		if spreadArg, ok := arg.(*ast.SpreadExpr); ok {
+			value = spreadArg.Right
+			spread = true
+		}
+		argType := c.typeOfExpr(scope, value, nil)
 		argTypes = append(argTypes, argType)
 		if inferFromArgs {
 			var pattern typeinfo.Type
 			if variadic && i >= variadicIndex {
-				pattern = variadicElem
+				if spread {
+					pattern = fnType.Params[variadicIndex].Type
+				} else {
+					pattern = variadicElem
+				}
 			} else if i < len(fnType.Params) {
 				pattern = fnType.Params[i].Type
 			}
@@ -3191,6 +3245,8 @@ func (c *checker) forBindingTypes(iterable typeinfo.Type) (typeinfo.Type, typein
 	indexType := &typeinfo.BuiltinType{Name: "usize"}
 	switch t := iterable.(type) {
 	case *typeinfo.ArrayType:
+		return indexType, t.Inner
+	case *typeinfo.SliceType:
 		return indexType, t.Inner
 	}
 	return indexType, typeinfo.UnknownType{}

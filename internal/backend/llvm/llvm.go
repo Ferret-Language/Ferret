@@ -624,7 +624,6 @@ func runtimeDecls() []string {
 		"declare void @ferret__bounds_check(i64, i64)",
 		"declare void @ferret__interface_panic(ptr, ptr)",
 		"declare void @global__panic(ptr)",
-		"declare i64 @ferret_global_slice_len(ptr)",
 		"declare { ptr, i64 } @ferret_global_str_bytes(ptr)",
 		"declare { ptr, i64 } @ferret_global_bytes_str(ptr)",
 		"declare { ptr, i64 } @ferret_global_str_chars(ptr)",

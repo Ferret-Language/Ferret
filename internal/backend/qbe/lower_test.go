@@ -303,7 +303,7 @@ fn main(items: []i32) usize {
 		t.Fatalf("lower qbe: %v", err)
 	}
 	text := artifact.Text
-	if !strings.Contains(text, "call $ferret_global_len(l %items)") {
+	if !strings.Contains(text, "call $ferret_global_slice_len(l %items)") {
 		t.Fatalf("expected slice len runtime call in qbe output:\n%s", text)
 	}
 }
@@ -328,7 +328,7 @@ fn main(s: str) usize {
 		t.Fatalf("lower qbe: %v", err)
 	}
 	text := artifact.Text
-	if !strings.Contains(text, "call $ferret_global_len(l %s)") {
+	if !strings.Contains(text, "call $ferret_global_slice_len(l %s)") {
 		t.Fatalf("expected string len runtime call in qbe output:\n%s", text)
 	}
 }

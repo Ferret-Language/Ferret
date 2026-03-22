@@ -139,6 +139,8 @@ func ExprString(expr Expr) string {
 		return e.Text()
 	case *PrefixExpr:
 		return e.Op + ExprString(e.Right)
+	case *SpreadExpr:
+		return ExprString(e.Right) + "..."
 	case *PostfixExpr:
 		return ExprString(e.Left) + e.Op
 	case *BinaryExpr:

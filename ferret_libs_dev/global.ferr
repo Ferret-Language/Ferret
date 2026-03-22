@@ -29,7 +29,7 @@ fn print(value: Any) void;
 
 /// Returns the element count of an array or slice.
 /// This foreign declaration is polymorphic in semantic analysis and accepts any []T or [N]T.
-#[extern]
+#[extern("ferret_global_slice_len")]
 fn len(value: []u8) usize;
 
 /// Internal helper used by lowering of len on slice values.

@@ -1,0 +1,46 @@
+fn sum(nums: ...i32) i32 {
+    let mut total = 0
+    for nums |v| {
+        total += v
+    }
+    return total
+}
+
+fn head_or(fallback: i32, nums: ...i32) i32 {
+    if len(nums) == 0 {
+        return fallback
+    }
+    return nums[0]
+}
+
+fn zero_mutate(nums: ...mut i32) i32 {
+    if len(nums) == 0 {
+        return -1
+    }
+    nums[0] = 0
+    return nums[0]
+}
+
+fn main() void {
+    let a = sum(1, 2, 3, 4)
+    if a != 10 {
+        panic "variadic sum failed"
+    }
+
+    let b = head_or(-1, 7, 8, 9)
+    if b != 7 {
+        panic "variadic head failed"
+    }
+
+    let c = head_or(-1)
+    if c != -1 {
+        panic "variadic fallback failed"
+    }
+
+    let d = zero_mutate(5, 6, 7)
+    if d != 0 {
+        panic "variadic mutable failed"
+    }
+
+    print("variadic smoke test: PASS")
+}

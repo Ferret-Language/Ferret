@@ -505,6 +505,60 @@ fn main() void {
 	t.Fatalf("expected specialized interface coercion for Point<i32>::Draw, got %#v", mainFn.Blocks)
 }
 
+func TestPipelineLowersVariadicSpreadCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+fn sum(nums: ...i32) i32 {
+    return nums[0]
+}
+
+fn main(items: []i32) i32 {
+    return sum(items...)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			compute, ok := instr.(*mir.ComputeInstr)
+			if !ok {
+				continue
+			}
+			call, ok := compute.Value.(*mir.CallValue)
+			if !ok || !hasCallNamed(call, "sum") {
+				continue
+			}
+			if len(call.Args) != 1 {
+				t.Fatalf("expected spread call lowered to single slice arg, got %#v", call.Args)
+			}
+			if _, ok := call.Args[0].Type().(*typeinfo.SliceType); !ok {
+				t.Fatalf("expected slice arg type, got %T %#v", call.Args[0].Type(), call.Args[0].Type())
+			}
+			if _, ok := call.Args[0].(*mir.CompositeValue); ok {
+				t.Fatalf("expected direct spread slice passthrough, got packed composite %#v", call.Args[0])
+			}
+			return
+		}
+	}
+	t.Fatalf("expected lowered sum call in MIR, got %#v", mainFn.Blocks)
+}
+
 func TestPipelineLowersConstrainedGenericMethodCallWithSpecializedOwnerPath(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
