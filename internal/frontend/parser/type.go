@@ -37,7 +37,12 @@ func (p *Parser) parseType() ast.TypeExpr {
 		p.advance()
 		if p.at(tokens.RBRACK) {
 			p.advance()
-			return &ast.SliceType{Inner: p.parseType(), Location: p.locFrom(start)}
+			slice := &ast.SliceType{Location: p.locFrom(start)}
+			if p.match(tokens.MUT) {
+				slice.Mutable = true
+			}
+			slice.Inner = p.parseType()
+			return slice
 		}
 		var size ast.Expr
 		if p.at(tokens.IDENT) && p.current().Literal == "_" {

@@ -621,9 +621,14 @@ func implicitExternDecls() []string {
 func runtimeDecls() []string {
 	return []string{
 		"declare void @ferret__panic(ptr)",
+		"declare void @ferret__bounds_check(i64, i64)",
 		"declare void @ferret__interface_panic(ptr, ptr)",
 		"declare void @global__panic(ptr)",
 		"declare i64 @ferret_global_slice_len(ptr)",
+		"declare { ptr, i64 } @ferret_global_str_bytes(ptr)",
+		"declare { ptr, i64 } @ferret_global_bytes_str(ptr)",
+		"declare { ptr, i64 } @ferret_global_str_chars(ptr)",
+		"declare { ptr, i64 } @ferret_global_chars_str(ptr)",
 		"declare { ptr, i64 } @ferret_global_i64_str(i64)",
 		"declare { ptr, i64 } @ferret_global_u64_str(i64)",
 		"declare { ptr, i64 } @ferret_global_f64_str(double)",
@@ -2060,10 +2065,15 @@ func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typei
 		return "", err
 	}
 	dataPtr := freshTemp(state, "slice_data")
+	lenAddr := freshTemp(state, "slice_len_addr")
+	lenVal := freshTemp(state, "slice_len")
 	elemPtr := freshTemp(state, "elem")
 	loadElem := freshTemp(state, "idx")
 	lines := []string{
 		fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, baseExpr),
+		fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", lenAddr, baseExpr),
+		fmt.Sprintf("%s = load i64, ptr %s", lenVal, lenAddr),
+		fmt.Sprintf("call void @ferret__bounds_check(i64 %s, i64 %s)", indexExpr, lenVal),
 		fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", elemPtr, elemIRType, dataPtr, indexExpr),
 		fmt.Sprintf("%s = load %s, ptr %s", loadElem, elemIRType, elemPtr),
 		fmt.Sprintf("%s = or %s 0, %s", llvmLocalName(targetName), elemIRType, loadElem),
@@ -2109,9 +2119,11 @@ func tupleElementLayoutForIndex(state *moduleState, tupleType *typeinfo.TupleTyp
 func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
 	var tupleElem *backend.TupleElementLayout
+	arrayLen := int64(-1)
 	switch bt := baseType.(type) {
 	case *typeinfo.ArrayType:
 		elemType = bt.Inner
+		arrayLen = bt.Len
 	case *typeinfo.TupleType:
 		entry, err := tupleElementLayoutForIndex(state, bt, index)
 		if err != nil {
@@ -2146,9 +2158,14 @@ func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, base
 	if err != nil {
 		return nil, "", err
 	}
+	var lines []string
+	if arrayLen >= 0 {
+		lines = append(lines, fmt.Sprintf("call void @ferret__bounds_check(i64 %s, i64 %d)", indexExpr, arrayLen))
+	}
 	addr := freshTemp(state, "elem")
 	line := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", addr, elemIRType, baseExpr, indexExpr)
-	return []string{line}, addr, nil
+	lines = append(lines, line)
+	return lines, addr, nil
 }
 
 func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) {
@@ -2247,11 +2264,13 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 		}
 		baseType := localTypeByPlaceID(state, p.Base)
 		var elemIRType string
+		arrayLen := int64(-1)
 		if arr, ok := baseType.(*typeinfo.ArrayType); ok {
 			elemIRType, err = llvmBaseType(arr.Inner)
 			if err != nil {
 				return nil, "", err
 			}
+			arrayLen = arr.Len
 		} else if tup, ok := baseType.(*typeinfo.TupleType); ok {
 			entry, err := tupleElementLayoutForIndex(state, tup, p.Index)
 			if err != nil {
@@ -2269,14 +2288,29 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 				return nil, "", err
 			}
 			dataPtr := freshTemp(state, "slice_data")
+			lenAddr := freshTemp(state, "slice_len_addr")
+			lenVal := freshTemp(state, "slice_len")
 			baseLines = append(baseLines, fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, basePtr))
+			baseLines = append(baseLines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", lenAddr, basePtr))
+			baseLines = append(baseLines, fmt.Sprintf("%s = load i64, ptr %s", lenVal, lenAddr))
 			basePtr = dataPtr
+			idxVal, err := lowerValue(state, p.Index)
+			if err != nil {
+				return nil, "", err
+			}
+			baseLines = append(baseLines, fmt.Sprintf("call void @ferret__bounds_check(i64 %s, i64 %s)", idxVal, lenVal))
+			addrTmp := freshTemp(state, "elem")
+			gepLine := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", addrTmp, elemIRType, basePtr, idxVal)
+			return append(baseLines, gepLine), addrTmp, nil
 		} else {
 			return nil, "", fmt.Errorf("IndexPlace base is not an array, tuple, or slice: %T", baseType)
 		}
 		idxVal, err := lowerValue(state, p.Index)
 		if err != nil {
 			return nil, "", err
+		}
+		if arrayLen >= 0 {
+			baseLines = append(baseLines, fmt.Sprintf("call void @ferret__bounds_check(i64 %s, i64 %d)", idxVal, arrayLen))
 		}
 		addrTmp := freshTemp(state, "elem")
 		gepLine := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", addrTmp, elemIRType, basePtr, idxVal)
@@ -2568,7 +2602,9 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 			return lowerAggregateAssign(state, agg, v.Right)
 		}
 	case *mir.CastValue:
-		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) {
+		srcCast := backend.UnwrapNamed(v.Left.Type())
+		dstCast := backend.UnwrapNamed(v.Type())
+		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) && !isStringSliceCastPair(srcCast, dstCast) {
 			return lowerAggregateAssign(state, agg, v.Left)
 		}
 		expr, err := lowerCast(state, v)
@@ -2936,29 +2972,81 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 }
 
 func lowerAggregateValueToAddr(state *moduleState, addr string, typ typeinfo.Type, value mir.Value) ([]string, error) {
-	if _, ok := typ.(*typeinfo.SliceType); ok {
+	if sliceType, ok := typ.(*typeinfo.SliceType); ok {
 		comp, ok := value.(*mir.CompositeValue)
 		if !ok {
 			return nil, fmt.Errorf("slice aggregate value must be composite")
 		}
-		items := make(map[string]mir.Value, len(comp.Items))
-		for _, item := range comp.Items {
-			items[item.Name] = item.Value
-		}
-		ptrLowered, err := lowerValue(state, items["ptr"])
+		ptrItem, lenItem, elems, err := becommon.SplitSliceComposite(comp)
 		if err != nil {
 			return nil, err
 		}
-		lenLowered, err := lowerValue(state, items["len"])
-		if err != nil {
-			return nil, err
+		lines := make([]string, 0, len(comp.Items)*3+3)
+		ptrLowered := "null"
+		lenLowered := "0"
+		if elems == nil {
+			ptrLowered, err = lowerValue(state, ptrItem)
+			if err != nil {
+				return nil, err
+			}
+			lenLowered, err = lowerValue(state, lenItem)
+			if err != nil {
+				return nil, err
+			}
+		} else if len(elems) > 0 {
+			elemSize, elemAlign, err := aggregateSizeAlignOfPrimitive(sliceType.Inner)
+			if err != nil {
+				elemSize, elemAlign, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), sliceType.Inner)
+			}
+			if err != nil {
+				return nil, err
+			}
+			if elemAlign < 1 {
+				elemAlign = 1
+			}
+			stride := backend.AlignUpInt64(elemSize, elemAlign)
+			total := stride * int64(len(elems))
+			allocBytes := total
+			if allocBytes <= 0 {
+				allocBytes = 1
+			}
+			buf := freshTemp(state, "slice_lit_buf")
+			lines = append(lines, fmt.Sprintf("%s = alloca i8, i64 %d, align %d", buf, allocBytes, elemAlign))
+			for i, elem := range elems {
+				offset := stride * int64(i)
+				elemAddr := buf
+				if offset != 0 {
+					elemAddr = freshTemp(state, "slice_lit_elem_addr")
+					lines = append(lines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", elemAddr, buf, offset))
+				}
+				if isAggregateType(state, sliceType.Inner) {
+					elemLines, err := lowerAggregateValueToAddr(state, elemAddr, sliceType.Inner, elem)
+					if err != nil {
+						return nil, err
+					}
+					lines = append(lines, elemLines...)
+					continue
+				}
+				irType, err := llvmBaseType(sliceType.Inner)
+				if err != nil {
+					return nil, err
+				}
+				lowered, err := lowerValue(state, elem)
+				if err != nil {
+					return nil, err
+				}
+				lines = append(lines, fmt.Sprintf("store %s %s, ptr %s", irType, lowered, elemAddr))
+			}
+			ptrLowered = buf
+			lenLowered = strconv.FormatInt(int64(len(elems)), 10)
 		}
 		lenAddr := freshTemp(state, "len_addr")
-		return []string{
+		lines = append(lines,
 			fmt.Sprintf("store ptr %s, ptr %s", ptrLowered, addr),
 			fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", lenAddr, addr),
 			fmt.Sprintf("store i64 %s, ptr %s", lenLowered, lenAddr),
-		}, nil
+		)
+		return lines, nil
 	}
 	if _, ok := typ.(*typeinfo.StringType); ok {
 		switch v := value.(type) {
@@ -3898,7 +3986,12 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if v == nil || v.Left == nil {
 		return "", fmt.Errorf("invalid cast")
 	}
-	if _, ok := backend.UnwrapNamed(v.Type()).(*typeinfo.StringType); ok {
+	src := backend.UnwrapNamed(v.Left.Type())
+	dst := backend.UnwrapNamed(v.Type())
+	if call, ok, err := lowerStringSliceCast(state, src, dst, v.Left); ok || err != nil {
+		return call, err
+	}
+	if _, ok := dst.(*typeinfo.StringType); ok {
 		return lowerStringCast(state, v.Left)
 	}
 	if isUnionAggregate(v.Left.Type()) && !isAggregateType(state, v.Type()) {
@@ -3921,9 +4014,6 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	src := backend.UnwrapNamed(v.Left.Type())
-	dst := backend.UnwrapNamed(v.Type())
-
 	srcBuiltin, srcIsBuiltin := src.(*typeinfo.BuiltinType)
 	dstBuiltin, dstIsBuiltin := dst.(*typeinfo.BuiltinType)
 	_, srcIsRawPtr := src.(*typeinfo.RawPtrType)
@@ -3962,6 +4052,70 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 		return llvmCopyExpr("ptr", srcVal)
 	}
 	return "", fmt.Errorf("unsupported cast from %s to %s", src, dst)
+}
+
+func lowerStringSliceCast(state *moduleState, src, dst typeinfo.Type, value mir.Value) (string, bool, error) {
+	if _, ok := src.(*typeinfo.StringType); ok {
+		elem, ok := sliceElementBuiltin(dst)
+		if !ok {
+			return "", false, nil
+		}
+		srcPtr, err := lowerAggregateSource(state, value)
+		if err != nil {
+			return "", true, err
+		}
+		switch elem {
+		case "u8":
+			return fmt.Sprintf("call { ptr, i64 } @ferret_global_str_bytes(ptr %s)", srcPtr), true, nil
+		case "char":
+			return fmt.Sprintf("call { ptr, i64 } @ferret_global_str_chars(ptr %s)", srcPtr), true, nil
+		default:
+			return "", false, nil
+		}
+	}
+	if _, ok := dst.(*typeinfo.StringType); ok {
+		elem, ok := sliceElementBuiltin(src)
+		if !ok {
+			return "", false, nil
+		}
+		srcPtr, err := lowerAggregateSource(state, value)
+		if err != nil {
+			return "", true, err
+		}
+		switch elem {
+		case "u8":
+			return fmt.Sprintf("call { ptr, i64 } @ferret_global_bytes_str(ptr %s)", srcPtr), true, nil
+		case "char":
+			return fmt.Sprintf("call { ptr, i64 } @ferret_global_chars_str(ptr %s)", srcPtr), true, nil
+		default:
+			return "", false, nil
+		}
+	}
+	return "", false, nil
+}
+
+func isStringSliceCastPair(src, dst typeinfo.Type) bool {
+	if _, ok := src.(*typeinfo.StringType); ok {
+		elem, ok := sliceElementBuiltin(dst)
+		return ok && (elem == "u8" || elem == "char")
+	}
+	if _, ok := dst.(*typeinfo.StringType); ok {
+		elem, ok := sliceElementBuiltin(src)
+		return ok && (elem == "u8" || elem == "char")
+	}
+	return false
+}
+
+func sliceElementBuiltin(typ typeinfo.Type) (string, bool) {
+	sliceType, ok := typ.(*typeinfo.SliceType)
+	if !ok || sliceType == nil {
+		return "", false
+	}
+	builtin, ok := backend.UnwrapNamed(sliceType.Inner).(*typeinfo.BuiltinType)
+	if !ok || builtin == nil {
+		return "", false
+	}
+	return builtin.Name, true
 }
 
 func lowerUnionSource(state *moduleState, value mir.Value) (string, error) {

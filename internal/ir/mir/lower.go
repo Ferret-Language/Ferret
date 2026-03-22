@@ -361,6 +361,31 @@ func lowerCoercedValue(lowerCtx *lowerContext, expr hir.Expr, expected typeinfo.
 			Methods:      methodLinks,
 		}
 	}
+	if expectedSlice, ok := expected.(*typeinfo.SliceType); ok {
+		if gotSlice, ok := expr.Type().(*typeinfo.SliceType); ok && !expectedSlice.Mutable && gotSlice.Mutable && typeinfo.Equal(expectedSlice.Inner, gotSlice.Inner) {
+			return withValueContext(lowerValue(lowerCtx, expr), expr.Loc(), expected)
+		}
+		if gotArray, ok := expr.Type().(*typeinfo.ArrayType); ok && typeinfo.Equal(expectedSlice.Inner, gotArray.Inner) {
+			ptrType := &typeinfo.RawPtrType{Const: !expectedSlice.Mutable, Inner: expectedSlice.Inner}
+			ptrValue := &AddrOfValue{
+				baseValue: baseValue{Location: expr.Loc(), ExprType: ptrType},
+				Source:    lowerAddrSource(lowerCtx, expr),
+				Mutable:   expectedSlice.Mutable,
+				Raw:       true,
+			}
+			lenValue := &NumberValue{
+				baseValue: baseValue{Location: expr.Loc(), ExprType: &typeinfo.BuiltinType{Name: "usize"}},
+				Value:     strconv.FormatInt(gotArray.Len, 10),
+			}
+			return &CompositeValue{
+				baseValue: baseValue{Location: expr.Loc(), ExprType: expected},
+				Items: []CompositeItem{
+					{Name: "ptr", Value: ptrValue},
+					{Name: "len", Value: lenValue},
+				},
+			}
+		}
+	}
 	return lowerValue(lowerCtx, expr)
 }
 

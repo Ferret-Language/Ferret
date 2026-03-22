@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"sort"
+	"strconv"
 	"strings"
 
 	layout "compiler/internal/analysis/layout/model"
@@ -1157,7 +1158,12 @@ func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typei
 	}
 	lines := make([]string, 0, 5)
 	dataPtr := freshTemp(state, "slice_data")
+	lenAddr := freshTemp(state, "slice_len_addr")
+	lenVal := freshTemp(state, "slice_len")
 	lines = append(lines, fmt.Sprintf("%s =l loadl %s", dataPtr, baseExpr))
+	lines = append(lines, fmt.Sprintf("%s =l add %s, 8", lenAddr, baseExpr))
+	lines = append(lines, fmt.Sprintf("%s =l loadl %s", lenVal, lenAddr))
+	lines = append(lines, fmt.Sprintf("call $ferret__bounds_check(l %s, l %s)", indexExpr, lenVal))
 	scaled := indexExpr
 	if elemSize != 1 {
 		scaledTmp := freshTemp(state, "idx")
@@ -1174,9 +1180,11 @@ func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typei
 func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
 	var elemType typeinfo.Type
 	var tupleElem *backend.TupleElementLayout
+	arrayLen := int64(-1)
 	switch bt := baseType.(type) {
 	case *typeinfo.ArrayType:
 		elemType = bt.Inner
+		arrayLen = bt.Len
 	case *typeinfo.TupleType:
 		entry, err := tupleElementLayoutForIndex(state, bt, index)
 		if err != nil {
@@ -1215,6 +1223,9 @@ func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, b
 		return nil, "", err
 	}
 	var lines []string
+	if arrayLen >= 0 {
+		lines = append(lines, fmt.Sprintf("call $ferret__bounds_check(l %s, l %d)", indexExpr, arrayLen))
+	}
 	scaled := indexExpr
 	if elemSize != 1 {
 		scl := freshTemp(state, "idx")
@@ -1327,8 +1338,10 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 		baseType := qbePlaceType(state, p.Base)
 		// Compute address using a fake LocalValue that returns basePtr
 		var elemType typeinfo.Type
+		arrayLen := int64(-1)
 		if arr, ok := baseType.(*typeinfo.ArrayType); ok {
 			elemType = arr.Inner
+			arrayLen = arr.Len
 		} else if tup, ok := baseType.(*typeinfo.TupleType); ok {
 			entry, err := tupleElementLayoutForIndex(state, tup, p.Index)
 			if err != nil {
@@ -1342,8 +1355,34 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 		} else if sl, ok := baseType.(*typeinfo.SliceType); ok {
 			elemType = sl.Inner
 			dataPtr := freshTemp(state, "slice_data")
+			lenAddr := freshTemp(state, "slice_len_addr")
+			lenVal := freshTemp(state, "slice_len")
 			baseLines = append(baseLines, fmt.Sprintf("%s =l loadl %s", dataPtr, basePtr))
+			baseLines = append(baseLines, fmt.Sprintf("%s =l add %s, 8", lenAddr, basePtr))
+			baseLines = append(baseLines, fmt.Sprintf("%s =l loadl %s", lenVal, lenAddr))
 			basePtr = dataPtr
+			idxVal, err := lowerValue(state, p.Index)
+			if err != nil {
+				return nil, "", err
+			}
+			baseLines = append(baseLines, fmt.Sprintf("call $ferret__bounds_check(l %s, l %s)", idxVal, lenVal))
+			elemSize, _, err := qbeScalarSizeAlign(elemType)
+			if err != nil {
+				elemSize, _, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), elemType)
+				if err != nil {
+					return nil, "", fmt.Errorf("cannot compute size of indexed element type %s", elemType)
+				}
+			}
+			var idxLines []string
+			scaled := idxVal
+			if elemSize != 1 {
+				scl := freshTemp(state, "idx")
+				idxLines = append(idxLines, fmt.Sprintf("%s =l mul %s, %d", scl, idxVal, elemSize))
+				scaled = scl
+			}
+			addrTmp := freshTemp(state, "elem")
+			idxLines = append(idxLines, fmt.Sprintf("%s =l add %s, %s", addrTmp, basePtr, scaled))
+			return append(baseLines, idxLines...), addrTmp, nil
 		} else {
 			return nil, "", fmt.Errorf("IndexPlace base is not an array, tuple, or slice: %T", baseType)
 		}
@@ -1359,6 +1398,9 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 			return nil, "", err
 		}
 		var idxLines []string
+		if arrayLen >= 0 {
+			idxLines = append(idxLines, fmt.Sprintf("call $ferret__bounds_check(l %s, l %d)", idxVal, arrayLen))
+		}
 		scaled := idxVal
 		if elemSize != 1 {
 			scl := freshTemp(state, "idx")
@@ -2116,29 +2158,81 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 }
 
 func lowerAggregateValueToAddr(state *moduleState, addr string, typ typeinfo.Type, value mir.Value) ([]string, error) {
-	if _, ok := typ.(*typeinfo.SliceType); ok {
+	if sliceType, ok := typ.(*typeinfo.SliceType); ok {
 		comp, ok := value.(*mir.CompositeValue)
 		if !ok {
 			return nil, fmt.Errorf("slice aggregate value must be composite")
 		}
-		items := make(map[string]mir.Value, len(comp.Items))
-		for _, item := range comp.Items {
-			items[item.Name] = item.Value
-		}
-		ptrLowered, err := lowerValue(state, items["ptr"])
+		ptrItem, lenItem, elems, err := becommon.SplitSliceComposite(comp)
 		if err != nil {
 			return nil, err
 		}
-		lenLowered, err := lowerValue(state, items["len"])
-		if err != nil {
-			return nil, err
+		lines := make([]string, 0, len(comp.Items)*3+3)
+		ptrLowered := "0"
+		lenLowered := "0"
+		if elems == nil {
+			ptrLowered, err = lowerValue(state, ptrItem)
+			if err != nil {
+				return nil, err
+			}
+			lenLowered, err = lowerValue(state, lenItem)
+			if err != nil {
+				return nil, err
+			}
+		} else if len(elems) > 0 {
+			elemSize, elemAlign, err := qbeScalarSizeAlign(sliceType.Inner)
+			if err != nil {
+				elemSize, elemAlign, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), sliceType.Inner)
+			}
+			if err != nil {
+				return nil, err
+			}
+			if elemAlign < 1 {
+				elemAlign = 1
+			}
+			stride := alignUpInt64(elemSize, elemAlign)
+			total := stride * int64(len(elems))
+			allocBytes := total
+			if allocBytes <= 0 {
+				allocBytes = 1
+			}
+			buf := freshTemp(state, "slice_lit_buf")
+			lines = append(lines, fmt.Sprintf("%s =l alloc%d %d", buf, normalizeQBEAlign(elemAlign), allocBytes))
+			for i, elem := range elems {
+				offset := stride * int64(i)
+				elemAddr := buf
+				if offset != 0 {
+					elemAddr = freshTemp(state, "slice_lit_elem_addr")
+					lines = append(lines, fmt.Sprintf("%s =l add %s, %d", elemAddr, buf, offset))
+				}
+				if isAggregateType(state, sliceType.Inner) {
+					elemLines, err := lowerAggregateValueToAddr(state, elemAddr, sliceType.Inner, elem)
+					if err != nil {
+						return nil, err
+					}
+					lines = append(lines, elemLines...)
+					continue
+				}
+				storeOp, err := qbeStoreOp(sliceType.Inner)
+				if err != nil {
+					return nil, err
+				}
+				lowered, err := lowerValue(state, elem)
+				if err != nil {
+					return nil, err
+				}
+				lines = append(lines, fmt.Sprintf("%s %s, %s", storeOp, lowered, elemAddr))
+			}
+			ptrLowered = buf
+			lenLowered = strconv.FormatInt(int64(len(elems)), 10)
 		}
 		tmp := freshTemp(state, "len_addr")
-		return []string{
+		lines = append(lines,
 			fmt.Sprintf("storel %s, %s", ptrLowered, addr),
 			fmt.Sprintf("%s =l add %s, 8", tmp, addr),
 			fmt.Sprintf("storel %s, %s", lenLowered, tmp),
-		}, nil
+		)
+		return lines, nil
 	}
 	if _, ok := typ.(*typeinfo.StringType); ok {
 		switch v := value.(type) {
@@ -2829,7 +2923,12 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if v == nil || v.Left == nil {
 		return "", fmt.Errorf("invalid cast")
 	}
-	if _, ok := backend.UnwrapNamed(v.Type()).(*typeinfo.StringType); ok {
+	src := backend.UnwrapNamed(v.Left.Type())
+	dst := backend.UnwrapNamed(v.Type())
+	if call, ok, err := lowerStringSliceCast(state, src, dst, v.Left); ok || err != nil {
+		return call, err
+	}
+	if _, ok := dst.(*typeinfo.StringType); ok {
 		return lowerStringCast(state, v.Left)
 	}
 	if isUnionAggregate(v.Left.Type()) && !isAggregateType(state, v.Type()) {
@@ -2852,9 +2951,6 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	src := backend.UnwrapNamed(v.Left.Type())
-	dst := backend.UnwrapNamed(v.Type())
-
 	srcBuiltin, srcIsBuiltin := src.(*typeinfo.BuiltinType)
 	dstBuiltin, dstIsBuiltin := dst.(*typeinfo.BuiltinType)
 	_, srcIsRawPtr := src.(*typeinfo.RawPtrType)
@@ -2892,6 +2988,59 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 		return "copy " + srcVal, nil
 	}
 	return "", fmt.Errorf("unsupported cast from %s to %s", typeinfo.FormatType(typeStringer{v.Left.Type()}), typeinfo.FormatType(typeStringer{v.Type()}))
+}
+
+func lowerStringSliceCast(state *moduleState, src, dst typeinfo.Type, value mir.Value) (string, bool, error) {
+	if _, ok := src.(*typeinfo.StringType); ok {
+		sliceType, _ := dst.(*typeinfo.SliceType)
+		elem, ok := sliceElementBuiltin(sliceType)
+		if !ok {
+			return "", false, nil
+		}
+		srcPtr, err := lowerAggregateSource(state, value)
+		if err != nil {
+			return "", true, err
+		}
+		switch elem {
+		case "u8":
+			return fmt.Sprintf("call $ferret_global_str_bytes(l %s)", srcPtr), true, nil
+		case "char":
+			return fmt.Sprintf("call $ferret_global_str_chars(l %s)", srcPtr), true, nil
+		default:
+			return "", false, nil
+		}
+	}
+	if _, ok := dst.(*typeinfo.StringType); ok {
+		sliceType, _ := src.(*typeinfo.SliceType)
+		elem, ok := sliceElementBuiltin(sliceType)
+		if !ok {
+			return "", false, nil
+		}
+		srcPtr, err := lowerAggregateSource(state, value)
+		if err != nil {
+			return "", true, err
+		}
+		switch elem {
+		case "u8":
+			return fmt.Sprintf("call $ferret_global_bytes_str(l %s)", srcPtr), true, nil
+		case "char":
+			return fmt.Sprintf("call $ferret_global_chars_str(l %s)", srcPtr), true, nil
+		default:
+			return "", false, nil
+		}
+	}
+	return "", false, nil
+}
+
+func sliceElementBuiltin(sliceType *typeinfo.SliceType) (string, bool) {
+	if sliceType == nil {
+		return "", false
+	}
+	builtin, ok := backend.UnwrapNamed(sliceType.Inner).(*typeinfo.BuiltinType)
+	if !ok || builtin == nil {
+		return "", false
+	}
+	return builtin.Name, true
 }
 
 func lowerUnionSource(state *moduleState, value mir.Value) (string, error) {

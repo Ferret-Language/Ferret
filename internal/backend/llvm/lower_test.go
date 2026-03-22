@@ -215,6 +215,7 @@ fn main() i32 {
 	for _, want := range []string{
 		"%arr = alloca [12 x i8], align 4",
 		"store i32 1, ptr %arr",
+		"call void @ferret__bounds_check(i64 1, i64 3)",
 		"getelementptr inbounds i8, ptr %arr, i64 4",
 		"getelementptr inbounds i32, ptr %arr, i64 1",
 	} {
@@ -247,6 +248,7 @@ fn main(items: []i32) i32 {
 	text := artifact.Text
 	for _, want := range []string{
 		"load ptr, ptr %items",
+		"call void @ferret__bounds_check(i64 1, i64 %_slice_len",
 		"getelementptr inbounds i32, ptr %_slice_data",
 	} {
 		if !strings.Contains(text, want) {
@@ -304,6 +306,134 @@ fn main(items: []i32) usize {
 	for _, want := range []string{
 		"declare i64 @ferret_global_len(ptr)",
 		"call i64 @ferret_global_len(ptr %items)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerBuiltinLenStringToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main(s: str) usize {
+    return len(s)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "call i64 @ferret_global_len(ptr %s)") {
+		t.Fatalf("expected string len runtime call in llvm output:\n%s", text)
+	}
+}
+
+func TestLowerSliceLiteralToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let items: []i32 = []i32{1, 2, 3}
+    return items[1]
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"slice_lit_buf",
+		"store i64 3",
+		"store i32 1",
+		"store i32 2",
+		"store i32 3",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerArrayToSliceCallToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn head(items: []i32) i32 {
+    return items[0]
+}
+
+fn main() i32 {
+    let items: [3]i32 = [3]i32{1, 2, 3}
+    return head(items)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"define i32 @main__head(ptr byval({ ptr, i64 }) align 8 %items)",
+		"call i32 @main__head(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerStringSliceCastsToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.ferr"), `
+fn main(s: str) str {
+    let bytes = s as []u8
+    let text = bytes as str
+    return text
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"declare { ptr, i64 } @ferret_global_str_bytes(ptr)",
+		"declare { ptr, i64 } @ferret_global_bytes_str(ptr)",
+		"call { ptr, i64 } @ferret_global_str_bytes(",
+		"call { ptr, i64 } @ferret_global_bytes_str(",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

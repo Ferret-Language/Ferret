@@ -144,6 +144,31 @@ type Reader interface {
 	}
 }
 
+func TestParseMutableSliceType(t *testing.T) {
+	src := `
+fn fill(buf: []mut i32) void {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[0])
+	}
+	sliceType, ok := fn.Params[0].Type.(*ast.SliceType)
+	if !ok {
+		t.Fatalf("expected slice parameter type, got %T", fn.Params[0].Type)
+	}
+	if !sliceType.Mutable {
+		t.Fatal("expected mutable slice parameter type")
+	}
+	if got := ast.TypeString(sliceType); got != "[]mut i32" {
+		t.Fatalf("unexpected slice type string: %q", got)
+	}
+}
+
 func TestParseIfAttributeOnTypeDecl(t *testing.T) {
 	src := `
 #[if(target_os, "linux")]

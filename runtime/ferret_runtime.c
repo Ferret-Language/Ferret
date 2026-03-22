@@ -90,6 +90,15 @@ void ferret__panic(const ferret_i8 *msg) {
     abort();
 }
 
+void ferret__bounds_check(ferret_usize index, ferret_usize len) {
+    if (index < len) {
+        return;
+    }
+    fprintf(stderr, "panic: index out of bounds (%zu >= %zu)\n", (size_t)index, (size_t)len);
+    fflush(stderr);
+    abort();
+}
+
 /* -------------------------------------------------------------------------
  * ferret__interface_panic
  *

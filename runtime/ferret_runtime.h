@@ -91,6 +91,14 @@ __attribute__((noreturn))
 void ferret__panic(const ferret_i8 *msg);
 
 /*
+ * ferret__bounds_check — panic when index >= len for array/slice indexing.
+ *
+ * The compiler emits this for all non-provable-safe array/slice reads and
+ * writes. Returns normally when the access is in range.
+ */
+void ferret__bounds_check(ferret_usize index, ferret_usize len);
+
+/*
  * ferret__interface_panic — called when a bad interface downcast is attempted.
  *
  * expected_iface — null-terminated name of the expected interface (*i8)

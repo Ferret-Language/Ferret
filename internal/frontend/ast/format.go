@@ -40,6 +40,9 @@ func TypeString(typ TypeExpr) string {
 	case *ArrayType:
 		return "[" + ExprString(t.Size) + "]" + TypeString(t.Inner)
 	case *SliceType:
+		if t.Mutable {
+			return "[]mut " + TypeString(t.Inner)
+		}
 		return "[]" + TypeString(t.Inner)
 	case *TupleType:
 		parts := make([]string, 0, len(t.Elems))

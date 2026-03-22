@@ -79,6 +79,7 @@ func (*ArrayType) typeNode()              {}
 func (t *ArrayType) Loc() source.Location { return t.Location }
 
 type SliceType struct {
+	Mutable  bool
 	Inner    TypeExpr
 	Location source.Location
 }

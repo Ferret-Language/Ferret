@@ -419,7 +419,7 @@ func hirInstantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type {
 	case *typeinfo.ArrayType:
 		return &typeinfo.ArrayType{Inner: hirInstantiateSelfType(t.Inner, selfType), Len: t.Len}
 	case *typeinfo.SliceType:
-		return &typeinfo.SliceType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
+		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: hirInstantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.TupleType:
 		elems := make([]typeinfo.Type, 0, len(t.Elems))
 		for _, elem := range t.Elems {

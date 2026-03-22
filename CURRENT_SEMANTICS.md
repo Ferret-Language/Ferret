@@ -504,7 +504,9 @@ Current implementation status:
 
 - slice type exists
 - slice indexing exists in typechecking and backend paths
-- slice literals are currently rejected as “not yet implemented”
+- slice literals are implemented in typed form, e.g. `[]i32{1, 2, 3}`
+- empty slice literals (`[]T{}`) produce zero-length slices
+- non-empty slice literals lower to a temporary backing buffer and carry `{ptr, len}`
 
 This area is still under active design discussion.
 
@@ -522,6 +524,8 @@ Current status:
 
 - `str` exists and works in the compiler/runtime paths
 - string literals are handled specially and flow through the current backend/runtime model
+- `len(str)` is supported
+- explicit casts between `str` and `[]u8` / `[]char` are lowered through runtime helpers
 - the final semantic design of `str` is **not yet settled**
 
 Discussion is still open on:

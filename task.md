@@ -49,3 +49,23 @@ Commands:
 - `./build.sh`
 - `ferret -backend llvm -k -o app <file>.ferr`
 - `ferret -backend qbe -k -o app <file>.ferr`
+
+## Track E: Slice + Variadic + String Surface
+
+- [*] Define proper slice type semantics in parser/AST/typeinfo/typechecker, including mutable-slice identity and one-way mut-to-readonly coercion.
+- [ ] Fix usage/mutability analysis so slice element mutation counts as using the slice parameter/binding and mutable-slice calls count as mutation on the source binding.
+- [*] Add array/slice bounds safety: compile-time diagnostics for provable constant out-of-range indexing, plus runtime panic checks in backend lowering for all remaining array/slice reads and writes.
+- [ ] Finish slice value semantics end-to-end: typed literals, indexing, assignment/call compatibility, lowering, and focused runtime tests.
+- [ ] Add variadic parameters for both readonly and mutable slice forms on top of the finalized slice model.
+- [ ] Add array/slice expansion with `arr...` call syntax after variadic lowering is stable.
+- [ ] Finalize `str` as an immutable UTF-8 view only after slice semantics are complete.
+
+Files:
+- `internal/frontend/ast/*`
+- `internal/frontend/parser/*`
+- `internal/analysis/semantics/typeinfo/*`
+- `internal/analysis/semantics/typechecker/*`
+- `internal/ir/hir/*`
+- `internal/ir/mir/*`
+- `internal/backend/*`
+- `CURRENT_SEMANTICS.md`

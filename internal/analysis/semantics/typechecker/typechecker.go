@@ -36,7 +36,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 			c.info.BindNode(d.Type, finalType)
 		}
 		if declared != nil && d.Value != nil {
-			c.checkAssignable(d.Value.Loc(), declared, value)
+			c.checkExprAssignable(nil, d.Value, declared, value)
 		}
 		c.checkModuleBindingType(d.Name.Loc(), finalType)
 		c.bindDeclSymbol(d.Name, finalType)
@@ -61,7 +61,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 			c.info.BindNode(d.Type, finalType)
 		}
 		if declared != nil && d.Value != nil {
-			c.checkAssignable(d.Value.Loc(), declared, value)
+			c.checkExprAssignable(nil, d.Value, declared, value)
 		}
 		c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
 		c.checkModuleBindingType(d.Name.Loc(), finalType)
@@ -115,7 +115,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 			c.checkHeapStoredReference(field.Type.Loc(), fieldType)
 			if field.Default != nil {
 				valueType := c.typeOfExpr(nil, field.Default, fieldType)
-				c.checkAssignable(field.Default.Loc(), fieldType, valueType)
+				c.checkExprAssignable(nil, field.Default, fieldType, valueType)
 			}
 		}
 	case *ast.InterfaceType:
@@ -1005,14 +1005,14 @@ func (c *checker) typeOfBuiltinLen(scope *refineScope, expr *ast.CallExpr) typei
 	if len(expr.Args) > 0 {
 		argType := c.typeOfExpr(scope, expr.Args[0], nil)
 		switch c.underlying(argType).(type) {
-		case *typeinfo.ArrayType, *typeinfo.SliceType:
+		case *typeinfo.ArrayType, *typeinfo.SliceType, *typeinfo.StringType:
 			// ok
 		default:
 			loc := expr.Args[0].Loc()
 			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("len expects an array or slice argument").
+				diagnostics.NewError("len expects an array, slice, or str argument").
 					WithCode(diagnostics.ErrInvalidType).
-					WithPrimaryLabel(&loc, "this value is not an array or slice"),
+					WithPrimaryLabel(&loc, "this value is not an array, slice, or str"),
 			)
 		}
 	}
@@ -1203,7 +1203,7 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 				invalid = true
 				continue
 			}
-			if !c.checkAssignable(arg.Loc(), expected, argType) {
+			if !c.checkExprAssignable(scope, arg, expected, argType) {
 				invalid = true
 			}
 		}
@@ -1471,7 +1471,9 @@ func (c *checker) inferTypeParamBindings(pattern, actual typeinfo.Type, bindings
 			c.inferTypeParamBindings(p.Inner, got.Inner, bindings)
 		}
 	case *typeinfo.SliceType:
-		if got, ok := actual.(*typeinfo.SliceType); ok {
+		if got, ok := actual.(*typeinfo.SliceType); ok && (!p.Mutable || got.Mutable) {
+			c.inferTypeParamBindings(p.Inner, got.Inner, bindings)
+		} else if got, ok := actual.(*typeinfo.ArrayType); ok {
 			c.inferTypeParamBindings(p.Inner, got.Inner, bindings)
 		}
 	case *typeinfo.TupleType:
@@ -1520,7 +1522,7 @@ func (c *checker) substituteTypeParams(typ typeinfo.Type, bindings map[*typeinfo
 	case *typeinfo.ArrayType:
 		return &typeinfo.ArrayType{Inner: c.substituteTypeParams(t.Inner, bindings), Len: t.Len}
 	case *typeinfo.SliceType:
-		return &typeinfo.SliceType{Inner: c.substituteTypeParams(t.Inner, bindings)}
+		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: c.substituteTypeParams(t.Inner, bindings)}
 	case *typeinfo.TupleType:
 		elems := make([]typeinfo.Type, 0, len(t.Elems))
 		for _, elem := range t.Elems {
@@ -1822,7 +1824,7 @@ func (c *checker) typeOfSelector(scope *refineScope, expr *ast.SelectorExpr) typ
 func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Type {
 	if unionTarget, memberTarget, ok := c.selectedUnionMemberTarget(c.mod, expr.Type); ok {
 		sourceType := c.typeOfExpr(scope, expr.Left, memberTarget)
-		if c.checkAssignable(expr.Left.Loc(), memberTarget, sourceType) {
+		if c.checkExprAssignable(scope, expr.Left, memberTarget, sourceType) {
 			c.info.BindNode(expr, unionTarget)
 			return unionTarget
 		}
@@ -1965,6 +1967,15 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 	c.typeOfExpr(scope, expr.Index, usize)
 	base := c.underlying(baseTyp)
 	if arr, ok := base.(*typeinfo.ArrayType); ok {
+		if idx := c.arrayLength(expr.Index); idx >= 0 && arr.Len >= 0 && idx >= arr.Len {
+			loc := expr.Index.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("array index out of bounds").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "this array does not have that element index"),
+			)
+			return typeinfo.InvalidType{}
+		}
 		c.info.BindNode(expr, arr.Inner)
 		return arr.Inner
 	}
@@ -1973,8 +1984,8 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 		return sl.Inner
 	}
 	if tuple, ok := base.(*typeinfo.TupleType); ok {
-		lit, ok := expr.Index.(*ast.NumberLit)
-		if !ok || lit == nil || numeric.IsFloat(lit.Value) {
+		idx := c.arrayLength(expr.Index)
+		if idx < 0 {
 			loc := expr.Index.Loc()
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError("tuple index must be a non-negative integer literal").
@@ -1983,18 +1994,7 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 			)
 			return typeinfo.InvalidType{}
 		}
-		idxBig, err := numeric.StringToBigInt(lit.Value)
-		if err != nil || idxBig.Sign() < 0 || !idxBig.IsInt64() {
-			loc := expr.Index.Loc()
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("tuple index must be a non-negative integer literal").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "use a tuple element literal index like 0 or 1"),
-			)
-			return typeinfo.InvalidType{}
-		}
-		idx := int(idxBig.Int64())
-		if idx >= len(tuple.Elems) {
+		if int(idx) >= len(tuple.Elems) {
 			loc := expr.Index.Loc()
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError("tuple index out of bounds").
@@ -2003,8 +2003,9 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 			)
 			return typeinfo.InvalidType{}
 		}
-		c.info.BindNode(expr, tuple.Elems[idx])
-		return tuple.Elems[idx]
+		elem := tuple.Elems[int(idx)]
+		c.info.BindNode(expr, elem)
+		return elem
 	}
 	// Pointer indexing: *T[i] → T
 	if ptr, ok := base.(*typeinfo.PointerType); ok {
@@ -2081,20 +2082,27 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 				break
 			}
 			got := c.typeOfExpr(scope, item.Value, actual.Inner)
-			c.checkAssignable(item.Value.Loc(), actual.Inner, got)
+			c.checkExprAssignable(scope, item.Value, actual.Inner, got)
 		}
 		c.info.BindNode(expr, actual)
 		return actual
 	}
-	if _, ok := base.(*typeinfo.SliceType); ok {
-		loc := expr.Location
-		c.ctx.Diagnostics.Add(
-			diagnostics.NewError("slice literals are not yet implemented").
-				WithCode(diagnostics.ErrInvalidType).
-				WithPrimaryLabel(&loc, "use an array literal or a slice-producing function for now"),
-		)
+	if sliceType, ok := base.(*typeinfo.SliceType); ok {
+		for _, item := range expr.Items {
+			if item.Name != nil {
+				loc := item.Name.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("slice literal does not support named elements").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(&loc, "use positional elements"),
+				)
+				continue
+			}
+			got := c.typeOfExpr(scope, item.Value, sliceType.Inner)
+			c.checkExprAssignable(scope, item.Value, sliceType.Inner, got)
+		}
 		c.info.BindNode(expr, expected)
-		return typeinfo.InvalidType{}
+		return expected
 	}
 	if tupleType, ok := base.(*typeinfo.TupleType); ok {
 		for i, item := range expr.Items {
@@ -2117,7 +2125,7 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 				continue
 			}
 			got := c.typeOfExpr(scope, item.Value, tupleType.Elems[i])
-			c.checkAssignable(item.Value.Loc(), tupleType.Elems[i], got)
+			c.checkExprAssignable(scope, item.Value, tupleType.Elems[i], got)
 		}
 		if len(expr.Items) < len(tupleType.Elems) {
 			loc := expr.Location
@@ -2157,7 +2165,7 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 				continue
 			}
 			got := c.typeOfExpr(scope, item.Value, field.Type)
-			c.checkAssignable(item.Value.Loc(), field.Type, got)
+			c.checkExprAssignable(scope, item.Value, field.Type, got)
 			provided[fieldName] = struct{}{}
 			continue
 		}
@@ -2179,7 +2187,7 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			continue
 		}
 		got := c.typeOfExpr(scope, item.Value, field.Type)
-		c.checkAssignable(item.Value.Loc(), field.Type, got)
+		c.checkExprAssignable(scope, item.Value, field.Type, got)
 		provided[field.Name] = struct{}{}
 		positional++
 	}
@@ -2502,6 +2510,13 @@ func (c *checker) exprAccess(scope *refineScope, expr ast.Expr) (addressable boo
 		}
 		return c.exprAccess(scope, e.Left)
 	case *ast.IndexExpr:
+		leftType, ok := c.info.Nodes[e.Left]
+		if !ok {
+			leftType = c.typeOfExpr(scope, e.Left, nil)
+		}
+		if sliceType, ok := c.underlying(leftType).(*typeinfo.SliceType); ok {
+			return true, sliceType.Mutable
+		}
 		return c.exprAccess(scope, e.Left)
 	case *ast.PrefixExpr:
 		if e.Op != "*" {
@@ -2729,6 +2744,38 @@ func (c *checker) reportTypeMismatch(loc source.Location, expected, got typeinfo
 			WithCode(diagnostics.ErrTypeMismatch).
 			WithPrimaryLabel(&loc, "type mismatch"),
 	)
+}
+
+func (c *checker) checkExprAssignable(scope *refineScope, expr ast.Expr, expected, got typeinfo.Type) bool {
+	if expr != nil && c.assignableFromExpr(scope, expr, expected, got) {
+		return true
+	}
+	if expr == nil {
+		return c.checkAssignable(source.Location{}, expected, got)
+	}
+	return c.checkAssignable(expr.Loc(), expected, got)
+}
+
+func (c *checker) assignableFromExpr(scope *refineScope, expr ast.Expr, expected, got typeinfo.Type) bool {
+	if c.assignable(expected, got) {
+		return true
+	}
+	expectedSlice, ok := c.underlying(expected).(*typeinfo.SliceType)
+	if !ok {
+		return false
+	}
+	gotArray, ok := c.underlying(got).(*typeinfo.ArrayType)
+	if !ok || !typeinfo.Equal(expectedSlice.Inner, gotArray.Inner) {
+		return false
+	}
+	addressable, mutable := c.exprAccess(scope, expr)
+	if !addressable {
+		return false
+	}
+	if expectedSlice.Mutable && !mutable {
+		return false
+	}
+	return true
 }
 
 func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Type) bool {
@@ -2977,7 +3024,7 @@ func (c *checker) instantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type
 	case *typeinfo.ArrayType:
 		return &typeinfo.ArrayType{Inner: c.instantiateSelfType(t.Inner, selfType), Len: t.Len}
 	case *typeinfo.SliceType:
-		return &typeinfo.SliceType{Inner: c.instantiateSelfType(t.Inner, selfType)}
+		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: c.instantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.TupleType:
 		elems := make([]typeinfo.Type, 0, len(t.Elems))
 		for _, elem := range t.Elems {

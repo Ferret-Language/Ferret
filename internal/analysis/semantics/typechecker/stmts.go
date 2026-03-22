@@ -35,7 +35,7 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		if s.Type != nil && declared != nil && !typeinfo.Equal(declared, finalType) {
 			c.info.BindNode(s.Type, finalType)
 		}
-		if declared != nil && s.Value != nil && !c.checkAssignable(s.Value.Loc(), declared, value) {
+		if declared != nil && s.Value != nil && !c.checkExprAssignable(scope, s.Value, declared, value) {
 		}
 		c.bindDeclSymbol(s.Name, finalType)
 		// No base-type environment: locals/params are typed via Bindings+Types.
@@ -53,7 +53,7 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		if s.Type != nil && declared != nil && !typeinfo.Equal(declared, finalType) {
 			c.info.BindNode(s.Type, finalType)
 		}
-		if declared != nil && s.Value != nil && !c.checkAssignable(s.Value.Loc(), declared, value) {
+		if declared != nil && s.Value != nil && !c.checkExprAssignable(scope, s.Value, declared, value) {
 		}
 		c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
 		c.bindDeclSymbol(s.Name, finalType)
@@ -69,7 +69,7 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		}
 		leftType := c.typeOfAssignmentTargetExpr(scope, s.Left)
 		rightType := c.typeOfExpr(scope, s.Right, leftType)
-		if !c.checkAssignable(s.Right.Loc(), leftType, rightType) {
+		if !c.checkExprAssignable(scope, s.Right, leftType, rightType) {
 		}
 		c.checkAssignmentTarget(scope, s.Left)
 	case *ast.IfStmt:
@@ -180,7 +180,7 @@ func (c *checker) checkReturn(scope *refineScope, stmt *ast.ReturnStmt) {
 		return
 	}
 	got := c.typeOfExpr(scope, stmt.Value, expected)
-	if !c.checkAssignable(stmt.Value.Loc(), expected, got) {
+	if !c.checkExprAssignable(scope, stmt.Value, expected, got) {
 	}
 }
 

@@ -167,12 +167,16 @@ func (t *ArrayType) String() string {
 }
 
 type SliceType struct {
-	Inner Type
+	Mutable bool
+	Inner   Type
 }
 
 func (t *SliceType) String() string {
 	if t == nil {
 		return "[]<nil>"
+	}
+	if t.Mutable {
+		return "[]mut " + typeString(t.Inner)
 	}
 	return "[]" + typeString(t.Inner)
 }
@@ -460,7 +464,7 @@ func Equal(a, b Type) bool {
 		return ok && at.Len == bt.Len && Equal(at.Inner, bt.Inner)
 	case *SliceType:
 		bt, ok := b.(*SliceType)
-		return ok && Equal(at.Inner, bt.Inner)
+		return ok && at.Mutable == bt.Mutable && Equal(at.Inner, bt.Inner)
 	case *TupleType:
 		bt, ok := b.(*TupleType)
 		if !ok || len(at.Elems) != len(bt.Elems) {
@@ -536,6 +540,14 @@ func Assignable(dst, src Type) bool {
 			if arrDst.Len == -2 && Equal(arrDst.Inner, arrSrc.Inner) {
 				return true
 			}
+		}
+	}
+	if sliceDst, ok := dst.(*SliceType); ok {
+		if sliceSrc, ok := src.(*SliceType); ok {
+			if sliceDst.Mutable {
+				return sliceSrc.Mutable && Equal(sliceDst.Inner, sliceSrc.Inner)
+			}
+			return Equal(sliceDst.Inner, sliceSrc.Inner)
 		}
 	}
 	return false

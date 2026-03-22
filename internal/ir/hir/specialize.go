@@ -845,7 +845,9 @@ func inferTypeBindings(pattern, actual typeinfo.Type, bindings map[*typeinfo.Typ
 			inferTypeBindings(p.Inner, got.Inner, bindings)
 		}
 	case *typeinfo.SliceType:
-		if got, ok := actual.(*typeinfo.SliceType); ok {
+		if got, ok := actual.(*typeinfo.SliceType); ok && (!p.Mutable || got.Mutable) {
+			inferTypeBindings(p.Inner, got.Inner, bindings)
+		} else if got, ok := actual.(*typeinfo.ArrayType); ok {
 			inferTypeBindings(p.Inner, got.Inner, bindings)
 		}
 	case *typeinfo.TupleType:
@@ -992,7 +994,11 @@ func appendSpecializedTypeTag(b *strings.Builder, typ typeinfo.Type, seen map[ty
 		b.WriteString("_")
 		appendSpecializedTypeTag(b, t.Inner, seen)
 	case *typeinfo.SliceType:
-		b.WriteString("slice_")
+		if t.Mutable {
+			b.WriteString("mslice_")
+		} else {
+			b.WriteString("slice_")
+		}
 		appendSpecializedTypeTag(b, t.Inner, seen)
 	case *typeinfo.TupleType:
 		b.WriteString("tuple_")

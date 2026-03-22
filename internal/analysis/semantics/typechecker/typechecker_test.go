@@ -3609,7 +3609,7 @@ fn main() i32 {
 	}
 }
 
-func TestTypecheckerRejectsSliceLiteralsAsNotImplemented(t *testing.T) {
+func TestTypecheckerTypesSliceLiterals(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 fn main() i32 {
@@ -3619,18 +3619,207 @@ fn main() i32 {
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letItems := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	itemsRes := result.Entry.Bindings.Nodes[letItems.Name]
+	itemsType := result.Entry.Types.Symbols[itemsRes.Symbol.ID]
+	sl, ok := itemsType.(*typeinfo.SliceType)
+	if !ok || !typeinfo.IsBuiltinNamed(sl.Inner, "i32") {
+		t.Fatalf("expected items type []i32, got %T %#v", itemsType, itemsType)
+	}
+}
+
+func TestTypecheckerTypesMutableSliceLiteral(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let items: []mut i32 = []mut i32{1, 2, 3}
+    items[0] = 9
+    return items[0]
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letItems := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	itemsRes := result.Entry.Bindings.Nodes[letItems.Name]
+	itemsType := result.Entry.Types.Symbols[itemsRes.Symbol.ID]
+	sl, ok := itemsType.(*typeinfo.SliceType)
+	if !ok || !sl.Mutable || !typeinfo.IsBuiltinNamed(sl.Inner, "i32") {
+		t.Fatalf("expected items type []mut i32, got %T %#v", itemsType, itemsType)
+	}
+}
+
+func TestTypecheckerAllowsMutableSliceToReadonlySlice(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn sum(items: []i32) i32 {
+    return items[0]
+}
+
+fn main() i32 {
+    let items: []mut i32 = []mut i32{1, 2, 3}
+    return sum(items)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsReadonlySliceToMutableSlice(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn fill(items: []mut i32) void {
+    items[0] = 1
+}
+
+fn main() void {
+    let items: []i32 = []i32{1, 2, 3}
+    fill(items)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
 	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected slice literal not implemented diagnostic")
+		t.Fatal("expected mutable slice mismatch diagnostic")
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "slice literals are not yet implemented") {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "type mismatch: expected []mut i32, got []i32") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected slice literal not implemented diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected mutable slice mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsMutationThroughReadonlySlice(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() void {
+    let items: []i32 = []i32{1, 2, 3}
+    items[0] = 9
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected readonly slice mutation diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrConstantReassignment && strings.Contains(diag.Message, "cannot assign through immutable access path") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected readonly slice mutation diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsArrayIndexOutOfBounds(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn main() i32 {
+    let items: [3]i32 = [3]i32{1, 2, 3}
+    return items[3]
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected array index out of bounds diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "array index out of bounds") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected array index out of bounds diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsReadonlySliceViewFromArray(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn head(items: []i32) i32 {
+    return items[0]
+}
+
+fn main() i32 {
+    let items: [3]i32 = [3]i32{1, 2, 3}
+    return head(items)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsMutableSliceViewFromMutableArray(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn bump(items: []mut i32) i32 {
+    items[0] = 9
+    return items[0]
+}
+
+fn main() i32 {
+    let mut items: [3]i32 = [3]i32{1, 2, 3}
+    return bump(items)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsMutableSliceViewFromImmutableArray(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+fn bump(items: []mut i32) i32 {
+    items[0] = 9
+    return items[0]
+}
+
+fn main() i32 {
+    let items: [3]i32 = [3]i32{1, 2, 3}
+    return bump(items)
+}
+`)
+
+	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected immutable array to mutable slice diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "type mismatch: expected []mut i32, got [3]i32") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected immutable array to mutable slice diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -3644,6 +3833,10 @@ fn lenArray() usize {
 
 fn lenSlice(items: []i32) usize {
     return len(items)
+}
+
+fn lenString(s: str) usize {
+    return len(s)
 }
 `)
 
@@ -3668,7 +3861,7 @@ fn main() usize {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "len expects an array or slice argument") {
+		if diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "len expects an array, slice, or str argument") {
 			found = true
 			break
 		}

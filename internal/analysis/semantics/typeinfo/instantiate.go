@@ -115,7 +115,7 @@ func instantiateType(typ Type, bindings map[*TypeParam]Type, seen map[Type]Type)
 		if cached := seen[t]; cached != nil {
 			return cached
 		}
-		out := &SliceType{}
+		out := &SliceType{Mutable: t.Mutable}
 		seen[t] = out
 		out.Inner = instantiateType(t.Inner, bindings, seen)
 		return out
