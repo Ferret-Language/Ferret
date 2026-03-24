@@ -15,6 +15,7 @@ import (
 
 const CompilerVersion = "0.0.2"
 const FerretSourceExt = ".fer"
+const LegacyFerretSourceExt = ".ferr"
 
 type Result struct {
 	Entry         *context.Module
@@ -90,11 +91,12 @@ func parsePath(path string, mode parseMode) Result {
 			return c.ParseWorkspace()
 		}
 	}
-	if !strings.EqualFold(filepath.Ext(absPath), FerretSourceExt) {
+	ext := strings.ToLower(filepath.Ext(absPath))
+	if ext != FerretSourceExt && ext != LegacyFerretSourceExt {
 		diag.Add(diagnostics.NewError("unsupported source file extension"))
 		return Result{Diagnostics: diag}
 	}
-	ws, err := project.Load(absPath, FerretSourceExt)
+	ws, err := project.Load(absPath, ext)
 	if err != nil {
 		diag.Add(diagnostics.NewError(err.Error()))
 		return Result{Diagnostics: diag}

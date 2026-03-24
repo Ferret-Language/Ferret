@@ -120,7 +120,11 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		params = p.parseParams()
 	}
 	var result ast.TypeExpr
-	if p.startsType() {
+	if p.match(tokens.ARROW) {
+		result = p.parseType()
+	} else if p.startsType() {
+		loc := p.locOfToken(p.current())
+		p.errorAt(loc, "expected '->' before function return type")
 		result = p.parseType()
 	}
 	isExtern, externName := foreignAttr(attrs)
@@ -513,7 +517,11 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 		nameTok := p.expect(tokens.IDENT, "expected interface method name")
 		receiver, params, inferredStatic := p.parseInterfaceMethodParams()
 		var result ast.TypeExpr
-		if p.startsType() {
+		if p.match(tokens.ARROW) {
+			result = p.parseType()
+		} else if p.startsType() {
+			loc := p.locOfToken(p.current())
+			p.errorAt(loc, "expected '->' before interface method return type")
 			result = p.parseType()
 		}
 		if p.match(tokens.COMMA) && p.at(tokens.RBRACE) {

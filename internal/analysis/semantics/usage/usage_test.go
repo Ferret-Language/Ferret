@@ -12,17 +12,17 @@ import (
 
 func TestUsageWarnsUnusedImport(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
-fn Println(text: str) void;
+	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]
+fn Println(text: str) -> void;
 `)
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `import "std/io"
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `import "std/io"
 
-fn main() i32 {
+fn main() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -43,22 +43,22 @@ fn main() i32 {
 
 func TestUsageWarnsUnusedPrivateTopLevelSymbols(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `type point struct {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `type point struct {
 }
 
 let hiddenValue: i32 = 1
 let deadValue: i32 = 2
 
-fn helper() i32 {
+fn helper() -> i32 {
     return hiddenValue
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -80,27 +80,27 @@ fn main() i32 {
 
 func TestUsageDoesNotWarnUsedOrExportedSymbols(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
-fn Println(text: str) void;
+	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]
+fn Println(text: str) -> void;
 `)
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `import "std/io"
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `import "std/io"
 
 type Point struct {
 }
 
 let hiddenValue: i32 = 1
 
-fn helper() i32 {
+fn helper() -> i32 {
     return hiddenValue
 }
 
-fn main() i32 {
+fn main() -> i32 {
     io::Println("ok")
     return helper()
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -114,18 +114,18 @@ fn main() i32 {
 
 func TestUsageWarnsUnusedLocalsAndParametersInUsedFunction(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn helper(x: i32, y: i32, z: i32) i32 {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn helper(x: i32, y: i32, z: i32) -> i32 {
     let alive = x
     let dead = y
     return alive
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return helper(1, 2, 3)
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -153,17 +153,17 @@ fn main() i32 {
 
 func TestUsageSkipsLocalWarningsInUnusedFunction(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn helper(x: i32, y: i32) i32 {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn helper(x: i32, y: i32) -> i32 {
     let dead = y
     return x
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -185,14 +185,14 @@ fn main() i32 {
 
 func TestUsageDoesNotCountAssignmentTargetAsUse(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn main() -> i32 {
     let mut a = 10
     a = 12
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -210,14 +210,14 @@ func TestUsageDoesNotCountAssignmentTargetAsUse(t *testing.T) {
 
 func TestUsageTreatsDiscardAssignmentAsUse(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn main() -> i32 {
     let a = 10
     _ = a
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -230,14 +230,14 @@ func TestUsageTreatsDiscardAssignmentAsUse(t *testing.T) {
 
 func TestUsageWarnsWhenMutableBindingIsNeverModified(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn main() -> i32 {
     let mut a = 10
     _ = a
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -255,7 +255,7 @@ func TestUsageWarnsWhenMutableBindingIsNeverModified(t *testing.T) {
 
 func TestUsageDoesNotWarnWhenMutableBindingIsAssigned(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() i32 {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn main() -> i32 {
     let mut a = 10
     a = 12
     _ = a
@@ -263,7 +263,7 @@ func TestUsageDoesNotWarnWhenMutableBindingIsAssigned(t *testing.T) {
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -276,23 +276,23 @@ func TestUsageDoesNotWarnWhenMutableBindingIsAssigned(t *testing.T) {
 
 func TestUsageDoesNotWarnWhenMutableBindingIsUsedByMutableMethodCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
 
-fn Point::Incr(&mut self) void {
+fn Point::Incr(&mut self) -> void {
     self.X++
 }
 
-fn main() void {
+fn main() -> void {
     let mut p: Point = .{ .X = 1 }
     p.Incr()
     _ = p
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -308,19 +308,19 @@ fn main() void {
 
 func TestUsageDoesNotWarnWhenMutableBindingIsPassedToMutParam(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `
-fn bump(mut value: i32) void {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `
+fn bump(mut value: i32) -> void {
     value = value + 1
 }
 
-fn main() void {
+fn main() -> void {
     let mut a = 10
     bump(a)
     _ = a
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -336,7 +336,7 @@ fn main() void {
 
 func TestUsageDoesNotWarnWhenMutableBindingIsModifiedThroughMutRef(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `fn main() void {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn main() -> void {
     let mut x = 10;
     let y = &mut x;
     *y = 12;
@@ -344,7 +344,7 @@ func TestUsageDoesNotWarnWhenMutableBindingIsModifiedThroughMutRef(t *testing.T)
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -357,19 +357,19 @@ func TestUsageDoesNotWarnWhenMutableBindingIsModifiedThroughMutRef(t *testing.T)
 
 func TestUsageDoesNotWarnOnMutableSliceElementMutation(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `
-fn fill(items: []mut i32) void {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `
+fn fill(items: []mut i32) -> void {
     items[0] = 9
 }
 
-fn main() void {
+fn main() -> void {
     let mut items: [3]i32 = [3]i32{1, 2, 3}
     fill(items)
     _ = items
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -388,13 +388,13 @@ fn main() void {
 
 func TestUsageDoesNotWarnOnDirectMutableSliceElementAssignment(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `
-fn main(items: []mut i32) void {
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `
+fn main(items: []mut i32) -> void {
     items[0] = 9
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -407,18 +407,18 @@ fn main(items: []mut i32) void {
 
 func TestUsageDoesNotWarnOnUnusedSelfReceiver(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "main.ferr"), `
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `
 type Point struct {}
 
-fn Point::Show(&self) void {}
+fn Point::Show(&self) -> void {}
 
-fn main() void {
+fn main() -> void {
     let p: Point = .{}
     p.Show()
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}

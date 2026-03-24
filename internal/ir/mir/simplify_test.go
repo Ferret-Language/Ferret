@@ -13,7 +13,7 @@ import (
 func TestPipelineSimplifiesConstantArithmeticInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let value = 1 + 2 * 3
     return value
 }
@@ -39,7 +39,7 @@ fn main() i32 {
 func TestPipelineSimplifiesConstantBranchAndRemovesDeadBlocks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let cond = 1 < 2
     if cond {
         return 1
@@ -73,7 +73,7 @@ fn main() i32 {
 func TestPipelineElidesLocalConstBindingsInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     const x = 1 + 2
     return x
 }
@@ -104,7 +104,7 @@ const Value = 4 + 5
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 import "util"
 
-fn main() i32 {
+fn main() -> i32 {
     return util::Value
 }
 `)
@@ -126,7 +126,7 @@ fn main() i32 {
 func TestPipelineWarnsOnConstantTrueCondition(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     if 1 < 2 {
         return 1
     }
@@ -158,7 +158,7 @@ func TestPipelineWarnsOnConstDrivenConstantFalseCondition(t *testing.T) {
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 const Flag = false
 
-fn main() i32 {
+fn main() -> i32 {
     if Flag {
         return 1
     }
@@ -189,18 +189,18 @@ func TestPipelineSimplifiesStaticIsCondition(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String(self) str
+    String(self) -> str
 }
 
 type Name struct {
     value: i32 = 0
 }
 
-fn Name::String(self) str {
+fn Name::String(self) -> str {
     return 1 as str
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let n: Name = .{ .value = 1 }
     if n is Stringer {
         return 1
@@ -226,17 +226,17 @@ fn main() i32 {
 func TestPipelineElidesVoidTempsFromComptimeWrapper(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn assert(comptime cond: bool, comptime msg: str) void {
+fn assert(comptime cond: bool, comptime msg: str) -> void {
     if !cond {
         panic msg
     }
 }
 
-fn static_assert(comptime cond: bool, comptime msg: str) void {
+fn static_assert(comptime cond: bool, comptime msg: str) -> void {
     comptime assert(cond, msg)
 }
 
-fn main() void {
+fn main() -> void {
     comptime static_assert(1 + 1 == 2, "math broke")
 }
 `)
@@ -253,7 +253,7 @@ fn main() void {
 	if strings.Contains(text, "void [temp]") {
 		t.Fatalf("expected no temporary void locals after simplification, got %q", text)
 	}
-	mainIdx := strings.Index(text, "fn main() void {")
+	mainIdx := strings.Index(text, "fn main() -> void {")
 	if mainIdx < 0 {
 		t.Fatalf("expected main function in MIR, got %q", text)
 	}

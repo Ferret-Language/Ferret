@@ -11,18 +11,18 @@ import (
 
 func TestLayoutComputesStructOffsets(t *testing.T) {
 	root := t.TempDir()
-	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Point struct {
+	mustWriteLayout(t, filepath.Join(root, "main.fer"), `type Point struct {
     X: i8
     Y: i64
     Z: i16
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -53,14 +53,14 @@ fn main() i32 {
 
 func TestLayoutPreservesArrayLengthFromTyping(t *testing.T) {
 	root := t.TempDir()
-	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Numbers [3]i16
+	mustWriteLayout(t, filepath.Join(root, "main.fer"), `type Numbers [3]i16
 
-fn main() i32 {
+fn main() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -78,18 +78,18 @@ fn main() i32 {
 
 func TestLayoutComputesTaggedUnionLayout(t *testing.T) {
 	root := t.TempDir()
-	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Token union {
+	mustWriteLayout(t, filepath.Join(root, "main.fer"), `type Token union {
     i32,
     i64,
     bool,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -116,16 +116,16 @@ fn main() i32 {
 
 func TestLayoutUsesNicheForOptionalPointer(t *testing.T) {
 	root := t.TempDir()
-	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Holder struct {
+	mustWriteLayout(t, filepath.Join(root, "main.fer"), `type Holder struct {
     Value: ?^i32
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -143,17 +143,17 @@ fn main() i32 {
 
 func TestLayoutComputesRawPointerFieldSizes(t *testing.T) {
 	root := t.TempDir()
-	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Holder struct {
+	mustWriteLayout(t, filepath.Join(root, "main.fer"), `type Holder struct {
     Raw: ^void
     Raw2: ^i32
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -174,16 +174,16 @@ fn main() i32 {
 
 func TestLayoutUsesNicheForOptionalBool(t *testing.T) {
 	root := t.TempDir()
-	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Flags struct {
+	mustWriteLayout(t, filepath.Join(root, "main.fer"), `type Flags struct {
     Value: ?bool
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -201,7 +201,7 @@ fn main() i32 {
 
 func TestLayoutUsesNicheForOptionalEnum(t *testing.T) {
 	root := t.TempDir()
-	mustWriteLayout(t, filepath.Join(root, "main.ferr"), `type Color enum {
+	mustWriteLayout(t, filepath.Join(root, "main.fer"), `type Color enum {
     red,
     blue,
 }
@@ -210,12 +210,12 @@ type Holder struct {
     Value: ?Color
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}

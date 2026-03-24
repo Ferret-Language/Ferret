@@ -18,18 +18,18 @@ func TestLowerInterfaceDispatchToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String(self) str
+    String(self) -> str
 }
 
 type Name struct {
     value: i32 = 0
 }
 
-fn Name::String(self) str {
+fn Name::String(self) -> str {
     return 1 as str
 }
 
-fn main() str {
+fn main() -> str {
     let n: Name = .{ .value = 1 }
     let s: Stringer = n
     return s.String()
@@ -70,11 +70,11 @@ type Name struct {
     value: i32 = 0
 }
 
-fn Origin() Name {
+fn Origin() -> Name {
     return .{ .value = 7 }
 }
 
-fn Name::String(self) str {
+fn Name::String(self) -> str {
     return 1 as str
 }
 `)
@@ -82,10 +82,10 @@ fn Name::String(self) str {
 import "util/name"
 
 type Stringer interface {
-    String(self) str
+    String(self) -> str
 }
 
-fn main() str {
+fn main() -> str {
     let n = name::Origin()
     let s: Stringer = n
     return s.String()
@@ -119,21 +119,21 @@ func TestLowerGlobalInterfaceValueToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String(self) str
+    String(self) -> str
 }
 
 type Name struct {
     value: i32 = 0
 }
 
-fn Name::String(self) str {
+fn Name::String(self) -> str {
     return 1 as str
 }
 
 let GlobalName: Name = .{ .value = 1 }
 let GlobalStringer: Stringer = GlobalName
 
-fn main() str {
+fn main() -> str {
     return GlobalStringer.String()
 }
 `)
@@ -165,7 +165,7 @@ fn main() str {
 func TestLowerDeclaresPreludeExternCallSymbolsToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() void {
+fn main() -> void {
     print("ok")
 }
 `)
@@ -193,7 +193,7 @@ fn main() void {
 func TestLowerLocalArrayLiteralAndIndexToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let arr: [3]i32 = [3]i32{1, 2, 3}
     let n = arr[1]
     return n
@@ -228,7 +228,7 @@ fn main() i32 {
 func TestLowerSliceIndexToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(items: []i32) i32 {
+fn main(items: []i32) -> i32 {
     let n = items[1]
     return n
 }
@@ -260,7 +260,7 @@ fn main(items: []i32) i32 {
 func TestLowerBuiltinLenArrayToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() usize {
+fn main() -> usize {
     let items: [_]i32 = [_]i32{1, 2, 3}
     return len(items)
 }
@@ -286,7 +286,7 @@ fn main() usize {
 func TestLowerBuiltinLenSliceToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(items: []i32) usize {
+fn main(items: []i32) -> usize {
     return len(items)
 }
 `)
@@ -316,7 +316,7 @@ fn main(items: []i32) usize {
 func TestLowerBuiltinLenStringToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(s: str) usize {
+fn main(s: str) -> usize {
     return len(s)
 }
 `)
@@ -341,7 +341,7 @@ fn main(s: str) usize {
 func TestLowerSliceLiteralToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let items: []i32 = []i32{1, 2, 3}
     return items[1]
 }
@@ -375,11 +375,11 @@ fn main() i32 {
 func TestLowerArrayToSliceCallToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn head(items: []i32) i32 {
+fn head(items: []i32) -> i32 {
     return items[0]
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let items: [3]i32 = [3]i32{1, 2, 3}
     return head(items)
 }
@@ -410,7 +410,7 @@ fn main() i32 {
 func TestLowerStringSliceCastsToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(s: str) str {
+fn main(s: str) -> str {
     let bytes = s as []u8
     let text = bytes as str
     return text
@@ -446,7 +446,7 @@ func TestLowerAggregateLoadAssignmentToLLVM(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn run(mut c: *Conn) void {
+fn run(mut c: *Conn) -> void {
     let r = &*c
     r
 }
@@ -471,7 +471,7 @@ type Point struct {
     Value: i32 = 0
 }
 
-fn Point::Incr(&mut self) void {
+fn Point::Incr(&mut self) -> void {
     self.Value = self.Value + 1
 }
 `)
@@ -496,7 +496,7 @@ type Token union {
     i64,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let value: Token = 1
     print(0)
     return 0
@@ -531,7 +531,7 @@ fn main() i32 {
 func TestLowerRawAddressLocalToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let a = 10
     unsafe {
         let p: ^const i32 = &a
@@ -569,12 +569,12 @@ func TestLowerDefaultExternFunctionCallToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `
 #[extern]
-fn Println(text: str) void;
+fn Println(text: str) -> void;
 `)
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 import "std/io"
 
-fn main() void {
+fn main() -> void {
     io::Println("hello")
 }
 `)
@@ -609,7 +609,7 @@ type Token union {
     i64,
 }
 
-fn main(flag: bool) i32 {
+fn main(flag: bool) -> i32 {
     let mut value: Token = 1
     if flag {
         value = 2 as i64
@@ -648,7 +648,7 @@ fn main(flag: bool) i32 {
 func TestLowerIntegerToRawPointerCastToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() ^void {
+fn main() -> ^void {
     unsafe {
         return 0 as ^void
     }
@@ -675,7 +675,7 @@ fn main() ^void {
 func TestLowerOptionalMatchNoneToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let value: ?i32 = none
     let out: i32 = match value {
         is i32 => value
@@ -721,7 +721,7 @@ type Token union {
 
 let Global: Token = 1
 
-fn main() i32 {
+fn main() -> i32 {
     let out = Global as i32
     return out
 }
@@ -756,7 +756,7 @@ fn main() i32 {
 func TestLowerUnsupportedFunctionResultTypeReturnsError(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     return 1
 }
 `)

@@ -22,7 +22,7 @@ type Point struct {
 
 let mut GlobalPoint: Point = .{ .X = 1 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p = GlobalPoint
     return p.X
 }
@@ -83,11 +83,11 @@ fn main() i32 {
 func TestPipelineSpecializesGenericTopLevelFunctions(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
-fn add<T>(a: T, b: T) T {
+fn add<T>(a: T, b: T) -> T {
     return a + b
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return add(1, 2)
 }
 `)
@@ -149,11 +149,11 @@ type Box<T> struct {
     Value: T
 }
 
-fn Box<T>::Get(&self) T {
+fn Box<T>::Get(&self) -> T {
     return self.Value
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let b: Box<i32> = .{ .Value = 7 }
     return b.Get()
 }
@@ -235,11 +235,11 @@ type Circle<T> struct {
     Rad: T
 }
 
-fn Circle<T>::New(v: T) Self {
+fn Circle<T>::New(v: T) -> Self {
     return .{ .Rad = v }
 }
 
-fn main() void {
+fn main() -> void {
     let _ = Circle<i32>::New(1)
 }
 `)
@@ -300,11 +300,11 @@ type Circle<T> struct {
     Rad: T
 }
 
-fn Circle<T>::New(v: T) Self {
+fn Circle<T>::New(v: T) -> Self {
     return .{ .Rad = v }
 }
 
-fn main() void {
+fn main() -> void {
     let _ = Circle::New(1)
 }
 `)
@@ -369,7 +369,7 @@ func TestPipelineSpecializesGenericOwnerMethodMutation(t *testing.T) {
      self.Value += cx
  }
 
- fn main() void {
+ fn main() -> void {
      let mut p: Point<i32> = .{ .Value = 0 }
      p.Incr(1)
  }
@@ -412,7 +412,7 @@ type Point<T> struct {
     Value: T
 }
 
-fn Point<T>::New(v: T) Self {
+fn Point<T>::New(v: T) -> Self {
     return .{ .Value = v }
 }
 
@@ -427,7 +427,7 @@ fn drawShape(s: Shape) {
     s.Draw()
 }
 
-fn main() void {
+fn main() -> void {
     let p: Point<i32> = .{ .Value = 1 }
     drawShape(p)
 }
@@ -466,7 +466,7 @@ type t_i32 struct {}
 
 type Wrap<T> struct {}
 
-fn main() void {
+fn main() -> void {
     let a: Wrap<t_i32> = .{}
     let b: Wrap<(i32)> = .{}
     a
@@ -505,11 +505,11 @@ func TestPipelineKeepsDistinctStaticOwnerMethodSpecializationsForDifferentOwnerA
 	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
 type Box<T> struct {}
 
-fn Box<T>::Id(v: T) T {
+fn Box<T>::Id(v: T) -> T {
     return v
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let a = Box<i32>::Id(1)
     let b = Box<i64>::Id(2)
     return a + (b as i32)
@@ -550,14 +550,14 @@ func TestPipelineKeepsDistinctFunctionSpecializationsForCrossModuleSameTypeName(
 	mustWriteHIR(t, filepath.Join(root, "lib", "a.ferr"), `
 type Data struct {}
 
-fn Make() Data {
+fn Make() -> Data {
     return .{}
 }
 `)
 	mustWriteHIR(t, filepath.Join(root, "lib", "b.ferr"), `
 type Data struct {}
 
-fn Make() Data {
+fn Make() -> Data {
     return .{}
 }
 `)
@@ -606,14 +606,14 @@ func TestPipelineKeepsDistinctTypeSpecializationsForCrossModuleSameTypeName(t *t
 	mustWriteHIR(t, filepath.Join(root, "lib", "a.ferr"), `
 type Data struct {}
 
-fn Make() Data {
+fn Make() -> Data {
     return .{}
 }
 `)
 	mustWriteHIR(t, filepath.Join(root, "lib", "b.ferr"), `
 type Data struct {}
 
-fn Make() Data {
+fn Make() -> Data {
     return .{}
 }
 `)
@@ -662,22 +662,22 @@ fn main() {
 func TestPipelineCrossModuleSpecializesImportedGenericFunction(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "util", "math.ferr"), `
-fn Pick<T>(value: T) T {
+fn Pick<T>(value: T) -> T {
     return value
 }
 
-fn UsePickI32() i32 {
+fn UsePickI32() -> i32 {
     return Pick(1)
 }
 
-fn UsePickI64() i64 {
+fn UsePickI64() -> i64 {
     return Pick(2 as i64)
 }
 `)
 	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
 import "util/math"
 
-fn main() i32 {
+fn main() -> i32 {
     return math::UsePickI32() + (math::UsePickI64() as i32)
 }
 `)
@@ -713,14 +713,14 @@ fn main() i32 {
 func TestPipelineCrossModuleSpecializesDirectImportedGenericFunctionCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "util", "math.ferr"), `
-fn Pick<T>(value: T) T {
+fn Pick<T>(value: T) -> T {
     return value
 }
 `)
 	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
 import "util/math"
 
-fn main() i32 {
+fn main() -> i32 {
     return math::Pick(1)
 }
 `)
@@ -773,14 +773,14 @@ type Box<T> struct {
     Value: T
 }
 
-fn Box<T>::Get(&self) T {
+fn Box<T>::Get(&self) -> T {
     return self.Value
 }
 `)
 	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
 import "util/box"
 
-fn main() i32 {
+fn main() -> i32 {
     let b: box::Box<i32> = .{ .Value = 7 }
     return b.Get()
 }
@@ -841,14 +841,14 @@ type Box<T> struct {
     Value: T
 }
 
-fn Box<T>::New(v: T) Box<T> {
+fn Box<T>::New(v: T) -> Box<T> {
     return .{ .Value = v }
 }
 `)
 	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
 import "util/box"
 
-fn main() i32 {
+fn main() -> i32 {
     let b = box::Box<i32>::New(7)
     return b.Value
 }
@@ -882,11 +882,11 @@ type Box<T> struct {
     Value: T
 }
 
-fn Box<T>::Get(&self) T {
+fn Box<T>::Get(&self) -> T {
     return self.Value
 }
 
-fn UseBoxGet() i32 {
+fn UseBoxGet() -> i32 {
     let b: Box<i32> = .{ .Value = 7 }
     return b.Get()
 }
@@ -894,7 +894,7 @@ fn UseBoxGet() i32 {
 	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
 import "util/box"
 
-fn main() i32 {
+fn main() -> i32 {
     return box::UseBoxGet()
 }
 `)

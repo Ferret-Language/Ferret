@@ -21,7 +21,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{}
     return build::Point::Origin().X
 }
@@ -31,7 +31,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::Origin() Point {
+fn Point::Origin() -> Point {
     return .{}
 }
 `)
@@ -79,10 +79,10 @@ func TestResolverBindsImportPathAndAliasAsModuleResolution(t *testing.T) {
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
 import "util/build" as build
 
-fn main() void {}
+fn main() -> void {}
 `)
 	mustWriteResolver(t, filepath.Join(root, "util", "build.ferr"), `
-fn Pick() i32 {
+fn Pick() -> i32 {
     return 1
 }
 `)
@@ -114,7 +114,7 @@ func TestResolverBindsImportedTypeMembers(t *testing.T) {
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
 import "util/colors"
 
-	fn main() colors::Color {
+	fn main() -> colors::Color {
 	    return colors::Color::Red
 	}
 	`)
@@ -147,7 +147,7 @@ type Color enum {
 func TestResolverBindsLabels(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
-fn run(items: [3]i32) void {
+fn run(items: [3]i32) -> void {
     outer: for items |v| {
         inner: while 1 < 2 {
             break outer
@@ -184,11 +184,11 @@ type Point struct {
     x: i32 = 0
 }
 
-fn Point::get(self) i32 {
+fn Point::get(self) -> i32 {
     return self.x
 }
 
-fn run(items: [3]i32) void {
+fn run(items: [3]i32) -> void {
     let x = 1
     const y = 2
     for items |i, v| {
@@ -256,11 +256,11 @@ fn run(items: [3]i32) void {
 func TestResolverBindsSpreadArgumentIdent(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
-fn sum(nums: ...i32) i32 {
+fn sum(nums: ...i32) -> i32 {
     return nums[0]
 }
 
-fn run(items: []i32) i32 {
+fn run(items: []i32) -> i32 {
     return sum(items...)
 }
 `)
@@ -299,7 +299,7 @@ fn run(items: []i32) i32 {
 func TestResolverReportsUndefinedSymbol(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
-fn run() i32 {
+fn run() -> i32 {
     return missing
 }
 `)
@@ -323,7 +323,7 @@ fn run() i32 {
 func TestResolverReportsRedeclaredLocalInSameScope(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
-fn run() i32 {
+fn run() -> i32 {
     let x = 1
     let x = 2
     return x
@@ -353,7 +353,7 @@ type Box<T> struct {
     Value: T
 }
 
-fn Identity<T>(value: T) T {
+fn Identity<T>(value: T) -> T {
     return value
 }
 `)
@@ -366,20 +366,20 @@ fn Identity<T>(value: T) T {
 
 func TestResolverReportsMissingSymbolInImportedModule(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 import "std/math"
 
-fn main() i32 {
+fn main() -> i32 {
     return math::ClampToZeros(-34)
 }
 `)
-	mustWriteResolver(t, filepath.Join(root, "ferret_libs_dev", "std", "math.ferr"), `
-fn ClampToZero(value: i32) i32 {
+	mustWriteResolver(t, filepath.Join(root, "ferret_libs_dev", "std", "math.fer"), `
+fn ClampToZero(value: i32) -> i32 {
     return value
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected module-member undefined diagnostic")
 	}
@@ -403,12 +403,12 @@ func TestResolverRejectsUnexportedImportedSymbol(t *testing.T) {
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
 import "util/build"
 
-fn main() i32 {
+fn main() -> i32 {
     return build::hidden()
 }
 `)
 	mustWriteResolver(t, filepath.Join(root, "util", "build.ferr"), `
-fn hidden() i32 {
+fn hidden() -> i32 {
     return 1
 }
 `)
@@ -437,7 +437,7 @@ func TestResolverRejectsUnexportedImportedTypeMember(t *testing.T) {
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
 import "util/build"
 
-fn main() i32 {
+fn main() -> i32 {
     return build::Point::origin
 }
 `)
@@ -445,7 +445,7 @@ fn main() i32 {
 type Point struct {
 }
 
-fn Point::origin() i32 {
+fn Point::origin() -> i32 {
     return 1
 }
 `)
@@ -472,7 +472,7 @@ fn Point::origin() i32 {
 func TestResolverRejectsInvalidLabeledBreak(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
-fn run() void {
+fn run() -> void {
     done: if true {
         break done
     }

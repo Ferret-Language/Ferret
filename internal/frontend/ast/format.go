@@ -277,7 +277,7 @@ func FuncSignature(fn *FuncDecl) string {
 
 	result := "void"
 	if fn.Result != nil {
-		result = TypeString(fn.Result)
+		result = "-> " + TypeString(fn.Result)
 	}
 	return prefix + " " + name + FormatParamList(params) + " " + result
 }
@@ -288,6 +288,8 @@ func FormatInterfaceMethodSignatureText(name, receiver string, params []string, 
 	}
 	if result == "" {
 		result = "void"
+	} else {
+		result = "-> " + result
 	}
 	return name + FormatParamList(params) + " " + result
 }

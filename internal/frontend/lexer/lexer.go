@@ -59,6 +59,7 @@ func New(file, input string, diag *diagnostics.DiagnosticBag) *Lexer {
 		{regexp.MustCompile(`\?\?`), defaultHandler(tokens.QQ)},
 		{regexp.MustCompile(`!!`), defaultHandler(tokens.BB)},
 		{regexp.MustCompile(`=>`), defaultHandler(tokens.FATARROW)},
+		{regexp.MustCompile(`->`), defaultHandler(tokens.ARROW)},
 		{regexp.MustCompile(`\+\+`), defaultHandler(tokens.PLUS_PLUS)},
 		{regexp.MustCompile(`--`), defaultHandler(tokens.MINUS_MINUS)},
 		{regexp.MustCompile(`\+=`), defaultHandler(tokens.PLUS_ASSIGN)},

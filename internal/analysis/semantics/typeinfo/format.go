@@ -194,7 +194,7 @@ func (p Printer) FuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 		}
 		wrote = true
 	}
-	b.WriteString(") ")
+	b.WriteString(") -> ")
 	b.WriteString(p.Type(fnType.Result))
 	return b.String()
 }
@@ -232,7 +232,7 @@ func (p Printer) MethodSignature(name string, receiver Type, fn *FuncType) strin
 		params = append(params, prefix+typeText)
 	}
 	b.WriteString(p.ParamList(params))
-	b.WriteByte(' ')
+	b.WriteString(" -> ")
 	b.WriteString(p.Type(fn.Result))
 	return b.String()
 }
@@ -354,7 +354,7 @@ func (p Printer) formatSignature(fn *FuncType) string {
 		}
 		parts = append(parts, prefix+p.Type(param.Type))
 	}
-	return fmt.Sprintf("(%s) %s", strings.Join(parts, ", "), p.Type(fn.Result))
+	return fmt.Sprintf("(%s) -> %s", strings.Join(parts, ", "), p.Type(fn.Result))
 }
 
 func (p Printer) formatTypeParams(params []*TypeParam) string {

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"compiler/internal/core/diagnostics"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
 )
 
@@ -14,11 +14,11 @@ func TestPipelineParsesImportsAndReusesCachedModules(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `import "util";
 
-fn build() i32 {
+fn build() -> i32 {
     return util::Value()
 }
 `)
-	mustWrite(t, filepath.Join(root, "util.ferr"), `fn Value() i32 {
+	mustWrite(t, filepath.Join(root, "util.ferr"), `fn Value() -> i32 {
     return 1
 }
 `)
@@ -49,10 +49,10 @@ fn build() i32 {
 func TestPipelineReportsImportCycle(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "a.ferr"), `import "b";
-fn a() i32 { return 1 }
+fn a() -> i32 { return 1 }
 `)
 	mustWrite(t, filepath.Join(root, "b.ferr"), `import "a";
-fn b() i32 { return 2 }
+fn b() -> i32 { return 2 }
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "a.ferr"))
@@ -75,11 +75,11 @@ func TestPipelineParsesWholeWorkspace(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `import "util"
 
-fn build() i32 {
+fn build() -> i32 {
     return util::Value()
 }
 `)
-	mustWrite(t, filepath.Join(root, "util.ferr"), `fn Value() i32 {
+	mustWrite(t, filepath.Join(root, "util.ferr"), `fn Value() -> i32 {
     return 1
 }
 `)
@@ -105,12 +105,12 @@ fn build() i32 {
 func TestPipelineReportsWorkspaceCycle(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "a.ferr"), `import "b"
-fn a() i32 { return 1 }
+fn a() -> i32 { return 1 }
 `)
 	mustWrite(t, filepath.Join(root, "b.ferr"), `import "a"
-fn b() i32 { return 2 }
+fn b() -> i32 { return 2 }
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `fn main() i32 { return 0 }`)
+	mustWrite(t, filepath.Join(root, "main.ferr"), `fn main() -> i32 { return 0 }`)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseWorkspace()
 	if !result.Diagnostics.HasErrors() {
@@ -132,7 +132,7 @@ func TestPipelineRejectsRelativeImports(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `import "../util/build"
 
-fn main() i32 { return 0 }
+fn main() -> i32 { return 0 }
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))

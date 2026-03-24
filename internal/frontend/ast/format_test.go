@@ -13,7 +13,7 @@ func TestFuncDeclSignature(t *testing.T) {
 		Result: &NamedType{Path: []string{"i32"}},
 	}
 
-	if got := fn.Signature(); got != "fn Point::Calc(&self) i32" {
+	if got := fn.Signature(); got != "fn Point::Calc(&self) -> i32" {
 		t.Fatalf("unexpected signature: %q", got)
 	}
 }
@@ -31,7 +31,7 @@ func TestFuncDeclSignatureIncludesTypeParams(t *testing.T) {
 		Result: &NamedType{Path: []string{"U"}},
 	}
 
-	want := "fn Map<T, U: any>(value: T) U"
+	want := "fn Map<T, U: any>(value: T) -> U"
 	if got := fn.Signature(); got != want {
 		t.Fatalf("unexpected signature:\nwant: %q\ngot:  %q", want, got)
 	}
@@ -55,7 +55,7 @@ func TestFormatReceiverTextAndParamList(t *testing.T) {
 	if got := FormatParamList([]string{"&self", "x: i32"}); got != "(&self, x: i32)" {
 		t.Fatalf("unexpected param list: %q", got)
 	}
-	if got := FormatInterfaceMethodSignatureText("Read", "&", []string{"buf: []u8"}, "usize"); got != "Read(&self, buf: []u8) usize" {
+	if got := FormatInterfaceMethodSignatureText("Read", "&", []string{"buf: []u8"}, "usize"); got != "Read(&self, buf: []u8) -> usize" {
 		t.Fatalf("unexpected interface method signature: %q", got)
 	}
 }

@@ -7,7 +7,7 @@ import (
 
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 )
 
 func TestOwnershipPhaseAllowsPlainStructCopy(t *testing.T) {
@@ -17,7 +17,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{ .X = 1 }
     let q = p
     return p.X
@@ -49,10 +49,10 @@ func TestOwnershipPhaseConsumesOwningReceiver(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
-fn Conn::Close(*self) void {
+fn Conn::Close(*self) -> void {
 }
 
-fn run(c: *Conn) void {
+fn run(c: *Conn) -> void {
     c.Close()
     c.Close()
 }
@@ -77,7 +77,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{ .X = 1 }
     while true {
         let q = p
@@ -101,7 +101,7 @@ fn main() i32 {
 func TestOwnershipPhaseAllowsArrayCopyByDefault(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
-fn main(items: [3]i32) i32 {
+fn main(items: [3]i32) -> i32 {
     let other = items
     return items[0] + other[1]
 }
@@ -123,7 +123,7 @@ func TestOwnershipPhaseAllowsOwningParamRebindAfterMove(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
-fn main(mut p: *Conn, mut q: *Conn) *Conn {
+fn main(mut p: *Conn, mut q: *Conn) -> *Conn {
     let tmp = p
     p = q
     return p
@@ -146,7 +146,7 @@ func TestOwnershipPhaseAllowsOwningParamLoopRebindAfterMove(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
-fn main(mut p: *Conn, mut q: *Conn) *Conn {
+fn main(mut p: *Conn, mut q: *Conn) -> *Conn {
     let mut i: i32 = 0
     while i < 1 {
         let tmp = p
@@ -175,7 +175,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut p: Point = .{ .X = 1 }
     let mut i: i32 = 0
     while i < 2 {
@@ -203,10 +203,10 @@ func TestOwnershipPhaseFreezesBorrowedOwnerWithinBlock(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
-fn useConn(c: *Conn) void {
+fn useConn(c: *Conn) -> void {
 }
 
-fn run(c: *Conn) void {
+fn run(c: *Conn) -> void {
     if 1 == 1 {
         let p = &*c
         useConn(c)
@@ -232,10 +232,10 @@ func TestOwnershipPhaseReleasesBorrowAfterLastUse(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
-fn useConn(c: *Conn) void {
+fn useConn(c: *Conn) -> void {
 }
 
-fn run(c: *Conn) void {
+fn run(c: *Conn) -> void {
     let p = &*c
     p
     useConn(c)
@@ -258,7 +258,7 @@ func TestOwnershipPhaseRejectsReturnedBorrow(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
-fn borrow(c: *Conn) &Conn {
+fn borrow(c: *Conn) -> &Conn {
     return &*c
 }
 `)
@@ -280,7 +280,7 @@ func TestOwnershipPhaseRejectsReturnedBorrowBinding(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
-fn borrow(c: *Conn) &Conn {
+fn borrow(c: *Conn) -> &Conn {
     let p = &*c
     return p
 }
@@ -305,11 +305,11 @@ type Point struct {
     Value: i32 = 0
 }
 
-fn read(p: &Point) void {
+fn read(p: &Point) -> void {
     p
 }
 
-fn run() void {
+fn run() -> void {
     let p: Point = .{}
     defer read(&p)
 }
@@ -332,7 +332,7 @@ func TestOwnershipPhaseRejectsImmutableBorrowWhileMutableBorrowIsLive(t *testing
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
-fn run(mut c: *Conn) void {
+fn run(mut c: *Conn) -> void {
     let m = &mut *c
     let r = &*c
     m
@@ -355,7 +355,7 @@ fn run(mut c: *Conn) void {
 func TestOwnershipPhaseRejectsUseWhileMutableBorrowBindingIsStillLive(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
-fn run() void {
+fn run() -> void {
     let mut x = 10
     let y = &mut x
     print(x)
@@ -382,7 +382,7 @@ type Point struct {
     Value: i32 = 0
 }
 
-fn run() void {
+fn run() -> void {
     let p: Point = .{}
     let a = &p
     let b = &p
@@ -410,14 +410,14 @@ type Handle enum {
     stdout,
 }
 
-fn make(flag: bool) Handle {
+fn make(flag: bool) -> Handle {
     if flag {
         return Handle::stdin
     }
     return Handle::stdout
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let h = make(true)
     let other = h
     let code = other as i32
@@ -444,14 +444,14 @@ type Handle enum {
     stdout,
 }
 
-fn make(flag: bool) Handle {
+fn make(flag: bool) -> Handle {
     if flag {
         return Handle::stdin
     }
     return Handle::stdout
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let h = make(true)
     return h as i32
 }
@@ -474,7 +474,7 @@ type Node struct {
     Value: i32 = 0
 }
 
-fn main(n: Node) i32 {
+fn main(n: Node) -> i32 {
     let child = n.Child
     let copy = n
     return copy.Value
@@ -501,7 +501,7 @@ type Node struct {
     Value: i32 = 0
 }
 
-fn main(n: Node) i32 {
+fn main(n: Node) -> i32 {
     let value = n.Value
     let again = n
     return again.Value + value
@@ -527,7 +527,7 @@ type Node struct {
     Value: i32 = 0
 }
 
-fn main(n: Node) i32 {
+fn main(n: Node) -> i32 {
     let child = n.Child
     return n.Value
 }
@@ -552,7 +552,7 @@ type Node struct {
     Value: i32 = 0
 }
 
-fn main(n: Node, replacement: *Node) i32 {
+fn main(n: Node, replacement: *Node) -> i32 {
     let mut current = n
     let child = current.Child
     current.Child = replacement
@@ -577,7 +577,7 @@ func TestOwnershipPhaseRejectsConditionalUseAfterMove(t *testing.T) {
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
-fn main(mut p: *Conn, cond: bool) *Conn {
+fn main(mut p: *Conn, cond: bool) -> *Conn {
     if cond {
         let x = p
     }

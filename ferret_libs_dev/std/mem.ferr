@@ -10,10 +10,10 @@
 /// Methods return `^void` for raw byte ownership at the FFI boundary.
 /// Callers cast to typed raw pointers in `unsafe { ... }` when needed.
 type Allocator interface {
-    Alloc(&self, size: usize) ^void
-    AllocZeroed(&self, size: usize) ^void
-    Realloc(&self, ptr: ^void, size: usize) ^void
-    Free(&self, ptr: ^void) void
+    Alloc(&self, size: usize) -> ^void
+    AllocZeroed(&self, size: usize) -> ^void
+    Realloc(&self, ptr: ^void, size: usize) -> ^void
+    Free(&self, ptr: ^void) -> void
 }
 
 /// Expose converts an owning pointer into a raw pointer without changing bits.
@@ -21,14 +21,14 @@ type Allocator interface {
 /// This is an explicit ownership-boundary API; use inside `unsafe` when handing
 /// ownership-managed values to low-level/FFI code.
 #[extern]
-fn Expose<T>(owner: *T) ^T;
+fn Expose<T>(owner: *T) -> ^T;
 
 /// Adopt converts a raw pointer into an owning pointer without changing bits.
 ///
 /// This is an explicit ownership-boundary API; use inside `unsafe` only when
 /// provenance is trusted (allocator + lifetime contract are compatible).
 #[extern]
-fn Adopt<T>(raw: ^T) *T;
+fn Adopt<T>(raw: ^T) -> *T;
 
 /// CAllocator is the default system allocator backed by libc.
 type CAllocator struct {}
@@ -52,7 +52,7 @@ type ArenaAllocator struct {
 
 const PageSize: usize = 4096
 
-fn align_up(value: usize, align: usize) usize {
+fn align_up(value: usize, align: usize) -> usize {
     if align == 0 {
         return value
     }
@@ -63,7 +63,7 @@ fn align_up(value: usize, align: usize) usize {
     return value + (align - rem)
 }
 
-fn ptr_add(base: ^void, offset: usize) ^void {
+fn ptr_add(base: ^void, offset: usize) -> ^void {
     let mut out = base
     unsafe {
         let addr = base as usize
@@ -73,53 +73,53 @@ fn ptr_add(base: ^void, offset: usize) ^void {
 }
 
 /// Alloc allocates `size` uninitialized bytes.
-fn CAllocator::Alloc(&self, size: usize) ^void {
+fn CAllocator::Alloc(&self, size: usize) -> ^void {
     return malloc(size)
 }
 
 /// AllocZeroed allocates `size` zero-initialized bytes.
-fn CAllocator::AllocZeroed(&self, size: usize) ^void {
+fn CAllocator::AllocZeroed(&self, size: usize) -> ^void {
     return calloc(1, size)
 }
 
 /// Realloc resizes a previous allocation.
-fn CAllocator::Realloc(&self, ptr: ^void, size: usize) ^void {
+fn CAllocator::Realloc(&self, ptr: ^void, size: usize) -> ^void {
     return realloc(ptr, size)
 }
 
 /// Free releases memory allocated by this allocator.
-fn CAllocator::Free(&self, ptr: ^void) void {
+fn CAllocator::Free(&self, ptr: ^void) -> void {
     free(ptr)
 }
 
 /// System returns the default libc-backed allocator.
-fn System() CAllocator {
+fn System() -> CAllocator {
     return .{}
 }
 
 /// Page returns a page-granularity allocator.
-fn Page() PageAllocator {
+fn Page() -> PageAllocator {
     return .{}
 }
 
-fn PageAllocator::Alloc(&self, size: usize) ^void {
+fn PageAllocator::Alloc(&self, size: usize) -> ^void {
     return malloc(align_up(size, PageSize))
 }
 
-fn PageAllocator::AllocZeroed(&self, size: usize) ^void {
+fn PageAllocator::AllocZeroed(&self, size: usize) -> ^void {
     return calloc(1, align_up(size, PageSize))
 }
 
-fn PageAllocator::Realloc(&self, ptr: ^void, size: usize) ^void {
+fn PageAllocator::Realloc(&self, ptr: ^void, size: usize) -> ^void {
     return realloc(ptr, align_up(size, PageSize))
 }
 
-fn PageAllocator::Free(&self, ptr: ^void) void {
+fn PageAllocator::Free(&self, ptr: ^void) -> void {
     free(ptr)
 }
 
 /// Arena creates a bump allocator with an optional initial capacity.
-fn Arena(initial_capacity: usize) ArenaAllocator {
+fn Arena(initial_capacity: usize) -> ArenaAllocator {
     return .{
         .base = malloc(initial_capacity),
         .cap = initial_capacity,
@@ -127,7 +127,7 @@ fn Arena(initial_capacity: usize) ArenaAllocator {
     }
 }
 
-fn ArenaAllocator::Alloc(&mut self, size: usize) ^void {
+fn ArenaAllocator::Alloc(&mut self, size: usize) -> ^void {
     if size == 0 {
         return ptr_add(self.base, self.used)
     }
@@ -148,7 +148,7 @@ fn ArenaAllocator::Alloc(&mut self, size: usize) ^void {
     return ptr
 }
 
-fn ArenaAllocator::AllocZeroed(&mut self, size: usize) ^void {
+fn ArenaAllocator::AllocZeroed(&mut self, size: usize) -> ^void {
     let ptr = self.Alloc(size)
     memset(ptr, 0, size)
     return ptr
@@ -157,24 +157,24 @@ fn ArenaAllocator::AllocZeroed(&mut self, size: usize) ^void {
 /// Arena Realloc allocates a new chunk and copies `size` bytes.
 ///
 /// This is useful when the old size is known by caller convention.
-fn ArenaAllocator::Realloc(&mut self, ptr: ^void, size: usize) ^void {
+fn ArenaAllocator::Realloc(&mut self, ptr: ^void, size: usize) -> ^void {
     let next = self.Alloc(size)
     memmove(next, ptr, size)
     return next
 }
 
 /// Arena Free is a no-op for individual pointers.
-fn ArenaAllocator::Free(&mut self, ptr: ^void) void {
+fn ArenaAllocator::Free(&mut self, ptr: ^void) -> void {
     ptr
 }
 
 /// Reset drops all bump allocations while retaining capacity.
-fn ArenaAllocator::Reset(&mut self) void {
+fn ArenaAllocator::Reset(&mut self) -> void {
     self.used = 0
 }
 
 /// Release frees the backing block and resets the arena state.
-fn ArenaAllocator::Release(&mut self) void {
+fn ArenaAllocator::Release(&mut self) -> void {
     free(self.base)
     unsafe {
         self.base = 0 as ^void
@@ -184,62 +184,62 @@ fn ArenaAllocator::Release(&mut self) void {
 }
 
 /// Alloc forwards allocation through any allocator implementation.
-fn Alloc(a: Allocator, size: usize) ^void {
+fn Alloc(a: Allocator, size: usize) -> ^void {
     return a.Alloc(size)
 }
 
 /// AllocAs forwards allocation and returns a typed raw pointer.
-fn AllocAs<T>(a: Allocator, size: usize) ^T {
+fn AllocAs<T>(a: Allocator, size: usize) -> ^T {
     unsafe {
         return Alloc(a, size) as ^T
     }
 }
 
 /// AllocZeroed forwards zeroed allocation through any allocator implementation.
-fn AllocZeroed(a: Allocator, size: usize) ^void {
+fn AllocZeroed(a: Allocator, size: usize) -> ^void {
     return a.AllocZeroed(size)
 }
 
 /// AllocZeroedAs forwards zeroed allocation and returns a typed raw pointer.
-fn AllocZeroedAs<T>(a: Allocator, size: usize) ^T {
+fn AllocZeroedAs<T>(a: Allocator, size: usize) -> ^T {
     unsafe {
         return AllocZeroed(a, size) as ^T
     }
 }
 
 /// Realloc forwards resize through any allocator implementation.
-fn Realloc(a: Allocator, ptr: ^void, size: usize) ^void {
+fn Realloc(a: Allocator, ptr: ^void, size: usize) -> ^void {
     return a.Realloc(ptr, size)
 }
 
 /// ReallocAs forwards resize for typed raw pointers.
-fn ReallocAs<T>(a: Allocator, ptr: ^T, size: usize) ^T {
+fn ReallocAs<T>(a: Allocator, ptr: ^T, size: usize) -> ^T {
     unsafe {
         return Realloc(a, ptr as ^void, size) as ^T
     }
 }
 
 /// Free forwards deallocation through any allocator implementation.
-fn Free(a: Allocator, ptr: ^void) void {
+fn Free(a: Allocator, ptr: ^void) -> void {
     a.Free(ptr)
 }
 
 /// FreeAs forwards deallocation for typed raw pointers.
-fn FreeAs<T>(a: Allocator, ptr: ^T) void {
+fn FreeAs<T>(a: Allocator, ptr: ^T) -> void {
     unsafe {
         Free(a, ptr as ^void)
     }
 }
 
 /// AllocOwnedAs allocates bytes and adopts them as an owning pointer.
-fn AllocOwnedAs<T>(a: Allocator, size: usize) *T {
+fn AllocOwnedAs<T>(a: Allocator, size: usize) -> *T {
     unsafe {
         return Adopt(Alloc(a, size) as ^T)
     }
 }
 
 /// ReallocOwnedAs resizes an owning pointer and returns a re-adopted owner.
-fn ReallocOwnedAs<T>(a: Allocator, ptr: *T, size: usize) *T {
+fn ReallocOwnedAs<T>(a: Allocator, ptr: *T, size: usize) -> *T {
     unsafe {
         let raw = Expose(ptr)
         let next = Realloc(a, raw as ^void, size)
@@ -248,7 +248,7 @@ fn ReallocOwnedAs<T>(a: Allocator, ptr: *T, size: usize) *T {
 }
 
 /// FreeOwned releases an owning pointer through an allocator boundary.
-fn FreeOwned<T>(a: Allocator, ptr: *T) void {
+fn FreeOwned<T>(a: Allocator, ptr: *T) -> void {
     unsafe {
         Free(a, Expose(ptr) as ^void)
     }

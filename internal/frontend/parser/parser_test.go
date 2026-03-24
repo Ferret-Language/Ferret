@@ -65,7 +65,7 @@ type Point struct {
     x: i32 = 0
     y: i32 = 0
 }
-fn Point::len2(self) i32 {
+fn Point::len2(self) -> i32 {
     if self == .{ .x = 1, .y = 2 } {
         return 1
     }
@@ -106,11 +106,40 @@ fn Point::len2(self) i32 {
 	}
 }
 
+func TestParseFunctionReturnTypeRequiresArrow(t *testing.T) {
+	src := `
+fn print(value: i32) void {}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "expected '->' before function return type") {
+		t.Fatalf("expected missing arrow diagnostic, got %v", diag.Diagnostics())
+	}
+}
+
+func TestParseFunctionWithoutExplicitReturnTypeNeedsNoArrow(t *testing.T) {
+	src := `
+fn print(value: i32) {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[0])
+	}
+	if fn.Result != nil {
+		t.Fatalf("expected implicit return type, got %#v", fn.Result)
+	}
+}
+
 func TestParserRejectsLegacyReceiverSyntax(t *testing.T) {
 	src := `
 type Point struct {}
 
-fn (p: Point) Len() i32 {
+fn (p: Point) Len() -> i32 {
     return 0
 }
 `
@@ -123,13 +152,13 @@ fn (p: Point) Len() i32 {
 func TestParseInterfaceReceiverModifiers(t *testing.T) {
 	src := `
 type Reader interface {
-    read(self, buf: []u8) i32
-    peek(&self) u8
-    refill(&mut self) i32
-    close(*self) void
-    raw(^self) void
-    rawConst(^const self, buf: []u8) i32
-    New() Reader
+    read(self, buf: []u8) -> i32
+    peek(&self) -> u8
+    refill(&mut self) -> i32
+    close(*self) -> void
+    raw(^self) -> void
+    rawConst(^const self, buf: []u8) -> i32
+    New() -> Reader
 }
 `
 
@@ -170,7 +199,7 @@ type Reader interface {
 
 func TestParseMutableSliceType(t *testing.T) {
 	src := `
-fn fill(buf: []mut i32) void {}
+fn fill(buf: []mut i32) -> void {}
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -195,8 +224,8 @@ fn fill(buf: []mut i32) void {}
 
 func TestParseVariadicParams(t *testing.T) {
 	src := `
-fn collect(nums: ...i32) void {}
-fn collectMut(nums: ...mut i32) void {}
+fn collect(nums: ...i32) -> void {}
+fn collectMut(nums: ...mut i32) -> void {}
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -232,7 +261,7 @@ fn collectMut(nums: ...mut i32) void {}
 
 func TestParserRejectsNonTrailingVariadicParam(t *testing.T) {
 	src := `
-fn bad(nums: ...i32, fallback: i32) void {}
+fn bad(nums: ...i32, fallback: i32) -> void {}
 `
 
 	_, diag := parseTestModule(t, src)
@@ -243,9 +272,9 @@ fn bad(nums: ...i32, fallback: i32) void {}
 
 func TestParseSpreadArgument(t *testing.T) {
 	src := `
-fn add(nums: ...i32) void {}
+fn add(nums: ...i32) -> void {}
 
-fn main() void {
+fn main() -> void {
     let xs: []i32 = []i32{1, 2, 3}
     add(xs...)
 }
@@ -274,9 +303,9 @@ fn main() void {
 
 func TestParserRejectsNonTrailingSpreadArgument(t *testing.T) {
 	src := `
-fn add(nums: ...i32) void {}
+fn add(nums: ...i32) -> void {}
 
-fn main() void {
+fn main() -> void {
     let xs: []i32 = []i32{1, 2, 3}
     add(xs..., 1)
 }
@@ -317,7 +346,7 @@ func TestParseLetMutConstAndComptime(t *testing.T) {
 let mut GlobalCount: i32 = 0
 const BuildMode = "debug"
 
-fn add(comptime T: Type, x: T) T {
+fn add(comptime T: Type, x: T) -> T {
     let mut a: i32
     let b = comptime 1 + 2
     const local = 3
@@ -377,7 +406,7 @@ fn add(comptime T: Type, x: T) T {
 
 func TestParseComptimeBlockRewritesExpressionStatements(t *testing.T) {
 	src := `
-fn main() void {
+fn main() -> void {
     comptime {
         assert(1 + 1 == 2, "math ok")
     }
@@ -420,9 +449,9 @@ fn main() void {
 
 func TestParseUnsafePrefixExpression(t *testing.T) {
 	src := `
-unsafe fn danger() i32 { return 1 }
+unsafe fn danger() -> i32 { return 1 }
 
-fn main() i32 {
+fn main() -> i32 {
     let x = unsafe danger()
     return x
 }
@@ -451,7 +480,7 @@ fn main() i32 {
 
 func TestParseRejectsLegacyRawAddressSyntax(t *testing.T) {
 	src := `
-fn main() void {
+fn main() -> void {
     let mut x: i32 = 1
     let p = @x
     p
@@ -466,7 +495,7 @@ fn main() void {
 
 func TestParseMutableParameter(t *testing.T) {
 	src := `
-fn set(mut x: i32, y: i32) i32 {
+fn set(mut x: i32, y: i32) -> i32 {
     return x
 }
 `
@@ -490,7 +519,7 @@ type Box<T> struct {
     Value: T
 }
 
-fn Map<T, U: any>(value: T) U {
+fn Map<T, U: any>(value: T) -> U {
     return value as U
 }
 `
@@ -526,7 +555,7 @@ func TestParseNamedTypeConstraint(t *testing.T) {
 	src := `
 type numeric union { i32, i64 }
 
-fn Use<T: numeric>(value: T) void {}
+fn Use<T: numeric>(value: T) -> void {}
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -560,17 +589,17 @@ func TestParseInlineConstraintLiterals(t *testing.T) {
 type W Writer
 
 type Writer interface {
-    write(&self, []u8) i32
+    write(&self, []u8) -> i32
 }
 
 fn close_it<T: interface {
-    close(&self) void
-}>(x: T) void {}
+    close(&self) -> void
+}>(x: T) -> void {}
 
 fn min<T: union {
     i32,
     i64
-}>(a: T, b: T) T {
+}>(a: T, b: T) -> T {
     return a
 }
 `
@@ -622,14 +651,14 @@ type C A & B
 func TestParseTypeParamRejectsIntersectionConstraint(t *testing.T) {
 	src := `
 type Reader interface {
-    Read(&self) i32
+    Read(&self) -> i32
 }
 
 type Printable interface {
-    Print(&self) void
+    Print(&self) -> void
 }
 
-fn Use<T: Reader & Printable>(value: T) void {}
+fn Use<T: Reader & Printable>(value: T) -> void {}
 `
 
 	_, diag := parseTestModule(t, src)
@@ -657,7 +686,7 @@ type Pair struct {
 
 func TestParseRepeatedSemicolonsReportInfo(t *testing.T) {
 	src := `
-fn main() void {
+fn main() -> void {
     print(1);;;;
 }
 `
@@ -671,7 +700,7 @@ fn main() void {
 func TestParseReceiverlessInterfaceMethodIsStatic(t *testing.T) {
 	src := `
 type Writer interface {
-    write([]u8) i32
+    write([]u8) -> i32
 }
 `
 
@@ -694,11 +723,11 @@ type Writer interface {
 
 func TestParseGenericCallWithAngleTypeArgs(t *testing.T) {
 	src := `
-fn add<T>(a: T, b: T) T {
+fn add<T>(a: T, b: T) -> T {
     return a
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return add<i32>(1, 2)
 }
 `
@@ -730,11 +759,11 @@ fn main() i32 {
 
 func TestParseRejectsEmptyAngleTypeArgs(t *testing.T) {
 	src := `
-fn add<T>(a: T, b: T) T {
+fn add<T>(a: T, b: T) -> T {
     return a
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return add<>(1, 2)
 }
 `
@@ -751,11 +780,11 @@ type Circle<T> struct {
     Rad: T
 }
 
-fn Circle<T>::New(v: T) Self {
+fn Circle<T>::New(v: T) -> Self {
     return .{ .Rad = v }
 }
 
-fn main() Circle<i32> {
+fn main() -> Circle<i32> {
     return Circle<i32>::New(1)
 }
 `
@@ -797,7 +826,7 @@ fn main() Circle<i32> {
 
 func TestParseCopyPrefixExpression(t *testing.T) {
 	src := `
-fn ClonePoint(p: Point) Point {
+fn ClonePoint(p: Point) -> Point {
     return copy p
 }
 `
@@ -825,7 +854,7 @@ func TestParseBuiltinDeclarationWithDocComment(t *testing.T) {
 /// Returns the current panic payload as a string.
 /// Returns an empty string when there is no active panic.
 #[builtin]
-fn recover() string;
+fn recover() -> string;
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -872,7 +901,7 @@ const Y = 2
 
 // Adds one.
 // Returns incremented value.
-fn addOne(v: i32) i32 {
+fn addOne(v: i32) -> i32 {
     return v + 1
 }
 `
@@ -911,7 +940,7 @@ func TestParseModuleDocComment(t *testing.T) {
 // module docs line 2
 import "std/os"
 
-fn main() void {}
+fn main() -> void {}
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -930,7 +959,7 @@ func TestParseDocCommentGapDoesNotAttach(t *testing.T) {
 	src := `
 // this should not attach due to gap
 
-fn noDoc() void {}
+fn noDoc() -> void {}
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -948,7 +977,7 @@ fn noDoc() void {}
 
 func TestParseRegularCommentsRemainIgnored(t *testing.T) {
 	src := `
-fn main() void
+fn main() -> void
 // comment between signature and body should be ignored
 {
     let x = 1
@@ -976,7 +1005,7 @@ func TestParseBlockDocCommentPreservesLines(t *testing.T) {
  * block line 1
  * block line 2
  */
-fn f() void {}
+fn f() -> void {}
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -997,7 +1026,7 @@ fn f() void {}
 
 func TestParseLocalBindingDocs(t *testing.T) {
 	src := `
-fn main() void {
+fn main() -> void {
     // local mutable binding doc
     let mut x = 1
 
@@ -1034,7 +1063,7 @@ func TestParseExternDeclarationWithLinkName(t *testing.T) {
 	src := `
 /// Writes a string to stdout.
 #[extern("ferret_io_println")]
-fn Println(text: string) void;
+fn Println(text: string) -> void;
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -1059,7 +1088,7 @@ fn Println(text: string) void;
 func TestParseExternDeclarationWithoutLinkNameUsesDefaultMangle(t *testing.T) {
 	src := `
 #[extern]
-fn Tick() void;
+fn Tick() -> void;
 `
 
 	mod, diag := parseTestModule(t, src)
@@ -1080,7 +1109,7 @@ fn Tick() void;
 
 func TestParseCastExpression(t *testing.T) {
 	src := `
-fn CastIt(x: i32) i8 {
+fn CastIt(x: i32) -> i8 {
     return x as i8
 }
 `
@@ -1105,7 +1134,7 @@ fn CastIt(x: i32) i8 {
 
 func TestParseAssignmentAndWhileLoop(t *testing.T) {
 	src := `
-fn run() i32 {
+fn run() -> i32 {
     let mut x: i32 = 0
     while x < 10 {
         x = x + 1
@@ -1157,7 +1186,7 @@ fn run() i32 {
 
 func TestParseForLoopForms(t *testing.T) {
 	src := `
-fn run() i32 {
+fn run() -> i32 {
     let mut sum: i32 = 0
 
     for items |v| {
@@ -1204,7 +1233,7 @@ fn run() i32 {
 
 func TestParserRejectsInvalidForBindingForm(t *testing.T) {
 	src := `
-fn run() void {
+fn run() -> void {
     for items {
         return
     }
@@ -1222,7 +1251,7 @@ fn run() void {
 
 func TestParseLabelsAndLabeledLoopControl(t *testing.T) {
 	src := `
-fn run() void {
+fn run() -> void {
     outer: for items |v| {
         inner: while true {
             break outer
@@ -1268,7 +1297,7 @@ fn run() void {
 
 func TestParserRecoversLabeledStatementBody(t *testing.T) {
 	src := `
-fn run() void {
+fn run() -> void {
     outer: x =
     return
 }
@@ -1303,7 +1332,7 @@ fn run() void {
 
 func TestParserRecoversAfterIncompleteAssignment(t *testing.T) {
 	src := `
-fn run() i32 {
+fn run() -> i32 {
     let mut x: i32 = 0
     while x < 10 {
         x = x +
@@ -1369,7 +1398,7 @@ fn Conn::~Conn(*self) {
 
 func TestParseElseIfDeferLockUnsafeAndBuiltins(t *testing.T) {
 	src := `
-fn run(m: Mutex, cond: bool) void {
+fn run(m: Mutex, cond: bool) -> void {
     if cond {
         defer release m
     } else if cond {
@@ -1419,11 +1448,11 @@ fn run(m: Mutex, cond: bool) void {
 
 func TestParseUnsafeBlockAndUnsafeFunctionCall(t *testing.T) {
 	src := `
-unsafe fn Read(ptr: ^i32) i32 {
+unsafe fn Read(ptr: ^i32) -> i32 {
     return *ptr
 }
 
-fn run(ptr: ^i32) i32 {
+fn run(ptr: ^i32) -> i32 {
     let x: i32
     unsafe {
         x = Read(ptr)
@@ -1482,7 +1511,7 @@ fn run(ptr: ^i32) i32 {
 
 func TestParseCatchExpressionForms(t *testing.T) {
 	src := `
-fn run(path: string) i32 {
+fn run(path: string) -> i32 {
     let file = open(path) catch |err| {
         log(err)
         return 0
@@ -1510,7 +1539,7 @@ fn run(path: string) i32 {
 
 func TestParseIsExpression(t *testing.T) {
 	src := `
-fn run(x: i32) bool {
+fn run(x: i32) -> bool {
     return x is i32
 }
 `
@@ -1537,7 +1566,7 @@ fn run(x: i32) bool {
 
 func TestParseMatchTypeArm(t *testing.T) {
 	src := `
-fn run(value: Token) i32 {
+fn run(value: Token) -> i32 {
     match value {
         is i32 => {
             return value
@@ -1568,7 +1597,7 @@ fn run(value: Token) i32 {
 
 func TestParseMatchExpression(t *testing.T) {
 	src := `
-fn run(value: Token) i32 {
+fn run(value: Token) -> i32 {
     let out = match value {
         is i32 => value
         _ => 0
@@ -1597,7 +1626,7 @@ fn run(value: Token) i32 {
 
 func TestParserRejectsMixedCompositeLiteralForms(t *testing.T) {
 	src := `
-fn build() Point {
+fn build() -> Point {
     let p: Point = .{ .x = 1, 2 }
     return p
 }
@@ -1620,8 +1649,8 @@ type Point struct {
 }
 
 type Shape interface {
-    area() i32
-    area() i32
+    area() -> i32
+    area() -> i32
 }
 
 type Color enum {
@@ -1664,7 +1693,7 @@ type Point struct {
     y: i32 = 1
 }
 
-fn build() i32 {
+fn build() -> i32 {
     return 1
 }
 `
@@ -1697,7 +1726,7 @@ fn build() i32 {
 
 func TestParserRecoversMissingCompositeComma(t *testing.T) {
 	src := `
-fn build() Point {
+fn build() -> Point {
     let p: Point = .{ .x = 1 .y = 2 }
     return p
 }
@@ -1735,7 +1764,7 @@ fn build() Point {
 
 func TestParserRecoversMissingArgumentComma(t *testing.T) {
 	src := `
-fn run() void {
+fn run() -> void {
     foo("a" "b")
     return
 }
@@ -1773,7 +1802,7 @@ fn run() void {
 
 func TestParserMissingCallCloserAnchorsAtInsertionPoint(t *testing.T) {
 	src := `
-fn run() void {
+fn run() -> void {
     print(Point::Counter
     let mut maybe : ?i32 = none
     return
@@ -1824,11 +1853,11 @@ type Node struct {
     ro: ^const u8
 }
 
-fn Node::peek(&self) &Node {
+fn Node::peek(&self) -> &Node {
     return self.view
 }
 
-fn Node::peekRaw(^const self) ^const u8 {
+fn Node::peekRaw(^const self) -> ^const u8 {
     return self.ro
 }
 `
@@ -1933,7 +1962,7 @@ func TestParseStaticAttachedMethod(t *testing.T) {
 	src := `
 type Point struct {}
 
-fn Point::New() Point {
+fn Point::New() -> Point {
     return .{}
 }
 `
@@ -1953,7 +1982,7 @@ fn Point::New() Point {
 func TestParseSelfTypeAndTypedCompositeLiteral(t *testing.T) {
 	src := `
 type Shape interface {
-    New() Self
+    New() -> Self
     Draw(&self)
 }
 
@@ -1961,7 +1990,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::Clone(&self) Self {
+fn Point::Clone(&self) -> Self {
     return .Point{}
 }
 `
@@ -1992,7 +2021,7 @@ func TestParseAttachedMethodWarnsOnNonSelfName(t *testing.T) {
 	src := `
 type Point struct {}
 
-fn Point::Len(this) i32 {
+fn Point::Len(this) -> i32 {
     return 0
 }
 `

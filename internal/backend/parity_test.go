@@ -22,22 +22,22 @@ type Box<T: any> struct {
     Marker: i32 = 0
 }
 
-fn Box<T>::Id(v: T) T {
+fn Box<T>::Id(v: T) -> T {
     return v
 }
 
-fn Box<T>::ConstValue() i32 {
+fn Box<T>::ConstValue() -> i32 {
     return 7
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let x = Box<i32>::Id(11)
     let y = Box<i64>::Id(22)
     let z = Box<i32>::ConstValue()
     return x + z + (y as i32)
 }
 `) + "\n"
-	mainPath := filepath.Join(root, "main.ferr")
+	mainPath := filepath.Join(root, "main.fer")
 	if err := os.WriteFile(mainPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write main source: %v", err)
 	}

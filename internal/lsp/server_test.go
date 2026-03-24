@@ -275,7 +275,7 @@ func TestHoverUsesOpenDocumentOverlayText(t *testing.T) {
 func TestHoverShowsExpandedNamedConstraint(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type numeric union {\n    i32,\n    i64,\n}\n\nfn add_numbers<T: numeric>(a: T, b: T) T {\n    return a + b\n}\n"
+	src := "type numeric union {\n    i32,\n    i64,\n}\n\nfn add_numbers<T: numeric>(a: T, b: T) -> T {\n    return a + b\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -324,7 +324,7 @@ func TestHoverShowsExpandedNamedConstraint(t *testing.T) {
 func TestDefinitionReturnsFunctionDeclaration(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "fn run2() void {\n}\n\nfn main() {\n    run2()\n}\n"
+	src := "fn run2() -> void {\n}\n\nfn main() {\n    run2()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -373,13 +373,13 @@ func TestDefinitionCrossModuleFunction(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
 		t.Fatalf("failed to create module dir: %v", err)
 	}
-	moduleSrc := "fn Pick(v: i32) i32 {\n    return v\n}\n"
+	moduleSrc := "fn Pick(v: i32) -> i32 {\n    return v\n}\n"
 	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
 		t.Fatalf("failed to write module source: %v", err)
 	}
 
 	path := filepath.Join(dir, "main.fer")
-	src := "import \"util/math\"\n\nfn main() i32 {\n    return math::Pick(1)\n}\n"
+	src := "import \"util/math\"\n\nfn main() -> i32 {\n    return math::Pick(1)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -426,8 +426,8 @@ func TestDefinitionCrossModuleFunction(t *testing.T) {
 func TestDefinitionOverlayReturnsOriginalFileURI(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	onDisk := "fn old() void {\n}\n\nfn main() {\n    old()\n}\n"
-	overlay := "fn run2() void {\n}\n\nfn main() {\n    run2()\n}\n"
+	onDisk := "fn old() -> void {\n}\n\nfn main() {\n    old()\n}\n"
+	overlay := "fn run2() -> void {\n}\n\nfn main() {\n    run2()\n}\n"
 	if err := os.WriteFile(path, []byte(onDisk), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestDefinitionOverlayReturnsOriginalFileURI(t *testing.T) {
 func TestDefinitionGenericStaticOwnerCallResolvesOwnerAndMethod(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\nfn main() void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
+	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) -> Self {\n    return .{ .Rad = v }\n}\n\nfn main() -> void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -490,7 +490,7 @@ func TestDefinitionGenericStaticOwnerCallResolvesOwnerAndMethod(t *testing.T) {
 	}
 	typeChar += len("type ")
 
-	methodLine, methodChar, ok := findPosition(src, "fn Circle<T>::New(v: T) Self")
+	methodLine, methodChar, ok := findPosition(src, "fn Circle<T>::New(v: T) -> Self")
 	if !ok {
 		t.Fatal("failed to find method declaration")
 	}
@@ -606,7 +606,7 @@ func TestHoverCachesByOpenDocumentVersion(t *testing.T) {
 func TestHoverMethodDeclarationShowsFullSignature(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Point struct {\n    X: i32\n}\n\nfn Point::Calc(&self) i32 {\n    return self.X\n}\n"
+	src := "type Point struct {\n    X: i32\n}\n\nfn Point::Calc(&self) -> i32 {\n    return self.X\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -635,7 +635,7 @@ func TestHoverMethodDeclarationShowsFullSignature(t *testing.T) {
 	if hover == nil {
 		t.Fatalf("expected hover result, got nil response payload: %q", out.String())
 	}
-	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) i32") {
+	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) -> i32") {
 		t.Fatalf("expected full method signature in hover, got %q", hover.Contents.Value)
 	}
 }
@@ -643,7 +643,7 @@ func TestHoverMethodDeclarationShowsFullSignature(t *testing.T) {
 func TestHoverNamedTypeShowsFieldsAndMethods(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Point struct {\n    X: i32\n    Y: i32 = 2\n}\n\nfn Point::Calc(&self) i32 {\n    return self.X\n}\n\nfn main() {\n    let p: Point = .{}\n    p.Calc()\n}\n"
+	src := "type Point struct {\n    X: i32\n    Y: i32 = 2\n}\n\nfn Point::Calc(&self) -> i32 {\n    return self.X\n}\n\nfn main() {\n    let p: Point = .{}\n    p.Calc()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestHoverNamedTypeShowsFieldsAndMethods(t *testing.T) {
 	if !strings.Contains(hover.Contents.Value, "X: i32") || !strings.Contains(hover.Contents.Value, "Y: i32 = 2") {
 		t.Fatalf("expected struct fields in hover, got %q", hover.Contents.Value)
 	}
-	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) i32") {
+	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) -> i32") {
 		t.Fatalf("expected type methods in hover, got %q", hover.Contents.Value)
 	}
 }
@@ -686,7 +686,7 @@ func TestHoverNamedTypeShowsFieldsAndMethods(t *testing.T) {
 func TestHoverGenericNamedTypeShowsConcreteFieldsAndMethods(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Point<T> struct {\n    Value: T\n}\n\nfn Point<T>::Calc(&self) T {\n    return self.Value\n}\n\nfn Point<T>::Incr(&mut self, dx: T) void {\n    self.Value += dx\n}\n\nfn main() void {\n    let p: Point<i32> = .{ .Value = 1 }\n    p\n}\n"
+	src := "type Point<T> struct {\n    Value: T\n}\n\nfn Point<T>::Calc(&self) -> T {\n    return self.Value\n}\n\nfn Point<T>::Incr(&mut self, dx: T) -> void {\n    self.Value += dx\n}\n\nfn main() -> void {\n    let p: Point<i32> = .{ .Value = 1 }\n    p\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -721,10 +721,10 @@ func TestHoverGenericNamedTypeShowsConcreteFieldsAndMethods(t *testing.T) {
 	if !strings.Contains(hover.Contents.Value, "Value: i32") {
 		t.Fatalf("expected concrete generic field type in hover, got %q", hover.Contents.Value)
 	}
-	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) i32") {
+	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) -> i32") {
 		t.Fatalf("expected concrete generic method result type in hover, got %q", hover.Contents.Value)
 	}
-	if !strings.Contains(hover.Contents.Value, "fn Point::Incr(&mut self, dx: i32) void") {
+	if !strings.Contains(hover.Contents.Value, "fn Point::Incr(&mut self, dx: i32) -> void") {
 		t.Fatalf("expected concrete generic method param type in hover, got %q", hover.Contents.Value)
 	}
 }
@@ -732,7 +732,7 @@ func TestHoverGenericNamedTypeShowsConcreteFieldsAndMethods(t *testing.T) {
 func TestHoverFunctionCallShowsNamedSignature(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "fn run2() void {\n}\n\nfn main() {\n    run2()\n}\n"
+	src := "fn run2() -> void {\n}\n\nfn main() {\n    run2()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -762,7 +762,7 @@ func TestHoverFunctionCallShowsNamedSignature(t *testing.T) {
 	if hover == nil {
 		t.Fatal("expected hover result")
 	}
-	if !strings.Contains(hover.Contents.Value, "fn run2() void") {
+	if !strings.Contains(hover.Contents.Value, "fn run2() -> void") {
 		t.Fatalf("expected named function signature in hover, got %q", hover.Contents.Value)
 	}
 	if strings.Contains(hover.Contents.Value, "fn() void") {
@@ -835,7 +835,7 @@ func TestHoverBuiltinCallsShowFunctionSignatures(t *testing.T) {
 func TestHoverGenericCallShowsInstantiatedSignature(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "fn add<T>(a: T, b: T) T {\n    return a + b\n}\n\nfn main() i32 {\n    let x = 1\n    let y = 2\n    return add(x, y)\n}\n"
+	src := "fn add<T>(a: T, b: T) -> T {\n    return a + b\n}\n\nfn main() -> i32 {\n    let x = 1\n    let y = 2\n    return add(x, y)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -864,7 +864,7 @@ func TestHoverGenericCallShowsInstantiatedSignature(t *testing.T) {
 	if hover == nil {
 		t.Fatal("expected hover result")
 	}
-	if !strings.Contains(hover.Contents.Value, "fn add(a: i32, b: i32) i32") {
+	if !strings.Contains(hover.Contents.Value, "fn add(a: i32, b: i32) -> i32") {
 		t.Fatalf("expected instantiated generic signature in hover, got %q", hover.Contents.Value)
 	}
 	if strings.Contains(hover.Contents.Value, "<T>") {
@@ -875,7 +875,7 @@ func TestHoverGenericCallShowsInstantiatedSignature(t *testing.T) {
 func TestHoverGenericStaticOwnerCallShowsInstantiatedSignature(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\nfn main() void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
+	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) -> Self {\n    return .{ .Rad = v }\n}\n\nfn main() -> void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -904,10 +904,10 @@ func TestHoverGenericStaticOwnerCallShowsInstantiatedSignature(t *testing.T) {
 	if hover == nil {
 		t.Fatal("expected hover result")
 	}
-	if !strings.Contains(hover.Contents.Value, "fn Circle::New(v: i32) Circle<i32>") {
+	if !strings.Contains(hover.Contents.Value, "fn Circle::New(v: i32) -> Circle<i32>") {
 		t.Fatalf("expected instantiated static owner signature in hover, got %q", hover.Contents.Value)
 	}
-	if strings.Contains(hover.Contents.Value, "fn Circle::New(v: T) Self") {
+	if strings.Contains(hover.Contents.Value, "fn Circle::New(v: T) -> Self") {
 		t.Fatalf("expected no unresolved owner type parameter in hover, got %q", hover.Contents.Value)
 	}
 }
@@ -915,7 +915,7 @@ func TestHoverGenericStaticOwnerCallShowsInstantiatedSignature(t *testing.T) {
 func TestHoverGenericStaticOwnerCallHasSegmentRanges(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\nfn main() void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
+	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) -> Self {\n    return .{ .Rad = v }\n}\n\nfn main() -> void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -976,7 +976,7 @@ func TestHoverGenericStaticOwnerCallHasSegmentRanges(t *testing.T) {
 	if methodHover.Range.Start.Character != newChar || methodHover.Range.End.Character != newChar+len("New") {
 		t.Fatalf("expected New segment range, got %#v", methodHover.Range)
 	}
-	if !strings.Contains(methodHover.Contents.Value, "fn Circle::New(v: i32) Circle<i32>") {
+	if !strings.Contains(methodHover.Contents.Value, "fn Circle::New(v: i32) -> Circle<i32>") {
 		t.Fatalf("expected instantiated static method hover, got %q", methodHover.Contents.Value)
 	}
 }
@@ -987,13 +987,13 @@ func TestHoverCrossModuleGenericCallShowsInstantiatedSignature(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
 		t.Fatalf("failed to create module dir: %v", err)
 	}
-	moduleSrc := "fn Pick<T>(v: T) T {\n    return v\n}\n"
+	moduleSrc := "fn Pick<T>(v: T) -> T {\n    return v\n}\n"
 	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
 		t.Fatalf("failed to write module source: %v", err)
 	}
 
 	path := filepath.Join(dir, "main.fer")
-	src := "import \"util/math\"\n\nfn main() i32 {\n    return math::Pick(1)\n}\n"
+	src := "import \"util/math\"\n\nfn main() -> i32 {\n    return math::Pick(1)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1022,7 +1022,7 @@ func TestHoverCrossModuleGenericCallShowsInstantiatedSignature(t *testing.T) {
 	if hover == nil {
 		t.Fatal("expected hover result")
 	}
-	if !strings.Contains(hover.Contents.Value, "fn Pick(v: i32) i32") {
+	if !strings.Contains(hover.Contents.Value, "fn Pick(v: i32) -> i32") {
 		t.Fatalf("expected cross-module instantiated generic signature in hover, got %q", hover.Contents.Value)
 	}
 	if strings.Contains(hover.Contents.Value, "<T>") {
@@ -1036,13 +1036,13 @@ func TestHoverCrossModuleConstrainedGenericCallShowsInstantiatedSignature(t *tes
 	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
 		t.Fatalf("failed to create module dir: %v", err)
 	}
-	moduleSrc := "type Shape interface {\n    Draw(&self)\n}\n\ntype Circle struct {}\n\nfn Circle::Draw(&self) void {\n}\n\nfn DrawOne<T: Shape>(s: T) void {\n    s.Draw()\n}\n"
+	moduleSrc := "type Shape interface {\n    Draw(&self)\n}\n\ntype Circle struct {}\n\nfn Circle::Draw(&self) -> void {\n}\n\nfn DrawOne<T: Shape>(s: T) -> void {\n    s.Draw()\n}\n"
 	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
 		t.Fatalf("failed to write module source: %v", err)
 	}
 
 	path := filepath.Join(dir, "main.fer")
-	src := "import \"util/shape\"\n\nfn main() void {\n    let c: shape::Circle = .{}\n    shape::DrawOne(c)\n}\n"
+	src := "import \"util/shape\"\n\nfn main() -> void {\n    let c: shape::Circle = .{}\n    shape::DrawOne(c)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1071,10 +1071,10 @@ func TestHoverCrossModuleConstrainedGenericCallShowsInstantiatedSignature(t *tes
 	if hover == nil {
 		t.Fatal("expected hover result")
 	}
-	if !strings.Contains(hover.Contents.Value, "fn DrawOne(s: Circle) void") {
+	if !strings.Contains(hover.Contents.Value, "fn DrawOne(s: Circle) -> void") {
 		t.Fatalf("expected constrained cross-module call hover to show instantiated type, got %q", hover.Contents.Value)
 	}
-	if strings.Contains(hover.Contents.Value, "fn DrawOne(s: T) void") {
+	if strings.Contains(hover.Contents.Value, "fn DrawOne(s: T) -> void") {
 		t.Fatalf("expected no unresolved constrained type parameter in hover, got %q", hover.Contents.Value)
 	}
 }
@@ -1082,7 +1082,7 @@ func TestHoverCrossModuleConstrainedGenericCallShowsInstantiatedSignature(t *tes
 func TestHoverFunctionCallShowsDocComment(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "/// Adds two numbers.\n/// Returns the sum.\nfn add(a: i32, b: i32) i32 {\n    return a + b\n}\n\nfn main() i32 {\n    return add(1, 2)\n}\n"
+	src := "/// Adds two numbers.\n/// Returns the sum.\nfn add(a: i32, b: i32) -> i32 {\n    return a + b\n}\n\nfn main() -> i32 {\n    return add(1, 2)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1111,7 +1111,7 @@ func TestHoverFunctionCallShowsDocComment(t *testing.T) {
 	if hover == nil {
 		t.Fatal("expected hover result")
 	}
-	if !strings.Contains(hover.Contents.Value, "fn add(a: i32, b: i32) i32") {
+	if !strings.Contains(hover.Contents.Value, "fn add(a: i32, b: i32) -> i32") {
 		t.Fatalf("expected function signature in hover, got %q", hover.Contents.Value)
 	}
 	if !strings.Contains(hover.Contents.Value, "Adds two numbers.") || !strings.Contains(hover.Contents.Value, "Returns the sum.") {
@@ -1122,7 +1122,7 @@ func TestHoverFunctionCallShowsDocComment(t *testing.T) {
 func TestHoverFunctionCallShowsLineCommentDocBlock(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "// Adds two numbers.\n// Returns the sum.\nfn add(a: i32, b: i32) i32 {\n    return a + b\n}\n\nfn main() i32 {\n    return add(1, 2)\n}\n"
+	src := "// Adds two numbers.\n// Returns the sum.\nfn add(a: i32, b: i32) -> i32 {\n    return a + b\n}\n\nfn main() -> i32 {\n    return add(1, 2)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1162,7 +1162,7 @@ func TestHoverFunctionCallShowsLineCommentDocBlock(t *testing.T) {
 func TestHoverTypeShowsDocCommentBlock(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "// Point docs line 1.\n// Point docs line 2.\ntype Point struct {\n    Value: i32 = 0\n}\n\nfn main() void {\n    let p: Point = .{ .Value = 1 }\n    p\n}\n"
+	src := "// Point docs line 1.\n// Point docs line 2.\ntype Point struct {\n    Value: i32 = 0\n}\n\nfn main() -> void {\n    let p: Point = .{ .Value = 1 }\n    p\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1201,7 +1201,7 @@ func TestHoverTypeShowsDocCommentBlock(t *testing.T) {
 func TestHoverInterfaceMethodCallShowsSelfReceiver(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Shape interface {\n    Draw(&self)\n}\n\nfn drawShape(s: Shape) void {\n    s.Draw()\n}\n"
+	src := "type Shape interface {\n    Draw(&self)\n}\n\nfn drawShape(s: Shape) -> void {\n    s.Draw()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1230,7 +1230,7 @@ func TestHoverInterfaceMethodCallShowsSelfReceiver(t *testing.T) {
 	if hover == nil {
 		t.Fatal("expected hover result")
 	}
-	if !strings.Contains(hover.Contents.Value, "fn Shape::Draw(&self) void") {
+	if !strings.Contains(hover.Contents.Value, "fn Shape::Draw(&self) -> void") {
 		t.Fatalf("expected method hover to include self receiver, got %q", hover.Contents.Value)
 	}
 }
@@ -1238,7 +1238,7 @@ func TestHoverInterfaceMethodCallShowsSelfReceiver(t *testing.T) {
 func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Point struct {\n    Value: i32 = 7\n}\n\nfn Point::Calc(&self) i32 {\n    return self.Value\n}\n"
+	src := "type Point struct {\n    Value: i32 = 7\n}\n\nfn Point::Calc(&self) -> i32 {\n    return self.Value\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1276,7 +1276,7 @@ func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 	if !strings.Contains(hover.Contents.Value, "type Point struct") || !strings.Contains(hover.Contents.Value, "Value: i32 = 7") {
 		t.Fatalf("expected expanded named type in hover, got %q", hover.Contents.Value)
 	}
-	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) i32") {
+	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) -> i32") {
 		t.Fatalf("expected method listing in hover, got %q", hover.Contents.Value)
 	}
 }
@@ -1284,7 +1284,7 @@ func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 func TestHoverBindingDeclarations(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Point struct {\n    Value: i32 = 7\n}\n\nfn Point::Calc(&self, mut dx: i32, comptime step: i32) i32 {\n    let mut a = dx\n    const b: i32 = step\n    return a + b + self.Value\n}\n"
+	src := "type Point struct {\n    Value: i32 = 7\n}\n\nfn Point::Calc(&self, mut dx: i32, comptime step: i32) -> i32 {\n    let mut a = dx\n    const b: i32 = step\n    return a + b + self.Value\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1328,7 +1328,7 @@ func TestHoverBindingDeclarations(t *testing.T) {
 func TestHoverLocalBindingShowsDocComment(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "fn run() void {\n    // local binding docs\n    // second line\n    let mut x = 1\n    x\n}\n"
+	src := "fn run() -> void {\n    // local binding docs\n    // second line\n    let mut x = 1\n    x\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1368,7 +1368,7 @@ func TestHoverLocalBindingShowsDocComment(t *testing.T) {
 func TestHoverPointerParameterIsNotReceiver(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Conn struct {}\n\nfn run(mut c: *Conn) void {\n    c\n}\n"
+	src := "type Conn struct {}\n\nfn run(mut c: *Conn) -> void {\n    c\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1408,7 +1408,7 @@ func TestHoverPointerParameterIsNotReceiver(t *testing.T) {
 func TestHoverMethodOwnerTypeInDeclaration(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Point<T> struct {\n    Value: T\n}\n\nfn Point<T>::Calc(&self) T {\n    return self.Value\n}\n"
+	src := "type Point<T> struct {\n    Value: T\n}\n\nfn Point<T>::Calc(&self) -> T {\n    return self.Value\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1444,7 +1444,7 @@ func TestHoverMethodOwnerTypeInDeclaration(t *testing.T) {
 func TestHoverLabels(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "fn run() void {\nouter: while true {\n    break outer\n}\n}\n"
+	src := "fn run() -> void {\nouter: while true {\n    break outer\n}\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1532,7 +1532,7 @@ func TestHoverRecursiveGenericTypeDoesNotLoop(t *testing.T) {
 func TestHoverRecursiveGenericInterfaceDoesNotLoop(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Node<T> interface {\n    Next(&self) Node<T>\n}\n\nfn use(n: Node<i32>) void {\n    n\n}\n"
+	src := "type Node<T> interface {\n    Next(&self) -> Node<T>\n}\n\nfn use(n: Node<i32>) -> void {\n    n\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1564,7 +1564,7 @@ func TestHoverRecursiveGenericInterfaceDoesNotLoop(t *testing.T) {
 	if !strings.Contains(hover.Contents.Value, "Node<i32>") {
 		t.Fatalf("expected instantiated recursive interface type in hover, got %q", hover.Contents.Value)
 	}
-	if !strings.Contains(hover.Contents.Value, "Next(&self) Node<i32>") {
+	if !strings.Contains(hover.Contents.Value, "Next(&self) -> Node<i32>") {
 		t.Fatalf("expected instantiated recursive interface method in hover, got %q", hover.Contents.Value)
 	}
 }
@@ -1580,7 +1580,7 @@ func TestHoverLargeMethodSetShowsTruncationNote(t *testing.T) {
 		srcBuilder.WriteString(strconv.Itoa(i))
 		srcBuilder.WriteString("(&self) void {\n}\n\n")
 	}
-	srcBuilder.WriteString("fn main() void {\n    let x: Big = .{}\n    x\n}\n")
+	srcBuilder.WriteString("fn main() -> void {\n    let x: Big = .{}\n    x\n}\n")
 	src := srcBuilder.String()
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1657,7 +1657,7 @@ func TestHoverConstrainedGenericParameterShowsConstraint(t *testing.T) {
 func TestCompletionReturnsVisibleSymbols(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "fn helper() void {}\n\nfn main() {\n    let value = 1\n    val\n}\n"
+	src := "fn helper() -> void {}\n\nfn main() {\n    let value = 1\n    val\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1701,9 +1701,9 @@ func TestCompletionReturnsVisibleSymbols(t *testing.T) {
 func TestCompletionMemberAndStaticMember(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Point struct {\n    Value: i32\n}\n\nfn Point::Draw(&self) void {\n}\n\n" +
-		"type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\n" +
-		"fn main() void {\n    let p: Point = .{ .Value = 1 }\n    p.Draw()\n    Circle<i32>::New(1)\n}\n"
+	src := "type Point struct {\n    Value: i32\n}\n\nfn Point::Draw(&self) -> void {\n}\n\n" +
+		"type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) -> Self {\n    return .{ .Rad = v }\n}\n\n" +
+		"fn main() -> void {\n    let p: Point = .{ .Value = 1 }\n    p.Draw()\n    Circle<i32>::New(1)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1788,13 +1788,13 @@ func TestHoverImportAliasAndPathShowsModuleDoc(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
 		t.Fatalf("failed to create module dir: %v", err)
 	}
-	moduleSrc := "// OS helpers.\n// Module level docs.\nfn CpuCount() i32 {\n    return 1\n}\n"
+	moduleSrc := "// OS helpers.\n// Module level docs.\nfn CpuCount() -> i32 {\n    return 1\n}\n"
 	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
 		t.Fatalf("failed to write module source: %v", err)
 	}
 
 	path := filepath.Join(dir, "main.fer")
-	src := "import \"util/os\" as os\n\nfn main() void {\n    os::CpuCount()\n}\n"
+	src := "import \"util/os\" as os\n\nfn main() -> void {\n    os::CpuCount()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1859,7 +1859,7 @@ func TestHoverCastRawOwnerBoundaryShowsAdoptExposeGuidance(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
 	src := `
-fn main() void {
+fn main() -> void {
     unsafe {
         let raw = 0 as ^i32
         let own = raw as *i32
@@ -1904,13 +1904,13 @@ func TestCompletionModuleStaticMembersViaImportAlias(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
 		t.Fatalf("failed to create module dir: %v", err)
 	}
-	moduleSrc := "fn CpuCount() i32 {\n    return 1\n}\n\nconst Version: i32 = 1\n"
+	moduleSrc := "fn CpuCount() -> i32 {\n    return 1\n}\n\nconst Version: i32 = 1\n"
 	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
 		t.Fatalf("failed to write module source: %v", err)
 	}
 
 	path := filepath.Join(dir, "main.fer")
-	src := "import \"util/os\"\n\nfn main() void {\n    os::CpuCount()\n}\n"
+	src := "import \"util/os\"\n\nfn main() -> void {\n    os::CpuCount()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}

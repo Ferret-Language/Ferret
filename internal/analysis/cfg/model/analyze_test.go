@@ -15,7 +15,7 @@ import (
 func TestCFGReportsMissingReturn(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     if true {
         return 1
     }
@@ -43,7 +43,7 @@ fn main() i32 {
 func TestCFGReportsUnreachableCode(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     return 1
     let x = 2
 }
@@ -68,7 +68,7 @@ fn main() i32 {
 func TestCFGAllowsMatchFallbackReturn(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     match 1 {
     0 => {
         return 10
@@ -95,7 +95,7 @@ fn main() i32 {
 func TestCFGTreatsPanicAsTerminator(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn fail() void {
+fn fail() -> void {
     panic "bad"
     let x = 1
 }
@@ -133,9 +133,9 @@ fn fail() void {
 func TestCFGBuildsCleanupEdgeForDeferredPanic(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn close() void {}
+fn close() -> void {}
 
-fn fail() void {
+fn fail() -> void {
     defer close()
     panic "bad"
 }
@@ -173,7 +173,7 @@ fn fail() void {
 func TestCFGReportsMissingReturnInMatchFallback(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     match 1 {
     0 => {
         return 10
@@ -203,7 +203,7 @@ fn main() i32 {
 func TestCFGLivenessTracksStraightLineLocals(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn main(a: i32) i32 {
+fn main(a: i32) -> i32 {
     let b = a
     let c = b
     return c
@@ -239,7 +239,7 @@ fn main(a: i32) i32 {
 func TestCFGLivenessFlowsAcrossIfBranches(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn main(a: i32, b: i32) i32 {
+fn main(a: i32, b: i32) -> i32 {
     let x = a
     if b > 0 {
         return x
@@ -272,7 +272,7 @@ fn main(a: i32, b: i32) i32 {
 func TestCFGLivenessHandlesLoopBackEdge(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
-fn main(n: i32) i32 {
+fn main(n: i32) -> i32 {
     let mut m: i32 = n
     let mut x: i32 = 0
     while m > 0 {

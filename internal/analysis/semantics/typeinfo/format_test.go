@@ -19,7 +19,7 @@ func TestFormatFuncSignature(t *testing.T) {
 	}
 
 	got := FormatFuncSignature("Point::Calc", fn)
-	want := "unsafe fn Point::Calc<T, U: bool>(comptime i32, mut i64) bool"
+	want := "unsafe fn Point::Calc<T, U: bool>(comptime i32, mut i64) -> bool"
 	if got != want {
 		t.Fatalf("unexpected signature:\nwant: %q\ngot:  %q", want, got)
 	}
@@ -47,7 +47,7 @@ func TestFormatFuncDeclSignature(t *testing.T) {
 	}
 
 	got := FormatFuncDeclSignature(fn, fnType)
-	want := "fn Point::Calc(&self, mut cx: i32, comptime flag: bool) void"
+	want := "fn Point::Calc(&self, mut cx: i32, comptime flag: bool) -> void"
 	if got != want {
 		t.Fatalf("unexpected declaration signature:\nwant: %q\ngot:  %q", want, got)
 	}
@@ -65,7 +65,7 @@ func TestFuncTypeStringUsesCanonicalFormatter(t *testing.T) {
 	}
 
 	got := fn.String()
-	want := "unsafe fn<T>(comptime i32, mut i64) bool"
+	want := "unsafe fn<T>(comptime i32, mut i64) -> bool"
 	if got != want {
 		t.Fatalf("unexpected canonical func type string:\nwant: %q\ngot:  %q", want, got)
 	}
@@ -79,7 +79,7 @@ func TestFormatMethodSignatureIncludesSelf(t *testing.T) {
 	}
 
 	got := FormatMethodSignature("Point::Calc", receiver, fn)
-	want := "fn Point::Calc(&mut self, i32) void"
+	want := "fn Point::Calc(&mut self, i32) -> void"
 	if got != want {
 		t.Fatalf("unexpected method signature:\nwant: %q\ngot:  %q", want, got)
 	}
@@ -116,19 +116,19 @@ func TestFormatNamedTypeHoverMarkdown(t *testing.T) {
 	got := FormatNamedTypeHoverMarkdown(NamedTypeHoverBlock{
 		DeclText: "type Point struct {\n    Value: i32 = 7\n}",
 		InstanceMethods: []string{
-			"fn Point::Calc(&self) i32",
+			"fn Point::Calc(&self) -> i32",
 		},
 		StaticMethods: []string{
-			"fn Point::New(v: i32) Point",
+			"fn Point::New(v: i32) -> Point",
 		},
 	})
 	if !strings.Contains(got, "```ferret\ntype Point struct {\n    Value: i32 = 7\n}\n```") {
 		t.Fatalf("expected declaration code block, got %q", got)
 	}
-	if !strings.Contains(got, "Instance methods:\n```ferret\nfn Point::Calc(&self) i32\n```") {
+	if !strings.Contains(got, "Instance methods:\n```ferret\nfn Point::Calc(&self) -> i32\n```") {
 		t.Fatalf("expected instance method section, got %q", got)
 	}
-	if !strings.Contains(got, "Static methods:\n```ferret\nfn Point::New(v: i32) Point\n```") {
+	if !strings.Contains(got, "Static methods:\n```ferret\nfn Point::New(v: i32) -> Point\n```") {
 		t.Fatalf("expected static method section, got %q", got)
 	}
 }
@@ -137,7 +137,7 @@ func TestFormatNamedTypeHoverMarkdownIncludesTruncationNote(t *testing.T) {
 	got := FormatNamedTypeHoverMarkdown(NamedTypeHoverBlock{
 		DeclText:        "type Point struct {}",
 		TruncationNote:  "_Hover truncated: omitted 3 additional method signature(s)._",
-		InstanceMethods: []string{"fn Point::Calc(&self) i32"},
+		InstanceMethods: []string{"fn Point::Calc(&self) -> i32"},
 	})
 	if !strings.Contains(got, "_Hover truncated: omitted 3 additional method signature(s)._") {
 		t.Fatalf("expected truncation note in hover markdown, got %q", got)

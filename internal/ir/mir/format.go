@@ -71,10 +71,10 @@ func formatFunction(b *strings.Builder, fn *Function) {
 		fmt.Fprintf(b, "fn %s%s", name, typeinfo.DefaultPrinter.ParamList(formatParams(fn.Params)))
 	}
 	if fn.Blocks == nil {
-		fmt.Fprintf(b, " %s;\n", renderType(fn.Result))
+		fmt.Fprintf(b, " -> %s;\n", renderType(fn.Result))
 		return
 	}
-	fmt.Fprintf(b, " %s {\n", renderType(fn.Result))
+	fmt.Fprintf(b, " -> %s {\n", renderType(fn.Result))
 	if len(fn.Locals) > 0 {
 		b.WriteString("locals:\n")
 		for _, local := range fn.Locals {

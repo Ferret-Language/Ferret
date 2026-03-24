@@ -20,7 +20,7 @@ func TestTypecheckerChecksWorkspaceExampleSubset(t *testing.T) {
 import "math/vec2"
 import "util/build"
 
-fn main() i32 {
+fn main() -> i32 {
     let p = build::Origin()
     if p == .{ .X = 0, .Y = 0 } {
         return vec2::Len2(p)
@@ -34,14 +34,14 @@ type Vec2 struct {
     Y: i32 = 0
 }
 
-fn Len2(v: Vec2) i32 {
+fn Len2(v: Vec2) -> i32 {
     return v.X * v.X + v.Y * v.Y
 }
 `)
 	mustWriteType(t, filepath.Join(root, "util", "build.ferr"), `
 import "math/vec2"
 
-fn Origin() vec2::Vec2 {
+fn Origin() -> vec2::Vec2 {
     return .{}
 }
 `)
@@ -68,7 +68,7 @@ fn Origin() vec2::Vec2 {
 func TestTypecheckerReportsInvalidReturn(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn bad() i32 {
+fn bad() -> i32 {
     return
 }
 `)
@@ -92,11 +92,11 @@ fn bad() i32 {
 func TestTypecheckerReportsArgumentTypeMismatch(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn Add(x: i32, y: i32) i32 {
+fn Add(x: i32, y: i32) -> i32 {
     return x + y
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return Add("x", 1)
 }
 `)
@@ -120,7 +120,7 @@ fn main() i32 {
 func TestTypecheckerContextualizesNumericLiteralsAndDefaults(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i64 {
+fn main() -> i64 {
     let a = 1
     let b = 1.5
     let c: i64 = 1
@@ -154,7 +154,7 @@ type Box<T> struct {
     Value: T
 }
 
-fn Identity<T>(value: T) T {
+fn Identity<T>(value: T) -> T {
     return value
 }
 `)
@@ -200,7 +200,7 @@ type Box<T> struct {
     Value: T
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let b: Box<i32> = .{ .Value = 7 }
     return b.Value
 }
@@ -233,11 +233,11 @@ type Box<T> struct {
     Value: T
 }
 
-fn Box<T>::Get(&self) T {
+fn Box<T>::Get(&self) -> T {
     return self.Value
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let b: Box<i32> = .{ .Value = 7 }
     return b.Get()
 }
@@ -265,11 +265,11 @@ type Circle<T> struct {
     Rad: T
 }
 
-fn Circle<T>::New(v: T) Self {
+fn Circle<T>::New(v: T) -> Self {
     return .{ .Rad = v }
 }
 
-fn main() Circle<i32> {
+fn main() -> Circle<i32> {
     return Circle<i32>::New(1)
 }
 `)
@@ -310,7 +310,7 @@ func TestTypecheckerReportsGenericOwnerMissingTypeArgsOnce(t *testing.T) {
      Value: T = 0
  }
 
- fn Point::Calc(&self) i32 {
+ fn Point::Calc(&self) -> i32 {
      return self.Value
  }
  `)
@@ -334,9 +334,9 @@ func TestTypecheckerInfersGenericExternCallResult(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 #[extern]
-fn Identity<T>(value: T) T;
+fn Identity<T>(value: T) -> T;
 
-fn main() i32 {
+fn main() -> i32 {
     return Identity(1)
 }
 `)
@@ -371,13 +371,13 @@ func TestTypecheckerRejectsGenericConstraintMismatch(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Reader interface {
-    Read(&self) i32
+    Read(&self) -> i32
 }
 
 #[extern]
-fn Use<T: Reader>(value: T) void;
+fn Use<T: Reader>(value: T) -> void;
 
-fn main() void {
+fn main() -> void {
     Use(1)
 }
 `)
@@ -403,11 +403,11 @@ func TestTypecheckerReportsConstraintDeclarationMismatch(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type numeric union { i32, i64 }
 
-fn Id<T: numeric>(v: T) T {
+fn Id<T: numeric>(v: T) -> T {
     return v
 }
 
-fn main() void {
+fn main() -> void {
     Id("x")
 }
 `)
@@ -433,7 +433,7 @@ func TestTypecheckerAllowsNamedConstraintTypeAsConcreteType(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type numeric union { i32, i64 }
 
-fn main() void {
+fn main() -> void {
     let x: numeric = 1
     x
 }
@@ -449,33 +449,33 @@ func TestTypecheckerSupportsNamedAndInlineConstraints(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Writer interface {
-    write(&self, []u8) i32
+    write(&self, []u8) -> i32
 }
 
 type W Writer
 
 type FileWriter struct {}
 
-fn FileWriter::write(&self, data: []u8) i32 {
+fn FileWriter::write(&self, data: []u8) -> i32 {
     data
     return 0
 }
 
-fn write_all<T: W>(x: T) void {
+fn write_all<T: W>(x: T) -> void {
     x
 }
 
 fn close_it<T: interface {
-    close(&self) void
-}>(x: T) void {
+    close(&self) -> void
+}>(x: T) -> void {
     x.close()
 }
 
 type Door struct {}
 
-fn Door::close(&self) void {}
+fn Door::close(&self) -> void {}
 
-fn main() void {
+fn main() -> void {
     let w = .FileWriter{}
     let d = .Door{}
     write_all(w)
@@ -498,11 +498,11 @@ type numeric union {
     u32,
 }
 
-fn add_numbers<T: numeric>(a: T, b: T) T {
+fn add_numbers<T: numeric>(a: T, b: T) -> T {
     return a + b
 }
 
-fn main() void {
+fn main() -> void {
     print(add_numbers(1, 2))
     print(add_numbers(1.4, 2.7))
     print(add_numbers(1, 2))
@@ -519,10 +519,10 @@ func TestTypecheckerAllowsMethodsFromTypeParamInterfaceConstraint(t *testing.T) 
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Reader interface {
-    Read(&self) i32
+    Read(&self) -> i32
 }
 
-fn ReadValue<T: Reader>(value: T) i32 {
+fn ReadValue<T: Reader>(value: T) -> i32 {
     return value.Read()
 }
 `)
@@ -547,18 +547,18 @@ func TestTypecheckerRejectsExplicitOwnerTypeArgsConstraintMismatch(t *testing.T)
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Reader interface {
-    Read(&self) i32
+    Read(&self) -> i32
 }
 
 type Box<T: Reader> struct {
     Value: T
 }
 
-fn Box<T>::New(value: T) Self {
+fn Box<T>::New(value: T) -> Self {
     return .{ .Value = value }
 }
 
-fn main() void {
+fn main() -> void {
     Box<i32>::New(1)
 }
 `)
@@ -586,11 +586,11 @@ type Point struct {
     X: i32
 }
 
-fn Add<T>(a: T, b: T) T {
+fn Add<T>(a: T, b: T) -> T {
     return a + b
 }
 
-fn main() void {
+fn main() -> void {
     let p: Point = .{ .X = 1 }
     Add(p, p)
 }
@@ -632,11 +632,11 @@ fn main() void {
 func TestTypecheckerReportsExplicitGenericTypeArgConflictClearly(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn Add<T>(a: T, b: T) T {
+fn Add<T>(a: T, b: T) -> T {
     return a + b
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return Add<bool>(1, 2)
 }
 `)
@@ -667,11 +667,11 @@ type Circle<T> struct {
     Rad: T
 }
 
-fn Circle<T>::New(v: T) Self {
+fn Circle<T>::New(v: T) -> Self {
     return .{ .Rad = v }
 }
 
-fn main() void {
+fn main() -> void {
     let c = Circle::New(1)
     c
 }
@@ -702,7 +702,7 @@ type Point<T> struct {
     Value: T
 }
 
-fn main() void {
+fn main() -> void {
     let p = .Point{ .Value = 2 }
     p
 }
@@ -729,7 +729,7 @@ fn main() void {
 func TestTypecheckerAllowsImplicitNumericWidening(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i64 {
+fn main() -> i64 {
     let a: i32 = 1
     let b: i64 = a
     return b
@@ -750,7 +750,7 @@ type Token union {
     bool,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let a: Token = 1
     let b: Token = true
     return 0
@@ -771,7 +771,7 @@ type Token union {
     bool,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let bad: Token = "text"
     return 0
 }
@@ -801,7 +801,7 @@ type MaybeInt union {
     i32,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let a: MaybeInt = 1
     let b: MaybeInt = 1 as i32
     let c: MaybeInt = 1 as ?i32
@@ -823,7 +823,7 @@ type Point struct {
     Y: i32 = 2
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p = .{} as Point
     return p.X
 }
@@ -849,7 +849,7 @@ type Shape interface {
     Show(self)
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{}
     let s: Shape = p
     return 0
@@ -870,7 +870,7 @@ type Both union {
     i32,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let bad: Both = 1
     return 0
 }
@@ -900,7 +900,7 @@ type MaybeInt union {
     i32,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let picked: MaybeInt = 1 as MaybeInt::i32
     return 0
 }
@@ -920,7 +920,7 @@ type Token union {
     i64,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let value: Token = 1
     let out = value as i32
     return out
@@ -941,7 +941,7 @@ type Token union {
     i64,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let left: Token = 1
     let right: Token = 2 as i64
     if left == right {
@@ -970,7 +970,7 @@ fn main() i32 {
 func TestTypecheckerAllowsNumericToStringCast(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() void {
+fn main() -> void {
     let a = 42 as str
     let b = 1.5 as str
     print(a)
@@ -988,18 +988,18 @@ func TestTypecheckerAllowsConcreteTypeAssignmentToInterface(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String(self) str
+    String(self) -> str
 }
 
 type Name struct {
     Value: i32 = 0
 }
 
-fn Name::String(self) str {
+fn Name::String(self) -> str {
     return 1 as str
 }
 
-fn main() str {
+fn main() -> str {
     let n: Name = .{ .Value = 1 }
     let s: Stringer = n
     return s.String()
@@ -1016,7 +1016,7 @@ func TestTypecheckerMatchesInterfaceSelfReturnAndTypedCompositeLiteral(t *testin
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Shape interface {
-    New() Self
+    New() -> Self
     Draw(&self)
 }
 
@@ -1024,14 +1024,14 @@ type Point struct {
     value: i32 = 0
 }
 
-fn Point::New() Self {
+fn Point::New() -> Self {
     return .Point{}
 }
 
 fn Point::Draw(&self) {
 }
 
-fn main() void {
+fn main() -> void {
     let p: Point = .Point{}
     let s: Shape = p
     _ = s
@@ -1048,18 +1048,18 @@ func TestTypecheckerAllowsStaticIsChecks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String(self) str
+    String(self) -> str
 }
 
 type Name struct {
     Value: i32 = 0
 }
 
-fn Name::String(self) str {
+fn Name::String(self) -> str {
     return 1 as str
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let n: Name = .{ .Value = 1 }
     if n is Stringer {
         return 1
@@ -1085,7 +1085,7 @@ type Token union {
     i64,
 }
 
-	fn main() bool {
+	fn main() -> bool {
 	    let value: Token = 1
 	    return value is i32
 	}
@@ -1105,7 +1105,7 @@ type Token union {
     i64,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let value: Token = 1
     if value is i32 {
         let narrowed: i32 = value
@@ -1129,7 +1129,7 @@ type Token union {
     i64,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let value: Token = 1
     while value is i32 {
         let narrowed: i32 = value
@@ -1153,7 +1153,7 @@ type Token union {
     i64,
 }
 
-fn main() i64 {
+fn main() -> i64 {
     let value: Token = 2 as i64
     if value is i32 {
         return 0 as i64
@@ -1178,7 +1178,7 @@ type Token union {
     i64,
 }
 
-fn main() i64 {
+fn main() -> i64 {
     let value: Token = 2 as i64
     if !(value is i32) {
         let narrowed: i64 = value
@@ -1202,7 +1202,7 @@ type Token union {
     i64,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let value: Token = 1
     match value {
         is i32 => {
@@ -1230,7 +1230,7 @@ type Token union {
     i64,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let value: Token = 1
     let out: i32 = match value {
         is i32 => {
@@ -1254,10 +1254,10 @@ func TestTypecheckerRejectsRuntimeInterfaceToConcreteTypeTest(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String() -> str
 }
 
-fn main(s: Stringer) bool {
+fn main(s: Stringer) -> bool {
     return s is str
 }
 `)
@@ -1278,14 +1278,14 @@ func TestTypecheckerRejectsConcreteTypeThatMissesInterfaceMethod(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String() -> str
 }
 
 type Name struct {
     value: i32 = 0
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let n: Name = .{ .value = 1 }
     let s: Stringer = n
     return 0
@@ -1312,18 +1312,18 @@ func TestTypecheckerRejectsConcreteTypeWithIncompatibleInterfaceMethod(t *testin
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String() str
+    String() -> str
 }
 
 type Name struct {
     value: i32 = 0
 }
 
-fn Name::String(self) i32 {
+fn Name::String(self) -> i32 {
     return self.value
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let n: Name = .{ .value = 1 }
     let s: Stringer = n
     return 0
@@ -1350,18 +1350,18 @@ func TestTypecheckerRejectsConcreteTypeWithWrongInterfaceReceiverModifier(t *tes
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Reader interface {
-    read(&mut self, buf []u8) i32
+    read(&mut self, buf []u8) -> i32
 }
 
 type File struct {
     value: i32 = 0
 }
 
-fn File::read(&self, buf: []u8) i32 {
+fn File::read(&self, buf: []u8) -> i32 {
     return 0
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let f: File = .{}
     let r: Reader = f
     return 0
@@ -1389,7 +1389,7 @@ func TestTypecheckerRejectsCrossModuleMethodDeclaration(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 import "util/name"
 
-fn name::Name::String(self) str {
+fn name::Name::String(self) -> str {
     return "x"
 }
 `)
@@ -1457,7 +1457,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::~Point(*self, x: i32) i32 {
+fn Point::~Point(*self, x: i32) -> i32 {
     return x
 }
 `)
@@ -1485,11 +1485,11 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::Point(self) i32 {
+fn Point::Point(self) -> i32 {
     return self.X
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .Point{}
     return p.Point()
 }
@@ -1508,11 +1508,11 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::Point() Point {
+fn Point::Point() -> Point {
     return .{}
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p = Point::Point()
     return p.X
 }
@@ -1531,7 +1531,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() void {
+fn main() -> void {
     let p: Point = .{}
     p.X = 1
 }
@@ -1564,7 +1564,7 @@ type Box struct {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 import "pkg"
 
-fn main() i32 {
+fn main() -> i32 {
     let b: pkg::Box = .{}
     return b.hidden
 }
@@ -1593,7 +1593,7 @@ type Box struct {
     hidden: i32 = 1
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let b: Box = .{}
     return b.hidden
 }
@@ -1612,15 +1612,15 @@ type Box struct {
     hidden: i32 = 1
 }
 
-fn Box::Read(&self) i32 {
+fn Box::Read(&self) -> i32 {
     return self.hidden
 }
 
-fn Box::Set(&mut self, value: i32) void {
+fn Box::Set(&mut self, value: i32) -> void {
     self.hidden = value
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut b: Box = .{}
     b.Set(3)
     return b.Read()
@@ -1641,7 +1641,7 @@ type Box struct {
     Visible: i32 = 2
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let b: Box = .{ .hidden = 3, .Visible = 4 }
     return b.Visible
 }
@@ -1660,7 +1660,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() void {
+fn main() -> void {
     let mut p: Point = .{}
     p.X = 1
 }
@@ -1679,7 +1679,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn bump(p: &mut Point) void {
+fn bump(p: &mut Point) -> void {
     (*p).X = 1
 }
 `)
@@ -1693,12 +1693,12 @@ fn bump(p: &mut Point) void {
 func TestTypecheckerAllowsByValueMutableParameterWithImmutableArgument(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn mutate(mut x: i32) i32 {
+fn mutate(mut x: i32) -> i32 {
     x = x + 1
     return x
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let x: i32 = 1
     return mutate(x)
 }
@@ -1717,7 +1717,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn bump(p: &Point) void {
+fn bump(p: &Point) -> void {
     (*p).X = 1
 }
 `)
@@ -1745,7 +1745,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() void {
+fn main() -> void {
     let p: Point = .{}
     let m = &mut p
     m
@@ -1775,11 +1775,11 @@ type Point struct {
     X: i32 = 0
 }
 
-fn read(p: &Point) i32 {
+fn read(p: &Point) -> i32 {
     return p.X
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{}
     return read(p)
 }
@@ -1808,11 +1808,11 @@ type Point struct {
     X: i32 = 0
 }
 
-fn bump(p: &mut Point) i32 {
+fn bump(p: &mut Point) -> i32 {
     return p.X
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{}
     return bump(p)
 }
@@ -1837,7 +1837,7 @@ fn main() i32 {
 func TestTypecheckerUsesBuiltInBoolConstants(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() bool {
+fn main() -> bool {
     if true {
         return false
     }
@@ -1859,7 +1859,7 @@ fn main() bool {
 func TestTypecheckerAllowsUndefinedWithContext(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let mut x: i32 = undefined
     x = 1
     return x
@@ -1875,7 +1875,7 @@ fn main() i32 {
 func TestTypecheckerRejectsNumericNarrowingAndLiteralOverflow(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let a: i64 = 1
     let b: i32 = a
     let c: i8 = 1000
@@ -1901,7 +1901,7 @@ fn main() i32 {
 func TestTypecheckerRejectsDefaultNumericLiteralOverflow(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let huge = 10235543634636243636263462346
     return 0
 }
@@ -1928,7 +1928,7 @@ func TestTypecheckerAllowsCatchFallbackValue(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Io error { denied }
 
-fn main(x: Io!i32) i32 {
+fn main(x: Io!i32) -> i32 {
     return x catch -1
 }
 `)
@@ -1942,7 +1942,7 @@ fn main(x: Io!i32) i32 {
 func TestTypecheckerTreatsRecoverAsBuiltinFunction(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() str {
+fn main() -> str {
     return recover()
 }
 `)
@@ -1965,7 +1965,7 @@ fn main() str {
 func TestTypecheckerRejectsRecoverArguments(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() string {
+fn main() -> string {
     return recover("x")
 }
 `)
@@ -1989,14 +1989,14 @@ fn main() string {
 func TestTypecheckerDoesNotCascadeNotCallableAfterMissingImportedSymbol(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "ferret_libs_dev", "std", "math.ferr"), `
-fn ClampToZero(value: i32) i32 {
+fn ClampToZero(value: i32) -> i32 {
     return value
 }
 `)
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 import "std/math"
 
-fn main() i32 {
+fn main() -> i32 {
     return math::ClampToZeros(-34)
 }
 `)
@@ -2022,9 +2022,9 @@ func TestTypecheckerRequiresCatchHandlerToExit(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Io error { denied }
 
-fn log(x: Io) void {}
+fn log(x: Io) -> void {}
 
-fn main(x: Io!i32) i32 {
+fn main(x: Io!i32) -> i32 {
     let file = x catch |err| {
         log(err)
     }
@@ -2051,7 +2051,7 @@ fn main(x: Io!i32) i32 {
 func TestTypecheckerReportsNumericNarrowingMessage(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let num1: i32 = 1
     let num2: i8 = num1
     return 0
@@ -2077,7 +2077,7 @@ fn main() i32 {
 func TestTypecheckerAllowsExplicitNumericCast(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let num1: i32 = 1
     let num2: i8 = num1 as i8
     return num2 as i32
@@ -2098,15 +2098,15 @@ type Point struct {
     Y: i32 = 0
 }
 
-fn Point::Len2(self) i32 {
+fn Point::Len2(self) -> i32 {
     return self.X * self.X + self.Y * self.Y
 }
 
-fn Point::Len(*self) i32 {
+fn Point::Len(*self) -> i32 {
     return self.X * self.X + self.Y * self.Y
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{ .X = 3, .Y = 4 }
     let q: *Point
     return p.Len2() + q.Len()
@@ -2126,11 +2126,11 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::Len(*self) i32 {
+fn Point::Len(*self) -> i32 {
     return self.X
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{}
     return p.Len()
 }
@@ -2159,7 +2159,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{ .X = 1 }
     return p.Missing()
 }
@@ -2188,7 +2188,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{ .X = 1 }
     let q = p
     return p.X
@@ -2209,7 +2209,7 @@ type Point struct {
     Y: i32 = 0
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{ .X = 1, .Y = 2 }
     let q = copy p
     return p.X + q.Y
@@ -2237,7 +2237,7 @@ func TestTypecheckerRejectsCopyOfOwningPointer(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn bad(c: *Conn) void {
+fn bad(c: *Conn) -> void {
     let d = copy c
 }
 `)
@@ -2261,7 +2261,7 @@ fn bad(c: *Conn) void {
 func TestTypecheckerRejectsCopyOfRawPointer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn bad(p: ^i32) void {
+fn bad(p: ^i32) -> void {
     let d = copy p
 }
 `)
@@ -2285,7 +2285,7 @@ fn bad(p: ^i32) void {
 func TestTypecheckerRejectsNonConstConstInitializer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let x = 1
     const y = x
     return y
@@ -2312,13 +2312,13 @@ func TestTypecheckerRejectsNonConstComptimeArgument(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 #[extern("clock")]
-fn clock() i32;
+fn clock() -> i32;
 
-fn id(comptime T: i32, x: i32) i32 {
+fn id(comptime T: i32, x: i32) -> i32 {
     return x
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return id(clock(), 2)
 }
 `)
@@ -2342,7 +2342,7 @@ fn main() i32 {
 func TestTypecheckerComptimePrefixExpressionFoldsInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let x = 1
     let y = comptime x + 2
     return y
@@ -2365,7 +2365,7 @@ fn main() i32 {
 func TestTypecheckerComptimeEvaluatesFunctionCallWithLoop(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn getVal() i32 {
+fn getVal() -> i32 {
     let mut i = 0
     let mut sum = 0
     while i < 5 {
@@ -2375,7 +2375,7 @@ fn getVal() i32 {
     return sum
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let val = comptime getVal()
     return val
 }
@@ -2401,9 +2401,9 @@ func TestTypecheckerRejectsComptimeOnExternCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 #[extern("clock")]
-fn clock() i64;
+fn clock() -> i64;
 
-fn main() i64 {
+fn main() -> i64 {
     let now = comptime clock()
     return now
 }
@@ -2428,14 +2428,14 @@ fn main() i64 {
 func TestTypecheckerComptimePanicReportsCompileError(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn assertNonZero(x: i32) i32 {
+fn assertNonZero(x: i32) -> i32 {
     if x == 0 {
         panic "x must not be zero"
     }
     return x
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let v = comptime assertNonZero(0)
     return v
 }
@@ -2480,13 +2480,13 @@ fn main() i32 {
 func TestTypecheckerComptimeAssertPatternWorks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn assert(comptime cond: bool, comptime msg: str) void {
+fn assert(comptime cond: bool, comptime msg: str) -> void {
     if !cond {
         panic msg
     }
 }
 
-fn main() void {
+fn main() -> void {
     comptime {
         assert(1 + 1 == 2, "math broke")
     }
@@ -2508,17 +2508,17 @@ fn main() void {
 func TestTypecheckerComptimeAssertWrapperWorks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn assert(comptime cond: bool, comptime msg: str) void {
+fn assert(comptime cond: bool, comptime msg: str) -> void {
     if !cond {
         panic msg
     }
 }
 
-fn static_assert(comptime cond: bool, comptime msg: str) void {
+fn static_assert(comptime cond: bool, comptime msg: str) -> void {
     comptime assert(cond, msg)
 }
 
-fn main() void {
+fn main() -> void {
     comptime static_assert(1 + 1 == 2, "math broke")
 }
 `)
@@ -2538,17 +2538,17 @@ fn main() void {
 func TestTypecheckerComptimePanicKeepsOriginalCallSiteWithFollowingComptimeExpr(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn assert(comptime cond: bool, comptime msg: str) void {
+fn assert(comptime cond: bool, comptime msg: str) -> void {
     if !cond {
         panic msg
     }
 }
 
-fn static_assert(comptime cond: bool, comptime msg: str) void {
+fn static_assert(comptime cond: bool, comptime msg: str) -> void {
     comptime assert(cond, msg)
 }
 
-fn main() void {
+fn main() -> void {
     comptime static_assert(1 == 2, "error")
     comptime assert(1 == 1, "ok")
 }
@@ -2579,7 +2579,7 @@ fn main() void {
 func TestTypecheckerComptimeRequireAllowsPrintSideEffects(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn require(name: str, cond: bool) void {
+fn require(name: str, cond: bool) -> void {
     if !cond {
         print("FAIL:")
         print(name)
@@ -2589,12 +2589,12 @@ fn require(name: str, cond: bool) void {
     print(name)
 }
 
-fn tuplePick() i32 {
+fn tuplePick() -> i32 {
     let p: (i32, i32) = .{1, 2}
     return p[0] + p[1]
 }
 
-fn main() void {
+fn main() -> void {
     let v = comptime tuplePick()
     comptime require("comptime tuple index", v == 3)
 }
@@ -2609,7 +2609,7 @@ fn main() void {
 func TestTypecheckerCompileErrorRequiresComptimeContext(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() void {
+fn main() -> void {
     compile_error("boom")
 }
 `)
@@ -2633,7 +2633,7 @@ fn main() void {
 func TestTypecheckerComptimeCompileErrorReportsMessage(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn assert(comptime cond: bool, comptime msg: str) void {
+fn assert(comptime cond: bool, comptime msg: str) -> void {
     if !cond {
         comptime {
             compile_error(msg)
@@ -2641,7 +2641,7 @@ fn assert(comptime cond: bool, comptime msg: str) void {
     }
 }
 
-fn main() void {
+fn main() -> void {
     comptime {
         assert(false, "boom")
     }
@@ -2680,12 +2680,12 @@ fn main() void {
 func TestTypecheckerComptimeEvaluatesArrayIndexAndForLoop(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn edgeSum() i32 {
+fn edgeSum() -> i32 {
     let arr: [3]i32 = [3]i32{1, 2, 3}
     return arr[0] + arr[2]
 }
 
-fn sumWithFor() i32 {
+fn sumWithFor() -> i32 {
     let arr: [4]i32 = [4]i32{1, 2, 3, 4}
     let mut sum = 0
     for arr |value| {
@@ -2694,7 +2694,7 @@ fn sumWithFor() i32 {
     return sum
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let a = comptime edgeSum()
     let b = comptime sumWithFor()
     return a + b
@@ -2720,12 +2720,12 @@ fn main() i32 {
 func TestTypecheckerComptimeEvaluatesTupleAggregateAndIndex(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn tuplePick() i32 {
+fn tuplePick() -> i32 {
     let p: (i32, i32) = .{1, 2}
     return p[0] + p[1]
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let v = comptime tuplePick()
     return v
 }
@@ -2750,7 +2750,7 @@ fn main() i32 {
 func TestTypecheckerSupportsMixedTupleElementTypes(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let p: (i32, bool, str) = .{7, true, "ok"}
     if !p[1] {
         return 0
@@ -2790,12 +2790,12 @@ fn main() i32 {
 func TestTypecheckerComptimeEvaluatesMixedTupleAggregateAndIndex(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn tupleCheck() bool {
+fn tupleCheck() -> bool {
     let p: (i32, bool, str) = .{7, true, "ok"}
     return p[0] == 7 && p[1] && p[2] == "ok"
 }
 
-fn main() bool {
+fn main() -> bool {
     let v = comptime tupleCheck()
     return v
 }
@@ -2824,18 +2824,18 @@ type Counter struct {
     Value: i32
 }
 
-fn Counter::Inc(&mut self, by: i32) i32 {
+fn Counter::Inc(&mut self, by: i32) -> i32 {
     self.Value = self.Value + by
     return self.Value
 }
 
-fn build() i32 {
+fn build() -> i32 {
     let mut c: Counter = .{ .Value = 1 }
     let n = c.Inc(2)
     return c.Value + n
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let v = comptime build()
     return v
 }
@@ -2861,12 +2861,12 @@ type Counter struct {
     Value: i32
 }
 
-fn Counter::Inc(&mut self, by: i32) i32 {
+fn Counter::Inc(&mut self, by: i32) -> i32 {
     self.Value = self.Value + by
     return self.Value
 }
 
-fn MakeAndInc() i32 {
+fn MakeAndInc() -> i32 {
     let mut c: Counter = .{ .Value = 3 }
     return c.Inc(4)
 }
@@ -2874,7 +2874,7 @@ fn MakeAndInc() i32 {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 import "counter"
 
-fn main() i32 {
+fn main() -> i32 {
     let v = comptime counter::MakeAndInc()
     return v
 }
@@ -2896,7 +2896,7 @@ fn main() i32 {
 func TestTypecheckerRejectsInvalidExplicitCast(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let x = "hi" as i32
     return 0
 }
@@ -2921,7 +2921,7 @@ fn main() i32 {
 func TestTypecheckerRejectsRawToOwningPointerCast(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() void {
+fn main() -> void {
     unsafe {
         let rp = 0 as ^void
         let own = rp as *i32
@@ -2949,7 +2949,7 @@ fn main() void {
 func TestTypecheckerSuggestsOwnershipBoundaryAPIsForRawOwnerCasts(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() void {
+fn main() -> void {
     unsafe {
         let rp = 0 as ^i32
         let own = rp as *i32
@@ -2985,7 +2985,7 @@ fn main() void {
 func TestTypecheckerRejectsOwningPointerToRawCast(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn use_ptr(p: *i32) void {
+fn use_ptr(p: *i32) -> void {
     unsafe {
         let raw = p as ^i32
         raw
@@ -3013,15 +3013,15 @@ func TestTypecheckerAcceptsAdoptExposeCalls(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "mem.ferr"), `
 #[extern]
-fn Expose<T>(owner: *T) ^T;
+fn Expose<T>(owner: *T) -> ^T;
 
 #[extern]
-fn Adopt<T>(raw: ^T) *T;
+fn Adopt<T>(raw: ^T) -> *T;
 `)
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 import "mem"
 
-fn main() void {
+fn main() -> void {
     unsafe {
         let raw = 0 as ^i32
         let own = mem::Adopt(raw)
@@ -3044,7 +3044,7 @@ type MyErr error {
     Oops
 }
 
-fn run(items: [3]i32) i32 {
+fn run(items: [3]i32) -> i32 {
     let r: MyErr!i32 = undefined
     let x = 1
     return r catch |e| { return x }
@@ -3143,14 +3143,14 @@ type Point struct {
     X: i32 = 0
 }
 
-fn readPoint() i32 {
+fn readPoint() -> i32 {
     let p: Point = .{}
     let r = &p
     let x = *r
     return x.X
 }
 
-fn writePoint() void {
+fn writePoint() -> void {
     let mut p: Point = .{}
     let m = &mut p
     m
@@ -3186,7 +3186,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() void {
+fn main() -> void {
     let mut p: Point = .{}
     unsafe {
         let r: ^const Point = &p
@@ -3229,7 +3229,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() void {
+fn main() -> void {
     let p: Point = .{}
     let r: ^const Point = &p
     r
@@ -3259,13 +3259,13 @@ type Point struct {
     X: i32 = 0
 }
 
-fn takeConstRaw(rp: ^const Point) void {
+fn takeConstRaw(rp: ^const Point) -> void {
     unsafe {
         rp.X
     }
 }
 
-fn main() void {
+fn main() -> void {
     let p: Point = .{}
     unsafe {
         takeConstRaw(&p)
@@ -3286,13 +3286,13 @@ type Point struct {
     X: i32 = 0
 }
 
-fn readRaw(rp: ^Point) i32 {
+fn readRaw(rp: ^Point) -> i32 {
     unsafe {
         return rp.X
     }
 }
 
-fn main() void {
+fn main() -> void {
     let mut p: Point = .{}
     unsafe {
         readRaw(&mut p)
@@ -3313,13 +3313,13 @@ type Point struct {
     X: i32 = 0
 }
 
-fn readRaw(rp: ^Point) i32 {
+fn readRaw(rp: ^Point) -> i32 {
     unsafe {
         return rp.X
     }
 }
 
-fn main() void {
+fn main() -> void {
     let p: Point = .{}
     unsafe {
         readRaw(&p)
@@ -3350,11 +3350,11 @@ type Point struct {
     X: i32 = 0
 }
 
-fn takeConstRaw(rp: ^const Point) void {
+fn takeConstRaw(rp: ^const Point) -> void {
     rp
 }
 
-fn main() void {
+fn main() -> void {
     let p: Point = .{}
     takeConstRaw(&p)
 }
@@ -3379,9 +3379,9 @@ fn main() void {
 func TestTypecheckerRequiresUnsafeForUnsafeFunctionCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-unsafe fn dangerous() void {}
+unsafe fn dangerous() -> void {}
 
-fn main() void {
+fn main() -> void {
     dangerous()
 }
 `)
@@ -3405,11 +3405,11 @@ fn main() void {
 func TestTypecheckerAllowsUnsafePrefixExpressionForUnsafeCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-unsafe fn dangerous() i32 {
+unsafe fn dangerous() -> i32 {
     return 1
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return unsafe dangerous()
 }
 `)
@@ -3425,9 +3425,9 @@ func TestTypecheckerRequiresUnsafeForUnsafeMethodCall(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
 type Point struct {}
 
-unsafe fn Point::Run(&self) void {}
+unsafe fn Point::Run(&self) -> void {}
 
-fn main() void {
+fn main() -> void {
     let p: Point = .{}
     p.Run()
 }
@@ -3456,7 +3456,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn read(rp: ^Point) i32 {
+fn read(rp: ^Point) -> i32 {
     return rp.X
 }
 `)
@@ -3484,7 +3484,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn write(mut rp: ^const Point) void {
+fn write(mut rp: ^const Point) -> void {
     unsafe {
         rp.X = 1
     }
@@ -3514,7 +3514,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn write(mut rp: ^Point) void {
+fn write(mut rp: ^Point) -> void {
     unsafe {
         rp.X = 1
     }
@@ -3530,7 +3530,7 @@ fn write(mut rp: ^Point) void {
 func TestTypecheckerTypesArrayIndexing(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main(items: [3]i32) i32 {
+fn main(items: [3]i32) -> i32 {
     let v = items[1]
     return v
 }
@@ -3550,7 +3550,7 @@ fn main(items: [3]i32) i32 {
 func TestTypecheckerInfersArrayLengthFromUnderscoreType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let items: [_]i32 = [_]i32{1, 2, 3}
     let v = items[1]
     return v
@@ -3578,7 +3578,7 @@ fn main() i32 {
 func TestTypecheckerTypesSliceLiterals(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let items: []i32 = []i32{1, 2, 3}
     return items[0]
 }
@@ -3601,7 +3601,7 @@ fn main() i32 {
 func TestTypecheckerAllowsForOverSlice(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn sum(items: []i32) i32 {
+fn sum(items: []i32) -> i32 {
     let mut total = 0
     for items |v| {
         total += v
@@ -3609,7 +3609,7 @@ fn sum(items: []i32) i32 {
     return total
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let items: []i32 = []i32{1, 2, 3}
     return sum(items)
 }
@@ -3624,7 +3624,7 @@ fn main() i32 {
 func TestTypecheckerAllowsVariadicCalls(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn sum(nums: ...i32) i32 {
+fn sum(nums: ...i32) -> i32 {
     let mut total = 0
     for nums |v| {
         total += v
@@ -3632,7 +3632,7 @@ fn sum(nums: ...i32) i32 {
     return total
 }
 
-fn main() i32 {
+fn main() -> i32 {
     return sum(1, 2, 3, 4)
 }
 `)
@@ -3646,7 +3646,7 @@ fn main() i32 {
 func TestTypecheckerAllowsSpreadIntoVariadicCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn sum(nums: ...i32) i32 {
+fn sum(nums: ...i32) -> i32 {
     let mut total = 0
     for nums |v| {
         total += v
@@ -3654,7 +3654,7 @@ fn sum(nums: ...i32) i32 {
     return total
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let items: []i32 = []i32{1, 2, 3}
     return sum(items...)
 }
@@ -3669,11 +3669,11 @@ fn main() i32 {
 func TestTypecheckerRejectsSpreadOnNonVariadicCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn sum(items: []i32) i32 {
+fn sum(items: []i32) -> i32 {
     return items[0]
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let items: []i32 = []i32{1, 2, 3}
     return sum(items...)
 }
@@ -3698,7 +3698,7 @@ fn main() i32 {
 func TestTypecheckerTypesMutableSliceLiteral(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let items: []mut i32 = []mut i32{1, 2, 3}
     items[0] = 9
     return items[0]
@@ -3722,11 +3722,11 @@ fn main() i32 {
 func TestTypecheckerAllowsMutableSliceToReadonlySlice(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn sum(items: []i32) i32 {
+fn sum(items: []i32) -> i32 {
     return items[0]
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let items: []mut i32 = []mut i32{1, 2, 3}
     return sum(items)
 }
@@ -3741,11 +3741,11 @@ fn main() i32 {
 func TestTypecheckerRejectsReadonlySliceToMutableSlice(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn fill(items: []mut i32) void {
+fn fill(items: []mut i32) -> void {
     items[0] = 1
 }
 
-fn main() void {
+fn main() -> void {
     let items: []i32 = []i32{1, 2, 3}
     fill(items)
 }
@@ -3770,7 +3770,7 @@ fn main() void {
 func TestTypecheckerRejectsMutationThroughReadonlySlice(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() void {
+fn main() -> void {
     let items: []i32 = []i32{1, 2, 3}
     items[0] = 9
 }
@@ -3795,7 +3795,7 @@ fn main() void {
 func TestTypecheckerRejectsArrayIndexOutOfBounds(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let items: [3]i32 = [3]i32{1, 2, 3}
     return items[3]
 }
@@ -3820,11 +3820,11 @@ fn main() i32 {
 func TestTypecheckerAllowsReadonlySliceViewFromArray(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn head(items: []i32) i32 {
+fn head(items: []i32) -> i32 {
     return items[0]
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let items: [3]i32 = [3]i32{1, 2, 3}
     return head(items)
 }
@@ -3839,12 +3839,12 @@ fn main() i32 {
 func TestTypecheckerAllowsMutableSliceViewFromMutableArray(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn bump(items: []mut i32) i32 {
+fn bump(items: []mut i32) -> i32 {
     items[0] = 9
     return items[0]
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut items: [3]i32 = [3]i32{1, 2, 3}
     return bump(items)
 }
@@ -3859,12 +3859,12 @@ fn main() i32 {
 func TestTypecheckerRejectsMutableSliceViewFromImmutableArray(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn bump(items: []mut i32) i32 {
+fn bump(items: []mut i32) -> i32 {
     items[0] = 9
     return items[0]
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let items: [3]i32 = [3]i32{1, 2, 3}
     return bump(items)
 }
@@ -3889,16 +3889,16 @@ fn main() i32 {
 func TestTypecheckerTypesLenForArrayAndSlice(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn lenArray() usize {
+fn lenArray() -> usize {
     let items: [_]i32 = [_]i32{1, 2, 3}
     return len(items)
 }
 
-fn lenSlice(items: []i32) usize {
+fn lenSlice(items: []i32) -> usize {
     return len(items)
 }
 
-fn lenString(s: str) usize {
+fn lenString(s: str) -> usize {
     return len(s)
 }
 `)
@@ -3912,7 +3912,7 @@ fn lenString(s: str) usize {
 func TestTypecheckerRejectsLenOnNonArraySlice(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() usize {
+fn main() -> usize {
     let x: i32 = 1
     return len(x)
 }
@@ -3937,7 +3937,7 @@ fn main() usize {
 func TestTypecheckerAllowsPrintingReferenceViaAny(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() void {
+fn main() -> void {
     let mut x = 10
     let y = &mut x
     print(y)
@@ -3953,7 +3953,7 @@ fn main() void {
 func TestTypecheckerAllowsDiscardAssignment(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let a = 10
     _ = a
     return 0
@@ -3973,15 +3973,15 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::Read(&self) i32 {
+fn Point::Read(&self) -> i32 {
     return self.X
 }
 
-fn Point::Bump(&mut self) i32 {
+fn Point::Bump(&mut self) -> i32 {
     return self.X + 1
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut p: Point = .{ .X = 1 }
     let a = (&p).Read()
     let b = (&mut p).Bump()
@@ -4002,16 +4002,16 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::Read(&self) i32 {
+fn Point::Read(&self) -> i32 {
     return self.X
 }
 
-fn Point::Bump(&mut self) i32 {
+fn Point::Bump(&mut self) -> i32 {
     self.X++
     return self.X
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut p: Point = .{ .X = 1 }
     return p.Read() + p.Bump()
 }

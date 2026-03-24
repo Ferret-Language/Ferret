@@ -22,14 +22,14 @@ json = "../deps/json"
 `)
 	mustWrite(t, filepath.Join(root, "app", "main.fer"), `import "json/parser"
 
-fn main() i32 {
+fn main() -> i32 {
     return parser::Value()
 }
 `)
 	mustWrite(t, filepath.Join(depRoot, "fer.ret"), `[package]
 name = "json"
 `)
-	mustWrite(t, filepath.Join(depRoot, "parser.fer"), `fn Value() i32 {
+	mustWrite(t, filepath.Join(depRoot, "parser.fer"), `fn Value() -> i32 {
     return 1
 }
 `)
@@ -49,11 +49,11 @@ name = "json"
 func TestParsePathResolvesStdlibWithoutManifest(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]
-fn Println(text: str) void;
+fn Println(text: str) -> void;
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 
-fn main() void {
+fn main() -> void {
     io::Println("hello")
 }
 `)
@@ -83,11 +83,11 @@ fn main() void {
 func TestParsePathTypechecksExternStdlibSignature(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]
-fn Println(text: str) void;
+fn Println(text: str) -> void;
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 
-fn main() void {
+fn main() -> void {
     io::Println(1)
 }
 `)
@@ -110,17 +110,17 @@ fn main() void {
 func TestParsePathResolvesStdlibOSWithoutManifest(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.fer"), `#[extern("ferret_os_cpu_count")]
-fn CPUCount() usize;
+fn CPUCount() -> usize;
 
 #[extern("ferret_os_platform")]
-fn Platform() str;
+fn Platform() -> str;
 
 #[extern("ferret_os_debug")]
-fn Debug() bool;
+fn Debug() -> bool;
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/os"
 
-fn main() void {
+fn main() -> void {
     if os::CPUCount() > 0 {
         print(os::Platform())
     }
@@ -155,11 +155,11 @@ fn main() void {
 func TestParsePathTypechecksStdlibOSSignature(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.fer"), `#[extern("ferret_os_cpu_count")]
-fn CPUCount() usize;
+fn CPUCount() -> usize;
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/os"
 
-fn main() void {
+fn main() -> void {
     os::CPUCount(1)
 }
 `)
@@ -184,35 +184,35 @@ func TestParsePathResolvesStdlibMemWithoutManifest(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
 type Allocator interface {
-    Alloc(&self, size: usize) ^void
-    Free(&self, ptr: ^void) void
+    Alloc(&self, size: usize) -> ^void
+    Free(&self, ptr: ^void) -> void
 }
 
 type CAllocator struct {}
 
-fn CAllocator::Alloc(&self, size: usize) ^void {
+fn CAllocator::Alloc(&self, size: usize) -> ^void {
     return malloc(size)
 }
 
-fn CAllocator::Free(&self, ptr: ^void) void {
+fn CAllocator::Free(&self, ptr: ^void) -> void {
     free(ptr)
 }
 
-fn System() CAllocator {
+fn System() -> CAllocator {
     return .{}
 }
 
-fn Alloc(a: Allocator, size: usize) ^void {
+fn Alloc(a: Allocator, size: usize) -> ^void {
     return a.Alloc(size)
 }
 
-fn Free(a: Allocator, ptr: ^void) void {
+fn Free(a: Allocator, ptr: ^void) -> void {
     a.Free(ptr)
 }
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/mem"
 
-fn main() void {
+fn main() -> void {
     let a = mem::System()
     let p = mem::Alloc(a, 16)
     mem::Free(a, p)
@@ -245,26 +245,26 @@ func TestParsePathTypechecksStdlibMemSignature(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
 type Allocator interface {
-    Alloc(&self, size: usize) ^void
+    Alloc(&self, size: usize) -> ^void
 }
 
 type CAllocator struct {}
 
-fn CAllocator::Alloc(&self, size: usize) ^void {
+fn CAllocator::Alloc(&self, size: usize) -> ^void {
     return malloc(size)
 }
 
-fn System() CAllocator {
+fn System() -> CAllocator {
     return .{}
 }
 
-fn Alloc(a: Allocator, size: usize) ^void {
+fn Alloc(a: Allocator, size: usize) -> ^void {
     return a.Alloc(size)
 }
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/mem"
 
-fn main() void {
+fn main() -> void {
     let a = mem::System()
     mem::Alloc(a, "bad")
 }
@@ -290,12 +290,12 @@ func TestIfAttributeFiltersTopLevelDeclarations(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 #[if(target_os, "linux")]
-fn LinuxOnly() i32 { return 1 }
+fn LinuxOnly() -> i32 { return 1 }
 
 #[if(target_os, "windows")]
-fn WindowsOnly() i32 { return 2 }
+fn WindowsOnly() -> i32 { return 2 }
 
-fn main() i32 {
+fn main() -> i32 {
     return LinuxOnly()
 }
 `)
@@ -325,7 +325,7 @@ const PlatformTag = 1
 #[ifnot(target_os, "linux")]
 const PlatformTag = 2
 
-fn main() i32 {
+fn main() -> i32 {
     return PlatformTag
 }
 `)
@@ -355,7 +355,7 @@ const BackendTag = 1
 #[ifnot(target_backend, "llvm")]
 const BackendTag = 2
 
-fn main() i32 {
+fn main() -> i32 {
     return BackendTag
 }
 `)
@@ -379,7 +379,7 @@ func TestIfAttributeInvalidFormReportsDiagnostic(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 #[if(target_os, "linux", extra)]
-fn main() i32 { return 0 }
+fn main() -> i32 { return 0 }
 `)
 
 	cfg := context.Config{

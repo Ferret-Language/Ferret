@@ -14,7 +14,7 @@ import (
 func TestLoweringNormalizesLoops(t *testing.T) {
 	root := t.TempDir()
 	mustWriteLower(t, filepath.Join(root, "main.ferr"), `
-fn main(items: [3]i32) i32 {
+fn main(items: [3]i32) -> i32 {
     let mut x: i32 = 0
     while x < 5 {
         x = x + 1
@@ -85,7 +85,7 @@ type Token union {
     i64,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let value: Token = 1
     let out: i32 = match value {
         is i32 => {

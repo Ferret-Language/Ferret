@@ -12,7 +12,7 @@
 ///
 /// Returns the number of logical CPUs currently available to the process.
 #[extern("ferret_os_cpu_count")]
-fn CPUCount() usize;
+fn CPUCount() -> usize;
 
 /// Returns a canonical lowercase platform name such as:
 /// - linux
@@ -20,19 +20,19 @@ fn CPUCount() usize;
 /// - darwin
 /// - freebsd
 #[extern("ferret_os_platform")]
-fn Platform() str;
+fn Platform() -> str;
 
 /// Returns a canonical lowercase architecture name such as:
 /// "amd64", "arm64", "arm", "386", "riscv64".
 #[extern("ferret_os_arch")]
-fn Arch() str;
+fn Arch() -> str;
 
 /// Returns the runtime OS name.
 ///
 /// On Unix this is typically the uname sysname (for example "Linux").
 /// On Windows this returns "Windows".
 #[extern("ferret_os_name")]
-fn OSName() str;
+fn OSName() -> str;
 
 /// Returns whether this binary was built in debug mode.
 ///
@@ -40,4 +40,4 @@ fn OSName() str;
 /// can wire this to a build-generated runtime flag without changing the
 /// Ferret surface.
 #[extern("ferret_os_debug")]
-fn Debug() bool;
+fn Debug() -> bool;

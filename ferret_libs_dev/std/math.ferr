@@ -3,10 +3,10 @@
 
 /// Returns the absolute value of an i32.
 #[extern("f_random")]
-fn Rand() f32;
+fn Rand() -> f32;
 
 /// Pure Ferret helper kept here to validate std imports with real bodies too.
-fn ClampToZero(value: i32) i32 {
+fn ClampToZero(value: i32) -> i32 {
     if value < 0 {
         return 0
     }

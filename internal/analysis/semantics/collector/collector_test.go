@@ -26,7 +26,7 @@ type Color enum {
     Red
 }
 
-fn Point::Origin() Point {
+fn Point::Origin() -> Point {
     return .{}
 }
 
@@ -78,7 +78,7 @@ func TestCollectorReportsDuplicateTopLevelSymbols(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 const Build = 1
-fn Build() i32 {
+fn Build() -> i32 {
     return 0
 }
 `)
@@ -104,11 +104,11 @@ func TestCollectorReportsDuplicateMethodsPerReceiver(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Point struct {}
 
-fn Point::Len(*self) i32 {
+fn Point::Len(*self) -> i32 {
     return 1
 }
 
-fn Point::Len(*self) i32 {
+fn Point::Len(*self) -> i32 {
     return 2
 }
 `)
@@ -136,19 +136,19 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::Copy(self) i32 {
+fn Point::Copy(self) -> i32 {
     return self.X
 }
 
-fn Point::Read(&self) i32 {
+fn Point::Read(&self) -> i32 {
     return self.X
 }
 
-fn Point::Bump(&mut self) i32 {
+fn Point::Bump(&mut self) -> i32 {
     return self.X + 1
 }
 
-fn Point::Take(*self) i32 {
+fn Point::Take(*self) -> i32 {
     return self.X
 }
 `)

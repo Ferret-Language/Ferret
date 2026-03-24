@@ -51,6 +51,7 @@ const (
 	QQ           Kind = "??"
 	BB           Kind = "!!"
 	FATARROW     Kind = "=>"
+	ARROW        Kind = "->"
 	COLON        Kind = ":"
 	DCOLON       Kind = "::"
 	COMMA        Kind = ","

@@ -16,13 +16,13 @@ import (
 
 func TestLowerScalarFunctionToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn add(a: i32, b: i32) i32 {
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn add(a: i32, b: i32) -> i32 {
     let sum = a + b
     return sum
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -49,17 +49,17 @@ fn add(a: i32, b: i32) i32 {
 
 func TestLowerBranchAndGlobalToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 let GlobalFlag: bool = true
 
-fn main() i32 {
+fn main() -> i32 {
     if GlobalFlag {
         return 1
     }
     return 0
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -88,15 +88,15 @@ fn main() i32 {
 
 func TestLowerMatchToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(x: i32) i32 {
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main(x: i32) -> i32 {
     match x {
         0 => { return 1 }
         _ => { return 2 }
     }
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -121,8 +121,8 @@ fn main(x: i32) i32 {
 
 func TestLowerOptionalMatchNoneToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
     let value: ?i32 = none
     let out: i32 = match value {
         is i32 => value
@@ -131,7 +131,7 @@ fn main() i32 {
     return out
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -160,7 +160,7 @@ fn main() i32 {
 
 func TestLowerStructFieldAccessToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
     Y: i32 = 0
@@ -168,7 +168,7 @@ type Point struct {
 
 let mut GlobalPoint: Point = .{ .X = 1, .Y = 2 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut p = GlobalPoint
     if p.X > 0 {
         p.X = p.X + 1
@@ -176,7 +176,7 @@ fn main() i32 {
     return p.X
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -205,19 +205,19 @@ fn main() i32 {
 
 func TestLowerImportedFunctionCallToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "util", "build.ferr"), `
-fn Origin() i32 {
+	mustWrite(t, filepath.Join(root, "util", "build.fer"), `
+fn Origin() -> i32 {
     return 7
 }
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 import "util/build"
 
-fn main() i32 {
+fn main() -> i32 {
     return build::Origin()
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -239,7 +239,7 @@ func TestLowerAggregateLoadAssignmentToQBE(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Conn struct {}
 
-fn run(mut c: *Conn) void {
+fn run(mut c: *Conn) -> void {
     let r = &*c
     r
 }
@@ -260,7 +260,7 @@ fn run(mut c: *Conn) void {
 func TestLowerBuiltinLenArrayToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() usize {
+fn main() -> usize {
     let items: [_]i32 = [_]i32{1, 2, 3}
     return len(items)
 }
@@ -286,7 +286,7 @@ fn main() usize {
 func TestLowerBuiltinLenSliceToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(items: []i32) usize {
+fn main(items: []i32) -> usize {
     return len(items)
 }
 `)
@@ -311,7 +311,7 @@ fn main(items: []i32) usize {
 func TestLowerBuiltinLenStringToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(s: str) usize {
+fn main(s: str) -> usize {
     return len(s)
 }
 `)
@@ -336,7 +336,7 @@ fn main(s: str) usize {
 func TestLowerSliceLiteralToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let items: []i32 = []i32{1, 2, 3}
     return items[1]
 }
@@ -370,11 +370,11 @@ fn main() i32 {
 func TestLowerArrayToSliceCallToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn head(items: []i32) i32 {
+fn head(items: []i32) -> i32 {
     return items[0]
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let items: [3]i32 = [3]i32{1, 2, 3}
     return head(items)
 }
@@ -405,7 +405,7 @@ fn main() i32 {
 func TestLowerStringSliceCastsToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(s: str) str {
+fn main(s: str) -> str {
     let bytes = s as []u8
     let text = bytes as str
     return text
@@ -441,7 +441,7 @@ type Point struct {
     Value: i32 = 0
 }
 
-fn Point::Incr(&mut self) void {
+fn Point::Incr(&mut self) -> void {
     self.Value = self.Value + 1
 }
 `)
@@ -462,9 +462,9 @@ func TestLowerExternFunctionCallToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 #[extern("ferret_math_abs_i32")]
-fn AbsI32(value: i32) i32;
+fn AbsI32(value: i32) -> i32;
 
-fn main() i32 {
+fn main() -> i32 {
     return AbsI32(-1)
 }
 `)
@@ -489,12 +489,12 @@ func TestLowerDefaultExternFunctionCallToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `
 #[extern]
-fn Println(text: str) void;
+fn Println(text: str) -> void;
 `)
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 import "std/io"
 
-fn main() void {
+fn main() -> void {
     io::Println("hello")
 }
 `)
@@ -523,14 +523,14 @@ type Vec2 struct {
     Y: i32 = 0
 }
 
-fn Origin() Vec2 {
+fn Origin() -> Vec2 {
     return .{ .X = 1, .Y = 2 }
 }
 `)
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 import "math/vec2"
 
-fn main() i32 {
+fn main() -> i32 {
     let p = vec2::Origin()
     return p.X
 }
@@ -562,7 +562,7 @@ fn main() i32 {
 func TestLowerNumericToStringCastToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() void {
+fn main() -> void {
     let text = 42 as str
     print(text)
 }
@@ -598,7 +598,7 @@ type Token union {
     i64,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let value: Token = 1
     print(0)
     return 0
@@ -633,7 +633,7 @@ fn main() i32 {
 func TestLowerRawAddressLocalToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let a = 10
     unsafe {
         let p: ^const i32 = &a
@@ -676,7 +676,7 @@ type Token union {
     i64,
 }
 
-fn main(flag: bool) i32 {
+fn main(flag: bool) -> i32 {
     let mut value: Token = 1
     if flag {
         value = 2 as i64
@@ -723,7 +723,7 @@ type Token union {
 
 let Global: Token = 1
 
-fn main() i32 {
+fn main() -> i32 {
     let out = Global as i32
     return out
 }
@@ -756,7 +756,7 @@ fn main() i32 {
 func TestLowerIntegerToRawPointerCastToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() ^void {
+fn main() -> ^void {
     unsafe {
         return 0 as ^void
     }
@@ -828,11 +828,11 @@ type Point struct {
     Y: i32 = 0
 }
 
-fn Point::Len2(self) i32 {
+fn Point::Len2(self) -> i32 {
     return self.X * self.X + self.Y * self.Y
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p: Point = .{ .X = 3, .Y = 4 }
     return p.Len2()
 }
@@ -864,18 +864,18 @@ func TestLowerInterfaceDispatchToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String(self) str
+    String(self) -> str
 }
 
 type Name struct {
     value: i32 = 0
 }
 
-fn Name::String(self) str {
+fn Name::String(self) -> str {
     return 1 as str
 }
 
-fn main() str {
+fn main() -> str {
     let n: Name = .{ .value = 1 }
     let s: Stringer = n
     return s.String()
@@ -914,11 +914,11 @@ type Name struct {
     value: i32 = 0
 }
 
-fn Origin() Name {
+fn Origin() -> Name {
     return .{ .value = 7 }
 }
 
-fn Name::String(self) str {
+fn Name::String(self) -> str {
     return 1 as str
 }
 `)
@@ -926,10 +926,10 @@ fn Name::String(self) str {
 import "util/name"
 
 type Stringer interface {
-    String(self) str
+    String(self) -> str
 }
 
-fn main() str {
+fn main() -> str {
     let n = name::Origin()
     let s: Stringer = n
     return s.String()
@@ -963,21 +963,21 @@ func TestLowerGlobalInterfaceValueToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
 type Stringer interface {
-    String(self) str
+    String(self) -> str
 }
 
 type Name struct {
     value: i32 = 0
 }
 
-fn Name::String(self) str {
+fn Name::String(self) -> str {
     return 1 as str
 }
 
 let GlobalName: Name = .{ .value = 1 }
 let GlobalStringer: Stringer = GlobalName
 
-fn main() str {
+fn main() -> str {
     return GlobalStringer.String()
 }
 `)
@@ -1016,7 +1016,7 @@ type Color enum {
 let mut RuntimeColor: Color = Color::Red
 const DefaultColor = Color::Green
 
-fn main(flag: bool) i32 {
+fn main(flag: bool) -> i32 {
     let mut value = Color::Blue
     if flag {
         value = RuntimeColor
@@ -1059,7 +1059,7 @@ fn main(flag: bool) i32 {
 func TestLowerSliceIndexToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main(items: []i32) i32 {
+fn main(items: []i32) -> i32 {
     let n = items[1]
     return n
 }
@@ -1091,7 +1091,7 @@ fn main(items: []i32) i32 {
 func TestLowerLocalArrayLiteralAndIndexToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let arr: [3]i32 = [3]i32{1, 2, 3}
     let n = arr[1]
     return n
@@ -1123,7 +1123,7 @@ fn main() i32 {
 func TestLowerUnsupportedFunctionResultTypeReturnsError(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     return 1
 }
 `)

@@ -1,0 +1,10 @@
+
+
+fn sayhi() -> void {
+    print("Hi")
+}
+
+fn main() {
+    sayhi()
+    print("Hello")
+}

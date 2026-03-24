@@ -23,7 +23,7 @@ type Point struct {
 
 let mut GlobalPoint: Point = .{ .X = 1, .Y = 2 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut p = GlobalPoint
     if p.X > 0 {
         p.X = p.X + 1
@@ -109,11 +109,11 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::Bump(&mut self) i32 {
+fn Point::Bump(&mut self) -> i32 {
     return self.X + 1
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut p: Point = .{ .X = 1 }
     return (&mut p).Bump()
 }
@@ -166,12 +166,12 @@ type Point struct {
     X: i32 = 0
 }
 
-fn Point::Bump(&mut self) i32 {
+fn Point::Bump(&mut self) -> i32 {
     self.X++
     return self.X
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut p: Point = .{ .X = 1 }
     return p.Bump()
 }
@@ -220,7 +220,7 @@ fn main() i32 {
 func TestPipelineLowersArrayLenToStaticValue(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn main() usize {
+fn main() -> usize {
     let items: [_]i32 = [_]i32{1, 2, 3}
     return len(items)
 }
@@ -266,7 +266,7 @@ fn main() usize {
 func TestPipelineLowersForLoopIndexUpdateToHiddenCounter(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn main() void {
+fn main() -> void {
     let items: [3]i32 = [3]i32{1, 2, 3}
     for items |v| {
         print(v)
@@ -322,18 +322,18 @@ func TestPipelineLowersInterfaceCoercionWithMutableReceiver(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
 type Reader interface {
-    read(&mut self, buf: []u8) i32
+    read(&mut self, buf: []u8) -> i32
 }
 
 type File struct {
     value: i32 = 0
 }
 
-fn File::read(&mut self, buf: []u8) i32 {
+fn File::read(&mut self, buf: []u8) -> i32 {
     return self.value
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut f: File = .{ .value = 7 }
     let r: Reader = &mut f
     return 0
@@ -418,7 +418,7 @@ fn drawShape(s: Shape) {
     s.Draw()
 }
 
-fn main() void {
+fn main() -> void {
     let p: Point<i32> = .{ .Value = 2 }
     drawShape(p)
 }
@@ -508,11 +508,11 @@ fn main() void {
 func TestPipelineLowersVariadicSpreadCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn sum(nums: ...i32) i32 {
+fn sum(nums: ...i32) -> i32 {
     return nums[0]
 }
 
-fn main(items: []i32) i32 {
+fn main(items: []i32) -> i32 {
     return sum(items...)
 }
 `)
@@ -570,18 +570,18 @@ type Circle<T> struct {
     Rad: T
 }
 
-fn Circle<T>::New(v: T) Self {
+fn Circle<T>::New(v: T) -> Self {
     return .{ .Rad = v }
 }
 
 fn Circle<T>::Draw(&self) {
 }
 
-fn drawShape<T: Shape>(s: T) void {
+fn drawShape<T: Shape>(s: T) -> void {
     s.Draw()
 }
 
-fn main() void {
+fn main() -> void {
     let cir = Circle<i32>::New(1)
     drawShape(cir)
 }
@@ -650,7 +650,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut p: Point = .{}
     unsafe {
         let rp: ^Point = &mut p
@@ -713,7 +713,7 @@ fn main() i32 {
 func TestPipelineLowersStringLiteralDataAsRawPointer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn main() str {
+fn main() -> str {
     return "hi"
 }
 `)
@@ -767,7 +767,7 @@ type Token union {
     i64,
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let value: Token = 1
     return 0
 }
@@ -800,7 +800,7 @@ type Point struct {
     X: i32 = 0
 }
 
-fn probe(p: *Point) void {
+fn probe(p: *Point) -> void {
     let q = &*p
     q
 }
@@ -825,7 +825,7 @@ fn probe(p: *Point) void {
 func TestPipelinePreservesAddrOfLocalInsteadOfFoldingToConstant(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn main() void {
+fn main() -> void {
     let mut x = 10;
     let y = &mut x;
     *y = 12;
@@ -849,7 +849,7 @@ fn main() void {
 func TestPipelineLowersPanicToMIRTerminator(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn fail() void {
+fn fail() -> void {
     panic "bad"
 }
 `)
@@ -883,9 +883,9 @@ fn fail() void {
 func TestPipelineLowersDeferredPanicCleanupToMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn close() void {}
+fn close() -> void {}
 
-fn fail() void {
+fn fail() -> void {
     defer close()
     panic "bad"
 }
@@ -914,9 +914,9 @@ fn fail() void {
 func TestPipelineLowersDeferredReturnCleanupToMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn close() void {}
+fn close() -> void {}
 
-fn run() i32 {
+fn run() -> i32 {
     defer close()
     return 1
 }
@@ -965,7 +965,7 @@ type Point struct {
     Y: i32 = 0
 }
 
-fn Point::New() Point {
+fn Point::New() -> Point {
     return .{}
 }
 
@@ -973,11 +973,11 @@ fn Point::Bump(*self) {
 	self.Y = self.Y + 1
 }
 
-fn Point::Drop(*self) void {
+fn Point::Drop(*self) -> void {
     _ = self
 }
 
-fn main() i32 {
+fn main() -> i32 {
 	let p: Point = .{ .X = 3, .Y = 4 }
     let q: Point = .{}
     return p.X + q.X
@@ -1022,7 +1022,7 @@ fn main() i32 {
 func TestPipelineHandlesLocalShadowingInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
-fn main() i32 {
+fn main() -> i32 {
     let x = 1
     if true {
         let x = 2

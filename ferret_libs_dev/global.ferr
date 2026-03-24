@@ -16,7 +16,7 @@
 /// Returns the panic message of the current panic as a str.
 /// When there is no active panic, returns an empty str (data=nil, len=0).
 #[extern]
-fn recover() str;
+fn recover() -> str;
 
 /// `Any` is the canonical empty-interface "accepts all types" surface.
 /// Use it at API boundaries that intentionally accept arbitrary concrete values.
@@ -25,21 +25,21 @@ type Any interface {}
 /// Temporary generic print declaration.
 /// Accepts any single value and prints a best-effort textual form to stdout.
 #[extern]
-fn print(value: Any) void;
+fn print(value: Any) -> void;
 
 /// Returns the element count of an array or slice.
 /// This foreign declaration is polymorphic in semantic analysis and accepts any []T or [N]T.
 #[extern("ferret_global_slice_len")]
-fn len(value: []u8) usize;
+fn len(value: []u8) -> usize;
 
 /// Internal helper used by lowering of len on slice values.
 #[extern]
-fn slice_len(value: ^void) usize;
+fn slice_len(value: ^void) -> usize;
 
 /// Reports a compile-time error with the provided message.
 /// Valid only when evaluated in a comptime context.
 #[extern]
-fn compile_error(comptime message: str) void;
+fn compile_error(comptime message: str) -> void;
 
 // ---------------------------------------------------------------------------
 // str field accessors
@@ -51,42 +51,42 @@ fn compile_error(comptime message: str) void;
 /// Returns the raw byte pointer that backs s.
 /// Valid only as long as s is live. Do not store without care.
 #[extern]
-fn str_data(s: *str) ^void;
+fn str_data(s: *str) -> ^void;
 
 /// Returns the byte length of s (number of UTF-8 code units / bytes).
 #[extern]
-fn str_len(s: *str) usize;
+fn str_len(s: *str) -> usize;
 
 /// Copies the UTF-8 bytes of s into a fresh []u8 slice.
 #[extern]
-fn str_bytes(s: *str) []u8;
+fn str_bytes(s: *str) -> []u8;
 
 /// Copies the bytes of a []u8 slice into a fresh str value.
 #[extern]
-fn bytes_str(bytes: *[]u8) str;
+fn bytes_str(bytes: *[]u8) -> str;
 
 /// Decodes the UTF-8 bytes of s into a fresh []char slice.
 #[extern]
-fn str_chars(s: *str) []char;
+fn str_chars(s: *str) -> []char;
 
 /// Encodes a []char slice into a fresh UTF-8 str value.
 #[extern]
-fn chars_str(chars: *[]char) str;
+fn chars_str(chars: *[]char) -> str;
 
 /// Copies s into a newly allocated NUL-terminated C string.
 /// The returned pointer can be passed to C APIs and freed with free().
 #[extern]
-fn str_cstr(s: *str) ^void;
+fn str_cstr(s: *str) -> ^void;
 
 /// Internal helpers used by numeric-to-string cast lowering.
 #[extern]
-fn i64_str(value: i64) str;
+fn i64_str(value: i64) -> str;
 
 #[extern]
-fn u64_str(value: u64) str;
+fn u64_str(value: u64) -> str;
 
 #[extern]
-fn f64_str(value: f64) str;
+fn f64_str(value: f64) -> str;
 
 // ---------------------------------------------------------------------------
 // Memory management (libc)
@@ -97,37 +97,37 @@ fn f64_str(value: f64) str;
 
 /// Allocates size uninitialized bytes. Returns a nil pointer on failure.
 #[extern("malloc")]
-fn malloc(size: usize) ^void;
+fn malloc(size: usize) -> ^void;
 
 /// Frees memory previously obtained from malloc, calloc, or realloc.
 #[extern("free")]
-fn free(ptr: ^void) void;
+fn free(ptr: ^void) -> void;
 
 /// Resizes a previously allocated block to size bytes.
 /// Returns the (possibly moved) new pointer, or nil on failure.
 #[extern("realloc")]
-fn realloc(ptr: ^void, size: usize) ^void;
+fn realloc(ptr: ^void, size: usize) -> ^void;
 
 /// Allocates count * size zero-initialised bytes. Returns nil on failure.
 #[extern("calloc")]
-fn calloc(count: usize, size: usize) ^void;
+fn calloc(count: usize, size: usize) -> ^void;
 
 /// Copies n bytes from src to dst. Regions must not overlap.
 #[extern("memcpy")]
-fn memcpy(dst: ^void, src: ^void, n: usize) ^void;
+fn memcpy(dst: ^void, src: ^void, n: usize) -> ^void;
 
 /// Copies n bytes from src to dst, handling overlap correctly.
 #[extern("memmove")]
-fn memmove(dst: ^void, src: ^void, n: usize) ^void;
+fn memmove(dst: ^void, src: ^void, n: usize) -> ^void;
 
 /// Fills the first n bytes at ptr with the byte value c (low 8 bits used).
 #[extern("memset")]
-fn memset(ptr: ^void, c: i32, n: usize) ^void;
+fn memset(ptr: ^void, c: i32, n: usize) -> ^void;
 
 /// Compares n bytes of a and b.
 /// Returns 0 if equal, negative if a < b, positive if a > b.
 #[extern("memcmp")]
-fn memcmp(a: ^void, b: ^void, n: usize) i32;
+fn memcmp(a: ^void, b: ^void, n: usize) -> i32;
 
 // ---------------------------------------------------------------------------
 // Process
@@ -135,4 +135,4 @@ fn memcmp(a: ^void, b: ^void, n: usize) i32;
 
 /// Terminates the process immediately with the given exit code.
 #[extern("exit")]
-fn exit(code: i32) void;
+fn exit(code: i32) -> void;
