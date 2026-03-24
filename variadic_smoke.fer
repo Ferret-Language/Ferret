@@ -1,4 +1,4 @@
-fn sum(nums: ...i32) i32 {
+fn sum(nums: ...i32) -> i32 {
     let mut total = 0
     for nums |v| {
         total += v
@@ -6,14 +6,14 @@ fn sum(nums: ...i32) i32 {
     return total
 }
 
-fn head_or(fallback: i32, nums: ...i32) i32 {
+fn head_or(fallback: i32, nums: ...i32) -> i32 {
     if len(nums) == 0 {
         return fallback
     }
     return nums[0]
 }
 
-fn zero_mutate(nums: ...mut i32) i32 {
+fn zero_mutate(nums: ...mut i32) -> i32 {
     if len(nums) == 0 {
         return -1
     }
@@ -21,7 +21,7 @@ fn zero_mutate(nums: ...mut i32) i32 {
     return nums[0]
 }
 
-fn main() void {
+fn main() -> void {
     let a = sum(1, 2, 3, 4)
     if a != 10 {
         panic "variadic sum failed"

@@ -90,13 +90,13 @@ func main() {
 
 		synthesizedMainAlias := false
 		if _, ok := files["main.fer"]; !ok {
-			if mainFerr, ok2 := files["main.ferr"]; ok2 {
+			if mainFerr, ok2 := files["main.fer"]; ok2 {
 				files["main.fer"] = mainFerr
 				synthesizedMainAlias = true
 			}
 		}
 
-		if mainFerr, hasFerr := files["main.ferr"]; hasFerr {
+		if mainFerr, hasFerr := files["main.fer"]; hasFerr {
 			if mainFer, hasFer := files["main.fer"]; hasFer && mainFer == mainFerr {
 				delete(files, "main.fer")
 				synthesizedMainAlias = false
@@ -104,12 +104,12 @@ func main() {
 		}
 
 		if _, ok := files["main.fer"]; !ok {
-			if _, okFerr := files["main.ferr"]; okFerr {
-				// main.ferr is sufficient when aliases are deduplicated
+			if _, okFerr := files["main.fer"]; okFerr {
+				// main.fer is sufficient when aliases are deduplicated
 			} else {
 				return toJSResult(compileResult{
 					Success:      false,
-					Error:        "entry file main.fer (or main.ferr) not found in provided files",
+					Error:        "entry file main.fer (or main.fer) not found in provided files",
 					Capabilities: caps,
 				})
 			}
@@ -120,7 +120,7 @@ func main() {
 		parsedModules := make([]*ast.Module, 0, len(files))
 		seenContent := make(map[string]struct{}, len(files))
 		for fileName, content := range files {
-			if !strings.HasSuffix(fileName, ".fer") && !strings.HasSuffix(fileName, ".ferr") {
+			if !strings.HasSuffix(fileName, ".fer") && !strings.HasSuffix(fileName, ".fer") {
 				continue
 			}
 			if synthesizedMainAlias && fileName == "main.fer" {
@@ -150,7 +150,7 @@ func main() {
 		if ferretFileCount == 0 {
 			return toJSResult(compileResult{
 				Success:      false,
-				Error:        "no .fer or .ferr source files provided",
+				Error:        "no .fer or .fer source files provided",
 				Capabilities: caps,
 			})
 		}

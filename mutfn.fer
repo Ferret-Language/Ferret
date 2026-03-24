@@ -5,7 +5,7 @@ type Point struct {
     Y: i32 = 20
 }
 
-fn Point::New() Self {
+fn Point::New() -> Self {
     return .{}
 }
 
@@ -14,7 +14,7 @@ fn Point::Incr(&mut self) {
     self.Y++
 }
 
-fn update(mut x: i32) i32 {
+fn update(mut x: i32) -> i32 {
     x++
     return x
 }
@@ -26,11 +26,11 @@ type num union {
 
 type C num
 
-fn add<T: C>(a: T, b: T) T {
+fn add<T: C>(a: T, b: T) -> T {
     return a + b
 }
 
-fn addAll(nums: ...i32) i32 {
+fn addAll(nums: ...i32) -> i32 {
     let mut res = 0
     for nums | v | {
         res += v

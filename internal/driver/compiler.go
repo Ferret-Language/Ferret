@@ -15,7 +15,7 @@ import (
 
 const CompilerVersion = "0.0.2"
 const FerretSourceExt = ".fer"
-const LegacyFerretSourceExt = ".ferr"
+const LegacyFerretSourceExt = ".fer"
 
 type Result struct {
 	Entry         *context.Module

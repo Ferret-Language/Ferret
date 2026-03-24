@@ -3,7 +3,7 @@ package context
 import "testing"
 
 func TestResolveImportRejectsRelativePaths(t *testing.T) {
-	ctx := New(t.TempDir(), ".ferr", nil)
+	ctx := New(t.TempDir(), ".fer", nil)
 
 	_, err := ctx.ResolveImport(nil, "../util/build")
 	if err == nil {
@@ -13,7 +13,7 @@ func TestResolveImportRejectsRelativePaths(t *testing.T) {
 
 func TestResolveImportClassifiesOrigins(t *testing.T) {
 	root := t.TempDir()
-	ctx := New(root, ".ferr", nil)
+	ctx := New(root, ".fer", nil)
 	ctx.Config.StdlibRoot = "/stdlib"
 	ctx.Config.DependencyRoots["json"] = "/deps/json"
 
@@ -21,7 +21,7 @@ func TestResolveImportClassifiesOrigins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve local import: %v", err)
 	}
-	if local.Origin != ModuleOriginLocal || local.Key != "local:util/build" || local.FilePath != root+"/util/build.ferr" {
+	if local.Origin != ModuleOriginLocal || local.Key != "local:util/build" || local.FilePath != root+"/util/build.fer" {
 		t.Fatalf("unexpected local import: %#v", local)
 	}
 
@@ -29,7 +29,7 @@ func TestResolveImportClassifiesOrigins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve std import: %v", err)
 	}
-	if std.Origin != ModuleOriginStdlib || std.Key != "stdlib:std/io" || std.FilePath != "/stdlib/io.ferr" {
+	if std.Origin != ModuleOriginStdlib || std.Key != "stdlib:std/io" || std.FilePath != "/stdlib/io.fer" {
 		t.Fatalf("unexpected std import: %#v", std)
 	}
 
@@ -37,23 +37,23 @@ func TestResolveImportClassifiesOrigins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve dependency import: %v", err)
 	}
-	if dep.Origin != ModuleOriginDependency || dep.DependencyAlias != "json" || dep.Key != "dependency:json/parser" || dep.FilePath != "/deps/json/parser.ferr" {
+	if dep.Origin != ModuleOriginDependency || dep.DependencyAlias != "json" || dep.Key != "dependency:json/parser" || dep.FilePath != "/deps/json/parser.fer" {
 		t.Fatalf("unexpected dependency import: %#v", dep)
 	}
 }
 
 func TestResolveLocalModuleRejectsReservedPrefix(t *testing.T) {
 	root := t.TempDir()
-	ctx := New(root, ".ferr", nil)
+	ctx := New(root, ".fer", nil)
 
-	_, err := ctx.ResolveLocalModule(root + "/std/io.ferr")
+	_, err := ctx.ResolveLocalModule(root + "/std/io.fer")
 	if err == nil {
 		t.Fatal("expected reserved std prefix to be rejected")
 	}
 }
 
 func TestUniverseRegistersBuiltInConstants(t *testing.T) {
-	ctx := New(t.TempDir(), ".ferr", nil)
+	ctx := New(t.TempDir(), ".fer", nil)
 
 	for _, name := range []string{"true", "false", "none", "undefined"} {
 		sym, ok := ctx.Universe.Lookup(name)

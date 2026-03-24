@@ -13,7 +13,7 @@ import (
 
 func TestLoweringNormalizesLoops(t *testing.T) {
 	root := t.TempDir()
-	mustWriteLower(t, filepath.Join(root, "main.ferr"), `
+	mustWriteLower(t, filepath.Join(root, "main.fer"), `
 fn main(items: [3]i32) -> i32 {
     let mut x: i32 = 0
     while x < 5 {
@@ -27,7 +27,7 @@ fn main(items: [3]i32) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -79,7 +79,7 @@ fn main(items: [3]i32) -> i32 {
 
 func TestLoweringEliminatesMatchExpr(t *testing.T) {
 	root := t.TempDir()
-	mustWriteLower(t, filepath.Join(root, "main.ferr"), `
+	mustWriteLower(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -99,7 +99,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}

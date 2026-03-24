@@ -1,8 +1,8 @@
 build/
 a.out
 *.ll
-main.ferr
-*.ferr.tmp
+main.fer
+*.fer.tmp
 .tmp/
 app
 *.hir

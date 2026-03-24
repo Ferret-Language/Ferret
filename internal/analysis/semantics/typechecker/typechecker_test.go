@@ -16,7 +16,7 @@ import (
 
 func TestTypecheckerChecksWorkspaceExampleSubset(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 import "math/vec2"
 import "util/build"
 
@@ -28,7 +28,7 @@ fn main() -> i32 {
     return 1
 }
 `)
-	mustWriteType(t, filepath.Join(root, "math", "vec2.ferr"), `
+	mustWriteType(t, filepath.Join(root, "math", "vec2.fer"), `
 type Vec2 struct {
     X: i32 = 0
     Y: i32 = 0
@@ -38,7 +38,7 @@ fn Len2(v: Vec2) -> i32 {
     return v.X * v.X + v.Y * v.Y
 }
 `)
-	mustWriteType(t, filepath.Join(root, "util", "build.ferr"), `
+	mustWriteType(t, filepath.Join(root, "util", "build.fer"), `
 import "math/vec2"
 
 fn Origin() -> vec2::Vec2 {
@@ -46,7 +46,7 @@ fn Origin() -> vec2::Vec2 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -67,13 +67,13 @@ fn Origin() -> vec2::Vec2 {
 
 func TestTypecheckerReportsInvalidReturn(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn bad() -> i32 {
     return
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid return diagnostic")
 	}
@@ -91,7 +91,7 @@ fn bad() -> i32 {
 
 func TestTypecheckerReportsArgumentTypeMismatch(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn Add(x: i32, y: i32) -> i32 {
     return x + y
 }
@@ -101,7 +101,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected type mismatch diagnostic")
 	}
@@ -119,7 +119,7 @@ fn main() -> i32 {
 
 func TestTypecheckerContextualizesNumericLiteralsAndDefaults(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i64 {
     let a = 1
     let b = 1.5
@@ -128,7 +128,7 @@ fn main() -> i64 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -149,7 +149,7 @@ fn main() -> i64 {
 
 func TestTypecheckerPreservesDeclarationTypeParams(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Box<T> struct {
     Value: T
 }
@@ -159,7 +159,7 @@ fn Identity<T>(value: T) -> T {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -195,7 +195,7 @@ fn Identity<T>(value: T) -> T {
 
 func TestTypecheckerHandlesGenericTypeArguments(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Box<T> struct {
     Value: T
 }
@@ -206,7 +206,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -228,7 +228,7 @@ fn main() -> i32 {
 
 func TestTypecheckerHandlesGenericOwnerMethod(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Box<T> struct {
     Value: T
 }
@@ -243,7 +243,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -260,7 +260,7 @@ fn main() -> i32 {
 
 func TestTypecheckerHandlesStaticMethodCallWithGenericOwnerTypeArgs(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Circle<T> struct {
     Rad: T
 }
@@ -274,7 +274,7 @@ fn main() -> Circle<i32> {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -305,7 +305,7 @@ fn main() -> Circle<i32> {
 
 func TestTypecheckerReportsGenericOwnerMissingTypeArgsOnce(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
  type Point<T> struct {
      Value: T = 0
  }
@@ -315,7 +315,7 @@ func TestTypecheckerReportsGenericOwnerMissingTypeArgsOnce(t *testing.T) {
  }
  `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected diagnostics")
 	}
@@ -332,7 +332,7 @@ func TestTypecheckerReportsGenericOwnerMissingTypeArgsOnce(t *testing.T) {
 
 func TestTypecheckerInfersGenericExternCallResult(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 #[extern]
 fn Identity<T>(value: T) -> T;
 
@@ -341,7 +341,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -369,7 +369,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsGenericConstraintMismatch(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Reader interface {
     Read(&self) -> i32
 }
@@ -382,7 +382,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected generic constraint diagnostic")
 	}
@@ -400,7 +400,7 @@ fn main() -> void {
 
 func TestTypecheckerReportsConstraintDeclarationMismatch(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type numeric union { i32, i64 }
 
 fn Id<T: numeric>(v: T) -> T {
@@ -412,7 +412,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected constraint mismatch diagnostic")
 	}
@@ -430,7 +430,7 @@ fn main() -> void {
 
 func TestTypecheckerAllowsNamedConstraintTypeAsConcreteType(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type numeric union { i32, i64 }
 
 fn main() -> void {
@@ -439,7 +439,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -447,7 +447,7 @@ fn main() -> void {
 
 func TestTypecheckerSupportsNamedAndInlineConstraints(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Writer interface {
     write(&self, []u8) -> i32
 }
@@ -483,7 +483,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -491,7 +491,7 @@ fn main() -> void {
 
 func TestTypecheckerDoesNotConflictNestedCallExpectedTypeInference(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type numeric union {
     i32,
     f32,
@@ -509,7 +509,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -517,7 +517,7 @@ fn main() -> void {
 
 func TestTypecheckerAllowsMethodsFromTypeParamInterfaceConstraint(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Reader interface {
     Read(&self) -> i32
 }
@@ -527,7 +527,7 @@ fn ReadValue<T: Reader>(value: T) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -545,7 +545,7 @@ fn ReadValue<T: Reader>(value: T) -> i32 {
 
 func TestTypecheckerRejectsExplicitOwnerTypeArgsConstraintMismatch(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Reader interface {
     Read(&self) -> i32
 }
@@ -563,7 +563,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected owner type-argument constraint diagnostic")
 	}
@@ -581,7 +581,7 @@ fn main() -> void {
 
 func TestTypecheckerReportsUnsupportedGenericOperationAtCallSite(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32
 }
@@ -596,7 +596,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected generic call-site diagnostic")
 	}
@@ -631,7 +631,7 @@ fn main() -> void {
 
 func TestTypecheckerReportsExplicitGenericTypeArgConflictClearly(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn Add<T>(a: T, b: T) -> T {
     return a + b
 }
@@ -641,7 +641,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected explicit generic type argument conflict diagnostic")
 	}
@@ -662,7 +662,7 @@ fn main() -> i32 {
 
 func TestTypecheckerInfersOwnerTypeArgsForStaticGenericMethodCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Circle<T> struct {
     Rad: T
 }
@@ -677,7 +677,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -697,7 +697,7 @@ fn main() -> void {
 
 func TestTypecheckerInfersGenericCompositeLiteralTypeArgs(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point<T> struct {
     Value: T
 }
@@ -708,7 +708,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -728,7 +728,7 @@ fn main() -> void {
 
 func TestTypecheckerAllowsImplicitNumericWidening(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i64 {
     let a: i32 = 1
     let b: i64 = a
@@ -736,7 +736,7 @@ fn main() -> i64 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -744,7 +744,7 @@ fn main() -> i64 {
 
 func TestTypecheckerAllowsUnionMemberAssignment(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     bool,
@@ -757,7 +757,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -765,7 +765,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsInvalidUnionMemberAssignment(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     bool,
@@ -777,7 +777,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected union member assignment diagnostic")
 	}
@@ -795,7 +795,7 @@ fn main() -> i32 {
 
 func TestTypecheckerPrefersExactUnionMemberMatch(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type MaybeInt union {
     ?i32,
     i32,
@@ -809,7 +809,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -817,7 +817,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsCompositeLiteralCastWithTargetType(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 1
     Y: i32 = 2
@@ -829,7 +829,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -837,7 +837,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsValueToSatisfyInterfaceValueMethod(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -856,7 +856,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -864,7 +864,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsAmbiguousUnionMemberAssignment(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Both union {
     i32,
     i32,
@@ -876,7 +876,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected ambiguous union member diagnostic")
 	}
@@ -894,7 +894,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsExplicitUnionMemberCast(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type MaybeInt union {
     ?i32,
     i32,
@@ -906,7 +906,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -914,7 +914,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsUnionExtractCastToExactMember(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -927,7 +927,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -935,7 +935,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsBinaryOpsOnUnionValues(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -951,7 +951,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected union binary-operation diagnostic")
 	}
@@ -969,7 +969,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsNumericToStringCast(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     let a = 42 as str
     let b = 1.5 as str
@@ -978,7 +978,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -986,7 +986,7 @@ fn main() -> void {
 
 func TestTypecheckerAllowsConcreteTypeAssignmentToInterface(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Stringer interface {
     String(self) -> str
 }
@@ -1006,7 +1006,7 @@ fn main() -> str {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1014,7 +1014,7 @@ fn main() -> str {
 
 func TestTypecheckerMatchesInterfaceSelfReturnAndTypedCompositeLiteral(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Shape interface {
     New() -> Self
     Draw(&self)
@@ -1038,7 +1038,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1046,7 +1046,7 @@ fn main() -> void {
 
 func TestTypecheckerAllowsStaticIsChecks(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Stringer interface {
     String(self) -> str
 }
@@ -1071,7 +1071,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1079,7 +1079,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsRuntimeUnionTypeTest(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -1091,7 +1091,7 @@ type Token union {
 	}
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1099,7 +1099,7 @@ type Token union {
 
 func TestTypecheckerNarrowsUnionTypeInIfBranch(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -1115,7 +1115,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1123,7 +1123,7 @@ fn main() -> i32 {
 
 func TestTypecheckerNarrowsUnionTypeInWhileBody(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -1139,7 +1139,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1147,7 +1147,7 @@ fn main() -> i32 {
 
 func TestTypecheckerNarrowsUnionTypeInElseBranch(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -1164,7 +1164,7 @@ fn main() -> i64 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1172,7 +1172,7 @@ fn main() -> i64 {
 
 func TestTypecheckerNarrowsUnionTypeInNegatedIfBranch(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -1188,7 +1188,7 @@ fn main() -> i64 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1196,7 +1196,7 @@ fn main() -> i64 {
 
 func TestTypecheckerNarrowsUnionTypeInMatchTypeArm(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -1216,7 +1216,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1224,7 +1224,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAcceptsMatchExpression(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -1244,7 +1244,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1252,7 +1252,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsRuntimeInterfaceToConcreteTypeTest(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Stringer interface {
     String() -> str
 }
@@ -1262,7 +1262,7 @@ fn main(s: Stringer) -> bool {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected runtime interface type-test diagnostic")
 	}
@@ -1276,7 +1276,7 @@ fn main(s: Stringer) -> bool {
 
 func TestTypecheckerRejectsConcreteTypeThatMissesInterfaceMethod(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Stringer interface {
     String() -> str
 }
@@ -1292,7 +1292,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected interface assignment diagnostic")
 	}
@@ -1310,7 +1310,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsConcreteTypeWithIncompatibleInterfaceMethod(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Stringer interface {
     String() -> str
 }
@@ -1330,7 +1330,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected interface signature diagnostic")
 	}
@@ -1348,7 +1348,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsConcreteTypeWithWrongInterfaceReceiverModifier(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Reader interface {
     read(&mut self, buf []u8) -> i32
 }
@@ -1368,7 +1368,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected interface receiver mismatch diagnostic")
 	}
@@ -1386,20 +1386,20 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsCrossModuleMethodDeclaration(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 import "util/name"
 
 fn name::Name::String(self) -> str {
     return "x"
 }
 `)
-	mustWriteType(t, filepath.Join(root, "util", "name.ferr"), `
+	mustWriteType(t, filepath.Join(root, "util", "name.fer"), `
 type Name struct {
     value: i32 = 0
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected cross-module method declaration diagnostic")
 	}
@@ -1417,7 +1417,7 @@ type Name struct {
 
 func TestTypecheckerAllowsMethodNamedLikeType(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1427,7 +1427,7 @@ fn Point::Point(*self, x: i32) {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1435,7 +1435,7 @@ fn Point::Point(*self, x: i32) {
 
 func TestTypecheckerAllowsMethodNamedLikeTypeOnRefReceiver(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1444,7 +1444,7 @@ fn Point::Point(&mut self) {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1452,7 +1452,7 @@ fn Point::Point(&mut self) {
 
 func TestTypecheckerRejectsRemovedDestructorSyntax(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1462,7 +1462,7 @@ fn Point::~Point(*self, x: i32) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected removed destructor syntax diagnostic")
 	}
@@ -1480,7 +1480,7 @@ fn Point::~Point(*self, x: i32) -> i32 {
 
 func TestTypecheckerAllowsDirectMethodCallNamedLikeType(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1495,7 +1495,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1503,7 +1503,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsStaticMethodNamedLikeType(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1518,7 +1518,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1526,7 +1526,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsFieldMutationThroughImmutableBinding(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1537,7 +1537,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected immutable assignment diagnostic")
 	}
@@ -1555,13 +1555,13 @@ fn main() -> void {
 
 func TestTypecheckerRejectsPrivateImportedStructFieldAccess(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "pkg.ferr"), `
+	mustWriteType(t, filepath.Join(root, "pkg.fer"), `
 type Box struct {
     hidden: i32 = 1
     Visible: i32 = 2
 }
 `)
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 import "pkg"
 
 fn main() -> i32 {
@@ -1570,7 +1570,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected private field access diagnostic")
 	}
@@ -1588,7 +1588,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsPrivateSameModuleStructFieldAccessOutsideMethods(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Box struct {
     hidden: i32 = 1
 }
@@ -1599,7 +1599,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1607,7 +1607,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsPrivateFieldAccessInsideOwnerMethods(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Box struct {
     hidden: i32 = 1
 }
@@ -1627,7 +1627,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1635,7 +1635,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsPrivateFieldInCompositeSameModule(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Box struct {
     hidden: i32 = 1
     Visible: i32 = 2
@@ -1647,7 +1647,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1655,7 +1655,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsFieldMutationThroughMutableBinding(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1666,7 +1666,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1674,7 +1674,7 @@ fn main() -> void {
 
 func TestTypecheckerAllowsMutationThroughMutableReference(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1684,7 +1684,7 @@ fn bump(p: &mut Point) -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1692,7 +1692,7 @@ fn bump(p: &mut Point) -> void {
 
 func TestTypecheckerAllowsByValueMutableParameterWithImmutableArgument(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn mutate(mut x: i32) -> i32 {
     x = x + 1
     return x
@@ -1704,7 +1704,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1712,7 +1712,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsMutationThroughImmutableReference(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1722,7 +1722,7 @@ fn bump(p: &Point) -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected immutable reference assignment diagnostic")
 	}
@@ -1740,7 +1740,7 @@ fn bump(p: &Point) -> void {
 
 func TestTypecheckerRejectsMutableReferenceFromImmutableBinding(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1752,7 +1752,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected mutable reference creation diagnostic")
 	}
@@ -1770,7 +1770,7 @@ fn main() -> void {
 
 func TestTypecheckerRejectsPlainValueForBorrowParameter(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1785,7 +1785,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected borrow parameter diagnostic")
 	}
@@ -1803,7 +1803,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsPlainImmutableValueForMutableBorrowParameter(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -1818,7 +1818,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected mutable borrow parameter diagnostic")
 	}
@@ -1836,7 +1836,7 @@ fn main() -> i32 {
 
 func TestTypecheckerUsesBuiltInBoolConstants(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> bool {
     if true {
         return false
@@ -1845,7 +1845,7 @@ fn main() -> bool {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1858,7 +1858,7 @@ fn main() -> bool {
 
 func TestTypecheckerAllowsUndefinedWithContext(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let mut x: i32 = undefined
     x = 1
@@ -1866,7 +1866,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1874,7 +1874,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsNumericNarrowingAndLiteralOverflow(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let a: i64 = 1
     let b: i32 = a
@@ -1883,7 +1883,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected numeric narrowing diagnostics")
 	}
@@ -1900,14 +1900,14 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsDefaultNumericLiteralOverflow(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let huge = 10235543634636243636263462346
     return 0
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected numeric default overflow diagnostic")
 	}
@@ -1925,7 +1925,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsCatchFallbackValue(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Io error { denied }
 
 fn main(x: Io!i32) -> i32 {
@@ -1933,7 +1933,7 @@ fn main(x: Io!i32) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1941,13 +1941,13 @@ fn main(x: Io!i32) -> i32 {
 
 func TestTypecheckerTreatsRecoverAsBuiltinFunction(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> str {
     return recover()
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1964,13 +1964,13 @@ fn main() -> str {
 
 func TestTypecheckerRejectsRecoverArguments(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> string {
     return recover("x")
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected wrong argument count diagnostic")
 	}
@@ -1988,12 +1988,12 @@ fn main() -> string {
 
 func TestTypecheckerDoesNotCascadeNotCallableAfterMissingImportedSymbol(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "ferret_libs_dev", "std", "math.ferr"), `
+	mustWriteType(t, filepath.Join(root, "ferret_libs_dev", "std", "math.fer"), `
 fn ClampToZero(value: i32) -> i32 {
     return value
 }
 `)
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 import "std/math"
 
 fn main() -> i32 {
@@ -2001,7 +2001,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected missing imported symbol diagnostic")
 	}
@@ -2019,7 +2019,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRequiresCatchHandlerToExit(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Io error { denied }
 
 fn log(x: Io) -> void {}
@@ -2032,7 +2032,7 @@ fn main(x: Io!i32) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected catch early-exit diagnostic")
 	}
@@ -2050,7 +2050,7 @@ fn main(x: Io!i32) -> i32 {
 
 func TestTypecheckerReportsNumericNarrowingMessage(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let num1: i32 = 1
     let num2: i8 = num1
@@ -2058,7 +2058,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected numeric narrowing diagnostic")
 	}
@@ -2076,7 +2076,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsExplicitNumericCast(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let num1: i32 = 1
     let num2: i8 = num1 as i8
@@ -2084,7 +2084,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2092,7 +2092,7 @@ fn main() -> i32 {
 
 func TestTypecheckerResolvesMethodCalls(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
     Y: i32 = 0
@@ -2113,7 +2113,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2121,7 +2121,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsPointerMethodCallOnValue(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -2136,7 +2136,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected pointer receiver method diagnostic")
 	}
@@ -2154,7 +2154,7 @@ fn main() -> i32 {
 
 func TestTypecheckerReportsMissingMethod(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -2165,7 +2165,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected missing method diagnostic")
 	}
@@ -2183,7 +2183,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsPlainStructCopyFromLetBinding(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -2195,7 +2195,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2203,7 +2203,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsCopyAsNotYetImplemented(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
     Y: i32 = 0
@@ -2216,7 +2216,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid copy diagnostic")
 	}
@@ -2234,7 +2234,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsCopyOfOwningPointer(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn bad(c: *Conn) -> void {
@@ -2242,7 +2242,7 @@ fn bad(c: *Conn) -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid copy diagnostic")
 	}
@@ -2260,13 +2260,13 @@ fn bad(c: *Conn) -> void {
 
 func TestTypecheckerRejectsCopyOfRawPointer(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn bad(p: ^i32) -> void {
     let d = copy p
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid copy diagnostic")
 	}
@@ -2284,7 +2284,7 @@ fn bad(p: ^i32) -> void {
 
 func TestTypecheckerRejectsNonConstConstInitializer(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let x = 1
     const y = x
@@ -2292,7 +2292,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected const initializer diagnostic")
 	}
@@ -2310,7 +2310,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsNonConstComptimeArgument(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 #[extern("clock")]
 fn clock() -> i32;
 
@@ -2323,7 +2323,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected comptime argument diagnostic")
 	}
@@ -2341,7 +2341,7 @@ fn main() -> i32 {
 
 func TestTypecheckerComptimePrefixExpressionFoldsInMIR(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let x = 1
     let y = comptime x + 2
@@ -2349,7 +2349,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("expected comptime prefix to fold, got %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2364,7 +2364,7 @@ fn main() -> i32 {
 
 func TestTypecheckerComptimeEvaluatesFunctionCallWithLoop(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn getVal() -> i32 {
     let mut i = 0
     let mut sum = 0
@@ -2381,7 +2381,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("expected comptime function call to evaluate, got %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2399,7 +2399,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsComptimeOnExternCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 #[extern("clock")]
 fn clock() -> i64;
 
@@ -2409,7 +2409,7 @@ fn main() -> i64 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected comptime extern-call diagnostic")
 	}
@@ -2427,7 +2427,7 @@ fn main() -> i64 {
 
 func TestTypecheckerComptimePanicReportsCompileError(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn assertNonZero(x: i32) -> i32 {
     if x == 0 {
         panic "x must not be zero"
@@ -2441,7 +2441,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected compile-time panic diagnostic")
 	}
@@ -2479,7 +2479,7 @@ fn main() -> i32 {
 
 func TestTypecheckerComptimeAssertPatternWorks(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn assert(comptime cond: bool, comptime msg: str) -> void {
     if !cond {
         panic msg
@@ -2493,7 +2493,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		if result.Entry != nil && result.Entry.MIR != nil {
 			t.Log(mir.FormatModule(result.Entry.MIR))
@@ -2507,7 +2507,7 @@ fn main() -> void {
 
 func TestTypecheckerComptimeAssertWrapperWorks(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn assert(comptime cond: bool, comptime msg: str) -> void {
     if !cond {
         panic msg
@@ -2523,7 +2523,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		if result.Entry != nil && result.Entry.MIR != nil {
 			t.Log(mir.FormatModule(result.Entry.MIR))
@@ -2537,7 +2537,7 @@ fn main() -> void {
 
 func TestTypecheckerComptimePanicKeepsOriginalCallSiteWithFollowingComptimeExpr(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn assert(comptime cond: bool, comptime msg: str) -> void {
     if !cond {
         panic msg
@@ -2554,7 +2554,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected compile-time panic diagnostic")
 	}
@@ -2578,7 +2578,7 @@ fn main() -> void {
 
 func TestTypecheckerComptimeRequireAllowsPrintSideEffects(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn require(name: str, cond: bool) -> void {
     if !cond {
         print("FAIL:")
@@ -2600,7 +2600,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("expected comptime require with print side effects to typecheck, got %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2608,13 +2608,13 @@ fn main() -> void {
 
 func TestTypecheckerCompileErrorRequiresComptimeContext(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     compile_error("boom")
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected compile_error context diagnostic")
 	}
@@ -2632,7 +2632,7 @@ fn main() -> void {
 
 func TestTypecheckerComptimeCompileErrorReportsMessage(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn assert(comptime cond: bool, comptime msg: str) -> void {
     if !cond {
         comptime {
@@ -2648,7 +2648,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected compile_error diagnostic")
 	}
@@ -2679,7 +2679,7 @@ fn main() -> void {
 
 func TestTypecheckerComptimeEvaluatesArrayIndexAndForLoop(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn edgeSum() -> i32 {
     let arr: [3]i32 = [3]i32{1, 2, 3}
     return arr[0] + arr[2]
@@ -2701,7 +2701,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("expected comptime array/index + for evaluation, got %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2719,7 +2719,7 @@ fn main() -> i32 {
 
 func TestTypecheckerComptimeEvaluatesTupleAggregateAndIndex(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn tuplePick() -> i32 {
     let p: (i32, i32) = .{1, 2}
     return p[0] + p[1]
@@ -2731,7 +2731,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("expected comptime tuple aggregate/index evaluation, got %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2749,7 +2749,7 @@ fn main() -> i32 {
 
 func TestTypecheckerSupportsMixedTupleElementTypes(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let p: (i32, bool, str) = .{7, true, "ok"}
     if !p[1] {
@@ -2762,7 +2762,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("expected mixed tuple elements to typecheck, got %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2789,7 +2789,7 @@ fn main() -> i32 {
 
 func TestTypecheckerComptimeEvaluatesMixedTupleAggregateAndIndex(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn tupleCheck() -> bool {
     let p: (i32, bool, str) = .{7, true, "ok"}
     return p[0] == 7 && p[1] && p[2] == "ok"
@@ -2801,7 +2801,7 @@ fn main() -> bool {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("expected comptime mixed tuple aggregate/index evaluation, got %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2819,7 +2819,7 @@ fn main() -> bool {
 
 func TestTypecheckerComptimeEvaluatesMethodCallOnStruct(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Counter struct {
     Value: i32
 }
@@ -2841,7 +2841,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("expected comptime method call evaluation, got %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2856,7 +2856,7 @@ fn main() -> i32 {
 
 func TestTypecheckerComptimeEvaluatesCrossModuleCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "counter.ferr"), `
+	mustWriteType(t, filepath.Join(root, "counter.fer"), `
 type Counter struct {
     Value: i32
 }
@@ -2871,7 +2871,7 @@ fn MakeAndInc() -> i32 {
     return c.Inc(4)
 }
 `)
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 import "counter"
 
 fn main() -> i32 {
@@ -2880,7 +2880,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("expected cross-module comptime evaluation, got %#v", result.Diagnostics.Diagnostics())
 	}
@@ -2895,14 +2895,14 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsInvalidExplicitCast(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let x = "hi" as i32
     return 0
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid cast diagnostic")
 	}
@@ -2920,7 +2920,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsRawToOwningPointerCast(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     unsafe {
         let rp = 0 as ^void
@@ -2930,7 +2930,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid raw-to-owning cast diagnostic")
 	}
@@ -2948,7 +2948,7 @@ fn main() -> void {
 
 func TestTypecheckerSuggestsOwnershipBoundaryAPIsForRawOwnerCasts(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     unsafe {
         let rp = 0 as ^i32
@@ -2958,7 +2958,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid raw-to-owning cast diagnostic")
 	}
@@ -2984,7 +2984,7 @@ fn main() -> void {
 
 func TestTypecheckerRejectsOwningPointerToRawCast(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn use_ptr(p: *i32) -> void {
     unsafe {
         let raw = p as ^i32
@@ -2993,7 +2993,7 @@ fn use_ptr(p: *i32) -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid owning-to-raw cast diagnostic")
 	}
@@ -3011,14 +3011,14 @@ fn use_ptr(p: *i32) -> void {
 
 func TestTypecheckerAcceptsAdoptExposeCalls(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "mem.ferr"), `
+	mustWriteType(t, filepath.Join(root, "mem.fer"), `
 #[extern]
 fn Expose<T>(owner: *T) -> ^T;
 
 #[extern]
 fn Adopt<T>(raw: ^T) -> *T;
 `)
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 import "mem"
 
 fn main() -> void {
@@ -3031,7 +3031,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3039,7 +3039,7 @@ fn main() -> void {
 
 func TestTypecheckerBindsLocalSymbolTypes(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type MyErr error {
     Oops
 }
@@ -3051,7 +3051,7 @@ fn run(items: [3]i32) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3138,7 +3138,7 @@ func mustWriteType(t *testing.T, path, content string) {
 
 func TestTypecheckerUsesReferenceTypesForAddressOf(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3157,7 +3157,7 @@ fn writePoint() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3181,7 +3181,7 @@ fn writePoint() -> void {
 
 func TestTypecheckerUsesRawPointerTypesForRawCoercion(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3198,7 +3198,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3224,7 +3224,7 @@ fn main() -> void {
 
 func TestTypecheckerRejectsRawCoercionOutsideUnsafe(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3236,7 +3236,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected raw-coercion unsafe diagnostic")
 	}
@@ -3254,7 +3254,7 @@ fn main() -> void {
 
 func TestTypecheckerCoercesRefToConstRawWhenExpected(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3273,7 +3273,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3281,7 +3281,7 @@ fn main() -> void {
 
 func TestTypecheckerCoercesMutRefToRawWhenExpected(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3300,7 +3300,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3308,7 +3308,7 @@ fn main() -> void {
 
 func TestTypecheckerRejectsImmutableRefToMutableRaw(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3327,7 +3327,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected type mismatch for immutable ref to mutable raw pointer")
 	}
@@ -3345,7 +3345,7 @@ fn main() -> void {
 
 func TestTypecheckerRejectsRefToRawOutsideUnsafeWhenExpected(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3360,7 +3360,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected unsafe diagnostic for implicit raw pointer creation")
 	}
@@ -3378,7 +3378,7 @@ fn main() -> void {
 
 func TestTypecheckerRequiresUnsafeForUnsafeFunctionCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 unsafe fn dangerous() -> void {}
 
 fn main() -> void {
@@ -3386,7 +3386,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected unsafe call diagnostic")
 	}
@@ -3404,7 +3404,7 @@ fn main() -> void {
 
 func TestTypecheckerAllowsUnsafePrefixExpressionForUnsafeCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 unsafe fn dangerous() -> i32 {
     return 1
 }
@@ -3414,7 +3414,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3422,7 +3422,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRequiresUnsafeForUnsafeMethodCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {}
 
 unsafe fn Point::Run(&self) -> void {}
@@ -3433,7 +3433,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected unsafe method call diagnostic")
 	}
@@ -3451,7 +3451,7 @@ fn main() -> void {
 
 func TestTypecheckerRejectsRawFieldAccessOutsideUnsafe(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3461,7 +3461,7 @@ fn read(rp: ^Point) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected raw-field unsafe diagnostic")
 	}
@@ -3479,7 +3479,7 @@ fn read(rp: ^Point) -> i32 {
 
 func TestTypecheckerRejectsAssignThroughConstRawPointer(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3491,7 +3491,7 @@ fn write(mut rp: ^const Point) -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected immutable-access assignment diagnostic")
 	}
@@ -3509,7 +3509,7 @@ fn write(mut rp: ^const Point) -> void {
 
 func TestTypecheckerAllowsAssignThroughMutableRawPointerInUnsafe(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3521,7 +3521,7 @@ fn write(mut rp: ^Point) -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3529,14 +3529,14 @@ fn write(mut rp: ^Point) -> void {
 
 func TestTypecheckerTypesArrayIndexing(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main(items: [3]i32) -> i32 {
     let v = items[1]
     return v
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3549,7 +3549,7 @@ fn main(items: [3]i32) -> i32 {
 
 func TestTypecheckerInfersArrayLengthFromUnderscoreType(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let items: [_]i32 = [_]i32{1, 2, 3}
     let v = items[1]
@@ -3557,7 +3557,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3577,14 +3577,14 @@ fn main() -> i32 {
 
 func TestTypecheckerTypesSliceLiterals(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let items: []i32 = []i32{1, 2, 3}
     return items[0]
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3600,7 +3600,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsForOverSlice(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn sum(items: []i32) -> i32 {
     let mut total = 0
     for items |v| {
@@ -3615,7 +3615,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3623,7 +3623,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsVariadicCalls(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn sum(nums: ...i32) -> i32 {
     let mut total = 0
     for nums |v| {
@@ -3637,7 +3637,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3645,7 +3645,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsSpreadIntoVariadicCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn sum(nums: ...i32) -> i32 {
     let mut total = 0
     for nums |v| {
@@ -3660,7 +3660,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3668,7 +3668,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsSpreadOnNonVariadicCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn sum(items: []i32) -> i32 {
     return items[0]
 }
@@ -3679,7 +3679,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected spread-on-non-variadic diagnostic")
 	}
@@ -3697,7 +3697,7 @@ fn main() -> i32 {
 
 func TestTypecheckerTypesMutableSliceLiteral(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let items: []mut i32 = []mut i32{1, 2, 3}
     items[0] = 9
@@ -3705,7 +3705,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3721,7 +3721,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsMutableSliceToReadonlySlice(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn sum(items: []i32) -> i32 {
     return items[0]
 }
@@ -3732,7 +3732,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3740,7 +3740,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsReadonlySliceToMutableSlice(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn fill(items: []mut i32) -> void {
     items[0] = 1
 }
@@ -3751,7 +3751,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected mutable slice mismatch diagnostic")
 	}
@@ -3769,14 +3769,14 @@ fn main() -> void {
 
 func TestTypecheckerRejectsMutationThroughReadonlySlice(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     let items: []i32 = []i32{1, 2, 3}
     items[0] = 9
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected readonly slice mutation diagnostic")
 	}
@@ -3794,14 +3794,14 @@ fn main() -> void {
 
 func TestTypecheckerRejectsArrayIndexOutOfBounds(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let items: [3]i32 = [3]i32{1, 2, 3}
     return items[3]
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected array index out of bounds diagnostic")
 	}
@@ -3819,7 +3819,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsReadonlySliceViewFromArray(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn head(items: []i32) -> i32 {
     return items[0]
 }
@@ -3830,7 +3830,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3838,7 +3838,7 @@ fn main() -> i32 {
 
 func TestTypecheckerAllowsMutableSliceViewFromMutableArray(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn bump(items: []mut i32) -> i32 {
     items[0] = 9
     return items[0]
@@ -3850,7 +3850,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3858,7 +3858,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsMutableSliceViewFromImmutableArray(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn bump(items: []mut i32) -> i32 {
     items[0] = 9
     return items[0]
@@ -3870,7 +3870,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected immutable array to mutable slice diagnostic")
 	}
@@ -3888,7 +3888,7 @@ fn main() -> i32 {
 
 func TestTypecheckerTypesLenForArrayAndSlice(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn lenArray() -> usize {
     let items: [_]i32 = [_]i32{1, 2, 3}
     return len(items)
@@ -3903,7 +3903,7 @@ fn lenString(s: str) -> usize {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3911,14 +3911,14 @@ fn lenString(s: str) -> usize {
 
 func TestTypecheckerRejectsLenOnNonArraySlice(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> usize {
     let x: i32 = 1
     return len(x)
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected len type diagnostic")
 	}
@@ -3936,7 +3936,7 @@ fn main() -> usize {
 
 func TestTypecheckerAllowsPrintingReferenceViaAny(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     let mut x = 10
     let y = &mut x
@@ -3944,7 +3944,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3952,7 +3952,7 @@ fn main() -> void {
 
 func TestTypecheckerAllowsDiscardAssignment(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let a = 10
     _ = a
@@ -3960,7 +3960,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3968,7 +3968,7 @@ fn main() -> i32 {
 
 func TestTypecheckerResolvesExplicitReferenceReceivers(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -3989,7 +3989,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -3997,7 +3997,7 @@ fn main() -> i32 {
 
 func TestTypecheckerResolvesAttachedReferenceReceiversFromValueCalls(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -4017,7 +4017,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -4025,7 +4025,7 @@ fn main() -> i32 {
 
 func TestTypecheckerRejectsOwningPointerToReferenceContainingType(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Inner struct {
     Ref: &i32
 }
@@ -4035,7 +4035,7 @@ type Outer struct {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected heap reference containment diagnostic")
 	}
@@ -4053,11 +4053,11 @@ type Outer struct {
 
 func TestTypecheckerRejectsModuleLevelReferenceBinding(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
 let GlobalRef: &i32 = undefined
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected module-level reference binding diagnostic")
 	}

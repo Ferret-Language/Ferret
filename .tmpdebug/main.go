@@ -22,7 +22,7 @@ func dumpCall(label string, call *hir.CallExpr) {
 }
 
 func main() {
-  result := compiler.New("/tmp", ".ferr", diagnostics.NewBag()).ParseEntry("/tmp/repro_iface_generic.ferr")
+  result := compiler.New("/tmp", ".fer", diagnostics.NewBag()).ParseEntry("/tmp/repro_iface_generic.fer")
   if result.Diagnostics.HasErrors() { fmt.Println(result.Diagnostics.Diagnostics()); return }
   for _, fn := range result.Entry.HIR.Functions {
     if fn.Name != "main" { continue }

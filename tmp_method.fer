@@ -3,11 +3,11 @@ type Point struct {
     Y: i32
 }
 
-fn Point::Len2(&self) i32 {
+fn Point::Len2(&self) -> i32 {
     return self.X * self.X + self.Y * self.Y
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let p = .Point{ .X = 3, .Y = 4 }
     return p.Len2()
 }

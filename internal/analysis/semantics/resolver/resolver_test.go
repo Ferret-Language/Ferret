@@ -14,7 +14,7 @@ import (
 
 func TestResolverBindsQualifiedPaths(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 import "util/build" as build
 
 type Point struct {
@@ -26,7 +26,7 @@ fn main() -> i32 {
     return build::Point::Origin().X
 }
 `)
-	mustWriteResolver(t, filepath.Join(root, "util", "build.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "util", "build.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -36,7 +36,7 @@ fn Point::Origin() -> Point {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -76,18 +76,18 @@ fn Point::Origin() -> Point {
 
 func TestResolverBindsImportPathAndAliasAsModuleResolution(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 import "util/build" as build
 
 fn main() -> void {}
 `)
-	mustWriteResolver(t, filepath.Join(root, "util", "build.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "util", "build.fer"), `
 fn Pick() -> i32 {
     return 1
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -111,20 +111,20 @@ fn Pick() -> i32 {
 
 func TestResolverBindsImportedTypeMembers(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 import "util/colors"
 
 	fn main() -> colors::Color {
 	    return colors::Color::Red
 	}
 	`)
-	mustWriteResolver(t, filepath.Join(root, "util", "colors.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "util", "colors.fer"), `
 type Color enum {
     Red
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -146,7 +146,7 @@ type Color enum {
 
 func TestResolverBindsLabels(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 fn run(items: [3]i32) -> void {
     outer: for items |v| {
         inner: while 1 < 2 {
@@ -157,7 +157,7 @@ fn run(items: [3]i32) -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -179,7 +179,7 @@ fn run(items: [3]i32) -> void {
 
 func TestResolverBindsDeclarationIdents(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     x: i32 = 0
 }
@@ -200,7 +200,7 @@ fn run(items: [3]i32) -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -255,7 +255,7 @@ fn run(items: [3]i32) -> void {
 
 func TestResolverBindsSpreadArgumentIdent(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 fn sum(nums: ...i32) -> i32 {
     return nums[0]
 }
@@ -265,7 +265,7 @@ fn run(items: []i32) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -298,13 +298,13 @@ fn run(items: []i32) -> i32 {
 
 func TestResolverReportsUndefinedSymbol(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 fn run() -> i32 {
     return missing
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected undefined symbol diagnostic")
 	}
@@ -322,7 +322,7 @@ fn run() -> i32 {
 
 func TestResolverReportsRedeclaredLocalInSameScope(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 fn run() -> i32 {
     let x = 1
     let x = 2
@@ -330,7 +330,7 @@ fn run() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected redeclared symbol diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
@@ -348,7 +348,7 @@ fn run() -> i32 {
 
 func TestResolverAllowsDeclarationTypeParams(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 type Box<T> struct {
     Value: T
 }
@@ -358,7 +358,7 @@ fn Identity<T>(value: T) -> T {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -400,20 +400,20 @@ fn ClampToZero(value: i32) -> i32 {
 
 func TestResolverRejectsUnexportedImportedSymbol(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 import "util/build"
 
 fn main() -> i32 {
     return build::hidden()
 }
 `)
-	mustWriteResolver(t, filepath.Join(root, "util", "build.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "util", "build.fer"), `
 fn hidden() -> i32 {
     return 1
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected visibility diagnostic")
 	}
@@ -434,14 +434,14 @@ fn hidden() -> i32 {
 
 func TestResolverRejectsUnexportedImportedTypeMember(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 import "util/build"
 
 fn main() -> i32 {
     return build::Point::origin
 }
 `)
-	mustWriteResolver(t, filepath.Join(root, "util", "build.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "util", "build.fer"), `
 type Point struct {
 }
 
@@ -450,7 +450,7 @@ fn Point::origin() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected visibility diagnostic")
 	}
@@ -471,7 +471,7 @@ fn Point::origin() -> i32 {
 
 func TestResolverRejectsInvalidLabeledBreak(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "main.ferr"), `
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 fn run() -> void {
     done: if true {
         break done
@@ -479,7 +479,7 @@ fn run() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid break diagnostic")
 	}

@@ -10,7 +10,7 @@ import (
 func TestLexCompositeLiteralAndReceiverTokens(t *testing.T) {
 	src := `fn (p *Point) shift(dx i32) { let q: Point = .{ .x = 1 } }`
 	diag := diagnostics.NewDiagnosticBag("")
-	out := New("test.ferr", src, diag).Tokenize()
+	out := New("test.fer", src, diag).Tokenize()
 	if len(diag.Diagnostics()) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", diag.Diagnostics())
 	}
@@ -42,7 +42,7 @@ func TestLexAllNumberForms(t *testing.T) {
 
 	for _, src := range cases {
 		diag := diagnostics.NewDiagnosticBag("")
-		out := New("test.ferr", src, diag).Tokenize()
+		out := New("test.fer", src, diag).Tokenize()
 		if len(diag.Diagnostics()) != 0 {
 			t.Fatalf("%s: unexpected diagnostics: %v", src, diag.Diagnostics())
 		}
@@ -58,7 +58,7 @@ func TestLexAllNumberForms(t *testing.T) {
 func TestLexLoopControlKeywords(t *testing.T) {
 	src := `while cond { break; continue; }`
 	diag := diagnostics.NewDiagnosticBag("")
-	out := New("test.ferr", src, diag).Tokenize()
+	out := New("test.fer", src, diag).Tokenize()
 	if len(diag.Diagnostics()) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", diag.Diagnostics())
 	}

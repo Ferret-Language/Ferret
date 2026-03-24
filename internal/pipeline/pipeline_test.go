@@ -12,20 +12,20 @@ import (
 
 func TestPipelineParsesImportsAndReusesCachedModules(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `import "util";
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "util";
 
 fn build() -> i32 {
     return util::Value()
 }
 `)
-	mustWrite(t, filepath.Join(root, "util.ferr"), `fn Value() -> i32 {
+	mustWrite(t, filepath.Join(root, "util.fer"), `fn Value() -> i32 {
     return 1
 }
 `)
 
 	diag := diagnostics.NewDiagnosticBag("")
-	c := compiler.New(root, ".ferr", diag)
-	first := c.ParseEntry(filepath.Join(root, "main.ferr"))
+	c := compiler.New(root, ".fer", diag)
+	first := c.ParseEntry(filepath.Join(root, "main.fer"))
 	if first.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", first.Diagnostics.Diagnostics())
 	}
@@ -37,7 +37,7 @@ fn build() -> i32 {
 	}
 
 	firstAST := first.Entry.AST
-	second := c.ParseEntry(filepath.Join(root, "main.ferr"))
+	second := c.ParseEntry(filepath.Join(root, "main.fer"))
 	if second.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics on cached parse: %v", second.Diagnostics.Diagnostics())
 	}
@@ -48,14 +48,14 @@ fn build() -> i32 {
 
 func TestPipelineReportsImportCycle(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "a.ferr"), `import "b";
+	mustWrite(t, filepath.Join(root, "a.fer"), `import "b";
 fn a() -> i32 { return 1 }
 `)
-	mustWrite(t, filepath.Join(root, "b.ferr"), `import "a";
+	mustWrite(t, filepath.Join(root, "b.fer"), `import "a";
 fn b() -> i32 { return 2 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "a.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "a.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected cycle diagnostic")
 	}
@@ -73,20 +73,20 @@ fn b() -> i32 { return 2 }
 
 func TestPipelineParsesWholeWorkspace(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `import "util"
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "util"
 
 fn build() -> i32 {
     return util::Value()
 }
 `)
-	mustWrite(t, filepath.Join(root, "util.ferr"), `fn Value() -> i32 {
+	mustWrite(t, filepath.Join(root, "util.fer"), `fn Value() -> i32 {
     return 1
 }
 `)
-	mustWrite(t, filepath.Join(root, "extra.ferr"), `const BuildMode = "debug"
+	mustWrite(t, filepath.Join(root, "extra.fer"), `const BuildMode = "debug"
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseWorkspace()
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseWorkspace()
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
 	}
@@ -104,15 +104,15 @@ fn build() -> i32 {
 
 func TestPipelineReportsWorkspaceCycle(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "a.ferr"), `import "b"
+	mustWrite(t, filepath.Join(root, "a.fer"), `import "b"
 fn a() -> i32 { return 1 }
 `)
-	mustWrite(t, filepath.Join(root, "b.ferr"), `import "a"
+	mustWrite(t, filepath.Join(root, "b.fer"), `import "a"
 fn b() -> i32 { return 2 }
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `fn main() -> i32 { return 0 }`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `fn main() -> i32 { return 0 }`)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseWorkspace()
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseWorkspace()
 	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected cycle diagnostic")
 	}
@@ -130,12 +130,12 @@ fn b() -> i32 { return 2 }
 
 func TestPipelineRejectsRelativeImports(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `import "../util/build"
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "../util/build"
 
 fn main() -> i32 { return 0 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatalf("expected import path diagnostic")
 	}

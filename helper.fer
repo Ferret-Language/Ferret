@@ -1,5 +1,5 @@
 
 
-fn Getname() str {
+fn Getname() -> str {
     return "I am helper"
 }

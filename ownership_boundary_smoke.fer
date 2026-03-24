@@ -1,19 +1,19 @@
 import "std/mem"
 
-fn is_non_null(p: ^void) bool {
+fn is_non_null(p: ^void) -> bool {
     unsafe {
         let addr = p as usize
         return addr != 0
     }
 }
 
-fn assert_non_null(label: str, p: ^void) void {
+fn assert_non_null(label: str, p: ^void) -> void {
     if !is_non_null(p) {
         panic label
     }
 }
 
-fn main() void {
+fn main() -> void {
     let sys = mem::System()
     let raw = sys.Alloc(16)
     assert_non_null("alloc failed", raw)

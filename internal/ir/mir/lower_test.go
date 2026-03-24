@@ -15,7 +15,7 @@ import (
 
 func TestPipelineGeneratesMIR(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
     Y: i32 = 0
@@ -32,7 +32,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -104,7 +104,7 @@ fn main() -> i32 {
 
 func TestPipelineNormalizesMethodReceiverAsFirstArgument(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -119,7 +119,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -161,7 +161,7 @@ fn main() -> i32 {
 
 func TestPipelineNormalizesAttachedReferenceReceiverFromValueCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -177,7 +177,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -219,14 +219,14 @@ fn main() -> i32 {
 
 func TestPipelineLowersArrayLenToStaticValue(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 fn main() -> usize {
     let items: [_]i32 = [_]i32{1, 2, 3}
     return len(items)
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -265,7 +265,7 @@ fn main() -> usize {
 
 func TestPipelineLowersForLoopIndexUpdateToHiddenCounter(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     let items: [3]i32 = [3]i32{1, 2, 3}
     for items |v| {
@@ -274,7 +274,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -320,7 +320,7 @@ fn main() -> void {
 
 func TestPipelineLowersInterfaceCoercionWithMutableReceiver(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 type Reader interface {
     read(&mut self, buf: []u8) -> i32
 }
@@ -340,7 +340,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -402,7 +402,7 @@ fn main() -> i32 {
 
 func TestPipelineLowersGenericOwnerInterfaceCallCoercion(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 type Shape interface {
     Draw(&self)
 }
@@ -424,7 +424,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -507,7 +507,7 @@ fn main() -> void {
 
 func TestPipelineLowersVariadicSpreadCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 fn sum(nums: ...i32) -> i32 {
     return nums[0]
 }
@@ -517,7 +517,7 @@ fn main(items: []i32) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -561,7 +561,7 @@ fn main(items: []i32) -> i32 {
 
 func TestPipelineLowersConstrainedGenericMethodCallWithSpecializedOwnerPath(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 type Shape interface {
     Draw(&self)
 }
@@ -587,7 +587,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -645,7 +645,7 @@ func instrValue(instr mir.Instr) mir.Value {
 
 func TestPipelineLowersRawAddressCoercion(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -660,7 +660,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -712,13 +712,13 @@ fn main() -> i32 {
 
 func TestPipelineLowersStringLiteralDataAsRawPointer(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 fn main() -> str {
     return "hi"
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -761,7 +761,7 @@ fn main() -> str {
 
 func TestPipelinePreservesAnnotatedUnionLocalTypeInMIR(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -773,7 +773,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -795,7 +795,7 @@ fn main() -> i32 {
 
 func TestPipelineGeneratesExplicitAddrOfAndLoadInMIR(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -806,7 +806,7 @@ fn probe(p: *Point) -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -824,7 +824,7 @@ fn probe(p: *Point) -> void {
 
 func TestPipelinePreservesAddrOfLocalInsteadOfFoldingToConstant(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     let mut x = 10;
     let y = &mut x;
@@ -833,7 +833,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -848,13 +848,13 @@ fn main() -> void {
 
 func TestPipelineLowersPanicToMIRTerminator(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 fn fail() -> void {
     panic "bad"
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -882,7 +882,7 @@ fn fail() -> void {
 
 func TestPipelineLowersDeferredPanicCleanupToMIR(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 fn close() -> void {}
 
 fn fail() -> void {
@@ -891,7 +891,7 @@ fn fail() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -913,7 +913,7 @@ fn fail() -> void {
 
 func TestPipelineLowersDeferredReturnCleanupToMIR(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 fn close() -> void {}
 
 fn run() -> i32 {
@@ -922,7 +922,7 @@ fn run() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -959,7 +959,7 @@ fn run() -> i32 {
 
 func TestPipelineDoesNotLowerImplicitLifecycleHooksToMIR(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
     Y: i32 = 0
@@ -984,7 +984,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1021,7 +1021,7 @@ fn main() -> i32 {
 
 func TestPipelineHandlesLocalShadowingInMIR(t *testing.T) {
 	root := t.TempDir()
-	mustWriteIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let x = 1
     if true {
@@ -1032,7 +1032,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}

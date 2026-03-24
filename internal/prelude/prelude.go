@@ -58,12 +58,12 @@ func Load(ctx *context.CompilerContext) error {
 func findGlobalPrelude(ctx *context.CompilerContext) (string, error) {
 	candidates := make([]string, 0, 8)
 	if ctx.Config.StdlibRoot != "" {
-		candidates = append(candidates, filepath.Join(filepath.Dir(ctx.Config.StdlibRoot), "global.ferr"))
+		candidates = append(candidates, filepath.Join(filepath.Dir(ctx.Config.StdlibRoot), "global.fer"))
 	}
 	for current := filepath.Clean(ctx.Config.RootDir); ; current = filepath.Dir(current) {
 		candidates = append(candidates,
-			filepath.Join(current, "ferret_libs_dev", "global.ferr"),
-			filepath.Join(current, "libs", "global.ferr"),
+			filepath.Join(current, "ferret_libs_dev", "global.fer"),
+			filepath.Join(current, "libs", "global.fer"),
 		)
 		parent := filepath.Dir(current)
 		if parent == current {
@@ -73,15 +73,15 @@ func findGlobalPrelude(ctx *context.CompilerContext) (string, error) {
 	if execPath, err := os.Executable(); err == nil {
 		execDir := filepath.Dir(execPath)
 		candidates = append(candidates,
-			filepath.Join(execDir, "..", "ferret_libs_dev", "global.ferr"),
-			filepath.Join(execDir, "..", "libs", "global.ferr"),
+			filepath.Join(execDir, "..", "ferret_libs_dev", "global.fer"),
+			filepath.Join(execDir, "..", "libs", "global.fer"),
 		)
 	}
 	if _, file, _, ok := runtime.Caller(0); ok {
 		root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 		candidates = append(candidates,
-			filepath.Join(root, "ferret_libs_dev", "global.ferr"),
-			filepath.Join(root, "libs", "global.ferr"),
+			filepath.Join(root, "ferret_libs_dev", "global.fer"),
+			filepath.Join(root, "libs", "global.fer"),
 		)
 	}
 	seen := make(map[string]struct{}, len(candidates))

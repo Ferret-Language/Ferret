@@ -20,7 +20,7 @@ func TestIsPubName(t *testing.T) {
 }
 
 func TestNewSymbolAssignsLocationAndID(t *testing.T) {
-	loc := source.NewLocation("main.ferr", source.NewPosition(), source.NewPosition())
+	loc := source.NewLocation("main.fer", source.NewPosition(), source.NewPosition())
 	node := &ast.Ident{Path: []string{"X"}, Location: loc}
 
 	s1 := New("X", SymbolVar, node)

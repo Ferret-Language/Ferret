@@ -12,7 +12,7 @@ import (
 
 func TestLoadRegistersGlobalBuiltinsFromPrelude(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", "..", ".."))
-	ctx := context.New(root, ".ferr", diagnostics.NewDiagnosticBag(""))
+	ctx := context.New(root, ".fer", diagnostics.NewDiagnosticBag(""))
 	if err := Load(ctx); err != nil {
 		t.Fatalf("unexpected prelude load error: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestLoadRegistersGlobalBuiltinsFromPrelude(t *testing.T) {
 
 func TestLoadRegistersAnyAndPrintFromPrelude(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", "..", ".."))
-	ctx := context.New(root, ".ferr", diagnostics.NewDiagnosticBag(""))
+	ctx := context.New(root, ".fer", diagnostics.NewDiagnosticBag(""))
 	if err := Load(ctx); err != nil {
 		t.Fatalf("unexpected prelude load error: %v", err)
 	}

@@ -15,7 +15,7 @@ import (
 
 func TestPipelineGeneratesHIR(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -28,7 +28,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -82,7 +82,7 @@ fn main() -> i32 {
 
 func TestPipelineSpecializesGenericTopLevelFunctions(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 fn add<T>(a: T, b: T) -> T {
     return a + b
 }
@@ -92,7 +92,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -144,7 +144,7 @@ fn main() -> i32 {
 
 func TestPipelineSpecializesGenericMethodsAndTypes(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 type Box<T> struct {
     Value: T
 }
@@ -159,7 +159,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -230,7 +230,7 @@ fn main() -> i32 {
 
 func TestPipelineSpecializesGenericStaticOwnerMethodCallPath(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 type Circle<T> struct {
     Rad: T
 }
@@ -244,7 +244,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -295,7 +295,7 @@ fn main() -> void {
 
 func TestPipelineSpecializesInferredGenericStaticOwnerMethodCallPath(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 type Circle<T> struct {
     Rad: T
 }
@@ -309,7 +309,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -360,7 +360,7 @@ fn main() -> void {
 
 func TestPipelineSpecializesGenericOwnerMethodMutation(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
  type Point<T> struct {
      Value: T
  }
@@ -375,7 +375,7 @@ func TestPipelineSpecializesGenericOwnerMethodMutation(t *testing.T) {
  }
  `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -403,7 +403,7 @@ func TestPipelineSpecializesGenericOwnerMethodMutation(t *testing.T) {
 
 func TestPipelineSpecializesOnlyRequiredGenericOwnerMethods(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 type Shape interface {
     Draw(&self)
 }
@@ -433,7 +433,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -461,7 +461,7 @@ fn main() -> void {
 
 func TestPipelineKeepsDistinctSpecializationsForNamedAndTupleTypeArgs(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 type t_i32 struct {}
 
 type Wrap<T> struct {}
@@ -474,7 +474,7 @@ fn main() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -502,7 +502,7 @@ fn main() -> void {
 
 func TestPipelineKeepsDistinctStaticOwnerMethodSpecializationsForDifferentOwnerArgs(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 type Box<T> struct {}
 
 fn Box<T>::Id(v: T) -> T {
@@ -516,7 +516,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -547,21 +547,21 @@ fn main() -> i32 {
 
 func TestPipelineKeepsDistinctFunctionSpecializationsForCrossModuleSameTypeName(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "lib", "a.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "lib", "a.fer"), `
 type Data struct {}
 
 fn Make() -> Data {
     return .{}
 }
 `)
-	mustWriteHIR(t, filepath.Join(root, "lib", "b.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "lib", "b.fer"), `
 type Data struct {}
 
 fn Make() -> Data {
     return .{}
 }
 `)
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 import "lib/a"
 import "lib/b"
 
@@ -575,7 +575,7 @@ fn main() {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -603,21 +603,21 @@ fn main() {
 
 func TestPipelineKeepsDistinctTypeSpecializationsForCrossModuleSameTypeName(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "lib", "a.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "lib", "a.fer"), `
 type Data struct {}
 
 fn Make() -> Data {
     return .{}
 }
 `)
-	mustWriteHIR(t, filepath.Join(root, "lib", "b.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "lib", "b.fer"), `
 type Data struct {}
 
 fn Make() -> Data {
     return .{}
 }
 `)
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 import "lib/a"
 import "lib/b"
 
@@ -633,7 +633,7 @@ fn main() {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -661,7 +661,7 @@ fn main() {
 
 func TestPipelineCrossModuleSpecializesImportedGenericFunction(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "util", "math.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "util", "math.fer"), `
 fn Pick<T>(value: T) -> T {
     return value
 }
@@ -674,7 +674,7 @@ fn UsePickI64() -> i64 {
     return Pick(2 as i64)
 }
 `)
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 import "util/math"
 
 fn main() -> i32 {
@@ -682,7 +682,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -712,12 +712,12 @@ fn main() -> i32 {
 
 func TestPipelineCrossModuleSpecializesDirectImportedGenericFunctionCall(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "util", "math.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "util", "math.fer"), `
 fn Pick<T>(value: T) -> T {
     return value
 }
 `)
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 import "util/math"
 
 fn main() -> i32 {
@@ -725,7 +725,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -768,7 +768,7 @@ fn main() -> i32 {
 
 func TestPipelineCrossModuleSpecializesDirectImportedGenericTypeMethod(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "util", "box.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "util", "box.fer"), `
 type Box<T> struct {
     Value: T
 }
@@ -777,7 +777,7 @@ fn Box<T>::Get(&self) -> T {
     return self.Value
 }
 `)
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 import "util/box"
 
 fn main() -> i32 {
@@ -786,7 +786,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -836,7 +836,7 @@ fn main() -> i32 {
 
 func TestPipelineCrossModuleSpecializesDirectImportedGenericStaticOwnerMethod(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "util", "box.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "util", "box.fer"), `
 type Box<T> struct {
     Value: T
 }
@@ -845,7 +845,7 @@ fn Box<T>::New(v: T) -> Box<T> {
     return .{ .Value = v }
 }
 `)
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 import "util/box"
 
 fn main() -> i32 {
@@ -854,7 +854,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -877,7 +877,7 @@ fn main() -> i32 {
 
 func TestPipelineCrossModuleSpecializesImportedGenericTypeMethod(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "util", "box.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "util", "box.fer"), `
 type Box<T> struct {
     Value: T
 }
@@ -891,7 +891,7 @@ fn UseBoxGet() -> i32 {
     return b.Get()
 }
 `)
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 import "util/box"
 
 fn main() -> i32 {
@@ -899,7 +899,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {
@@ -950,8 +950,8 @@ func mustWriteHIR(t *testing.T, path, content string) {
 func TestHIRBorrowPrefixOpAndSpacing(t *testing.T) {
 	root := t.TempDir()
 	src := "fn main() {\n    let mut p = 1\n    let m = &mut p\n    m\n}\n"
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), src)
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), src)
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -984,7 +984,7 @@ func TestHIRBorrowPrefixOpAndSpacing(t *testing.T) {
 
 func TestLoweredHIRGenericMutBorrowSpacing(t *testing.T) {
 	root := t.TempDir()
-	mustWriteHIR(t, filepath.Join(root, "main.ferr"), `
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
 type Point<T> struct {
     Value: T
 }
@@ -1001,7 +1001,7 @@ fn main() {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
 		for _, diag := range result.Diagnostics.Diagnostics() {

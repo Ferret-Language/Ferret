@@ -10,7 +10,7 @@
  *   ferret__interface_panic — abort on a bad interface downcast (stub)
  *
  * Everything else (malloc/free, I/O, string building) is accessed through
- * ordinary #[extern] declarations in global.ferr and std/io.ferr, which bind
+ * ordinary #[extern] declarations in global.fer and std/io.fer, which bind
  * directly to libc at link time. Method dispatch stays compiler-emitted;
  * the only runtime Any dispatch here is for helpers such as print.
  */

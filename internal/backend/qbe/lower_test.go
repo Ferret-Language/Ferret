@@ -236,7 +236,7 @@ fn main() -> i32 {
 
 func TestLowerAggregateLoadAssignmentToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn run(mut c: *Conn) -> void {
@@ -244,7 +244,7 @@ fn run(mut c: *Conn) -> void {
     r
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -259,13 +259,13 @@ fn run(mut c: *Conn) -> void {
 
 func TestLowerBuiltinLenArrayToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main() -> usize {
     let items: [_]i32 = [_]i32{1, 2, 3}
     return len(items)
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -285,12 +285,12 @@ fn main() -> usize {
 
 func TestLowerBuiltinLenSliceToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main(items: []i32) -> usize {
     return len(items)
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -310,12 +310,12 @@ fn main(items: []i32) -> usize {
 
 func TestLowerBuiltinLenStringToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main(s: str) -> usize {
     return len(s)
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -335,13 +335,13 @@ fn main(s: str) -> usize {
 
 func TestLowerSliceLiteralToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let items: []i32 = []i32{1, 2, 3}
     return items[1]
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -369,7 +369,7 @@ fn main() -> i32 {
 
 func TestLowerArrayToSliceCallToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn head(items: []i32) -> i32 {
     return items[0]
 }
@@ -379,7 +379,7 @@ fn main() -> i32 {
     return head(items)
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -404,14 +404,14 @@ fn main() -> i32 {
 
 func TestLowerStringSliceCastsToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main(s: str) -> str {
     let bytes = s as []u8
     let text = bytes as str
     return text
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -436,7 +436,7 @@ fn main(s: str) -> str {
 
 func TestLowerReceiverFieldReadToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     Value: i32 = 0
 }
@@ -445,7 +445,7 @@ fn Point::Incr(&mut self) -> void {
     self.Value = self.Value + 1
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -460,7 +460,7 @@ fn Point::Incr(&mut self) -> void {
 
 func TestLowerExternFunctionCallToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 #[extern("ferret_math_abs_i32")]
 fn AbsI32(value: i32) -> i32;
 
@@ -468,7 +468,7 @@ fn main() -> i32 {
     return AbsI32(-1)
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -487,18 +487,18 @@ fn main() -> i32 {
 
 func TestLowerDefaultExternFunctionCallToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
 #[extern]
 fn Println(text: str) -> void;
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 import "std/io"
 
 fn main() -> void {
     io::Println("hello")
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -517,7 +517,7 @@ fn main() -> void {
 
 func TestLowerImportedStructTypeToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "math", "vec2.ferr"), `
+	mustWrite(t, filepath.Join(root, "math", "vec2.fer"), `
 type Vec2 struct {
     X: i32 = 0
     Y: i32 = 0
@@ -527,7 +527,7 @@ fn Origin() -> Vec2 {
     return .{ .X = 1, .Y = 2 }
 }
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 import "math/vec2"
 
 fn main() -> i32 {
@@ -535,7 +535,7 @@ fn main() -> i32 {
     return p.X
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -561,13 +561,13 @@ fn main() -> i32 {
 
 func TestLowerNumericToStringCastToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     let text = 42 as str
     print(text)
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -592,7 +592,7 @@ fn main() -> void {
 
 func TestLowerUnionLocalAssignmentToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -604,7 +604,7 @@ fn main() -> i32 {
     return 0
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -632,7 +632,7 @@ fn main() -> i32 {
 
 func TestLowerRawAddressLocalToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let a = 10
     unsafe {
@@ -642,7 +642,7 @@ fn main() -> i32 {
     return 0
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -670,7 +670,7 @@ fn main() -> i32 {
 
 func TestLowerUnionExtractCastToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -685,7 +685,7 @@ fn main(flag: bool) -> i32 {
     return out
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -715,7 +715,7 @@ fn main(flag: bool) -> i32 {
 
 func TestLowerUnionGlobalToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Token union {
     i32,
     i64,
@@ -728,7 +728,7 @@ fn main() -> i32 {
     return out
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -755,14 +755,14 @@ fn main() -> i32 {
 
 func TestLowerIntegerToRawPointerCastToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main() -> ^void {
     unsafe {
         return 0 as ^void
     }
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -822,7 +822,7 @@ func testUnit(result compiler.Result) *backend.Unit {
 
 func TestLowerMethodCallToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
     Y: i32 = 0
@@ -837,7 +837,7 @@ fn main() -> i32 {
     return p.Len2()
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -862,7 +862,7 @@ fn main() -> i32 {
 
 func TestLowerInterfaceDispatchToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Stringer interface {
     String(self) -> str
 }
@@ -881,7 +881,7 @@ fn main() -> str {
     return s.String()
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -909,7 +909,7 @@ fn main() -> str {
 
 func TestLowerImportedInterfaceDispatchToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "util", "name.ferr"), `
+	mustWrite(t, filepath.Join(root, "util", "name.fer"), `
 type Name struct {
     value: i32 = 0
 }
@@ -922,7 +922,7 @@ fn Name::String(self) -> str {
     return 1 as str
 }
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 import "util/name"
 
 type Stringer interface {
@@ -935,7 +935,7 @@ fn main() -> str {
     return s.String()
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -961,7 +961,7 @@ fn main() -> str {
 
 func TestLowerGlobalInterfaceValueToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Stringer interface {
     String(self) -> str
 }
@@ -981,7 +981,7 @@ fn main() -> str {
     return GlobalStringer.String()
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1006,7 +1006,7 @@ fn main() -> str {
 
 func TestLowerEnumValuesToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Color enum {
     Red,
     Green,
@@ -1027,7 +1027,7 @@ fn main(flag: bool) -> i32 {
     return 2
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1058,13 +1058,13 @@ fn main(flag: bool) -> i32 {
 
 func TestLowerSliceIndexToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main(items: []i32) -> i32 {
     let n = items[1]
     return n
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1090,14 +1090,14 @@ fn main(items: []i32) -> i32 {
 
 func TestLowerLocalArrayLiteralAndIndexToQBE(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     let arr: [3]i32 = [3]i32{1, 2, 3}
     let n = arr[1]
     return n
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -1122,12 +1122,12 @@ fn main() -> i32 {
 
 func TestLowerUnsupportedFunctionResultTypeReturnsError(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     return 1
 }
 `)
-	result := compiler.ParsePath(filepath.Join(root, "main.ferr"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}

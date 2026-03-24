@@ -23,7 +23,7 @@ fn who(s: Shape) {
     s.Show()
 }
 
-fn main() i32 {
+fn main() -> i32 {
     let mut p: Point = .{}
     //let px = p
     print(p.X)

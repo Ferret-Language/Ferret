@@ -14,7 +14,7 @@ func testLoc(file string, line, col int) source.Location {
 
 func TestWithSecondaryLabelRequiresPrimary(t *testing.T) {
 	d := NewError("boom")
-	loc := testLoc("a.ferr", 1, 1)
+	loc := testLoc("a.fer", 1, 1)
 
 	d.WithSecondaryLabel(&loc, "context")
 	if d.Severity != Error {
@@ -39,7 +39,7 @@ func TestWithSecondaryLabelRequiresPrimary(t *testing.T) {
 
 func TestWithCodeReplacementAddsOrderedExtra(t *testing.T) {
 	d := NewError("immutable")
-	loc := testLoc("main.ferr", 2, 5)
+	loc := testLoc("main.fer", 2, 5)
 	d.WithCodeReplacement(&loc, "maybe", "mut maybe")
 
 	if len(d.Extras) != 1 {
@@ -65,11 +65,11 @@ func TestWithCodeReplacementAddsOrderedExtra(t *testing.T) {
 
 func TestWithPrimaryLabelSetsFilePath(t *testing.T) {
 	d := NewError("x")
-	loc := testLoc("sample.ferr", 3, 2)
+	loc := testLoc("sample.fer", 3, 2)
 	d.WithPrimaryLabel(&loc, "here")
 
-	if d.FilePath != "sample.ferr" {
-		t.Fatalf("expected filepath sample.ferr, got %q", d.FilePath)
+	if d.FilePath != "sample.fer" {
+		t.Fatalf("expected filepath sample.fer, got %q", d.FilePath)
 	}
 	if len(d.Labels) != 1 || d.Labels[0].Style != Primary {
 		t.Fatalf("expected one primary label, got %#v", d.Labels)

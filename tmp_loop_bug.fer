@@ -1,6 +1,6 @@
 type Conn struct {}
 
-fn run(mut p: *Conn, mut q: *Conn) *Conn {
+fn run(mut p: *Conn, mut q: *Conn) -> *Conn {
     let mut i: i32 = 0
     while i < 1 {
         let t = p

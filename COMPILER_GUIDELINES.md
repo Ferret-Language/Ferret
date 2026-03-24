@@ -97,8 +97,8 @@ These decisions are already part of the language design and should not drift acc
   - `^T`
   - `^const T`
 - `defer` and `panic` are part of the core control-flow model
-- builtin functions are declared in `ferret_libs_dev/global.ferr`
-- stdlib source modules are declared in `ferret_libs_dev/std/*.ferr`
+- builtin functions are declared in `ferret_libs_dev/global.fer`
+- stdlib source modules are declared in `ferret_libs_dev/std/*.fer`
 - builtin declarations use `#[builtin]` and may omit a body
 - external declarations use `#[extern(\"...\")]` and may omit a body
 - error unions are explicit value-level control flow and are not exceptions

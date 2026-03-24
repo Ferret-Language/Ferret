@@ -1,18 +1,18 @@
 import "std/mem"
 
-fn is_non_null(p: ^void) bool {
+fn is_non_null(p: ^void) -> bool {
     unsafe {
         return (p as usize) != 0
     }
 }
 
-fn must_non_null(label: str, p: ^void) void {
+fn must_non_null(label: str, p: ^void) -> void {
     if !is_non_null(p) {
         panic label
     }
 }
 
-fn main() void {
+fn main() -> void {
     let mut arena = mem::Arena(8)
 
     let p1 = arena.Alloc(8)

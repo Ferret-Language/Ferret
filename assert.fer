@@ -1,6 +1,6 @@
 
 
-fn assert(comptime cond: bool, comptime msg: str) void {
+fn assert(comptime cond: bool, comptime msg: str) -> void {
     if cond == false {
         panic msg
     } 

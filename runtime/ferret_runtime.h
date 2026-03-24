@@ -67,13 +67,13 @@ typedef struct {
  *
  *   global__panic           — `panic(msg str)` keyword lowering hook
  *   ferret__panic           — compiler-internal panic with a C string
- *   ferret_global_recover   — `recover()` extern from global.ferr
+ *   ferret_global_recover   — `recover()` extern from global.fer
  *   ferret__interface_panic — bad interface downcast (stub, ABI frozen)
  * -------------------------------------------------------------------------*/
 
 /* global__panic — the Ferret-callable `panic(msg *str)` builtin.
  *
- * Declared as #[builtin] fn panic(msg *str) void in global.ferr.
+ * Declared as #[builtin] fn panic(msg *str) void in global.fer.
  * The compiler mangles this to global__panic.  str is a move type so callers
  * pass a reference (*str); the C side receives a const FerretStr*.
  * Does not return.
@@ -131,7 +131,7 @@ void ferret_global_print(const FerretAny *value);
  * str_data / str_len  — extract fields from a str fat-pointer.
  *
  * These back the #[extern] fn str_data(s *str) *raw
- * and #[extern] fn str_len(s *str) usize declarations in global.ferr.
+ * and #[extern] fn str_len(s *str) usize declarations in global.fer.
  *
  * Using them via a function call is safe; the caller keeps the str alive
  * for the duration of any use of the returned pointer.
@@ -181,7 +181,7 @@ FerretStr ferret_global_f64_str(ferret_f64 value);
 /* -------------------------------------------------------------------------
  * std/os helpers
  *
- * These back the declarations in std/os.ferr.
+ * These back the declarations in std/os.fer.
  * -------------------------------------------------------------------------*/
 
 ferret_usize ferret_os_cpu_count(void);

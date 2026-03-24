@@ -21,7 +21,7 @@ json = "./deps/json"
 name = "json"
 `)
 
-	ws, err := Load(root, ".ferr")
+	ws, err := Load(root, ".fer")
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
@@ -44,7 +44,7 @@ name = "app"
 		t.Fatal(err)
 	}
 
-	ws, err := Load(root, ".ferr")
+	ws, err := Load(root, ".fer")
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestLoadFindsStdlibRootWithoutManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ws, err := Load(root, ".ferr")
+	ws, err := Load(root, ".fer")
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
@@ -77,7 +77,7 @@ name = "app"
 [dependencies]
 json = "github.com/acme/json@v1.0.0"
 `)
-	if _, err := Load(root, ".ferr"); err == nil {
+	if _, err := Load(root, ".fer"); err == nil {
 		t.Fatal("expected unlocked remote dependency error")
 	}
 }
@@ -104,7 +104,7 @@ json = "github.com/acme/json@v1.0.0"
 name = "json"
 `)
 
-	ws, err := Load(root, ".ferr")
+	ws, err := Load(root, ".fer")
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}

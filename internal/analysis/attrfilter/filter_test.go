@@ -36,7 +36,7 @@ func TestFilterModuleIfAndIfNot(t *testing.T) {
 func TestFilterModuleInvalidAttrReportsDiagnostic(t *testing.T) {
 	diag := diagnostics.NewDiagnosticBag("")
 	ctx := context.NewWithConfig(context.Config{}, diag)
-	loc := source.NewLocation("main.ferr", source.NewPosition(), source.NewPosition())
+	loc := source.NewLocation("main.fer", source.NewPosition(), source.NewPosition())
 	mod := &context.Module{
 		AST: &ast.Module{
 			Decls: []ast.Decl{

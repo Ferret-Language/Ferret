@@ -26,7 +26,7 @@ func TestModuleInfoBinders(t *testing.T) {
 		t.Fatalf("module info maps must be initialized")
 	}
 
-	node := &ast.Ident{Path: []string{"x"}, Location: source.NewLocation("main.ferr", source.NewPosition(), source.NewPosition())}
+	node := &ast.Ident{Path: []string{"x"}, Location: source.NewLocation("main.fer", source.NewPosition(), source.NewPosition())}
 	res := &Resolution{Kind: ResolutionModule, ModuleKey: "m"}
 	info.BindNode(node, res)
 	if got := info.Nodes[node]; got != res {

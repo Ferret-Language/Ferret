@@ -1,22 +1,22 @@
-fn assert_i32(label: str, got: i32, want: i32) void {
+fn assert_i32(label: str, got: i32, want: i32) -> void {
     if got != want {
         panic label
     }
 }
 
-fn sum3(items: []i32) i32 {
+fn sum3(items: []i32) -> i32 {
     return items[0] + items[1] + items[2]
 }
 
-fn set_first(items: []mut i32, value: i32) void {
+fn set_first(items: []mut i32, value: i32) -> void {
     items[0] = value
 }
 
-fn set_second(items: []mut i32, value: i32) void {
+fn set_second(items: []mut i32, value: i32) -> void {
     items[1] = value
 }
 
-fn main() void {
+fn main() -> void {
     let mut items: [3]i32 = [3]i32{1, 2, 3}
 
     assert_i32("array to readonly slice call failed", sum3(items), 6)

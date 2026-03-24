@@ -53,7 +53,7 @@ version = "0.0.1"
 description = %q
 author = %q
 compiler = "<=%s"
-	entry = "main.ferr"
+	entry = "main.fer"
 
 [dependencies]
 `, projectName, description, author, compiler.CompilerVersion)
@@ -62,7 +62,7 @@ compiler = "<=%s"
 		return err
 	}
 
-	if _, err := os.Stat("main.ferr"); os.IsNotExist(err) {
+	if _, err := os.Stat("main.fer"); os.IsNotExist(err) {
 		mainContent := `import "std/io"
 
 fn main() i32 {
@@ -70,16 +70,16 @@ fn main() i32 {
 	return 0
 }
 `
-		if err := os.WriteFile("main.ferr", []byte(mainContent), 0o644); err != nil {
+		if err := os.WriteFile("main.fer", []byte(mainContent), 0o644); err != nil {
 			return err
 		}
-		printSuccess("Created main.ferr")
+		printSuccess("Created main.fer")
 	}
 
 	printSuccess(fmt.Sprintf("Initialized project: %s", projectName))
 	fmt.Println("\nNext steps:")
 	fmt.Println("  1. Edit fer.ret to add dependencies")
 	fmt.Println("  2. Run: ferret get")
-	fmt.Println("  3. Run: ferret main.ferr")
+	fmt.Println("  3. Run: ferret main.fer")
 	return nil
 }

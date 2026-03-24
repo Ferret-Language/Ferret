@@ -1,0 +1,8 @@
+import "std/os"
+
+fn main() -> void {
+    print(os::Platform())
+    print(os::Arch())
+    print(os::OSName())
+    print(os::CPUCount())
+}

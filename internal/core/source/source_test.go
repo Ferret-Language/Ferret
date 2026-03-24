@@ -31,7 +31,7 @@ func TestPositionAdvance(t *testing.T) {
 
 func TestLocationGetTextAndRange(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	content := "hello world\nsecond line\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)

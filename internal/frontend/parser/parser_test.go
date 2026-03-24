@@ -12,8 +12,8 @@ import (
 func parseTestModule(t *testing.T, src string) (*ast.Module, *diagnostics.DiagnosticBag) {
 	t.Helper()
 	diag := diagnostics.NewDiagnosticBag("")
-	toks := lexer.New("test.ferr", src, diag).Tokenize()
-	mod := New("test.ferr", toks, diag).ParseModule()
+	toks := lexer.New("test.fer", src, diag).Tokenize()
+	mod := New("test.fer", toks, diag).ParseModule()
 	return mod, diag
 }
 

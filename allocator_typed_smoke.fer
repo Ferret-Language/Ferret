@@ -1,12 +1,12 @@
 import "std/mem"
 
-fn is_non_null(p: ^void) bool {
+fn is_non_null(p: ^void) -> bool {
     unsafe {
         return (p as usize) != 0
     }
 }
 
-fn assert_raw_non_null<T>(label: str, p: ^T) void {
+fn assert_raw_non_null<T>(label: str, p: ^T) -> void {
     unsafe {
         if !is_non_null(p as ^void) {
             panic label
@@ -14,7 +14,7 @@ fn assert_raw_non_null<T>(label: str, p: ^T) void {
     }
 }
 
-fn main() void {
+fn main() -> void {
     let sys = mem::System()
 
     let p1 = mem::AllocAs<i32>(sys, 4)

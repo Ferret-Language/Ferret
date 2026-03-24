@@ -1,13 +1,13 @@
 import "std/mem"
 import "status_test/lib"
 
-fn assert_eq_i32(label: str, got: i32, want: i32) void {
+fn assert_eq_i32(label: str, got: i32, want: i32) -> void {
     if got != want {
         panic label
     }
 }
 
-fn assert_non_null(label: str, p: ^void) void {
+fn assert_non_null(label: str, p: ^void) -> void {
     unsafe {
         if (p as usize) == 0 {
             panic label
@@ -20,7 +20,7 @@ type point struct {
     y: i32
 }
 
-fn main() void {
+fn main() -> void {
     // Works: cross-module generic function (inferred + explicit type args).
     let a = lib::Id(7)
     let b = lib::Id<i32>(9)

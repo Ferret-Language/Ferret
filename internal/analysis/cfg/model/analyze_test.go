@@ -14,7 +14,7 @@ import (
 
 func TestCFGReportsMissingReturn(t *testing.T) {
 	root := t.TempDir()
-	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+	mustWriteCFG(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     if true {
         return 1
@@ -22,7 +22,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -42,14 +42,14 @@ fn main() -> i32 {
 
 func TestCFGReportsUnreachableCode(t *testing.T) {
 	root := t.TempDir()
-	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+	mustWriteCFG(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     return 1
     let x = 2
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -67,7 +67,7 @@ fn main() -> i32 {
 
 func TestCFGAllowsMatchFallbackReturn(t *testing.T) {
 	root := t.TempDir()
-	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+	mustWriteCFG(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     match 1 {
     0 => {
@@ -81,7 +81,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -94,14 +94,14 @@ fn main() -> i32 {
 
 func TestCFGTreatsPanicAsTerminator(t *testing.T) {
 	root := t.TempDir()
-	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+	mustWriteCFG(t, filepath.Join(root, "main.fer"), `
 fn fail() -> void {
     panic "bad"
     let x = 1
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -132,7 +132,7 @@ fn fail() -> void {
 
 func TestCFGBuildsCleanupEdgeForDeferredPanic(t *testing.T) {
 	root := t.TempDir()
-	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+	mustWriteCFG(t, filepath.Join(root, "main.fer"), `
 fn close() -> void {}
 
 fn fail() -> void {
@@ -141,7 +141,7 @@ fn fail() -> void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -172,7 +172,7 @@ fn fail() -> void {
 
 func TestCFGReportsMissingReturnInMatchFallback(t *testing.T) {
 	root := t.TempDir()
-	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+	mustWriteCFG(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
     match 1 {
     0 => {
@@ -185,7 +185,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -202,7 +202,7 @@ fn main() -> i32 {
 
 func TestCFGLivenessTracksStraightLineLocals(t *testing.T) {
 	root := t.TempDir()
-	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+	mustWriteCFG(t, filepath.Join(root, "main.fer"), `
 fn main(a: i32) -> i32 {
     let b = a
     let c = b
@@ -210,7 +210,7 @@ fn main(a: i32) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -238,7 +238,7 @@ fn main(a: i32) -> i32 {
 
 func TestCFGLivenessFlowsAcrossIfBranches(t *testing.T) {
 	root := t.TempDir()
-	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+	mustWriteCFG(t, filepath.Join(root, "main.fer"), `
 fn main(a: i32, b: i32) -> i32 {
     let x = a
     if b > 0 {
@@ -248,7 +248,7 @@ fn main(a: i32, b: i32) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -271,7 +271,7 @@ fn main(a: i32, b: i32) -> i32 {
 
 func TestCFGLivenessHandlesLoopBackEdge(t *testing.T) {
 	root := t.TempDir()
-	mustWriteCFG(t, filepath.Join(root, "main.ferr"), `
+	mustWriteCFG(t, filepath.Join(root, "main.fer"), `
 fn main(n: i32) -> i32 {
     let mut m: i32 = n
     let mut x: i32 = 0
@@ -283,7 +283,7 @@ fn main(n: i32) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}

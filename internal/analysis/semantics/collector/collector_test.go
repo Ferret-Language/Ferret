@@ -14,7 +14,7 @@ import (
 
 func TestCollectorBuildsModuleScopeAndMethodSets(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 let mut GlobalCount: i32 = 0
 const BuildMode = "debug"
 
@@ -34,7 +34,7 @@ fn Point::Shift(*self, dx: i32) {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
 	}
@@ -76,14 +76,14 @@ fn Point::Shift(*self, dx: i32) {
 
 func TestCollectorReportsDuplicateTopLevelSymbols(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 const Build = 1
 fn Build() -> i32 {
     return 0
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected duplicate symbol diagnostic")
 	}
@@ -101,7 +101,7 @@ fn Build() -> i32 {
 
 func TestCollectorReportsDuplicateMethodsPerReceiver(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Point struct {}
 
 fn Point::Len(*self) -> i32 {
@@ -113,7 +113,7 @@ fn Point::Len(*self) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected duplicate method diagnostic")
 	}
@@ -131,7 +131,7 @@ fn Point::Len(*self) -> i32 {
 
 func TestCollectorKeepsReceiverFormMethodSetsSeparate(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -153,7 +153,7 @@ fn Point::Take(*self) -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
 	}

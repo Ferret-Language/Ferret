@@ -22,7 +22,7 @@ fn takeVal(v: &mut i32) {
     _ = v
 }
 
-fn give2() i32 {
+fn give2() -> i32 {
     return 2
 }
 
@@ -39,13 +39,13 @@ type Number union {
 // It just checks if the type arg can be used or not.
 // very similar to how typechecker checks type compatibility of two bindings when assigning.
 
-fn add<T: Number>(a: T, b: T) T {
+fn add<T: Number>(a: T, b: T) -> T {
     return a + b // This always returns T, not number
 }
 
-fn add(a: Number, b: Number) Number {
-    return a + b // but this always returns the wraped type. Thats the difference
-}
+// fn add(a: Number, b: Number) -> Number {
+//     return a + b // but this always returns the wraped type. Thats the difference
+// }
 
 
 fn main() {
