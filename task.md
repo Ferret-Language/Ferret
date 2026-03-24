@@ -23,9 +23,9 @@ Files:
 - [*] Follow-up: investigate runtime crash path for allocator-interface `Realloc(...)` calls (observed in dedicated typed/realloc smoke runs).
 
 Files:
-- `ferret_libs_dev/std/mem.ferr`
-- `allocator_smoke.ferr`
-- `allocator_ffi_smoke.ferr`
+- `ferret_libs_dev/std/mem.fer`
+- `allocator_smoke.fer`
+- `allocator_ffi_smoke.fer`
 
 ## Track C: Language Server + Docs
 
@@ -47,8 +47,8 @@ Files:
 Commands:
 - `go test ./internal/analysis/semantics/typechecker`
 - `./build.sh`
-- `ferret -backend llvm -k -o app <file>.ferr`
-- `ferret -backend qbe -k -o app <file>.ferr`
+- `ferret -backend llvm -k -o app <file>.fer`
+- `ferret -backend qbe -k -o app <file>.fer`
 
 ## Track E: Slice + Variadic + String Surface
 

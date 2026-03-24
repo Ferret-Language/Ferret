@@ -14,7 +14,7 @@ import (
 )
 
 const CompilerVersion = "0.0.2"
-const FerretSourceExt = ".ferr"
+const FerretSourceExt = ".fer"
 
 type Result struct {
 	Entry         *context.Module
@@ -69,7 +69,7 @@ func parsePath(path string, mode parseMode) Result {
 		return Result{Diagnostics: diag}
 	}
 	if info.IsDir() {
-		ws, err := project.Load(absPath, ".ferr")
+		ws, err := project.Load(absPath, ".fer")
 		if err != nil {
 			diag.Add(diagnostics.NewError(err.Error()))
 			return Result{Diagnostics: diag}

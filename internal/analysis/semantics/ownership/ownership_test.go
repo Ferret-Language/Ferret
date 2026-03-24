@@ -7,12 +7,12 @@ import (
 
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	compiler "compiler/internal/driver"
+	"compiler/internal/driver"
 )
 
 func TestOwnershipPhaseAllowsPlainStructCopy(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -24,7 +24,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -46,7 +46,7 @@ fn main() i32 {
 
 func TestOwnershipPhaseConsumesOwningReceiver(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn Conn::Close(*self) void {
@@ -58,7 +58,7 @@ fn run(c: *Conn) void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -72,7 +72,7 @@ fn run(c: *Conn) void {
 
 func TestOwnershipPhaseAllowsPlainStructCopyThroughLoop(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -87,7 +87,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -100,14 +100,14 @@ fn main() i32 {
 
 func TestOwnershipPhaseAllowsArrayCopyByDefault(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 fn main(items: [3]i32) i32 {
     let other = items
     return items[0] + other[1]
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -120,7 +120,7 @@ fn main(items: [3]i32) i32 {
 
 func TestOwnershipPhaseAllowsOwningParamRebindAfterMove(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn main(mut p: *Conn, mut q: *Conn) *Conn {
@@ -130,7 +130,7 @@ fn main(mut p: *Conn, mut q: *Conn) *Conn {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -143,7 +143,7 @@ fn main(mut p: *Conn, mut q: *Conn) *Conn {
 
 func TestOwnershipPhaseAllowsOwningParamLoopRebindAfterMove(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn main(mut p: *Conn, mut q: *Conn) *Conn {
@@ -157,7 +157,7 @@ fn main(mut p: *Conn, mut q: *Conn) *Conn {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -170,7 +170,7 @@ fn main(mut p: *Conn, mut q: *Conn) *Conn {
 
 func TestOwnershipPhaseAllowsLoopReinitialization(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     X: i32 = 0
 }
@@ -187,7 +187,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -200,7 +200,7 @@ fn main() i32 {
 
 func TestOwnershipPhaseFreezesBorrowedOwnerWithinBlock(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn useConn(c: *Conn) void {
@@ -215,7 +215,7 @@ fn run(c: *Conn) void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -229,7 +229,7 @@ fn run(c: *Conn) void {
 
 func TestOwnershipPhaseReleasesBorrowAfterLastUse(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn useConn(c: *Conn) void {
@@ -242,7 +242,7 @@ fn run(c: *Conn) void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -255,7 +255,7 @@ fn run(c: *Conn) void {
 
 func TestOwnershipPhaseRejectsReturnedBorrow(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn borrow(c: *Conn) &Conn {
@@ -263,7 +263,7 @@ fn borrow(c: *Conn) &Conn {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -277,7 +277,7 @@ fn borrow(c: *Conn) &Conn {
 
 func TestOwnershipPhaseRejectsReturnedBorrowBinding(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn borrow(c: *Conn) &Conn {
@@ -286,7 +286,7 @@ fn borrow(c: *Conn) &Conn {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -300,7 +300,7 @@ fn borrow(c: *Conn) &Conn {
 
 func TestOwnershipPhaseRejectsDeferredBorrowCapture(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     Value: i32 = 0
 }
@@ -315,7 +315,7 @@ fn run() void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -329,7 +329,7 @@ fn run() void {
 
 func TestOwnershipPhaseRejectsImmutableBorrowWhileMutableBorrowIsLive(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn run(mut c: *Conn) void {
@@ -340,7 +340,7 @@ fn run(mut c: *Conn) void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -354,7 +354,7 @@ fn run(mut c: *Conn) void {
 
 func TestOwnershipPhaseRejectsUseWhileMutableBorrowBindingIsStillLive(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 fn run() void {
     let mut x = 10
     let y = &mut x
@@ -363,7 +363,7 @@ fn run() void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -377,7 +377,7 @@ fn run() void {
 
 func TestOwnershipPhaseAllowsMultipleImmutableBorrows(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Point struct {
     Value: i32 = 0
 }
@@ -391,7 +391,7 @@ fn run() void {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -404,7 +404,7 @@ fn run() void {
 
 func TestOwnershipPhaseAllowsPlainEnumCopySemantics(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Handle enum {
     stdin,
     stdout,
@@ -425,7 +425,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -438,7 +438,7 @@ fn main() i32 {
 
 func TestOwnershipPhaseAllowsExplicitCopyOfPlainEnum(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Handle enum {
     stdin,
     stdout,
@@ -457,7 +457,7 @@ fn main() i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -468,7 +468,7 @@ fn main() i32 {
 
 func TestOwnershipPhaseRejectsWholeValueUseAfterFieldMove(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Node struct {
     Child: *Node
     Value: i32 = 0
@@ -481,7 +481,7 @@ fn main(n: Node) i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -495,7 +495,7 @@ fn main(n: Node) i32 {
 
 func TestOwnershipPhaseAllowsWholeValueUseAfterCopyingPlainField(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Node struct {
     Child: *Node
     Value: i32 = 0
@@ -508,7 +508,7 @@ fn main(n: Node) i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -521,7 +521,7 @@ fn main(n: Node) i32 {
 
 func TestOwnershipPhaseAllowsOtherFieldAfterFieldMove(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Node struct {
     Child: *Node
     Value: i32 = 0
@@ -533,7 +533,7 @@ fn main(n: Node) i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -546,7 +546,7 @@ fn main(n: Node) i32 {
 
 func TestOwnershipPhaseAllowsFieldReinitializationAfterFieldMove(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Node struct {
     Child: *Node
     Value: i32 = 0
@@ -561,7 +561,7 @@ fn main(n: Node, replacement: *Node) i32 {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}
@@ -574,7 +574,7 @@ fn main(n: Node, replacement: *Node) i32 {
 
 func TestOwnershipPhaseRejectsConditionalUseAfterMove(t *testing.T) {
 	root := t.TempDir()
-	mustWriteOwnership(t, filepath.Join(root, "main.ferr"), `
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
 type Conn struct {}
 
 fn main(mut p: *Conn, cond: bool) *Conn {
@@ -585,7 +585,7 @@ fn main(mut p: *Conn, cond: bool) *Conn {
 }
 `)
 
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
 		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
 	}

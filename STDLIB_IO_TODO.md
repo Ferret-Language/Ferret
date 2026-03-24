@@ -43,9 +43,9 @@ Current runtime is centralized in `runtime/ferret_runtime.c/h`.
 
 ## 5) Validation Matrix
 
-- [ ] add smoke: `io_writer_smoke.ferr` (single API call works with stdout writer)
-- [ ] add smoke: `io_file_smoke.ferr` (write/read/close roundtrip via `std/fs`)
-- [ ] add smoke: `io_copy_smoke.ferr` (copy stdin/file/network-like reader->writer)
+- [ ] add smoke: `io_writer_smoke.fer` (single API call works with stdout writer)
+- [ ] add smoke: `io_file_smoke.fer` (write/read/close roundtrip via `std/fs`)
+- [ ] add smoke: `io_copy_smoke.fer` (copy stdin/file/network-like reader->writer)
 - [ ] run backends:
   - `ferret -backend llvm ...`
   - `ferret -backend qbe ...`

@@ -1,9 +1,9 @@
-package ownershipv2
+package ownership
 
 import (
 	"strconv"
 
-	cfg "compiler/internal/analysis/cfg/model"
+	"compiler/internal/analysis/cfg/model"
 	"compiler/internal/ir/mir"
 )
 

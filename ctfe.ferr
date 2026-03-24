@@ -1,4 +1,4 @@
-// ctfe.ferr
+// ctfe.fer
 // Incremental CTFE smoke file.
 // Keep this file runnable; add new checks as features land.
 //

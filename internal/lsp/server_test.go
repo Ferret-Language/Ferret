@@ -19,7 +19,7 @@ import (
 )
 
 func TestConvertDiagnosticsPreservesZeroWidthRange(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "main.ferr")
+	path := filepath.Join(t.TempDir(), "main.fer")
 	at := source.Position{Line: 3, Column: 5}
 	loc := source.NewLocation(path, at, at)
 	d := diagnostics.NewError("expected ';'").WithPrimaryLabel(&loc, "expected ';'")
@@ -38,7 +38,7 @@ func TestConvertDiagnosticsPreservesZeroWidthRange(t *testing.T) {
 }
 
 func TestConvertDiagnosticsMarksUnusedWarningsAsUnnecessary(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "main.ferr")
+	path := filepath.Join(t.TempDir(), "main.fer")
 	at := source.Position{Line: 1, Column: 1}
 	loc := source.NewLocation(path, at, at)
 	d := diagnostics.NewWarning("unused local").
@@ -72,7 +72,7 @@ func TestPublishSyntaxDiagnosticsRecoversFromParserPanic(t *testing.T) {
 	var out bytes.Buffer
 	s := &Server{out: &out}
 
-	path := filepath.Join(t.TempDir(), "main.ferr")
+	path := filepath.Join(t.TempDir(), "main.fer")
 	uri := "file://" + filepath.ToSlash(path)
 	s.publishSyntaxDiagnostics(uri, 7, "fn main() {}")
 
@@ -177,7 +177,7 @@ func TestInitializeAdvertisesHoverDefinitionAndCompletionProvider(t *testing.T) 
 
 func TestHoverReturnsTypeFromSavedFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "fn main() {\n    let x = 1\n    x\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -224,7 +224,7 @@ func TestHoverReturnsTypeFromSavedFile(t *testing.T) {
 
 func TestHoverUsesOpenDocumentOverlayText(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	onDisk := "fn main() {\n    let x = 1\n    x\n}\n"
 	overlay := "fn main() {\n    let x = \"hi\"\n    x\n}\n"
 	if err := os.WriteFile(path, []byte(onDisk), 0o644); err != nil {
@@ -274,7 +274,7 @@ func TestHoverUsesOpenDocumentOverlayText(t *testing.T) {
 
 func TestHoverShowsExpandedNamedConstraint(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type numeric union {\n    i32,\n    i64,\n}\n\nfn add_numbers<T: numeric>(a: T, b: T) T {\n    return a + b\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -323,7 +323,7 @@ func TestHoverShowsExpandedNamedConstraint(t *testing.T) {
 
 func TestDefinitionReturnsFunctionDeclaration(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "fn run2() void {\n}\n\nfn main() {\n    run2()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -369,7 +369,7 @@ func TestDefinitionReturnsFunctionDeclaration(t *testing.T) {
 
 func TestDefinitionCrossModuleFunction(t *testing.T) {
 	dir := t.TempDir()
-	modulePath := filepath.Join(dir, "util", "math.ferr")
+	modulePath := filepath.Join(dir, "util", "math.fer")
 	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
 		t.Fatalf("failed to create module dir: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestDefinitionCrossModuleFunction(t *testing.T) {
 		t.Fatalf("failed to write module source: %v", err)
 	}
 
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "import \"util/math\"\n\nfn main() i32 {\n    return math::Pick(1)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -425,7 +425,7 @@ func TestDefinitionCrossModuleFunction(t *testing.T) {
 
 func TestDefinitionOverlayReturnsOriginalFileURI(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	onDisk := "fn old() void {\n}\n\nfn main() {\n    old()\n}\n"
 	overlay := "fn run2() void {\n}\n\nfn main() {\n    run2()\n}\n"
 	if err := os.WriteFile(path, []byte(onDisk), 0o644); err != nil {
@@ -478,7 +478,7 @@ func TestDefinitionOverlayReturnsOriginalFileURI(t *testing.T) {
 
 func TestDefinitionGenericStaticOwnerCallResolvesOwnerAndMethod(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\nfn main() void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -562,7 +562,7 @@ func TestHoverCachesByOpenDocumentVersion(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	if err := os.WriteFile(path, []byte("fn main() {}"), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -605,7 +605,7 @@ func TestHoverCachesByOpenDocumentVersion(t *testing.T) {
 
 func TestHoverMethodDeclarationShowsFullSignature(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Point struct {\n    X: i32\n}\n\nfn Point::Calc(&self) i32 {\n    return self.X\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -642,7 +642,7 @@ func TestHoverMethodDeclarationShowsFullSignature(t *testing.T) {
 
 func TestHoverNamedTypeShowsFieldsAndMethods(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Point struct {\n    X: i32\n    Y: i32 = 2\n}\n\nfn Point::Calc(&self) i32 {\n    return self.X\n}\n\nfn main() {\n    let p: Point = .{}\n    p.Calc()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -685,7 +685,7 @@ func TestHoverNamedTypeShowsFieldsAndMethods(t *testing.T) {
 
 func TestHoverGenericNamedTypeShowsConcreteFieldsAndMethods(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Point<T> struct {\n    Value: T\n}\n\nfn Point<T>::Calc(&self) T {\n    return self.Value\n}\n\nfn Point<T>::Incr(&mut self, dx: T) void {\n    self.Value += dx\n}\n\nfn main() void {\n    let p: Point<i32> = .{ .Value = 1 }\n    p\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -731,7 +731,7 @@ func TestHoverGenericNamedTypeShowsConcreteFieldsAndMethods(t *testing.T) {
 
 func TestHoverFunctionCallShowsNamedSignature(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "fn run2() void {\n}\n\nfn main() {\n    run2()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -772,7 +772,7 @@ func TestHoverFunctionCallShowsNamedSignature(t *testing.T) {
 
 func TestHoverBuiltinCallsShowFunctionSignatures(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "fn main() {\n    let xs: [3]i32 = [1, 2, 3]\n    print(\"ok\")\n    len(xs)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -834,7 +834,7 @@ func TestHoverBuiltinCallsShowFunctionSignatures(t *testing.T) {
 
 func TestHoverGenericCallShowsInstantiatedSignature(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "fn add<T>(a: T, b: T) T {\n    return a + b\n}\n\nfn main() i32 {\n    let x = 1\n    let y = 2\n    return add(x, y)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -874,7 +874,7 @@ func TestHoverGenericCallShowsInstantiatedSignature(t *testing.T) {
 
 func TestHoverGenericStaticOwnerCallShowsInstantiatedSignature(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\nfn main() void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -914,7 +914,7 @@ func TestHoverGenericStaticOwnerCallShowsInstantiatedSignature(t *testing.T) {
 
 func TestHoverGenericStaticOwnerCallHasSegmentRanges(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\nfn main() void {\n    let c = Circle<i32>::New(1)\n    c\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -983,7 +983,7 @@ func TestHoverGenericStaticOwnerCallHasSegmentRanges(t *testing.T) {
 
 func TestHoverCrossModuleGenericCallShowsInstantiatedSignature(t *testing.T) {
 	dir := t.TempDir()
-	modulePath := filepath.Join(dir, "util", "math.ferr")
+	modulePath := filepath.Join(dir, "util", "math.fer")
 	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
 		t.Fatalf("failed to create module dir: %v", err)
 	}
@@ -992,7 +992,7 @@ func TestHoverCrossModuleGenericCallShowsInstantiatedSignature(t *testing.T) {
 		t.Fatalf("failed to write module source: %v", err)
 	}
 
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "import \"util/math\"\n\nfn main() i32 {\n    return math::Pick(1)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1032,7 +1032,7 @@ func TestHoverCrossModuleGenericCallShowsInstantiatedSignature(t *testing.T) {
 
 func TestHoverCrossModuleConstrainedGenericCallShowsInstantiatedSignature(t *testing.T) {
 	dir := t.TempDir()
-	modulePath := filepath.Join(dir, "util", "shape.ferr")
+	modulePath := filepath.Join(dir, "util", "shape.fer")
 	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
 		t.Fatalf("failed to create module dir: %v", err)
 	}
@@ -1041,7 +1041,7 @@ func TestHoverCrossModuleConstrainedGenericCallShowsInstantiatedSignature(t *tes
 		t.Fatalf("failed to write module source: %v", err)
 	}
 
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "import \"util/shape\"\n\nfn main() void {\n    let c: shape::Circle = .{}\n    shape::DrawOne(c)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1081,7 +1081,7 @@ func TestHoverCrossModuleConstrainedGenericCallShowsInstantiatedSignature(t *tes
 
 func TestHoverFunctionCallShowsDocComment(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "/// Adds two numbers.\n/// Returns the sum.\nfn add(a: i32, b: i32) i32 {\n    return a + b\n}\n\nfn main() i32 {\n    return add(1, 2)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1121,7 +1121,7 @@ func TestHoverFunctionCallShowsDocComment(t *testing.T) {
 
 func TestHoverFunctionCallShowsLineCommentDocBlock(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "// Adds two numbers.\n// Returns the sum.\nfn add(a: i32, b: i32) i32 {\n    return a + b\n}\n\nfn main() i32 {\n    return add(1, 2)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1161,7 +1161,7 @@ func TestHoverFunctionCallShowsLineCommentDocBlock(t *testing.T) {
 
 func TestHoverTypeShowsDocCommentBlock(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "// Point docs line 1.\n// Point docs line 2.\ntype Point struct {\n    Value: i32 = 0\n}\n\nfn main() void {\n    let p: Point = .{ .Value = 1 }\n    p\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1200,7 +1200,7 @@ func TestHoverTypeShowsDocCommentBlock(t *testing.T) {
 
 func TestHoverInterfaceMethodCallShowsSelfReceiver(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Shape interface {\n    Draw(&self)\n}\n\nfn drawShape(s: Shape) void {\n    s.Draw()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1237,7 +1237,7 @@ func TestHoverInterfaceMethodCallShowsSelfReceiver(t *testing.T) {
 
 func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Point struct {\n    Value: i32 = 7\n}\n\nfn Point::Calc(&self) i32 {\n    return self.Value\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1283,7 +1283,7 @@ func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 
 func TestHoverBindingDeclarations(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Point struct {\n    Value: i32 = 7\n}\n\nfn Point::Calc(&self, mut dx: i32, comptime step: i32) i32 {\n    let mut a = dx\n    const b: i32 = step\n    return a + b + self.Value\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1327,7 +1327,7 @@ func TestHoverBindingDeclarations(t *testing.T) {
 
 func TestHoverLocalBindingShowsDocComment(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "fn run() void {\n    // local binding docs\n    // second line\n    let mut x = 1\n    x\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1367,7 +1367,7 @@ func TestHoverLocalBindingShowsDocComment(t *testing.T) {
 
 func TestHoverPointerParameterIsNotReceiver(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Conn struct {}\n\nfn run(mut c: *Conn) void {\n    c\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1407,7 +1407,7 @@ func TestHoverPointerParameterIsNotReceiver(t *testing.T) {
 
 func TestHoverMethodOwnerTypeInDeclaration(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Point<T> struct {\n    Value: T\n}\n\nfn Point<T>::Calc(&self) T {\n    return self.Value\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1443,7 +1443,7 @@ func TestHoverMethodOwnerTypeInDeclaration(t *testing.T) {
 
 func TestHoverLabels(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "fn run() void {\nouter: while true {\n    break outer\n}\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1491,7 +1491,7 @@ func TestHoverLabels(t *testing.T) {
 
 func TestHoverRecursiveGenericTypeDoesNotLoop(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Node<T> struct {\n    Next: *Node<T>\n    Value: T\n}\n\nfn main() {\n    let n = .Node<i32>{}\n    n\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1531,7 +1531,7 @@ func TestHoverRecursiveGenericTypeDoesNotLoop(t *testing.T) {
 
 func TestHoverRecursiveGenericInterfaceDoesNotLoop(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Node<T> interface {\n    Next(&self) Node<T>\n}\n\nfn use(n: Node<i32>) void {\n    n\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1571,7 +1571,7 @@ func TestHoverRecursiveGenericInterfaceDoesNotLoop(t *testing.T) {
 
 func TestHoverLargeMethodSetShowsTruncationNote(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	var srcBuilder strings.Builder
 	srcBuilder.WriteString("type Big struct {}\n\n")
 	totalMethods := maxHoverMethodsPerKind + 5
@@ -1619,7 +1619,7 @@ func TestHoverLargeMethodSetShowsTruncationNote(t *testing.T) {
 
 func TestHoverConstrainedGenericParameterShowsConstraint(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Shape interface {\n    Draw(&self)\n}\n\nfn drawShape<T: Shape>(s: T) {\n    s.Draw()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1656,7 +1656,7 @@ func TestHoverConstrainedGenericParameterShowsConstraint(t *testing.T) {
 
 func TestCompletionReturnsVisibleSymbols(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "fn helper() void {}\n\nfn main() {\n    let value = 1\n    val\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1700,7 +1700,7 @@ func TestCompletionReturnsVisibleSymbols(t *testing.T) {
 
 func TestCompletionMemberAndStaticMember(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "type Point struct {\n    Value: i32\n}\n\nfn Point::Draw(&self) void {\n}\n\n" +
 		"type Circle<T> struct {\n    Rad: T\n}\n\nfn Circle<T>::New(v: T) Self {\n    return .{ .Rad = v }\n}\n\n" +
 		"fn main() void {\n    let p: Point = .{ .Value = 1 }\n    p.Draw()\n    Circle<i32>::New(1)\n}\n"
@@ -1784,7 +1784,7 @@ func TestCompletionMemberAndStaticMember(t *testing.T) {
 
 func TestHoverImportAliasAndPathShowsModuleDoc(t *testing.T) {
 	dir := t.TempDir()
-	modulePath := filepath.Join(dir, "util", "os.ferr")
+	modulePath := filepath.Join(dir, "util", "os.fer")
 	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
 		t.Fatalf("failed to create module dir: %v", err)
 	}
@@ -1793,7 +1793,7 @@ func TestHoverImportAliasAndPathShowsModuleDoc(t *testing.T) {
 		t.Fatalf("failed to write module source: %v", err)
 	}
 
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "import \"util/os\" as os\n\nfn main() void {\n    os::CpuCount()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
@@ -1857,7 +1857,7 @@ func TestHoverImportAliasAndPathShowsModuleDoc(t *testing.T) {
 
 func TestHoverCastRawOwnerBoundaryShowsAdoptExposeGuidance(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := `
 fn main() void {
     unsafe {
@@ -1900,7 +1900,7 @@ fn main() void {
 
 func TestCompletionModuleStaticMembersViaImportAlias(t *testing.T) {
 	dir := t.TempDir()
-	modulePath := filepath.Join(dir, "util", "os.ferr")
+	modulePath := filepath.Join(dir, "util", "os.fer")
 	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
 		t.Fatalf("failed to create module dir: %v", err)
 	}
@@ -1909,7 +1909,7 @@ func TestCompletionModuleStaticMembersViaImportAlias(t *testing.T) {
 		t.Fatalf("failed to write module source: %v", err)
 	}
 
-	path := filepath.Join(dir, "main.ferr")
+	path := filepath.Join(dir, "main.fer")
 	src := "import \"util/os\"\n\nfn main() void {\n    os::CpuCount()\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)

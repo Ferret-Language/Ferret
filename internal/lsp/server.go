@@ -982,7 +982,7 @@ func parseForHover(path, text string, hasText bool) (compiler.Result, string, fu
 
 func writeHoverOverlay(originalPath, text string) (string, error) {
 	dir := filepath.Dir(originalPath)
-	file, err := os.CreateTemp(dir, ".ferret-lsp-hover-*.ferr")
+	file, err := os.CreateTemp(dir, ".ferret-lsp-hover-*.fer")
 	if err != nil {
 		return "", err
 	}

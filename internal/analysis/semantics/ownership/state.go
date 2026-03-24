@@ -1,4 +1,4 @@
-package ownershipv2
+package ownership
 
 import (
 	cfg "compiler/internal/analysis/cfg/model"

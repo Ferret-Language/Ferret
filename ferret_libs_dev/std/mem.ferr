@@ -2,7 +2,7 @@
 ///
 /// This module is intentionally thin for v0:
 /// - allocator API is explicit and library-defined (not compiler hardcoded)
-/// - implementation is backed by libc allocation externs from global.ferr
+/// - implementation is backed by libc allocation externs from global.fer
 /// - raw pointers stay unsafe at use-sites (`^T` / `^const T`)
 
 /// Allocator is the common allocation interface.

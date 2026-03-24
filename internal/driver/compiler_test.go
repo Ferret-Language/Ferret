@@ -20,7 +20,7 @@ name = "app"
 [dependencies]
 json = "../deps/json"
 `)
-	mustWrite(t, filepath.Join(root, "app", "main.ferr"), `import "json/parser"
+	mustWrite(t, filepath.Join(root, "app", "main.fer"), `import "json/parser"
 
 fn main() i32 {
     return parser::Value()
@@ -29,12 +29,12 @@ fn main() i32 {
 	mustWrite(t, filepath.Join(depRoot, "fer.ret"), `[package]
 name = "json"
 `)
-	mustWrite(t, filepath.Join(depRoot, "parser.ferr"), `fn Value() i32 {
+	mustWrite(t, filepath.Join(depRoot, "parser.fer"), `fn Value() i32 {
     return 1
 }
 `)
 
-	result := ParsePath(filepath.Join(root, "app", "main.ferr"))
+	result := ParsePath(filepath.Join(root, "app", "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
 	}
@@ -48,17 +48,17 @@ name = "json"
 
 func TestParsePathResolvesStdlibWithoutManifest(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]
 fn Println(text: str) void;
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/io"
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 
 fn main() void {
     io::Println("hello")
 }
 `)
 
-	result := ParsePath(filepath.Join(root, "main.ferr"))
+	result := ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
 	}
@@ -82,16 +82,16 @@ fn main() void {
 
 func TestParsePathTypechecksExternStdlibSignature(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.ferr"), `#[extern("ferret_io_println")]
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]
 fn Println(text: str) void;
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/io"
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 
 fn main() void {
     io::Println(1)
 }
 `)
-	result := ParsePath(filepath.Join(root, "main.ferr"))
+	result := ParsePath(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected stdlib signature type error")
 	}
@@ -109,7 +109,7 @@ fn main() void {
 
 func TestParsePathResolvesStdlibOSWithoutManifest(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.ferr"), `#[extern("ferret_os_cpu_count")]
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.fer"), `#[extern("ferret_os_cpu_count")]
 fn CPUCount() usize;
 
 #[extern("ferret_os_platform")]
@@ -118,7 +118,7 @@ fn Platform() str;
 #[extern("ferret_os_debug")]
 fn Debug() bool;
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/os"
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/os"
 
 fn main() void {
     if os::CPUCount() > 0 {
@@ -130,7 +130,7 @@ fn main() void {
 }
 `)
 
-	result := ParsePath(filepath.Join(root, "main.ferr"))
+	result := ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
 	}
@@ -154,17 +154,17 @@ fn main() void {
 
 func TestParsePathTypechecksStdlibOSSignature(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.ferr"), `#[extern("ferret_os_cpu_count")]
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.fer"), `#[extern("ferret_os_cpu_count")]
 fn CPUCount() usize;
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/os"
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/os"
 
 fn main() void {
     os::CPUCount(1)
 }
 `)
 
-	result := ParsePath(filepath.Join(root, "main.ferr"))
+	result := ParsePath(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected stdlib signature type error")
 	}
@@ -182,7 +182,7 @@ fn main() void {
 
 func TestParsePathResolvesStdlibMemWithoutManifest(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.ferr"), `
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
 type Allocator interface {
     Alloc(&self, size: usize) ^void
     Free(&self, ptr: ^void) void
@@ -210,7 +210,7 @@ fn Free(a: Allocator, ptr: ^void) void {
     a.Free(ptr)
 }
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/mem"
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/mem"
 
 fn main() void {
     let a = mem::System()
@@ -219,7 +219,7 @@ fn main() void {
 }
 `)
 
-	result := ParsePath(filepath.Join(root, "main.ferr"))
+	result := ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
 	}
@@ -243,7 +243,7 @@ fn main() void {
 
 func TestParsePathTypechecksStdlibMemSignature(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.ferr"), `
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
 type Allocator interface {
     Alloc(&self, size: usize) ^void
 }
@@ -262,7 +262,7 @@ fn Alloc(a: Allocator, size: usize) ^void {
     return a.Alloc(size)
 }
 `)
-	mustWrite(t, filepath.Join(root, "main.ferr"), `import "std/mem"
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/mem"
 
 fn main() void {
     let a = mem::System()
@@ -270,7 +270,7 @@ fn main() void {
 }
 `)
 
-	result := ParsePath(filepath.Join(root, "main.ferr"))
+	result := ParsePath(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected stdlib mem signature type error")
 	}
@@ -288,7 +288,7 @@ fn main() void {
 
 func TestIfAttributeFiltersTopLevelDeclarations(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 #[if(target_os, "linux")]
 fn LinuxOnly() i32 { return 1 }
 
@@ -302,12 +302,12 @@ fn main() i32 {
 
 	cfg := context.Config{
 		RootDir:         root,
-		Extension:       ".ferr",
+		Extension:       ".fer",
 		DependencyRoots: map[string]string{},
 		TargetOS:        "linux",
 		TargetArch:      runtime.GOARCH,
 	}
-	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -318,7 +318,7 @@ fn main() i32 {
 
 func TestIfAttributeSupportsNegatedTargetSelection(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 #[if(target_os, "linux")]
 const PlatformTag = 1
 
@@ -332,12 +332,12 @@ fn main() i32 {
 
 	cfg := context.Config{
 		RootDir:         root,
-		Extension:       ".ferr",
+		Extension:       ".fer",
 		DependencyRoots: map[string]string{},
 		TargetOS:        "linux",
 		TargetArch:      runtime.GOARCH,
 	}
-	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -348,7 +348,7 @@ fn main() i32 {
 
 func TestIfAttributeSupportsBackendSelection(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 #[if(target_backend, "llvm")]
 const BackendTag = 1
 
@@ -362,11 +362,11 @@ fn main() i32 {
 
 	cfg := context.Config{
 		RootDir:         root,
-		Extension:       ".ferr",
+		Extension:       ".fer",
 		DependencyRoots: map[string]string{},
 		TargetBackend:   "llvm",
 	}
-	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -377,17 +377,17 @@ fn main() i32 {
 
 func TestIfAttributeInvalidFormReportsDiagnostic(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "main.ferr"), `
+	mustWrite(t, filepath.Join(root, "main.fer"), `
 #[if(target_os, "linux", extra)]
 fn main() i32 { return 0 }
 `)
 
 	cfg := context.Config{
 		RootDir:         root,
-		Extension:       ".ferr",
+		Extension:       ".fer",
 		DependencyRoots: map[string]string{},
 	}
-	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid #[if(...)] diagnostic")
 	}

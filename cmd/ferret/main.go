@@ -114,12 +114,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  remove|rm <alias>       remove dependency alias from fer.ret and lockfile")
 		fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
 		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
-		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.ferr only)")
+		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.fer only)")
 		fmt.Fprintln(os.Stderr, "  run [path] [args]       build and run a program using LLVM")
 		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
-		colors.GREEN.Fprintf(os.Stderr, "  %s -backend llvm main.ferr\n", os.Args[0])
-		colors.GREEN.Fprintf(os.Stderr, "  %s -k main.ferr\n", os.Args[0])
-		colors.GREEN.Fprintf(os.Stderr, "  %s run main.ferr arg1 arg2\n", os.Args[0])
+		colors.GREEN.Fprintf(os.Stderr, "  %s -backend llvm main.fer\n", os.Args[0])
+		colors.GREEN.Fprintf(os.Stderr, "  %s -k main.fer\n", os.Args[0])
+		colors.GREEN.Fprintf(os.Stderr, "  %s run main.fer arg1 arg2\n", os.Args[0])
 	}
 	flag.Parse()
 
