@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
@@ -33,6 +34,8 @@ const (
 	maxHoverMethodsPerKind = 32
 	maxCompletionItems     = 200
 	diagTagUnnecessary     = 1
+
+	semanticDiagnosticsDebounce = 250 * time.Millisecond
 
 	symbolKindClass      = 5
 	symbolKindMethod     = 6
@@ -227,6 +230,11 @@ type hoverCacheEntry struct {
 	Index     *hoverIndex
 }
 
+type semanticDiagnosticsEntry struct {
+	seq   uint64
+	timer *time.Timer
+}
+
 type Server struct {
 	in  *bufio.Reader
 	out io.Writer
@@ -237,14 +245,21 @@ type Server struct {
 	shouldExit     bool
 	documents      map[string]openDocument
 	hoverCache     map[string]hoverCacheEntry
+
+	semanticGate        chan struct{}
+	semanticDiagnostics map[string]*semanticDiagnosticsEntry
 }
 
 func Run(stdin io.Reader, stdout io.Writer) error {
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
 	s := &Server{
-		in:         bufio.NewReader(stdin),
-		out:        stdout,
-		documents:  make(map[string]openDocument),
-		hoverCache: make(map[string]hoverCacheEntry),
+		in:                  bufio.NewReader(stdin),
+		out:                 stdout,
+		documents:           make(map[string]openDocument),
+		hoverCache:          make(map[string]hoverCacheEntry),
+		semanticGate:        semanticGate,
+		semanticDiagnostics: make(map[string]*semanticDiagnosticsEntry),
 	}
 	return s.serve()
 }
@@ -366,18 +381,17 @@ func (s *Server) handleDidOpen(raw json.RawMessage) {
 		s.documents = make(map[string]openDocument)
 	}
 	s.documents[uri] = openDocument{Version: params.TextDocument.Version, Text: params.TextDocument.Text}
-	if s.hoverCache != nil {
-		delete(s.hoverCache, uri)
-	}
 	s.mu.Unlock()
 
 	path, err := uriToPath(uri)
 	if err != nil || !isFerretSourcePath(path) {
+		s.cancelSemanticDiagnostics(uri)
 		s.publishDiagnostics(uri, nil, nil)
 		return
 	}
 
 	s.publishSyntaxDiagnostics(uri, params.TextDocument.Version, params.TextDocument.Text)
+	s.scheduleSemanticDiagnostics(uri, path)
 }
 
 func (s *Server) handleDidChange(raw json.RawMessage) {
@@ -396,18 +410,17 @@ func (s *Server) handleDidChange(raw json.RawMessage) {
 		s.documents = make(map[string]openDocument)
 	}
 	s.documents[uri] = openDocument{Version: params.TextDocument.Version, Text: text}
-	if s.hoverCache != nil {
-		delete(s.hoverCache, uri)
-	}
 	s.mu.Unlock()
 
 	path, err := uriToPath(uri)
 	if err != nil || !isFerretSourcePath(path) {
+		s.cancelSemanticDiagnostics(uri)
 		s.publishDiagnostics(uri, nil, nil)
 		return
 	}
 
 	s.publishSyntaxDiagnostics(uri, params.TextDocument.Version, text)
+	s.scheduleSemanticDiagnostics(uri, path)
 }
 
 func (s *Server) handleDidSave(raw json.RawMessage) {
@@ -426,6 +439,7 @@ func (s *Server) handleDidSave(raw json.RawMessage) {
 		return
 	}
 
+	s.cancelSemanticDiagnostics(uri)
 	result := compiler.ParsePathForIDE(path)
 	diagnostics := convertDiagnostics(result.Diagnostics.Diagnostics(), path)
 	s.publishDiagnostics(uri, nil, diagnostics)
@@ -444,6 +458,7 @@ func (s *Server) handleDidClose(raw json.RawMessage) {
 	}
 	s.mu.Unlock()
 
+	s.cancelSemanticDiagnostics(params.TextDocument.URI)
 	s.publishDiagnostics(params.TextDocument.URI, nil, nil)
 }
 
@@ -552,6 +567,89 @@ func (s *Server) documentState(uri string) (openDocument, bool) {
 	return doc, true
 }
 
+func (s *Server) scheduleSemanticDiagnostics(uri, path string) {
+	if uri == "" || path == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.semanticDiagnostics == nil {
+		s.semanticDiagnostics = make(map[string]*semanticDiagnosticsEntry)
+	}
+	entry := s.semanticDiagnostics[uri]
+	if entry == nil {
+		entry = &semanticDiagnosticsEntry{}
+		s.semanticDiagnostics[uri] = entry
+	}
+	entry.seq++
+	seq := entry.seq
+	if entry.timer != nil {
+		entry.timer.Stop()
+	}
+	entry.timer = time.AfterFunc(semanticDiagnosticsDebounce, func() {
+		s.publishSemanticDiagnostics(uri, path, seq)
+	})
+	s.mu.Unlock()
+}
+
+func (s *Server) cancelSemanticDiagnostics(uri string) {
+	if uri == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.semanticDiagnostics != nil {
+		if entry := s.semanticDiagnostics[uri]; entry != nil && entry.timer != nil {
+			entry.timer.Stop()
+		}
+		delete(s.semanticDiagnostics, uri)
+	}
+	s.mu.Unlock()
+}
+
+func (s *Server) publishSemanticDiagnostics(uri, path string, seq uint64) {
+	if s == nil || uri == "" || path == "" {
+		return
+	}
+
+	// Ensure we never run more than one semantic compile at a time.
+	if s.semanticGate != nil {
+		<-s.semanticGate
+		defer func() { s.semanticGate <- struct{}{} }()
+	}
+
+	s.mu.Lock()
+	entry := (*semanticDiagnosticsEntry)(nil)
+	if s.semanticDiagnostics != nil {
+		entry = s.semanticDiagnostics[uri]
+	}
+	doc, ok := s.documents[uri]
+	if !ok || entry == nil || entry.seq != seq {
+		s.mu.Unlock()
+		return
+	}
+	version := doc.Version
+	text := doc.Text
+	s.mu.Unlock()
+
+	result, parsedPath, cleanup := parseForHover(path, text, true)
+	defer cleanup()
+	diagnostics := convertDiagnostics(result.Diagnostics.Diagnostics(), path, parsedPath)
+
+	s.mu.Lock()
+	entry = nil
+	if s.semanticDiagnostics != nil {
+		entry = s.semanticDiagnostics[uri]
+	}
+	current, ok := s.documents[uri]
+	if !ok || entry == nil || entry.seq != seq || current.Version != version {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+
+	v := version
+	s.publishDiagnostics(uri, &v, diagnostics)
+}
+
 func (s *Server) publishSyntaxDiagnostics(uri string, version int, text string) {
 	path, err := uriToPath(uri)
 	if err != nil {
@@ -590,15 +688,26 @@ func (s *Server) publishDiagnostics(uri string, version *int, diagnostics []lspD
 	})
 }
 
-func convertDiagnostics(diags []*diagnostics.Diagnostic, targetPath string) []lspDiagnostic {
+func convertDiagnostics(diags []*diagnostics.Diagnostic, targetPath string, extraTargets ...string) []lspDiagnostic {
 	out := make([]lspDiagnostic, 0, len(diags))
-	target := filepath.Clean(targetPath)
+	targets := make(map[string]struct{}, 1+len(extraTargets))
+	if targetPath != "" {
+		targets[filepath.Clean(targetPath)] = struct{}{}
+	}
+	for _, extra := range extraTargets {
+		if extra == "" {
+			continue
+		}
+		targets[filepath.Clean(extra)] = struct{}{}
+	}
 	for _, diag := range diags {
 		if diag == nil {
 			continue
 		}
-		if file := diagnosticFilePath(diag); file != "" && filepath.Clean(file) != target {
-			continue
+		if file := diagnosticFilePath(diag); file != "" {
+			if _, ok := targets[filepath.Clean(file)]; !ok {
+				continue
+			}
 		}
 		rng := lspRange{Start: lspPosition{Line: 0, Character: 0}, End: lspPosition{Line: 0, Character: 1}}
 		if label := primaryLabel(diag); label != nil && label.Location != nil && label.Location.Start != nil {
