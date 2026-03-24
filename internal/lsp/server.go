@@ -72,7 +72,9 @@ var (
 		_ = parser.Parse(path, toks, diag)
 	}
 	parseProject = func(path string) compiler.Result {
-		return compiler.ParsePath(path)
+		// LSP needs resolver + typechecker data. Backend passes are too expensive
+		// during interactive editing (especially generics-heavy code).
+		return compiler.ParsePathForIDE(path)
 	}
 )
 
@@ -424,7 +426,7 @@ func (s *Server) handleDidSave(raw json.RawMessage) {
 		return
 	}
 
-	result := compiler.ParsePath(path)
+	result := compiler.ParsePathForIDE(path)
 	diagnostics := convertDiagnostics(result.Diagnostics.Diagnostics(), path)
 	s.publishDiagnostics(uri, nil, diagnostics)
 }

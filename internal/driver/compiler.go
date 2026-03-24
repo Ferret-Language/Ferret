@@ -49,7 +49,14 @@ func ParseFile(path string) Result {
 	return ParsePath(path)
 }
 
-func ParsePath(path string) Result {
+type parseMode uint8
+
+const (
+	parseModeFull parseMode = iota
+	parseModeIDE
+)
+
+func parsePath(path string, mode parseMode) Result {
 	absPath, err := filepath.Abs(path)
 	diag := diagnostics.NewDiagnosticBag(absPath)
 	if err != nil {
@@ -67,8 +74,21 @@ func ParsePath(path string) Result {
 			diag.Add(diagnostics.NewError(err.Error()))
 			return Result{Diagnostics: diag}
 		}
-		compiler := NewWithConfig(ws.Context, diag)
-		return compiler.ParseWorkspace()
+		c := NewWithConfig(ws.Context, diag)
+		switch mode {
+		case parseModeIDE:
+			mods, err := c.pipeline.ParseWorkspaceForIDE()
+			if err != nil {
+				c.ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
+			}
+			return Result{
+				Modules:       mods,
+				Diagnostics:   c.ctx.Diagnostics,
+				CompilerState: c.ctx,
+			}
+		default:
+			return c.ParseWorkspace()
+		}
 	}
 	if !strings.EqualFold(filepath.Ext(absPath), FerretSourceExt) {
 		diag.Add(diagnostics.NewError("unsupported source file extension"))
@@ -79,8 +99,39 @@ func ParsePath(path string) Result {
 		diag.Add(diagnostics.NewError(err.Error()))
 		return Result{Diagnostics: diag}
 	}
-	compiler := NewWithConfig(ws.Context, diag)
-	return compiler.ParseEntry(absPath)
+	c := NewWithConfig(ws.Context, diag)
+	switch mode {
+	case parseModeIDE:
+		entry, err := c.pipeline.ParseEntryForIDE(absPath)
+		if err != nil {
+			c.ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
+		}
+		result := Result{
+			Entry:         entry,
+			Modules:       c.ctx.Modules(),
+			Diagnostics:   c.ctx.Diagnostics,
+			CompilerState: c.ctx,
+		}
+		if entry != nil {
+			result.Module = entry.AST
+		}
+		return result
+	default:
+		return c.ParseEntry(absPath)
+	}
+}
+
+func ParsePath(path string) Result {
+	return parsePath(path, parseModeFull)
+}
+
+// ParsePathForIDE parses enough of the project/workspace to provide accurate
+// name resolution and type information, but intentionally skips expensive
+// backend passes (HIR lowering/specialization, MIR, comptime, ownership).
+//
+// Intended for editor tooling (LSP) to avoid large transient memory spikes.
+func ParsePathForIDE(path string) Result {
+	return parsePath(path, parseModeIDE)
 }
 
 func (c *Compiler) ParseEntry(entryFile string) Result {

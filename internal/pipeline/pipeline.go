@@ -45,6 +45,50 @@ func New(ctx *context.CompilerContext) *Pipeline {
 	return &Pipeline{ctx: ctx}
 }
 
+// ParseEntryForIDE parses a single entry file and its transitive imports, then
+// runs just the semantic front-end (resolve + type-check).
+//
+// This is intended for editor tooling (LSP) where type information is needed
+// but backend passes (HIR lowering/specialization, MIR, comptime, ownership)
+// are too expensive and can cause large transient memory spikes.
+func (p *Pipeline) ParseEntryForIDE(entryFile string) (*context.Module, error) {
+	resolved, err := p.ctx.ResolveLocalModule(entryFile)
+	if err != nil {
+		return nil, err
+	}
+	p.scheduleParseFile(resolved, nil)
+	p.wg.Wait()
+	if mod, ok := p.ctx.GetModule(resolved.Key); ok && mod != nil {
+		mod.IsEntry = true
+	}
+	if err := p.runIDEPasses(); err != nil {
+		return nil, err
+	}
+	mod, _ := p.ctx.GetModule(resolved.Key)
+	return mod, nil
+}
+
+// ParseWorkspaceForIDE parses all source files in the workspace root then runs
+// resolve + type-check across them in dependency order.
+func (p *Pipeline) ParseWorkspaceForIDE() ([]*context.Module, error) {
+	files, err := p.ctx.DiscoverModules()
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		resolved, err := p.ctx.ResolveLocalModule(file)
+		if err != nil {
+			return nil, err
+		}
+		p.scheduleParseFile(resolved, nil)
+	}
+	p.wg.Wait()
+	if err := p.runIDEPasses(); err != nil {
+		return nil, err
+	}
+	return p.ctx.Modules(), nil
+}
+
 // ParseEntry parses a single entry file and all its transitive imports.
 func (p *Pipeline) ParseEntry(entryFile string) (*context.Module, error) {
 	resolved, err := p.ctx.ResolveLocalModule(entryFile)
@@ -174,6 +218,24 @@ func (p *Pipeline) runAllSemanticPasses() error {
 			continue
 		}
 		p.runSemanticBackPasses(mod)
+	}
+	return nil
+}
+
+// runIDEPasses runs resolver → type-checker for every parsed module in
+// topological (dependency-first) order.
+func (p *Pipeline) runIDEPasses() error {
+	mods := p.ctx.Modules()
+	sorted, cycles := topoSort(mods, p.ctx.DependencyList)
+	for _, cycle := range cycles {
+		p.reportCycle(cycle)
+	}
+	for _, mod := range sorted {
+		if mod == nil || mod.Phase < phase.PhaseParsed {
+			continue
+		}
+		resolver.ResolveModule(p.ctx, mod)
+		typechecker.CheckModule(p.ctx, mod)
 	}
 	return nil
 }
