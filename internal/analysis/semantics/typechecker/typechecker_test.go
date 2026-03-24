@@ -398,34 +398,10 @@ fn main() void {
 	}
 }
 
-func TestTypecheckerSupportsConstraintDeclarationIntersection(t *testing.T) {
-	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-constraint reader = interface {
-    Read(&self) i32
-}
-
-constraint printable = interface {
-    Print(&self) void
-}
-
-constraint reader_printable = reader & printable
-
-fn Use<T: reader_printable>(value: T) T {
-    return value
-}
-`)
-
-	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
-	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
-	}
-}
-
 func TestTypecheckerReportsConstraintDeclarationMismatch(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-constraint numeric = union { i32, i64 }
+type numeric union { i32, i64 }
 
 fn Id<T: numeric>(v: T) T {
     return v
@@ -452,10 +428,10 @@ fn main() void {
 	}
 }
 
-func TestTypecheckerRejectsConstraintAsConcreteType(t *testing.T) {
+func TestTypecheckerAllowsNamedConstraintTypeAsConcreteType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-constraint numeric = union { i32, i64 }
+type numeric union { i32, i64 }
 
 fn main() void {
     let x: numeric = 1
@@ -464,18 +440,8 @@ fn main() void {
 `)
 
 	result := compiler.New(root, ".ferr", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.ferr"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected invalid concrete-constraint type diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "constraint \"numeric\" cannot be used as a concrete type") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected concrete-constraint usage diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -486,7 +452,7 @@ type Writer interface {
     write(&self, []u8) i32
 }
 
-constraint W = Writer
+type W Writer
 
 type FileWriter struct {}
 
@@ -526,7 +492,7 @@ fn main() void {
 func TestTypecheckerDoesNotConflictNestedCallExpectedTypeInference(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.ferr"), `
-constraint numeric = union {
+type numeric union {
     i32,
     f32,
     u32,

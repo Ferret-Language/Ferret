@@ -143,14 +143,6 @@ type UnionType struct {
 func (*UnionType) typeNode()              {}
 func (t *UnionType) Loc() source.Location { return t.Location }
 
-type IntersectionType struct {
-	Terms    []TypeExpr
-	Location source.Location
-}
-
-func (*IntersectionType) typeNode()              {}
-func (t *IntersectionType) Loc() source.Location { return t.Location }
-
 type ErrorMember struct {
 	Name     *Ident
 	Location source.Location

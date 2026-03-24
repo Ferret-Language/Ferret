@@ -57,15 +57,6 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			owner = mod
 		}
 		decl, _ := resolution.Symbol.Node.(*ast.TypeDecl)
-		if decl != nil && decl.IsConstraint && !c.inConstraintContext() {
-			loc := t.Loc()
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("constraint %q cannot be used as a concrete type", resolution.Symbol.Name)).
-					WithCode(diagnostics.ErrInvalidType).
-					WithPrimaryLabel(&loc, "constraints are only valid in constraint positions"),
-			)
-			return typeinfo.InvalidType{}
-		}
 		named := &typeinfo.NamedType{ModuleKey: owner.Key, Name: resolution.Symbol.Name, Decl: decl}
 		if len(t.TypeArgs) == 0 {
 			if decl != nil && len(decl.TypeParams) > 0 {
@@ -183,12 +174,6 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			members = append(members, c.typeFromSyntax(mod, member))
 		}
 		return &typeinfo.UnionType{Members: members}
-	case *ast.IntersectionType:
-		members := make([]typeinfo.Type, 0, len(t.Terms))
-		for _, term := range t.Terms {
-			members = append(members, c.typeFromSyntax(mod, term))
-		}
-		return &typeinfo.IntersectionType{Members: members}
 	case *ast.InterfaceType:
 		methods := make(map[string]*typeinfo.FuncType)
 		methodReceivers := make(map[string]typeinfo.ReceiverKind)

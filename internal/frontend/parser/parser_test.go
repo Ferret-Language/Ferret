@@ -35,6 +35,30 @@ func findDiagnosticWithMessage(diag *diagnostics.DiagnosticBag, substr string) *
 	return nil
 }
 
+func hasDiagnosticCode(diag *diagnostics.DiagnosticBag, code string) bool {
+	for _, d := range diag.Diagnostics() {
+		if d.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func countDiagnosticsExcludingCodes(diag *diagnostics.DiagnosticBag, codes ...string) int {
+	excluded := make(map[string]struct{}, len(codes))
+	for _, code := range codes {
+		excluded[code] = struct{}{}
+	}
+	count := 0
+	for _, d := range diag.Diagnostics() {
+		if _, skip := excluded[d.Code]; skip {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 func TestParseMethodReceiverAndLiteral(t *testing.T) {
 	src := `
 type Point struct {
@@ -273,8 +297,11 @@ type Handle enum {
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.Diagnostics(); len(got) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", got)
+	if got := countDiagnosticsExcludingCodes(diag, diagnostics.InfoTrailingComma); got != 0 {
+		t.Fatalf("unexpected diagnostics: %v", diag.Diagnostics())
+	}
+	if !hasDiagnosticCode(diag, diagnostics.InfoTrailingComma) {
+		t.Fatalf("expected trailing comma info diagnostic, got %v", diag.Diagnostics())
 	}
 	typ, ok := mod.Decls[0].(*ast.TypeDecl)
 	if !ok {
@@ -495,36 +522,30 @@ fn Map<T, U: any>(value: T) U {
 	}
 }
 
-func TestParseConstraintDeclarationAndIntersectionConstraint(t *testing.T) {
+func TestParseNamedTypeConstraint(t *testing.T) {
 	src := `
-constraint numeric = union { i32, i64 };
-constraint writer = interface { Write(&self, v: i32) void };
-constraint numeric_writer = numeric & writer;
+type numeric union { i32, i64 }
 
-fn Use<T: numeric_writer>(value: T) void {}
+fn Use<T: numeric>(value: T) void {}
 `
 
 	mod, diag := parseTestModule(t, src)
 	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
-	if len(mod.Decls) != 4 {
-		t.Fatalf("expected 4 declarations, got %d", len(mod.Decls))
+	if len(mod.Decls) != 2 {
+		t.Fatalf("expected 2 declarations, got %d", len(mod.Decls))
 	}
 	numeric, ok := mod.Decls[0].(*ast.TypeDecl)
-	if !ok || !numeric.IsConstraint {
-		t.Fatalf("expected first decl to be constraint type decl, got %#v", mod.Decls[0])
-	}
-	intersectionDecl, ok := mod.Decls[2].(*ast.TypeDecl)
-	if !ok || !intersectionDecl.IsConstraint {
-		t.Fatalf("expected third decl to be constraint type decl, got %#v", mod.Decls[2])
-	}
-	if _, ok := intersectionDecl.Type.(*ast.IntersectionType); !ok {
-		t.Fatalf("expected numeric_writer to parse as intersection type, got %T", intersectionDecl.Type)
-	}
-	fn, ok := mod.Decls[3].(*ast.FuncDecl)
 	if !ok {
-		t.Fatalf("expected function decl, got %T", mod.Decls[3])
+		t.Fatalf("expected first decl to be type decl, got %#v", mod.Decls[0])
+	}
+	if _, ok := numeric.Type.(*ast.UnionType); !ok {
+		t.Fatalf("expected numeric to parse as union type, got %T", numeric.Type)
+	}
+	fn, ok := mod.Decls[1].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[1])
 	}
 	if len(fn.TypeParams) != 1 {
 		t.Fatalf("expected one type parameter, got %d", len(fn.TypeParams))
@@ -536,7 +557,7 @@ fn Use<T: numeric_writer>(value: T) void {}
 
 func TestParseInlineConstraintLiterals(t *testing.T) {
 	src := `
-constraint W = Writer
+type W Writer
 
 type Writer interface {
     write(&self, []u8) i32
@@ -582,6 +603,68 @@ fn min<T: union {
 	}
 	if len(unionConstraint.Members) != 2 {
 		t.Fatalf("expected 2 inline union members, got %#v", unionConstraint.Members)
+	}
+}
+
+func TestParseTypeDeclRejectsIntersectionBody(t *testing.T) {
+	src := `
+type A i32
+type B i64
+type C A & B
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "expected top-level declaration") {
+		t.Fatalf("expected intersection type declaration to be rejected, got %v", diag.Diagnostics())
+	}
+}
+
+func TestParseTypeParamRejectsIntersectionConstraint(t *testing.T) {
+	src := `
+type Reader interface {
+    Read(&self) i32
+}
+
+type Printable interface {
+    Print(&self) void
+}
+
+fn Use<T: Reader & Printable>(value: T) void {}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "expected ',' or '>' after type parameter") {
+		t.Fatalf("expected intersection constraint to be rejected, got %v", diag.Diagnostics())
+	}
+}
+
+func TestParseStructTrailingCommaReportsInfo(t *testing.T) {
+	src := `
+type Pair struct {
+    A: i32,
+    B: i32,
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 1 {
+		t.Fatalf("expected one info diagnostic, got %v", got)
+	}
+	if !hasDiagnosticCode(diag, diagnostics.InfoTrailingComma) {
+		t.Fatalf("expected trailing comma info diagnostic, got %v", diag.Diagnostics())
+	}
+}
+
+func TestParseRepeatedSemicolonsReportInfo(t *testing.T) {
+	src := `
+fn main() void {
+    print(1);;;;
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticCode(diag, diagnostics.InfoUnnecessarySemicolon) {
+		t.Fatalf("expected unnecessary semicolon info diagnostic, got %v", diag.Diagnostics())
 	}
 }
 
@@ -1558,8 +1641,8 @@ type Token union {
 `
 
 	_, diag := parseTestModule(t, src)
-	if got := diag.Diagnostics(); len(got) != 5 {
-		t.Fatalf("expected 5 diagnostics, got %d: %v", len(got), got)
+	if got := countDiagnosticsExcludingCodes(diag, diagnostics.InfoTrailingComma); got != 5 {
+		t.Fatalf("expected 5 diagnostics, got %d: %v", got, diag.Diagnostics())
 	}
 	for _, substr := range []string{
 		`duplicate field "x"`,

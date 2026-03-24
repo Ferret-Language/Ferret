@@ -15,11 +15,15 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 	p.expect(tokens.LBRACE, "expected '{'")
 	stmts := make([]ast.Stmt, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		if p.at(tokens.SEMICOLON) {
+			p.consumeRedundantSemicolons(0)
+			continue
+		}
 		stmt := p.parseStmt()
 		if stmt != nil {
 			stmts = append(stmts, stmt)
 		}
-		p.match(tokens.SEMICOLON)
+		p.consumeRedundantSemicolons(1)
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
 	return &ast.BlockStmt{Stmts: stmts, Location: p.locFrom(start)}

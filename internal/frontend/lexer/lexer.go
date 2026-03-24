@@ -249,7 +249,7 @@ func (l *Lexer) isDocCandidateAhead(index int) bool {
 	}
 	word := l.input[start:i]
 	switch word {
-	case "fn", "unsafe", "type", "constraint", "let", "const", "import":
+	case "fn", "unsafe", "type", "let", "const", "import":
 		return true
 	default:
 		return false

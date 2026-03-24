@@ -223,18 +223,6 @@ func instantiateType(typ Type, bindings map[*TypeParam]Type, seen map[Type]Type)
 		}
 		out.Members = members
 		return out
-	case *IntersectionType:
-		if cached := seen[t]; cached != nil {
-			return cached
-		}
-		out := &IntersectionType{Members: make([]Type, 0, len(t.Members))}
-		seen[t] = out
-		members := make([]Type, 0, len(t.Members))
-		for _, member := range t.Members {
-			members = append(members, instantiateType(member, bindings, seen))
-		}
-		out.Members = members
-		return out
 	case *FuncType:
 		return instantiateFuncType(t, bindings, seen)
 	default:

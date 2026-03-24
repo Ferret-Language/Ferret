@@ -106,12 +106,6 @@ func TypeString(typ TypeExpr) string {
 			members = append(members, TypeString(member))
 		}
 		return "union { " + strings.Join(members, ", ") + " }"
-	case *IntersectionType:
-		parts := make([]string, 0, len(t.Terms))
-		for _, term := range t.Terms {
-			parts = append(parts, TypeString(term))
-		}
-		return strings.Join(parts, " & ")
 	case *ErrorType:
 		names := make([]string, 0, len(t.Members))
 		for _, member := range t.Members {
@@ -318,9 +312,6 @@ func TypeDeclString(decl *TypeDecl) string {
 		return "type <unknown>"
 	}
 	name := decl.Name.Text() + typeParamListString(decl.TypeParams)
-	if decl.IsConstraint {
-		return "constraint " + name + " = " + TypeString(decl.Type)
-	}
 	switch t := decl.Type.(type) {
 	case *StructType:
 		var b strings.Builder

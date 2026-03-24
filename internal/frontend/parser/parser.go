@@ -38,6 +38,10 @@ func (p *Parser) ParseModule() *ast.Module {
 	}
 	seenDecl := false
 	for !p.at(tokens.EOF) {
+		if p.at(tokens.SEMICOLON) {
+			p.consumeRedundantSemicolons(0)
+			continue
+		}
 		p.skipDocCommentsBeforeImports()
 		if p.at(tokens.IMPORT) {
 			if seenDecl {
@@ -78,7 +82,7 @@ func (p *Parser) leadingModuleDocComment() *ast.CommentGroup {
 
 func isTopLevelStartToken(kind tokens.Kind) bool {
 	switch kind {
-	case tokens.EOF, tokens.IMPORT, tokens.LET, tokens.CONST, tokens.TYPE, tokens.CONSTRAINT, tokens.FN, tokens.UNSAFE, tokens.HASH:
+	case tokens.EOF, tokens.IMPORT, tokens.LET, tokens.CONST, tokens.TYPE, tokens.FN, tokens.UNSAFE, tokens.HASH:
 		return true
 	default:
 		return false
@@ -95,8 +99,6 @@ func (p *Parser) parseDecl() ast.Decl {
 		return p.parseConstDecl(doc, attrs)
 	case tokens.TYPE:
 		return p.parseTypeDecl(doc, attrs)
-	case tokens.CONSTRAINT:
-		return p.parseConstraintDecl(doc, attrs)
 	case tokens.UNSAFE:
 		if p.peekN(1).Kind == tokens.FN {
 			return p.parseFuncDecl(doc, attrs)
@@ -377,6 +379,14 @@ func (p *Parser) errorAt(loc source.Location, message string) {
 	)
 }
 
+func (p *Parser) infoAt(loc source.Location, code, message, label string) {
+	diag := diagnostics.NewInfo(message).WithCode(code)
+	if label != "" {
+		diag.WithPrimaryLabel(&loc, label)
+	}
+	p.diag.Add(diag)
+}
+
 func (p *Parser) synchronizeTopLevel() {
 	for !p.at(tokens.EOF) {
 		switch p.current().Kind {
@@ -438,6 +448,10 @@ func (p *Parser) isRecoveryBoundary(kind tokens.Kind) bool {
 
 func (p *Parser) consumeListSeparator(end tokens.Kind, itemName string, canStartNext bool) bool {
 	if p.match(tokens.COMMA) {
+		if p.at(end) {
+			loc := p.locOfToken(p.previous())
+			p.infoAt(loc, diagnostics.InfoTrailingComma, "trailing comma is unnecessary", "remove this trailing comma")
+		}
 		return true
 	}
 	if p.at(end) || p.at(tokens.EOF) {
@@ -458,6 +472,33 @@ func (p *Parser) consumeListSeparator(end tokens.Kind, itemName string, canStart
 		p.match(tokens.COMMA)
 	}
 	return !p.at(end) && !p.at(tokens.EOF)
+}
+
+func (p *Parser) consumeRedundantSemicolons(allowed int) int {
+	count := 0
+	var firstExtra tokens.Token
+	var lastExtra tokens.Token
+	for p.at(tokens.SEMICOLON) {
+		tok := p.advance()
+		count++
+		if count == allowed+1 {
+			firstExtra = tok
+		}
+		if count > allowed {
+			lastExtra = tok
+		}
+	}
+	if count > allowed {
+		loc := source.NewLocation(p.file, firstExtra.Start, lastExtra.End)
+		message := "unnecessary semicolon"
+		label := "remove this semicolon"
+		if count > allowed+1 {
+			message = "unnecessary semicolons"
+			label = "remove these semicolons"
+		}
+		p.infoAt(loc, diagnostics.InfoUnnecessarySemicolon, message, label)
+	}
+	return count
 }
 
 func (p *Parser) parseNamePath() []string {

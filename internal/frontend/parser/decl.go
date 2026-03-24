@@ -43,22 +43,6 @@ func (p *Parser) parseTypeDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 	}
 }
 
-func (p *Parser) parseConstraintDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
-	start := p.expect(tokens.CONSTRAINT, "expected 'constraint'").Start
-	nameTok := p.expect(tokens.IDENT, "expected constraint name")
-	p.expect(tokens.ASSIGN, "expected '=' after constraint name")
-	value := p.parseConstraintTypeExpr()
-	p.match(tokens.SEMICOLON)
-	return &ast.TypeDecl{
-		Name:         &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
-		Doc:          doc,
-		Attrs:        attrs,
-		IsConstraint: true,
-		Type:         value,
-		Location:     p.locFrom(start),
-	}
-}
-
 func (p *Parser) parseLetDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.LET, "expected 'let'").Start
 	isMut := p.match(tokens.MUT)
@@ -178,32 +162,19 @@ func (p *Parser) parseTypeParams() []ast.TypeParam {
 		nameTok := p.expect(tokens.IDENT, "expected type parameter name")
 		var constraint ast.TypeExpr
 		if p.match(tokens.COLON) {
-			constraint = p.parseConstraintTypeExpr()
+			constraint = p.parseType()
 		}
 		params = append(params, ast.TypeParam{
 			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Constraint: constraint,
 			Location:   p.locFrom(start),
 		})
-		if !p.consumeListSeparator(tokens.GT, "type parameter", p.startsType()) {
+		if !p.consumeListSeparator(tokens.GT, "type parameter", p.at(tokens.IDENT)) {
 			break
 		}
 	}
 	p.expect(tokens.GT, "expected '>' after type parameters")
 	return params
-}
-
-func (p *Parser) parseConstraintTypeExpr() ast.TypeExpr {
-	start := p.current().Start
-	left := p.parseType()
-	terms := []ast.TypeExpr{left}
-	for p.match(tokens.AMP) {
-		terms = append(terms, p.parseType())
-	}
-	if len(terms) == 1 {
-		return left
-	}
-	return &ast.IntersectionType{Terms: terms, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseAttachedOwner() *ast.NamedType {
@@ -513,7 +484,10 @@ func (p *Parser) parseStructType() ast.TypeExpr {
 		if p.match(tokens.ASSIGN) {
 			def = p.parseExprUntil(precLowest)
 		}
-		p.match(tokens.COMMA)
+		if p.match(tokens.COMMA) && p.at(tokens.RBRACE) {
+			loc := p.locOfToken(p.previous())
+			p.infoAt(loc, diagnostics.InfoTrailingComma, "trailing comma is unnecessary", "remove this trailing comma")
+		}
 		fields = append(fields, &ast.FieldDecl{
 			Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 			Type:     fieldType,
@@ -542,7 +516,10 @@ func (p *Parser) parseInterfaceType() ast.TypeExpr {
 		if p.startsType() {
 			result = p.parseType()
 		}
-		p.match(tokens.COMMA)
+		if p.match(tokens.COMMA) && p.at(tokens.RBRACE) {
+			loc := p.locOfToken(p.previous())
+			p.infoAt(loc, diagnostics.InfoTrailingComma, "trailing comma is unnecessary", "remove this trailing comma")
+		}
 		methods = append(methods, &ast.InterfaceMethod{
 			Receiver: receiver,
 			Static:   inferredStatic,
@@ -690,6 +667,10 @@ func (p *Parser) parseUnionType() ast.TypeExpr {
 
 func (p *Parser) consumeUnionMemberSeparator() bool {
 	if p.match(tokens.COMMA) {
+		if p.at(tokens.RBRACE) {
+			loc := p.locOfToken(p.previous())
+			p.infoAt(loc, diagnostics.InfoTrailingComma, "trailing comma is unnecessary", "remove this trailing comma")
+		}
 		return true
 	}
 	if p.at(tokens.RBRACE) || p.at(tokens.EOF) {

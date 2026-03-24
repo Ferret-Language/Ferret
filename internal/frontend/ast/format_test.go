@@ -106,10 +106,9 @@ func TestTypeDeclTextIncludesTypeParams(t *testing.T) {
 	}
 }
 
-func TestConstraintDeclTextIncludesFullUnionBody(t *testing.T) {
+func TestTypeDeclTextIncludesFullUnionBody(t *testing.T) {
 	decl := &TypeDecl{
-		Name:         &Ident{Path: []string{"Number"}},
-		IsConstraint: true,
+		Name: &Ident{Path: []string{"Number"}},
 		Type: &UnionType{
 			Members: []TypeExpr{
 				&NamedType{Path: []string{"i32"}},
@@ -118,8 +117,8 @@ func TestConstraintDeclTextIncludesFullUnionBody(t *testing.T) {
 		},
 	}
 
-	want := "constraint Number = union { i32, i64 }"
+	want := "type Number union { i32, i64 }"
 	if got := decl.Text(); got != want {
-		t.Fatalf("unexpected constraint text:\nwant: %q\ngot:  %q", want, got)
+		t.Fatalf("unexpected type text:\nwant: %q\ngot:  %q", want, got)
 	}
 }

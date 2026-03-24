@@ -1,0 +1,51 @@
+
+
+type Point struct {
+    X: i32 = 10
+    Y: i32 = 20
+}
+
+fn Point::New() Self {
+    return .{}
+}
+
+fn Point::Incr(&mut self) {
+    self.X++
+    self.Y++
+}
+
+fn update(mut x: i32) i32 {
+    x++
+    return x
+}
+
+type num union {
+    i32,
+    f32
+}
+
+type C num
+
+fn add<T: C>(a: T, b: T) T {
+    return a + b
+}
+
+fn addAll(nums: ...i32) i32 {
+    let mut res = 0
+    for nums | v | {
+        res += v
+    }
+    return res
+}
+
+fn main() {
+    let mut x = 1
+    print(update(x))
+    print(update(10))
+
+    let arr = [_]i32{1,2,3,4}
+
+    //x = Point::New()
+    x = addAll(arr...)
+    print(x)
+}

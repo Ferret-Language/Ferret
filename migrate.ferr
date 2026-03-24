@@ -60,7 +60,7 @@ type Shape interface {
     Draw(&self)
 }
 
-/* 
+/*
     This accepts any struct
     that implements shape
 */
@@ -70,7 +70,7 @@ fn drawShape<T: Shape>(s: T) {
 
 type any interface{}
 
-constraint numeric = union {
+type numeric union {
     i32,
     f32,
     u32
@@ -111,7 +111,7 @@ fn main() {
     // run2() catch |err| {
 
     // }
-    // 
+    //
     jump:
 
     let p = .Point<i32>{ .Value = 2 }
@@ -139,14 +139,14 @@ fn main() {
     print("###### For Loop ######")
 
     let mut sum = 0
-    
+
     for arr | i, v | {
         print(i)
         print("-")
         print(v)
         sum += v
     }
-    
+
     print("###### For Loop End ######")
     //c = 13
     print(a)

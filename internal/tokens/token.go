@@ -68,69 +68,67 @@ const (
 	LBRACK Kind = "["
 	RBRACK Kind = "]"
 
-	IMPORT     Kind = "IMPORT"
-	CONST      Kind = "CONST"
-	TYPE       Kind = "TYPE"
-	STRUCT     Kind = "STRUCT"
-	INTERFACE  Kind = "INTERFACE"
-	ENUM       Kind = "ENUM"
-	UNION      Kind = "UNION"
-	ERROR      Kind = "ERROR"
-	CONSTRAINT Kind = "CONSTRAINT"
-	FN         Kind = "FN"
-	LET        Kind = "LET"
-	IF         Kind = "IF"
-	ELSE       Kind = "ELSE"
-	MATCH      Kind = "MATCH"
-	FOR        Kind = "FOR"
-	WHILE      Kind = "WHILE"
-	BREAK      Kind = "BREAK"
-	CONTINUE   Kind = "CONTINUE"
-	RETURN     Kind = "RETURN"
-	AS         Kind = "AS"
-	IS         Kind = "IS"
-	MUT        Kind = "MUT"
-	COMPTIME   Kind = "COMPTIME"
-	LOCK       Kind = "LOCK"
-	DEFER      Kind = "DEFER"
-	PANIC      Kind = "PANIC"
-	RELEASE    Kind = "RELEASE"
-	CATCH      Kind = "CATCH"
-	NONE       Kind = "NONE"
-	UNSAFE     Kind = "UNSAFE"
+	IMPORT    Kind = "IMPORT"
+	CONST     Kind = "CONST"
+	TYPE      Kind = "TYPE"
+	STRUCT    Kind = "STRUCT"
+	INTERFACE Kind = "INTERFACE"
+	ENUM      Kind = "ENUM"
+	UNION     Kind = "UNION"
+	ERROR     Kind = "ERROR"
+	FN        Kind = "FN"
+	LET       Kind = "LET"
+	IF        Kind = "IF"
+	ELSE      Kind = "ELSE"
+	MATCH     Kind = "MATCH"
+	FOR       Kind = "FOR"
+	WHILE     Kind = "WHILE"
+	BREAK     Kind = "BREAK"
+	CONTINUE  Kind = "CONTINUE"
+	RETURN    Kind = "RETURN"
+	AS        Kind = "AS"
+	IS        Kind = "IS"
+	MUT       Kind = "MUT"
+	COMPTIME  Kind = "COMPTIME"
+	LOCK      Kind = "LOCK"
+	DEFER     Kind = "DEFER"
+	PANIC     Kind = "PANIC"
+	RELEASE   Kind = "RELEASE"
+	CATCH     Kind = "CATCH"
+	NONE      Kind = "NONE"
+	UNSAFE    Kind = "UNSAFE"
 )
 
 var keywords = map[string]Kind{
-	"import":     IMPORT,
-	"const":      CONST,
-	"type":       TYPE,
-	"struct":     STRUCT,
-	"interface":  INTERFACE,
-	"enum":       ENUM,
-	"union":      UNION,
-	"error":      ERROR,
-	"constraint": CONSTRAINT,
-	"fn":         FN,
-	"let":        LET,
-	"if":         IF,
-	"else":       ELSE,
-	"match":      MATCH,
-	"for":        FOR,
-	"while":      WHILE,
-	"break":      BREAK,
-	"continue":   CONTINUE,
-	"return":     RETURN,
-	"as":         AS,
-	"is":         IS,
-	"mut":        MUT,
-	"comptime":   COMPTIME,
-	"lock":       LOCK,
-	"defer":      DEFER,
-	"panic":      PANIC,
-	"release":    RELEASE,
-	"catch":      CATCH,
-	"none":       NONE,
-	"unsafe":     UNSAFE,
+	"import":    IMPORT,
+	"const":     CONST,
+	"type":      TYPE,
+	"struct":    STRUCT,
+	"interface": INTERFACE,
+	"enum":      ENUM,
+	"union":     UNION,
+	"error":     ERROR,
+	"fn":        FN,
+	"let":       LET,
+	"if":        IF,
+	"else":      ELSE,
+	"match":     MATCH,
+	"for":       FOR,
+	"while":     WHILE,
+	"break":     BREAK,
+	"continue":  CONTINUE,
+	"return":    RETURN,
+	"as":        AS,
+	"is":        IS,
+	"mut":       MUT,
+	"comptime":  COMPTIME,
+	"lock":      LOCK,
+	"defer":     DEFER,
+	"panic":     PANIC,
+	"release":   RELEASE,
+	"catch":     CATCH,
+	"none":      NONE,
+	"unsafe":    UNSAFE,
 }
 
 func LookupIdent(ident string) Kind {

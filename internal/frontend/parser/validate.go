@@ -301,10 +301,6 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 				seen[key] = member
 			}
 		}
-	case *ast.IntersectionType:
-		for _, term := range t.Terms {
-			p.validateType(term)
-		}
 	}
 }
 

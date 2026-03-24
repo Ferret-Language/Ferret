@@ -1517,7 +1517,7 @@ func completionKindForSymbol(sym *symbols.Symbol) int {
 func keywordCompletionItems() []completionItem {
 	keywords := []string{
 		"import", "const", "let", "mut", "fn", "type", "struct", "interface", "enum", "union",
-		"error", "constraint", "if", "else", "match", "for", "while", "break", "continue",
+		"error", "if", "else", "match", "for", "while", "break", "continue",
 		"return", "comptime", "catch", "is", "as", "defer", "release", "panic", "lock", "unsafe",
 		"self", "none", "true", "false",
 	}

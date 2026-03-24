@@ -5,9 +5,6 @@ import "fmt"
 func DeclSummary(decl Decl) string {
 	switch d := decl.(type) {
 	case *TypeDecl:
-		if d.IsConstraint {
-			return fmt.Sprintf("constraint %s", d.Name.Text())
-		}
 		return fmt.Sprintf("type %s", d.Name.Text())
 	case *ConstDecl:
 		return fmt.Sprintf("const %s", d.Name.Text())

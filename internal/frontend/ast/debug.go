@@ -42,7 +42,7 @@ func debugDecl(decl Decl) any {
 	case *ConstDecl:
 		return map[string]any{"kind": "ConstDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
 	case *TypeDecl:
-		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "type_params": debugTypeParams(d.TypeParams), "attrs": debugAttrs(d.Attrs), "is_constraint": d.IsConstraint, "type": debugType(d.Type), "loc": debugLoc(d.Location)}
+		return map[string]any{"kind": "TypeDecl", "name": debugExpr(d.Name), "type_params": debugTypeParams(d.TypeParams), "attrs": debugAttrs(d.Attrs), "type": debugType(d.Type), "loc": debugLoc(d.Location)}
 	case *FuncDecl:
 		params := make([]any, 0, len(d.Params))
 		for _, param := range d.Params {
@@ -322,12 +322,6 @@ func debugType(typ TypeExpr) any {
 			members = append(members, debugType(m))
 		}
 		return map[string]any{"kind": "UnionType", "members": members, "loc": debugLoc(t.Location)}
-	case *IntersectionType:
-		terms := make([]any, 0, len(t.Terms))
-		for _, term := range t.Terms {
-			terms = append(terms, debugType(term))
-		}
-		return map[string]any{"kind": "IntersectionType", "terms": terms, "loc": debugLoc(t.Location)}
 	case *ErrorType:
 		members := make([]any, 0, len(t.Members))
 		for _, m := range t.Members {

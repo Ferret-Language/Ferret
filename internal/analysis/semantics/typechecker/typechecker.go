@@ -89,17 +89,9 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 		c.info.BindNode(param.Name, typeParams[i])
 	}
 	resolveDeclType := func() typeinfo.Type { return c.typeFromSyntax(c.mod, d.Type) }
-	var declType typeinfo.Type
-	if d.IsConstraint {
-		declType = c.withConstraintContext(resolveDeclType)
-	} else {
-		declType = resolveDeclType()
-	}
+	declType := resolveDeclType()
 	if d.Type != nil {
 		c.info.BindNode(d.Type, declType)
-	}
-	if d.IsConstraint {
-		return
 	}
 	switch t := d.Type.(type) {
 	case *ast.StructType:
@@ -863,8 +855,6 @@ func (c *checker) containsTypeParam(typ typeinfo.Type) bool {
 		return c.containsTypeParam(t.Inner)
 	case *typeinfo.TupleType:
 		return slices.ContainsFunc(t.Elems, c.containsTypeParam)
-	case *typeinfo.IntersectionType:
-		return slices.ContainsFunc(t.Members, c.containsTypeParam)
 	default:
 		return false
 	}
@@ -1491,10 +1481,6 @@ func (c *checker) collectTypeParams(typ typeinfo.Type, visit func(*typeinfo.Type
 		for _, member := range t.Members {
 			c.collectTypeParams(member, visit)
 		}
-	case *typeinfo.IntersectionType:
-		for _, member := range t.Members {
-			c.collectTypeParams(member, visit)
-		}
 	case *typeinfo.FuncType:
 		for _, param := range t.TypeParams {
 			visit(param)
@@ -1694,12 +1680,6 @@ func (c *checker) substituteTypeParams(typ typeinfo.Type, bindings map[*typeinfo
 			members = append(members, c.substituteTypeParams(member, bindings))
 		}
 		return &typeinfo.UnionType{Members: members}
-	case *typeinfo.IntersectionType:
-		members := make([]typeinfo.Type, 0, len(t.Members))
-		for _, member := range t.Members {
-			members = append(members, c.substituteTypeParams(member, bindings))
-		}
-		return &typeinfo.IntersectionType{Members: members}
 	case *typeinfo.FuncType:
 		out := &typeinfo.FuncType{
 			IsUnsafe: t.IsUnsafe,
@@ -2884,19 +2864,6 @@ func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Ty
 	if c.assignable(expected, got) {
 		return true
 	}
-	if inter, ok := c.underlying(expected).(*typeinfo.IntersectionType); ok && inter != nil {
-		for _, member := range inter.Members {
-			if c.assignable(member, got) {
-				continue
-			}
-			if iface, ok := c.underlying(member).(*typeinfo.InterfaceType); ok {
-				c.reportInterfaceMismatch(loc, member, got, iface)
-				return false
-			}
-			c.reportTypeMismatch(loc, member, got)
-			return false
-		}
-	}
 	if members, matches := c.unionAssignableMembers(expected, got); members != nil {
 		if matches == 0 {
 			c.ctx.Diagnostics.Add(
@@ -2937,14 +2904,6 @@ func (c *checker) assignable(expected, got typeinfo.Type) bool {
 			return c.assignable(approx.Inner, baseGot)
 		}
 		return false
-	}
-	if inter, ok := c.underlying(expected).(*typeinfo.IntersectionType); ok && inter != nil {
-		for _, member := range inter.Members {
-			if !c.assignable(member, got) {
-				return false
-			}
-		}
-		return true
 	}
 	if iface, ok := c.underlying(expected).(*typeinfo.InterfaceType); ok && c.implementsInterface(got, iface) {
 		return true
@@ -3133,12 +3092,6 @@ func (c *checker) instantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type
 			elems = append(elems, c.instantiateSelfType(elem, selfType))
 		}
 		return &typeinfo.TupleType{Elems: elems}
-	case *typeinfo.IntersectionType:
-		members := make([]typeinfo.Type, 0, len(t.Members))
-		for _, member := range t.Members {
-			members = append(members, c.instantiateSelfType(member, selfType))
-		}
-		return &typeinfo.IntersectionType{Members: members}
 	default:
 		return typ
 	}

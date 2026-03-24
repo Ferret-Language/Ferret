@@ -275,7 +275,7 @@ func TestHoverUsesOpenDocumentOverlayText(t *testing.T) {
 func TestHoverShowsExpandedNamedConstraint(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.ferr")
-	src := "constraint numeric = union {\n    i32,\n    i64,\n}\n\nfn add_numbers<T: numeric>(a: T, b: T) T {\n    return a + b\n}\n"
+	src := "type numeric union {\n    i32,\n    i64,\n}\n\nfn add_numbers<T: numeric>(a: T, b: T) T {\n    return a + b\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestHoverShowsExpandedNamedConstraint(t *testing.T) {
 	if err := json.Unmarshal(raw, &hover); err != nil {
 		t.Fatalf("failed to unmarshal hover result: %v", err)
 	}
-	if !strings.Contains(hover.Contents.Value, "constraint numeric = union { i32, i64 }") {
+	if !strings.Contains(hover.Contents.Value, "type numeric union { i32, i64 }") {
 		t.Fatalf("expected expanded constraint hover, got %q", hover.Contents.Value)
 	}
 }
