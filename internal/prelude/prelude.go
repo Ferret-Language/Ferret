@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"compiler/internal/analysis/semantics/collector"
 	"compiler/internal/analysis/semantics/resolver"
@@ -16,6 +15,8 @@ import (
 )
 
 const globalModuleKey = "builtin:global"
+
+var ExecutablePath = os.Executable
 
 func Load(ctx *context.CompilerContext) error {
 	if ctx == nil || ctx.Prelude != nil {
@@ -56,48 +57,19 @@ func Load(ctx *context.CompilerContext) error {
 }
 
 func findGlobalPrelude(ctx *context.CompilerContext) (string, error) {
-	candidates := make([]string, 0, 8)
 	if ctx.Config.StdlibRoot != "" {
-		candidates = append(candidates, filepath.Join(filepath.Dir(ctx.Config.StdlibRoot), "global.fer"))
-	}
-	for current := filepath.Clean(ctx.Config.RootDir); ; current = filepath.Dir(current) {
-		candidates = append(candidates,
-			filepath.Join(current, "ferret_libs_dev", "global.fer"),
-			filepath.Join(current, "libs", "global.fer"),
-		)
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
+		candidate := filepath.Clean(filepath.Join(filepath.Dir(ctx.Config.StdlibRoot), "global.fer"))
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
 		}
 	}
-	if execPath, err := os.Executable(); err == nil {
+
+	if execPath, err := ExecutablePath(); err == nil {
 		execDir := filepath.Dir(execPath)
-		candidates = append(candidates,
-			filepath.Join(execDir, "..", "ferret_libs_dev", "global.fer"),
-			filepath.Join(execDir, "..", "libs", "global.fer"),
-		)
-	}
-	if _, file, _, ok := runtime.Caller(0); ok {
-		root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
-		candidates = append(candidates,
-			filepath.Join(root, "ferret_libs_dev", "global.fer"),
-			filepath.Join(root, "libs", "global.fer"),
-		)
-	}
-	seen := make(map[string]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		if candidate == "" {
-			continue
-		}
-		clean := filepath.Clean(candidate)
-		if _, ok := seen[clean]; ok {
-			continue
-		}
-		seen[clean] = struct{}{}
-		info, err := os.Stat(clean)
-		if err == nil && !info.IsDir() {
-			return clean, nil
+		candidate := filepath.Clean(filepath.Join(execDir, "..", "libs", "global.fer"))
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("global prelude not found in ferret_libs_dev or libs")
+	return "", fmt.Errorf("global prelude not found in packaged libs beside the executable")
 }

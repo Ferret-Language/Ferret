@@ -10,6 +10,8 @@ import (
 func TestLoadResolvesNeighborDependencyRoots(t *testing.T) {
 	root := t.TempDir()
 	depRoot := filepath.Join(root, "deps", "json")
+	pkgRoot := filepath.Join(root, "bundle", "core")
+	pkgStdRoot := filepath.Join(pkgRoot, "libs", "std")
 
 	mustWrite(t, filepath.Join(root, "fer.ret"), `[package]
 name = "app"
@@ -20,6 +22,15 @@ json = "./deps/json"
 	mustWrite(t, filepath.Join(depRoot, "fer.ret"), `[package]
 name = "json"
 `)
+	if err := os.MkdirAll(pkgStdRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldExecutablePath := ExecutablePath
+	ExecutablePath = func() (string, error) {
+		return filepath.Join(pkgRoot, "bin", "ferret"), nil
+	}
+	defer func() { ExecutablePath = oldExecutablePath }()
 
 	ws, err := Load(root, ".fer")
 	if err != nil {
@@ -35,7 +46,8 @@ name = "json"
 
 func TestLoadFindsProjectStdlibRoot(t *testing.T) {
 	root := t.TempDir()
-	stdRoot := filepath.Join(root, "libs", "std")
+	pkgRoot := filepath.Join(root, "bundle", "core")
+	stdRoot := filepath.Join(pkgRoot, "libs", "std")
 
 	mustWrite(t, filepath.Join(root, "fer.ret"), `[package]
 name = "app"
@@ -43,6 +55,12 @@ name = "app"
 	if err := os.MkdirAll(stdRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
+	oldExecutablePath := ExecutablePath
+	ExecutablePath = func() (string, error) {
+		return filepath.Join(pkgRoot, "bin", "ferret"), nil
+	}
+	defer func() { ExecutablePath = oldExecutablePath }()
 
 	ws, err := Load(root, ".fer")
 	if err != nil {
@@ -53,12 +71,19 @@ name = "app"
 	}
 }
 
-func TestLoadFindsStdlibRootWithoutManifest(t *testing.T) {
+func TestLoadUsesExecutableRelativeStdlibRootWithoutManifest(t *testing.T) {
 	root := t.TempDir()
-	stdRoot := filepath.Join(root, "ferret_libs_dev", "std")
+	pkgRoot := filepath.Join(root, "bundle", "core")
+	stdRoot := filepath.Join(pkgRoot, "libs", "std")
 	if err := os.MkdirAll(stdRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+
+	oldExecutablePath := ExecutablePath
+	ExecutablePath = func() (string, error) {
+		return filepath.Join(pkgRoot, "bin", "ferret"), nil
+	}
+	defer func() { ExecutablePath = oldExecutablePath }()
 
 	ws, err := Load(root, ".fer")
 	if err != nil {
@@ -66,6 +91,33 @@ func TestLoadFindsStdlibRootWithoutManifest(t *testing.T) {
 	}
 	if ws.Context.StdlibRoot != stdRoot {
 		t.Fatalf("expected stdlib root %q, got %q", stdRoot, ws.Context.StdlibRoot)
+	}
+}
+
+func TestLoadPrefersExecutableRelativeStdlibRoot(t *testing.T) {
+	root := t.TempDir()
+	pkgRoot := filepath.Join(root, "bundle", "core")
+	pkgStdRoot := filepath.Join(pkgRoot, "libs", "std")
+
+	mustWrite(t, filepath.Join(root, "fer.ret"), `[package]
+name = "app"
+`)
+	if err := os.MkdirAll(pkgStdRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldExecutablePath := ExecutablePath
+	ExecutablePath = func() (string, error) {
+		return filepath.Join(pkgRoot, "bin", "ferret"), nil
+	}
+	defer func() { ExecutablePath = oldExecutablePath }()
+
+	ws, err := Load(root, ".fer")
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if ws.Context.StdlibRoot != pkgStdRoot {
+		t.Fatalf("expected packaged stdlib root %q, got %q", pkgStdRoot, ws.Context.StdlibRoot)
 	}
 }
 

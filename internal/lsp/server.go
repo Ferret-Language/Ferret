@@ -1158,25 +1158,49 @@ func collectOwnershipCastFromStmt(stmt ast.Stmt, info *typeinfo.ModuleInfo, out 
 	}
 	switch s := stmt.(type) {
 	case *ast.BlockStmt:
+		if s == nil {
+			return
+		}
 		for _, nested := range s.Stmts {
 			collectOwnershipCastFromStmt(nested, info, out)
 		}
 	case *ast.LetStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Value, info, out)
 	case *ast.ConstStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Value, info, out)
 	case *ast.ReturnStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Value, info, out)
 	case *ast.ExprStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Value, info, out)
 	case *ast.AssignStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Left, info, out)
 		collectOwnershipCastFromExpr(s.Right, info, out)
 	case *ast.IfStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Cond, info, out)
 		collectOwnershipCastFromStmt(s.Then, info, out)
 		collectOwnershipCastFromStmt(s.Else, info, out)
 	case *ast.MatchStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Value, info, out)
 		for _, arm := range s.Arms {
 			if arm == nil {
@@ -1186,23 +1210,47 @@ func collectOwnershipCastFromStmt(stmt ast.Stmt, info *typeinfo.ModuleInfo, out 
 			collectOwnershipCastFromStmt(arm.Body, info, out)
 		}
 	case *ast.WhileStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Cond, info, out)
 		collectOwnershipCastFromStmt(s.Body, info, out)
 	case *ast.ForStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Iterable, info, out)
 		collectOwnershipCastFromStmt(s.Body, info, out)
 	case *ast.LabelStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromStmt(s.Stmt, info, out)
 	case *ast.DeferStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromStmt(s.Body, info, out)
 	case *ast.ReleaseStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Value, info, out)
 	case *ast.PanicStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Value, info, out)
 	case *ast.LockStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(s.Value, info, out)
 		collectOwnershipCastFromStmt(s.Body, info, out)
 	case *ast.UnsafeStmt:
+		if s == nil {
+			return
+		}
 		collectOwnershipCastFromStmt(s.Body, info, out)
 	}
 }
@@ -1213,20 +1261,38 @@ func collectOwnershipCastFromExpr(expr ast.Expr, info *typeinfo.ModuleInfo, out 
 	}
 	switch e := expr.(type) {
 	case *ast.PrefixExpr:
+		if e == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(e.Right, info, out)
 	case *ast.BinaryExpr:
+		if e == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(e.Left, info, out)
 		collectOwnershipCastFromExpr(e.Right, info, out)
 	case *ast.PostfixExpr:
+		if e == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(e.Left, info, out)
 	case *ast.CallExpr:
+		if e == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(e.Callee, info, out)
 		for _, arg := range e.Args {
 			collectOwnershipCastFromExpr(arg, info, out)
 		}
 	case *ast.SelectorExpr:
+		if e == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(e.Left, info, out)
 	case *ast.CastExpr:
+		if e == nil {
+			return
+		}
 		if note := ownershipBoundaryCastNoteForExpr(e, info); note != "" {
 			loc := e.Loc()
 			*out = append(*out, hoverCandidate{
@@ -1238,8 +1304,14 @@ func collectOwnershipCastFromExpr(expr ast.Expr, info *typeinfo.ModuleInfo, out 
 		}
 		collectOwnershipCastFromExpr(e.Left, info, out)
 	case *ast.IsExpr:
+		if e == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(e.Left, info, out)
 	case *ast.MatchExpr:
+		if e == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(e.Value, info, out)
 		for _, arm := range e.Arms {
 			if arm == nil {
@@ -1249,14 +1321,23 @@ func collectOwnershipCastFromExpr(expr ast.Expr, info *typeinfo.ModuleInfo, out 
 			collectOwnershipCastFromStmt(arm.Body, info, out)
 		}
 	case *ast.CatchExpr:
+		if e == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(e.Left, info, out)
 		collectOwnershipCastFromExpr(e.Fallback, info, out)
 		collectOwnershipCastFromStmt(e.Handler, info, out)
 	case *ast.CompositeLit:
+		if e == nil {
+			return
+		}
 		for _, item := range e.Items {
 			collectOwnershipCastFromExpr(item.Value, info, out)
 		}
 	case *ast.IndexExpr:
+		if e == nil {
+			return
+		}
 		collectOwnershipCastFromExpr(e.Left, info, out)
 		collectOwnershipCastFromExpr(e.Index, info, out)
 	}

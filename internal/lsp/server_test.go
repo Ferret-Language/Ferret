@@ -12,9 +12,11 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
+	projectpkg "compiler/internal/core/project"
 	"compiler/internal/core/source"
 	compiler "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/prelude"
 	"compiler/internal/tokens"
 )
 
@@ -423,6 +425,103 @@ func TestDefinitionCrossModuleFunction(t *testing.T) {
 	}
 }
 
+func TestHoverWorksInsideStdlibFile(t *testing.T) {
+	restore := usePackagedLibsForTest(t)
+	defer restore()
+
+	dir, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	path := filepath.Join(dir, "ferret_libs_dev", "std", "mem.fer")
+	srcBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read stdlib source: %v", err)
+	}
+	src := string(srcBytes)
+
+	line, char, ok := findPosition(src, "    return malloc(align_up(size, PageSize))")
+	if !ok {
+		t.Fatal("failed to find align_up call in stdlib source")
+	}
+	char += len("    return malloc(")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result for stdlib source")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn align_up(value: usize, align: usize) -> usize") {
+		t.Fatalf("expected stdlib align_up hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestDefinitionWorksInsideStdlibFile(t *testing.T) {
+	restore := usePackagedLibsForTest(t)
+	defer restore()
+
+	dir, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	path := filepath.Join(dir, "ferret_libs_dev", "std", "mem.fer")
+	srcBytes, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read stdlib source: %v", err)
+	}
+	src := string(srcBytes)
+
+	declLine, declChar, ok := findPosition(src, "fn align_up(value: usize, align: usize) -> usize")
+	if !ok {
+		t.Fatal("failed to find align_up declaration in stdlib source")
+	}
+	declChar += len("fn ")
+
+	line, char, ok := findPosition(src, "    return malloc(align_up(size, PageSize))")
+	if !ok {
+		t.Fatal("failed to find align_up call in stdlib source")
+	}
+	char += len("    return malloc(")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/definition",
+		Params: mustRawJSON(t, definitionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	loc := decodeDefinitionResult(t, out.String())
+	if loc == nil {
+		t.Fatal("expected definition result for stdlib source")
+	}
+	if loc.URI != uri {
+		t.Fatalf("expected stdlib definition URI %q, got %q", uri, loc.URI)
+	}
+	if loc.Range.Start.Line != declLine || loc.Range.Start.Character != declChar {
+		t.Fatalf("expected stdlib definition at %d:%d, got %d:%d", declLine, declChar, loc.Range.Start.Line, loc.Range.Start.Character)
+	}
+}
+
 func TestDefinitionOverlayReturnsOriginalFileURI(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
@@ -771,6 +870,9 @@ func TestHoverFunctionCallShowsNamedSignature(t *testing.T) {
 }
 
 func TestHoverBuiltinCallsShowFunctionSignatures(t *testing.T) {
+	restore := usePackagedLibsForTest(t)
+	defer restore()
+
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
 	src := "fn main() {\n    let xs: [3]i32 = [1, 2, 3]\n    print(\"ok\")\n    len(xs)\n}\n"
@@ -2061,4 +2163,55 @@ func findPosition(text, needle string) (int, int, bool) {
 		}
 	}
 	return 0, 0, false
+}
+
+func usePackagedLibsForTest(t *testing.T) func() {
+	t.Helper()
+
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	srcRoot := filepath.Join(repoRoot, "ferret_libs_dev")
+
+	bundleRoot := filepath.Join(t.TempDir(), "bundle")
+	libsRoot := filepath.Join(bundleRoot, "libs")
+	if err := copyDir(srcRoot, libsRoot); err != nil {
+		t.Fatalf("copy packaged libs: %v", err)
+	}
+
+	execPath := filepath.Join(bundleRoot, "bin", "ferret")
+	if err := os.MkdirAll(filepath.Dir(execPath), 0o755); err != nil {
+		t.Fatalf("mkdir bundle bin: %v", err)
+	}
+
+	oldProjectExecutablePath := projectpkg.ExecutablePath
+	oldPreludeExecutablePath := prelude.ExecutablePath
+	projectpkg.ExecutablePath = func() (string, error) { return execPath, nil }
+	prelude.ExecutablePath = func() (string, error) { return execPath, nil }
+	return func() {
+		projectpkg.ExecutablePath = oldProjectExecutablePath
+		prelude.ExecutablePath = oldPreludeExecutablePath
+	}
+}
+
+func copyDir(srcDir, dstDir string) error {
+	return filepath.WalkDir(srcDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil {
+			return err
+		}
+		dstPath := filepath.Join(dstDir, rel)
+		if entry.IsDir() {
+			return os.MkdirAll(dstPath, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dstPath, data, 0o644)
+	})
 }

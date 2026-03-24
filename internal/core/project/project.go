@@ -9,6 +9,8 @@ import (
 	"compiler/internal/core/manifest"
 )
 
+var ExecutablePath = os.Executable
+
 type Workspace struct {
 	RootDir   string
 	Manifest  *manifest.File
@@ -136,50 +138,16 @@ func resolveRemotePackage(cachePath string, lock *manifest.Lockfile, repoName, v
 	return modulePath, nil
 }
 
-// resolveStdlibRoot finds the stdlib root directory.
+// resolveStdlibRoot finds the packaged stdlib beside the compiler binary.
 //
-// Search order:
-//  1. Executable-relative: the ferret binary lives in bin/, so stdlib is at
-//     <execDir>/../libs/std  (the canonical installed layout).
-//  2. Walk up from projectRoot looking for libs/std or ferret_libs_dev/std,
-//     which covers development checkouts where the repo contains the stdlib.
+// Layout: <bundle>/bin/ferret -> <bundle>/libs/std
 func resolveStdlibRoot(projectRoot string) (string, error) {
-	var candidates []string
-
-	// 1. Relative to the ferret executable.
-	//    Layout: <root>/bin/ferret  →  <root>/libs/std
-	if execPath, err := os.Executable(); err == nil {
+	_ = projectRoot
+	if execPath, err := ExecutablePath(); err == nil {
 		execDir := filepath.Dir(execPath)
-		candidates = append(candidates,
-			filepath.Join(execDir, "..", "libs", "std"),
-			filepath.Join(execDir, "libs", "std"),
-		)
-	}
-
-	// 2. Walk up from the project root (development / monorepo layout).
-	stdNames := []string{"libs", "ferret_libs_dev", "ferret_libs"}
-	for current := projectRoot; ; current = filepath.Dir(current) {
-		for _, name := range stdNames {
-			candidates = append(candidates, filepath.Join(current, name, "std"))
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-	}
-
-	seen := make(map[string]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		if candidate == "" {
-			continue
-		}
-		clean := filepath.Clean(candidate)
-		if _, ok := seen[clean]; ok {
-			continue
-		}
-		seen[clean] = struct{}{}
-		if info, err := os.Stat(clean); err == nil && info.IsDir() {
-			return clean, nil
+		candidate := filepath.Clean(filepath.Join(execDir, "..", "libs", "std"))
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate, nil
 		}
 	}
 	return "", nil
