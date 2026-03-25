@@ -363,8 +363,8 @@ func (s *Server) handleInitialize(req rpcRequest) {
 			},
 		},
 		"serverInfo": map[string]any{
-			"name":    "ferret-lsp",
-			"version": "0.1.0",
+			"name":    "ferretls",
+			"version": compiler.CompilerVersion,
 		},
 	}
 	s.writeResponse(req.ID, result)
@@ -982,7 +982,7 @@ func parseForHover(path, text string, hasText bool) (compiler.Result, string, fu
 
 func writeHoverOverlay(originalPath, text string) (string, error) {
 	dir := filepath.Dir(originalPath)
-	file, err := os.CreateTemp(dir, ".ferret-lsp-hover-*.fer")
+	file, err := os.CreateTemp(dir, ".ferretls-hover-*.fer")
 	if err != nil {
 		return "", err
 	}
