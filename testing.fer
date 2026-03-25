@@ -1,0 +1,11 @@
+
+
+import "std/testing"
+
+fn main() -> void {
+    print("app")
+}
+
+test "smoke" {
+    testing::ExpectEq(2 + 2, 4, "math broke")
+}

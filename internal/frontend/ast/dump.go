@@ -14,6 +14,9 @@ func DeclSummary(decl Decl) string {
 		}
 		return fmt.Sprintf("let %s", d.Name.Text())
 	case *FuncDecl:
+		if d.IsTest {
+			return fmt.Sprintf("test %q", d.TestName)
+		}
 		if d.Receiver != nil {
 			if d.IsConstructor {
 				return fmt.Sprintf("ctor %s", d.Name.Text())

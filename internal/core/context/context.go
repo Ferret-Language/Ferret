@@ -35,6 +35,7 @@ type Config struct {
 	TargetArch      string
 	TargetBackend   string
 	BuildDebug      bool
+	TestMode        bool
 }
 
 type ModuleOrigin string

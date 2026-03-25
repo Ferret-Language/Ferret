@@ -249,6 +249,9 @@ func FuncDeclName(fn *FuncDecl) string {
 	if fn == nil || fn.Name == nil {
 		return ""
 	}
+	if fn.IsTest {
+		return `test "` + fn.TestName + `"`
+	}
 	name := fn.Name.Text()
 	if fn.OwnerType != nil && len(fn.OwnerType.Path) > 0 {
 		return strings.Join(fn.OwnerType.Path, "::") + "::" + name
@@ -259,6 +262,9 @@ func FuncDeclName(fn *FuncDecl) string {
 func FuncSignature(fn *FuncDecl) string {
 	if fn == nil || fn.Name == nil {
 		return "fn <unknown>() void"
+	}
+	if fn.IsTest {
+		return `test "` + fn.TestName + `"`
 	}
 	prefix := "fn"
 	if fn.IsUnsafe {

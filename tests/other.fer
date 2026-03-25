@@ -1,0 +1,15 @@
+
+
+let mut Value = 10
+
+fn Incr() {
+    Value++
+}
+
+fn Decr() {
+    Value--
+}
+
+fn Get() -> i32 {
+    return Value
+}

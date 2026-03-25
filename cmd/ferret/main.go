@@ -82,6 +82,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "test":
+			if err := testCommand(commandArgs); err != nil {
+				colors.RED.Fprintln(os.Stderr, err)
+				os.Exit(1)
+			}
+			return
 		case "check", "lint":
 			if err := checkCommand(commandArgs); err != nil {
 				colors.RED.Fprintln(os.Stderr, err)
@@ -116,6 +122,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
 		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.fer only)")
 		fmt.Fprintln(os.Stderr, "  run [path] [args]       build and run a program using LLVM")
+		fmt.Fprintln(os.Stderr, "  test [path] [args]      build and run unit tests using LLVM")
 		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
 		colors.GREEN.Fprintf(os.Stderr, "  %s -backend llvm main.fer\n", os.Args[0])
 		colors.GREEN.Fprintf(os.Stderr, "  %s -k main.fer\n", os.Args[0])
@@ -277,6 +284,72 @@ func runCommand(args []string) error {
 	return nil
 }
 
+func testCommand(args []string) error {
+	sourcePath := ""
+	runtimeArgs := []string{}
+	if len(args) > 0 {
+		sourcePath = args[0]
+		runtimeArgs = args[1:]
+	}
+	resolvedPath, entryPath, selectedByDiscovery, err := resolveRunTarget(sourcePath)
+	if err != nil {
+		return err
+	}
+	if selectedByDiscovery {
+		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", entryPath)
+	}
+
+	result := parsePathForTest(resolvedPath)
+	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
+		result.Diagnostics.EmitAll()
+	}
+	if result.Diagnostics.HasErrors() {
+		return fmt.Errorf("test build failed")
+	}
+	testCount := countModuleTests(result.Entry)
+	if testCount == 0 {
+		return fmt.Errorf("no tests found in %s", resolvedPath)
+	}
+	colors.CYAN.Fprintf(os.Stderr, "running %d test(s)\n", testCount)
+
+	tempPattern := "ferret-test-*"
+	if runtime.GOOS == "windows" {
+		tempPattern = "ferret-test-*.exe"
+	}
+	tempFile, err := os.CreateTemp("", tempPattern)
+	if err != nil {
+		return fmt.Errorf("create temp output: %w", err)
+	}
+	tempPath := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		return err
+	}
+	_ = os.Remove(tempPath)
+
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(tempPath), ".exe") {
+		tempPath += ".exe"
+	}
+	defer func() {
+		_ = os.Remove(tempPath)
+	}()
+
+	if err := buildExecutable(result, tempPath, backend.TargetLLVM); err != nil {
+		return err
+	}
+
+	cmd := exec.Command(tempPath, runtimeArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		return fmt.Errorf("run tests: %w", err)
+	}
+	return nil
+}
+
 func resolveRunTarget(path string) (resolvedPath string, entryPath string, selectedByDiscovery bool, err error) {
 	if strings.TrimSpace(path) == "" {
 		entryPath, err = resolveManifestEntryPath(".")
@@ -366,6 +439,14 @@ func checkCommand(args []string) error {
 }
 
 func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.Result {
+	return parsePathWithConfig(path, targetBackend, buildDebug, false)
+}
+
+func parsePathForTest(path string) compiler.Result {
+	return parsePathWithConfig(path, string(backend.TargetLLVM), false, true)
+}
+
+func parsePathWithConfig(path, targetBackend string, buildDebug, testMode bool) compiler.Result {
 	absPath, err := filepath.Abs(path)
 	diag := diagnostics.NewDiagnosticBag(absPath)
 	if err != nil {
@@ -390,6 +471,7 @@ func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.
 		}
 		ws.Context.TargetBackend = targetBackend
 		ws.Context.BuildDebug = buildDebug
+		ws.Context.TestMode = testMode
 		compiler := compiler.NewWithConfig(ws.Context, diag)
 		return compiler.ParseEntry(entryPath)
 	}
@@ -404,6 +486,7 @@ func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.
 	}
 	ws.Context.TargetBackend = targetBackend
 	ws.Context.BuildDebug = buildDebug
+	ws.Context.TestMode = testMode
 	compiler := compiler.NewWithConfig(ws.Context, diag)
 	return compiler.ParseEntry(absPath)
 }
@@ -440,6 +523,20 @@ func parsePathForCheck(path string) compiler.Result {
 	}
 	compiler := compiler.NewWithConfig(ws.Context, diag)
 	return compiler.ParseEntry(absPath)
+}
+
+func countModuleTests(mod *context.Module) int {
+	if mod == nil || mod.AST == nil {
+		return 0
+	}
+	count := 0
+	for _, decl := range mod.AST.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn != nil && fn.IsTest {
+			count++
+		}
+	}
+	return count
 }
 
 func emitModuleASTDumps(result compiler.Result, outDir string) error {

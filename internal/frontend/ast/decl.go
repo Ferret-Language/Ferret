@@ -78,6 +78,9 @@ type FuncDecl struct {
 	OwnerType     *NamedType
 	IsStatic      bool
 	Name          *Ident
+	IsTest        bool
+	TestName      string
+	IsSynthetic   bool
 	TypeParams    []TypeParam
 	Doc           *CommentGroup
 	Attrs         []Attribute

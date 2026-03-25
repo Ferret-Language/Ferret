@@ -78,6 +78,7 @@ const (
 	UNION     Kind = "UNION"
 	ERROR     Kind = "ERROR"
 	FN        Kind = "FN"
+	TEST      Kind = "TEST"
 	LET       Kind = "LET"
 	IF        Kind = "IF"
 	ELSE      Kind = "ELSE"
@@ -110,6 +111,7 @@ var keywords = map[string]Kind{
 	"union":     UNION,
 	"error":     ERROR,
 	"fn":        FN,
+	"test":      TEST,
 	"let":       LET,
 	"if":        IF,
 	"else":      ELSE,

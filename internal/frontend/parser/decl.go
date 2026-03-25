@@ -1,6 +1,8 @@
 package parser
 
 import (
+	"fmt"
+
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
@@ -153,6 +155,26 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		Result:        result,
 		Body:          body,
 		Location:      p.locFrom(start),
+	}
+}
+
+func (p *Parser) parseTestDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
+	start := p.expect(tokens.TEST, "expected 'test'").Start
+	nameTok := p.expect(tokens.STRING, "expected test name string literal")
+	body := p.parseBlock()
+	internalName := fmt.Sprintf("__ferret_test_%d", p.testDeclIndex)
+	p.testDeclIndex++
+	return &ast.FuncDecl{
+		Name:        &ast.Ident{Path: []string{internalName}, Location: p.locOfToken(nameTok)},
+		IsTest:      true,
+		TestName:    nameTok.Literal,
+		Doc:         doc,
+		Attrs:       attrs,
+		Params:      nil,
+		Result:      nil,
+		Body:        body,
+		Location:    p.locFrom(start),
+		IsSynthetic: false,
 	}
 }
 

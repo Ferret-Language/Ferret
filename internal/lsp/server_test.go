@@ -1957,6 +1957,55 @@ func TestHoverImportAliasAndPathShowsModuleDoc(t *testing.T) {
 	}
 }
 
+func TestHoverImportPathUsesModuleDocOverFirstDeclDoc(t *testing.T) {
+	dir := t.TempDir()
+	modulePath := filepath.Join(dir, "util", "testing.fer")
+	if err := os.MkdirAll(filepath.Dir(modulePath), 0o755); err != nil {
+		t.Fatalf("failed to create module dir: %v", err)
+	}
+	moduleSrc := "// Module docs line 1.\n// Module docs line 2.\n\n// Function docs should not replace module docs.\nfn ExpectEq() -> void {\n}\n"
+	if err := os.WriteFile(modulePath, []byte(moduleSrc), 0o644); err != nil {
+		t.Fatalf("failed to write module source: %v", err)
+	}
+
+	path := filepath.Join(dir, "main.fer")
+	src := "import \"util/testing\"\n\nfn main() -> void {\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	pathLine, pathChar, ok := findPosition(src, "\"util/testing\"")
+	if !ok {
+		t.Fatal("failed to find import path position")
+	}
+	pathChar++
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: pathLine, Character: pathChar},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "Module docs line 1.") || !strings.Contains(hover.Contents.Value, "Module docs line 2.") {
+		t.Fatalf("expected module docs in hover, got %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "Function docs should not replace module docs.") {
+		t.Fatalf("expected function docs to be excluded from module hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverCastRawOwnerBoundaryShowsAdoptExposeGuidance(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")

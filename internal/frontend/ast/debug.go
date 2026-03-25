@@ -60,6 +60,9 @@ func debugDecl(decl Decl) any {
 		return map[string]any{
 			"kind":           "FuncDecl",
 			"name":           debugExpr(d.Name),
+			"is_test":        d.IsTest,
+			"test_name":      d.TestName,
+			"is_synthetic":   d.IsSynthetic,
 			"doc":            debugDoc(d.Doc),
 			"attrs":          debugAttrs(d.Attrs),
 			"is_unsafe":      d.IsUnsafe,

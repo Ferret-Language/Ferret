@@ -8,6 +8,7 @@ import (
 
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
+	"compiler/internal/frontend/ast"
 )
 
 func TestParsePathResolvesDependencyAliasFromManifest(t *testing.T) {
@@ -43,6 +44,124 @@ name = "json"
 	}
 	if result.Modules[0].Key != "dependency:json/parser" || result.Modules[1].Key != "local:main" {
 		t.Fatalf("unexpected modules: %#v", []string{result.Modules[0].Key, result.Modules[1].Key})
+	}
+}
+
+func TestParseEntrySynthesizesMainForTests(t *testing.T) {
+	root := t.TempDir()
+	libsRoot := filepath.Join(root, "bundle", "core", "libs")
+	mustWrite(t, filepath.Join(libsRoot, "global.fer"), `
+#[extern("ferret_test_begin")]
+fn __test_begin(name: str) -> void;
+#[extern("ferret_test_failure_count")]
+fn __test_failure_count() -> usize;
+#[extern("ferret_test_mark_pass")]
+fn __test_mark_pass(name: str) -> void;
+#[extern("ferret_test_mark_fail")]
+fn __test_mark_fail(name: str) -> void;
+#[extern("ferret_test_summary")]
+fn __test_summary() -> void;
+#[extern("ferret_test_exit_code")]
+fn __test_exit_code() -> i32;
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+test "smoke" {
+    let ok = true
+    ok
+}
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".fer",
+		StdlibRoot:      filepath.Join(libsRoot, "std"),
+		DependencyRoots: map[string]string{},
+	}
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.AST == nil {
+		t.Fatalf("expected parsed entry AST, got %#v", result.Entry)
+	}
+
+	foundTest := false
+	foundMain := false
+	for _, decl := range result.Entry.AST.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn == nil {
+			continue
+		}
+		if fn.IsTest && fn.TestName == "smoke" {
+			foundTest = true
+		}
+		if fn.IsSynthetic && fn.Name != nil && fn.Name.Text() == "main" {
+			foundMain = true
+		}
+	}
+	if !foundTest || !foundMain {
+		t.Fatalf("expected synthesized test harness and test decl, got %#v", result.Entry.AST.Decls)
+	}
+}
+
+func TestParseEntryTestModeOverridesUserMain(t *testing.T) {
+	root := t.TempDir()
+	libsRoot := filepath.Join(root, "bundle", "core", "libs")
+	mustWrite(t, filepath.Join(libsRoot, "global.fer"), `
+#[extern]
+fn print(value: Any) -> void;
+type Any interface {}
+#[extern("ferret_test_begin")]
+fn __test_begin(name: str) -> void;
+#[extern("ferret_test_failure_count")]
+fn __test_failure_count() -> usize;
+#[extern("ferret_test_mark_pass")]
+fn __test_mark_pass(name: str) -> void;
+#[extern("ferret_test_mark_fail")]
+fn __test_mark_fail(name: str) -> void;
+#[extern("ferret_test_summary")]
+fn __test_summary() -> void;
+#[extern("ferret_test_exit_code")]
+fn __test_exit_code() -> i32;
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    print("app")
+}
+
+test "smoke" {
+    let ok = true
+    ok
+}
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".fer",
+		StdlibRoot:      filepath.Join(libsRoot, "std"),
+		DependencyRoots: map[string]string{},
+		TestMode:        true,
+	}
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	userMain := 0
+	synthMain := 0
+	for _, decl := range result.Entry.AST.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn == nil || fn.Name == nil || fn.Name.Text() != "main" {
+			continue
+		}
+		if fn.IsSynthetic {
+			synthMain++
+		} else {
+			userMain++
+		}
+	}
+	if userMain != 0 || synthMain != 1 {
+		t.Fatalf("expected only one synthetic main in test mode, got user=%d synthetic=%d", userMain, synthMain)
 	}
 }
 

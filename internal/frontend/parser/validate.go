@@ -36,6 +36,17 @@ func (p *Parser) validateDecl(decl ast.Decl) {
 		for _, param := range d.Params {
 			p.validateType(param.Type)
 		}
+		if d.IsTest {
+			if d.IsUnsafe {
+				p.errorAt(d.Location, "test declarations cannot be marked unsafe")
+			}
+			if d.IsExtern {
+				p.errorAt(d.Location, "test declarations cannot be extern")
+			}
+			if len(d.TypeParams) > 0 || len(d.Params) > 0 || d.Result != nil || d.Receiver != nil || d.OwnerType != nil {
+				p.errorAt(d.Location, "test declarations cannot declare receivers, parameters, type parameters, or result types")
+			}
+		}
 		p.validateStmt(d.Body)
 	}
 }

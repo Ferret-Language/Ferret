@@ -128,6 +128,18 @@ FerretStr ferret_global_recover(void);
 void ferret_global_print(const FerretAny *value);
 
 /* -------------------------------------------------------------------------
+ * Test runtime hooks.
+ * -------------------------------------------------------------------------*/
+
+void ferret_test_begin(const FerretStr *name);
+void ferret_test_fail(const FerretStr *message);
+ferret_usize ferret_test_failure_count(void);
+void ferret_test_mark_pass(const FerretStr *name);
+void ferret_test_mark_fail(const FerretStr *name);
+void ferret_test_summary(void);
+ferret_i32 ferret_test_exit_code(void);
+
+/* -------------------------------------------------------------------------
  * str_data / str_len  — extract fields from a str fat-pointer.
  *
  * These back the #[extern] fn str_data(s *str) *raw

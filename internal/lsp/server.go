@@ -2029,8 +2029,12 @@ func documentSymbolForFuncDecl(d *ast.FuncDecl, mod *context.Module, info *typei
 	if d.OwnerType != nil {
 		kind = symbolKindMethod
 	}
+	name := d.Name.Text()
+	if d.IsTest {
+		name = `test "` + d.TestName + `"`
+	}
 	detail := functionDetailForOutline(d, mod, info)
-	return makeDocumentSymbol(d.Name.Text(), kind, d.Loc(), d.Name.Loc(), detail, nil)
+	return makeDocumentSymbol(name, kind, d.Loc(), d.Name.Loc(), detail, nil)
 }
 
 func functionDetailForOutline(fn *ast.FuncDecl, mod *context.Module, info *typeinfo.ModuleInfo) string {

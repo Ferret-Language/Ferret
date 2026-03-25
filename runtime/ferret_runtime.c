@@ -63,6 +63,18 @@ static FerretStr ferret__owned_str_from_cstr(const char *s) {
     return out;
 }
 
+static void ferret__fwrite_str(FILE *stream, const FerretStr *s) {
+    if (stream == NULL || s == NULL || s->ptr == NULL || s->len == 0) {
+        return;
+    }
+    fwrite(s->ptr, 1, (size_t)s->len, stream);
+}
+
+static FerretStr ferret__current_test_name = { (const ferret_u8 *)0, 0 };
+static ferret_usize ferret__test_count = 0;
+static ferret_usize ferret__failed_test_count = 0;
+static ferret_usize ferret__failure_count = 0;
+
 /* -------------------------------------------------------------------------
  * global__panic
  *
@@ -296,6 +308,65 @@ void ferret_global_print(const FerretAny *value) {
     }
     fprintf(stdout, "<any %p>\n", value->data);
     fflush(stdout);
+}
+
+void ferret_test_begin(const FerretStr *name) {
+    ferret__current_test_name = name ? *name : ferret__static_str("");
+    ferret__test_count++;
+    fputs("RUN  ", stdout);
+    ferret__fwrite_str(stdout, &ferret__current_test_name);
+    fputc('\n', stdout);
+    fflush(stdout);
+}
+
+void ferret_test_fail(const FerretStr *message) {
+    ferret__failure_count++;
+    fputs("  assertion failed", stdout);
+    if (ferret__current_test_name.ptr != NULL && ferret__current_test_name.len > 0) {
+        fputs(" in ", stdout);
+        ferret__fwrite_str(stdout, &ferret__current_test_name);
+    }
+    if (message != NULL && message->ptr != NULL && message->len > 0) {
+        fputs(": ", stdout);
+        ferret__fwrite_str(stdout, message);
+    }
+    fputc('\n', stdout);
+    fflush(stdout);
+}
+
+ferret_usize ferret_test_failure_count(void) {
+    return ferret__failure_count;
+}
+
+void ferret_test_mark_pass(const FerretStr *name) {
+    fputs("PASS ", stdout);
+    ferret__fwrite_str(stdout, name);
+    fputc('\n', stdout);
+    fflush(stdout);
+}
+
+void ferret_test_mark_fail(const FerretStr *name) {
+    ferret__failed_test_count++;
+    fputs("FAIL ", stdout);
+    ferret__fwrite_str(stdout, name);
+    fputc('\n', stdout);
+    fflush(stdout);
+}
+
+void ferret_test_summary(void) {
+    ferret_usize passed = 0;
+    if (ferret__test_count >= ferret__failed_test_count) {
+        passed = ferret__test_count - ferret__failed_test_count;
+    }
+    fprintf(stdout, "summary: %zu passed, %zu failed, %zu total\n",
+            (size_t)passed,
+            (size_t)ferret__failed_test_count,
+            (size_t)ferret__test_count);
+    fflush(stdout);
+}
+
+ferret_i32 ferret_test_exit_code(void) {
+    return ferret__failed_test_count == 0 ? 0 : 1;
 }
 
 /* -------------------------------------------------------------------------

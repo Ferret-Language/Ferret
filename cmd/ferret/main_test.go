@@ -6,6 +6,7 @@ import (
 
 	"compiler/internal/core/context"
 	compiler "compiler/internal/driver"
+	"compiler/internal/frontend/ast"
 )
 
 func TestAllModulesForBuildOrdersAndDedupes(t *testing.T) {
@@ -41,5 +42,20 @@ func TestModuleArtifactPath(t *testing.T) {
 	}
 	if _, err := moduleArtifactPath(mod, "", ".mir"); err == nil {
 		t.Fatalf("expected empty output dir error")
+	}
+}
+
+func TestCountModuleTests(t *testing.T) {
+	mod := &context.Module{
+		AST: &ast.Module{
+			Decls: []ast.Decl{
+				&ast.FuncDecl{Name: &ast.Ident{Path: []string{"main"}}},
+				&ast.FuncDecl{Name: &ast.Ident{Path: []string{"__ferret_test_0"}}, IsTest: true, TestName: "smoke"},
+				&ast.FuncDecl{Name: &ast.Ident{Path: []string{"__ferret_test_1"}}, IsTest: true, TestName: "more"},
+			},
+		},
+	}
+	if got := countModuleTests(mod); got != 2 {
+		t.Fatalf("countModuleTests = %d, want 2", got)
 	}
 }

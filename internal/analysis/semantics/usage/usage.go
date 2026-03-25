@@ -662,7 +662,7 @@ func shouldWarnOnUnusedModuleSymbol(mod *context.Module, sym *symbols.Symbol) bo
 	}
 	switch node := sym.Node.(type) {
 	case *ast.FuncDecl:
-		if node.IsExtern {
+		if node.IsExtern || node.IsTest || node.IsSynthetic {
 			return false
 		}
 		return sym.Kind == symbols.SymbolFunc
@@ -715,6 +715,9 @@ func (a *analyzer) shouldWarnInsideFunction(fn *ast.FuncDecl) bool {
 		return false
 	}
 	if fn.IsExtern {
+		return false
+	}
+	if fn.IsSynthetic {
 		return false
 	}
 	sym := a.mod.Bindings.FunctionSymbols[fn]

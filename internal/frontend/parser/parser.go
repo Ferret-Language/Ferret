@@ -14,6 +14,7 @@ type Parser struct {
 	file                string
 	toks                []tokens.Token
 	pos                 int
+	testDeclIndex       int
 	compositeValueDepth int
 	diag                *diagnostics.DiagnosticBag
 }
@@ -30,11 +31,15 @@ func New(file string, toks []tokens.Token, diag *diagnostics.DiagnosticBag) *Par
 }
 
 func (p *Parser) ParseModule() *ast.Module {
+	doc := p.leadingModuleDocComment()
 	mod := &ast.Module{
 		FilePath: p.file,
-		Doc:      p.leadingModuleDocComment(),
+		Doc:      doc,
 		Imports:  make([]*ast.ImportDecl, 0),
 		Decls:    make([]ast.Decl, 0),
+	}
+	if doc != nil {
+		p.consumeLeadingDocCommentGroup()
 	}
 	seenDecl := false
 	for !p.at(tokens.EOF) {
@@ -71,18 +76,14 @@ func (p *Parser) leadingModuleDocComment() *ast.CommentGroup {
 		return nil
 	}
 	saved := p.pos
-	doc := p.parseDocComment()
-	next := p.current().Kind
+	doc := p.consumeLeadingDocCommentGroup()
 	p.pos = saved
-	if doc == nil || !isTopLevelStartToken(next) {
-		return nil
-	}
 	return doc
 }
 
 func isTopLevelStartToken(kind tokens.Kind) bool {
 	switch kind {
-	case tokens.EOF, tokens.IMPORT, tokens.LET, tokens.CONST, tokens.TYPE, tokens.FN, tokens.UNSAFE, tokens.HASH:
+	case tokens.EOF, tokens.IMPORT, tokens.LET, tokens.CONST, tokens.TYPE, tokens.FN, tokens.TEST, tokens.UNSAFE, tokens.HASH:
 		return true
 	default:
 		return false
@@ -105,6 +106,8 @@ func (p *Parser) parseDecl() ast.Decl {
 		}
 	case tokens.FN:
 		return p.parseFuncDecl(doc, attrs)
+	case tokens.TEST:
+		return p.parseTestDecl(doc, attrs)
 	}
 	p.errorHere("expected top-level declaration")
 	p.advance()
@@ -132,15 +135,39 @@ func (p *Parser) parseDocComment() *ast.CommentGroup {
 	endLine := p.current().End.Line
 	parts := make([]string, 0, 1)
 	for p.at(tokens.DOC_COMMENT) {
-		tok := p.advance()
-		if len(parts) > 0 && tok.Start.Line > endLine+1 {
-			start = tok.Start
+		if len(parts) > 0 && p.current().Start.Line > endLine+1 {
+			start = p.current().Start
 			parts = parts[:0]
 		}
+		tok := p.advance()
 		parts = append(parts, tok.Literal)
 		endLine = tok.End.Line
 	}
-	if p.current().Kind != tokens.EOF && p.current().Start.Line > endLine+1 {
+	if p.current().Kind != tokens.EOF && p.current().Kind != tokens.DOC_COMMENT && p.current().Start.Line > endLine+1 {
+		return nil
+	}
+	return &ast.CommentGroup{
+		Text:     strings.Join(parts, "\n"),
+		Location: p.locFrom(start),
+	}
+}
+
+func (p *Parser) consumeLeadingDocCommentGroup() *ast.CommentGroup {
+	if !p.at(tokens.DOC_COMMENT) {
+		return nil
+	}
+	start := p.current().Start
+	endLine := p.current().End.Line
+	parts := make([]string, 0, 1)
+	for p.at(tokens.DOC_COMMENT) {
+		if len(parts) > 0 && p.current().Start.Line > endLine+1 {
+			break
+		}
+		tok := p.advance()
+		parts = append(parts, tok.Literal)
+		endLine = tok.End.Line
+	}
+	if len(parts) == 0 {
 		return nil
 	}
 	return &ast.CommentGroup{

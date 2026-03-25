@@ -135,6 +135,35 @@ fn print(value: i32) {}
 	}
 }
 
+func TestParseTestDecl(t *testing.T) {
+	src := `
+test "allocator grows" {
+    panic "boom"
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	if len(mod.Decls) != 1 {
+		t.Fatalf("expected 1 decl, got %d", len(mod.Decls))
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl backing test, got %T", mod.Decls[0])
+	}
+	if !fn.IsTest || fn.TestName != "allocator grows" {
+		t.Fatalf("expected parsed test metadata, got %#v", fn)
+	}
+	if fn.Name == nil || !strings.HasPrefix(fn.Name.Text(), "__ferret_test_") {
+		t.Fatalf("expected synthetic test function name, got %#v", fn.Name)
+	}
+	if fn.Body == nil || len(fn.Body.Stmts) != 1 {
+		t.Fatalf("expected test body to parse, got %#v", fn.Body)
+	}
+}
+
 func TestParserRejectsLegacyReceiverSyntax(t *testing.T) {
 	src := `
 type Point struct {}
@@ -955,6 +984,30 @@ fn main() -> void {}
 	}
 }
 
+func TestParseModuleDocCommentWithBlankLineBeforeDeclarations(t *testing.T) {
+	src := `// module docs line 1
+// module docs line 2
+
+/// function docs
+fn main() -> void {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if diag.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", diag.Diagnostics())
+	}
+	if mod == nil || mod.Doc == nil {
+		t.Fatal("expected module doc comment")
+	}
+	if !strings.Contains(mod.Doc.Text, "module docs line 1") || !strings.Contains(mod.Doc.Text, "module docs line 2") {
+		t.Fatalf("unexpected module doc text: %q", mod.Doc.Text)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok || fn.Doc == nil || !strings.Contains(fn.Doc.Text, "function docs") {
+		t.Fatalf("expected function doc to remain attached, got %#v", mod.Decls[0])
+	}
+}
+
 func TestParseDocCommentGapDoesNotAttach(t *testing.T) {
 	src := `
 // this should not attach due to gap
@@ -972,6 +1025,38 @@ fn noDoc() -> void {}
 	}
 	if fn.Doc != nil {
 		t.Fatalf("expected no doc attachment across blank line, got %q", fn.Doc.Text)
+	}
+}
+
+func TestParseDocCommentAttachesLastContiguousBlockBeforeExternDecl(t *testing.T) {
+	src := `
+// section header
+// more section header
+//
+// not declaration docs
+
+/// declaration docs line 1
+/// declaration docs line 2
+#[extern]
+fn recover() -> str;
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	if fn.Doc == nil {
+		t.Fatal("expected declaration doc comment")
+	}
+	if !strings.Contains(fn.Doc.Text, "declaration docs line 1") || strings.Contains(fn.Doc.Text, "section header") {
+		t.Fatalf("unexpected function doc text: %q", fn.Doc.Text)
+	}
+	if !fn.IsExtern {
+		t.Fatal("expected extern function declaration")
 	}
 }
 
