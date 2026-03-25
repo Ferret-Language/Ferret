@@ -324,8 +324,12 @@ func (e *Emitter) Emit(diag *Diagnostic) {
 			}
 		}
 	} else {
-		// No labels, print a simple arrow header
-		e.printSimpleArrowHeader(diag)
+		// No labels: only print arrow header when we have a concrete file path.
+		// Operational errors (e.g. missing files, invalid CLI args) should not
+		// render synthetic :1:1 source positions.
+		if strings.TrimSpace(diag.FilePath) != "" {
+			e.printSimpleArrowHeader(diag)
+		}
 	}
 
 	if len(diag.Extras) > 0 {

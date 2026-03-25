@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -29,6 +30,8 @@ import (
 	"compiler/internal/ir/mir"
 	"compiler/internal/lsp"
 )
+
+var errAlreadyReported = errors.New("diagnostics already reported")
 
 func main() {
 	if len(os.Args) > 1 {
@@ -80,18 +83,27 @@ func main() {
 			return
 		case "run":
 			if err := runCommand(commandArgs); err != nil {
+				if errors.Is(err, errAlreadyReported) {
+					os.Exit(1)
+				}
 				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			return
 		case "test":
 			if err := testCommand(commandArgs); err != nil {
+				if errors.Is(err, errAlreadyReported) {
+					os.Exit(1)
+				}
 				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
 			return
 		case "check", "lint":
 			if err := checkCommand(commandArgs); err != nil {
+				if errors.Is(err, errAlreadyReported) {
+					os.Exit(1)
+				}
 				colors.RED.Fprintln(os.Stderr, err)
 				os.Exit(1)
 			}
@@ -245,7 +257,7 @@ func runCommand(args []string) error {
 		result.Diagnostics.EmitAll()
 	}
 	if result.Diagnostics.HasErrors() {
-		return fmt.Errorf("build failed")
+		return errAlreadyReported
 	}
 
 	tempPattern := "ferret-run-*"
@@ -306,7 +318,7 @@ func testCommand(args []string) error {
 		result.Diagnostics.EmitAll()
 	}
 	if result.Diagnostics.HasErrors() {
-		return fmt.Errorf("test build failed")
+		return errAlreadyReported
 	}
 	tests := moduleTests(result.Entry)
 	if len(tests) == 0 {
@@ -351,6 +363,9 @@ func resolveRunTarget(path string) (resolvedPath string, entryPath string, selec
 	resolvedPath, err = filepath.Abs(path)
 	if err != nil {
 		return "", "", false, err
+	}
+	if ext := filepath.Ext(resolvedPath); ext != "" && !strings.EqualFold(ext, compiler.FerretSourceExt) {
+		return "", "", false, fmt.Errorf("unsupported source file extension %q (expected %s)", ext, compiler.FerretSourceExt)
 	}
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
@@ -422,7 +437,7 @@ func checkCommand(args []string) error {
 		result.Diagnostics.EmitAll()
 	}
 	if result.Diagnostics.HasErrors() {
-		return fmt.Errorf("check failed")
+		return errAlreadyReported
 	}
 	return nil
 }
@@ -444,6 +459,10 @@ func parsePathWithConfig(path, targetBackend string, buildDebug, testMode bool, 
 	diag := diagnostics.NewDiagnosticBag(absPath)
 	if err != nil {
 		diag.Add(diagnostics.NewError(err.Error()))
+		return compiler.Result{Diagnostics: diag}
+	}
+	if ext := filepath.Ext(absPath); ext != "" && !strings.EqualFold(ext, compiler.FerretSourceExt) {
+		diag.Add(diagnostics.NewError(fmt.Sprintf("unsupported source file extension %q (expected %s)", ext, compiler.FerretSourceExt)))
 		return compiler.Result{Diagnostics: diag}
 	}
 	info, err := os.Stat(absPath)
@@ -491,6 +510,10 @@ func parsePathForCheck(path string) compiler.Result {
 	diag := diagnostics.NewDiagnosticBag(absPath)
 	if err != nil {
 		diag.Add(diagnostics.NewError(err.Error()))
+		return compiler.Result{Diagnostics: diag}
+	}
+	if ext := filepath.Ext(absPath); ext != "" && !strings.EqualFold(ext, compiler.FerretSourceExt) {
+		diag.Add(diagnostics.NewError(fmt.Sprintf("unsupported source file extension %q (expected %s)", ext, compiler.FerretSourceExt)))
 		return compiler.Result{Diagnostics: diag}
 	}
 	info, err := os.Stat(absPath)
@@ -565,7 +588,7 @@ func runSingleTest(path, testName, displayName string, runtimeArgs []string) (te
 		result.Diagnostics.EmitAll()
 	}
 	if result.Diagnostics.HasErrors() {
-		return testRunResult{}, fmt.Errorf("test build failed for %s", testName)
+		return testRunResult{}, errAlreadyReported
 	}
 
 	tempPattern := "ferret-test-*"

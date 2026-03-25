@@ -63,6 +63,10 @@ func parsePath(path string, mode parseMode) Result {
 		diag.Add(diagnostics.NewError(err.Error()))
 		return Result{Diagnostics: diag}
 	}
+	if ext := strings.ToLower(filepath.Ext(absPath)); ext != "" && ext != FerretSourceExt {
+		diag.Add(diagnostics.NewError("unsupported source file extension"))
+		return Result{Diagnostics: diag}
+	}
 	info, err := os.Stat(absPath)
 	if err != nil {
 		diag.Add(diagnostics.NewError(err.Error()))
