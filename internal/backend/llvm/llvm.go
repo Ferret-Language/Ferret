@@ -31,6 +31,11 @@ type interfaceWrapperKey struct {
 	method   string
 }
 
+type sharedLoweringState struct {
+	interfaceVTables  map[interfaceVTableKey]string
+	interfaceWrappers map[interfaceWrapperKey]struct{}
+}
+
 type moduleState struct {
 	mod               *mir.Module
 	layout            *layout.Module
@@ -53,6 +58,7 @@ type moduleState struct {
 	debug             *debugState // nil if debug info is disabled
 	fnScopeID         int         // DISubprogram metadata ID for the current function
 	debugLocalVarIDs  map[int]int // local ID -> DILocalVariable metadata ID (for dbg.value updates)
+	shared            *sharedLoweringState
 }
 
 // debugState accumulates LLVM debug-info metadata nodes (DWARF) while
@@ -437,6 +443,10 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 	if includeDebug {
 		dbg = newDebugState()
 	}
+	shared := &sharedLoweringState{
+		interfaceVTables:  make(map[interfaceVTableKey]string),
+		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
+	}
 
 	// Pass 1: collect all type declarations in dependency order (units are
 	// already ordered imports-before-entry by the caller).
@@ -447,7 +457,7 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 		if unit == nil || unit.Module == nil {
 			continue
 		}
-		state := newModuleStateWithDebug(unit, allLayouts, dbg)
+		state := newProgramModuleState(unit, allLayouts, dbg, shared)
 		for _, decl := range unit.Module.Types {
 			if decl == nil || decl.Named == nil {
 				continue
@@ -492,7 +502,7 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 			continue
 		}
 		// We need a temporary state only to resolve return types.
-		tmpState := newModuleStateWithDebug(unit, allLayouts, dbg)
+		tmpState := newProgramModuleState(unit, allLayouts, dbg, shared)
 		callDecls, err := collectExternCallDecls(tmpState, unit.Module, seenExterns)
 		if err != nil {
 			return "", fmt.Errorf("collect extern call declarations [%s]: %w", unit.Module.ImportPath, err)
@@ -549,7 +559,7 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 		if unit == nil || unit.Module == nil || unit.Layout == nil {
 			continue
 		}
-		state := newModuleStateWithDebug(unit, allLayouts, dbg)
+		state := newProgramModuleState(unit, allLayouts, dbg, shared)
 
 		// Create one DICompileUnit per module source file.
 		if state.debug != nil && unit.Module.FilePath != "" {
@@ -930,18 +940,27 @@ func newModuleStateWithDebug(unit *backend.Unit, allLayouts map[string]*layout.M
 // as the cross-module layout map.
 func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *moduleState {
 	if unit == nil || unit.Module == nil {
+		shared := &sharedLoweringState{
+			interfaceVTables:  make(map[interfaceVTableKey]string),
+			interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
+		}
 		return &moduleState{
 			layouts:           allLayouts,
 			functions:         make(map[string]struct{}),
 			globals:           make(map[string]struct{}),
 			modulePrefix:      becommon.SanitizePath(""),
 			deferredB:         &strings.Builder{},
-			interfaceVTables:  make(map[interfaceVTableKey]string),
-			interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
+			interfaceVTables:  shared.interfaceVTables,
+			interfaceWrappers: shared.interfaceWrappers,
 			tempValues:        make(map[int]mir.Value),
+			shared:            shared,
 		}
 	}
 	modulePrefix, functions, globals := becommon.BuildModuleSymbolTables(unit.Module)
+	shared := &sharedLoweringState{
+		interfaceVTables:  make(map[interfaceVTableKey]string),
+		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
+	}
 	state := &moduleState{
 		mod:               unit.Module,
 		layout:            unit.Layout,
@@ -951,10 +970,22 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		globals:           globals,
 		modulePrefix:      modulePrefix,
 		deferredB:         &strings.Builder{},
-		interfaceVTables:  make(map[interfaceVTableKey]string),
-		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
+		interfaceVTables:  shared.interfaceVTables,
+		interfaceWrappers: shared.interfaceWrappers,
 		tempValues:        make(map[int]mir.Value),
+		shared:            shared,
 	}
+	return state
+}
+
+func newProgramModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module, dbg *debugState, shared *sharedLoweringState) *moduleState {
+	state := newModuleStateWithDebug(unit, allLayouts, dbg)
+	if shared == nil {
+		return state
+	}
+	state.shared = shared
+	state.interfaceVTables = shared.interfaceVTables
+	state.interfaceWrappers = shared.interfaceWrappers
 	return state
 }
 

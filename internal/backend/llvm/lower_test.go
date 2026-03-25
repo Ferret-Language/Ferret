@@ -9,6 +9,7 @@ import (
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
+	llvmbackend "compiler/internal/backend/llvm"
 	"compiler/internal/backend/registry"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
@@ -112,6 +113,41 @@ fn main() -> str {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
 		}
+	}
+}
+
+func TestLowerProgramDedupesImportedInterfaceHelpers(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "global.fer"), `
+type Any interface {}
+fn print(value: Any) -> void;
+`)
+	mustWrite(t, filepath.Join(root, "util", "testing.fer"), `
+fn Expect(cond: bool, message: str) -> void {
+    if !cond {
+        print(message)
+    }
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "util/testing"
+
+fn main() -> void {
+    print("hello")
+    testing::Expect(true, "ok")
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	ir, err := llvmbackend.LowerProgram(testUnits(result), false)
+	if err != nil {
+		t.Fatalf("lower llvm program: %v", err)
+	}
+	const sym = "@vtable__builtin__global__Any__str__typeinfo ="
+	if got := strings.Count(ir, sym); got != 1 {
+		t.Fatalf("expected %q once, got %d\n%s", sym, got, ir)
 	}
 }
 
@@ -830,4 +866,57 @@ func testUnit(result compiler.Result) *backend.Unit {
 		Layouts: layouts,
 		Modules: modules,
 	}
+}
+
+func testUnits(result compiler.Result) []*backend.Unit {
+	layouts := make(map[string]*layout.Module)
+	modules := make(map[string]*mir.Module)
+	seen := make(map[string]struct{})
+	for _, mod := range result.Modules {
+		if mod == nil {
+			continue
+		}
+		if mod.Layout != nil {
+			layouts[mod.Key] = mod.Layout
+		}
+		if mod.MIR != nil {
+			modules[mod.Key] = mod.MIR
+		}
+	}
+	if result.Entry != nil {
+		if result.Entry.Layout != nil {
+			layouts[result.Entry.Key] = result.Entry.Layout
+		}
+		if result.Entry.MIR != nil {
+			modules[result.Entry.Key] = result.Entry.MIR
+		}
+	}
+	units := make([]*backend.Unit, 0, len(modules))
+	for _, mod := range result.Modules {
+		if mod == nil || mod.MIR == nil || mod.Layout == nil {
+			continue
+		}
+		if _, ok := seen[mod.Key]; ok {
+			continue
+		}
+		seen[mod.Key] = struct{}{}
+		units = append(units, &backend.Unit{
+			Module:  mod.MIR,
+			Layout:  mod.Layout,
+			Layouts: layouts,
+			Modules: modules,
+		})
+	}
+	if result.Entry != nil && result.Entry.MIR != nil && result.Entry.Layout != nil {
+		if _, ok := seen[result.Entry.Key]; ok {
+			return units
+		}
+		units = append(units, &backend.Unit{
+			Module:  result.Entry.MIR,
+			Layout:  result.Entry.Layout,
+			Layouts: layouts,
+			Modules: modules,
+		})
+	}
+	return units
 }
