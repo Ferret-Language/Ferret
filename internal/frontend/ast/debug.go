@@ -208,6 +208,8 @@ func debugExpr(expr Expr) any {
 		return map[string]any{"kind": "SpreadExpr", "right": debugExpr(e.Right), "loc": debugLoc(e.Location)}
 	case *BinaryExpr:
 		return map[string]any{"kind": "BinaryExpr", "left": debugExpr(e.Left), "op": e.Op, "right": debugExpr(e.Right), "loc": debugLoc(e.Location)}
+	case *RangeExpr:
+		return map[string]any{"kind": "RangeExpr", "start": debugExpr(e.Start), "end": debugExpr(e.End), "step": debugExpr(e.Step), "inclusive": e.Inclusive, "loc": debugLoc(e.Location)}
 	case *PostfixExpr:
 		return map[string]any{"kind": "PostfixExpr", "left": debugExpr(e.Left), "op": e.Op, "loc": debugLoc(e.Location)}
 	case *CallExpr:

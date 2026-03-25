@@ -1,7 +1,7 @@
 package cfganalysis
 
 import (
-	"compiler/internal/analysis/cfg/model"
+	cfg "compiler/internal/analysis/cfg/model"
 	"compiler/internal/ir/hir"
 )
 
@@ -199,6 +199,10 @@ func accumulateExprUses(use, def, locals cfg.LocalSet, expr hir.Expr) {
 	case *hir.BinaryExpr:
 		accumulateExprUses(use, def, locals, e.Left)
 		accumulateExprUses(use, def, locals, e.Right)
+	case *hir.RangeExpr:
+		accumulateExprUses(use, def, locals, e.Start)
+		accumulateExprUses(use, def, locals, e.End)
+		accumulateExprUses(use, def, locals, e.Step)
 	case *hir.PostfixExpr:
 		accumulateExprUses(use, def, locals, e.Left)
 	case *hir.CallExpr:

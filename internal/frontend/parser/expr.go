@@ -41,6 +41,8 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 			tokens.EQ, tokens.NEQ, tokens.LE, tokens.GT, tokens.GE,
 			tokens.ANDAND, tokens.OROR, tokens.QQ:
 			left = p.parseBinary(left)
+		case tokens.DOTDOT, tokens.DOTDOT_EQ:
+			left = p.parseRange(left)
 		case tokens.CATCH:
 			left = p.parseCatch(left)
 		case tokens.LPAREN:
@@ -209,6 +211,40 @@ func (p *Parser) parseBinary(left ast.Expr) ast.Expr {
 	prec := precedence(tok.Kind)
 	right := p.parseExprUntil(prec)
 	return &ast.BinaryExpr{Left: left, Op: tok.Literal, Right: right, Location: source.NewLocation(p.file, *left.Loc().Start, p.previous().End)}
+}
+
+func (p *Parser) parseRange(left ast.Expr) ast.Expr {
+	start := *left.Loc().Start
+	tok := p.advance()
+	inclusive := tok.Kind == tokens.DOTDOT_EQ
+	if !p.startsExpr() {
+		loc := source.NewLocation(p.file, tok.Start, tok.End)
+		p.errorAt(loc, "expected expression after '"+tok.Literal+"'")
+		return &ast.RangeExpr{
+			Start:     left,
+			End:       &ast.BadExpr{Location: loc},
+			Inclusive: inclusive,
+			Location:  source.NewLocation(p.file, start, p.previous().End),
+		}
+	}
+	right := p.parseExprUntil(precCompare)
+	var step ast.Expr
+	if p.match(tokens.COLON) {
+		if !p.startsExpr() {
+			loc := source.NewLocation(p.file, p.previous().Start, p.previous().End)
+			p.errorAt(loc, "expected step expression after ':'")
+			step = &ast.BadExpr{Location: loc}
+		} else {
+			step = p.parseExprUntil(precCompare)
+		}
+	}
+	return &ast.RangeExpr{
+		Start:     left,
+		End:       right,
+		Step:      step,
+		Inclusive: inclusive,
+		Location:  source.NewLocation(p.file, start, p.previous().End),
+	}
 }
 
 func (p *Parser) parseCall(left ast.Expr) ast.Expr {
@@ -392,6 +428,8 @@ func precedence(kind tokens.Kind) int {
 	case tokens.EQ, tokens.NEQ:
 		return precEqual
 	case tokens.LT, tokens.LE, tokens.GT, tokens.GE:
+		return precCompare
+	case tokens.DOTDOT, tokens.DOTDOT_EQ:
 		return precCompare
 	case tokens.PLUS, tokens.MINUS:
 		return precSum

@@ -49,6 +49,16 @@ type BinaryExpr struct {
 
 func (*BinaryExpr) exprNode() {}
 
+type RangeExpr struct {
+	baseExpr
+	Start     Expr
+	End       Expr
+	Step      Expr
+	Inclusive bool
+}
+
+func (*RangeExpr) exprNode() {}
+
 type PostfixExpr struct {
 	baseExpr
 	Left Expr

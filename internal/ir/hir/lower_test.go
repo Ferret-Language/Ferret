@@ -116,6 +116,10 @@ fn main() -> i32 {
 		case *hir.BinaryExpr:
 			walkExpr(e.Left)
 			walkExpr(e.Right)
+		case *hir.RangeExpr:
+			walkExpr(e.Start)
+			walkExpr(e.End)
+			walkExpr(e.Step)
 		case *hir.PostfixExpr:
 			walkExpr(e.Left)
 		case *hir.CallExpr:
@@ -193,6 +197,59 @@ fn main() -> i32 {
 			walkExpr(s.Value)
 		case *hir.LockStmt:
 			walkExpr(s.Value)
+			walkStmt(s.Body)
+		case *hir.UnsafeStmt:
+			walkStmt(s.Body)
+		}
+	}
+	walkStmt(fn.Body)
+}
+
+func TestLoweringSupportsRangeForAndRangeMatchArms(t *testing.T) {
+	root := t.TempDir()
+	mustWriteLower(t, filepath.Join(root, "main.fer"), `
+fn main(x: i32) -> i32 {
+    let mut total: i32 = 0
+    for 0..=10:2 |i, v| {
+        total = total + i as i32
+        total = total + v
+    }
+    let y: i32 = match x {
+        0..=10 => 1
+        _ => 0
+    }
+    return total + y
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	fn := result.Entry.LoweredHIR.Functions[0]
+	var walkStmt func(hir.Stmt)
+	walkStmt = func(stmt hir.Stmt) {
+		switch s := stmt.(type) {
+		case nil:
+			return
+		case *hir.BlockStmt:
+			for _, child := range s.Stmts {
+				walkStmt(child)
+			}
+		case *hir.ForStmt:
+			t.Fatalf("expected lowered HIR to eliminate for loops, got %T", s)
+		case *hir.LoopStmt:
+			walkStmt(s.Init)
+			walkStmt(s.Post)
+			walkStmt(s.Body)
+		case *hir.IfStmt:
+			walkStmt(s.Then)
+			walkStmt(s.Else)
+		case *hir.LabelStmt:
+			walkStmt(s.Stmt)
+		case *hir.DeferStmt:
+			walkStmt(s.Body)
+		case *hir.LockStmt:
 			walkStmt(s.Body)
 		case *hir.UnsafeStmt:
 			walkStmt(s.Body)

@@ -181,6 +181,17 @@ func (t *SliceType) String() string {
 	return "[]" + typeString(t.Inner)
 }
 
+type RangeType struct {
+	Elem Type
+}
+
+func (t *RangeType) String() string {
+	if t == nil {
+		return "range<?>"
+	}
+	return "range<" + typeString(t.Elem) + ">"
+}
+
 type TupleType struct {
 	Elems []Type
 }
@@ -448,6 +459,9 @@ func Equal(a, b Type) bool {
 	case *SliceType:
 		bt, ok := b.(*SliceType)
 		return ok && at.Mutable == bt.Mutable && Equal(at.Inner, bt.Inner)
+	case *RangeType:
+		bt, ok := b.(*RangeType)
+		return ok && Equal(at.Elem, bt.Elem)
 	case *TupleType:
 		bt, ok := b.(*TupleType)
 		if !ok || len(at.Elems) != len(bt.Elems) {

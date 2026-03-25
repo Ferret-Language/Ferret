@@ -152,6 +152,10 @@ func (p *Parser) validateExpr(expr ast.Expr) {
 	case *ast.BinaryExpr:
 		p.validateExpr(e.Left)
 		p.validateExpr(e.Right)
+	case *ast.RangeExpr:
+		p.validateExpr(e.Start)
+		p.validateExpr(e.End)
+		p.validateExpr(e.Step)
 	case *ast.PostfixExpr:
 		p.validateExpr(e.Left)
 	case *ast.CallExpr:

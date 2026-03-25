@@ -400,6 +400,8 @@ func (c *checker) typeOfExpr(scope *refineScope, expr ast.Expr, expected typeinf
 		return typ
 	case *ast.BinaryExpr:
 		return c.typeOfBinary(scope, e)
+	case *ast.RangeExpr:
+		return c.typeOfRange(scope, e)
 	case *ast.CatchExpr:
 		return c.typeOfCatch(scope, e)
 	case *ast.PostfixExpr:
@@ -642,6 +644,8 @@ func (c *checker) typeOfMatchExpr(scope *refineScope, expr *ast.MatchExpr, expec
 			c.info.BindNode(arm.TypePattern, target)
 			_ = c.typeOfIs(scope, &ast.IsExpr{Left: expr.Value, Type: arm.TypePattern, Location: arm.Location})
 			armScope = c.narrowedMatchTypeArmScope(scope, expr.Value, target)
+		} else if rangePattern, ok := arm.Pattern.(*ast.RangeExpr); ok {
+			c.checkRangePatternAgainstMatchValue(scope, valueType, rangePattern)
 		} else {
 			patternType := c.typeOfExpr(scope, arm.Pattern, valueType)
 			if !typeinfo.Assignable(valueType, patternType) && !typeinfo.Assignable(patternType, valueType) {
@@ -780,6 +784,94 @@ func (c *checker) typeOfBinary(scope *refineScope, expr *ast.BinaryExpr) typeinf
 			WithPrimaryLabel(&loc, "invalid binary operation"),
 	)
 	return typeinfo.InvalidType{}
+}
+
+func (c *checker) typeOfRange(scope *refineScope, expr *ast.RangeExpr) typeinfo.Type {
+	startType := c.typeOfExpr(scope, expr.Start, nil)
+	endType := c.typeOfExpr(scope, expr.End, startType)
+
+	elem := startType
+	if common := typeinfo.CommonNumericType(startType, endType); common != nil {
+		elem = common
+	} else if !typeinfo.Equal(startType, endType) {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("range endpoints must have compatible integer types").
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(&loc, "use matching integer endpoint types"),
+		)
+		typ := typeinfo.InvalidType{}
+		c.info.BindNode(expr, typ)
+		return typ
+	}
+	if !c.isIntegerType(elem) {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("range endpoints must be integers").
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(&loc, "floating-point ranges are not supported"),
+		)
+		typ := typeinfo.InvalidType{}
+		c.info.BindNode(expr, typ)
+		return typ
+	}
+
+	if expr.Step != nil {
+		stepType := c.typeOfExpr(scope, expr.Step, elem)
+		if !c.isIntegerType(stepType) {
+			loc := expr.Step.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("range step must be an integer").
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, "use an integer step value"),
+			)
+			typ := typeinfo.InvalidType{}
+			c.info.BindNode(expr, typ)
+			return typ
+		}
+		if lit, ok := expr.Step.(*ast.NumberLit); ok && lit != nil && lit.Value == "0" {
+			loc := expr.Step.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("range step cannot be zero").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "use a non-zero step"),
+			)
+			typ := typeinfo.InvalidType{}
+			c.info.BindNode(expr, typ)
+			return typ
+		}
+	}
+
+	typ := &typeinfo.RangeType{Elem: elem}
+	c.info.BindNode(expr, typ)
+	return typ
+}
+
+func (c *checker) checkRangePatternAgainstMatchValue(scope *refineScope, valueType typeinfo.Type, pattern *ast.RangeExpr) {
+	if pattern == nil {
+		return
+	}
+	patternType := c.typeOfRange(scope, pattern)
+	rangeType, ok := patternType.(*typeinfo.RangeType)
+	if !ok || rangeType == nil {
+		return
+	}
+	if !c.isIntegerType(valueType) {
+		loc := pattern.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("range patterns require an integer match value").
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(&loc, "this match value is not an integer"),
+		)
+		return
+	}
+	if typeinfo.CommonNumericType(valueType, rangeType.Elem) != nil {
+		return
+	}
+	if typeinfo.Assignable(valueType, rangeType.Elem) || typeinfo.Assignable(rangeType.Elem, valueType) {
+		return
+	}
+	c.reportTypeMismatch(pattern.Loc(), valueType, rangeType.Elem)
 }
 
 func (c *checker) binaryResult(op string, left, right typeinfo.Type) (typeinfo.Type, bool) {
@@ -3201,8 +3293,15 @@ func (c *checker) forBindingTypes(iterable typeinfo.Type) (typeinfo.Type, typein
 		return indexType, t.Inner
 	case *typeinfo.SliceType:
 		return indexType, t.Inner
+	case *typeinfo.RangeType:
+		return indexType, t.Elem
 	}
 	return indexType, typeinfo.UnknownType{}
+}
+
+func (c *checker) isIntegerType(typ typeinfo.Type) bool {
+	family, _, ok := typeinfo.NumericInfo(typ)
+	return ok && family != typeinfo.NumericFloat
 }
 
 func stmtDefinitelyExits(stmt ast.Stmt) bool {

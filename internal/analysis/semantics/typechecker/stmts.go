@@ -94,6 +94,8 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 				c.info.BindNode(arm.TypePattern, target)
 				_ = c.typeOfIs(scope, &ast.IsExpr{Left: s.Value, Type: arm.TypePattern, Location: arm.Location})
 				armScope = c.narrowedMatchTypeArmScope(scope, s.Value, target)
+			} else if rangePattern, ok := arm.Pattern.(*ast.RangeExpr); ok {
+				c.checkRangePatternAgainstMatchValue(scope, valueType, rangePattern)
 			} else {
 				patternType := c.typeOfExpr(scope, arm.Pattern, valueType)
 				if !typeinfo.Assignable(valueType, patternType) && !typeinfo.Assignable(patternType, valueType) {

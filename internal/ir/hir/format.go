@@ -271,6 +271,16 @@ func formatExpr(expr Expr) string {
 		return formatPrefix(e.Op, wrapExpr(e.Right))
 	case *BinaryExpr:
 		return fmt.Sprintf("%s %s %s", wrapExpr(e.Left), e.Op, wrapExpr(e.Right))
+	case *RangeExpr:
+		op := ".."
+		if e.Inclusive {
+			op = "..="
+		}
+		out := fmt.Sprintf("%s%s%s", wrapExpr(e.Start), op, wrapExpr(e.End))
+		if e.Step != nil {
+			out += ":" + wrapExpr(e.Step)
+		}
+		return out
 	case *PostfixExpr:
 		return fmt.Sprintf("%s%s", wrapExpr(e.Left), e.Op)
 	case *CallExpr:

@@ -515,6 +515,13 @@ func (s *specializer) cloneExpr(expr Expr, bindings map[*typeinfo.TypeParam]type
 		out.Right = right
 		out.ExprType = s.specializeBinaryType(ex, bindings, left, right)
 		return &out
+	case *RangeExpr:
+		out := *ex
+		out.Start = s.cloneExpr(ex.Start, bindings)
+		out.End = s.cloneExpr(ex.End, bindings)
+		out.Step = s.cloneExpr(ex.Step, bindings)
+		out.ExprType = s.substituteType(ex.Type(), bindings)
+		return &out
 	case *PostfixExpr:
 		out := *ex
 		out.Left = s.cloneExpr(ex.Left, bindings)

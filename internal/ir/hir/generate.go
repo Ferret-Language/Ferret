@@ -604,6 +604,15 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		out := &BinaryExpr{Left: g.generateExpr(e.Left), Op: e.Op, Right: g.generateExpr(e.Right)}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
+	case *ast.RangeExpr:
+		out := &RangeExpr{
+			Start:     g.generateExpr(e.Start),
+			End:       g.generateExpr(e.End),
+			Step:      g.generateExpr(e.Step),
+			Inclusive: e.Inclusive,
+		}
+		out.ExprType, out.Location, out.Source = typ, e.Location, e
+		return out
 	case *ast.PostfixExpr:
 		out := &PostfixExpr{Left: g.generateExpr(e.Left), Op: e.Op}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e

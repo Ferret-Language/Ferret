@@ -274,6 +274,46 @@ func TestHoverUsesOpenDocumentOverlayText(t *testing.T) {
 	}
 }
 
+func TestHoverRangeExpressionShowsSourceSyntaxWithoutType(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "fn main() -> void {\n    for 2..=10:2 |v| {\n        v\n    }\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "2..=10:2")
+	if !ok {
+		t.Fatal("failed to find range expression")
+	}
+	char++
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "2..=10:2") {
+		t.Fatalf("expected source-like range hover, got %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "range<") {
+		t.Fatalf("did not expect internal range type in hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverShowsExpandedNamedConstraint(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")

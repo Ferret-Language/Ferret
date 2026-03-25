@@ -139,6 +139,16 @@ func ExprString(expr Expr) string {
 		return ExprString(e.Left) + e.Op
 	case *BinaryExpr:
 		return ExprString(e.Left) + " " + e.Op + " " + ExprString(e.Right)
+	case *RangeExpr:
+		op := ".."
+		if e.Inclusive {
+			op = "..="
+		}
+		out := ExprString(e.Start) + op + ExprString(e.End)
+		if e.Step != nil {
+			out += ":" + ExprString(e.Step)
+		}
+		return out
 	case *SelectorExpr:
 		return ExprString(e.Left) + "." + e.Name.Text()
 	case *IndexExpr:

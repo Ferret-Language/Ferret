@@ -96,6 +96,17 @@ type BinaryExpr struct {
 func (*BinaryExpr) exprNode()              {}
 func (e *BinaryExpr) Loc() source.Location { return e.Location }
 
+type RangeExpr struct {
+	Start     Expr
+	End       Expr
+	Step      Expr
+	Inclusive bool
+	Location  source.Location
+}
+
+func (*RangeExpr) exprNode()              {}
+func (e *RangeExpr) Loc() source.Location { return e.Location }
+
 type PostfixExpr struct {
 	Left     Expr
 	Op       string

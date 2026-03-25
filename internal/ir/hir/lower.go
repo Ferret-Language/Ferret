@@ -187,7 +187,7 @@ func (l *lowerer) lowerMatchStmt(s *MatchStmt) []Stmt {
 			Body:        l.lowerBlock(arm.Body),
 		})
 	}
-	if l.hasTypeMatchArm(out) {
+	if l.hasSpecialMatchArm(out) {
 		return append(prelude, l.lowerTypedMatch(out))
 	}
 	return append(prelude, out)
@@ -223,6 +223,9 @@ func (l *lowerer) lowerWhileStmt(s *WhileStmt) []Stmt {
 
 func (l *lowerer) lowerForStmt(s *ForStmt) []Stmt {
 	prelude, iterable := l.lowerExpr(s.Iterable)
+	if rangeExpr, ok := iterable.(*RangeExpr); ok {
+		return l.lowerRangeForStmt(s, rangeExpr, prelude)
+	}
 	elemType := typeinfo.Type(nil)
 	limitExpr := Expr(nil)
 	limitType := &typeinfo.BuiltinType{Name: "usize"}
@@ -324,6 +327,172 @@ func (l *lowerer) lowerForStmt(s *ForStmt) []Stmt {
 	return stmts
 }
 
+func (l *lowerer) lowerRangeForStmt(s *ForStmt, r *RangeExpr, prelude []Stmt) []Stmt {
+	rangeType, _ := r.Type().(*typeinfo.RangeType)
+	elemType := typeinfo.Type(&typeinfo.BuiltinType{Name: typeinfo.DefaultIntTypeName})
+	if rangeType != nil && rangeType.Elem != nil {
+		elemType = rangeType.Elem
+	}
+	boolType := &typeinfo.BuiltinType{Name: "bool"}
+	usizeType := &typeinfo.BuiltinType{Name: "usize"}
+
+	startName, startID := l.nextTempLocal()
+	endName, endID := l.nextTempLocal()
+	stepName, stepID := l.nextTempLocal()
+	valueName, valueID := l.nextTempLocal()
+	indexName, indexID := l.nextTempLocal()
+
+	startDecl := &LetStmt{Name: startName, LocalID: startID, Mutable: false, Type: elemType, Value: r.Start}
+	SetStmtLocation(startDecl, r.Start.Loc())
+
+	endDecl := &LetStmt{Name: endName, LocalID: endID, Mutable: false, Type: elemType, Value: r.End}
+	SetStmtLocation(endDecl, r.End.Loc())
+
+	stepExpr := r.Step
+	if stepExpr == nil {
+		one := &NumberLit{Value: "1"}
+		one.ExprType = elemType
+		one.Location = s.Loc()
+		stepExpr = one
+	}
+	stepDecl := &LetStmt{Name: stepName, LocalID: stepID, Mutable: false, Type: elemType, Value: stepExpr}
+	SetStmtLocation(stepDecl, s.Loc())
+
+	valueDecl := &LetStmt{
+		Name:    valueName,
+		LocalID: valueID,
+		Mutable: true,
+		Type:    elemType,
+		Value:   makeTempIdent(startName, startID, elemType, s.Loc()),
+	}
+	SetStmtLocation(valueDecl, s.Loc())
+
+	zero := &NumberLit{Value: "0"}
+	zero.ExprType = usizeType
+	zero.Location = s.Loc()
+	indexDecl := &LetStmt{Name: indexName, LocalID: indexID, Mutable: true, Type: usizeType, Value: zero}
+	SetStmtLocation(indexDecl, s.Loc())
+
+	stepZero := &NumberLit{Value: "0"}
+	stepZero.ExprType = elemType
+	stepZero.Location = s.Loc()
+	stepPos := &BinaryExpr{
+		Left:  makeTempIdent(stepName, stepID, elemType, s.Loc()),
+		Op:    ">",
+		Right: stepZero,
+	}
+	stepPos.ExprType = boolType
+	stepPos.Location = s.Loc()
+
+	stepZeroNeg := &NumberLit{Value: "0"}
+	stepZeroNeg.ExprType = elemType
+	stepZeroNeg.Location = s.Loc()
+	stepNeg := &BinaryExpr{
+		Left:  makeTempIdent(stepName, stepID, elemType, s.Loc()),
+		Op:    "<",
+		Right: stepZeroNeg,
+	}
+	stepNeg.ExprType = boolType
+	stepNeg.Location = s.Loc()
+
+	posCmpOp := "<"
+	negCmpOp := ">"
+	if r.Inclusive {
+		posCmpOp = "<="
+		negCmpOp = ">="
+	}
+	posCmp := &BinaryExpr{
+		Left:  makeTempIdent(valueName, valueID, elemType, s.Loc()),
+		Op:    posCmpOp,
+		Right: makeTempIdent(endName, endID, elemType, s.Loc()),
+	}
+	posCmp.ExprType = boolType
+	posCmp.Location = s.Loc()
+	negCmp := &BinaryExpr{
+		Left:  makeTempIdent(valueName, valueID, elemType, s.Loc()),
+		Op:    negCmpOp,
+		Right: makeTempIdent(endName, endID, elemType, s.Loc()),
+	}
+	negCmp.ExprType = boolType
+	negCmp.Location = s.Loc()
+
+	posCond := &BinaryExpr{Left: stepPos, Op: "&&", Right: posCmp}
+	posCond.ExprType = boolType
+	posCond.Location = s.Loc()
+	negCond := &BinaryExpr{Left: stepNeg, Op: "&&", Right: negCmp}
+	negCond.ExprType = boolType
+	negCond.Location = s.Loc()
+	cond := &BinaryExpr{Left: posCond, Op: "||", Right: negCond}
+	cond.ExprType = boolType
+	cond.Location = s.Loc()
+
+	body := &BlockStmt{}
+	SetStmtLocation(body, s.Loc())
+	if s.IndexName != "" {
+		indexBind := &LetStmt{
+			Name:    s.IndexName,
+			LocalID: s.IndexID,
+			Mutable: false,
+			Type:    usizeType,
+			Value:   makeTempIdent(indexName, indexID, usizeType, s.Loc()),
+		}
+		SetStmtLocation(indexBind, s.Loc())
+		body.Stmts = append(body.Stmts, indexBind)
+	}
+	if s.ValueName != "" {
+		valueBind := &LetStmt{
+			Name:    s.ValueName,
+			LocalID: s.ValueID,
+			Mutable: false,
+			Type:    elemType,
+			Value:   makeTempIdent(valueName, valueID, elemType, s.Loc()),
+		}
+		SetStmtLocation(valueBind, s.Loc())
+		body.Stmts = append(body.Stmts, valueBind)
+	}
+	if loweredBody := l.lowerBlock(s.Body); loweredBody != nil {
+		body.Stmts = append(body.Stmts, loweredBody.Stmts...)
+	}
+
+	nextValue := &BinaryExpr{
+		Left:  makeTempIdent(valueName, valueID, elemType, s.Loc()),
+		Op:    "+",
+		Right: makeTempIdent(stepName, stepID, elemType, s.Loc()),
+	}
+	nextValue.ExprType = elemType
+	nextValue.Location = s.Loc()
+	valuePost := &AssignStmt{
+		Left:  makeTempIdent(valueName, valueID, elemType, s.Loc()),
+		Right: nextValue,
+	}
+	SetStmtLocation(valuePost, s.Loc())
+
+	indexInc := &BinaryExpr{
+		Left:  makeTempIdent(indexName, indexID, usizeType, s.Loc()),
+		Op:    "+",
+		Right: &NumberLit{Value: "1"},
+	}
+	indexInc.ExprType = usizeType
+	indexInc.Location = s.Loc()
+	indexInc.Right.(*NumberLit).ExprType = usizeType
+	indexInc.Right.(*NumberLit).Location = s.Loc()
+	indexPost := &AssignStmt{
+		Left:  makeTempIdent(indexName, indexID, usizeType, s.Loc()),
+		Right: indexInc,
+	}
+	SetStmtLocation(indexPost, s.Loc())
+
+	post := &BlockStmt{Stmts: []Stmt{valuePost, indexPost}}
+	SetStmtLocation(post, s.Loc())
+
+	loop := &LoopStmt{Cond: cond, Post: post, Body: body}
+	SetStmtLocation(loop, s.Loc())
+
+	stmts := append([]Stmt{}, prelude...)
+	stmts = append(stmts, startDecl, endDecl, stepDecl, valueDecl, indexDecl, loop)
+	return stmts
+}
+
 func (l *lowerer) lowerExpr(expr Expr) ([]Stmt, Expr) {
 	switch e := expr.(type) {
 	case nil, *Ident, *BadExpr, *NumberLit, *StringLit, *NoneLit:
@@ -341,6 +510,18 @@ func (l *lowerer) lowerExpr(expr Expr) ([]Stmt, Expr) {
 		out.Right = right
 		prelude := append([]Stmt{}, leftPrelude...)
 		prelude = append(prelude, rightPrelude...)
+		return prelude, &out
+	case *RangeExpr:
+		startPrelude, start := l.lowerExpr(e.Start)
+		endPrelude, end := l.lowerExpr(e.End)
+		stepPrelude, step := l.lowerExpr(e.Step)
+		out := *e
+		out.Start = start
+		out.End = end
+		out.Step = step
+		prelude := append([]Stmt{}, startPrelude...)
+		prelude = append(prelude, endPrelude...)
+		prelude = append(prelude, stepPrelude...)
 		return prelude, &out
 	case *PostfixExpr:
 		prelude, left := l.lowerExpr(e.Left)
@@ -484,12 +665,18 @@ func makeTempIdent(name string, localID int, typ typeinfo.Type, loc source.Locat
 	return ident
 }
 
-func (l *lowerer) hasTypeMatchArm(s *MatchStmt) bool {
+func (l *lowerer) hasSpecialMatchArm(s *MatchStmt) bool {
 	if s == nil {
 		return false
 	}
 	for _, arm := range s.Arms {
-		if arm != nil && arm.TypePattern != nil {
+		if arm == nil {
+			continue
+		}
+		if arm.TypePattern != nil {
+			return true
+		}
+		if _, ok := arm.Pattern.(*RangeExpr); ok {
 			return true
 		}
 	}
@@ -552,6 +739,8 @@ func (l *lowerer) lowerTypedMatch(s *MatchStmt) Stmt {
 			cond = &IsExpr{Left: matchValue, Target: arm.TypePattern, StaticKnown: false}
 			cond.(*IsExpr).ExprType = &typeinfo.BuiltinType{Name: "bool"}
 			cond.(*IsExpr).Location = body.Loc()
+		} else if rangePat, ok := arm.Pattern.(*RangeExpr); ok {
+			cond = l.rangeMatchCond(matchValue, rangePat, body.Loc())
 		} else {
 			cond = &BinaryExpr{Left: matchValue, Op: "==", Right: arm.Pattern}
 			cond.(*BinaryExpr).ExprType = &typeinfo.BuiltinType{Name: "bool"}
@@ -578,6 +767,91 @@ func (l *lowerer) rewriteMatchArmBody(body *BlockStmt, fromName string, fromID i
 		out.Stmts = append(out.Stmts, l.rewriteStmtIdents(stmt, fromName, fromID, toName, toID))
 	}
 	return out
+}
+
+func (l *lowerer) rangeMatchCond(value Expr, pattern *RangeExpr, loc source.Location) Expr {
+	if pattern == nil {
+		return nil
+	}
+	boolType := &typeinfo.BuiltinType{Name: "bool"}
+	elemType := value.Type()
+	if elemType == nil {
+		elemType = pattern.Start.Type()
+	}
+	if elemType == nil {
+		elemType = &typeinfo.BuiltinType{Name: typeinfo.DefaultIntTypeName}
+	}
+
+	posEndOp := "<"
+	negEndOp := ">"
+	if pattern.Inclusive {
+		posEndOp = "<="
+		negEndOp = ">="
+	}
+	posStart := &BinaryExpr{Left: value, Op: ">=", Right: pattern.Start}
+	posStart.ExprType = boolType
+	posStart.Location = loc
+	posEnd := &BinaryExpr{Left: value, Op: posEndOp, Right: pattern.End}
+	posEnd.ExprType = boolType
+	posEnd.Location = loc
+	posBounds := &BinaryExpr{Left: posStart, Op: "&&", Right: posEnd}
+	posBounds.ExprType = boolType
+	posBounds.Location = loc
+
+	if pattern.Step == nil {
+		return posBounds
+	}
+
+	negStart := &BinaryExpr{Left: value, Op: "<=", Right: pattern.Start}
+	negStart.ExprType = boolType
+	negStart.Location = loc
+	negEnd := &BinaryExpr{Left: value, Op: negEndOp, Right: pattern.End}
+	negEnd.ExprType = boolType
+	negEnd.Location = loc
+	negBounds := &BinaryExpr{Left: negStart, Op: "&&", Right: negEnd}
+	negBounds.ExprType = boolType
+	negBounds.Location = loc
+
+	stepZero := &NumberLit{Value: "0"}
+	stepZero.ExprType = elemType
+	stepZero.Location = loc
+	stepPos := &BinaryExpr{Left: pattern.Step, Op: ">", Right: stepZero}
+	stepPos.ExprType = boolType
+	stepPos.Location = loc
+	stepZeroNeg := &NumberLit{Value: "0"}
+	stepZeroNeg.ExprType = elemType
+	stepZeroNeg.Location = loc
+	stepNeg := &BinaryExpr{Left: pattern.Step, Op: "<", Right: stepZeroNeg}
+	stepNeg.ExprType = boolType
+	stepNeg.Location = loc
+
+	posCond := &BinaryExpr{Left: stepPos, Op: "&&", Right: posBounds}
+	posCond.ExprType = boolType
+	posCond.Location = loc
+	negCond := &BinaryExpr{Left: stepNeg, Op: "&&", Right: negBounds}
+	negCond.ExprType = boolType
+	negCond.Location = loc
+	signCond := &BinaryExpr{Left: posCond, Op: "||", Right: negCond}
+	signCond.ExprType = boolType
+	signCond.Location = loc
+
+	delta := &BinaryExpr{Left: value, Op: "-", Right: pattern.Start}
+	delta.ExprType = elemType
+	delta.Location = loc
+	mod := &BinaryExpr{Left: delta, Op: "%", Right: pattern.Step}
+	mod.ExprType = elemType
+	mod.Location = loc
+	zero := &NumberLit{Value: "0"}
+	zero.ExprType = elemType
+	zero.Location = loc
+	aligned := &BinaryExpr{Left: mod, Op: "==", Right: zero}
+	aligned.ExprType = boolType
+	aligned.Location = loc
+
+	cond := &BinaryExpr{Left: signCond, Op: "&&", Right: aligned}
+	cond.ExprType = boolType
+	cond.Location = loc
+	return cond
 }
 
 func (l *lowerer) rewriteStmtIdents(stmt Stmt, fromName string, fromID int, toName string, toID int) Stmt {
@@ -694,6 +968,12 @@ func (l *lowerer) rewriteExprIdents(expr Expr, fromName string, fromID int, toNa
 		out := *e
 		out.Left = l.rewriteExprIdents(e.Left, fromName, fromID, toName, toID)
 		out.Right = l.rewriteExprIdents(e.Right, fromName, fromID, toName, toID)
+		return &out
+	case *RangeExpr:
+		out := *e
+		out.Start = l.rewriteExprIdents(e.Start, fromName, fromID, toName, toID)
+		out.End = l.rewriteExprIdents(e.End, fromName, fromID, toName, toID)
+		out.Step = l.rewriteExprIdents(e.Step, fromName, fromID, toName, toID)
 		return &out
 	case *PostfixExpr:
 		out := *e

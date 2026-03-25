@@ -1322,6 +1322,79 @@ fn run() -> i32 {
 	}
 }
 
+func TestParseForLoopRangeForms(t *testing.T) {
+	src := `
+fn run() -> i32 {
+    let mut sum: i32 = 0
+    for 0..10 |v| {
+        sum += v
+    }
+    for 0..=10:2 |i, v| {
+        sum += i
+        sum += v
+    }
+    return sum
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	first, ok := fn.Body.Stmts[1].(*ast.ForStmt)
+	if !ok {
+		t.Fatalf("expected first range for stmt, got %T", fn.Body.Stmts[1])
+	}
+	r0, ok := first.Iterable.(*ast.RangeExpr)
+	if !ok || r0.Inclusive || r0.Step != nil {
+		t.Fatalf("expected exclusive range without step, got %#v", first.Iterable)
+	}
+	second, ok := fn.Body.Stmts[2].(*ast.ForStmt)
+	if !ok {
+		t.Fatalf("expected second range for stmt, got %T", fn.Body.Stmts[2])
+	}
+	r1, ok := second.Iterable.(*ast.RangeExpr)
+	if !ok || !r1.Inclusive || r1.Step == nil {
+		t.Fatalf("expected inclusive range with step, got %#v", second.Iterable)
+	}
+}
+
+func TestParseMatchArmRangePattern(t *testing.T) {
+	src := `
+fn run(x: i32) -> i32 {
+    return match x {
+        0..=10 => 1
+        _ => 0
+    }
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	ret, ok := fn.Body.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return stmt, got %T", fn.Body.Stmts[0])
+	}
+	matchExpr, ok := ret.Value.(*ast.MatchExpr)
+	if !ok {
+		t.Fatalf("expected match expr, got %T", ret.Value)
+	}
+	rangePat, ok := matchExpr.Arms[0].Pattern.(*ast.RangeExpr)
+	if !ok || !rangePat.Inclusive {
+		t.Fatalf("expected inclusive range pattern, got %#v", matchExpr.Arms[0].Pattern)
+	}
+}
+
 func TestParserRejectsInvalidForBindingForm(t *testing.T) {
 	src := `
 fn run() -> void {

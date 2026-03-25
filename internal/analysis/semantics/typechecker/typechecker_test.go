@@ -3621,6 +3621,69 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerAllowsForOverIntegerRange(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn sum() -> i32 {
+    let mut total = 0
+    for 0..=10:2 |i, v| {
+        total += i as i32
+        total += v
+    }
+    return total
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsFloatRange(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn bad() -> i32 {
+    for 0.0..1.0 |v| {
+        return v as i32
+    }
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected float range diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if strings.Contains(diag.Message, "range endpoints must be integers") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected integer-range diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsMatchRangePattern(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn classify(x: i32) -> i32 {
+    return match x {
+        0..=10 => 1
+        _ => 0
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsVariadicCalls(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

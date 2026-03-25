@@ -2259,6 +2259,11 @@ func renderLabelHoverMarkdown(label *binding.LabelBinding) string {
 
 func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module) string {
 	ownershipNote := renderOwnershipBoundaryCastHoverNote(node, info)
+	if expr, ok := node.(ast.Expr); ok {
+		if _, isRange := expr.(*ast.RangeExpr); isRange {
+			return appendHoverNote(asFerretCodeBlock(ast.ExprString(expr)), ownershipNote)
+		}
+	}
 	if typ == nil {
 		return appendHoverNote("", ownershipNote)
 	}
