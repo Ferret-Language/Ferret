@@ -1,20 +1,55 @@
 /// std/testing provides runtime assertion helpers for unit tests.
 
+const __FerretTestFail = "__FERRET_TEST_FAIL__"
+const __FerretTestMessage = "__FERRET_TEST_MESSAGE__"
+const __FerretTestExpected = "__FERRET_TEST_EXPECTED__"
+const __FerretTestGot = "__FERRET_TEST_GOT__"
+
+#[extern("exit")]
+fn __test_abort(code: i32) -> void;
+
+fn emit_fail_header() -> void {
+    print(__FerretTestFail)
+}
+
+fn emit_fail_message(message: str) -> void {
+    print(__FerretTestMessage)
+    print(message)
+}
+
+fn emit_fail_expected<T>(want: T) -> void {
+    print(__FerretTestExpected)
+    print(want)
+}
+
+fn emit_fail_got<T>(got: T) -> void {
+    print(__FerretTestGot)
+    print(got)
+}
+
 /// Fails with message
 fn Fail(message: str) -> void {
-    panic message
+    emit_fail_header()
+    emit_fail_message(message)
+    __test_abort(1)
 }
 
 /// Expect fails the current test when cond is false.
 fn Expect(cond: bool, message: str) -> void {
     if !cond {
-        panic message
+        emit_fail_header()
+        emit_fail_message(message)
+        __test_abort(1)
     }
 }
 
 /// ExpectEq fails the current test when got != want.
 fn ExpectEq<T>(got: T, want: T, message: str) -> void {
     if got != want {
-        panic message
+        emit_fail_header()
+        emit_fail_message(message)
+        emit_fail_expected(want)
+        emit_fail_got(got)
+        __test_abort(1)
     }
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -319,7 +320,7 @@ func testCommand(args []string) error {
 		if test == nil || test.Name == nil {
 			continue
 		}
-		runResult, err := runSingleTest(resolvedPath, test.Name.Text(), runtimeArgs)
+		runResult, err := runSingleTest(resolvedPath, test.Name.Text(), displayTestName(test), runtimeArgs)
 		if err != nil {
 			return err
 		}
@@ -329,13 +330,7 @@ func testCommand(args []string) error {
 			continue
 		}
 		failed++
-		fmt.Fprintf(os.Stdout, "FAIL %s\n", runResult.Name)
-		if strings.TrimSpace(runResult.Output) != "" {
-			fmt.Fprint(os.Stderr, runResult.Output)
-			if !strings.HasSuffix(runResult.Output, "\n") {
-				fmt.Fprintln(os.Stderr)
-			}
-		}
+		renderTestFailure(runResult.Name, runResult.Output)
 	}
 	fmt.Fprintf(os.Stdout, "\nsummary: %d passed, %d failed, %d total\n", passed, failed, len(tests))
 	if failed > 0 {
@@ -549,7 +544,22 @@ type testRunResult struct {
 	Output string
 }
 
-func runSingleTest(path, testName string, runtimeArgs []string) (testRunResult, error) {
+type testFailureDetails struct {
+	Message  string
+	Expected string
+	Got      string
+	Raw      string
+	Known    bool
+}
+
+const (
+	testFailMarker     = "__FERRET_TEST_FAIL__"
+	testMessageMarker  = "__FERRET_TEST_MESSAGE__"
+	testExpectedMarker = "__FERRET_TEST_EXPECTED__"
+	testGotMarker      = "__FERRET_TEST_GOT__"
+)
+
+func runSingleTest(path, testName, displayName string, runtimeArgs []string) (testRunResult, error) {
 	result := parsePathWithTest(path, testName)
 	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
 		result.Diagnostics.EmitAll()
@@ -592,12 +602,114 @@ func runSingleTest(path, testName string, runtimeArgs []string) (testRunResult, 
 	err = cmd.Run()
 	output := stdout.String() + stderr.String()
 	if err == nil {
-		return testRunResult{Name: testName, Passed: true, Output: output}, nil
+		return testRunResult{Name: displayName, Passed: true, Output: output}, nil
 	}
 	if _, ok := err.(*exec.ExitError); ok {
-		return testRunResult{Name: testName, Passed: false, Output: output}, nil
+		return testRunResult{Name: displayName, Passed: false, Output: output}, nil
 	}
 	return testRunResult{}, fmt.Errorf("run test %s: %w", testName, err)
+}
+
+func displayTestName(fn *ast.FuncDecl) string {
+	if fn == nil {
+		return ""
+	}
+	if strings.TrimSpace(fn.TestName) != "" {
+		return fn.TestName
+	}
+	if fn.Name != nil {
+		return fn.Name.Text()
+	}
+	return ""
+}
+
+func parseTestFailureOutput(output string) testFailureDetails {
+	lines := strings.Split(strings.ReplaceAll(output, "\r\n", "\n"), "\n")
+	details := testFailureDetails{}
+	raw := make([]string, 0, len(lines))
+	pending := ""
+
+	flushPending := func() {
+		if pending == "" {
+			return
+		}
+		switch pending {
+		case testMessageMarker:
+			details.Message = ""
+		case testExpectedMarker:
+			details.Expected = ""
+		case testGotMarker:
+			details.Got = ""
+		}
+		pending = ""
+	}
+
+	for _, line := range lines {
+		switch line {
+		case testFailMarker:
+			details.Known = true
+			flushPending()
+			continue
+		case testMessageMarker, testExpectedMarker, testGotMarker:
+			details.Known = true
+			flushPending()
+			pending = line
+			continue
+		}
+
+		if pending != "" {
+			switch pending {
+			case testMessageMarker:
+				details.Message = line
+			case testExpectedMarker:
+				details.Expected = line
+			case testGotMarker:
+				details.Got = line
+			}
+			pending = ""
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		raw = append(raw, line)
+	}
+	flushPending()
+	details.Raw = strings.Join(raw, "\n")
+	return details
+}
+
+func renderTestFailure(name, output string) {
+	fmt.Fprintf(os.Stdout, "FAIL %s\n", name)
+	details := parseTestFailureOutput(output)
+	if !details.Known {
+		if strings.TrimSpace(output) != "" {
+			printIndented(os.Stdout, output)
+		}
+		return
+	}
+	if strings.TrimSpace(details.Message) != "" {
+		fmt.Fprintf(os.Stdout, "  %s\n", details.Message)
+	}
+	if strings.TrimSpace(details.Expected) != "" {
+		fmt.Fprintf(os.Stdout, "  expected: %s\n", details.Expected)
+	}
+	if strings.TrimSpace(details.Got) != "" {
+		fmt.Fprintf(os.Stdout, "  got:      %s\n", details.Got)
+	}
+	if strings.TrimSpace(details.Raw) != "" {
+		printIndented(os.Stdout, details.Raw)
+	}
+}
+
+func printIndented(w io.Writer, text string) {
+	trimmed := strings.TrimRight(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	if trimmed == "" {
+		return
+	}
+	for _, line := range strings.Split(trimmed, "\n") {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
 }
 
 func emitModuleASTDumps(result compiler.Result, outDir string) error {

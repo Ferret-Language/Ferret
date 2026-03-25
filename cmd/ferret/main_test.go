@@ -59,3 +59,42 @@ func TestCountModuleTests(t *testing.T) {
 		t.Fatalf("countModuleTests = %d, want 2", got)
 	}
 }
+
+func TestDisplayTestNamePrefersDeclaredLabel(t *testing.T) {
+	fn := &ast.FuncDecl{
+		Name:     &ast.Ident{Path: []string{"__ferret_test_0"}},
+		IsTest:   true,
+		TestName: "smoke",
+	}
+	if got := displayTestName(fn); got != "smoke" {
+		t.Fatalf("displayTestName = %q, want %q", got, "smoke")
+	}
+}
+
+func TestParseTestFailureOutputStructured(t *testing.T) {
+	output := "__FERRET_TEST_FAIL__\n__FERRET_TEST_MESSAGE__\nmath broke\n__FERRET_TEST_EXPECTED__\n4\n__FERRET_TEST_GOT__\n5\n"
+	got := parseTestFailureOutput(output)
+	if !got.Known {
+		t.Fatalf("expected known structured failure")
+	}
+	if got.Message != "math broke" {
+		t.Fatalf("message = %q, want %q", got.Message, "math broke")
+	}
+	if got.Expected != "4" {
+		t.Fatalf("expected = %q, want %q", got.Expected, "4")
+	}
+	if got.Got != "5" {
+		t.Fatalf("got = %q, want %q", got.Got, "5")
+	}
+	if got.Raw != "" {
+		t.Fatalf("raw = %q, want empty", got.Raw)
+	}
+}
+
+func TestParseTestFailureOutputKeepsRawLines(t *testing.T) {
+	output := "hello\n__FERRET_TEST_FAIL__\n__FERRET_TEST_MESSAGE__\nmath broke\nworld\n"
+	got := parseTestFailureOutput(output)
+	if got.Raw != "hello\nworld" {
+		t.Fatalf("raw = %q, want %q", got.Raw, "hello\nworld")
+	}
+}
