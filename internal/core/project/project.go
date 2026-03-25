@@ -142,7 +142,12 @@ func resolveRemotePackage(cachePath string, lock *manifest.Lockfile, repoName, v
 //
 // Layout: <bundle>/bin/ferret -> <bundle>/libs/std
 func resolveStdlibRoot(projectRoot string) (string, error) {
-	_ = projectRoot
+	if projectRoot != "" {
+		candidate := filepath.Clean(filepath.Join(projectRoot, "ferret_libs_dev", "std"))
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate, nil
+		}
+	}
 	if execPath, err := ExecutablePath(); err == nil {
 		execDir := filepath.Dir(execPath)
 		candidate := filepath.Clean(filepath.Join(execDir, "..", "libs", "std"))

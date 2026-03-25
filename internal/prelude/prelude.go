@@ -1,7 +1,6 @@
 package prelude
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -63,6 +62,12 @@ func findGlobalPrelude(ctx *context.CompilerContext) (string, error) {
 			return candidate, nil
 		}
 	}
+	if ctx != nil && ctx.Config.RootDir != "" {
+		candidate := filepath.Clean(filepath.Join(ctx.Config.RootDir, "ferret_libs_dev", "global.fer"))
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
 
 	if execPath, err := ExecutablePath(); err == nil {
 		execDir := filepath.Dir(execPath)
@@ -71,5 +76,19 @@ func findGlobalPrelude(ctx *context.CompilerContext) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("global prelude not found in packaged libs beside the executable")
+	if wd, err := os.Getwd(); err == nil && wd != "" {
+		dir := filepath.Clean(wd)
+		for {
+			candidate := filepath.Clean(filepath.Join(dir, "ferret_libs_dev", "global.fer"))
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate, nil
+			}
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	return "", nil
 }

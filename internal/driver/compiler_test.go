@@ -192,7 +192,7 @@ fn main() -> void {
 
 	result := ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
 	if len(result.Modules) != 2 {
 		t.Fatalf("expected 2 modules, got %d", len(result.Modules))
@@ -235,7 +235,7 @@ fn main() -> void {
 		}
 	}
 	if !found {
-		t.Fatalf("expected type mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected type mismatch diagnostic, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
 }
 
@@ -292,6 +292,11 @@ func TestParsePathForIDEReportsUnusedLocalDiagnostics(t *testing.T) {
 
 func TestParsePathResolvesStdlibOSWithoutManifest(t *testing.T) {
 	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
+type Any interface {}
+#[extern("ferret_io_print")]
+fn print(value: Any) -> void;
+`)
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.fer"), `#[extern("ferret_os_cpu_count")]
 fn CPUCount() -> usize;
 
@@ -315,7 +320,7 @@ fn main() -> void {
 
 	result := ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
 	if len(result.Modules) != 2 {
 		t.Fatalf("expected 2 modules, got %d", len(result.Modules))
@@ -337,6 +342,11 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdlibOSSignature(t *testing.T) {
 	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
+type Any interface {}
+#[extern("ferret_io_print")]
+fn print(value: Any) -> void;
+`)
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.fer"), `#[extern("ferret_os_cpu_count")]
 fn CPUCount() -> usize;
 `)
@@ -359,12 +369,18 @@ fn main() -> void {
 		}
 	}
 	if !found {
-		t.Fatalf("expected wrong arg count diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected wrong arg count diagnostic, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
 }
 
 func TestParsePathResolvesStdlibMemWithoutManifest(t *testing.T) {
 	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
+#[extern("malloc")]
+fn malloc(size: usize) -> ^void;
+#[extern("free")]
+fn free(ptr: ^void) -> void;
+`)
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
 type Allocator interface {
     Alloc(&self, size: usize) -> ^void
@@ -404,7 +420,7 @@ fn main() -> void {
 
 	result := ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %v", result.Diagnostics.Diagnostics())
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
 	if len(result.Modules) != 2 {
 		t.Fatalf("expected 2 modules, got %d", len(result.Modules))
@@ -426,6 +442,12 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdlibMemSignature(t *testing.T) {
 	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
+#[extern("malloc")]
+fn malloc(size: usize) -> ^void;
+#[extern("free")]
+fn free(ptr: ^void) -> void;
+`)
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
 type Allocator interface {
     Alloc(&self, size: usize) -> ^void
@@ -465,7 +487,7 @@ fn main() -> void {
 		}
 	}
 	if !found {
-		t.Fatalf("expected type mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected type mismatch diagnostic, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
 }
 
@@ -594,4 +616,15 @@ func mustWrite(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func diagnosticSummaries(diags []*diagnostics.Diagnostic) []string {
+	out := make([]string, 0, len(diags))
+	for _, diag := range diags {
+		if diag == nil {
+			continue
+		}
+		out = append(out, diag.Code+": "+diag.Message)
+	}
+	return out
 }

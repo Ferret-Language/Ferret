@@ -1,6 +1,7 @@
 package prelude
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -12,6 +13,30 @@ import (
 
 func TestLoadRegistersGlobalBuiltinsFromPrelude(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", "..", ".."))
+	execPath := filepath.Join(t.TempDir(), "bundle", "bin", "ferret")
+	if err := os.MkdirAll(filepath.Dir(execPath), 0o755); err != nil {
+		t.Fatalf("mkdir exec dir: %v", err)
+	}
+	if err := os.WriteFile(execPath, []byte{}, 0o644); err != nil {
+		t.Fatalf("write exec file: %v", err)
+	}
+	global := filepath.Join(filepath.Dir(execPath), "..", "libs", "global.fer")
+	if err := os.MkdirAll(filepath.Dir(global), 0o755); err != nil {
+		t.Fatalf("mkdir prelude dir: %v", err)
+	}
+	preludeSrc := `type Any interface {}
+#[extern]
+fn print(value: Any) -> void;
+#[builtin]
+fn recover() -> str;
+`
+	if err := os.WriteFile(global, []byte(preludeSrc), 0o644); err != nil {
+		t.Fatalf("write prelude file: %v", err)
+	}
+	oldExecutablePath := ExecutablePath
+	ExecutablePath = func() (string, error) { return execPath, nil }
+	defer func() { ExecutablePath = oldExecutablePath }()
+
 	ctx := context.New(root, ".fer", diagnostics.NewDiagnosticBag(""))
 	if err := Load(ctx); err != nil {
 		t.Fatalf("unexpected prelude load error: %v", err)
@@ -38,6 +63,30 @@ func TestLoadRegistersGlobalBuiltinsFromPrelude(t *testing.T) {
 
 func TestLoadRegistersAnyAndPrintFromPrelude(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", "..", ".."))
+	execPath := filepath.Join(t.TempDir(), "bundle", "bin", "ferret")
+	if err := os.MkdirAll(filepath.Dir(execPath), 0o755); err != nil {
+		t.Fatalf("mkdir exec dir: %v", err)
+	}
+	if err := os.WriteFile(execPath, []byte{}, 0o644); err != nil {
+		t.Fatalf("write exec file: %v", err)
+	}
+	global := filepath.Join(filepath.Dir(execPath), "..", "libs", "global.fer")
+	if err := os.MkdirAll(filepath.Dir(global), 0o755); err != nil {
+		t.Fatalf("mkdir prelude dir: %v", err)
+	}
+	preludeSrc := `type Any interface {}
+#[extern]
+fn print(value: Any) -> void;
+#[builtin]
+fn recover() -> str;
+`
+	if err := os.WriteFile(global, []byte(preludeSrc), 0o644); err != nil {
+		t.Fatalf("write prelude file: %v", err)
+	}
+	oldExecutablePath := ExecutablePath
+	ExecutablePath = func() (string, error) { return execPath, nil }
+	defer func() { ExecutablePath = oldExecutablePath }()
+
 	ctx := context.New(root, ".fer", diagnostics.NewDiagnosticBag(""))
 	if err := Load(ctx); err != nil {
 		t.Fatalf("unexpected prelude load error: %v", err)

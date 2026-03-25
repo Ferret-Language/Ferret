@@ -2262,6 +2262,10 @@ func renderNodeHoverMarkdown(node ast.Node, typ typeinfo.Type, mod *context.Modu
 	if typ == nil {
 		return appendHoverNote("", ownershipNote)
 	}
+	sym := resolvedSymbolForNode(mod, node)
+	if constrained := renderConstrainedTypeParamBindingHover(sym, typ); constrained != "" {
+		return appendHoverNote(appendHoverDoc(constrained, declarationDocForNode(node, mod)), ownershipNote)
+	}
 	bindingDecl := renderBindingDeclForNode(node, typ, mod)
 	if sig := renderNodeFunctionSignature(node, typ, mod, info); sig != "" {
 		return appendHoverNote(appendHoverDoc(asFerretCodeBlock(sig), declarationDocForNode(node, mod)), ownershipNote)
@@ -2398,6 +2402,9 @@ func renderSymbolHoverMarkdown(sym *symbols.Symbol, typ typeinfo.Type, mod *cont
 		return renderTypeHoverMarkdown(typ, mod, modulesByKey)
 	}
 	doc := declarationDocForSymbol(sym)
+	if constrained := renderConstrainedTypeParamBindingHover(sym, typ); constrained != "" {
+		return appendHoverDoc(constrained, doc)
+	}
 	if decl := renderBindingDeclForSymbol(sym, typ, mod); decl != "" {
 		return appendHoverDoc(joinBindingAndTypeHover(decl, renderTypeHoverMarkdown(typ, mod, modulesByKey)), doc)
 	}
@@ -2434,6 +2441,32 @@ func joinBindingAndTypeHover(bindingDecl, typeMarkdown string) string {
 		return bindingBlock
 	}
 	return bindingBlock + "\n\n" + typeMarkdown
+}
+
+func renderConstrainedTypeParamBindingHover(sym *symbols.Symbol, typ typeinfo.Type) string {
+	if sym == nil || sym.Kind != symbols.SymbolParam {
+		return ""
+	}
+	param, ok := typ.(*typeinfo.TypeParam)
+	if !ok || param == nil || param.Constraint == nil {
+		return ""
+	}
+	name := sym.Name
+	if name == "" {
+		name = "_"
+	}
+	flags := ""
+	if sym.Flags.Mutable() {
+		flags += "mut "
+	}
+	if sym.Flags.Comptime() {
+		flags += "comptime "
+	}
+	typeName := typeinfo.DefaultPrinter.Type(param)
+	constraint := typeinfo.DefaultPrinter.Type(param.Constraint)
+	bindingLine := "(parameter) " + flags + name + ": " + typeName
+	constraintLine := typeName + ": " + constraint
+	return asFerretCodeBlock(bindingLine) + "\n\n" + asFerretCodeBlock(constraintLine)
 }
 
 func renderBindingDeclForNode(node ast.Node, typ typeinfo.Type, mod *context.Module) string {
@@ -2546,6 +2579,11 @@ func renderTypeHoverMarkdown(typ typeinfo.Type, mod *context.Module, modulesByKe
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		return renderNamedTypeMarkdown(t, mod, modulesByKey)
+	case *typeinfo.TypeParam:
+		if t.Constraint != nil {
+			return asFerretCodeBlock(typeinfo.DefaultPrinter.Type(t) + ": " + typeinfo.DefaultPrinter.Type(t.Constraint))
+		}
+		return asFerretCodeBlock(typeinfo.DefaultPrinter.Type(t))
 	default:
 		rendered := typeinfo.DefaultPrinter.Type(typ)
 		switch rendered {

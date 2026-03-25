@@ -1184,7 +1184,7 @@ func TestHoverCrossModuleConstrainedGenericCallShowsInstantiatedSignature(t *tes
 func TestHoverFunctionCallShowsDocComment(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "/// Adds two numbers.\n/// Returns the sum.\nfn add(a: i32, b: i32) -> i32 {\n    return a + b\n}\n\nfn main() -> i32 {\n    return add(1, 2)\n}\n"
+	src := "const sentinel = 0\n\n/// Adds two numbers.\n/// Returns the sum.\nfn add(a: i32, b: i32) -> i32 {\n    return a + b\n}\n\nfn main() -> i32 {\n    return add(1, 2)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1224,7 +1224,7 @@ func TestHoverFunctionCallShowsDocComment(t *testing.T) {
 func TestHoverFunctionCallShowsLineCommentDocBlock(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "// Adds two numbers.\n// Returns the sum.\nfn add(a: i32, b: i32) -> i32 {\n    return a + b\n}\n\nfn main() -> i32 {\n    return add(1, 2)\n}\n"
+	src := "const sentinel = 0\n\n// Adds two numbers.\n// Returns the sum.\nfn add(a: i32, b: i32) -> i32 {\n    return a + b\n}\n\nfn main() -> i32 {\n    return add(1, 2)\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1264,7 +1264,7 @@ func TestHoverFunctionCallShowsLineCommentDocBlock(t *testing.T) {
 func TestHoverTypeShowsDocCommentBlock(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "// Point docs line 1.\n// Point docs line 2.\ntype Point struct {\n    Value: i32 = 0\n}\n\nfn main() -> void {\n    let p: Point = .{ .Value = 1 }\n    p\n}\n"
+	src := "const sentinel = 0\n\n// Point docs line 1.\n// Point docs line 2.\ntype Point struct {\n    Value: i32 = 0\n}\n\nfn main() -> void {\n    let p: Point = .{ .Value = 1 }\n    p\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}
@@ -1751,8 +1751,51 @@ func TestHoverConstrainedGenericParameterShowsConstraint(t *testing.T) {
 	if hover == nil {
 		t.Fatal("expected hover result")
 	}
-	if !strings.Contains(hover.Contents.Value, "parameter s: T: Shape") {
+	if !strings.Contains(hover.Contents.Value, "(parameter) s: T") {
+		t.Fatalf("expected constrained parameter hover header, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "T: Shape") {
 		t.Fatalf("expected constrained parameter hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverConstrainedTypeParamNameShowsConstraint(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "type Shape interface {\n    Draw(&self)\n}\n\nfn drawShape<T: Shape>(s: T) {\n    s.Draw()\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "(s: T)")
+	if !ok {
+		t.Fatal("failed to find constrained parameter type")
+	}
+	char += len("(s: ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "T: Shape") {
+		t.Fatalf("expected constrained type parameter hover, got %q", hover.Contents.Value)
+	}
+	if strings.Contains(hover.Contents.Value, "(parameter)") {
+		t.Fatalf("did not expect parameter header while hovering on type parameter, got %q", hover.Contents.Value)
 	}
 }
 

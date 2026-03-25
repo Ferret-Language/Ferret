@@ -880,6 +880,8 @@ fn ClonePoint(p: Point) -> Point {
 
 func TestParseBuiltinDeclarationWithDocComment(t *testing.T) {
 	src := `
+const sentinel = 0
+
 /// Returns the current panic payload as a string.
 /// Returns an empty string when there is no active panic.
 #[builtin]
@@ -890,12 +892,12 @@ fn recover() -> string;
 	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
-	if len(mod.Decls) != 1 {
-		t.Fatalf("expected 1 decl, got %d", len(mod.Decls))
+	if len(mod.Decls) != 2 {
+		t.Fatalf("expected 2 decls, got %d", len(mod.Decls))
 	}
-	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	fn, ok := mod.Decls[1].(*ast.FuncDecl)
 	if !ok {
-		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+		t.Fatalf("expected function decl, got %T", mod.Decls[1])
 	}
 	if fn.Doc == nil {
 		t.Fatal("expected doc comment to be attached to builtin declaration")
@@ -919,6 +921,8 @@ fn recover() -> string;
 
 func TestParseDeclarationDocsFromLineAndBlockComments(t *testing.T) {
 	src := `
+const sentinel = 0
+
 // Point docs.
 type Point struct {}
 
@@ -939,25 +943,25 @@ fn addOne(v: i32) -> i32 {
 	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
-	if len(mod.Decls) != 4 {
-		t.Fatalf("expected 4 decls, got %d", len(mod.Decls))
+	if len(mod.Decls) != 5 {
+		t.Fatalf("expected 5 decls, got %d", len(mod.Decls))
 	}
 
-	typ, ok := mod.Decls[0].(*ast.TypeDecl)
+	typ, ok := mod.Decls[1].(*ast.TypeDecl)
 	if !ok || typ.Doc == nil || !strings.Contains(typ.Doc.Text, "Point docs.") {
-		t.Fatalf("expected type doc from // comment, got %#v", mod.Decls[0])
+		t.Fatalf("expected type doc from // comment, got %#v", mod.Decls[1])
 	}
-	letDecl, ok := mod.Decls[1].(*ast.LetDecl)
+	letDecl, ok := mod.Decls[2].(*ast.LetDecl)
 	if !ok || letDecl.Doc == nil || !strings.Contains(letDecl.Doc.Text, "mutable binding docs") {
-		t.Fatalf("expected let doc from // comment, got %#v", mod.Decls[1])
+		t.Fatalf("expected let doc from // comment, got %#v", mod.Decls[2])
 	}
-	constDecl, ok := mod.Decls[2].(*ast.ConstDecl)
+	constDecl, ok := mod.Decls[3].(*ast.ConstDecl)
 	if !ok || constDecl.Doc == nil || !strings.Contains(constDecl.Doc.Text, "constant docs") {
-		t.Fatalf("expected const doc from /* */ comment, got %#v", mod.Decls[2])
+		t.Fatalf("expected const doc from /* */ comment, got %#v", mod.Decls[3])
 	}
-	fn, ok := mod.Decls[3].(*ast.FuncDecl)
+	fn, ok := mod.Decls[4].(*ast.FuncDecl)
 	if !ok || fn.Doc == nil {
-		t.Fatalf("expected function doc from // comments, got %#v", mod.Decls[3])
+		t.Fatalf("expected function doc from // comments, got %#v", mod.Decls[4])
 	}
 	if !strings.Contains(fn.Doc.Text, "Adds one.") || !strings.Contains(fn.Doc.Text, "Returns incremented value.") {
 		t.Fatalf("unexpected function doc text: %q", fn.Doc.Text)
@@ -1086,6 +1090,8 @@ fn main() -> void
 
 func TestParseBlockDocCommentPreservesLines(t *testing.T) {
 	src := `
+const sentinel = 0
+
 /**
  * block line 1
  * block line 2
@@ -1097,9 +1103,9 @@ fn f() -> void {}
 	if got := diag.Diagnostics(); len(got) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", got)
 	}
-	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	fn, ok := mod.Decls[1].(*ast.FuncDecl)
 	if !ok || fn.Doc == nil {
-		t.Fatalf("expected function doc from block comment, got %#v", mod.Decls[0])
+		t.Fatalf("expected function doc from block comment, got %#v", mod.Decls[1])
 	}
 	if !strings.Contains(fn.Doc.Text, "block line 1") || !strings.Contains(fn.Doc.Text, "block line 2") {
 		t.Fatalf("unexpected block doc text: %q", fn.Doc.Text)
