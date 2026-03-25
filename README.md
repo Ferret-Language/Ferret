@@ -15,19 +15,19 @@ Supported release installers:
 ### Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/main/compiler/install-ferret.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/compiler/install-ferret.sh | bash
 ```
 
 If you prefer `wget`:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/Ferret-Language/Ferret/main/compiler/install-ferret.sh | bash
+wget -qO- https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/compiler/install-ferret.sh | bash
 ```
 
 Install a specific release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/main/compiler/install-ferret.sh | bash -s -- v0.1.0
+curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/compiler/install-ferret.sh | bash -s -- v0.1.0
 ```
 
 Default install location:
@@ -41,13 +41,13 @@ Default install location:
 Use the same installer script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/main/compiler/install-ferret.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/compiler/install-ferret.sh | bash
 ```
 
 Install a specific release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/main/compiler/install-ferret.sh | bash -s -- v0.1.0
+curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/compiler/install-ferret.sh | bash -s -- v0.1.0
 ```
 
 Default install location:
@@ -59,14 +59,14 @@ Default install location:
 ### Windows PowerShell
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/Ferret-Language/Ferret/main/compiler/install-ferret.ps1 -OutFile install-ferret.ps1
+Invoke-WebRequest https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/compiler/install-ferret.ps1 -OutFile install-ferret.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-ferret.ps1
 ```
 
 Install a specific release tag:
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/Ferret-Language/Ferret/main/compiler/install-ferret.ps1 -OutFile install-ferret.ps1
+Invoke-WebRequest https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/compiler/install-ferret.ps1 -OutFile install-ferret.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-ferret.ps1 -Version v0.1.0
 ```
 
@@ -75,7 +75,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install-ferret.ps1 -Versio
 Download and run the wrapper script:
 
 ```bat
-curl -fsSLO https://raw.githubusercontent.com/Ferret-Language/Ferret/main/compiler/install-ferret.cmd
+curl -fsSLO https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/compiler/install-ferret.cmd
 install-ferret.cmd
 ```
 
