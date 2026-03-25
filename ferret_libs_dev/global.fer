@@ -27,34 +27,6 @@ type Any interface {}
 #[extern]
 fn print(value: Any) -> void;
 
-/// Internal test runtime hook: begin one test case.
-#[extern("ferret_test_begin")]
-fn __test_begin(name: str) -> void;
-
-/// Internal test runtime hook: record one assertion failure.
-#[extern("ferret_test_fail")]
-fn __test_fail(message: str) -> void;
-
-/// Internal test runtime hook: total assertion failures observed so far.
-#[extern("ferret_test_failure_count")]
-fn __test_failure_count() -> usize;
-
-/// Internal test runtime hook: mark a test case as passed.
-#[extern("ferret_test_mark_pass")]
-fn __test_mark_pass(name: str) -> void;
-
-/// Internal test runtime hook: mark a test case as failed.
-#[extern("ferret_test_mark_fail")]
-fn __test_mark_fail(name: str) -> void;
-
-/// Internal test runtime hook: print overall test summary.
-#[extern("ferret_test_summary")]
-fn __test_summary() -> void;
-
-/// Internal test runtime hook: process exit code for test execution.
-#[extern("ferret_test_exit_code")]
-fn __test_exit_code() -> i32;
-
 /// Returns the element count of an array or slice.
 /// This foreign declaration is polymorphic in semantic analysis and accepts any []T or [N]T.
 #[extern("ferret_global_slice_len")]

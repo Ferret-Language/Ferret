@@ -60,7 +60,7 @@ func (p *Pipeline) ParseEntryForIDE(entryFile string) (*context.Module, error) {
 	p.wg.Wait()
 	if mod, ok := p.ctx.GetModule(resolved.Key); ok && mod != nil {
 		mod.IsEntry = true
-		if synthesizeTestHarness(mod.AST, p.ctx.Config.TestMode) {
+		if synthesizeTestHarness(mod.AST, p.ctx.Config.TestMode, p.ctx.Config.TestName) {
 			collector.CollectModule(p.ctx, mod)
 		}
 	}
@@ -102,7 +102,7 @@ func (p *Pipeline) ParseEntry(entryFile string) (*context.Module, error) {
 	p.wg.Wait()
 	if mod, ok := p.ctx.GetModule(resolved.Key); ok && mod != nil {
 		mod.IsEntry = true
-		if synthesizeTestHarness(mod.AST, p.ctx.Config.TestMode) {
+		if synthesizeTestHarness(mod.AST, p.ctx.Config.TestMode, p.ctx.Config.TestName) {
 			collector.CollectModule(p.ctx, mod)
 		}
 	}

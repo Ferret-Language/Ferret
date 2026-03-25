@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -306,46 +307,39 @@ func testCommand(args []string) error {
 	if result.Diagnostics.HasErrors() {
 		return fmt.Errorf("test build failed")
 	}
-	testCount := countModuleTests(result.Entry)
-	if testCount == 0 {
+	tests := moduleTests(result.Entry)
+	if len(tests) == 0 {
 		return fmt.Errorf("no tests found in %s", resolvedPath)
 	}
-	colors.CYAN.Fprintf(os.Stderr, "running %d test(s)\n", testCount)
+	colors.CYAN.Fprintf(os.Stderr, "running %d test(s)\n", len(tests))
 
-	tempPattern := "ferret-test-*"
-	if runtime.GOOS == "windows" {
-		tempPattern = "ferret-test-*.exe"
-	}
-	tempFile, err := os.CreateTemp("", tempPattern)
-	if err != nil {
-		return fmt.Errorf("create temp output: %w", err)
-	}
-	tempPath := tempFile.Name()
-	if err := tempFile.Close(); err != nil {
-		return err
-	}
-	_ = os.Remove(tempPath)
-
-	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(tempPath), ".exe") {
-		tempPath += ".exe"
-	}
-	defer func() {
-		_ = os.Remove(tempPath)
-	}()
-
-	if err := buildExecutable(result, tempPath, backend.TargetLLVM); err != nil {
-		return err
-	}
-
-	cmd := exec.Command(tempPath, runtimeArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+	passed := 0
+	failed := 0
+	for _, test := range tests {
+		if test == nil || test.Name == nil {
+			continue
 		}
-		return fmt.Errorf("run tests: %w", err)
+		runResult, err := runSingleTest(resolvedPath, test.Name.Text(), runtimeArgs)
+		if err != nil {
+			return err
+		}
+		if runResult.Passed {
+			passed++
+			fmt.Fprintf(os.Stdout, "ok   %s\n", runResult.Name)
+			continue
+		}
+		failed++
+		fmt.Fprintf(os.Stdout, "FAIL %s\n", runResult.Name)
+		if strings.TrimSpace(runResult.Output) != "" {
+			fmt.Fprint(os.Stderr, runResult.Output)
+			if !strings.HasSuffix(runResult.Output, "\n") {
+				fmt.Fprintln(os.Stderr)
+			}
+		}
+	}
+	fmt.Fprintf(os.Stdout, "\nsummary: %d passed, %d failed, %d total\n", passed, failed, len(tests))
+	if failed > 0 {
+		return fmt.Errorf("%d test(s) failed", failed)
 	}
 	return nil
 }
@@ -439,14 +433,18 @@ func checkCommand(args []string) error {
 }
 
 func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.Result {
-	return parsePathWithConfig(path, targetBackend, buildDebug, false)
+	return parsePathWithConfig(path, targetBackend, buildDebug, false, "")
 }
 
 func parsePathForTest(path string) compiler.Result {
-	return parsePathWithConfig(path, string(backend.TargetLLVM), false, true)
+	return parsePathWithTest(path, "")
 }
 
-func parsePathWithConfig(path, targetBackend string, buildDebug, testMode bool) compiler.Result {
+func parsePathWithTest(path, testName string) compiler.Result {
+	return parsePathWithConfig(path, string(backend.TargetLLVM), false, true, testName)
+}
+
+func parsePathWithConfig(path, targetBackend string, buildDebug, testMode bool, testName string) compiler.Result {
 	absPath, err := filepath.Abs(path)
 	diag := diagnostics.NewDiagnosticBag(absPath)
 	if err != nil {
@@ -472,6 +470,7 @@ func parsePathWithConfig(path, targetBackend string, buildDebug, testMode bool) 
 		ws.Context.TargetBackend = targetBackend
 		ws.Context.BuildDebug = buildDebug
 		ws.Context.TestMode = testMode
+		ws.Context.TestName = testName
 		compiler := compiler.NewWithConfig(ws.Context, diag)
 		return compiler.ParseEntry(entryPath)
 	}
@@ -487,6 +486,7 @@ func parsePathWithConfig(path, targetBackend string, buildDebug, testMode bool) 
 	ws.Context.TargetBackend = targetBackend
 	ws.Context.BuildDebug = buildDebug
 	ws.Context.TestMode = testMode
+	ws.Context.TestName = testName
 	compiler := compiler.NewWithConfig(ws.Context, diag)
 	return compiler.ParseEntry(absPath)
 }
@@ -526,17 +526,78 @@ func parsePathForCheck(path string) compiler.Result {
 }
 
 func countModuleTests(mod *context.Module) int {
+	return len(moduleTests(mod))
+}
+
+func moduleTests(mod *context.Module) []*ast.FuncDecl {
 	if mod == nil || mod.AST == nil {
-		return 0
+		return nil
 	}
-	count := 0
+	tests := make([]*ast.FuncDecl, 0)
 	for _, decl := range mod.AST.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if ok && fn != nil && fn.IsTest {
-			count++
+			tests = append(tests, fn)
 		}
 	}
-	return count
+	return tests
+}
+
+type testRunResult struct {
+	Name   string
+	Passed bool
+	Output string
+}
+
+func runSingleTest(path, testName string, runtimeArgs []string) (testRunResult, error) {
+	result := parsePathWithTest(path, testName)
+	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
+		result.Diagnostics.EmitAll()
+	}
+	if result.Diagnostics.HasErrors() {
+		return testRunResult{}, fmt.Errorf("test build failed for %s", testName)
+	}
+
+	tempPattern := "ferret-test-*"
+	if runtime.GOOS == "windows" {
+		tempPattern = "ferret-test-*.exe"
+	}
+	tempFile, err := os.CreateTemp("", tempPattern)
+	if err != nil {
+		return testRunResult{}, fmt.Errorf("create temp output: %w", err)
+	}
+	tempPath := tempFile.Name()
+	if err := tempFile.Close(); err != nil {
+		return testRunResult{}, err
+	}
+	_ = os.Remove(tempPath)
+
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(tempPath), ".exe") {
+		tempPath += ".exe"
+	}
+	defer func() {
+		_ = os.Remove(tempPath)
+	}()
+
+	if err := buildExecutable(result, tempPath, backend.TargetLLVM); err != nil {
+		return testRunResult{}, err
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd := exec.Command(tempPath, runtimeArgs...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	output := stdout.String() + stderr.String()
+	if err == nil {
+		return testRunResult{Name: testName, Passed: true, Output: output}, nil
+	}
+	if _, ok := err.(*exec.ExitError); ok {
+		return testRunResult{Name: testName, Passed: false, Output: output}, nil
+	}
+	return testRunResult{}, fmt.Errorf("run test %s: %w", testName, err)
 }
 
 func emitModuleASTDumps(result compiler.Result, outDir string) error {

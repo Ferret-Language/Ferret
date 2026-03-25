@@ -36,6 +36,7 @@ type Config struct {
 	TargetBackend   string
 	BuildDebug      bool
 	TestMode        bool
+	TestName        string
 }
 
 type ModuleOrigin string

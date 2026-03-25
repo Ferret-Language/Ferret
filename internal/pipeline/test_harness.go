@@ -2,12 +2,13 @@ package pipeline
 
 import (
 	"fmt"
+	"strings"
 
 	"compiler/internal/core/source"
 	"compiler/internal/frontend/ast"
 )
 
-func synthesizeTestHarness(mod *ast.Module, force bool) bool {
+func synthesizeTestHarness(mod *ast.Module, force bool, selectedTest string) bool {
 	if mod == nil || len(mod.Decls) == 0 {
 		return false
 	}
@@ -30,6 +31,12 @@ func synthesizeTestHarness(mod *ast.Module, force bool) bool {
 	if len(tests) == 0 {
 		return false
 	}
+	if selectedTest != "" {
+		tests = selectTestsByName(tests, selectedTest)
+		if len(tests) == 0 {
+			return false
+		}
+	}
 	if hasUserMain && !force {
 		return false
 	}
@@ -47,34 +54,16 @@ func synthesizeTestHarness(mod *ast.Module, force bool) bool {
 		mod.Decls = filtered
 	}
 	body := &ast.BlockStmt{
-		Stmts:    make([]ast.Stmt, 0, len(tests)*5+2),
+		Stmts:    make([]ast.Stmt, 0, len(tests)+1),
 		Location: loc,
 	}
-	for i, testFn := range tests {
+	for _, testFn := range tests {
 		if testFn == nil || testFn.Name == nil {
 			continue
 		}
-		testName := &ast.StringLit{Value: testFn.TestName, Location: loc}
-		beforeName := fmt.Sprintf("__ferret_test_before_%d", i)
-		afterName := fmt.Sprintf("__ferret_test_after_%d", i)
-
-		body.Stmts = append(body.Stmts,
-			exprStmt(callExpr(loc, "__test_begin", testName)),
-			letStmt(loc, beforeName, callExpr(loc, "__test_failure_count")),
-			exprStmt(callExpr(loc, testFn.Name.Text())),
-			letStmt(loc, afterName, callExpr(loc, "__test_failure_count")),
-			&ast.IfStmt{
-				Cond:     binaryExpr(loc, identExpr(loc, afterName), "==", identExpr(loc, beforeName)),
-				Then:     blockStmt(loc, exprStmt(callExpr(loc, "__test_mark_pass", testName))),
-				Else:     blockStmt(loc, exprStmt(callExpr(loc, "__test_mark_fail", testName))),
-				Location: loc,
-			},
-		)
+		body.Stmts = append(body.Stmts, exprStmt(callExpr(loc, testFn.Name.Text())))
 	}
-	body.Stmts = append(body.Stmts,
-		exprStmt(callExpr(loc, "__test_summary")),
-		&ast.ReturnStmt{Value: callExpr(loc, "__test_exit_code"), Location: loc},
-	)
+	body.Stmts = append(body.Stmts, &ast.ReturnStmt{Value: intLit(loc, 0), Location: loc})
 	mod.Decls = append(mod.Decls, &ast.FuncDecl{
 		Name:        &ast.Ident{Path: []string{"main"}, Location: loc},
 		IsSynthetic: true,
@@ -86,6 +75,23 @@ func synthesizeTestHarness(mod *ast.Module, force bool) bool {
 		Location:    loc,
 	})
 	return true
+}
+
+func selectTestsByName(tests []*ast.FuncDecl, selectedTest string) []*ast.FuncDecl {
+	selectedTest = strings.TrimSpace(selectedTest)
+	if selectedTest == "" {
+		return tests
+	}
+	filtered := make([]*ast.FuncDecl, 0, 1)
+	for _, fn := range tests {
+		if fn == nil || fn.Name == nil {
+			continue
+		}
+		if fn.Name.Text() == selectedTest || fn.TestName == selectedTest {
+			filtered = append(filtered, fn)
+		}
+	}
+	return filtered
 }
 
 func syntheticModuleLocation(mod *ast.Module) source.Location {
@@ -108,6 +114,10 @@ func identExpr(loc source.Location, name string) *ast.Ident {
 	return &ast.Ident{Path: []string{name}, Location: loc}
 }
 
+func intLit(loc source.Location, value int64) *ast.NumberLit {
+	return &ast.NumberLit{Value: fmt.Sprintf("%d", value), Location: loc}
+}
+
 func callExpr(loc source.Location, name string, args ...ast.Expr) *ast.CallExpr {
 	return &ast.CallExpr{
 		Callee:   identExpr(loc, name),
@@ -122,12 +132,4 @@ func binaryExpr(loc source.Location, left ast.Expr, op string, right ast.Expr) *
 
 func exprStmt(expr ast.Expr) *ast.ExprStmt {
 	return &ast.ExprStmt{Value: expr, Location: expr.Loc()}
-}
-
-func letStmt(loc source.Location, name string, value ast.Expr) *ast.LetStmt {
-	return &ast.LetStmt{Name: identExpr(loc, name), Value: value, Location: loc}
-}
-
-func blockStmt(loc source.Location, stmts ...ast.Stmt) *ast.BlockStmt {
-	return &ast.BlockStmt{Stmts: stmts, Location: loc}
 }

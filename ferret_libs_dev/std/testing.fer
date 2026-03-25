@@ -2,19 +2,19 @@
 
 /// Fails with message
 fn Fail(message: str) -> void {
-    __test_fail(message)
+    panic message
 }
 
 /// Expect fails the current test when cond is false.
 fn Expect(cond: bool, message: str) -> void {
     if !cond {
-        __test_fail(message)
+        panic message
     }
 }
 
 /// ExpectEq fails the current test when got != want.
 fn ExpectEq<T>(got: T, want: T, message: str) -> void {
     if got != want {
-        __test_fail(message)
+        panic message
     }
 }

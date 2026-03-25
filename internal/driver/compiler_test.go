@@ -50,20 +50,7 @@ name = "json"
 func TestParseEntrySynthesizesMainForTests(t *testing.T) {
 	root := t.TempDir()
 	libsRoot := filepath.Join(root, "bundle", "core", "libs")
-	mustWrite(t, filepath.Join(libsRoot, "global.fer"), `
-#[extern("ferret_test_begin")]
-fn __test_begin(name: str) -> void;
-#[extern("ferret_test_failure_count")]
-fn __test_failure_count() -> usize;
-#[extern("ferret_test_mark_pass")]
-fn __test_mark_pass(name: str) -> void;
-#[extern("ferret_test_mark_fail")]
-fn __test_mark_fail(name: str) -> void;
-#[extern("ferret_test_summary")]
-fn __test_summary() -> void;
-#[extern("ferret_test_exit_code")]
-fn __test_exit_code() -> i32;
-`)
+	mustWrite(t, filepath.Join(libsRoot, "global.fer"), ``)
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 test "smoke" {
     let ok = true
@@ -111,18 +98,6 @@ func TestParseEntryTestModeOverridesUserMain(t *testing.T) {
 #[extern]
 fn print(value: Any) -> void;
 type Any interface {}
-#[extern("ferret_test_begin")]
-fn __test_begin(name: str) -> void;
-#[extern("ferret_test_failure_count")]
-fn __test_failure_count() -> usize;
-#[extern("ferret_test_mark_pass")]
-fn __test_mark_pass(name: str) -> void;
-#[extern("ferret_test_mark_fail")]
-fn __test_mark_fail(name: str) -> void;
-#[extern("ferret_test_summary")]
-fn __test_summary() -> void;
-#[extern("ferret_test_exit_code")]
-fn __test_exit_code() -> i32;
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
@@ -162,6 +137,42 @@ test "smoke" {
 	}
 	if userMain != 0 || synthMain != 1 {
 		t.Fatalf("expected only one synthetic main in test mode, got user=%d synthetic=%d", userMain, synthMain)
+	}
+}
+
+func TestParseEntryTestModeSelectsSingleTest(t *testing.T) {
+	root := t.TempDir()
+	libsRoot := filepath.Join(root, "bundle", "core", "libs")
+	mustWrite(t, filepath.Join(libsRoot, "global.fer"), ``)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+test "smoke" {}
+
+test "other" {}
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".fer",
+		StdlibRoot:      filepath.Join(libsRoot, "std"),
+		DependencyRoots: map[string]string{},
+		TestMode:        true,
+		TestName:        "__ferret_test_1",
+	}
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	tests := 0
+	for _, decl := range result.Entry.AST.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn == nil || !fn.IsTest {
+			continue
+		}
+		tests++
+	}
+	if tests != 2 {
+		t.Fatalf("expected original test decls to remain visible, got %d", tests)
 	}
 }
 
