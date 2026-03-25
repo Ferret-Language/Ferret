@@ -54,7 +54,7 @@ fn main() {
     //
     // int, float
 
-    add("a", "b") // "ab"
+    //add("a", "b") // "ab"
 
     defer sayHi()
 
@@ -78,7 +78,7 @@ fn main() {
 
 
     unsafe {
-        print(@x)
+        print(&x)
     }
 
     let myarr: [_]i32 = [_]i32{1,2,3,4}

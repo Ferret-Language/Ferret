@@ -20,22 +20,6 @@ import (
 
 type lowerer struct{}
 
-type interfaceVTableKey struct {
-	iface    string
-	concrete string
-}
-
-type interfaceWrapperKey struct {
-	iface    string
-	concrete string
-	method   string
-}
-
-type sharedLoweringState struct {
-	interfaceVTables  map[interfaceVTableKey]string
-	interfaceWrappers map[interfaceWrapperKey]struct{}
-}
-
 type moduleState struct {
 	mod               *mir.Module
 	layout            *layout.Module
@@ -52,13 +36,13 @@ type moduleState struct {
 	nextStrConst      int              // counter for unnamed string constant globals
 	deferredB         *strings.Builder // deferred global definitions (e.g. string literals used in functions)
 	pendingLines      []string         // extra load instructions to flush before each emitted line
-	interfaceVTables  map[interfaceVTableKey]string
-	interfaceWrappers map[interfaceWrapperKey]struct{}
+	interfaceVTables  map[becommon.InterfaceVTableKey]string
+	interfaceWrappers map[becommon.InterfaceWrapperKey]struct{}
 	tempValues        map[int]mir.Value
 	debug             *debugState // nil if debug info is disabled
 	fnScopeID         int         // DISubprogram metadata ID for the current function
 	debugLocalVarIDs  map[int]int // local ID -> DILocalVariable metadata ID (for dbg.value updates)
-	shared            *sharedLoweringState
+	shared            *becommon.InterfaceHelperCache
 }
 
 // debugState accumulates LLVM debug-info metadata nodes (DWARF) while
@@ -443,9 +427,9 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 	if includeDebug {
 		dbg = newDebugState()
 	}
-	shared := &sharedLoweringState{
-		interfaceVTables:  make(map[interfaceVTableKey]string),
-		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
+	shared := &becommon.InterfaceHelperCache{
+		VTables:  make(map[becommon.InterfaceVTableKey]string),
+		Wrappers: make(map[becommon.InterfaceWrapperKey]struct{}),
 	}
 
 	// Pass 1: collect all type declarations in dependency order (units are
@@ -940,9 +924,9 @@ func newModuleStateWithDebug(unit *backend.Unit, allLayouts map[string]*layout.M
 // as the cross-module layout map.
 func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *moduleState {
 	if unit == nil || unit.Module == nil {
-		shared := &sharedLoweringState{
-			interfaceVTables:  make(map[interfaceVTableKey]string),
-			interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
+		shared := &becommon.InterfaceHelperCache{
+			VTables:  make(map[becommon.InterfaceVTableKey]string),
+			Wrappers: make(map[becommon.InterfaceWrapperKey]struct{}),
 		}
 		return &moduleState{
 			layouts:           allLayouts,
@@ -950,16 +934,16 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 			globals:           make(map[string]struct{}),
 			modulePrefix:      becommon.SanitizePath(""),
 			deferredB:         &strings.Builder{},
-			interfaceVTables:  shared.interfaceVTables,
-			interfaceWrappers: shared.interfaceWrappers,
+			interfaceVTables:  shared.VTables,
+			interfaceWrappers: shared.Wrappers,
 			tempValues:        make(map[int]mir.Value),
 			shared:            shared,
 		}
 	}
 	modulePrefix, functions, globals := becommon.BuildModuleSymbolTables(unit.Module)
-	shared := &sharedLoweringState{
-		interfaceVTables:  make(map[interfaceVTableKey]string),
-		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
+	shared := &becommon.InterfaceHelperCache{
+		VTables:  make(map[becommon.InterfaceVTableKey]string),
+		Wrappers: make(map[becommon.InterfaceWrapperKey]struct{}),
 	}
 	state := &moduleState{
 		mod:               unit.Module,
@@ -970,22 +954,22 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		globals:           globals,
 		modulePrefix:      modulePrefix,
 		deferredB:         &strings.Builder{},
-		interfaceVTables:  shared.interfaceVTables,
-		interfaceWrappers: shared.interfaceWrappers,
+		interfaceVTables:  shared.VTables,
+		interfaceWrappers: shared.Wrappers,
 		tempValues:        make(map[int]mir.Value),
 		shared:            shared,
 	}
 	return state
 }
 
-func newProgramModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module, dbg *debugState, shared *sharedLoweringState) *moduleState {
+func newProgramModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module, dbg *debugState, shared *becommon.InterfaceHelperCache) *moduleState {
 	state := newModuleStateWithDebug(unit, allLayouts, dbg)
 	if shared == nil {
 		return state
 	}
 	state.shared = shared
-	state.interfaceVTables = shared.interfaceVTables
-	state.interfaceWrappers = shared.interfaceWrappers
+	state.interfaceVTables = shared.VTables
+	state.interfaceWrappers = shared.Wrappers
 	return state
 }
 
@@ -3341,7 +3325,7 @@ func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *
 	if !ok || targetNamed == nil {
 		return "", 0, fmt.Errorf("interface target must be named")
 	}
-	key := interfaceVTableKey{iface: typeinfo.DefaultPrinter.Type(targetNamed), concrete: typeinfo.DefaultPrinter.Type(value.ConcreteType)}
+	key := becommon.InterfaceVTableKey{Iface: typeinfo.DefaultPrinter.Type(targetNamed), Concrete: typeinfo.DefaultPrinter.Type(value.ConcreteType)}
 	if sym, ok := state.interfaceVTables[key]; ok {
 		if iface, _, err := becommon.LookupInterfaceDecl(state.mod, state.modules, target, "llvm"); err == nil && iface != nil {
 			return sym, len(iface.Methods) + 1, nil
@@ -3403,7 +3387,7 @@ func llvmRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int
 }
 
 func ensureLLVMInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
-	key := interfaceWrapperKey{iface: typeinfo.DefaultPrinter.Type(iface), concrete: typeinfo.DefaultPrinter.Type(concrete), method: method.Name}
+	key := becommon.InterfaceWrapperKey{Iface: typeinfo.DefaultPrinter.Type(iface), Concrete: typeinfo.DefaultPrinter.Type(concrete), Method: method.Name}
 	name := becommon.SanitizeIdent("ifacewrap__" + llvmTypeName(state, iface) + "__" + becommon.SanitizeType(concrete) + "__" + method.Name)
 	if _, ok := state.interfaceWrappers[key]; ok {
 		return name, nil

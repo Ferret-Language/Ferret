@@ -959,6 +959,99 @@ fn main() -> str {
 	}
 }
 
+func TestLowerQBEDedupesImportedInterfaceHelpersAcrossModules(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "global.fer"), `
+type Any interface {}
+fn print(value: Any) -> void;
+`)
+	mustWrite(t, filepath.Join(root, "util", "testing.fer"), `
+fn Expect(cond: bool, message: str) -> void {
+    if !cond {
+        print(message)
+    }
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "util/testing"
+
+fn main() -> void {
+    print("hello")
+    testing::Expect(true, "ok")
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	layouts := make(map[string]*layout.Module)
+	modules := make(map[string]*mir.Module)
+	for _, mod := range result.Modules {
+		if mod == nil {
+			continue
+		}
+		if mod.Layout != nil {
+			layouts[mod.Key] = mod.Layout
+		}
+		if mod.MIR != nil {
+			modules[mod.Key] = mod.MIR
+		}
+	}
+	if result.Entry != nil {
+		if result.Entry.Layout != nil {
+			layouts[result.Entry.Key] = result.Entry.Layout
+		}
+		if result.Entry.MIR != nil {
+			modules[result.Entry.Key] = result.Entry.MIR
+		}
+	}
+	seen := make(map[string]struct{})
+	var combined strings.Builder
+	for _, mod := range result.Modules {
+		if mod == nil || mod.MIR == nil || mod.Layout == nil {
+			continue
+		}
+		if _, ok := seen[mod.Key]; ok {
+			continue
+		}
+		seen[mod.Key] = struct{}{}
+		artifact, err := lowerer.LowerModule(&backend.Unit{
+			Module:  mod.MIR,
+			Layout:  mod.Layout,
+			Layouts: layouts,
+			Modules: modules,
+		})
+		if err != nil {
+			t.Fatalf("lower qbe %s: %v", mod.ImportPath, err)
+		}
+		combined.WriteString(artifact.Text)
+		combined.WriteByte('\n')
+	}
+	if result.Entry != nil && result.Entry.MIR != nil && result.Entry.Layout != nil {
+		if _, ok := seen[result.Entry.Key]; !ok {
+			artifact, err := lowerer.LowerModule(&backend.Unit{
+				Module:  result.Entry.MIR,
+				Layout:  result.Entry.Layout,
+				Layouts: layouts,
+				Modules: modules,
+			})
+			if err != nil {
+				t.Fatalf("lower qbe %s: %v", result.Entry.ImportPath, err)
+			}
+			combined.WriteString(artifact.Text)
+			combined.WriteByte('\n')
+		}
+	}
+	const sym = "data $vtable__builtin__global__Any__str__typeinfo ="
+	if got := strings.Count(combined.String(), sym); got != 1 {
+		t.Fatalf("expected %q once, got %d\n%s", sym, got, combined.String())
+	}
+}
+
 func TestLowerGlobalInterfaceValueToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

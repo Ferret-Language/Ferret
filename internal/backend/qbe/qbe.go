@@ -21,17 +21,8 @@ const VendoredCommit = "8ff06515526c97628b47d8223b73d5376287a9b4"
 //go:embed qbe-src
 var sourceTree embed.FS
 
-type lowerer struct{}
-
-type interfaceVTableKey struct {
-	iface    string
-	concrete string
-}
-
-type interfaceWrapperKey struct {
-	iface    string
-	concrete string
-	method   string
+type lowerer struct {
+	shared *becommon.InterfaceHelperCache
 }
 
 type moduleState struct {
@@ -51,8 +42,8 @@ type moduleState struct {
 	nextStrConst      int              // counter for unnamed string constant globals
 	deferredB         *strings.Builder // deferred data sections (string literals used in functions)
 	pendingLines      []string
-	interfaceVTables  map[interfaceVTableKey]string
-	interfaceWrappers map[interfaceWrapperKey]struct{}
+	interfaceVTables  map[becommon.InterfaceVTableKey]string
+	interfaceWrappers map[becommon.InterfaceWrapperKey]struct{}
 	tempValues        map[int]mir.Value
 }
 
@@ -75,11 +66,18 @@ type scalarAllocaLocal struct {
 	Align   int64
 }
 
-func New() backend.Lowerer { return &lowerer{} }
+func New() backend.Lowerer {
+	return &lowerer{
+		shared: &becommon.InterfaceHelperCache{
+			VTables:  make(map[becommon.InterfaceVTableKey]string),
+			Wrappers: make(map[becommon.InterfaceWrapperKey]struct{}),
+		},
+	}
+}
 
 func (*lowerer) Target() backend.Target { return backend.TargetQBE }
 
-func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
+func (l *lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 	if err := backend.ValidateUnit(unit); err != nil {
 		return nil, err
 	}
@@ -94,8 +92,8 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		globals:           globals,
 		modulePrefix:      modulePrefix,
 		deferredB:         &strings.Builder{},
-		interfaceVTables:  make(map[interfaceVTableKey]string),
-		interfaceWrappers: make(map[interfaceWrapperKey]struct{}),
+		interfaceVTables:  l.shared.VTables,
+		interfaceWrappers: l.shared.Wrappers,
 		tempValues:        make(map[int]mir.Value),
 	}
 
@@ -1720,7 +1718,7 @@ func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *m
 	if !ok || targetNamed == nil {
 		return "", fmt.Errorf("interface target must be named")
 	}
-	key := interfaceVTableKey{iface: typeinfo.DefaultPrinter.Type(targetNamed), concrete: typeinfo.DefaultPrinter.Type(value.ConcreteType)}
+	key := becommon.InterfaceVTableKey{Iface: typeinfo.DefaultPrinter.Type(targetNamed), Concrete: typeinfo.DefaultPrinter.Type(value.ConcreteType)}
 	if sym, ok := state.interfaceVTables[key]; ok {
 		return sym, nil
 	}
@@ -1773,7 +1771,7 @@ func qbeRuntimeTypeSizeAlign(state *moduleState, typ typeinfo.Type) (int64, int6
 }
 
 func ensureQBEInterfaceWrapper(state *moduleState, iface *typeinfo.NamedType, method *mir.InterfaceMethodDecl, concrete typeinfo.Type, link mir.InterfaceMethodLink) (string, error) {
-	key := interfaceWrapperKey{iface: typeinfo.DefaultPrinter.Type(iface), concrete: typeinfo.DefaultPrinter.Type(concrete), method: method.Name}
+	key := becommon.InterfaceWrapperKey{Iface: typeinfo.DefaultPrinter.Type(iface), Concrete: typeinfo.DefaultPrinter.Type(concrete), Method: method.Name}
 	name := becommon.SanitizeIdent("ifacewrap__" + qbeTypeName(state, iface) + "__" + becommon.SanitizeType(concrete) + "__" + method.Name)
 	if _, ok := state.interfaceWrappers[key]; ok {
 		return name, nil
