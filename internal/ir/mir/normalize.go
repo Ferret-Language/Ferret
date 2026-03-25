@@ -125,7 +125,7 @@ func (n *normalizer) normalizeInstr(fn *Function, instr Instr) []Instr {
 		i.Value = value
 		return append(temps, i)
 	case *StoreInstr:
-		temps, value := n.normalizeValueInline(fn, i.Value)
+		temps, value := n.normalizeValue(fn, i.Value)
 		i.Value = value
 		return append(temps, i)
 	case *StoreFieldInstr:

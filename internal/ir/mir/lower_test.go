@@ -559,6 +559,64 @@ fn main(items: []i32) -> i32 {
 	t.Fatalf("expected lowered sum call in MIR, got %#v", mainFn.Blocks)
 }
 
+func TestPipelineNormalizesStoreCallValueIntoTemp(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+fn inc(x: i32) -> i32 {
+    return x + 1
+}
+
+fn main() -> i32 {
+    let mut x = 1
+    x = inc(x)
+    return x
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+
+	foundCallCompute := false
+	foundStore := false
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			switch ins := instr.(type) {
+			case *mir.ComputeInstr:
+				call, ok := ins.Value.(*mir.CallValue)
+				if ok && hasCallNamed(call, "inc") {
+					foundCallCompute = true
+				}
+			case *mir.StoreInstr:
+				foundStore = true
+				if _, ok := ins.Value.(*mir.CallValue); ok {
+					t.Fatalf("expected store call value to be normalized into a temp, got %#v", ins)
+				}
+			}
+		}
+	}
+	if !foundCallCompute {
+		t.Fatalf("expected inc call to be lowered into a compute temp, got %#v", mainFn.Blocks)
+	}
+	if !foundStore {
+		t.Fatalf("expected mutable local assignment to lower into a store, got %#v", mainFn.Blocks)
+	}
+}
+
 func TestPipelineLowersConstrainedGenericMethodCallWithSpecializedOwnerPath(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.fer"), `
