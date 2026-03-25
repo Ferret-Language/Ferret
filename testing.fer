@@ -9,3 +9,8 @@ fn main() -> void {
 test "smoke" {
     testing::ExpectEq(2 + 2, 4, "math broke")
 }
+
+test "try multiply" {
+    testing::Expect(2 * 10 == 20, "Condition failed")
+}
+

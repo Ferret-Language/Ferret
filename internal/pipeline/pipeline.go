@@ -67,6 +67,7 @@ func (p *Pipeline) ParseEntryForIDE(entryFile string) (*context.Module, error) {
 	if err := p.runIDEPasses(); err != nil {
 		return nil, err
 	}
+	p.runIDEFinalPasses()
 	mod, _ := p.ctx.GetModule(resolved.Key)
 	return mod, nil
 }
@@ -89,6 +90,7 @@ func (p *Pipeline) ParseWorkspaceForIDE() ([]*context.Module, error) {
 	if err := p.runIDEPasses(); err != nil {
 		return nil, err
 	}
+	p.runIDEFinalPasses()
 	return p.ctx.Modules(), nil
 }
 
@@ -244,6 +246,16 @@ func (p *Pipeline) runIDEPasses() error {
 		typechecker.CheckModule(p.ctx, mod)
 	}
 	return nil
+}
+
+func (p *Pipeline) runIDEFinalPasses() {
+	if p == nil || p.ctx == nil || p.ctx.Diagnostics == nil {
+		return
+	}
+	if p.ctx.Diagnostics.HasErrors() {
+		return
+	}
+	usage.AnalyzeModules(p.ctx, p.ctx.Modules())
 }
 
 func (p *Pipeline) runSemanticFrontPasses(mod *context.Module) {

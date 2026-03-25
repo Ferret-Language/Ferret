@@ -8,7 +8,9 @@ import (
 
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
+	projectpkg "compiler/internal/core/project"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/prelude"
 )
 
 func TestParsePathResolvesDependencyAliasFromManifest(t *testing.T) {
@@ -234,6 +236,57 @@ fn main() -> void {
 	}
 	if !found {
 		t.Fatalf("expected type mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestParsePathForIDEReportsUnusedLocalDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	execPath := filepath.Join(root, "bundle", "bin", "ferret")
+	mustWrite(t, execPath, "")
+	mustWrite(t, filepath.Join(root, "bundle", "libs", "global.fer"), ``)
+	mustWrite(t, filepath.Join(root, "bundle", "libs", "std", "io.fer"), ``)
+	oldProjectExecutablePath := projectpkg.ExecutablePath
+	oldPreludeExecutablePath := prelude.ExecutablePath
+	projectpkg.ExecutablePath = func() (string, error) { return execPath, nil }
+	prelude.ExecutablePath = func() (string, error) { return execPath, nil }
+	defer func() {
+		projectpkg.ExecutablePath = oldProjectExecutablePath
+		prelude.ExecutablePath = oldPreludeExecutablePath
+	}()
+	mustWrite(t, filepath.Join(root, "main.fer"), `fn main() -> i32 {
+    let dead = 1
+    return 0
+}
+`)
+
+	result := ParsePathForIDE(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		got := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			got = append(got, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedLocal {
+			found = true
+			break
+		}
+	}
+	if !found {
+		got := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			got = append(got, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("expected %s diagnostic, got %v", diagnostics.WarnUnusedLocal, got)
 	}
 }
 
