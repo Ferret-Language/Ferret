@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"path/filepath"
 	"testing"
 
+	"compiler/colors"
 	"compiler/internal/backend"
 	"compiler/internal/core/context"
 	compiler "compiler/internal/driver"
@@ -131,5 +133,15 @@ func TestParseCommandBackendDefaultsAndExplicitTargets(t *testing.T) {
 		if gotName != tc.wantName || gotTarget != tc.wantTarget {
 			t.Fatalf("%q: got (%q, %q), want (%q, %q)", tc.in, gotName, gotTarget, tc.wantName, tc.wantTarget)
 		}
+	}
+}
+
+func TestPrintTestStatusUsesUppercaseColoredLabel(t *testing.T) {
+	var buf bytes.Buffer
+	printTestStatus(&buf, colors.GREEN, "OK", "smoke")
+	got := buf.String()
+	want := colors.GREEN.Sprintf("%-5s", "OK") + " smoke\n"
+	if got != want {
+		t.Fatalf("printTestStatus = %q, want %q", got, want)
 	}
 }

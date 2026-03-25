@@ -348,10 +348,8 @@ func testCommand(args []string, target backend.Target) error {
 		target = backend.TargetLLVM
 	}
 	result := parsePathWithTest(resolvedPath, "", target)
-	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
-		result.Diagnostics.EmitAll()
-	}
 	if result.Diagnostics.HasErrors() {
+		result.Diagnostics.EmitErrors()
 		return errAlreadyReported
 	}
 	tests := moduleTests(result.Entry)
@@ -372,13 +370,13 @@ func testCommand(args []string, target backend.Target) error {
 		}
 		if runResult.Passed {
 			passed++
-			fmt.Fprintf(os.Stdout, "ok   %s\n", runResult.Name)
+			printTestStatus(os.Stdout, colors.GREEN, "OK", runResult.Name)
 			continue
 		}
 		failed++
 		renderTestFailure(runResult.Name, runResult.Output)
 	}
-	fmt.Fprintf(os.Stdout, "\nsummary: %d passed, %d failed, %d total\n", passed, failed, len(tests))
+	fmt.Fprintf(os.Stdout, "\nSummary: %d passed, %d failed, %d total\n", passed, failed, len(tests))
 	if failed > 0 {
 		return fmt.Errorf("%d test(s) failed", failed)
 	}
@@ -624,10 +622,8 @@ func runSingleTest(path, testName, displayName string, runtimeArgs []string, tar
 		target = backend.TargetLLVM
 	}
 	result := parsePathWithTest(path, testName, target)
-	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
-		result.Diagnostics.EmitAll()
-	}
 	if result.Diagnostics.HasErrors() {
+		result.Diagnostics.EmitErrors()
 		return testRunResult{}, errAlreadyReported
 	}
 
@@ -743,7 +739,7 @@ func parseTestFailureOutput(output string) testFailureDetails {
 }
 
 func renderTestFailure(name, output string) {
-	fmt.Fprintf(os.Stdout, "FAIL %s\n", name)
+	printTestStatus(os.Stdout, colors.RED, "FAIL", name)
 	details := parseTestFailureOutput(output)
 	if !details.Known {
 		if strings.TrimSpace(output) != "" {
@@ -763,6 +759,11 @@ func renderTestFailure(name, output string) {
 	if strings.TrimSpace(details.Raw) != "" {
 		printIndented(os.Stdout, details.Raw)
 	}
+}
+
+func printTestStatus(w io.Writer, color colors.COLOR, status, name string) {
+	color.Fprintf(w, "%-5s", status)
+	fmt.Fprintf(w, " %s\n", name)
 }
 
 func printIndented(w io.Writer, text string) {

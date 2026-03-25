@@ -136,34 +136,52 @@ func sortDiagnostics(diagnostics []*Diagnostic) {
 }
 
 func (db *DiagnosticBag) EmitAll() {
-
 	emitter := NewEmitter(os.Stderr)
-
-	db.emitAll(emitter, os.Stderr)
+	db.emitFiltered(emitter, os.Stderr, func(*Diagnostic) bool { return true })
 }
 
-func (db *DiagnosticBag) emitAll(emitter *Emitter, w io.Writer) {
+// EmitErrors prints only error diagnostics and an error-only summary.
+func (db *DiagnosticBag) EmitErrors() {
+	emitter := NewEmitter(os.Stderr)
+	db.emitFiltered(emitter, os.Stderr, func(diag *Diagnostic) bool {
+		return diag != nil && diag.Severity == Error
+	})
+}
+
+func (db *DiagnosticBag) emitFiltered(emitter *Emitter, w io.Writer, keep func(*Diagnostic) bool) {
 	db.mu.Lock()
 
 	diagnostics := make([]*Diagnostic, len(db.diagnostics))
-
 	copy(diagnostics, db.diagnostics)
-
 	db.mu.Unlock()
 
-	// Sort diagnostics by source location
-	sortDiagnostics(diagnostics)
-
+	filtered := diagnostics[:0]
+	var errors, warnings int
 	for _, diag := range diagnostics {
+		if keep != nil && !keep(diag) {
+			continue
+		}
+		filtered = append(filtered, diag)
+		switch diag.Severity {
+		case Error:
+			errors++
+		case Warning:
+			warnings++
+		}
+	}
+
+	// Sort diagnostics by source location
+	sortDiagnostics(filtered)
+
+	for _, diag := range filtered {
 		emitter.Emit(diag)
 	}
 
-	db.printSummary(w)
+	printSummary(w, errors, warnings)
 }
 
 // EmitAllToString emits all diagnostics to a string with ANSI codes, using provided source cache
 func (db *DiagnosticBag) EmitAllToString() string {
-
 	var buf bytes.Buffer
 	emitter := &Emitter{
 		cache:       db.sourceCache,
@@ -171,7 +189,7 @@ func (db *DiagnosticBag) EmitAllToString() string {
 		highlighter: NewSyntaxHighlighter(true),
 	}
 
-	db.emitAll(emitter, &buf)
+	db.emitFiltered(emitter, &buf, func(*Diagnostic) bool { return true })
 
 	return buf.String()
 }
@@ -182,18 +200,15 @@ func (db *DiagnosticBag) EmitAllToHTML() string {
 	return colors.ConvertANSIToHTML(ansiOutput)
 }
 
-func (db *DiagnosticBag) printSummary(w io.Writer) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-
-	if db.errorCount > 0 {
-		colors.RED.Fprintf(w, compileFailedMsg, db.errorCount)
-		if db.warnCount > 0 {
-			colors.RED.Fprintf(w, andWarningMsg, db.warnCount)
+func printSummary(w io.Writer, errorCount, warnCount int) {
+	if errorCount > 0 {
+		colors.RED.Fprintf(w, compileFailedMsg, errorCount)
+		if warnCount > 0 {
+			colors.RED.Fprintf(w, andWarningMsg, warnCount)
 		}
 		fmt.Fprintln(w)
-	} else if db.warnCount > 0 {
-		colors.ORANGE.Fprintf(w, compileSuccessWithWarning, db.warnCount)
+	} else if warnCount > 0 {
+		colors.ORANGE.Fprintf(w, compileSuccessWithWarning, warnCount)
 	}
 }
 
