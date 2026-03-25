@@ -296,6 +296,59 @@ fn run(items: []i32) -> i32 {
 	}
 }
 
+func TestResolverBindsRangeIdentifiersInForIterable(t *testing.T) {
+	root := t.TempDir()
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
+fn run() -> i32 {
+    let start: i32 = 2
+    let end: i32 = 10
+    let step: i32 = 2
+    let mut total = 0
+    for start..end:step |v| {
+        total += v
+    }
+    return total
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	runFn := findFunc(t, result.Entry.AST, "run")
+	loop, ok := runFn.Body.Stmts[4].(*ast.ForStmt)
+	if !ok {
+		t.Fatalf("expected for stmt, got %T", runFn.Body.Stmts[4])
+	}
+	rangeExpr, ok := loop.Iterable.(*ast.RangeExpr)
+	if !ok {
+		t.Fatalf("expected range expr iterable, got %T", loop.Iterable)
+	}
+	start, ok := rangeExpr.Start.(*ast.Ident)
+	if !ok {
+		t.Fatalf("expected range start ident, got %T", rangeExpr.Start)
+	}
+	end, ok := rangeExpr.End.(*ast.Ident)
+	if !ok {
+		t.Fatalf("expected range end ident, got %T", rangeExpr.End)
+	}
+	step, ok := rangeExpr.Step.(*ast.Ident)
+	if !ok {
+		t.Fatalf("expected range step ident, got %T", rangeExpr.Step)
+	}
+
+	if res := result.Entry.Bindings.Nodes[start]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "start" {
+		t.Fatalf("expected start binding, got %#v", res)
+	}
+	if res := result.Entry.Bindings.Nodes[end]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "end" {
+		t.Fatalf("expected end binding, got %#v", res)
+	}
+	if res := result.Entry.Bindings.Nodes[step]; res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Name != "step" {
+		t.Fatalf("expected step binding, got %#v", res)
+	}
+}
+
 func TestResolverReportsUndefinedSymbol(t *testing.T) {
 	root := t.TempDir()
 	mustWriteResolver(t, filepath.Join(root, "main.fer"), `

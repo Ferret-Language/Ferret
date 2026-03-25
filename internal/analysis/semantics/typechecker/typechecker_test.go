@@ -3640,6 +3640,27 @@ fn sum() -> i32 {
 	}
 }
 
+func TestTypecheckerAllowsForOverIntegerRangeWithBindingsAndConsts(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn sum() -> i32 {
+    const start: i32 = 2
+    const end: i32 = 10
+    let step: i32 = 2
+    let mut total = 0
+    for start..end:step |v| {
+        total += v
+    }
+    return total
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerRejectsFloatRange(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

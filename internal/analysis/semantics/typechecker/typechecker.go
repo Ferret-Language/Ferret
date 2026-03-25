@@ -789,11 +789,13 @@ func (c *checker) typeOfBinary(scope *refineScope, expr *ast.BinaryExpr) typeinf
 func (c *checker) typeOfRange(scope *refineScope, expr *ast.RangeExpr) typeinfo.Type {
 	startType := c.typeOfExpr(scope, expr.Start, nil)
 	endType := c.typeOfExpr(scope, expr.End, startType)
+	startBase := c.underlying(startType)
+	endBase := c.underlying(endType)
 
-	elem := startType
-	if common := typeinfo.CommonNumericType(startType, endType); common != nil {
+	elem := startBase
+	if common := typeinfo.CommonNumericType(startBase, endBase); common != nil {
 		elem = common
-	} else if !typeinfo.Equal(startType, endType) {
+	} else if !typeinfo.Equal(startBase, endBase) {
 		loc := expr.Location
 		c.ctx.Diagnostics.Add(
 			diagnostics.NewError("range endpoints must have compatible integer types").
@@ -806,10 +808,15 @@ func (c *checker) typeOfRange(scope *refineScope, expr *ast.RangeExpr) typeinfo.
 	}
 	if !c.isIntegerType(elem) {
 		loc := expr.Location
+		msg := "range endpoints must be integers"
+		label := "use integer-typed range endpoints"
+		if family, _, ok := typeinfo.NumericInfo(elem); ok && family == typeinfo.NumericFloat {
+			label = "floating-point ranges are not supported"
+		}
 		c.ctx.Diagnostics.Add(
-			diagnostics.NewError("range endpoints must be integers").
+			diagnostics.NewError(msg).
 				WithCode(diagnostics.ErrTypeMismatch).
-				WithPrimaryLabel(&loc, "floating-point ranges are not supported"),
+				WithPrimaryLabel(&loc, label),
 		)
 		typ := typeinfo.InvalidType{}
 		c.info.BindNode(expr, typ)
@@ -818,12 +825,17 @@ func (c *checker) typeOfRange(scope *refineScope, expr *ast.RangeExpr) typeinfo.
 
 	if expr.Step != nil {
 		stepType := c.typeOfExpr(scope, expr.Step, elem)
+		stepBase := c.underlying(stepType)
 		if !c.isIntegerType(stepType) {
 			loc := expr.Step.Loc()
+			label := "use an integer step value"
+			if family, _, ok := typeinfo.NumericInfo(stepBase); ok && family == typeinfo.NumericFloat {
+				label = "floating-point step is not supported"
+			}
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError("range step must be an integer").
 					WithCode(diagnostics.ErrTypeMismatch).
-					WithPrimaryLabel(&loc, "use an integer step value"),
+					WithPrimaryLabel(&loc, label),
 			)
 			typ := typeinfo.InvalidType{}
 			c.info.BindNode(expr, typ)
@@ -3300,7 +3312,7 @@ func (c *checker) forBindingTypes(iterable typeinfo.Type) (typeinfo.Type, typein
 }
 
 func (c *checker) isIntegerType(typ typeinfo.Type) bool {
-	family, _, ok := typeinfo.NumericInfo(typ)
+	family, _, ok := typeinfo.NumericInfo(c.underlying(typ))
 	return ok && family != typeinfo.NumericFloat
 }
 

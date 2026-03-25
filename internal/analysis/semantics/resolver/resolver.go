@@ -500,6 +500,10 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.BinaryExpr:
 		r.resolveExpr(scope, e.Left)
 		r.resolveExpr(scope, e.Right)
+	case *ast.RangeExpr:
+		r.resolveExpr(scope, e.Start)
+		r.resolveExpr(scope, e.End)
+		r.resolveExpr(scope, e.Step)
 	case *ast.PostfixExpr:
 		r.resolveExpr(scope, e.Left)
 	case *ast.CallExpr:
