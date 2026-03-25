@@ -37,7 +37,12 @@ func main() {
 	if len(os.Args) > 1 {
 		command := os.Args[1]
 		commandArgs := os.Args[2:]
-		switch command {
+		commandName, commandBackend, err := parseCommandBackend(command)
+		if err != nil {
+			colors.RED.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		switch commandName {
 		case "lsp":
 			colors.CYAN.Fprintln(os.Stderr, "starting Ferret LSP server...")
 			if err := lsp.Run(os.Stdin, os.Stdout); err != nil {
@@ -82,7 +87,7 @@ func main() {
 			}
 			return
 		case "run":
-			if err := runCommand(commandArgs); err != nil {
+			if err := runCommand(commandArgs, commandBackend); err != nil {
 				if errors.Is(err, errAlreadyReported) {
 					os.Exit(1)
 				}
@@ -91,7 +96,7 @@ func main() {
 			}
 			return
 		case "test":
-			if err := testCommand(commandArgs); err != nil {
+			if err := testCommand(commandArgs, commandBackend); err != nil {
 				if errors.Is(err, errAlreadyReported) {
 					os.Exit(1)
 				}
@@ -135,8 +140,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  list|ls                 list direct and transitive dependencies")
 		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
 		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.fer only)")
-		fmt.Fprintln(os.Stderr, "  run [path] [args]       build and run a program using LLVM")
-		fmt.Fprintln(os.Stderr, "  test [path] [args]      build and run unit tests using LLVM")
+		fmt.Fprintln(os.Stderr, "  run[:llvm|:qbe] [path] [args]  build and run a program (default llvm)")
+		fmt.Fprintln(os.Stderr, "  test[:llvm|:qbe] [path] [args] build and run unit tests (default llvm)")
 		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
 		colors.GREEN.Fprintf(os.Stderr, "  %s -backend llvm main.fer\n", os.Args[0])
 		colors.GREEN.Fprintf(os.Stderr, "  %s -k main.fer\n", os.Args[0])
@@ -236,7 +241,30 @@ func emitKeepGenArtifacts(result compiler.Result, backendName, outDir string) er
 	return nil
 }
 
-func runCommand(args []string) error {
+func parseCommandBackend(command string) (string, backend.Target, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return "", "", fmt.Errorf("empty command")
+	}
+	base, suffix, hasSuffix := strings.Cut(command, ":")
+	switch base {
+	case "run", "test":
+		if !hasSuffix || strings.TrimSpace(suffix) == "" {
+			return base, backend.TargetLLVM, nil
+		}
+		target := backend.Target(strings.ToLower(strings.TrimSpace(suffix)))
+		switch target {
+		case backend.TargetLLVM, backend.TargetQBE:
+			return base, target, nil
+		default:
+			return "", "", fmt.Errorf("invalid %s backend %q (expected llvm or qbe)", base, suffix)
+		}
+	default:
+		return command, "", nil
+	}
+}
+
+func runCommand(args []string, target backend.Target) error {
 	sourcePath := ""
 	runtimeArgs := []string{}
 	if len(args) > 0 {
@@ -251,7 +279,10 @@ func runCommand(args []string) error {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", entryPath)
 	}
 
-	result := parsePathWithBackend(resolvedPath, string(backend.TargetLLVM), false)
+	if target == "" {
+		target = backend.TargetLLVM
+	}
+	result := parsePathWithBackend(resolvedPath, string(target), false)
 
 	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
 		result.Diagnostics.EmitAll()
@@ -281,7 +312,7 @@ func runCommand(args []string) error {
 		_ = os.Remove(tempPath)
 	}()
 
-	if err := buildExecutable(result, tempPath, backend.TargetLLVM); err != nil {
+	if err := buildExecutable(result, tempPath, target); err != nil {
 		return err
 	}
 
@@ -298,7 +329,7 @@ func runCommand(args []string) error {
 	return nil
 }
 
-func testCommand(args []string) error {
+func testCommand(args []string, target backend.Target) error {
 	sourcePath := ""
 	runtimeArgs := []string{}
 	if len(args) > 0 {
@@ -313,7 +344,10 @@ func testCommand(args []string) error {
 		colors.CYAN.Fprintf(os.Stderr, "using entry: %s\n", entryPath)
 	}
 
-	result := parsePathForTest(resolvedPath)
+	if target == "" {
+		target = backend.TargetLLVM
+	}
+	result := parsePathWithTest(resolvedPath, "", target)
 	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
 		result.Diagnostics.EmitAll()
 	}
@@ -332,7 +366,7 @@ func testCommand(args []string) error {
 		if test == nil || test.Name == nil {
 			continue
 		}
-		runResult, err := runSingleTest(resolvedPath, test.Name.Text(), displayTestName(test), runtimeArgs)
+		runResult, err := runSingleTest(resolvedPath, test.Name.Text(), displayTestName(test), runtimeArgs, target)
 		if err != nil {
 			return err
 		}
@@ -447,11 +481,14 @@ func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.
 }
 
 func parsePathForTest(path string) compiler.Result {
-	return parsePathWithTest(path, "")
+	return parsePathWithTest(path, "", backend.TargetLLVM)
 }
 
-func parsePathWithTest(path, testName string) compiler.Result {
-	return parsePathWithConfig(path, string(backend.TargetLLVM), false, true, testName)
+func parsePathWithTest(path, testName string, target backend.Target) compiler.Result {
+	if target == "" {
+		target = backend.TargetLLVM
+	}
+	return parsePathWithConfig(path, string(target), false, true, testName)
 }
 
 func parsePathWithConfig(path, targetBackend string, buildDebug, testMode bool, testName string) compiler.Result {
@@ -582,8 +619,11 @@ const (
 	testGotMarker      = "__FERRET_TEST_GOT__"
 )
 
-func runSingleTest(path, testName, displayName string, runtimeArgs []string) (testRunResult, error) {
-	result := parsePathWithTest(path, testName)
+func runSingleTest(path, testName, displayName string, runtimeArgs []string, target backend.Target) (testRunResult, error) {
+	if target == "" {
+		target = backend.TargetLLVM
+	}
+	result := parsePathWithTest(path, testName, target)
 	if diags := result.Diagnostics.Diagnostics(); len(diags) > 0 {
 		result.Diagnostics.EmitAll()
 	}
@@ -612,7 +652,7 @@ func runSingleTest(path, testName, displayName string, runtimeArgs []string) (te
 		_ = os.Remove(tempPath)
 	}()
 
-	if err := buildExecutable(result, tempPath, backend.TargetLLVM); err != nil {
+	if err := buildExecutable(result, tempPath, target); err != nil {
 		return testRunResult{}, err
 	}
 

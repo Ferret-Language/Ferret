@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/internal/backend"
 	"compiler/internal/core/context"
 	compiler "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
@@ -96,5 +97,39 @@ func TestParseTestFailureOutputKeepsRawLines(t *testing.T) {
 	got := parseTestFailureOutput(output)
 	if got.Raw != "hello\nworld" {
 		t.Fatalf("raw = %q, want %q", got.Raw, "hello\nworld")
+	}
+}
+
+func TestParseCommandBackendDefaultsAndExplicitTargets(t *testing.T) {
+	tests := []struct {
+		in         string
+		wantName   string
+		wantTarget backend.Target
+		wantErr    bool
+	}{
+		{in: "run", wantName: "run", wantTarget: backend.TargetLLVM},
+		{in: "test", wantName: "test", wantTarget: backend.TargetLLVM},
+		{in: "run:llvm", wantName: "run", wantTarget: backend.TargetLLVM},
+		{in: "run:qbe", wantName: "run", wantTarget: backend.TargetQBE},
+		{in: "test:llvm", wantName: "test", wantTarget: backend.TargetLLVM},
+		{in: "test:qbe", wantName: "test", wantTarget: backend.TargetQBE},
+		{in: "check", wantName: "check", wantTarget: ""},
+		{in: "run:bad", wantErr: true},
+		{in: "test:", wantName: "test", wantTarget: backend.TargetLLVM},
+	}
+	for _, tc := range tests {
+		gotName, gotTarget, err := parseCommandBackend(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Fatalf("%q: expected error", tc.in)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%q: unexpected error: %v", tc.in, err)
+		}
+		if gotName != tc.wantName || gotTarget != tc.wantTarget {
+			t.Fatalf("%q: got (%q, %q), want (%q, %q)", tc.in, gotName, gotTarget, tc.wantName, tc.wantTarget)
+		}
 	}
 }
