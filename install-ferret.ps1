@@ -1,6 +1,6 @@
 param(
     [string]$Version = "latest",
-    [string]$Repo = "itsfuad/compiler",
+    [string]$Repo = "Ferret-Language/Ferret",
     [string]$InstallDir = "$env:LOCALAPPDATA\Ferret"
 )
 

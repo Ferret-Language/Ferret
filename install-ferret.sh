@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${FERRET_REPO:-itsfuad/compiler}"
+REPO="${FERRET_REPO:-Ferret-Language/Ferret}"
 VERSION="${1:-latest}"
 INSTALL_DIR="${FERRET_INSTALL_DIR:-$HOME/.local/ferret}"
 BIN_DIR="$INSTALL_DIR/bin"
