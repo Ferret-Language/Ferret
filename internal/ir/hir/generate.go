@@ -412,7 +412,7 @@ func hirInstantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type {
 	case *typeinfo.ErrorUnionType:
 		return &typeinfo.ErrorUnionType{Error: hirInstantiateSelfType(t.Error, selfType), Value: hirInstantiateSelfType(t.Value, selfType)}
 	case *typeinfo.ArrayType:
-		return &typeinfo.ArrayType{Inner: hirInstantiateSelfType(t.Inner, selfType), Len: t.Len}
+		return &typeinfo.ArrayType{Inner: hirInstantiateSelfType(t.Inner, selfType), Len: t.Len, SizeExpr: t.SizeExpr}
 	case *typeinfo.SliceType:
 		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: hirInstantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.TupleType:

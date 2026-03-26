@@ -120,7 +120,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.ErrorUnionType:
 		return &typeinfo.ErrorUnionType{Error: c.typeFromSyntax(mod, t.Error), Value: c.typeFromSyntax(mod, t.Value)}
 	case *ast.ArrayType:
-		return &typeinfo.ArrayType{Inner: c.typeFromSyntax(mod, t.Inner), Len: c.arrayLength(t.Size)}
+		return &typeinfo.ArrayType{Inner: c.typeFromSyntax(mod, t.Inner), Len: c.arrayLength(t.Size), SizeExpr: t.Size}
 	case *ast.SliceType:
 		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.TupleType:
@@ -252,18 +252,18 @@ func (c *checker) lookupNamedUnionMemberType(mod *context.Module, unionDecl *ast
 
 func (c *checker) arrayLength(expr ast.Expr) int64 {
 	if expr == nil {
-		return -1
+		return typeinfo.ArrayLenUnknown
 	}
 	if ident, ok := expr.(*ast.Ident); ok && ident.Text() == "_" {
-		return -2
+		return typeinfo.ArrayLenInferred
 	}
 	lit, ok := expr.(*ast.NumberLit)
 	if !ok {
-		return -1
+		return typeinfo.ArrayLenUnknown
 	}
 	value, err := numeric.StringToBigInt(lit.Value)
 	if err != nil || value.Sign() < 0 || !value.IsInt64() {
-		return -1
+		return typeinfo.ArrayLenUnknown
 	}
 	return value.Int64()
 }

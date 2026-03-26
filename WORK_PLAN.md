@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 2 implemented and verified; waiting for review.
+Status: Step 3 in progress: introduce deferred array-length representation.
 
 ## Steps
 
@@ -25,7 +25,10 @@ Status: Step 2 implemented and verified; waiting for review.
 - [done] Commit step 1 only after approval.
 - [done] Implement step 2: remove legacy `comptime` parameter syntax and plumbing.
 - [done] Verify step 2 with focused tests and real Ferret repro files.
-- [in_review] Wait for review before committing step 2.
+- [done] Wait for review before committing step 2.
+- [in_progress] Implement step 3: introduce deferred array-length representation.
+- [pending] Verify step 3 with focused tests and foundation tests.
+- [pending] Wait for review before committing step 3.
 
 ## Active Task List
 
@@ -35,6 +38,8 @@ Status: Step 2 implemented and verified; waiting for review.
 - [done] Remove `comptime` parameter support from parser, AST, semantic flags, HIR, MIR, and LSP.
 - [done] Update tests and Ferret sample files to use plain parameters plus explicit `comptime` calls/blocks.
 - [done] Rebuild compiler and run `test_comptime/` repros after the syntax removal.
+- [in_progress] Add deferred array-length state to `ArrayType` and preserve it through type copies.
+- [pending] Keep current eager behavior intact while making later deferred filling possible.
 
 ## Verification
 

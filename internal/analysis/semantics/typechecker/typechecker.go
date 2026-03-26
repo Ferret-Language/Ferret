@@ -137,7 +137,7 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 }
 
 func (c *checker) resolveDeclaredValueType(declared, value typeinfo.Type) typeinfo.Type {
-	if arr, ok := declared.(*typeinfo.ArrayType); ok && arr != nil && arr.Len == -2 {
+	if arr, ok := declared.(*typeinfo.ArrayType); ok && arr != nil && arr.Len == typeinfo.ArrayLenInferred {
 		if concrete, ok := value.(*typeinfo.ArrayType); ok && concrete != nil && typeinfo.Equal(arr.Inner, concrete.Inner) {
 			return concrete
 		}
@@ -1863,7 +1863,7 @@ func (c *checker) substituteTypeParams(typ typeinfo.Type, bindings map[*typeinfo
 			Value: c.substituteTypeParams(t.Value, bindings),
 		}
 	case *typeinfo.ArrayType:
-		return &typeinfo.ArrayType{Inner: c.substituteTypeParams(t.Inner, bindings), Len: t.Len}
+		return &typeinfo.ArrayType{Inner: c.substituteTypeParams(t.Inner, bindings), Len: t.Len, SizeExpr: t.SizeExpr}
 	case *typeinfo.SliceType:
 		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: c.substituteTypeParams(t.Inner, bindings)}
 	case *typeinfo.TupleType:
@@ -2392,8 +2392,8 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 	// Array literal: positional elements matching element type.
 	if arrType, ok := base.(*typeinfo.ArrayType); ok {
 		actual := arrType
-		if arrType.Len == -2 {
-			actual = &typeinfo.ArrayType{Inner: arrType.Inner, Len: int64(len(expr.Items))}
+		if arrType.Len == typeinfo.ArrayLenInferred {
+			actual = &typeinfo.ArrayType{Inner: arrType.Inner, Len: int64(len(expr.Items)), SizeExpr: arrType.SizeExpr}
 		}
 		for i, item := range expr.Items {
 			if item.Name != nil {
@@ -3330,7 +3330,7 @@ func (c *checker) instantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type
 	case *typeinfo.ErrorUnionType:
 		return &typeinfo.ErrorUnionType{Error: c.instantiateSelfType(t.Error, selfType), Value: c.instantiateSelfType(t.Value, selfType)}
 	case *typeinfo.ArrayType:
-		return &typeinfo.ArrayType{Inner: c.instantiateSelfType(t.Inner, selfType), Len: t.Len}
+		return &typeinfo.ArrayType{Inner: c.instantiateSelfType(t.Inner, selfType), Len: t.Len, SizeExpr: t.SizeExpr}
 	case *typeinfo.SliceType:
 		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: c.instantiateSelfType(t.Inner, selfType)}
 	case *typeinfo.TupleType:

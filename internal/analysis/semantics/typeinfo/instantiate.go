@@ -107,7 +107,7 @@ func instantiateType(typ Type, bindings map[*TypeParam]Type, seen map[Type]Type)
 		if cached := seen[t]; cached != nil {
 			return cached
 		}
-		out := &ArrayType{Len: t.Len}
+		out := &ArrayType{Len: t.Len, SizeExpr: t.SizeExpr}
 		seen[t] = out
 		out.Inner = instantiateType(t.Inner, bindings, seen)
 		return out
