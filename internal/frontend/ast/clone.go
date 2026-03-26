@@ -133,7 +133,6 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 						copy.Params = append(copy.Params, Param{
 							Name:       cloneIdent(param.Name),
 							IsMut:      param.IsMut,
-							IsComptime: param.IsComptime,
 							IsVariadic: param.IsVariadic,
 							Type:       cloneType(param.Type),
 							Default:    cloneExpr(param.Default),

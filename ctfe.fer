@@ -61,17 +61,17 @@ fn buildCounterValue() i32 {
     return c.Value + n
 }
 
-fn passComptimeArg(comptime x: i32) i32 {
+fn passComptimeArg(x: i32) i32 {
     return x
 }
 
-fn assert(comptime cond: bool, comptime msg: str) {
+fn assert(cond: bool, msg: str) {
     if !cond {
         panic msg
     }
 }
 
-fn static_assert(comptime cond: bool, comptime msg: str) {
+fn static_assert(cond: bool, msg: str) {
     comptime assert(cond, msg)
 }
 

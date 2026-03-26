@@ -4,16 +4,11 @@ type ValueFlags uint8
 
 const (
 	FlagMutable ValueFlags = 1 << iota
-	FlagComptime
 	FlagVariadic
 )
 
 func (f ValueFlags) Mutable() bool {
 	return f&FlagMutable != 0
-}
-
-func (f ValueFlags) Comptime() bool {
-	return f&FlagComptime != 0
 }
 
 func (f ValueFlags) Variadic() bool {

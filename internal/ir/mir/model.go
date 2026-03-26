@@ -87,12 +87,11 @@ type Function struct {
 }
 
 type Param struct {
-	Name       string
-	LocalID    int
-	Type       typeinfo.Type
-	IsComptime bool
-	IsMutable  bool
-	Location   source.Location
+	Name      string
+	LocalID   int
+	Type      typeinfo.Type
+	IsMutable bool
+	Location  source.Location
 }
 
 type Local struct {

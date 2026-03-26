@@ -429,12 +429,12 @@ type Handle enum {
 	}
 }
 
-func TestParseLetMutConstAndComptime(t *testing.T) {
+func TestParseLetMutConstAndComptimeExpr(t *testing.T) {
 	src := `
 let mut GlobalCount: i32 = 0
 const BuildMode = "debug"
 
-fn add(comptime T: Type, x: T) -> T {
+fn add(T: Type, x: T) -> T {
     let mut a: i32
     let b = comptime 1 + 2
     const local = 3
@@ -461,8 +461,8 @@ fn add(comptime T: Type, x: T) -> T {
 	if !ok {
 		t.Fatalf("expected function decl, got %T", mod.Decls[2])
 	}
-	if len(fn.Params) != 2 || !fn.Params[0].IsComptime {
-		t.Fatalf("expected first param to be comptime, got %#v", fn.Params)
+	if len(fn.Params) != 2 {
+		t.Fatalf("expected 2 params, got %#v", fn.Params)
 	}
 	if fn.Params[1].IsMut {
 		t.Fatalf("did not expect second param to be mutable, got %#v", fn.Params[1])
@@ -489,6 +489,19 @@ fn add(comptime T: Type, x: T) -> T {
 	localConst, ok := fn.Body.Stmts[2].(*ast.ConstStmt)
 	if !ok || localConst.Name.Text() != "local" {
 		t.Fatalf("expected local const stmt, got %#v", fn.Body.Stmts[2])
+	}
+}
+
+func TestParseRejectsLegacyComptimeParamSyntax(t *testing.T) {
+	src := `
+fn add(comptime x: i32, y: i32) -> i32 {
+    return x + y
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if len(diag.Diagnostics()) == 0 {
+		t.Fatal("expected diagnostics for legacy comptime parameter syntax")
 	}
 }
 

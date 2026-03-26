@@ -94,10 +94,9 @@ type Func struct {
 }
 
 type Param struct {
-	Name       string
-	LocalID    int
-	Type       typeinfo.Type
-	IsMutable  bool
-	IsComptime bool
-	Location   source.Location
+	Name      string
+	LocalID   int
+	Type      typeinfo.Type
+	IsMutable bool
+	Location  source.Location
 }

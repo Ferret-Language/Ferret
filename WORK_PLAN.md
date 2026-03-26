@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 1 verified with real Ferret repro files and waiting for review.
+Status: Step 2 implemented and verified; waiting for review.
 
 ## Steps
 
@@ -21,15 +21,20 @@ Status: Step 1 verified with real Ferret repro files and waiting for review.
 - [done] Implement step 1: route `const` through CTFE and remove the syntax-only const gate.
 - [done] Add repo workflow files (`AGENTS.md`, `WORK_PLAN.md`) for pause/resume and approval-first work.
 - [done] Add `test_comptime/` repro files and verify them with a built compiler.
-- [in_review] Review step 1 diff and repro results.
-- [pending] Commit step 1 only after approval.
-- [pending] Repeat for later approved steps.
+- [done] Review step 1 diff and repro results.
+- [done] Commit step 1 only after approval.
+- [done] Implement step 2: remove legacy `comptime` parameter syntax and plumbing.
+- [done] Verify step 2 with focused tests and real Ferret repro files.
+- [in_review] Wait for review before committing step 2.
 
 ## Active Task List
 
 - [done] Verify that `const` initializers use CTFE on real Ferret source files.
 - [done] Keep `WORK_PLAN.md` updated with concrete implementation tasks, not only workflow states.
-- [pending] After approval, commit only step 1 and its verification artifacts.
+- [done] After approval, commit only step 1 and its verification artifacts.
+- [done] Remove `comptime` parameter support from parser, AST, semantic flags, HIR, MIR, and LSP.
+- [done] Update tests and Ferret sample files to use plain parameters plus explicit `comptime` calls/blocks.
+- [done] Rebuild compiler and run `test_comptime/` repros after the syntax removal.
 
 ## Verification
 

@@ -256,7 +256,6 @@ type ReceiverKey = semmeta.ReceiverKey
 
 const (
 	FlagMutable  = semmeta.FlagMutable
-	FlagComptime = semmeta.FlagComptime
 	FlagVariadic = semmeta.FlagVariadic
 
 	ReceiverValue  = semmeta.ReceiverValue

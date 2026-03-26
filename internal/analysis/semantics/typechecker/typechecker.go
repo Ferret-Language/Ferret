@@ -345,9 +345,6 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 			if param.IsMut {
 				sym.Flags |= semmeta.FlagMutable
 			}
-			if param.IsComptime {
-				sym.Flags |= semmeta.FlagComptime
-			}
 			funcScope.Set(sym, paramType)
 		}
 		// No base-type environment: locals/params are typed via Bindings+Types.
@@ -1409,9 +1406,6 @@ func paramFlags(param ast.Param) typeinfo.ValueFlags {
 	flags := typeinfo.ValueFlags(0)
 	if param.IsMut {
 		flags |= typeinfo.FlagMutable
-	}
-	if param.IsComptime {
-		flags |= typeinfo.FlagComptime
 	}
 	if param.IsVariadic {
 		flags |= typeinfo.FlagVariadic

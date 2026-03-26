@@ -262,11 +262,10 @@ func generateInterfaceTypeDecl(types *typeinfo.ModuleInfo, t *ast.InterfaceType)
 		}
 		for _, param := range method.Params {
 			entry.Params = append(entry.Params, &Param{
-				Name:       param.Name.Text(),
-				Type:       syntaxType(types, param.Type),
-				IsMutable:  param.IsMut,
-				IsComptime: param.IsComptime,
-				Location:   param.Location,
+				Name:      param.Name.Text(),
+				Type:      syntaxType(types, param.Type),
+				IsMutable: param.IsMut,
+				Location:  param.Location,
 			})
 		}
 		out.Methods = append(out.Methods, entry)
@@ -385,12 +384,11 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	fn.Params = make([]*Param, 0, len(d.Params))
 	for _, param := range d.Params {
 		fn.Params = append(fn.Params, &Param{
-			Name:       g.maybeMangledLocalName(param.Name),
-			LocalID:    g.maybeLocalID(param.Name),
-			Type:       hirInstantiateSelfType(effectiveType(g.types, param.Type, param.Default), selfType),
-			IsMutable:  param.IsMut,
-			IsComptime: param.IsComptime,
-			Location:   param.Location,
+			Name:      g.maybeMangledLocalName(param.Name),
+			LocalID:   g.maybeLocalID(param.Name),
+			Type:      hirInstantiateSelfType(effectiveType(g.types, param.Type, param.Default), selfType),
+			IsMutable: param.IsMut,
+			Location:  param.Location,
 		})
 	}
 	return fn

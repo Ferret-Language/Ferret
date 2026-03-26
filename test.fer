@@ -14,7 +14,7 @@ fn Point::New() -> Self {
     return .{}
 }
 
-fn sayhi(comptime msg: str) {
+fn sayhi(msg: str) {
     if msg != "Fuad" {
         panic "You are not fuad. Blocked to compile"
     }
@@ -31,7 +31,7 @@ fn add<T: U>(a: T, b: T) -> T {
 
 
 fn sum(values: ...i32) {
-    
+
 }
 
 test "smoke" {
@@ -46,7 +46,7 @@ fn main() {
     print(add(1, 2))
     print(add(1.2, 4.2))
 
-    // 
+    //
 
     for [_]i32{1,2,3} | v | {
         print(v)
@@ -62,6 +62,6 @@ fn main() {
     for start..end:step | v | {
         print(v)
     }
-    
+
     sum(arr...)
 }

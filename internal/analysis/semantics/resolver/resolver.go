@@ -215,9 +215,6 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 			if param.IsMut {
 				sym.Flags |= semmeta.FlagMutable
 			}
-			if param.IsComptime {
-				sym.Flags |= semmeta.FlagComptime
-			}
 			declared := r.declareLocal(funcScope, sym)
 			r.info.AddFunctionLocal(d, declared)
 			r.bindDeclIdent(param.Name, declared)

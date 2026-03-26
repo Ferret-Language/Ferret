@@ -2357,37 +2357,6 @@ fn main() -> i32 {
 	}
 }
 
-func TestTypecheckerRejectsNonConstComptimeArgument(t *testing.T) {
-	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.fer"), `
-#[extern("clock")]
-fn clock() -> i32;
-
-fn id(comptime T: i32, x: i32) -> i32 {
-    return x
-}
-
-fn main() -> i32 {
-    return id(clock(), 2)
-}
-`)
-
-	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected comptime argument diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "argument to comptime parameter must be compile-time evaluable") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected comptime-argument diagnostic, got %#v", result.Diagnostics.Diagnostics())
-	}
-}
-
 func TestTypecheckerComptimePrefixExpressionFoldsInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
@@ -2529,7 +2498,7 @@ fn main() -> i32 {
 func TestTypecheckerComptimeAssertPatternWorks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn assert(comptime cond: bool, comptime msg: str) -> void {
+fn assert(cond: bool, msg: str) -> void {
     if !cond {
         panic msg
     }
@@ -2557,13 +2526,13 @@ fn main() -> void {
 func TestTypecheckerComptimeAssertWrapperWorks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn assert(comptime cond: bool, comptime msg: str) -> void {
+fn assert(cond: bool, msg: str) -> void {
     if !cond {
         panic msg
     }
 }
 
-fn static_assert(comptime cond: bool, comptime msg: str) -> void {
+fn static_assert(cond: bool, msg: str) -> void {
     comptime assert(cond, msg)
 }
 
@@ -2587,13 +2556,13 @@ fn main() -> void {
 func TestTypecheckerComptimePanicKeepsOriginalCallSiteWithFollowingComptimeExpr(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn assert(comptime cond: bool, comptime msg: str) -> void {
+fn assert(cond: bool, msg: str) -> void {
     if !cond {
         panic msg
     }
 }
 
-fn static_assert(comptime cond: bool, comptime msg: str) -> void {
+fn static_assert(cond: bool, msg: str) -> void {
     comptime assert(cond, msg)
 }
 
@@ -2682,7 +2651,7 @@ fn main() -> void {
 func TestTypecheckerComptimeCompileErrorReportsMessage(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn assert(comptime cond: bool, comptime msg: str) -> void {
+fn assert(cond: bool, msg: str) -> void {
     if !cond {
         comptime {
             compile_error(msg)

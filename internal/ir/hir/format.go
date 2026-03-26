@@ -100,7 +100,7 @@ func formatParam(param *Param) string {
 	if param == nil {
 		return ""
 	}
-	return typeinfo.DefaultPrinter.NamedParamText(param.Name, param.Type, param.IsMutable, param.IsComptime)
+	return typeinfo.DefaultPrinter.NamedParamText(param.Name, param.Type, param.IsMutable)
 }
 
 func formatParams(params []*Param) []string {

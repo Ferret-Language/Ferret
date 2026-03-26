@@ -59,7 +59,6 @@ func (r *Receiver) Loc() source.Location { return r.Location }
 type Param struct {
 	Name       *Ident
 	IsMut      bool
-	IsComptime bool
 	IsVariadic bool
 	Type       TypeExpr
 	Default    Expr
