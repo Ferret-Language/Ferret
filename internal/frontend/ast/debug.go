@@ -130,7 +130,7 @@ func debugStmt(stmt Stmt) any {
 		for _, child := range s.Stmts {
 			stmts = append(stmts, debugStmt(child))
 		}
-		return map[string]any{"kind": "BlockStmt", "stmts": stmts, "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "BlockStmt", "stmts": stmts, "comptime": s.Comptime, "loc": debugLoc(s.Location)}
 	case *LetStmt:
 		return map[string]any{"kind": "LetStmt", "name": debugExpr(s.Name), "is_mut": s.IsMut, "type": debugType(s.Type), "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
 	case *ConstStmt:

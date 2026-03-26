@@ -1,0 +1,15 @@
+fn assert(cond: bool, msg: str) -> void {
+    if !cond {
+        panic msg
+    }
+}
+
+fn static_assert(cond: bool, msg: str) -> void {
+    comptime {
+        assert(cond, msg)
+    }
+}
+
+fn main() -> void {
+    comptime static_assert(1 + 1 == 2, "math broke")
+}

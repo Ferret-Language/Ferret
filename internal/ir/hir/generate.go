@@ -414,6 +414,14 @@ func (g *generator) generateBlock(block *ast.BlockStmt) *BlockStmt {
 	out.Location = block.Location
 	for _, stmt := range block.Stmts {
 		if lowered := g.generateStmt(stmt); lowered != nil {
+			if block.Comptime {
+				if exprStmt, ok := lowered.(*ExprStmt); ok && exprStmt.Value != nil {
+					expr := exprStmt.Value
+					wrapped := &PrefixExpr{Op: "comptime", Right: expr}
+					wrapped.ExprType, wrapped.Location, wrapped.Source = expr.Type(), expr.Loc(), expr.SourceExpr()
+					exprStmt.Value = wrapped
+				}
+			}
 			out.Stmts = append(out.Stmts, lowered)
 		}
 	}

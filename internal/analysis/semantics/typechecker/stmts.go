@@ -15,8 +15,14 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 	case nil:
 		return
 	case *ast.BlockStmt:
+		if s.Comptime {
+			c.comptimeDepth++
+		}
 		for _, child := range s.Stmts {
 			c.checkStmt(scope, child)
+		}
+		if s.Comptime {
+			c.comptimeDepth--
 		}
 	case *ast.LetStmt:
 		var declared typeinfo.Type

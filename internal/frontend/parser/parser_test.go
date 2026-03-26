@@ -505,7 +505,7 @@ fn add(comptime x: i32, y: i32) -> i32 {
 	}
 }
 
-func TestParseComptimeBlockRewritesExpressionStatements(t *testing.T) {
+func TestParseComptimeBlockPreservesBlockContext(t *testing.T) {
 	src := `
 fn main() -> void {
     comptime {
@@ -530,7 +530,10 @@ fn main() -> void {
 	}
 	block, ok := fn.Body.Stmts[0].(*ast.BlockStmt)
 	if !ok {
-		t.Fatalf("expected comptime block to lower into block stmt, got %T", fn.Body.Stmts[0])
+		t.Fatalf("expected comptime block stmt, got %T", fn.Body.Stmts[0])
+	}
+	if !block.Comptime {
+		t.Fatal("expected comptime block marker")
 	}
 	if len(block.Stmts) != 1 {
 		t.Fatalf("expected one stmt in comptime block, got %d", len(block.Stmts))
@@ -539,12 +542,8 @@ fn main() -> void {
 	if !ok {
 		t.Fatalf("expected expr stmt in comptime block, got %T", block.Stmts[0])
 	}
-	prefix, ok := exprStmt.Value.(*ast.PrefixExpr)
-	if !ok || prefix.Op != "comptime" {
-		t.Fatalf("expected comptime prefix expr, got %#v", exprStmt.Value)
-	}
-	if _, ok := prefix.Right.(*ast.CallExpr); !ok {
-		t.Fatalf("expected wrapped call expression, got %T", prefix.Right)
+	if _, ok := exprStmt.Value.(*ast.CallExpr); !ok {
+		t.Fatalf("expected plain call expression in comptime block, got %T", exprStmt.Value)
 	}
 }
 
