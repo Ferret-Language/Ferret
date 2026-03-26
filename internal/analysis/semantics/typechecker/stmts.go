@@ -55,7 +55,6 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		}
 		if declared != nil && s.Value != nil && !c.checkExprAssignable(scope, s.Value, declared, value) {
 		}
-		c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
 		c.bindDeclSymbol(s.Name, finalType)
 		// No base-type environment: locals/params are typed via Bindings+Types.
 	case *ast.ReturnStmt:

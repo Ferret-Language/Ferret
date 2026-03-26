@@ -63,7 +63,6 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if declared != nil && d.Value != nil {
 			c.checkExprAssignable(nil, d.Value, declared, value)
 		}
-		c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
 		c.checkModuleBindingType(d.Name.Loc(), finalType)
 		c.bindDeclSymbol(d.Name, finalType)
 		if sym, ok := c.mod.ModuleScope.LookupLocal(d.Name.Text()); ok {

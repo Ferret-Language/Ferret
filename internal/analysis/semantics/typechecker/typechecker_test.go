@@ -2313,7 +2313,7 @@ fn bad(p: ^i32) -> void {
 	}
 }
 
-func TestTypecheckerRejectsNonConstConstInitializer(t *testing.T) {
+func TestTypecheckerAllowsCTFEConstInitializerFromLocalValue(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
@@ -2324,12 +2324,30 @@ fn main() -> i32 {
 `)
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected CTFE-able const initializer to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNonCTFEConstInitializer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+#[extern("clock")]
+fn clock() -> i32;
+
+fn main() -> i32 {
+    const y = clock()
+    return y
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected const initializer diagnostic")
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && diag.Message == "constant initializer must be compile-time evaluable" {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "compile-time evaluable") {
 			found = true
 			break
 		}

@@ -335,7 +335,7 @@ func (g *generator) generateConstDecl(d *ast.ConstDecl) *Global {
 		Mutable:  false,
 		Constant: true,
 		Type:     effectiveType(g.types, d.Type, d.Value),
-		Value:    g.generateExpr(d.Value),
+		Value:    g.generateConstValue(d.Value),
 		Location: d.Location,
 		Source:   d,
 	}
@@ -453,7 +453,7 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.ConstStmt:
-		out := &ConstStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
+		out := &ConstStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateConstValue(s.Value)}
 		out.Location = s.Location
 		return out
 	case *ast.ReturnStmt:
@@ -554,6 +554,16 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 	default:
 		return nil
 	}
+}
+
+func (g *generator) generateConstValue(expr ast.Expr) Expr {
+	value := g.generateExpr(expr)
+	if expr == nil || value == nil {
+		return value
+	}
+	out := &PrefixExpr{Op: "comptime", Right: value}
+	out.ExprType, out.Location, out.Source = exprType(g.types, expr), expr.Loc(), expr
+	return out
 }
 
 func (g *generator) generateExpr(expr ast.Expr) Expr {

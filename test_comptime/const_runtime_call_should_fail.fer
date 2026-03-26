@@ -1,0 +1,7 @@
+#[extern("clock")]
+fn clock() -> i32;
+
+fn main() -> i32 {
+    const y = clock()
+    return y
+}

@@ -1,0 +1,12 @@
+fn pairSum(pair: (i32, i32)) -> i32 {
+    return pair[0] + pair[1]
+}
+
+const RESULT = pairSum((3, 4))
+
+fn main() {
+    if RESULT != 7 {
+        panic "const call CTFE failed"
+    }
+    print("const call CTFE: PASS")
+}
