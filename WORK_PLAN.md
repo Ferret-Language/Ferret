@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 4 refactored for strict compile-time array lengths and verified; waiting for review.
+Status: Step 5 implemented for early-folded `const` initializers where possible; waiting for review.
 
 ## Steps
 
@@ -33,7 +33,9 @@ Status: Step 4 refactored for strict compile-time array lengths and verified; wa
 - [done] Rework step 4 to use a shared type rewrite utility instead of another local recursive type switch.
 - [done] Refactor step 4 to use one strict compile-time integer check for array lengths instead of a pipeline-side deferred evaluator.
 - [done] Verify step 4 with focused tests and real Ferret repro files.
-- [in_review] Wait for review before committing step 4.
+- [done] Wait for review before committing step 4.
+- [done] Implement step 5: reuse early const-eval results for `const` initializers where possible.
+- [in_review] Wait for review before committing step 5.
 
 ## Active Task List
 
@@ -49,6 +51,8 @@ Status: Step 4 refactored for strict compile-time array lengths and verified; wa
 - [done] Centralize recursive type rewriting in `typeinfo` and reuse it in existing transforms.
 - [done] Reuse one early const-eval service for array lengths and compile-time index bounds.
 - [done] Cover local and imported const array lengths with focused tests and a real repro.
+- [done] Cache early const-eval results for `const` declarations and statements.
+- [done] Reuse cached early const values in HIR instead of wrapping obvious literals in `comptime`.
 
 ## Verification
 

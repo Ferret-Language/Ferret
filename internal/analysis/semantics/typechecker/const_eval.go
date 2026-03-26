@@ -5,63 +5,40 @@ import (
 
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/utils/numeric"
 )
 
-type constValueKind uint8
-
-const (
-	constInvalid constValueKind = iota
-	constInt
-	constBool
-	constString
-	constNone
-)
-
-type constValue struct {
-	kind   constValueKind
-	intVal *big.Int
-	boolV  bool
-	strVal string
-}
-
-func (v constValue) nonNegativeInt64() (int64, bool) {
-	if v.kind != constInt || v.intVal == nil || v.intVal.Sign() < 0 || !v.intVal.IsInt64() {
-		return 0, false
-	}
-	return v.intVal.Int64(), true
-}
-
-func (c *checker) constExpr(mod *context.Module, expr ast.Expr, seen map[ast.Node]bool) (constValue, bool) {
+func (c *checker) constExpr(mod *context.Module, expr ast.Expr, seen map[ast.Node]bool) (typeinfo.ConstValue, bool) {
 	switch e := expr.(type) {
 	case nil:
-		return constValue{}, false
+		return typeinfo.ConstValue{}, false
 	case *ast.NumberLit:
 		value, err := numeric.StringToBigInt(e.Value)
 		if err != nil {
-			return constValue{}, false
+			return typeinfo.ConstValue{}, false
 		}
-		return constValue{kind: constInt, intVal: value}, true
+		return typeinfo.ConstValue{Kind: typeinfo.ConstInt, Int: value}, true
 	case *ast.StringLit:
-		return constValue{kind: constString, strVal: e.Value}, true
+		return typeinfo.ConstValue{Kind: typeinfo.ConstString, String: e.Value}, true
 	case *ast.NoneLit:
-		return constValue{kind: constNone}, true
+		return typeinfo.ConstValue{Kind: typeinfo.ConstNone}, true
 	case *ast.Ident:
 		switch e.Text() {
 		case "_":
-			return constValue{}, false
+			return typeinfo.ConstValue{}, false
 		case "true":
-			return constValue{kind: constBool, boolV: true}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstBool, Bool: true}, true
 		case "false":
-			return constValue{kind: constBool, boolV: false}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstBool, Bool: false}, true
 		case "none":
-			return constValue{kind: constNone}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstNone}, true
 		}
 		res := c.lookupTypeResolution(mod, e)
 		if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Kind != symbols.SymbolConst || res.Symbol.Node == nil {
-			return constValue{}, false
+			return typeinfo.ConstValue{}, false
 		}
 		owner := c.findModuleForSymbol(res.Symbol)
 		if owner == nil {
@@ -71,7 +48,7 @@ func (c *checker) constExpr(mod *context.Module, expr ast.Expr, seen map[ast.Nod
 			seen = make(map[ast.Node]bool)
 		}
 		if seen[res.Symbol.Node] {
-			return constValue{}, false
+			return typeinfo.ConstValue{}, false
 		}
 		seen[res.Symbol.Node] = true
 		defer delete(seen, res.Symbol.Node)
@@ -81,69 +58,69 @@ func (c *checker) constExpr(mod *context.Module, expr ast.Expr, seen map[ast.Nod
 		case *ast.ConstStmt:
 			return c.constExpr(owner, n.Value, seen)
 		default:
-			return constValue{}, false
+			return typeinfo.ConstValue{}, false
 		}
 	case *ast.PrefixExpr:
 		right, ok := c.constExpr(mod, e.Right, seen)
 		if !ok {
-			return constValue{}, false
+			return typeinfo.ConstValue{}, false
 		}
 		switch e.Op {
 		case "comptime", "copy", "take", "unsafe", "?":
 			return right, true
 		case "!":
-			if right.kind != constBool {
-				return constValue{}, false
+			if right.Kind != typeinfo.ConstBool {
+				return typeinfo.ConstValue{}, false
 			}
-			return constValue{kind: constBool, boolV: !right.boolV}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstBool, Bool: !right.Bool}, true
 		case "-":
-			if right.kind != constInt || right.intVal == nil {
-				return constValue{}, false
+			if right.Kind != typeinfo.ConstInt || right.Int == nil {
+				return typeinfo.ConstValue{}, false
 			}
-			return constValue{kind: constInt, intVal: new(big.Int).Neg(new(big.Int).Set(right.intVal))}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstInt, Int: new(big.Int).Neg(new(big.Int).Set(right.Int))}, true
 		case "+":
-			if right.kind != constInt || right.intVal == nil {
-				return constValue{}, false
+			if right.Kind != typeinfo.ConstInt || right.Int == nil {
+				return typeinfo.ConstValue{}, false
 			}
-			return constValue{kind: constInt, intVal: new(big.Int).Set(right.intVal)}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstInt, Int: new(big.Int).Set(right.Int)}, true
 		default:
-			return constValue{}, false
+			return typeinfo.ConstValue{}, false
 		}
 	case *ast.BinaryExpr:
 		left, ok := c.constExpr(mod, e.Left, seen)
 		if !ok {
-			return constValue{}, false
+			return typeinfo.ConstValue{}, false
 		}
 		right, ok := c.constExpr(mod, e.Right, seen)
 		if !ok {
-			return constValue{}, false
+			return typeinfo.ConstValue{}, false
 		}
-		if left.kind != constInt || left.intVal == nil || right.kind != constInt || right.intVal == nil {
-			return constValue{}, false
+		if left.Kind != typeinfo.ConstInt || left.Int == nil || right.Kind != typeinfo.ConstInt || right.Int == nil {
+			return typeinfo.ConstValue{}, false
 		}
 		switch e.Op {
 		case "+":
-			return constValue{kind: constInt, intVal: new(big.Int).Add(left.intVal, right.intVal)}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstInt, Int: new(big.Int).Add(left.Int, right.Int)}, true
 		case "-":
-			return constValue{kind: constInt, intVal: new(big.Int).Sub(left.intVal, right.intVal)}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstInt, Int: new(big.Int).Sub(left.Int, right.Int)}, true
 		case "*":
-			return constValue{kind: constInt, intVal: new(big.Int).Mul(left.intVal, right.intVal)}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstInt, Int: new(big.Int).Mul(left.Int, right.Int)}, true
 		case "/":
-			if right.intVal.Sign() == 0 {
-				return constValue{}, false
+			if right.Int.Sign() == 0 {
+				return typeinfo.ConstValue{}, false
 			}
-			return constValue{kind: constInt, intVal: new(big.Int).Quo(left.intVal, right.intVal)}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstInt, Int: new(big.Int).Quo(left.Int, right.Int)}, true
 		case "%":
-			if right.intVal.Sign() == 0 {
-				return constValue{}, false
+			if right.Int.Sign() == 0 {
+				return typeinfo.ConstValue{}, false
 			}
-			return constValue{kind: constInt, intVal: new(big.Int).Rem(left.intVal, right.intVal)}, true
+			return typeinfo.ConstValue{Kind: typeinfo.ConstInt, Int: new(big.Int).Rem(left.Int, right.Int)}, true
 		default:
-			return constValue{}, false
+			return typeinfo.ConstValue{}, false
 		}
 	case *ast.CastExpr:
 		return c.constExpr(mod, e.Left, seen)
 	default:
-		return constValue{}, false
+		return typeinfo.ConstValue{}, false
 	}
 }

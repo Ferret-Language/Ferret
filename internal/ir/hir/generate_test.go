@@ -123,6 +123,54 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineFoldsEarlyConstInitializersInHIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
+const FLAG = true
+
+fn main() -> i32 {
+    const x = 1 + 2
+    if FLAG {
+        return x
+    }
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.HIR == nil {
+		t.Fatal("expected HIR module")
+	}
+	if len(result.Entry.HIR.Globals) != 1 {
+		t.Fatalf("expected one global const, got %#v", result.Entry.HIR.Globals)
+	}
+	if _, ok := result.Entry.HIR.Globals[0].Value.(*hir.Ident); !ok {
+		t.Fatalf("expected folded bool const global, got %T", result.Entry.HIR.Globals[0].Value)
+	}
+	mainFn := result.Entry.HIR.Functions[0]
+	stmt, ok := mainFn.Body.Stmts[0].(*hir.ConstStmt)
+	if !ok {
+		t.Fatalf("expected local const stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	if lit, ok := stmt.Value.(*hir.NumberLit); !ok || lit.Value != "3" {
+		t.Fatalf("expected folded local const number literal 3, got %#v", stmt.Value)
+	}
+	text := hir.FormatModule(result.Entry.HIR)
+	if strings.Contains(text, "comptime 1 + 2") || strings.Contains(text, "comptime true") {
+		t.Fatalf("expected early-folded consts to avoid comptime wrapper in HIR, got %q", text)
+	}
+}
+
 func TestPipelineLowersInferredDefaultParamTypesInHIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "main.fer"), `

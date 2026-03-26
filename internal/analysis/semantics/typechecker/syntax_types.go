@@ -266,7 +266,7 @@ func (c *checker) arrayLength(mod *context.Module, expr ast.Expr) int64 {
 		)
 		return typeinfo.ArrayLenUnknown
 	}
-	length, ok := value.nonNegativeInt64()
+	length, ok := value.NonNegativeInt64()
 	if !ok {
 		loc := expr.Loc()
 		c.ctx.Diagnostics.Add(

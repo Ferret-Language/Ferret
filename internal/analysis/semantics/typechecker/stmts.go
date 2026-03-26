@@ -46,6 +46,9 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 			c.info.BindNode(s.Type, declared)
 		}
 		value := c.typeOfExpr(scope, s.Value, declared)
+		if constValue, ok := c.constExpr(c.mod, s.Value, nil); ok {
+			c.info.BindConstValue(s.Value, constValue)
+		}
 		finalType := c.resolveDeclaredValueType(declared, value)
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}

@@ -52,6 +52,9 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		var value typeinfo.Type
 		if d.Value != nil {
 			value = c.typeOfExpr(nil, d.Value, declared)
+			if constValue, ok := c.constExpr(c.mod, d.Value, nil); ok {
+				c.info.BindConstValue(d.Value, constValue)
+			}
 		}
 		finalType := c.resolveDeclaredValueType(declared, value)
 		if finalType == nil {
@@ -2188,7 +2191,7 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 	base := c.underlying(baseTyp)
 	if arr, ok := base.(*typeinfo.ArrayType); ok {
 		if idx, ok := c.constExpr(c.mod, expr.Index, nil); ok {
-			if index, ok := idx.nonNegativeInt64(); ok && arr.Len >= 0 && index >= arr.Len {
+			if index, ok := idx.NonNegativeInt64(); ok && arr.Len >= 0 && index >= arr.Len {
 				loc := expr.Index.Loc()
 				c.ctx.Diagnostics.Add(
 					diagnostics.NewError("array index out of bounds").
@@ -2216,7 +2219,7 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 			)
 			return typeinfo.InvalidType{}
 		}
-		index, ok := idx.nonNegativeInt64()
+		index, ok := idx.NonNegativeInt64()
 		if !ok {
 			loc := expr.Index.Loc()
 			c.ctx.Diagnostics.Add(

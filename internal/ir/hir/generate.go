@@ -535,6 +535,34 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 }
 
 func (g *generator) generateConstValue(expr ast.Expr) Expr {
+	if value, ok := g.types.LookupConstValue(expr); ok {
+		typ := exprType(g.types, expr)
+		loc := expr.Loc()
+		switch value.Kind {
+		case typeinfo.ConstInt:
+			if value.Int != nil {
+				out := &NumberLit{Value: value.Int.String()}
+				out.ExprType, out.Location, out.Source = typ, loc, expr
+				return out
+			}
+		case typeinfo.ConstBool:
+			name := "false"
+			if value.Bool {
+				name = "true"
+			}
+			out := &Ident{Path: []string{name}, LocalID: -1}
+			out.ExprType, out.Location, out.Source = typ, loc, expr
+			return out
+		case typeinfo.ConstString:
+			out := &StringLit{Value: value.String}
+			out.ExprType, out.Location, out.Source = typ, loc, expr
+			return out
+		case typeinfo.ConstNone:
+			out := &NoneLit{}
+			out.ExprType, out.Location, out.Source = typ, loc, expr
+			return out
+		}
+	}
 	value := g.generateExpr(expr)
 	if expr == nil || value == nil {
 		return value
