@@ -3,6 +3,7 @@ package qbe_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -703,13 +704,14 @@ fn main(flag: bool) -> i32 {
 		"%_unioncast",
 		"%_unionpayload2 =l add %value, 8",
 		"storew 1, %value",
-		"%_store",
-		"storel %_store",
 		"loadw %_unionpayload",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)
 		}
+	}
+	if !regexp.MustCompile(`storel %[A-Za-z0-9_]+, %_unionpayload[0-9]+`).MatchString(text) {
+		t.Fatalf("expected normalized payload store in qbe output:\n%s", text)
 	}
 }
 

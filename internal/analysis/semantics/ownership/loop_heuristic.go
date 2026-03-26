@@ -3,7 +3,7 @@ package ownership
 import (
 	"strconv"
 
-	"compiler/internal/analysis/cfg/model"
+	cfg "compiler/internal/analysis/cfg/model"
 	"compiler/internal/ir/mir"
 )
 
@@ -84,14 +84,14 @@ func loopConditionInfo(head *mir.Block) (localID int, op string, limit int64, ok
 			if inst.TargetID != condLocal.LocalID {
 				continue
 			}
-			if localID, op, limit, ok = compareLocalAgainstConst(inst.Value); ok {
+			if localID, op, limit, ok = compareLocalAgainstConst(resolveComputedValueBefore(head, i, inst.Value)); ok {
 				return localID, op, limit, true
 			}
 		case *mir.AssignInstr:
 			if inst.TargetID != condLocal.LocalID {
 				continue
 			}
-			if localID, op, limit, ok = compareLocalAgainstConst(inst.Value); ok {
+			if localID, op, limit, ok = compareLocalAgainstConst(resolveComputedValueBefore(head, i, inst.Value)); ok {
 				return localID, op, limit, true
 			}
 		}
@@ -147,19 +147,20 @@ func loopStepInfo(body *mir.Block, a *analyzer, localID int) (int64, bool) {
 			if inst.TargetID != localID {
 				continue
 			}
-			return inductionStep(inst.Value, localID)
+			return inductionStep(body, i, inst.Value, localID)
 		case *mir.StoreInstr:
 			root, path, ok := a.localPlacePath(inst.Target)
 			if !ok || path != "" || root != localID {
 				continue
 			}
-			return inductionStep(inst.Value, localID)
+			return inductionStep(body, i, inst.Value, localID)
 		}
 	}
 	return 0, false
 }
 
-func inductionStep(value mir.Value, localID int) (int64, bool) {
+func inductionStep(block *mir.Block, before int, value mir.Value, localID int) (int64, bool) {
+	value = resolveComputedValueBefore(block, before, value)
 	bin, ok := value.(*mir.BinaryValue)
 	if !ok || bin == nil {
 		return 0, false
@@ -223,16 +224,47 @@ func lastAssignedLocalConst(block *mir.Block, a *analyzer, localID int) (int64, 
 			if inst.TargetID != localID {
 				continue
 			}
-			return literalInt64(inst.Value)
+			return literalInt64(resolveComputedValueBefore(block, i, inst.Value))
 		case *mir.StoreInstr:
 			root, path, ok := a.localPlacePath(inst.Target)
 			if !ok || path != "" || root != localID {
 				continue
 			}
-			return literalInt64(inst.Value)
+			return literalInt64(resolveComputedValueBefore(block, i, inst.Value))
 		}
 	}
 	return 0, false
+}
+
+func resolveComputedValueBefore(block *mir.Block, before int, value mir.Value) mir.Value {
+	if block == nil || before <= 0 {
+		return value
+	}
+	seen := map[int]struct{}{}
+	for {
+		local, ok := value.(*mir.LocalValue)
+		if !ok || local == nil {
+			return value
+		}
+		if _, dup := seen[local.LocalID]; dup {
+			return value
+		}
+		seen[local.LocalID] = struct{}{}
+		resolved := false
+		for i := before - 1; i >= 0; i-- {
+			inst, ok := block.Instructions[i].(*mir.ComputeInstr)
+			if !ok || inst.TargetID != local.LocalID {
+				continue
+			}
+			value = inst.Value
+			before = i
+			resolved = true
+			break
+		}
+		if !resolved {
+			return value
+		}
+	}
 }
 
 func literalInt64(value mir.Value) (int64, bool) {

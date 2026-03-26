@@ -367,6 +367,37 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerInfersParamTypeFromDefaultValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn add(base = 2, extra = base + 1) -> i32 {
+    return base + extra
+}
+
+fn main() -> i32 {
+    return add()
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	addFn := findTypeFunc(t, result.Entry.AST, "add")
+	addSym := result.Entry.Bindings.FunctionSymbols[addFn]
+	fnType, ok := result.Entry.Types.Symbols[addSym.ID].(*typeinfo.FuncType)
+	if !ok {
+		t.Fatalf("expected function type, got %T", result.Entry.Types.Symbols[addSym.ID])
+	}
+	if len(fnType.Params) != 2 {
+		t.Fatalf("expected 2 params, got %#v", fnType.Params)
+	}
+	if !typeinfo.IsBuiltinNamed(fnType.Params[0].Type, "i32") || !typeinfo.IsBuiltinNamed(fnType.Params[1].Type, "i32") {
+		t.Fatalf("expected inferred i32 params, got %#v", fnType.Params)
+	}
+}
+
 func TestTypecheckerRejectsGenericConstraintMismatch(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

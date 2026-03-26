@@ -387,7 +387,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 		fn.Params = append(fn.Params, &Param{
 			Name:       g.maybeMangledLocalName(param.Name),
 			LocalID:    g.maybeLocalID(param.Name),
-			Type:       hirInstantiateSelfType(syntaxType(g.types, param.Type), selfType),
+			Type:       hirInstantiateSelfType(effectiveType(g.types, param.Type, param.Default), selfType),
 			IsMutable:  param.IsMut,
 			IsComptime: param.IsComptime,
 			Location:   param.Location,

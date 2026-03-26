@@ -118,8 +118,13 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 		selfType = c.syntaxType(mod, fn.OwnerType)
 	}
 	params := make([]typeinfo.ParamSpec, 0, len(fn.Params))
+	funcScope := newRefineScope(nil)
 	for _, param := range fn.Params {
-		params = append(params, c.paramSpecFromSyntax(mod, param, selfType))
+		paramType := c.paramTypeForSyntax(funcScope, mod, param, selfType)
+		params = append(params, typeinfo.WithParamType(c.paramSpecFromSyntax(mod, param, selfType), paramType))
+		if sym := c.declSymbol(param.Name); sym != nil {
+			funcScope.Set(sym, paramType)
+		}
 	}
 	return &typeinfo.FuncType{
 		IsUnsafe:   fn.IsUnsafe,

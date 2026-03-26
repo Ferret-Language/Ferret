@@ -779,6 +779,46 @@ func TestHoverMethodDeclarationShowsFullSignature(t *testing.T) {
 	}
 }
 
+func TestHoverFunctionDeclarationWithInferredDefaultParamDoesNotShowVoid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "fn something(v: i32, i = v) -> i32 {\n    return v + i\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "something")
+	if !ok {
+		t.Fatal("failed to find function position")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatalf("expected hover result, got nil response payload: %q", out.String())
+	}
+	if strings.Contains(hover.Contents.Value, "i: void") {
+		t.Fatalf("did not expect fallback hover signature to show void, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "fn something(v: i32, i: i32 = v) -> i32") {
+		t.Fatalf("expected inferred hover signature, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverNamedTypeShowsFieldsAndMethods(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")

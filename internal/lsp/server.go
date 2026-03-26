@@ -2415,11 +2415,9 @@ func renderSymbolHoverMarkdown(sym *symbols.Symbol, typ typeinfo.Type, mod *cont
 	}
 	switch sym.Kind {
 	case symbols.SymbolFunc, symbols.SymbolMethod:
-		if sig := symbolFunctionSignature(sym, nil); sig != "" {
+		fnType, _ := typ.(*typeinfo.FuncType)
+		if sig := symbolFunctionSignature(sym, fnType); sig != "" {
 			return appendHoverDoc(asFerretCodeBlock(sig), doc)
-		}
-		if fnType, ok := typ.(*typeinfo.FuncType); ok {
-			return appendHoverDoc(asFerretCodeBlock(typeinfo.DefaultPrinter.FuncSignature(sym.Name, fnType)), doc)
 		}
 	case symbols.SymbolType:
 		if named, ok := typ.(*typeinfo.NamedType); ok {

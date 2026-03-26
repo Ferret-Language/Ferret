@@ -123,6 +123,44 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineLowersInferredDefaultParamTypesInHIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
+fn add(base = 2, extra = base + 1) -> i32 {
+    return base + extra
+}
+
+fn main() -> i32 {
+    return add()
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.HIR == nil {
+		t.Fatal("expected HIR module")
+	}
+	addFn := result.Entry.HIR.Functions[0]
+	if len(addFn.Params) != 2 {
+		t.Fatalf("expected 2 lowered params, got %#v", addFn.Params)
+	}
+	if addFn.Params[0].Type == nil || addFn.Params[0].Type.String() != "i32" {
+		t.Fatalf("expected inferred first param type i32, got %#v", addFn.Params[0].Type)
+	}
+	if addFn.Params[1].Type == nil || addFn.Params[1].Type.String() != "i32" {
+		t.Fatalf("expected inferred second param type i32, got %#v", addFn.Params[1].Type)
+	}
+}
+
 func TestPipelineSpecializesGenericTopLevelFunctions(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "main.fer"), `

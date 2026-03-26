@@ -338,14 +338,19 @@ func (p *Parser) parseNamedParam() ast.Param {
 	isComptime := p.match(tokens.COMPTIME)
 	isMut := p.match(tokens.MUT)
 	nameTok := p.expect(tokens.IDENT, "expected parameter name")
-	p.expect(tokens.COLON, "expected ':' after parameter name")
-	paramType, isVariadic := p.parseParamType()
+	var paramType ast.TypeExpr
+	isVariadic := false
+	if p.match(tokens.COLON) {
+		paramType, isVariadic = p.parseParamType()
+	}
 	var def ast.Expr
 	if p.match(tokens.ASSIGN) {
 		if isVariadic {
 			p.errorAt(p.locOfToken(p.previous()), "variadic parameter cannot have a default value")
 		}
 		def = p.parseExprUntil(precLowest, tokens.COMMA, tokens.RPAREN)
+	} else if paramType == nil {
+		p.errorAt(p.locOfToken(nameTok), "parameter must declare a type or default value")
 	}
 	return ast.Param{
 		Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},

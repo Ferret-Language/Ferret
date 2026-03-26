@@ -37,6 +37,22 @@ func TestFuncDeclSignatureIncludesTypeParams(t *testing.T) {
 	}
 }
 
+func TestFuncDeclSignatureOmitsMissingParamSyntaxType(t *testing.T) {
+	fn := &FuncDecl{
+		Name: &Ident{Path: []string{"Something"}},
+		Params: []Param{
+			{Name: &Ident{Path: []string{"v"}}, Type: &NamedType{Path: []string{"i32"}}},
+			{Name: &Ident{Path: []string{"i"}}, Default: &Ident{Path: []string{"v"}}},
+		},
+		Result: &NamedType{Path: []string{"i32"}},
+	}
+
+	want := "fn Something(v: i32, i = v) -> i32"
+	if got := fn.Signature(); got != want {
+		t.Fatalf("unexpected signature:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
 func TestFuncDeclNameIncludesOwnerType(t *testing.T) {
 	fn := &FuncDecl{
 		OwnerType: &NamedType{Path: []string{"math", "Point"}},

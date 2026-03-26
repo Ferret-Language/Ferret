@@ -333,14 +333,11 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		}
 	}
 	for _, param := range d.Params {
-		paramType := c.instantiateSelfType(c.syntaxType(c.mod, param.Type), selfType)
+		paramType := c.paramTypeForSyntax(funcScope, c.mod, param, selfType)
 		if param.Type != nil {
 			c.info.BindNode(param.Type, paramType)
 		}
-		if paramType == nil {
-			paramType = typeinfo.UnknownType{}
-		}
-		if param.Default != nil {
+		if param.Default != nil && param.Type != nil {
 			valueType := c.typeOfExpr(funcScope, param.Default, paramType)
 			c.checkExprAssignable(funcScope, param.Default, paramType, valueType)
 		}
@@ -352,6 +349,7 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 			if param.IsComptime {
 				sym.Flags |= semmeta.FlagComptime
 			}
+			funcScope.Set(sym, paramType)
 		}
 		// No base-type environment: locals/params are typed via Bindings+Types.
 	}
@@ -1433,6 +1431,17 @@ func (c *checker) paramSpecFromSyntax(mod *context.Module, param ast.Param, self
 		Flags:      paramFlags(param),
 		HasDefault: param.Default != nil,
 	}
+}
+
+func (c *checker) paramTypeForSyntax(scope *refineScope, mod *context.Module, param ast.Param, selfType typeinfo.Type) typeinfo.Type {
+	paramType := c.instantiateSelfType(c.syntaxType(mod, param.Type), selfType)
+	if paramType == nil && param.Default != nil {
+		paramType = c.typeOfExpr(scope, param.Default, nil)
+	}
+	if paramType == nil {
+		paramType = typeinfo.UnknownType{}
+	}
+	return paramType
 }
 
 func (c *checker) callTargetForSymbol(sym *symbols.Symbol) (*context.Module, *ast.FuncDecl) {

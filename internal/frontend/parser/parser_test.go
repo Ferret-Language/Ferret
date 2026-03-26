@@ -312,6 +312,30 @@ fn greet(name: str = "world", repeat: i32 = 1) -> void {}
 	}
 }
 
+func TestParseDefaultParamWithoutExplicitType(t *testing.T) {
+	src := `
+fn greet(name = "world") -> void {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[0])
+	}
+	if len(fn.Params) != 1 {
+		t.Fatalf("expected 1 param, got %d", len(fn.Params))
+	}
+	if fn.Params[0].Type != nil {
+		t.Fatalf("expected omitted param type, got %#v", fn.Params[0].Type)
+	}
+	if fn.Params[0].Default == nil {
+		t.Fatalf("expected parsed default expr, got %#v", fn.Params[0])
+	}
+}
+
 func TestParserRejectsNonTrailingVariadicParam(t *testing.T) {
 	src := `
 fn bad(nums: ...i32, fallback: i32) -> void {}

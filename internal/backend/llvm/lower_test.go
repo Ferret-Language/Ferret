@@ -3,6 +3,7 @@ package llvm_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -671,13 +672,15 @@ fn main(flag: bool) -> i32 {
 		"%value = alloca %local__main__Token",
 		"store i32 1, ptr %value",
 		"getelementptr i8, ptr %value, i64 8",
-		"%_cast",
-		"store i64 %_cast",
+		"%_unioncast",
 		"load i32, ptr",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
 		}
+	}
+	if !regexp.MustCompile(`store i64 %[A-Za-z0-9_]+, ptr %_unionpayload[0-9]+`).MatchString(text) {
+		t.Fatalf("expected normalized payload store in llvm output:\n%s", text)
 	}
 }
 

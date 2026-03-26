@@ -181,8 +181,10 @@ func FormatNamedParamText(name, typeText string, isMut, isComptime bool) string 
 		name = "_"
 	}
 	b.WriteString(name)
-	b.WriteString(": ")
-	b.WriteString(typeText)
+	if typeText != "" {
+		b.WriteString(": ")
+		b.WriteString(typeText)
+	}
 	return b.String()
 }
 
@@ -219,7 +221,10 @@ func ParamString(param Param) string {
 	if param.Name != nil && param.Name.Text() != "" {
 		name = param.Name.Text()
 	}
-	typeText := TypeString(param.Type)
+	typeText := ""
+	if param.Type != nil {
+		typeText = TypeString(param.Type)
+	}
 	if param.IsVariadic {
 		if slice, ok := param.Type.(*SliceType); ok && slice != nil {
 			typeText = "..."
