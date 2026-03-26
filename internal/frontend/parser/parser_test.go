@@ -1805,6 +1805,42 @@ fn build() -> Point {
 	}
 }
 
+func TestParseTupleLiteralUsesParenthesizedSyntax(t *testing.T) {
+	src := `
+fn main() -> void {
+    let tuple: (i32, i32) = (1, 2)
+    let grouped = (1 + 2)
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	tupleLet := fn.Body.Stmts[0].(*ast.LetStmt)
+	lit, ok := tupleLet.Value.(*ast.CompositeLit)
+	if !ok {
+		t.Fatalf("expected tuple literal composite, got %T", tupleLet.Value)
+	}
+	if lit.Type != nil {
+		t.Fatalf("expected inferred tuple literal type, got %#v", lit.Type)
+	}
+	if !lit.Tuple {
+		t.Fatalf("expected tuple literal marker, got %#v", lit)
+	}
+	if len(lit.Items) != 2 {
+		t.Fatalf("expected 2 tuple elements, got %d", len(lit.Items))
+	}
+	if lit.Items[0].Name != nil || lit.Items[1].Name != nil {
+		t.Fatalf("expected positional tuple elements, got %#v", lit.Items)
+	}
+	groupedLet := fn.Body.Stmts[1].(*ast.LetStmt)
+	if _, ok := groupedLet.Value.(*ast.BinaryExpr); !ok {
+		t.Fatalf("expected parenthesized expression grouping, got %T", groupedLet.Value)
+	}
+}
+
 func TestParserRejectsDuplicateTypeMembers(t *testing.T) {
 	src := `
 type Point struct {

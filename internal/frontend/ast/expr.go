@@ -181,6 +181,7 @@ type CompositeItem struct {
 type CompositeLit struct {
 	Type     TypeExpr
 	Items    []CompositeItem
+	Tuple    bool
 	Location source.Location
 }
 

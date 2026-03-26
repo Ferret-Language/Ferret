@@ -1,0 +1,25 @@
+fn require(name: str, cond: bool) -> void {
+    if !cond {
+        print("FAIL:")
+        print(name)
+        panic "tuple check failed"
+    }
+    print("ok:")
+    print(name)
+}
+
+fn pairSum(pair: (i32, i32)) -> i32 {
+    return pair[0] + pair[1]
+}
+
+fn main() {
+    let ints: (i32, i32) = (3, 4)
+    let mixed: (i32, bool, str) = (7, true, "ok")
+
+    require("tuple sum", pairSum(ints) == 7)
+    require("tuple first element", mixed[0] == 7)
+    require("tuple bool element", mixed[1])
+    require("tuple string element", mixed[2] == "ok")
+
+    print("tuple smoke: PASS")
+}

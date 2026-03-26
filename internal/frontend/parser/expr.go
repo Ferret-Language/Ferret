@@ -88,10 +88,7 @@ func (p *Parser) parsePrefix() ast.Expr {
 		p.advance()
 		return &ast.NoneLit{Location: p.locFrom(start)}
 	case tokens.LPAREN:
-		p.advance()
-		expr := p.parseExprUntil(precLowest)
-		p.expect(tokens.RPAREN, "expected ')'")
-		return expr
+		return p.parseParenExpr()
 	case tokens.DOT:
 		return p.parseCompositeLit()
 	case tokens.LBRACK:
@@ -146,6 +143,37 @@ func (p *Parser) parseBracketCompositeLit() ast.Expr {
 	p.advance()
 	items := p.parseCompositeItems(tokens.RBRACE)
 	return &ast.CompositeLit{Type: literalType, Items: items, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseParenExpr() ast.Expr {
+	start := p.expect(tokens.LPAREN, "expected '('").Start
+	if p.at(tokens.RPAREN) {
+		loc := p.locFrom(start)
+		p.errorAt(loc, "expected expression")
+		p.advance()
+		return &ast.BadExpr{Location: loc}
+	}
+
+	first := p.parseExprUntil(precLowest, tokens.COMMA, tokens.RPAREN)
+	if !p.at(tokens.COMMA) {
+		p.expect(tokens.RPAREN, "expected ')'")
+		return first
+	}
+
+	items := []ast.CompositeItem{{Value: first}}
+	for {
+		if !p.consumeListSeparator(tokens.RPAREN, "tuple element", p.startsExpr()) {
+			break
+		}
+		if p.at(tokens.RPAREN) {
+			break
+		}
+		items = append(items, ast.CompositeItem{
+			Value: p.parseExprUntil(precLowest, tokens.COMMA, tokens.RPAREN),
+		})
+	}
+	p.expect(tokens.RPAREN, "expected ')'")
+	return &ast.CompositeLit{Items: items, Tuple: true, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseCompositeLit() ast.Expr {

@@ -2590,7 +2590,7 @@ fn require(name: str, cond: bool) -> void {
 }
 
 fn tuplePick() -> i32 {
-    let p: (i32, i32) = .{1, 2}
+    let p: (i32, i32) = (1, 2)
     return p[0] + p[1]
 }
 
@@ -2721,7 +2721,7 @@ func TestTypecheckerComptimeEvaluatesTupleAggregateAndIndex(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn tuplePick() -> i32 {
-    let p: (i32, i32) = .{1, 2}
+    let p: (i32, i32) = (1, 2)
     return p[0] + p[1]
 }
 
@@ -2751,7 +2751,7 @@ func TestTypecheckerSupportsMixedTupleElementTypes(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
-    let p: (i32, bool, str) = .{7, true, "ok"}
+    let p: (i32, bool, str) = (7, true, "ok")
     if !p[1] {
         return 0
     }
@@ -2791,7 +2791,7 @@ func TestTypecheckerComptimeEvaluatesMixedTupleAggregateAndIndex(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn tupleCheck() -> bool {
-    let p: (i32, bool, str) = .{7, true, "ok"}
+    let p: (i32, bool, str) = (7, true, "ok")
     return p[0] == 7 && p[1] && p[2] == "ok"
 }
 
