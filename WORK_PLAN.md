@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 7 implemented for soft `comptime {}` execution/skip behavior; waiting for review.
+Status: Step 8 cleanup/validation for the comptime redesign is complete; waiting for review.
 
 ## Steps
 
@@ -39,7 +39,10 @@ Status: Step 7 implemented for soft `comptime {}` execution/skip behavior; waiti
 - [done] Implement step 6: preserve `comptime {}` blocks on AST instead of rewriting them into hard prefix expressions during parsing.
 - [done] Wait for review before committing step 6.
 - [done] Implement step 7: lower `comptime {}` through a soft CTFE path that executes when values are concrete and skips silently otherwise.
-- [in_review] Wait for review before committing step 7.
+- [done] Wait for review before committing step 7.
+- [done] Commit step 7 after approval.
+- [done] Run broader touched-package validation for the comptime redesign.
+- [in_review] Wait for review before committing step 8.
 
 ## Active Task List
 
@@ -61,6 +64,8 @@ Status: Step 7 implemented for soft `comptime {}` execution/skip behavior; waiti
 - [done] Verify the preserved `comptime {}` path with focused tests and a real Ferret repro.
 - [done] Distinguish soft `comptime {}` lowering from hard `comptime expr` in MIR CTFE.
 - [done] Verify soft-block skip behavior and hard-inside-soft errors with focused tests and real Ferret repros.
+- [done] Re-run the broader touched packages after the soft-block changes.
+- [done] Update the persistent plan with the current comptime status and validation coverage.
 
 ## Verification
 
@@ -70,12 +75,18 @@ Status: Step 7 implemented for soft `comptime {}` execution/skip behavior; waiti
 - `./build/core/bin/ferret run:llvm test_comptime/const_call_ctfe.fer`
 - `./build/core/bin/ferret run:qbe test_comptime/const_call_ctfe.fer`
 - `./build/core/bin/ferret check test_comptime/const_runtime_call_should_fail.fer`
+- `./build/core/bin/ferret check test_comptime/comptime_block_skip_runtime.fer`
+- `./build/core/bin/ferret check test_comptime/comptime_block_hard_inside_soft_fail.fer`
+- `go test ./internal/analysis/semantics/typechecker ./internal/ir/mir ./internal/ir/hir -count=1`
 
 Observed results:
 
 - `const_local_ctfe.fer` passed on both LLVM and QBE.
 - `const_call_ctfe.fer` passed on both LLVM and QBE.
 - `const_runtime_call_should_fail.fer` failed as expected through the CTFE path.
+- `comptime_block_skip_runtime.fer` passed with no diagnostics.
+- `comptime_block_hard_inside_soft_fail.fer` failed with the expected hard comptime diagnostic.
+- The broader touched packages (`typechecker`, `mir`, `hir`) passed under the memory cap.
 
 ## Notes
 
