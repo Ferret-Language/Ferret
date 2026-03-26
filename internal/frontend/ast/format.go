@@ -231,7 +231,11 @@ func ParamString(param Param) string {
 			typeText = "..." + typeText
 		}
 	}
-	return FormatNamedParamText(name, typeText, param.IsMut, param.IsComptime)
+	text := FormatNamedParamText(name, typeText, param.IsMut, param.IsComptime)
+	if param.Default != nil {
+		text += " = " + ExprString(param.Default)
+	}
+	return text
 }
 
 func TypeParamString(param TypeParam) string {

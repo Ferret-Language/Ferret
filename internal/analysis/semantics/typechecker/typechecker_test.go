@@ -3727,6 +3727,83 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerAllowsOmittedDefaultArgs(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn add(base: i32, extra: i32 = 2) -> i32 {
+    return base + extra
+}
+
+fn main() -> i32 {
+    return add(5)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsImportedDefaultArgs(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "util", "math.fer"), `
+const DefaultStep: i32 = 3
+
+fn Add(base: i32, step: i32 = DefaultStep) -> i32 {
+    return base + step
+}
+`)
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+import "util/math"
+
+fn main() -> i32 {
+    return math::Add(4)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsRuntimeCallDefaultParamValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn bump(x: i32) -> i32 {
+    return x + 1
+}
+
+fn add(base: i32, extra: i32 = bump(2)) -> i32 {
+    return base + extra
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsDefaultParamReferencingEarlierParams(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn add(base: i32, extra: i32 = base, bias: i32 = extra + 1) -> i32 {
+    return base + extra + bias
+}
+
+fn main() -> i32 {
+    return add(2)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsSpreadIntoVariadicCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

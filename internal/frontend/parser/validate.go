@@ -35,6 +35,7 @@ func (p *Parser) validateDecl(decl ast.Decl) {
 		p.validateType(d.Result)
 		for _, param := range d.Params {
 			p.validateType(param.Type)
+			p.validateExpr(param.Default)
 		}
 		if d.IsTest {
 			if d.IsUnsafe {
@@ -264,6 +265,9 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 			}
 			for _, param := range method.Params {
 				p.validateType(param.Type)
+				if param.Default != nil {
+					p.errorAt(param.Location, "interface method parameters cannot have default values")
+				}
 			}
 			p.validateType(method.Result)
 		}

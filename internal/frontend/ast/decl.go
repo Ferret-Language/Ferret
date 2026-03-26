@@ -62,6 +62,7 @@ type Param struct {
 	IsComptime bool
 	IsVariadic bool
 	Type       TypeExpr
+	Default    Expr
 	Location   source.Location
 }
 

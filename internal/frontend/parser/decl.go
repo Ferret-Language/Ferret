@@ -317,34 +317,7 @@ func (p *Parser) parseReceiver() *ast.Receiver {
 
 func (p *Parser) parseParams() []ast.Param {
 	p.expect(tokens.LPAREN, "expected '('")
-	params := make([]ast.Param, 0)
-	seenVariadic := false
-	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
-		if seenVariadic {
-			loc := p.locOfToken(p.current())
-			p.errorAt(loc, "variadic parameter must be the last parameter")
-		}
-		paramStart := p.current().Start
-		isComptime := p.match(tokens.COMPTIME)
-		isMut := p.match(tokens.MUT)
-		nameTok := p.expect(tokens.IDENT, "expected parameter name")
-		p.expect(tokens.COLON, "expected ':' after parameter name")
-		paramType, isVariadic := p.parseParamType()
-		params = append(params, ast.Param{
-			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
-			IsMut:      isMut,
-			IsComptime: isComptime,
-			IsVariadic: isVariadic,
-			Type:       paramType,
-			Location:   p.locFrom(paramStart),
-		})
-		if isVariadic {
-			seenVariadic = true
-		}
-		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
-			break
-		}
-	}
+	params := p.parseNamedParams()
 	p.expect(tokens.RPAREN, "expected ')'")
 	return params
 }
@@ -358,6 +331,57 @@ func (p *Parser) parseParamType() (ast.TypeExpr, bool) {
 	mutable := p.match(tokens.MUT)
 	inner := p.parseType()
 	return &ast.SliceType{Mutable: mutable, Inner: inner, Location: p.locFrom(start)}, true
+}
+
+func (p *Parser) parseNamedParam() ast.Param {
+	paramStart := p.current().Start
+	isComptime := p.match(tokens.COMPTIME)
+	isMut := p.match(tokens.MUT)
+	nameTok := p.expect(tokens.IDENT, "expected parameter name")
+	p.expect(tokens.COLON, "expected ':' after parameter name")
+	paramType, isVariadic := p.parseParamType()
+	var def ast.Expr
+	if p.match(tokens.ASSIGN) {
+		if isVariadic {
+			p.errorAt(p.locOfToken(p.previous()), "variadic parameter cannot have a default value")
+		}
+		def = p.parseExprUntil(precLowest, tokens.COMMA, tokens.RPAREN)
+	}
+	return ast.Param{
+		Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		IsMut:      isMut,
+		IsComptime: isComptime,
+		IsVariadic: isVariadic,
+		Type:       paramType,
+		Default:    def,
+		Location:   p.locFrom(paramStart),
+	}
+}
+
+func (p *Parser) parseNamedParams() []ast.Param {
+	params := make([]ast.Param, 0)
+	seenVariadic := false
+	seenDefault := false
+	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+		if seenVariadic {
+			loc := p.locOfToken(p.current())
+			p.errorAt(loc, "variadic parameter must be the last parameter")
+		}
+		param := p.parseNamedParam()
+		params = append(params, param)
+		if param.IsVariadic {
+			seenVariadic = true
+		}
+		if param.Default != nil {
+			seenDefault = true
+		} else if seenDefault && !param.IsVariadic {
+			p.errorAt(param.Location, "parameter without default cannot follow parameter with default value")
+		}
+		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
+			break
+		}
+	}
+	return params
 }
 
 func cloneNamedType(t *ast.NamedType) *ast.NamedType {
@@ -374,37 +398,10 @@ func cloneNamedType(t *ast.NamedType) *ast.NamedType {
 func (p *Parser) parseAttachedMethodParams(owner *ast.NamedType) (*ast.Receiver, []ast.Param, bool) {
 	p.expect(tokens.LPAREN, "expected '('")
 	recv, isStatic := p.parseAttachedReceiver(owner)
-	params := make([]ast.Param, 0)
-	seenVariadic := false
 	if recv != nil && p.at(tokens.COMMA) {
 		p.advance()
 	}
-	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
-		if seenVariadic {
-			loc := p.locOfToken(p.current())
-			p.errorAt(loc, "variadic parameter must be the last parameter")
-		}
-		paramStart := p.current().Start
-		isComptime := p.match(tokens.COMPTIME)
-		isMut := p.match(tokens.MUT)
-		nameTok := p.expect(tokens.IDENT, "expected parameter name")
-		p.expect(tokens.COLON, "expected ':' after parameter name")
-		paramType, isVariadic := p.parseParamType()
-		params = append(params, ast.Param{
-			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
-			IsMut:      isMut,
-			IsComptime: isComptime,
-			IsVariadic: isVariadic,
-			Type:       paramType,
-			Location:   p.locFrom(paramStart),
-		})
-		if isVariadic {
-			seenVariadic = true
-		}
-		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
-			break
-		}
-	}
+	params := p.parseNamedParams()
 	p.expect(tokens.RPAREN, "expected ')'")
 	return recv, params, isStatic
 }

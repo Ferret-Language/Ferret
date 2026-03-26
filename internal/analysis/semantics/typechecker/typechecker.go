@@ -340,6 +340,10 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		if paramType == nil {
 			paramType = typeinfo.UnknownType{}
 		}
+		if param.Default != nil {
+			valueType := c.typeOfExpr(funcScope, param.Default, paramType)
+			c.checkExprAssignable(funcScope, param.Default, paramType, valueType)
+		}
 		c.bindDeclSymbol(param.Name, paramType)
 		if sym := c.declSymbol(param.Name); sym != nil {
 			if param.IsMut {
@@ -1074,6 +1078,10 @@ func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr, expected ty
 				WithPrimaryLabel(&loc, "wrap this call in `unsafe { ... }`"),
 		)
 	}
+	if res := c.lookupResolution(expr.Callee); res != nil && res.Kind == binding.ResolutionSymbol && res.Symbol != nil {
+		targetMod, targetDecl := c.callTargetForSymbol(res.Symbol)
+		c.expandCallDefaults(expr, targetMod, targetDecl)
+	}
 	instantiated, argTypes, bindings, invalid := c.instantiateCallFuncType(scope, expr, expr.Callee, fnType, expected)
 	if instantiated == nil {
 		instantiated = fnType
@@ -1267,6 +1275,8 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 		c.info.BindMethodReceiver(selector, methodReceiver)
 	}
 	c.bindNodeSymbolResolution(selector, methodSym)
+	methodMod, methodDecl := c.callTargetForSymbol(methodSym)
+	c.expandCallDefaults(call, methodMod, methodDecl)
 	instantiated, argTypes, bindings, invalid := c.instantiateCallFuncType(scope, call, selector, methodType, expected)
 	if instantiated == nil {
 		instantiated = methodType
@@ -1302,17 +1312,30 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 	if fnType == nil {
 		return false
 	}
+	args := c.callArgs(call)
 	variadicIndex, variadicElem, variadic := c.variadicParamInfo(fnType)
+	fixedParams := len(fnType.Params)
 	if variadic {
-		if len(call.Args) < variadicIndex {
-			c.reportWrongArgCountAtLeast(call.Location, variadicIndex, len(call.Args))
+		fixedParams = variadicIndex
+	}
+	requiredParams := fixedParams
+	for requiredParams > 0 && fnType.Params[requiredParams-1].HasDefault {
+		requiredParams--
+	}
+	if variadic {
+		if len(call.Args) < requiredParams {
+			c.reportWrongArgCountAtLeast(call.Location, requiredParams, len(call.Args))
 			invalid = true
 		}
-	} else if len(call.Args) != len(fnType.Params) {
-		c.reportWrongArgCount(call.Location, len(fnType.Params), len(call.Args))
+	} else if len(call.Args) < requiredParams || len(call.Args) > len(fnType.Params) {
+		if requiredParams == len(fnType.Params) {
+			c.reportWrongArgCount(call.Location, len(fnType.Params), len(call.Args))
+		} else {
+			c.reportWrongArgCountRange(call.Location, requiredParams, len(fnType.Params), len(call.Args))
+		}
 		invalid = true
 	}
-	for i, arg := range call.Args {
+	for i, arg := range args {
 		value := arg
 		spread := false
 		if spreadArg, ok := arg.(*ast.SpreadExpr); ok {
@@ -1373,6 +1396,135 @@ func (c *checker) typecheckCallArgs(scope *refineScope, call *ast.CallExpr, fnTy
 	return invalid
 }
 
+func (c *checker) callArgs(call *ast.CallExpr) []ast.Expr {
+	if call == nil {
+		return nil
+	}
+	if c != nil && c.info != nil {
+		if args, ok := c.info.LookupCallArgs(call); ok {
+			return args
+		}
+	}
+	return call.Args
+}
+
+func paramFlags(param ast.Param) typeinfo.ValueFlags {
+	flags := typeinfo.ValueFlags(0)
+	if param.IsMut {
+		flags |= typeinfo.FlagMutable
+	}
+	if param.IsComptime {
+		flags |= typeinfo.FlagComptime
+	}
+	if param.IsVariadic {
+		flags |= typeinfo.FlagVariadic
+	}
+	return flags
+}
+
+func (c *checker) paramSpecFromSyntax(mod *context.Module, param ast.Param, selfType typeinfo.Type) typeinfo.ParamSpec {
+	name := ""
+	if param.Name != nil {
+		name = param.Name.Text()
+	}
+	return typeinfo.ParamSpec{
+		Name:       name,
+		Type:       c.instantiateSelfType(c.syntaxType(mod, param.Type), selfType),
+		Flags:      paramFlags(param),
+		HasDefault: param.Default != nil,
+	}
+}
+
+func (c *checker) callTargetForSymbol(sym *symbols.Symbol) (*context.Module, *ast.FuncDecl) {
+	if sym == nil {
+		return nil, nil
+	}
+	fn, _ := sym.Node.(*ast.FuncDecl)
+	if fn == nil {
+		return nil, nil
+	}
+	mod := c.findModuleForSymbol(sym)
+	if mod == nil {
+		mod = c.mod
+	}
+	return mod, fn
+}
+
+func (c *checker) expandCallDefaults(call *ast.CallExpr, targetMod *context.Module, targetDecl *ast.FuncDecl) {
+	if c == nil || c.info == nil || call == nil || targetMod == nil || targetDecl == nil {
+		return
+	}
+	fixedParams := len(targetDecl.Params)
+	if fixedParams == 0 || len(call.Args) >= fixedParams {
+		return
+	}
+	if targetDecl.Params[fixedParams-1].IsVariadic {
+		fixedParams--
+		if len(call.Args) >= fixedParams {
+			return
+		}
+	}
+
+	expanded := make([]ast.Expr, 0, fixedParams)
+	expanded = append(expanded, call.Args...)
+	paramArgs := make(map[symbols.SymbolID]ast.Expr, fixedParams)
+	for i := 0; i < len(expanded) && i < fixedParams; i++ {
+		if sym := c.paramSymbol(targetMod, targetDecl.Params[i]); sym != nil {
+			paramArgs[sym.ID] = expanded[i]
+		}
+	}
+
+	for i := len(expanded); i < fixedParams; i++ {
+		param := targetDecl.Params[i]
+		if param.Default == nil {
+			return
+		}
+		defaultExpr, mapping := ast.CloneExprWithNodeMapAndSubstitute(param.Default, func(node ast.Node) ast.Expr {
+			ident, ok := node.(*ast.Ident)
+			if !ok || targetMod.Bindings == nil {
+				return nil
+			}
+			res := targetMod.Bindings.Nodes[ident]
+			if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+				return nil
+			}
+			return paramArgs[res.Symbol.ID]
+		})
+		if defaultExpr == nil {
+			return
+		}
+		if c.mod != nil && c.mod.Bindings != nil && targetMod.Bindings != nil {
+			for src, dst := range mapping {
+				if src == nil || dst == nil {
+					continue
+				}
+				if res := targetMod.Bindings.Nodes[src]; res != nil {
+					c.mod.Bindings.BindNode(dst, res)
+				}
+			}
+		}
+		expanded = append(expanded, defaultExpr)
+		if sym := c.paramSymbol(targetMod, param); sym != nil {
+			paramArgs[sym.ID] = defaultExpr
+		}
+	}
+
+	if len(expanded) != len(call.Args) {
+		c.info.BindCallArgs(call, expanded)
+	}
+}
+
+func (c *checker) paramSymbol(mod *context.Module, param ast.Param) *symbols.Symbol {
+	if mod == nil || mod.Bindings == nil || param.Name == nil {
+		return nil
+	}
+	res := mod.Bindings.Nodes[param.Name]
+	if res == nil || res.Kind != binding.ResolutionSymbol {
+		return nil
+	}
+	return res.Symbol
+}
+
 func (c *checker) lookupOrTypeExpr(scope *refineScope, expr ast.Expr, expected typeinfo.Type, precomputed []typeinfo.Type, index int) typeinfo.Type {
 	if expected == nil && index >= 0 && index < len(precomputed) && precomputed[index] != nil {
 		return precomputed[index]
@@ -1406,10 +1558,11 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 		c.bindExplicitTypeArgs(call, fnType, bindings)
 	}
 
-	argTypes := make([]typeinfo.Type, 0, len(call.Args))
+	args := c.callArgs(call)
+	argTypes := make([]typeinfo.Type, 0, len(args))
 	inferFromArgs := len(call.TypeArgs) == 0 || len(call.TypeArgs) < len(fnType.TypeParams) || len(genericParams) > len(fnType.TypeParams)
 	variadicIndex, variadicElem, variadic := c.variadicParamInfo(fnType)
-	for i, arg := range call.Args {
+	for i, arg := range args {
 		value := arg
 		spread := false
 		if spreadArg, ok := arg.(*ast.SpreadExpr); ok {
@@ -1480,11 +1633,7 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 		Result:   c.substituteTypeParams(fnType.Result, bindings),
 	}
 	for _, param := range fnType.Params {
-		instantiated.Params = append(instantiated.Params, typeinfo.ParamSpec{
-			Name:  param.Name,
-			Type:  c.substituteTypeParams(param.Type, bindings),
-			Flags: param.Flags,
-		})
+		instantiated.Params = append(instantiated.Params, typeinfo.WithParamType(param, c.substituteTypeParams(param.Type, bindings)))
 	}
 	if callee != nil {
 		c.info.BindNode(callee, instantiated)
@@ -1790,11 +1939,7 @@ func (c *checker) substituteTypeParams(typ typeinfo.Type, bindings map[*typeinfo
 			Result:   c.substituteTypeParams(t.Result, bindings),
 		}
 		for _, param := range t.Params {
-			out.Params = append(out.Params, typeinfo.ParamSpec{
-				Name:  param.Name,
-				Type:  c.substituteTypeParams(param.Type, bindings),
-				Flags: param.Flags,
-			})
+			out.Params = append(out.Params, typeinfo.WithParamType(param, c.substituteTypeParams(param.Type, bindings)))
 		}
 		return out
 	default:
@@ -3154,11 +3299,7 @@ func (c *checker) instantiateSelfFuncType(fn *typeinfo.FuncType, selfType typein
 	}
 	params := make([]typeinfo.ParamSpec, 0, len(fn.Params))
 	for _, param := range fn.Params {
-		params = append(params, typeinfo.ParamSpec{
-			Name:  param.Name,
-			Type:  c.instantiateSelfType(param.Type, selfType),
-			Flags: param.Flags,
-		})
+		params = append(params, typeinfo.WithParamType(param, c.instantiateSelfType(param.Type, selfType)))
 	}
 	return &typeinfo.FuncType{
 		IsUnsafe: fn.IsUnsafe,
@@ -3262,6 +3403,18 @@ func (c *checker) reportWrongArgCount(loc source.Location, expected, got int) {
 func (c *checker) reportWrongArgCountAtLeast(loc source.Location, expectedMin, got int) {
 	c.ctx.Diagnostics.Add(
 		diagnostics.NewError(fmt.Sprintf("wrong argument count: expected at least %d, got %d", expectedMin, got)).
+			WithCode(diagnostics.ErrWrongArgumentCount).
+			WithPrimaryLabel(&loc, "argument count does not match"),
+	)
+}
+
+func (c *checker) reportWrongArgCountRange(loc source.Location, expectedMin, expectedMax, got int) {
+	if expectedMin == expectedMax {
+		c.reportWrongArgCount(loc, expectedMax, got)
+		return
+	}
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError(fmt.Sprintf("wrong argument count: expected between %d and %d, got %d", expectedMin, expectedMax, got)).
 			WithCode(diagnostics.ErrWrongArgumentCount).
 			WithPrimaryLabel(&loc, "argument count does not match"),
 	)

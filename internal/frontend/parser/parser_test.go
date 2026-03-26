@@ -288,6 +288,30 @@ fn collectMut(nums: ...mut i32) -> void {}
 	}
 }
 
+func TestParseDefaultParams(t *testing.T) {
+	src := `
+fn greet(name: str = "world", repeat: i32 = 1) -> void {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[0])
+	}
+	if len(fn.Params) != 2 {
+		t.Fatalf("expected 2 params, got %d", len(fn.Params))
+	}
+	if got := ast.ParamString(fn.Params[0]); got != "name: str = world" {
+		t.Fatalf("unexpected defaulted param string %q", got)
+	}
+	if got := ast.ParamString(fn.Params[1]); got != "repeat: i32 = 1" {
+		t.Fatalf("unexpected defaulted param string %q", got)
+	}
+}
+
 func TestParserRejectsNonTrailingVariadicParam(t *testing.T) {
 	src := `
 fn bad(nums: ...i32, fallback: i32) -> void {}
@@ -296,6 +320,17 @@ fn bad(nums: ...i32, fallback: i32) -> void {}
 	_, diag := parseTestModule(t, src)
 	if !hasDiagnosticMessage(diag, "variadic parameter must be the last parameter") {
 		t.Fatalf("expected non-trailing variadic diagnostic, got %v", diag.Diagnostics())
+	}
+}
+
+func TestParserRejectsRequiredParamAfterDefault(t *testing.T) {
+	src := `
+fn bad(x: i32 = 1, y: i32) -> void {}
+`
+
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "parameter without default cannot follow parameter with default value") {
+		t.Fatalf("expected default-order diagnostic, got %v", diag.Diagnostics())
 	}
 }
 

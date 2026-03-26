@@ -618,12 +618,16 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
 	case *ast.CallExpr:
-		out := &CallExpr{Callee: g.generateExpr(e.Callee), Args: make([]Expr, 0, len(e.Args))}
+		args := e.Args
+		if expanded, ok := g.types.LookupCallArgs(e); ok {
+			args = expanded
+		}
+		out := &CallExpr{Callee: g.generateExpr(e.Callee), Args: make([]Expr, 0, len(args))}
 		if recv, ok := g.types.LookupMethodReceiver(e); ok {
 			out.MethodReceiver = recv
 		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
-		for _, arg := range e.Args {
+		for _, arg := range args {
 			out.Args = append(out.Args, g.generateExpr(arg))
 		}
 		return out

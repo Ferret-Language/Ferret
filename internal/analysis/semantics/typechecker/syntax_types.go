@@ -185,21 +185,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			}
 			params := make([]typeinfo.ParamSpec, 0, len(method.Params))
 			for _, param := range method.Params {
-				flags := typeinfo.ValueFlags(0)
-				if param.IsMut {
-					flags |= typeinfo.FlagMutable
-				}
-				if param.IsComptime {
-					flags |= typeinfo.FlagComptime
-				}
-				if param.IsVariadic {
-					flags |= typeinfo.FlagVariadic
-				}
-				name := ""
-				if param.Name != nil {
-					name = param.Name.Text()
-				}
-				params = append(params, typeinfo.ParamSpec{Name: name, Type: c.typeFromSyntax(mod, param.Type), Flags: flags})
+				params = append(params, c.paramSpecFromSyntax(mod, param, nil))
 			}
 			result := c.typeFromSyntax(mod, method.Result)
 			if result == nil {

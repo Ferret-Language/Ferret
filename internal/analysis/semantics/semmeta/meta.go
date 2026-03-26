@@ -21,9 +21,10 @@ func (f ValueFlags) Variadic() bool {
 }
 
 type ValueSpec[T any] struct {
-	Name  string
-	Type  T
-	Flags ValueFlags
+	Name       string
+	Type       T
+	Flags      ValueFlags
+	HasDefault bool
 }
 
 type ReceiverKind uint8

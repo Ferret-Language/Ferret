@@ -119,25 +119,7 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 	}
 	params := make([]typeinfo.ParamSpec, 0, len(fn.Params))
 	for _, param := range fn.Params {
-		flags := typeinfo.ValueFlags(0)
-		if param.IsMut {
-			flags |= typeinfo.FlagMutable
-		}
-		if param.IsComptime {
-			flags |= typeinfo.FlagComptime
-		}
-		if param.IsVariadic {
-			flags |= typeinfo.FlagVariadic
-		}
-		name := ""
-		if param.Name != nil {
-			name = param.Name.Text()
-		}
-		params = append(params, typeinfo.ParamSpec{
-			Name:  name,
-			Type:  c.instantiateSelfType(c.syntaxType(mod, param.Type), selfType),
-			Flags: flags,
-		})
+		params = append(params, c.paramSpecFromSyntax(mod, param, selfType))
 	}
 	return &typeinfo.FuncType{
 		IsUnsafe:   fn.IsUnsafe,

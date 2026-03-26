@@ -207,6 +207,9 @@ func (r *resolver) resolveDecl(scope *table.Scope, decl ast.Decl) {
 		}
 		for _, param := range d.Params {
 			r.resolveType(scope, param.Type)
+			if param.Default != nil {
+				r.resolveExpr(funcScope, param.Default)
+			}
 			sym := symbols.New(param.Name.Text(), symbols.SymbolParam, nil)
 			sym.Location = param.Name.Loc()
 			if param.IsMut {

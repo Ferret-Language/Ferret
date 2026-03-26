@@ -13,6 +13,13 @@ func TestValueFlags(t *testing.T) {
 	}
 }
 
+func TestValueSpecDefaultFlag(t *testing.T) {
+	spec := ValueSpec[int]{Name: "value", Type: 7, HasDefault: true}
+	if !spec.HasDefault {
+		t.Fatal("expected value spec to keep default metadata")
+	}
+}
+
 func TestReceiverKinds(t *testing.T) {
 	cases := []struct {
 		syntax string

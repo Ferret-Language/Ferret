@@ -26,6 +26,7 @@ type ModuleInfo struct {
 	SymbolIndex         map[symbols.SymbolID]*symbols.Symbol
 	Bools               map[ast.Node]bool
 	MethodReceivers     map[ast.Node]Type
+	CallArgs            map[*ast.CallExpr][]ast.Expr
 	GenericRequirements map[symbols.SymbolID][]*GenericRequirement
 }
 
@@ -36,6 +37,7 @@ func NewModuleInfo() *ModuleInfo {
 		SymbolIndex:         make(map[symbols.SymbolID]*symbols.Symbol),
 		Bools:               make(map[ast.Node]bool),
 		MethodReceivers:     make(map[ast.Node]Type),
+		CallArgs:            make(map[*ast.CallExpr][]ast.Expr),
 		GenericRequirements: make(map[symbols.SymbolID][]*GenericRequirement),
 	}
 }
@@ -83,6 +85,21 @@ func (m *ModuleInfo) LookupMethodReceiver(node ast.Node) (Type, bool) {
 	}
 	typ, ok := m.MethodReceivers[node]
 	return typ, ok
+}
+
+func (m *ModuleInfo) BindCallArgs(call *ast.CallExpr, args []ast.Expr) {
+	if m == nil || call == nil || len(args) == 0 {
+		return
+	}
+	m.CallArgs[call] = args
+}
+
+func (m *ModuleInfo) LookupCallArgs(call *ast.CallExpr) ([]ast.Expr, bool) {
+	if m == nil || call == nil {
+		return nil, false
+	}
+	args, ok := m.CallArgs[call]
+	return args, ok
 }
 
 func (m *ModuleInfo) BindGenericRequirements(sym *symbols.Symbol, requirements []*GenericRequirement) {

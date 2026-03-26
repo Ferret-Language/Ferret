@@ -250,11 +250,7 @@ func instantiateFuncType(fn *FuncType, bindings map[*TypeParam]Type, seen map[Ty
 	seen[fn] = out
 	out.Result = instantiateType(fn.Result, bindings, seen)
 	for _, param := range fn.Params {
-		out.Params = append(out.Params, ParamSpec{
-			Name:  param.Name,
-			Type:  instantiateType(param.Type, bindings, seen),
-			Flags: param.Flags,
-		})
+		out.Params = append(out.Params, WithParamType(param, instantiateType(param.Type, bindings, seen)))
 	}
 	if len(fn.TypeParams) > 0 {
 		out.TypeParams = make([]*TypeParam, 0, len(fn.TypeParams))

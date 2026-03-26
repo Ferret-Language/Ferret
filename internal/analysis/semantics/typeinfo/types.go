@@ -273,6 +273,11 @@ type FuncType struct {
 	Result     Type
 }
 
+func WithParamType(param ParamSpec, typ Type) ParamSpec {
+	param.Type = typ
+	return param
+}
+
 // String returns the canonical textual form for function types, including
 // parameter modifiers such as `mut` and `comptime`.
 func (t *FuncType) String() string {

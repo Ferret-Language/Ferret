@@ -179,6 +179,10 @@ func (p Printer) FuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 			} else {
 				b.WriteString(p.Type(fnType.Params[i].Type))
 			}
+			if param.Default != nil {
+				b.WriteString(" = ")
+				b.WriteString(ast.ExprString(param.Default))
+			}
 			paramIndex = i + 1
 		}
 		wrote = true

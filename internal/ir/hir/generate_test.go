@@ -80,6 +80,49 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineGeneratesDefaultCallArgsInHIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
+fn add(base: i32, extra: i32 = 2) -> i32 {
+    return base + extra
+}
+
+fn main() -> i32 {
+    return add(5)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.HIR == nil {
+		t.Fatal("expected HIR module")
+	}
+	mainFn := result.Entry.HIR.Functions[1]
+	ret, ok := mainFn.Body.Stmts[0].(*hir.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	call, ok := ret.Value.(*hir.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expr, got %T", ret.Value)
+	}
+	if len(call.Args) != 2 {
+		t.Fatalf("expected default arg expansion in HIR, got %d args", len(call.Args))
+	}
+	if lit, ok := call.Args[1].(*hir.NumberLit); !ok || lit.Value != "2" {
+		t.Fatalf("expected second arg to be default literal 2, got %#v", call.Args[1])
+	}
+}
+
 func TestPipelineSpecializesGenericTopLevelFunctions(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
