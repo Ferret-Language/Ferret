@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 3 in progress: introduce deferred array-length representation.
+Status: Step 4 refactored for strict compile-time array lengths and verified; waiting for review.
 
 ## Steps
 
@@ -26,9 +26,14 @@ Status: Step 3 in progress: introduce deferred array-length representation.
 - [done] Implement step 2: remove legacy `comptime` parameter syntax and plumbing.
 - [done] Verify step 2 with focused tests and real Ferret repro files.
 - [done] Wait for review before committing step 2.
-- [in_progress] Implement step 3: introduce deferred array-length representation.
-- [pending] Verify step 3 with focused tests and foundation tests.
-- [pending] Wait for review before committing step 3.
+- [done] Implement step 3: introduce deferred array-length representation.
+- [done] Verify step 3 with focused tests and foundation tests.
+- [done] Wait for review before committing step 3.
+- [done] Implement step 4: resolve deferred array lengths after typechecking.
+- [done] Rework step 4 to use a shared type rewrite utility instead of another local recursive type switch.
+- [done] Refactor step 4 to use one strict compile-time integer check for array lengths instead of a pipeline-side deferred evaluator.
+- [done] Verify step 4 with focused tests and real Ferret repro files.
+- [in_review] Wait for review before committing step 4.
 
 ## Active Task List
 
@@ -38,8 +43,12 @@ Status: Step 3 in progress: introduce deferred array-length representation.
 - [done] Remove `comptime` parameter support from parser, AST, semantic flags, HIR, MIR, and LSP.
 - [done] Update tests and Ferret sample files to use plain parameters plus explicit `comptime` calls/blocks.
 - [done] Rebuild compiler and run `test_comptime/` repros after the syntax removal.
-- [in_progress] Add deferred array-length state to `ArrayType` and preserve it through type copies.
-- [pending] Keep current eager behavior intact while making later deferred filling possible.
+- [done] Add deferred array-length state to `ArrayType` and preserve it through type copies.
+- [done] Keep current eager behavior intact while making later deferred filling possible.
+- [done] Require `[N]T` array lengths to be compile-time known during typechecking.
+- [done] Centralize recursive type rewriting in `typeinfo` and reuse it in existing transforms.
+- [done] Reuse one early const-eval service for array lengths and compile-time index bounds.
+- [done] Cover local and imported const array lengths with focused tests and a real repro.
 
 ## Verification
 

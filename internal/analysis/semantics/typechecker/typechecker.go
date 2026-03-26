@@ -1596,7 +1596,7 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 			if bindings[param] != nil {
 				continue
 			}
-			if bound := c.lookupTypeParamBinding(expectedBindings, param); bound != nil {
+			if bound := typeinfo.LookupTypeParamBinding(expectedBindings, param); bound != nil {
 				bindings[param] = bound
 			}
 		}
@@ -1839,129 +1839,16 @@ func (c *checker) inferTypeParamBindings(pattern, actual typeinfo.Type, bindings
 }
 
 func (c *checker) substituteTypeParams(typ typeinfo.Type, bindings map[*typeinfo.TypeParam]typeinfo.Type) typeinfo.Type {
-	switch t := typ.(type) {
-	case nil:
-		return nil
-	case *typeinfo.TypeParam:
-		if bound := c.lookupTypeParamBinding(bindings, t); bound != nil {
+	return typeinfo.RewriteType(typ, func(t typeinfo.Type) typeinfo.Type {
+		param, ok := t.(*typeinfo.TypeParam)
+		if !ok {
+			return nil
+		}
+		if bound := typeinfo.LookupTypeParamBinding(bindings, param); bound != nil {
 			return bound
 		}
 		return typeinfo.UnknownType{}
-	case *typeinfo.PointerType:
-		return &typeinfo.PointerType{Inner: c.substituteTypeParams(t.Inner, bindings)}
-	case *typeinfo.RefType:
-		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.substituteTypeParams(t.Inner, bindings)}
-	case *typeinfo.RawPtrType:
-		return &typeinfo.RawPtrType{Const: t.Const, Inner: c.substituteTypeParams(t.Inner, bindings)}
-	case *typeinfo.OptionalType:
-		return &typeinfo.OptionalType{Inner: c.substituteTypeParams(t.Inner, bindings)}
-	case *typeinfo.ApproxType:
-		return &typeinfo.ApproxType{Inner: c.substituteTypeParams(t.Inner, bindings)}
-	case *typeinfo.ErrorUnionType:
-		return &typeinfo.ErrorUnionType{
-			Error: c.substituteTypeParams(t.Error, bindings),
-			Value: c.substituteTypeParams(t.Value, bindings),
-		}
-	case *typeinfo.ArrayType:
-		return &typeinfo.ArrayType{Inner: c.substituteTypeParams(t.Inner, bindings), Len: t.Len, SizeExpr: t.SizeExpr}
-	case *typeinfo.SliceType:
-		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: c.substituteTypeParams(t.Inner, bindings)}
-	case *typeinfo.TupleType:
-		elems := make([]typeinfo.Type, 0, len(t.Elems))
-		for _, elem := range t.Elems {
-			elems = append(elems, c.substituteTypeParams(elem, bindings))
-		}
-		return &typeinfo.TupleType{Elems: elems}
-	case *typeinfo.NamedType:
-		out := &typeinfo.NamedType{
-			ModuleKey: t.ModuleKey,
-			Name:      t.Name,
-			Decl:      t.Decl,
-		}
-		if len(t.TypeArgs) > 0 {
-			out.TypeArgs = make([]typeinfo.Type, 0, len(t.TypeArgs))
-			for _, arg := range t.TypeArgs {
-				out.TypeArgs = append(out.TypeArgs, c.substituteTypeParams(arg, bindings))
-			}
-		}
-		return out
-	case *typeinfo.StructType:
-		fields := make(map[string]*typeinfo.StructField, len(t.Fields))
-		ordered := make([]*typeinfo.StructField, 0, len(t.OrderedFields))
-		for _, field := range t.OrderedFields {
-			if field == nil {
-				continue
-			}
-			copy := &typeinfo.StructField{
-				Name:       field.Name,
-				IsPub:      field.IsPub,
-				Type:       c.substituteTypeParams(field.Type, bindings),
-				HasDefault: field.HasDefault,
-			}
-			fields[copy.Name] = copy
-			ordered = append(ordered, copy)
-		}
-		return &typeinfo.StructType{Fields: fields, OrderedFields: ordered}
-	case *typeinfo.InterfaceType:
-		methods := make(map[string]*typeinfo.FuncType, len(t.Methods))
-		methodReceivers := make(map[string]typeinfo.ReceiverKind, len(t.MethodReceivers))
-		methodStatic := make(map[string]bool, len(t.MethodStatic))
-		ordered := make([]*typeinfo.InterfaceMethod, 0, len(t.OrderedMethods))
-		for _, method := range t.OrderedMethods {
-			if method == nil {
-				continue
-			}
-			fn, _ := c.substituteTypeParams(method.Type, bindings).(*typeinfo.FuncType)
-			copy := &typeinfo.InterfaceMethod{
-				Receiver: method.Receiver,
-				Static:   method.Static,
-				Name:     method.Name,
-				Type:     fn,
-			}
-			methods[copy.Name] = fn
-			methodReceivers[copy.Name] = copy.Receiver
-			methodStatic[copy.Name] = copy.Static
-			ordered = append(ordered, copy)
-		}
-		return &typeinfo.InterfaceType{
-			Methods:         methods,
-			MethodReceivers: methodReceivers,
-			MethodStatic:    methodStatic,
-			OrderedMethods:  ordered,
-		}
-	case *typeinfo.UnionType:
-		members := make([]typeinfo.Type, 0, len(t.Members))
-		for _, member := range t.Members {
-			members = append(members, c.substituteTypeParams(member, bindings))
-		}
-		return &typeinfo.UnionType{Members: members}
-	case *typeinfo.FuncType:
-		out := &typeinfo.FuncType{
-			IsUnsafe: t.IsUnsafe,
-			Result:   c.substituteTypeParams(t.Result, bindings),
-		}
-		for _, param := range t.Params {
-			out.Params = append(out.Params, typeinfo.WithParamType(param, c.substituteTypeParams(param.Type, bindings)))
-		}
-		return out
-	default:
-		return typ
-	}
-}
-
-func (c *checker) lookupTypeParamBinding(bindings map[*typeinfo.TypeParam]typeinfo.Type, target *typeinfo.TypeParam) typeinfo.Type {
-	if target == nil {
-		return nil
-	}
-	if bound := bindings[target]; bound != nil {
-		return bound
-	}
-	for param, bound := range bindings {
-		if typeinfo.Equal(param, target) {
-			return bound
-		}
-	}
-	return nil
+	}, nil)
 }
 
 func (c *checker) checkCallTypeParamConstraints(call *ast.CallExpr, params []*typeinfo.TypeParam, bindings map[*typeinfo.TypeParam]typeinfo.Type) {
@@ -2300,14 +2187,16 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 	c.typeOfExpr(scope, expr.Index, usize)
 	base := c.underlying(baseTyp)
 	if arr, ok := base.(*typeinfo.ArrayType); ok {
-		if idx := c.arrayLength(expr.Index); idx >= 0 && arr.Len >= 0 && idx >= arr.Len {
-			loc := expr.Index.Loc()
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("array index out of bounds").
-					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "this array does not have that element index"),
-			)
-			return typeinfo.InvalidType{}
+		if idx, ok := c.constExpr(c.mod, expr.Index, nil); ok {
+			if index, ok := idx.nonNegativeInt64(); ok && arr.Len >= 0 && index >= arr.Len {
+				loc := expr.Index.Loc()
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("array index out of bounds").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(&loc, "this array does not have that element index"),
+				)
+				return typeinfo.InvalidType{}
+			}
 		}
 		c.info.BindNode(expr, arr.Inner)
 		return arr.Inner
@@ -2317,8 +2206,8 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 		return sl.Inner
 	}
 	if tuple, ok := base.(*typeinfo.TupleType); ok {
-		idx := c.arrayLength(expr.Index)
-		if idx < 0 {
+		idx, ok := c.constExpr(c.mod, expr.Index, nil)
+		if !ok {
 			loc := expr.Index.Loc()
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError("tuple index must be a non-negative integer literal").
@@ -2327,7 +2216,17 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 			)
 			return typeinfo.InvalidType{}
 		}
-		if int(idx) >= len(tuple.Elems) {
+		index, ok := idx.nonNegativeInt64()
+		if !ok {
+			loc := expr.Index.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("tuple index must be a non-negative integer literal").
+					WithCode(diagnostics.ErrInvalidOperation).
+					WithPrimaryLabel(&loc, "use a tuple element literal index like 0 or 1"),
+			)
+			return typeinfo.InvalidType{}
+		}
+		if int(index) >= len(tuple.Elems) {
 			loc := expr.Index.Loc()
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError("tuple index out of bounds").
@@ -2336,7 +2235,7 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 			)
 			return typeinfo.InvalidType{}
 		}
-		elem := tuple.Elems[int(idx)]
+		elem := tuple.Elems[int(index)]
 		c.info.BindNode(expr, elem)
 		return elem
 	}
@@ -3314,34 +3213,12 @@ func (c *checker) instantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type
 	if selfType == nil {
 		return typ
 	}
-	switch t := typ.(type) {
-	case *typeinfo.SelfType:
-		return selfType
-	case *typeinfo.PointerType:
-		return &typeinfo.PointerType{Inner: c.instantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.RefType:
-		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.instantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.RawPtrType:
-		return &typeinfo.RawPtrType{Const: t.Const, Inner: c.instantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.OptionalType:
-		return &typeinfo.OptionalType{Inner: c.instantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.ApproxType:
-		return &typeinfo.ApproxType{Inner: c.instantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.ErrorUnionType:
-		return &typeinfo.ErrorUnionType{Error: c.instantiateSelfType(t.Error, selfType), Value: c.instantiateSelfType(t.Value, selfType)}
-	case *typeinfo.ArrayType:
-		return &typeinfo.ArrayType{Inner: c.instantiateSelfType(t.Inner, selfType), Len: t.Len, SizeExpr: t.SizeExpr}
-	case *typeinfo.SliceType:
-		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: c.instantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.TupleType:
-		elems := make([]typeinfo.Type, 0, len(t.Elems))
-		for _, elem := range t.Elems {
-			elems = append(elems, c.instantiateSelfType(elem, selfType))
+	return typeinfo.RewriteType(typ, func(t typeinfo.Type) typeinfo.Type {
+		if _, ok := t.(*typeinfo.SelfType); ok {
+			return selfType
 		}
-		return &typeinfo.TupleType{Elems: elems}
-	default:
-		return typ
-	}
+		return nil
+	}, nil)
 }
 
 func (c *checker) reportUnsupportedTypeTest(loc source.Location, msg, help string) (bool, bool) {

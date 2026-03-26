@@ -1,0 +1,6 @@
+const BASE = 2
+const EXTRA = 1
+
+fn main(items: [BASE + EXTRA]i32) -> i32 {
+    return items[2]
+}

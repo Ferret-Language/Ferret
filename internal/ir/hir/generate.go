@@ -398,32 +398,12 @@ func hirInstantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type {
 	if selfType == nil {
 		return typ
 	}
-	switch t := typ.(type) {
-	case *typeinfo.SelfType:
-		return selfType
-	case *typeinfo.PointerType:
-		return &typeinfo.PointerType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.RefType:
-		return &typeinfo.RefType{Mutable: t.Mutable, Inner: hirInstantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.RawPtrType:
-		return &typeinfo.RawPtrType{Const: t.Const, Inner: hirInstantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.OptionalType:
-		return &typeinfo.OptionalType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.ErrorUnionType:
-		return &typeinfo.ErrorUnionType{Error: hirInstantiateSelfType(t.Error, selfType), Value: hirInstantiateSelfType(t.Value, selfType)}
-	case *typeinfo.ArrayType:
-		return &typeinfo.ArrayType{Inner: hirInstantiateSelfType(t.Inner, selfType), Len: t.Len, SizeExpr: t.SizeExpr}
-	case *typeinfo.SliceType:
-		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: hirInstantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.TupleType:
-		elems := make([]typeinfo.Type, 0, len(t.Elems))
-		for _, elem := range t.Elems {
-			elems = append(elems, hirInstantiateSelfType(elem, selfType))
+	return typeinfo.RewriteType(typ, func(t typeinfo.Type) typeinfo.Type {
+		if _, ok := t.(*typeinfo.SelfType); ok {
+			return selfType
 		}
-		return &typeinfo.TupleType{Elems: elems}
-	default:
-		return typ
-	}
+		return nil
+	}, nil)
 }
 
 func (g *generator) generateBlock(block *ast.BlockStmt) *BlockStmt {

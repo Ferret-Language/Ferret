@@ -3593,6 +3593,84 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerResolvesDeferredArrayLengthFromConstExpr(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+const BASE = 2
+const EXTRA = 1
+
+fn main(items: [BASE + EXTRA]i32) -> i32 {
+    return items[2]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	paramRes := result.Entry.Bindings.Nodes[mainFn.Params[0].Name]
+	paramType := result.Entry.Types.Symbols[paramRes.Symbol.ID]
+	arr, ok := paramType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 3 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected items type [3]i32, got %T %#v", paramType, paramType)
+	}
+}
+
+func TestTypecheckerResolvesDeferredArrayLengthFromImportedConst(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "sizes.fer"), `
+const COUNT = 3
+`)
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+import "sizes"
+
+fn main(items: [sizes::COUNT]i32) -> i32 {
+    return items[2]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	paramRes := result.Entry.Bindings.Nodes[mainFn.Params[0].Name]
+	paramType := result.Entry.Types.Symbols[paramRes.Symbol.ID]
+	arr, ok := paramType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 3 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected items type [3]i32, got %T %#v", paramType, paramType)
+	}
+}
+
+func TestTypecheckerRejectsRuntimeArrayLength(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(n: i32) -> i32 {
+    let items: [n]i32
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected compile-time array length diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag == nil || diag.Code != diagnostics.ErrTypeMismatch {
+			continue
+		}
+		if strings.Contains(diag.Message, "array length must be a non-negative compile-time integer") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected compile-time array length diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerTypesSliceLiterals(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
