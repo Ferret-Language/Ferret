@@ -449,7 +449,10 @@ func wrapExpr(expr Expr) string {
 
 func formatPrefix(op, right string) string {
 	switch op {
-	case "copy", "comptime", "unsafe", "take", "&mut":
+	case "copy", "comptime", "comptime_soft", "unsafe", "take", "&mut":
+		if op == "comptime_soft" {
+			op = "comptime"
+		}
 		return op + " " + right
 	default:
 		return op + right

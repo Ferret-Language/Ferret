@@ -2695,6 +2695,77 @@ fn main() -> void {
 	}
 }
 
+func TestTypecheckerSoftComptimeBlockSkipsRuntimeDependentExpr(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+#[extern("clock")]
+fn clock() -> i64;
+
+fn requirePositive(v: i64) -> void {
+    if v < 0 {
+        panic "negative"
+    }
+}
+
+fn main() -> void {
+    let now = clock()
+    comptime {
+        requirePositive(now)
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected runtime-dependent soft comptime block to skip, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR for soft comptime skip, got %#v", result.Entry)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	mainIdx := strings.Index(text, "fn main() -> void {")
+	if mainIdx < 0 {
+		t.Fatalf("expected main function in MIR, got %q", text)
+	}
+	mainText := text[mainIdx:]
+	if strings.Contains(mainText, "comptime ") || strings.Contains(mainText, "requirePositive(") {
+		t.Fatalf("expected skipped soft comptime block to leave no runtime residue in main, got %q", mainText)
+	}
+}
+
+func TestTypecheckerHardComptimeInsideSoftBlockStillErrors(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+#[extern("clock")]
+fn clock() -> i64;
+
+fn hardCheck() -> void {
+    let _ = comptime clock()
+}
+
+fn main() -> void {
+    comptime {
+        hardCheck()
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected nested hard comptime failure inside soft block")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "`comptime` expression must be compile-time evaluable: call to clock cannot run at compile time") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected nested hard comptime diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerComptimeEvaluatesArrayIndexAndForLoop(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

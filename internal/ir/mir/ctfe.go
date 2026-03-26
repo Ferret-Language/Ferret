@@ -51,6 +51,25 @@ type ctfeEngine struct {
 	originStack    []source.Location
 }
 
+func (e *ctfeEngine) evalSoftComptime(loc source.Location, eval func() bool) (bool, bool) {
+	before := 0
+	if e != nil && e.diag != nil {
+		before = len(e.diag.Diagnostics())
+	}
+	if e != nil {
+		e.panicRaised = false
+		e.panicMessage = ""
+		e.failReason = ""
+		e.originStack = append(e.originStack, loc)
+	}
+	ok := eval()
+	if e != nil {
+		e.originStack = e.originStack[:len(e.originStack)-1]
+	}
+	emittedDiag := e != nil && e.diag != nil && len(e.diag.Diagnostics()) > before
+	return ok, emittedDiag
+}
+
 func (e *ctfeEngine) rewriteFunction(mod *Module, fn *Function) {
 	if fn == nil {
 		return
@@ -61,6 +80,7 @@ func (e *ctfeEngine) rewriteFunction(mod *Module, fn *Function) {
 		}
 		e.ctfeCandidates = make(map[int]bool)
 		defs := make(map[int]Value)
+		out := make([]Instr, 0, len(block.Instructions))
 		for _, instr := range block.Instructions {
 			switch i := instr.(type) {
 			case *AssignInstr:
@@ -69,38 +89,68 @@ func (e *ctfeEngine) rewriteFunction(mod *Module, fn *Function) {
 					invalidateDefsOnUnknownMutation(fn, defs)
 				}
 				defs[i.TargetID] = i.Value
+				out = append(out, i)
 			case *ComputeInstr:
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				if valueMayMutateMemory(i.Value) {
 					invalidateDefsOnUnknownMutation(fn, defs)
 				}
 				defs[i.TargetID] = i.Value
+				out = append(out, i)
 			case *StoreInstr:
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				clear(defs)
+				out = append(out, i)
 			case *StoreFieldInstr:
 				i.Base = e.rewriteValue(mod, fn, i.Base, defs)
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				clear(defs)
+				out = append(out, i)
 			case *EvalInstr:
+				if unary, ok := i.Value.(*UnaryValue); ok && unary != nil && unary.Op == "comptime_soft" {
+					ok, emittedDiag := e.evalSoftComptime(unary.Location, func() bool {
+						unary.Right = e.rewriteValue(mod, fn, unary.Right, defs)
+						_, ok = e.evalValue(mod, fn, unary.Right, nil, defs, 0, 0)
+						return ok
+					})
+					if ok {
+						e.markComptimeValueInputs(unary.Right, defs)
+						continue
+					}
+					if ctfeDependsOnDeferredInput(fn, unary.Right, defs, nil) {
+						i.Value = unary
+						out = append(out, i)
+						continue
+					}
+					if emittedDiag {
+						i.Value = unary
+						out = append(out, i)
+					}
+					continue
+				}
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				if valueMayMutateMemory(i.Value) {
 					invalidateDefsOnUnknownMutation(fn, defs)
 				}
+				out = append(out, i)
 			case *BindInstr:
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				if valueMayMutateMemory(i.Value) {
 					invalidateDefsOnUnknownMutation(fn, defs)
 				}
+				out = append(out, i)
 			case *LockInstr:
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				clear(defs)
+				out = append(out, i)
 			case *DeferInstr:
 				for j, child := range i.Body {
 					i.Body[j] = e.rewriteDeferredInstr(mod, fn, child, defs)
 				}
+				out = append(out, i)
 			}
 		}
+		block.Instructions = out
 		block.Terminator = e.rewriteTerminator(mod, fn, block.Terminator, defs)
 		eliminateCTFEDeadTemps(fn, block, e.ctfeCandidates)
 		e.ctfeCandidates = nil
@@ -548,7 +598,7 @@ func (e *ctfeEngine) evalValue(mod *Module, fn *Function, value Value, locals ma
 			return ctfeValue{}, false
 		}
 		switch v.Op {
-		case "comptime", "copy", "take", "unsafe", "?":
+		case "comptime", "comptime_soft", "copy", "take", "unsafe", "?":
 			return right, true
 		case "!":
 			if right.kind != ctfeBool {
@@ -852,6 +902,20 @@ func (e *ctfeEngine) execFunction(mod *Module, fn *Function, args []ctfeValue, p
 				}
 				base.fields[i.FieldIndex] = value
 			case *EvalInstr:
+				if unary, ok := i.Value.(*UnaryValue); ok && unary != nil && unary.Op == "comptime_soft" {
+					ok, emittedDiag := e.evalSoftComptime(unary.Location, func() bool {
+						unary.Right = e.rewriteValue(mod, fn, unary.Right, nil)
+						_, ok = e.evalValue(mod, fn, unary.Right, locals, nil, depth, steps)
+						return ok
+					})
+					if ok {
+						continue
+					}
+					if emittedDiag {
+						return ctfeValue{}, false
+					}
+					continue
+				}
 				if _, ok := e.evalValue(mod, fn, i.Value, locals, nil, depth, steps); !ok {
 					return ctfeValue{}, false
 				}

@@ -412,7 +412,7 @@ func unwrapVoidEffectValue(value Value) (Value, bool) {
 		return v, true
 	case *UnaryValue:
 		switch v.Op {
-		case "comptime", "copy", "take", "unsafe", "?":
+		case "comptime", "comptime_soft", "copy", "take", "unsafe", "?":
 			return unwrapVoidEffectValue(v.Right)
 		default:
 			return nil, false
@@ -424,7 +424,7 @@ func unwrapVoidEffectValue(value Value) (Value, bool) {
 
 func isVoidEffectWrapperOp(op string) bool {
 	switch op {
-	case "comptime", "copy", "take", "unsafe", "?":
+	case "comptime", "comptime_soft", "copy", "take", "unsafe", "?":
 		return true
 	default:
 		return false

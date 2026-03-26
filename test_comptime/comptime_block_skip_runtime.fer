@@ -1,0 +1,15 @@
+#[extern("clock")]
+fn clock() -> i64;
+
+fn require_positive(v: i64) -> void {
+    if v < 0 {
+        panic "negative"
+    }
+}
+
+fn main() -> void {
+    let now = clock()
+    comptime {
+        require_positive(now)
+    }
+}

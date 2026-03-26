@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 6 implemented to preserve `comptime {}` block syntax while keeping current hard lowering behavior; waiting for review.
+Status: Step 7 implemented for soft `comptime {}` execution/skip behavior; waiting for review.
 
 ## Steps
 
@@ -37,7 +37,9 @@ Status: Step 6 implemented to preserve `comptime {}` block syntax while keeping 
 - [done] Implement step 5: reuse early const-eval results for `const` initializers where possible.
 - [done] Wait for review before committing step 5.
 - [done] Implement step 6: preserve `comptime {}` blocks on AST instead of rewriting them into hard prefix expressions during parsing.
-- [in_review] Wait for review before committing step 6.
+- [done] Wait for review before committing step 6.
+- [done] Implement step 7: lower `comptime {}` through a soft CTFE path that executes when values are concrete and skips silently otherwise.
+- [in_review] Wait for review before committing step 7.
 
 ## Active Task List
 
@@ -57,6 +59,8 @@ Status: Step 6 implemented to preserve `comptime {}` block syntax while keeping 
 - [done] Reuse cached early const values in HIR instead of wrapping obvious literals in `comptime`.
 - [done] Preserve `comptime {}` as block syntax on AST and reapply the current hard lowering at HIR generation.
 - [done] Verify the preserved `comptime {}` path with focused tests and a real Ferret repro.
+- [done] Distinguish soft `comptime {}` lowering from hard `comptime expr` in MIR CTFE.
+- [done] Verify soft-block skip behavior and hard-inside-soft errors with focused tests and real Ferret repros.
 
 ## Verification
 

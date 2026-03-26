@@ -417,7 +417,7 @@ func (g *generator) generateBlock(block *ast.BlockStmt) *BlockStmt {
 			if block.Comptime {
 				if exprStmt, ok := lowered.(*ExprStmt); ok && exprStmt.Value != nil {
 					expr := exprStmt.Value
-					wrapped := &PrefixExpr{Op: "comptime", Right: expr}
+					wrapped := &PrefixExpr{Op: "comptime_soft", Right: expr}
 					wrapped.ExprType, wrapped.Location, wrapped.Source = expr.Type(), expr.Loc(), expr.SourceExpr()
 					exprStmt.Value = wrapped
 				}
