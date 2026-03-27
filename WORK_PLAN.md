@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: LSP incomplete-syntax hover/type memory spike
 
-Status: Step 18 review fixes include syntax-error-safe index fallback for LSP, immutable-only CTFE local caching, CTFE method-receiver safety, and instantiated HIR local-type recovery for generic binary locals; waiting for review.
+Status: Step 18 review fixes include syntax-error-safe index fallback for LSP, Windows file-URI normalization in the LSP path bridge, immutable-only CTFE local caching, CTFE method-receiver safety, and instantiated HIR local-type recovery for generic binary locals; waiting for review.
 
 ## Steps
 
@@ -62,6 +62,7 @@ Status: Step 18 review fixes include syntax-error-safe index fallback for LSP, i
 - [done] Fix CTFE local-value caching so mutable `let` bindings are not reused as constant values after reassignment.
 - [done] Reject CTFE method calls whose selector receiver is not compile-time evaluable.
 - [done] Reuse cached/file-based LSP indexes for syntax-invalid open docs instead of returning empty hover/completion/definition results.
+- [done] Normalize Windows file URIs to local paths without duplicating the drive prefix.
 - [done] Recover specialized local binding types from instantiated HIR values so generic locals do not lower as `<unknown>`.
 - [done] Wait for review before committing step 18.
 

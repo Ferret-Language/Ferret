@@ -3189,7 +3189,7 @@ func uriToPath(uri string) (string, error) {
 	if u.Scheme != "file" {
 		return "", fmt.Errorf("unsupported uri scheme %q", u.Scheme)
 	}
-	return filepath.Clean(filepath.FromSlash(u.Path)), nil
+	return filepath.Clean(filepath.FromSlash(fileURLPath(u))), nil
 }
 
 func pathToURI(path string) (string, error) {
@@ -3197,8 +3197,41 @@ func pathToURI(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	u := &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
+	u := &url.URL{Scheme: "file", Path: fileURIPath(abs)}
 	return u.String(), nil
+}
+
+func fileURLPath(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	if u.Host != "" && u.Host != "localhost" {
+		return "//" + u.Host + u.Path
+	}
+	if hasWindowsDriveURIPath(u.Path) {
+		return u.Path[1:]
+	}
+	return u.Path
+}
+
+func fileURIPath(path string) string {
+	slash := filepath.ToSlash(path)
+	if hasWindowsDrivePath(slash) {
+		return "/" + slash
+	}
+	return slash
+}
+
+func hasWindowsDriveURIPath(path string) bool {
+	return len(path) >= 4 && path[0] == '/' && isASCIILetter(path[1]) && path[2] == ':' && path[3] == '/'
+}
+
+func hasWindowsDrivePath(path string) bool {
+	return len(path) >= 3 && isASCIILetter(path[0]) && path[1] == ':' && path[2] == '/'
+}
+
+func isASCIILetter(ch byte) bool {
+	return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
 }
 
 func max(a, b int) int {

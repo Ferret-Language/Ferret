@@ -3,6 +3,7 @@ package lsp
 import (
 	"bytes"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -174,6 +175,27 @@ func TestInitializeAdvertisesHoverDefinitionAndCompletionProvider(t *testing.T) 
 
 	if _, ok := payload.Capabilities["documentSymbolProvider"]; ok {
 		t.Fatal("expected documentSymbolProvider to be omitted")
+	}
+}
+
+func TestURIToPathStripsWindowsDriveSlash(t *testing.T) {
+	got, err := uriToPath("file:///E:/Dev/Ferret/app/main.fer")
+	if err != nil {
+		t.Fatalf("unexpected uriToPath error: %v", err)
+	}
+	want := filepath.Clean(filepath.FromSlash("E:/Dev/Ferret/app/main.fer"))
+	if got != want {
+		t.Fatalf("expected windows drive path %q, got %q", want, got)
+	}
+}
+
+func TestFileURIPathPrefixesWindowsDrive(t *testing.T) {
+	got := fileURIPath("E:/Dev/Ferret/app/main.fer")
+	if got != "/E:/Dev/Ferret/app/main.fer" {
+		t.Fatalf("expected file URI path with drive slash, got %q", got)
+	}
+	if uri := (&url.URL{Scheme: "file", Path: got}).String(); uri != "file:///E:/Dev/Ferret/app/main.fer" {
+		t.Fatalf("expected canonical windows file URI, got %q", uri)
 	}
 }
 
