@@ -2433,6 +2433,36 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerRejectsCTFEConstInitializerFromRuntimeMethodReceiver(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Token struct {}
+
+#[extern("make_token")]
+fn make_token() -> Token;
+
+fn Token::Always(&self) -> i32 {
+    return 1
+}
+
+fn main() -> i32 {
+    const y = make_token().Always()
+    return y
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected const initializer diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "constant initializer must be compile-time evaluable") {
+			return
+		}
+	}
+	t.Fatalf("expected const initializer diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
 func TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

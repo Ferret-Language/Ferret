@@ -862,33 +862,32 @@ type hoverIndex struct {
 
 func (s *Server) getOrBuildHoverIndex(uri, path string, doc openDocument, hasDoc bool) *hoverIndex {
 	if hasDoc {
-		if doc.HasSyntaxErrors {
-			return &hoverIndex{}
-		}
-		s.mu.Lock()
-		if s.hoverCache == nil {
-			s.hoverCache = make(map[string]hoverCacheEntry)
-		}
-		if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "doc" && entry.Version == doc.Version && entry.Index != nil {
-			index := entry.Index
+		if !doc.HasSyntaxErrors {
+			s.mu.Lock()
+			if s.hoverCache == nil {
+				s.hoverCache = make(map[string]hoverCacheEntry)
+			}
+			if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "doc" && entry.Version == doc.Version && entry.Index != nil {
+				index := entry.Index
+				s.mu.Unlock()
+				return index
+			}
+			s.mu.Unlock()
+
+			index := buildHoverIndex(path, doc.Text, true)
+
+			s.mu.Lock()
+			if s.hoverCache == nil {
+				s.hoverCache = make(map[string]hoverCacheEntry)
+			}
+			s.hoverCache[uri] = hoverCacheEntry{
+				Mode:    "doc",
+				Version: doc.Version,
+				Index:   index,
+			}
 			s.mu.Unlock()
 			return index
 		}
-		s.mu.Unlock()
-
-		index := buildHoverIndex(path, doc.Text, true)
-
-		s.mu.Lock()
-		if s.hoverCache == nil {
-			s.hoverCache = make(map[string]hoverCacheEntry)
-		}
-		s.hoverCache[uri] = hoverCacheEntry{
-			Mode:    "doc",
-			Version: doc.Version,
-			Index:   index,
-		}
-		s.mu.Unlock()
-		return index
 	}
 
 	stamp := fileStamp(path)

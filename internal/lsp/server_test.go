@@ -759,13 +759,28 @@ func TestHoverSkipsIndexBuildWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
 	}
 
 	uri := "file://" + filepath.ToSlash(path)
+	cachedLoc := source.NewLocation(path, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 3})
+	cachedIndex := &hoverIndex{
+		candidates: []hoverCandidate{{
+			markdown: "cached hover",
+			location: cachedLoc,
+			span:     locationSpan(cachedLoc),
+			priority: 1,
+		}},
+	}
 	var out bytes.Buffer
 	s := &Server{
 		out: &out,
 		documents: map[string]openDocument{
 			uri: {Version: 7, Text: "fn main(", HasSyntaxErrors: true},
 		},
-		hoverCache: make(map[string]hoverCacheEntry),
+		hoverCache: map[string]hoverCacheEntry{
+			uri: {
+				Mode:      "file",
+				FileStamp: fileStamp(path),
+				Index:     cachedIndex,
+			},
+		},
 	}
 
 	req := rpcRequest{
@@ -781,6 +796,10 @@ func TestHoverSkipsIndexBuildWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
 
 	if calls != 0 {
 		t.Fatalf("expected hover parse to be skipped on syntax-invalid open doc, got %d calls", calls)
+	}
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil || hover.Contents.Value != "cached hover" {
+		t.Fatalf("expected cached hover fallback on syntax-invalid open doc, got %#v", hover)
 	}
 }
 

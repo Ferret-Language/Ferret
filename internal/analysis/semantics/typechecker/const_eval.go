@@ -301,6 +301,20 @@ func (c *checker) constCall(mod *context.Module, call *ast.CallExpr, state *cons
 	frame := state.callFrame()
 	state.activeFn[fn] = true
 	defer delete(state.activeFn, fn)
+	if selector, ok := call.Callee.(*ast.SelectorExpr); ok && selector != nil && !fn.IsStatic {
+		if fn.Receiver == nil || fn.Receiver.Name == nil {
+			return typeinfo.ConstValue{}, false
+		}
+		receiverValue, ok := c.constExprIn(mod, selector.Left, state)
+		if !ok {
+			return typeinfo.ConstValue{}, false
+		}
+		receiverRes := c.lookupTypeResolution(owner, fn.Receiver.Name)
+		if receiverRes == nil || receiverRes.Symbol == nil {
+			return typeinfo.ConstValue{}, false
+		}
+		frame.bind(receiverRes.Symbol, receiverValue)
+	}
 	if len(fn.Params) != len(args) {
 		return typeinfo.ConstValue{}, false
 	}

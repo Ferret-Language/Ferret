@@ -2949,7 +2949,13 @@ func (c *checker) isConstExpr(scope *refineScope, expr ast.Expr) bool {
 			return false
 		}
 		fn, ok := res.Symbol.Node.(*ast.FuncDecl)
-		return ok && fn != nil && !fn.IsExtern
+		if !ok || fn == nil || fn.IsExtern {
+			return false
+		}
+		if selector, ok := e.Callee.(*ast.SelectorExpr); ok && selector != nil && !fn.IsStatic {
+			return c.isConstExpr(scope, selector.Left)
+		}
+		return true
 	case *ast.CastExpr:
 		return c.isConstExpr(scope, e.Left)
 	case *ast.CompositeLit:
