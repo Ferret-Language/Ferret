@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: LSP incomplete-syntax hover/type memory spike
 
-Status: Step 18 review fixes include syntax-gated hover stability and immutable-only CTFE local caching; waiting for review.
+Status: Step 18 review fixes include syntax-gated hover stability, immutable-only CTFE local caching, and instantiated HIR local-type recovery for generic binary locals; waiting for review.
 
 ## Steps
 
@@ -60,6 +60,7 @@ Status: Step 18 review fixes include syntax-gated hover stability and immutable-
 - [in_review] Wait for review before committing step 17.
 - [done] Implement step 18: eliminate runaway LSP memory use triggered by hover plus incomplete-syntax editing.
 - [done] Fix CTFE local-value caching so mutable `let` bindings are not reused as constant values after reassignment.
+- [done] Recover specialized local binding types from instantiated HIR values so generic locals do not lower as `<unknown>`.
 - [in_review] Wait for review before committing step 18.
 
 ## Active Task List
