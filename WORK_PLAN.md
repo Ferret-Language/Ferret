@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 12 deferred array-length cleanup is complete; waiting for review.
+Status: Step 13 early const-eval loop support is complete; waiting for review.
 
 ## Steps
 
@@ -52,7 +52,9 @@ Status: Step 12 deferred array-length cleanup is complete; waiting for review.
 - [done] Add a single repro file covering the currently supported comptime surface.
 - [done] Wait for review before committing step 11.
 - [done] Remove leftover deferred array-length scaffolding that is no longer used by strict array typing.
-- [in_review] Wait for review before committing step 12.
+- [done] Wait for review before committing step 12.
+- [done] Extend early const evaluation with simple loop-carried mutation for CTFE-safe helper calls.
+- [in_review] Wait for review before committing step 13.
 
 ## Active Task List
 
@@ -80,6 +82,7 @@ Status: Step 12 deferred array-length cleanup is complete; waiting for review.
 - [done] Evaluate CTFE-safe const calls on demand during typing so cached const values can flow into later array-length checks.
 - [done] Keep one runnable Ferret repro that documents the currently supported comptime behavior end to end.
 - [done] Remove dead `ArrayLenDeferred` / `SizeExpr` bookkeeping now that array lengths are resolved during typing.
+- [done] Support `while`-based local helper functions in on-demand const evaluation for `const` initializers and strict array lengths.
 
 ## Verification
 
@@ -93,9 +96,13 @@ Status: Step 12 deferred array-length cleanup is complete; waiting for review.
 - `./build/core/bin/ferret check test_comptime/comptime_block_hard_inside_soft_fail.fer`
 - `./build/core/bin/ferret run:llvm test_comptime/comptime_works.fer`
 - `./build/core/bin/ferret run:qbe test_comptime/comptime_works.fer`
+- `./build/core/bin/ferret run:llvm test_comptime/const_while_loop.fer`
+- `./build/core/bin/ferret run:qbe test_comptime/const_while_loop.fer`
 - `./build/core/bin/ferret check tuple.fer`
 - `go test ./internal/analysis/semantics/typechecker ./internal/ir/mir ./internal/ir/hir -count=1`
 - `go test ./internal/analysis/semantics/typeinfo ./internal/analysis/semantics/typechecker -run 'TestTypecheckerResolvesArrayLengthFromConstExpr|TestTypecheckerResolvesArrayLengthFromImportedConst|TestTypecheckerRejectsRuntimeArrayLength|TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall|TestInstantiateTypeHandlesRecursiveStruct|TestRefAndRawTypeString|TestEqualRefAndRawTypes' -count=1`
+- `go test ./internal/analysis/semantics/typechecker -run 'TestTypecheckerAllowsCTFEConstInitializerFromLocalValue|TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall|TestTypecheckerAllowsCTFEConstInitializerFromLocalWhileLoopCall|TestTypecheckerRejectsNonCTFEConstInitializer' -count=1`
+- `go test ./internal/driver -run 'TestParsePathForIDERejectsRuntimeConstInitializer|TestParsePathForIDEAllowsPotentialCTFEConstCall' -count=1`
 
 Observed results:
 
@@ -105,6 +112,7 @@ Observed results:
 - `comptime_block_skip_runtime.fer` passed with no diagnostics.
 - `comptime_block_hard_inside_soft_fail.fer` failed with the expected hard comptime diagnostic.
 - `comptime_works.fer` passed on both LLVM and QBE.
+- `const_while_loop.fer` passed on both LLVM and QBE.
 - `tuple.fer` still typechecked successfully after removing the dead deferred-array metadata.
 - The broader touched packages (`typechecker`, `mir`, `hir`) passed under the memory cap.
 

@@ -20,6 +20,7 @@ func (c *checker) constExpr(mod *context.Module, expr ast.Expr, seen map[ast.Nod
 }
 
 type constEvalState struct {
+	parent   *constEvalState
 	env      map[symbols.SymbolID]typeinfo.ConstValue
 	seen     map[ast.Node]bool
 	activeFn map[*ast.FuncDecl]bool
@@ -32,23 +33,38 @@ func (s *constEvalState) scoped() *constEvalState {
 			activeFn: make(map[*ast.FuncDecl]bool),
 		}
 	}
-	env := make(map[symbols.SymbolID]typeinfo.ConstValue, len(s.env))
-	for id, value := range s.env {
-		env[id] = value
+	return &constEvalState{
+		parent:   s,
+		env:      make(map[symbols.SymbolID]typeinfo.ConstValue),
+		seen:     s.seen,
+		activeFn: s.activeFn,
+	}
+}
+
+func (s *constEvalState) callFrame() *constEvalState {
+	if s == nil {
+		return &constEvalState{
+			env:      make(map[symbols.SymbolID]typeinfo.ConstValue),
+			activeFn: make(map[*ast.FuncDecl]bool),
+		}
 	}
 	return &constEvalState{
-		env:      env,
+		env:      make(map[symbols.SymbolID]typeinfo.ConstValue),
 		seen:     s.seen,
 		activeFn: s.activeFn,
 	}
 }
 
 func (s *constEvalState) lookup(sym *symbols.Symbol) (typeinfo.ConstValue, bool) {
-	if s == nil || sym == nil || s.env == nil {
-		return typeinfo.ConstValue{}, false
+	for cur := s; cur != nil; cur = cur.parent {
+		if cur.env == nil || sym == nil {
+			continue
+		}
+		if value, ok := cur.env[sym.ID]; ok {
+			return value, true
+		}
 	}
-	value, ok := s.env[sym.ID]
-	return value, ok
+	return typeinfo.ConstValue{}, false
 }
 
 func (s *constEvalState) bind(sym *symbols.Symbol, value typeinfo.ConstValue) {
@@ -60,6 +76,39 @@ func (s *constEvalState) bind(sym *symbols.Symbol, value typeinfo.ConstValue) {
 	}
 	s.env[sym.ID] = value
 }
+
+func (s *constEvalState) assign(sym *symbols.Symbol, value typeinfo.ConstValue) bool {
+	if s == nil || sym == nil || !value.Valid() {
+		return false
+	}
+	for cur := s; cur != nil; cur = cur.parent {
+		if cur.env == nil {
+			continue
+		}
+		if _, ok := cur.env[sym.ID]; ok {
+			cur.env[sym.ID] = value
+			return true
+		}
+	}
+	return false
+}
+
+type constFlow uint8
+
+const (
+	constFlowNone constFlow = iota
+	constFlowReturn
+	constFlowBreak
+	constFlowContinue
+)
+
+type constExecResult struct {
+	value typeinfo.ConstValue
+	flow  constFlow
+	ok    bool
+}
+
+const constEvalMaxLoopIterations = 10000
 
 func (c *checker) constExprIn(mod *context.Module, expr ast.Expr, state *constEvalState) (typeinfo.ConstValue, bool) {
 	switch e := expr.(type) {
@@ -220,7 +269,7 @@ func (c *checker) constCall(mod *context.Module, call *ast.CallExpr, state *cons
 	if state.activeFn[fn] {
 		return typeinfo.ConstValue{}, false
 	}
-	frame := state.scoped()
+	frame := state.callFrame()
 	state.activeFn[fn] = true
 	defer delete(state.activeFn, fn)
 	if len(fn.Params) != len(args) {
@@ -233,72 +282,111 @@ func (c *checker) constCall(mod *context.Module, call *ast.CallExpr, state *cons
 		}
 		frame.bind(res.Symbol, args[i])
 	}
-	value, returned, ok := c.constBlockResult(owner, fn.Body, frame)
-	if !ok || !returned {
+	result := c.constBlockResult(owner, fn.Body, frame)
+	if !result.ok || result.flow != constFlowReturn {
 		return typeinfo.ConstValue{}, false
 	}
-	return value, true
+	return result.value, true
 }
 
-func (c *checker) constBlockResult(mod *context.Module, block *ast.BlockStmt, state *constEvalState) (typeinfo.ConstValue, bool, bool) {
+func (c *checker) constBlockResult(mod *context.Module, block *ast.BlockStmt, state *constEvalState) constExecResult {
 	if block == nil {
-		return typeinfo.ConstValue{}, false, false
+		return constExecResult{ok: false}
 	}
+	scope := state.scoped()
 	for _, stmt := range block.Stmts {
-		value, returned, ok := c.constStmtResult(mod, stmt, state)
-		if !ok {
-			return typeinfo.ConstValue{}, false, false
-		}
-		if returned {
-			return value, true, true
+		result := c.constStmtResult(mod, stmt, scope)
+		if !result.ok || result.flow != constFlowNone {
+			return result
 		}
 	}
-	return typeinfo.ConstValue{}, false, true
+	return constExecResult{ok: true}
 }
 
-func (c *checker) constStmtResult(mod *context.Module, stmt ast.Stmt, state *constEvalState) (typeinfo.ConstValue, bool, bool) {
+func (c *checker) constStmtResult(mod *context.Module, stmt ast.Stmt, state *constEvalState) constExecResult {
 	switch s := stmt.(type) {
 	case nil:
-		return typeinfo.ConstValue{}, false, true
+		return constExecResult{ok: true}
 	case *ast.BlockStmt:
-		return c.constBlockResult(mod, s, state.scoped())
+		return c.constBlockResult(mod, s, state)
 	case *ast.LetStmt:
 		value, ok := c.constExprIn(mod, s.Value, state)
 		if !ok {
-			return typeinfo.ConstValue{}, false, false
+			return constExecResult{ok: false}
 		}
 		if res := c.lookupTypeResolution(mod, s.Name); res != nil && res.Symbol != nil {
 			state.bind(res.Symbol, value)
 		}
-		return typeinfo.ConstValue{}, false, true
+		return constExecResult{ok: true}
 	case *ast.ConstStmt:
 		value, ok := c.constExprIn(mod, s.Value, state)
 		if !ok {
-			return typeinfo.ConstValue{}, false, false
+			return constExecResult{ok: false}
 		}
 		if res := c.lookupTypeResolution(mod, s.Name); res != nil && res.Symbol != nil {
 			state.bind(res.Symbol, value)
 		}
-		return typeinfo.ConstValue{}, false, true
+		return constExecResult{ok: true}
 	case *ast.ReturnStmt:
 		value, ok := c.constExprIn(mod, s.Value, state)
-		return value, ok, ok
+		return constExecResult{value: value, flow: constFlowReturn, ok: ok}
 	case *ast.ExprStmt:
 		_, ok := c.constExprIn(mod, s.Value, state)
-		return typeinfo.ConstValue{}, false, ok
+		return constExecResult{ok: ok}
+	case *ast.AssignStmt:
+		value, ok := c.constExprIn(mod, s.Right, state)
+		if !ok {
+			return constExecResult{ok: false}
+		}
+		ident, ok := s.Left.(*ast.Ident)
+		if !ok {
+			return constExecResult{ok: false}
+		}
+		res := c.lookupTypeResolution(mod, ident)
+		if res == nil || res.Symbol == nil || !state.assign(res.Symbol, value) {
+			return constExecResult{ok: false}
+		}
+		return constExecResult{ok: true}
 	case *ast.IfStmt:
 		cond, ok := c.constExprIn(mod, s.Cond, state)
 		if !ok || cond.Kind != typeinfo.ConstBool {
-			return typeinfo.ConstValue{}, false, false
+			return constExecResult{ok: false}
 		}
 		if cond.Bool {
-			return c.constBlockResult(mod, s.Then, state.scoped())
+			return c.constBlockResult(mod, s.Then, state)
 		}
 		if s.Else == nil {
-			return typeinfo.ConstValue{}, false, true
+			return constExecResult{ok: true}
 		}
-		return c.constStmtResult(mod, s.Else, state.scoped())
+		return c.constStmtResult(mod, s.Else, state)
+	case *ast.WhileStmt:
+		for i := 0; i < constEvalMaxLoopIterations; i++ {
+			cond, ok := c.constExprIn(mod, s.Cond, state)
+			if !ok || cond.Kind != typeinfo.ConstBool {
+				return constExecResult{ok: false}
+			}
+			if !cond.Bool {
+				return constExecResult{ok: true}
+			}
+			result := c.constBlockResult(mod, s.Body, state)
+			if !result.ok {
+				return result
+			}
+			switch result.flow {
+			case constFlowNone, constFlowContinue:
+				continue
+			case constFlowBreak:
+				return constExecResult{ok: true}
+			case constFlowReturn:
+				return result
+			}
+		}
+		return constExecResult{ok: false}
+	case *ast.BreakStmt:
+		return constExecResult{flow: constFlowBreak, ok: true}
+	case *ast.ContinueStmt:
+		return constExecResult{flow: constFlowContinue, ok: true}
 	default:
-		return typeinfo.ConstValue{}, false, false
+		return constExecResult{ok: false}
 	}
 }

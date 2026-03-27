@@ -2385,6 +2385,40 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerAllowsCTFEConstInitializerFromLocalWhileLoopCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn sumTo(limit: i32) -> i32 {
+    let mut i = 0
+    let mut sum = 0
+    while i < limit {
+        sum = sum + i
+        i = i + 1
+    }
+    return sum
+}
+
+fn main() -> i32 {
+    let limit = 5
+    const total = sumTo(limit)
+    let arr: [total]i32
+    return arr[0]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected while-loop const initializer to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letArr := mainFn.Body.Stmts[2].(*ast.LetStmt)
+	arrType := result.Entry.Types.Symbols[result.Entry.Bindings.Nodes[letArr.Name].Symbol.ID]
+	arr, ok := arrType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 10 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected arr type [10]i32, got %T %#v", arrType, arrType)
+	}
+}
+
 func TestTypecheckerComptimePrefixExpressionFoldsInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
