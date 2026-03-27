@@ -87,6 +87,9 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 	}
 	typeParams := c.pushTypeParams(c.mod, d, d.TypeParams)
 	defer c.popTypeParams()
+	if len(d.TypeParams) > 0 && d.Type != nil {
+		c.checkCanonicalGenericSelfUse(c.mod, d, d.Type)
+	}
 	for i, param := range d.TypeParams {
 		if i >= len(typeParams) {
 			continue
@@ -260,6 +263,9 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		return
 	}
 	ownerMod, ownerDecl := c.ownerTypeDeclForFunc(c.mod, d)
+	if d.OwnerType != nil && ownerDecl != nil && len(ownerDecl.TypeParams) > 0 && !canonicalGenericUseMatchesDecl(d.OwnerType, ownerDecl) {
+		c.reportInvalidGenericUse(d.OwnerType, ownerDecl, fmt.Sprintf("attached methods for generic type %q must use the declaration type parameters", ownerDecl.Name.Text()))
+	}
 	if ownerDecl != nil && len(ownerDecl.TypeParams) > 0 {
 		c.pushTypeParams(ownerMod, ownerDecl, ownerDecl.TypeParams)
 		defer c.popTypeParams()
@@ -1038,7 +1044,7 @@ func (c *checker) typeOfPostfix(scope *refineScope, expr *ast.PostfixExpr) typei
 }
 
 func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {
-	if c.isForeignLenCall(expr.Callee) {
+	if c.isForeignLenCall(c.mod, expr.Callee) {
 		return c.typeOfBuiltinLen(scope, expr)
 	}
 	if c.isCompileErrorCall(expr.Callee) && c.comptimeDepth == 0 {
@@ -1134,8 +1140,8 @@ func (c *checker) typeOfBuiltinLen(scope *refineScope, expr *ast.CallExpr) typei
 	return result
 }
 
-func (c *checker) isForeignLenCall(callee ast.Expr) bool {
-	res := c.lookupResolution(callee)
+func (c *checker) isForeignLenCall(mod *context.Module, callee ast.Expr) bool {
+	res := c.lookupTypeResolution(mod, callee)
 	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 		return false
 	}
@@ -2298,7 +2304,7 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 	if arrType, ok := base.(*typeinfo.ArrayType); ok {
 		actual := arrType
 		if arrType.Len == typeinfo.ArrayLenInferred {
-			actual = &typeinfo.ArrayType{Inner: arrType.Inner, Len: int64(len(expr.Items)), SizeExpr: arrType.SizeExpr}
+			actual = &typeinfo.ArrayType{Inner: arrType.Inner, Len: int64(len(expr.Items))}
 		}
 		for i, item := range expr.Items {
 			if item.Name != nil {
@@ -2935,7 +2941,7 @@ func (c *checker) isConstExpr(scope *refineScope, expr ast.Expr) bool {
 				return false
 			}
 		}
-		if c.isForeignLenCall(e.Callee) {
+		if c.isForeignLenCall(c.mod, e.Callee) {
 			return true
 		}
 		res := c.lookupResolution(e.Callee)
@@ -2943,7 +2949,13 @@ func (c *checker) isConstExpr(scope *refineScope, expr ast.Expr) bool {
 			return false
 		}
 		fn, ok := res.Symbol.Node.(*ast.FuncDecl)
-		return ok && fn != nil && !fn.IsExtern
+		if !ok || fn == nil || fn.IsExtern {
+			return false
+		}
+		if selector, ok := e.Callee.(*ast.SelectorExpr); ok && selector != nil && !fn.IsStatic {
+			return c.isConstExpr(scope, selector.Left)
+		}
+		return true
 	case *ast.CastExpr:
 		return c.isConstExpr(scope, e.Left)
 	case *ast.CompositeLit:
@@ -2982,7 +2994,7 @@ func (c *checker) isConstIdent(_ *refineScope, ident *ast.Ident) bool {
 	if owner != nil && owner != c.mod {
 		info = owner.Types
 	}
-	if info != nil {
+	if info != nil && allowsConstValueCache(res.Symbol.Node) {
 		if _, ok := info.LookupConstValue(res.Symbol.Node); ok {
 			return true
 		}

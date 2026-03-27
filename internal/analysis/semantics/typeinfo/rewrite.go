@@ -63,7 +63,7 @@ func rewriteType(typ Type, pre, post func(Type) Type, seen map[Type]Type) Type {
 		copy.Value = rewriteType(t.Value, pre, post, seen)
 		out = copy
 	case *ArrayType:
-		copy := &ArrayType{Len: t.Len, SizeExpr: t.SizeExpr}
+		copy := &ArrayType{Len: t.Len}
 		seen[typ] = copy
 		copy.Inner = rewriteType(t.Inner, pre, post, seen)
 		out = copy

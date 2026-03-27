@@ -271,6 +271,56 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineRecoversGenericLocalBindingTypeDuringSpecialization(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
+fn add<T>(a: T, b: T) -> T {
+    let res = a + b
+    return res
+}
+
+fn main() -> void {
+    print(add(1, 3))
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.LoweredHIR == nil {
+		t.Fatal("expected lowered HIR module")
+	}
+
+	var specialized *hir.Func
+	for _, fn := range result.Entry.LoweredHIR.Functions {
+		if fn != nil && strings.HasPrefix(fn.Name, "add$") {
+			specialized = fn
+			break
+		}
+	}
+	if specialized == nil || specialized.Body == nil || len(specialized.Body.Stmts) < 2 {
+		t.Fatalf("expected specialized add function body, got %#v", specialized)
+	}
+	letRes, ok := specialized.Body.Stmts[0].(*hir.LetStmt)
+	if !ok {
+		t.Fatalf("expected specialized let stmt, got %T", specialized.Body.Stmts[0])
+	}
+	if letRes.Type == nil || letRes.Type.String() != "i32" {
+		t.Fatalf("expected specialized local binding type i32, got %#v", letRes.Type)
+	}
+	if letRes.Value == nil || letRes.Value.Type() == nil || letRes.Value.Type().String() != "i32" {
+		t.Fatalf("expected specialized local binding value type i32, got %#v", letRes.Value)
+	}
+}
+
 func TestPipelineSpecializesGenericMethodsAndTypes(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "main.fer"), `

@@ -119,7 +119,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.ErrorUnionType:
 		return &typeinfo.ErrorUnionType{Error: c.typeFromSyntax(mod, t.Error), Value: c.typeFromSyntax(mod, t.Value)}
 	case *ast.ArrayType:
-		return &typeinfo.ArrayType{Inner: c.typeFromSyntax(mod, t.Inner), Len: c.arrayLength(mod, t.Size), SizeExpr: t.Size}
+		return &typeinfo.ArrayType{Inner: c.typeFromSyntax(mod, t.Inner), Len: c.arrayLength(mod, t.Size)}
 	case *ast.SliceType:
 		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.TupleType:

@@ -63,11 +63,9 @@ compiler = "<=%s"
 	}
 
 	if _, err := os.Stat("main.fer"); os.IsNotExist(err) {
-		mainContent := `import "std/io"
-
-fn main() i32 {
-	io::Println("Hello from Ferret!")
-	return 0
+		mainContent := `
+fn main() {
+	print("Hello from Ferret!")
 }
 `
 		if err := os.WriteFile("main.fer", []byte(mainContent), 0o644); err != nil {

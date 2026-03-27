@@ -387,14 +387,24 @@ func (s *specializer) cloneStmt(stmt Stmt, bindings map[*typeinfo.TypeParam]type
 	case *LetStmt:
 		out := *st
 		out.Type = s.substituteType(st.Type, bindings)
-		s.requestInterfaceMethodSpecializations(st.Value, st.Type, bindings)
 		out.Value = s.cloneExpr(st.Value, bindings)
+		if (out.Type == nil || typeinfo.IsUnknown(out.Type)) && out.Value != nil {
+			if valueType := out.Value.Type(); valueType != nil && !typeinfo.IsUnknown(valueType) && !typeinfo.IsInvalid(valueType) {
+				out.Type = valueType
+			}
+		}
+		s.requestInterfaceMethodSpecializations(out.Value, out.Type, bindings)
 		return &out
 	case *ConstStmt:
 		out := *st
 		out.Type = s.substituteType(st.Type, bindings)
-		s.requestInterfaceMethodSpecializations(st.Value, st.Type, bindings)
 		out.Value = s.cloneExpr(st.Value, bindings)
+		if (out.Type == nil || typeinfo.IsUnknown(out.Type)) && out.Value != nil {
+			if valueType := out.Value.Type(); valueType != nil && !typeinfo.IsUnknown(valueType) && !typeinfo.IsInvalid(valueType) {
+				out.Type = valueType
+			}
+		}
+		s.requestInterfaceMethodSpecializations(out.Value, out.Type, bindings)
 		return &out
 	case *ReturnStmt:
 		out := *st

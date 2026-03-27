@@ -726,6 +726,59 @@ fn main() -> void {
 	}
 }
 
+func TestTypecheckerRejectsNonCanonicalRecursiveGenericSelfUse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Node<T> struct {
+    Next: ?*Node<Node<T>>
+    Value: T
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected recursive generic self-use diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "must preserve declaration type parameters") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected canonical recursive generic diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNonCanonicalGenericMethodOwner(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Point<T> struct {
+    X: T
+}
+
+fn Point<i32>::Incr(&mut self, dx: i32) -> void {
+    self.X += dx
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected canonical generic owner diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "attached methods for generic type") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected canonical generic owner diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerInfersGenericCompositeLiteralTypeArgs(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
@@ -2329,6 +2382,29 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerRejectsCTFEConstInitializerFromMutatedLocalValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let mut x = 1
+    x = 2
+    const y = x
+    return y
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected mutable local const initializer diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "constant initializer must be compile-time evaluable") {
+			return
+		}
+	}
+	t.Fatalf("expected const initializer diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
 func TestTypecheckerRejectsNonCTFEConstInitializer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
@@ -2354,6 +2430,157 @@ fn main() -> i32 {
 	}
 	if !found {
 		t.Fatalf("expected const-evaluable diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsCTFEConstInitializerFromRuntimeMethodReceiver(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Token struct {}
+
+#[extern("make_token")]
+fn make_token() -> Token;
+
+fn Token::Always(&self) -> i32 {
+    return 1
+}
+
+fn main() -> i32 {
+    const y = make_token().Always()
+    return y
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected const initializer diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "constant initializer must be compile-time evaluable") {
+			return
+		}
+	}
+	t.Fatalf("expected const initializer diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
+func TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn pairSum(pair: (i32, i32)) -> i32 {
+    return pair[0] + pair[1]
+}
+
+fn main() -> i32 {
+    let ints: (i32, i32) = (3, 4)
+    const ress = pairSum(ints)
+    let arr: [ress]i32
+    return arr[0]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected on-demand CTFE const initializer to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letArr := mainFn.Body.Stmts[2].(*ast.LetStmt)
+	arrType := result.Entry.Types.Symbols[result.Entry.Bindings.Nodes[letArr.Name].Symbol.ID]
+	arr, ok := arrType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 7 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected arr type [7]i32, got %T %#v", arrType, arrType)
+	}
+}
+
+func TestTypecheckerAllowsShortCircuitConstInitializer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> bool {
+    const a = true || (1 / 0 == 0)
+    const b = false && (1 / 0 == 0)
+    return a && !b
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected short-circuit const initializers to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsExplicitTypeArgsInConstCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn id<T>(x: T) -> T {
+    return x
+}
+
+fn main() -> i32 {
+    const n = id<i32>(3)
+    let arr: [n]i32
+    return arr[0]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected explicit generic type args in const call to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsImportedLenCallInConstInitializer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+import "util"
+
+fn main() -> i32 {
+    const n = util::Size()
+    let arr: [n]i32
+    return arr[0]
+}
+`)
+	mustWriteType(t, filepath.Join(root, "util.fer"), `
+fn Size() -> usize {
+    return len("abcd")
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected imported len const initializer to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsCTFEConstInitializerFromLocalWhileLoopCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn sumTo(limit: i32) -> i32 {
+    let mut i = 0
+    let mut sum = 0
+    while i < limit {
+        sum = sum + i
+        i = i + 1
+    }
+    return sum
+}
+
+fn main() -> i32 {
+    let limit = 5
+    const total = sumTo(limit)
+    let arr: [total]i32
+    return arr[0]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected while-loop const initializer to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letArr := mainFn.Body.Stmts[2].(*ast.LetStmt)
+	arrType := result.Entry.Types.Symbols[result.Entry.Bindings.Nodes[letArr.Name].Symbol.ID]
+	arr, ok := arrType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 10 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected arr type [10]i32, got %T %#v", arrType, arrType)
 	}
 }
 
@@ -3664,7 +3891,7 @@ fn main() -> i32 {
 	}
 }
 
-func TestTypecheckerResolvesDeferredArrayLengthFromConstExpr(t *testing.T) {
+func TestTypecheckerResolvesArrayLengthFromConstExpr(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 const BASE = 2
@@ -3688,7 +3915,7 @@ fn main(items: [BASE + EXTRA]i32) -> i32 {
 	}
 }
 
-func TestTypecheckerResolvesDeferredArrayLengthFromImportedConst(t *testing.T) {
+func TestTypecheckerResolvesArrayLengthFromImportedConst(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "sizes.fer"), `
 const COUNT = 3

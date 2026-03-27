@@ -220,6 +220,9 @@ func (p *Pipeline) runAllSemanticPasses() error {
 		}
 		p.runSemanticFrontPasses(mod)
 	}
+	if p.ctx.Diagnostics.HasErrors() {
+		return nil
+	}
 	p.runHIRLoweringAndSpecialization(sorted)
 	for _, mod := range sorted {
 		if mod == nil || mod.Phase < phase.PhaseHIRLowered {

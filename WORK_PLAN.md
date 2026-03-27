@@ -11,9 +11,9 @@ This file is the pause/resume tracker for active compiler work.
 
 ## Current Focus
 
-Topic: Comptime redesign and related compiler behavior
+Topic: LSP incomplete-syntax hover/type memory spike
 
-Status: Step 9 PR review feedback fixes are complete.
+Status: Step 18 review fixes include syntax-error-safe index fallback for LSP, Windows file-URI normalization in the LSP path bridge, immutable-only CTFE local caching, CTFE method-receiver safety, and instantiated HIR local-type recovery for generic binary locals; waiting for review.
 
 ## Steps
 
@@ -46,6 +46,25 @@ Status: Step 9 PR review feedback fixes are complete.
 - [done] Implement PR review feedback fixes for comptime migration.
 - [done] Verify PR review feedback fixes with focused tests.
 - [done] Wait for review before committing step 9.
+- [done] Implement step 10: on-demand CTFE for const initializers during typechecking.
+- [done] Verify step 10 with focused tests and a tuple repro.
+- [done] Commit step 10 after approval.
+- [done] Add a single repro file covering the currently supported comptime surface.
+- [done] Wait for review before committing step 11.
+- [done] Remove leftover deferred array-length scaffolding that is no longer used by strict array typing.
+- [done] Wait for review before committing step 12.
+- [done] Extend early const evaluation with simple loop-carried mutation for CTFE-safe helper calls.
+- [done] Implement step 14: reject non-canonical generic self-use/owner syntax in the front-end and stop before lowering on semantic errors.
+- [done] Implement step 16: show generic params in declaration hovers.
+- [done] Implement step 17: fix early const-eval short-circuiting, explicit generic type args, and imported builtin len resolution.
+- [done] Wait for review before committing step 17.
+- [done] Implement step 18: eliminate runaway LSP memory use triggered by hover plus incomplete-syntax editing.
+- [done] Fix CTFE local-value caching so mutable `let` bindings are not reused as constant values after reassignment.
+- [done] Reject CTFE method calls whose selector receiver is not compile-time evaluable.
+- [done] Reuse cached/file-based LSP indexes for syntax-invalid open docs instead of returning empty hover/completion/definition results.
+- [done] Normalize Windows file URIs to local paths without duplicating the drive prefix.
+- [done] Recover specialized local binding types from instantiated HIR values so generic locals do not lower as `<unknown>`.
+- [done] Wait for review before committing step 18.
 
 ## Active Task List
 
@@ -70,6 +89,16 @@ Status: Step 9 PR review feedback fixes are complete.
 - [done] Re-run the broader touched packages after the soft-block changes.
 - [done] Update the persistent plan with the current comptime status and validation coverage.
 - [done] Fix PR review feedback around IDE const diagnostics, stale const-index diagnostics, interface-method parser recovery, and documentation cleanup.
+- [done] Evaluate CTFE-safe const calls on demand during typing so cached const values can flow into later array-length checks.
+- [done] Keep one runnable Ferret repro that documents the currently supported comptime behavior end to end.
+- [done] Remove dead `ArrayLenDeferred` / `SizeExpr` bookkeeping now that array lengths are resolved during typing.
+- [done] Support `while`-based local helper functions in on-demand const evaluation for `const` initializers and strict array lengths.
+- [done] Reject `Node<Node<T>>`-style self-use and `Point<i32>::Method`-style owner syntax by matching generic uses against the declared parameter shape.
+- [done] Stop the full pipeline after semantic front-end errors so invalid generic shapes cannot reach lowering/specialization.
+- [done] Preserve short-circuit semantics in early CTFE boolean ops.
+- [done] Allow explicit generic type args in const-evaluable calls.
+- [done] Resolve builtin `len(...)` during early CTFE using the evaluated module context.
+- [done] Identify and fix the shared LSP open-document parse path that can recurse or fan out under incomplete syntax.
 
 ## Verification
 
@@ -81,7 +110,19 @@ Status: Step 9 PR review feedback fixes are complete.
 - `./build/core/bin/ferret check test_comptime/const_runtime_call_should_fail.fer`
 - `./build/core/bin/ferret check test_comptime/comptime_block_skip_runtime.fer`
 - `./build/core/bin/ferret check test_comptime/comptime_block_hard_inside_soft_fail.fer`
+- `./build/core/bin/ferret run:llvm test_comptime/comptime_works.fer`
+- `./build/core/bin/ferret run:qbe test_comptime/comptime_works.fer`
+- `./build/core/bin/ferret run:llvm test_comptime/const_while_loop.fer`
+- `./build/core/bin/ferret run:qbe test_comptime/const_while_loop.fer`
+- `./build/core/bin/ferret check tuple.fer`
 - `go test ./internal/analysis/semantics/typechecker ./internal/ir/mir ./internal/ir/hir -count=1`
+- `go test ./internal/analysis/semantics/typeinfo ./internal/analysis/semantics/typechecker -run 'TestTypecheckerResolvesArrayLengthFromConstExpr|TestTypecheckerResolvesArrayLengthFromImportedConst|TestTypecheckerRejectsRuntimeArrayLength|TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall|TestInstantiateTypeHandlesRecursiveStruct|TestRefAndRawTypeString|TestEqualRefAndRawTypes' -count=1`
+- `go test ./internal/analysis/semantics/typechecker -run 'TestTypecheckerAllowsCTFEConstInitializerFromLocalValue|TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall|TestTypecheckerAllowsCTFEConstInitializerFromLocalWhileLoopCall|TestTypecheckerRejectsNonCTFEConstInitializer' -count=1`
+- `go test ./internal/analysis/semantics/typechecker -run 'TestTypecheckerAllowsShortCircuitConstInitializer|TestTypecheckerAllowsExplicitTypeArgsInConstCall|TestTypecheckerAllowsImportedLenCallInConstInitializer' -count=1`
+- `go test ./internal/analysis/semantics/typechecker -run 'TestTypecheckerRejectsNonCanonicalRecursiveGenericSelfUse|TestTypecheckerRejectsNonCanonicalGenericMethodOwner|TestTypecheckerInfersOwnerTypeArgsForStaticGenericMethodCall' -count=1`
+- `go test ./internal/driver -run 'TestParsePathRejectsNonCanonicalRecursiveGenericSelfUseBeforeLowering' -count=1`
+- `GOCACHE=$(pwd)/.gocache timeout 5s go run ./cmd/ferret check /tmp/ferret_generic_stress/main.fer`
+- `go test ./internal/driver -run 'TestParsePathForIDERejectsRuntimeConstInitializer|TestParsePathForIDEAllowsPotentialCTFEConstCall' -count=1`
 
 Observed results:
 
@@ -90,7 +131,11 @@ Observed results:
 - `const_runtime_call_should_fail.fer` failed as expected through the CTFE path.
 - `comptime_block_skip_runtime.fer` passed with no diagnostics.
 - `comptime_block_hard_inside_soft_fail.fer` failed with the expected hard comptime diagnostic.
+- `comptime_works.fer` passed on both LLVM and QBE.
+- `const_while_loop.fer` passed on both LLVM and QBE.
+- `tuple.fer` still typechecked successfully after removing the dead deferred-array metadata.
 - The broader touched packages (`typechecker`, `mir`, `hir`) passed under the memory cap.
+- Recursive generic self-use now fails fast in the front-end with the canonical generic-shape diagnostic and does not proceed to lowered HIR.
 
 ## Notes
 

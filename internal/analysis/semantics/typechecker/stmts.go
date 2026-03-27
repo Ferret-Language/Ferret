@@ -44,8 +44,10 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		if declared != nil && s.Value != nil && !c.checkExprAssignable(scope, s.Value, declared, value) {
 		}
 		c.bindDeclSymbol(s.Name, finalType)
-		if constValue, ok := c.constExpr(c.mod, s.Value, nil); ok {
-			c.info.BindConstValue(s, constValue)
+		if !s.IsMut {
+			if constValue, ok := c.constExpr(c.mod, s.Value, nil); ok {
+				c.info.BindConstValue(s, constValue)
+			}
 		}
 		// No base-type environment: locals/params are typed via Bindings+Types.
 	case *ast.ConstStmt:

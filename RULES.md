@@ -1,4 +1,4 @@
-# Coding Rules (Humans + Agents)
+# Coding Rules
 
 This file defines mandatory engineering rules for the `compiler` repository.
 

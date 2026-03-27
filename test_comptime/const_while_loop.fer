@@ -1,0 +1,30 @@
+fn require(name: str, cond: bool) -> void {
+    if !cond {
+        print("FAIL:")
+        print(name)
+        panic "const while loop check failed"
+    }
+    print("ok:")
+    print(name)
+}
+
+fn sum_to(limit: i32) -> i32 {
+    let mut i = 0
+    let mut sum = 0
+    while i < limit {
+        sum = sum + i
+        i = i + 1
+    }
+    return sum
+}
+
+fn main() -> void {
+    let limit = 5
+    const total = sum_to(limit)
+    let arr: [total]i32 = [total]i32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}
+
+    require("const while loop", total == 10)
+    require("array length from while loop const", arr[9] == 9)
+
+    print("const while loop: PASS")
+}

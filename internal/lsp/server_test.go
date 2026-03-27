@@ -3,6 +3,7 @@ package lsp
 import (
 	"bytes"
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -174,6 +175,27 @@ func TestInitializeAdvertisesHoverDefinitionAndCompletionProvider(t *testing.T) 
 
 	if _, ok := payload.Capabilities["documentSymbolProvider"]; ok {
 		t.Fatal("expected documentSymbolProvider to be omitted")
+	}
+}
+
+func TestURIToPathStripsWindowsDriveSlash(t *testing.T) {
+	got, err := uriToPath("file:///E:/Dev/Ferret/app/main.fer")
+	if err != nil {
+		t.Fatalf("unexpected uriToPath error: %v", err)
+	}
+	want := filepath.Clean(filepath.FromSlash("E:/Dev/Ferret/app/main.fer"))
+	if got != want {
+		t.Fatalf("expected windows drive path %q, got %q", want, got)
+	}
+}
+
+func TestFileURIPathPrefixesWindowsDrive(t *testing.T) {
+	got := fileURIPath("E:/Dev/Ferret/app/main.fer")
+	if got != "/E:/Dev/Ferret/app/main.fer" {
+		t.Fatalf("expected file URI path with drive slash, got %q", got)
+	}
+	if uri := (&url.URL{Scheme: "file", Path: got}).String(); uri != "file:///E:/Dev/Ferret/app/main.fer" {
+		t.Fatalf("expected canonical windows file URI, got %q", uri)
 	}
 }
 
@@ -739,6 +761,101 @@ func TestHoverCachesByOpenDocumentVersion(t *testing.T) {
 
 	if calls != 2 {
 		t.Fatalf("expected cache invalidation after version change, got %d parses", calls)
+	}
+}
+
+func TestHoverSkipsIndexBuildWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	calls := 0
+	parseProject = func(path string) compiler.Result {
+		calls++
+		return fakeHoverResult(path, "i32")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	if err := os.WriteFile(path, []byte("fn main() {}"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	cachedLoc := source.NewLocation(path, source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 3})
+	cachedIndex := &hoverIndex{
+		candidates: []hoverCandidate{{
+			markdown: "cached hover",
+			location: cachedLoc,
+			span:     locationSpan(cachedLoc),
+			priority: 1,
+		}},
+	}
+	var out bytes.Buffer
+	s := &Server{
+		out: &out,
+		documents: map[string]openDocument{
+			uri: {Version: 7, Text: "fn main(", HasSyntaxErrors: true},
+		},
+		hoverCache: map[string]hoverCacheEntry{
+			uri: {
+				Mode:      "file",
+				FileStamp: fileStamp(path),
+				Index:     cachedIndex,
+			},
+		},
+	}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 0, Character: 0},
+		}),
+	}
+	s.handleRequest(req)
+
+	if calls != 0 {
+		t.Fatalf("expected hover parse to be skipped on syntax-invalid open doc, got %d calls", calls)
+	}
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil || hover.Contents.Value != "cached hover" {
+		t.Fatalf("expected cached hover fallback on syntax-invalid open doc, got %#v", hover)
+	}
+}
+
+func TestPublishSemanticDiagnosticsContinuesWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	calls := 0
+	parseProject = func(path string) compiler.Result {
+		calls++
+		return compiler.Result{Diagnostics: diagnostics.NewDiagnosticBag(path)}
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(3)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &bytes.Buffer{},
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 9, Text: "fn main(", HasSyntaxErrors: true},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	if calls != 1 {
+		t.Fatalf("expected semantic parse to continue on syntax-invalid open doc, got %d calls", calls)
 	}
 }
 
@@ -1620,6 +1737,42 @@ func TestHoverMethodOwnerTypeInDeclaration(t *testing.T) {
 	}
 	if !strings.Contains(hover.Contents.Value, "type Point<T> struct") {
 		t.Fatalf("expected owner type hover markdown, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverGenericFunctionDeclarationShowsTypeParams(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "fn add<T>(a: T, b: T) -> T {\n    return a + b\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "add<T>")
+	if !ok {
+		t.Fatal("failed to find generic function name")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn add<T>(a: T, b: T) -> T") {
+		t.Fatalf("expected generic declaration signature in hover, got %q", hover.Contents.Value)
 	}
 }
 

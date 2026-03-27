@@ -1,10 +1,6 @@
 package typeinfo
 
-import (
-	"testing"
-
-	"compiler/internal/frontend/ast"
-)
+import "testing"
 
 func TestRefAndRawTypeString(t *testing.T) {
 	immutable := &RefType{Inner: &BuiltinType{Name: "i32"}}
@@ -52,29 +48,6 @@ func TestCommonNumericTypeRejectsNonNumericEqualTypes(t *testing.T) {
 	point := &NamedType{ModuleKey: "main", Name: "Point"}
 	if got := CommonNumericType(point, point); got != nil {
 		t.Fatalf("expected no numeric common type for named type, got %#v", got)
-	}
-}
-
-func TestArrayTypePreservesDeferredLengthExpr(t *testing.T) {
-	sizeExpr := &ast.BinaryExpr{
-		Left:  &ast.Ident{Path: []string{"N"}},
-		Op:    "+",
-		Right: &ast.NumberLit{Value: "1"},
-	}
-	arr := &ArrayType{
-		Inner:    &BuiltinType{Name: "i32"},
-		Len:      ArrayLenDeferred,
-		SizeExpr: sizeExpr,
-	}
-	if got := arr.String(); got != "[N + 1]i32" {
-		t.Fatalf("expected deferred array string, got %q", got)
-	}
-	if !Equal(arr, &ArrayType{
-		Inner:    &BuiltinType{Name: "i32"},
-		Len:      ArrayLenDeferred,
-		SizeExpr: &ast.BinaryExpr{Left: &ast.Ident{Path: []string{"N"}}, Op: "+", Right: &ast.NumberLit{Value: "1"}},
-	}) {
-		t.Fatal("expected deferred array types with the same size expr to compare equal")
 	}
 }
 

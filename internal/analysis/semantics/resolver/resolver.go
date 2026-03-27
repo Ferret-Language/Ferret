@@ -563,57 +563,23 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 }
 
 func (r *resolver) resolveType(scope *table.Scope, typ ast.TypeExpr) {
-	switch t := typ.(type) {
-	case nil:
-		return
-	case *ast.NamedType:
-		for _, arg := range t.TypeArgs {
-			r.resolveType(scope, arg)
-		}
-		r.resolveTypePath(scope, t)
-	case *ast.PointerType:
-		r.resolveType(scope, t.Inner)
-	case *ast.RefType:
-		r.resolveType(scope, t.Inner)
-	case *ast.RawPtrType:
-		r.resolveType(scope, t.Inner)
-	case *ast.OptionalType:
-		r.resolveType(scope, t.Inner)
-	case *ast.ErrorUnionType:
-		r.resolveType(scope, t.Error)
-		r.resolveType(scope, t.Value)
-	case *ast.ArrayType:
-		if ident, ok := t.Size.(*ast.Ident); !ok || ident.Text() != "_" {
-			r.resolveExpr(scope, t.Size)
-		}
-		r.resolveType(scope, t.Inner)
-	case *ast.TupleType:
-		for _, elem := range t.Elems {
-			r.resolveType(scope, elem)
-		}
-	case *ast.StructType:
-		for _, field := range t.Fields {
-			if field == nil {
-				continue
+	ast.WalkType(typ, func(current ast.TypeExpr) bool {
+		switch t := current.(type) {
+		case *ast.NamedType:
+			r.resolveTypePath(scope, t)
+		case *ast.ArrayType:
+			if ident, ok := t.Size.(*ast.Ident); !ok || ident.Text() != "_" {
+				r.resolveExpr(scope, t.Size)
 			}
-			r.resolveType(scope, field.Type)
-			r.resolveExpr(scope, field.Default)
-		}
-	case *ast.InterfaceType:
-		for _, method := range t.Methods {
-			if method == nil {
-				continue
+		case *ast.StructType:
+			for _, field := range t.Fields {
+				if field != nil {
+					r.resolveExpr(scope, field.Default)
+				}
 			}
-			for _, param := range method.Params {
-				r.resolveType(scope, param.Type)
-			}
-			r.resolveType(scope, method.Result)
 		}
-	case *ast.UnionType:
-		for _, member := range t.Members {
-			r.resolveType(scope, member)
-		}
-	}
+		return true
+	})
 }
 
 func (r *resolver) resolveExprPath(scope *table.Scope, ident *ast.Ident) {
