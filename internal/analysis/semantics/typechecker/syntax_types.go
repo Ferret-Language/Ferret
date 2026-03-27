@@ -266,15 +266,32 @@ func (c *checker) arrayLength(mod *context.Module, expr ast.Expr) int64 {
 		)
 		return typeinfo.ArrayLenUnknown
 	}
-	length, ok := value.NonNegativeInt64()
-	if !ok {
+	if value.Kind != typeinfo.ConstInt || value.Int == nil {
 		loc := expr.Loc()
 		c.ctx.Diagnostics.Add(
 			diagnostics.NewError("array length must be a non-negative compile-time integer").
 				WithCode(diagnostics.ErrTypeMismatch).
-				WithPrimaryLabel(&loc, "this array length is not compile-time known"),
+				WithPrimaryLabel(&loc, "this array length does not evaluate to an integer"),
 		)
 		return typeinfo.ArrayLenUnknown
 	}
-	return length
+	if value.Int.Sign() < 0 {
+		loc := expr.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("array length must be a non-negative compile-time integer").
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(&loc, "array length must be non-negative"),
+		)
+		return typeinfo.ArrayLenUnknown
+	}
+	if !value.Int.IsInt64() {
+		loc := expr.Loc()
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("array length must be a non-negative compile-time integer").
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(&loc, "array length is too large"),
+		)
+		return typeinfo.ArrayLenUnknown
+	}
+	return value.Int.Int64()
 }

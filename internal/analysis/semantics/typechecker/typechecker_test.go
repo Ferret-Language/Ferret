@@ -3742,6 +3742,27 @@ fn main(n: i32) -> i32 {
 	}
 }
 
+func TestTypecheckerRejectsNegativeArrayLength(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let items: [-1]i32
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected negative array length diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && len(diag.Labels) > 0 && diag.Labels[0].Message == "array length must be non-negative" {
+			return
+		}
+	}
+	t.Fatalf("expected non-negative array length diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
 func TestTypecheckerTypesSliceLiterals(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

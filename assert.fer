@@ -1,36 +1,11 @@
 
-
 fn assert(cond: bool, msg: str) -> void {
     if cond == false {
         panic msg
     }
-
 }
 
-
 fn main() {
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     print("checking")
 
     comptime assert(1 == 2, "equal")

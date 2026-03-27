@@ -1,6 +1,6 @@
 # Agent Workflow
 
-Follow [RULES.md](/home/fuad/Dev/Ferret-compiler-v2/compiler/RULES.md) for every code change in this repository.
+Follow [RULES.md](RULES.md) for every code change in this repository.
 
 ## Required Pre-Change Check
 

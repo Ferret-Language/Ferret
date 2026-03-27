@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 8 cleanup/validation for the comptime redesign is complete; waiting for review.
+Status: Step 9 PR review feedback fixes are complete.
 
 ## Steps
 
@@ -42,7 +42,10 @@ Status: Step 8 cleanup/validation for the comptime redesign is complete; waiting
 - [done] Wait for review before committing step 7.
 - [done] Commit step 7 after approval.
 - [done] Run broader touched-package validation for the comptime redesign.
-- [in_review] Wait for review before committing step 8.
+- [done] Wait for review before committing step 8.
+- [done] Implement PR review feedback fixes for comptime migration.
+- [done] Verify PR review feedback fixes with focused tests.
+- [done] Wait for review before committing step 9.
 
 ## Active Task List
 
@@ -66,6 +69,7 @@ Status: Step 8 cleanup/validation for the comptime redesign is complete; waiting
 - [done] Verify soft-block skip behavior and hard-inside-soft errors with focused tests and real Ferret repros.
 - [done] Re-run the broader touched packages after the soft-block changes.
 - [done] Update the persistent plan with the current comptime status and validation coverage.
+- [done] Fix PR review feedback around IDE const diagnostics, stale const-index diagnostics, interface-method parser recovery, and documentation cleanup.
 
 ## Verification
 

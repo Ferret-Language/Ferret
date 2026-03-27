@@ -44,6 +44,9 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		if declared != nil && s.Value != nil && !c.checkExprAssignable(scope, s.Value, declared, value) {
 		}
 		c.bindDeclSymbol(s.Name, finalType)
+		if constValue, ok := c.constExpr(c.mod, s.Value, nil); ok {
+			c.info.BindConstValue(s, constValue)
+		}
 		// No base-type environment: locals/params are typed via Bindings+Types.
 	case *ast.ConstStmt:
 		var declared typeinfo.Type
@@ -53,7 +56,10 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		}
 		value := c.typeOfExpr(scope, s.Value, declared)
 		if constValue, ok := c.constExpr(c.mod, s.Value, nil); ok {
+			c.info.BindConstValue(s, constValue)
 			c.info.BindConstValue(s.Value, constValue)
+		} else {
+			c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
 		}
 		finalType := c.resolveDeclaredValueType(declared, value)
 		if finalType == nil {

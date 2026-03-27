@@ -53,7 +53,10 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if d.Value != nil {
 			value = c.typeOfExpr(nil, d.Value, declared)
 			if constValue, ok := c.constExpr(c.mod, d.Value, nil); ok {
+				c.info.BindConstValue(d, constValue)
 				c.info.BindConstValue(d.Value, constValue)
+			} else {
+				c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
 			}
 		}
 		finalType := c.resolveDeclaredValueType(declared, value)
@@ -2213,9 +2216,9 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 		if !ok {
 			loc := expr.Index.Loc()
 			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("tuple index must be a non-negative integer literal").
+				diagnostics.NewError("tuple index must be a non-negative compile-time integer").
 					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "use a tuple element literal index like 0 or 1"),
+					WithPrimaryLabel(&loc, "use a compile-time tuple index like 0 or 1"),
 			)
 			return typeinfo.InvalidType{}
 		}
@@ -2223,9 +2226,9 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 		if !ok {
 			loc := expr.Index.Loc()
 			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("tuple index must be a non-negative integer literal").
+				diagnostics.NewError("tuple index must be a non-negative compile-time integer").
 					WithCode(diagnostics.ErrInvalidOperation).
-					WithPrimaryLabel(&loc, "use a tuple element literal index like 0 or 1"),
+					WithPrimaryLabel(&loc, "use a compile-time tuple index like 0 or 1"),
 			)
 			return typeinfo.InvalidType{}
 		}
@@ -2926,6 +2929,21 @@ func (c *checker) isConstExpr(scope *refineScope, expr ast.Expr) bool {
 		}
 	case *ast.BinaryExpr:
 		return c.isConstExpr(scope, e.Left) && c.isConstExpr(scope, e.Right)
+	case *ast.CallExpr:
+		for _, arg := range e.Args {
+			if !c.isConstExpr(scope, arg) {
+				return false
+			}
+		}
+		if c.isForeignLenCall(e.Callee) {
+			return true
+		}
+		res := c.lookupResolution(e.Callee)
+		if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+			return false
+		}
+		fn, ok := res.Symbol.Node.(*ast.FuncDecl)
+		return ok && fn != nil && !fn.IsExtern
 	case *ast.CastExpr:
 		return c.isConstExpr(scope, e.Left)
 	case *ast.CompositeLit:
@@ -2955,6 +2973,19 @@ func (c *checker) isConstIdent(_ *refineScope, ident *ast.Ident) bool {
 	res := c.lookupResolution(ident)
 	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 		return false
+	}
+	owner := c.findModuleForSymbol(res.Symbol)
+	if owner == nil {
+		owner = c.mod
+	}
+	info := c.info
+	if owner != nil && owner != c.mod {
+		info = owner.Types
+	}
+	if info != nil {
+		if _, ok := info.LookupConstValue(res.Symbol.Node); ok {
+			return true
+		}
 	}
 	if res.Symbol.Kind != symbols.SymbolConst && res.Symbol.Kind != symbols.SymbolVariant && res.Symbol.Kind != symbols.SymbolError {
 		return false

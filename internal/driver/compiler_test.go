@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"compiler/internal/core/context"
@@ -12,6 +13,22 @@ import (
 	"compiler/internal/frontend/ast"
 	"compiler/internal/prelude"
 )
+
+func setIDEExecutablePaths(t *testing.T, root string) {
+	t.Helper()
+	execPath := filepath.Join(root, "bundle", "bin", "ferret")
+	mustWrite(t, execPath, "")
+	mustWrite(t, filepath.Join(root, "bundle", "libs", "global.fer"), ``)
+	mustWrite(t, filepath.Join(root, "bundle", "libs", "std", "io.fer"), ``)
+	oldProjectExecutablePath := projectpkg.ExecutablePath
+	oldPreludeExecutablePath := prelude.ExecutablePath
+	projectpkg.ExecutablePath = func() (string, error) { return execPath, nil }
+	prelude.ExecutablePath = func() (string, error) { return execPath, nil }
+	t.Cleanup(func() {
+		projectpkg.ExecutablePath = oldProjectExecutablePath
+		prelude.ExecutablePath = oldPreludeExecutablePath
+	})
+}
 
 func TestParsePathResolvesDependencyAliasFromManifest(t *testing.T) {
 	root := t.TempDir()
@@ -241,18 +258,7 @@ fn main() -> void {
 
 func TestParsePathForIDEReportsUnusedLocalDiagnostics(t *testing.T) {
 	root := t.TempDir()
-	execPath := filepath.Join(root, "bundle", "bin", "ferret")
-	mustWrite(t, execPath, "")
-	mustWrite(t, filepath.Join(root, "bundle", "libs", "global.fer"), ``)
-	mustWrite(t, filepath.Join(root, "bundle", "libs", "std", "io.fer"), ``)
-	oldProjectExecutablePath := projectpkg.ExecutablePath
-	oldPreludeExecutablePath := prelude.ExecutablePath
-	projectpkg.ExecutablePath = func() (string, error) { return execPath, nil }
-	prelude.ExecutablePath = func() (string, error) { return execPath, nil }
-	defer func() {
-		projectpkg.ExecutablePath = oldProjectExecutablePath
-		prelude.ExecutablePath = oldPreludeExecutablePath
-	}()
+	setIDEExecutablePaths(t, root)
 	mustWrite(t, filepath.Join(root, "main.fer"), `fn main() -> i32 {
     let dead = 1
     return 0
@@ -287,6 +293,49 @@ func TestParsePathForIDEReportsUnusedLocalDiagnostics(t *testing.T) {
 			got = append(got, diag.Code+": "+diag.Message)
 		}
 		t.Fatalf("expected %s diagnostic, got %v", diagnostics.WarnUnusedLocal, got)
+	}
+}
+
+func TestParsePathForIDERejectsRuntimeConstInitializer(t *testing.T) {
+	root := t.TempDir()
+	setIDEExecutablePaths(t, root)
+	mustWrite(t, filepath.Join(root, "main.fer"), `#[extern("clock")]
+fn clock() -> i32;
+
+fn main() -> i32 {
+    const y = clock()
+    return y
+}
+`)
+
+	result := ParsePathForIDE(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected const initializer diagnostic in IDE mode")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "constant initializer must be compile-time evaluable") {
+			return
+		}
+	}
+	t.Fatalf("expected const initializer diagnostic, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+}
+
+func TestParsePathForIDEAllowsPotentialCTFEConstCall(t *testing.T) {
+	root := t.TempDir()
+	setIDEExecutablePaths(t, root)
+	mustWrite(t, filepath.Join(root, "main.fer"), `fn add(a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+fn main() -> i32 {
+    const y = add(1, 2)
+    return y
+}
+`)
+
+	result := ParsePathForIDE(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected potential CTFE const call to remain valid in IDE mode, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
 }
 

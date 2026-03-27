@@ -37,12 +37,24 @@ func (c *checker) constExpr(mod *context.Module, expr ast.Expr, seen map[ast.Nod
 			return typeinfo.ConstValue{Kind: typeinfo.ConstNone}, true
 		}
 		res := c.lookupTypeResolution(mod, e)
-		if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Kind != symbols.SymbolConst || res.Symbol.Node == nil {
+		if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.Node == nil {
 			return typeinfo.ConstValue{}, false
 		}
 		owner := c.findModuleForSymbol(res.Symbol)
 		if owner == nil {
 			owner = mod
+		}
+		info := c.info
+		if owner != nil && owner != c.mod {
+			info = owner.Types
+		}
+		if info != nil {
+			if value, ok := info.LookupConstValue(res.Symbol.Node); ok {
+				return value, true
+			}
+		}
+		if res.Symbol.Kind != symbols.SymbolConst {
+			return typeinfo.ConstValue{}, false
 		}
 		if seen == nil {
 			seen = make(map[ast.Node]bool)
