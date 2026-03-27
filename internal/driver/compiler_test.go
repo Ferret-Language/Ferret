@@ -296,6 +296,36 @@ func TestParsePathForIDEReportsUnusedLocalDiagnostics(t *testing.T) {
 	}
 }
 
+func TestParsePathRejectsNonCanonicalRecursiveGenericSelfUseBeforeLowering(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Node<T> struct {
+    Next: ?*Node<Node<T>>
+    Value: T
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected recursive generic self-use diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "must preserve declaration type parameters") {
+			found = true
+		}
+		if diag != nil && strings.Contains(diag.Message, "does not converge") {
+			t.Fatalf("expected no specialization diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+	if !found {
+		t.Fatalf("expected canonical generic self-use diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry != nil && result.Entry.LoweredHIR != nil {
+		t.Fatalf("expected no lowered HIR on semantic error, got %#v", result.Entry.LoweredHIR)
+	}
+}
+
 func TestParsePathForIDERejectsRuntimeConstInitializer(t *testing.T) {
 	root := t.TempDir()
 	setIDEExecutablePaths(t, root)

@@ -726,6 +726,59 @@ fn main() -> void {
 	}
 }
 
+func TestTypecheckerRejectsNonCanonicalRecursiveGenericSelfUse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Node<T> struct {
+    Next: ?*Node<Node<T>>
+    Value: T
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected recursive generic self-use diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "must preserve declaration type parameters") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected canonical recursive generic diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNonCanonicalGenericMethodOwner(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Point<T> struct {
+    X: T
+}
+
+fn Point<i32>::Incr(&mut self, dx: i32) -> void {
+    self.X += dx
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected canonical generic owner diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "attached methods for generic type") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected canonical generic owner diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerInfersGenericCompositeLiteralTypeArgs(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

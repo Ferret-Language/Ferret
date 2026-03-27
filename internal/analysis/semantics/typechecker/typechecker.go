@@ -87,6 +87,9 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 	}
 	typeParams := c.pushTypeParams(c.mod, d, d.TypeParams)
 	defer c.popTypeParams()
+	if len(d.TypeParams) > 0 && d.Type != nil {
+		c.checkCanonicalGenericSelfUse(c.mod, d, d.Type)
+	}
 	for i, param := range d.TypeParams {
 		if i >= len(typeParams) {
 			continue
@@ -260,6 +263,9 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		return
 	}
 	ownerMod, ownerDecl := c.ownerTypeDeclForFunc(c.mod, d)
+	if d.OwnerType != nil && ownerDecl != nil && len(ownerDecl.TypeParams) > 0 && !canonicalGenericUseMatchesDecl(d.OwnerType, ownerDecl) {
+		c.reportInvalidGenericUse(d.OwnerType, ownerDecl, fmt.Sprintf("attached methods for generic type %q must use the declaration type parameters", ownerDecl.Name.Text()))
+	}
 	if ownerDecl != nil && len(ownerDecl.TypeParams) > 0 {
 		c.pushTypeParams(ownerMod, ownerDecl, ownerDecl.TypeParams)
 		defer c.popTypeParams()

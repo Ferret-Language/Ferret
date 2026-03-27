@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 13 early const-eval loop support is complete; waiting for review.
+Status: Step 14 simple generic-shape validation is complete; waiting for review.
 
 ## Steps
 
@@ -54,7 +54,8 @@ Status: Step 13 early const-eval loop support is complete; waiting for review.
 - [done] Remove leftover deferred array-length scaffolding that is no longer used by strict array typing.
 - [done] Wait for review before committing step 12.
 - [done] Extend early const evaluation with simple loop-carried mutation for CTFE-safe helper calls.
-- [in_review] Wait for review before committing step 13.
+- [done] Implement step 14: reject non-canonical generic self-use/owner syntax in the front-end and stop before lowering on semantic errors.
+- [in_review] Wait for review before committing step 14.
 
 ## Active Task List
 
@@ -83,6 +84,8 @@ Status: Step 13 early const-eval loop support is complete; waiting for review.
 - [done] Keep one runnable Ferret repro that documents the currently supported comptime behavior end to end.
 - [done] Remove dead `ArrayLenDeferred` / `SizeExpr` bookkeeping now that array lengths are resolved during typing.
 - [done] Support `while`-based local helper functions in on-demand const evaluation for `const` initializers and strict array lengths.
+- [done] Reject `Node<Node<T>>`-style self-use and `Point<i32>::Method`-style owner syntax by matching generic uses against the declared parameter shape.
+- [done] Stop the full pipeline after semantic front-end errors so invalid generic shapes cannot reach lowering/specialization.
 
 ## Verification
 
@@ -102,6 +105,9 @@ Status: Step 13 early const-eval loop support is complete; waiting for review.
 - `go test ./internal/analysis/semantics/typechecker ./internal/ir/mir ./internal/ir/hir -count=1`
 - `go test ./internal/analysis/semantics/typeinfo ./internal/analysis/semantics/typechecker -run 'TestTypecheckerResolvesArrayLengthFromConstExpr|TestTypecheckerResolvesArrayLengthFromImportedConst|TestTypecheckerRejectsRuntimeArrayLength|TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall|TestInstantiateTypeHandlesRecursiveStruct|TestRefAndRawTypeString|TestEqualRefAndRawTypes' -count=1`
 - `go test ./internal/analysis/semantics/typechecker -run 'TestTypecheckerAllowsCTFEConstInitializerFromLocalValue|TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall|TestTypecheckerAllowsCTFEConstInitializerFromLocalWhileLoopCall|TestTypecheckerRejectsNonCTFEConstInitializer' -count=1`
+- `go test ./internal/analysis/semantics/typechecker -run 'TestTypecheckerRejectsNonCanonicalRecursiveGenericSelfUse|TestTypecheckerRejectsNonCanonicalGenericMethodOwner|TestTypecheckerInfersOwnerTypeArgsForStaticGenericMethodCall' -count=1`
+- `go test ./internal/driver -run 'TestParsePathRejectsNonCanonicalRecursiveGenericSelfUseBeforeLowering' -count=1`
+- `GOCACHE=$(pwd)/.gocache timeout 5s go run ./cmd/ferret check /tmp/ferret_generic_stress/main.fer`
 - `go test ./internal/driver -run 'TestParsePathForIDERejectsRuntimeConstInitializer|TestParsePathForIDEAllowsPotentialCTFEConstCall' -count=1`
 
 Observed results:
@@ -115,6 +121,7 @@ Observed results:
 - `const_while_loop.fer` passed on both LLVM and QBE.
 - `tuple.fer` still typechecked successfully after removing the dead deferred-array metadata.
 - The broader touched packages (`typechecker`, `mir`, `hir`) passed under the memory cap.
+- Recursive generic self-use now fails fast in the front-end with the canonical generic-shape diagnostic and does not proceed to lowered HIR.
 
 ## Notes
 
