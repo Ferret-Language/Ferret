@@ -53,6 +53,30 @@ func TestFormatFuncDeclSignature(t *testing.T) {
 	}
 }
 
+func TestFormatGenericFuncDeclSignature(t *testing.T) {
+	fn := &ast.FuncDecl{
+		Name: &ast.Ident{Path: []string{"add"}},
+		Params: []ast.Param{
+			{Name: &ast.Ident{Path: []string{"a"}}},
+			{Name: &ast.Ident{Path: []string{"b"}}},
+		},
+	}
+	fnType := &FuncType{
+		TypeParams: []*TypeParam{{Name: "T"}},
+		Params: []ParamSpec{
+			{Type: &TypeParam{Name: "T"}},
+			{Type: &TypeParam{Name: "T"}},
+		},
+		Result: &TypeParam{Name: "T"},
+	}
+
+	got := FormatFuncDeclSignature(fn, fnType)
+	want := "fn add<T>(a: T, b: T) -> T"
+	if got != want {
+		t.Fatalf("unexpected generic declaration signature:\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
 func TestFuncTypeStringUsesCanonicalFormatter(t *testing.T) {
 	fn := &FuncType{
 		IsUnsafe:   true,

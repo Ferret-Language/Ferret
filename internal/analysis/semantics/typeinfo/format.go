@@ -147,6 +147,7 @@ func (p Printer) FuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 		b.WriteByte(' ')
 		b.WriteString(name)
 	}
+	b.WriteString(p.formatTypeParams(fnType.TypeParams))
 	b.WriteByte('(')
 	wrote := false
 	paramIndex := 0

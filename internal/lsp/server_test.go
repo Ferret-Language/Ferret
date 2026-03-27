@@ -1623,6 +1623,42 @@ func TestHoverMethodOwnerTypeInDeclaration(t *testing.T) {
 	}
 }
 
+func TestHoverGenericFunctionDeclarationShowsTypeParams(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "fn add<T>(a: T, b: T) -> T {\n    return a + b\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "add<T>")
+	if !ok {
+		t.Fatal("failed to find generic function name")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "fn add<T>(a: T, b: T) -> T") {
+		t.Fatalf("expected generic declaration signature in hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverLabels(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
