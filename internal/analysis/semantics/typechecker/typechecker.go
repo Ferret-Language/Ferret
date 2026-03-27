@@ -1044,7 +1044,7 @@ func (c *checker) typeOfPostfix(scope *refineScope, expr *ast.PostfixExpr) typei
 }
 
 func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr, expected typeinfo.Type) typeinfo.Type {
-	if c.isForeignLenCall(expr.Callee) {
+	if c.isForeignLenCall(c.mod, expr.Callee) {
 		return c.typeOfBuiltinLen(scope, expr)
 	}
 	if c.isCompileErrorCall(expr.Callee) && c.comptimeDepth == 0 {
@@ -1140,8 +1140,8 @@ func (c *checker) typeOfBuiltinLen(scope *refineScope, expr *ast.CallExpr) typei
 	return result
 }
 
-func (c *checker) isForeignLenCall(callee ast.Expr) bool {
-	res := c.lookupResolution(callee)
+func (c *checker) isForeignLenCall(mod *context.Module, callee ast.Expr) bool {
+	res := c.lookupTypeResolution(mod, callee)
 	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 		return false
 	}
@@ -2941,7 +2941,7 @@ func (c *checker) isConstExpr(scope *refineScope, expr ast.Expr) bool {
 				return false
 			}
 		}
-		if c.isForeignLenCall(e.Callee) {
+		if c.isForeignLenCall(c.mod, e.Callee) {
 			return true
 		}
 		res := c.lookupResolution(e.Callee)

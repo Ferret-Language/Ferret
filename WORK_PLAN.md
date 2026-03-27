@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 14 simple generic-shape validation is complete; waiting for review.
+Status: Step 17 const-eval review fixes are complete; waiting for review.
 
 ## Steps
 
@@ -55,7 +55,9 @@ Status: Step 14 simple generic-shape validation is complete; waiting for review.
 - [done] Wait for review before committing step 12.
 - [done] Extend early const evaluation with simple loop-carried mutation for CTFE-safe helper calls.
 - [done] Implement step 14: reject non-canonical generic self-use/owner syntax in the front-end and stop before lowering on semantic errors.
-- [in_review] Wait for review before committing step 14.
+- [done] Implement step 16: show generic params in declaration hovers.
+- [done] Implement step 17: fix early const-eval short-circuiting, explicit generic type args, and imported builtin len resolution.
+- [in_review] Wait for review before committing step 17.
 
 ## Active Task List
 
@@ -86,6 +88,9 @@ Status: Step 14 simple generic-shape validation is complete; waiting for review.
 - [done] Support `while`-based local helper functions in on-demand const evaluation for `const` initializers and strict array lengths.
 - [done] Reject `Node<Node<T>>`-style self-use and `Point<i32>::Method`-style owner syntax by matching generic uses against the declared parameter shape.
 - [done] Stop the full pipeline after semantic front-end errors so invalid generic shapes cannot reach lowering/specialization.
+- [done] Preserve short-circuit semantics in early CTFE boolean ops.
+- [done] Allow explicit generic type args in const-evaluable calls.
+- [done] Resolve builtin `len(...)` during early CTFE using the evaluated module context.
 
 ## Verification
 
@@ -105,6 +110,7 @@ Status: Step 14 simple generic-shape validation is complete; waiting for review.
 - `go test ./internal/analysis/semantics/typechecker ./internal/ir/mir ./internal/ir/hir -count=1`
 - `go test ./internal/analysis/semantics/typeinfo ./internal/analysis/semantics/typechecker -run 'TestTypecheckerResolvesArrayLengthFromConstExpr|TestTypecheckerResolvesArrayLengthFromImportedConst|TestTypecheckerRejectsRuntimeArrayLength|TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall|TestInstantiateTypeHandlesRecursiveStruct|TestRefAndRawTypeString|TestEqualRefAndRawTypes' -count=1`
 - `go test ./internal/analysis/semantics/typechecker -run 'TestTypecheckerAllowsCTFEConstInitializerFromLocalValue|TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall|TestTypecheckerAllowsCTFEConstInitializerFromLocalWhileLoopCall|TestTypecheckerRejectsNonCTFEConstInitializer' -count=1`
+- `go test ./internal/analysis/semantics/typechecker -run 'TestTypecheckerAllowsShortCircuitConstInitializer|TestTypecheckerAllowsExplicitTypeArgsInConstCall|TestTypecheckerAllowsImportedLenCallInConstInitializer' -count=1`
 - `go test ./internal/analysis/semantics/typechecker -run 'TestTypecheckerRejectsNonCanonicalRecursiveGenericSelfUse|TestTypecheckerRejectsNonCanonicalGenericMethodOwner|TestTypecheckerInfersOwnerTypeArgsForStaticGenericMethodCall' -count=1`
 - `go test ./internal/driver -run 'TestParsePathRejectsNonCanonicalRecursiveGenericSelfUseBeforeLowering' -count=1`
 - `GOCACHE=$(pwd)/.gocache timeout 5s go run ./cmd/ferret check /tmp/ferret_generic_stress/main.fer`

@@ -2438,6 +2438,65 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerAllowsShortCircuitConstInitializer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> bool {
+    const a = true || (1 / 0 == 0)
+    const b = false && (1 / 0 == 0)
+    return a && !b
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected short-circuit const initializers to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsExplicitTypeArgsInConstCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn id<T>(x: T) -> T {
+    return x
+}
+
+fn main() -> i32 {
+    const n = id<i32>(3)
+    let arr: [n]i32
+    return arr[0]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected explicit generic type args in const call to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsImportedLenCallInConstInitializer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+import "util"
+
+fn main() -> i32 {
+    const n = util::Size()
+    let arr: [n]i32
+    return arr[0]
+}
+`)
+	mustWriteType(t, filepath.Join(root, "util.fer"), `
+fn Size() -> usize {
+    return len("abcd")
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected imported len const initializer to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsCTFEConstInitializerFromLocalWhileLoopCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

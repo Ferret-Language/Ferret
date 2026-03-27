@@ -188,6 +188,22 @@ func (c *checker) constExprIn(mod *context.Module, expr ast.Expr, state *constEv
 		if !ok {
 			return typeinfo.ConstValue{}, false
 		}
+		switch e.Op {
+		case "&&":
+			if left.Kind != typeinfo.ConstBool {
+				return typeinfo.ConstValue{}, false
+			}
+			if !left.Bool {
+				return typeinfo.ConstValue{Kind: typeinfo.ConstBool, Bool: false}, true
+			}
+		case "||":
+			if left.Kind != typeinfo.ConstBool {
+				return typeinfo.ConstValue{}, false
+			}
+			if left.Bool {
+				return typeinfo.ConstValue{Kind: typeinfo.ConstBool, Bool: true}, true
+			}
+		}
 		right, ok := c.constExprIn(mod, e.Right, state)
 		if !ok {
 			return typeinfo.ConstValue{}, false
@@ -241,7 +257,7 @@ func (c *checker) constCall(mod *context.Module, call *ast.CallExpr, state *cons
 		}
 		args = append(args, value)
 	}
-	if c.isForeignLenCall(call.Callee) {
+	if c.isForeignLenCall(mod, call.Callee) {
 		if len(args) != 1 {
 			return typeinfo.ConstValue{}, false
 		}
@@ -259,7 +275,7 @@ func (c *checker) constCall(mod *context.Module, call *ast.CallExpr, state *cons
 		return typeinfo.ConstValue{}, false
 	}
 	fn, ok := res.Symbol.Node.(*ast.FuncDecl)
-	if !ok || fn == nil || fn.IsExtern || fn.Body == nil || len(call.TypeArgs) != 0 {
+	if !ok || fn == nil || fn.IsExtern || fn.Body == nil {
 		return typeinfo.ConstValue{}, false
 	}
 	owner := c.findModuleForSymbol(res.Symbol)
