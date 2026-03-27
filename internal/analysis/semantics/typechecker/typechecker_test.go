@@ -2382,6 +2382,29 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerRejectsCTFEConstInitializerFromMutatedLocalValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let mut x = 1
+    x = 2
+    const y = x
+    return y
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected mutable local const initializer diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "constant initializer must be compile-time evaluable") {
+			return
+		}
+	}
+	t.Fatalf("expected const initializer diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
 func TestTypecheckerRejectsNonCTFEConstInitializer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

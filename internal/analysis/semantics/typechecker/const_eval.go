@@ -11,6 +11,19 @@ import (
 	"compiler/internal/utils/numeric"
 )
 
+func allowsConstValueCache(node ast.Node) bool {
+	switch n := node.(type) {
+	case *ast.ConstDecl, *ast.ConstStmt:
+		return true
+	case *ast.LetDecl:
+		return n != nil && !n.IsMut
+	case *ast.LetStmt:
+		return n != nil && !n.IsMut
+	default:
+		return false
+	}
+}
+
 func (c *checker) constExpr(mod *context.Module, expr ast.Expr, seen map[ast.Node]bool) (typeinfo.ConstValue, bool) {
 	return c.constExprIn(mod, expr, &constEvalState{
 		env:      make(map[symbols.SymbolID]typeinfo.ConstValue),
@@ -153,7 +166,7 @@ func (c *checker) constExprIn(mod *context.Module, expr ast.Expr, state *constEv
 		if owner != nil && owner != c.mod {
 			info = owner.Types
 		}
-		if info != nil {
+		if info != nil && allowsConstValueCache(res.Symbol.Node) {
 			if value, ok := info.LookupConstValue(res.Symbol.Node); ok {
 				return value, true
 			}

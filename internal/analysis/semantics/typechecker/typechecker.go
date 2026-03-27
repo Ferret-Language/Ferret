@@ -2988,7 +2988,7 @@ func (c *checker) isConstIdent(_ *refineScope, ident *ast.Ident) bool {
 	if owner != nil && owner != c.mod {
 		info = owner.Types
 	}
-	if info != nil {
+	if info != nil && allowsConstValueCache(res.Symbol.Node) {
 		if _, ok := info.LookupConstValue(res.Symbol.Node); ok {
 			return true
 		}
