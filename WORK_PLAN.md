@@ -57,11 +57,11 @@ Status: Step 18 review fixes include syntax-gated hover stability, immutable-onl
 - [done] Implement step 14: reject non-canonical generic self-use/owner syntax in the front-end and stop before lowering on semantic errors.
 - [done] Implement step 16: show generic params in declaration hovers.
 - [done] Implement step 17: fix early const-eval short-circuiting, explicit generic type args, and imported builtin len resolution.
-- [in_review] Wait for review before committing step 17.
+- [done] Wait for review before committing step 17.
 - [done] Implement step 18: eliminate runaway LSP memory use triggered by hover plus incomplete-syntax editing.
 - [done] Fix CTFE local-value caching so mutable `let` bindings are not reused as constant values after reassignment.
 - [done] Recover specialized local binding types from instantiated HIR values so generic locals do not lower as `<unknown>`.
-- [in_review] Wait for review before committing step 18.
+- [done] Wait for review before committing step 18.
 
 ## Active Task List
 
