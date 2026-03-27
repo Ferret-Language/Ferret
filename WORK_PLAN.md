@@ -13,7 +13,7 @@ This file is the pause/resume tracker for active compiler work.
 
 Topic: Comptime redesign and related compiler behavior
 
-Status: Step 9 PR review feedback fixes are complete.
+Status: Step 10 on-demand CTFE for const initializers is complete; waiting for review.
 
 ## Steps
 
@@ -46,6 +46,9 @@ Status: Step 9 PR review feedback fixes are complete.
 - [done] Implement PR review feedback fixes for comptime migration.
 - [done] Verify PR review feedback fixes with focused tests.
 - [done] Wait for review before committing step 9.
+- [done] Implement step 10: on-demand CTFE for const initializers during typechecking.
+- [done] Verify step 10 with focused tests and a tuple repro.
+- [in_review] Wait for review before committing step 10.
 
 ## Active Task List
 
@@ -70,6 +73,7 @@ Status: Step 9 PR review feedback fixes are complete.
 - [done] Re-run the broader touched packages after the soft-block changes.
 - [done] Update the persistent plan with the current comptime status and validation coverage.
 - [done] Fix PR review feedback around IDE const diagnostics, stale const-index diagnostics, interface-method parser recovery, and documentation cleanup.
+- [done] Evaluate CTFE-safe const calls on demand during typing so cached const values can flow into later array-length checks.
 
 ## Verification
 

@@ -2357,6 +2357,34 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerAllowsCTFEConstInitializerFromLocalTupleCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn pairSum(pair: (i32, i32)) -> i32 {
+    return pair[0] + pair[1]
+}
+
+fn main() -> i32 {
+    let ints: (i32, i32) = (3, 4)
+    const ress = pairSum(ints)
+    let arr: [ress]i32
+    return arr[0]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected on-demand CTFE const initializer to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letArr := mainFn.Body.Stmts[2].(*ast.LetStmt)
+	arrType := result.Entry.Types.Symbols[result.Entry.Bindings.Nodes[letArr.Name].Symbol.ID]
+	arr, ok := arrType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 7 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected arr type [7]i32, got %T %#v", arrType, arrType)
+	}
+}
+
 func TestTypecheckerComptimePrefixExpressionFoldsInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
