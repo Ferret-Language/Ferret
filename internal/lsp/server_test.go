@@ -742,6 +742,82 @@ func TestHoverCachesByOpenDocumentVersion(t *testing.T) {
 	}
 }
 
+func TestHoverSkipsIndexBuildWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	calls := 0
+	parseProject = func(path string) compiler.Result {
+		calls++
+		return fakeHoverResult(path, "i32")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	if err := os.WriteFile(path, []byte("fn main() {}"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	var out bytes.Buffer
+	s := &Server{
+		out: &out,
+		documents: map[string]openDocument{
+			uri: {Version: 7, Text: "fn main(", HasSyntaxErrors: true},
+		},
+		hoverCache: make(map[string]hoverCacheEntry),
+	}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 0, Character: 0},
+		}),
+	}
+	s.handleRequest(req)
+
+	if calls != 0 {
+		t.Fatalf("expected hover parse to be skipped on syntax-invalid open doc, got %d calls", calls)
+	}
+}
+
+func TestPublishSemanticDiagnosticsContinuesWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	calls := 0
+	parseProject = func(path string) compiler.Result {
+		calls++
+		return compiler.Result{Diagnostics: diagnostics.NewDiagnosticBag(path)}
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(3)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &bytes.Buffer{},
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 9, Text: "fn main(", HasSyntaxErrors: true},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	if calls != 1 {
+		t.Fatalf("expected semantic parse to continue on syntax-invalid open doc, got %d calls", calls)
+	}
+}
+
 func TestHoverMethodDeclarationShowsFullSignature(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")

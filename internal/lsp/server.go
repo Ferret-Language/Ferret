@@ -219,8 +219,9 @@ type hoverResult struct {
 }
 
 type openDocument struct {
-	Version int
-	Text    string
+	Version         int
+	Text            string
+	HasSyntaxErrors bool
 }
 
 type hoverCacheEntry struct {
@@ -376,21 +377,27 @@ func (s *Server) handleDidOpen(raw json.RawMessage) {
 		return
 	}
 	uri := params.TextDocument.URI
+	path, err := uriToPath(uri)
+	syntaxValid := true
+	if err == nil && isFerretSourcePath(path) {
+		syntaxValid = s.publishSyntaxDiagnostics(uri, params.TextDocument.Version, params.TextDocument.Text)
+	}
 	s.mu.Lock()
 	if s.documents == nil {
 		s.documents = make(map[string]openDocument)
 	}
-	s.documents[uri] = openDocument{Version: params.TextDocument.Version, Text: params.TextDocument.Text}
+	s.documents[uri] = openDocument{
+		Version:         params.TextDocument.Version,
+		Text:            params.TextDocument.Text,
+		HasSyntaxErrors: !syntaxValid,
+	}
 	s.mu.Unlock()
 
-	path, err := uriToPath(uri)
 	if err != nil || !isFerretSourcePath(path) {
 		s.cancelSemanticDiagnostics(uri)
 		s.publishDiagnostics(uri, nil, nil)
 		return
 	}
-
-	s.publishSyntaxDiagnostics(uri, params.TextDocument.Version, params.TextDocument.Text)
 	s.scheduleSemanticDiagnostics(uri, path)
 }
 
@@ -404,22 +411,28 @@ func (s *Server) handleDidChange(raw json.RawMessage) {
 	}
 	text := params.ContentChanges[len(params.ContentChanges)-1].Text
 	uri := params.TextDocument.URI
+	path, err := uriToPath(uri)
+	syntaxValid := true
+	if err == nil && isFerretSourcePath(path) {
+		syntaxValid = s.publishSyntaxDiagnostics(uri, params.TextDocument.Version, text)
+	}
 
 	s.mu.Lock()
 	if s.documents == nil {
 		s.documents = make(map[string]openDocument)
 	}
-	s.documents[uri] = openDocument{Version: params.TextDocument.Version, Text: text}
+	s.documents[uri] = openDocument{
+		Version:         params.TextDocument.Version,
+		Text:            text,
+		HasSyntaxErrors: !syntaxValid,
+	}
 	s.mu.Unlock()
 
-	path, err := uriToPath(uri)
 	if err != nil || !isFerretSourcePath(path) {
 		s.cancelSemanticDiagnostics(uri)
 		s.publishDiagnostics(uri, nil, nil)
 		return
 	}
-
-	s.publishSyntaxDiagnostics(uri, params.TextDocument.Version, text)
 	s.scheduleSemanticDiagnostics(uri, path)
 }
 
@@ -650,10 +663,10 @@ func (s *Server) publishSemanticDiagnostics(uri, path string, seq uint64) {
 	s.publishDiagnostics(uri, &v, diagnostics)
 }
 
-func (s *Server) publishSyntaxDiagnostics(uri string, version int, text string) {
+func (s *Server) publishSyntaxDiagnostics(uri string, version int, text string) bool {
 	path, err := uriToPath(uri)
 	if err != nil {
-		return
+		return false
 	}
 	diagBag := diagnostics.NewDiagnosticBag(path)
 	diagBag.AddSourceContent(path, text)
@@ -678,6 +691,7 @@ func (s *Server) publishSyntaxDiagnostics(uri string, version int, text string) 
 	diagnostics := convertDiagnostics(diagBag.Diagnostics(), path)
 	v := version
 	s.publishDiagnostics(uri, &v, diagnostics)
+	return !diagBag.HasErrors()
 }
 
 func (s *Server) publishDiagnostics(uri string, version *int, diagnostics []lspDiagnostic) {
@@ -848,6 +862,9 @@ type hoverIndex struct {
 
 func (s *Server) getOrBuildHoverIndex(uri, path string, doc openDocument, hasDoc bool) *hoverIndex {
 	if hasDoc {
+		if doc.HasSyntaxErrors {
+			return &hoverIndex{}
+		}
 		s.mu.Lock()
 		if s.hoverCache == nil {
 			s.hoverCache = make(map[string]hoverCacheEntry)

@@ -11,9 +11,9 @@ This file is the pause/resume tracker for active compiler work.
 
 ## Current Focus
 
-Topic: Comptime redesign and related compiler behavior
+Topic: LSP incomplete-syntax hover/type memory spike
 
-Status: Step 17 const-eval review fixes are complete; waiting for review.
+Status: Step 18 updated per review feedback: semantic diagnostics now continue on syntax errors while hover/index remains syntax-gated for stability; waiting for review.
 
 ## Steps
 
@@ -58,6 +58,8 @@ Status: Step 17 const-eval review fixes are complete; waiting for review.
 - [done] Implement step 16: show generic params in declaration hovers.
 - [done] Implement step 17: fix early const-eval short-circuiting, explicit generic type args, and imported builtin len resolution.
 - [in_review] Wait for review before committing step 17.
+- [done] Implement step 18: eliminate runaway LSP memory use triggered by hover plus incomplete-syntax editing.
+- [in_review] Wait for review before committing step 18.
 
 ## Active Task List
 
@@ -91,6 +93,7 @@ Status: Step 17 const-eval review fixes are complete; waiting for review.
 - [done] Preserve short-circuit semantics in early CTFE boolean ops.
 - [done] Allow explicit generic type args in const-evaluable calls.
 - [done] Resolve builtin `len(...)` during early CTFE using the evaluated module context.
+- [done] Identify and fix the shared LSP open-document parse path that can recurse or fan out under incomplete syntax.
 
 ## Verification
 
