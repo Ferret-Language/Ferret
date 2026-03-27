@@ -476,8 +476,8 @@ type Node struct {
 
 fn main(n: Node) -> i32 {
     let child = n.Child
-    let copy = n
-    return copy.Value
+    let dup = n
+    return dup.Value
 }
 `)
 
