@@ -2298,7 +2298,7 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 	if arrType, ok := base.(*typeinfo.ArrayType); ok {
 		actual := arrType
 		if arrType.Len == typeinfo.ArrayLenInferred {
-			actual = &typeinfo.ArrayType{Inner: arrType.Inner, Len: int64(len(expr.Items)), SizeExpr: arrType.SizeExpr}
+			actual = &typeinfo.ArrayType{Inner: arrType.Inner, Len: int64(len(expr.Items))}
 		}
 		for i, item := range expr.Items {
 			if item.Name != nil {

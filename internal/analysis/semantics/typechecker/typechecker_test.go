@@ -3692,7 +3692,7 @@ fn main() -> i32 {
 	}
 }
 
-func TestTypecheckerResolvesDeferredArrayLengthFromConstExpr(t *testing.T) {
+func TestTypecheckerResolvesArrayLengthFromConstExpr(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 const BASE = 2
@@ -3716,7 +3716,7 @@ fn main(items: [BASE + EXTRA]i32) -> i32 {
 	}
 }
 
-func TestTypecheckerResolvesDeferredArrayLengthFromImportedConst(t *testing.T) {
+func TestTypecheckerResolvesArrayLengthFromImportedConst(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "sizes.fer"), `
 const COUNT = 3

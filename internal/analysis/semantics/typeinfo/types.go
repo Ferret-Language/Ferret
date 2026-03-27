@@ -149,15 +149,13 @@ func (t *ErrorUnionType) String() string {
 }
 
 type ArrayType struct {
-	Inner    Type
-	Len      int64
-	SizeExpr ast.Expr
+	Inner Type
+	Len   int64
 }
 
 const (
 	ArrayLenUnknown  int64 = -1
 	ArrayLenInferred int64 = -2
-	ArrayLenDeferred int64 = -3
 )
 
 func (t *ArrayType) String() string {
@@ -166,9 +164,6 @@ func (t *ArrayType) String() string {
 	}
 	if t.Len == ArrayLenInferred {
 		return "[_]" + typeString(t.Inner)
-	}
-	if t.Len == ArrayLenDeferred && t.SizeExpr != nil {
-		return "[" + ast.ExprString(t.SizeExpr) + "]" + typeString(t.Inner)
 	}
 	if t.Len < 0 {
 		return "[?]" + typeString(t.Inner)
@@ -469,16 +464,7 @@ func Equal(a, b Type) bool {
 		return ok && Equal(at.Error, bt.Error) && Equal(at.Value, bt.Value)
 	case *ArrayType:
 		bt, ok := b.(*ArrayType)
-		if !ok || at.Len != bt.Len || !Equal(at.Inner, bt.Inner) {
-			return false
-		}
-		if at.Len == ArrayLenDeferred {
-			if at.SizeExpr == nil || bt.SizeExpr == nil {
-				return at.SizeExpr == nil && bt.SizeExpr == nil
-			}
-			return ast.ExprString(at.SizeExpr) == ast.ExprString(bt.SizeExpr)
-		}
-		return true
+		return ok && at.Len == bt.Len && Equal(at.Inner, bt.Inner)
 	case *SliceType:
 		bt, ok := b.(*SliceType)
 		return ok && at.Mutable == bt.Mutable && Equal(at.Inner, bt.Inner)
