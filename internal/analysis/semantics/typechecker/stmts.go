@@ -15,8 +15,14 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 	case nil:
 		return
 	case *ast.BlockStmt:
+		if s.Comptime {
+			c.comptimeDepth++
+		}
 		for _, child := range s.Stmts {
 			c.checkStmt(scope, child)
+		}
+		if s.Comptime {
+			c.comptimeDepth--
 		}
 	case *ast.LetStmt:
 		var declared typeinfo.Type
@@ -38,6 +44,9 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		if declared != nil && s.Value != nil && !c.checkExprAssignable(scope, s.Value, declared, value) {
 		}
 		c.bindDeclSymbol(s.Name, finalType)
+		if constValue, ok := c.constExpr(c.mod, s.Value, nil); ok {
+			c.info.BindConstValue(s, constValue)
+		}
 		// No base-type environment: locals/params are typed via Bindings+Types.
 	case *ast.ConstStmt:
 		var declared typeinfo.Type
@@ -46,6 +55,12 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 			c.info.BindNode(s.Type, declared)
 		}
 		value := c.typeOfExpr(scope, s.Value, declared)
+		if constValue, ok := c.constExpr(c.mod, s.Value, nil); ok {
+			c.info.BindConstValue(s, constValue)
+			c.info.BindConstValue(s.Value, constValue)
+		} else {
+			c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
+		}
 		finalType := c.resolveDeclaredValueType(declared, value)
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
@@ -55,7 +70,6 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		}
 		if declared != nil && s.Value != nil && !c.checkExprAssignable(scope, s.Value, declared, value) {
 		}
-		c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
 		c.bindDeclSymbol(s.Name, finalType)
 		// No base-type environment: locals/params are typed via Bindings+Types.
 	case *ast.ReturnStmt:

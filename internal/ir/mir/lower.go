@@ -119,10 +119,9 @@ func lowerInterfaceTypeDecl(decl *hir.InterfaceTypeDecl) *InterfaceTypeDecl {
 				continue
 			}
 			entry.Params = append(entry.Params, &Param{
-				Name:       param.Name,
-				Type:       param.Type,
-				IsComptime: param.IsComptime,
-				Location:   param.Location,
+				Name:     param.Name,
+				Type:     param.Type,
+				Location: param.Location,
 			})
 		}
 		out.Methods = append(out.Methods, entry)
@@ -207,12 +206,11 @@ func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts 
 			continue
 		}
 		out.Params = append(out.Params, &Param{
-			Name:       param.Name,
-			LocalID:    param.LocalID,
-			Type:       param.Type,
-			IsMutable:  param.IsMutable,
-			IsComptime: param.IsComptime,
-			Location:   param.Location,
+			Name:      param.Name,
+			LocalID:   param.LocalID,
+			Type:      param.Type,
+			IsMutable: param.IsMutable,
+			Location:  param.Location,
 		})
 	}
 	for _, block := range fn.Blocks {

@@ -100,7 +100,7 @@ func formatParam(param *Param) string {
 	if param == nil {
 		return ""
 	}
-	return typeinfo.DefaultPrinter.NamedParamText(param.Name, param.Type, param.IsMutable, param.IsComptime)
+	return typeinfo.DefaultPrinter.NamedParamText(param.Name, param.Type, param.IsMutable)
 }
 
 func formatParams(params []*Param) []string {
@@ -449,7 +449,10 @@ func wrapExpr(expr Expr) string {
 
 func formatPrefix(op, right string) string {
 	switch op {
-	case "copy", "comptime", "unsafe", "take", "&mut":
+	case "copy", "comptime", "comptime_soft", "unsafe", "take", "&mut":
+		if op == "comptime_soft" {
+			op = "comptime"
+		}
 		return op + " " + right
 	default:
 		return op + right

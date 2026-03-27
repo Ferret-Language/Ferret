@@ -1,0 +1,12 @@
+#[extern("clock")]
+fn clock() -> i64;
+
+fn hard_check() -> void {
+    let _ = comptime clock()
+}
+
+fn main() -> void {
+    comptime {
+        hard_check()
+    }
+}

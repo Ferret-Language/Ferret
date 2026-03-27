@@ -12,14 +12,14 @@ func TestFormatFuncSignature(t *testing.T) {
 		IsUnsafe:   true,
 		TypeParams: []*TypeParam{{Name: "T"}, {Name: "U", Constraint: &BuiltinType{Name: "bool"}}},
 		Params: []ParamSpec{
-			{Type: &BuiltinType{Name: "i32"}, Flags: FlagComptime},
+			{Type: &BuiltinType{Name: "i32"}},
 			{Type: &BuiltinType{Name: "i64"}, Flags: FlagMutable},
 		},
 		Result: &BuiltinType{Name: "bool"},
 	}
 
 	got := FormatFuncSignature("Point::Calc", fn)
-	want := "unsafe fn Point::Calc<T, U: bool>(comptime i32, mut i64) -> bool"
+	want := "unsafe fn Point::Calc<T, U: bool>(i32, mut i64) -> bool"
 	if got != want {
 		t.Fatalf("unexpected signature:\nwant: %q\ngot:  %q", want, got)
 	}
@@ -35,19 +35,19 @@ func TestFormatFuncDeclSignature(t *testing.T) {
 		},
 		Params: []ast.Param{
 			{Name: &ast.Ident{Path: []string{"cx"}}, IsMut: true},
-			{Name: &ast.Ident{Path: []string{"flag"}}, IsComptime: true},
+			{Name: &ast.Ident{Path: []string{"flag"}}},
 		},
 	}
 	fnType := &FuncType{
 		Params: []ParamSpec{
 			{Type: &BuiltinType{Name: "i32"}, Flags: FlagMutable},
-			{Type: &BuiltinType{Name: "bool"}, Flags: FlagComptime},
+			{Type: &BuiltinType{Name: "bool"}},
 		},
 		Result: &BuiltinType{Name: "void"},
 	}
 
 	got := FormatFuncDeclSignature(fn, fnType)
-	want := "fn Point::Calc(&self, mut cx: i32, comptime flag: bool) -> void"
+	want := "fn Point::Calc(&self, mut cx: i32, flag: bool) -> void"
 	if got != want {
 		t.Fatalf("unexpected declaration signature:\nwant: %q\ngot:  %q", want, got)
 	}
@@ -58,14 +58,14 @@ func TestFuncTypeStringUsesCanonicalFormatter(t *testing.T) {
 		IsUnsafe:   true,
 		TypeParams: []*TypeParam{{Name: "T"}},
 		Params: []ParamSpec{
-			{Type: &BuiltinType{Name: "i32"}, Flags: FlagComptime},
+			{Type: &BuiltinType{Name: "i32"}},
 			{Type: &BuiltinType{Name: "i64"}, Flags: FlagMutable},
 		},
 		Result: &BuiltinType{Name: "bool"},
 	}
 
 	got := fn.String()
-	want := "unsafe fn<T>(comptime i32, mut i64) -> bool"
+	want := "unsafe fn<T>(i32, mut i64) -> bool"
 	if got != want {
 		t.Fatalf("unexpected canonical func type string:\nwant: %q\ngot:  %q", want, got)
 	}
@@ -92,7 +92,7 @@ func TestFormatBindingDecl(t *testing.T) {
 	if got := FormatBindingDecl("const", "b", &BuiltinType{Name: "i32"}, 0); got != "const b: i32" {
 		t.Fatalf("unexpected const binding declaration: %q", got)
 	}
-	if got := FormatBindingDecl("parameter", "p", &BuiltinType{Name: "i32"}, FlagMutable|FlagComptime); got != "parameter mut comptime p: i32" {
+	if got := FormatBindingDecl("parameter", "p", &BuiltinType{Name: "i32"}, FlagMutable); got != "parameter mut p: i32" {
 		t.Fatalf("unexpected parameter binding declaration: %q", got)
 	}
 	if got := FormatBindingDecl("parameter", "s", &TypeParam{Name: "T", Constraint: &NamedType{Name: "Shape"}}, 0); got != "parameter s: T: Shape" {

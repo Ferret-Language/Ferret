@@ -103,7 +103,7 @@ func debugAttrs(attrs []Attribute) []any {
 }
 
 func debugParam(p Param) any {
-	return map[string]any{"name": debugExpr(p.Name), "is_mut": p.IsMut, "is_comptime": p.IsComptime, "type": debugType(p.Type), "loc": debugLoc(p.Location)}
+	return map[string]any{"name": debugExpr(p.Name), "is_mut": p.IsMut, "type": debugType(p.Type), "loc": debugLoc(p.Location)}
 }
 
 func debugTypeParams(params []TypeParam) []any {
@@ -130,7 +130,7 @@ func debugStmt(stmt Stmt) any {
 		for _, child := range s.Stmts {
 			stmts = append(stmts, debugStmt(child))
 		}
-		return map[string]any{"kind": "BlockStmt", "stmts": stmts, "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "BlockStmt", "stmts": stmts, "comptime": s.Comptime, "loc": debugLoc(s.Location)}
 	case *LetStmt:
 		return map[string]any{"kind": "LetStmt", "name": debugExpr(s.Name), "is_mut": s.IsMut, "type": debugType(s.Type), "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
 	case *ConstStmt:

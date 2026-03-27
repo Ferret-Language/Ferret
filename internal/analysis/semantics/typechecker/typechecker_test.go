@@ -2313,7 +2313,7 @@ fn bad(p: ^i32) -> void {
 	}
 }
 
-func TestTypecheckerRejectsNonConstConstInitializer(t *testing.T) {
+func TestTypecheckerAllowsCTFEConstInitializerFromLocalValue(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
@@ -2324,49 +2324,36 @@ fn main() -> i32 {
 `)
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected CTFE-able const initializer to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNonCTFEConstInitializer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+#[extern("clock")]
+fn clock() -> i32;
+
+fn main() -> i32 {
+    const y = clock()
+    return y
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected const initializer diagnostic")
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && diag.Message == "constant initializer must be compile-time evaluable" {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "compile-time evaluable") {
 			found = true
 			break
 		}
 	}
 	if !found {
 		t.Fatalf("expected const-evaluable diagnostic, got %#v", result.Diagnostics.Diagnostics())
-	}
-}
-
-func TestTypecheckerRejectsNonConstComptimeArgument(t *testing.T) {
-	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.fer"), `
-#[extern("clock")]
-fn clock() -> i32;
-
-fn id(comptime T: i32, x: i32) -> i32 {
-    return x
-}
-
-fn main() -> i32 {
-    return id(clock(), 2)
-}
-`)
-
-	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected comptime argument diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "argument to comptime parameter must be compile-time evaluable") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected comptime-argument diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -2511,7 +2498,7 @@ fn main() -> i32 {
 func TestTypecheckerComptimeAssertPatternWorks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn assert(comptime cond: bool, comptime msg: str) -> void {
+fn assert(cond: bool, msg: str) -> void {
     if !cond {
         panic msg
     }
@@ -2539,13 +2526,13 @@ fn main() -> void {
 func TestTypecheckerComptimeAssertWrapperWorks(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn assert(comptime cond: bool, comptime msg: str) -> void {
+fn assert(cond: bool, msg: str) -> void {
     if !cond {
         panic msg
     }
 }
 
-fn static_assert(comptime cond: bool, comptime msg: str) -> void {
+fn static_assert(cond: bool, msg: str) -> void {
     comptime assert(cond, msg)
 }
 
@@ -2569,13 +2556,13 @@ fn main() -> void {
 func TestTypecheckerComptimePanicKeepsOriginalCallSiteWithFollowingComptimeExpr(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn assert(comptime cond: bool, comptime msg: str) -> void {
+fn assert(cond: bool, msg: str) -> void {
     if !cond {
         panic msg
     }
 }
 
-fn static_assert(comptime cond: bool, comptime msg: str) -> void {
+fn static_assert(cond: bool, msg: str) -> void {
     comptime assert(cond, msg)
 }
 
@@ -2664,7 +2651,7 @@ fn main() -> void {
 func TestTypecheckerComptimeCompileErrorReportsMessage(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn assert(comptime cond: bool, comptime msg: str) -> void {
+fn assert(cond: bool, msg: str) -> void {
     if !cond {
         comptime {
             compile_error(msg)
@@ -2705,6 +2692,77 @@ fn main() -> void {
 	}
 	if foundDeferred {
 		t.Fatalf("expected no deferred-evaluation compile_error message diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerSoftComptimeBlockSkipsRuntimeDependentExpr(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+#[extern("clock")]
+fn clock() -> i64;
+
+fn requirePositive(v: i64) -> void {
+    if v < 0 {
+        panic "negative"
+    }
+}
+
+fn main() -> void {
+    let now = clock()
+    comptime {
+        requirePositive(now)
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected runtime-dependent soft comptime block to skip, got %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR for soft comptime skip, got %#v", result.Entry)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	mainIdx := strings.Index(text, "fn main() -> void {")
+	if mainIdx < 0 {
+		t.Fatalf("expected main function in MIR, got %q", text)
+	}
+	mainText := text[mainIdx:]
+	if strings.Contains(mainText, "comptime ") || strings.Contains(mainText, "requirePositive(") {
+		t.Fatalf("expected skipped soft comptime block to leave no runtime residue in main, got %q", mainText)
+	}
+}
+
+func TestTypecheckerHardComptimeInsideSoftBlockStillErrors(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+#[extern("clock")]
+fn clock() -> i64;
+
+fn hardCheck() -> void {
+    let _ = comptime clock()
+}
+
+fn main() -> void {
+    comptime {
+        hardCheck()
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected nested hard comptime failure inside soft block")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "`comptime` expression must be compile-time evaluable: call to clock cannot run at compile time") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected nested hard comptime diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -3604,6 +3662,105 @@ fn main() -> i32 {
 	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[letV.Value], "i32") {
 		t.Fatalf("expected items[1] to typecheck as i32, got %#v", result.Entry.Types.Nodes[letV.Value])
 	}
+}
+
+func TestTypecheckerResolvesDeferredArrayLengthFromConstExpr(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+const BASE = 2
+const EXTRA = 1
+
+fn main(items: [BASE + EXTRA]i32) -> i32 {
+    return items[2]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	paramRes := result.Entry.Bindings.Nodes[mainFn.Params[0].Name]
+	paramType := result.Entry.Types.Symbols[paramRes.Symbol.ID]
+	arr, ok := paramType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 3 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected items type [3]i32, got %T %#v", paramType, paramType)
+	}
+}
+
+func TestTypecheckerResolvesDeferredArrayLengthFromImportedConst(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "sizes.fer"), `
+const COUNT = 3
+`)
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+import "sizes"
+
+fn main(items: [sizes::COUNT]i32) -> i32 {
+    return items[2]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	paramRes := result.Entry.Bindings.Nodes[mainFn.Params[0].Name]
+	paramType := result.Entry.Types.Symbols[paramRes.Symbol.ID]
+	arr, ok := paramType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 3 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected items type [3]i32, got %T %#v", paramType, paramType)
+	}
+}
+
+func TestTypecheckerRejectsRuntimeArrayLength(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(n: i32) -> i32 {
+    let items: [n]i32
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected compile-time array length diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag == nil || diag.Code != diagnostics.ErrTypeMismatch {
+			continue
+		}
+		if strings.Contains(diag.Message, "array length must be a non-negative compile-time integer") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected compile-time array length diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNegativeArrayLength(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let items: [-1]i32
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected negative array length diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && len(diag.Labels) > 0 && diag.Labels[0].Message == "array length must be non-negative" {
+			return
+		}
+	}
+	t.Fatalf("expected non-negative array length diagnostic, got %#v", result.Diagnostics.Diagnostics())
 }
 
 func TestTypecheckerTypesSliceLiterals(t *testing.T) {

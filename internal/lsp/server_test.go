@@ -1466,7 +1466,7 @@ func TestHoverSelfShowsWrapperAndExpandedNamedType(t *testing.T) {
 func TestHoverBindingDeclarations(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
-	src := "type Point struct {\n    Value: i32 = 7\n}\n\nfn Point::Calc(&self, mut dx: i32, comptime step: i32) -> i32 {\n    let mut a = dx\n    const b: i32 = step\n    return a + b + self.Value\n}\n"
+	src := "type Point struct {\n    Value: i32 = 7\n}\n\nfn Point::Calc(&self, mut dx: i32, step: i32) -> i32 {\n    let mut a = dx\n    const b: i32 = step\n    return a + b + self.Value\n}\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 		t.Fatalf("failed to write source: %v", err)
 	}

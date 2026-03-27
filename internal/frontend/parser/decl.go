@@ -335,7 +335,10 @@ func (p *Parser) parseParamType() (ast.TypeExpr, bool) {
 
 func (p *Parser) parseNamedParam() ast.Param {
 	paramStart := p.current().Start
-	isComptime := p.match(tokens.COMPTIME)
+	if p.at(tokens.COMPTIME) {
+		p.errorHere("expected parameter name")
+		p.advance()
+	}
 	isMut := p.match(tokens.MUT)
 	nameTok := p.expect(tokens.IDENT, "expected parameter name")
 	var paramType ast.TypeExpr
@@ -355,7 +358,6 @@ func (p *Parser) parseNamedParam() ast.Param {
 	return ast.Param{
 		Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 		IsMut:      isMut,
-		IsComptime: isComptime,
 		IsVariadic: isVariadic,
 		Type:       paramType,
 		Default:    def,
@@ -622,7 +624,6 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 			p.errorAt(loc, "variadic parameter must be the last parameter")
 		}
 		paramStart := p.current().Start
-		isComptime := p.match(tokens.COMPTIME)
 		var (
 			paramName  *ast.Ident
 			paramType  ast.TypeExpr
@@ -638,7 +639,6 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 		}
 		params = append(params, ast.Param{
 			Name:       paramName,
-			IsComptime: isComptime,
 			IsVariadic: isVariadic,
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),

@@ -226,13 +226,13 @@ fn main() -> i32 {
 func TestPipelineElidesVoidTempsFromComptimeWrapper(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.fer"), `
-fn assert(comptime cond: bool, comptime msg: str) -> void {
+fn assert(cond: bool, msg: str) -> void {
     if !cond {
         panic msg
     }
 }
 
-fn static_assert(comptime cond: bool, comptime msg: str) -> void {
+fn static_assert(cond: bool, msg: str) -> void {
     comptime assert(cond, msg)
 }
 

@@ -258,36 +258,31 @@ func (p *Parser) parseUnsafeStmt() ast.Stmt {
 func (p *Parser) parseComptimeStmt() ast.Stmt {
 	start := p.advance().Start
 	body := p.parseBlock()
-	out := &ast.BlockStmt{Stmts: make([]ast.Stmt, 0, len(body.Stmts)), Location: p.locFrom(start)}
-	for _, stmt := range body.Stmts {
-		out.Stmts = append(out.Stmts, p.rewriteComptimeStmt(stmt))
-	}
-	return out
-}
-
-func (p *Parser) rewriteComptimeStmt(stmt ast.Stmt) ast.Stmt {
-	switch s := stmt.(type) {
-	case nil:
-		return nil
-	case *ast.ExprStmt:
-		if s.Value == nil {
+	var mark func(ast.Stmt) ast.Stmt
+	mark = func(stmt ast.Stmt) ast.Stmt {
+		switch s := stmt.(type) {
+		case nil:
+			return nil
+		case *ast.ExprStmt:
+			return s
+		case *ast.BlockStmt:
+			s.Comptime = true
+			for i, child := range s.Stmts {
+				s.Stmts[i] = mark(child)
+			}
+			return s
+		default:
+			loc := s.Loc()
+			p.errorAt(loc, "comptime block currently supports expression statements only")
 			return s
 		}
-		return &ast.ExprStmt{
-			Value:    &ast.PrefixExpr{Op: "comptime", Right: s.Value, Location: s.Value.Loc()},
-			Location: s.Location,
-		}
-	case *ast.BlockStmt:
-		out := &ast.BlockStmt{Stmts: make([]ast.Stmt, 0, len(s.Stmts)), Location: s.Location}
-		for _, child := range s.Stmts {
-			out.Stmts = append(out.Stmts, p.rewriteComptimeStmt(child))
-		}
-		return out
-	default:
-		loc := s.Loc()
-		p.errorAt(loc, "comptime block currently supports expression statements only")
-		return s
 	}
+	body.Comptime = true
+	body.Location = p.locFrom(start)
+	for i, stmt := range body.Stmts {
+		body.Stmts[i] = mark(stmt)
+	}
+	return body
 }
 
 func (p *Parser) parseBreakStmt() ast.Stmt {

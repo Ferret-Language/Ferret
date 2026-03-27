@@ -4,11 +4,11 @@ import "testing"
 
 func TestValueFlags(t *testing.T) {
 	var f ValueFlags
-	if f.Mutable() || f.Comptime() || f.Variadic() {
+	if f.Mutable() || f.Variadic() {
 		t.Fatalf("expected zero flags to be false")
 	}
-	f = FlagMutable | FlagComptime | FlagVariadic
-	if !f.Mutable() || !f.Comptime() || !f.Variadic() {
+	f = FlagMutable | FlagVariadic
+	if !f.Mutable() || !f.Variadic() {
 		t.Fatalf("expected all flags to be true")
 	}
 }

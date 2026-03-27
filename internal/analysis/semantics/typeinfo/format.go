@@ -48,8 +48,8 @@ func (p Printer) ReceiverText(name string, receiver Type) string {
 	return ast.FormatReceiverText(name, p.Type(receiver))
 }
 
-func (p Printer) NamedParamText(name string, typ Type, mutable, comptime bool) string {
-	return ast.FormatNamedParamText(name, p.Type(typ), mutable, comptime)
+func (p Printer) NamedParamText(name string, typ Type, mutable bool) string {
+	return ast.FormatNamedParamText(name, p.Type(typ), mutable)
 }
 
 func (p Printer) ParamList(params []string) string {
@@ -88,9 +88,6 @@ func (p Printer) NamedDecl(name string, underlying Type) string {
 					prefix := ""
 					if param.Flags.Mutable() {
 						prefix += "mut "
-					}
-					if param.Flags.Comptime() {
-						prefix += "comptime "
 					}
 					params = append(params, prefix+p.Type(param.Type))
 				}
@@ -164,9 +161,6 @@ func (p Printer) FuncDeclSignature(fn *ast.FuncDecl, fnType *FuncType) string {
 		if param.IsMut {
 			b.WriteString("mut ")
 		}
-		if param.IsComptime {
-			b.WriteString("comptime ")
-		}
 		if param.Name != nil && param.Name.Text() != "" {
 			b.WriteString(param.Name.Text())
 		} else {
@@ -226,9 +220,6 @@ func (p Printer) MethodSignature(name string, receiver Type, fn *FuncType) strin
 		if param.Flags.Mutable() {
 			prefix += "mut "
 		}
-		if param.Flags.Comptime() {
-			prefix += "comptime "
-		}
 		typeText := p.Type(param.Type)
 		if param.Flags.Variadic() {
 			typeText = p.variadicTypeText(param.Type)
@@ -276,9 +267,6 @@ func (p Printer) BindingDecl(kind, name string, typ Type, flags ValueFlags) stri
 		b.WriteString("parameter")
 		if flags.Mutable() {
 			b.WriteString(" mut")
-		}
-		if flags.Comptime() {
-			b.WriteString(" comptime")
 		}
 		b.WriteString(" ")
 		b.WriteString(name)
@@ -352,9 +340,6 @@ func (p Printer) formatSignature(fn *FuncType) string {
 		prefix := ""
 		if param.Flags.Mutable() {
 			prefix += "mut "
-		}
-		if param.Flags.Comptime() {
-			prefix += "comptime "
 		}
 		parts = append(parts, prefix+p.Type(param.Type))
 	}

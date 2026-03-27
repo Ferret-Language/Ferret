@@ -25,6 +25,7 @@ type ModuleInfo struct {
 	Symbols             map[symbols.SymbolID]Type
 	SymbolIndex         map[symbols.SymbolID]*symbols.Symbol
 	Bools               map[ast.Node]bool
+	ConstValues         map[ast.Node]ConstValue
 	MethodReceivers     map[ast.Node]Type
 	CallArgs            map[*ast.CallExpr][]ast.Expr
 	GenericRequirements map[symbols.SymbolID][]*GenericRequirement
@@ -36,6 +37,7 @@ func NewModuleInfo() *ModuleInfo {
 		Symbols:             make(map[symbols.SymbolID]Type),
 		SymbolIndex:         make(map[symbols.SymbolID]*symbols.Symbol),
 		Bools:               make(map[ast.Node]bool),
+		ConstValues:         make(map[ast.Node]ConstValue),
 		MethodReceivers:     make(map[ast.Node]Type),
 		CallArgs:            make(map[*ast.CallExpr][]ast.Expr),
 		GenericRequirements: make(map[symbols.SymbolID][]*GenericRequirement),
@@ -62,6 +64,21 @@ func (m *ModuleInfo) BindBool(node ast.Node, value bool) {
 		return
 	}
 	m.Bools[node] = value
+}
+
+func (m *ModuleInfo) BindConstValue(node ast.Node, value ConstValue) {
+	if m == nil || node == nil || !value.Valid() {
+		return
+	}
+	m.ConstValues[node] = value
+}
+
+func (m *ModuleInfo) LookupConstValue(node ast.Node) (ConstValue, bool) {
+	if m == nil || node == nil {
+		return ConstValue{}, false
+	}
+	value, ok := m.ConstValues[node]
+	return value, ok
 }
 
 func (m *ModuleInfo) LookupBool(node ast.Node) (bool, bool) {

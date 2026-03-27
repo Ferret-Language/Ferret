@@ -20,9 +20,7 @@ type FunctionResolver func(current *Module, callee *NameValue) (*Module, *Functi
 
 // EvaluateComptime evaluates compile-time expressions in MIR.
 //
-// It performs two actions:
-// 1. folds `comptime expr` unary values into literals when evaluable.
-// 2. validates arguments to `comptime` parameters at call sites.
+// It folds `comptime expr` unary values into literals when evaluable.
 func EvaluateComptime(diag *diagnostics.DiagnosticBag, mod *Module, resolve FunctionResolver) *Module {
 	if mod == nil || resolve == nil {
 		return mod
@@ -53,6 +51,25 @@ type ctfeEngine struct {
 	originStack    []source.Location
 }
 
+func (e *ctfeEngine) evalSoftComptime(loc source.Location, eval func() bool) (bool, bool) {
+	before := 0
+	if e != nil && e.diag != nil {
+		before = len(e.diag.Diagnostics())
+	}
+	if e != nil {
+		e.panicRaised = false
+		e.panicMessage = ""
+		e.failReason = ""
+		e.originStack = append(e.originStack, loc)
+	}
+	ok := eval()
+	if e != nil {
+		e.originStack = e.originStack[:len(e.originStack)-1]
+	}
+	emittedDiag := e != nil && e.diag != nil && len(e.diag.Diagnostics()) > before
+	return ok, emittedDiag
+}
+
 func (e *ctfeEngine) rewriteFunction(mod *Module, fn *Function) {
 	if fn == nil {
 		return
@@ -63,6 +80,7 @@ func (e *ctfeEngine) rewriteFunction(mod *Module, fn *Function) {
 		}
 		e.ctfeCandidates = make(map[int]bool)
 		defs := make(map[int]Value)
+		out := make([]Instr, 0, len(block.Instructions))
 		for _, instr := range block.Instructions {
 			switch i := instr.(type) {
 			case *AssignInstr:
@@ -71,38 +89,68 @@ func (e *ctfeEngine) rewriteFunction(mod *Module, fn *Function) {
 					invalidateDefsOnUnknownMutation(fn, defs)
 				}
 				defs[i.TargetID] = i.Value
+				out = append(out, i)
 			case *ComputeInstr:
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				if valueMayMutateMemory(i.Value) {
 					invalidateDefsOnUnknownMutation(fn, defs)
 				}
 				defs[i.TargetID] = i.Value
+				out = append(out, i)
 			case *StoreInstr:
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				clear(defs)
+				out = append(out, i)
 			case *StoreFieldInstr:
 				i.Base = e.rewriteValue(mod, fn, i.Base, defs)
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				clear(defs)
+				out = append(out, i)
 			case *EvalInstr:
+				if unary, ok := i.Value.(*UnaryValue); ok && unary != nil && unary.Op == "comptime_soft" {
+					ok, emittedDiag := e.evalSoftComptime(unary.Location, func() bool {
+						unary.Right = e.rewriteValue(mod, fn, unary.Right, defs)
+						_, ok = e.evalValue(mod, fn, unary.Right, nil, defs, 0, 0)
+						return ok
+					})
+					if ok {
+						e.markComptimeValueInputs(unary.Right, defs)
+						continue
+					}
+					if ctfeDependsOnDeferredInput(fn, unary.Right, defs, nil) {
+						i.Value = unary
+						out = append(out, i)
+						continue
+					}
+					if emittedDiag {
+						i.Value = unary
+						out = append(out, i)
+					}
+					continue
+				}
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				if valueMayMutateMemory(i.Value) {
 					invalidateDefsOnUnknownMutation(fn, defs)
 				}
+				out = append(out, i)
 			case *BindInstr:
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				if valueMayMutateMemory(i.Value) {
 					invalidateDefsOnUnknownMutation(fn, defs)
 				}
+				out = append(out, i)
 			case *LockInstr:
 				i.Value = e.rewriteValue(mod, fn, i.Value, defs)
 				clear(defs)
+				out = append(out, i)
 			case *DeferInstr:
 				for j, child := range i.Body {
 					i.Body[j] = e.rewriteDeferredInstr(mod, fn, child, defs)
 				}
+				out = append(out, i)
 			}
 		}
+		block.Instructions = out
 		block.Terminator = e.rewriteTerminator(mod, fn, block.Terminator, defs)
 		eliminateCTFEDeadTemps(fn, block, e.ctfeCandidates)
 		e.ctfeCandidates = nil
@@ -177,7 +225,7 @@ func (e *ctfeEngine) rewriteValue(mod *Module, fn *Function, value Value, defs m
 				if e.panicRaised {
 					return v
 				}
-				if ctfeDependsOnDeferredComptimeParam(fn, v.Right, defs, nil) {
+				if ctfeDependsOnDeferredInput(fn, v.Right, defs, nil) {
 					return v
 				}
 				loc := v.Location
@@ -215,7 +263,6 @@ func (e *ctfeEngine) rewriteValue(mod *Module, fn *Function, value Value, defs m
 		for i, arg := range v.Args {
 			v.Args[i] = e.rewriteValue(mod, fn, arg, defs)
 		}
-		e.checkComptimeCallArgs(mod, fn, v, defs)
 		return v
 	case *FieldLoadValue:
 		v.Base = e.rewriteValue(mod, fn, v.Base, defs)
@@ -246,42 +293,6 @@ func (e *ctfeEngine) rewriteValue(mod *Module, fn *Function, value Value, defs m
 	}
 }
 
-func (e *ctfeEngine) checkComptimeCallArgs(mod *Module, fn *Function, call *CallValue, defs map[int]Value) {
-	if callIsCompileErrorIntrinsic(call) {
-		return
-	}
-	target, _, ok := e.resolveCall(mod, call)
-	if !ok || target == nil {
-		return
-	}
-	for i, param := range target.Params {
-		if param == nil || !param.IsComptime || i >= len(call.Args) {
-			continue
-		}
-		e.panicRaised = false
-		e.panicMessage = ""
-		e.failReason = ""
-		e.originStack = append(e.originStack, call.Args[i].Loc())
-		if _, ok := e.evalValue(mod, fn, call.Args[i], nil, defs, 0, 0); ok {
-			e.originStack = e.originStack[:len(e.originStack)-1]
-			continue
-		}
-		e.originStack = e.originStack[:len(e.originStack)-1]
-		if e.panicRaised {
-			continue
-		}
-		if ctfeDependsOnDeferredComptimeParam(fn, call.Args[i], defs, nil) {
-			continue
-		}
-		loc := call.Args[i].Loc()
-		msg := "argument to comptime parameter must be compile-time evaluable"
-		if e.failReason != "" {
-			msg += ": " + e.failReason
-		}
-		e.addError(msg, diagnostics.ErrTypeMismatch, &loc, "this expression is not compile-time evaluable")
-	}
-}
-
 func (e *ctfeEngine) resolveCall(mod *Module, call *CallValue) (*Function, *Module, bool) {
 	if e == nil || call == nil {
 		return nil, nil, false
@@ -297,7 +308,7 @@ func (e *ctfeEngine) resolveCall(mod *Module, call *CallValue) (*Function, *Modu
 	return target, owner, true
 }
 
-func ctfeDependsOnDeferredComptimeParam(fn *Function, value Value, defs map[int]Value, seen map[int]bool) bool {
+func ctfeDependsOnDeferredInput(fn *Function, value Value, defs map[int]Value, seen map[int]bool) bool {
 	if fn == nil || value == nil {
 		return false
 	}
@@ -306,66 +317,67 @@ func ctfeDependsOnDeferredComptimeParam(fn *Function, value Value, defs map[int]
 		if len(v.Path) != 1 {
 			return false
 		}
+		name := v.Path[0]
 		for _, param := range fn.Params {
-			if param != nil && param.Name == v.Path[0] {
-				return param.IsComptime
+			if param != nil && param.Name == name {
+				return ctfeDependsOnDeferredLocalID(fn, param.LocalID, defs, seen)
 			}
 		}
 		for _, local := range fn.Locals {
-			if local != nil && local.Name == v.Path[0] {
-				return ctfeDependsOnDeferredComptimeLocal(fn, local.ID, defs, seen)
+			if local != nil && local.Name == name {
+				return ctfeDependsOnDeferredLocalID(fn, local.ID, defs, seen)
 			}
 		}
 		return false
 	case *LocalValue:
-		return ctfeDependsOnDeferredComptimeLocal(fn, v.LocalID, defs, seen)
+		return ctfeDependsOnDeferredLocalID(fn, v.LocalID, defs, seen)
 	case *UnaryValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Right, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Right, defs, seen)
 	case *BinaryValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Left, defs, seen) ||
-			ctfeDependsOnDeferredComptimeParam(fn, v.Right, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Left, defs, seen) ||
+			ctfeDependsOnDeferredInput(fn, v.Right, defs, seen)
 	case *PostfixValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Left, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Left, defs, seen)
 	case *AddrOfValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Source, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Source, defs, seen)
 	case *LoadValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Pointer, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Pointer, defs, seen)
 	case *CallValue:
-		if ctfeDependsOnDeferredComptimeParam(fn, v.Callee, defs, seen) {
+		if ctfeDependsOnDeferredInput(fn, v.Callee, defs, seen) {
 			return true
 		}
 		for _, arg := range v.Args {
-			if ctfeDependsOnDeferredComptimeParam(fn, arg, defs, seen) {
+			if ctfeDependsOnDeferredInput(fn, arg, defs, seen) {
 				return true
 			}
 		}
 		return false
 	case *FieldLoadValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Base, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Base, defs, seen)
 	case *FieldValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Base, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Base, defs, seen)
 	case *CastValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Left, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Left, defs, seen)
 	case *TypeTestValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Left, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Left, defs, seen)
 	case *CompositeValue:
 		for _, item := range v.Items {
-			if ctfeDependsOnDeferredComptimeParam(fn, item.Value, defs, seen) {
+			if ctfeDependsOnDeferredInput(fn, item.Value, defs, seen) {
 				return true
 			}
 		}
 		return false
 	case *InterfaceValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Value, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Value, defs, seen)
 	case *IndexValue:
-		return ctfeDependsOnDeferredComptimeParam(fn, v.Base, defs, seen) ||
-			ctfeDependsOnDeferredComptimeParam(fn, v.Index, defs, seen)
+		return ctfeDependsOnDeferredInput(fn, v.Base, defs, seen) ||
+			ctfeDependsOnDeferredInput(fn, v.Index, defs, seen)
 	default:
 		return false
 	}
 }
 
-func ctfeDependsOnDeferredComptimeLocal(fn *Function, localID int, defs map[int]Value, seen map[int]bool) bool {
+func ctfeDependsOnDeferredLocalID(fn *Function, localID int, defs map[int]Value, seen map[int]bool) bool {
 	if localID < 0 {
 		return false
 	}
@@ -376,14 +388,19 @@ func ctfeDependsOnDeferredComptimeLocal(fn *Function, localID int, defs map[int]
 		return false
 	}
 	seen[localID] = true
-	for _, param := range fn.Params {
-		if param != nil && param.LocalID == localID {
-			return param.IsComptime
-		}
-	}
 	if defs != nil {
 		if replacement, ok := defs[localID]; ok && replacement != nil {
-			return ctfeDependsOnDeferredComptimeParam(fn, replacement, defs, seen)
+			return ctfeDependsOnDeferredInput(fn, replacement, defs, seen)
+		}
+	}
+	for _, param := range fn.Params {
+		if param != nil && param.LocalID == localID {
+			return true
+		}
+	}
+	for _, local := range fn.Locals {
+		if local != nil && local.ID == localID {
+			return true
 		}
 	}
 	return false
@@ -581,7 +598,7 @@ func (e *ctfeEngine) evalValue(mod *Module, fn *Function, value Value, locals ma
 			return ctfeValue{}, false
 		}
 		switch v.Op {
-		case "comptime", "copy", "take", "unsafe", "?":
+		case "comptime", "comptime_soft", "copy", "take", "unsafe", "?":
 			return right, true
 		case "!":
 			if right.kind != ctfeBool {
@@ -885,6 +902,20 @@ func (e *ctfeEngine) execFunction(mod *Module, fn *Function, args []ctfeValue, p
 				}
 				base.fields[i.FieldIndex] = value
 			case *EvalInstr:
+				if unary, ok := i.Value.(*UnaryValue); ok && unary != nil && unary.Op == "comptime_soft" {
+					ok, emittedDiag := e.evalSoftComptime(unary.Location, func() bool {
+						unary.Right = e.rewriteValue(mod, fn, unary.Right, nil)
+						_, ok = e.evalValue(mod, fn, unary.Right, locals, nil, depth, steps)
+						return ok
+					})
+					if ok {
+						continue
+					}
+					if emittedDiag {
+						return ctfeValue{}, false
+					}
+					continue
+				}
 				if _, ok := e.evalValue(mod, fn, i.Value, locals, nil, depth, steps); !ok {
 					return ctfeValue{}, false
 				}

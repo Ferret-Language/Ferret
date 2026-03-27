@@ -429,12 +429,12 @@ type Handle enum {
 	}
 }
 
-func TestParseLetMutConstAndComptime(t *testing.T) {
+func TestParseLetMutConstAndComptimeExpr(t *testing.T) {
 	src := `
 let mut GlobalCount: i32 = 0
 const BuildMode = "debug"
 
-fn add(comptime T: Type, x: T) -> T {
+fn add(T: Type, x: T) -> T {
     let mut a: i32
     let b = comptime 1 + 2
     const local = 3
@@ -461,8 +461,8 @@ fn add(comptime T: Type, x: T) -> T {
 	if !ok {
 		t.Fatalf("expected function decl, got %T", mod.Decls[2])
 	}
-	if len(fn.Params) != 2 || !fn.Params[0].IsComptime {
-		t.Fatalf("expected first param to be comptime, got %#v", fn.Params)
+	if len(fn.Params) != 2 {
+		t.Fatalf("expected 2 params, got %#v", fn.Params)
 	}
 	if fn.Params[1].IsMut {
 		t.Fatalf("did not expect second param to be mutable, got %#v", fn.Params[1])
@@ -492,7 +492,20 @@ fn add(comptime T: Type, x: T) -> T {
 	}
 }
 
-func TestParseComptimeBlockRewritesExpressionStatements(t *testing.T) {
+func TestParseRejectsLegacyComptimeParamSyntax(t *testing.T) {
+	src := `
+fn add(comptime x: i32, y: i32) -> i32 {
+    return x + y
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if len(diag.Diagnostics()) == 0 {
+		t.Fatal("expected diagnostics for legacy comptime parameter syntax")
+	}
+}
+
+func TestParseComptimeBlockPreservesBlockContext(t *testing.T) {
 	src := `
 fn main() -> void {
     comptime {
@@ -517,7 +530,10 @@ fn main() -> void {
 	}
 	block, ok := fn.Body.Stmts[0].(*ast.BlockStmt)
 	if !ok {
-		t.Fatalf("expected comptime block to lower into block stmt, got %T", fn.Body.Stmts[0])
+		t.Fatalf("expected comptime block stmt, got %T", fn.Body.Stmts[0])
+	}
+	if !block.Comptime {
+		t.Fatal("expected comptime block marker")
 	}
 	if len(block.Stmts) != 1 {
 		t.Fatalf("expected one stmt in comptime block, got %d", len(block.Stmts))
@@ -526,12 +542,8 @@ fn main() -> void {
 	if !ok {
 		t.Fatalf("expected expr stmt in comptime block, got %T", block.Stmts[0])
 	}
-	prefix, ok := exprStmt.Value.(*ast.PrefixExpr)
-	if !ok || prefix.Op != "comptime" {
-		t.Fatalf("expected comptime prefix expr, got %#v", exprStmt.Value)
-	}
-	if _, ok := prefix.Right.(*ast.CallExpr); !ok {
-		t.Fatalf("expected wrapped call expression, got %T", prefix.Right)
+	if _, ok := exprStmt.Value.(*ast.CallExpr); !ok {
+		t.Fatalf("expected plain call expression in comptime block, got %T", exprStmt.Value)
 	}
 }
 

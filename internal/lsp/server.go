@@ -2065,9 +2065,6 @@ func interfaceMethodDetail(method *ast.InterfaceMethod) string {
 		if param.IsMut {
 			text = "mut " + text
 		}
-		if param.IsComptime {
-			text = "comptime " + text
-		}
 		parts = append(parts, text)
 	}
 	result := ast.TypeString(method.Result)
@@ -2462,9 +2459,6 @@ func renderConstrainedTypeParamBindingHover(sym *symbols.Symbol, typ typeinfo.Ty
 	if sym.Flags.Mutable() {
 		flags += "mut "
 	}
-	if sym.Flags.Comptime() {
-		flags += "comptime "
-	}
 	typeName := typeinfo.DefaultPrinter.Type(param)
 	constraint := typeinfo.DefaultPrinter.Type(param.Constraint)
 	bindingLine := "(parameter) " + flags + name + ": " + typeName
@@ -2497,9 +2491,6 @@ func renderBindingDeclForSymbol(sym *symbols.Symbol, typ typeinfo.Type, mod *con
 		flags := typeinfo.ValueFlags(0)
 		if sym.Flags.Mutable() {
 			flags |= typeinfo.FlagMutable
-		}
-		if sym.Flags.Comptime() {
-			flags |= typeinfo.FlagComptime
 		}
 		return typeinfo.DefaultPrinter.BindingDecl("parameter", sym.Name, typ, flags)
 	default:

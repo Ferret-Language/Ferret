@@ -262,11 +262,10 @@ func generateInterfaceTypeDecl(types *typeinfo.ModuleInfo, t *ast.InterfaceType)
 		}
 		for _, param := range method.Params {
 			entry.Params = append(entry.Params, &Param{
-				Name:       param.Name.Text(),
-				Type:       syntaxType(types, param.Type),
-				IsMutable:  param.IsMut,
-				IsComptime: param.IsComptime,
-				Location:   param.Location,
+				Name:      param.Name.Text(),
+				Type:      syntaxType(types, param.Type),
+				IsMutable: param.IsMut,
+				Location:  param.Location,
 			})
 		}
 		out.Methods = append(out.Methods, entry)
@@ -335,7 +334,7 @@ func (g *generator) generateConstDecl(d *ast.ConstDecl) *Global {
 		Mutable:  false,
 		Constant: true,
 		Type:     effectiveType(g.types, d.Type, d.Value),
-		Value:    g.generateExpr(d.Value),
+		Value:    g.generateConstValue(d.Value),
 		Location: d.Location,
 		Source:   d,
 	}
@@ -385,12 +384,11 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	fn.Params = make([]*Param, 0, len(d.Params))
 	for _, param := range d.Params {
 		fn.Params = append(fn.Params, &Param{
-			Name:       g.maybeMangledLocalName(param.Name),
-			LocalID:    g.maybeLocalID(param.Name),
-			Type:       hirInstantiateSelfType(effectiveType(g.types, param.Type, param.Default), selfType),
-			IsMutable:  param.IsMut,
-			IsComptime: param.IsComptime,
-			Location:   param.Location,
+			Name:      g.maybeMangledLocalName(param.Name),
+			LocalID:   g.maybeLocalID(param.Name),
+			Type:      hirInstantiateSelfType(effectiveType(g.types, param.Type, param.Default), selfType),
+			IsMutable: param.IsMut,
+			Location:  param.Location,
 		})
 	}
 	return fn
@@ -400,32 +398,12 @@ func hirInstantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type {
 	if selfType == nil {
 		return typ
 	}
-	switch t := typ.(type) {
-	case *typeinfo.SelfType:
-		return selfType
-	case *typeinfo.PointerType:
-		return &typeinfo.PointerType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.RefType:
-		return &typeinfo.RefType{Mutable: t.Mutable, Inner: hirInstantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.RawPtrType:
-		return &typeinfo.RawPtrType{Const: t.Const, Inner: hirInstantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.OptionalType:
-		return &typeinfo.OptionalType{Inner: hirInstantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.ErrorUnionType:
-		return &typeinfo.ErrorUnionType{Error: hirInstantiateSelfType(t.Error, selfType), Value: hirInstantiateSelfType(t.Value, selfType)}
-	case *typeinfo.ArrayType:
-		return &typeinfo.ArrayType{Inner: hirInstantiateSelfType(t.Inner, selfType), Len: t.Len}
-	case *typeinfo.SliceType:
-		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: hirInstantiateSelfType(t.Inner, selfType)}
-	case *typeinfo.TupleType:
-		elems := make([]typeinfo.Type, 0, len(t.Elems))
-		for _, elem := range t.Elems {
-			elems = append(elems, hirInstantiateSelfType(elem, selfType))
+	return typeinfo.RewriteType(typ, func(t typeinfo.Type) typeinfo.Type {
+		if _, ok := t.(*typeinfo.SelfType); ok {
+			return selfType
 		}
-		return &typeinfo.TupleType{Elems: elems}
-	default:
-		return typ
-	}
+		return nil
+	}, nil)
 }
 
 func (g *generator) generateBlock(block *ast.BlockStmt) *BlockStmt {
@@ -436,6 +414,14 @@ func (g *generator) generateBlock(block *ast.BlockStmt) *BlockStmt {
 	out.Location = block.Location
 	for _, stmt := range block.Stmts {
 		if lowered := g.generateStmt(stmt); lowered != nil {
+			if block.Comptime {
+				if exprStmt, ok := lowered.(*ExprStmt); ok && exprStmt.Value != nil {
+					expr := exprStmt.Value
+					wrapped := &PrefixExpr{Op: "comptime_soft", Right: expr}
+					wrapped.ExprType, wrapped.Location, wrapped.Source = expr.Type(), expr.Loc(), expr.SourceExpr()
+					exprStmt.Value = wrapped
+				}
+			}
 			out.Stmts = append(out.Stmts, lowered)
 		}
 	}
@@ -453,7 +439,7 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.ConstStmt:
-		out := &ConstStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
+		out := &ConstStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateConstValue(s.Value)}
 		out.Location = s.Location
 		return out
 	case *ast.ReturnStmt:
@@ -554,6 +540,44 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 	default:
 		return nil
 	}
+}
+
+func (g *generator) generateConstValue(expr ast.Expr) Expr {
+	if value, ok := g.types.LookupConstValue(expr); ok {
+		typ := exprType(g.types, expr)
+		loc := expr.Loc()
+		switch value.Kind {
+		case typeinfo.ConstInt:
+			if value.Int != nil {
+				out := &NumberLit{Value: value.Int.String()}
+				out.ExprType, out.Location, out.Source = typ, loc, expr
+				return out
+			}
+		case typeinfo.ConstBool:
+			name := "false"
+			if value.Bool {
+				name = "true"
+			}
+			out := &Ident{Path: []string{name}, LocalID: -1}
+			out.ExprType, out.Location, out.Source = typ, loc, expr
+			return out
+		case typeinfo.ConstString:
+			out := &StringLit{Value: value.String}
+			out.ExprType, out.Location, out.Source = typ, loc, expr
+			return out
+		case typeinfo.ConstNone:
+			out := &NoneLit{}
+			out.ExprType, out.Location, out.Source = typ, loc, expr
+			return out
+		}
+	}
+	value := g.generateExpr(expr)
+	if expr == nil || value == nil {
+		return value
+	}
+	out := &PrefixExpr{Op: "comptime", Right: value}
+	out.ExprType, out.Location, out.Source = exprType(g.types, expr), expr.Loc(), expr
+	return out
 }
 
 func (g *generator) generateExpr(expr ast.Expr) Expr {

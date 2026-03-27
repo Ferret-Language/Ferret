@@ -4,6 +4,7 @@ import "compiler/internal/core/source"
 
 type BlockStmt struct {
 	Stmts    []Stmt
+	Comptime bool
 	Location source.Location
 }
 

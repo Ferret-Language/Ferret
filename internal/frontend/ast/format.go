@@ -169,11 +169,8 @@ func ReceiverString(recv *Receiver) string {
 	return FormatReceiverText(name, TypeString(recv.Type))
 }
 
-func FormatNamedParamText(name, typeText string, isMut, isComptime bool) string {
+func FormatNamedParamText(name, typeText string, isMut bool) string {
 	var b strings.Builder
-	if isComptime {
-		b.WriteString("comptime ")
-	}
 	if isMut {
 		b.WriteString("mut ")
 	}
@@ -236,7 +233,7 @@ func ParamString(param Param) string {
 			typeText = "..." + typeText
 		}
 	}
-	text := FormatNamedParamText(name, typeText, param.IsMut, param.IsComptime)
+	text := FormatNamedParamText(name, typeText, param.IsMut)
 	if param.Default != nil {
 		text += " = " + ExprString(param.Default)
 	}
