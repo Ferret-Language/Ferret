@@ -10,3 +10,4 @@ app
 *.
 *.ast.json
 _gen
+.gocache

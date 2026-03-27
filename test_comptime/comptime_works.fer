@@ -1,0 +1,50 @@
+fn require(name: str, cond: bool) -> void {
+    if !cond {
+        print("FAIL:")
+        print(name)
+        panic "comptime check failed"
+    }
+    print("ok:")
+    print(name)
+}
+
+fn pair_sum(pair: (i32, i32)) -> i32 {
+    return pair[0] + pair[1]
+}
+
+fn assert(cond: bool, msg: str) -> void {
+    if !cond {
+        panic msg
+    }
+}
+
+fn static_assert(cond: bool, msg: str) -> void {
+    comptime {
+        assert(cond, msg)
+    }
+}
+
+const BASE = 2
+const EXTRA = 1
+const RESULT = pair_sum((3, 4))
+
+fn main() {
+    let x = 1
+    const y = x
+
+    let hard = comptime pair_sum((5, 6))
+    let arr: [BASE + EXTRA]i32 = [BASE + EXTRA]i32{10, 20, 30}
+
+    comptime {
+        assert(BASE + EXTRA == 3, "soft comptime block failed")
+    }
+
+    comptime static_assert(1 + 1 == 2, "hard comptime wrapper failed")
+
+    require("const local CTFE", y == 1)
+    require("const call CTFE", RESULT == 7)
+    require("hard comptime expr", hard == 11)
+    require("strict array const length", arr[2] == 30)
+
+    print("comptime works: PASS")
+}

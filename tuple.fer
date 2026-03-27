@@ -16,6 +16,18 @@ fn main() {
     let ints: (i32, i32) = (3, 4)
     let mixed: (i32, bool, str) = (7, true, "ok")
 
+    const ress = pairSum(ints)
+
+    print(ress)
+
+    const N = 2 + 5
+
+    let mut constArr : [N]i32
+
+    constArr[0] = 123
+
+    print(constArr[0])
+
     require("tuple sum", pairSum(ints) == 7)
     require("tuple first element", mixed[0] == 7)
     require("tuple bool element", mixed[1])
