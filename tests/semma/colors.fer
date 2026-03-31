@@ -1,0 +1,11 @@
+type Color enum {
+    Red,
+    Green,
+    Blue
+}
+
+const DefaultColor = Color::Green
+
+fn IsDefault(color: Color) -> bool {
+    return color == DefaultColor
+}

@@ -11,14 +11,17 @@ const (
 	ConstString
 	ConstNone
 	ConstSequence
+	ConstObject
 )
 
 type ConstValue struct {
-	Kind   ConstValueKind
-	Int    *big.Int
-	Bool   bool
-	String string
-	Elems  []ConstValue
+	Kind       ConstValueKind
+	Int        *big.Int
+	Bool       bool
+	String     string
+	Elems      []ConstValue
+	FieldNames []string
+	Fields     []ConstValue
 }
 
 func (v ConstValue) Valid() bool {

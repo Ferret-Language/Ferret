@@ -932,49 +932,15 @@ func lowerResolvedScalarValue(resolution *binding.Resolution, loc source.Locatio
 	}
 	switch resolution.Symbol.Kind {
 	case symbols.SymbolVariant:
-		if ordinal, ok := lookupEnumOrdinal(typ, resolution.Symbol.Name); ok {
+		if ordinal, ok := typeinfo.LookupEnumOrdinal(typ, resolution.Symbol.Name); ok {
 			return &NumberValue{baseValue: baseValue{Location: loc, ExprType: typ}, Value: strconv.Itoa(ordinal)}
 		}
 	case symbols.SymbolError:
-		if ordinal, ok := lookupErrorOrdinal(typ, resolution.Symbol.Name); ok {
+		if ordinal, ok := typeinfo.LookupErrorOrdinal(typ, resolution.Symbol.Name); ok {
 			return &NumberValue{baseValue: baseValue{Location: loc, ExprType: typ}, Value: strconv.Itoa(ordinal)}
 		}
 	}
 	return nil
-}
-
-func lookupEnumOrdinal(typ typeinfo.Type, name string) (int, bool) {
-	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
-		if decl, ok := named.Decl.Type.(*ast.EnumType); ok {
-			for i, variant := range decl.Variants {
-				if variant != nil && variant.Name != nil && variant.Name.Text() == name {
-					return i, true
-				}
-			}
-		}
-	}
-	if enumTyp, ok := typ.(*typeinfo.EnumType); ok && enumTyp != nil && enumTyp.VariantOrdinals != nil {
-		ordinal, ok := enumTyp.VariantOrdinals[name]
-		return ordinal, ok
-	}
-	return 0, false
-}
-
-func lookupErrorOrdinal(typ typeinfo.Type, name string) (int, bool) {
-	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
-		if decl, ok := named.Decl.Type.(*ast.ErrorType); ok {
-			for i, member := range decl.Members {
-				if member != nil && member.Name != nil && member.Name.Text() == name {
-					return i, true
-				}
-			}
-		}
-	}
-	if errTyp, ok := typ.(*typeinfo.ErrorSetType); ok && errTyp != nil && errTyp.MemberOrdinals != nil {
-		ordinal, ok := errTyp.MemberOrdinals[name]
-		return ordinal, ok
-	}
-	return 0, false
 }
 
 func lowerAddrSource(c *lowerContext, expr hir.Expr) Value {

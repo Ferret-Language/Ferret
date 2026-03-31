@@ -1,0 +1,9 @@
+fn SumTo(limit: i32) -> i32 {
+    let mut i = 0
+    let mut sum = 0
+    while i <= limit {
+        sum = sum + i
+        i = i + 1
+    }
+    return sum
+}

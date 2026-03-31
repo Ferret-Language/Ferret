@@ -54,7 +54,6 @@ func (c *checker) checkDecl(decl ast.Decl) {
 			value = c.typeOfExpr(nil, d.Value, declared)
 			if constValue, ok := c.constExpr(c.mod, d.Value, nil); ok {
 				c.info.BindConstValue(d, constValue)
-				c.info.BindConstValue(d.Value, constValue)
 			} else {
 				c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
 			}
@@ -524,6 +523,9 @@ func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expecte
 		c.comptimeDepth++
 		comptimeType := c.typeOfExpr(scope, expr.Right, expected)
 		c.comptimeDepth--
+		if !c.hasDeferredComptimeInputs(scope, expr.Right) {
+			c.evalComptimeExpr(c.mod, expr, expr)
+		}
 		c.info.BindNode(expr, comptimeType)
 		return comptimeType
 	}
@@ -2914,6 +2916,46 @@ func (c *checker) requireConstExpr(scope *refineScope, expr ast.Expr, message st
 			WithCode(diagnostics.ErrTypeMismatch).
 			WithPrimaryLabel(&loc, "this expression is not compile-time evaluable"),
 	)
+}
+
+func (c *checker) hasDeferredComptimeInputs(scope *refineScope, expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case nil:
+		return false
+	case *ast.BadExpr, *ast.NumberLit, *ast.StringLit, *ast.NoneLit:
+		return false
+	case *ast.Ident:
+		return !c.isConstIdent(scope, e)
+	case *ast.PrefixExpr:
+		return c.hasDeferredComptimeInputs(scope, e.Right)
+	case *ast.BinaryExpr:
+		return c.hasDeferredComptimeInputs(scope, e.Left) || c.hasDeferredComptimeInputs(scope, e.Right)
+	case *ast.CallExpr:
+		for _, arg := range e.Args {
+			if c.hasDeferredComptimeInputs(scope, arg) {
+				return true
+			}
+		}
+		if selector, ok := e.Callee.(*ast.SelectorExpr); ok && selector != nil {
+			return c.hasDeferredComptimeInputs(scope, selector.Left)
+		}
+		return false
+	case *ast.CastExpr:
+		return c.hasDeferredComptimeInputs(scope, e.Left)
+	case *ast.CompositeLit:
+		for _, item := range e.Items {
+			if c.hasDeferredComptimeInputs(scope, item.Value) {
+				return true
+			}
+		}
+		return false
+	case *ast.IndexExpr:
+		return c.hasDeferredComptimeInputs(scope, e.Left) || c.hasDeferredComptimeInputs(scope, e.Index)
+	case *ast.SelectorExpr:
+		return c.hasDeferredComptimeInputs(scope, e.Left)
+	default:
+		return true
+	}
 }
 
 func (c *checker) isConstExpr(scope *refineScope, expr ast.Expr) bool {
