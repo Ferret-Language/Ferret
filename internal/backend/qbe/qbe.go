@@ -44,6 +44,7 @@ type moduleState struct {
 	pendingLines      []string
 	interfaceVTables  map[becommon.InterfaceVTableKey]string
 	interfaceWrappers map[becommon.InterfaceWrapperKey]struct{}
+	runtimeTypes      map[string]string
 	tempValues        map[int]mir.Value
 }
 
@@ -69,8 +70,9 @@ type scalarAllocaLocal struct {
 func New() backend.Lowerer {
 	return &lowerer{
 		shared: &becommon.InterfaceHelperCache{
-			VTables:  make(map[becommon.InterfaceVTableKey]string),
-			Wrappers: make(map[becommon.InterfaceWrapperKey]struct{}),
+			VTables:      make(map[becommon.InterfaceVTableKey]string),
+			Wrappers:     make(map[becommon.InterfaceWrapperKey]struct{}),
+			RuntimeTypes: make(map[string]string),
 		},
 	}
 }
@@ -94,6 +96,7 @@ func (l *lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		deferredB:         &strings.Builder{},
 		interfaceVTables:  l.shared.VTables,
 		interfaceWrappers: l.shared.Wrappers,
+		runtimeTypes:      l.shared.RuntimeTypes,
 		tempValues:        make(map[int]mir.Value),
 	}
 
@@ -1620,6 +1623,22 @@ func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concrete
 	return lines, tmp, nil
 }
 
+func lowerNarrowedInterfaceConcrete(state *moduleState, value mir.Value) ([]string, string, bool, error) {
+	if state == nil || value == nil || isInterfaceAggregate(value.Type()) {
+		return nil, "", false, nil
+	}
+	storedType := becommon.StoredValueType(state.mod, state.fn, state.modules, value)
+	if !isInterfaceAggregate(storedType) {
+		return nil, "", false, nil
+	}
+	slotPtr, err := lowerInterfaceSlotPointer(state, value)
+	if err != nil {
+		return nil, "", false, err
+	}
+	dataPtr := freshTemp(state, "iface_data")
+	return []string{fmt.Sprintf("%s =l loadl %s", dataPtr, slotPtr)}, dataPtr, true, nil
+}
+
 func lowerInterfaceCall(state *moduleState, targetName string, targetType typeinfo.Type, call *mir.CallValue, field *mir.FieldValue) (string, error) {
 	if len(call.Args) == 0 {
 		return "", fmt.Errorf("interface call requires receiver")
@@ -1727,7 +1746,7 @@ func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *m
 		return "", err
 	}
 	sym := becommon.SanitizeIdent("vtable__" + qbeTypeName(state, targetNamed) + "__" + becommon.SanitizeType(value.ConcreteType))
-	typeInfoSym, err := emitQBERuntimeTypeInfo(state, sym+"__typeinfo", value.ConcreteType)
+	typeInfoSym, err := ensureQBERuntimeTypeInfo(state, value.ConcreteType)
 	if err != nil {
 		return "", err
 	}
@@ -1751,7 +1770,15 @@ func ensureQBEInterfaceVTable(state *moduleState, target typeinfo.Type, value *m
 	return sym, nil
 }
 
-func emitQBERuntimeTypeInfo(state *moduleState, sym string, typ typeinfo.Type) (string, error) {
+func ensureQBERuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, error) {
+	if state == nil {
+		return "", fmt.Errorf("invalid runtime type info request")
+	}
+	key := becommon.RuntimeTypeKey(typ)
+	if sym, ok := state.runtimeTypes[key]; ok {
+		return sym, nil
+	}
+	sym := becommon.SanitizeIdent("typeinfo__" + key)
 	desc := backend.DescribeRuntimeType(typ)
 	nameSym := sym + "__name"
 	fmt.Fprintf(state.deferredB, "data $%s = { b %q, b 0 }\n", nameSym, desc.Name)
@@ -1760,6 +1787,7 @@ func emitQBERuntimeTypeInfo(state *moduleState, sym string, typ typeinfo.Type) (
 		return "", err
 	}
 	fmt.Fprintf(state.deferredB, "data $%s = { w %d, z 4, l $%s, l %d, l %d, w %d, z 4 }\n", sym, desc.ID, nameSym, size, align, desc.Flags)
+	state.runtimeTypes[key] = sym
 	return sym, nil
 }
 
@@ -2648,6 +2676,21 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 	case nil:
 		return "", fmt.Errorf("nil value")
 	case *mir.LocalValue:
+		if lines, dataPtr, ok, err := lowerNarrowedInterfaceConcrete(state, v); err != nil {
+			return "", err
+		} else if ok {
+			state.pendingLines = append(state.pendingLines, lines...)
+			if isAggregateType(state, v.Type()) {
+				return dataPtr, nil
+			}
+			op, qtype, err := qbeLoadOp(v.Type())
+			if err != nil {
+				return "", err
+			}
+			tmp := freshTemp(state, "iface_ld")
+			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, dataPtr))
+			return tmp, nil
+		}
 		if agg, ok := state.aggLocals[v.LocalID]; ok {
 			return qbeLocalName(agg.PtrName), nil
 		}
@@ -2662,6 +2705,21 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		}
 		return qbeLocalName(becommon.LocalNameByID(state.fn, v.LocalID)), nil
 	case *mir.NameValue:
+		if lines, dataPtr, ok, err := lowerNarrowedInterfaceConcrete(state, v); err != nil {
+			return "", err
+		} else if ok {
+			state.pendingLines = append(state.pendingLines, lines...)
+			if isAggregateType(state, v.Type()) {
+				return dataPtr, nil
+			}
+			op, qtype, err := qbeLoadOp(v.Type())
+			if err != nil {
+				return "", err
+			}
+			tmp := freshTemp(state, "iface_ld")
+			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, dataPtr))
+			return tmp, nil
+		}
 		if len(v.Path) == 1 {
 			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
 				if value, ok := state.tempValues[local.ID]; ok && value != nil {
@@ -2807,6 +2865,27 @@ func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 		if _, ok := backend.UnwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
 			return "0", nil
 		}
+	}
+	if isInterfaceAggregate(v.Left.Type()) {
+		src, err := lowerAggregateSource(state, v.Left)
+		if err != nil {
+			return "", err
+		}
+		expectedSym, err := ensureQBERuntimeTypeInfo(state, v.Target)
+		if err != nil {
+			return "", err
+		}
+		vtAddr := freshTemp(state, "iface_vt_addr")
+		vtPtr := freshTemp(state, "iface_vt")
+		typeInfoPtr := freshTemp(state, "iface_typeinfo")
+		cmp := freshTemp(state, "istype")
+		state.pendingLines = append(state.pendingLines,
+			fmt.Sprintf("%s =l add %s, 8", vtAddr, src),
+			fmt.Sprintf("%s =l loadl %s", vtPtr, vtAddr),
+			fmt.Sprintf("%s =l loadl %s", typeInfoPtr, vtPtr),
+			fmt.Sprintf("%s =w ceql %s, $%s", cmp, typeInfoPtr, expectedSym),
+		)
+		return cmp, nil
 	}
 	if !isUnionAggregate(v.Left.Type()) {
 		return "", fmt.Errorf("unsupported runtime type test on %s", typeinfo.FormatType(typeStringer{v.Left.Type()}))

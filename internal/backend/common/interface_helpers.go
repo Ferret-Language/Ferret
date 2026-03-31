@@ -12,6 +12,7 @@ type InterfaceWrapperKey struct {
 }
 
 type InterfaceHelperCache struct {
-	VTables  map[InterfaceVTableKey]string
-	Wrappers map[InterfaceWrapperKey]struct{}
+	VTables      map[InterfaceVTableKey]string
+	Wrappers     map[InterfaceWrapperKey]struct{}
+	RuntimeTypes map[string]string
 }

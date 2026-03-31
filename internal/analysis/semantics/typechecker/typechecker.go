@@ -2188,8 +2188,7 @@ func (c *checker) classifyTypeTest(loc source.Location, left, target typeinfo.Ty
 		return c.implementsInterface(left, targetIface), true, true
 	}
 	if _, ok := c.underlying(left).(*typeinfo.InterfaceType); ok {
-		result, ok := c.reportUnsupportedTypeTest(loc, "runtime interface type tests are not implemented yet", "only exact or interface-to-interface static checks work right now")
-		return result, false, ok
+		return false, false, true
 	}
 	return false, true, true
 }

@@ -55,7 +55,7 @@ fn main() -> str {
 	for _, want := range []string{
 		"%local__main__Stringer = type { ptr, ptr }",
 		"@vtable__local__main__Stringer__Name = private unnamed_addr constant [2 x ptr]",
-		"@vtable__local__main__Stringer__Name__typeinfo = private unnamed_addr constant { i32, ptr, i64, i64, i32 }",
+		"@typeinfo__main__Name = private unnamed_addr constant { i32, ptr, i64, i64, i32 }",
 		"define { ptr, i64 } @ifacewrap__local__main__Stringer__Name__String(ptr %data)",
 		"%_iface_fnslot",
 		"%_iface_fn",
@@ -148,7 +148,7 @@ fn main() -> void {
 	if err != nil {
 		t.Fatalf("lower llvm program: %v", err)
 	}
-	const sym = "@vtable__builtin__global__Any__str__typeinfo ="
+	const sym = "@typeinfo__str ="
 	if got := strings.Count(ir, sym); got != 1 {
 		t.Fatalf("expected %q once, got %d\n%s", sym, got, ir)
 	}
@@ -197,6 +197,97 @@ fn main() -> str {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerRuntimeInterfaceTypeTestToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Stringer interface {
+    String() -> str
+}
+
+type Name struct {}
+
+fn Name::String() -> str {
+    return "name"
+}
+
+fn main(s: Stringer) -> bool {
+    return s is Name
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "@typeinfo__main__Name = private unnamed_addr constant") {
+		t.Fatalf("expected runtime type info in llvm output:\n%s", text)
+	}
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`%_iface_vt_addr[0-9]+ = getelementptr inbounds i8, ptr %[A-Za-z0-9_]+, i64 8`),
+		regexp.MustCompile(`%_iface_vt[0-9]+ = load ptr, ptr %_iface_vt_addr[0-9]+`),
+		regexp.MustCompile(`%_iface_typeinfo[0-9]+ = load ptr, ptr %_iface_vt[0-9]+`),
+		regexp.MustCompile(`%_istype[0-9]+ = icmp eq ptr %_iface_typeinfo[0-9]+, @typeinfo__main__Name`),
+	} {
+		if !pattern.MatchString(text) {
+			t.Fatalf("expected %q in llvm output:\n%s", pattern.String(), text)
+		}
+	}
+}
+
+func TestLowerNarrowedInterfaceValueToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Stringer interface {
+    String(self) -> str
+}
+
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn main(s: Stringer) -> i32 {
+    if s is Name {
+        let narrowed: Name = s
+        return narrowed.value
+    }
+    return 0
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`%_iface_data[0-9]+ = load ptr, ptr %s`),
+		regexp.MustCompile(`call void @llvm\.memcpy\.p0\.p0\.i64\(ptr align 4 %narrowed, ptr align 4 %_iface_data[0-9]+, i64 4, i1 false\)`),
+	} {
+		if !pattern.MatchString(text) {
+			t.Fatalf("expected %q in llvm output:\n%s", pattern.String(), text)
 		}
 	}
 }
@@ -794,6 +885,84 @@ fn main() -> i32 {
 		"br i1 %_br3, label %bb1, label %bb2",
 		"store i32 %_asgn9, ptr %__match1_alloca",
 		"ret i32 %_ld12",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerMatchToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main(x: i32) -> i32 {
+    match x {
+        0 => { return 1 }
+        _ => { return 2 }
+    }
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%_ld1 = load i32, ptr %x_alloca",
+		"switch i32 %_ld1, label %bb2 [",
+		"i32 0, label %bb1",
+		"ret i32 1",
+		"ret i32 2",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerEnumMatchToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Color enum {
+    Red,
+    Green,
+    Blue,
+}
+
+fn main(value: Color) -> i32 {
+    match value {
+        Color::Green => { return 1 }
+        _ => { return 2 }
+    }
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%_ld1 = load i32, ptr %value_alloca",
+		"switch i32 %_ld1, label %bb2 [",
+		"i32 1, label %bb1",
+		"ret i32 1",
+		"ret i32 2",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

@@ -60,6 +60,44 @@ func LocalTypeByID(fn *mir.Function, id int) typeinfo.Type {
 	return typeinfo.UnknownType{}
 }
 
+func GlobalTypeByPath(current *mir.Module, modules map[string]*mir.Module, path []string) typeinfo.Type {
+	if len(path) == 0 {
+		return typeinfo.UnknownType{}
+	}
+	mod := current
+	name := path[len(path)-1]
+	if len(path) > 1 && modules != nil {
+		if owner := modules[strings.Join(path[:len(path)-1], "/")]; owner != nil {
+			mod = owner
+		}
+	}
+	if mod == nil {
+		return typeinfo.UnknownType{}
+	}
+	for _, global := range mod.Globals {
+		if global != nil && global.Name == name {
+			return global.Type
+		}
+	}
+	return typeinfo.UnknownType{}
+}
+
+func StoredValueType(current *mir.Module, fn *mir.Function, modules map[string]*mir.Module, value mir.Value) typeinfo.Type {
+	switch v := value.(type) {
+	case *mir.LocalValue:
+		return LocalTypeByID(fn, v.LocalID)
+	case *mir.NameValue:
+		if len(v.Path) == 1 {
+			if local := FindLocalByName(fn, v.Path[0]); local != nil {
+				return local.Type
+			}
+		}
+		return GlobalTypeByPath(current, modules, v.Path)
+	default:
+		return typeinfo.UnknownType{}
+	}
+}
+
 func TupleIndexFromValue(value mir.Value) (int, bool) {
 	num, ok := value.(*mir.NumberValue)
 	if !ok || num == nil {
@@ -136,6 +174,63 @@ func SanitizeType(typ typeinfo.Type) string {
 		"!", "_",
 		"/", "__",
 	).Replace(format))
+}
+
+func RuntimeTypeKey(typ typeinfo.Type) string {
+	switch t := typ.(type) {
+	case nil:
+		return "void"
+	case *typeinfo.NamedType:
+		var b strings.Builder
+		if t.ModuleKey != "" {
+			b.WriteString(SanitizePath(strings.TrimPrefix(t.ModuleKey, "local:")))
+			b.WriteString("__")
+		}
+		b.WriteString(SanitizeIdent(t.Name))
+		for _, arg := range t.TypeArgs {
+			b.WriteString("__")
+			b.WriteString(RuntimeTypeKey(arg))
+		}
+		return b.String()
+	case *typeinfo.BuiltinType:
+		return SanitizeIdent(t.Name)
+	case *typeinfo.StringType:
+		return "str"
+	case *typeinfo.PointerType:
+		return "ptr__" + RuntimeTypeKey(t.Inner)
+	case *typeinfo.RefType:
+		if t.Mutable {
+			return "ref_mut__" + RuntimeTypeKey(t.Inner)
+		}
+		return "ref__" + RuntimeTypeKey(t.Inner)
+	case *typeinfo.RawPtrType:
+		return "rawptr__" + RuntimeTypeKey(t.Inner)
+	case *typeinfo.SliceType:
+		if t.Mutable {
+			return "slice_mut__" + RuntimeTypeKey(t.Inner)
+		}
+		return "slice__" + RuntimeTypeKey(t.Inner)
+	case *typeinfo.ArrayType:
+		return "array_" + strconv.FormatInt(t.Len, 10) + "__" + RuntimeTypeKey(t.Inner)
+	case *typeinfo.OptionalType:
+		return "opt__" + RuntimeTypeKey(t.Inner)
+	case *typeinfo.TupleType:
+		parts := make([]string, 0, len(t.Elems))
+		for _, elem := range t.Elems {
+			parts = append(parts, RuntimeTypeKey(elem))
+		}
+		return "tuple__" + strings.Join(parts, "__")
+	case *typeinfo.UnionType:
+		parts := make([]string, 0, len(t.Members))
+		for _, member := range t.Members {
+			parts = append(parts, RuntimeTypeKey(member))
+		}
+		return "union__" + strings.Join(parts, "__")
+	case *typeinfo.InterfaceType:
+		return "iface__" + SanitizeIdent(typeinfo.FormatType(t))
+	default:
+		return SanitizeType(typ)
+	}
 }
 
 func SanitizeIdent(s string) string {

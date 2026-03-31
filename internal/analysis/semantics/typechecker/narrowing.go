@@ -71,6 +71,14 @@ func (c *checker) narrowedScopeForIs(scope *refineScope, expr *ast.IsExpr, truth
 		narrowed.Set(res.Symbol, baseType)
 		return narrowed
 	}
+	if _, ok := c.underlying(baseType).(*typeinfo.InterfaceType); ok {
+		if !truth || typeinfo.Equal(baseType, target) {
+			return scope
+		}
+		narrowed := newRefineScope(scope)
+		narrowed.Set(res.Symbol, target)
+		return narrowed
+	}
 	return scope
 }
 
@@ -123,6 +131,11 @@ func (c *checker) narrowedMatchTypeArmScope(scope *refineScope, value ast.Expr, 
 		return narrowed
 	}
 	if opt, ok := c.underlying(baseType).(*typeinfo.OptionalType); ok && opt != nil && typeinfo.Equal(opt.Inner, target) {
+		narrowed := newRefineScope(scope)
+		narrowed.Set(res.Symbol, target)
+		return narrowed
+	}
+	if _, ok := c.underlying(baseType).(*typeinfo.InterfaceType); ok {
 		narrowed := newRefineScope(scope)
 		narrowed.Set(res.Symbol, target)
 		return narrowed

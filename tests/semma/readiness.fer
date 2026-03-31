@@ -1,0 +1,71 @@
+type Color enum {
+    Red,
+    Green,
+    Blue
+}
+
+type Token union {
+    i32,
+    i64
+}
+
+type Stringer interface {
+    String(self) -> str
+}
+
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn enum_score(color: Color) -> i32 {
+    let out: i32 = match color {
+        Color::Green => {
+            1
+        }
+        _ => {
+            2
+        }
+    }
+    return out
+}
+
+fn union_score(token: Token) -> i32 {
+    let out: i32 = match token {
+        is i32 => {
+            token + 1
+        }
+        _ => {
+            0
+        }
+    }
+    return out
+}
+
+fn interface_score(value: Stringer) -> i32 {
+    if value is Name {
+        let narrowed: Name = value
+        return narrowed.value
+    }
+    return 0
+}
+
+fn main() -> void {
+    let name: Name = .{ .value = 7 }
+    let stringer: Stringer = name
+    let token: Token = 4
+
+    let enum_ok = enum_score(Color::Green) == 1
+    let union_ok = union_score(token) == 5
+    let iface_ok = interface_score(stringer) == 7
+
+    if enum_ok && union_ok && iface_ok && stringer.String() == "name" {
+        print("readiness-ok")
+        return
+    }
+
+    print("readiness-fail")
+}

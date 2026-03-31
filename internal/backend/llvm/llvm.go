@@ -39,6 +39,7 @@ type moduleState struct {
 	pendingLines      []string         // extra load instructions to flush before each emitted line
 	interfaceVTables  map[becommon.InterfaceVTableKey]string
 	interfaceWrappers map[becommon.InterfaceWrapperKey]struct{}
+	runtimeTypes      map[string]string
 	tempValues        map[int]mir.Value
 	debug             *debugState // nil if debug info is disabled
 	fnScopeID         int         // DISubprogram metadata ID for the current function
@@ -918,8 +919,9 @@ func newModuleStateWithDebug(unit *backend.Unit, allLayouts map[string]*layout.M
 func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *moduleState {
 	if unit == nil || unit.Module == nil {
 		shared := &becommon.InterfaceHelperCache{
-			VTables:  make(map[becommon.InterfaceVTableKey]string),
-			Wrappers: make(map[becommon.InterfaceWrapperKey]struct{}),
+			VTables:      make(map[becommon.InterfaceVTableKey]string),
+			Wrappers:     make(map[becommon.InterfaceWrapperKey]struct{}),
+			RuntimeTypes: make(map[string]string),
 		}
 		return &moduleState{
 			layouts:           allLayouts,
@@ -929,14 +931,16 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 			deferredB:         &strings.Builder{},
 			interfaceVTables:  shared.VTables,
 			interfaceWrappers: shared.Wrappers,
+			runtimeTypes:      shared.RuntimeTypes,
 			tempValues:        make(map[int]mir.Value),
 			shared:            shared,
 		}
 	}
 	modulePrefix, functions, globals := becommon.BuildModuleSymbolTables(unit.Module)
 	shared := &becommon.InterfaceHelperCache{
-		VTables:  make(map[becommon.InterfaceVTableKey]string),
-		Wrappers: make(map[becommon.InterfaceWrapperKey]struct{}),
+		VTables:      make(map[becommon.InterfaceVTableKey]string),
+		Wrappers:     make(map[becommon.InterfaceWrapperKey]struct{}),
+		RuntimeTypes: make(map[string]string),
 	}
 	state := &moduleState{
 		mod:               unit.Module,
@@ -949,6 +953,7 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		deferredB:         &strings.Builder{},
 		interfaceVTables:  shared.VTables,
 		interfaceWrappers: shared.Wrappers,
+		runtimeTypes:      shared.RuntimeTypes,
 		tempValues:        make(map[int]mir.Value),
 		shared:            shared,
 	}
@@ -3198,6 +3203,22 @@ func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concrete
 	return lines, tmp, nil
 }
 
+func lowerNarrowedInterfaceConcrete(state *moduleState, value mir.Value) ([]string, string, bool, error) {
+	if state == nil || value == nil || isInterfaceAggregate(value.Type()) {
+		return nil, "", false, nil
+	}
+	storedType := becommon.StoredValueType(state.mod, state.fn, state.modules, value)
+	if !isInterfaceAggregate(storedType) {
+		return nil, "", false, nil
+	}
+	slotPtr, err := lowerInterfaceSlotPointer(state, value)
+	if err != nil {
+		return nil, "", false, err
+	}
+	dataPtr := freshTemp(state, "iface_data")
+	return []string{fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, slotPtr)}, dataPtr, true, nil
+}
+
 func lowerInterfaceCall(state *moduleState, targetName string, targetType typeinfo.Type, call *mir.CallValue, field *mir.FieldValue) (string, error) {
 	recv := call.Args[0]
 	method, index, err := becommon.LookupInterfaceMethodDecl(state.mod, state.modules, field.Base.Type(), field.MemberName, "llvm")
@@ -3335,7 +3356,7 @@ func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *
 		return "", 0, err
 	}
 	sym := becommon.SanitizeIdent("vtable__" + llvmTypeName(state, targetNamed) + "__" + becommon.SanitizeType(value.ConcreteType))
-	typeInfoSym, err := emitLLVMRuntimeTypeInfo(state, sym+"__typeinfo", value.ConcreteType)
+	typeInfoSym, err := ensureLLVMRuntimeTypeInfo(state, value.ConcreteType)
 	if err != nil {
 		return "", 0, err
 	}
@@ -3359,7 +3380,15 @@ func ensureLLVMInterfaceVTable(state *moduleState, target typeinfo.Type, value *
 	return sym, len(entries), nil
 }
 
-func emitLLVMRuntimeTypeInfo(state *moduleState, sym string, typ typeinfo.Type) (string, error) {
+func ensureLLVMRuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, error) {
+	if state == nil {
+		return "", fmt.Errorf("invalid runtime type info request")
+	}
+	key := becommon.RuntimeTypeKey(typ)
+	if sym, ok := state.runtimeTypes[key]; ok {
+		return sym, nil
+	}
+	sym := becommon.SanitizeIdent("typeinfo__" + key)
 	desc := backend.DescribeRuntimeType(typ)
 	nameSym := emitStringConstant(state, desc.Name)
 	size, align, err := llvmRuntimeTypeSizeAlign(state, typ)
@@ -3369,6 +3398,7 @@ func emitLLVMRuntimeTypeInfo(state *moduleState, sym string, typ typeinfo.Type) 
 	fmt.Fprintf(state.deferredB,
 		"@%s = private unnamed_addr constant { i32, ptr, i64, i64, i32 } { i32 %d, ptr @%s, i64 %d, i64 %d, i32 %d }\n",
 		sym, desc.ID, nameSym, size, align, desc.Flags)
+	state.runtimeTypes[key] = sym
 	return sym, nil
 }
 
@@ -3629,7 +3659,31 @@ func lowerTerm(state *moduleState, term mir.Terminator) (string, error) {
 		}
 		return lowerPanicTerm(state, t)
 	case *mir.SwitchTerm:
-		return "", fmt.Errorf("match lowering is not implemented yet")
+		if len(t.Cases) == 0 {
+			return fmt.Sprintf("br label %%%s", llvmBlockLabel(state.fn, t.DefaultID)), nil
+		}
+		irType, err := llvmBaseType(t.Value.Type())
+		if err != nil {
+			return "", err
+		}
+		if !strings.HasPrefix(irType, "i") {
+			return "", fmt.Errorf("switch lowering requires integer-like value, got %s", typeinfo.FormatType(typeStringer{t.Value.Type()}))
+		}
+		value, err := lowerValue(state, t.Value)
+		if err != nil {
+			return "", err
+		}
+		lines := make([]string, 0, len(t.Cases)+2)
+		lines = append(lines, fmt.Sprintf("switch %s %s, label %%%s [", irType, value, llvmBlockLabel(state.fn, t.DefaultID)))
+		for _, sc := range t.Cases {
+			caseVal, err := lowerValue(state, sc.Expr)
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, fmt.Sprintf("  %s %s, label %%%s", irType, caseVal, llvmBlockLabel(state.fn, sc.TargetID)))
+		}
+		lines = append(lines, "]")
+		return strings.Join(lines, "\n"), nil
 	default:
 		return "", fmt.Errorf("unsupported MIR terminator %T", term)
 	}
@@ -3680,6 +3734,21 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 	case nil:
 		return "", fmt.Errorf("nil value")
 	case *mir.LocalValue:
+		if lines, dataPtr, ok, err := lowerNarrowedInterfaceConcrete(state, v); err != nil {
+			return "", err
+		} else if ok {
+			state.pendingLines = append(state.pendingLines, lines...)
+			if isAggregateType(state, v.Type()) {
+				return dataPtr, nil
+			}
+			irType, err := llvmBaseType(v.Type())
+			if err != nil {
+				return "", err
+			}
+			tmp := freshTemp(state, "iface_ld")
+			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, dataPtr))
+			return tmp, nil
+		}
 		if agg, ok := state.aggLocals[v.LocalID]; ok {
 			return llvmLocalName(agg.PtrName), nil
 		}
@@ -3691,6 +3760,21 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		}
 		return llvmLocalName(becommon.LocalNameByID(state.fn, v.LocalID)), nil
 	case *mir.NameValue:
+		if lines, dataPtr, ok, err := lowerNarrowedInterfaceConcrete(state, v); err != nil {
+			return "", err
+		} else if ok {
+			state.pendingLines = append(state.pendingLines, lines...)
+			if isAggregateType(state, v.Type()) {
+				return dataPtr, nil
+			}
+			irType, err := llvmBaseType(v.Type())
+			if err != nil {
+				return "", err
+			}
+			tmp := freshTemp(state, "iface_ld")
+			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, dataPtr))
+			return tmp, nil
+		}
 		if len(v.Path) == 1 {
 			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
 				if agg, ok := state.aggLocals[local.ID]; ok {
@@ -3801,6 +3885,29 @@ func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 		if _, ok := backend.UnwrapNamed(v.Left.Type()).(*typeinfo.OptionalType); ok {
 			return "0", nil
 		}
+	}
+	if isInterfaceAggregate(v.Left.Type()) {
+		src, err := lowerAggregateSource(state, v.Left)
+		if err != nil {
+			return "", err
+		}
+		expectedSym, err := ensureLLVMRuntimeTypeInfo(state, v.Target)
+		if err != nil {
+			return "", err
+		}
+		vtAddr := freshTemp(state, "iface_vt_addr")
+		vtPtr := freshTemp(state, "iface_vt")
+		typeInfoPtr := freshTemp(state, "iface_typeinfo")
+		cmp := freshTemp(state, "istype")
+		out := freshTemp(state, "istype8")
+		state.pendingLines = append(state.pendingLines,
+			fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", vtAddr, src),
+			fmt.Sprintf("%s = load ptr, ptr %s", vtPtr, vtAddr),
+			fmt.Sprintf("%s = load ptr, ptr %s", typeInfoPtr, vtPtr),
+			fmt.Sprintf("%s = icmp eq ptr %s, @%s", cmp, typeInfoPtr, expectedSym),
+			fmt.Sprintf("%s = zext i1 %s to i8", out, cmp),
+		)
+		return out, nil
 	}
 	if !isUnionAggregate(v.Left.Type()) {
 		return "", fmt.Errorf("unsupported runtime type test on %s", typeinfo.FormatType(typeStringer{v.Left.Type()}))

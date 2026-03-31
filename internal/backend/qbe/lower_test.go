@@ -897,7 +897,7 @@ fn main() -> str {
 	}
 	text := artifact.Text
 	for _, want := range []string{
-		"data $vtable__local__main__Stringer__Name = { l $vtable__local__main__Stringer__Name__typeinfo, l $ifacewrap__local__main__Stringer__Name__String }",
+		"data $vtable__local__main__Stringer__Name = { l $typeinfo__main__Name, l $ifacewrap__local__main__Stringer__Name__String }",
 		"function :__ferret_slice $ifacewrap__local__main__Stringer__Name__String(l %data)",
 		"%s =l alloc8 16",
 		"%_iface_fn",
@@ -952,7 +952,7 @@ fn main() -> str {
 	text := artifact.Text
 	for _, want := range []string{
 		"type :local__main__Stringer = { l, l }",
-		"data $vtable__local__main__Stringer__Name = { l $vtable__local__main__Stringer__Name__typeinfo, l $ifacewrap__local__main__Stringer__Name__String }",
+		"data $vtable__local__main__Stringer__Name = { l $typeinfo__util__name__Name, l $ifacewrap__local__main__Stringer__Name__String }",
 		"call $util__name__Name__String(",
 	} {
 		if !strings.Contains(text, want) {
@@ -1048,7 +1048,7 @@ fn main() -> void {
 			combined.WriteByte('\n')
 		}
 	}
-	const sym = "data $vtable__builtin__global__Any__str__typeinfo ="
+	const sym = "data $typeinfo__str ="
 	if got := strings.Count(combined.String(), sym); got != 1 {
 		t.Fatalf("expected %q once, got %d\n%s", sym, got, combined.String())
 	}
@@ -1095,6 +1095,97 @@ fn main() -> str {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerRuntimeInterfaceTypeTestToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Stringer interface {
+    String() -> str
+}
+
+type Name struct {}
+
+fn Name::String() -> str {
+    return "name"
+}
+
+fn main(s: Stringer) -> bool {
+    return s is Name
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "data $typeinfo__main__Name = {") {
+		t.Fatalf("expected runtime type info in qbe output:\n%s", text)
+	}
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`%_iface_vt_addr[0-9]+ =l add %[A-Za-z0-9_]+, 8`),
+		regexp.MustCompile(`%_iface_vt[0-9]+ =l loadl %_iface_vt_addr[0-9]+`),
+		regexp.MustCompile(`%_iface_typeinfo[0-9]+ =l loadl %_iface_vt[0-9]+`),
+		regexp.MustCompile(`%_istype[0-9]+ =w ceql %_iface_typeinfo[0-9]+, \$typeinfo__main__Name`),
+	} {
+		if !pattern.MatchString(text) {
+			t.Fatalf("expected %q in qbe output:\n%s", pattern.String(), text)
+		}
+	}
+}
+
+func TestLowerNarrowedInterfaceValueToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Stringer interface {
+    String(self) -> str
+}
+
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn main(s: Stringer) -> i32 {
+    if s is Name {
+        let narrowed: Name = s
+        return narrowed.value
+    }
+    return 0
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`%_iface_data[0-9]+ =l loadl %s`),
+		regexp.MustCompile(`blit %_iface_data[0-9]+, %narrowed, 4`),
+	} {
+		if !pattern.MatchString(text) {
+			t.Fatalf("expected %q in qbe output:\n%s", pattern.String(), text)
 		}
 	}
 }

@@ -2,7 +2,7 @@
  * ferret_runtime.h — Ferret runtime ABI contract.
  *
  * This header defines the stable interface between compiler-emitted code and
- * the tiny C runtime support library (ferret_runtime.c).  Backend lowering
+ * the tiny C runtime support library in the `runtime/` sources. Backend lowering
  * must conform to this ABI when synthesising calls to runtime symbols.
  *
  * Rule: the runtime keeps dynamic behavior minimal. Interface/union/enum
@@ -119,7 +119,7 @@ void ferret__interface_panic(const ferret_i8 *expected_iface, const ferret_i8 *g
  *
  * Returns the current panic message as a FerretStr, or an empty FerretStr
  * (ptr=NULL, len=0) when called outside of a panic context.
- * Implemented in ferret_runtime.c.
+ * Implemented in the runtime support library.
  */
 FerretStr ferret_global_recover(void);
 

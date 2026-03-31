@@ -1334,28 +1334,58 @@ fn main() -> i32 {
 	}
 }
 
-func TestTypecheckerRejectsRuntimeInterfaceToConcreteTypeTest(t *testing.T) {
+func TestTypecheckerAllowsRuntimeInterfaceToConcreteTypeTest(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Stringer interface {
     String() -> str
 }
 
+type Name struct {}
+
+fn Name::String() -> str {
+    return "name"
+}
+
 fn main(s: Stringer) -> bool {
-    return s is str
+    return s is Name
 }
 `)
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected runtime interface type-test diagnostic")
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "runtime interface type tests are not implemented yet") {
-			return
-		}
+}
+
+func TestTypecheckerNarrowsInterfaceTypeInIfBranch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Stringer interface {
+    String() -> str
+}
+
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String() -> str {
+    return "name"
+}
+
+fn main(s: Stringer) -> i32 {
+    if s is Name {
+        let narrowed: Name = s
+        return narrowed.value
+    }
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
-	t.Fatalf("expected runtime interface type-test diagnostic, got %#v", result.Diagnostics.Diagnostics())
 }
 
 func TestTypecheckerRejectsConcreteTypeThatMissesInterfaceMethod(t *testing.T) {
