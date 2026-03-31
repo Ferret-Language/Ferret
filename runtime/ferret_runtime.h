@@ -58,6 +58,8 @@ typedef struct {
 #define FERRET_TYPE_FLAG_NAMED     (1u << 1)
 #define FERRET_TYPE_FLAG_INTERFACE (1u << 2)
 #define FERRET_TYPE_FLAG_SLICE     (1u << 3)
+#define FERRET_TYPE_FLAG_INTEGER   (1u << 4)
+#define FERRET_TYPE_FLAG_SIGNED    (1u << 5)
 
 /* `FerretAny` (declared in ferrettypes.h) is the stable ABI type for empty
  * interface values across C helpers and runtime-adjacent extern functions. */

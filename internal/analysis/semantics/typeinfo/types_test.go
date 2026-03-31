@@ -96,3 +96,15 @@ func TestInstantiateTypeHandlesRecursiveStruct(t *testing.T) {
 		t.Fatalf("expected recursive pointer to instantiated struct, got %#v", ptr.Inner)
 	}
 }
+
+func TestNumericInfoSupportsArbitraryWidthIntegers(t *testing.T) {
+	family, bits, ok := NumericInfo(&BuiltinType{Name: "i128"})
+	if !ok || family != NumericSigned || bits != 128 {
+		t.Fatalf("expected i128 numeric info, got family=%v bits=%d ok=%v", family, bits, ok)
+	}
+
+	family, bits, ok = NumericInfo(&BuiltinType{Name: "u1024"})
+	if !ok || family != NumericUnsigned || bits != 1024 {
+		t.Fatalf("expected u1024 numeric info, got family=%v bits=%d ok=%v", family, bits, ok)
+	}
+}

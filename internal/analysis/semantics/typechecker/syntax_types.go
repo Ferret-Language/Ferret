@@ -37,6 +37,15 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			}
 		}
 		if len(t.Path) == 1 && tokens.IsBuiltinType(t.Path[0]) {
+			if _, bits, ok := tokens.ParseIntegerBuiltin(t.Path[0]); ok && bits > 64 && c.ctx != nil && c.ctx.Config.TargetBackend == "qbe" {
+				loc := t.Loc()
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("type %q is only supported on the llvm backend", t.Path[0])).
+						WithCode(diagnostics.ErrTypeMismatch).
+						WithPrimaryLabel(&loc, "use the llvm backend for arbitrary-width integers"),
+				)
+				return typeinfo.InvalidType{}
+			}
 			if t.Path[0] == "str" {
 				return &typeinfo.StringType{}
 			}

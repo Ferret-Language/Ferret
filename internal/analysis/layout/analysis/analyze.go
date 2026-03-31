@@ -7,6 +7,7 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/core/phase"
+	"compiler/internal/tokens"
 )
 
 const (
@@ -326,16 +327,18 @@ func (a *analyzer) layoutTaggedUnionDetail(members []typeinfo.Type) (int64, int6
 }
 
 func builtinLayout(name string) (int64, int64, bool, *layout.StructLayout) {
+	if _, bits, ok := tokens.ParseIntegerBuiltin(name); ok {
+		size := int64((bits + 7) / 8)
+		return size, size, true, nil
+	}
 	switch name {
 	case "void":
 		return 0, 1, true, nil
-	case "bool", "u8", "i8":
+	case "bool":
 		return 1, 1, true, nil
-	case "u16", "i16":
-		return 2, 2, true, nil
-	case "u32", "i32", "f32", "char":
+	case "f32", "char":
 		return 4, 4, true, nil
-	case "u64", "i64", "usize", "isize", "f64":
+	case "f64":
 		return 8, 8, true, nil
 	default:
 		return 0, 1, false, nil

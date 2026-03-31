@@ -687,6 +687,38 @@ fn main() -> i32 { return 0 }
 	}
 }
 
+func TestArbitraryWidthIntegersRequireLLVMBackend(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> i128 {
+    let value: i128 = 1
+    return value
+}
+`)
+
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".fer",
+		DependencyRoots: map[string]string{},
+		TargetBackend:   "qbe",
+	}
+	result := NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected arbitrary-width integer backend diagnostic")
+	}
+
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "only supported on the llvm backend") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected llvm-only arbitrary-width integer diagnostic, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

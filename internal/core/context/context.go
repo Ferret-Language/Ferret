@@ -117,7 +117,7 @@ func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext
 		cfg.TargetArch = runtime.GOARCH
 	}
 	if cfg.TargetBackend == "" {
-		cfg.TargetBackend = "qbe"
+		cfg.TargetBackend = "llvm"
 	}
 	cfg.RootDir = filepath.Clean(cfg.RootDir)
 	if cfg.DependencyRoots == nil {

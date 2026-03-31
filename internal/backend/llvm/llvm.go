@@ -15,6 +15,7 @@ import (
 	"compiler/internal/backend"
 	becommon "compiler/internal/backend/common"
 	"compiler/internal/ir/mir"
+	"compiler/internal/tokens"
 	"compiler/internal/utils/numeric"
 )
 
@@ -326,25 +327,17 @@ func (d *debugState) getType(state *moduleState, typ typeinfo.Type) int {
 	}
 	switch t := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
+		if signed, bits, ok := tokens.ParseIntegerBuiltin(t.Name); ok {
+			if signed {
+				return d.getBasicType(t.Name, bits, "DW_ATE_signed")
+			}
+			return d.getBasicType(t.Name, bits, "DW_ATE_unsigned")
+		}
 		switch t.Name {
-		case "bool", "u8":
+		case "bool":
 			return d.getBasicType(t.Name, 8, "DW_ATE_unsigned")
-		case "i8":
-			return d.getBasicType(t.Name, 8, "DW_ATE_signed")
-		case "u16":
-			return d.getBasicType(t.Name, 16, "DW_ATE_unsigned")
-		case "i16":
-			return d.getBasicType(t.Name, 16, "DW_ATE_signed")
-		case "u32":
-			return d.getBasicType(t.Name, 32, "DW_ATE_unsigned")
-		case "i32":
-			return d.getBasicType(t.Name, 32, "DW_ATE_signed")
 		case "char":
 			return d.getBasicType(t.Name, 32, "DW_ATE_UTF")
-		case "u64", "usize":
-			return d.getBasicType(t.Name, 64, "DW_ATE_unsigned")
-		case "i64", "isize":
-			return d.getBasicType(t.Name, 64, "DW_ATE_signed")
 		case "f32":
 			return d.getBasicType(t.Name, 32, "DW_ATE_float")
 		case "f64":
@@ -1343,25 +1336,30 @@ func llvmScalarBytesFromNumber(typeName, raw string) ([]byte, error) {
 	}
 	width := 0
 	signed := false
-	switch typeName {
-	case "i8":
-		width, signed = 1, true
-	case "u8", "bool":
-		width = 1
-	case "i16":
-		width, signed = 2, true
-	case "u16":
-		width = 2
-	case "i32", "char":
-		width, signed = 4, true
-	case "u32":
-		width = 4
-	case "i64", "isize":
-		width, signed = 8, true
-	case "u64", "usize":
-		width = 8
-	default:
-		return nil, fmt.Errorf("unsupported union numeric initializer type %s", typeName)
+	if intSigned, bits, ok := tokens.ParseIntegerBuiltin(typeName); ok {
+		width = (bits + 7) / 8
+		signed = intSigned
+	} else {
+		switch typeName {
+		case "i8":
+			width, signed = 1, true
+		case "u8", "bool":
+			width = 1
+		case "i16":
+			width, signed = 2, true
+		case "u16":
+			width = 2
+		case "i32", "char":
+			width, signed = 4, true
+		case "u32":
+			width = 4
+		case "i64", "isize":
+			width, signed = 8, true
+		case "u64", "usize":
+			width = 8
+		default:
+			return nil, fmt.Errorf("unsupported union numeric initializer type %s", typeName)
+		}
 	}
 	mod := new(big.Int).Lsh(big.NewInt(1), uint(width*8))
 	if signed && value.Sign() < 0 {
@@ -4621,14 +4619,16 @@ func isAggregateType(state *moduleState, typ typeinfo.Type) bool {
 func aggregateSizeAlignOfPrimitive(typ typeinfo.Type) (int64, int64, error) {
 	switch t := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
+		if _, bits, ok := tokens.ParseIntegerBuiltin(t.Name); ok {
+			size := int64((bits + 7) / 8)
+			return size, size, nil
+		}
 		switch t.Name {
-		case "bool", "u8", "i8":
+		case "bool":
 			return 1, 1, nil
-		case "u16", "i16":
-			return 2, 2, nil
-		case "u32", "i32", "char", "f32":
+		case "char", "f32":
 			return 4, 4, nil
-		case "u64", "i64", "usize", "isize", "f64":
+		case "f64":
 			return 8, 8, nil
 		}
 	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
@@ -4853,9 +4853,9 @@ func llvmIsSigned(typ typeinfo.Type) bool {
 	if !ok {
 		return false
 	}
-	switch b.Name {
-	case "i8", "i16", "i32", "i64", "isize":
-		return true
+	signed, _, ok := tokens.ParseIntegerBuiltin(b.Name)
+	if ok {
+		return signed
 	}
 	return false
 }
@@ -4917,23 +4917,24 @@ func llvmFloatCastOp(src, dst string, srcVal string) (string, bool) {
 func isFloatType(name string) bool { return name == "f32" || name == "f64" }
 
 func isIntType(name string) bool {
-	switch name {
-	case "bool", "u8", "i8", "u16", "i16", "u32", "i32", "char", "u64", "i64", "usize", "isize":
+	if name == "bool" || name == "char" {
 		return true
 	}
-	return false
+	_, _, ok := tokens.ParseIntegerBuiltin(name)
+	return ok
 }
 
 func llvmTypeBits(name string) int {
-	switch name {
-	case "bool", "u8", "i8":
+	if name == "bool" {
 		return 8
-	case "u16", "i16":
-		return 16
-	case "u32", "i32", "char":
+	}
+	if name == "char" {
 		return 32
-	case "u64", "i64", "usize", "isize":
-		return 64
+	}
+	if _, bits, ok := tokens.ParseIntegerBuiltin(name); ok {
+		return bits
+	}
+	switch name {
 	case "f32":
 		return 32
 	case "f64":
@@ -5112,14 +5113,13 @@ func normalizeAlign(align int64) int64 {
 }
 
 func irTypeAlign(irType string) int64 {
+	if bits, ok := parseLLVMIntegerBits(irType); ok {
+		return int64((bits + 7) / 8)
+	}
 	switch irType {
-	case "i8":
-		return 1
-	case "i16":
-		return 2
-	case "i32", "float":
+	case "float":
 		return 4
-	case "i64", "double", "ptr":
+	case "double", "ptr":
 		return 8
 	default:
 		return 4
@@ -5127,18 +5127,28 @@ func irTypeAlign(irType string) int64 {
 }
 
 func irTypeSize(irType string) int64 {
+	if bits, ok := parseLLVMIntegerBits(irType); ok {
+		return int64((bits + 7) / 8)
+	}
 	switch irType {
-	case "i8":
-		return 1
-	case "i16":
-		return 2
-	case "i32", "float":
+	case "float":
 		return 4
-	case "i64", "double", "ptr":
+	case "double", "ptr":
 		return 8
 	default:
 		return 4
 	}
+}
+
+func parseLLVMIntegerBits(irType string) (int, bool) {
+	if len(irType) < 2 || irType[0] != 'i' {
+		return 0, false
+	}
+	bits, err := strconv.Atoi(irType[1:])
+	if err != nil || bits <= 0 {
+		return 0, false
+	}
+	return bits, true
 }
 
 // ---------------------------------------------------------------------------

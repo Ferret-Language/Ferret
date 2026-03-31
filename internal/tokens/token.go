@@ -2,6 +2,8 @@ package tokens
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"compiler/internal/core/source"
 )
@@ -148,11 +150,43 @@ func IsKeyword(ident string) bool {
 
 func IsBuiltinType(name string) bool {
 	switch name {
-	case "bool", "char", "str", "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64", "void":
+	case "bool", "char", "str", "usize", "isize", "f32", "f64", "void":
 		return true
 	default:
-		return false
+		_, _, ok := ParseIntegerBuiltin(name)
+		return ok
 	}
+}
+
+func ParseIntegerBuiltin(name string) (signed bool, bits int, ok bool) {
+	switch name {
+	case "isize":
+		return true, 64, true
+	case "usize":
+		return false, 64, true
+	}
+	if len(name) < 2 {
+		return false, 0, false
+	}
+	switch name[0] {
+	case 'i':
+		signed = true
+	case 'u':
+		signed = false
+	default:
+		return false, 0, false
+	}
+	if strings.HasPrefix(name, "i0") || strings.HasPrefix(name, "u0") {
+		return false, 0, false
+	}
+	n, err := strconv.Atoi(name[1:])
+	if err != nil || n < 8 {
+		return false, 0, false
+	}
+	if n&(n-1) != 0 {
+		return false, 0, false
+	}
+	return signed, n, true
 }
 
 type Token struct {

@@ -3,6 +3,7 @@ package backend
 import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/tokens"
 )
 
 const (
@@ -29,6 +30,8 @@ const (
 	RuntimeTypeFlagNamed     = 1 << 1
 	RuntimeTypeFlagInterface = 1 << 2
 	RuntimeTypeFlagSlice     = 1 << 3
+	RuntimeTypeFlagInteger   = 1 << 4
+	RuntimeTypeFlagSigned    = 1 << 5
 )
 
 type RuntimeTypeDescriptor struct {
@@ -62,6 +65,12 @@ func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
 	case *typeinfo.StringType:
 		desc.ID = RuntimeTypeString
 	case *typeinfo.BuiltinType:
+		if signed, _, ok := tokens.ParseIntegerBuiltin(t.Name); ok {
+			desc.Flags |= RuntimeTypeFlagInteger
+			if signed {
+				desc.Flags |= RuntimeTypeFlagSigned
+			}
+		}
 		switch t.Name {
 		case "bool":
 			desc.ID = RuntimeTypeBool

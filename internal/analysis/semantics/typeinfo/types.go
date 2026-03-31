@@ -6,6 +6,7 @@ import (
 
 	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/frontend/ast"
+	"compiler/internal/tokens"
 )
 
 type Type interface {
@@ -397,8 +398,11 @@ func IsNumeric(t Type) bool {
 	if !ok {
 		return false
 	}
+	if _, _, ok := tokens.ParseIntegerBuiltin(b.Name); ok {
+		return true
+	}
 	switch b.Name {
-	case "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f32", "f64":
+	case "f32", "f64":
 		return true
 	default:
 		return false
@@ -554,27 +558,13 @@ func NumericInfo(t Type) (family NumericFamily, bits int, ok bool) {
 	if !ok {
 		return NumericInvalid, 0, false
 	}
+	if signed, width, ok := tokens.ParseIntegerBuiltin(b.Name); ok {
+		if signed {
+			return NumericSigned, width, true
+		}
+		return NumericUnsigned, width, true
+	}
 	switch b.Name {
-	case "i8":
-		return NumericSigned, 8, true
-	case "i16":
-		return NumericSigned, 16, true
-	case "i32":
-		return NumericSigned, 32, true
-	case "i64":
-		return NumericSigned, 64, true
-	case "isize":
-		return NumericSigned, 64, true
-	case "u8":
-		return NumericUnsigned, 8, true
-	case "u16":
-		return NumericUnsigned, 16, true
-	case "u32":
-		return NumericUnsigned, 32, true
-	case "u64":
-		return NumericUnsigned, 64, true
-	case "usize":
-		return NumericUnsigned, 64, true
 	case "f32":
 		return NumericFloat, 32, true
 	case "f64":

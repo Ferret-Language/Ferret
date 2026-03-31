@@ -10,6 +10,7 @@ import (
 	"compiler/internal/backend"
 	"compiler/internal/backend/toolchain"
 	"compiler/internal/ir/mir"
+	"compiler/internal/tokens"
 )
 
 type CompileOptions struct {
@@ -102,15 +103,14 @@ func FunctionReturnIsScalar(fn *mir.Function) bool {
 func llvmBaseType(typ typeinfo.Type) (string, error) {
 	switch base := backend.UnwrapNamed(typ).(type) {
 	case *typeinfo.BuiltinType:
+		if _, bits, ok := tokens.ParseIntegerBuiltin(base.Name); ok {
+			return fmt.Sprintf("i%d", bits), nil
+		}
 		switch base.Name {
-		case "bool", "u8", "i8":
+		case "bool":
 			return "i8", nil
-		case "u16", "i16":
-			return "i16", nil
-		case "u32", "i32", "char":
+		case "char":
 			return "i32", nil
-		case "u64", "i64", "usize", "isize":
-			return "i64", nil
 		case "f32":
 			return "float", nil
 		case "f64":

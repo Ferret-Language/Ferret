@@ -12,6 +12,8 @@ import (
 	"compiler/internal/backend"
 	llvmbackend "compiler/internal/backend/llvm"
 	"compiler/internal/backend/registry"
+	"compiler/internal/core/context"
+	"compiler/internal/core/diagnostics"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
 )
@@ -255,6 +257,55 @@ fn main() -> i32 {
 		"call void @ferret__bounds_check(i64 1, i64 3)",
 		"getelementptr inbounds i8, ptr %arr, i64 4",
 		"getelementptr inbounds i32, ptr %arr, i64 1",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerArbitraryWidthIntegersToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn addWide(a: i128, b: i128) -> i128 {
+    return a + b
+}
+
+fn main() -> i128 {
+    return addWide(1, 2)
+}
+`)
+	cfg := context.Config{
+		RootDir:         root,
+		Extension:       ".fer",
+		DependencyRoots: map[string]string{},
+		TargetBackend:   "llvm",
+	}
+	result := compiler.NewWithConfig(cfg, diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"define i128 @main__addWide(i128 %a, i128 %b)",
+		"add i128 ",
+		"define i128 @main()",
+		"call i128 @main__addWide(i128 1, i128 2)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

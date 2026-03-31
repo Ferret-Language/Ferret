@@ -67,3 +67,24 @@ func TestIsVoidType(t *testing.T) {
 		t.Fatalf("enum lowered to i32 should not be void")
 	}
 }
+
+func TestDescribeRuntimeTypeMarksArbitraryWidthIntegers(t *testing.T) {
+	desc := DescribeRuntimeType(&typeinfo.BuiltinType{Name: "i128"})
+	if desc.Name != "i128" {
+		t.Fatalf("expected i128 runtime type name, got %q", desc.Name)
+	}
+	if desc.ID != RuntimeTypeUnknown {
+		t.Fatalf("expected i128 runtime type id to remain unknown, got %d", desc.ID)
+	}
+	if desc.Flags&RuntimeTypeFlagInteger == 0 || desc.Flags&RuntimeTypeFlagSigned == 0 {
+		t.Fatalf("expected i128 runtime flags to mark signed integer, got %#x", desc.Flags)
+	}
+
+	desc = DescribeRuntimeType(&typeinfo.BuiltinType{Name: "u1024"})
+	if desc.Flags&RuntimeTypeFlagInteger == 0 {
+		t.Fatalf("expected u1024 runtime flags to mark integer, got %#x", desc.Flags)
+	}
+	if desc.Flags&RuntimeTypeFlagSigned != 0 {
+		t.Fatalf("expected u1024 runtime flags to stay unsigned, got %#x", desc.Flags)
+	}
+}
