@@ -292,6 +292,49 @@ fn main(s: Stringer) -> i32 {
 	}
 }
 
+func TestLowerExplicitInterfaceDowncastToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Stringer interface {
+    String(self) -> str
+}
+
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn main(s: Stringer) -> i32 {
+    let narrowed: Name = s as Name
+    return narrowed.value
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`%_iface_cast[0-9]+ = call ptr @ferret__interface_downcast\(ptr %[A-Za-z0-9_]+, ptr @typeinfo__main__Name\)`),
+		regexp.MustCompile(`call void @llvm\.memcpy\.p0\.p0\.i64\(ptr align 4 %narrowed, ptr align 4 %_iface_cast[0-9]+, i64 4, i1 false\)`),
+	} {
+		if !pattern.MatchString(text) {
+			t.Fatalf("expected %q in llvm output:\n%s", pattern.String(), text)
+		}
+	}
+}
+
 func TestLowerDeclaresPreludeExternCallSymbolsToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

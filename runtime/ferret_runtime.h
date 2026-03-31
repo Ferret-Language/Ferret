@@ -70,7 +70,8 @@ typedef struct {
  *   global__panic           — `panic(msg str)` keyword lowering hook
  *   ferret__panic           — compiler-internal panic with a C string
  *   ferret_global_recover   — `recover()` extern from global.fer
- *   ferret__interface_panic — bad interface downcast (stub, ABI frozen)
+ *   ferret__interface_panic — bad interface downcast
+ *   ferret__interface_downcast — checked interface-to-concrete downcast
  * -------------------------------------------------------------------------*/
 
 /* global__panic — the Ferret-callable `panic(msg *str)` builtin.
@@ -103,16 +104,24 @@ void ferret__bounds_check(ferret_usize index, ferret_usize len);
 /*
  * ferret__interface_panic — called when a bad interface downcast is attempted.
  *
- * expected_iface — null-terminated name of the expected interface (*i8)
+ * expected_type — null-terminated name of the expected target type (*i8)
  * got_type       — null-terminated display name of the actual concrete type
  *
  * This function does not return.
- *
- * NOTE: not yet emitted by the compiler; stub is present so the ABI is
- * frozen before interface lowering is implemented.
  */
 __attribute__((noreturn))
-void ferret__interface_panic(const ferret_i8 *expected_iface, const ferret_i8 *got_type);
+void ferret__interface_panic(const ferret_i8 *expected_type, const ferret_i8 *got_type);
+
+/*
+ * ferret__interface_downcast — checks an interface value against the expected
+ * concrete runtime type and returns the concrete data pointer on success.
+ *
+ * iface     — pointer to the interface fat-pointer slot ({data, vtable})
+ * expected  — compiler-emitted runtime type-info record for the target type
+ *
+ * On mismatch this calls ferret__interface_panic and does not return.
+ */
+void *ferret__interface_downcast(const FerretInterface *iface, const FerretTypeInfo *expected);
 
 /*
  * ferret_global_recover — called by `recover()` expressions.

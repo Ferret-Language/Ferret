@@ -2091,6 +2091,12 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 		c.info.BindNode(expr, target)
 		return target
 	}
+	if _, ok := c.underlying(sourceType).(*typeinfo.InterfaceType); ok {
+		if _, targetIsInterface := c.underlying(target).(*typeinfo.InterfaceType); !targetIsInterface {
+			c.info.BindNode(expr, target)
+			return target
+		}
+	}
 	// Raw-pointer reinterpretation: ^T → ^S (including ^void).
 	// Any cast where either side is a raw pointer requires an unsafe block.
 	srcUnderlying := c.underlying(sourceType)

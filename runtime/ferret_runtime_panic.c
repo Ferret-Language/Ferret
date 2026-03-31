@@ -35,10 +35,10 @@ void ferret__bounds_check(ferret_usize index, ferret_usize len) {
 }
 
 __attribute__((noreturn))
-void ferret__interface_panic(const ferret_i8 *expected_iface, const ferret_i8 *got_type) {
+void ferret__interface_panic(const ferret_i8 *expected_type, const ferret_i8 *got_type) {
     fputs("interface error: expected ", stderr);
-    if (expected_iface) {
-        fputs((const char *)expected_iface, stderr);
+    if (expected_type) {
+        fputs((const char *)expected_type, stderr);
     }
     fputs(", got ", stderr);
     if (got_type) {
@@ -47,6 +47,29 @@ void ferret__interface_panic(const ferret_i8 *expected_iface, const ferret_i8 *g
     fputc('\n', stderr);
     fflush(stderr);
     abort();
+}
+
+void *ferret__interface_downcast(const FerretInterface *iface, const FerretTypeInfo *expected) {
+    static const ferret_i8 invalid_interface[] = "<invalid interface>";
+    static const ferret_i8 unknown_type[] = "<unknown>";
+    const void *const *vtable;
+    const FerretTypeInfo *actual;
+    const ferret_i8 *expected_name = expected ? expected->name : unknown_type;
+    const ferret_i8 *actual_name = unknown_type;
+
+    if (iface == NULL || iface->vtable == NULL || expected == NULL) {
+        ferret__interface_panic(expected_name, invalid_interface);
+    }
+
+    vtable = (const void *const *)iface->vtable;
+    actual = (const FerretTypeInfo *)vtable[0];
+    if (actual != NULL && actual->name != NULL) {
+        actual_name = actual->name;
+    }
+    if (actual == expected) {
+        return iface->data;
+    }
+    ferret__interface_panic(expected_name, actual_name);
 }
 
 FerretStr ferret_global_recover(void) {

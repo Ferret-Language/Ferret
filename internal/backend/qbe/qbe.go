@@ -1538,6 +1538,14 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 			return lowerAggregateAssign(state, agg, v.Right)
 		}
 	case *mir.CastValue:
+		if isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type()) && isAggregateType(state, v.Type()) {
+			lines, srcPtr, err := lowerInterfaceDowncastPointer(state, v.Left, v.Type())
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, fmt.Sprintf("blit %s, %s, %d", srcPtr, qbeLocalName(agg.PtrName), agg.Size))
+			return strings.Join(lines, "\n\t"), nil
+		}
 		expr, err := lowerCast(state, v)
 		if err != nil {
 			return "", err
@@ -1637,6 +1645,21 @@ func lowerNarrowedInterfaceConcrete(state *moduleState, value mir.Value) ([]stri
 	}
 	dataPtr := freshTemp(state, "iface_data")
 	return []string{fmt.Sprintf("%s =l loadl %s", dataPtr, slotPtr)}, dataPtr, true, nil
+}
+
+func lowerInterfaceDowncastPointer(state *moduleState, value mir.Value, target typeinfo.Type) ([]string, string, error) {
+	slotPtr, err := lowerAggregateSource(state, value)
+	if err != nil {
+		return nil, "", err
+	}
+	expectedSym, err := ensureQBERuntimeTypeInfo(state, target)
+	if err != nil {
+		return nil, "", err
+	}
+	tmp := freshTemp(state, "iface_cast")
+	return []string{
+		fmt.Sprintf("%s =l call $ferret__interface_downcast(l %s, l $%s)", tmp, slotPtr, expectedSym),
+	}, tmp, nil
 }
 
 func lowerInterfaceCall(state *moduleState, targetName string, targetType typeinfo.Type, call *mir.CallValue, field *mir.FieldValue) (string, error) {
@@ -3018,6 +3041,23 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 			return "", err
 		}
 		tmp := freshTemp(state, "unioncast")
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, srcPtr))
+		return "copy " + tmp, nil
+	}
+	if isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type()) {
+		lines, srcPtr, err := lowerInterfaceDowncastPointer(state, v.Left, v.Type())
+		if err != nil {
+			return "", err
+		}
+		state.pendingLines = append(state.pendingLines, lines...)
+		if isAggregateType(state, v.Type()) {
+			return "copy " + srcPtr, nil
+		}
+		op, qtype, err := qbeLoadOp(v.Type())
+		if err != nil {
+			return "", err
+		}
+		tmp := freshTemp(state, "ifacecast")
 		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, srcPtr))
 		return "copy " + tmp, nil
 	}

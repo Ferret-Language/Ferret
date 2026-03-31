@@ -1190,6 +1190,49 @@ fn main(s: Stringer) -> i32 {
 	}
 }
 
+func TestLowerExplicitInterfaceDowncastToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Stringer interface {
+    String(self) -> str
+}
+
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn main(s: Stringer) -> i32 {
+    let narrowed: Name = s as Name
+    return narrowed.value
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`%_iface_cast[0-9]+ =l call \$ferret__interface_downcast\(l %[A-Za-z0-9_]+, l \$typeinfo__main__Name\)`),
+		regexp.MustCompile(`blit %_iface_cast[0-9]+, %narrowed, 4`),
+	} {
+		if !pattern.MatchString(text) {
+			t.Fatalf("expected %q in qbe output:\n%s", pattern.String(), text)
+		}
+	}
+}
+
 func TestLowerEnumValuesToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

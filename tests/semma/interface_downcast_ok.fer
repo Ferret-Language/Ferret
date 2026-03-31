@@ -1,0 +1,23 @@
+type Stringer interface {
+    String(self) -> str
+}
+
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn main() -> void {
+    let name: Name = .{ .value = 9 }
+    let stringer: Stringer = name
+    let narrowed: Name = stringer as Name
+    if narrowed.value == 9 {
+        print(narrowed.value)
+        print("interface-downcast-ok")
+        return
+    }
+    print("interface-downcast-fail")
+}

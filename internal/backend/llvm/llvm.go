@@ -611,6 +611,7 @@ func runtimeDecls() []string {
 		"declare void @ferret__panic(ptr)",
 		"declare void @ferret__bounds_check(i64, i64)",
 		"declare void @ferret__interface_panic(ptr, ptr)",
+		"declare ptr @ferret__interface_downcast(ptr, ptr)",
 		"declare void @global__panic(ptr)",
 		"declare { ptr, i64 } @ferret_global_str_bytes(ptr)",
 		"declare { ptr, i64 } @ferret_global_bytes_str(ptr)",
@@ -2621,8 +2622,16 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 	case *mir.CastValue:
 		srcCast := backend.UnwrapNamed(v.Left.Type())
 		dstCast := backend.UnwrapNamed(v.Type())
-		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) && !isStringSliceCastPair(srcCast, dstCast) {
+		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) && !isStringSliceCastPair(srcCast, dstCast) && !isInterfaceAggregate(v.Left.Type()) {
 			return lowerAggregateAssign(state, agg, v.Left)
+		}
+		if isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type()) && isAggregateType(state, v.Type()) {
+			lines, srcPtr, err := lowerInterfaceDowncastPointer(state, v.Left, v.Type())
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, llvmMemcpy(llvmLocalName(agg.PtrName), srcPtr, agg.Size, agg.Align))
+			return strings.Join(lines, "\n"), nil
 		}
 		expr, err := lowerCast(state, v)
 		if err != nil {
@@ -3217,6 +3226,21 @@ func lowerNarrowedInterfaceConcrete(state *moduleState, value mir.Value) ([]stri
 	}
 	dataPtr := freshTemp(state, "iface_data")
 	return []string{fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, slotPtr)}, dataPtr, true, nil
+}
+
+func lowerInterfaceDowncastPointer(state *moduleState, value mir.Value, target typeinfo.Type) ([]string, string, error) {
+	slotPtr, err := lowerAggregateSource(state, value)
+	if err != nil {
+		return nil, "", err
+	}
+	expectedSym, err := ensureLLVMRuntimeTypeInfo(state, target)
+	if err != nil {
+		return nil, "", err
+	}
+	tmp := freshTemp(state, "iface_cast")
+	return []string{
+		fmt.Sprintf("%s = call ptr @ferret__interface_downcast(ptr %s, ptr @%s)", tmp, slotPtr, expectedSym),
+	}, tmp, nil
 }
 
 func lowerInterfaceCall(state *moduleState, targetName string, targetType typeinfo.Type, call *mir.CallValue, field *mir.FieldValue) (string, error) {
@@ -4123,6 +4147,23 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 			return "", err
 		}
 		tmp := freshTemp(state, "unioncast")
+		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, srcPtr))
+		return llvmCopyExpr(irType, tmp)
+	}
+	if isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type()) {
+		lines, srcPtr, err := lowerInterfaceDowncastPointer(state, v.Left, v.Type())
+		if err != nil {
+			return "", err
+		}
+		state.pendingLines = append(state.pendingLines, lines...)
+		if isAggregateType(state, v.Type()) {
+			return srcPtr, nil
+		}
+		irType, err := llvmBaseType(v.Type())
+		if err != nil {
+			return "", err
+		}
+		tmp := freshTemp(state, "ifacecast")
 		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, srcPtr))
 		return llvmCopyExpr(irType, tmp)
 	}

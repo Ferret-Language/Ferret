@@ -1,0 +1,21 @@
+type Stringer interface {
+    String(self) -> str
+}
+
+type Name struct {}
+type Other struct {}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn Other::String(self) -> str {
+    return "other"
+}
+
+fn main() -> void {
+    let other: Other = .{}
+    let stringer: Stringer = other
+    let narrowed: Name = stringer as Name
+    narrowed
+}

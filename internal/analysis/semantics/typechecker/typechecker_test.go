@@ -1388,6 +1388,33 @@ fn main(s: Stringer) -> i32 {
 	}
 }
 
+func TestTypecheckerAllowsExplicitInterfaceDowncast(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Stringer interface {
+    String(self) -> str
+}
+
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn main(s: Stringer) -> i32 {
+    let narrowed: Name = s as Name
+    return narrowed.value
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerRejectsConcreteTypeThatMissesInterfaceMethod(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
