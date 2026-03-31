@@ -1,0 +1,16 @@
+fn addWide(a: i128, b: i128) -> i128 {
+    return a + b
+}
+
+fn main() -> void {
+    let base = 9223372036854775808 as i128
+    let got = addWide(base, 5 as i128)
+    if got == (9223372036854775813 as i128) {
+        print("wide-int-ok")
+    } else {
+        print("wide-int-not-ok")
+    }
+    
+    let kilobitInt: i1024 = 242860162864012940610926412640124628064018
+    print(kilobitInt + 1)
+}
