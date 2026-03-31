@@ -2954,7 +2954,7 @@ func (c *checker) hasDeferredComptimeInputs(scope *refineScope, expr ast.Expr) b
 	case *ast.SelectorExpr:
 		return c.hasDeferredComptimeInputs(scope, e.Left)
 	default:
-		return false
+		return true
 	}
 }
 

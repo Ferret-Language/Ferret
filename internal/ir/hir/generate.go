@@ -578,7 +578,7 @@ func (g *generator) constExprFromValue(expr ast.Expr, value typeinfo.ConstValue,
 		out := &CompositeLit{Items: make([]CompositeItem, 0, len(value.Elems))}
 		out.ExprType, out.Location, out.Source = typ, loc, expr
 		for i, elem := range value.Elems {
-			elemType := constSequenceElemType(typ, i)
+			elemType := g.constSequenceElemType(typ, i)
 			child, ok := g.constExprFromValue(nil, elem, elemType, loc)
 			if !ok {
 				return nil, false
@@ -590,7 +590,7 @@ func (g *generator) constExprFromValue(expr ast.Expr, value typeinfo.ConstValue,
 		out := &CompositeLit{Items: make([]CompositeItem, 0, len(value.Fields))}
 		out.ExprType, out.Location, out.Source = typ, loc, expr
 		for i, field := range value.Fields {
-			fieldType := constObjectFieldType(typ, i)
+			fieldType := g.constObjectFieldType(typ, i)
 			child, ok := g.constExprFromValue(nil, field, fieldType, loc)
 			if !ok {
 				return nil, false
@@ -607,9 +607,37 @@ func (g *generator) constExprFromValue(expr ast.Expr, value typeinfo.ConstValue,
 	}
 }
 
-func constSequenceElemType(typ typeinfo.Type, index int) typeinfo.Type {
+func (g *generator) constMaterializeType(typ typeinfo.Type) typeinfo.Type {
 	switch t := typ.(type) {
+	case *typeinfo.NamedType:
+		if t != nil && t.Decl != nil {
+			if resolved := syntaxType(g.types, t.Decl.Type); resolved != nil {
+				return g.constMaterializeType(resolved)
+			}
+		}
+	case *typeinfo.RefType:
+		if t != nil && t.Inner != nil {
+			return g.constMaterializeType(t.Inner)
+		}
+	case *typeinfo.PointerType:
+		if t != nil && t.Inner != nil {
+			return g.constMaterializeType(t.Inner)
+		}
+	case *typeinfo.RawPtrType:
+		if t != nil && t.Inner != nil {
+			return g.constMaterializeType(t.Inner)
+		}
+	}
+	return typ
+}
+
+func (g *generator) constSequenceElemType(typ typeinfo.Type, index int) typeinfo.Type {
+	switch t := g.constMaterializeType(typ).(type) {
 	case *typeinfo.ArrayType:
+		if t != nil && t.Inner != nil {
+			return t.Inner
+		}
+	case *typeinfo.SliceType:
 		if t != nil && t.Inner != nil {
 			return t.Inner
 		}
@@ -621,8 +649,8 @@ func constSequenceElemType(typ typeinfo.Type, index int) typeinfo.Type {
 	return typeinfo.UnknownType{}
 }
 
-func constObjectFieldType(typ typeinfo.Type, index int) typeinfo.Type {
-	if t, ok := typ.(*typeinfo.StructType); ok && t != nil && index >= 0 && index < len(t.OrderedFields) {
+func (g *generator) constObjectFieldType(typ typeinfo.Type, index int) typeinfo.Type {
+	if t, ok := g.constMaterializeType(typ).(*typeinfo.StructType); ok && t != nil && index >= 0 && index < len(t.OrderedFields) {
 		if field := t.OrderedFields[index]; field != nil && field.Type != nil {
 			return field.Type
 		}
