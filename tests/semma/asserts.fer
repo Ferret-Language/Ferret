@@ -1,0 +1,9 @@
+fn Assert(cond: bool, msg: str) -> void {
+    if !cond {
+        panic msg
+    }
+}
+
+fn StaticAssert(cond: bool, msg: str) -> void {
+    comptime Assert(cond, msg)
+}

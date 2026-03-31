@@ -20,6 +20,11 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		}
 		for _, child := range s.Stmts {
 			c.checkStmt(scope, child)
+			if s.Comptime {
+				if exprStmt, ok := child.(*ast.ExprStmt); ok && exprStmt != nil && exprStmt.Value != nil && !c.hasDeferredComptimeInputs(scope, exprStmt.Value) {
+					c.evalComptimeExpr(c.mod, exprStmt.Value, exprStmt.Value)
+				}
+			}
 		}
 		if s.Comptime {
 			c.comptimeDepth--
@@ -59,7 +64,6 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		value := c.typeOfExpr(scope, s.Value, declared)
 		if constValue, ok := c.constExpr(c.mod, s.Value, nil); ok {
 			c.info.BindConstValue(s, constValue)
-			c.info.BindConstValue(s.Value, constValue)
 		} else {
 			c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
 		}

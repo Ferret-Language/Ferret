@@ -4,6 +4,7 @@ import (
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/source"
 	"compiler/internal/frontend/ast"
 	"compiler/internal/tokens"
 	"fmt"
@@ -414,14 +415,6 @@ func (g *generator) generateBlock(block *ast.BlockStmt) *BlockStmt {
 	out.Location = block.Location
 	for _, stmt := range block.Stmts {
 		if lowered := g.generateStmt(stmt); lowered != nil {
-			if block.Comptime {
-				if exprStmt, ok := lowered.(*ExprStmt); ok && exprStmt.Value != nil {
-					expr := exprStmt.Value
-					wrapped := &PrefixExpr{Op: "comptime_soft", Right: expr}
-					wrapped.ExprType, wrapped.Location, wrapped.Source = expr.Type(), expr.Loc(), expr.SourceExpr()
-					exprStmt.Value = wrapped
-				}
-			}
 			out.Stmts = append(out.Stmts, lowered)
 		}
 	}
@@ -433,6 +426,9 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 	case nil:
 		return nil
 	case *ast.BlockStmt:
+		if s.Comptime {
+			return nil
+		}
 		return g.generateBlock(s)
 	case *ast.LetStmt:
 		out := &LetStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Mutable: s.IsMut, Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
@@ -542,34 +538,101 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 	}
 }
 
-func (g *generator) generateConstValue(expr ast.Expr) Expr {
-	if value, ok := g.types.LookupConstValue(expr); ok {
-		typ := exprType(g.types, expr)
-		loc := expr.Loc()
-		switch value.Kind {
-		case typeinfo.ConstInt:
-			if value.Int != nil {
-				out := &NumberLit{Value: value.Int.String()}
-				out.ExprType, out.Location, out.Source = typ, loc, expr
-				return out
-			}
-		case typeinfo.ConstBool:
-			name := "false"
-			if value.Bool {
-				name = "true"
-			}
-			out := &Ident{Path: []string{name}, LocalID: -1}
-			out.ExprType, out.Location, out.Source = typ, loc, expr
-			return out
-		case typeinfo.ConstString:
-			out := &StringLit{Value: value.String}
-			out.ExprType, out.Location, out.Source = typ, loc, expr
-			return out
-		case typeinfo.ConstNone:
-			out := &NoneLit{}
-			out.ExprType, out.Location, out.Source = typ, loc, expr
-			return out
+func (g *generator) cachedConstExpr(expr ast.Expr) (Expr, bool) {
+	if expr == nil {
+		return nil, false
+	}
+	value, ok := g.types.LookupConstValue(expr)
+	if !ok {
+		return nil, false
+	}
+	return g.constExprFromValue(expr, value, exprType(g.types, expr), expr.Loc())
+}
+
+func (g *generator) constExprFromValue(expr ast.Expr, value typeinfo.ConstValue, typ typeinfo.Type, loc source.Location) (Expr, bool) {
+	switch value.Kind {
+	case typeinfo.ConstInt:
+		if value.Int == nil {
+			return nil, false
 		}
+		out := &NumberLit{Value: value.Int.String()}
+		out.ExprType, out.Location, out.Source = typ, loc, expr
+		return out, true
+	case typeinfo.ConstBool:
+		name := "false"
+		if value.Bool {
+			name = "true"
+		}
+		out := &Ident{Path: []string{name}, LocalID: -1}
+		out.ExprType, out.Location, out.Source = typ, loc, expr
+		return out, true
+	case typeinfo.ConstString:
+		out := &StringLit{Value: value.String}
+		out.ExprType, out.Location, out.Source = typ, loc, expr
+		return out, true
+	case typeinfo.ConstNone:
+		out := &NoneLit{}
+		out.ExprType, out.Location, out.Source = typ, loc, expr
+		return out, true
+	case typeinfo.ConstSequence:
+		out := &CompositeLit{Items: make([]CompositeItem, 0, len(value.Elems))}
+		out.ExprType, out.Location, out.Source = typ, loc, expr
+		for i, elem := range value.Elems {
+			elemType := constSequenceElemType(typ, i)
+			child, ok := g.constExprFromValue(nil, elem, elemType, loc)
+			if !ok {
+				return nil, false
+			}
+			out.Items = append(out.Items, CompositeItem{Value: child})
+		}
+		return out, true
+	case typeinfo.ConstObject:
+		out := &CompositeLit{Items: make([]CompositeItem, 0, len(value.Fields))}
+		out.ExprType, out.Location, out.Source = typ, loc, expr
+		for i, field := range value.Fields {
+			fieldType := constObjectFieldType(typ, i)
+			child, ok := g.constExprFromValue(nil, field, fieldType, loc)
+			if !ok {
+				return nil, false
+			}
+			name := ""
+			if i < len(value.FieldNames) {
+				name = value.FieldNames[i]
+			}
+			out.Items = append(out.Items, CompositeItem{Name: name, Value: child})
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func constSequenceElemType(typ typeinfo.Type, index int) typeinfo.Type {
+	switch t := typ.(type) {
+	case *typeinfo.ArrayType:
+		if t != nil && t.Inner != nil {
+			return t.Inner
+		}
+	case *typeinfo.TupleType:
+		if t != nil && index >= 0 && index < len(t.Elems) && t.Elems[index] != nil {
+			return t.Elems[index]
+		}
+	}
+	return typeinfo.UnknownType{}
+}
+
+func constObjectFieldType(typ typeinfo.Type, index int) typeinfo.Type {
+	if t, ok := typ.(*typeinfo.StructType); ok && t != nil && index >= 0 && index < len(t.OrderedFields) {
+		if field := t.OrderedFields[index]; field != nil && field.Type != nil {
+			return field.Type
+		}
+	}
+	return typeinfo.UnknownType{}
+}
+
+func (g *generator) generateConstValue(expr ast.Expr) Expr {
+	if out, ok := g.cachedConstExpr(expr); ok {
+		return out
 	}
 	value := g.generateExpr(expr)
 	if expr == nil || value == nil {
@@ -616,6 +679,11 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
 	case *ast.PrefixExpr:
+		if e.Op == "comptime" {
+			if out, ok := g.cachedConstExpr(e); ok {
+				return out
+			}
+		}
 		out := &PrefixExpr{Op: e.Op, Right: g.generateExpr(e.Right)}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out

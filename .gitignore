@@ -11,3 +11,7 @@ app
 *.ast.json
 _gen
 .gocache
+.tmp-gocache
+.tmp_probe
+.tmpdebug
+_tmp

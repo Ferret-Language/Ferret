@@ -2607,6 +2607,88 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerCachesSemanticConstExprResults(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn pair() -> (i32, i32) {
+    return (1, 2)
+}
+
+fn main() -> i32 {
+    let value = comptime pair()[1]
+    return value
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected semantic const cache test to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letValue := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	prefix, ok := letValue.Value.(*ast.PrefixExpr)
+	if !ok {
+		t.Fatalf("expected comptime prefix expr, got %T", letValue.Value)
+	}
+	value, ok := result.Entry.Types.LookupConstValue(prefix)
+	if !ok {
+		t.Fatal("expected semantic const value cached for comptime expression")
+	}
+	if got, ok := value.NonNegativeInt64(); !ok || got != 2 {
+		t.Fatalf("expected comptime cache value 2, got %#v", value)
+	}
+	indexExpr, ok := prefix.Right.(*ast.IndexExpr)
+	if !ok {
+		t.Fatalf("expected index expr inside comptime prefix, got %T", prefix.Right)
+	}
+	indexValue, ok := result.Entry.Types.LookupConstValue(indexExpr.Index)
+	if !ok {
+		t.Fatal("expected semantic const value cached for tuple index expression")
+	}
+	if got, ok := indexValue.NonNegativeInt64(); !ok || got != 1 {
+		t.Fatalf("expected tuple index cache value 1, got %#v", indexValue)
+	}
+}
+
+func TestTypecheckerCachesEnumVariantConstInitializers(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Color enum {
+    Red,
+    Green,
+    Blue,
+}
+
+const DefaultColor = Color::Green
+
+fn main() -> Color {
+    return DefaultColor
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected enum const cache test to pass, got %#v", result.Diagnostics.Diagnostics())
+	}
+	var decl *ast.ConstDecl
+	for _, node := range result.Entry.AST.Decls {
+		if constDecl, ok := node.(*ast.ConstDecl); ok && constDecl.Name != nil && constDecl.Name.Text() == "DefaultColor" {
+			decl = constDecl
+			break
+		}
+	}
+	if decl == nil {
+		t.Fatal("expected DefaultColor const declaration")
+	}
+	value, ok := result.Entry.Types.LookupConstValue(decl)
+	if !ok {
+		t.Fatal("expected semantic const value cached for enum const initializer")
+	}
+	if got, ok := value.NonNegativeInt64(); !ok || got != 1 {
+		t.Fatalf("expected enum variant cache value 1, got %#v", value)
+	}
+}
+
 func TestTypecheckerComptimeEvaluatesFunctionCallWithLoop(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
@@ -3912,6 +3994,71 @@ fn main(items: [BASE + EXTRA]i32) -> i32 {
 	arr, ok := paramType.(*typeinfo.ArrayType)
 	if !ok || arr.Len != 3 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
 		t.Fatalf("expected items type [3]i32, got %T %#v", paramType, paramType)
+	}
+}
+
+func TestTypecheckerResolvesArrayLengthFromCTFEFunctionCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn count() -> i32 {
+    let mut i = 0
+    let mut sum = 0
+    while i < 4 {
+        sum = sum + 1
+        i = i + 1
+    }
+    return sum
+}
+
+fn main(items: [count()]i32) -> i32 {
+    return items[3]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	paramRes := result.Entry.Bindings.Nodes[mainFn.Params[0].Name]
+	paramType := result.Entry.Types.Symbols[paramRes.Symbol.ID]
+	arr, ok := paramType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 4 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected items type [4]i32, got %T %#v", paramType, paramType)
+	}
+}
+
+func TestTypecheckerResolvesArrayLengthFromEarlierComptimeLet(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn count() -> i32 {
+    let mut i = 0
+    let mut sum = 0
+    while i < 5 {
+        sum = sum + 1
+        i = i + 1
+    }
+    return sum
+}
+
+fn main() -> i32 {
+    let size = comptime count()
+    let items: [size]i32 = [size]i32{1, 2, 3, 4, 5}
+    return items[4]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letItems := mainFn.Body.Stmts[1].(*ast.LetStmt)
+	itemsRes := result.Entry.Bindings.Nodes[letItems.Name]
+	itemsType := result.Entry.Types.Symbols[itemsRes.Symbol.ID]
+	arr, ok := itemsType.(*typeinfo.ArrayType)
+	if !ok || arr.Len != 5 || !typeinfo.IsBuiltinNamed(arr.Inner, "i32") {
+		t.Fatalf("expected items type [5]i32, got %T %#v", itemsType, itemsType)
 	}
 }
 

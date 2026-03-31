@@ -1,0 +1,4 @@
+fn PairSum() -> i32 {
+    let pair: (i32, i32) = (1, 2)
+    return pair[0] + pair[1]
+}

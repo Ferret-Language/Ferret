@@ -171,6 +171,93 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineFoldsExplicitComptimeExprInHIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
+fn sumTo(limit: i32) -> i32 {
+    let mut i = 0
+    let mut sum = 0
+    while i < limit {
+        sum = sum + i
+        i = i + 1
+    }
+    return sum
+}
+
+fn main() -> i32 {
+    let value = comptime sumTo(4)
+    return value
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.HIR == nil {
+		t.Fatal("expected HIR module")
+	}
+	mainFn := result.Entry.HIR.Functions[1]
+	stmt, ok := mainFn.Body.Stmts[0].(*hir.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	if lit, ok := stmt.Value.(*hir.NumberLit); !ok || lit.Value != "6" {
+		t.Fatalf("expected folded comptime value 6 in HIR, got %#v", stmt.Value)
+	}
+	text := hir.FormatModule(result.Entry.HIR)
+	if strings.Contains(text, "comptime sumTo(4)") {
+		t.Fatalf("expected explicit comptime expr to lower from semantic cache, got %q", text)
+	}
+}
+
+func TestPipelineElidesComptimeBlockFromHIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
+fn assert(cond: bool, msg: str) -> void {
+    if !cond {
+        panic msg
+    }
+}
+
+fn main() -> void {
+    comptime {
+        assert(1 + 1 == 2, "math broke")
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			if diag == nil {
+				continue
+			}
+			msgs = append(msgs, diag.Code+": "+diag.Message)
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
+	}
+	if result.Entry == nil || result.Entry.HIR == nil {
+		t.Fatal("expected HIR module")
+	}
+	mainFn := result.Entry.HIR.Functions[1]
+	if len(mainFn.Body.Stmts) != 0 {
+		t.Fatalf("expected comptime block to be elided from HIR, got %#v", mainFn.Body.Stmts)
+	}
+	text := hir.FormatModule(result.Entry.HIR)
+	if strings.Contains(text, "assert(1 + 1 == 2") || strings.Contains(text, "comptime") {
+		t.Fatalf("expected no comptime block residue in HIR, got %q", text)
+	}
+}
+
 func TestPipelineLowersInferredDefaultParamTypesInHIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
