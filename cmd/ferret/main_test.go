@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"compiler/colors"
 	"compiler/internal/backend"
@@ -138,10 +140,35 @@ func TestParseCommandBackendDefaultsAndExplicitTargets(t *testing.T) {
 
 func TestPrintTestStatusUsesUppercaseColoredLabel(t *testing.T) {
 	var buf bytes.Buffer
-	printTestStatus(&buf, colors.GREEN, "OK", "smoke")
+	printTestStatus(&buf, colors.GREEN, "OK", "smoke", 12*time.Millisecond)
 	got := buf.String()
-	want := colors.GREEN.Sprintf("%-5s", "OK") + " smoke\n"
+	want := colors.GREEN.Sprintf("    %-5s", "OK") + "     12ms  \"smoke\"\n"
 	if got != want {
 		t.Fatalf("printTestStatus = %q, want %q", got, want)
+	}
+}
+
+func TestRenderTestFailureIncludesIndentedStatusAndDuration(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	renderTestFailure("math", "__FERRET_TEST_FAIL__\n__FERRET_TEST_MESSAGE__\nbroke\n", 3*time.Millisecond)
+	_ = w.Close()
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("ReadFrom: %v", err)
+	}
+	got := buf.String()
+	want := colors.RED.Sprintf("    %-5s", "FAIL") + "      3ms  \"math\"\n" + "  broke\n"
+	if got != want {
+		t.Fatalf("renderTestFailure = %q, want %q", got, want)
 	}
 }

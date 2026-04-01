@@ -1,0 +1,13 @@
+test "math works" {
+    let total = 2 + 3
+    if total != 5 {
+        panic "math failed"
+    }
+}
+
+test "math still works" {
+    let total = 8 + 5
+    if total != 13 {
+        panic "second math failed"
+    }
+}

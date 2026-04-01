@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"compiler/cmd/ferret/cli"
 	"compiler/colors"
@@ -357,6 +358,11 @@ func testCommand(args []string, target backend.Target) error {
 		return fmt.Errorf("no tests found in %s", resolvedPath)
 	}
 	colors.CYAN.Fprintf(os.Stderr, "running %d test(s)\n", len(tests))
+	displayPath := resolvedPath
+	if relPath, relErr := filepath.Rel(".", resolvedPath); relErr == nil && relPath != "" && relPath != "." {
+		displayPath = relPath
+	}
+	fmt.Fprintln(os.Stdout, displayPath)
 
 	passed := 0
 	failed := 0
@@ -370,11 +376,11 @@ func testCommand(args []string, target backend.Target) error {
 		}
 		if runResult.Passed {
 			passed++
-			printTestStatus(os.Stdout, colors.GREEN, "OK", runResult.Name)
+			printTestStatus(os.Stdout, colors.GREEN, "OK", runResult.Name, runResult.Elapsed)
 			continue
 		}
 		failed++
-		renderTestFailure(runResult.Name, runResult.Output)
+		renderTestFailure(runResult.Name, runResult.Output, runResult.Elapsed)
 	}
 	fmt.Fprintf(os.Stdout, "\nSummary: %d passed, %d failed, %d total\n", passed, failed, len(tests))
 	if failed > 0 {
@@ -597,9 +603,10 @@ func moduleTests(mod *context.Module) []*ast.FuncDecl {
 }
 
 type testRunResult struct {
-	Name   string
-	Passed bool
-	Output string
+	Name    string
+	Passed  bool
+	Output  string
+	Elapsed time.Duration
 }
 
 type testFailureDetails struct {
@@ -658,13 +665,15 @@ func runSingleTest(path, testName, displayName string, runtimeArgs []string, tar
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	start := time.Now()
 	err = cmd.Run()
+	elapsed := time.Since(start)
 	output := stdout.String() + stderr.String()
 	if err == nil {
-		return testRunResult{Name: displayName, Passed: true, Output: output}, nil
+		return testRunResult{Name: displayName, Passed: true, Output: output, Elapsed: elapsed}, nil
 	}
 	if _, ok := err.(*exec.ExitError); ok {
-		return testRunResult{Name: displayName, Passed: false, Output: output}, nil
+		return testRunResult{Name: displayName, Passed: false, Output: output, Elapsed: elapsed}, nil
 	}
 	return testRunResult{}, fmt.Errorf("run test %s: %w", testName, err)
 }
@@ -738,8 +747,8 @@ func parseTestFailureOutput(output string) testFailureDetails {
 	return details
 }
 
-func renderTestFailure(name, output string) {
-	printTestStatus(os.Stdout, colors.RED, "FAIL", name)
+func renderTestFailure(name, output string, elapsed time.Duration) {
+	printTestStatus(os.Stdout, colors.RED, "FAIL", name, elapsed)
 	details := parseTestFailureOutput(output)
 	if !details.Known {
 		if strings.TrimSpace(output) != "" {
@@ -761,9 +770,13 @@ func renderTestFailure(name, output string) {
 	}
 }
 
-func printTestStatus(w io.Writer, color colors.COLOR, status, name string) {
-	color.Fprintf(w, "%-5s", status)
-	fmt.Fprintf(w, " %s\n", name)
+func printTestStatus(w io.Writer, color colors.COLOR, status, name string, elapsed time.Duration) {
+	color.Fprintf(w, "    %-5s", status)
+	if elapsed < time.Millisecond {
+		fmt.Fprintf(w, " %8s  %q\n", elapsed.Round(time.Microsecond), name)
+		return
+	}
+	fmt.Fprintf(w, " %8s  %q\n", elapsed.Round(time.Millisecond), name)
 }
 
 func printIndented(w io.Writer, text string) {
