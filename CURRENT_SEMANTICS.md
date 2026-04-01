@@ -494,7 +494,10 @@ Current behavior:
 
 - `[_]T` infers array length from the literal
 - array indexing is implemented end-to-end
+- array element writes are implemented end-to-end
+- arrays coerce to readonly `[]T`, and mutable arrays coerce to `[]mut T`
 - array literals currently use typed brace form such as `[3]i32{1, 2, 3}` or `[_]i32{1, 2, 3}`
+- the current array surface is considered implemented; only future syntax cleanup may still change
 
 Note:
 

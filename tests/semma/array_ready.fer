@@ -1,0 +1,19 @@
+fn head(items: []i32) -> i32 {
+    return items[0]
+}
+
+fn bump(items: []mut i32) -> i32 {
+    items[1] = 9
+    return items[1]
+}
+
+fn main() -> void {
+    let mut arr: [3]i32 = [3]i32{1, 2, 3}
+    let before = head(arr)
+    let after = bump(arr)
+    if before == 1 && after == 9 && arr[1] == 9 && len(arr) == 3 {
+        print("array-ready-ok")
+        return
+    }
+    panic "array readiness failed"
+}
