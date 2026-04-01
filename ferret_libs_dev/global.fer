@@ -1,8 +1,9 @@
 // Global builtins implicitly available in every module.
 //
-// `str` is the built-in string type: an opaque fat pointer { data *u8, len usize }.
-// `str` is a MOVE type — assigning or passing by value transfers ownership.
-// Pass `*str` (immutable reference) when you only need to read the string.
+// `str` is the built-in immutable text view type: an opaque fat pointer
+// `{ data *u8, len usize }`.
+// Assigning or passing `str` copies only this small view, not the backing bytes.
+// The helper declarations below use `*str` as their current FFI ABI shape.
 // String literals have type `str`. Use str_data(s) and str_len(s) to extract
 // the raw fields at C FFI boundaries.
 //

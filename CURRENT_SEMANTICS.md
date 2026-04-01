@@ -21,7 +21,8 @@ Ferret currently uses these semantic categories:
 
 Current design intent:
 
-- plain values are copyable by default
+- plain values without owning storage are copyable by default
+- values that contain owning pointers are move-only until deep-clone support exists
 - owning pointers are move-only by default
 - references are non-owning
 - raw pointers are unsafe
@@ -663,7 +664,8 @@ These areas are intentionally incomplete or still under design discussion:
 
 Current Ferret semantics are best summarized as:
 
-- values are plain and copyable by default
+- values without owning storage are copyable by default
+- values that contain owning storage are move-only
 - `*T` is the owner category
 - `&T` / `&mut T` are borrow categories
 - `^T` is the raw-pointer category

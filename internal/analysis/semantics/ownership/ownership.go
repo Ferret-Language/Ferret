@@ -5,7 +5,7 @@ import (
 	"slices"
 	"strings"
 
-	"compiler/internal/analysis/cfg/model"
+	cfg "compiler/internal/analysis/cfg/model"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
@@ -194,6 +194,27 @@ func declareFunctionLocals(scope *valueScope, fn *mir.Function) {
 	}
 }
 
+func resetMoveState(slot *valueInfo) {
+	if slot == nil {
+		return
+	}
+	slot.moved = false
+	slot.moveLoc = source.Location{}
+	slot.movedPath = ""
+	slot.movedSubs = nil
+}
+
+func setConcreteValue(slot *valueInfo, value mir.Value) {
+	if slot == nil {
+		return
+	}
+	if ifaceValue, ok := value.(*mir.InterfaceValue); ok {
+		slot.concrete = ifaceValue.ConcreteType
+		return
+	}
+	slot.concrete = nil
+}
+
 func (a *analyzer) transferBlock(in *valueScope, cfgBlock *cfg.Block, mirBlock *mir.Block) *valueScope {
 	state := in.Clone()
 	if state == nil {
@@ -275,10 +296,8 @@ func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
 			if slot == nil {
 				break
 			}
-			slot.moved = false
-			slot.moveLoc = source.Location{}
-			slot.movedPath = ""
-			slot.movedSubs = nil
+			resetMoveState(slot)
+			setConcreteValue(slot, inst.Value)
 			a.bindBorrowValue(scope, slot, inst.Value)
 		}
 	case *mir.StoreInstr:
@@ -300,6 +319,9 @@ func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
 		a.checkAssignmentTarget(scope, target)
 		a.checkValue(scope, inst.Value)
 		a.consumeMoveValue(scope, inst.Value, a.localType(inst.TargetID))
+		if slot, _ := scope.Lookup(inst.TargetID); slot != nil {
+			setConcreteValue(slot, inst.Value)
+		}
 		a.rebindBorrowAssignment(scope, target, inst.Value)
 	case *mir.EvalInstr:
 		a.checkValue(scope, inst.Value)
@@ -310,10 +332,7 @@ func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
 	case *mir.LockInstr:
 		a.checkValue(scope, inst.Value)
 		if slot, _ := scope.Lookup(inst.LocalID); slot != nil {
-			slot.moved = false
-			slot.moveLoc = source.Location{}
-			slot.movedPath = ""
-			slot.movedSubs = nil
+			resetMoveState(slot)
 		}
 	case *mir.UnsafeInstr:
 		return
@@ -719,17 +738,10 @@ func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
 	a.checkValue(scope, call.Callee)
 	fnType, ok := valueType(call.Callee).(*typeinfo.FuncType)
 	if !ok {
-		for _, arg := range call.Args {
-			a.checkValue(scope, arg)
-		}
+		a.checkCallArgs(scope, call.Args, nil)
 		return
 	}
-	for i, arg := range call.Args {
-		a.checkValue(scope, arg)
-		if i < len(fnType.Params) {
-			a.consumeMoveValue(scope, arg, fnType.Params[i].Type)
-		}
-	}
+	a.checkCallArgs(scope, call.Args, fnType.Params)
 }
 
 // checkNormalizedMethodCall handles method calls that have been normalized in MIR so
@@ -744,6 +756,20 @@ func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallVa
 	if name, ok := call.Callee.(*mir.NameValue); ok && len(name.Path) > 0 {
 		methodName = name.Path[len(name.Path)-1]
 	}
+	if methodName != "" {
+		if iface, ok := a.interfaceView(receiverType); ok {
+			if baseNamed, ok := typeinfo.ReceiverBaseNamedType(receiverType); ok && baseNamed != nil {
+				prefix := baseNamed.Name + "__"
+				methodName = strings.TrimPrefix(methodName, prefix)
+			}
+			method := iface.Methods[methodName]
+			if method != nil {
+				a.checkCallArgs(scope, call.Args[1:], method.Params)
+				a.consumeInterfaceReceiver(scope, receiver, iface.MethodReceivers[methodName], receiverType)
+				return
+			}
+		}
+	}
 	if methodName != "" && !typeinfo.IsInvalid(receiverType) && !typeinfo.IsUnknown(receiverType) {
 		if baseNamed, ok := typeinfo.ReceiverBaseNamedType(receiverType); ok && baseNamed != nil {
 			prefix := baseNamed.Name + "__"
@@ -752,12 +778,7 @@ func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallVa
 		addressable, mutable := a.valueAccess(scope, receiver)
 		methodSym, methodType := a.lookupMethod(receiverType, methodName, addressable, mutable)
 		if methodType != nil {
-			for i, arg := range call.Args[1:] {
-				a.checkValue(scope, arg)
-				if i < len(methodType.Params) {
-					a.consumeMoveValue(scope, arg, methodType.Params[i].Type)
-				}
-			}
+			a.checkCallArgs(scope, call.Args[1:], methodType.Params)
 			if methodSym != nil {
 				if fn, ok := methodSym.Node.(*ast.FuncDecl); ok && a.receiverConsumes(a.findModuleForSymbol(methodSym), fn) {
 					a.consumeMoveValue(scope, receiver, receiverType)
@@ -767,9 +788,7 @@ func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallVa
 		}
 	}
 	// Fallback: just check all args normally.
-	for _, arg := range call.Args[1:] {
-		a.checkValue(scope, arg)
-	}
+	a.checkCallArgs(scope, call.Args[1:], nil)
 }
 
 func (a *analyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field *mir.FieldValue) bool {
@@ -787,12 +806,8 @@ func (a *analyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field
 		if method == nil {
 			return true
 		}
-		for i, arg := range call.Args {
-			a.checkValue(scope, arg)
-			if i < len(method.Params) {
-				a.consumeMoveValue(scope, arg, method.Params[i].Type)
-			}
-		}
+		a.checkCallArgs(scope, call.Args, method.Params)
+		a.consumeInterfaceReceiver(scope, field.Base, iface.MethodReceivers[name], receiverType)
 		return true
 	}
 	addressable, mutable := a.valueAccess(scope, field.Base)
@@ -800,18 +815,22 @@ func (a *analyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field
 	if methodType == nil {
 		return a.canHaveMethods(receiverType)
 	}
-	for i, arg := range call.Args {
-		a.checkValue(scope, arg)
-		if i < len(methodType.Params) {
-			a.consumeMoveValue(scope, arg, methodType.Params[i].Type)
-		}
-	}
+	a.checkCallArgs(scope, call.Args, methodType.Params)
 	if methodSym != nil {
 		if fn, ok := methodSym.Node.(*ast.FuncDecl); ok && a.receiverConsumes(a.findModuleForSymbol(methodSym), fn) {
 			a.consumeMoveValue(scope, field.Base, receiverType)
 		}
 	}
 	return true
+}
+
+func (a *analyzer) checkCallArgs(scope *valueScope, args []mir.Value, params []typeinfo.ParamSpec) {
+	for i, arg := range args {
+		a.checkValue(scope, arg)
+		if i < len(params) {
+			a.consumeMoveValue(scope, arg, params[i].Type)
+		}
+	}
 }
 
 func (a *analyzer) requireActiveValue(scope *valueScope, value *mir.NameValue) {
@@ -832,7 +851,20 @@ func (a *analyzer) requireActiveLocal(scope *valueScope, value *mir.LocalValue) 
 }
 
 func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ typeinfo.Type) {
-	if value == nil || typ == nil || !a.isMoveType(typ) {
+	if value == nil {
+		return
+	}
+	if ifaceValue, ok := value.(*mir.InterfaceValue); ok {
+		a.consumeMoveValue(scope, ifaceValue.Value, ifaceValue.ConcreteType)
+		return
+	}
+	if local, ok := value.(*mir.LocalValue); ok && scope != nil {
+		if slot, ok := scope.Lookup(local.LocalID); ok && slot != nil && a.isMoveType(slot.concrete) {
+			a.consumeLocalPath(scope, local.LocalID, "", value.Loc())
+			return
+		}
+	}
+	if typ == nil || !a.isMoveType(typ) {
 		return
 	}
 	switch v := value.(type) {
@@ -840,9 +872,6 @@ func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ type
 		if v.Op == "copy" {
 			return
 		}
-	case *mir.InterfaceValue:
-		a.consumeMoveValue(scope, v.Value, v.ConcreteType)
-		return
 	case *mir.LocalValue:
 		if info, ok := a.temps[v.LocalID]; ok {
 			if !info.root.isLocal() {
@@ -1264,18 +1293,84 @@ func (a *analyzer) reportMovedPathUse(root int, path string, loc source.Location
 }
 
 func (a *analyzer) isMoveType(typ typeinfo.Type) bool {
+	return a.isMoveTypeSeen(typ, make(map[string]struct{}))
+}
+
+func (a *analyzer) isMoveTypeSeen(typ typeinfo.Type, seen map[string]struct{}) bool {
 	if typ == nil || typeinfo.IsInvalid(typ) || typeinfo.IsUnknown(typ) {
 		return false
 	}
 	switch t := typ.(type) {
 	case *typeinfo.PointerType:
-		_ = t
 		return true
-	case *typeinfo.RawPtrType, *typeinfo.RefType, *typeinfo.BuiltinType, *typeinfo.EnumType, *typeinfo.NamedType:
+	case *typeinfo.NamedType:
+		key := t.ModuleKey + "::" + t.String()
+		if _, ok := seen[key]; ok {
+			return false
+		}
+		seen[key] = struct{}{}
+		return a.isMoveTypeSeen(a.underlying(t), seen)
+	case *typeinfo.StructType:
+		for _, field := range t.OrderedFields {
+			if field != nil && a.isMoveTypeSeen(field.Type, seen) {
+				return true
+			}
+		}
+		return false
+	case *typeinfo.UnionType:
+		for _, member := range t.Members {
+			if a.isMoveTypeSeen(member, seen) {
+				return true
+			}
+		}
+		return false
+	case *typeinfo.TupleType:
+		for _, elem := range t.Elems {
+			if a.isMoveTypeSeen(elem, seen) {
+				return true
+			}
+		}
+		return false
+	case *typeinfo.ArrayType:
+		return a.isMoveTypeSeen(t.Inner, seen)
+	case *typeinfo.OptionalType:
+		return a.isMoveTypeSeen(t.Inner, seen)
+	case *typeinfo.ErrorUnionType:
+		return a.isMoveTypeSeen(t.Error, seen) || a.isMoveTypeSeen(t.Value, seen)
+	case *typeinfo.ApproxType:
+		return a.isMoveTypeSeen(t.Inner, seen)
+	case *typeinfo.RawPtrType, *typeinfo.RefType, *typeinfo.BuiltinType, *typeinfo.EnumType, *typeinfo.InterfaceType, *typeinfo.SliceType, *typeinfo.StringType:
 		return false
 	default:
 		return false
 	}
+}
+
+func (a *analyzer) consumeInterfaceReceiver(scope *valueScope, receiver mir.Value, receiverKind typeinfo.ReceiverKind, receiverType typeinfo.Type) {
+	if receiverKind == typeinfo.ReceiverPtr {
+		if root, path, ok := a.localValuePath(receiver); ok && path == "" {
+			a.consumeLocalPath(scope, root, "", receiver.Loc())
+		}
+		return
+	}
+	if receiverKind != typeinfo.ReceiverValue {
+		return
+	}
+	if root, path, ok := a.localValuePath(receiver); ok && path == "" && scope != nil {
+		if info, ok := scope.Lookup(root); ok && info != nil {
+			if info.concrete != nil {
+				if a.isMoveType(info.concrete) {
+					a.consumeLocalPath(scope, root, "", receiver.Loc())
+				}
+				return
+			}
+			if _, ok := a.interfaceView(info.typ); ok {
+				a.consumeLocalPath(scope, root, "", receiver.Loc())
+				return
+			}
+		}
+	}
+	a.consumeMoveValue(scope, receiver, receiverType)
 }
 
 func (a *analyzer) reportBorrowEscapeIfNeeded(scope *valueScope, value mir.Value, message string) {

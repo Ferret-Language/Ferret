@@ -9,6 +9,7 @@ import (
 
 type valueInfo struct {
 	typ       typeinfo.Type
+	concrete  typeinfo.Type
 	mutable   bool
 	constant  bool
 	moved     bool
@@ -36,6 +37,7 @@ func (s *valueScope) Declare(id int, info valueInfo) *valueInfo {
 	}
 	slot := &valueInfo{
 		typ:      info.typ,
+		concrete: info.concrete,
 		mutable:  info.mutable,
 		constant: info.constant,
 		borrowOf: -1,
@@ -127,7 +129,8 @@ func equalValueInfo(a, b *valueInfo) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
-	return a.typ == b.typ &&
+	return typeinfo.Equal(a.typ, b.typ) &&
+		typeinfo.Equal(a.concrete, b.concrete) &&
 		a.mutable == b.mutable &&
 		a.constant == b.constant &&
 		a.moved == b.moved &&
@@ -154,6 +157,9 @@ func mergeValueInfo(a, b *valueInfo) *valueInfo {
 		return &clone
 	}
 	out := *a
+	if !typeinfo.Equal(a.concrete, b.concrete) {
+		out.concrete = nil
+	}
 	out.mutable = a.mutable || b.mutable
 	out.constant = a.constant && b.constant
 	out.moved = a.moved || b.moved
