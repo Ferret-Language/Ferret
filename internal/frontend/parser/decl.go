@@ -328,9 +328,11 @@ func (p *Parser) parseParamType() (ast.TypeExpr, bool) {
 	}
 	start := p.current().Start
 	p.advance()
-	mutable := p.match(tokens.MUT)
+	if p.match(tokens.MUT) {
+		p.errorAt(p.locOfToken(p.previous()), "variadic slice syntax is ...T; put mutability on the binding")
+	}
 	inner := p.parseType()
-	return &ast.SliceType{Mutable: mutable, Inner: inner, Location: p.locFrom(start)}, true
+	return &ast.SliceType{Inner: inner, Location: p.locFrom(start)}, true
 }
 
 func (p *Parser) parseNamedParam() ast.Param {

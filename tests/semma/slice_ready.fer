@@ -2,7 +2,7 @@ fn head(items: []i32) -> i32 {
     return items[0]
 }
 
-fn bump(items: []mut i32) -> i32 {
+fn bump(mut items: []i32) -> i32 {
     items[1] = 9
     return items[1]
 }
@@ -16,7 +16,7 @@ fn sum(items: []i32) -> i32 {
 }
 
 fn main() -> void {
-    let items: []mut i32 = []mut i32{1, 2, 3}
+    let mut items: []i32 = []i32{1, 2, 3}
     let empty: []i32 = []i32{}
     let first = head(items)
     let changed = bump(items)

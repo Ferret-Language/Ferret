@@ -1068,51 +1068,28 @@ fn main() -> void {
 	}
 }
 
-func TestTypecheckerRejectsStringToMutableByteSliceCast(t *testing.T) {
+func TestTypecheckerRejectsMutationThroughStringSliceView(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn main(s: str) -> []mut u8 {
-    return s as []mut u8
+fn main(s: str) -> void {
+    let mut bytes: []u8 = s as []u8
+    bytes[0] = 1
 }
 `)
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected mutable byte-slice cast diagnostic")
+		t.Fatal("expected readonly string slice mutation diagnostic")
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidCast && strings.Contains(diag.Message, "cannot cast str to []mut u8") {
+		if diag.Code == diagnostics.ErrConstantReassignment && strings.Contains(diag.Message, "cannot assign through immutable access path") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected mutable byte-slice cast diagnostic, got %#v", result.Diagnostics.Diagnostics())
-	}
-}
-
-func TestTypecheckerRejectsStringToMutableCharSliceCast(t *testing.T) {
-	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn main(s: str) -> []mut char {
-    return s as []mut char
-}
-`)
-
-	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected mutable char-slice cast diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidCast && strings.Contains(diag.Message, "cannot cast str to []mut char") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected mutable char-slice cast diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected readonly string slice mutation diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -3678,7 +3655,7 @@ fn main() -> void {
     unsafe {
         let raw = 0 as ^u8
         let readonly = (raw, 4 as usize) as []u8
-        let writable = (raw, 4 as usize) as []mut u8
+        let mut writable: []u8 = (raw, 4 as usize) as []u8
         let ptr1 = readonly as ^const u8
         let ptr2 = arr as ^const u8
         let ptr3 = arr as ^u8
@@ -3694,6 +3671,37 @@ fn main() -> void {
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsMutationThroughMutableRawPartsSliceBinding(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    unsafe {
+        let raw = 0 as ^u8
+        let mut bytes: []u8 = (raw, 4 as usize) as []u8
+        bytes[0] = 1
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	unsafeStmt, ok := mainFn.Body.Stmts[0].(*ast.UnsafeStmt)
+	if !ok {
+		t.Fatalf("expected unsafe stmt, got %#v", mainFn.Body.Stmts[0])
+	}
+	block := unsafeStmt.Body
+	letBytes := block.Stmts[1].(*ast.LetStmt)
+	bytesRes := result.Entry.Bindings.Nodes[letBytes.Name]
+	bytesType := result.Entry.Types.Symbols[bytesRes.Symbol.ID]
+	sl, ok := bytesType.(*typeinfo.SliceType)
+	if !ok || !sl.Mutable || !typeinfo.IsBuiltinNamed(sl.Inner, "u8") {
+		t.Fatalf("expected mutable-capable []u8 binding, got %T %#v", bytesType, bytesType)
 	}
 }
 
@@ -4703,11 +4711,11 @@ fn main() -> i32 {
 	}
 }
 
-func TestTypecheckerTypesMutableSliceLiteral(t *testing.T) {
+func TestTypecheckerTypesMutableSliceBindingFromLiteral(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
-    let items: []mut i32 = []mut i32{1, 2, 3}
+    let mut items: []i32 = []i32{1, 2, 3}
     items[0] = 9
     return items[0]
 }
@@ -4723,11 +4731,11 @@ fn main() -> i32 {
 	itemsType := result.Entry.Types.Symbols[itemsRes.Symbol.ID]
 	sl, ok := itemsType.(*typeinfo.SliceType)
 	if !ok || !sl.Mutable || !typeinfo.IsBuiltinNamed(sl.Inner, "i32") {
-		t.Fatalf("expected items type []mut i32, got %T %#v", itemsType, itemsType)
+		t.Fatalf("expected mutable-capable []i32 binding, got %T %#v", itemsType, itemsType)
 	}
 }
 
-func TestTypecheckerAllowsMutableSliceToReadonlySlice(t *testing.T) {
+func TestTypecheckerAllowsMutableSliceBindingToReadonlyParam(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn sum(items: []i32) -> i32 {
@@ -4735,7 +4743,7 @@ fn sum(items: []i32) -> i32 {
 }
 
 fn main() -> i32 {
-    let items: []mut i32 = []mut i32{1, 2, 3}
+    let mut items: []i32 = []i32{1, 2, 3}
     return sum(items)
 }
 `)
@@ -4746,10 +4754,10 @@ fn main() -> i32 {
 	}
 }
 
-func TestTypecheckerRejectsReadonlySliceToMutableSlice(t *testing.T) {
+func TestTypecheckerRejectsReadonlySliceBindingToMutableParam(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn fill(items: []mut i32) -> void {
+fn fill(mut items: []i32) -> void {
     items[0] = 1
 }
 
@@ -4765,7 +4773,7 @@ fn main() -> void {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "type mismatch: expected []mut i32, got []i32") {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "slice value is not writable in this context") {
 			found = true
 			break
 		}
@@ -4847,7 +4855,7 @@ fn main() -> i32 {
 func TestTypecheckerAllowsMutableSliceViewFromMutableArray(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn bump(items: []mut i32) -> i32 {
+fn bump(mut items: []i32) -> i32 {
     items[0] = 9
     return items[0]
 }
@@ -4867,7 +4875,7 @@ fn main() -> i32 {
 func TestTypecheckerRejectsMutableSliceViewFromImmutableArray(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn bump(items: []mut i32) -> i32 {
+fn bump(mut items: []i32) -> i32 {
     items[0] = 9
     return items[0]
 }
@@ -4884,7 +4892,7 @@ fn main() -> i32 {
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "type mismatch: expected []mut i32, got [3]i32") {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "type mismatch: expected []i32, got [3]i32") {
 			found = true
 			break
 		}

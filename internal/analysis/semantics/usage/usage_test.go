@@ -358,7 +358,7 @@ func TestUsageDoesNotWarnWhenMutableBindingIsModifiedThroughMutRef(t *testing.T)
 func TestUsageDoesNotWarnOnMutableSliceElementMutation(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "main.fer"), `
-fn fill(items: []mut i32) -> void {
+fn fill(mut items: []i32) -> void {
     items[0] = 9
 }
 
@@ -389,7 +389,7 @@ fn main() -> void {
 func TestUsageDoesNotWarnOnDirectMutableSliceElementAssignment(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "main.fer"), `
-fn main(items: []mut i32) -> void {
+fn main(mut items: []i32) -> void {
     items[0] = 9
 }
 `)

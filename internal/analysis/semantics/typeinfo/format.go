@@ -235,11 +235,7 @@ func (p Printer) MethodSignature(name string, receiver Type, fn *FuncType) strin
 
 func (p Printer) variadicTypeText(typ Type) string {
 	if slice, ok := typ.(*SliceType); ok && slice != nil {
-		prefix := "..."
-		if slice.Mutable {
-			prefix += "mut "
-		}
-		return prefix + p.Type(slice.Inner)
+		return "..." + p.Type(slice.Inner)
 	}
 	return "..." + p.Type(typ)
 }

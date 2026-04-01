@@ -39,7 +39,7 @@ func (p *Parser) parseType() ast.TypeExpr {
 			p.advance()
 			slice := &ast.SliceType{Location: p.locFrom(start)}
 			if p.match(tokens.MUT) {
-				slice.Mutable = true
+				p.errorAt(p.locOfToken(p.previous()), "slice type syntax is []T; put mutability on the binding or reference")
 			}
 			slice.Inner = p.parseType()
 			return slice

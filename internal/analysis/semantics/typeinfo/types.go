@@ -181,9 +181,6 @@ func (t *SliceType) String() string {
 	if t == nil {
 		return "[]<nil>"
 	}
-	if t.Mutable {
-		return "[]mut " + typeString(t.Inner)
-	}
 	return "[]" + typeString(t.Inner)
 }
 

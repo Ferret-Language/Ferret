@@ -226,14 +226,14 @@ type Reader interface {
 	}
 }
 
-func TestParseMutableSliceType(t *testing.T) {
+func TestParseSliceTypeRejectsLegacyMutMarker(t *testing.T) {
 	src := `
-fn fill(buf: []mut i32) -> void {}
+fn fill(mut buf: []mut i32) -> void {}
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.Diagnostics(); len(got) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", got)
+	if !hasDiagnosticMessage(diag, "slice type syntax is []T") {
+		t.Fatalf("expected legacy mutable slice syntax diagnostic, got %v", diag.Diagnostics())
 	}
 	fn, ok := mod.Decls[0].(*ast.FuncDecl)
 	if !ok {
@@ -243,23 +243,23 @@ fn fill(buf: []mut i32) -> void {}
 	if !ok {
 		t.Fatalf("expected slice parameter type, got %T", fn.Params[0].Type)
 	}
-	if !sliceType.Mutable {
-		t.Fatal("expected mutable slice parameter type")
-	}
-	if got := ast.TypeString(sliceType); got != "[]mut i32" {
+	if got := ast.TypeString(sliceType); got != "[]i32" {
 		t.Fatalf("unexpected slice type string: %q", got)
+	}
+	if !fn.Params[0].IsMut {
+		t.Fatal("expected parameter binding to remain mutable")
 	}
 }
 
 func TestParseVariadicParams(t *testing.T) {
 	src := `
 fn collect(nums: ...i32) -> void {}
-fn collectMut(nums: ...mut i32) -> void {}
+fn collectMut(mut nums: ...mut i32) -> void {}
 `
 
 	mod, diag := parseTestModule(t, src)
-	if got := diag.Diagnostics(); len(got) != 0 {
-		t.Fatalf("unexpected diagnostics: %v", got)
+	if !hasDiagnosticMessage(diag, "variadic slice syntax is ...T") {
+		t.Fatalf("expected legacy mutable variadic syntax diagnostic, got %v", diag.Diagnostics())
 	}
 	if len(mod.Decls) != 2 {
 		t.Fatalf("expected 2 decls, got %d", len(mod.Decls))
@@ -283,7 +283,10 @@ fn collectMut(nums: ...mut i32) -> void {}
 	if len(fnB.Params) != 1 || !fnB.Params[0].IsVariadic {
 		t.Fatalf("expected variadic mutable param, got %#v", fnB.Params)
 	}
-	if got := ast.ParamString(fnB.Params[0]); got != "nums: ...mut i32" {
+	if !fnB.Params[0].IsMut {
+		t.Fatalf("expected mutable parameter binding, got %#v", fnB.Params[0])
+	}
+	if got := ast.ParamString(fnB.Params[0]); got != "mut nums: ...i32" {
 		t.Fatalf("unexpected variadic mutable param string %q", got)
 	}
 }

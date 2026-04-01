@@ -39,7 +39,7 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		if s.Value != nil {
 			value = c.typeOfExpr(scope, s.Value, declared)
 		}
-		finalType := c.resolveDeclaredValueType(declared, value)
+		finalType := c.resolveBindingValueType(scope, declared, value, s.Value, s.IsMut)
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
@@ -67,7 +67,7 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		} else {
 			c.requireConstExpr(scope, s.Value, "constant initializer must be compile-time evaluable")
 		}
-		finalType := c.resolveDeclaredValueType(declared, value)
+		finalType := c.resolveBindingValueType(scope, declared, value, s.Value, false)
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}

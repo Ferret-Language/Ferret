@@ -79,7 +79,7 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 			mapping[t] = out
 			return out
 		case *SliceType:
-			out := &SliceType{Mutable: t.Mutable, Inner: cloneType(t.Inner), Location: t.Location}
+			out := &SliceType{Inner: cloneType(t.Inner), Location: t.Location}
 			mapping[t] = out
 			return out
 		case *TupleType:

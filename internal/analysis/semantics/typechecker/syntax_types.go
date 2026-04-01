@@ -130,7 +130,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.ArrayType:
 		return &typeinfo.ArrayType{Inner: c.typeFromSyntax(mod, t.Inner), Len: c.arrayLength(mod, t.Size)}
 	case *ast.SliceType:
-		return &typeinfo.SliceType{Mutable: t.Mutable, Inner: c.typeFromSyntax(mod, t.Inner)}
+		return &typeinfo.SliceType{Inner: c.typeFromSyntax(mod, t.Inner)}
 	case *ast.TupleType:
 		elems := make([]typeinfo.Type, 0, len(t.Elems))
 		for _, elem := range t.Elems {

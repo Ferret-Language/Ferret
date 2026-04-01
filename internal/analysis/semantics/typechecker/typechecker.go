@@ -28,7 +28,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if d.Value != nil {
 			value = c.typeOfExpr(nil, d.Value, declared)
 		}
-		finalType := c.resolveDeclaredValueType(declared, value)
+		finalType := c.resolveBindingValueType(nil, declared, value, d.Value, d.IsMut)
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
@@ -58,7 +58,7 @@ func (c *checker) checkDecl(decl ast.Decl) {
 				c.requireConstExpr(nil, d.Value, "constant initializer must be compile-time evaluable")
 			}
 		}
-		finalType := c.resolveDeclaredValueType(declared, value)
+		finalType := c.resolveBindingValueType(nil, declared, value, d.Value, false)
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
@@ -144,14 +144,30 @@ func (c *checker) checkTypeDecl(d *ast.TypeDecl) {
 	}
 }
 
-func (c *checker) resolveDeclaredValueType(declared, value typeinfo.Type) typeinfo.Type {
+func (c *checker) resolveBindingValueType(scope *refineScope, declared, value typeinfo.Type, valueExpr ast.Expr, bindingMutable bool) typeinfo.Type {
 	if arr, ok := declared.(*typeinfo.ArrayType); ok && arr != nil && arr.Len == typeinfo.ArrayLenInferred {
 		if concrete, ok := value.(*typeinfo.ArrayType); ok && concrete != nil && typeinfo.Equal(arr.Inner, concrete.Inner) {
-			return concrete
+			declared = concrete
 		}
+	}
+	if declaredSlice, ok := c.underlying(declared).(*typeinfo.SliceType); ok && declaredSlice != nil {
+		mutable := false
+		switch got := c.underlying(value).(type) {
+		case *typeinfo.SliceType:
+			mutable = got.Mutable
+		case *typeinfo.ArrayType:
+			addressable, writable := c.exprAccess(scope, valueExpr)
+			mutable = addressable && writable
+		case nil:
+			mutable = bindingMutable
+		}
+		return &typeinfo.SliceType{Mutable: bindingMutable && mutable, Inner: declaredSlice.Inner}
 	}
 	if declared != nil {
 		return declared
+	}
+	if inferredSlice, ok := c.underlying(value).(*typeinfo.SliceType); ok && inferredSlice != nil {
+		return &typeinfo.SliceType{Mutable: bindingMutable && inferredSlice.Mutable, Inner: inferredSlice.Inner}
 	}
 	return value
 }
@@ -1442,6 +1458,9 @@ func (c *checker) paramSpecFromSyntax(mod *context.Module, param ast.Param, self
 
 func (c *checker) paramTypeForSyntax(scope *refineScope, mod *context.Module, param ast.Param, selfType typeinfo.Type) typeinfo.Type {
 	paramType := c.instantiateSelfType(c.syntaxType(mod, param.Type), selfType)
+	if slice, ok := c.underlying(paramType).(*typeinfo.SliceType); ok && slice != nil && param.IsMut {
+		paramType = &typeinfo.SliceType{Mutable: true, Inner: slice.Inner}
+	}
 	if paramType == nil && param.Default != nil {
 		paramType = c.typeOfExpr(scope, param.Default, nil)
 	}
@@ -2088,22 +2107,30 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 		c.info.BindNode(expr, target)
 		return target
 	}
-	if c.isStringType(sourceType) {
-		if slice, ok := c.underlying(target).(*typeinfo.SliceType); ok && slice.Mutable && (typeinfo.IsBuiltinNamed(slice.Inner, "u8") || typeinfo.IsBuiltinNamed(slice.Inner, "char")) {
-			loc := expr.Location
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError(fmt.Sprintf("cannot cast %s to %s", sourceType.String(), target.String())).
-					WithCode(diagnostics.ErrInvalidCast).
-					WithPrimaryLabel(&loc, "`str` is immutable; cast to a readonly slice instead"),
-			)
-			return typeinfo.InvalidType{}
-		}
-	}
 	if c.isExplicitStringCast(target, sourceType) {
 		c.info.BindNode(expr, target)
 		return target
 	}
 	if c.isRawSliceCast(scope, expr.Left, target, sourceType) {
+		if targetSlice, ok := c.underlying(target).(*typeinfo.SliceType); ok && targetSlice != nil {
+			switch src := c.underlying(sourceType).(type) {
+			case *typeinfo.SliceType:
+				target = &typeinfo.SliceType{Mutable: src.Mutable, Inner: targetSlice.Inner}
+			case *typeinfo.TupleType:
+				var ptrType *typeinfo.RawPtrType
+				if comp, ok := expr.Left.(*ast.CompositeLit); ok && comp != nil && len(comp.Items) > 0 && comp.Items[0].Value != nil {
+					if actual, ok := c.info.Nodes[comp.Items[0].Value]; ok {
+						ptrType, _ = c.underlying(actual).(*typeinfo.RawPtrType)
+					}
+				}
+				if ptrType == nil && len(src.Elems) == 2 {
+					ptrType, _ = c.underlying(src.Elems[0]).(*typeinfo.RawPtrType)
+				}
+				if ptrType != nil {
+					target = &typeinfo.SliceType{Mutable: !ptrType.Const, Inner: targetSlice.Inner}
+				}
+			}
+		}
 		if c.unsafeDepth > 0 {
 			c.info.BindNode(expr, target)
 			return target
@@ -2179,7 +2206,7 @@ func (c *checker) castSourceExpectedType(source ast.Expr, target typeinfo.Type) 
 		}
 	}
 	return &typeinfo.TupleType{Elems: []typeinfo.Type{
-		&typeinfo.RawPtrType{Const: !targetSlice.Mutable, Inner: targetSlice.Inner},
+		&typeinfo.RawPtrType{Const: true, Inner: targetSlice.Inner},
 		&typeinfo.BuiltinType{Name: "usize"},
 	}}
 }
@@ -2457,8 +2484,9 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			got := c.typeOfExpr(scope, item.Value, sliceType.Inner)
 			c.checkExprAssignable(scope, item.Value, sliceType.Inner, got)
 		}
-		c.info.BindNode(expr, expected)
-		return expected
+		actual := &typeinfo.SliceType{Mutable: true, Inner: sliceType.Inner}
+		c.info.BindNode(expr, actual)
+		return actual
 	}
 	if tupleType, ok := base.(*typeinfo.TupleType); ok {
 		for i, item := range expr.Items {
@@ -2871,7 +2899,8 @@ func (c *checker) exprAccess(scope *refineScope, expr ast.Expr) (addressable boo
 			leftType = c.typeOfExpr(scope, e.Left, nil)
 		}
 		if sliceType, ok := c.underlying(leftType).(*typeinfo.SliceType); ok {
-			return true, sliceType.Mutable
+			_, leftMutable := c.exprAccess(scope, e.Left)
+			return true, leftMutable && sliceType.Mutable
 		}
 		return c.exprAccess(scope, e.Left)
 	case *ast.PrefixExpr:
@@ -3211,6 +3240,16 @@ func (c *checker) assignableFromExpr(scope *refineScope, expr ast.Expr, expected
 func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Type) bool {
 	if c.assignable(expected, got) {
 		return true
+	}
+	if expectedSlice, ok := c.underlying(expected).(*typeinfo.SliceType); ok && expectedSlice != nil {
+		if gotSlice, ok := c.underlying(got).(*typeinfo.SliceType); ok && gotSlice != nil && typeinfo.Equal(expectedSlice.Inner, gotSlice.Inner) && expectedSlice.Mutable && !gotSlice.Mutable {
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("slice value is not writable in this context: expected %s", expected.String())).
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, "this operation requires a mutable slice binding or mutable source view"),
+			)
+			return false
+		}
 	}
 	if members, matches := c.unionAssignableMembers(expected, got); members != nil {
 		if matches == 0 {

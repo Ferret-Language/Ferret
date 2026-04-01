@@ -552,7 +552,7 @@ fn main(items: []i32) -> i32 {
 func TestLowerMutableSliceElementWriteToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
-fn bump(items: []mut i32) -> i32 {
+fn bump(mut items: []i32) -> i32 {
     items[1] = 9
     return items[1]
 }
