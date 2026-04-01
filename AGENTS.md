@@ -18,6 +18,9 @@ Do not start implementation until those questions are answered.
 - Do not add pass-through wrappers.
 - Do not duplicate logic that can be centralized.
 - Prefer existing shared logic before introducing new helpers.
+- Always remove local repetition when it can be reduced without harming clarity.
+- Optimize for readability and maintainability first, not just correctness.
+- Do not leave touched code in a repetitive or obviously cleanup-needed state.
 - Keep diffs minimal and task-focused.
 - Do not mix unrelated refactors into the same change.
 
@@ -47,3 +50,5 @@ For each completed step, include a short `Rules check` note that states:
 - whether any wrapper was added
 - whether any duplicated logic remains in touched areas
 - whether any helper was added and why it is allowed under `RULES.md`
+
+Do not overstate cleanup status in review notes. If duplication still exists in touched code, say so plainly.
