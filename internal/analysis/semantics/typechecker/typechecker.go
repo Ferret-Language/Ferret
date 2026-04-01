@@ -1019,6 +1019,21 @@ func (c *checker) inferNumberLiteralType(lit *ast.NumberLit, expected typeinfo.T
 	if lit == nil {
 		return typeinfo.UnknownType{}
 	}
+	if err := numeric.ValidateLiteral(lit.Value); err != nil {
+		loc := lit.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(err.Error()).
+				WithCode(diagnostics.ErrInvalidNumber).
+				WithPrimaryLabel(&loc, "use a valid numeric literal here"),
+		)
+		if expected != nil && typeinfo.IsNumeric(expected) {
+			return expected
+		}
+		if numeric.LooksFloatLike(lit.Value) {
+			return typeinfo.DefaultFloatType()
+		}
+		return typeinfo.DefaultIntType()
+	}
 	if expected != nil && typeinfo.IsNumeric(expected) {
 		if c.numericLiteralFits(expected, lit.Value) {
 			return expected

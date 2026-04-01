@@ -1450,6 +1450,30 @@ func TestLowerMutableSliceElementWriteToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn bump(mut items: []i32) -> i32 {
+func TestLowerPrefixedIntegerLiteralToDecimalQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    return 0x10 + 0b10 + 0o7
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe prefixed integer literals: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "ret 25") {
+		t.Fatalf("expected folded decimal return in qbe output:\n%s", text)
+	}
+}
     items[1] = 9
     return items[1]
 }

@@ -1,0 +1,6 @@
+fn main() -> i32 {
+    let bad_bin = 0b4234
+    let bad_hex = 0xG1
+    let bad_oct = 0o89
+    return bad_bin + bad_hex + bad_oct
+}

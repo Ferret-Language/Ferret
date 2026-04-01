@@ -5138,7 +5138,7 @@ func llvmNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
 		}
 		return fmt.Sprintf("0x%016X", math.Float64bits(v)), nil
 	default:
-		return lit, nil
+		return numeric.CanonicalizeIntegerLiteral(lit)
 	}
 }
 

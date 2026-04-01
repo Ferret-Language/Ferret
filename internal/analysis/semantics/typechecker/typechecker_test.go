@@ -2202,6 +2202,40 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerRejectsInvalidBinaryLiteralWithoutSplittingToken(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let bad = 0b4234
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected invalid numeric literal diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidNumber && diag.Message == "invalid binary literal 0b4234" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected invalid binary literal diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letBad, ok := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[letBad.Value], typeinfo.DefaultIntTypeName) {
+		t.Fatalf("expected invalid literal to keep default int type, got %#v", result.Entry.Types.Nodes[letBad.Value])
+	}
+}
+
 func TestTypecheckerAllowsCatchFallbackValue(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

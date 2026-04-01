@@ -9,6 +9,7 @@ import (
 
 	"compiler/colors"
 	"compiler/internal/tokens"
+	"compiler/internal/utils/numeric"
 )
 
 type keytype int
@@ -34,6 +35,8 @@ var colorMap = map[keytype]colors.COLOR{
 	COMMENT: colors.GREY,
 	TYPE:    colors.CYAN,
 }
+
+var highlightNumberPattern = regexp.MustCompile("^" + numeric.NumberTokenPattern)
 
 // SyntaxHighlighter provides syntax highlighting for Ferret code snippets
 type SyntaxHighlighter struct {
@@ -130,13 +133,10 @@ func (sh *SyntaxHighlighter) Highlight(line string) []Token {
 			continue
 		}
 
-		// Numbers (integers and floats)
-		if unicode.IsDigit(rune(line[i])) || (line[i] == '.' && i+1 < len(line) && unicode.IsDigit(rune(line[i+1]))) {
-			start := i
-			for i < len(line) && (unicode.IsDigit(rune(line[i])) || line[i] == '.' || line[i] == '_') {
-				i++
-			}
-			tokensSlice = append(tokensSlice, Token{Text: line[start:i], Color: colorMap[NUMBER]})
+		// Numbers (including prefixed integers and scientific notation).
+		if match := highlightNumberPattern.FindString(line[i:]); match != "" {
+			tokensSlice = append(tokensSlice, Token{Text: match, Color: colorMap[NUMBER]})
+			i += len(match)
 			continue
 		}
 

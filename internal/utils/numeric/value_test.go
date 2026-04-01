@@ -33,3 +33,21 @@ func TestStringParsingAndFits(t *testing.T) {
 		t.Fatalf("float fit mismatch")
 	}
 }
+
+func TestValidateLiteralAndCanonicalizeInteger(t *testing.T) {
+	if err := ValidateLiteral("0b1010"); err != nil {
+		t.Fatalf("expected valid binary literal, got %v", err)
+	}
+	if err := ValidateLiteral("1.5e2"); err != nil {
+		t.Fatalf("expected valid scientific literal, got %v", err)
+	}
+	if err := ValidateLiteral("0b4234"); err == nil || err.Error() != "invalid binary literal 0b4234" {
+		t.Fatalf("unexpected invalid-binary result: %v", err)
+	}
+	if err := ValidateLiteral("1.2e+"); err == nil || err.Error() != "invalid float literal 1.2e+" {
+		t.Fatalf("unexpected invalid-float result: %v", err)
+	}
+	if got, err := CanonicalizeIntegerLiteral("0x10"); err != nil || got != "16" {
+		t.Fatalf("CanonicalizeIntegerLiteral(0x10) = %q, %v", got, err)
+	}
+}

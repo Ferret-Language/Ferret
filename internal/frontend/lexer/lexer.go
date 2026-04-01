@@ -46,7 +46,7 @@ func New(file, input string, diag *diagnostics.DiagnosticBag) *Lexer {
 		{regexp.MustCompile(`//[^\n\r]*`), lineCommentHandler},
 		{regexp.MustCompile(`(?s)/\*.*?\*/`), blockCommentHandler},
 		{regexp.MustCompile(`"(?:\\.|[^"\\])*"`), stringHandler},
-		{regexp.MustCompile(numeric.NumberPattern), numberHandler},
+		{regexp.MustCompile(numeric.NumberTokenPattern), numberHandler},
 		{regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`), identifierHandler},
 		// Multi-char operators — must precede their single-char prefixes.
 		{regexp.MustCompile(`::`), defaultHandler(tokens.DCOLON)},

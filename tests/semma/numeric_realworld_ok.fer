@@ -1,0 +1,15 @@
+fn scaled(factor: f64) -> f64 {
+    return factor * 2.0
+}
+
+fn main() -> void {
+    let mut total = 0x10 + 0b1010 + 0o7
+    total += 0X1
+
+    let ratio = scaled(1.5e1)
+    let tiny = 2.5E-1
+
+    if total == 34 && ratio == 30.0 && tiny == 0.25 {
+        print("numeric-realworld-ok")
+    }
+}

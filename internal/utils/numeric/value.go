@@ -16,6 +16,41 @@ func IsImaginary(s string) bool {
 	return strings.HasSuffix(CleanNumberString(s), "i")
 }
 
+func LooksFloatLike(s string) bool {
+	clean := CleanNumberString(s)
+	if clean == "" {
+		return false
+	}
+	lower := strings.ToLower(clean)
+	if strings.HasPrefix(lower, "0x") || strings.HasPrefix(lower, "0o") || strings.HasPrefix(lower, "0b") {
+		return false
+	}
+	return strings.ContainsAny(clean, ".eE")
+}
+
+func ValidateLiteral(s string) error {
+	clean := CleanNumberString(s)
+	if clean == "" {
+		return fmt.Errorf("invalid numeric literal %s", s)
+	}
+	if IsValidNumber(clean) {
+		return nil
+	}
+	lower := strings.ToLower(clean)
+	switch {
+	case strings.HasPrefix(lower, "0x"):
+		return fmt.Errorf("invalid hexadecimal literal %s", s)
+	case strings.HasPrefix(lower, "0o"):
+		return fmt.Errorf("invalid octal literal %s", s)
+	case strings.HasPrefix(lower, "0b"):
+		return fmt.Errorf("invalid binary literal %s", s)
+	case LooksFloatLike(clean):
+		return fmt.Errorf("invalid float literal %s", s)
+	default:
+		return fmt.Errorf("invalid integer literal %s", s)
+	}
+}
+
 func StringToBigInt(s string) (*big.Int, error) {
 	clean := CleanNumberString(s)
 	if clean == "" {
@@ -53,6 +88,14 @@ func StringToBigInt(s string) (*big.Int, error) {
 func StringToFloat(s string) (float64, error) {
 	clean := CleanNumberString(s)
 	return strconv.ParseFloat(clean, 64)
+}
+
+func CanonicalizeIntegerLiteral(s string) (string, error) {
+	value, err := StringToBigInt(s)
+	if err != nil {
+		return "", err
+	}
+	return value.String(), nil
 }
 
 func FitsIntegerLiteral(raw string, bitSize int, signed bool) bool {

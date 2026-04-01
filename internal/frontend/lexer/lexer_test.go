@@ -55,6 +55,20 @@ func TestLexAllNumberForms(t *testing.T) {
 	}
 }
 
+func TestLexInvalidBaseLiteralAsSingleNumberToken(t *testing.T) {
+	diag := diagnostics.NewDiagnosticBag("")
+	out := New("test.fer", `0b4234`, diag).Tokenize()
+	if len(diag.Diagnostics()) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", diag.Diagnostics())
+	}
+	if len(out) < 2 {
+		t.Fatalf("expected token and EOF, got %d tokens", len(out))
+	}
+	if out[0].Kind != tokens.NUMBER || out[0].Literal != "0b4234" {
+		t.Fatalf("expected single NUMBER token 0b4234, got %s %q", out[0].Kind, out[0].Literal)
+	}
+}
+
 func TestLexLoopControlKeywords(t *testing.T) {
 	src := `while cond { break; continue; }`
 	diag := diagnostics.NewDiagnosticBag("")

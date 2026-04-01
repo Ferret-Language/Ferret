@@ -14,6 +14,7 @@ import (
 	"compiler/internal/backend"
 	becommon "compiler/internal/backend/common"
 	"compiler/internal/ir/mir"
+	"compiler/internal/utils/numeric"
 )
 
 const VendoredCommit = "8ff06515526c97628b47d8223b73d5376287a9b4"
@@ -3597,7 +3598,7 @@ func qbeNumberLiteral(typ typeinfo.Type, lit string) (string, error) {
 		case "f64":
 			return "d_" + lit, nil
 		default:
-			return lit, nil
+			return numeric.CanonicalizeIntegerLiteral(lit)
 		}
 	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return lit, nil
