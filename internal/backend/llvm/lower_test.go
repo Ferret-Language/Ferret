@@ -579,10 +579,41 @@ fn main(s: str) -> char {
 	}
 }
 
-func TestLowerMutableSliceElementWriteToLLVM(t *testing.T) {
+func TestLowerMutableStringReassignmentToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
-fn bump(mut items: []i32) -> i32 {
+fn main() -> void {
+    let mut greeting: str = "hello"
+    greeting = "hé🙂"
+    print(greeting)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm mutable string reassignment: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%greeting = alloca { ptr, i64 }",
+		"store ptr @__str",
+		"store i64 7, ptr",
+		"store ptr %greeting, ptr %_t2",
+		"call void @ferret_global_print(ptr %_t2)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerPrefixedIntegerLiteralToDecimalLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -607,6 +638,11 @@ fn main() -> i32 {
 		t.Fatalf("expected folded decimal return in llvm output:\n%s", text)
 	}
 }
+
+func TestLowerMutableSliceElementWriteToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn bump(mut items: []i32) -> i32 {
     items[1] = 9
     return items[1]
 }

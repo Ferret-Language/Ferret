@@ -84,6 +84,12 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case tokens.STRING:
 		tok := p.advance()
 		return &ast.StringLit{Value: tok.Literal, Location: p.locFrom(start)}
+	case tokens.CHAR:
+		tok := p.advance()
+		return &ast.CharLit{Value: tok.Literal, Location: p.locFrom(start)}
+	case tokens.BYTE_CHAR:
+		tok := p.advance()
+		return &ast.CharLit{Value: tok.Literal, IsByte: true, Location: p.locFrom(start)}
 	case tokens.NONE:
 		p.advance()
 		return &ast.NoneLit{Location: p.locFrom(start)}
@@ -476,7 +482,7 @@ func precedence(kind tokens.Kind) int {
 
 func (p *Parser) startsExpr() bool {
 	switch p.current().Kind {
-	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.NONE,
+	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.CHAR, tokens.BYTE_CHAR, tokens.NONE,
 		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
 		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.COMPTIME, tokens.UNSAFE, tokens.MATCH:
 		return true

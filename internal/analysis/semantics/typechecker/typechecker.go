@@ -417,6 +417,13 @@ func (c *checker) typeOfExpr(scope *refineScope, expr ast.Expr, expected typeinf
 		}
 		c.info.BindNode(e, typ)
 		return typ
+	case *ast.CharLit:
+		typ := typeinfo.Type(&typeinfo.BuiltinType{Name: "char"})
+		if e.IsByte {
+			typ = &typeinfo.BuiltinType{Name: "u8"}
+		}
+		c.info.BindNode(e, typ)
+		return typ
 	case *ast.NoneLit:
 		if _, ok := expected.(*typeinfo.OptionalType); ok {
 			c.info.BindNode(e, expected)
@@ -2296,7 +2303,7 @@ func (c *checker) typeOfIs(scope *refineScope, expr *ast.IsExpr) typeinfo.Type {
 		return typeinfo.InvalidType{}
 	}
 	c.info.BindNode(expr.Type, target)
-	result, static, ok := c.classifyTypeTest(expr.Location, left, target)
+	result, static, ok := c.classifyTypeTest(left, target)
 	if !ok {
 		return typeinfo.InvalidType{}
 	}
@@ -2321,7 +2328,7 @@ func (c *checker) unionContainsExactMember(source, target typeinfo.Type) bool {
 	return false
 }
 
-func (c *checker) classifyTypeTest(loc source.Location, left, target typeinfo.Type) (bool, bool, bool) {
+func (c *checker) classifyTypeTest(left, target typeinfo.Type) (bool, bool, bool) {
 	if typeinfo.Equal(left, target) {
 		return true, true, true
 	}

@@ -46,6 +46,8 @@ func New(file, input string, diag *diagnostics.DiagnosticBag) *Lexer {
 		{regexp.MustCompile(`//[^\n\r]*`), lineCommentHandler},
 		{regexp.MustCompile(`(?s)/\*.*?\*/`), blockCommentHandler},
 		{regexp.MustCompile(`"(?:\\.|[^"\\])*"`), stringHandler},
+		{regexp.MustCompile(`b'(?:\\.|[^'\\])*'`), byteCharHandler},
+		{regexp.MustCompile(`'(?:\\.|[^'\\])*'`), charHandler},
 		{regexp.MustCompile(numeric.NumberTokenPattern), numberHandler},
 		{regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`), identifierHandler},
 		// Multi-char operators — must precede their single-char prefixes.
@@ -164,7 +166,45 @@ func stringHandler(l *Lexer, re *regexp.Regexp) {
 	start := l.pos
 	l.advanceBy(match)
 	inner := match[1 : len(match)-1] // strip quotes
-	l.push(tokens.Token{Kind: tokens.STRING, Literal: unescapeString(inner), Start: start, End: l.pos})
+	l.push(tokens.Token{Kind: tokens.STRING, Literal: unescapeQuoted(inner, '"'), Start: start, End: l.pos})
+}
+
+func charHandler(l *Lexer, re *regexp.Regexp) {
+	match := re.FindString(l.remainder())
+	start := l.pos
+	l.advanceBy(match)
+	inner := match[1 : len(match)-1]
+	value := unescapeQuoted(inner, '\'')
+	if utf8.RuneCountInString(value) != 1 {
+		loc := source.NewLocation(l.file, start, l.pos)
+		l.diag.Add(
+			diagnostics.NewError("character literal must contain exactly one character").
+				WithCode(diagnostics.ErrUnexpectedCharacter).
+				WithPrimaryLabel(&loc, "use exactly one character between single quotes"),
+		)
+		l.push(tokens.Token{Kind: tokens.ILLEGAL, Literal: match, Start: start, End: l.pos})
+		return
+	}
+	l.push(tokens.Token{Kind: tokens.CHAR, Literal: value, Start: start, End: l.pos})
+}
+
+func byteCharHandler(l *Lexer, re *regexp.Regexp) {
+	match := re.FindString(l.remainder())
+	start := l.pos
+	l.advanceBy(match)
+	inner := match[2 : len(match)-1]
+	value := unescapeQuoted(inner, '\'')
+	if len(value) != 1 {
+		loc := source.NewLocation(l.file, start, l.pos)
+		l.diag.Add(
+			diagnostics.NewError("byte literal must contain exactly one byte").
+				WithCode(diagnostics.ErrUnexpectedCharacter).
+				WithPrimaryLabel(&loc, "use exactly one byte after the b'...' prefix"),
+		)
+		l.push(tokens.Token{Kind: tokens.ILLEGAL, Literal: match, Start: start, End: l.pos})
+		return
+	}
+	l.push(tokens.Token{Kind: tokens.BYTE_CHAR, Literal: value, Start: start, End: l.pos})
 }
 
 func (l *Lexer) Tokenize() []tokens.Token {
@@ -272,7 +312,7 @@ func (l *Lexer) atEOF() bool {
 	return l.pos.Index >= len(l.input)
 }
 
-func unescapeString(s string) string {
+func unescapeQuoted(s string, quote byte) string {
 	var out []byte
 	i := 0
 	for i < len(s) {
@@ -293,7 +333,17 @@ func unescapeString(s string) string {
 		case '\\':
 			out = append(out, '\\')
 		case '"':
-			out = append(out, '"')
+			if quote == '"' {
+				out = append(out, '"')
+			} else {
+				out = append(out, '\\', '"')
+			}
+		case '\'':
+			if quote == '\'' {
+				out = append(out, '\'')
+			} else {
+				out = append(out, '\\', '\'')
+			}
 		case 'x':
 			if i+3 < len(s) {
 				h := s[i+2 : i+4]

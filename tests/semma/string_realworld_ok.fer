@@ -1,0 +1,48 @@
+fn normalize(text: str) -> str {
+    return text
+}
+
+fn second_char(text: str) -> char {
+    return text[1]
+}
+
+fn byte_len(text: &str) -> usize {
+    return len(text)
+}
+
+fn char_len(chars: &[]char) -> usize {
+    return len(chars)
+}
+
+fn main() -> void {
+    let mut greeting: str = "hello"
+    greeting = "hé🙂"
+
+    let roundtrip = normalize(greeting)
+    let bytes = roundtrip as []u8
+    let chars = roundtrip as []char
+    let expected: [3]char = [3]char{'h', 'é', '🙂'}
+    let raw: [2]u8 = [2]u8{b'h', b'i'}
+
+    let hex = 0x2f
+    print(hex)
+
+    if greeting == roundtrip &&
+        byte_len(&roundtrip) == 7 &&
+        char_len(&chars) == 3 &&
+        len(bytes) == 7 &&
+        len(&expected) == 3 &&
+        len(&raw) == 2 &&
+        second_char(roundtrip) == 'é' &&
+        roundtrip[0] == 'h' &&
+        roundtrip[2] == '🙂' &&
+        bytes[0] == b'h' &&
+        chars[1] == 'é' &&
+        expected[2] == roundtrip[2] &&
+        raw[1] == b'i' {
+        print("string-realworld-ok")
+        return
+    }
+
+    print("string-realworld-fail")
+}

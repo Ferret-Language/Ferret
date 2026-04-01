@@ -18,6 +18,7 @@ const (
 	NUMBER      Kind = "NUMBER"
 	STRING      Kind = "STRING"
 	CHAR        Kind = "CHAR"
+	BYTE_CHAR   Kind = "BYTE_CHAR"
 	DOC_COMMENT Kind = "DOC_COMMENT"
 
 	ASSIGN       Kind = "="

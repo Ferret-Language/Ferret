@@ -702,6 +702,15 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		out := &StringLit{Value: e.Value}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
+	case *ast.CharLit:
+		runes := []rune(e.Value)
+		value := "0"
+		if len(runes) == 1 {
+			value = fmt.Sprintf("%d", runes[0])
+		}
+		out := &NumberLit{Value: value}
+		out.ExprType, out.Location, out.Source = typ, e.Location, e
+		return out
 	case *ast.NoneLit:
 		out := &NoneLit{}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e

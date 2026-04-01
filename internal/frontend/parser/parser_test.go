@@ -291,6 +291,60 @@ fn collectMut(mut nums: ...mut i32) -> void {}
 	}
 }
 
+func TestParseCharAndByteLiterals(t *testing.T) {
+	src := `
+fn main() -> void {
+    let c = 'é'
+    let b = b'h'
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	if len(mod.Decls) != 1 {
+		t.Fatalf("expected 1 decl, got %d", len(mod.Decls))
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[0])
+	}
+	if len(fn.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 statements, got %#v", fn.Body.Stmts)
+	}
+
+	charLet, ok := fn.Body.Stmts[0].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected first stmt let, got %T", fn.Body.Stmts[0])
+	}
+	charLit, ok := charLet.Value.(*ast.CharLit)
+	if !ok {
+		t.Fatalf("expected first let char literal, got %T", charLet.Value)
+	}
+	if charLit.IsByte {
+		t.Fatalf("expected plain char literal, got %#v", charLit)
+	}
+	if charLit.Value != "é" {
+		t.Fatalf("expected char literal value é, got %q", charLit.Value)
+	}
+
+	byteLet, ok := fn.Body.Stmts[1].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected second stmt let, got %T", fn.Body.Stmts[1])
+	}
+	byteLit, ok := byteLet.Value.(*ast.CharLit)
+	if !ok {
+		t.Fatalf("expected second let byte literal, got %T", byteLet.Value)
+	}
+	if !byteLit.IsByte {
+		t.Fatalf("expected byte literal, got %#v", byteLit)
+	}
+	if byteLit.Value != "h" {
+		t.Fatalf("expected byte literal value h, got %q", byteLit.Value)
+	}
+}
+
 func TestParseDefaultParams(t *testing.T) {
 	src := `
 fn greet(name: str = "world", repeat: i32 = 1) -> void {}

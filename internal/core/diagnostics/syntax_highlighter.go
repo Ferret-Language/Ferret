@@ -115,6 +115,24 @@ func (sh *SyntaxHighlighter) Highlight(line string) []Token {
 			continue
 		}
 
+		// Byte literals (b'X')
+		if line[i] == 'b' && i+1 < len(line) && line[i+1] == '\'' {
+			start := i
+			i += 2
+			for i < len(line) && line[i] != '\'' {
+				if line[i] == '\\' && i+1 < len(line) {
+					i += 2
+				} else {
+					i++
+				}
+			}
+			if i < len(line) {
+				i++
+			}
+			tokensSlice = append(tokensSlice, Token{Text: line[start:i], Color: colorMap[CHAR]})
+			continue
+		}
+
 		// Character literals (single quotes)
 		if line[i] == '\'' {
 			start := i

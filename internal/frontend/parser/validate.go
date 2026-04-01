@@ -403,6 +403,8 @@ func renderExpr(expr ast.Expr) string {
 		return e.Value
 	case *ast.StringLit:
 		return e.Value
+	case *ast.CharLit:
+		return e.Value
 	case *ast.Ident:
 		return fmt.Sprint(e.Path)
 	default:

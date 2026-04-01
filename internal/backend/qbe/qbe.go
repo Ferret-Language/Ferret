@@ -1255,8 +1255,10 @@ func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) 
 	if instr == nil {
 		return "", nil
 	}
-	if agg := unionAggregateLocalForPlace(state, instr.Target); agg != nil {
-		return lowerUnionAssign(state, agg, instr.Value)
+	if localID, ok := becommon.LocalIDForPlace(state.fn, instr.Target); ok {
+		if agg, ok := state.aggLocals[localID]; ok {
+			return lowerAggregateAssign(state, agg, instr.Value)
+		}
 	}
 	lines, addr, err := lowerQBEPlaceAddr(state, instr.Target)
 	if err != nil {
@@ -1281,33 +1283,6 @@ func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) 
 	}
 	lines = append(lines, fmt.Sprintf("%s %s, %s", op, val, addr))
 	return strings.Join(lines, "\n\t"), nil
-}
-
-func unionAggregateLocalForPlace(state *moduleState, place mir.Place) *aggregateLocal {
-	switch p := place.(type) {
-	case *mir.LocalPlace:
-		if agg, ok := state.aggLocals[p.LocalID]; ok && isUnionAggregate(agg.Type) {
-			return agg
-		}
-	case *mir.DerefPlace:
-		if addr, ok := p.Pointer.(*mir.AddrOfValue); ok {
-			switch src := addr.Source.(type) {
-			case *mir.LocalValue:
-				if agg, ok := state.aggLocals[src.LocalID]; ok && isUnionAggregate(agg.Type) {
-					return agg
-				}
-			case *mir.NameValue:
-				if len(src.Path) == 1 {
-					if local := becommon.FindLocalByName(state.fn, src.Path[0]); local != nil {
-						if agg, ok := state.aggLocals[local.ID]; ok && isUnionAggregate(agg.Type) {
-							return agg
-						}
-					}
-				}
-			}
-		}
-	}
-	return nil
 }
 
 // lowerQBEPlaceAddr computes the QBE address for a place.
@@ -1587,6 +1562,12 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 			return "", err
 		}
 		return fmt.Sprintf("blit %s, %s, %d", src, qbeLocalName(agg.PtrName), agg.Size), nil
+	case *mir.StringValue:
+		lines, err := lowerAggregateValueToAddr(state, qbeLocalName(agg.PtrName), agg.Type, v)
+		if err != nil {
+			return "", err
+		}
+		return strings.Join(lines, "\n\t"), nil
 	case *mir.IndexValue:
 		lines, src, err := lowerQBEIndexAddress(state, v.Base, v.Index, v.Base.Type())
 		if err != nil {

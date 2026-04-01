@@ -1,6 +1,9 @@
 package ast
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // TypeString renders a type expression using Ferret source syntax.
 func TypeString(typ TypeExpr) string {
@@ -126,6 +129,12 @@ func ExprString(expr Expr) string {
 		return e.Value
 	case *StringLit:
 		return e.Value
+	case *CharLit:
+		text := strconv.QuoteRuneToASCII([]rune(e.Value)[0])
+		if e.IsByte {
+			return "b" + text
+		}
+		return text
 	case *Ident:
 		return e.Text()
 	case *PrefixExpr:

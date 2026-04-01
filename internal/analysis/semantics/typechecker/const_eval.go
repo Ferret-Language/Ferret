@@ -291,6 +291,12 @@ func (c *checker) constExprIn(mod *context.Module, expr ast.Expr, state *constEv
 		return typeinfo.ConstValue{Kind: typeinfo.ConstInt, Int: value}, true
 	case *ast.StringLit:
 		return typeinfo.ConstValue{Kind: typeinfo.ConstString, String: e.Value}, true
+	case *ast.CharLit:
+		runes := []rune(e.Value)
+		if len(runes) != 1 {
+			return typeinfo.ConstValue{}, false
+		}
+		return typeinfo.ConstValue{Kind: typeinfo.ConstInt, Int: big.NewInt(int64(runes[0]))}, true
 	case *ast.NoneLit:
 		return typeinfo.ConstValue{Kind: typeinfo.ConstNone}, true
 	case *ast.Ident:

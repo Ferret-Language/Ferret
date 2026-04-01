@@ -200,6 +200,8 @@ func debugExpr(expr Expr) any {
 		return map[string]any{"kind": "NumberLit", "value": e.Value, "loc": debugLoc(e.Location)}
 	case *StringLit:
 		return map[string]any{"kind": "StringLit", "value": e.Value, "loc": debugLoc(e.Location)}
+	case *CharLit:
+		return map[string]any{"kind": "CharLit", "value": e.Value, "is_byte": e.IsByte, "loc": debugLoc(e.Location)}
 	case *NoneLit:
 		return map[string]any{"kind": "NoneLit", "loc": debugLoc(e.Location)}
 	case *PrefixExpr:

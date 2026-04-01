@@ -1119,6 +1119,39 @@ fn main(s: str) -> char {
 	}
 }
 
+func TestTypecheckerTypesCharAndByteLiterals(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let c = 'é'
+    let b = b'h'
+    print(c)
+    print(b)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	charLet, ok := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected first stmt let, got %T", mainFn.Body.Stmts[0])
+	}
+	byteLet, ok := mainFn.Body.Stmts[1].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected second stmt let, got %T", mainFn.Body.Stmts[1])
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[charLet.Value], "char") {
+		t.Fatalf("expected char literal type char, got %#v", result.Entry.Types.Nodes[charLet.Value])
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[byteLet.Value], "u8") {
+		t.Fatalf("expected byte literal type u8, got %#v", result.Entry.Types.Nodes[byteLet.Value])
+	}
+}
+
 func TestTypecheckerRejectsStringIndexAssignment(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

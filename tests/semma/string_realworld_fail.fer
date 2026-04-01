@@ -1,0 +1,4 @@
+fn main() -> void {
+    let mut greeting: str = "hello"
+    greeting[0] = 'H'
+}

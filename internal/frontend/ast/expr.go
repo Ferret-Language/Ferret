@@ -62,6 +62,15 @@ type StringLit struct {
 func (*StringLit) exprNode()              {}
 func (e *StringLit) Loc() source.Location { return e.Location }
 
+type CharLit struct {
+	Value    string
+	IsByte   bool
+	Location source.Location
+}
+
+func (*CharLit) exprNode()              {}
+func (e *CharLit) Loc() source.Location { return e.Location }
+
 type NoneLit struct {
 	Location source.Location
 }
@@ -205,6 +214,8 @@ func ExprText(expr Expr) string {
 	case *Ident:
 		return e.Text()
 	case *StringLit:
+		return e.Value
+	case *CharLit:
 		return e.Value
 	default:
 		return ""

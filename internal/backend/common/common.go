@@ -98,6 +98,35 @@ func StoredValueType(current *mir.Module, fn *mir.Function, modules map[string]*
 	}
 }
 
+func LocalIDForPlace(fn *mir.Function, place mir.Place) (int, bool) {
+	switch p := place.(type) {
+	case *mir.LocalPlace:
+		return p.LocalID, true
+	case *mir.DerefPlace:
+		addr, ok := p.Pointer.(*mir.AddrOfValue)
+		if !ok {
+			return 0, false
+		}
+		switch src := addr.Source.(type) {
+		case *mir.LocalValue:
+			return src.LocalID, true
+		case *mir.NameValue:
+			if len(src.Path) != 1 {
+				return 0, false
+			}
+			local := FindLocalByName(fn, src.Path[0])
+			if local == nil {
+				return 0, false
+			}
+			return local.ID, true
+		default:
+			return 0, false
+		}
+	default:
+		return 0, false
+	}
+}
+
 func TupleIndexFromValue(value mir.Value) (int, bool) {
 	num, ok := value.(*mir.NumberValue)
 	if !ok || num == nil {

@@ -1446,10 +1446,41 @@ fn main(s: str) -> char {
 	}
 }
 
-func TestLowerMutableSliceElementWriteToQBE(t *testing.T) {
+func TestLowerMutableStringReassignmentToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
-fn bump(mut items: []i32) -> i32 {
+fn main() -> void {
+    let mut greeting: str = "hello"
+    greeting = "hé🙂"
+    print(greeting)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe mutable string reassignment: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%greeting =l alloc8 16",
+		"storel $__ferret_str",
+		"storel 7,",
+		"storel %greeting, %_t2",
+		"call $ferret_global_print(l %_t2)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerPrefixedIntegerLiteralToDecimalQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -1474,6 +1505,11 @@ fn main() -> i32 {
 		t.Fatalf("expected folded decimal return in qbe output:\n%s", text)
 	}
 }
+
+func TestLowerMutableSliceElementWriteToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn bump(mut items: []i32) -> i32 {
     items[1] = 9
     return items[1]
 }

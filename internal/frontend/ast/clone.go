@@ -325,6 +325,10 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 			out := &StringLit{Value: e.Value, Location: e.Location}
 			mapping[e] = out
 			return out
+		case *CharLit:
+			out := &CharLit{Value: e.Value, IsByte: e.IsByte, Location: e.Location}
+			mapping[e] = out
+			return out
 		case *NoneLit:
 			out := &NoneLit{Location: e.Location}
 			mapping[e] = out
