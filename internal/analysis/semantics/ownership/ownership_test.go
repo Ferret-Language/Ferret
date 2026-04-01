@@ -597,6 +597,211 @@ fn main(mut p: *Conn, cond: bool) -> *Conn {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
 }
 
+func TestOwnershipPhaseCurrentlyAllowsMoveTypePlainAssignmentReuse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
+type Node struct {
+    Child: *Node
+    Value: i32 = 0
+}
+
+fn main(n: Node) -> i32 {
+    let other = n
+    return n.Value + other.Value
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
+		}
+	}
+}
+
+func TestOwnershipPhaseAllowsPlainValueParamCopy(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn usePoint(p: Point) -> i32 {
+    return p.X
+}
+
+fn main() -> i32 {
+    let p: Point = .{ .X = 1 }
+    let x = usePoint(p)
+    return x + p.X
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
+		}
+	}
+}
+
+func TestOwnershipPhaseCurrentlyAllowsMoveTypePlainValueParamReuse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
+type Node struct {
+    Child: *Node
+    Value: i32 = 0
+}
+
+fn take(n: Node) -> i32 {
+    return n.Value
+}
+
+fn main(n: Node) -> i32 {
+    let x = take(n)
+    return x + n.Value
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
+		}
+	}
+}
+
+func TestOwnershipPhaseAllowsPlainValueReceiverMethodReuse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn Point::Read(self) -> i32 {
+    return self.X
+}
+
+fn main() -> i32 {
+    let p: Point = .{ .X = 1 }
+    return p.Read() + p.Read()
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
+		}
+	}
+}
+
+func TestOwnershipPhaseCurrentlyAllowsMoveTypeValueReceiverMethodReuse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
+type Node struct {
+    Child: *Node
+    Value: i32 = 0
+}
+
+fn Node::Read(self) -> i32 {
+    return self.Value
+}
+
+fn main(n: Node) -> i32 {
+    return n.Read() + n.Read()
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
+		}
+	}
+}
+
+func TestOwnershipPhaseAllowsInterfaceValueMethodReuseForCopyType(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
+type Point struct {
+    X: i32 = 0
+}
+
+fn Point::Read(self) -> i32 {
+    return self.X
+}
+
+type Reader interface {
+    Read(self) -> i32
+}
+
+fn main() -> i32 {
+    let p: Point = .{ .X = 1 }
+    let r: Reader = p
+    return r.Read() + r.Read()
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
+		}
+	}
+}
+
+func TestOwnershipPhaseCurrentlyAllowsMoveTypeInterfaceValueMethodReuse(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
+type Node struct {
+    Child: *Node
+    Value: i32 = 0
+}
+
+fn Node::Read(self) -> i32 {
+    return self.Value
+}
+
+type Reader interface {
+    Read(self) -> i32
+}
+
+fn main(n: Node) -> i32 {
+    let r: Reader = n
+    return r.Read() + r.Read()
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			t.Fatalf("unexpected use-after-move diagnostic %#v", diag)
+		}
+	}
+}
+
 func mustWriteOwnership(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
