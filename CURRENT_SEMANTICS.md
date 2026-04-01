@@ -560,19 +560,21 @@ Current status:
 - `str` exists and works in the compiler/runtime paths
 - string literals are handled specially and flow through the current backend/runtime model
 - `len(str)` is supported
-- explicit casts between `str` and `[]u8` / `[]char` are lowered through runtime helpers
-- the final semantic design of `str` is **not yet settled**
+- `str` currently behaves as an immutable view-like text type
+- explicit casts between `str` and readonly `[]u8` / `[]char` are lowered through runtime helpers
+- casts from `str` to mutable `[]mut u8` / `[]mut char` are rejected
+- the final owned mutable text type is not part of the current core language surface
 
 Discussion is still open on:
 
 - whether string literals should always type as `str`
 - how `str` should relate to slices/bytes/chars
-- whether `str` is best modeled as an immutable view
+- what the eventual owned `String` companion type should look like
 
 So for now:
 
-- `str` is implemented
-- its final language semantics are still open
+- treat `str` as the builtin immutable text/string view the compiler currently supports
+- rely on the implemented runtime/compiler behavior above
 
 ---
 

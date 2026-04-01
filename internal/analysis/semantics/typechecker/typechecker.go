@@ -2087,6 +2087,17 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 		c.info.BindNode(expr, target)
 		return target
 	}
+	if c.isStringType(sourceType) {
+		if slice, ok := c.underlying(target).(*typeinfo.SliceType); ok && slice.Mutable && (typeinfo.IsBuiltinNamed(slice.Inner, "u8") || typeinfo.IsBuiltinNamed(slice.Inner, "char")) {
+			loc := expr.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot cast %s to %s", sourceType.String(), target.String())).
+					WithCode(diagnostics.ErrInvalidCast).
+					WithPrimaryLabel(&loc, "`str` is immutable; cast to a readonly slice instead"),
+			)
+			return typeinfo.InvalidType{}
+		}
+	}
 	if c.isExplicitStringCast(target, sourceType) {
 		c.info.BindNode(expr, target)
 		return target

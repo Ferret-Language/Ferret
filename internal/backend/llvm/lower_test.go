@@ -732,6 +732,40 @@ fn main(s: str) -> str {
 	}
 }
 
+func TestLowerStringCharSliceCastsToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main(s: str) -> str {
+    let chars = s as []char
+    let text = chars as str
+    return text
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"declare { ptr, i64 } @ferret_global_str_chars(ptr)",
+		"declare { ptr, i64 } @ferret_global_chars_str(ptr)",
+		"call { ptr, i64 } @ferret_global_str_chars(",
+		"call { ptr, i64 } @ferret_global_chars_str(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerAggregateLoadAssignmentToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

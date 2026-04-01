@@ -1068,6 +1068,78 @@ fn main() -> void {
 	}
 }
 
+func TestTypecheckerRejectsStringToMutableByteSliceCast(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(s: str) -> []mut u8 {
+    return s as []mut u8
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected mutable byte-slice cast diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidCast && strings.Contains(diag.Message, "cannot cast str to []mut u8") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected mutable byte-slice cast diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsStringToMutableCharSliceCast(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(s: str) -> []mut char {
+    return s as []mut char
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected mutable char-slice cast diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidCast && strings.Contains(diag.Message, "cannot cast str to []mut char") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected mutable char-slice cast diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsStringIndexing(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(s: str) -> u8 {
+    return s[0]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected string indexing diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "cannot index into str") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected string indexing diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsConcreteTypeAssignmentToInterface(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
