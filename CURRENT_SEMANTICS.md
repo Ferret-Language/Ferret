@@ -78,7 +78,7 @@ Other builtin type forms:
 
 Current status notes:
 
-- tuples exist in the frontend/type system but are not a fully settled surface
+- tuples exist in the frontend/type system and current compiler/runtime paths
 - slices exist semantically and in backend support paths
 - typed slice literals are implemented in the current compiler, including `[]T{...}` and `[]mut T{...}`
 - array/slice indexing now gets compile-time out-of-bounds diagnostics where provable and runtime panic checks otherwise
@@ -505,7 +505,27 @@ Note:
 
 ---
 
-## 15. Slices
+## 15. Tuples
+
+Current tuple type:
+
+- `(T1, T2, ...)`
+
+Current behavior:
+
+- tuple literals are positional, e.g. `(1, true, "ok")`
+- tuple indexing is implemented end-to-end
+- tuple indices must be non-negative compile-time integers
+- tuple elements may use mixed types
+- tuple aggregates and tuple index evaluation work in semantic CTFE
+
+Note:
+
+- the current tuple surface is considered implemented as described above; named tuple elements and runtime-variable tuple indexing are not part of the current design
+
+---
+
+## 16. Slices
 
 Current slice types:
 
@@ -529,7 +549,7 @@ The compiler currently has working slice support in the type system and lowering
 
 ---
 
-## 16. Strings
+## 17. Strings
 
 Current builtin string-like type:
 

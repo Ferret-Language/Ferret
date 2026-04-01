@@ -3272,6 +3272,112 @@ fn main() -> bool {
 	}
 }
 
+func TestTypecheckerRejectsTupleIndexWithRuntimeValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(i: usize) -> i32 {
+    let p: (i32, bool) = (7, true)
+    return p[i]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected tuple runtime-index diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "tuple index must be a non-negative compile-time integer") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected tuple runtime-index diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsTupleIndexOutOfBounds(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let p: (i32, bool) = (7, true)
+    return p[2]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected tuple index out of bounds diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "tuple index out of bounds") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected tuple index out of bounds diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsTooManyTupleLiteralElements(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let p: (i32, bool) = (7, true, 9)
+    if p[1] {
+        return p[0]
+    }
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected extra tuple element diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrExtraField && strings.Contains(diag.Message, "too many elements in tuple literal") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected extra tuple element diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsMissingTupleLiteralElements(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let p: (i32, bool, str) = (7, true)
+    if p[1] {
+        return p[0]
+    }
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected missing tuple element diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrMissingField && strings.Contains(diag.Message, "missing required tuple element(s) in composite literal") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected missing tuple element diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerComptimeEvaluatesMethodCallOnStruct(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

@@ -1,0 +1,25 @@
+fn pick(pair: (i32, bool, str)) -> i32 {
+    if !pair[1] {
+        return 0
+    }
+    if pair[2] != "ok" {
+        return 0
+    }
+    return pair[0]
+}
+
+fn tupleConst() -> i32 {
+    let pair: (i32, bool, str) = (7, true, "ok")
+    return pair[0]
+}
+
+fn main() -> void {
+    let pair: (i32, bool, str) = (7, true, "ok")
+    let folded = comptime tupleConst()
+    if pick(pair) == 7 && folded == 7 {
+        print("tuple-ready-ok")
+        return
+    }
+    // panic "tuple readiness failed"
+    // nothing
+}
