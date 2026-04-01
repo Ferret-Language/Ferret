@@ -13,7 +13,7 @@ import (
 	"compiler/internal/prelude"
 )
 
-const CompilerVersion = "0.0.5"
+const CompilerVersion = "0.0.6"
 const FerretSourceExt = ".fer"
 
 type Result struct {
@@ -73,7 +73,7 @@ func parsePath(path string, mode parseMode) Result {
 		return Result{Diagnostics: diag}
 	}
 	if info.IsDir() {
-		ws, err := project.Load(absPath, ".fer")
+		ws, err := project.Load(absPath, FerretSourceExt)
 		if err != nil {
 			diag.Add(diagnostics.NewError(err.Error()))
 			return Result{Diagnostics: diag}
