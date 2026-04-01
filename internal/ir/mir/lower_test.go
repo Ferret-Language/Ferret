@@ -11,6 +11,7 @@ import (
 	"compiler/internal/core/phase"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
+	"compiler/internal/testutil"
 )
 
 func TestPipelineGeneratesMIR(t *testing.T) {
@@ -32,7 +33,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -261,6 +262,58 @@ fn main() -> usize {
 		}
 	}
 	t.Fatalf("expected static len(array) return value, got:\n%s", mir.FormatModule(result.Entry.MIR))
+}
+
+func TestPipelineLowersStdMemSliceRawBridgeWithoutRuntimeCalls(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteStdMemFixture(t, root)
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+import "std/mem"
+
+fn main() -> u8 {
+    let mut arr: [4]u8 = .{1, 2, 3, 4}
+    unsafe {
+        let ptr = arr as ^const u8
+        let view = (ptr, len(arr)) as []u8
+        return view[0]
+	}
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			switch ins := instr.(type) {
+			case *mir.ComputeInstr:
+				if call, ok := ins.Value.(*mir.CallValue); ok {
+					if hasCallNamed(call, "SlicePtr") || hasCallNamed(call, "SliceFromRawParts") {
+						t.Fatalf("expected raw/slice casts to lower without runtime helper calls, got %#v", call)
+					}
+				}
+			}
+		}
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "view = .{ .ptr = ptr, .len = 4 }") {
+		t.Fatalf("expected raw pointer + len to lower as a slice composite, got:\n%s", text)
+	}
 }
 
 func TestPipelineLowersForLoopIndexUpdateToHiddenCounter(t *testing.T) {

@@ -1384,8 +1384,13 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 			addrTmp := freshTemp(state, "elem")
 			idxLines = append(idxLines, fmt.Sprintf("%s =l add %s, %s", addrTmp, basePtr, scaled))
 			return append(baseLines, idxLines...), addrTmp, nil
+		} else if raw, ok := baseType.(*typeinfo.RawPtrType); ok {
+			elemType = raw.Inner
+			rawPtr := freshTemp(state, "rawptr")
+			baseLines = append(baseLines, fmt.Sprintf("%s =l loadl %s", rawPtr, basePtr))
+			basePtr = rawPtr
 		} else {
-			return nil, "", fmt.Errorf("IndexPlace base is not an array, tuple, or slice: %T", baseType)
+			return nil, "", fmt.Errorf("IndexPlace base is not an array, tuple, slice, or raw pointer: %T", baseType)
 		}
 		elemSize, _, err := qbeScalarSizeAlign(elemType)
 		if err != nil {

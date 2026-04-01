@@ -16,6 +16,7 @@ import (
 	"compiler/internal/core/diagnostics"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
+	"compiler/internal/testutil"
 )
 
 func TestLowerInterfaceDispatchToLLVM(t *testing.T) {
@@ -915,6 +916,48 @@ fn main() -> i32 {
 		"store i32 %_asgn1, ptr %a_alloca",
 		"call void @ferret_global_print(",
 		"ret i32 0",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerRawPointerIndexWriteToLLVM(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteStdMemFixture(t, root)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/mem"
+
+fn main() -> u8 {
+    let alloc = mem::System()
+    unsafe {
+        let mut ptr = mem::AllocAs<u8>(alloc, 4)
+        ptr[0] = 7
+        let view = (ptr as ^const u8, 4 as usize) as []u8
+        let out = view[0]
+        mem::FreeAs(alloc, ptr)
+        return out
+    }
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"load ptr, ptr %ptr_alloca",
+		"store i8 7, ptr",
+		"ret i8 %_ld",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

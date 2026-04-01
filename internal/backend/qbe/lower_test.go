@@ -13,6 +13,7 @@ import (
 	"compiler/internal/backend/registry"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
+	"compiler/internal/testutil"
 )
 
 func TestLowerScalarFunctionToQBE(t *testing.T) {
@@ -694,6 +695,48 @@ fn main() -> i32 {
 		"%p =l copy %a_slot",
 		"call $ferret_global_print(",
 		"ret 0",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerRawPointerIndexWriteToQBE(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteStdMemFixture(t, root)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/mem"
+
+fn main() -> u8 {
+    let alloc = mem::System()
+    unsafe {
+        let mut ptr = mem::AllocAs<u8>(alloc, 4)
+        ptr[0] = 7
+        let view = (ptr as ^const u8, 4 as usize) as []u8
+        let out = view[0]
+        mem::FreeAs(alloc, ptr)
+        return out
+    }
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"loadl %ptr_slot",
+		"storeb 7,",
+		"ret %out",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)

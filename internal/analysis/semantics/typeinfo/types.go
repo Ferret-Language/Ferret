@@ -541,6 +541,14 @@ func Assignable(dst, src Type) bool {
 			return Equal(sliceDst.Inner, sliceSrc.Inner)
 		}
 	}
+	if rawDst, ok := dst.(*RawPtrType); ok {
+		if rawSrc, ok := src.(*RawPtrType); ok {
+			if rawDst.Const {
+				return Equal(rawDst.Inner, rawSrc.Inner)
+			}
+			return !rawSrc.Const && Equal(rawDst.Inner, rawSrc.Inner)
+		}
+	}
 	return false
 }
 

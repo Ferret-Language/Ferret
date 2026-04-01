@@ -3670,6 +3670,33 @@ fn main() -> void {
 	}
 }
 
+func TestTypecheckerAcceptsRawSliceCasts(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let mut arr: [4]u8 = .{1, 2, 3, 4}
+    unsafe {
+        let raw = 0 as ^u8
+        let readonly = (raw, 4 as usize) as []u8
+        let writable = (raw, 4 as usize) as []mut u8
+        let ptr1 = readonly as ^const u8
+        let ptr2 = arr as ^const u8
+        let ptr3 = arr as ^u8
+        let ptr4 = writable as ^u8
+        ptr1
+        ptr2
+        ptr3
+        ptr4
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerBindsLocalSymbolTypes(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

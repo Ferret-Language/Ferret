@@ -2320,8 +2320,16 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 			addrTmp := freshTemp(state, "elem")
 			gepLine := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", addrTmp, elemIRType, basePtr, idxVal)
 			return append(baseLines, gepLine), addrTmp, nil
+		} else if raw, ok := baseType.(*typeinfo.RawPtrType); ok {
+			elemIRType, err = llvmBaseType(raw.Inner)
+			if err != nil {
+				return nil, "", err
+			}
+			rawPtr := freshTemp(state, "rawptr")
+			baseLines = append(baseLines, fmt.Sprintf("%s = load ptr, ptr %s", rawPtr, basePtr))
+			basePtr = rawPtr
 		} else {
-			return nil, "", fmt.Errorf("IndexPlace base is not an array, tuple, or slice: %T", baseType)
+			return nil, "", fmt.Errorf("IndexPlace base is not an array, tuple, slice, or raw pointer: %T", baseType)
 		}
 		idxVal, err := lowerValue(state, p.Index)
 		if err != nil {

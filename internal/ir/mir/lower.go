@@ -464,6 +464,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.PostfixExpr:
 		return &PostfixValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left), Op: e.Op}
 	case *hir.CallExpr:
+		fnType := lowerCallFuncType(e.Callee)
 		if staticLen, ok := lowerStaticLenCallValue(lowerCtx, e); ok {
 			return staticLen
 		}
@@ -478,10 +479,6 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 						Args:      make([]Value, 0, 1+len(e.Args)),
 					}
 					out.Args = append(out.Args, lowerValue(lowerCtx, sel.Left))
-					var fnType *typeinfo.FuncType
-					if typed, ok := e.Callee.Type().(*typeinfo.FuncType); ok {
-						fnType = typed
-					}
 					out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType)...)
 					return out
 				}
@@ -504,20 +501,12 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 						ReceiverType: e.MethodReceiver,
 					}
 					out.Args = append(out.Args, receiver)
-					var fnType *typeinfo.FuncType
-					if typed, ok := e.Callee.Type().(*typeinfo.FuncType); ok {
-						fnType = typed
-					}
 					out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType)...)
 					return out
 				}
 			}
 		}
 		out := &CallValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Callee: lowerValue(lowerCtx, e.Callee), Args: make([]Value, 0, len(e.Args))}
-		var fnType *typeinfo.FuncType
-		if typed, ok := e.Callee.Type().(*typeinfo.FuncType); ok {
-			fnType = typed
-		}
 		out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType)...)
 		return out
 	case *hir.ConstructorCallExpr:
@@ -540,6 +529,9 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		}
 		return &FieldValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Base: base, FieldIndex: -1, MemberName: e.Name}
 	case *hir.CastExpr:
+		if castValue, ok := lowerSpecialCastValue(lowerCtx, e); ok {
+			return castValue
+		}
 		return &CastValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left)}
 	case *hir.IsExpr:
 		if e.StaticKnown {
@@ -878,6 +870,97 @@ func lowerStaticLenCallValue(c *lowerContext, call *hir.CallExpr) (Value, bool) 
 		baseValue: baseValue{Location: call.Loc(), ExprType: call.Type()},
 		Value:     strconv.FormatInt(n, 10),
 	}, true
+}
+
+func lowerCallFuncType(callee hir.Expr) *typeinfo.FuncType {
+	if typed, ok := callee.Type().(*typeinfo.FuncType); ok {
+		return typed
+	}
+	return nil
+}
+
+func lowerSpecialCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bool) {
+	if c == nil || cast == nil {
+		return nil, false
+	}
+	if value, ok := lowerSliceToRawCastValue(c, cast); ok {
+		return value, true
+	}
+	return lowerRawPartsSliceCastValue(c, cast)
+}
+
+func lowerSliceToRawCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bool) {
+	targetRaw, ok := cast.Type().(*typeinfo.RawPtrType)
+	if !ok || targetRaw == nil {
+		return nil, false
+	}
+	switch source := cast.Left.Type().(type) {
+	case *typeinfo.SliceType:
+		return lowerSlicePointerValue(cast.Loc(), cast.Type(), lowerValue(c, cast.Left)), true
+	case *typeinfo.ArrayType:
+		sliceType := &typeinfo.SliceType{Mutable: !targetRaw.Const, Inner: source.Inner}
+		return lowerSlicePointerValue(cast.Loc(), cast.Type(), lowerCoercedValue(c, cast.Left, sliceType)), true
+	default:
+		return nil, false
+	}
+}
+
+func lowerRawPartsSliceCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bool) {
+	targetSlice, ok := cast.Type().(*typeinfo.SliceType)
+	if !ok || targetSlice == nil {
+		return nil, false
+	}
+	sourceTuple, ok := cast.Left.Type().(*typeinfo.TupleType)
+	if !ok || sourceTuple == nil || len(sourceTuple.Elems) != 2 {
+		return nil, false
+	}
+	return &CompositeValue{
+		baseValue: baseValue{Location: cast.Loc(), ExprType: cast.Type()},
+		Items: []CompositeItem{
+			{Name: "ptr", Value: lowerTupleCastElementValue(c, cast.Left, 0, &typeinfo.RawPtrType{Const: !targetSlice.Mutable, Inner: targetSlice.Inner})},
+			{Name: "len", Value: lowerTupleCastElementValue(c, cast.Left, 1, &typeinfo.BuiltinType{Name: "usize"})},
+		},
+	}, true
+}
+
+func lowerTupleCastElementValue(c *lowerContext, expr hir.Expr, index int, typ typeinfo.Type) Value {
+	if comp, ok := expr.(*hir.CompositeLit); ok && comp != nil && index >= 0 && index < len(comp.Items) {
+		return lowerCoercedValue(c, comp.Items[index].Value, typ)
+	}
+	return &IndexValue{
+		baseValue: baseValue{Location: expr.Loc(), ExprType: typ},
+		Base:      lowerValue(c, expr),
+		Index: &NumberValue{
+			baseValue: baseValue{Location: expr.Loc(), ExprType: &typeinfo.BuiltinType{Name: "usize"}},
+			Value:     strconv.Itoa(index),
+		},
+	}
+}
+
+func lowerSlicePointerValue(loc source.Location, typ typeinfo.Type, sliceValue Value) Value {
+	if comp, ok := sliceValue.(*CompositeValue); ok {
+		if ptrValue, ok := lowerSliceCompositePointer(comp); ok {
+			return withValueContext(ptrValue, loc, typ)
+		}
+	}
+	return &FieldValue{
+		baseValue:  baseValue{Location: loc, ExprType: typ},
+		Base:       sliceValue,
+		FieldIndex: -1,
+		MemberName: "ptr",
+	}
+}
+
+func lowerSliceCompositePointer(comp *CompositeValue) (Value, bool) {
+	if comp == nil {
+		return nil, false
+	}
+	for _, item := range comp.Items {
+		if item.Name == "ptr" && item.Value != nil {
+			return item.Value, true
+		}
+	}
+	return nil, false
 }
 
 func lowerIsForeignLenCall(c *lowerContext, callee hir.Expr) bool {

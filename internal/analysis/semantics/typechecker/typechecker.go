@@ -2066,7 +2066,8 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 	}
 
 	target := c.typeFromSyntax(c.mod, expr.Type)
-	sourceType := c.typeOfExpr(scope, expr.Left, target)
+	expected := c.castSourceExpectedType(expr.Left, target)
+	sourceType := c.typeOfExpr(scope, expr.Left, expected)
 	if c.unionContainsExactMember(sourceType, target) {
 		c.info.BindNode(expr, target)
 		return target
@@ -2101,6 +2102,19 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 	if c.isExplicitStringCast(target, sourceType) {
 		c.info.BindNode(expr, target)
 		return target
+	}
+	if c.isRawSliceCast(scope, expr.Left, target, sourceType) {
+		if c.unsafeDepth > 0 {
+			c.info.BindNode(expr, target)
+			return target
+		}
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot cast %s to %s outside unsafe block", sourceType.String(), target.String())).
+				WithCode(diagnostics.ErrInvalidCast).
+				WithPrimaryLabel(&loc, "raw pointer cast requires 'unsafe'"),
+		)
+		return typeinfo.InvalidType{}
 	}
 	if _, ok := c.underlying(sourceType).(*typeinfo.InterfaceType); ok {
 		if _, targetIsInterface := c.underlying(target).(*typeinfo.InterfaceType); !targetIsInterface {
@@ -2145,6 +2159,86 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 			WithPrimaryLabel(&loc, "invalid explicit cast"),
 	)
 	return typeinfo.InvalidType{}
+}
+
+func (c *checker) castSourceExpectedType(source ast.Expr, target typeinfo.Type) typeinfo.Type {
+	if source == nil {
+		return target
+	}
+	targetSlice, ok := c.underlying(target).(*typeinfo.SliceType)
+	if !ok || targetSlice == nil {
+		return target
+	}
+	comp, ok := source.(*ast.CompositeLit)
+	if !ok || comp == nil || comp.Type != nil || len(comp.Items) != 2 {
+		return nil
+	}
+	for _, item := range comp.Items {
+		if item.Name != nil {
+			return nil
+		}
+	}
+	return &typeinfo.TupleType{Elems: []typeinfo.Type{
+		&typeinfo.RawPtrType{Const: !targetSlice.Mutable, Inner: targetSlice.Inner},
+		&typeinfo.BuiltinType{Name: "usize"},
+	}}
+}
+
+func (c *checker) isRawSliceCast(scope *refineScope, source ast.Expr, target, sourceType typeinfo.Type) bool {
+	if c.isSliceToRawCast(scope, source, target, sourceType) {
+		return true
+	}
+	return c.isRawPartsToSliceCast(target, sourceType)
+}
+
+func (c *checker) isSliceToRawCast(scope *refineScope, source ast.Expr, target, sourceType typeinfo.Type) bool {
+	targetRaw, ok := c.underlying(target).(*typeinfo.RawPtrType)
+	if !ok || targetRaw == nil || targetRaw.Inner == nil {
+		return false
+	}
+	switch src := c.underlying(sourceType).(type) {
+	case *typeinfo.SliceType:
+		if !typeinfo.Equal(targetRaw.Inner, src.Inner) {
+			return false
+		}
+		if targetRaw.Const {
+			return true
+		}
+		return src.Mutable
+	case *typeinfo.ArrayType:
+		if !typeinfo.Equal(targetRaw.Inner, src.Inner) {
+			return false
+		}
+		if targetRaw.Const {
+			return true
+		}
+		addressable, mutable := c.exprAccess(scope, source)
+		return addressable && mutable
+	default:
+		return false
+	}
+}
+
+func (c *checker) isRawPartsToSliceCast(target, sourceType typeinfo.Type) bool {
+	targetSlice, ok := c.underlying(target).(*typeinfo.SliceType)
+	if !ok || targetSlice == nil {
+		return false
+	}
+	sourceTuple, ok := c.underlying(sourceType).(*typeinfo.TupleType)
+	if !ok || sourceTuple == nil || len(sourceTuple.Elems) != 2 {
+		return false
+	}
+	ptrType, ok := c.underlying(sourceTuple.Elems[0]).(*typeinfo.RawPtrType)
+	if !ok || ptrType == nil || ptrType.Inner == nil {
+		return false
+	}
+	if !typeinfo.Equal(ptrType.Inner, targetSlice.Inner) {
+		return false
+	}
+	if targetSlice.Mutable && ptrType.Const {
+		return false
+	}
+	return typeinfo.Equal(c.underlying(sourceTuple.Elems[1]), &typeinfo.BuiltinType{Name: "usize"})
 }
 
 func (c *checker) typeOfIs(scope *refineScope, expr *ast.IsExpr) typeinfo.Type {

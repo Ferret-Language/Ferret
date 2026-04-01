@@ -108,3 +108,15 @@ func TestNumericInfoSupportsArbitraryWidthIntegers(t *testing.T) {
 		t.Fatalf("expected u1024 numeric info, got family=%v bits=%d ok=%v", family, bits, ok)
 	}
 }
+
+func TestAssignableAllowsMutableRawPointerToReadonlyRawPointer(t *testing.T) {
+	readonly := &RawPtrType{Const: true, Inner: &BuiltinType{Name: "u8"}}
+	mutable := &RawPtrType{Inner: &BuiltinType{Name: "u8"}}
+
+	if !Assignable(readonly, mutable) {
+		t.Fatal("expected ^u8 to be assignable to ^const u8")
+	}
+	if Assignable(mutable, readonly) {
+		t.Fatal("expected ^const u8 to remain non-assignable to ^u8")
+	}
+}

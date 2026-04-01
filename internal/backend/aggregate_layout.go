@@ -76,8 +76,40 @@ func LookupStructLayout(
 		return LookupStructLayout(lookupNamed, t.Inner)
 	case *typeinfo.RawPtrType:
 		return LookupStructLayout(lookupNamed, t.Inner)
+	case *typeinfo.StringType:
+		return sliceLikeStructLayout(&typeinfo.RawPtrType{Const: true, Inner: &typeinfo.BuiltinType{Name: "u8"}}), nil
+	case *typeinfo.SliceType:
+		return sliceLikeStructLayout(&typeinfo.RawPtrType{Const: !t.Mutable, Inner: t.Inner}), nil
 	default:
 		return nil, fmt.Errorf("unsupported struct base type %s", typeinfo.FormatType(typ))
+	}
+}
+
+func sliceLikeStructLayout(ptrType typeinfo.Type) *layout.StructLayout {
+	return &layout.StructLayout{
+		Fields: []*layout.FieldLayout{
+			{
+				Name:          "ptr",
+				Type:          ptrType,
+				SemanticIndex: 0,
+				PhysicalIndex: 0,
+				Offset:        0,
+				Size:          8,
+				Align:         8,
+			},
+			{
+				Name:          "len",
+				Type:          &typeinfo.BuiltinType{Name: "usize"},
+				SemanticIndex: 1,
+				PhysicalIndex: 1,
+				Offset:        8,
+				Size:          8,
+				Align:         8,
+			},
+		},
+		PhysicalOrder: []int{0, 1},
+		Size:          16,
+		Align:         8,
 	}
 }
 

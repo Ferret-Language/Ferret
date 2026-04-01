@@ -1,0 +1,28 @@
+import "std/mem"
+
+fn main() -> void {
+    let alloc = mem::System()
+    let mut arr: [4]u8 = .{10, 20, 30, 40}
+
+    unsafe {
+        let mut arr_ptr = arr as ^u8
+        arr_ptr[1] = 21
+
+        let raw = mem::AllocAs<u8>(alloc, 4)
+        let bytes = (raw, 4 as usize) as []mut u8
+        bytes[0] = arr_ptr[0]
+        bytes[1] = arr_ptr[1]
+        bytes[2] = 33
+        bytes[3] = 44
+
+        let view = (raw as ^const u8, 4 as usize) as []u8
+        let ptr = view as ^const u8
+        if ptr[0] == 10 && view[1] == 21 && view[2] == 33 && view[3] == 44 {
+            print("raw-slice-ok")
+            mem::FreeAs(alloc, raw)
+            return
+        }
+
+        mem::FreeAs(alloc, raw)
+    }
+}
