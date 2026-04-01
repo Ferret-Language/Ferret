@@ -30,7 +30,18 @@ func (p *Parser) parseBlock() *ast.BlockStmt {
 }
 
 func (p *Parser) parseStmt() ast.Stmt {
-	doc := p.parseDocComment()
+	hadDocComment := p.at(tokens.DOC_COMMENT)
+	doc := p.parseDocCommentFor(func(kind tokens.Kind) bool {
+		switch kind {
+		case tokens.LET, tokens.CONST:
+			return true
+		default:
+			return false
+		}
+	})
+	if hadDocComment && doc == nil && (p.at(tokens.RBRACE) || p.at(tokens.EOF)) {
+		return nil
+	}
 	if p.at(tokens.IDENT) && p.peekN(1).Kind == tokens.COLON {
 		return p.parseLabelStmt()
 	}

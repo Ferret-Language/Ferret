@@ -20,6 +20,5 @@ fn main() -> void {
         print("tuple-ready-ok")
         return
     }
-    // panic "tuple readiness failed"
-    // nothing
+    panic "tuple readiness failed"
 }

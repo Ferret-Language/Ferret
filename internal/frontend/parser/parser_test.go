@@ -1159,6 +1159,24 @@ fn main() -> void
 	}
 }
 
+func TestParseTrailingCommentsBeforeBlockCloseRemainIgnored(t *testing.T) {
+	src := `
+fn main() -> void {
+    if true {
+        print("ok")
+        return
+    }
+    // panic "ignored"
+    // still ignored
+}
+`
+
+	_, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+}
+
 func TestParseBlockDocCommentPreservesLines(t *testing.T) {
 	src := `
 const sentinel = 0

@@ -91,7 +91,7 @@ func isTopLevelStartToken(kind tokens.Kind) bool {
 }
 
 func (p *Parser) parseDecl() ast.Decl {
-	doc := p.parseDocComment()
+	doc := p.parseDocCommentFor(isTopLevelStartToken)
 	attrs := p.parseAttributes()
 	switch p.current().Kind {
 	case tokens.LET:
@@ -128,6 +128,10 @@ func (p *Parser) skipDocCommentsBeforeImports() {
 }
 
 func (p *Parser) parseDocComment() *ast.CommentGroup {
+	return p.parseDocCommentFor(func(tokens.Kind) bool { return true })
+}
+
+func (p *Parser) parseDocCommentFor(anchor func(tokens.Kind) bool) *ast.CommentGroup {
 	if !p.at(tokens.DOC_COMMENT) {
 		return nil
 	}
@@ -144,6 +148,9 @@ func (p *Parser) parseDocComment() *ast.CommentGroup {
 		endLine = tok.End.Line
 	}
 	if p.current().Kind != tokens.EOF && p.current().Kind != tokens.DOC_COMMENT && p.current().Start.Line > endLine+1 {
+		return nil
+	}
+	if anchor != nil && !anchor(p.current().Kind) {
 		return nil
 	}
 	return &ast.CommentGroup{
