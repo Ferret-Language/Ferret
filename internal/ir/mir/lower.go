@@ -439,6 +439,21 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 				},
 			}
 		}
+		if arr, ok := e.Type().(*typeinfo.ArrayType); ok && typeinfo.IsBuiltinNamed(arr.Inner, "u8") {
+			items := make([]CompositeItem, 0, len(e.Value))
+			for _, b := range []byte(e.Value) {
+				items = append(items, CompositeItem{
+					Value: &NumberValue{
+						baseValue: baseValue{ExprType: arr.Inner},
+						Value:     strconv.FormatUint(uint64(b), 10),
+					},
+				})
+			}
+			return &CompositeValue{
+				baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()},
+				Items:     items,
+			}
+		}
 		return &StringValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Value: e.Value}
 	case *hir.NoneLit:
 		return &NoneValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}}
@@ -465,8 +480,8 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		return &PostfixValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Left: lowerValue(lowerCtx, e.Left), Op: e.Op}
 	case *hir.CallExpr:
 		fnType := lowerCallFuncType(e.Callee)
-		if staticLen, ok := lowerStaticLenCallValue(lowerCtx, e); ok {
-			return staticLen
+		if builtinLen, ok := lowerBuiltinLenCallValue(lowerCtx, e); ok {
+			return builtinLen
 		}
 		// Normalize method calls (instance.Method(...)) to direct function calls
 		// by prepending the receiver as the first argument, e.g. p.Len2() → Len2(p).
@@ -855,21 +870,45 @@ func (c *lowerContext) lookupResolution(source ast.Expr) (*binding.Resolution, b
 	return resolution, true
 }
 
-func lowerStaticLenCallValue(c *lowerContext, call *hir.CallExpr) (Value, bool) {
+func lowerBuiltinLenCallValue(c *lowerContext, call *hir.CallExpr) (Value, bool) {
 	if call == nil || len(call.Args) != 1 {
 		return nil, false
 	}
 	if !lowerIsForeignLenCall(c, call.Callee) {
 		return nil, false
 	}
-	n, ok := lowerArrayLen(call.Args[0].Type())
-	if !ok {
+	arg := call.Args[0]
+	argType := arg.Type()
+	argValue := lowerValue(c, arg)
+	if ref, ok := argType.(*typeinfo.RefType); ok && ref != nil {
+		argType = ref.Inner
+		if _, ok := argType.(*typeinfo.ArrayType); !ok {
+			argValue = &LoadValue{
+				baseValue: baseValue{Location: arg.Loc(), ExprType: argType},
+				Pointer:   argValue,
+			}
+		}
+	}
+	if n, ok := lowerArrayLen(argType); ok {
+		return &NumberValue{
+			baseValue: baseValue{Location: call.Loc(), ExprType: call.Type()},
+			Value:     strconv.FormatInt(n, 10),
+		}, true
+	}
+	switch argType.(type) {
+	case *typeinfo.SliceType, *typeinfo.StringType:
+		return &CallValue{
+			baseValue: baseValue{Location: call.Loc(), ExprType: call.Type()},
+			Callee: &NameValue{
+				baseValue: baseValue{Location: call.Callee.Loc(), ExprType: call.Callee.Type()},
+				Path:      []string{"global", "len"},
+				LinkName:  "ferret_global_slice_len",
+			},
+			Args: []Value{argValue},
+		}, true
+	default:
 		return nil, false
 	}
-	return &NumberValue{
-		baseValue: baseValue{Location: call.Loc(), ExprType: call.Type()},
-		Value:     strconv.FormatInt(n, 10),
-	}, true
 }
 
 func lowerCallFuncType(callee hir.Expr) *typeinfo.FuncType {

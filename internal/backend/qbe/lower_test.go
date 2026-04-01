@@ -335,6 +335,31 @@ fn main(s: str) -> usize {
 	}
 }
 
+func TestLowerBuiltinLenStringRefToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main(s: &str) -> usize {
+    return len(s)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "call $ferret_global_slice_len(") {
+		t.Fatalf("expected string ref len runtime call in qbe output:\n%s", text)
+	}
+}
+
 func TestLowerSliceLiteralToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -1385,6 +1410,35 @@ fn main(items: []i32) -> i32 {
 		"loadl %items",
 		"call $ferret__bounds_check(l 1, l %_slice_len",
 		"=l add %_slice_data",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerStringIndexToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main(s: str) -> char {
+    return s[1]
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"call $ferret_global_str_index(l %s, l 1)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)

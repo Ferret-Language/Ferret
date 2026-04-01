@@ -1093,27 +1093,116 @@ fn main(s: str) -> void {
 	}
 }
 
-func TestTypecheckerRejectsStringIndexing(t *testing.T) {
+func TestTypecheckerAllowsStringIndexing(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-fn main(s: str) -> u8 {
+fn main(s: str) -> char {
     return s[0]
 }
 `)
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	ret, ok := mainFn.Body.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	idx, ok := ret.Value.(*ast.IndexExpr)
+	if !ok {
+		t.Fatalf("expected index expr, got %T", ret.Value)
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[idx], "char") {
+		t.Fatalf("expected str index type char, got %#v", result.Entry.Types.Nodes[idx])
+	}
+}
+
+func TestTypecheckerRejectsStringIndexAssignment(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(mut s: str) -> void {
+    s[0] = 1
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected string indexing diagnostic")
+		t.Fatal("expected readonly string index assignment diagnostic")
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "cannot index into str") {
+		if diag.Code == diagnostics.ErrConstantReassignment && strings.Contains(diag.Message, "cannot assign through immutable access path") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected string indexing diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected readonly string index assignment diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerInfersStringLiteralAsByteArrayWithoutContext(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> usize {
+    let bytes = "hi"
+    return len(bytes)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letBytes, ok := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	arr, ok := result.Entry.Types.Nodes[letBytes.Value].(*typeinfo.ArrayType)
+	if !ok {
+		t.Fatalf("expected inferred string literal type [N]u8, got %#v", result.Entry.Types.Nodes[letBytes.Value])
+	}
+	if arr.Len != 2 || !typeinfo.IsBuiltinNamed(arr.Inner, "u8") {
+		t.Fatalf("expected inferred string literal type [2]u8, got %#v", arr)
+	}
+}
+
+func TestTypecheckerContextualizesStringLiteralAsStr(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let text: str = "hi"
+    print("ok")
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letText, ok := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	if _, ok := result.Entry.Types.Nodes[letText.Value].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected contextual string literal type str for let binding, got %#v", result.Entry.Types.Nodes[letText.Value])
+	}
+	printStmt, ok := mainFn.Body.Stmts[1].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected expr stmt, got %T", mainFn.Body.Stmts[1])
+	}
+	printCall, ok := printStmt.Value.(*ast.CallExpr)
+	if !ok || len(printCall.Args) != 1 {
+		t.Fatalf("expected print call, got %T %#v", printStmt.Value, printStmt.Value)
+	}
+	if _, ok := result.Entry.Types.Nodes[printCall.Args[0]].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected contextual string literal type str for print arg, got %#v", result.Entry.Types.Nodes[printCall.Args[0]])
 	}
 }
 
@@ -4915,6 +5004,18 @@ fn lenSlice(items: []i32) -> usize {
 }
 
 fn lenString(s: str) -> usize {
+    return len(s)
+}
+
+fn lenArrayRef(items: &[3]i32) -> usize {
+    return len(items)
+}
+
+fn lenSliceRef(items: &[]i32) -> usize {
+    return len(items)
+}
+
+fn lenStringRef(s: &str) -> usize {
     return len(s)
 }
 `)

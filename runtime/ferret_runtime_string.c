@@ -125,6 +125,30 @@ FerretStr ferret_global_bytes_str(const FerretSliceU8 *bytes) {
     return out;
 }
 
+ferret_char ferret_global_str_index(const FerretStr *s, ferret_usize index) {
+    const ferret_u8 *cursor;
+    const ferret_u8 *end;
+    ferret_usize current = 0;
+
+    if (s == NULL || s->ptr == NULL || s->len == 0) {
+        ferret__bounds_check(index, 0);
+        return 0;
+    }
+
+    cursor = s->ptr;
+    end = s->ptr + s->len;
+    while (cursor < end) {
+        ferret_char ch = ferret__utf8_decode_next(&cursor, end);
+        if (current == index) {
+            return ch;
+        }
+        current++;
+    }
+
+    ferret__bounds_check(index, current);
+    return 0;
+}
+
 FerretSliceChar ferret_global_str_chars(const FerretStr *s) {
     FerretSliceChar out = { (ferret_char *)0, 0 };
     const ferret_u8 *cursor;

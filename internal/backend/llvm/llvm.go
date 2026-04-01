@@ -614,6 +614,7 @@ func runtimeDecls() []string {
 		"declare ptr @ferret__interface_downcast(ptr, ptr)",
 		"declare void @global__panic(ptr)",
 		"declare { ptr, i64 } @ferret_global_str_bytes(ptr)",
+		"declare i32 @ferret_global_str_index(ptr, i64)",
 		"declare { ptr, i64 } @ferret_global_bytes_str(ptr)",
 		"declare { ptr, i64 } @ferret_global_str_chars(ptr)",
 		"declare { ptr, i64 } @ferret_global_chars_str(ptr)",
@@ -2054,7 +2055,18 @@ func llvmResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldInde
 
 // lowerIndexLoad lowers arr[index] as an rvalue load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
-	if _, ok := backend.UnwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
+	if _, ok := backend.UnwrapNamed(idx.Base.Type()).(*typeinfo.StringType); ok {
+		baseExpr, err := lowerValue(state, idx.Base)
+		if err != nil {
+			return "", err
+		}
+		indexExpr, err := lowerValue(state, idx.Index)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%s = call i32 @ferret_global_str_index(ptr %s, i64 %s)", llvmLocalName(targetName), baseExpr, indexExpr), nil
+	}
+	if backend.IsSliceLikeType(backend.UnwrapNamed(idx.Base.Type())) {
 		return lowerSliceIndexLoad(state, targetName, targetType, idx)
 	}
 	lines, addr, err := lowerIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())

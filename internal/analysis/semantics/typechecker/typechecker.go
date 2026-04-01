@@ -398,8 +398,23 @@ func (c *checker) typeOfExpr(scope *refineScope, expr ast.Expr, expected typeinf
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.StringLit:
-		// String literals have dedicated type `str`.
-		typ := &typeinfo.StringType{}
+		typ := typeinfo.Type(&typeinfo.ArrayType{
+			Inner: &typeinfo.BuiltinType{Name: "u8"},
+			Len:   int64(len(e.Value)),
+		})
+		for current := expected; current != nil; {
+			switch t := c.underlying(current).(type) {
+			case *typeinfo.StringType, *typeinfo.InterfaceType:
+				typ = &typeinfo.StringType{}
+				current = nil
+			case *typeinfo.OptionalType:
+				current = t.Inner
+			case *typeinfo.ApproxType:
+				current = t.Inner
+			default:
+				current = nil
+			}
+		}
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.NoneLit:
@@ -1142,7 +1157,11 @@ func (c *checker) typeOfBuiltinLen(scope *refineScope, expr *ast.CallExpr) typei
 	}
 	if len(expr.Args) > 0 {
 		argType := c.typeOfExpr(scope, expr.Args[0], nil)
-		switch c.underlying(argType).(type) {
+		argBase := c.underlying(argType)
+		if ref, ok := argBase.(*typeinfo.RefType); ok && ref != nil {
+			argBase = c.underlying(ref.Inner)
+		}
+		switch argBase.(type) {
 		case *typeinfo.ArrayType, *typeinfo.SliceType, *typeinfo.StringType:
 			// ok
 		default:
@@ -2085,7 +2104,24 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 	}
 
 	target := c.typeFromSyntax(c.mod, expr.Type)
-	expected := c.castSourceExpectedType(expr.Left, target)
+	expected := target
+	if targetSlice, ok := c.underlying(target).(*typeinfo.SliceType); ok && targetSlice != nil {
+		if comp, ok := expr.Left.(*ast.CompositeLit); ok && comp != nil && comp.Type == nil && len(comp.Items) == 2 {
+			rawParts := true
+			for _, item := range comp.Items {
+				if item.Name != nil {
+					rawParts = false
+					break
+				}
+			}
+			if rawParts {
+				expected = &typeinfo.TupleType{Elems: []typeinfo.Type{
+					&typeinfo.RawPtrType{Const: true, Inner: targetSlice.Inner},
+					&typeinfo.BuiltinType{Name: "usize"},
+				}}
+			}
+		}
+	}
 	sourceType := c.typeOfExpr(scope, expr.Left, expected)
 	if c.unionContainsExactMember(sourceType, target) {
 		c.info.BindNode(expr, target)
@@ -2111,7 +2147,7 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 		c.info.BindNode(expr, target)
 		return target
 	}
-	if c.isRawSliceCast(scope, expr.Left, target, sourceType) {
+	if c.isSliceToRawCast(scope, expr.Left, target, sourceType) || c.isRawPartsToSliceCast(target, sourceType) {
 		if targetSlice, ok := c.underlying(target).(*typeinfo.SliceType); ok && targetSlice != nil {
 			switch src := c.underlying(sourceType).(type) {
 			case *typeinfo.SliceType:
@@ -2186,36 +2222,6 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 			WithPrimaryLabel(&loc, "invalid explicit cast"),
 	)
 	return typeinfo.InvalidType{}
-}
-
-func (c *checker) castSourceExpectedType(source ast.Expr, target typeinfo.Type) typeinfo.Type {
-	if source == nil {
-		return target
-	}
-	targetSlice, ok := c.underlying(target).(*typeinfo.SliceType)
-	if !ok || targetSlice == nil {
-		return target
-	}
-	comp, ok := source.(*ast.CompositeLit)
-	if !ok || comp == nil || comp.Type != nil || len(comp.Items) != 2 {
-		return nil
-	}
-	for _, item := range comp.Items {
-		if item.Name != nil {
-			return nil
-		}
-	}
-	return &typeinfo.TupleType{Elems: []typeinfo.Type{
-		&typeinfo.RawPtrType{Const: true, Inner: targetSlice.Inner},
-		&typeinfo.BuiltinType{Name: "usize"},
-	}}
-}
-
-func (c *checker) isRawSliceCast(scope *refineScope, source ast.Expr, target, sourceType typeinfo.Type) bool {
-	if c.isSliceToRawCast(scope, source, target, sourceType) {
-		return true
-	}
-	return c.isRawPartsToSliceCast(target, sourceType)
 }
 
 func (c *checker) isSliceToRawCast(scope *refineScope, source ast.Expr, target, sourceType typeinfo.Type) bool {
@@ -2387,6 +2393,11 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 			return typeinfo.InvalidType{}
 		}
 		elem := tuple.Elems[int(index)]
+		c.info.BindNode(expr, elem)
+		return elem
+	}
+	if _, ok := base.(*typeinfo.StringType); ok {
+		elem := &typeinfo.BuiltinType{Name: "char"}
 		c.info.BindNode(expr, elem)
 		return elem
 	}
@@ -2897,6 +2908,9 @@ func (c *checker) exprAccess(scope *refineScope, expr ast.Expr) (addressable boo
 		leftType, ok := c.info.Nodes[e.Left]
 		if !ok {
 			leftType = c.typeOfExpr(scope, e.Left, nil)
+		}
+		if _, ok := c.underlying(leftType).(*typeinfo.StringType); ok {
+			return true, false
 		}
 		if sliceType, ok := c.underlying(leftType).(*typeinfo.SliceType); ok {
 			_, leftMutable := c.exprAccess(scope, e.Left)

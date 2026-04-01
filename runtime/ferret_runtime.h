@@ -182,6 +182,7 @@ ferret_usize ferret_global_len(const FerretSlicePtr *s);
 
 FerretSliceU8 ferret_global_str_bytes(const FerretStr *s);
 FerretStr ferret_global_bytes_str(const FerretSliceU8 *bytes);
+ferret_char ferret_global_str_index(const FerretStr *s, ferret_usize index);
 FerretSliceChar ferret_global_str_chars(const FerretStr *s);
 FerretStr ferret_global_chars_str(const FerretSliceChar *chars);
 ferret_raw ferret_global_str_cstr(const FerretStr *s);

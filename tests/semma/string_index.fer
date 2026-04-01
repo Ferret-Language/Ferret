@@ -1,0 +1,23 @@
+fn str_len_ref(s: &str) -> usize {
+    return len(s)
+}
+
+fn slice_len_ref(values: &[]char) -> usize {
+    return len(values)
+}
+
+fn array_len_ref(values: &[3]i32) -> usize {
+    return len(values)
+}
+
+fn main() -> void {
+    let s: str = "hé🙂"
+    let chars = s as []char
+    print(len(&s))
+    let nums: [3]i32 = [3]i32{1, 2, 3}
+    if len(chars) == 3 && str_len_ref(&s) == 7 && slice_len_ref(&chars) == 3 && array_len_ref(&nums) == 3 && s[1] == chars[1] && s[2] == chars[2] {
+        print("string-index-ok")
+        return
+    }
+    print("string-index-fail")
+}

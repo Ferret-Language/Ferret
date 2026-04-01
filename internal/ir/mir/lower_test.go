@@ -261,7 +261,57 @@ fn main() -> usize {
 			}
 		}
 	}
-	t.Fatalf("expected static len(array) return value, got:\n%s", mir.FormatModule(result.Entry.MIR))
+	t.Fatalf("expected static array len return in MIR, got %#v", mainFn.Blocks)
+}
+
+func TestPipelineLowersLenOnStringReferenceToRuntimeCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+fn main(s: &str) -> usize {
+    return len(s)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			compute, ok := instr.(*mir.ComputeInstr)
+			if !ok {
+				continue
+			}
+			call, ok := compute.Value.(*mir.CallValue)
+			if !ok || call.Callee == nil {
+				continue
+			}
+			name, ok := call.Callee.(*mir.NameValue)
+			if ok && name.LinkName == "ferret_global_slice_len" {
+				if len(call.Args) != 1 {
+					t.Fatalf("expected len runtime call with one arg, got %#v", call)
+				}
+				if !typeinfo.Equal(call.Args[0].Type(), &typeinfo.StringType{}) {
+					t.Fatalf("expected len(&str) runtime arg to have string type, got %#v", call.Args[0].Type())
+				}
+				return
+			}
+		}
+	}
+	t.Fatalf("expected len(&str) runtime call in MIR, got %#v", mainFn.Blocks)
 }
 
 func TestPipelineLowersStdMemSliceRawBridgeWithoutRuntimeCalls(t *testing.T) {
@@ -868,6 +918,51 @@ fn main() -> str {
 		}
 	}
 	t.Fatalf("expected lowered string composite in MIR, got %#v", mainFn.Blocks)
+}
+
+func TestPipelineLowersInferredStringLiteralAsByteArray(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+fn main() -> u8 {
+    let bytes = "hi"
+    return bytes[1]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	var bytesLocal *mir.Local
+	for _, local := range mainFn.Locals {
+		if local != nil && local.Name == "bytes" {
+			bytesLocal = local
+			break
+		}
+	}
+	if bytesLocal == nil {
+		t.Fatalf("expected MIR local bytes, got %#v", mainFn.Locals)
+	}
+	arr, ok := bytesLocal.Type.(*typeinfo.ArrayType)
+	if !ok {
+		t.Fatalf("expected inferred local type [N]u8, got %#v", bytesLocal.Type)
+	}
+	if arr.Len != 2 || !typeinfo.IsBuiltinNamed(arr.Inner, "u8") {
+		t.Fatalf("expected inferred local type [2]u8, got %#v", arr)
+	}
 }
 
 func TestPipelinePreservesAnnotatedUnionLocalTypeInMIR(t *testing.T) {

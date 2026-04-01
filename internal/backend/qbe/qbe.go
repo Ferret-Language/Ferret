@@ -1121,7 +1121,18 @@ func qbeResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldIndex
 
 // lowerIndexLoad lowers arr[index] as an rvalue via QBE load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
-	if _, ok := backend.UnwrapNamed(idx.Base.Type()).(*typeinfo.SliceType); ok {
+	if _, ok := backend.UnwrapNamed(idx.Base.Type()).(*typeinfo.StringType); ok {
+		baseExpr, err := lowerValue(state, idx.Base)
+		if err != nil {
+			return "", err
+		}
+		indexExpr, err := lowerValue(state, idx.Index)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("%s =w call $ferret_global_str_index(l %s, l %s)", qbeLocalName(targetName), baseExpr, indexExpr), nil
+	}
+	if backend.IsSliceLikeType(backend.UnwrapNamed(idx.Base.Type())) {
 		return lowerSliceIndexLoad(state, targetName, targetType, idx)
 	}
 	lines, addr, err := lowerQBEIndexAddress(state, idx.Base, idx.Index, idx.Base.Type())

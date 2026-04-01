@@ -1,0 +1,11 @@
+fn main() -> void {
+    let bytes = "hi"
+    let text: str = "ok"
+
+    if len(bytes) == 2 && bytes[0] == 104 && bytes[1] == 105 && text == "ok" {
+        print("string-literal-ok")
+        return
+    }
+
+    print("string-literal-fail")
+}

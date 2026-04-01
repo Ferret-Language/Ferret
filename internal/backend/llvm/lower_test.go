@@ -549,6 +549,36 @@ fn main(items: []i32) -> i32 {
 	}
 }
 
+func TestLowerStringIndexToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main(s: str) -> char {
+    return s[1]
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"declare i32 @ferret_global_str_index(ptr, i64)",
+		"call i32 @ferret_global_str_index(ptr %s, i64 1)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerMutableSliceElementWriteToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -657,8 +687,43 @@ fn main(s: str) -> usize {
 		t.Fatalf("lower llvm: %v", err)
 	}
 	text := artifact.Text
-	if !strings.Contains(text, "call i64 @ferret_global_slice_len(ptr %s)") {
-		t.Fatalf("expected string len runtime call in llvm output:\n%s", text)
+	for _, want := range []string{
+		"declare i64 @ferret_global_slice_len(ptr)",
+		"call i64 @ferret_global_slice_len(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerBuiltinLenStringRefToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main(s: &str) -> usize {
+    return len(s)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"declare i64 @ferret_global_slice_len(ptr)",
+		"call i64 @ferret_global_slice_len(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
 	}
 }
 
