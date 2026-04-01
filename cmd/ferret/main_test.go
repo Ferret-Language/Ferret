@@ -172,3 +172,69 @@ func TestRenderTestFailureIncludesIndentedStatusAndDuration(t *testing.T) {
 		t.Fatalf("renderTestFailure = %q, want %q", got, want)
 	}
 }
+
+func TestCollectTestTargetsProjectWideUsesAllLocalModules(t *testing.T) {
+	mainFile := filepath.Join("/tmp", "project", "main.fer")
+	utilFile := filepath.Join("/tmp", "project", "util.fer")
+	result := compiler.Result{
+		Entry: &context.Module{
+			FilePath: mainFile,
+			Origin:   context.ModuleOriginLocal,
+			AST: &ast.Module{Decls: []ast.Decl{
+				&ast.FuncDecl{Name: &ast.Ident{Path: []string{"__ferret_test_0"}}, IsTest: true, TestName: "entry test"},
+			}},
+		},
+		Modules: []*context.Module{
+			{
+				FilePath: utilFile,
+				Origin:   context.ModuleOriginLocal,
+				AST: &ast.Module{Decls: []ast.Decl{
+					&ast.FuncDecl{Name: &ast.Ident{Path: []string{"__ferret_test_1"}}, IsTest: true, TestName: "util test"},
+				}},
+			},
+			{
+				FilePath: "/stdlib/testing.fer",
+				Origin:   context.ModuleOriginStdlib,
+				AST: &ast.Module{Decls: []ast.Decl{
+					&ast.FuncDecl{Name: &ast.Ident{Path: []string{"__ferret_test_2"}}, IsTest: true, TestName: "stdlib test"},
+				}},
+			},
+			{
+				FilePath: mainFile,
+				Origin:   context.ModuleOriginLocal,
+				AST: &ast.Module{Decls: []ast.Decl{
+					&ast.FuncDecl{Name: &ast.Ident{Path: []string{"__ferret_test_0"}}, IsTest: true, TestName: "entry test"},
+				}},
+			},
+		},
+	}
+
+	got := collectTestTargets(result, mainFile, true)
+	if len(got) != 2 {
+		t.Fatalf("collectTestTargets project-wide count = %d, want 2", len(got))
+	}
+	if got[0].FilePath != mainFile || got[0].TestName != "entry test" {
+		t.Fatalf("first target = %#v", got[0])
+	}
+	if got[1].FilePath != utilFile || got[1].TestName != "util test" {
+		t.Fatalf("second target = %#v", got[1])
+	}
+}
+
+func TestCollectTestTargetsSingleFileStaysScoped(t *testing.T) {
+	mainFile := filepath.Join("/tmp", "project", "main.fer")
+	entry := &context.Module{
+		FilePath: mainFile,
+		Origin:   context.ModuleOriginLocal,
+		AST: &ast.Module{Decls: []ast.Decl{
+			&ast.FuncDecl{Name: &ast.Ident{Path: []string{"__ferret_test_0"}}, IsTest: true, TestName: "entry test"},
+		}},
+	}
+	got := collectTestTargets(compiler.Result{Entry: entry, Modules: []*context.Module{entry}}, mainFile, false)
+	if len(got) != 1 {
+		t.Fatalf("collectTestTargets single-file count = %d, want 1", len(got))
+	}
+	if got[0].FilePath != mainFile || got[0].TestName != "entry test" {
+		t.Fatalf("single-file target = %#v", got[0])
+	}
+}

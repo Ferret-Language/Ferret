@@ -1,0 +1,3 @@
+[package]
+name = "project_tests"
+entry = "main.fer"

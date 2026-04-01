@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -349,28 +350,28 @@ func testCommand(args []string, target backend.Target) error {
 		target = backend.TargetLLVM
 	}
 	result := parsePathWithTest(resolvedPath, "", target)
+	if selectedByDiscovery {
+		result = parseWorkspaceWithConfig(filepath.Dir(resolvedPath), string(target))
+	}
 	if result.Diagnostics.HasErrors() {
 		result.Diagnostics.EmitErrors()
 		return errAlreadyReported
 	}
-	tests := moduleTests(result.Entry)
-	if len(tests) == 0 {
+	testTargets := collectTestTargets(result, resolvedPath, selectedByDiscovery)
+	if len(testTargets) == 0 {
 		return fmt.Errorf("no tests found in %s", resolvedPath)
 	}
-	colors.CYAN.Fprintf(os.Stderr, "running %d test(s)\n", len(tests))
-	displayPath := resolvedPath
-	if relPath, relErr := filepath.Rel(".", resolvedPath); relErr == nil && relPath != "" && relPath != "." {
-		displayPath = relPath
-	}
-	fmt.Fprintln(os.Stdout, displayPath)
+	colors.CYAN.Fprintf(os.Stderr, "running %d test(s)\n", len(testTargets))
 
 	passed := 0
 	failed := 0
-	for _, test := range tests {
-		if test == nil || test.Name == nil {
-			continue
+	currentFile := ""
+	for _, test := range testTargets {
+		if test.FilePath != currentFile {
+			fmt.Fprintln(os.Stdout, test.DisplayPath)
+			currentFile = test.FilePath
 		}
-		runResult, err := runSingleTest(resolvedPath, test.Name.Text(), displayTestName(test), runtimeArgs, target)
+		runResult, err := runSingleTest(test.FilePath, test.TestName, test.TestName, runtimeArgs, target)
 		if err != nil {
 			return err
 		}
@@ -382,7 +383,7 @@ func testCommand(args []string, target backend.Target) error {
 		failed++
 		renderTestFailure(runResult.Name, runResult.Output, runResult.Elapsed)
 	}
-	fmt.Fprintf(os.Stdout, "\nSummary: %d passed, %d failed, %d total\n", passed, failed, len(tests))
+	fmt.Fprintf(os.Stdout, "\nSummary: %d passed, %d failed, %d total\n", passed, failed, len(testTargets))
 	if failed > 0 {
 		return fmt.Errorf("%d test(s) failed", failed)
 	}
@@ -486,6 +487,23 @@ func parsePathWithBackend(path, targetBackend string, buildDebug bool) compiler.
 
 func parsePathForTest(path string) compiler.Result {
 	return parsePathWithTest(path, "", backend.TargetLLVM)
+}
+
+func parseWorkspaceWithConfig(path, targetBackend string) compiler.Result {
+	absPath, err := filepath.Abs(path)
+	diag := diagnostics.NewDiagnosticBag(absPath)
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return compiler.Result{Diagnostics: diag}
+	}
+	ws, err := project.Load(absPath, compiler.FerretSourceExt)
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return compiler.Result{Diagnostics: diag}
+	}
+	ws.Context.TargetBackend = targetBackend
+	compiler := compiler.NewWithConfig(ws.Context, diag)
+	return compiler.ParseWorkspace()
 }
 
 func parsePathWithTest(path, testName string, target backend.Target) compiler.Result {
@@ -600,6 +618,60 @@ func moduleTests(mod *context.Module) []*ast.FuncDecl {
 		}
 	}
 	return tests
+}
+
+type testTarget struct {
+	FilePath    string
+	DisplayPath string
+	TestName    string
+}
+
+func collectTestTargets(result compiler.Result, resolvedPath string, projectWide bool) []testTarget {
+	if projectWide {
+		targets := make([]testTarget, 0)
+		for _, mod := range result.Modules {
+			if mod == nil || mod.Origin != context.ModuleOriginLocal {
+				continue
+			}
+			for _, test := range moduleTests(mod) {
+				if test == nil || test.Name == nil {
+					continue
+				}
+				targets = append(targets, testTarget{
+					FilePath:    mod.FilePath,
+					DisplayPath: displayPath(mod.FilePath),
+					TestName:    displayTestName(test),
+				})
+			}
+		}
+		slices.SortFunc(targets, func(a, b testTarget) int {
+			if a.FilePath != b.FilePath {
+				return strings.Compare(a.FilePath, b.FilePath)
+			}
+			return strings.Compare(a.TestName, b.TestName)
+		})
+		return targets
+	}
+
+	targets := make([]testTarget, 0)
+	for _, test := range moduleTests(result.Entry) {
+		if test == nil || test.Name == nil {
+			continue
+		}
+		targets = append(targets, testTarget{
+			FilePath:    resolvedPath,
+			DisplayPath: displayPath(resolvedPath),
+			TestName:    displayTestName(test),
+		})
+	}
+	return targets
+}
+
+func displayPath(path string) string {
+	if relPath, err := filepath.Rel(".", path); err == nil && relPath != "" && relPath != "." {
+		return relPath
+	}
+	return path
 }
 
 type testRunResult struct {

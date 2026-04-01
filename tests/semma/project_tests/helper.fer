@@ -1,0 +1,6 @@
+test "helper test" {
+    let total = 2 + 3
+    if total != 5 {
+        panic "helper test failed"
+    }
+}
