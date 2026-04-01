@@ -23,10 +23,22 @@ Do not start implementation until those questions are answered.
 
 ## Stepwise Workflow
 
-1. Keep a persistent plan file in the repo.
+1. Keep a persistent local tracking file with the `*.localplan.md` naming pattern. Do not commit it.
 2. Implement one approved step at a time.
 3. Stop after each step and wait for review.
 4. Commit only after explicit approval.
+
+Local plan format:
+
+```
+TASK: <short task title>
+STATUS: active|done|blocked
+STEP: <one-line current step>
+NEXT: <one-line next step>
+NOTES:
+- <short note>
+- <short note>
+```
 
 ## Required Close-Out Note
 

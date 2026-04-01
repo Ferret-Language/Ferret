@@ -4395,6 +4395,29 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerTypesEmptySliceLiteral(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> usize {
+    let items: []i32 = []i32{}
+    return len(items)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letItems := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	itemsRes := result.Entry.Bindings.Nodes[letItems.Name]
+	itemsType := result.Entry.Types.Symbols[itemsRes.Symbol.ID]
+	sl, ok := itemsType.(*typeinfo.SliceType)
+	if !ok || !typeinfo.IsBuiltinNamed(sl.Inner, "i32") {
+		t.Fatalf("expected items type []i32, got %T %#v", itemsType, itemsType)
+	}
+}
+
 func TestTypecheckerAllowsForOverSlice(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

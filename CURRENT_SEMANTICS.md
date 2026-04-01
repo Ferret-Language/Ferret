@@ -532,20 +532,22 @@ Current slice types:
 - `[]T`
 - `[]mut T`
 
-Current implementation status:
+Current behavior:
 
-- slice type exists
-- slice indexing exists in typechecking and backend paths
-- slice literals are implemented in typed form, e.g. `[]i32{1, 2, 3}`
-- mutable typed slice literals are implemented, e.g. `[]mut i32{1, 2, 3}`
+- typed slice literals are implemented end-to-end, e.g. `[]i32{1, 2, 3}` and `[]mut i32{1, 2, 3}`
 - empty slice literals (`[]T{}`) produce zero-length slices
 - non-empty slice literals lower to a temporary backing buffer and carry `{ptr, len}`
+- slice indexing is implemented end-to-end
+- mutable slice element writes are implemented end-to-end
+- `for` iteration over slices is implemented
+- `len([]T)` is implemented
 - `[]mut T` coerces one-way to `[]T`
+- arrays coerce to readonly `[]T`, and mutable arrays coerce to `[]mut T`
 - array/slice indexing performs runtime bounds checks unless the compiler can prove the index is out of range at compile time
 
-This area is still under active design discussion.
+Note:
 
-The compiler currently has working slice support in the type system and lowering paths, but the final higher-level surface semantics are not yet settled.
+- the current slice surface is considered implemented as described above; slicing/subslice syntax and growable owned containers are not part of the current design
 
 ---
 
@@ -650,6 +652,7 @@ These areas are intentionally incomplete or still under design discussion:
 
 - `copy` deep-clone semantics
 - final slice literal syntax and slice semantics
+- Go-style array/slice slicing syntax such as `a[i:j]`, `a[i:]`, and `a[:j]`
 - final `str` semantics
 - complete documentation pass across all docs
 - broader stabilization around corner cases
