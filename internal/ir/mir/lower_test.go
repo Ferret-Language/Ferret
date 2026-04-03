@@ -1141,7 +1141,7 @@ fn fail() -> void {
 		t.Fatalf("expected MIR blocks, got %#v", fn)
 	}
 	text := mir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "panic ") || !strings.Contains(text, "\"bad\"") {
+	if !strings.Contains(text, "panic ") || !strings.Contains(text, ".{ 98, 97, 100 }") {
 		t.Fatalf("expected lowered panic sequence in MIR dump, got %q", text)
 	}
 }
