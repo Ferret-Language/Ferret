@@ -55,7 +55,7 @@ func TestResolveLocalModuleRejectsReservedPrefix(t *testing.T) {
 func TestUniverseRegistersBuiltInConstants(t *testing.T) {
 	ctx := New(t.TempDir(), ".fer", nil)
 
-	for _, name := range []string{"true", "false", "none", "undefined"} {
+	for _, name := range []string{"true", "false", "none"} {
 		sym, ok := ctx.Universe.Lookup(name)
 		if !ok || sym == nil {
 			t.Fatalf("expected builtin constant %q to be registered", name)

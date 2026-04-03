@@ -139,7 +139,6 @@ func predeclaredScope() *table.Scope {
 	declarePredeclaredConst(scope, "true")
 	declarePredeclaredConst(scope, "false")
 	declarePredeclaredConst(scope, "none")
-	declarePredeclaredConst(scope, "undefined")
 	return scope
 }
 

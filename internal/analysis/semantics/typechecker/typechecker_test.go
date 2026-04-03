@@ -2319,7 +2319,7 @@ fn main() -> bool {
 	}
 }
 
-func TestTypecheckerAllowsUndefinedWithContext(t *testing.T) {
+func TestTypecheckerRejectsUndefinedSymbol(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
@@ -2330,8 +2330,18 @@ fn main() -> i32 {
 `)
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
-	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected undefined symbol diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUndefinedSymbol && strings.Contains(diag.Message, `undefined symbol "undefined"`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected undefined symbol diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -4024,8 +4034,8 @@ type MyErr error {
     Oops
 }
 
-fn run(items: [3]i32) -> i32 {
-    let r: MyErr!i32 = undefined
+fn run(items: [3]i32, input: MyErr!i32) -> i32 {
+    let r = input
     let x = 1
     return r catch |e| { return x }
 }
@@ -5394,7 +5404,7 @@ type Outer struct {
 func TestTypecheckerRejectsModuleLevelReferenceBinding(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
-let GlobalRef: &i32 = undefined
+let GlobalRef: &i32 = 0
 `)
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))

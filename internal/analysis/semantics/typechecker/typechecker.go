@@ -487,15 +487,6 @@ func (c *checker) typeOfIdent(scope *refineScope, ident *ast.Ident, expected typ
 				return typ
 			}
 		}
-		if res.Symbol.Kind == symbols.SymbolConst && res.Symbol.Node == nil && res.Symbol.Name == "undefined" {
-			if expected != nil {
-				c.info.BindNode(ident, expected)
-				return expected
-			}
-			typ := typeinfo.UndefinedType{}
-			c.info.BindNode(ident, typ)
-			return typ
-		}
 		typ := c.typeOfSymbol(res.Symbol)
 		if fnType, ok := typ.(*typeinfo.FuncType); ok && len(ident.TypeArgs) > 0 {
 			fnDecl, _ := res.Symbol.Node.(*ast.FuncDecl)
@@ -3206,8 +3197,6 @@ func (c *checker) isConstIdent(_ *refineScope, ident *ast.Ident) bool {
 		switch ident.Path[0] {
 		case "true", "false", "none":
 			return true
-		case "undefined":
-			return false
 		}
 	}
 	res := c.lookupResolution(ident)
@@ -3231,7 +3220,7 @@ func (c *checker) isConstIdent(_ *refineScope, ident *ast.Ident) bool {
 		return false
 	}
 	if res.Symbol.Node == nil {
-		return res.Symbol.Name != "undefined"
+		return true
 	}
 	return true
 }

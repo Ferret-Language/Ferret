@@ -21,10 +21,6 @@ type UnknownType struct{}
 
 func (UnknownType) String() string { return "<unknown>" }
 
-type UndefinedType struct{}
-
-func (UndefinedType) String() string { return "undefined" }
-
 const (
 	DefaultIntTypeName   = "i32"
 	DefaultFloatTypeName = "f32"

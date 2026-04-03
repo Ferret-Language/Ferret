@@ -189,7 +189,7 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 		return a.layoutTaggedUnion([]typeinfo.Type{t.Error, t.Value})
 	case *typeinfo.UnionType:
 		return a.layoutTaggedUnion(t.Members)
-	case typeinfo.UnknownType, typeinfo.InvalidType, typeinfo.UndefinedType:
+	case typeinfo.UnknownType, typeinfo.InvalidType:
 		return 0, 1, false, nil
 	case nil:
 		return 0, 1, true, nil

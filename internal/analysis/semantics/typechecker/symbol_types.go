@@ -81,8 +81,6 @@ func (c *checker) synthesizeSymbolType(mod *context.Module, sym *symbols.Symbol)
 				return &typeinfo.BuiltinType{Name: "bool"}
 			case "none":
 				return typeinfo.UnknownType{}
-			case "undefined":
-				return typeinfo.UndefinedType{}
 			}
 		}
 	case symbols.SymbolVariant, symbols.SymbolError:
