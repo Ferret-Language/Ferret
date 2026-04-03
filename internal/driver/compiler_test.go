@@ -115,7 +115,7 @@ func TestParseEntryTestModeOverridesUserMain(t *testing.T) {
 	libsRoot := filepath.Join(root, "bundle", "core", "libs")
 	mustWrite(t, filepath.Join(libsRoot, "global.fer"), `
 #[extern]
-fn print(value: Any) -> void;
+fn print(values: ...Any) -> void;
 type Any interface {}
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -374,7 +374,7 @@ func TestParsePathResolvesStdlibOSWithoutManifest(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
 type Any interface {}
 #[extern("ferret_io_print")]
-fn print(value: Any) -> void;
+fn print(values: ...Any) -> void;
 `)
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.fer"), `#[extern("ferret_os_cpu_count")]
 fn CPUCount() -> usize;
@@ -424,7 +424,7 @@ func TestParsePathTypechecksStdlibOSSignature(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
 type Any interface {}
 #[extern("ferret_io_print")]
-fn print(value: Any) -> void;
+fn print(values: ...Any) -> void;
 `)
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.fer"), `#[extern("ferret_os_cpu_count")]
 fn CPUCount() -> usize;

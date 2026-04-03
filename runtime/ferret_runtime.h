@@ -134,9 +134,10 @@ FerretStr ferret_global_recover(void);
 
 /* -------------------------------------------------------------------------
  * Generic Any-based print entrypoint.
+ * Accepts the variadic print payload as a []Any slice and prints each element.
  * -------------------------------------------------------------------------*/
 
-void ferret_global_print(const FerretAny *value);
+void ferret_global_print(const FerretSliceAny *values);
 
 /* -------------------------------------------------------------------------
  * str_data / str_len  — extract fields from a str fat-pointer.

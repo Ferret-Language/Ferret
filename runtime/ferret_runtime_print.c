@@ -100,7 +100,7 @@ static void ferret__print_big_integer(const void *data, const FerretTypeInfo *in
     free(work);
 }
 
-void ferret_global_print(const FerretAny *value) {
+static void ferret__print_any(const FerretAny *value) {
     if (value == NULL || (value->data == NULL && value->vtable == NULL)) {
         fputs("<any:nil>\n", stdout);
         fflush(stdout);
@@ -202,4 +202,15 @@ void ferret_global_print(const FerretAny *value) {
     }
     fprintf(stdout, "<any %p>\n", value->data);
     fflush(stdout);
+}
+
+void ferret_global_print(const FerretSliceAny *values) {
+    ferret_usize i;
+
+    if (values == NULL || values->ptr == NULL || values->len == 0) {
+        return;
+    }
+    for (i = 0; i < values->len; i++) {
+        ferret__print_any(&values->ptr[i]);
+    }
 }

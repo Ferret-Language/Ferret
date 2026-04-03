@@ -124,7 +124,7 @@ func TestLowerProgramDedupesImportedInterfaceHelpers(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "global.fer"), `
 type Any interface {}
-fn print(value: Any) -> void;
+fn print(values: ...Any) -> void;
 `)
 	mustWrite(t, filepath.Join(root, "util", "testing.fer"), `
 fn Expect(cond: bool, message: str) -> void {
@@ -361,6 +361,38 @@ fn main() -> void {
 	}
 	if !strings.Contains(text, "call void @ferret_global_print(") {
 		t.Fatalf("expected lowered call to ferret_global_print:\n%s", text)
+	}
+}
+
+func TestLowerVariadicPrintToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    print("ok", 42, true)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm variadic print: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"store i32 42, ptr %_iface_data",
+		"store i8 1, ptr %_iface_data",
+		"store i64 3, ptr %_len_addr",
+		"call void @ferret_global_print(ptr %_t4)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
 	}
 }
 
@@ -606,7 +638,8 @@ fn main() -> void {
 		"store ptr @__str",
 		"store i64 7, ptr",
 		"store ptr %greeting, ptr %_t2",
-		"call void @ferret_global_print(ptr %_t2)",
+		"store i64 1, ptr %_len_addr",
+		"call void @ferret_global_print(ptr %_t3)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

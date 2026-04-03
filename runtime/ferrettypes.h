@@ -437,6 +437,7 @@ typedef struct { ferret_u64 *ptr; ferret_usize len; } FerretSliceU64;
 typedef struct { ferret_f32 *ptr; ferret_usize len; } FerretSliceF32;
 typedef struct { ferret_f64 *ptr; ferret_usize len; } FerretSliceF64;
 typedef struct { ferret_raw  ptr; ferret_usize len; } FerretSlicePtr;  /* [](*T) — erased element type */
+typedef struct { FerretAny *ptr; ferret_usize len; } FerretSliceAny;
 
 #ifdef __cplusplus
 }

@@ -26,7 +26,7 @@ func TestLoadRegistersGlobalBuiltinsFromPrelude(t *testing.T) {
 	}
 	preludeSrc := `type Any interface {}
 #[extern]
-fn print(value: Any) -> void;
+fn print(values: ...Any) -> void;
 #[builtin]
 fn recover() -> str;
 `
@@ -76,7 +76,7 @@ func TestLoadRegistersAnyAndPrintFromPrelude(t *testing.T) {
 	}
 	preludeSrc := `type Any interface {}
 #[extern]
-fn print(value: Any) -> void;
+fn print(values: ...Any) -> void;
 #[builtin]
 fn recover() -> str;
 `
@@ -114,11 +114,18 @@ fn recover() -> str;
 	if len(fn.Params) != 1 {
 		t.Fatalf("expected print to have one parameter, got %d", len(fn.Params))
 	}
-	paramType, ok := fn.Params[0].Type.(*ast.NamedType)
+	paramType, ok := fn.Params[0].Type.(*ast.SliceType)
 	if !ok {
-		t.Fatalf("expected print parameter type to be a named type, got %T", fn.Params[0].Type)
+		t.Fatalf("expected print parameter type to be a slice type, got %T", fn.Params[0].Type)
 	}
-	if len(paramType.Path) != 1 || paramType.Path[0] != "Any" {
-		t.Fatalf("expected print parameter type Any, got %#v", paramType.Path)
+	elemType, ok := paramType.Inner.(*ast.NamedType)
+	if !ok {
+		t.Fatalf("expected variadic print element type to be named, got %T", paramType.Inner)
+	}
+	if len(elemType.Path) != 1 || elemType.Path[0] != "Any" {
+		t.Fatalf("expected print parameter element type Any, got %#v", elemType.Path)
+	}
+	if !fn.Params[0].IsVariadic {
+		t.Fatalf("expected print parameter to be variadic, got %#v", fn.Params[0])
 	}
 }

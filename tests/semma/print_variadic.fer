@@ -1,0 +1,3 @@
+fn main() -> void {
+    print("ok", 42, true)
+}

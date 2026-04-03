@@ -649,6 +649,38 @@ fn main() -> void {
 	}
 }
 
+func TestLowerVariadicPrintToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    print("ok", 42, true)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe variadic print: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"storew 42, %_iface_data",
+		"storeb 1, %_iface_data",
+		"storel 3, %_len_addr",
+		"call $ferret_global_print(l %_t4)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerUnionLocalAssignmentToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -1065,7 +1097,7 @@ func TestLowerQBEDedupesImportedInterfaceHelpersAcrossModules(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "global.fer"), `
 type Any interface {}
-fn print(value: Any) -> void;
+fn print(values: ...Any) -> void;
 `)
 	mustWrite(t, filepath.Join(root, "util", "testing.fer"), `
 fn Expect(cond: bool, message: str) -> void {
@@ -1473,7 +1505,8 @@ fn main() -> void {
 		"storel $__ferret_str",
 		"storel 7,",
 		"storel %greeting, %_t2",
-		"call $ferret_global_print(l %_t2)",
+		"storel 1, %_len_addr",
+		"call $ferret_global_print(l %_t3)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)
