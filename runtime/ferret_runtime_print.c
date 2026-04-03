@@ -189,6 +189,18 @@ static void ferret__write_typed(const void *data, const FerretTypeInfo *info) {
         return;
     }
 
+    if ((info->flags & FERRET_TYPE_FLAG_VARIANTS) != 0u) {
+        const FerretVariantTypeInfo *meta = (const FerretVariantTypeInfo *)info->meta;
+        ferret_i32 ordinal = data != NULL ? *(const ferret_i32 *)data : 0;
+        if (meta != NULL && meta->names != NULL && ordinal >= 0 && (ferret_usize)ordinal < meta->len) {
+            const ferret_i8 *name = meta->names[ordinal];
+            if (name != NULL) {
+                fputs((const char *)name, stdout);
+                return;
+            }
+        }
+    }
+
     switch (info->id) {
     case FERRET_TYPE_BOOL:
         fputs((data != NULL && *(const ferret_bool *)data) ? "true" : "false", stdout);
@@ -242,7 +254,6 @@ static void ferret__write_typed(const void *data, const FerretTypeInfo *info) {
     default:
         break;
     }
-
     if ((info->flags & FERRET_TYPE_FLAG_INTEGER) != 0u) {
         ferret__write_big_integer(data, info);
         return;

@@ -34,16 +34,18 @@ const (
 	RuntimeTypeFlagSigned    = 1 << 5
 	RuntimeTypeFlagArray     = 1 << 6
 	RuntimeTypeFlagTuple     = 1 << 7
+	RuntimeTypeFlagVariants  = 1 << 8
 )
 
 type RuntimeTypeDescriptor struct {
-	Name   string
-	ID     uint32
-	Flags  uint32
-	Elem   typeinfo.Type
-	Length int64
-	Stride int64
-	Fields []RuntimeTypeFieldDescriptor
+	Name     string
+	ID       uint32
+	Flags    uint32
+	Elem     typeinfo.Type
+	Length   int64
+	Stride   int64
+	Fields   []RuntimeTypeFieldDescriptor
+	Variants []string
 }
 
 type RuntimeTypeFieldDescriptor struct {
@@ -63,8 +65,24 @@ func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
 	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil {
 		desc.Flags |= RuntimeTypeFlagNamed
 		if named.Decl != nil {
-			switch named.Decl.Type.(type) {
-			case *ast.EnumType, *ast.ErrorType:
+			switch decl := named.Decl.Type.(type) {
+			case *ast.EnumType:
+				desc.Flags |= RuntimeTypeFlagVariants
+				desc.Variants = make([]string, 0, len(decl.Variants))
+				for _, variant := range decl.Variants {
+					if variant != nil && variant.Name != nil {
+						desc.Variants = append(desc.Variants, variant.Name.Text())
+					}
+				}
+				inspect = &typeinfo.BuiltinType{Name: "i32"}
+			case *ast.ErrorType:
+				desc.Flags |= RuntimeTypeFlagVariants
+				desc.Variants = make([]string, 0, len(decl.Members))
+				for _, member := range decl.Members {
+					if member != nil && member.Name != nil {
+						desc.Variants = append(desc.Variants, member.Name.Text())
+					}
+				}
 				inspect = &typeinfo.BuiltinType{Name: "i32"}
 			case *ast.InterfaceType:
 				desc.Flags |= RuntimeTypeFlagInterface

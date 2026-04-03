@@ -2,6 +2,7 @@ package backend
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -87,6 +88,40 @@ func TestDescribeRuntimeTypeMarksArbitraryWidthIntegers(t *testing.T) {
 	}
 	if desc.Flags&RuntimeTypeFlagSigned != 0 {
 		t.Fatalf("expected u1024 runtime flags to stay unsigned, got %#x", desc.Flags)
+	}
+}
+
+func TestDescribeRuntimeTypeCapturesNamedVariantMetadata(t *testing.T) {
+	enumDesc := DescribeRuntimeType(&typeinfo.NamedType{
+		Name: "Color",
+		Decl: &ast.TypeDecl{Type: &ast.EnumType{
+			Variants: []*ast.EnumVariant{
+				{Name: &ast.Ident{Path: []string{"Red"}}},
+				{Name: &ast.Ident{Path: []string{"Green"}}},
+			},
+		}},
+	})
+	if enumDesc.Flags&RuntimeTypeFlagVariants == 0 {
+		t.Fatalf("expected enum descriptor to mark variants, got %#x", enumDesc.Flags)
+	}
+	if !reflect.DeepEqual(enumDesc.Variants, []string{"Red", "Green"}) {
+		t.Fatalf("unexpected enum variants: %#v", enumDesc.Variants)
+	}
+
+	errorDesc := DescribeRuntimeType(&typeinfo.NamedType{
+		Name: "Io",
+		Decl: &ast.TypeDecl{Type: &ast.ErrorType{
+			Members: []*ast.ErrorMember{
+				{Name: &ast.Ident{Path: []string{"denied"}}},
+				{Name: &ast.Ident{Path: []string{"timeout"}}},
+			},
+		}},
+	})
+	if errorDesc.Flags&RuntimeTypeFlagVariants == 0 {
+		t.Fatalf("expected error descriptor to mark variants, got %#x", errorDesc.Flags)
+	}
+	if !reflect.DeepEqual(errorDesc.Variants, []string{"denied", "timeout"}) {
+		t.Fatalf("unexpected error variants: %#v", errorDesc.Variants)
 	}
 }
 

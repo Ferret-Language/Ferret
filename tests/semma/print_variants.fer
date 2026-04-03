@@ -1,0 +1,17 @@
+type Color enum {
+    Red,
+    Green,
+    Blue
+}
+
+type Io error {
+    denied,
+    timeout
+}
+
+fn main() -> void {
+    let color = Color::Green
+    let err = Io::denied
+
+    print(color, err, "print-variants-ok")
+}

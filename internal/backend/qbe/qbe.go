@@ -1812,6 +1812,22 @@ func ensureQBERuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, er
 	}
 	metaRef := "0"
 	switch {
+	case desc.Flags&backend.RuntimeTypeFlagVariants != 0:
+		namesRef := "0"
+		if len(desc.Variants) != 0 {
+			namesSym := sym + "__variant_names"
+			parts := make([]string, 0, len(desc.Variants))
+			for i, variant := range desc.Variants {
+				variantSym := fmt.Sprintf("%s__variant_%d", sym, i)
+				fmt.Fprintf(state.deferredB, "data $%s = { b %q, b 0 }\n", variantSym, variant)
+				parts = append(parts, "l $"+variantSym)
+			}
+			fmt.Fprintf(state.deferredB, "data $%s = { %s }\n", namesSym, strings.Join(parts, ", "))
+			namesRef = "$" + namesSym
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB, "data $%s = { l %d, l %s }\n", metaSym, len(desc.Variants), namesRef)
+		metaRef = "$" + metaSym
 	case desc.Flags&backend.RuntimeTypeFlagArray != 0:
 		elemSym, err := ensureQBERuntimeTypeInfo(state, desc.Elem)
 		if err != nil {

@@ -3468,6 +3468,25 @@ func ensureLLVMRuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, e
 	}
 	metaRef := "ptr null"
 	switch {
+	case desc.Flags&backend.RuntimeTypeFlagVariants != 0:
+		namesRef := "ptr null"
+		if len(desc.Variants) != 0 {
+			namesSym := sym + "__variant_names"
+			entries := make([]string, 0, len(desc.Variants))
+			for _, variant := range desc.Variants {
+				variantSym := emitStringConstant(state, variant)
+				entries = append(entries, fmt.Sprintf("ptr @%s", variantSym))
+			}
+			fmt.Fprintf(state.deferredB,
+				"@%s = private unnamed_addr constant [%d x ptr] [%s]\n",
+				namesSym, len(entries), strings.Join(entries, ", "))
+			namesRef = fmt.Sprintf("ptr @%s", namesSym)
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB,
+			"@%s = private unnamed_addr constant { i64, ptr } { i64 %d, %s }\n",
+			metaSym, len(desc.Variants), namesRef)
+		metaRef = "ptr @" + metaSym
 	case desc.Flags&backend.RuntimeTypeFlagArray != 0:
 		elemSym, err := ensureLLVMRuntimeTypeInfo(state, desc.Elem)
 		if err != nil {

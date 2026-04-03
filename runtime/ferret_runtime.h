@@ -60,6 +60,11 @@ typedef struct {
     const FerretTupleFieldInfo *fields;
 } FerretTupleTypeInfo;
 
+typedef struct {
+    ferret_usize           len;
+    const ferret_i8 *const *names;
+} FerretVariantTypeInfo;
+
 #define FERRET_TYPE_BOOL   1u
 #define FERRET_TYPE_I8     2u
 #define FERRET_TYPE_I16    3u
@@ -84,6 +89,7 @@ typedef struct {
 #define FERRET_TYPE_FLAG_SIGNED    (1u << 5)
 #define FERRET_TYPE_FLAG_ARRAY     (1u << 6)
 #define FERRET_TYPE_FLAG_TUPLE     (1u << 7)
+#define FERRET_TYPE_FLAG_VARIANTS  (1u << 8)
 
 /* `FerretAny` (declared in ferrettypes.h) is the stable ABI type for empty
  * interface values across C helpers and runtime-adjacent extern functions. */
