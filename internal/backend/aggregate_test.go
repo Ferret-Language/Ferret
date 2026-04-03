@@ -102,3 +102,22 @@ func TestResolveAggregateSourceUnsupported(t *testing.T) {
 		t.Fatalf("expected unsupported aggregate source error")
 	}
 }
+
+func TestResolveTaggedUnionComposite(t *testing.T) {
+	tag := &mir.NumberValue{Value: "1"}
+	payload := &mir.NumberValue{Value: "41"}
+	value := &mir.CompositeValue{
+		Items: []mir.CompositeItem{
+			{Value: tag},
+			{Value: payload},
+		},
+	}
+
+	gotTag, gotPayload, ok := ResolveTaggedUnionComposite(nil, value)
+	if !ok {
+		t.Fatalf("expected tagged union composite resolution")
+	}
+	if gotTag != tag || gotPayload != payload {
+		t.Fatalf("unexpected resolved values: %#v %#v", gotTag, gotPayload)
+	}
+}

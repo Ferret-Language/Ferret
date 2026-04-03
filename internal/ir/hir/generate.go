@@ -431,7 +431,8 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		}
 		return g.generateBlock(s)
 	case *ast.LetStmt:
-		out := &LetStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Mutable: s.IsMut, Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateExpr(s.Value)}
+		targetType := effectiveType(g.types, s.Type, s.Value)
+		out := &LetStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Mutable: s.IsMut, Type: targetType, Value: g.generateExprForTarget(s.Value, targetType)}
 		out.Location = s.Location
 		return out
 	case *ast.ConstStmt:
@@ -439,7 +440,11 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.ReturnStmt:
-		value := g.generateExpr(s.Value)
+		var targetType typeinfo.Type
+		if g.currentFn != nil && g.currentFn.Result != nil {
+			targetType = syntaxType(g.types, g.currentFn.Result)
+		}
+		value := g.generateExprForTarget(s.Value, targetType)
 		if comp, ok := value.(*CompositeLit); ok && (typeinfo.IsInvalid(comp.ExprType) || isUnknownType(comp.ExprType)) {
 			if g.currentFn != nil && g.currentFn.Result != nil {
 				if resultType := syntaxType(g.types, g.currentFn.Result); resultType != nil {
@@ -459,7 +464,8 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		out.Location = s.Location
 		return out
 	case *ast.AssignStmt:
-		out := &AssignStmt{Left: g.generateExpr(s.Left), Right: g.generateExpr(s.Right)}
+		left := g.generateExpr(s.Left)
+		out := &AssignStmt{Left: left, Right: g.generateExprForTarget(s.Right, exprType(g.types, s.Left))}
 		out.Location = s.Location
 		return out
 	case *ast.IfStmt:
@@ -751,13 +757,24 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		if expanded, ok := g.types.LookupCallArgs(e); ok {
 			args = expanded
 		}
+		calleeType, _ := exprType(g.types, e.Callee).(*typeinfo.FuncType)
 		out := &CallExpr{Callee: g.generateExpr(e.Callee), Args: make([]Expr, 0, len(args))}
 		if recv, ok := g.types.LookupMethodReceiver(e); ok {
 			out.MethodReceiver = recv
 		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
-		for _, arg := range args {
-			out.Args = append(out.Args, g.generateExpr(arg))
+		for i, arg := range args {
+			target := typeinfo.Type(nil)
+			if calleeType != nil && len(calleeType.Params) != 0 {
+				paramIndex := i
+				if paramIndex >= len(calleeType.Params) {
+					paramIndex = len(calleeType.Params) - 1
+				}
+				if paramIndex >= 0 && paramIndex < len(calleeType.Params) {
+					target = calleeType.Params[paramIndex].Type
+				}
+			}
+			out.Args = append(out.Args, g.generateExprForTarget(arg, target))
 		}
 		return out
 	case *ast.SelectorExpr:
@@ -836,7 +853,14 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 				if name != "" {
 					used[name] = struct{}{}
 				}
-				out.Items = append(out.Items, CompositeItem{Name: name, Value: g.generateExpr(item.Value)})
+				fieldType := typeinfo.Type(nil)
+				for _, field := range fields {
+					if field.Name == name {
+						fieldType = field.Type
+						break
+					}
+				}
+				out.Items = append(out.Items, CompositeItem{Name: name, Value: g.generateExprForTarget(item.Value, fieldType)})
 			}
 			for _, field := range fields {
 				if field.Default == nil {
@@ -845,12 +869,31 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 				if _, exists := used[field.Name]; exists {
 					continue
 				}
-				out.Items = append(out.Items, CompositeItem{Name: field.Name, Value: g.generateExpr(field.Default)})
+				out.Items = append(out.Items, CompositeItem{Name: field.Name, Value: g.generateExprForTarget(field.Default, field.Type)})
 			}
 			return out
 		}
-		for _, item := range e.Items {
-			out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: g.generateExpr(item.Value)})
+		switch resolved := typ.(type) {
+		case *typeinfo.ArrayType:
+			for _, item := range e.Items {
+				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: g.generateExprForTarget(item.Value, resolved.Inner)})
+			}
+		case *typeinfo.SliceType:
+			for _, item := range e.Items {
+				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: g.generateExprForTarget(item.Value, resolved.Inner)})
+			}
+		case *typeinfo.TupleType:
+			for i, item := range e.Items {
+				target := typeinfo.Type(nil)
+				if i >= 0 && i < len(resolved.Elems) {
+					target = resolved.Elems[i]
+				}
+				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: g.generateExprForTarget(item.Value, target)})
+			}
+		default:
+			for _, item := range e.Items {
+				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: g.generateExpr(item.Value)})
+			}
 		}
 		return out
 	case *ast.IndexExpr:
@@ -860,6 +903,46 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 	default:
 		return nil
 	}
+}
+
+func (g *generator) generateExprForTarget(expr ast.Expr, target typeinfo.Type) Expr {
+	value := g.generateExpr(expr)
+	if expr == nil || value == nil || target == nil {
+		return value
+	}
+	errUnionTarget := target
+	errUnion, ok := target.(*typeinfo.ErrorUnionType)
+	if !ok || errUnion == nil {
+		if named, ok := target.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
+			if resolved, ok := syntaxType(g.types, named.Decl.Type).(*typeinfo.ErrorUnionType); ok && resolved != nil {
+				errUnion = resolved
+			}
+		}
+	}
+	if errUnion == nil {
+		return value
+	}
+	sourceType := exprType(g.types, expr)
+	if sourceType == nil || typeinfo.Equal(errUnionTarget, sourceType) {
+		return value
+	}
+	tag := "0"
+	switch {
+	case typeinfo.Assignable(errUnion.Error, sourceType):
+		tag = "0"
+	case typeinfo.Assignable(errUnion.Value, sourceType):
+		tag = "1"
+	default:
+		return value
+	}
+	tagExpr := &NumberLit{Value: tag}
+	tagExpr.ExprType, tagExpr.Location, tagExpr.Source = &typeinfo.BuiltinType{Name: "i32"}, expr.Loc(), expr
+	out := &CompositeLit{Items: []CompositeItem{
+		{Value: tagExpr},
+		{Value: value},
+	}}
+	out.ExprType, out.Location, out.Source = errUnionTarget, expr.Loc(), expr
+	return out
 }
 
 func isUnknownType(typ typeinfo.Type) bool {
@@ -935,6 +1018,7 @@ func effectiveType(types *typeinfo.ModuleInfo, syntax ast.TypeExpr, value ast.Ex
 type structLiteralField struct {
 	Name    string
 	Default ast.Expr
+	Type    typeinfo.Type
 }
 
 func (g *generator) structLiteralFields(typ typeinfo.Type) ([]structLiteralField, bool) {
@@ -946,12 +1030,17 @@ func (g *generator) structLiteralFields(typ typeinfo.Type) ([]structLiteralField
 	if !ok || structDecl == nil {
 		return nil, false
 	}
+	structType, _ := syntaxType(g.types, named.Decl.Type).(*typeinfo.StructType)
 	fields := make([]structLiteralField, 0, len(structDecl.Fields))
-	for _, field := range structDecl.Fields {
+	for i, field := range structDecl.Fields {
 		if field == nil || field.Name == nil {
 			continue
 		}
-		fields = append(fields, structLiteralField{Name: field.Name.Text(), Default: field.Default})
+		fieldType := typeinfo.Type(nil)
+		if structType != nil && i >= 0 && i < len(structType.OrderedFields) && structType.OrderedFields[i] != nil {
+			fieldType = structType.OrderedFields[i].Type
+		}
+		fields = append(fields, structLiteralField{Name: field.Name.Text(), Default: field.Default, Type: fieldType})
 	}
 	return fields, true
 }

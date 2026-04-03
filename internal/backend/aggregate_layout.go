@@ -8,10 +8,9 @@ import (
 )
 
 type AggregateLayoutContext struct {
-	BackendName      string
-	ScalarSizeAlign  func(typeinfo.Type) (int64, int64, error)
-	OptionalSizeFunc func(typeinfo.Type) (int64, int64, error)
-	LookupNamed      func(*typeinfo.NamedType) (*layout.TypeLayout, error)
+	BackendName     string
+	ScalarSizeAlign func(typeinfo.Type) (int64, int64, error)
+	LookupNamed     func(*typeinfo.NamedType) (*layout.TypeLayout, error)
 }
 
 type TupleElementLayout struct {
@@ -122,6 +121,43 @@ func aggregateElementSizeAlign(ctx AggregateLayoutContext, typ typeinfo.Type) (i
 	return AggregateSizeAlign(ctx, typ)
 }
 
+type TaggedUnionLayout struct {
+	Size          int64
+	Align         int64
+	PayloadOffset int64
+}
+
+func TaggedUnionLayoutInfo(ctx AggregateLayoutContext, members []typeinfo.Type) (*TaggedUnionLayout, error) {
+	if len(members) == 0 {
+		return nil, fmt.Errorf("tagged union requires at least one member")
+	}
+	payloadSize := int64(0)
+	payloadAlign := int64(1)
+	for _, member := range members {
+		size, align, err := aggregateElementSizeAlign(ctx, member)
+		if err != nil {
+			return nil, err
+		}
+		if size > payloadSize {
+			payloadSize = size
+		}
+		if align > payloadAlign {
+			payloadAlign = align
+		}
+	}
+	payloadOffset := AlignUpInt64(4, payloadAlign)
+	align := payloadAlign
+	if align < 4 {
+		align = 4
+	}
+	size := AlignUpInt64(payloadOffset+payloadSize, align)
+	return &TaggedUnionLayout{
+		Size:          size,
+		Align:         align,
+		PayloadOffset: payloadOffset,
+	}, nil
+}
+
 func TupleLayout(ctx AggregateLayoutContext, tuple *typeinfo.TupleType) ([]TupleElementLayout, int64, int64, error) {
 	if tuple == nil {
 		return nil, 0, 0, fmt.Errorf("nil tuple type")
@@ -182,10 +218,23 @@ func AggregateSizeAlign(ctx AggregateLayoutContext, typ typeinfo.Type) (int64, i
 		if OptionalUsesNiche(t.Inner) {
 			return 0, 0, fmt.Errorf("optional %s uses niche layout", t.Inner)
 		}
-		if ctx.OptionalSizeFunc == nil {
-			return 0, 0, fmt.Errorf("aggregate size context missing optional size resolver")
+		info, err := TaggedUnionLayoutInfo(ctx, []typeinfo.Type{t.Inner})
+		if err != nil {
+			return 0, 0, err
 		}
-		return ctx.OptionalSizeFunc(typ)
+		return info.Size, info.Align, nil
+	case *typeinfo.ErrorUnionType:
+		info, err := TaggedUnionLayoutInfo(ctx, []typeinfo.Type{t.Error, t.Value})
+		if err != nil {
+			return 0, 0, err
+		}
+		return info.Size, info.Align, nil
+	case *typeinfo.UnionType:
+		info, err := TaggedUnionLayoutInfo(ctx, t.Members)
+		if err != nil {
+			return 0, 0, err
+		}
+		return info.Size, info.Align, nil
 	case *typeinfo.NamedType:
 		if IsNamedInterface(t) {
 			return 16, 8, nil

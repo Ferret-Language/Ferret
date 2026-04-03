@@ -1,0 +1,18 @@
+type Io error {
+    denied
+}
+
+fn load(ok: bool) -> Io!i32 {
+    if ok {
+        return 41
+    }
+    return Io::denied
+}
+
+fn main() -> i32 {
+    let value = load(false) catch |err| {
+        let code: Io = err
+        code
+    }
+    return value
+}

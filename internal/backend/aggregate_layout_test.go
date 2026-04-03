@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"errors"
 	"testing"
 
 	layout "compiler/internal/analysis/layout/model"
@@ -36,5 +37,34 @@ func TestLookupStructLayoutSupportsSliceLikeTypes(t *testing.T) {
 	strPtrType, ok := strLayout.Fields[0].Type.(*typeinfo.RawPtrType)
 	if !ok || !strPtrType.Const || !typeinfo.Equal(strPtrType.Inner, &typeinfo.BuiltinType{Name: "u8"}) {
 		t.Fatalf("expected str ptr field type ^const u8, got %#v", strLayout.Fields[0].Type)
+	}
+}
+
+func TestAggregateSizeAlignSupportsErrorUnions(t *testing.T) {
+	ctx := AggregateLayoutContext{
+		BackendName: "test",
+		ScalarSizeAlign: func(typ typeinfo.Type) (int64, int64, error) {
+			switch t := typ.(type) {
+			case *typeinfo.BuiltinType:
+				switch t.Name {
+				case "i32":
+					return 4, 4, nil
+				case "usize":
+					return 8, 8, nil
+				}
+			}
+			return 0, 0, errors.New("unsupported type")
+		},
+	}
+
+	size, align, err := AggregateSizeAlign(ctx, &typeinfo.ErrorUnionType{
+		Error: &typeinfo.BuiltinType{Name: "i32"},
+		Value: &typeinfo.BuiltinType{Name: "usize"},
+	})
+	if err != nil {
+		t.Fatalf("aggregate size for error union: %v", err)
+	}
+	if size != 16 || align != 8 {
+		t.Fatalf("expected size=16 align=8, got size=%d align=%d", size, align)
 	}
 }

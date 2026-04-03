@@ -3,6 +3,7 @@ package backend
 import (
 	"fmt"
 
+	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/ir/mir"
 )
 
@@ -39,4 +40,15 @@ func ResolveAggregateSource(
 		return onFieldLoad(v.Base, v.FieldIndex)
 	}
 	return "", fmt.Errorf("unsupported aggregate source %T", value)
+}
+
+func ResolveTaggedUnionComposite(target typeinfo.Type, value mir.Value) (mir.Value, mir.Value, bool) {
+	comp, ok := value.(*mir.CompositeValue)
+	if !ok || comp == nil || len(comp.Items) < 2 {
+		return nil, nil, false
+	}
+	if !typeinfo.Equal(target, comp.Type()) && !typeinfo.Equal(UnwrapNamed(target), UnwrapNamed(comp.Type())) {
+		return nil, nil, false
+	}
+	return comp.Items[0].Value, comp.Items[1].Value, true
 }

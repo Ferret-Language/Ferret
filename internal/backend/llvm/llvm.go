@@ -2677,6 +2677,8 @@ func isUnionAggregate(typ typeinfo.Type) bool {
 		return true
 	case *typeinfo.OptionalType:
 		return !backend.OptionalUsesNiche(t.Inner)
+	case *typeinfo.ErrorUnionType:
+		return true
 	default:
 		return false
 	}
@@ -2708,6 +2710,47 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 		if _, isNone := value.(*mir.NoneValue); isNone {
 			return fmt.Sprintf("store i32 0, ptr %s", llvmLocalName(agg.PtrName)), nil
 		}
+	}
+	if call, ok := value.(*mir.CallValue); ok {
+		return lowerAggregateCallValue(state, agg, call)
+	}
+	if tagValue, payloadValue, ok := backend.ResolveTaggedUnionComposite(agg.Type, value); ok {
+		info, err := llvmUnionLayoutInfo(state, agg.Type)
+		if err != nil {
+			return "", err
+		}
+		tag, err := lowerValue(state, tagValue)
+		if err != nil {
+			return "", err
+		}
+		lines := []string{fmt.Sprintf("store i32 %s, ptr %s", tag, llvmLocalName(agg.PtrName))}
+		if payloadValue == nil {
+			return strings.Join(lines, "\n"), nil
+		}
+		dst := llvmLocalName(agg.PtrName)
+		if info.PayloadOffset != 0 {
+			tmp := freshTemp(state, "unionpayload")
+			lines = append(lines, fmt.Sprintf("%s = getelementptr i8, ptr %s, i64 %d", tmp, llvmLocalName(agg.PtrName), info.PayloadOffset))
+			dst = tmp
+		}
+		if isAggregateType(state, payloadValue.Type()) {
+			payloadLines, err := lowerAggregateValueToAddr(state, dst, payloadValue.Type(), payloadValue)
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, payloadLines...)
+			return strings.Join(lines, "\n"), nil
+		}
+		irType, err := llvmBaseType(payloadValue.Type())
+		if err != nil {
+			return "", err
+		}
+		payload, err := lowerValue(state, payloadValue)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, fmt.Sprintf("store %s, ptr %s", operandWithTemp(state, irType, payload), dst))
+		return strings.Join(lines, "\n"), nil
 	}
 	if isUnionAggregate(value.Type()) {
 		src, err := lowerAggregateSource(state, value)
@@ -4186,10 +4229,13 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if _, ok := dst.(*typeinfo.StringType); ok {
 		return lowerStringCast(state, v.Left)
 	}
-	if isUnionAggregate(v.Left.Type()) && !isAggregateType(state, v.Type()) {
+	if isUnionAggregate(v.Left.Type()) {
 		srcPtr, err := lowerUnionSource(state, v.Left)
 		if err != nil {
 			return "", err
+		}
+		if isAggregateType(state, v.Type()) {
+			return srcPtr, nil
 		}
 		irType, err := llvmBaseType(v.Type())
 		if err != nil {
@@ -4376,47 +4422,38 @@ func llvmUnionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLa
 			Members:       llvmUnionMemberTypes(info.Union),
 		}, nil
 	case *typeinfo.OptionalType:
-		payloadSize, payloadAlign, err := aggregateSizeAlignOfPrimitive(t.Inner)
+		layoutInfo, err := backend.TaggedUnionLayoutInfo(aggregateLayoutContext(state), []typeinfo.Type{t.Inner})
 		if err != nil {
-			payloadSize, payloadAlign, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), t.Inner)
-			if err != nil {
-				return nil, err
-			}
+			return nil, err
 		}
-		payloadOffset := backend.AlignUpInt64(4, payloadAlign)
-		align := payloadAlign
-		if align < 4 {
-			align = 4
-		}
-		size := backend.AlignUpInt64(payloadOffset+payloadSize, align)
 		return &backendUnionLayout{
-			Size:          size,
-			Align:         align,
-			PayloadOffset: payloadOffset,
+			Size:          layoutInfo.Size,
+			Align:         layoutInfo.Align,
+			PayloadOffset: layoutInfo.PayloadOffset,
 			Members:       []typeinfo.Type{t.Inner},
 		}, nil
+	case *typeinfo.ErrorUnionType:
+		layoutInfo, err := backend.TaggedUnionLayoutInfo(aggregateLayoutContext(state), []typeinfo.Type{t.Error, t.Value})
+		if err != nil {
+			return nil, err
+		}
+		return &backendUnionLayout{
+			Size:          layoutInfo.Size,
+			Align:         layoutInfo.Align,
+			PayloadOffset: layoutInfo.PayloadOffset,
+			Members:       []typeinfo.Type{t.Error, t.Value},
+		}, nil
 	case *typeinfo.UnionType:
-		payloadSize := int64(0)
-		payloadAlign := int64(1)
-		for _, member := range t.Members {
-			size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), member)
-			if err != nil {
-				return nil, err
-			}
-			if size > payloadSize {
-				payloadSize = size
-			}
-			if align > payloadAlign {
-				payloadAlign = align
-			}
+		layoutInfo, err := backend.TaggedUnionLayoutInfo(aggregateLayoutContext(state), t.Members)
+		if err != nil {
+			return nil, err
 		}
-		payloadOffset := backend.AlignUpInt64(4, payloadAlign)
-		align := payloadAlign
-		if align < 4 {
-			align = 4
-		}
-		size := backend.AlignUpInt64(payloadOffset+payloadSize, align)
-		return &backendUnionLayout{Size: size, Align: align, PayloadOffset: payloadOffset, Members: t.Members}, nil
+		return &backendUnionLayout{
+			Size:          layoutInfo.Size,
+			Align:         layoutInfo.Align,
+			PayloadOffset: layoutInfo.PayloadOffset,
+			Members:       t.Members,
+		}, nil
 	default:
 		return nil, fmt.Errorf("type %s has no union layout", typeinfo.FormatType(typeStringer{typ}))
 	}
@@ -4838,13 +4875,6 @@ func aggregateLayoutContext(state *moduleState) backend.AggregateLayoutContext {
 	return backend.AggregateLayoutContext{
 		BackendName:     "llvm",
 		ScalarSizeAlign: aggregateSizeAlignOfPrimitive,
-		OptionalSizeFunc: func(optional typeinfo.Type) (int64, int64, error) {
-			info, err := llvmUnionLayoutInfo(state, optional)
-			if err != nil {
-				return 0, 0, err
-			}
-			return info.Size, info.Align, nil
-		},
 		LookupNamed: func(named *typeinfo.NamedType) (*layout.TypeLayout, error) {
 			return becommon.LookupNamedLayoutFromState(state.layouts, state.layout, state.mod, named, "llvm")
 		},
@@ -4896,6 +4926,13 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 			return fmt.Sprintf("[%d x i8]", info.Size), nil
 		}
 	}
+	if _, ok := typ.(*typeinfo.ErrorUnionType); ok {
+		info, err := llvmUnionLayoutInfo(state, typ)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("[%d x i8]", info.Size), nil
+	}
 	if _, ok := typ.(*typeinfo.StringType); ok {
 		return "{ ptr, i64 }", nil
 	}
@@ -4935,6 +4972,12 @@ func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
 	case backend.ABITypeNamedInterface:
 		return "{ ptr, ptr }", nil
 	case backend.ABITypeOptionalAggregate:
+		info, err := llvmUnionLayoutInfo(state, typ)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("[%d x i8]", info.Size), nil
+	case backend.ABITypeErrorUnionAggregate:
 		info, err := llvmUnionLayoutInfo(state, typ)
 		if err != nil {
 			return "", err

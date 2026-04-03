@@ -9,6 +9,7 @@ const (
 	ABITypeNamedLayout
 	ABITypeNamedInterface
 	ABITypeOptionalAggregate
+	ABITypeErrorUnionAggregate
 	ABITypeSliceLike
 )
 
@@ -51,6 +52,9 @@ func ClassifyABIType(typ typeinfo.Type, hasNamedLayout func(*typeinfo.NamedType)
 	}
 	if opt, ok := typ.(*typeinfo.OptionalType); ok && !OptionalUsesNiche(opt.Inner) {
 		return ABITypeOptionalAggregate
+	}
+	if _, ok := typ.(*typeinfo.ErrorUnionType); ok {
+		return ABITypeErrorUnionAggregate
 	}
 	if IsSliceLikeType(typ) {
 		return ABITypeSliceLike

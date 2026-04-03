@@ -567,15 +567,7 @@ func (l *lowerer) lowerExpr(expr Expr) ([]Stmt, Expr) {
 	case *MatchExpr:
 		return l.lowerMatchExpr(e)
 	case *CatchExpr:
-		leftPrelude, left := l.lowerExpr(e.Left)
-		fallbackPrelude, fallback := l.lowerExpr(e.Fallback)
-		out := *e
-		out.Left = left
-		out.Fallback = fallback
-		out.Handler = l.lowerBlock(e.Handler)
-		prelude := append([]Stmt{}, leftPrelude...)
-		prelude = append(prelude, fallbackPrelude...)
-		return prelude, &out
+		return l.lowerCatchExpr(e)
 	case *CompositeLit:
 		out := *e
 		out.Items = append([]CompositeItem(nil), e.Items...)
@@ -623,6 +615,84 @@ func (l *lowerer) lowerMatchExpr(expr *MatchExpr) ([]Stmt, Expr) {
 	result := makeTempIdent(resultName, resultID, expr.Type(), expr.Loc())
 	result.Source = expr.SourceExpr()
 	return prelude, result
+}
+
+func (l *lowerer) lowerCatchExpr(expr *CatchExpr) ([]Stmt, Expr) {
+	if expr == nil {
+		return nil, nil
+	}
+	leftPrelude, left := l.lowerExpr(expr.Left)
+	errUnion, _ := left.Type().(*typeinfo.ErrorUnionType)
+	if errUnion == nil {
+		out := *expr
+		out.Left = left
+		out.Fallback = nil
+		out.Handler = l.lowerBlock(expr.Handler)
+		return leftPrelude, &out
+	}
+
+	unionName, unionID := l.nextTempLocal()
+	unionDecl := &LetStmt{Name: unionName, LocalID: unionID, Mutable: false, Type: left.Type(), Value: left}
+	SetStmtLocation(unionDecl, left.Loc())
+	unionValue := makeTempIdent(unionName, unionID, left.Type(), left.Loc())
+	unionValue.Source = left.SourceExpr()
+
+	resultName, resultID := l.nextTempLocal()
+	resultDecl := &LetStmt{Name: resultName, LocalID: resultID, Mutable: false, Type: expr.Type(), Value: nil}
+	SetStmtLocation(resultDecl, expr.Loc())
+	resultValue := makeTempIdent(resultName, resultID, expr.Type(), expr.Loc())
+	resultValue.Source = expr.SourceExpr()
+
+	cond := &IsExpr{Left: unionValue, Target: errUnion.Value, StaticKnown: false}
+	cond.ExprType = &typeinfo.BuiltinType{Name: "bool"}
+	cond.Location = expr.Loc()
+	cond.Source = expr.SourceExpr()
+
+	successCast := &CastExpr{Left: unionValue}
+	successCast.ExprType = errUnion.Value
+	successCast.Location = expr.Loc()
+	successCast.Source = expr.SourceExpr()
+	successAssign := &AssignStmt{Left: resultValue, Right: successCast}
+	SetStmtLocation(successAssign, expr.Loc())
+	thenBlock := &BlockStmt{Stmts: []Stmt{successAssign}}
+	SetStmtLocation(thenBlock, expr.Loc())
+
+	var elseStmt Stmt
+	if expr.Handler != nil {
+		handler := l.lowerBlock(expr.Handler)
+		if expr.PayloadName != "" && expr.PayloadID >= 0 {
+			payloadCast := &CastExpr{Left: unionValue}
+			payloadCast.ExprType = errUnion.Error
+			payloadCast.Location = expr.Loc()
+			payloadCast.Source = expr.SourceExpr()
+			payloadBind := &LetStmt{
+				Name:    expr.PayloadName,
+				LocalID: expr.PayloadID,
+				Mutable: false,
+				Type:    errUnion.Error,
+				Value:   payloadCast,
+			}
+			SetStmtLocation(payloadBind, expr.Loc())
+			handler.Stmts = append([]Stmt{payloadBind}, handler.Stmts...)
+		}
+		elseStmt = handler
+	} else {
+		fallbackPrelude, fallback := l.lowerExpr(expr.Fallback)
+		fallbackAssign := &AssignStmt{Left: resultValue, Right: fallback}
+		SetStmtLocation(fallbackAssign, expr.Loc())
+		elseBlock := &BlockStmt{Stmts: make([]Stmt, 0, len(fallbackPrelude)+1)}
+		SetStmtLocation(elseBlock, expr.Loc())
+		elseBlock.Stmts = append(elseBlock.Stmts, fallbackPrelude...)
+		elseBlock.Stmts = append(elseBlock.Stmts, fallbackAssign)
+		elseStmt = elseBlock
+	}
+
+	ifStmt := &IfStmt{Cond: cond, Then: thenBlock, Else: elseStmt}
+	SetStmtLocation(ifStmt, expr.Loc())
+
+	prelude := append([]Stmt{}, leftPrelude...)
+	prelude = append(prelude, unionDecl, resultDecl, ifStmt)
+	return prelude, resultValue
 }
 
 func (l *lowerer) lowerMatchExprArm(arm *MatchArm, resultName string, resultID int, resultType typeinfo.Type) *MatchArm {

@@ -2325,15 +2325,19 @@ func (c *checker) typeOfIs(scope *refineScope, expr *ast.IsExpr) typeinfo.Type {
 
 func (c *checker) unionContainsExactMember(source, target typeinfo.Type) bool {
 	unionType, ok := c.underlying(source).(*typeinfo.UnionType)
-	if !ok || unionType == nil {
+	if ok && unionType != nil {
+		for _, member := range unionType.Members {
+			if typeinfo.Equal(member, target) {
+				return true
+			}
+		}
 		return false
 	}
-	for _, member := range unionType.Members {
-		if typeinfo.Equal(member, target) {
-			return true
-		}
+	errUnion, ok := c.underlying(source).(*typeinfo.ErrorUnionType)
+	if !ok || errUnion == nil {
+		return false
 	}
-	return false
+	return typeinfo.Equal(errUnion.Error, target) || typeinfo.Equal(errUnion.Value, target)
 }
 
 func (c *checker) classifyTypeTest(left, target typeinfo.Type) (bool, bool, bool) {
@@ -2351,6 +2355,12 @@ func (c *checker) classifyTypeTest(left, target typeinfo.Type) (bool, bool, bool
 	}
 	if opt, ok := c.underlying(left).(*typeinfo.OptionalType); ok && opt != nil {
 		if typeinfo.Equal(opt.Inner, target) {
+			return false, false, true
+		}
+		return false, true, true
+	}
+	if errUnion, ok := c.underlying(left).(*typeinfo.ErrorUnionType); ok && errUnion != nil {
+		if typeinfo.Equal(errUnion.Error, target) || typeinfo.Equal(errUnion.Value, target) {
 			return false, false, true
 		}
 		return false, true, true
@@ -3317,6 +3327,9 @@ func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Ty
 func (c *checker) assignable(expected, got typeinfo.Type) bool {
 	if typeinfo.Assignable(expected, got) {
 		return true
+	}
+	if errUnion, ok := c.underlying(expected).(*typeinfo.ErrorUnionType); ok && errUnion != nil {
+		return c.assignable(errUnion.Error, got) || c.assignable(errUnion.Value, got)
 	}
 	if approx, ok := c.underlying(expected).(*typeinfo.ApproxType); ok && approx != nil {
 		if c.assignable(approx.Inner, got) {

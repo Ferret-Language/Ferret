@@ -1968,6 +1968,8 @@ func isUnionAggregate(typ typeinfo.Type) bool {
 		return true
 	case *typeinfo.OptionalType:
 		return !backend.OptionalUsesNiche(t.Inner)
+	case *typeinfo.ErrorUnionType:
+		return true
 	default:
 		return false
 	}
@@ -1988,6 +1990,56 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 		if _, isNone := value.(*mir.NoneValue); isNone {
 			return fmt.Sprintf("storew 0, %s", qbeLocalName(agg.PtrName)), nil
 		}
+	}
+	if call, ok := value.(*mir.CallValue); ok {
+		return lowerCall(state, agg.PtrName, agg.Type, call)
+	}
+	if tagValue, payloadValue, ok := backend.ResolveTaggedUnionComposite(agg.Type, value); ok {
+		info, err := unionLayoutInfo(state, agg.Type)
+		if err != nil {
+			return "", err
+		}
+		tag, err := lowerValue(state, tagValue)
+		if err != nil {
+			return "", err
+		}
+		lines := []string{fmt.Sprintf("storew %s, %s", tag, qbeLocalName(agg.PtrName))}
+		if payloadValue == nil {
+			return strings.Join(lines, "\n"), nil
+		}
+		dst := qbeLocalName(agg.PtrName)
+		if info.PayloadOffset != 0 {
+			tmp := freshTemp(state, "unionpayload")
+			lines = append(lines, fmt.Sprintf("%s =l add %s, %d", tmp, qbeLocalName(agg.PtrName), info.PayloadOffset))
+			dst = tmp
+		}
+		if isAggregateType(state, payloadValue.Type()) {
+			payloadLines, err := lowerAggregateValueToAddr(state, dst, payloadValue.Type(), payloadValue)
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, payloadLines...)
+			return strings.Join(lines, "\n"), nil
+		}
+		payload, err := lowerValue(state, payloadValue)
+		if err != nil {
+			return "", err
+		}
+		op, err := qbeStoreOp(payloadValue.Type())
+		if err != nil {
+			return "", err
+		}
+		if !qbeValueNeedsCopy(payloadValue) {
+			qtype, err := qbeBaseType(payloadValue.Type())
+			if err != nil {
+				return "", err
+			}
+			tmp := freshTemp(state, "store")
+			lines = append(lines, fmt.Sprintf("%s =%s %s", tmp, qtype, payload))
+			payload = tmp
+		}
+		lines = append(lines, fmt.Sprintf("%s %s, %s", op, payload, dst))
+		return strings.Join(lines, "\n"), nil
 	}
 	if isUnionAggregate(value.Type()) {
 		src, err := lowerAggregateSource(state, value)
@@ -3037,10 +3089,13 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if _, ok := dst.(*typeinfo.StringType); ok {
 		return lowerStringCast(state, v.Left)
 	}
-	if isUnionAggregate(v.Left.Type()) && !isAggregateType(state, v.Type()) {
+	if isUnionAggregate(v.Left.Type()) {
 		srcPtr, err := lowerUnionSource(state, v.Left)
 		if err != nil {
 			return "", err
+		}
+		if isAggregateType(state, v.Type()) {
+			return "copy " + srcPtr, nil
 		}
 		op, qtype, err := qbeLoadOp(v.Type())
 		if err != nil {
@@ -3215,47 +3270,38 @@ func unionLayoutInfo(state *moduleState, typ typeinfo.Type) (*backendUnionLayout
 			Members:       unionMemberTypes(info.Union),
 		}, nil
 	case *typeinfo.OptionalType:
-		payloadSize, payloadAlign, err := qbeScalarSizeAlign(t.Inner)
+		layoutInfo, err := backend.TaggedUnionLayoutInfo(aggregateLayoutContext(state), []typeinfo.Type{t.Inner})
 		if err != nil {
-			payloadSize, payloadAlign, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), t.Inner)
-			if err != nil {
-				return nil, err
-			}
+			return nil, err
 		}
-		payloadOffset := alignUpInt64(4, payloadAlign)
-		align := payloadAlign
-		if align < 4 {
-			align = 4
-		}
-		size := alignUpInt64(payloadOffset+payloadSize, align)
 		return &backendUnionLayout{
-			Size:          size,
-			Align:         align,
-			PayloadOffset: payloadOffset,
+			Size:          layoutInfo.Size,
+			Align:         layoutInfo.Align,
+			PayloadOffset: layoutInfo.PayloadOffset,
 			Members:       []typeinfo.Type{t.Inner},
 		}, nil
+	case *typeinfo.ErrorUnionType:
+		layoutInfo, err := backend.TaggedUnionLayoutInfo(aggregateLayoutContext(state), []typeinfo.Type{t.Error, t.Value})
+		if err != nil {
+			return nil, err
+		}
+		return &backendUnionLayout{
+			Size:          layoutInfo.Size,
+			Align:         layoutInfo.Align,
+			PayloadOffset: layoutInfo.PayloadOffset,
+			Members:       []typeinfo.Type{t.Error, t.Value},
+		}, nil
 	case *typeinfo.UnionType:
-		payloadSize := int64(0)
-		payloadAlign := int64(1)
-		for _, member := range t.Members {
-			size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), member)
-			if err != nil {
-				return nil, err
-			}
-			if size > payloadSize {
-				payloadSize = size
-			}
-			if align > payloadAlign {
-				payloadAlign = align
-			}
+		layoutInfo, err := backend.TaggedUnionLayoutInfo(aggregateLayoutContext(state), t.Members)
+		if err != nil {
+			return nil, err
 		}
-		payloadOffset := alignUpInt64(4, payloadAlign)
-		align := payloadAlign
-		if align < 4 {
-			align = 4
-		}
-		size := alignUpInt64(payloadOffset+payloadSize, align)
-		return &backendUnionLayout{Size: size, Align: align, PayloadOffset: payloadOffset, Members: t.Members}, nil
+		return &backendUnionLayout{
+			Size:          layoutInfo.Size,
+			Align:         layoutInfo.Align,
+			PayloadOffset: layoutInfo.PayloadOffset,
+			Members:       t.Members,
+		}, nil
 	default:
 		return nil, fmt.Errorf("type %s has no union layout", typeinfo.FormatType(typeStringer{typ}))
 	}
@@ -3400,13 +3446,6 @@ func aggregateLayoutContext(state *moduleState) backend.AggregateLayoutContext {
 	return backend.AggregateLayoutContext{
 		BackendName:     "qbe",
 		ScalarSizeAlign: qbeScalarSizeAlign,
-		OptionalSizeFunc: func(optional typeinfo.Type) (int64, int64, error) {
-			info, err := unionLayoutInfo(state, optional)
-			if err != nil {
-				return 0, 0, err
-			}
-			return info.Size, info.Align, nil
-		},
 		LookupNamed: func(named *typeinfo.NamedType) (*layout.TypeLayout, error) {
 			return becommon.LookupNamedLayoutFromState(state.layouts, state.layout, state.mod, named, "qbe")
 		},
@@ -3451,6 +3490,9 @@ func qbeAggregateSubType(state *moduleState, typ typeinfo.Type) (string, error) 
 		if !backend.OptionalUsesNiche(opt.Inner) {
 			return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
 		}
+	}
+	if _, ok := typ.(*typeinfo.ErrorUnionType); ok {
+		return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
 	}
 	return qbeExtType(typ)
 }
@@ -3513,6 +3555,8 @@ func qbeABIType(state *moduleState, typ typeinfo.Type) (string, error) {
 	case backend.ABITypeNamedInterface:
 		return ":__ferret_iface", nil
 	case backend.ABITypeOptionalAggregate:
+		return fmt.Sprintf(":__ferret_opt_%d", mustAggregateSize(state, typ)), nil
+	case backend.ABITypeErrorUnionAggregate:
 		return fmt.Sprintf(":__ferret_opt_%d", mustAggregateSize(state, typ)), nil
 	case backend.ABITypeSliceLike:
 		return ":__ferret_slice", nil
