@@ -1,44 +1,51 @@
 import "std/string"
 
-fn echo(value: string::String) -> string::String {
-    return value
+fn greet(prefix: str, name: str) -> string::String {
+    let mut out = string::FromStr(prefix)
+    out.PushStr(name)
+    out.PushStr("!")
+    return out
+}
+
+fn append_label(mut text: string::String, label: str) -> string::String {
+    text.PushStr(label)
+    return text
 }
 
 fn main() -> void {
-    let mut greeting = string::New()
-    greeting.PushStr("he")
-    greeting.PushStr("llo")
+    let mut welcome = greet("Hello, ", "Ferret")
+    welcome = append_label(welcome, " Playground")
 
-    let mut moved = echo(greeting)
-    let len_before = moved.Len()
-    let cap_before = moved.Capacity()
+    let len_before = welcome.Len()
+    let cap_before = welcome.Capacity()
 
-    moved.Reserve(20)
-    let bytes = moved.Bytes()
-    let text = moved.AsStr()
+    welcome.Reserve(16)
 
-    let mut copied = string::FromStr("xy")
-    copied.Clear()
+    let view = welcome.AsStr()
+    let bytes = welcome.Bytes()
 
-    if text == "hello" &&
-        len_before == 5 &&
-        cap_before >= 5 &&
-        moved.Capacity() >= 25 &&
-        !moved.IsEmpty() &&
-        bytes[0] == b'h' &&
-        bytes[4] == b'o' &&
-        text[1] == 'e' &&
-        copied.IsEmpty() &&
-        copied.Len() == 0 &&
-        copied.AsStr() == "" {
-        moved.Release()
-        copied.Release()
+    let mut draft = string::FromStr("draft")
+    draft.Clear()
+
+    if view == "Hello, Ferret! Playground" &&
+        len_before == 25 &&
+        cap_before >= 25 &&
+        welcome.Capacity() >= 41 &&
+        !welcome.IsEmpty() &&
+        bytes[0] == b'H' &&
+        bytes[7] == b'F' &&
+        bytes[24] == b'd' &&
+        view[7] == 'F' &&
+        draft.IsEmpty() &&
+        draft.AsStr() == "" {
+        welcome.Release()
+        draft.Release()
         print("string-stdlib-ok")
         return
     }
 
-    moved.Release()
-    copied.Release()
+    welcome.Release()
+    draft.Release()
     print("string-stdlib-fail")
     exit(1)
 }

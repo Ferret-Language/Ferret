@@ -609,7 +609,7 @@ fn main() -> i32 {
 	text := artifact.Text
 	for _, want := range []string{
 		"%p =l alloc4 8",
-		"call $math__vec2__Origin()",
+		"call $math__vec2__Origin(l %p)",
 		"%_t1 =w loadw %p",
 	} {
 		if !strings.Contains(text, want) {
@@ -998,7 +998,7 @@ fn main() -> str {
 	text := artifact.Text
 	for _, want := range []string{
 		"data $vtable__local__main__Stringer__Name = { l $typeinfo__main__Name, l $ifacewrap__local__main__Stringer__Name__String }",
-		"function :__ferret_slice $ifacewrap__local__main__Stringer__Name__String(l %data)",
+		"function $ifacewrap__local__main__Stringer__Name__String(l %ret, l %data)",
 		"%s =l alloc8 16",
 		"%_iface_fn",
 		"call %_iface_fn",
