@@ -2127,18 +2127,23 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 
 	target := c.typeFromSyntax(c.mod, expr.Type)
 	expected := target
-	if targetSlice, ok := c.underlying(target).(*typeinfo.SliceType); ok && targetSlice != nil {
-		if comp, ok := expr.Left.(*ast.CompositeLit); ok && comp != nil && comp.Type == nil && len(comp.Items) == 2 {
-			rawParts := true
-			for _, item := range comp.Items {
-				if item.Name != nil {
-					rawParts = false
-					break
-				}
+	if comp, ok := expr.Left.(*ast.CompositeLit); ok && comp != nil && comp.Type == nil && len(comp.Items) == 2 {
+		rawParts := true
+		for _, item := range comp.Items {
+			if item.Name != nil {
+				rawParts = false
+				break
 			}
-			if rawParts {
+		}
+		if rawParts {
+			if targetSlice, ok := c.underlying(target).(*typeinfo.SliceType); ok && targetSlice != nil {
 				expected = &typeinfo.TupleType{Elems: []typeinfo.Type{
 					&typeinfo.RawPtrType{Const: true, Inner: targetSlice.Inner},
+					&typeinfo.BuiltinType{Name: "usize"},
+				}}
+			} else if _, ok := c.underlying(target).(*typeinfo.StringType); ok {
+				expected = &typeinfo.TupleType{Elems: []typeinfo.Type{
+					&typeinfo.RawPtrType{Const: true, Inner: &typeinfo.BuiltinType{Name: "u8"}},
 					&typeinfo.BuiltinType{Name: "usize"},
 				}}
 			}
@@ -2169,7 +2174,15 @@ func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Ty
 		c.info.BindNode(expr, target)
 		return target
 	}
-	if c.isSliceToRawCast(scope, expr.Left, target, sourceType) || c.isRawPartsToSliceCast(target, sourceType) {
+	rawPartsToString := false
+	if _, ok := c.underlying(target).(*typeinfo.StringType); ok {
+		if sourceTuple, ok := c.underlying(sourceType).(*typeinfo.TupleType); ok && sourceTuple != nil && len(sourceTuple.Elems) == 2 {
+			if ptrType, ok := c.underlying(sourceTuple.Elems[0]).(*typeinfo.RawPtrType); ok && ptrType != nil && typeinfo.IsBuiltinNamed(ptrType.Inner, "u8") {
+				rawPartsToString = typeinfo.Equal(c.underlying(sourceTuple.Elems[1]), &typeinfo.BuiltinType{Name: "usize"})
+			}
+		}
+	}
+	if c.isSliceToRawCast(scope, expr.Left, target, sourceType) || c.isRawPartsToSliceCast(target, sourceType) || rawPartsToString {
 		if targetSlice, ok := c.underlying(target).(*typeinfo.SliceType); ok && targetSlice != nil {
 			switch src := c.underlying(sourceType).(type) {
 			case *typeinfo.SliceType:

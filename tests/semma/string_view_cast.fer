@@ -1,0 +1,17 @@
+fn main() -> void {
+    let mut bytes: [2]u8 = [2]u8{104, 105}
+
+    unsafe {
+        let ptr = bytes as ^const u8
+        let text = (ptr, 2 as usize) as str
+        bytes[1] = b'!'
+
+        if text[0] == 'h' && text[1] == '!' && len(&text) == 2 {
+            print("string-view-cast-ok")
+            return
+        }
+    }
+
+    print("string-view-cast-fail")
+    exit(1)
+}

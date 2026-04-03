@@ -965,6 +965,66 @@ fn main() -> u8 {
 	}
 }
 
+func TestPipelineLowersRawPartsStringCastAsStringComposite(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+fn main() -> str {
+    let bytes: []u8 = []u8{104, 105}
+    unsafe {
+        let ptr = bytes as ^const u8
+        return (ptr, 2 as usize) as str
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			var value mir.Value
+			switch ins := instr.(type) {
+			case *mir.AssignInstr:
+				value = ins.Value
+			case *mir.ComputeInstr:
+				value = ins.Value
+			}
+			comp, ok := value.(*mir.CompositeValue)
+			if !ok {
+				continue
+			}
+			if _, ok := comp.Type().(*typeinfo.StringType); !ok {
+				continue
+			}
+			if len(comp.Items) != 2 || comp.Items[0].Name != "ptr" || comp.Items[1].Name != "len" {
+				t.Fatalf("expected raw-parts string composite, got %#v", comp.Items)
+			}
+			if _, ok := comp.Items[0].Value.Type().(*typeinfo.RawPtrType); !ok {
+				t.Fatalf("expected ptr item to lower as raw pointer, got %#v", comp.Items[0].Value.Type())
+			}
+			return
+		}
+	}
+
+	t.Fatalf("expected lowered raw-parts string composite in MIR, got %#v", mainFn.Blocks)
+}
+
 func TestPipelinePreservesAnnotatedUnionLocalTypeInMIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.fer"), `

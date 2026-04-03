@@ -925,7 +925,7 @@ func lowerSpecialCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bool) {
 	if value, ok := lowerSliceToRawCastValue(c, cast); ok {
 		return value, true
 	}
-	return lowerRawPartsSliceCastValue(c, cast)
+	return lowerRawPartsViewCastValue(c, cast)
 }
 
 func lowerSliceToRawCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bool) {
@@ -944,9 +944,13 @@ func lowerSliceToRawCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bool)
 	}
 }
 
-func lowerRawPartsSliceCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bool) {
-	targetSlice, ok := cast.Type().(*typeinfo.SliceType)
-	if !ok || targetSlice == nil {
+func lowerRawPartsViewCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bool) {
+	ptrType := typeinfo.Type(&typeinfo.RawPtrType{Const: true, Inner: &typeinfo.BuiltinType{Name: "u8"}})
+	switch target := cast.Type().(type) {
+	case *typeinfo.SliceType:
+		ptrType = &typeinfo.RawPtrType{Const: !target.Mutable, Inner: target.Inner}
+	case *typeinfo.StringType:
+	default:
 		return nil, false
 	}
 	sourceTuple, ok := cast.Left.Type().(*typeinfo.TupleType)
@@ -956,7 +960,7 @@ func lowerRawPartsSliceCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bo
 	return &CompositeValue{
 		baseValue: baseValue{Location: cast.Loc(), ExprType: cast.Type()},
 		Items: []CompositeItem{
-			{Name: "ptr", Value: lowerTupleCastElementValue(c, cast.Left, 0, &typeinfo.RawPtrType{Const: !targetSlice.Mutable, Inner: targetSlice.Inner})},
+			{Name: "ptr", Value: lowerTupleCastElementValue(c, cast.Left, 0, ptrType)},
 			{Name: "len", Value: lowerTupleCastElementValue(c, cast.Left, 1, &typeinfo.BuiltinType{Name: "usize"})},
 		},
 	}, true

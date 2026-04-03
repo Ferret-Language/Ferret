@@ -1239,6 +1239,35 @@ fn main() -> void {
 	}
 }
 
+func TestTypecheckerAllowsRawPartsCastToStr(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let bytes: []u8 = []u8{104, 105}
+    unsafe {
+        let ptr = bytes as ^const u8
+        let text = (ptr, 2 as usize) as str
+        print(text)
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	unsafeStmt, ok := mainFn.Body.Stmts[1].(*ast.UnsafeStmt)
+	if !ok {
+		t.Fatalf("expected unsafe stmt, got %#v", mainFn.Body.Stmts[1])
+	}
+	letText := unsafeStmt.Body.Stmts[1].(*ast.LetStmt)
+	if _, ok := result.Entry.Types.Nodes[letText.Value].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected raw-parts cast to typecheck as str, got %#v", result.Entry.Types.Nodes[letText.Value])
+	}
+}
+
 func TestTypecheckerAllowsConcreteTypeAssignmentToInterface(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
