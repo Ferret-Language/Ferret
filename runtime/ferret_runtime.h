@@ -36,7 +36,29 @@ typedef struct {
     ferret_usize     size;    /* sizeof the type in bytes                 */
     ferret_usize     align;   /* alignof the type in bytes                */
     ferret_u32       flags;   /* runtime classification bits              */
+    const void      *meta;    /* optional composite print metadata        */
 } FerretTypeInfo;
+
+typedef struct {
+    const FerretTypeInfo *elem;
+    ferret_usize          stride;
+} FerretSliceTypeInfo;
+
+typedef struct {
+    const FerretTypeInfo *elem;
+    ferret_usize          len;
+    ferret_usize          stride;
+} FerretArrayTypeInfo;
+
+typedef struct {
+    ferret_usize          offset;
+    const FerretTypeInfo *type;
+} FerretTupleFieldInfo;
+
+typedef struct {
+    ferret_usize                len;
+    const FerretTupleFieldInfo *fields;
+} FerretTupleTypeInfo;
 
 #define FERRET_TYPE_BOOL   1u
 #define FERRET_TYPE_I8     2u
@@ -60,6 +82,8 @@ typedef struct {
 #define FERRET_TYPE_FLAG_SLICE     (1u << 3)
 #define FERRET_TYPE_FLAG_INTEGER   (1u << 4)
 #define FERRET_TYPE_FLAG_SIGNED    (1u << 5)
+#define FERRET_TYPE_FLAG_ARRAY     (1u << 6)
+#define FERRET_TYPE_FLAG_TUPLE     (1u << 7)
 
 /* `FerretAny` (declared in ferrettypes.h) is the stable ABI type for empty
  * interface values across C helpers and runtime-adjacent extern functions. */

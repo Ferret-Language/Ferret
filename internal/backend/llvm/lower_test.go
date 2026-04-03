@@ -56,7 +56,7 @@ fn main() -> str {
 	for _, want := range []string{
 		"%local__main__Stringer = type { ptr, ptr }",
 		"@vtable__local__main__Stringer__Name = private unnamed_addr constant [2 x ptr]",
-		"@typeinfo__main__Name = private unnamed_addr constant { i32, ptr, i64, i64, i32 }",
+		"@typeinfo__main__Name = private unnamed_addr constant { i32, ptr, i64, i64, i32, ptr }",
 		"define { ptr, i64 } @ifacewrap__local__main__Stringer__Name__String(ptr %data)",
 		"%_iface_fnslot",
 		"%_iface_fn",
@@ -389,6 +389,42 @@ fn main() -> void {
 		"store i8 1, ptr %_iface_data",
 		"store i64 3, ptr %_len_addr",
 		"call void @ferret_global_print(ptr %_t4)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerStructuredPrintTypeInfoToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let arr: [3]i32 = [3]i32{1, 2, 3}
+    let items: []i32 = []i32{4, 5}
+    let pair: (i32, bool, str) = (7, true, "ok")
+    print(arr, items, pair)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm structured print: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"@typeinfo__array_3__i32__meta = private unnamed_addr constant { ptr, i64, i64 }",
+		"@typeinfo__slice__i32__meta = private unnamed_addr constant { ptr, i64 }",
+		"@typeinfo__tuple__i32__bool__str__fields = private unnamed_addr constant [3 x { i64, ptr }]",
+		"@typeinfo__tuple__i32__bool__str__meta = private unnamed_addr constant { i64, ptr }",
+		"call void @ferret_global_print(ptr",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

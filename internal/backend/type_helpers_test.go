@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"errors"
 	"testing"
 
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -86,5 +87,58 @@ func TestDescribeRuntimeTypeMarksArbitraryWidthIntegers(t *testing.T) {
 	}
 	if desc.Flags&RuntimeTypeFlagSigned != 0 {
 		t.Fatalf("expected u1024 runtime flags to stay unsigned, got %#x", desc.Flags)
+	}
+}
+
+func TestDescribeRuntimeTypeLayoutCapturesCompositePrintShape(t *testing.T) {
+	ctx := AggregateLayoutContext{
+		BackendName: "test",
+		ScalarSizeAlign: func(typ typeinfo.Type) (int64, int64, error) {
+			switch t := typ.(type) {
+			case *typeinfo.BuiltinType:
+				switch t.Name {
+				case "i32":
+					return 4, 4, nil
+				case "bool":
+					return 1, 1, nil
+				case "usize":
+					return 8, 8, nil
+				}
+			case *typeinfo.StringType:
+				return 16, 8, nil
+			}
+			return 0, 0, errors.New("unsupported type")
+		},
+	}
+
+	arrayDesc, err := DescribeRuntimeTypeLayout(ctx, &typeinfo.ArrayType{Len: 3, Inner: &typeinfo.BuiltinType{Name: "i32"}})
+	if err != nil {
+		t.Fatalf("describe array layout: %v", err)
+	}
+	if arrayDesc.Flags&RuntimeTypeFlagArray == 0 || arrayDesc.Stride != 4 || arrayDesc.Length != 3 {
+		t.Fatalf("unexpected array descriptor: %#v", arrayDesc)
+	}
+
+	sliceDesc, err := DescribeRuntimeTypeLayout(ctx, &typeinfo.SliceType{Inner: &typeinfo.BuiltinType{Name: "bool"}})
+	if err != nil {
+		t.Fatalf("describe slice layout: %v", err)
+	}
+	if sliceDesc.Flags&RuntimeTypeFlagSlice == 0 || sliceDesc.Stride != 1 {
+		t.Fatalf("unexpected slice descriptor: %#v", sliceDesc)
+	}
+
+	tupleDesc, err := DescribeRuntimeTypeLayout(ctx, &typeinfo.TupleType{Elems: []typeinfo.Type{
+		&typeinfo.BuiltinType{Name: "i32"},
+		&typeinfo.BuiltinType{Name: "bool"},
+		&typeinfo.StringType{},
+	}})
+	if err != nil {
+		t.Fatalf("describe tuple layout: %v", err)
+	}
+	if tupleDesc.Flags&RuntimeTypeFlagTuple == 0 || len(tupleDesc.Fields) != 3 {
+		t.Fatalf("unexpected tuple descriptor: %#v", tupleDesc)
+	}
+	if tupleDesc.Fields[0].Offset != 0 || tupleDesc.Fields[1].Offset != 4 || tupleDesc.Fields[2].Offset != 8 {
+		t.Fatalf("unexpected tuple field offsets: %#v", tupleDesc.Fields)
 	}
 }

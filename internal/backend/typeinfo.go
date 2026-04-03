@@ -32,12 +32,23 @@ const (
 	RuntimeTypeFlagSlice     = 1 << 3
 	RuntimeTypeFlagInteger   = 1 << 4
 	RuntimeTypeFlagSigned    = 1 << 5
+	RuntimeTypeFlagArray     = 1 << 6
+	RuntimeTypeFlagTuple     = 1 << 7
 )
 
 type RuntimeTypeDescriptor struct {
-	Name  string
-	ID    uint32
-	Flags uint32
+	Name   string
+	ID     uint32
+	Flags  uint32
+	Elem   typeinfo.Type
+	Length int64
+	Stride int64
+	Fields []RuntimeTypeFieldDescriptor
+}
+
+type RuntimeTypeFieldDescriptor struct {
+	Offset int64
+	Type   typeinfo.Type
 }
 
 func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
@@ -109,4 +120,40 @@ func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
 		desc.Flags |= RuntimeTypeFlagSlice
 	}
 	return desc
+}
+
+func DescribeRuntimeTypeLayout(ctx AggregateLayoutContext, typ typeinfo.Type) (RuntimeTypeDescriptor, error) {
+	desc := DescribeRuntimeType(typ)
+	switch t := typ.(type) {
+	case *typeinfo.ArrayType:
+		elemSize, elemAlign, err := aggregateElementSizeAlign(ctx, t.Inner)
+		if err != nil {
+			return desc, err
+		}
+		desc.Flags |= RuntimeTypeFlagArray
+		desc.Elem = t.Inner
+		desc.Length = t.Len
+		desc.Stride = AlignUpInt64(elemSize, elemAlign)
+	case *typeinfo.SliceType:
+		elemSize, elemAlign, err := aggregateElementSizeAlign(ctx, t.Inner)
+		if err != nil {
+			return desc, err
+		}
+		desc.Elem = t.Inner
+		desc.Stride = AlignUpInt64(elemSize, elemAlign)
+	case *typeinfo.TupleType:
+		entries, _, _, err := TupleLayout(ctx, t)
+		if err != nil {
+			return desc, err
+		}
+		desc.Flags |= RuntimeTypeFlagTuple
+		desc.Fields = make([]RuntimeTypeFieldDescriptor, 0, len(entries))
+		for _, entry := range entries {
+			desc.Fields = append(desc.Fields, RuntimeTypeFieldDescriptor{
+				Offset: entry.Offset,
+				Type:   entry.Type,
+			})
+		}
+	}
+	return desc, nil
 }

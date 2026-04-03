@@ -3414,15 +3414,63 @@ func ensureLLVMRuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, e
 		return sym, nil
 	}
 	sym := becommon.SanitizeIdent("typeinfo__" + key)
-	desc := backend.DescribeRuntimeType(typ)
+	desc, err := backend.DescribeRuntimeTypeLayout(aggregateLayoutContext(state), typ)
+	if err != nil {
+		return "", err
+	}
 	nameSym := emitStringConstant(state, desc.Name)
 	size, align, err := llvmRuntimeTypeSizeAlign(state, typ)
 	if err != nil {
 		return "", err
 	}
+	metaRef := "ptr null"
+	switch {
+	case desc.Flags&backend.RuntimeTypeFlagArray != 0:
+		elemSym, err := ensureLLVMRuntimeTypeInfo(state, desc.Elem)
+		if err != nil {
+			return "", err
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB,
+			"@%s = private unnamed_addr constant { ptr, i64, i64 } { ptr @%s, i64 %d, i64 %d }\n",
+			metaSym, elemSym, desc.Length, desc.Stride)
+		metaRef = "ptr @" + metaSym
+	case desc.Flags&backend.RuntimeTypeFlagSlice != 0 && desc.Elem != nil:
+		elemSym, err := ensureLLVMRuntimeTypeInfo(state, desc.Elem)
+		if err != nil {
+			return "", err
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB,
+			"@%s = private unnamed_addr constant { ptr, i64 } { ptr @%s, i64 %d }\n",
+			metaSym, elemSym, desc.Stride)
+		metaRef = "ptr @" + metaSym
+	case desc.Flags&backend.RuntimeTypeFlagTuple != 0:
+		fieldsRef := "ptr null"
+		if len(desc.Fields) != 0 {
+			fieldSym := sym + "__fields"
+			entries := make([]string, 0, len(desc.Fields))
+			for _, field := range desc.Fields {
+				fieldTypeSym, err := ensureLLVMRuntimeTypeInfo(state, field.Type)
+				if err != nil {
+					return "", err
+				}
+				entries = append(entries, fmt.Sprintf("{ i64, ptr } { i64 %d, ptr @%s }", field.Offset, fieldTypeSym))
+			}
+			fmt.Fprintf(state.deferredB,
+				"@%s = private unnamed_addr constant [%d x { i64, ptr }] [%s]\n",
+				fieldSym, len(entries), strings.Join(entries, ", "))
+			fieldsRef = fmt.Sprintf("ptr @%s", fieldSym)
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB,
+			"@%s = private unnamed_addr constant { i64, ptr } { i64 %d, %s }\n",
+			metaSym, len(desc.Fields), fieldsRef)
+		metaRef = "ptr @" + metaSym
+	}
 	fmt.Fprintf(state.deferredB,
-		"@%s = private unnamed_addr constant { i32, ptr, i64, i64, i32 } { i32 %d, ptr @%s, i64 %d, i64 %d, i32 %d }\n",
-		sym, desc.ID, nameSym, size, align, desc.Flags)
+		"@%s = private unnamed_addr constant { i32, ptr, i64, i64, i32, ptr } { i32 %d, ptr @%s, i64 %d, i64 %d, i32 %d, %s }\n",
+		sym, desc.ID, nameSym, size, align, desc.Flags, metaRef)
 	state.runtimeTypes[key] = sym
 	return sym, nil
 }

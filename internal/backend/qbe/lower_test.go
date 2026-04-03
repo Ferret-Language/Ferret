@@ -681,6 +681,42 @@ fn main() -> void {
 	}
 }
 
+func TestLowerStructuredPrintTypeInfoToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let arr: [3]i32 = [3]i32{1, 2, 3}
+    let items: []i32 = []i32{4, 5}
+    let pair: (i32, bool, str) = (7, true, "ok")
+    print(arr, items, pair)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe structured print: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"data $typeinfo__array_3__i32__meta = { l $typeinfo__i32, l 3, l 4 }",
+		"data $typeinfo__slice__i32__meta = { l $typeinfo__i32, l 4 }",
+		"data $typeinfo__tuple__i32__bool__str__fields = { l 0, l $typeinfo__i32, l 4, l $typeinfo__bool, l 8, l $typeinfo__str }",
+		"data $typeinfo__tuple__i32__bool__str__meta = { l 3, l $typeinfo__tuple__i32__bool__str__fields }",
+		"call $ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerUnionLocalAssignmentToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

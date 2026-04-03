@@ -32,7 +32,7 @@ static void ferret__twos_complement_abs_big_endian(ferret_u8 *bytes, ferret_usiz
     }
 }
 
-static void ferret__print_big_integer(const void *data, const FerretTypeInfo *info) {
+static void ferret__write_big_integer(const void *data, const FerretTypeInfo *info) {
     ferret_usize size;
     ferret_u8 *work;
     char *digits;
@@ -41,16 +41,14 @@ static void ferret__print_big_integer(const void *data, const FerretTypeInfo *in
     ferret_usize i;
 
     if (data == NULL || info == NULL || info->size == 0) {
-        fputs("0\n", stdout);
-        fflush(stdout);
+        fputc('0', stdout);
         return;
     }
 
     size = info->size;
     work = (ferret_u8 *)malloc((size_t)size);
     if (work == NULL) {
-        fprintf(stdout, "<%s %p>\n", info->name ? (const char *)info->name : "int", data);
-        fflush(stdout);
+        fprintf(stdout, "<%s %p>", info->name ? (const char *)info->name : "int", data);
         return;
     }
     ferret__copy_integer_big_endian(data, size, work);
@@ -63,8 +61,7 @@ static void ferret__print_big_integer(const void *data, const FerretTypeInfo *in
     digits = (char *)malloc((size_t)(size * 3u + 2u));
     if (digits == NULL) {
         free(work);
-        fprintf(stdout, "<%s %p>\n", info->name ? (const char *)info->name : "int", data);
-        fflush(stdout);
+        fprintf(stdout, "<%s %p>", info->name ? (const char *)info->name : "int", data);
         return;
     }
 
@@ -93,115 +90,184 @@ static void ferret__print_big_integer(const void *data, const FerretTypeInfo *in
     while (digit_count > 0) {
         fputc(digits[--digit_count], stdout);
     }
-    fputc('\n', stdout);
-    fflush(stdout);
 
     free(digits);
     free(work);
 }
 
-static void ferret__print_any(const FerretAny *value) {
+static void ferret__write_typed(const void *data, const FerretTypeInfo *info);
+
+static void ferret__write_dynamic(const FerretAny *value) {
     if (value == NULL || (value->data == NULL && value->vtable == NULL)) {
-        fputs("<any:nil>\n", stdout);
-        fflush(stdout);
+        fputs("<any:nil>", stdout);
         return;
     }
     if (value->vtable != NULL) {
         const void *const *vtable = (const void *const *)value->vtable;
         const FerretTypeInfo *info = (const FerretTypeInfo *)vtable[0];
         if (info != NULL) {
-            const char *type_name = (const char *)info->name;
-            switch (info->id) {
-            case FERRET_TYPE_BOOL:
-                fputs((*(const ferret_bool *)value->data) ? "true\n" : "false\n", stdout);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_I8:
-                fprintf(stdout, "%d\n", (int)*(const ferret_i8 *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_I16:
-                fprintf(stdout, "%d\n", (int)*(const ferret_i16 *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_I32:
-                fprintf(stdout, "%d\n", (int)*(const ferret_i32 *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_I64:
-                fprintf(stdout, "%lld\n", (long long)*(const ferret_i64 *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_ISIZE:
-                fprintf(stdout, "%ld\n", (long)*(const ferret_isize *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_U8:
-                fprintf(stdout, "%u\n", (unsigned)*(const ferret_u8 *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_U16:
-                fprintf(stdout, "%u\n", (unsigned)*(const ferret_u16 *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_U32:
-                fprintf(stdout, "%u\n", (unsigned)*(const ferret_u32 *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_U64:
-                fprintf(stdout, "%llu\n", (unsigned long long)*(const ferret_u64 *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_USIZE:
-                fprintf(stdout, "%lu\n", (unsigned long)*(const ferret_usize *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_F32:
-                fprintf(stdout, "%.9g\n", (double)*(const ferret_f32 *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_F64:
-                fprintf(stdout, "%.17g\n", (double)*(const ferret_f64 *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_CHAR:
-                fprintf(stdout, "%u\n", (unsigned)*(const ferret_char *)value->data);
-                fflush(stdout);
-                return;
-            case FERRET_TYPE_STR: {
-                const FerretStr *s = (const FerretStr *)value->data;
-                if (s != NULL && s->ptr != NULL && s->len != 0) {
-                    fwrite(s->ptr, 1u, (size_t)s->len, stdout);
-                }
-                fputc('\n', stdout);
-                fflush(stdout);
-                return;
-            }
-            default:
-                break;
-            }
-
-            if ((info->flags & FERRET_TYPE_FLAG_INTEGER) != 0u) {
-                ferret__print_big_integer(value->data, info);
-                return;
-            }
-            if ((info->flags & FERRET_TYPE_FLAG_POINTER) != 0u) {
-                fprintf(stdout, "%p\n", value->data ? *(void *const *)value->data : NULL);
-                fflush(stdout);
-                return;
-            }
-            if (type_name != NULL) {
-                fprintf(stdout, "<%s %p>\n", type_name, value->data);
-                fflush(stdout);
-                return;
-            }
-            fprintf(stdout, "<type#%u %p>\n", (unsigned)info->id, value->data);
-            fflush(stdout);
+            ferret__write_typed(value->data, info);
             return;
         }
     }
-    fprintf(stdout, "<any %p>\n", value->data);
-    fflush(stdout);
+    fprintf(stdout, "<any %p>", value->data);
+}
+
+static void ferret__write_array(const void *data, const FerretTypeInfo *info) {
+    const FerretArrayTypeInfo *meta = (const FerretArrayTypeInfo *)info->meta;
+    const ferret_u8 *base = (const ferret_u8 *)data;
+    ferret_usize i;
+
+    fputs((const char *)info->name, stdout);
+    fputc('{', stdout);
+    if (meta != NULL && meta->elem != NULL && base != NULL) {
+        for (i = 0; i < meta->len; i++) {
+            if (i != 0) {
+                fputs(", ", stdout);
+            }
+            if ((meta->elem->flags & FERRET_TYPE_FLAG_INTERFACE) != 0u) {
+                ferret__write_dynamic((const FerretAny *)(base + (i * meta->stride)));
+            } else {
+                ferret__write_typed(base + (i * meta->stride), meta->elem);
+            }
+        }
+    }
+    fputc('}', stdout);
+}
+
+static void ferret__write_slice(const void *data, const FerretTypeInfo *info) {
+    const FerretSliceTypeInfo *meta = (const FerretSliceTypeInfo *)info->meta;
+    const FerretSlicePtr *slice = (const FerretSlicePtr *)data;
+    const ferret_u8 *base;
+    ferret_usize i;
+
+    fputs((const char *)info->name, stdout);
+    fputc('{', stdout);
+    if (meta != NULL && meta->elem != NULL && slice != NULL && slice->ptr != NULL) {
+        base = (const ferret_u8 *)slice->ptr;
+        for (i = 0; i < slice->len; i++) {
+            if (i != 0) {
+                fputs(", ", stdout);
+            }
+            if ((meta->elem->flags & FERRET_TYPE_FLAG_INTERFACE) != 0u) {
+                ferret__write_dynamic((const FerretAny *)(base + (i * meta->stride)));
+            } else {
+                ferret__write_typed(base + (i * meta->stride), meta->elem);
+            }
+        }
+    }
+    fputc('}', stdout);
+}
+
+static void ferret__write_tuple(const void *data, const FerretTypeInfo *info) {
+    const FerretTupleTypeInfo *meta = (const FerretTupleTypeInfo *)info->meta;
+    const ferret_u8 *base = (const ferret_u8 *)data;
+    ferret_usize i;
+
+    fputc('(', stdout);
+    if (meta != NULL && meta->fields != NULL && base != NULL) {
+        for (i = 0; i < meta->len; i++) {
+            const FerretTupleFieldInfo *field = &meta->fields[i];
+            if (i != 0) {
+                fputs(", ", stdout);
+            }
+            if (field->type != NULL && (field->type->flags & FERRET_TYPE_FLAG_INTERFACE) != 0u) {
+                ferret__write_dynamic((const FerretAny *)(base + field->offset));
+            } else {
+                ferret__write_typed(base + field->offset, field->type);
+            }
+        }
+    }
+    fputc(')', stdout);
+}
+
+static void ferret__write_typed(const void *data, const FerretTypeInfo *info) {
+    const char *type_name = info != NULL ? (const char *)info->name : NULL;
+
+    if (info == NULL) {
+        fprintf(stdout, "<type:nil %p>", data);
+        return;
+    }
+
+    switch (info->id) {
+    case FERRET_TYPE_BOOL:
+        fputs((data != NULL && *(const ferret_bool *)data) ? "true" : "false", stdout);
+        return;
+    case FERRET_TYPE_I8:
+        fprintf(stdout, "%d", data != NULL ? (int)*(const ferret_i8 *)data : 0);
+        return;
+    case FERRET_TYPE_I16:
+        fprintf(stdout, "%d", data != NULL ? (int)*(const ferret_i16 *)data : 0);
+        return;
+    case FERRET_TYPE_I32:
+        fprintf(stdout, "%d", data != NULL ? (int)*(const ferret_i32 *)data : 0);
+        return;
+    case FERRET_TYPE_I64:
+        fprintf(stdout, "%lld", data != NULL ? (long long)*(const ferret_i64 *)data : 0LL);
+        return;
+    case FERRET_TYPE_ISIZE:
+        fprintf(stdout, "%ld", data != NULL ? (long)*(const ferret_isize *)data : 0L);
+        return;
+    case FERRET_TYPE_U8:
+        fprintf(stdout, "%u", data != NULL ? (unsigned)*(const ferret_u8 *)data : 0u);
+        return;
+    case FERRET_TYPE_U16:
+        fprintf(stdout, "%u", data != NULL ? (unsigned)*(const ferret_u16 *)data : 0u);
+        return;
+    case FERRET_TYPE_U32:
+        fprintf(stdout, "%u", data != NULL ? (unsigned)*(const ferret_u32 *)data : 0u);
+        return;
+    case FERRET_TYPE_U64:
+        fprintf(stdout, "%llu", data != NULL ? (unsigned long long)*(const ferret_u64 *)data : 0ull);
+        return;
+    case FERRET_TYPE_USIZE:
+        fprintf(stdout, "%lu", data != NULL ? (unsigned long)*(const ferret_usize *)data : 0ul);
+        return;
+    case FERRET_TYPE_F32:
+        fprintf(stdout, "%.9g", data != NULL ? (double)*(const ferret_f32 *)data : 0.0);
+        return;
+    case FERRET_TYPE_F64:
+        fprintf(stdout, "%.17g", data != NULL ? (double)*(const ferret_f64 *)data : 0.0);
+        return;
+    case FERRET_TYPE_CHAR:
+        fprintf(stdout, "%u", data != NULL ? (unsigned)*(const ferret_char *)data : 0u);
+        return;
+    case FERRET_TYPE_STR: {
+        const FerretStr *s = (const FerretStr *)data;
+        if (s != NULL && s->ptr != NULL && s->len != 0) {
+            fwrite(s->ptr, 1u, (size_t)s->len, stdout);
+        }
+        return;
+    }
+    default:
+        break;
+    }
+
+    if ((info->flags & FERRET_TYPE_FLAG_INTEGER) != 0u) {
+        ferret__write_big_integer(data, info);
+        return;
+    }
+    if ((info->flags & FERRET_TYPE_FLAG_ARRAY) != 0u) {
+        ferret__write_array(data, info);
+        return;
+    }
+    if ((info->flags & FERRET_TYPE_FLAG_SLICE) != 0u) {
+        ferret__write_slice(data, info);
+        return;
+    }
+    if ((info->flags & FERRET_TYPE_FLAG_TUPLE) != 0u) {
+        ferret__write_tuple(data, info);
+        return;
+    }
+    if ((info->flags & FERRET_TYPE_FLAG_POINTER) != 0u) {
+        fprintf(stdout, "%p", data ? *(void *const *)data : NULL);
+        return;
+    }
+    if (type_name != NULL) {
+        fprintf(stdout, "<%s %p>", type_name, data);
+        return;
+    }
+    fprintf(stdout, "<type#%u %p>", (unsigned)info->id, data);
 }
 
 void ferret_global_print(const FerretSliceAny *values) {
@@ -211,6 +277,8 @@ void ferret_global_print(const FerretSliceAny *values) {
         return;
     }
     for (i = 0; i < values->len; i++) {
-        ferret__print_any(&values->ptr[i]);
+        ferret__write_dynamic(&values->ptr[i]);
+        fputc('\n', stdout);
     }
+    fflush(stdout);
 }

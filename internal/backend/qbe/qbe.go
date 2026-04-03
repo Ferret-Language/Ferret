@@ -1800,14 +1800,54 @@ func ensureQBERuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, er
 		return sym, nil
 	}
 	sym := becommon.SanitizeIdent("typeinfo__" + key)
-	desc := backend.DescribeRuntimeType(typ)
+	desc, err := backend.DescribeRuntimeTypeLayout(aggregateLayoutContext(state), typ)
+	if err != nil {
+		return "", err
+	}
 	nameSym := sym + "__name"
 	fmt.Fprintf(state.deferredB, "data $%s = { b %q, b 0 }\n", nameSym, desc.Name)
 	size, align, err := qbeRuntimeTypeSizeAlign(state, typ)
 	if err != nil {
 		return "", err
 	}
-	fmt.Fprintf(state.deferredB, "data $%s = { w %d, z 4, l $%s, l %d, l %d, w %d, z 4 }\n", sym, desc.ID, nameSym, size, align, desc.Flags)
+	metaRef := "0"
+	switch {
+	case desc.Flags&backend.RuntimeTypeFlagArray != 0:
+		elemSym, err := ensureQBERuntimeTypeInfo(state, desc.Elem)
+		if err != nil {
+			return "", err
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB, "data $%s = { l $%s, l %d, l %d }\n", metaSym, elemSym, desc.Length, desc.Stride)
+		metaRef = "$" + metaSym
+	case desc.Flags&backend.RuntimeTypeFlagSlice != 0 && desc.Elem != nil:
+		elemSym, err := ensureQBERuntimeTypeInfo(state, desc.Elem)
+		if err != nil {
+			return "", err
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB, "data $%s = { l $%s, l %d }\n", metaSym, elemSym, desc.Stride)
+		metaRef = "$" + metaSym
+	case desc.Flags&backend.RuntimeTypeFlagTuple != 0:
+		fieldsRef := "0"
+		if len(desc.Fields) != 0 {
+			fieldSym := sym + "__fields"
+			parts := make([]string, 0, len(desc.Fields)*2)
+			for _, field := range desc.Fields {
+				fieldTypeSym, err := ensureQBERuntimeTypeInfo(state, field.Type)
+				if err != nil {
+					return "", err
+				}
+				parts = append(parts, fmt.Sprintf("l %d", field.Offset), fmt.Sprintf("l $%s", fieldTypeSym))
+			}
+			fmt.Fprintf(state.deferredB, "data $%s = { %s }\n", fieldSym, strings.Join(parts, ", "))
+			fieldsRef = "$" + fieldSym
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB, "data $%s = { l %d, l %s }\n", metaSym, len(desc.Fields), fieldsRef)
+		metaRef = "$" + metaSym
+	}
+	fmt.Fprintf(state.deferredB, "data $%s = { w %d, z 4, l $%s, l %d, l %d, w %d, z 4, l %s }\n", sym, desc.ID, nameSym, size, align, desc.Flags, metaRef)
 	state.runtimeTypes[key] = sym
 	return sym, nil
 }
