@@ -2323,7 +2323,7 @@ func renderOwnershipBoundaryCastHoverNote(node ast.Node, info *typeinfo.ModuleIn
 }
 
 func ownershipBoundaryCastHoverNoteText() string {
-	return "_`^T` and `*T` are distinct ownership domains. Use `unsafe std/mem::Adopt(^T)` or `unsafe std/mem::Expose(*T)`._"
+	return "_`^T` and `*T` are distinct ownership domains. Use `unsafe std/mem::Adopt(^T)`, `unsafe std/mem::Expose(*T)`, or `unsafe std/mem::ExposeRef(&*T)`._"
 }
 
 func isRawOwnerBoundaryCast(sourceType, targetType typeinfo.Type) bool {

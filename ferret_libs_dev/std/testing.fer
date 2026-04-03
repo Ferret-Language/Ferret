@@ -1,4 +1,4 @@
-/// std/testing provides runtime assertion helpers for unit tests.
+// std/testing provides runtime assertion helpers for unit tests.
 
 #[extern("exit")]
 fn __test_abort(code: i32) -> void;
@@ -22,14 +22,14 @@ fn emit_fail_got<T>(got: T) -> void {
     print(got)
 }
 
-/// Fails with message
+// Fails with message
 fn Fail(message: str) -> void {
     emit_fail_header()
     emit_fail_message(message)
     __test_abort(1)
 }
 
-/// Expect fails the current test when cond is false.
+// Expect fails the current test when cond is false.
 fn Expect(cond: bool, message: str) -> void {
     if !cond {
         emit_fail_header()
@@ -38,7 +38,7 @@ fn Expect(cond: bool, message: str) -> void {
     }
 }
 
-/// ExpectEq fails the current test when got != want.
+// ExpectEq fails the current test when got != want.
 fn ExpectEq<T>(got: T, want: T, message: str) -> void {
     if got != want {
         emit_fail_header()

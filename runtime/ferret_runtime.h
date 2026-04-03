@@ -211,6 +211,7 @@ ferret_bool ferret_os_debug(void);
  * -------------------------------------------------------------------------*/
 
 ferret_raw ferret_std_mem_Expose(ferret_raw owner);
+ferret_raw ferret_std_mem_ExposeRef(const ferret_raw *owner);
 ferret_raw ferret_std_mem_Adopt(ferret_raw raw);
 
 #ifdef __cplusplus

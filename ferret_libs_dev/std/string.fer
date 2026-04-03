@@ -1,0 +1,134 @@
+import "std/mem"
+
+// String is an owned mutable UTF-8 buffer.
+//
+// `str` remains the readonly view type. Convert an owned String to `str`
+// with AsStr(), and construct a String from a `str` with FromStr().
+type String struct {
+    data: *u8
+    len: usize = 0
+    cap: usize = 0
+}
+
+fn empty_data() -> *u8 {
+    unsafe {
+        return mem::Adopt(0 as ^u8)
+    }
+}
+
+fn raw_data(data: &*u8) -> ^u8 {
+    unsafe {
+        return mem::ExposeRef(data)
+    }
+}
+
+// New returns an empty owned string.
+fn New() -> String {
+    return .{
+        .data = empty_data(),
+        .len = 0,
+        .cap = 0
+    }
+}
+
+// FromStr copies a readonly string view into owned mutable storage.
+fn FromStr(text: str) -> String {
+    let mut out = New()
+    out.PushStr(text)
+    return out
+}
+
+// Len returns the current UTF-8 byte length.
+fn String::Len(&self) -> usize {
+    return self.len
+}
+
+// Capacity returns the currently allocated byte capacity.
+fn String::Capacity(&self) -> usize {
+    return self.cap
+}
+
+// IsEmpty reports whether the string has zero bytes.
+fn String::IsEmpty(&self) -> bool {
+    return self.len == 0
+}
+
+// Clear resets the length to zero while retaining capacity.
+fn String::Clear(&mut self) -> void {
+    self.len = 0
+}
+
+// Reserve ensures room for at least `additional` more bytes.
+fn String::Reserve(&mut self, additional: usize) -> void {
+    let needed = self.len + additional
+    if needed <= self.cap {
+        return
+    }
+
+    let mut next = self.cap
+    if next == 0 {
+        next = 8
+    }
+    while next < needed {
+        next = next + next
+    }
+
+    let alloc = mem::System()
+    if self.cap == 0 {
+        self.data = mem::AllocOwnedAs<u8>(alloc, next)
+    } else {
+        self.data = mem::ReallocOwnedAs<u8>(alloc, self.data, next)
+    }
+    self.cap = next
+}
+
+// PushStr appends UTF-8 bytes from a readonly string view.
+fn String::PushStr(&mut self, text: str) -> void {
+    let bytes = text as []u8
+    let count = len(&bytes)
+    if count == 0 {
+        return
+    }
+
+    self.Reserve(count)
+    let base_len = self.len
+    unsafe {
+        let base = raw_data(&self.data) as usize
+        let dst = (base + base_len) as ^void
+        let src = bytes as ^const u8
+        memmove(dst, src as ^void, count)
+    }
+    self.len = base_len + count
+}
+
+// Bytes returns a readonly byte view over the owned UTF-8 buffer.
+fn String::Bytes(&self) -> []u8 {
+    if self.len == 0 {
+        return []u8{}
+    }
+    unsafe {
+        return (raw_data(&self.data) as ^const u8, self.len) as []u8
+    }
+}
+
+// AsStr returns a readonly str view over the owned UTF-8 buffer.
+fn String::AsStr(&self) -> str {
+    if self.len == 0 {
+        return ""
+    }
+    unsafe {
+        return (raw_data(&self.data) as ^const u8, self.len) as str
+    }
+}
+
+// Release frees the owned buffer and resets the string to empty.
+fn String::Release(&mut self) -> void {
+    if self.cap == 0 {
+        return
+    }
+    let alloc = mem::System()
+    mem::FreeOwned(alloc, self.data)
+    self.data = empty_data()
+    self.len = 0
+    self.cap = 0
+}

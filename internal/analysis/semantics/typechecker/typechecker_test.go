@@ -3933,6 +3933,9 @@ func TestTypecheckerAcceptsAdoptExposeCalls(t *testing.T) {
 fn Expose<T>(owner: *T) -> ^T;
 
 #[extern]
+fn ExposeRef<T>(owner: &*T) -> ^T;
+
+#[extern]
 fn Adopt<T>(raw: ^T) -> *T;
 `)
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
@@ -3942,8 +3945,10 @@ fn main() -> void {
     unsafe {
         let raw = 0 as ^i32
         let own = mem::Adopt(raw)
-        let back = mem::Expose(own)
-        back
+        let back1 = mem::Expose(own)
+        let own2 = mem::Adopt(back1)
+        let back2 = mem::ExposeRef(&own2)
+        back2
     }
 }
 `)

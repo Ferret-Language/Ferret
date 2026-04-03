@@ -1,0 +1,44 @@
+import "std/string"
+
+fn echo(value: string::String) -> string::String {
+    return value
+}
+
+fn main() -> void {
+    let mut greeting = string::New()
+    greeting.PushStr("he")
+    greeting.PushStr("llo")
+
+    let mut moved = echo(greeting)
+    let len_before = moved.Len()
+    let cap_before = moved.Capacity()
+
+    moved.Reserve(20)
+    let bytes = moved.Bytes()
+    let text = moved.AsStr()
+
+    let mut copied = string::FromStr("xy")
+    copied.Clear()
+
+    if text == "hello" &&
+        len_before == 5 &&
+        cap_before >= 5 &&
+        moved.Capacity() >= 25 &&
+        !moved.IsEmpty() &&
+        bytes[0] == b'h' &&
+        bytes[4] == b'o' &&
+        text[1] == 'e' &&
+        copied.IsEmpty() &&
+        copied.Len() == 0 &&
+        copied.AsStr() == "" {
+        moved.Release()
+        copied.Release()
+        print("string-stdlib-ok")
+        return
+    }
+
+    moved.Release()
+    copied.Release()
+    print("string-stdlib-fail")
+    exit(1)
+}
