@@ -12,7 +12,7 @@ fn load(ok: bool) -> Io!i32 {
 fn main() -> i32 {
     let value = load(false) catch |err| {
         let code: Io = err
-        code
+        let _ = code
     }
     return value
 }

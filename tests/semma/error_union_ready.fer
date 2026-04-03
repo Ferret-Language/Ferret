@@ -16,10 +16,8 @@ fn with_fallback(ok: bool) -> i32 {
 fn with_handler(ok: bool) -> i32 {
     let resolved = load(ok) catch |err| {
         let code: Io = err
-        if code == Io::denied {
-            return 7
-        }
-        return 0
+        print(code)
+        7
     }
     return resolved + 1
 }
@@ -30,7 +28,7 @@ fn main() -> void {
     let c = with_handler(true)
     let d = with_handler(false)
 
-    if a == 41 && b == -1 && c == 42 && d == 7 {
+    if a == 41 && b == -1 && c == 42 && d == 8 {
         print("error-union-ready-ok")
         return
     }

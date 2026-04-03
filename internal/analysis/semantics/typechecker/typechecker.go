@@ -693,7 +693,15 @@ func (c *checker) typeOfMatchExpr(scope *refineScope, expr *ast.MatchExpr, expec
 				c.reportTypeMismatch(arm.Pattern.Loc(), valueType, patternType)
 			}
 		}
-		armType, diverges := c.blockValueType(armScope, arm.Body, expected)
+		armType, diverges := c.blockValueType(
+			armScope,
+			arm.Body,
+			expected,
+			"match arm must yield a value or exit",
+			"add a final expression or terminate this arm",
+			"match arm must end with a value expression or exit",
+			"this arm does not produce a value",
+		)
 		if diverges || typeinfo.IsInvalid(armType) || typeinfo.IsUnknown(armType) {
 			continue
 		}
@@ -739,16 +747,24 @@ func (c *checker) typeOfMatchExpr(scope *refineScope, expr *ast.MatchExpr, expec
 	return typeinfo.UnknownType{}
 }
 
-func (c *checker) blockValueType(scope *refineScope, block *ast.BlockStmt, expected typeinfo.Type) (typeinfo.Type, bool) {
+func (c *checker) blockValueType(
+	scope *refineScope,
+	block *ast.BlockStmt,
+	expected typeinfo.Type,
+	emptyMsg string,
+	emptyLabel string,
+	finalMsg string,
+	finalLabel string,
+) (typeinfo.Type, bool) {
 	if block == nil || len(block.Stmts) == 0 {
 		loc := source.Location{}
 		if block != nil {
 			loc = block.Location
 		}
 		c.ctx.Diagnostics.Add(
-			diagnostics.NewError("match arm must yield a value or exit").
+			diagnostics.NewError(emptyMsg).
 				WithCode(diagnostics.ErrInvalidExpression).
-				WithPrimaryLabel(&loc, "add a final expression or terminate this arm"),
+				WithPrimaryLabel(&loc, emptyLabel),
 		)
 		return typeinfo.InvalidType{}, false
 	}
@@ -766,9 +782,9 @@ func (c *checker) blockValueType(scope *refineScope, block *ast.BlockStmt, expec
 	c.checkStmt(scope, last)
 	loc := last.Loc()
 	c.ctx.Diagnostics.Add(
-		diagnostics.NewError("match arm must end with a value expression or exit").
+		diagnostics.NewError(finalMsg).
 			WithCode(diagnostics.ErrInvalidExpression).
-			WithPrimaryLabel(&loc, "this arm does not produce a value"),
+			WithPrimaryLabel(&loc, finalLabel),
 	)
 	return typeinfo.InvalidType{}, false
 }
@@ -1231,15 +1247,17 @@ func (c *checker) typeOfCatch(scope *refineScope, expr *ast.CatchExpr) typeinfo.
 			c.bindDeclSymbol(expr.Payload, payloadType)
 			// No base-type environment: locals/params are typed via Bindings+Types.
 		}
-		c.checkStmt(scope, expr.Handler)
-		if !stmtDefinitelyExits(expr.Handler) {
-			loc := expr.Handler.Location
-			c.ctx.Diagnostics.Add(
-				diagnostics.NewError("catch handler block must exit early").
-					WithCode(diagnostics.ErrInvalidReturn).
-					WithPrimaryLabel(&loc, "this catch handler can continue without producing a value").
-					WithHelp("return, panic, break, or continue from every path, or use `catch <fallback>`"),
-			)
+		handlerType, diverges := c.blockValueType(
+			scope,
+			expr.Handler,
+			errUnion.Value,
+			"catch handler must yield a fallback value or exit",
+			"add a final fallback expression or terminate this handler",
+			"catch handler must end with a fallback expression or exit",
+			"this catch handler does not produce a fallback value",
+		)
+		if !diverges && !typeinfo.Assignable(errUnion.Value, handlerType) {
+			c.reportTypeMismatch(expr.Handler.Stmts[len(expr.Handler.Stmts)-1].Loc(), errUnion.Value, handlerType)
 		}
 		c.info.BindNode(expr, errUnion.Value)
 		return errUnion.Value

@@ -675,6 +675,7 @@ func (l *lowerer) lowerCatchExpr(expr *CatchExpr) ([]Stmt, Expr) {
 			SetStmtLocation(payloadBind, expr.Loc())
 			handler.Stmts = append([]Stmt{payloadBind}, handler.Stmts...)
 		}
+		handler = l.lowerBlockResult(handler, resultName, resultID, expr.Type())
 		elseStmt = handler
 	} else {
 		fallbackPrelude, fallback := l.lowerExpr(expr.Fallback)
@@ -707,24 +708,32 @@ func (l *lowerer) lowerMatchExprArm(arm *MatchArm, resultName string, resultID i
 	if arm.Body == nil {
 		return out
 	}
-	out.Body = &BlockStmt{Stmts: make([]Stmt, 0, len(arm.Body.Stmts))}
-	SetStmtLocation(out.Body, arm.Body.Loc())
-	if len(arm.Body.Stmts) == 0 {
+	out.Body = l.lowerBlockResult(arm.Body, resultName, resultID, resultType)
+	return out
+}
+
+func (l *lowerer) lowerBlockResult(body *BlockStmt, resultName string, resultID int, resultType typeinfo.Type) *BlockStmt {
+	if body == nil {
+		return nil
+	}
+	out := &BlockStmt{Stmts: make([]Stmt, 0, len(body.Stmts))}
+	SetStmtLocation(out, body.Loc())
+	if len(body.Stmts) == 0 {
 		return out
 	}
-	out.Body.Stmts = append(out.Body.Stmts, arm.Body.Stmts[:len(arm.Body.Stmts)-1]...)
-	last := arm.Body.Stmts[len(arm.Body.Stmts)-1]
+	out.Stmts = append(out.Stmts, body.Stmts[:len(body.Stmts)-1]...)
+	last := body.Stmts[len(body.Stmts)-1]
 	if hirStmtDefinitelyExits(last) {
-		out.Body.Stmts = append(out.Body.Stmts, last)
+		out.Stmts = append(out.Stmts, last)
 		return out
 	}
 	if exprStmt, ok := last.(*ExprStmt); ok {
 		assign := &AssignStmt{Left: makeTempIdent(resultName, resultID, resultType, exprStmt.Loc()), Right: exprStmt.Value}
 		SetStmtLocation(assign, exprStmt.Loc())
-		out.Body.Stmts = append(out.Body.Stmts, assign)
+		out.Stmts = append(out.Stmts, assign)
 		return out
 	}
-	out.Body.Stmts = append(out.Body.Stmts, last)
+	out.Stmts = append(out.Stmts, last)
 	return out
 }
 

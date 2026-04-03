@@ -2524,7 +2524,29 @@ fn main() -> i32 {
 	}
 }
 
-func TestTypecheckerRequiresCatchHandlerToExit(t *testing.T) {
+func TestTypecheckerAllowsCatchHandlerFallbackExpression(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Io error { denied }
+
+fn log(x: Io) -> void {}
+
+fn main(x: Io!i32) -> i32 {
+    let file = x catch |err| {
+        log(err)
+        7
+    }
+    return file
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRequiresCatchHandlerValueOrExit(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 type Io error { denied }
@@ -2541,17 +2563,17 @@ fn main(x: Io!i32) -> i32 {
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected catch early-exit diagnostic")
+		t.Fatal("expected catch fallback diagnostic")
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Message == "catch handler block must exit early" {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "expected i32, got void") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected catch early-exit diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected catch fallback diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
