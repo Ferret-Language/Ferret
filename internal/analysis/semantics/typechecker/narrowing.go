@@ -4,6 +4,7 @@ import (
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/frontend/ast"
+	"fmt"
 )
 
 func (c *checker) narrowedScopeForCondition(scope *refineScope, cond ast.Expr, truth bool) *refineScope {
@@ -15,6 +16,35 @@ func (c *checker) narrowedScopeForCondition(scope *refineScope, cond ast.Expr, t
 		if e.Op == "!" {
 			return c.narrowedScopeForCondition(scope, e.Right, !truth)
 		}
+	case *ast.BinaryExpr:
+		if e.Op != "==" && e.Op != "!=" {
+			return scope
+		}
+		var narrowedExpr ast.Expr
+		if _, ok := e.Right.(*ast.NoneLit); ok {
+			narrowedExpr = e.Left
+		} else if _, ok := e.Left.(*ast.NoneLit); ok {
+			narrowedExpr = e.Right
+		}
+		if narrowedExpr == nil {
+			return scope
+		}
+		baseType, ok := c.refinableExprType(scope, narrowedExpr)
+		if !ok {
+			return scope
+		}
+		opt, ok := c.underlying(baseType).(*typeinfo.OptionalType)
+		if !ok || opt == nil {
+			return scope
+		}
+		narrowsToInner := truth
+		if e.Op == "==" {
+			narrowsToInner = !truth
+		}
+		if !narrowsToInner {
+			return scope
+		}
+		return c.refineExprType(scope, narrowedExpr, opt.Inner)
 	case *ast.IsExpr:
 		return c.narrowedScopeForIs(scope, e, truth)
 	}
@@ -25,16 +55,8 @@ func (c *checker) narrowedScopeForIs(scope *refineScope, expr *ast.IsExpr, truth
 	if expr == nil {
 		return scope
 	}
-	ident, ok := expr.Left.(*ast.Ident)
-	if !ok || ident == nil || len(ident.Path) != 1 {
-		return scope
-	}
-	res := c.lookupResolution(ident)
-	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
-		return scope
-	}
-	baseType := c.typeOfSymbol(res.Symbol)
-	if baseType == nil || typeinfo.IsInvalid(baseType) || typeinfo.IsUnknown(baseType) {
+	baseType, ok := c.refinableExprType(scope, expr.Left)
+	if !ok {
 		return scope
 	}
 	target, ok := c.info.Nodes[expr.Type]
@@ -47,37 +69,28 @@ func (c *checker) narrowedScopeForIs(scope *refineScope, expr *ast.IsExpr, truth
 			if !c.unionTypeMayMatch(unionType, target) {
 				return scope
 			}
-			narrowed := newRefineScope(scope)
-			narrowed.Set(res.Symbol, target)
-			return narrowed
+			return c.refineExprType(scope, expr.Left, target)
 		}
 		remaining := c.unionMembersWithoutExactMatch(unionType, target)
 		if len(remaining) == 0 || len(remaining) == len(unionType.Members) {
 			return scope
 		}
-		narrowed := newRefineScope(scope)
-		narrowed.Set(res.Symbol, c.narrowedTypeFromMembers(remaining))
-		return narrowed
+		return c.refineExprType(scope, expr.Left, c.narrowedTypeFromMembers(remaining))
 	}
 	if opt, ok := c.underlying(baseType).(*typeinfo.OptionalType); ok && opt != nil {
 		if !typeinfo.Equal(opt.Inner, target) {
 			return scope
 		}
-		narrowed := newRefineScope(scope)
 		if truth {
-			narrowed.Set(res.Symbol, target)
-			return narrowed
+			return c.refineExprType(scope, expr.Left, target)
 		}
-		narrowed.Set(res.Symbol, baseType)
-		return narrowed
+		return c.refineExprType(scope, expr.Left, baseType)
 	}
 	if _, ok := c.underlying(baseType).(*typeinfo.InterfaceType); ok {
 		if !truth || typeinfo.Equal(baseType, target) {
 			return scope
 		}
-		narrowed := newRefineScope(scope)
-		narrowed.Set(res.Symbol, target)
-		return narrowed
+		return c.refineExprType(scope, expr.Left, target)
 	}
 	return scope
 }
@@ -113,37 +126,110 @@ func (c *checker) narrowedMatchTypeArmScope(scope *refineScope, value ast.Expr, 
 	if scope == nil || value == nil || target == nil {
 		return scope
 	}
-	ident, ok := value.(*ast.Ident)
-	if !ok || ident == nil || len(ident.Path) != 1 {
-		return scope
-	}
-	res := c.lookupResolution(ident)
-	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
-		return scope
-	}
-	baseType := c.typeOfSymbol(res.Symbol)
-	if baseType == nil || typeinfo.IsInvalid(baseType) || typeinfo.IsUnknown(baseType) {
+	baseType, ok := c.refinableExprType(scope, value)
+	if !ok {
 		return scope
 	}
 	if unionType, ok := c.underlying(baseType).(*typeinfo.UnionType); ok && unionType != nil && c.unionTypeMayMatch(unionType, target) {
-		narrowed := newRefineScope(scope)
-		narrowed.Set(res.Symbol, target)
-		return narrowed
+		return c.refineExprType(scope, value, target)
 	}
 	if opt, ok := c.underlying(baseType).(*typeinfo.OptionalType); ok && opt != nil && typeinfo.Equal(opt.Inner, target) {
-		narrowed := newRefineScope(scope)
-		narrowed.Set(res.Symbol, target)
-		return narrowed
+		return c.refineExprType(scope, value, target)
 	}
 	if _, ok := c.underlying(baseType).(*typeinfo.InterfaceType); ok {
-		narrowed := newRefineScope(scope)
-		narrowed.Set(res.Symbol, target)
-		return narrowed
+		return c.refineExprType(scope, value, target)
 	}
 	if typeinfo.Equal(baseType, target) {
 		return scope
 	}
 	return scope
+}
+
+func (c *checker) refinableExprType(scope *refineScope, expr ast.Expr) (typeinfo.Type, bool) {
+	if expr == nil {
+		return nil, false
+	}
+	baseType, ok := c.info.Nodes[expr]
+	if !ok || baseType == nil {
+		baseType = c.typeOfExpr(scope, expr, nil)
+	}
+	if baseType == nil || typeinfo.IsInvalid(baseType) || typeinfo.IsUnknown(baseType) {
+		return nil, false
+	}
+	return baseType, true
+}
+
+func (c *checker) refineExprType(scope *refineScope, expr ast.Expr, typ typeinfo.Type) *refineScope {
+	if scope == nil || expr == nil || typ == nil {
+		return scope
+	}
+	narrowed := newRefineScope(scope)
+	changed := false
+	if ident, ok := expr.(*ast.Ident); ok && ident != nil && len(ident.Path) == 1 {
+		res := c.lookupResolution(ident)
+		if res != nil && res.Kind == binding.ResolutionSymbol && res.Symbol != nil {
+			narrowed.Set(res.Symbol, typ)
+			changed = true
+		}
+	}
+	if key, ok := c.refinementKey(expr); ok {
+		narrowed.SetPath(key, typ)
+		changed = true
+	}
+	if !changed {
+		return scope
+	}
+	return narrowed
+}
+
+func (c *checker) lookupRefinedType(scope *refineScope, expr ast.Expr) (typeinfo.Type, bool) {
+	if scope == nil || expr == nil {
+		return nil, false
+	}
+	if ident, ok := expr.(*ast.Ident); ok && ident != nil && len(ident.Path) == 1 {
+		res := c.lookupResolution(ident)
+		if res != nil && res.Kind == binding.ResolutionSymbol && res.Symbol != nil {
+			if typ, ok := scope.Lookup(res.Symbol); ok && typ != nil {
+				return typ, true
+			}
+		}
+	}
+	if key, ok := c.refinementKey(expr); ok {
+		return scope.LookupPath(key)
+	}
+	return nil, false
+}
+
+func (c *checker) refinementKey(expr ast.Expr) (string, bool) {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		if e == nil || len(e.Path) != 1 {
+			return "", false
+		}
+		res := c.lookupResolution(e)
+		if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+			return "", false
+		}
+		return fmt.Sprintf("sym:%d", res.Symbol.ID), true
+	case *ast.SelectorExpr:
+		left, ok := c.refinementKey(e.Left)
+		if !ok || e.Name == nil || e.Name.Text() == "" {
+			return "", false
+		}
+		return left + "." + e.Name.Text(), true
+	case *ast.IndexExpr:
+		left, ok := c.refinementKey(e.Left)
+		if !ok {
+			return "", false
+		}
+		index := ast.ExprString(e.Index)
+		if index == "" || index == "_" {
+			return "", false
+		}
+		return left + "[" + index + "]", true
+	default:
+		return "", false
+	}
 }
 
 func (c *checker) unionTypeMayMatch(unionType *typeinfo.UnionType, target typeinfo.Type) bool {

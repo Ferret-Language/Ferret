@@ -1588,6 +1588,128 @@ fn main(s: Stringer) -> i32 {
 	}
 }
 
+func TestTypecheckerNarrowsOptionalBindingInIfBranch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(value: ?i32) -> i32 {
+    if value != none {
+        let narrowed: i32 = value
+        return narrowed
+    }
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerNarrowsOptionalBindingInElseBranch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(value: ?i32) -> i32 {
+    if value == none {
+        return 0
+    } else {
+        let narrowed: i32 = value
+        return narrowed
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerNarrowsOptionalSelectorChainInIfBranch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Leaf struct {
+    value: i32
+}
+
+type D struct {
+    e: ?Leaf
+}
+
+type C struct {
+    d: D
+}
+
+type B struct {
+    c: C
+}
+
+type A struct {
+    b: B
+}
+
+fn main(a: A) -> i32 {
+    if a.b.c.d.e != none {
+        return a.b.c.d.e.value
+    }
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerNarrowsOptionalIndexPathInIfBranch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Item struct {
+    value: i32
+}
+
+fn main(values: [1]?Item) -> i32 {
+    if values[0] != none {
+        return values[0].value
+    }
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerNarrowsUnionSelectorPathInIfBranch(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Token union {
+    i32,
+    i64,
+}
+
+type Holder struct {
+    value: Token
+}
+
+fn main(h: Holder) -> i32 {
+    if h.value is i32 {
+        let narrowed: i32 = h.value
+        return narrowed
+    }
+    return 0
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsExplicitInterfaceDowncast(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

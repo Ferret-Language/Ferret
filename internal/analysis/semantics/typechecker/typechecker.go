@@ -482,7 +482,7 @@ func (c *checker) typeOfIdent(scope *refineScope, ident *ast.Ident, expected typ
 	}
 	if res.Kind == binding.ResolutionSymbol && res.Symbol != nil {
 		if scope != nil && len(ident.Path) == 1 {
-			if typ, ok := scope.Lookup(res.Symbol); ok && typ != nil {
+			if typ, ok := c.lookupRefinedType(scope, ident); ok && typ != nil {
 				c.info.BindNode(ident, typ)
 				return typ
 			}
@@ -2111,8 +2111,12 @@ func (c *checker) typeOfSelector(scope *refineScope, expr *ast.SelectorExpr) typ
 		c.reportNotExportedFromType(expr.Location, expr.Name.Text(), owner)
 		return typeinfo.InvalidType{}
 	}
-	c.info.BindNode(expr, field.Type)
-	return field.Type
+	typ := field.Type
+	if refined, ok := c.lookupRefinedType(scope, expr); ok && refined != nil {
+		typ = refined
+	}
+	c.info.BindNode(expr, typ)
+	return typ
 }
 
 func (c *checker) typeOfCast(scope *refineScope, expr *ast.CastExpr) typeinfo.Type {
@@ -2378,9 +2382,11 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 	usize := &typeinfo.BuiltinType{Name: "usize"}
 	c.typeOfExpr(scope, expr.Index, usize)
 	base := c.underlying(baseTyp)
-	if arr, ok := base.(*typeinfo.ArrayType); ok {
+	var elem typeinfo.Type
+	switch t := base.(type) {
+	case *typeinfo.ArrayType:
 		if idx, ok := c.constExpr(c.mod, expr.Index, nil); ok {
-			if index, ok := idx.NonNegativeInt64(); ok && arr.Len >= 0 && index >= arr.Len {
+			if index, ok := idx.NonNegativeInt64(); ok && t.Len >= 0 && index >= t.Len {
 				loc := expr.Index.Loc()
 				c.ctx.Diagnostics.Add(
 					diagnostics.NewError("array index out of bounds").
@@ -2390,14 +2396,10 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 				return typeinfo.InvalidType{}
 			}
 		}
-		c.info.BindNode(expr, arr.Inner)
-		return arr.Inner
-	}
-	if sl, ok := base.(*typeinfo.SliceType); ok {
-		c.info.BindNode(expr, sl.Inner)
-		return sl.Inner
-	}
-	if tuple, ok := base.(*typeinfo.TupleType); ok {
+		elem = t.Inner
+	case *typeinfo.SliceType:
+		elem = t.Inner
+	case *typeinfo.TupleType:
 		idx, ok := c.constExpr(c.mod, expr.Index, nil)
 		if !ok {
 			loc := expr.Index.Loc()
@@ -2418,7 +2420,7 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 			)
 			return typeinfo.InvalidType{}
 		}
-		if int(index) >= len(tuple.Elems) {
+		if int(index) >= len(t.Elems) {
 			loc := expr.Index.Loc()
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError("tuple index out of bounds").
@@ -2427,21 +2429,12 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 			)
 			return typeinfo.InvalidType{}
 		}
-		elem := tuple.Elems[int(index)]
-		c.info.BindNode(expr, elem)
-		return elem
-	}
-	if _, ok := base.(*typeinfo.StringType); ok {
-		elem := &typeinfo.BuiltinType{Name: "char"}
-		c.info.BindNode(expr, elem)
-		return elem
-	}
-	// Pointer indexing: *T[i] → T
-	if ptr, ok := base.(*typeinfo.PointerType); ok {
-		c.info.BindNode(expr, ptr.Inner)
-		return ptr.Inner
-	}
-	if ptr, ok := base.(*typeinfo.RawPtrType); ok {
+		elem = t.Elems[int(index)]
+	case *typeinfo.StringType:
+		elem = &typeinfo.BuiltinType{Name: "char"}
+	case *typeinfo.PointerType:
+		elem = t.Inner
+	case *typeinfo.RawPtrType:
 		if c.unsafeDepth == 0 {
 			loc := expr.Location
 			c.ctx.Diagnostics.Add(
@@ -2450,7 +2443,7 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 					WithPrimaryLabel(&loc, "wrap this indexing operation in `unsafe { ... }`"),
 			)
 		}
-		if ptr.Inner == nil {
+		if t.Inner == nil {
 			loc := expr.Location
 			c.ctx.Diagnostics.Add(
 				diagnostics.NewError("cannot index into untyped raw pointer").
@@ -2459,16 +2452,21 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 			)
 			return typeinfo.InvalidType{}
 		}
-		c.info.BindNode(expr, ptr.Inner)
-		return ptr.Inner
+		elem = t.Inner
+	default:
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot index into %s", baseTyp.String())).
+				WithCode(diagnostics.ErrInvalidOperation).
+				WithPrimaryLabel(&loc, "not an array, slice, or pointer type"),
+		)
+		return typeinfo.InvalidType{}
 	}
-	loc := expr.Location
-	c.ctx.Diagnostics.Add(
-		diagnostics.NewError(fmt.Sprintf("cannot index into %s", baseTyp.String())).
-			WithCode(diagnostics.ErrInvalidOperation).
-			WithPrimaryLabel(&loc, "not an array, slice, or pointer type"),
-	)
-	return typeinfo.InvalidType{}
+	if refined, ok := c.lookupRefinedType(scope, expr); ok && refined != nil {
+		elem = refined
+	}
+	c.info.BindNode(expr, elem)
+	return elem
 }
 
 func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, expected typeinfo.Type) typeinfo.Type {

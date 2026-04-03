@@ -10,16 +10,22 @@ import (
 )
 
 // refineScope is a narrow, per-branch overlay that can override the type of a
-// resolved symbol (used for `is` narrowing and match-type arms).
+// resolved symbol or a specific access path (used for `is` narrowing, optional
+// `none` checks, and match-type arms).
 //
 // Base types always live in `Module.Types` and are keyed by `*symbols.Symbol`.
 type refineScope struct {
 	parent *refineScope
 	types  map[symbols.SymbolID]typeinfo.Type
+	paths  map[string]typeinfo.Type
 }
 
 func newRefineScope(parent *refineScope) *refineScope {
-	return &refineScope{parent: parent, types: make(map[symbols.SymbolID]typeinfo.Type)}
+	return &refineScope{
+		parent: parent,
+		types:  make(map[symbols.SymbolID]typeinfo.Type),
+		paths:  make(map[string]typeinfo.Type),
+	}
 }
 
 func (s *refineScope) Set(sym *symbols.Symbol, typ typeinfo.Type) {
@@ -35,6 +41,25 @@ func (s *refineScope) Lookup(sym *symbols.Symbol) (typeinfo.Type, bool) {
 	}
 	for scope := s; scope != nil; scope = scope.parent {
 		if typ, ok := scope.types[sym.ID]; ok {
+			return typ, true
+		}
+	}
+	return nil, false
+}
+
+func (s *refineScope) SetPath(path string, typ typeinfo.Type) {
+	if s == nil || path == "" || typ == nil {
+		return
+	}
+	s.paths[path] = typ
+}
+
+func (s *refineScope) LookupPath(path string) (typeinfo.Type, bool) {
+	if path == "" {
+		return nil, false
+	}
+	for scope := s; scope != nil; scope = scope.parent {
+		if typ, ok := scope.paths[path]; ok {
 			return typ, true
 		}
 	}

@@ -1,0 +1,67 @@
+type Leaf struct {
+    value: i32
+}
+
+type D struct {
+    e: ?Leaf
+}
+
+type C struct {
+    d: D
+}
+
+type B struct {
+    c: C
+}
+
+type A struct {
+    b: B
+}
+
+type Item struct {
+    value: i32
+}
+
+type Token union {
+    i32,
+    i64
+}
+
+type Holder struct {
+    value: Token
+}
+
+fn pick(a: A) -> i32 {
+    if a.b.c.d.e != none {
+        return a.b.c.d.e.value
+    }
+    return 0
+}
+
+fn first(values: [1]?Item) -> i32 {
+    if values[0] != none {
+        return values[0].value
+    }
+    return 0
+}
+
+fn fromUnion(h: Holder) -> i32 {
+    if h.value is i32 {
+        return h.value
+    }
+    return 0
+}
+
+fn main() -> void {
+    let a: A = .{ .b = .{ .c = .{ .d = .{ .e = .{ .value = 11 } } } } }
+    let item: ?Item = .{ .value = 7 }
+    let values: [1]?Item = .{ item }
+    let h: Holder = .{ .value = 5 }
+
+    if pick(a) == 11 && first(values) == 7 && fromUnion(h) == 5 {
+        print("narrowing-paths-ok")
+        return
+    }
+
+    panic "narrowing paths failed"
+}
