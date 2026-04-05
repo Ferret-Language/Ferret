@@ -153,8 +153,8 @@ func main() {
 	flag.Usage = func() {
 		colors.BLUE.Fprintln(os.Stderr, "Ferret compiler v"+compiler.CompilerVersion)
 		colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
-		colors.GREEN.Fprintf(os.Stderr, "  %s [options] <source-file-or-directory>\n", os.Args[0])
-		colors.GREEN.Fprintf(os.Stderr, "  %s [command] [args]\n", os.Args[0])
+		colors.GREEN.Fprintf(os.Stderr, "  ferret [options] <source-file-or-directory>\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ferret [command] [args]\n")
 		colors.CYAN.Fprintln(os.Stderr, "\nOptions:")
 		flag.PrintDefaults()
 		colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
@@ -168,10 +168,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  run[:llvm|:qbe] [path] [args]  build and run a program (default llvm)")
 		fmt.Fprintln(os.Stderr, "  test[:llvm|:qbe] [path] [args] build and run unit tests (default llvm)")
 		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
-		colors.GREEN.Fprintf(os.Stderr, "  %s -backend llvm main.fer\n", os.Args[0])
-		colors.GREEN.Fprintf(os.Stderr, "  %s -m32 -o app32 main.fer\n", os.Args[0])
-		colors.GREEN.Fprintf(os.Stderr, "  %s -k main.fer\n", os.Args[0])
-		colors.GREEN.Fprintf(os.Stderr, "  %s run main.fer arg1 arg2\n", os.Args[0])
+		colors.GREEN.Fprintf(os.Stderr, "  ferret -backend llvm main.fer\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ferret -m32 -o app32 main.fer\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ferret -k main.fer\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ferret run main.fer arg1 arg2\n")
 	}
 	flag.Parse()
 	if err := colors.SetLogFormatString(*logFormat); err != nil {
