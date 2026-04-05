@@ -35,6 +35,24 @@ import (
 
 var errAlreadyReported = errors.New("diagnostics already reported")
 
+func newLogFormatFlagSet(name string) (*flag.FlagSet, *string) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	logFormat := fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)")
+	return fs, logFormat
+}
+
+func parseCommandArgsWithLogFormat(name string, args []string) ([]string, error) {
+	fs, logFormat := newLogFormatFlagSet(name)
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if err := colors.SetLogFormatString(*logFormat); err != nil {
+		return nil, err
+	}
+	return fs.Args(), nil
+}
+
 func main() {
 	if len(os.Args) > 1 {
 		command := os.Args[1]
@@ -43,6 +61,13 @@ func main() {
 		if err != nil {
 			colors.RED.Fprintln(os.Stderr, err)
 			os.Exit(2)
+		}
+		switch commandName {
+		case "run", "test", "check", "lint":
+			if _, err := parseCommandArgsWithLogFormat(commandName, commandArgs); err == nil {
+				// The command handlers re-parse their own args; this early pass only
+				// establishes the output formatter before any colored output is emitted.
+			}
 		}
 		switch commandName {
 		case "lsp":
@@ -119,6 +144,7 @@ func main() {
 	}
 
 	backendTarget := flag.String("backend", "llvm", "backend target (llvm|qbe)")
+	logFormat := flag.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)")
 	outputPath := flag.String("o", "", "compile and link to executable")
 	keepGen := flag.Bool("keep-gen", false, "keep generated AST/HIR/MIR/backend IR in _gen directory")
 	flag.BoolVar(keepGen, "k", false, "alias for -keep-gen")
@@ -150,6 +176,10 @@ func main() {
 		colors.GREEN.Fprintf(os.Stderr, "  %s run main.fer arg1 arg2\n", os.Args[0])
 	}
 	flag.Parse()
+	if err := colors.SetLogFormatString(*logFormat); err != nil {
+		colors.RED.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
 
 	if *showVersion {
 		fmt.Printf("v%s\n", compiler.CompilerVersion)
@@ -267,11 +297,16 @@ func parseCommandBackend(command string) (string, backend.Target, error) {
 }
 
 func runCommand(args []string, target backend.Target) error {
+	parsedArgs, err := parseCommandArgsWithLogFormat("run", args)
+	if err != nil {
+		return err
+	}
+
 	sourcePath := ""
 	runtimeArgs := []string{}
-	if len(args) > 0 {
-		sourcePath = args[0]
-		runtimeArgs = args[1:]
+	if len(parsedArgs) > 0 {
+		sourcePath = parsedArgs[0]
+		runtimeArgs = parsedArgs[1:]
 	}
 	resolvedPath, entryPath, selectedByDiscovery, err := resolveRunTarget(sourcePath)
 	if err != nil {
@@ -332,11 +367,16 @@ func runCommand(args []string, target backend.Target) error {
 }
 
 func testCommand(args []string, target backend.Target) error {
+	parsedArgs, err := parseCommandArgsWithLogFormat("test", args)
+	if err != nil {
+		return err
+	}
+
 	sourcePath := ""
 	runtimeArgs := []string{}
-	if len(args) > 0 {
-		sourcePath = args[0]
-		runtimeArgs = args[1:]
+	if len(parsedArgs) > 0 {
+		sourcePath = parsedArgs[0]
+		runtimeArgs = parsedArgs[1:]
 	}
 	resolvedPath, entryPath, selectedByDiscovery, err := resolveRunTarget(sourcePath)
 	if err != nil {
@@ -466,9 +506,14 @@ func resolveManifestEntryPath(startPath string) (string, error) {
 }
 
 func checkCommand(args []string) error {
+	parsedArgs, err := parseCommandArgsWithLogFormat("check", args)
+	if err != nil {
+		return err
+	}
+
 	path := "."
-	if len(args) > 0 {
-		path = args[0]
+	if len(parsedArgs) > 0 {
+		path = parsedArgs[0]
 	}
 
 	result := parsePathForCheck(path)

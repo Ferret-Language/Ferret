@@ -182,6 +182,19 @@ func (db *DiagnosticBag) emitFiltered(emitter *Emitter, w io.Writer, keep func(*
 
 // EmitAllToString emits all diagnostics to a string with ANSI codes, using provided source cache
 func (db *DiagnosticBag) EmitAllToString() string {
+	return db.emitAllToStringWithFormat(colors.LogFormatANSI)
+}
+
+// EmitAllToHTML emits all diagnostics to an HTML string, using provided source cache
+func (db *DiagnosticBag) EmitAllToHTML() string {
+	return db.emitAllToStringWithFormat(colors.LogFormatHTML)
+}
+
+func (db *DiagnosticBag) emitAllToStringWithFormat(format colors.LogFormat) string {
+	prevFormat := colors.CurrentLogFormat()
+	colors.SetLogFormat(format)
+	defer colors.SetLogFormat(prevFormat)
+
 	var buf bytes.Buffer
 	emitter := &Emitter{
 		cache:       db.sourceCache,
@@ -192,12 +205,6 @@ func (db *DiagnosticBag) EmitAllToString() string {
 	db.emitFiltered(emitter, &buf, func(*Diagnostic) bool { return true })
 
 	return buf.String()
-}
-
-// EmitAllToHTML emits all diagnostics to an HTML string, using provided source cache
-func (db *DiagnosticBag) EmitAllToHTML() string {
-	ansiOutput := db.EmitAllToString()
-	return colors.ConvertANSIToHTML(ansiOutput)
 }
 
 func printSummary(w io.Writer, errorCount, warnCount int) {

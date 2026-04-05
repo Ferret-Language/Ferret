@@ -35,6 +35,22 @@ func TestEmitErrorsSkipsWarningsWhenNoErrors(t *testing.T) {
 	}
 }
 
+func TestEmitAllToHTMLRendersDirectHTML(t *testing.T) {
+	bag := NewDiagnosticBag("")
+	bag.Add(NewError("<broken>"))
+
+	out := bag.EmitAllToHTML()
+	if !strings.Contains(out, "<span style=") {
+		t.Fatalf("expected html spans, got %q", out)
+	}
+	if !strings.Contains(out, "&lt;broken&gt;") {
+		t.Fatalf("expected escaped html message, got %q", out)
+	}
+	if strings.Contains(out, "\033[") {
+		t.Fatalf("expected no ansi sequences, got %q", out)
+	}
+}
+
 func captureEmitErrors(bag *DiagnosticBag) string {
 	var sb strings.Builder
 	emitter := &Emitter{
