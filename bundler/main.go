@@ -15,6 +15,8 @@ import (
 	"compiler/internal/core/abi"
 )
 
+const windowsMSYS2RootEnv = "MSYS2_ROOT"
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "build bundler: %v\n", err)
@@ -657,7 +659,11 @@ func supportsBundled32BitTarget() bool {
 }
 
 func windowsMSYS2Root() string {
-	return filepath.Clean(`C:\msys64`)
+	root := strings.TrimSpace(os.Getenv(windowsMSYS2RootEnv))
+	if root == "" {
+		root = `C:\msys64`
+	}
+	return filepath.Clean(root)
 }
 
 func uniqueExistingDirs(dirs []string) []string {

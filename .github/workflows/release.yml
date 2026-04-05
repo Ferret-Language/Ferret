@@ -70,6 +70,7 @@ jobs:
 
       - name: Setup MSYS2 toolchain
         if: matrix.os == 'windows'
+        id: msys2
         uses: msys2/setup-msys2@v2
         with:
           update: true
@@ -84,12 +85,15 @@ jobs:
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "${{ steps.msys2.outputs.msys2-location }}\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Verify Windows clang source
         if: matrix.os == 'windows'
         shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: |
+          Write-Host "MSYS2 root: $env:MSYS2_ROOT"
           Get-Command clang | Format-List Source
           clang --version
 
@@ -102,6 +106,8 @@ jobs:
       - name: Pack bundle (windows)
         if: matrix.os == 'windows'
         shell: pwsh
+        env:
+          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: |
           Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
           go run ./bundler
