@@ -131,6 +131,25 @@ func resolveToolBinaries() (map[string]string, error) {
 	}
 	tools[binaryName("qbe")] = qbePath
 
+	if runtime.GOOS == "windows" {
+		msys2Root := windowsMSYS2Root()
+		for _, name := range []string{"clang", "clang++", "ld.lld", "lld", "lld-link"} {
+			path := filepath.Join(msys2Root, "mingw64", "bin", binaryName(name))
+			if isFile(path) {
+				tools[filepath.Base(path)] = path
+			}
+		}
+		clangPath, ok := tools[binaryName("clang")]
+		if !ok {
+			return nil, fmt.Errorf("bundle toolchain: windows clang not found in %s", filepath.Join(msys2Root, "mingw64", "bin"))
+		}
+		root64, root32 := windowsMingwRoots(clangPath)
+		if root64 == "" || root32 == "" {
+			return nil, fmt.Errorf("bundle toolchain: windows clang must come from an MSYS2 root with sibling mingw32 (got %s)", clangPath)
+		}
+		return tools, nil
+	}
+
 	for _, name := range []string{"clang", "clang++", "ld.lld", "lld", "lld-link"} {
 		path, err := exec.LookPath(name)
 		if err != nil {
@@ -237,6 +256,9 @@ func windowsMingwRoots(clangPath string) (string, string) {
 		return "", ""
 	}
 	root64 := filepath.Clean(filepath.Join(filepath.Dir(clangPath), ".."))
+	if !isDir(filepath.Join(root64, "lib")) {
+		return "", ""
+	}
 	root32 := filepath.Clean(filepath.Join(root64, "..", "mingw32"))
 	if !isDir(root32) {
 		root32 = ""
@@ -626,19 +648,16 @@ func supportsBundled32BitTarget() bool {
 	case "linux":
 		return true
 	case "windows":
-		_, root32 := windowsMingwRoots(mustResolveClangPath())
+		root64 := filepath.Join(windowsMSYS2Root(), "mingw64")
+		_, root32 := windowsMingwRoots(filepath.Join(root64, "bin", binaryName("clang")))
 		return root32 != ""
 	default:
 		return false
 	}
 }
 
-func mustResolveClangPath() string {
-	path, err := exec.LookPath("clang")
-	if err != nil {
-		return ""
-	}
-	return path
+func windowsMSYS2Root() string {
+	return filepath.Clean(`C:\msys64`)
 }
 
 func uniqueExistingDirs(dirs []string) []string {

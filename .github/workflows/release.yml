@@ -86,6 +86,13 @@ jobs:
         run: |
           "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
 
+      - name: Verify Windows clang source
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          Get-Command clang | Format-List Source
+          clang --version
+
       - name: Pack bundle (unix)
         if: matrix.os != 'windows'
         run: |
