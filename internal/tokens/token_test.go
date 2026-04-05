@@ -3,6 +3,8 @@ package tokens
 import (
 	"strings"
 	"testing"
+
+	"compiler/internal/core/abi"
 )
 
 func TestLookupIdentAndKeywordHelpers(t *testing.T) {
@@ -53,5 +55,26 @@ func TestParseIntegerBuiltin(t *testing.T) {
 		if signed != tt.signed || bits != tt.bits || ok != tt.ok {
 			t.Fatalf("ParseIntegerBuiltin(%q) = (%v, %d, %v)", tt.name, signed, bits, ok)
 		}
+	}
+}
+
+func TestParseIntegerBuiltinUsesConfiguredABISize(t *testing.T) {
+	prev := abi.SizeBits()
+	defer func() {
+		if err := abi.SetSizeBits(prev); err != nil {
+			t.Fatalf("restore abi size: %v", err)
+		}
+	}()
+	if err := abi.SetSizeBits(abi.Bits32); err != nil {
+		t.Fatalf("set abi size: %v", err)
+	}
+
+	signed, bits, ok := ParseIntegerBuiltin("isize")
+	if !ok || !signed || bits != abi.Bits32 {
+		t.Fatalf("ParseIntegerBuiltin(isize) = (%v, %d, %v)", signed, bits, ok)
+	}
+	signed, bits, ok = ParseIntegerBuiltin("usize")
+	if !ok || signed || bits != abi.Bits32 {
+		t.Fatalf("ParseIntegerBuiltin(usize) = (%v, %d, %v)", signed, bits, ok)
 	}
 }

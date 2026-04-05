@@ -70,11 +70,11 @@ func CompileIR(llvmIR, outputPath string, opts CompileOptions) error {
 	args = append(args, runtimeLib)
 	args = append(args, "-o", outputPath)
 
-	clangPath, err := toolchain.ResolveBinary("clang", "cc", "gcc")
+	clangPath, err := toolchain.ResolveBundledBinary("clang")
 	if err != nil {
 		return fmt.Errorf("compile ir: %w", err)
 	}
-	if bundledArgs := bundledToolchainArgs(clangPath, abiBits); len(bundledArgs) != 0 {
+	if bundledArgs := toolchain.ClangDriverArgs(clangPath, abiBits); len(bundledArgs) != 0 {
 		args = append(args[:2], append(bundledArgs, args[2:]...)...)
 	}
 
@@ -84,23 +84,6 @@ func CompileIR(llvmIR, outputPath string, opts CompileOptions) error {
 	}
 
 	return nil
-}
-
-func bundledToolchainArgs(clangPath string, bits int) []string {
-	if clangPath == "" {
-		return nil
-	}
-	binDir := filepath.Clean(filepath.Dir(clangPath))
-	root := filepath.Clean(filepath.Join(binDir, ".."))
-	if filepath.Base(root) != "toolchain" {
-		return nil
-	}
-	includeDir := filepath.Join(root, "include")
-	libDir := filepath.Join(root, "lib")
-	if bits == abi.Bits32 {
-		libDir = filepath.Join(root, "lib32")
-	}
-	return []string{"-isystem", includeDir, "-L" + libDir, "-B" + libDir}
 }
 
 // FunctionReturnLLVMType returns the LLVM IR type string for the function's
