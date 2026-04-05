@@ -50,7 +50,7 @@ For this repo specifically:
 Library source files live in `ferret_libs_dev/`.
 
 - `ferret_libs_dev/` is the editable source tree for builtin Ferret libraries
-- the build tooling has a single mode: `go run ./tools` (also used by `build.sh` / `build.bat`)
+- the build tooling has a single mode: `go run ./bundler` (also used by `build.sh` / `build.bat`)
 - all generated artifacts are placed under `output/ferret/`
 - the compiler binary is produced at `output/ferret/bin/ferret` (or `.exe` on Windows)
 - builtin libs and runtime archive are produced at `output/ferret/libs/`

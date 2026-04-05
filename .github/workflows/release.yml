@@ -54,7 +54,7 @@ jobs:
           wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh 18
-          sudo apt-get install -y clang-18 lld-18
+          sudo apt-get install -y clang-18 lld-18 gcc-multilib libc6-dev-i386
           mkdir -p "$HOME/.local/llvm-bin"
           ln -sf /usr/bin/clang-18 "$HOME/.local/llvm-bin/clang"
           ln -sf /usr/bin/clang++-18 "$HOME/.local/llvm-bin/clang++"
@@ -89,14 +89,14 @@ jobs:
         if: matrix.os != 'windows'
         run: |
           rm -rf build dist
-          go run ./tools
+          go run ./bundler
 
       - name: Pack bundle (windows)
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
           Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
-          go run ./tools
+          go run ./bundler
 
       - name: Verify core bundle (unix)
         if: matrix.os != 'windows'
