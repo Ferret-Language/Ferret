@@ -95,10 +95,41 @@ func ClangDriverArgs(clangPath string, bits int) []string {
 		"-L" + libDir,
 		"-isystem", includeDir,
 	}
+	if runtime.GOOS == "windows" {
+		for _, dir := range bundledWindowsGCCRuntimeLibDirs(libDir) {
+			args = append(args, "-L"+dir)
+		}
+	}
 	if target != "" {
 		args = append([]string{"--target=" + target}, args...)
 	}
 	return args
+}
+
+func bundledWindowsGCCRuntimeLibDirs(libDir string) []string {
+	gccDir := filepath.Join(libDir, "gcc")
+	triples, err := os.ReadDir(gccDir)
+	if err != nil {
+		return nil
+	}
+
+	dirs := make([]string, 0, len(triples))
+	for _, triple := range triples {
+		if !triple.IsDir() {
+			continue
+		}
+		versions, err := os.ReadDir(filepath.Join(gccDir, triple.Name()))
+		if err != nil {
+			continue
+		}
+		for _, version := range versions {
+			if !version.IsDir() {
+				continue
+			}
+			dirs = append(dirs, filepath.Join(gccDir, triple.Name(), version.Name()))
+		}
+	}
+	return uniqueExistingDirs(dirs)
 }
 
 func candidateToolchainBinDirs() []string {

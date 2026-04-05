@@ -94,3 +94,19 @@ func TestClangDriverArgsUseBundledLayout(t *testing.T) {
 		}
 	}
 }
+
+func TestBundledWindowsGCCRuntimeLibDirs(t *testing.T) {
+	root := t.TempDir()
+	versionDir := filepath.Join(root, "lib32", "gcc", "i686-w64-mingw32", "14.2.0")
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatalf("mkdir version dir: %v", err)
+	}
+
+	got := bundledWindowsGCCRuntimeLibDirs(filepath.Join(root, "lib32"))
+	if len(got) != 1 {
+		t.Fatalf("bundledWindowsGCCRuntimeLibDirs len = %d, want 1 (%#v)", len(got), got)
+	}
+	if got[0] != versionDir {
+		t.Fatalf("bundledWindowsGCCRuntimeLibDirs[0] = %q, want %q", got[0], versionDir)
+	}
+}
