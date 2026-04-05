@@ -36,6 +36,12 @@ Default install location:
 ~/.local/ferret
 ```
 
+Binary location:
+
+```text
+~/.local/ferret/core/bin/ferret
+```
+
 ### macOS
 
 Use the same installer script:
@@ -83,6 +89,12 @@ Default install location:
 
 ```text
 %LOCALAPPDATA%\Ferret
+```
+
+Binary location:
+
+```text
+%LOCALAPPDATA%\Ferret\core\bin\ferret.exe
 ```
 
 ## Verify the installation

@@ -69,7 +69,7 @@ func bundleCore(root, bundleDir string) error {
 	if err := buildRuntimeLib(filepath.Join(root, "runtime"), libsDir, 0); err != nil {
 		return err
 	}
-	if runtime.GOOS == "linux" {
+	if supportsBundled32BitTarget() {
 		if err := buildRuntimeLib(filepath.Join(root, "runtime"), libsDir, abi.Bits32); err != nil {
 			return err
 		}
@@ -111,7 +111,7 @@ func bundleToolchain(bundleDir string) error {
 	if err := copyClangResources(clangPath, libDir); err != nil {
 		return err
 	}
-	if err := copyPlatformToolchainRuntime(bundleDir, libDir, toolPaths(tools)); err != nil {
+	if err := copyPlatformToolchainRuntime(bundleDir, libDir, toolPaths(tools), clangPath); err != nil {
 		return err
 	}
 	if runtime.GOOS == "linux" {
@@ -131,7 +131,7 @@ func resolveToolBinaries() (map[string]string, error) {
 	}
 	tools[binaryName("qbe")] = qbePath
 
-	for _, name := range []string{"clang", "clang++", "ld.lld", "lld"} {
+	for _, name := range []string{"clang", "clang++", "ld.lld", "lld", "lld-link"} {
 		path, err := exec.LookPath(name)
 		if err != nil {
 			continue
@@ -156,15 +156,53 @@ func copyClangResources(clangPath, libDir string) error {
 	return copyDirContents(resourceDir, filepath.Join(libDir, "clang", filepath.Base(resourceDir)))
 }
 
-func copyPlatformToolchainRuntime(bundleDir, libDir string, binaries []string) error {
+func copyPlatformToolchainRuntime(bundleDir, libDir string, binaries []string, clangPath string) error {
 	switch runtime.GOOS {
 	case "windows":
-		return copyWindowsToolchainDLLs(filepath.Join(bundleDir, "bin"), binaries)
+		return copyWindowsToolchain(bundleDir, binaries, clangPath)
 	case "darwin":
 		return copySharedLibraries(libDir, binaries, dependenciesFromOtool)
 	default:
 		return copySharedLibraries(libDir, binaries, dependenciesFromLdd)
 	}
+}
+
+func copyWindowsToolchain(bundleDir string, binaries []string, clangPath string) error {
+	if err := copyWindowsToolchainDLLs(filepath.Join(bundleDir, "bin"), binaries); err != nil {
+		return err
+	}
+
+	root64, root32 := windowsMingwRoots(clangPath)
+	if err := copyWindowsTargetRoot(root64, filepath.Join(bundleDir, "lib"), filepath.Join(bundleDir, "include")); err != nil {
+		return err
+	}
+	if root32 != "" {
+		if err := copyWindowsTargetRoot(root32, filepath.Join(bundleDir, "lib32"), filepath.Join(bundleDir, "include32")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func copyWindowsTargetRoot(root string, libDst string, includeDst string) error {
+	if root == "" {
+		return fmt.Errorf("bundle windows toolchain: empty target root")
+	}
+	libSrc := filepath.Join(root, "lib")
+	if !isDir(libSrc) {
+		return fmt.Errorf("bundle windows toolchain: missing lib dir %s", libSrc)
+	}
+	if err := copyDirContents(libSrc, libDst); err != nil {
+		return fmt.Errorf("bundle windows toolchain libs from %s: %w", libSrc, err)
+	}
+
+	includeSrc := filepath.Join(root, "include")
+	if isDir(includeSrc) {
+		if err := copyDirContents(includeSrc, includeDst); err != nil {
+			return fmt.Errorf("bundle windows toolchain includes from %s: %w", includeSrc, err)
+		}
+	}
+	return nil
 }
 
 func copyLinux32ToolchainSupport(clangPath, bundleDir string) error {
@@ -192,6 +230,18 @@ func copyLinux32ToolchainSupport(clangPath, bundleDir string) error {
 		return fmt.Errorf("bundle toolchain 32-bit support: copy include dir %s: %w", filepath.Dir(stubs32Path), err)
 	}
 	return nil
+}
+
+func windowsMingwRoots(clangPath string) (string, string) {
+	if runtime.GOOS != "windows" || clangPath == "" {
+		return "", ""
+	}
+	root64 := filepath.Clean(filepath.Join(filepath.Dir(clangPath), ".."))
+	root32 := filepath.Clean(filepath.Join(root64, "..", "mingw32"))
+	if !isDir(root32) {
+		root32 = ""
+	}
+	return root64, root32
 }
 
 func copySharedLibraries(dstDir string, binaries []string, depsFn func(string) ([]string, error)) error {
@@ -258,7 +308,7 @@ func linuxStubs32Header(clangPath string) (string, error) {
 		return "", fmt.Errorf("bundle toolchain 32-bit support: resolve include search dirs: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	inSearchList := false
-	
+
 	for line := range strings.SplitSeq(string(out), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "#include <...> search starts here:" {
@@ -339,11 +389,11 @@ func buildRuntimeLib(runtimeDir, libsDir string, bits int) error {
 	}
 	sort.Strings(entries)
 
-	cc, err := resolveCCompiler()
+	cc, err := resolveRuntimeCompiler(bits)
 	if err != nil {
 		return err
 	}
-	ar, err := resolveTool("ar")
+	ar, err := resolveRuntimeArchiver(bits)
 	if err != nil {
 		return err
 	}
@@ -407,12 +457,34 @@ func resolveCCompiler() (string, error) {
 	return "", fmt.Errorf("no C compiler found in PATH (tried %s)", strings.Join(candidates, ", "))
 }
 
-func resolveTool(name string) (string, error) {
-	path, err := exec.LookPath(name)
-	if err != nil {
-		return "", fmt.Errorf("tool not found: %s", name)
+func resolveRuntimeCompiler(bits int) (string, error) {
+	if runtime.GOOS == "windows" {
+		if bits == abi.Bits32 {
+			return resolveTool("i686-w64-mingw32-gcc", "gcc")
+		}
+		return resolveTool("x86_64-w64-mingw32-gcc", "gcc")
 	}
-	return path, nil
+	return resolveCCompiler()
+}
+
+func resolveRuntimeArchiver(bits int) (string, error) {
+	if runtime.GOOS == "windows" {
+		if bits == abi.Bits32 {
+			return resolveTool("i686-w64-mingw32-ar", "ar")
+		}
+		return resolveTool("x86_64-w64-mingw32-ar", "ar")
+	}
+	return resolveTool("ar")
+}
+
+func resolveTool(names ...string) (string, error) {
+	for _, name := range names {
+		path, err := exec.LookPath(name)
+		if err == nil {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("tool not found: %s", strings.Join(names, ", "))
 }
 
 func dependenciesFromLdd(binary string) ([]string, error) {
@@ -422,7 +494,7 @@ func dependenciesFromLdd(binary string) ([]string, error) {
 	}
 	deps := make([]string, 0)
 	seen := map[string]struct{}{}
-	
+
 	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "linux-vdso") {
@@ -432,7 +504,7 @@ func dependenciesFromLdd(binary string) ([]string, error) {
 			return nil, fmt.Errorf("missing runtime dependency: %s", line)
 		}
 		candidate := ""
-		
+
 		if _, after, ok := strings.Cut(line, "=>"); ok {
 			fields := strings.Fields(strings.TrimSpace(after))
 			if len(fields) > 0 {
@@ -547,6 +619,26 @@ func toolBinaryDirs(binaries []string) []string {
 		dirs = append(dirs, filepath.Clean(filepath.Dir(binary)))
 	}
 	return dirs
+}
+
+func supportsBundled32BitTarget() bool {
+	switch runtime.GOOS {
+	case "linux":
+		return true
+	case "windows":
+		_, root32 := windowsMingwRoots(mustResolveClangPath())
+		return root32 != ""
+	default:
+		return false
+	}
+}
+
+func mustResolveClangPath() string {
+	path, err := exec.LookPath("clang")
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 func uniqueExistingDirs(dirs []string) []string {

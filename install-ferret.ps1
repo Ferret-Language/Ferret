@@ -71,15 +71,16 @@ try {
         Remove-Item -Recurse -Force $InstallDir
     }
     New-Item -ItemType Directory -Path $InstallDir | Out-Null
-    Expand-Archive -Path $coreZipPath -DestinationPath $InstallDir -Force
+    $coreDir = Join-Path $InstallDir "core"
+    Expand-Archive -Path $coreZipPath -DestinationPath $coreDir -Force
     $toolchainDir = Join-Path $InstallDir "toolchain"
     New-Item -ItemType Directory -Path $toolchainDir -Force | Out-Null
     Expand-Archive -Path $toolchainZipPath -DestinationPath $toolchainDir -Force
 
-    $binDir = Join-Path $InstallDir "bin"
+    $binDir = Join-Path $coreDir "bin"
     $ferretExe = Join-Path $binDir "ferret.exe"
     if (-not (Test-Path $ferretExe)) {
-        $rootExe = Join-Path $InstallDir "ferret.exe"
+        $rootExe = Join-Path $coreDir "ferret.exe"
         if (Test-Path $rootExe) {
             New-Item -ItemType Directory -Path $binDir -Force | Out-Null
             Move-Item -Force $rootExe $ferretExe

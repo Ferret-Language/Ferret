@@ -4,7 +4,7 @@ set -euo pipefail
 REPO="${FERRET_REPO:-Ferret-Language/Ferret}"
 VERSION="${1:-latest}"
 INSTALL_DIR="${FERRET_INSTALL_DIR:-$HOME/.local/ferret}"
-BIN_DIR="$INSTALL_DIR/bin"
+BIN_DIR="$INSTALL_DIR/core/bin"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -62,7 +62,7 @@ pick_profile_file() {
 
 ensure_path_persisted() {
   local profile_file="$1"
-  local line='export PATH="$HOME/.local/ferret/bin:$PATH"'
+  local line='export PATH="$HOME/.local/ferret/core/bin:$PATH"'
 
   mkdir -p "$(dirname "$profile_file")"
   touch "$profile_file"
@@ -121,13 +121,14 @@ download_to "$TOOLCHAIN_URL" "$TOOLCHAIN_ARCHIVE"
 
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
-tar -xzf "$CORE_ARCHIVE" -C "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR/core"
+tar -xzf "$CORE_ARCHIVE" -C "$INSTALL_DIR/core"
 mkdir -p "$INSTALL_DIR/toolchain"
 tar -xzf "$TOOLCHAIN_ARCHIVE" -C "$INSTALL_DIR/toolchain"
 
-if [[ ! -x "$BIN_DIR/ferret" && -x "$INSTALL_DIR/ferret" ]]; then
+if [[ ! -x "$BIN_DIR/ferret" && -x "$INSTALL_DIR/core/ferret" ]]; then
   mkdir -p "$BIN_DIR"
-  mv "$INSTALL_DIR/ferret" "$BIN_DIR/ferret"
+  mv "$INSTALL_DIR/core/ferret" "$BIN_DIR/ferret"
 fi
 
 if [[ ! -x "$BIN_DIR/ferret" ]]; then

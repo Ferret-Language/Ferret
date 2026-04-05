@@ -78,6 +78,7 @@ jobs:
             mingw-w64-x86_64-binutils
             mingw-w64-x86_64-clang
             mingw-w64-x86_64-lld
+            mingw-w64-i686-toolchain
 
       - name: Add MSYS2 to PATH
         if: matrix.os == 'windows'
@@ -126,7 +127,14 @@ jobs:
           if (!(Test-Path "build\toolchain\bin\ld.lld.exe")) {
             throw "toolchain ld.lld.exe not found"
           }
+          if (!(Test-Path "build\toolchain\bin\lld-link.exe")) {
+            throw "toolchain lld-link.exe not found"
+          }
+          if (!(Test-Path "build\toolchain\lib32")) {
+            throw "toolchain lib32 not found"
+          }
           & "build\toolchain\bin\ld.lld.exe" --version
+          & "build\toolchain\bin\lld-link.exe" --version
 
       - name: Packaged LLVM smoke (windows)
         if: matrix.os == 'windows'
@@ -135,6 +143,10 @@ jobs:
           & "build\core\bin\ferret.exe" -backend llvm -o "build\smoke.exe" "tests\semma\string_realworld_ok.fer"
           if (!(Test-Path "build\smoke.exe")) {
             throw "packaged windows llvm smoke output not found"
+          }
+          & "build\core\bin\ferret.exe" -m32 -backend llvm -o "build\smoke32.exe" "tests\semma\string_realworld_ok.fer"
+          if (!(Test-Path "build\smoke32.exe")) {
+            throw "packaged windows llvm 32-bit smoke output not found"
           }
 
       - name: Archive (unix)

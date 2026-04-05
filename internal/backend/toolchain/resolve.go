@@ -78,13 +78,27 @@ func ClangDriverArgs(clangPath string, bits int) []string {
 	if bits == 32 {
 		libDir = filepath.Join(root, "lib32")
 	}
-	return []string{
-		"-fuse-ld=lld",
+	linkerFlavor := "lld"
+	target := ""
+	if runtime.GOOS == "windows" {
+		if bits == 32 {
+			target = "i686-w64-windows-gnu"
+			includeDir = filepath.Join(root, "include32")
+		} else {
+			target = "x86_64-w64-windows-gnu"
+		}
+	}
+	args := []string{
+		"-fuse-ld=" + linkerFlavor,
 		"-B" + binDir,
 		"-B" + libDir,
 		"-L" + libDir,
 		"-isystem", includeDir,
 	}
+	if target != "" {
+		args = append([]string{"--target=" + target}, args...)
+	}
+	return args
 }
 
 func candidateToolchainBinDirs() []string {
