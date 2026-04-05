@@ -15,24 +15,6 @@ import (
 	"compiler/internal/core/abi"
 )
 
-type bundleTarget struct {
-	label string
-	run   func() error
-}
-
-type bundleContext struct {
-	root            string
-	coreBundleDir   string
-	coreBinDir      string
-	coreLibsDir     string
-	toolchainDir    string
-	toolchainBinDir string
-	toolchainLibDir string
-	bundledTools    map[string]string
-	clangPath       string
-	toolBinaryPaths []string
-}
-
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "build bundler: %v\n", err)
@@ -49,257 +31,213 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	ctx, err := prepareBundleContext(root)
-	if err != nil {
-		return err
+	buildDir := filepath.Join(root, "build")
+	if err := resetDir(buildDir); err != nil {
+		return fmt.Errorf("prepare build dir: %w", err)
 	}
-
-	targets, err := planBundleTargets(ctx)
-	if err != nil {
-		return err
-	}
-	for _, target := range targets {
-		if err := target.run(); err != nil {
-			return fmt.Errorf("%s: %w", target.label, err)
+	for _, legacy := range []string{"libs", "bin"} {
+		if err := os.RemoveAll(filepath.Join(root, legacy)); err != nil {
+			return fmt.Errorf("clean legacy %s: %w", legacy, err)
 		}
 	}
 
-	fmt.Printf("packaged %s and %s\n", ctx.coreBundleDir, ctx.toolchainDir)
+	coreDir := filepath.Join(buildDir, "core")
+	toolchainDir := filepath.Join(buildDir, "toolchain")
+	if err := bundleCore(root, coreDir); err != nil {
+		return err
+	}
+	if err := bundleToolchain(toolchainDir); err != nil {
+		return err
+	}
+
+	fmt.Printf("packaged %s and %s\n", coreDir, toolchainDir)
 	return nil
 }
 
-func prepareBundleContext(root string) (bundleContext, error) {
-	for _, legacy := range []string{"libs", "bin"} {
-		legacyPath := filepath.Join(root, legacy)
-		if err := os.RemoveAll(legacyPath); err != nil {
-			return bundleContext{}, fmt.Errorf("clean legacy %s: %w", legacyPath, err)
+func bundleCore(root, bundleDir string) error {
+	binDir := filepath.Join(bundleDir, "bin")
+	libsDir := filepath.Join(bundleDir, "libs")
+	for _, dir := range []string{bundleDir, binDir, libsDir} {
+		if err := resetDir(dir); err != nil {
+			return fmt.Errorf("prepare %s: %w", dir, err)
 		}
 	}
 
-	buildDir := filepath.Join(root, "build")
-	if err := os.RemoveAll(buildDir); err != nil {
-		return bundleContext{}, fmt.Errorf("clean build dir: %w", err)
+	if err := syncFerretLibs(filepath.Join(root, "ferret_libs_dev"), libsDir); err != nil {
+		return err
 	}
-	if err := os.MkdirAll(buildDir, 0o755); err != nil {
-		return bundleContext{}, fmt.Errorf("create build dir: %w", err)
+	if err := buildRuntimeLib(filepath.Join(root, "runtime"), libsDir, 0); err != nil {
+		return err
 	}
+	if runtime.GOOS == "linux" {
+		if err := buildRuntimeLib(filepath.Join(root, "runtime"), libsDir, abi.Bits32); err != nil {
+			return err
+		}
+	}
+	if err := buildCompiler(root, filepath.Join(binDir, binaryName("ferret"))); err != nil {
+		return err
+	}
+	for _, name := range []string{"README.md", "LICENSE"} {
+		src := filepath.Join(root, name)
+		if isFile(src) {
+			if err := copyFile(src, filepath.Join(bundleDir, name)); err != nil {
+				return fmt.Errorf("copy %s: %w", name, err)
+			}
+		}
+	}
+	return nil
+}
 
-	ctx := bundleContext{
-		root:            root,
-		coreBundleDir:   filepath.Join(buildDir, "core"),
-		coreBinDir:      filepath.Join(buildDir, "core", "bin"),
-		coreLibsDir:     filepath.Join(buildDir, "core", "libs"),
-		toolchainDir:    filepath.Join(buildDir, "toolchain"),
-		toolchainBinDir: filepath.Join(buildDir, "toolchain", "bin"),
-		toolchainLibDir: filepath.Join(buildDir, "toolchain", "lib"),
-	}
-	for _, dir := range []string{
-		ctx.coreBundleDir,
-		ctx.coreBinDir,
-		ctx.coreLibsDir,
-		ctx.toolchainDir,
-		ctx.toolchainBinDir,
-		ctx.toolchainLibDir,
-	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return bundleContext{}, fmt.Errorf("create bundle dir %s: %w", dir, err)
+func bundleToolchain(bundleDir string) error {
+	binDir := filepath.Join(bundleDir, "bin")
+	libDir := filepath.Join(bundleDir, "lib")
+	for _, dir := range []string{bundleDir, binDir, libDir} {
+		if err := resetDir(dir); err != nil {
+			return fmt.Errorf("prepare %s: %w", dir, err)
 		}
 	}
 
-	bundledTools, err := resolveBundledTools()
+	tools, err := resolveToolBinaries()
 	if err != nil {
-		return bundleContext{}, err
+		return err
 	}
-	ctx.bundledTools = bundledTools
-	ctx.clangPath = bundledTools[binaryName("clang")]
-	ctx.toolBinaryPaths = make([]string, 0, len(bundledTools))
-	for _, name := range sortedKeys(bundledTools) {
-		ctx.toolBinaryPaths = append(ctx.toolBinaryPaths, bundledTools[name])
-	}
-	return ctx, nil
-}
-
-func planBundleTargets(ctx bundleContext) ([]bundleTarget, error) {
-	targets := make([]bundleTarget, 0, 16)
-	targets = appendCoreBundleTargets(targets, ctx)
-	targets = appendToolchainBundleTargets(targets, ctx)
-	switch runtime.GOOS {
-	case "linux":
-		var err error
-		targets, err = appendLinuxBundleTargets(targets, ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return targets, nil
-}
-
-func appendCoreBundleTargets(targets []bundleTarget, ctx bundleContext) []bundleTarget {
-	runtimeDir := filepath.Join(ctx.root, "runtime")
-	targets = append(targets,
-		bundleTarget{
-			label: "bundle ferret libs",
-			run: func() error {
-				return syncFerretLibs(filepath.Join(ctx.root, "ferret_libs_dev"), ctx.coreLibsDir)
-			},
-		},
-		bundleTarget{
-			label: "bundle runtime archive",
-			run: func() error {
-				return buildRuntimeLib(runtimeDir, ctx.coreLibsDir, 0)
-			},
-		},
-		bundleTarget{
-			label: "bundle compiler",
-			run: func() error {
-				return buildCompiler(ctx.root, filepath.Join(ctx.coreBinDir, binaryName("ferret")))
-			},
-		},
-	)
-
-	for _, file := range []string{"README.md", "LICENSE"} {
-		src := filepath.Join(ctx.root, file)
-		if info, err := os.Stat(src); err == nil && !info.IsDir() {
-			dst := filepath.Join(ctx.coreBundleDir, file)
-			targets = append(targets, bundleTarget{
-				label: fmt.Sprintf("bundle %s", file),
-				run: func(src, dst string) func() error {
-					return func() error {
-						return copyFile(src, dst)
-					}
-				}(src, dst),
-			})
+	for _, name := range sortedKeys(tools) {
+		if err := copyFile(tools[name], filepath.Join(binDir, name)); err != nil {
+			return fmt.Errorf("copy tool %s: %w", name, err)
 		}
 	}
 
-	return targets
+	clangPath := tools[binaryName("clang")]
+	if err := copyClangResources(clangPath, libDir); err != nil {
+		return err
+	}
+	if err := copyPlatformToolchainRuntime(bundleDir, libDir, toolPaths(tools)); err != nil {
+		return err
+	}
+	if runtime.GOOS == "linux" {
+		if err := copyLinux32ToolchainSupport(clangPath, bundleDir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func appendToolchainBundleTargets(targets []bundleTarget, ctx bundleContext) []bundleTarget {
-	for _, name := range sortedKeys(ctx.bundledTools) {
-		src := ctx.bundledTools[name]
-		dst := filepath.Join(ctx.toolchainBinDir, name)
-		targets = append(targets, bundleTarget{
-			label: fmt.Sprintf("bundle tool %s", name),
-			run: func(src, dst string) func() error {
-				return func() error {
-					return copyFile(src, dst)
-				}
-			}(src, dst),
-		})
-	}
-
-	targets = append(targets,
-		bundleTarget{
-			label: "bundle toolchain shared libraries",
-			run: func() error {
-				return copyToolchainSharedLibraries(ctx.toolchainLibDir, ctx.toolBinaryPaths)
-			},
-		},
-		bundleTarget{
-			label: "bundle clang resources",
-			run: func() error {
-				resourceDir, err := clangResourceDir(ctx.clangPath)
-				if err != nil {
-					return err
-				}
-				return copyDirContents(resourceDir, filepath.Join(ctx.toolchainLibDir, "clang", filepath.Base(resourceDir)))
-			},
-		},
-	)
-	return targets
-}
-
-func appendLinuxBundleTargets(targets []bundleTarget, ctx bundleContext) ([]bundleTarget, error) {
-	runtimeDir := filepath.Join(ctx.root, "runtime")
-	targets = append(targets, bundleTarget{
-		label: "bundle runtime archive (32-bit)",
-		run: func() error {
-			return buildRuntimeLib(runtimeDir, ctx.coreLibsDir, abi.Bits32)
-		},
-	})
-
-	lib32Copies, err := linuxLib32CopyTargets(ctx.clangPath, ctx.toolchainDir)
-	if err != nil {
-		return nil, err
-	}
-	targets = append(targets, lib32Copies...)
-	return targets, nil
-}
-
-func linuxLib32CopyTargets(clangPath string, toolchainDir string) ([]bundleTarget, error) {
-	startFilePath, err := clangResolvedFile(clangPath, "-m32", "-print-file-name=Scrt1.o")
-	if err != nil {
-		return nil, fmt.Errorf("bundle toolchain 32-bit support: resolve start files: %w", err)
-	}
-	libgccPath, err := clangResolvedFile(clangPath, "-m32", "-print-file-name=libgcc.a")
-	if err != nil {
-		return nil, fmt.Errorf("bundle toolchain 32-bit support: resolve libgcc dir: %w", err)
-	}
-	stubs32Path, err := linuxStubs32Header(clangPath)
-	if err != nil {
-		return nil, err
-	}
-
-	return []bundleTarget{
-		{
-			label: "bundle toolchain 32-bit start files",
-			run: func() error {
-				return copyDirContents(filepath.Dir(startFilePath), filepath.Join(toolchainDir, "lib32"))
-			},
-		},
-		{
-			label: "bundle toolchain 32-bit libgcc",
-			run: func() error {
-				return copyDirContents(filepath.Dir(libgccPath), filepath.Join(toolchainDir, "lib32"))
-			},
-		},
-		{
-			label: "bundle toolchain 32-bit headers",
-			run: func() error {
-				return copyDirContents(filepath.Dir(stubs32Path), filepath.Join(toolchainDir, "include", "gnu"))
-			},
-		},
-	}, nil
-}
-
-func resolveBundledTools() (map[string]string, error) {
-	bundled := map[string]string{}
+func resolveToolBinaries() (map[string]string, error) {
+	tools := map[string]string{}
 
 	qbePath, err := qbe.QBEBinary()
 	if err != nil {
 		return nil, fmt.Errorf("bundle qbe: %w", err)
 	}
-	bundled[binaryName("qbe")] = qbePath
+	tools[binaryName("qbe")] = qbePath
 
-	for _, name := range []string{"clang", "clang++", "ld.lld", "lld", "cc", "gcc"} {
+	for _, name := range []string{"clang", "clang++", "ld.lld", "lld"} {
 		path, err := exec.LookPath(name)
 		if err != nil {
 			continue
 		}
-		base := filepath.Base(path)
-		if _, exists := bundled[base]; exists {
-			continue
-		}
-		bundled[base] = path
+		tools[filepath.Base(path)] = path
 	}
-	if _, ok := bundled[binaryName("clang")]; !ok {
+	if _, ok := tools[binaryName("clang")]; !ok {
 		return nil, fmt.Errorf("bundle toolchain: clang is required in PATH for release packaging")
 	}
-	return bundled, nil
+	return tools, nil
 }
 
-func clangResourceDir(clangPath string) (string, error) {
+func copyClangResources(clangPath, libDir string) error {
 	out, err := exec.Command(clangPath, "-print-resource-dir").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("bundle clang resources: %w\n%s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("bundle clang resources: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	resourceDir := filepath.Clean(strings.TrimSpace(string(out)))
-	info, err := os.Stat(resourceDir)
-	if err != nil || !info.IsDir() {
-		return "", fmt.Errorf("bundle clang resources: invalid resource dir %s", resourceDir)
+	if !isDir(resourceDir) {
+		return fmt.Errorf("bundle clang resources: invalid resource dir %s", resourceDir)
 	}
-	return resourceDir, nil
+	return copyDirContents(resourceDir, filepath.Join(libDir, "clang", filepath.Base(resourceDir)))
+}
+
+func copyPlatformToolchainRuntime(bundleDir, libDir string, binaries []string) error {
+	switch runtime.GOOS {
+	case "windows":
+		return copyWindowsToolchainDLLs(filepath.Join(bundleDir, "bin"), binaries)
+	case "darwin":
+		return copySharedLibraries(libDir, binaries, dependenciesFromOtool)
+	default:
+		return copySharedLibraries(libDir, binaries, dependenciesFromLdd)
+	}
+}
+
+func copyLinux32ToolchainSupport(clangPath, bundleDir string) error {
+	startFilePath, err := clangResolvedFile(clangPath, "-m32", "-print-file-name=Scrt1.o")
+	if err != nil {
+		return fmt.Errorf("bundle toolchain 32-bit support: resolve start files: %w", err)
+	}
+	if err := copyDirContents(filepath.Dir(startFilePath), filepath.Join(bundleDir, "lib32")); err != nil {
+		return fmt.Errorf("bundle toolchain 32-bit support: copy start-file dir %s: %w", filepath.Dir(startFilePath), err)
+	}
+
+	libgccPath, err := clangResolvedFile(clangPath, "-m32", "-print-file-name=libgcc.a")
+	if err != nil {
+		return fmt.Errorf("bundle toolchain 32-bit support: resolve libgcc dir: %w", err)
+	}
+	if err := copyDirContents(filepath.Dir(libgccPath), filepath.Join(bundleDir, "lib32")); err != nil {
+		return fmt.Errorf("bundle toolchain 32-bit support: copy libgcc dir %s: %w", filepath.Dir(libgccPath), err)
+	}
+
+	stubs32Path, err := linuxStubs32Header(clangPath)
+	if err != nil {
+		return err
+	}
+	if err := copyDirContents(filepath.Dir(stubs32Path), filepath.Join(bundleDir, "include", "gnu")); err != nil {
+		return fmt.Errorf("bundle toolchain 32-bit support: copy include dir %s: %w", filepath.Dir(stubs32Path), err)
+	}
+	return nil
+}
+
+func copySharedLibraries(dstDir string, binaries []string, depsFn func(string) ([]string, error)) error {
+	deps := make(map[string]struct{})
+	for _, bin := range binaries {
+		libs, err := depsFn(bin)
+		if err != nil {
+			return fmt.Errorf("toolchain deps for %s: %w", filepath.Base(bin), err)
+		}
+		for _, lib := range libs {
+			deps[lib] = struct{}{}
+		}
+	}
+	paths := make([]string, 0, len(deps))
+	for path := range deps {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, src := range paths {
+		if skipBundledSharedLibrary(src) {
+			continue
+		}
+		if err := copyFile(src, filepath.Join(dstDir, filepath.Base(src))); err != nil {
+			return fmt.Errorf("copy toolchain shared lib %s: %w", src, err)
+		}
+	}
+	return nil
+}
+
+func copyWindowsToolchainDLLs(binDir string, binaries []string) error {
+	for _, dir := range uniqueExistingDirs(toolBinaryDirs(binaries)) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return fmt.Errorf("read toolchain dir %s: %w", dir, err)
+		}
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".dll") {
+				continue
+			}
+			src := filepath.Join(dir, entry.Name())
+			if err := copyFile(src, filepath.Join(binDir, entry.Name())); err != nil {
+				return fmt.Errorf("copy toolchain dll %s: %w", src, err)
+			}
+		}
+	}
+	return nil
 }
 
 func clangResolvedFile(clangPath string, args ...string) (string, error) {
@@ -320,7 +258,8 @@ func linuxStubs32Header(clangPath string) (string, error) {
 		return "", fmt.Errorf("bundle toolchain 32-bit support: resolve include search dirs: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	inSearchList := false
-	for _, line := range strings.Split(string(out), "\n") {
+	
+	for line := range strings.SplitSeq(string(out), "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "#include <...> search starts here:" {
 			inSearchList = true
@@ -340,15 +279,6 @@ func linuxStubs32Header(clangPath string) (string, error) {
 	return "", fmt.Errorf("bundle toolchain 32-bit support: missing gnu/stubs-32.h in toolchain include search paths")
 }
 
-func sortedKeys(values map[string]string) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
 func findRepoRoot() (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -366,30 +296,27 @@ func findRepoRoot() (string, error) {
 	return "", fmt.Errorf("go.mod not found from %s", cwd)
 }
 
-func syncFerretLibs(srcDir, dstDir string) error {
-	info, err := os.Stat(srcDir)
-	if err != nil {
-		return fmt.Errorf("stat ferret_libs_dev: %w", err)
+func resetDir(path string) error {
+	if err := os.RemoveAll(path); err != nil {
+		return err
 	}
-	if !info.IsDir() {
+	return os.MkdirAll(path, 0o755)
+}
+
+func syncFerretLibs(srcDir, dstDir string) error {
+	if !isDir(srcDir) {
 		return fmt.Errorf("ferret_libs_dev is not a directory: %s", srcDir)
 	}
-	if err := os.RemoveAll(dstDir); err != nil {
-		return fmt.Errorf("clean libs dir: %w", err)
-	}
-	if err := os.MkdirAll(dstDir, 0o755); err != nil {
-		return fmt.Errorf("recreate libs dir: %w", err)
+	if err := resetDir(dstDir); err != nil {
+		return fmt.Errorf("prepare libs dir: %w", err)
 	}
 	return filepath.WalkDir(srcDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		rel, err := filepath.Rel(srcDir, path)
-		if err != nil {
+		if err != nil || rel == "." {
 			return err
-		}
-		if rel == "." {
-			return nil
 		}
 		dstPath := filepath.Join(dstDir, rel)
 		if entry.IsDir() {
@@ -444,8 +371,7 @@ func buildRuntimeLib(runtimeDir, libsDir string, bits int) error {
 	}
 
 	libPath := filepath.Join(libsDir, backend.RuntimeStaticLibName(bits))
-	args := append([]string{"rcs", libPath}, objFiles...)
-	if err := runCmd("", ar, args...); err != nil {
+	if err := runCmd("", ar, append([]string{"rcs", libPath}, objFiles...)...); err != nil {
 		return fmt.Errorf("archive runtime library: %w", err)
 	}
 	if ranlib, err := exec.LookPath("ranlib"); err == nil {
@@ -489,6 +415,75 @@ func resolveTool(name string) (string, error) {
 	return path, nil
 }
 
+func dependenciesFromLdd(binary string) ([]string, error) {
+	out, err := exec.Command("ldd", binary).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("ldd failed: %w\n%s", err, out)
+	}
+	deps := make([]string, 0)
+	seen := map[string]struct{}{}
+	
+	for line := range strings.SplitSeq(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "linux-vdso") {
+			continue
+		}
+		if strings.Contains(line, "=> not found") {
+			return nil, fmt.Errorf("missing runtime dependency: %s", line)
+		}
+		candidate := ""
+		
+		if _, after, ok := strings.Cut(line, "=>"); ok {
+			fields := strings.Fields(strings.TrimSpace(after))
+			if len(fields) > 0 {
+				candidate = fields[0]
+			}
+		} else if strings.HasPrefix(line, "/") {
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				candidate = fields[0]
+			}
+		}
+		if !strings.HasPrefix(candidate, "/") || seen[candidate] != (struct{}{}) && false {
+			continue
+		}
+		if _, ok := seen[candidate]; ok || !isFile(candidate) {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		deps = append(deps, candidate)
+	}
+	return deps, nil
+}
+
+func dependenciesFromOtool(binary string) ([]string, error) {
+	out, err := exec.Command("otool", "-L", binary).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("otool failed: %w\n%s", err, out)
+	}
+	deps := make([]string, 0)
+	seen := map[string]struct{}{}
+	for idx, line := range strings.Split(string(out), "\n") {
+		if idx == 0 {
+			continue
+		}
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
+			continue
+		}
+		candidate := fields[0]
+		if !strings.HasPrefix(candidate, "/") || strings.HasPrefix(candidate, "/usr/lib/") || strings.HasPrefix(candidate, "/System/Library/") {
+			continue
+		}
+		if _, ok := seen[candidate]; ok || !isFile(candidate) {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		deps = append(deps, candidate)
+	}
+	return deps, nil
+}
+
 func copyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
@@ -515,106 +510,15 @@ func copyFile(src, dst string) error {
 
 func copyDirContents(srcDir, dstDir string) error {
 	return filepath.WalkDir(srcDir, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
+		if walkErr != nil || entry.IsDir() {
 			return walkErr
 		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, err := os.Stat(path)
-		if err != nil || info.IsDir() {
-			return nil
-		}
 		rel, err := filepath.Rel(srcDir, path)
-		if err != nil {
+		if err != nil || !isFile(path) {
 			return err
 		}
 		return copyFile(path, filepath.Join(dstDir, rel))
 	})
-}
-
-func copyToolchainSharedLibraries(toolchainLibDir string, binaries []string) error {
-	deps := make(map[string]struct{})
-	for _, bin := range binaries {
-		libs, err := sharedLibraryDependencies(bin)
-		if err != nil {
-			return fmt.Errorf("toolchain deps for %s: %w", filepath.Base(bin), err)
-		}
-		for _, lib := range libs {
-			deps[lib] = struct{}{}
-		}
-	}
-
-	paths := make([]string, 0, len(deps))
-	for path := range deps {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	for _, src := range paths {
-		if skipBundledSharedLibrary(src) {
-			continue
-		}
-		dst := filepath.Join(toolchainLibDir, filepath.Base(src))
-		if err := copyFile(src, dst); err != nil {
-			return fmt.Errorf("copy toolchain shared lib %s: %w", src, err)
-		}
-	}
-	return nil
-}
-
-func sharedLibraryDependencies(binary string) ([]string, error) {
-	switch runtime.GOOS {
-	case "darwin":
-		return dependenciesFromOtool(binary)
-	default:
-		return dependenciesFromLdd(binary)
-	}
-}
-
-func dependenciesFromLdd(binary string) ([]string, error) {
-	cmd := exec.Command("ldd", binary)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("ldd failed: %w\n%s", err, out)
-	}
-
-	deps := make([]string, 0)
-	seen := map[string]struct{}{}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "linux-vdso") {
-			continue
-		}
-		if strings.Contains(line, "=> not found") {
-			return nil, fmt.Errorf("missing runtime dependency: %s", line)
-		}
-
-		candidate := ""
-		if idx := strings.Index(line, "=>"); idx >= 0 {
-			rhs := strings.TrimSpace(line[idx+2:])
-			fields := strings.Fields(rhs)
-			if len(fields) > 0 {
-				candidate = fields[0]
-			}
-		} else if strings.HasPrefix(line, "/") {
-			fields := strings.Fields(line)
-			if len(fields) > 0 {
-				candidate = fields[0]
-			}
-		}
-		if !strings.HasPrefix(candidate, "/") {
-			continue
-		}
-		if _, ok := seen[candidate]; ok {
-			continue
-		}
-		if info, statErr := os.Stat(candidate); statErr != nil || info.IsDir() {
-			continue
-		}
-		seen[candidate] = struct{}{}
-		deps = append(deps, candidate)
-	}
-	return deps, nil
 }
 
 func skipBundledSharedLibrary(path string) bool {
@@ -629,50 +533,56 @@ func skipBundledSharedLibrary(path string) bool {
 	return strings.HasPrefix(base, "ld-linux")
 }
 
-func dependenciesFromOtool(binary string) ([]string, error) {
-	cmd := exec.Command("otool", "-L", binary)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("otool failed: %w\n%s", err, out)
+func toolPaths(tools map[string]string) []string {
+	paths := make([]string, 0, len(tools))
+	for _, name := range sortedKeys(tools) {
+		paths = append(paths, tools[name])
 	}
+	return paths
+}
 
-	deps := make([]string, 0)
-	seen := map[string]struct{}{}
-	lines := strings.Split(string(out), "\n")
-	for idx, line := range lines {
-		if idx == 0 {
-			continue
-		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		candidate := fields[0]
-		if !strings.HasPrefix(candidate, "/") {
-			continue
-		}
-		if strings.HasPrefix(candidate, "/usr/lib/") || strings.HasPrefix(candidate, "/System/Library/") {
-			continue
-		}
-		if _, ok := seen[candidate]; ok {
-			continue
-		}
-		if info, statErr := os.Stat(candidate); statErr != nil || info.IsDir() {
-			continue
-		}
-		seen[candidate] = struct{}{}
-		deps = append(deps, candidate)
+func toolBinaryDirs(binaries []string) []string {
+	dirs := make([]string, 0, len(binaries))
+	for _, binary := range binaries {
+		dirs = append(dirs, filepath.Clean(filepath.Dir(binary)))
 	}
-	return deps, nil
+	return dirs
+}
+
+func uniqueExistingDirs(dirs []string) []string {
+	seen := make(map[string]struct{}, len(dirs))
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if dir == "" {
+			continue
+		}
+		clean := filepath.Clean(dir)
+		if _, ok := seen[clean]; ok || !isDir(clean) {
+			continue
+		}
+		seen[clean] = struct{}{}
+		out = append(out, clean)
+	}
+	return out
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func isFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 func binaryName(base string) string {
