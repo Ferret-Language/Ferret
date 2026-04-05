@@ -213,17 +213,51 @@ func copyWindowsTargetRoot(root string, libDst string, includeDst string) error 
 	if !isDir(libSrc) {
 		return fmt.Errorf("bundle windows toolchain: missing lib dir %s", libSrc)
 	}
-	if err := copyDirContents(libSrc, libDst); err != nil {
+	if err := copyDirContentsFiltered(libSrc, libDst, shouldSkipWindowsToolchainPath); err != nil {
 		return fmt.Errorf("bundle windows toolchain libs from %s: %w", libSrc, err)
 	}
 
 	includeSrc := filepath.Join(root, "include")
 	if isDir(includeSrc) {
-		if err := copyDirContents(includeSrc, includeDst); err != nil {
+		if err := copyDirContentsFiltered(includeSrc, includeDst, shouldSkipWindowsToolchainPath); err != nil {
 			return fmt.Errorf("bundle windows toolchain includes from %s: %w", includeSrc, err)
 		}
 	}
 	return nil
+}
+
+func shouldSkipWindowsToolchainPath(rel string) bool {
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) == 0 {
+		return false
+	}
+
+	for _, part := range parts {
+		lower := strings.ToLower(part)
+		switch {
+		case strings.HasPrefix(lower, "python"):
+			return true
+		case strings.HasPrefix(lower, "tcl"):
+			return true
+		case strings.HasPrefix(lower, "tk"):
+			return true
+		case lower == "cmake", lower == "pkgconfig", lower == "terminfo":
+			return true
+		case lower == "clang", lower == "clang-c", lower == "lld":
+			return true
+		}
+	}
+
+	if len(parts) >= 3 && parts[0] == "gcc" {
+		for _, part := range parts[3:] {
+			switch strings.ToLower(part) {
+			case "plugin", "include", "include-fixed", "install-tools",
+				"cc1.exe", "cc1plus.exe", "collect2.exe", "lto1.exe", "lto-wrapper.exe", "g++-mapper-server.exe":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func copyLinux32ToolchainSupport(clangPath, bundleDir string) error {
@@ -612,6 +646,31 @@ func copyDirContents(srcDir, dstDir string) error {
 		rel, err := filepath.Rel(srcDir, path)
 		if err != nil || !isFile(path) {
 			return err
+		}
+		return copyFile(path, filepath.Join(dstDir, rel))
+	})
+}
+
+func copyDirContentsFiltered(srcDir, dstDir string, skip func(string) bool) error {
+	return filepath.WalkDir(srcDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(srcDir, path)
+		if err != nil || rel == "." {
+			return err
+		}
+		if skip(rel) {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		if !isFile(path) {
+			return nil
 		}
 		return copyFile(path, filepath.Join(dstDir, rel))
 	})
