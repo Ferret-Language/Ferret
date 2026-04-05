@@ -5,6 +5,7 @@ import (
 
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/abi"
 )
 
 type AggregateLayoutContext struct {
@@ -85,6 +86,7 @@ func LookupStructLayout(
 }
 
 func sliceLikeStructLayout(ptrType typeinfo.Type) *layout.StructLayout {
+	ptrSize := abi.PointerBytes()
 	return &layout.StructLayout{
 		Fields: []*layout.FieldLayout{
 			{
@@ -93,22 +95,22 @@ func sliceLikeStructLayout(ptrType typeinfo.Type) *layout.StructLayout {
 				SemanticIndex: 0,
 				PhysicalIndex: 0,
 				Offset:        0,
-				Size:          8,
-				Align:         8,
+				Size:          ptrSize,
+				Align:         ptrSize,
 			},
 			{
 				Name:          "len",
 				Type:          &typeinfo.BuiltinType{Name: "usize"},
 				SemanticIndex: 1,
 				PhysicalIndex: 1,
-				Offset:        8,
-				Size:          8,
-				Align:         8,
+				Offset:        ptrSize,
+				Size:          ptrSize,
+				Align:         ptrSize,
 			},
 		},
 		PhysicalOrder: []int{0, 1},
-		Size:          16,
-		Align:         8,
+		Size:          ptrSize * 2,
+		Align:         ptrSize,
 	}
 }
 
@@ -211,9 +213,11 @@ func AggregateSizeAlign(ctx AggregateLayoutContext, typ typeinfo.Type) (int64, i
 		}
 		return size, align, nil
 	case *typeinfo.StringType:
-		return 16, 8, nil
+		ptrSize := abi.PointerBytes()
+		return ptrSize * 2, ptrSize, nil
 	case *typeinfo.SliceType:
-		return 16, 8, nil
+		ptrSize := abi.PointerBytes()
+		return ptrSize * 2, ptrSize, nil
 	case *typeinfo.OptionalType:
 		if OptionalUsesNiche(t.Inner) {
 			return 0, 0, fmt.Errorf("optional %s uses niche layout", t.Inner)
@@ -237,7 +241,8 @@ func AggregateSizeAlign(ctx AggregateLayoutContext, typ typeinfo.Type) (int64, i
 		return info.Size, info.Align, nil
 	case *typeinfo.NamedType:
 		if IsNamedInterface(t) {
-			return 16, 8, nil
+			ptrSize := abi.PointerBytes()
+			return ptrSize * 2, ptrSize, nil
 		}
 		if ctx.LookupNamed == nil {
 			return 0, 0, fmt.Errorf("aggregate size context missing named layout resolver")

@@ -14,6 +14,7 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	becommon "compiler/internal/backend/common"
+	"compiler/internal/core/abi"
 	"compiler/internal/ir/mir"
 	"compiler/internal/tokens"
 	"compiler/internal/utils/numeric"
@@ -82,6 +83,18 @@ func newDebugState() *debugState {
 		compositeIDs:   make(map[string]int),
 		buildingTypes:  make(map[string]bool),
 	}
+}
+
+func llvmABIIntType() string {
+	return fmt.Sprintf("i%d", abi.SizeBits())
+}
+
+func llvmSliceLikeType() string {
+	return "{ ptr, " + llvmABIIntType() + " }"
+}
+
+func llvmGEPIndex(value string) string {
+	return llvmABIIntType() + " " + value
 }
 
 // emit appends a metadata node definition "!N = <node>" and returns its ID.
@@ -170,7 +183,7 @@ func (d *debugState) getPointerType(baseTypeID int) int {
 	if id, ok := d.pointerTypeIDs[baseTypeID]; ok {
 		return id
 	}
-	id := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !%d, size: 64)", baseTypeID))
+	id := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !%d, size: %d)", baseTypeID, abi.SizeBits()))
 	d.pointerTypeIDs[baseTypeID] = id
 	return id
 }
@@ -191,12 +204,13 @@ func (d *debugState) getSliceLikeType(name string) int {
 	if name == "slice" && d.sliceType >= 0 {
 		return d.sliceType
 	}
+	ptrBits := abi.SizeBits()
 	ptrID := d.getPointerType(d.getUnknownType())
-	lenID := d.getBasicType("usize", 64, "DW_ATE_unsigned")
-	dataMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: %q, baseType: !%d, size: 64, align: 64, offset: 0)", "data", ptrID))
-	lenMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: %q, baseType: !%d, size: 64, align: 64, offset: 64)", "len", lenID))
+	lenID := d.getBasicType("usize", ptrBits, "DW_ATE_unsigned")
+	dataMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: %q, baseType: !%d, size: %d, align: %d, offset: 0)", "data", ptrID, ptrBits, ptrBits))
+	lenMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: %q, baseType: !%d, size: %d, align: %d, offset: %d)", "len", lenID, ptrBits, ptrBits, ptrBits))
 	elemsID := d.emit(fmt.Sprintf("!{!%d, !%d}", dataMember, lenMember))
-	id := d.emit(fmt.Sprintf("!DICompositeType(tag: DW_TAG_structure_type, name: %q, size: 128, align: 64, elements: !%d)", name, elemsID))
+	id := d.emit(fmt.Sprintf("!DICompositeType(tag: DW_TAG_structure_type, name: %q, size: %d, align: %d, elements: !%d)", name, ptrBits*2, ptrBits, elemsID))
 	if name == "str" {
 		d.stringType = id
 	} else if name == "slice" {
@@ -251,11 +265,12 @@ func (d *debugState) getInterfaceType() int {
 	if id, ok := d.compositeIDs[key]; ok {
 		return id
 	}
+	ptrBits := abi.SizeBits()
 	ptrID := d.getPointerType(d.getUnknownType())
-	dataMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"data\", baseType: !%d, size: 64, align: 64, offset: 0)", ptrID))
-	vtableMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"vtable\", baseType: !%d, size: 64, align: 64, offset: 64)", ptrID))
+	dataMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"data\", baseType: !%d, size: %d, align: %d, offset: 0)", ptrID, ptrBits, ptrBits))
+	vtableMember := d.emit(fmt.Sprintf("!DIDerivedType(tag: DW_TAG_member, name: \"vtable\", baseType: !%d, size: %d, align: %d, offset: %d)", ptrID, ptrBits, ptrBits, ptrBits))
 	elemsID := d.emit(fmt.Sprintf("!{!%d, !%d}", dataMember, vtableMember))
-	id := d.emit("!DICompositeType(tag: DW_TAG_structure_type, name: \"iface\", size: 128, align: 64, elements: !" + fmt.Sprintf("%d)", elemsID))
+	id := d.emit(fmt.Sprintf("!DICompositeType(tag: DW_TAG_structure_type, name: \"iface\", size: %d, align: %d, elements: !%d)", ptrBits*2, ptrBits, elemsID))
 	d.compositeIDs[key] = id
 	return id
 }
@@ -593,34 +608,37 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 }
 
 func implicitExternDecls() []string {
+	abiIR := llvmABIIntType()
 	return []string{
-		"declare ptr @malloc(i64)",
+		fmt.Sprintf("declare ptr @malloc(%s)", abiIR),
 		"declare void @free(ptr)",
-		"declare ptr @realloc(ptr, i64)",
-		"declare ptr @calloc(i64, i64)",
-		"declare ptr @memcpy(ptr, ptr, i64)",
-		"declare ptr @memmove(ptr, ptr, i64)",
-		"declare ptr @memset(ptr, i32, i64)",
-		"declare i32 @memcmp(ptr, ptr, i64)",
+		fmt.Sprintf("declare ptr @realloc(ptr, %s)", abiIR),
+		fmt.Sprintf("declare ptr @calloc(%s, %s)", abiIR, abiIR),
+		fmt.Sprintf("declare ptr @memcpy(ptr, ptr, %s)", abiIR),
+		fmt.Sprintf("declare ptr @memmove(ptr, ptr, %s)", abiIR),
+		fmt.Sprintf("declare ptr @memset(ptr, i32, %s)", abiIR),
+		fmt.Sprintf("declare i32 @memcmp(ptr, ptr, %s)", abiIR),
 		"declare void @exit(i32)",
 	}
 }
 
 func runtimeDecls() []string {
+	abiIR := llvmABIIntType()
+	sliceIR := llvmSliceLikeType()
 	return []string{
 		"declare void @ferret__panic(ptr)",
-		"declare void @ferret__bounds_check(i64, i64)",
+		fmt.Sprintf("declare void @ferret__bounds_check(%s, %s)", abiIR, abiIR),
 		"declare void @ferret__interface_panic(ptr, ptr)",
 		"declare ptr @ferret__interface_downcast(ptr, ptr)",
 		"declare void @global__panic(ptr)",
-		"declare { ptr, i64 } @ferret_global_str_bytes(ptr)",
-		"declare i32 @ferret_global_str_index(ptr, i64)",
-		"declare { ptr, i64 } @ferret_global_bytes_str(ptr)",
-		"declare { ptr, i64 } @ferret_global_str_chars(ptr)",
-		"declare { ptr, i64 } @ferret_global_chars_str(ptr)",
-		"declare { ptr, i64 } @ferret_global_i64_str(i64)",
-		"declare { ptr, i64 } @ferret_global_u64_str(i64)",
-		"declare { ptr, i64 } @ferret_global_f64_str(double)",
+		fmt.Sprintf("declare %s @ferret_global_str_bytes(ptr)", sliceIR),
+		fmt.Sprintf("declare i32 @ferret_global_str_index(ptr, %s)", abiIR),
+		fmt.Sprintf("declare %s @ferret_global_bytes_str(ptr)", sliceIR),
+		fmt.Sprintf("declare %s @ferret_global_str_chars(ptr)", sliceIR),
+		fmt.Sprintf("declare %s @ferret_global_chars_str(ptr)", sliceIR),
+		fmt.Sprintf("declare %s @ferret_global_i64_str(i64)", sliceIR),
+		fmt.Sprintf("declare %s @ferret_global_u64_str(i64)", sliceIR),
+		fmt.Sprintf("declare %s @ferret_global_f64_str(double)", sliceIR),
 	}
 }
 
@@ -1883,15 +1901,17 @@ func lowerAggregateCompare(state *moduleState, targetName string, targetType typ
 			memcmpTmp := freshTemp(state, "str_cmp")
 			bytesEq := freshTemp(state, "str_bytes_eq")
 			result := freshTemp(state, "str_eq")
+			abiIR := llvmABIIntType()
+			ptrSize := abi.PointerBytes()
 			lines := []string{
 				fmt.Sprintf("%s = load ptr, ptr %s", leftPtr, leftBase),
 				fmt.Sprintf("%s = load ptr, ptr %s", rightPtr, rightBase),
-				fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", leftLenAddr, leftBase),
-				fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", rightLenAddr, rightBase),
-				fmt.Sprintf("%s = load i64, ptr %s", leftLen, leftLenAddr),
-				fmt.Sprintf("%s = load i64, ptr %s", rightLen, rightLenAddr),
-				fmt.Sprintf("%s = icmp eq i64 %s, %s", lenEq, leftLen, rightLen),
-				fmt.Sprintf("%s = call i32 @memcmp(ptr %s, ptr %s, i64 %s)", memcmpTmp, leftPtr, rightPtr, leftLen),
+				fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", leftLenAddr, leftBase, ptrSize),
+				fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", rightLenAddr, rightBase, ptrSize),
+				fmt.Sprintf("%s = load %s, ptr %s", leftLen, abiIR, leftLenAddr),
+				fmt.Sprintf("%s = load %s, ptr %s", rightLen, abiIR, rightLenAddr),
+				fmt.Sprintf("%s = icmp eq %s %s, %s", lenEq, abiIR, leftLen, rightLen),
+				fmt.Sprintf("%s = call i32 @memcmp(ptr %s, ptr %s, %s %s)", memcmpTmp, leftPtr, rightPtr, abiIR, leftLen),
 				fmt.Sprintf("%s = icmp eq i32 %s, 0", bytesEq, memcmpTmp),
 				fmt.Sprintf("%s = and i1 %s, %s", result, lenEq, bytesEq),
 			}
@@ -2064,7 +2084,7 @@ func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.T
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("%s = call i32 @ferret_global_str_index(ptr %s, i64 %s)", llvmLocalName(targetName), baseExpr, indexExpr), nil
+		return fmt.Sprintf("%s = call i32 @ferret_global_str_index(ptr %s, %s %s)", llvmLocalName(targetName), baseExpr, llvmABIIntType(), indexExpr), nil
 	}
 	if backend.IsSliceLikeType(backend.UnwrapNamed(idx.Base.Type())) {
 		return lowerSliceIndexLoad(state, targetName, targetType, idx)
@@ -2099,12 +2119,14 @@ func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typei
 	lenVal := freshTemp(state, "slice_len")
 	elemPtr := freshTemp(state, "elem")
 	loadElem := freshTemp(state, "idx")
+	abiIR := llvmABIIntType()
+	ptrSize := abi.PointerBytes()
 	lines := []string{
 		fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, baseExpr),
-		fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", lenAddr, baseExpr),
-		fmt.Sprintf("%s = load i64, ptr %s", lenVal, lenAddr),
-		fmt.Sprintf("call void @ferret__bounds_check(i64 %s, i64 %s)", indexExpr, lenVal),
-		fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", elemPtr, elemIRType, dataPtr, indexExpr),
+		fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", lenAddr, baseExpr, ptrSize),
+		fmt.Sprintf("%s = load %s, ptr %s", lenVal, abiIR, lenAddr),
+		fmt.Sprintf("call void @ferret__bounds_check(%s %s, %s %s)", abiIR, indexExpr, abiIR, lenVal),
+		fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, %s", elemPtr, elemIRType, dataPtr, llvmGEPIndex(indexExpr)),
 		fmt.Sprintf("%s = load %s, ptr %s", loadElem, elemIRType, elemPtr),
 		fmt.Sprintf("%s = or %s 0, %s", llvmLocalName(targetName), elemIRType, loadElem),
 	}
@@ -2190,10 +2212,10 @@ func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, base
 	}
 	var lines []string
 	if arrayLen >= 0 {
-		lines = append(lines, fmt.Sprintf("call void @ferret__bounds_check(i64 %s, i64 %d)", indexExpr, arrayLen))
+		lines = append(lines, fmt.Sprintf("call void @ferret__bounds_check(%s %s, %s %d)", llvmABIIntType(), indexExpr, llvmABIIntType(), arrayLen))
 	}
 	addr := freshTemp(state, "elem")
-	line := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", addr, elemIRType, baseExpr, indexExpr)
+	line := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, %s", addr, elemIRType, baseExpr, llvmGEPIndex(indexExpr))
 	lines = append(lines, line)
 	return lines, addr, nil
 }
@@ -2295,17 +2317,19 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 			dataPtr := freshTemp(state, "slice_data")
 			lenAddr := freshTemp(state, "slice_len_addr")
 			lenVal := freshTemp(state, "slice_len")
+			abiIR := llvmABIIntType()
+			ptrSize := abi.PointerBytes()
 			baseLines = append(baseLines, fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, basePtr))
-			baseLines = append(baseLines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", lenAddr, basePtr))
-			baseLines = append(baseLines, fmt.Sprintf("%s = load i64, ptr %s", lenVal, lenAddr))
+			baseLines = append(baseLines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", lenAddr, basePtr, ptrSize))
+			baseLines = append(baseLines, fmt.Sprintf("%s = load %s, ptr %s", lenVal, abiIR, lenAddr))
 			basePtr = dataPtr
 			idxVal, err := lowerValue(state, p.Index)
 			if err != nil {
 				return nil, "", err
 			}
-			baseLines = append(baseLines, fmt.Sprintf("call void @ferret__bounds_check(i64 %s, i64 %s)", idxVal, lenVal))
+			baseLines = append(baseLines, fmt.Sprintf("call void @ferret__bounds_check(%s %s, %s %s)", abiIR, idxVal, abiIR, lenVal))
 			addrTmp := freshTemp(state, "elem")
-			gepLine := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", addrTmp, elemIRType, basePtr, idxVal)
+			gepLine := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, %s", addrTmp, elemIRType, basePtr, llvmGEPIndex(idxVal))
 			return append(baseLines, gepLine), addrTmp, nil
 		} else if raw, ok := baseType.(*typeinfo.RawPtrType); ok {
 			elemIRType, err = llvmBaseType(raw.Inner)
@@ -2323,10 +2347,10 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 			return nil, "", err
 		}
 		if arrayLen >= 0 {
-			baseLines = append(baseLines, fmt.Sprintf("call void @ferret__bounds_check(i64 %s, i64 %d)", idxVal, arrayLen))
+			baseLines = append(baseLines, fmt.Sprintf("call void @ferret__bounds_check(%s %s, %s %d)", llvmABIIntType(), idxVal, llvmABIIntType(), arrayLen))
 		}
 		addrTmp := freshTemp(state, "elem")
-		gepLine := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i64 %s", addrTmp, elemIRType, basePtr, idxVal)
+		gepLine := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, %s", addrTmp, elemIRType, basePtr, llvmGEPIndex(idxVal))
 		return append(baseLines, gepLine), addrTmp, nil
 	case *mir.DerefPlace:
 		// *ptr: the address to store to is the pointer value itself.
@@ -3043,6 +3067,8 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 
 func lowerAggregateValueToAddr(state *moduleState, addr string, typ typeinfo.Type, value mir.Value) ([]string, error) {
 	if sliceType, ok := typ.(*typeinfo.SliceType); ok {
+		abiIR := llvmABIIntType()
+		ptrSize := abi.PointerBytes()
 		comp, ok := value.(*mir.CompositeValue)
 		if !ok {
 			return nil, fmt.Errorf("slice aggregate value must be composite")
@@ -3113,12 +3139,14 @@ func lowerAggregateValueToAddr(state *moduleState, addr string, typ typeinfo.Typ
 		lenAddr := freshTemp(state, "len_addr")
 		lines = append(lines,
 			fmt.Sprintf("store ptr %s, ptr %s", ptrLowered, addr),
-			fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", lenAddr, addr),
-			fmt.Sprintf("store i64 %s, ptr %s", lenLowered, lenAddr),
+			fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", lenAddr, addr, ptrSize),
+			fmt.Sprintf("store %s %s, ptr %s", abiIR, lenLowered, lenAddr),
 		)
 		return lines, nil
 	}
 	if _, ok := typ.(*typeinfo.StringType); ok {
+		abiIR := llvmABIIntType()
+		ptrSize := abi.PointerBytes()
 		switch v := value.(type) {
 		case *mir.StringValue:
 			ptrLowered, err := lowerValue(state, v)
@@ -3128,8 +3156,8 @@ func lowerAggregateValueToAddr(state *moduleState, addr string, typ typeinfo.Typ
 			lenAddr := freshTemp(state, "len_addr")
 			return []string{
 				fmt.Sprintf("store ptr %s, ptr %s", ptrLowered, addr),
-				fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", lenAddr, addr),
-				fmt.Sprintf("store i64 %d, ptr %s", len(v.Value), lenAddr),
+				fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", lenAddr, addr, ptrSize),
+				fmt.Sprintf("store %s %d, ptr %s", abiIR, len(v.Value), lenAddr),
 			}, nil
 		case *mir.CompositeValue:
 			items := make(map[string]mir.Value, len(v.Items))
@@ -3147,8 +3175,8 @@ func lowerAggregateValueToAddr(state *moduleState, addr string, typ typeinfo.Typ
 			lenAddr := freshTemp(state, "len_addr")
 			return []string{
 				fmt.Sprintf("store ptr %s, ptr %s", ptrLowered, addr),
-				fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", lenAddr, addr),
-				fmt.Sprintf("store i64 %s, ptr %s", lenLowered, lenAddr),
+				fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", lenAddr, addr, ptrSize),
+				fmt.Sprintf("store %s %s, ptr %s", abiIR, lenLowered, lenAddr),
 			}, nil
 		}
 	}
@@ -3168,6 +3196,7 @@ func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Typ
 	if err != nil {
 		return "", err
 	}
+	ptrSize := abi.PointerBytes()
 	vtSym, methodCount, err := ensureLLVMInterfaceVTable(state, target, value)
 	if err != nil {
 		return "", err
@@ -3177,7 +3206,7 @@ func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Typ
 	lines = append(lines,
 		fmt.Sprintf("store ptr %s, ptr %s", dataPtr, dstPtr),
 		fmt.Sprintf("%s = getelementptr inbounds [%d x ptr], ptr @%s, i32 0, i32 0", vtGEP, methodCount, vtSym),
-		fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", vtSlot, dstPtr),
+		fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", vtSlot, dstPtr, ptrSize),
 		fmt.Sprintf("store ptr %s, ptr %s", vtGEP, vtSlot),
 	)
 	return strings.Join(lines, "\n"), nil
@@ -3302,9 +3331,10 @@ func lowerInterfaceCall(state *moduleState, targetName string, targetType typein
 	vtTmp := freshTemp(state, "iface_vt")
 	fnSlot := freshTemp(state, "iface_fnslot")
 	fnTmp := freshTemp(state, "iface_fn")
+	ptrSize := abi.PointerBytes()
 	lines := []string{
 		fmt.Sprintf("%s = load ptr, ptr %s", dataTmp, slotPtr),
-		fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", vtAddr, slotPtr),
+		fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", vtAddr, slotPtr, ptrSize),
 		fmt.Sprintf("%s = load ptr, ptr %s", vtTmp, vtAddr),
 		fmt.Sprintf("%s = getelementptr inbounds ptr, ptr %s, i64 %d", fnSlot, vtTmp, index+1),
 		fmt.Sprintf("%s = load ptr, ptr %s", fnTmp, fnSlot),
@@ -3484,8 +3514,8 @@ func ensureLLVMRuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, e
 		}
 		metaSym := sym + "__meta"
 		fmt.Fprintf(state.deferredB,
-			"@%s = private unnamed_addr constant { i64, ptr } { i64 %d, %s }\n",
-			metaSym, len(desc.Variants), namesRef)
+			"@%s = private unnamed_addr constant { %s, ptr } { %s %d, %s }\n",
+			metaSym, llvmABIIntType(), llvmABIIntType(), len(desc.Variants), namesRef)
 		metaRef = "ptr @" + metaSym
 	case desc.Flags&backend.RuntimeTypeFlagArray != 0:
 		elemSym, err := ensureLLVMRuntimeTypeInfo(state, desc.Elem)
@@ -3494,8 +3524,8 @@ func ensureLLVMRuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, e
 		}
 		metaSym := sym + "__meta"
 		fmt.Fprintf(state.deferredB,
-			"@%s = private unnamed_addr constant { ptr, i64, i64 } { ptr @%s, i64 %d, i64 %d }\n",
-			metaSym, elemSym, desc.Length, desc.Stride)
+			"@%s = private unnamed_addr constant { ptr, %s, %s } { ptr @%s, %s %d, %s %d }\n",
+			metaSym, llvmABIIntType(), llvmABIIntType(), elemSym, llvmABIIntType(), desc.Length, llvmABIIntType(), desc.Stride)
 		metaRef = "ptr @" + metaSym
 	case desc.Flags&backend.RuntimeTypeFlagSlice != 0 && desc.Elem != nil:
 		elemSym, err := ensureLLVMRuntimeTypeInfo(state, desc.Elem)
@@ -3504,8 +3534,8 @@ func ensureLLVMRuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, e
 		}
 		metaSym := sym + "__meta"
 		fmt.Fprintf(state.deferredB,
-			"@%s = private unnamed_addr constant { ptr, i64 } { ptr @%s, i64 %d }\n",
-			metaSym, elemSym, desc.Stride)
+			"@%s = private unnamed_addr constant { ptr, %s } { ptr @%s, %s %d }\n",
+			metaSym, llvmABIIntType(), elemSym, llvmABIIntType(), desc.Stride)
 		metaRef = "ptr @" + metaSym
 	case desc.Flags&backend.RuntimeTypeFlagTuple != 0:
 		fieldsRef := "ptr null"
@@ -3517,22 +3547,22 @@ func ensureLLVMRuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, e
 				if err != nil {
 					return "", err
 				}
-				entries = append(entries, fmt.Sprintf("{ i64, ptr } { i64 %d, ptr @%s }", field.Offset, fieldTypeSym))
+				entries = append(entries, fmt.Sprintf("{ %s, ptr } { %s %d, ptr @%s }", llvmABIIntType(), llvmABIIntType(), field.Offset, fieldTypeSym))
 			}
 			fmt.Fprintf(state.deferredB,
-				"@%s = private unnamed_addr constant [%d x { i64, ptr }] [%s]\n",
-				fieldSym, len(entries), strings.Join(entries, ", "))
+				"@%s = private unnamed_addr constant [%d x { %s, ptr }] [%s]\n",
+				fieldSym, len(entries), llvmABIIntType(), strings.Join(entries, ", "))
 			fieldsRef = fmt.Sprintf("ptr @%s", fieldSym)
 		}
 		metaSym := sym + "__meta"
 		fmt.Fprintf(state.deferredB,
-			"@%s = private unnamed_addr constant { i64, ptr } { i64 %d, %s }\n",
-			metaSym, len(desc.Fields), fieldsRef)
+			"@%s = private unnamed_addr constant { %s, ptr } { %s %d, %s }\n",
+			metaSym, llvmABIIntType(), llvmABIIntType(), len(desc.Fields), fieldsRef)
 		metaRef = "ptr @" + metaSym
 	}
 	fmt.Fprintf(state.deferredB,
-		"@%s = private unnamed_addr constant { i32, ptr, i64, i64, i32, ptr } { i32 %d, ptr @%s, i64 %d, i64 %d, i32 %d, %s }\n",
-		sym, desc.ID, nameSym, size, align, desc.Flags, metaRef)
+		"@%s = private unnamed_addr constant { i32, ptr, %s, %s, i32, ptr } { i32 %d, ptr @%s, %s %d, %s %d, i32 %d, %s }\n",
+		sym, llvmABIIntType(), llvmABIIntType(), desc.ID, nameSym, llvmABIIntType(), size, llvmABIIntType(), align, desc.Flags, metaRef)
 	state.runtimeTypes[key] = sym
 	return sym, nil
 }
@@ -4035,8 +4065,9 @@ func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 		typeInfoPtr := freshTemp(state, "iface_typeinfo")
 		cmp := freshTemp(state, "istype")
 		out := freshTemp(state, "istype8")
+		ptrSize := abi.PointerBytes()
 		state.pendingLines = append(state.pendingLines,
-			fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 8", vtAddr, src),
+			fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", vtAddr, src, ptrSize),
 			fmt.Sprintf("%s = load ptr, ptr %s", vtPtr, vtAddr),
 			fmt.Sprintf("%s = load ptr, ptr %s", typeInfoPtr, vtPtr),
 			fmt.Sprintf("%s = icmp eq ptr %s, @%s", cmp, typeInfoPtr, expectedSym),
@@ -4340,9 +4371,9 @@ func lowerStringSliceCast(state *moduleState, src, dst typeinfo.Type, value mir.
 		}
 		switch elem {
 		case "u8":
-			return fmt.Sprintf("call { ptr, i64 } @ferret_global_str_bytes(ptr %s)", srcPtr), true, nil
+			return fmt.Sprintf("call %s @ferret_global_str_bytes(ptr %s)", llvmSliceLikeType(), srcPtr), true, nil
 		case "char":
-			return fmt.Sprintf("call { ptr, i64 } @ferret_global_str_chars(ptr %s)", srcPtr), true, nil
+			return fmt.Sprintf("call %s @ferret_global_str_chars(ptr %s)", llvmSliceLikeType(), srcPtr), true, nil
 		default:
 			return "", false, nil
 		}
@@ -4358,9 +4389,9 @@ func lowerStringSliceCast(state *moduleState, src, dst typeinfo.Type, value mir.
 		}
 		switch elem {
 		case "u8":
-			return fmt.Sprintf("call { ptr, i64 } @ferret_global_bytes_str(ptr %s)", srcPtr), true, nil
+			return fmt.Sprintf("call %s @ferret_global_bytes_str(ptr %s)", llvmSliceLikeType(), srcPtr), true, nil
 		case "char":
-			return fmt.Sprintf("call { ptr, i64 } @ferret_global_chars_str(ptr %s)", srcPtr), true, nil
+			return fmt.Sprintf("call %s @ferret_global_chars_str(ptr %s)", llvmSliceLikeType(), srcPtr), true, nil
 		default:
 			return "", false, nil
 		}
@@ -4532,27 +4563,27 @@ func lowerStringCast(state *moduleState, value mir.Value) (string, error) {
 	switch srcBuiltin.Name {
 	case "i8", "i16", "i32":
 		castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "i64", srcVal)
-		return fmt.Sprintf("call { ptr, i64 } @ferret_global_i64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
+		return fmt.Sprintf("call %s @ferret_global_i64_str(%s)", llvmSliceLikeType(), operandWithTemp(state, "i64", castExpr)), nil
 	case "i64", "isize":
 		if srcBuiltin.Name == "isize" {
 			castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "i64", srcVal)
-			return fmt.Sprintf("call { ptr, i64 } @ferret_global_i64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
+			return fmt.Sprintf("call %s @ferret_global_i64_str(%s)", llvmSliceLikeType(), operandWithTemp(state, "i64", castExpr)), nil
 		}
-		return fmt.Sprintf("call { ptr, i64 } @ferret_global_i64_str(i64 %s)", srcVal), nil
+		return fmt.Sprintf("call %s @ferret_global_i64_str(i64 %s)", llvmSliceLikeType(), srcVal), nil
 	case "u8", "u16", "u32", "bool", "char":
 		castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "u64", srcVal)
-		return fmt.Sprintf("call { ptr, i64 } @ferret_global_u64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
+		return fmt.Sprintf("call %s @ferret_global_u64_str(%s)", llvmSliceLikeType(), operandWithTemp(state, "i64", castExpr)), nil
 	case "u64", "usize":
 		if srcBuiltin.Name == "usize" {
 			castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "u64", srcVal)
-			return fmt.Sprintf("call { ptr, i64 } @ferret_global_u64_str(%s)", operandWithTemp(state, "i64", castExpr)), nil
+			return fmt.Sprintf("call %s @ferret_global_u64_str(%s)", llvmSliceLikeType(), operandWithTemp(state, "i64", castExpr)), nil
 		}
-		return fmt.Sprintf("call { ptr, i64 } @ferret_global_u64_str(i64 %s)", srcVal), nil
+		return fmt.Sprintf("call %s @ferret_global_u64_str(i64 %s)", llvmSliceLikeType(), srcVal), nil
 	case "f32":
 		castExpr, _ := llvmFloatCastOp("f32", "f64", srcVal)
-		return fmt.Sprintf("call { ptr, i64 } @ferret_global_f64_str(%s)", operandWithTemp(state, "double", castExpr)), nil
+		return fmt.Sprintf("call %s @ferret_global_f64_str(%s)", llvmSliceLikeType(), operandWithTemp(state, "double", castExpr)), nil
 	case "f64":
-		return fmt.Sprintf("call { ptr, i64 } @ferret_global_f64_str(double %s)", srcVal), nil
+		return fmt.Sprintf("call %s @ferret_global_f64_str(double %s)", llvmSliceLikeType(), srcVal), nil
 	default:
 		return "", fmt.Errorf("unsupported string cast source %s", srcBuiltin.Name)
 	}
@@ -4821,7 +4852,7 @@ func lowerGlobalStringLike(state *moduleState, comp *mir.CompositeValue) (string
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("{ ptr, i64 } { ptr %s, i64 %s }", ptrLit, lenLit), nil
+	return fmt.Sprintf("%s { ptr %s, %s %s }", llvmSliceLikeType(), ptrLit, llvmABIIntType(), lenLit), nil
 }
 
 func lowerGlobalValue(state *moduleState, typ typeinfo.Type, value mir.Value) (string, error) {
@@ -4885,7 +4916,8 @@ func aggregateSizeAlignOfPrimitive(typ typeinfo.Type) (int64, int64, error) {
 			return 8, 8, nil
 		}
 	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
-		return 8, 8, nil
+		ptrSize := abi.PointerBytes()
+		return ptrSize, ptrSize, nil
 	}
 	return 0, 0, fmt.Errorf("not a primitive type")
 }
@@ -4953,10 +4985,10 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 		return fmt.Sprintf("[%d x i8]", info.Size), nil
 	}
 	if _, ok := typ.(*typeinfo.StringType); ok {
-		return "{ ptr, i64 }", nil
+		return llvmSliceLikeType(), nil
 	}
 	if _, ok := typ.(*typeinfo.SliceType); ok {
-		return "{ ptr, i64 }", nil
+		return llvmSliceLikeType(), nil
 	}
 	if _, ok := backend.UnwrapNamed(typ).(*typeinfo.TupleType); ok {
 		size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
@@ -5003,7 +5035,7 @@ func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
 		}
 		return fmt.Sprintf("[%d x i8]", info.Size), nil
 	case backend.ABITypeSliceLike:
-		return "{ ptr, i64 }", nil
+		return llvmSliceLikeType(), nil
 	}
 	return llvmBaseType(typ)
 }
@@ -5279,8 +5311,8 @@ func llvmMemcpy(dst, src string, size, align int64) string {
 	if align <= 0 {
 		align = 1
 	}
-	return fmt.Sprintf("call void @llvm.memcpy.p0.p0.i64(ptr align %d %s, ptr align %d %s, i64 %d, i1 false)",
-		align, dst, align, src, size)
+	return fmt.Sprintf("call void @llvm.memcpy.p0.p0.%s(ptr align %d %s, ptr align %d %s, %s %d, i1 false)",
+		llvmABIIntType(), align, dst, align, src, llvmABIIntType(), size)
 }
 
 // ---------------------------------------------------------------------------

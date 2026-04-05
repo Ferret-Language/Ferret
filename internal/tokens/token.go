@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"compiler/internal/core/abi"
 	"compiler/internal/core/source"
 )
 
@@ -162,9 +163,9 @@ func IsBuiltinType(name string) bool {
 func ParseIntegerBuiltin(name string) (signed bool, bits int, ok bool) {
 	switch name {
 	case "isize":
-		return true, 64, true
+		return true, abi.SizeBits(), true
 	case "usize":
-		return false, 64, true
+		return false, abi.SizeBits(), true
 	}
 	if len(name) < 2 {
 		return false, 0, false

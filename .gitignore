@@ -16,3 +16,4 @@ _gen
 .tmpdebug
 _tmp
 *.localplan.md
+*.html

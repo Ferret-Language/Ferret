@@ -5,16 +5,15 @@ import (
 
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/abi"
 	"compiler/internal/core/context"
 	"compiler/internal/core/phase"
 	"compiler/internal/tokens"
 )
 
 const (
-	pointerSize  = int64(8)
-	pointerAlign = int64(8)
-	tagSize      = int64(4)
-	tagAlign     = int64(4)
+	tagSize  = int64(4)
+	tagAlign = int64(4)
 )
 
 type analyzer struct {
@@ -155,16 +154,20 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 	case *typeinfo.BuiltinType:
 		return builtinLayout(t.Name)
 	case *typeinfo.PointerType:
-		return pointerSize, pointerAlign, true, nil
+		ptrSize := abi.PointerBytes()
+		return ptrSize, ptrSize, true, nil
 	case *typeinfo.RefType:
-		return pointerSize, pointerAlign, true, nil
+		ptrSize := abi.PointerBytes()
+		return ptrSize, ptrSize, true, nil
 	case *typeinfo.RawPtrType:
-		return pointerSize, pointerAlign, true, nil
+		ptrSize := abi.PointerBytes()
+		return ptrSize, ptrSize, true, nil
 	case *typeinfo.StringType:
-		return 16, 8, true, nil
+		ptrSize := abi.PointerBytes()
+		return ptrSize * 2, ptrSize, true, nil
 	case *typeinfo.SliceType:
-		// str / []T: { ptr *T, len usize } — always 16 bytes, 8-byte aligned.
-		return 16, 8, true, nil
+		ptrSize := abi.PointerBytes()
+		return ptrSize * 2, ptrSize, true, nil
 	case *typeinfo.ArrayType:
 		if t.Len < 0 {
 			return 0, 1, false, nil
@@ -182,7 +185,8 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 	case *typeinfo.EnumType, *typeinfo.ErrorSetType:
 		return tagSize, tagAlign, true, nil
 	case *typeinfo.InterfaceType:
-		return 16, 8, true, nil
+		ptrSize := abi.PointerBytes()
+		return ptrSize * 2, ptrSize, true, nil
 	case *typeinfo.OptionalType:
 		return a.layoutOptional(t.Inner)
 	case *typeinfo.ErrorUnionType:

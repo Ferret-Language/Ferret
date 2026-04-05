@@ -95,14 +95,12 @@ func candidateToolchainLibDirs(binary string) []string {
 		binDir := filepath.Clean(filepath.Dir(binary))
 		dirs = append(dirs,
 			filepath.Join(binDir, "..", "lib"),
-			filepath.Join(binDir, "lib"),
+			filepath.Join(binDir, "..", "lib32"),
 		)
 	}
 
 	dirs = append(dirs, envToolchainLibDirs()...)
-	if binary == "" || isBinaryFromAutoToolchain(binary) {
-		dirs = append(dirs, autoToolchainLibDirs()...)
-	}
+	dirs = append(dirs, autoToolchainLibDirs()...)
 	return uniqueDirs(dirs)
 }
 
@@ -113,7 +111,6 @@ func envToolchainBinDirs() []string {
 	}
 	return []string{
 		filepath.Join(env, "bin"),
-		env,
 	}
 }
 
@@ -122,62 +119,42 @@ func envToolchainLibDirs() []string {
 	if env == "" {
 		return nil
 	}
-	return []string{filepath.Join(env, "lib")}
+	return []string{
+		filepath.Join(env, "lib"),
+		filepath.Join(env, "lib32"),
+	}
 }
 
 func autoToolchainBinDirs() []string {
-	dirs := make([]string, 0, 16)
+	dirs := make([]string, 0, 2)
 	if execPath, err := os.Executable(); err == nil {
 		execDir := filepath.Dir(execPath)
 		dirs = append(dirs,
-			filepath.Join(execDir, "..", "toolchain", "bin"),
-			filepath.Join(execDir, "toolchain", "bin"),
+			filepath.Join(execDir, "..", "..", "toolchain", "bin"),
 		)
 	}
 	if wd, err := os.Getwd(); err == nil {
-		for current := wd; ; current = filepath.Dir(current) {
-			dirs = append(dirs, filepath.Join(current, "toolchain", "bin"))
-			parent := filepath.Dir(current)
-			if parent == current {
-				break
-			}
-		}
+		dirs = append(dirs, filepath.Join(wd, "build", "toolchain", "bin"))
 	}
 	return dirs
 }
 
 func autoToolchainLibDirs() []string {
-	dirs := make([]string, 0, 16)
+	dirs := make([]string, 0, 4)
 	if execPath, err := os.Executable(); err == nil {
 		execDir := filepath.Dir(execPath)
 		dirs = append(dirs,
-			filepath.Join(execDir, "..", "toolchain", "lib"),
-			filepath.Join(execDir, "toolchain", "lib"),
+			filepath.Join(execDir, "..", "..", "toolchain", "lib"),
+			filepath.Join(execDir, "..", "..", "toolchain", "lib32"),
 		)
 	}
 	if wd, err := os.Getwd(); err == nil {
-		for current := wd; ; current = filepath.Dir(current) {
-			dirs = append(dirs, filepath.Join(current, "toolchain", "lib"))
-			parent := filepath.Dir(current)
-			if parent == current {
-				break
-			}
-		}
+		dirs = append(dirs,
+			filepath.Join(wd, "build", "toolchain", "lib"),
+			filepath.Join(wd, "build", "toolchain", "lib32"),
+		)
 	}
 	return dirs
-}
-
-func isBinaryFromAutoToolchain(binary string) bool {
-	if binary == "" {
-		return false
-	}
-	binDir := filepath.Clean(filepath.Dir(binary))
-	for _, dir := range uniqueDirs(autoToolchainBinDirs()) {
-		if binDir == dir {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizeNames(names []string) []string {
