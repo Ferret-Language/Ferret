@@ -1,5 +1,6 @@
 #include "ferret_runtime.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -218,7 +219,7 @@ static void ferret__write_typed(const void *data, const FerretTypeInfo *info) {
         fprintf(stdout, "%lld", data != NULL ? (long long)*(const ferret_i64 *)data : 0LL);
         return;
     case FERRET_TYPE_ISIZE:
-        fprintf(stdout, "%ld", data != NULL ? (long)*(const ferret_isize *)data : 0L);
+        fprintf(stdout, "%" PRIdPTR, data != NULL ? (intptr_t)*(const ferret_isize *)data : (intptr_t)0);
         return;
     case FERRET_TYPE_U8:
         fprintf(stdout, "%u", data != NULL ? (unsigned)*(const ferret_u8 *)data : 0u);
@@ -233,7 +234,7 @@ static void ferret__write_typed(const void *data, const FerretTypeInfo *info) {
         fprintf(stdout, "%llu", data != NULL ? (unsigned long long)*(const ferret_u64 *)data : 0ull);
         return;
     case FERRET_TYPE_USIZE:
-        fprintf(stdout, "%lu", data != NULL ? (unsigned long)*(const ferret_usize *)data : 0ul);
+        fprintf(stdout, "%" PRIuPTR, data != NULL ? (uintptr_t)*(const ferret_usize *)data : (uintptr_t)0);
         return;
     case FERRET_TYPE_F32:
         fprintf(stdout, "%.9g", data != NULL ? (double)*(const ferret_f32 *)data : 0.0);
