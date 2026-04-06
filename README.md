@@ -1,10 +1,10 @@
 # Ferret Compiler
 
-This folder contains the Ferret compiler, installer scripts, and local build scripts.
+This folder contains the Ferret compiler, the bundled toolchain/build logic, and installer assets under `installers/`.
 
 ## Install from GitHub Releases
 
-The install scripts download the latest Ferret release from `Ferret-Language/Ferret`, extract the compiler bundle and toolchain, and add `ferret` to your `PATH`.
+The release installer entrypoints live under `installers/`. The shell and PowerShell installers download the latest Ferret release from `Ferret-Language/Ferret`, extract the compiler bundle and toolchain, and add `ferret` to your `PATH`.
 
 Supported release installers:
 
@@ -15,19 +15,19 @@ Supported release installers:
 ### Linux
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/install-ferret.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/installers/install-ferret.sh | bash
 ```
 
 If you prefer `wget`:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/install-ferret.sh | bash
+wget -qO- https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/installers/install-ferret.sh | bash
 ```
 
 Install a specific release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/install-ferret.sh | bash -s -- v0.1.0
+curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/installers/install-ferret.sh | bash -s -- v0.1.0
 ```
 
 Default install location:
@@ -47,13 +47,13 @@ Binary location:
 Use the same installer script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/install-ferret.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/installers/install-ferret.sh | bash
 ```
 
 Install a specific release tag:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/install-ferret.sh | bash -s -- v0.1.0
+curl -fsSL https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/installers/install-ferret.sh | bash -s -- v0.1.0
 ```
 
 Default install location:
@@ -65,23 +65,23 @@ Default install location:
 ### Windows PowerShell
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/install-ferret.ps1 -OutFile install-ferret.ps1
+Invoke-WebRequest https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/installers/install-ferret.ps1 -OutFile install-ferret.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-ferret.ps1
 ```
 
 Install a specific release tag:
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/install-ferret.ps1 -OutFile install-ferret.ps1
+Invoke-WebRequest https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/installers/install-ferret.ps1 -OutFile install-ferret.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-ferret.ps1 -Version v0.1.0
 ```
 
 ### Windows CMD
 
-Download and run the wrapper script:
+Download and run the CMD entrypoint:
 
 ```bat
-curl -fsSLO https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/install-ferret.cmd
+curl -fsSLO https://raw.githubusercontent.com/Ferret-Language/Ferret/refs/heads/main/installers/install-ferret.cmd
 install-ferret.cmd
 ```
 
