@@ -90,10 +90,7 @@ jobs:
       - name: Verify Windows clang source
         if: matrix.os == 'windows'
         shell: pwsh
-        env:
-          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: |
-          Write-Host "MSYS2 root: $env:MSYS2_ROOT"
           Get-Command clang | Format-List Source
           clang --version
 
@@ -106,8 +103,6 @@ jobs:
       - name: Pack bundle (windows)
         if: matrix.os == 'windows'
         shell: pwsh
-        env:
-          MSYS2_ROOT: ${{ steps.msys2.outputs.msys2-location }}
         run: |
           Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
           go run ./bundler

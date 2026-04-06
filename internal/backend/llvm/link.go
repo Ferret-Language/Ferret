@@ -55,8 +55,6 @@ func CompileIR(llvmIR, outputPath string, opts CompileOptions) error {
 	args := []string{"-Wno-override-module"}
 	if abiBits == abi.Bits32 {
 		args = append(args, "-m32")
-	} else {
-		args = append(args, "-m64")
 	}
 	if opts.Debug {
 		if runtime.GOOS == "windows" {

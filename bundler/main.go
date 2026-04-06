@@ -15,8 +15,6 @@ import (
 	"compiler/internal/core/abi"
 )
 
-const windowsMSYS2RootEnv = "MSYS2_ROOT"
-
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "build bundler: %v\n", err)
@@ -137,25 +135,6 @@ func resolveToolBinaries() (map[string]string, error) {
 	}
 	tools[binaryName("qbe")] = qbePath
 
-	if runtime.GOOS == "windows" {
-		msys2Root := windowsMSYS2Root()
-		for _, name := range []string{"clang", "clang++", "ld.lld", "lld", "lld-link"} {
-			path := filepath.Join(msys2Root, "mingw64", "bin", binaryName(name))
-			if isFile(path) {
-				tools[filepath.Base(path)] = path
-			}
-		}
-		clangPath, ok := tools[binaryName("clang")]
-		if !ok {
-			return nil, fmt.Errorf("bundle toolchain: windows clang not found in %s", filepath.Join(msys2Root, "mingw64", "bin"))
-		}
-		root64, root32 := windowsMingwRoots(clangPath)
-		if root64 == "" || root32 == "" {
-			return nil, fmt.Errorf("bundle toolchain: windows clang must come from an MSYS2 root with sibling mingw32 (got %s)", clangPath)
-		}
-		return tools, nil
-	}
-
 	for _, name := range []string{"clang", "clang++", "ld.lld", "lld", "lld-link"} {
 		path, err := exec.LookPath(name)
 		if err != nil {
@@ -165,6 +144,13 @@ func resolveToolBinaries() (map[string]string, error) {
 	}
 	if _, ok := tools[binaryName("clang")]; !ok {
 		return nil, fmt.Errorf("bundle toolchain: clang is required in PATH for release packaging")
+	}
+	if runtime.GOOS == "windows" {
+		clangPath := tools[binaryName("clang")]
+		root64, root32 := windowsMingwRoots(clangPath)
+		if root64 == "" || root32 == "" {
+			return nil, fmt.Errorf("bundle toolchain: windows clang must come from an MSYS2 mingw64 root with sibling mingw32 (got %s)", clangPath)
+		}
 	}
 	return tools, nil
 }
@@ -768,14 +754,6 @@ func supportsLinux32BitRuntimeCompile(compiler string) bool {
 
 	cmd := exec.Command(compiler, "-m32", "-c", src, "-o", out)
 	return cmd.Run() == nil
-}
-
-func windowsMSYS2Root() string {
-	root := strings.TrimSpace(os.Getenv(windowsMSYS2RootEnv))
-	if root == "" {
-		root = `C:\msys64`
-	}
-	return filepath.Clean(root)
 }
 
 func uniqueExistingDirs(dirs []string) []string {
