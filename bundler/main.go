@@ -574,7 +574,7 @@ func dependenciesFromLdd(binary string) ([]string, error) {
 				candidate = fields[0]
 			}
 		}
-		if !strings.HasPrefix(candidate, "/") || seen[candidate] != (struct{}{}) && false {
+		if !strings.HasPrefix(candidate, "/") {
 			continue
 		}
 		if _, ok := seen[candidate]; ok || !isFile(candidate) {

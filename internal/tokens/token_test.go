@@ -44,8 +44,8 @@ func TestParseIntegerBuiltin(t *testing.T) {
 	}{
 		{name: "i128", signed: true, bits: 128, ok: true},
 		{name: "u1024", signed: false, bits: 1024, ok: true},
-		{name: "isize", signed: true, bits: 64, ok: true},
-		{name: "usize", signed: false, bits: 64, ok: true},
+		{name: "isize", signed: true, bits: abi.SizeBits(), ok: true},
+		{name: "usize", signed: false, bits: abi.SizeBits(), ok: true},
 		{name: "i24", ok: false},
 		{name: "u04", ok: false},
 		{name: "foo", ok: false},

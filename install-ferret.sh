@@ -62,7 +62,7 @@ pick_profile_file() {
 
 ensure_path_persisted() {
   local profile_file="$1"
-  local line='export PATH="$HOME/.local/ferret/core/bin:$PATH"'
+  local line="export PATH=\"$BIN_DIR:\$PATH\""
 
   mkdir -p "$(dirname "$profile_file")"
   touch "$profile_file"
