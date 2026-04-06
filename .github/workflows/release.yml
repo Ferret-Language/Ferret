@@ -172,6 +172,23 @@ jobs:
           Compress-Archive -Path "build\core\*" -DestinationPath "dist\ferret-${{ matrix.os }}-${{ matrix.arch }}.zip"
           Compress-Archive -Path "build\toolchain\*" -DestinationPath "dist\ferret-toolchain-${{ matrix.os }}-${{ matrix.arch }}.zip"
 
+      - name: Install Inno Setup
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y
+
+      - name: Build Windows installer
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installers\ferret-installer.iss"
+          $setupPath = "installers\dist\FerretSetup.exe"
+          if (!(Test-Path $setupPath)) {
+            throw "Windows installer output not found at $setupPath"
+          }
+          Copy-Item -Force $setupPath "dist\FerretSetup-${{ matrix.os }}-${{ matrix.arch }}.exe"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -181,6 +198,7 @@ jobs:
             dist/ferret-${{ matrix.os }}-${{ matrix.arch }}.zip
             dist/ferret-toolchain-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
             dist/ferret-toolchain-${{ matrix.os }}-${{ matrix.arch }}.zip
+            dist/FerretSetup-${{ matrix.os }}-${{ matrix.arch }}.exe
           if-no-files-found: ignore
 
   publish:
