@@ -12,6 +12,7 @@ import (
 	"compiler/internal/backend"
 	llvmbackend "compiler/internal/backend/llvm"
 	"compiler/internal/backend/registry"
+	"compiler/internal/core/abi"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	compiler "compiler/internal/driver"
@@ -432,6 +433,37 @@ fn main() -> void {
 	}
 }
 
+func TestLowerDirectTupleLiteralPrintToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    print((1, 2, 3))
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm direct tuple print: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"@typeinfo__tuple__i32__i32__i32__fields = private unnamed_addr constant [3 x { i64, ptr }]",
+		"@typeinfo__tuple__i32__i32__i32__meta = private unnamed_addr constant { i64, ptr }",
+		"call void @ferret_global_print(ptr",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerLocalArrayLiteralAndIndexToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -789,6 +821,48 @@ fn main(items: []i32) -> usize {
 	for _, want := range []string{
 		"declare i64 @ferret_global_slice_len(ptr)",
 		"call i64 @ferret_global_slice_len(ptr %items)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerBuiltinLenSliceRespectsConfiguredABISize(t *testing.T) {
+	prev := abi.SizeBits()
+	defer func() {
+		if err := abi.SetSizeBits(prev); err != nil {
+			t.Fatalf("restore abi size: %v", err)
+		}
+	}()
+	if err := abi.SetSizeBits(abi.Bits32); err != nil {
+		t.Fatalf("set abi size: %v", err)
+	}
+
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main(items: []i32) -> usize {
+    return len(items)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"declare i32 @ferret_global_slice_len(ptr)",
+		"define i32 @main(ptr byval({ ptr, i32 }) align 4 %items)",
+		"call i32 @ferret_global_slice_len(ptr %items)",
+		"load i32, ptr %_t1_alloca",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

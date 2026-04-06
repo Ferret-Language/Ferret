@@ -22,6 +22,7 @@ import (
 	"compiler/internal/backend/llvm"
 	"compiler/internal/backend/qbe"
 	"compiler/internal/backend/registry"
+	"compiler/internal/core/abi"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/manifest"
@@ -35,19 +36,21 @@ import (
 
 var errAlreadyReported = errors.New("diagnostics already reported")
 
-func newLogFormatFlagSet(name string) (*flag.FlagSet, *string) {
+func parseCommandArgs(name string, args []string) ([]string, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
 	logFormat := fs.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)")
-	return fs, logFormat
-}
-
-func parseCommandArgsWithLogFormat(name string, args []string) ([]string, error) {
-	fs, logFormat := newLogFormatFlagSet(name)
+	m32 := fs.Bool("m32", false, "target 32-bit ABI")
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 	if err := colors.SetLogFormatString(*logFormat); err != nil {
+		return nil, err
+	}
+	if *m32 {
+		if err := abi.SetSizeBits(abi.Bits32); err != nil {
+			return nil, err
+		}
+	} else if err := abi.SetSizeBits(0); err != nil {
 		return nil, err
 	}
 	return fs.Args(), nil
@@ -61,13 +64,6 @@ func main() {
 		if err != nil {
 			colors.RED.Fprintln(os.Stderr, err)
 			os.Exit(2)
-		}
-		switch commandName {
-		case "run", "test", "check", "lint":
-			if _, err := parseCommandArgsWithLogFormat(commandName, commandArgs); err == nil {
-				// The command handlers re-parse their own args; this early pass only
-				// establishes the output formatter before any colored output is emitted.
-			}
 		}
 		switch commandName {
 		case "lsp":
@@ -145,6 +141,7 @@ func main() {
 
 	backendTarget := flag.String("backend", "llvm", "backend target (llvm|qbe)")
 	logFormat := flag.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)")
+	m32 := flag.Bool("m32", false, "target 32-bit ABI")
 	outputPath := flag.String("o", "", "compile and link to executable")
 	keepGen := flag.Bool("keep-gen", false, "keep generated AST/HIR/MIR/backend IR in _gen directory")
 	flag.BoolVar(keepGen, "k", false, "alias for -keep-gen")
@@ -156,8 +153,8 @@ func main() {
 	flag.Usage = func() {
 		colors.BLUE.Fprintln(os.Stderr, "Ferret compiler v"+compiler.CompilerVersion)
 		colors.CYAN.Fprintln(os.Stderr, "\nUsage:")
-		colors.GREEN.Fprintf(os.Stderr, "  %s [options] <source-file-or-directory>\n", os.Args[0])
-		colors.GREEN.Fprintf(os.Stderr, "  %s [command] [args]\n", os.Args[0])
+		colors.GREEN.Fprintf(os.Stderr, "  ferret [options] <source-file-or-directory>\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ferret [command] [args]\n")
 		colors.CYAN.Fprintln(os.Stderr, "\nOptions:")
 		flag.PrintDefaults()
 		colors.CYAN.Fprintln(os.Stderr, "\nCommands:")
@@ -171,12 +168,22 @@ func main() {
 		fmt.Fprintln(os.Stderr, "  run[:llvm|:qbe] [path] [args]  build and run a program (default llvm)")
 		fmt.Fprintln(os.Stderr, "  test[:llvm|:qbe] [path] [args] build and run unit tests (default llvm)")
 		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
-		colors.GREEN.Fprintf(os.Stderr, "  %s -backend llvm main.fer\n", os.Args[0])
-		colors.GREEN.Fprintf(os.Stderr, "  %s -k main.fer\n", os.Args[0])
-		colors.GREEN.Fprintf(os.Stderr, "  %s run main.fer arg1 arg2\n", os.Args[0])
+		colors.GREEN.Fprintf(os.Stderr, "  ferret -backend llvm main.fer\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ferret -m32 -o app32 main.fer\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ferret -k main.fer\n")
+		colors.GREEN.Fprintf(os.Stderr, "  ferret run main.fer arg1 arg2\n")
 	}
 	flag.Parse()
 	if err := colors.SetLogFormatString(*logFormat); err != nil {
+		colors.RED.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	if *m32 {
+		if err := abi.SetSizeBits(abi.Bits32); err != nil {
+			colors.RED.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+	} else if err := abi.SetSizeBits(0); err != nil {
 		colors.RED.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
@@ -297,7 +304,7 @@ func parseCommandBackend(command string) (string, backend.Target, error) {
 }
 
 func runCommand(args []string, target backend.Target) error {
-	parsedArgs, err := parseCommandArgsWithLogFormat("run", args)
+	parsedArgs, err := parseCommandArgs("run", args)
 	if err != nil {
 		return err
 	}
@@ -367,7 +374,7 @@ func runCommand(args []string, target backend.Target) error {
 }
 
 func testCommand(args []string, target backend.Target) error {
-	parsedArgs, err := parseCommandArgsWithLogFormat("test", args)
+	parsedArgs, err := parseCommandArgs("test", args)
 	if err != nil {
 		return err
 	}
@@ -506,7 +513,7 @@ func resolveManifestEntryPath(startPath string) (string, error) {
 }
 
 func checkCommand(args []string) error {
-	parsedArgs, err := parseCommandArgsWithLogFormat("check", args)
+	parsedArgs, err := parseCommandArgs("check", args)
 	if err != nil {
 		return err
 	}

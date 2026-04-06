@@ -7,6 +7,7 @@ import (
 
 	"compiler/internal/backend"
 	"compiler/internal/backend/toolchain"
+	"compiler/internal/core/abi"
 )
 
 // CompileIR compiles QBE IL text into a native executable at outputPath.
@@ -47,20 +48,15 @@ func CompileIR(qbeIR, outputPath string) error {
 		return fmt.Errorf("compile ir: qbe: %w\n%s", err, out)
 	}
 
-	// Link: assembly + runtime archive → executable.
-	// Pass the archive as a plain positional argument so it works with any
-	// cc/ld combination — -l:name is GNU ld only and not reliable through
-	// the clang driver on all platforms.
-	linkerPath, err := toolchain.ResolveBinary("clang", "cc", "gcc")
+	// Link: assembly + runtime archive → executable via the bundled clang
+	// driver so packaged toolchain resolution stays consistent across backends.
+	linkerPath, err := toolchain.ResolveBundledBinary("clang")
 	if err != nil {
 		return fmt.Errorf("compile ir: %w", err)
 	}
-
-	ccCmd := toolchain.Command(linkerPath,
-		asmFile,
-		runtimeLib,
-		"-o", outputPath,
-	)
+	args := toolchain.ClangDriverArgs(linkerPath, abi.SizeBits())
+	args = append(args, asmFile, runtimeLib, "-o", outputPath)
+	ccCmd := toolchain.Command(linkerPath, args...)
 	if out, err := ccCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("compile ir: link: %w\n%s", err, out)
 	}

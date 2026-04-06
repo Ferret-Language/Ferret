@@ -9,8 +9,6 @@ import (
 	"strings"
 )
 
-const envToolchainDir = "FERRET_TOOLCHAIN_DIR"
-
 func ResolveBinary(names ...string) (string, error) {
 	normNames := normalizeNames(names)
 	if len(normNames) == 0 {
@@ -40,144 +38,139 @@ func ResolveBinary(names ...string) (string, error) {
 	return "", fmt.Errorf("toolchain: unable to find any of [%s] (tried %s)", strings.Join(normNames, ", "), strings.Join(tried, ", "))
 }
 
-func Command(binary string, args ...string) *exec.Cmd {
-	cmd := exec.Command(binary, args...)
-	cmd.Env = EnvForBinary(binary, nil)
-	return cmd
-}
-
-func EnvForBinary(binary string, baseEnv []string) []string {
-	env := baseEnv
-	if env == nil {
-		env = os.Environ()
+func ResolveBundledBinary(names ...string) (string, error) {
+	normNames := normalizeNames(names)
+	if len(normNames) == 0 {
+		return "", fmt.Errorf("toolchain: no binary names provided")
 	}
 
-	binDirs := make([]string, 0, 8)
-	if binary != "" {
-		binDirs = append(binDirs, filepath.Clean(filepath.Dir(binary)))
-	}
-	binDirs = append(binDirs, candidateToolchainBinDirs()...)
-	binDirs = uniqueExistingDirs(binDirs)
-
-	libDirs := candidateToolchainLibDirs(binary)
-	libDirs = uniqueExistingDirs(libDirs)
-
-	out := env
-	if len(binDirs) > 0 {
-		out = prependPathLikeEnv(out, "PATH", binDirs)
-	}
-	if len(libDirs) > 0 {
-		switch runtime.GOOS {
-		case "darwin":
-			out = prependPathLikeEnv(out, "DYLD_LIBRARY_PATH", libDirs)
-		case "windows":
-			out = prependPathLikeEnv(out, "PATH", libDirs)
-		default:
-			out = prependPathLikeEnv(out, "LD_LIBRARY_PATH", libDirs)
+	binDirs := candidateToolchainBinDirs()
+	tried := make([]string, 0, len(binDirs)*len(normNames))
+	for _, dir := range binDirs {
+		for _, name := range normNames {
+			candidate := filepath.Join(dir, exeName(name))
+			tried = append(tried, candidate)
+			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+				return candidate, nil
+			}
 		}
 	}
 
-	return out
+	return "", fmt.Errorf("toolchain: unable to find bundled binary [%s] (tried %s)", strings.Join(normNames, ", "), strings.Join(tried, ", "))
+}
+
+func Command(binary string, args ...string) *exec.Cmd {
+	return exec.Command(binary, args...)
+}
+
+func ClangDriverArgs(clangPath string, bits int) []string {
+	if clangPath == "" {
+		return nil
+	}
+	binDir := filepath.Clean(filepath.Dir(clangPath))
+	root := filepath.Clean(filepath.Join(binDir, ".."))
+	if filepath.Base(root) != "toolchain" {
+		return nil
+	}
+
+	includeDir := filepath.Join(root, "include")
+	libDir := filepath.Join(root, "lib")
+	if bits == 32 {
+		libDir = filepath.Join(root, "lib32")
+	}
+	linkerFlavor := "lld"
+	target := ""
+	if runtime.GOOS == "windows" {
+		if bits == 32 {
+			target = "i686-w64-windows-gnu"
+			includeDir = filepath.Join(root, "include32")
+		} else {
+			target = "x86_64-w64-windows-gnu"
+		}
+	}
+	args := []string{
+		"-fuse-ld=" + linkerFlavor,
+		"-B" + binDir,
+		"-B" + libDir,
+		"-L" + libDir,
+		"-isystem", includeDir,
+	}
+	if runtime.GOOS == "windows" {
+		for _, dir := range bundledWindowsGCCRuntimeLibDirs(libDir) {
+			args = append(args, "-L"+dir)
+		}
+	}
+	if target != "" {
+		args = append([]string{"--target=" + target}, args...)
+	}
+	return args
+}
+
+func bundledWindowsGCCRuntimeLibDirs(libDir string) []string {
+	gccDir := filepath.Join(libDir, "gcc")
+	triples, err := os.ReadDir(gccDir)
+	if err != nil {
+		return nil
+	}
+
+	dirs := make([]string, 0, len(triples))
+	for _, triple := range triples {
+		if !triple.IsDir() {
+			continue
+		}
+		versions, err := os.ReadDir(filepath.Join(gccDir, triple.Name()))
+		if err != nil {
+			continue
+		}
+		for _, version := range versions {
+			if !version.IsDir() {
+				continue
+			}
+			dirs = append(dirs, filepath.Join(gccDir, triple.Name(), version.Name()))
+		}
+	}
+	return uniqueExistingDirs(dirs)
 }
 
 func candidateToolchainBinDirs() []string {
 	dirs := make([]string, 0, 16)
-
-	dirs = append(dirs, envToolchainBinDirs()...)
 	dirs = append(dirs, autoToolchainBinDirs()...)
 	return uniqueDirs(dirs)
 }
 
-func candidateToolchainLibDirs(binary string) []string {
-	dirs := make([]string, 0, 16)
-
-	if binary != "" {
-		binDir := filepath.Clean(filepath.Dir(binary))
-		dirs = append(dirs,
-			filepath.Join(binDir, "..", "lib"),
-			filepath.Join(binDir, "lib"),
-		)
-	}
-
-	dirs = append(dirs, envToolchainLibDirs()...)
-	if binary == "" || isBinaryFromAutoToolchain(binary) {
-		dirs = append(dirs, autoToolchainLibDirs()...)
-	}
-	return uniqueDirs(dirs)
-}
-
-func envToolchainBinDirs() []string {
-	env := strings.TrimSpace(os.Getenv(envToolchainDir))
-	if env == "" {
-		return nil
-	}
-	return []string{
-		filepath.Join(env, "bin"),
-		env,
-	}
-}
-
-func envToolchainLibDirs() []string {
-	env := strings.TrimSpace(os.Getenv(envToolchainDir))
-	if env == "" {
-		return nil
-	}
-	return []string{filepath.Join(env, "lib")}
-}
-
 func autoToolchainBinDirs() []string {
-	dirs := make([]string, 0, 16)
+	dirs := make([]string, 0, 4)
 	if execPath, err := os.Executable(); err == nil {
 		execDir := filepath.Dir(execPath)
 		dirs = append(dirs,
 			filepath.Join(execDir, "..", "toolchain", "bin"),
-			filepath.Join(execDir, "toolchain", "bin"),
+			filepath.Join(execDir, "..", "..", "toolchain", "bin"),
 		)
 	}
 	if wd, err := os.Getwd(); err == nil {
-		for current := wd; ; current = filepath.Dir(current) {
-			dirs = append(dirs, filepath.Join(current, "toolchain", "bin"))
-			parent := filepath.Dir(current)
-			if parent == current {
-				break
-			}
-		}
+		dirs = append(dirs, filepath.Join(wd, "build", "toolchain", "bin"))
 	}
 	return dirs
 }
 
 func autoToolchainLibDirs() []string {
-	dirs := make([]string, 0, 16)
+	dirs := make([]string, 0, 6)
 	if execPath, err := os.Executable(); err == nil {
 		execDir := filepath.Dir(execPath)
 		dirs = append(dirs,
 			filepath.Join(execDir, "..", "toolchain", "lib"),
-			filepath.Join(execDir, "toolchain", "lib"),
+			filepath.Join(execDir, "..", "toolchain", "lib32"),
+			filepath.Join(execDir, "..", "..", "toolchain", "lib"),
+			filepath.Join(execDir, "..", "..", "toolchain", "lib32"),
 		)
 	}
 	if wd, err := os.Getwd(); err == nil {
-		for current := wd; ; current = filepath.Dir(current) {
-			dirs = append(dirs, filepath.Join(current, "toolchain", "lib"))
-			parent := filepath.Dir(current)
-			if parent == current {
-				break
-			}
-		}
+		dirs = append(dirs,
+			filepath.Join(wd, "build", "toolchain", "lib"),
+			filepath.Join(wd, "build", "toolchain", "lib32"),
+		)
 	}
 	return dirs
-}
-
-func isBinaryFromAutoToolchain(binary string) bool {
-	if binary == "" {
-		return false
-	}
-	binDir := filepath.Clean(filepath.Dir(binary))
-	for _, dir := range uniqueDirs(autoToolchainBinDirs()) {
-		if binDir == dir {
-			return true
-		}
-	}
-	return false
 }
 
 func normalizeNames(names []string) []string {
@@ -203,48 +196,6 @@ func exeName(base string) string {
 		return base + ".exe"
 	}
 	return base
-}
-
-func prependPathLikeEnv(env []string, key string, dirs []string) []string {
-	if len(dirs) == 0 {
-		return env
-	}
-
-	value := strings.Join(dirs, string(os.PathListSeparator))
-	if existing, ok := lookupEnv(env, key); ok && existing != "" {
-		value = value + string(os.PathListSeparator) + existing
-	}
-	return setEnv(env, key, value)
-}
-
-func lookupEnv(env []string, key string) (string, bool) {
-	for _, pair := range env {
-		if !strings.HasPrefix(pair, key+"=") {
-			continue
-		}
-		return strings.TrimPrefix(pair, key+"="), true
-	}
-	return "", false
-}
-
-func setEnv(env []string, key, value string) []string {
-	out := make([]string, 0, len(env)+1)
-	prefix := key + "="
-	replaced := false
-	for _, pair := range env {
-		if strings.HasPrefix(pair, prefix) {
-			if !replaced {
-				out = append(out, prefix+value)
-				replaced = true
-			}
-			continue
-		}
-		out = append(out, pair)
-	}
-	if !replaced {
-		out = append(out, prefix+value)
-	}
-	return out
 }
 
 func uniqueExistingDirs(dirs []string) []string {

@@ -54,7 +54,7 @@ jobs:
           wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh 18
-          sudo apt-get install -y clang-18 lld-18
+          sudo apt-get install -y clang-18 lld-18 gcc-multilib libc6-dev-i386
           mkdir -p "$HOME/.local/llvm-bin"
           ln -sf /usr/bin/clang-18 "$HOME/.local/llvm-bin/clang"
           ln -sf /usr/bin/clang++-18 "$HOME/.local/llvm-bin/clang++"
@@ -70,6 +70,7 @@ jobs:
 
       - name: Setup MSYS2 toolchain
         if: matrix.os == 'windows'
+        id: msys2
         uses: msys2/setup-msys2@v2
         with:
           update: true
@@ -78,25 +79,33 @@ jobs:
             mingw-w64-x86_64-binutils
             mingw-w64-x86_64-clang
             mingw-w64-x86_64-lld
+            mingw-w64-i686-toolchain
 
       - name: Add MSYS2 to PATH
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
-          "C:\msys64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          "${{ steps.msys2.outputs.msys2-location }}\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Verify Windows clang source
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          Get-Command clang | Format-List Source
+          clang --version
 
       - name: Pack bundle (unix)
         if: matrix.os != 'windows'
         run: |
           rm -rf build dist
-          go run ./tools
+          go run ./bundler
 
       - name: Pack bundle (windows)
         if: matrix.os == 'windows'
         shell: pwsh
         run: |
           Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
-          go run ./tools
+          go run ./bundler
 
       - name: Verify core bundle (unix)
         if: matrix.os != 'windows'
@@ -122,6 +131,30 @@ jobs:
         run: |
           if (!(Test-Path "build\toolchain\bin\clang.exe")) {
             throw "toolchain clang.exe not found"
+          }
+          if (!(Test-Path "build\toolchain\bin\ld.lld.exe")) {
+            throw "toolchain ld.lld.exe not found"
+          }
+          if (!(Test-Path "build\toolchain\bin\lld-link.exe")) {
+            throw "toolchain lld-link.exe not found"
+          }
+          if (!(Test-Path "build\toolchain\lib32")) {
+            throw "toolchain lib32 not found"
+          }
+          & "build\toolchain\bin\ld.lld.exe" --version
+          & "build\toolchain\bin\lld-link.exe" --version
+
+      - name: Packaged LLVM smoke (windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          & "build\core\bin\ferret.exe" -backend llvm -o "build\smoke.exe" "tests\semma\string_realworld_ok.fer"
+          if (!(Test-Path "build\smoke.exe")) {
+            throw "packaged windows llvm smoke output not found"
+          }
+          & "build\core\bin\ferret.exe" -m32 -backend llvm -o "build\smoke32.exe" "tests\semma\string_realworld_ok.fer"
+          if (!(Test-Path "build\smoke32.exe")) {
+            throw "packaged windows llvm 32-bit smoke output not found"
           }
 
       - name: Archive (unix)

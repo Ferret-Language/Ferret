@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"compiler/internal/core/abi"
 	"compiler/internal/core/phase"
 	compiler "compiler/internal/driver"
 )
@@ -138,6 +139,44 @@ fn main() -> i32 {
 	}
 	if got := holder.Struct.Fields[0].Size; got != 16 {
 		t.Fatalf("expected optional raw pointer field size=16, got %d", got)
+	}
+}
+
+func TestLayoutRespectsConfiguredABISize(t *testing.T) {
+	prev := abi.SizeBits()
+	defer func() {
+		if err := abi.SetSizeBits(prev); err != nil {
+			t.Fatalf("restore abi size: %v", err)
+		}
+	}()
+	if err := abi.SetSizeBits(abi.Bits32); err != nil {
+		t.Fatalf("set abi size: %v", err)
+	}
+
+	root := t.TempDir()
+	mustWriteLayout(t, filepath.Join(root, "main.fer"), `type Holder struct {
+    Text: str
+    Ptr: ^i32
+}
+
+fn main() -> i32 {
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	holder, ok := result.Entry.Layout.Lookup("Holder")
+	if !ok || holder == nil || holder.Struct == nil {
+		t.Fatalf("expected Holder layout, got %#v", result.Entry.Layout)
+	}
+	if holder.Size != 12 || holder.Align != 4 {
+		t.Fatalf("expected Holder size=12 align=4, got size=%d align=%d", holder.Size, holder.Align)
+	}
+	if holder.Struct.Fields[0].Offset != 0 || holder.Struct.Fields[1].Offset != 8 {
+		t.Fatalf("expected Text@0 Ptr@8, got %#v", holder.Struct.Fields)
 	}
 }
 

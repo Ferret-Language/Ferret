@@ -8,7 +8,7 @@ if errorlevel 1 (
   exit /b 1
 )
 
-go run ./tools
+go run ./bundler
 if errorlevel 1 (
   echo Build failed
   popd >nul

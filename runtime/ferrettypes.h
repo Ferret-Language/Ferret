@@ -54,6 +54,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <inttypes.h>
 
 #if defined(__cplusplus)
 #define FERRET_STATIC_ASSERT(cond, msg) static_assert((cond), msg)
@@ -83,8 +84,8 @@ extern "C" {
  *   i64         │ ferret_i64     │ int64_t
  *   f32         │ ferret_f32     │ float
  *   f64         │ ferret_f64     │ double
- *   usize       │ ferret_usize   │ unsigned long  (pointer-sized)
- *   isize       │ ferret_isize   │ signed long    (pointer-sized)
+ *   usize       │ ferret_usize   │ uintptr_t      (pointer-sized)
+ *   isize       │ ferret_isize   │ intptr_t       (pointer-sized)
  *   char        │ ferret_char    │ uint32_t       (Unicode scalar U+0000..U+10FFFF)
  *   bool        │ ferret_bool    │ uint8_t        (0 = false, 1 = true)
  *   ^T          │ ferret_raw     │ void *         (C void*, erased pointer)
@@ -100,11 +101,16 @@ typedef int32_t       ferret_i32;
 typedef int64_t       ferret_i64;
 typedef float         ferret_f32;
 typedef double        ferret_f64;
-typedef unsigned long ferret_usize;   /* Ferret `usize` — pointer-sized unsigned integer */
-typedef signed   long ferret_isize;   /* Ferret `isize` — pointer-sized signed integer   */
+typedef uintptr_t     ferret_usize;   /* Ferret `usize` — pointer-sized unsigned integer */
+typedef intptr_t      ferret_isize;   /* Ferret `isize` — pointer-sized signed integer   */
 typedef ferret_u32    ferret_char;    /* Ferret `char`  — Unicode scalar value           */
 typedef ferret_u8     ferret_bool;    /* Ferret `bool`  — 0 = false, 1 = true            */
 typedef void         *ferret_raw;     /* Ferret `^T`    — erased / untyped raw pointer   */
+
+FERRET_STATIC_ASSERT(sizeof(ferret_usize) == sizeof(void *),
+                     "ferret_usize must match pointer width");
+FERRET_STATIC_ASSERT(sizeof(ferret_isize) == sizeof(void *),
+                     "ferret_isize must match pointer width");
 
 /* ferret_type_id — stable numeric identity assigned to every named Ferret type.
  * ID 0 is reserved (FERRET_TYPE_UNKNOWN).                                    */
@@ -137,6 +143,13 @@ typedef struct {
     const ferret_u8 *ptr;   /* pointer to first byte; need not be null-terminated */
     ferret_usize     len;   /* number of bytes                                     */
 } FerretStr;
+
+FERRET_STATIC_ASSERT(sizeof(FerretStr) == (sizeof(void *) * 2u),
+                     "FerretStr must be exactly two pointer-width fields");
+FERRET_STATIC_ASSERT(offsetof(FerretStr, ptr) == 0u,
+                     "FerretStr.ptr must be the first field");
+FERRET_STATIC_ASSERT(offsetof(FerretStr, len) == sizeof(void *),
+                     "FerretStr.len must follow ptr");
 
 /* =========================================================================
  * 3. Enum  (Ferret `enum`)
@@ -438,6 +451,13 @@ typedef struct { ferret_f32 *ptr; ferret_usize len; } FerretSliceF32;
 typedef struct { ferret_f64 *ptr; ferret_usize len; } FerretSliceF64;
 typedef struct { ferret_raw  ptr; ferret_usize len; } FerretSlicePtr;  /* [](*T) — erased element type */
 typedef struct { FerretAny *ptr; ferret_usize len; } FerretSliceAny;
+
+FERRET_STATIC_ASSERT(sizeof(FerretSliceU8) == sizeof(FerretStr),
+                     "FerretSliceU8 must match FerretStr ABI layout");
+FERRET_STATIC_ASSERT(sizeof(FerretSlicePtr) == (sizeof(void *) * 2u),
+                     "FerretSlicePtr must be exactly two pointer-width fields");
+FERRET_STATIC_ASSERT(sizeof(FerretSliceAny) == (sizeof(void *) * 2u),
+                     "FerretSliceAny must be exactly two pointer-width fields");
 
 #ifdef __cplusplus
 }

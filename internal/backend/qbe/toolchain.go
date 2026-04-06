@@ -28,7 +28,7 @@ func QBEBinary() (string, error) {
 }
 
 func ensureQBEBinary() (string, error) {
-	if bundled, err := toolchain.ResolveBinary("qbe"); err == nil {
+	if bundled, err := toolchain.ResolveBundledBinary("qbe"); err == nil {
 		if info, statErr := os.Stat(bundled); statErr == nil && !info.IsDir() && info.Size() > 0 {
 			return bundled, nil
 		}

@@ -9,6 +9,7 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	"compiler/internal/backend/toolchain"
+	"compiler/internal/core/abi"
 	"compiler/internal/ir/mir"
 	"compiler/internal/tokens"
 )
@@ -26,8 +27,7 @@ type CompileOptions struct {
 // clang handles both compilation and linking, picking up the C runtime
 // automatically.
 func CompileIR(llvmIR, outputPath string, opts CompileOptions) error {
-	// Locate the pre-compiled runtime archive before touching the temp dir so
-	// a missing archive is reported cleanly before any work is done.
+	abiBits := abi.SizeBits()
 	runtimeLib, err := backend.RuntimeStaticLib()
 	if err != nil {
 		return fmt.Errorf("compile ir: %w", err)
@@ -53,6 +53,9 @@ func CompileIR(llvmIR, outputPath string, opts CompileOptions) error {
 	// Pass the runtime archive as a positional input so we do not depend on
 	// driver-specific -l:filename support.
 	args := []string{"-Wno-override-module"}
+	if abiBits == abi.Bits32 {
+		args = append(args, "-m32")
+	}
 	if opts.Debug {
 		if runtime.GOOS == "windows" {
 			args = append(args, "-gcodeview")
@@ -61,11 +64,16 @@ func CompileIR(llvmIR, outputPath string, opts CompileOptions) error {
 		}
 		args = append(args, "-O0", "-fno-omit-frame-pointer")
 	}
-	args = append(args, irFile, runtimeLib, "-o", outputPath)
+	args = append(args, irFile)
+	args = append(args, runtimeLib)
+	args = append(args, "-o", outputPath)
 
-	clangPath, err := toolchain.ResolveBinary("clang", "cc", "gcc")
+	clangPath, err := toolchain.ResolveBundledBinary("clang")
 	if err != nil {
 		return fmt.Errorf("compile ir: %w", err)
+	}
+	if bundledArgs := toolchain.ClangDriverArgs(clangPath, abiBits); len(bundledArgs) != 0 {
+		args = append(args[:2], append(bundledArgs, args[2:]...)...)
 	}
 
 	cmd := toolchain.Command(clangPath, args...)

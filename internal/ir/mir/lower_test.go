@@ -662,6 +662,77 @@ fn main(items: []i32) -> i32 {
 	t.Fatalf("expected lowered sum call in MIR, got %#v", mainFn.Blocks)
 }
 
+func TestPipelineBoxesDirectTupleLiteralForVariadicAny(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    print((1, 2, 3))
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn == nil || fn.Name != "main" {
+			continue
+		}
+		for _, block := range fn.Blocks {
+			for _, instr := range block.Instructions {
+				var value mir.Value
+				switch ins := instr.(type) {
+				case *mir.AssignInstr:
+					value = ins.Value
+				case *mir.ComputeInstr:
+					value = ins.Value
+				default:
+					continue
+				}
+				iface, ok := value.(*mir.InterfaceValue)
+				if !ok {
+					continue
+				}
+				tupleType, ok := iface.ConcreteType.(*typeinfo.TupleType)
+				if !ok || len(tupleType.Elems) != 3 {
+					continue
+				}
+				if typeinfo.IsBuiltinNamed(tupleType.Elems[0], "i32") &&
+					typeinfo.IsBuiltinNamed(tupleType.Elems[1], "i32") &&
+					typeinfo.IsBuiltinNamed(tupleType.Elems[2], "i32") {
+					return
+				}
+			}
+		}
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	t.Fatalf("expected direct tuple literal to be boxed into Any, got:\n%s", text)
+}
+
+func TestPipelineBoxesDirectTupleLiteralWithStringForVariadicAny(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    print((1, "hi", 3))
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "_t1: (i32, str, i32) [temp]") {
+		t.Fatalf("expected inferred tuple temp to use str element, got:\n%s", text)
+	}
+}
+
 func TestPipelineNormalizesStoreCallValueIntoTemp(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.fer"), `

@@ -717,6 +717,37 @@ fn main() -> void {
 	}
 }
 
+func TestLowerDirectTupleLiteralPrintToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    print((1, 2, 3))
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe direct tuple print: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"data $typeinfo__tuple__i32__i32__i32__fields = { l 0, l $typeinfo__i32, l 4, l $typeinfo__i32, l 8, l $typeinfo__i32 }",
+		"data $typeinfo__tuple__i32__i32__i32__meta = { l 3, l $typeinfo__tuple__i32__i32__i32__fields }",
+		"call $ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerUnionLocalAssignmentToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

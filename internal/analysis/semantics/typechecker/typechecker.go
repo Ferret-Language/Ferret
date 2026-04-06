@@ -2492,6 +2492,21 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 	if expr != nil && expr.Type != nil {
 		expected = c.resolveCompositeLiteralType(scope, expr, expected)
 	}
+	if expr != nil && expr.Tuple && expr.Type == nil {
+		if _, ok := c.underlying(expected).(*typeinfo.TupleType); expected == nil || !ok {
+			elems := make([]typeinfo.Type, 0, len(expr.Items))
+			for _, item := range expr.Items {
+				itemExpected := typeinfo.Type(nil)
+				if _, ok := item.Value.(*ast.StringLit); ok {
+					itemExpected = &typeinfo.StringType{}
+				}
+				elems = append(elems, c.typeOfExpr(scope, item.Value, itemExpected))
+			}
+			inferred := &typeinfo.TupleType{Elems: elems}
+			c.info.BindNode(expr, inferred)
+			return inferred
+		}
+	}
 	if expected == nil {
 		loc := expr.Location
 		c.ctx.Diagnostics.Add(

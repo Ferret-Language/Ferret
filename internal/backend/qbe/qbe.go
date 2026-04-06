@@ -13,6 +13,7 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	becommon "compiler/internal/backend/common"
+	"compiler/internal/core/abi"
 	"compiler/internal/ir/mir"
 	"compiler/internal/utils/numeric"
 )
@@ -83,6 +84,9 @@ func (*lowerer) Target() backend.Target { return backend.TargetQBE }
 func (l *lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 	if err := backend.ValidateUnit(unit); err != nil {
 		return nil, err
+	}
+	if abi.SizeBits() != abi.Bits64 {
+		return nil, fmt.Errorf("qbe backend supports only 64-bit ABI")
 	}
 	mod := unit.Module
 	modulePrefix, functions, globals := becommon.BuildModuleSymbolTables(mod)
