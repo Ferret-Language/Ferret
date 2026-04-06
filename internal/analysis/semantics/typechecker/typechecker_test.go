@@ -3630,6 +3630,42 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerPreservesDirectTupleLiteralTypeForVariadicAny(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    print((1, 2, 3))
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("expected tuple literal print to typecheck, got %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	exprStmt, ok := mainFn.Body.Stmts[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected main body expr statement, got %#v", mainFn.Body.Stmts)
+	}
+	call, ok := exprStmt.Value.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		t.Fatalf("expected print call with one arg, got %#v", exprStmt.Value)
+	}
+	tupleType, ok := result.Entry.Types.Nodes[call.Args[0]].(*typeinfo.TupleType)
+	if !ok {
+		t.Fatalf("expected direct tuple literal arg type, got %T %#v", result.Entry.Types.Nodes[call.Args[0]], result.Entry.Types.Nodes[call.Args[0]])
+	}
+	if len(tupleType.Elems) != 3 {
+		t.Fatalf("expected 3 tuple elements, got %#v", tupleType.Elems)
+	}
+	for i, elem := range tupleType.Elems {
+		if !typeinfo.IsBuiltinNamed(elem, "i32") {
+			t.Fatalf("expected tuple elem %d to be i32, got %#v", i, elem)
+		}
+	}
+}
+
 func TestTypecheckerComptimeEvaluatesMixedTupleAggregateAndIndex(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
