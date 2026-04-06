@@ -76,44 +76,6 @@ func TestResolveBundledBinaryPrefersOnlyBundledPaths(t *testing.T) {
 	}
 }
 
-func TestResolveBundledBinaryFindsParentBuildToolchainFromSubdir(t *testing.T) {
-	root := t.TempDir()
-	toolchainDir := filepath.Join(root, "build", "toolchain", "bin")
-	workDir := filepath.Join(root, "nested", "child")
-	if err := os.MkdirAll(toolchainDir, 0o755); err != nil {
-		t.Fatalf("mkdir toolchain dir: %v", err)
-	}
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir work dir: %v", err)
-	}
-
-	bundledPath := filepath.Join(toolchainDir, exeName("clang"))
-	if err := os.WriteFile(bundledPath, []byte("x"), 0o755); err != nil {
-		t.Fatalf("write bundled binary: %v", err)
-	}
-
-	prevDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(workDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	defer func() {
-		if chdirErr := os.Chdir(prevDir); chdirErr != nil {
-			t.Fatalf("restore cwd: %v", chdirErr)
-		}
-	}()
-
-	got, err := ResolveBundledBinary("clang")
-	if err != nil {
-		t.Fatalf("ResolveBundledBinary returned error: %v", err)
-	}
-	if got != bundledPath {
-		t.Fatalf("ResolveBundledBinary = %q, want %q", got, bundledPath)
-	}
-}
-
 func TestClangDriverArgsUseBundledLayout(t *testing.T) {
 	got := ClangDriverArgs("/tmp/ferret/toolchain/bin/clang", 32)
 	want := []string{

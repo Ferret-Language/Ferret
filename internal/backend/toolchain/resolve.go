@@ -148,7 +148,7 @@ func autoToolchainBinDirs() []string {
 		)
 	}
 	if wd, err := os.Getwd(); err == nil {
-		dirs = append(dirs, walkUpToolchainDirs(wd, filepath.Join("build", "toolchain", "bin"))...)
+		dirs = append(dirs, filepath.Join(wd, "build", "toolchain", "bin"))
 	}
 	return dirs
 }
@@ -165,20 +165,10 @@ func autoToolchainLibDirs() []string {
 		)
 	}
 	if wd, err := os.Getwd(); err == nil {
-		dirs = append(dirs, walkUpToolchainDirs(wd, filepath.Join("build", "toolchain", "lib"))...)
-		dirs = append(dirs, walkUpToolchainDirs(wd, filepath.Join("build", "toolchain", "lib32"))...)
-	}
-	return dirs
-}
-
-func walkUpToolchainDirs(startDir, relPath string) []string {
-	dirs := make([]string, 0, 4)
-	for dir := filepath.Clean(startDir); ; dir = filepath.Dir(dir) {
-		dirs = append(dirs, filepath.Join(dir, relPath))
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
+		dirs = append(dirs,
+			filepath.Join(wd, "build", "toolchain", "lib"),
+			filepath.Join(wd, "build", "toolchain", "lib32"),
+		)
 	}
 	return dirs
 }
