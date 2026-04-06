@@ -45,10 +45,18 @@ func run() error {
 
 	coreDir := filepath.Join(buildDir, "core")
 	toolchainDir := filepath.Join(buildDir, "toolchain")
-	if err := bundleCore(root, coreDir); err != nil {
+	tools, err := resolveToolBinaries()
+	if err != nil {
 		return err
 	}
-	if err := bundleToolchain(toolchainDir); err != nil {
+	bundle32Bit, err := supportsBundled32BitTarget(tools)
+	if err != nil {
+		return err
+	}
+	if err := bundleCore(root, coreDir, bundle32Bit); err != nil {
+		return err
+	}
+	if err := bundleToolchain(toolchainDir, tools, bundle32Bit); err != nil {
 		return err
 	}
 
@@ -56,7 +64,7 @@ func run() error {
 	return nil
 }
 
-func bundleCore(root, bundleDir string) error {
+func bundleCore(root, bundleDir string, bundle32Bit bool) error {
 	binDir := filepath.Join(bundleDir, "bin")
 	libsDir := filepath.Join(bundleDir, "libs")
 	for _, dir := range []string{bundleDir, binDir, libsDir} {
@@ -71,7 +79,7 @@ func bundleCore(root, bundleDir string) error {
 	if err := buildRuntimeLib(filepath.Join(root, "runtime"), libsDir, 0); err != nil {
 		return err
 	}
-	if supportsBundled32BitTarget() {
+	if bundle32Bit {
 		if err := buildRuntimeLib(filepath.Join(root, "runtime"), libsDir, abi.Bits32); err != nil {
 			return err
 		}
@@ -90,7 +98,7 @@ func bundleCore(root, bundleDir string) error {
 	return nil
 }
 
-func bundleToolchain(bundleDir string) error {
+func bundleToolchain(bundleDir string, tools map[string]string, bundle32Bit bool) error {
 	binDir := filepath.Join(bundleDir, "bin")
 	libDir := filepath.Join(bundleDir, "lib")
 	for _, dir := range []string{bundleDir, binDir, libDir} {
@@ -99,10 +107,6 @@ func bundleToolchain(bundleDir string) error {
 		}
 	}
 
-	tools, err := resolveToolBinaries()
-	if err != nil {
-		return err
-	}
 	for _, name := range sortedKeys(tools) {
 		if err := copyFile(tools[name], filepath.Join(binDir, name)); err != nil {
 			return fmt.Errorf("copy tool %s: %w", name, err)
@@ -116,7 +120,7 @@ func bundleToolchain(bundleDir string) error {
 	if err := copyPlatformToolchainRuntime(bundleDir, libDir, toolPaths(tools), clangPath); err != nil {
 		return err
 	}
-	if runtime.GOOS == "linux" {
+	if runtime.GOOS == "linux" && bundle32Bit {
 		if err := copyLinux32ToolchainSupport(clangPath, bundleDir); err != nil {
 			return err
 		}
@@ -704,17 +708,66 @@ func toolBinaryDirs(binaries []string) []string {
 	return dirs
 }
 
-func supportsBundled32BitTarget() bool {
+func supportsBundled32BitTarget(tools map[string]string) (bool, error) {
 	switch runtime.GOOS {
 	case "linux":
-		return true
+		if !linux32BitHostArchSupported(runtime.GOARCH) {
+			return false, nil
+		}
+		clangPath, ok := tools[binaryName("clang")]
+		if !ok {
+			return false, fmt.Errorf("bundle toolchain: clang is required for 32-bit support detection")
+		}
+		cc, err := resolveRuntimeCompiler(abi.Bits32)
+		if err != nil || !supportsLinux32BitRuntimeCompile(cc) {
+			return false, nil
+		}
+		if _, err := clangResolvedFile(clangPath, "-m32", "-print-file-name=Scrt1.o"); err != nil {
+			return false, nil
+		}
+		if _, err := clangResolvedFile(clangPath, "-m32", "-print-file-name=libgcc.a"); err != nil {
+			return false, nil
+		}
+		if _, err := linuxStubs32Header(clangPath); err != nil {
+			return false, nil
+		}
+		return true, nil
 	case "windows":
-		root64 := filepath.Join(windowsMSYS2Root(), "mingw64")
-		_, root32 := windowsMingwRoots(filepath.Join(root64, "bin", binaryName("clang")))
-		return root32 != ""
+		clangPath, ok := tools[binaryName("clang")]
+		if !ok {
+			return false, fmt.Errorf("bundle toolchain: clang is required for 32-bit support detection")
+		}
+		_, root32 := windowsMingwRoots(clangPath)
+		return root32 != "", nil
 	default:
+		return false, nil
+	}
+}
+
+func linux32BitHostArchSupported(goarch string) bool {
+	return goarch == "amd64" || goarch == "386"
+}
+
+func supportsLinux32BitRuntimeCompile(compiler string) bool {
+	if compiler == "" {
 		return false
 	}
+
+	tmpDir, err := os.MkdirTemp("", "ferret-m32-probe-*")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(tmpDir)
+
+	src := filepath.Join(tmpDir, "probe.c")
+	out := filepath.Join(tmpDir, "probe.o")
+	probe := "#include <stdint.h>\nint ferret_m32_probe(void) { return (int)sizeof(uintptr_t); }\n"
+	if err := os.WriteFile(src, []byte(probe), 0o644); err != nil {
+		return false
+	}
+
+	cmd := exec.Command(compiler, "-m32", "-c", src, "-o", out)
+	return cmd.Run() == nil
 }
 
 func windowsMSYS2Root() string {

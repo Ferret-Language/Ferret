@@ -133,3 +133,17 @@ func TestCopyDirContentsFilteredSkipsWindowsToolchainProjects(t *testing.T) {
 		}
 	}
 }
+
+func TestLinux32BitHostArchSupported(t *testing.T) {
+	cases := map[string]bool{
+		"amd64":   true,
+		"386":     true,
+		"arm64":   false,
+		"riscv64": false,
+	}
+	for goarch, want := range cases {
+		if got := linux32BitHostArchSupported(goarch); got != want {
+			t.Fatalf("linux32BitHostArchSupported(%q) = %v, want %v", goarch, got, want)
+		}
+	}
+}
