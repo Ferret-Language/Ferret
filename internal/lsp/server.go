@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/url"
 	"os"
@@ -230,13 +231,26 @@ type openDocument struct {
 type hoverCacheEntry struct {
 	Mode      string
 	Version   int
+	TextStamp uint64
+	DepStamp  string
+	DepFiles  []string
 	FileStamp string
 	Index     *hoverIndex
 }
 
+type semanticSnapshot struct {
+	Version     int
+	TextStamp   uint64
+	DepStamp    string
+	DepFiles    []string
+	ParsedPath  string
+	Diagnostics []lspDiagnostic
+}
+
 type semanticDiagnosticsEntry struct {
-	seq   uint64
-	timer *time.Timer
+	seq      uint64
+	timer    *time.Timer
+	snapshot *semanticSnapshot
 }
 
 type Server struct {
@@ -455,6 +469,23 @@ func (s *Server) handleDidSave(raw json.RawMessage) {
 		return
 	}
 
+	s.mu.Lock()
+	if s.semanticDiagnostics != nil {
+		if entry := s.semanticDiagnostics[uri]; entry != nil {
+			if entry.timer != nil {
+				entry.timer.Stop()
+				entry.timer = nil
+			}
+			if doc, ok := s.documents[uri]; ok && entry.snapshot != nil && entry.snapshot.TextStamp == textStamp(doc.Text) && dependencyStamp(entry.snapshot.DepFiles) == entry.snapshot.DepStamp {
+				diagnostics := append([]lspDiagnostic(nil), entry.snapshot.Diagnostics...)
+				s.mu.Unlock()
+				s.publishDiagnostics(uri, nil, diagnostics)
+				return
+			}
+		}
+	}
+	s.mu.Unlock()
+
 	s.cancelSemanticDiagnostics(uri)
 	result := parseSemanticProject(path)
 	diagnostics := convertDiagnostics(result.Diagnostics.Diagnostics(), path)
@@ -644,11 +675,20 @@ func (s *Server) publishSemanticDiagnostics(uri, path string, seq uint64) {
 	}
 	version := doc.Version
 	text := doc.Text
+	stamp := textStamp(text)
+	if entry.snapshot != nil && entry.snapshot.TextStamp == stamp && dependencyStamp(entry.snapshot.DepFiles) == entry.snapshot.DepStamp {
+		diagnostics := append([]lspDiagnostic(nil), entry.snapshot.Diagnostics...)
+		s.mu.Unlock()
+		v := version
+		s.publishDiagnostics(uri, &v, diagnostics)
+		return
+	}
 	s.mu.Unlock()
 
 	result, parsedPath, cleanup := parseForSemanticDiagnostics(path, text, true)
 	defer cleanup()
 	diagnostics := convertDiagnostics(result.Diagnostics.Diagnostics(), path, parsedPath)
+	depFiles, depStamp := dependencySnapshot(result, parsedPath, path)
 
 	s.mu.Lock()
 	entry = nil
@@ -659,6 +699,25 @@ func (s *Server) publishSemanticDiagnostics(uri, path string, seq uint64) {
 	if !ok || entry == nil || entry.seq != seq || current.Version != version {
 		s.mu.Unlock()
 		return
+	}
+	entry.snapshot = &semanticSnapshot{
+		Version:     version,
+		TextStamp:   stamp,
+		DepStamp:    depStamp,
+		DepFiles:    depFiles,
+		ParsedPath:  parsedPath,
+		Diagnostics: append([]lspDiagnostic(nil), diagnostics...),
+	}
+	if s.hoverCache == nil {
+		s.hoverCache = make(map[string]hoverCacheEntry)
+	}
+	s.hoverCache[uri] = hoverCacheEntry{
+		Mode:      "doc",
+		Version:   version,
+		TextStamp: stamp,
+		DepStamp:  depStamp,
+		DepFiles:  depFiles,
+		Index:     buildHoverIndexFromResult(result, parsedPath, path, text),
 	}
 	s.mu.Unlock()
 
@@ -866,30 +925,27 @@ type hoverIndex struct {
 func (s *Server) getOrBuildHoverIndex(uri, path string, doc openDocument, hasDoc bool) *hoverIndex {
 	if hasDoc {
 		if !doc.HasSyntaxErrors {
+			stamp := textStamp(doc.Text)
 			s.mu.Lock()
 			if s.hoverCache == nil {
 				s.hoverCache = make(map[string]hoverCacheEntry)
 			}
-			if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "doc" && entry.Version == doc.Version && entry.Index != nil {
+			if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "doc" && entry.TextStamp == stamp && entry.DepStamp == dependencyStamp(entry.DepFiles) && entry.Index != nil {
 				index := entry.Index
 				s.mu.Unlock()
 				return index
 			}
 			s.mu.Unlock()
 
-			index := buildHoverIndex(path, doc.Text, true)
+			entry := buildHoverCacheEntry(path, doc.Text, doc.Version)
 
 			s.mu.Lock()
 			if s.hoverCache == nil {
 				s.hoverCache = make(map[string]hoverCacheEntry)
 			}
-			s.hoverCache[uri] = hoverCacheEntry{
-				Mode:    "doc",
-				Version: doc.Version,
-				Index:   index,
-			}
+			s.hoverCache[uri] = entry
 			s.mu.Unlock()
-			return index
+			return entry.Index
 		}
 	}
 
@@ -899,26 +955,22 @@ func (s *Server) getOrBuildHoverIndex(uri, path string, doc openDocument, hasDoc
 	if s.hoverCache == nil {
 		s.hoverCache = make(map[string]hoverCacheEntry)
 	}
-	if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "file" && entry.FileStamp == stamp && entry.Index != nil {
+	if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "file" && entry.FileStamp == stamp && entry.DepStamp == dependencyStamp(entry.DepFiles) && entry.Index != nil {
 		index := entry.Index
 		s.mu.Unlock()
 		return index
 	}
 	s.mu.Unlock()
 
-	index := buildHoverIndex(path, "", false)
+	entry := buildFileHoverCacheEntry(path)
 
 	s.mu.Lock()
 	if s.hoverCache == nil {
 		s.hoverCache = make(map[string]hoverCacheEntry)
 	}
-	s.hoverCache[uri] = hoverCacheEntry{
-		Mode:      "file",
-		FileStamp: stamp,
-		Index:     index,
-	}
+	s.hoverCache[uri] = entry
 	s.mu.Unlock()
-	return index
+	return entry.Index
 }
 
 func fileStamp(path string) string {
@@ -927,6 +979,62 @@ func fileStamp(path string) string {
 		return ""
 	}
 	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
+}
+
+func textStamp(text string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(text))
+	return h.Sum64()
+}
+
+func dependencySnapshot(result compiler.Result, parsedPath, originalPath string) ([]string, string) {
+	files := dependencyFiles(result, parsedPath, originalPath)
+	return files, dependencyStamp(files)
+}
+
+func dependencyFiles(result compiler.Result, parsedPath, originalPath string) []string {
+	seen := make(map[string]struct{})
+	files := make([]string, 0, len(result.Modules)+1)
+	add := func(path string) {
+		if path == "" || sameFilePath(path, parsedPath) || sameFilePath(path, originalPath) {
+			return
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			abs = path
+		}
+		clean := filepath.Clean(abs)
+		if _, ok := seen[clean]; ok {
+			return
+		}
+		seen[clean] = struct{}{}
+		files = append(files, clean)
+	}
+	if result.Entry != nil {
+		add(result.Entry.FilePath)
+	}
+	for _, mod := range result.Modules {
+		if mod == nil {
+			continue
+		}
+		add(mod.FilePath)
+	}
+	sort.Strings(files)
+	return files
+}
+
+func dependencyStamp(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, path := range files {
+		b.WriteString(path)
+		b.WriteByte('=')
+		b.WriteString(fileStamp(path))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func hoverFromIndex(index *hoverIndex, pos source.Position) *hoverResult {
@@ -950,19 +1058,52 @@ func hoverFromIndex(index *hoverIndex, pos source.Position) *hoverResult {
 func buildHoverIndex(path, text string, hasText bool) *hoverIndex {
 	result, parsedPath, cleanup := parseForHover(path, text, hasText)
 	defer cleanup()
+	sourceText := text
+	if !hasText {
+		sourceText = ""
+	}
+	return buildHoverIndexFromResult(result, parsedPath, path, sourceText)
+}
 
+func buildHoverCacheEntry(path, text string, version int) hoverCacheEntry {
+	result, parsedPath, cleanup := parseForHover(path, text, true)
+	defer cleanup()
+	depFiles, depStamp := dependencySnapshot(result, parsedPath, path)
+	return hoverCacheEntry{
+		Mode:      "doc",
+		Version:   version,
+		TextStamp: textStamp(text),
+		DepStamp:  depStamp,
+		DepFiles:  depFiles,
+		Index:     buildHoverIndexFromResult(result, parsedPath, path, text),
+	}
+}
+
+func buildFileHoverCacheEntry(path string) hoverCacheEntry {
+	result, parsedPath, cleanup := parseForHover(path, "", false)
+	defer cleanup()
+	depFiles, depStamp := dependencySnapshot(result, parsedPath, path)
+	return hoverCacheEntry{
+		Mode:      "file",
+		FileStamp: fileStamp(path),
+		DepStamp:  depStamp,
+		DepFiles:  depFiles,
+		Index:     buildHoverIndexFromResult(result, parsedPath, path, ""),
+	}
+}
+
+func buildHoverIndexFromResult(result compiler.Result, parsedPath, originalPath, sourceText string) *hoverIndex {
 	mod := findModuleByPath(result, parsedPath)
 	if mod == nil {
 		return &hoverIndex{}
 	}
 	modules := indexModulesByKey(result)
-	sourceText := text
-	if !hasText {
-		if bytes, err := os.ReadFile(path); err == nil {
+	if sourceText == "" {
+		if bytes, err := os.ReadFile(originalPath); err == nil {
 			sourceText = string(bytes)
 		}
 	}
-	hoverCandidates, defCandidates := collectHoverCandidates(mod, mod.Types, modules, sourceText, parsedPath, path)
+	hoverCandidates, defCandidates := collectHoverCandidates(mod, mod.Types, modules, sourceText, parsedPath, originalPath)
 	docSymbols := collectDocumentSymbols(mod, mod.Types)
 	completions := collectCompletionIndex(mod, mod.Types, modules)
 	return &hoverIndex{
