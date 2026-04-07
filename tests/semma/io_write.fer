@@ -1,0 +1,5 @@
+import "std/io"
+
+fn main() -> void {
+    io::Write(io::Stdout, "hi\n")
+}

@@ -176,6 +176,12 @@ FerretStr ferret_global_recover(void);
 void ferret_global_print(const FerretSliceAny *values);
 
 /* -------------------------------------------------------------------------
+ * std/io surface.
+ * -------------------------------------------------------------------------*/
+
+ferret_usize ferret_std_io_write_stream(ferret_i32 kind, const FerretStr *text);
+
+/* -------------------------------------------------------------------------
  * str_data / str_len  — extract fields from a str fat-pointer.
  *
  * These back the #[extern] fn str_data(s *str) *raw

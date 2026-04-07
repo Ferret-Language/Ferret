@@ -256,6 +256,43 @@ fn main() -> void {
 	}
 }
 
+func TestParsePathTypechecksStdIOWrite(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
+type Writer interface {
+    Write(&self, text: str) -> usize
+}
+
+type Stream struct {
+    kind: i32
+}
+
+#[extern("ferret_std_io_write_stream")]
+fn write_stream(kind: i32, text: &str) -> usize;
+
+let Stdout: Stream = .{ .kind = 1 }
+
+fn Stream::Write(&self, text: str) -> usize {
+    return write_stream(self.kind, &text)
+}
+
+fn Write(dst: Writer, text: str) -> usize {
+    return dst.Write(text)
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
+
+fn main() -> void {
+    _ = io::Write(io::Stdout, "hello")
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
 func TestParsePathForIDEReportsUnusedLocalDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	setIDEExecutablePaths(t, root)
