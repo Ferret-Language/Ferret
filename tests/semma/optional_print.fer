@@ -1,0 +1,15 @@
+fn main() -> void {
+    let some: ?i32 = 10
+    let empty: ?i32 = none
+
+    print(some)
+    print(empty)
+
+    if some != none {
+        print("optional-print-ok")
+        return
+    }
+
+    print("optional-print-fail")
+    exit(1)
+}

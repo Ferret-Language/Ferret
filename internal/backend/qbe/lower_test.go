@@ -785,6 +785,47 @@ fn main() -> void {
 	}
 }
 
+func TestLowerTaggedOptionalToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let value: ?i32 = 10
+    if value != none {
+        print(value)
+    }
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe tagged optional: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"loaduw %value",
+		"cnew",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+	for _, bad := range []string{
+		"add 0, 4",
+		"loaduw 0",
+	} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("unexpected %q in qbe output:\n%s", bad, text)
+		}
+	}
+}
+
 func TestLowerUnionLocalAssignmentToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

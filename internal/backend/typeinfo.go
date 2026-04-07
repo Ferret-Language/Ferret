@@ -35,17 +35,19 @@ const (
 	RuntimeTypeFlagArray     = 1 << 6
 	RuntimeTypeFlagTuple     = 1 << 7
 	RuntimeTypeFlagVariants  = 1 << 8
+	RuntimeTypeFlagOptional  = 1 << 9
 )
 
 type RuntimeTypeDescriptor struct {
-	Name     string
-	ID       uint32
-	Flags    uint32
-	Elem     typeinfo.Type
-	Length   int64
-	Stride   int64
-	Fields   []RuntimeTypeFieldDescriptor
-	Variants []string
+	Name          string
+	ID            uint32
+	Flags         uint32
+	Elem          typeinfo.Type
+	Length        int64
+	Stride        int64
+	PayloadOffset int64
+	Fields        []RuntimeTypeFieldDescriptor
+	Variants      []string
 }
 
 type RuntimeTypeFieldDescriptor struct {
@@ -136,6 +138,8 @@ func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
 		desc.Flags |= RuntimeTypeFlagInterface
 	case *typeinfo.SliceType:
 		desc.Flags |= RuntimeTypeFlagSlice
+	case *typeinfo.OptionalType:
+		desc.Flags |= RuntimeTypeFlagOptional
 	}
 	return desc
 }
@@ -171,6 +175,16 @@ func DescribeRuntimeTypeLayout(ctx AggregateLayoutContext, typ typeinfo.Type) (R
 				Offset: entry.Offset,
 				Type:   entry.Type,
 			})
+		}
+	case *typeinfo.OptionalType:
+		desc.Flags |= RuntimeTypeFlagOptional
+		desc.Elem = t.Inner
+		if !OptionalUsesNiche(t.Inner) {
+			info, err := TaggedUnionLayoutInfo(ctx, []typeinfo.Type{t.Inner})
+			if err != nil {
+				return desc, err
+			}
+			desc.PayloadOffset = info.PayloadOffset
 		}
 	}
 	return desc, nil

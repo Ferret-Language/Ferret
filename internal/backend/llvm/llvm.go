@@ -1881,6 +1881,28 @@ func lowerAggregateCompare(state *moduleState, targetName string, targetType typ
 	if err != nil {
 		return "", true, err
 	}
+	if optValue, _, ok := backend.TaggedOptionalAgainstNone(bin.Left, bin.Right); ok {
+		src, err := lowerAggregateSource(state, optValue)
+		if err != nil {
+			return "", true, err
+		}
+		tag := freshTemp(state, "opt_tag")
+		cmp := freshTemp(state, "opt_is_none")
+		op := "icmp eq"
+		if bin.Op == "!=" {
+			op = "icmp ne"
+		}
+		lines := []string{
+			fmt.Sprintf("%s = load i32, ptr %s", tag, src),
+			fmt.Sprintf("%s = %s i32 %s, 0", cmp, op, tag),
+		}
+		if targetIRType == "i1" || targetIRType == "" {
+			lines = append(lines, fmt.Sprintf("%s = or i1 0, %s", llvmLocalName(targetName), cmp))
+		} else {
+			lines = append(lines, fmt.Sprintf("%s = zext i1 %s to %s", llvmLocalName(targetName), cmp, targetIRType))
+		}
+		return strings.Join(lines, "\n"), true, nil
+	}
 	if _, ok := backend.UnwrapNamed(bin.Left.Type()).(*typeinfo.StringType); ok {
 		if _, ok := backend.UnwrapNamed(bin.Right.Type()).(*typeinfo.StringType); ok {
 			leftBase, err := lowerValue(state, bin.Left)
@@ -3566,6 +3588,16 @@ func ensureLLVMRuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, e
 		fmt.Fprintf(state.deferredB,
 			"@%s = private unnamed_addr constant { %s, ptr } { %s %d, %s }\n",
 			metaSym, llvmABIIntType(), llvmABIIntType(), len(desc.Fields), fieldsRef)
+		metaRef = "ptr @" + metaSym
+	case desc.Flags&backend.RuntimeTypeFlagOptional != 0 && desc.Elem != nil:
+		innerSym, err := ensureLLVMRuntimeTypeInfo(state, desc.Elem)
+		if err != nil {
+			return "", err
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB,
+			"@%s = private unnamed_addr constant { ptr, %s } { ptr @%s, %s %d }\n",
+			metaSym, llvmABIIntType(), innerSym, llvmABIIntType(), desc.PayloadOffset)
 		metaRef = "ptr @" + metaSym
 	}
 	fmt.Fprintf(state.deferredB,

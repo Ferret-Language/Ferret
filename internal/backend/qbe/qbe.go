@@ -630,6 +630,24 @@ func lowerAggregateCompare(state *moduleState, targetName string, targetType typ
 	if _, err := qbeBaseType(targetType); err != nil {
 		return "", true, err
 	}
+	if optValue, _, ok := backend.TaggedOptionalAgainstNone(bin.Left, bin.Right); ok {
+		src, err := lowerAggregateSource(state, optValue)
+		if err != nil {
+			return "", true, err
+		}
+		tag := freshTemp(state, "opt_tag")
+		cmp := freshTemp(state, "opt_is_none")
+		lines := []string{
+			fmt.Sprintf("%s =w loaduw %s", tag, src),
+		}
+		if bin.Op == "!=" {
+			lines = append(lines, fmt.Sprintf("%s =w cnew %s, 0", cmp, tag))
+		} else {
+			lines = append(lines, fmt.Sprintf("%s =w ceqw %s, 0", cmp, tag))
+		}
+		lines = append(lines, fmt.Sprintf("%s =w copy %s", qbeLocalName(targetName), cmp))
+		return strings.Join(lines, "\n\t"), true, nil
+	}
 	if _, ok := backend.UnwrapNamed(bin.Left.Type()).(*typeinfo.StringType); ok {
 		if _, ok := backend.UnwrapNamed(bin.Right.Type()).(*typeinfo.StringType); ok {
 			leftBase, err := lowerValue(state, bin.Left)
@@ -1865,6 +1883,14 @@ func ensureQBERuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, er
 		}
 		metaSym := sym + "__meta"
 		fmt.Fprintf(state.deferredB, "data $%s = { l %d, l %s }\n", metaSym, len(desc.Fields), fieldsRef)
+		metaRef = "$" + metaSym
+	case desc.Flags&backend.RuntimeTypeFlagOptional != 0 && desc.Elem != nil:
+		innerSym, err := ensureQBERuntimeTypeInfo(state, desc.Elem)
+		if err != nil {
+			return "", err
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB, "data $%s = { l $%s, l %d }\n", metaSym, innerSym, desc.PayloadOffset)
 		metaRef = "$" + metaSym
 	}
 	fmt.Fprintf(state.deferredB, "data $%s = { w %d, z 4, l $%s, l %d, l %d, w %d, z 4, l %s }\n", sym, desc.ID, nameSym, size, align, desc.Flags, metaRef)

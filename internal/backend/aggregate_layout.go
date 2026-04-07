@@ -6,6 +6,7 @@ import (
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/abi"
+	"compiler/internal/tokens"
 )
 
 type AggregateLayoutContext struct {
@@ -80,6 +81,51 @@ func LookupStructLayout(
 		return sliceLikeStructLayout(&typeinfo.RawPtrType{Const: true, Inner: &typeinfo.BuiltinType{Name: "u8"}}), nil
 	case *typeinfo.SliceType:
 		return sliceLikeStructLayout(&typeinfo.RawPtrType{Const: !t.Mutable, Inner: t.Inner}), nil
+	case *typeinfo.OptionalType:
+		if OptionalUsesNiche(t.Inner) {
+			return nil, fmt.Errorf("optional %s uses niche layout", t.Inner)
+		}
+		info, err := TaggedUnionLayoutInfo(AggregateLayoutContext{
+			BackendName:     "shared",
+			ScalarSizeAlign: sharedScalarSizeAlign,
+			LookupNamed:     lookupNamed,
+		}, []typeinfo.Type{t.Inner})
+		if err != nil {
+			return nil, err
+		}
+		payloadSize, payloadAlign, err := aggregateElementSizeAlign(AggregateLayoutContext{
+			BackendName:     "shared",
+			ScalarSizeAlign: sharedScalarSizeAlign,
+			LookupNamed:     lookupNamed,
+		}, t.Inner)
+		if err != nil {
+			return nil, err
+		}
+		return &layout.StructLayout{
+			Fields: []*layout.FieldLayout{
+				{
+					Name:          "$tag",
+					Type:          &typeinfo.BuiltinType{Name: "i32"},
+					SemanticIndex: 0,
+					PhysicalIndex: 0,
+					Offset:        0,
+					Size:          4,
+					Align:         4,
+				},
+				{
+					Name:          "$payload",
+					Type:          t.Inner,
+					SemanticIndex: 1,
+					PhysicalIndex: 1,
+					Offset:        info.PayloadOffset,
+					Size:          payloadSize,
+					Align:         payloadAlign,
+				},
+			},
+			PhysicalOrder: []int{0, 1},
+			Size:          info.Size,
+			Align:         info.Align,
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported struct base type %s", typeinfo.FormatType(typ))
 	}
@@ -112,6 +158,28 @@ func sliceLikeStructLayout(ptrType typeinfo.Type) *layout.StructLayout {
 		Size:          ptrSize * 2,
 		Align:         ptrSize,
 	}
+}
+
+func sharedScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
+	switch t := typ.(type) {
+	case *typeinfo.BuiltinType:
+		if _, bits, ok := tokens.ParseIntegerBuiltin(t.Name); ok {
+			size := int64((bits + 7) / 8)
+			return size, size, nil
+		}
+		switch t.Name {
+		case "bool":
+			return 1, 1, nil
+		case "char", "f32":
+			return 4, 4, nil
+		case "f64":
+			return 8, 8, nil
+		}
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+		ptrSize := abi.PointerBytes()
+		return ptrSize, ptrSize, nil
+	}
+	return 0, 0, fmt.Errorf("not a primitive type")
 }
 
 func aggregateElementSizeAlign(ctx AggregateLayoutContext, typ typeinfo.Type) (int64, int64, error) {

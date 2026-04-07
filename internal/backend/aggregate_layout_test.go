@@ -68,3 +68,24 @@ func TestAggregateSizeAlignSupportsErrorUnions(t *testing.T) {
 		t.Fatalf("expected size=16 align=8, got size=%d align=%d", size, align)
 	}
 }
+
+func TestLookupStructLayoutSupportsTaggedOptional(t *testing.T) {
+	lookupNamed := func(*typeinfo.NamedType) (*layout.TypeLayout, error) {
+		t.Fatal("lookupNamed should not be used for builtin tagged optionals")
+		return nil, nil
+	}
+
+	optLayout, err := LookupStructLayout(lookupNamed, &typeinfo.OptionalType{Inner: &typeinfo.BuiltinType{Name: "i32"}})
+	if err != nil {
+		t.Fatalf("lookup optional layout: %v", err)
+	}
+	if got := len(optLayout.Fields); got != 2 {
+		t.Fatalf("expected 2 optional fields, got %d", got)
+	}
+	if optLayout.Fields[0].Name != "$tag" || optLayout.Fields[0].Offset != 0 {
+		t.Fatalf("unexpected optional tag field: %#v", optLayout.Fields[0])
+	}
+	if optLayout.Fields[1].Name != "$payload" || !typeinfo.Equal(optLayout.Fields[1].Type, &typeinfo.BuiltinType{Name: "i32"}) {
+		t.Fatalf("unexpected optional payload field: %#v", optLayout.Fields[1])
+	}
+}

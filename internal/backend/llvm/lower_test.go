@@ -501,6 +501,47 @@ fn main() -> void {
 	}
 }
 
+func TestLowerTaggedOptionalToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let value: ?i32 = 10
+    if value != none {
+        print(value)
+    }
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm tagged optional: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"load i32, ptr %value",
+		"icmp ne i32",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+	for _, bad := range []string{
+		"getelementptr inbounds i8, ptr null, i64 4",
+		"load i32, ptr null",
+	} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("unexpected %q in llvm output:\n%s", bad, text)
+		}
+	}
+}
+
 func TestLowerLocalArrayLiteralAndIndexToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
