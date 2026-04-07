@@ -1,0 +1,20 @@
+
+
+type User struct {
+    uid: i32 = 1,
+    name: str
+}
+
+fn main() {
+    let u = .User{ .name = "Fuad"}
+    print(u.name)
+
+    let value: ?i32 = 10
+    print(value)
+    if value != none {
+        print(value)
+    } else {
+        print("none")
+    }
+    print("done")
+}
