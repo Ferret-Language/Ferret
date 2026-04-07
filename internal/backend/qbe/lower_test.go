@@ -811,6 +811,7 @@ fn main() -> void {
 	for _, want := range []string{
 		"loaduw %value",
 		"cnew",
+		"add %value, 4",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)
@@ -819,6 +820,7 @@ fn main() -> void {
 	for _, bad := range []string{
 		"add 0, 4",
 		"loaduw 0",
+		"copy %value",
 	} {
 		if strings.Contains(text, bad) {
 			t.Fatalf("unexpected %q in qbe output:\n%s", bad, text)

@@ -527,6 +527,7 @@ fn main() -> void {
 	for _, want := range []string{
 		"load i32, ptr %value",
 		"icmp ne i32",
+		"getelementptr inbounds i8, ptr %value, i64 4",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
@@ -535,6 +536,7 @@ fn main() -> void {
 	for _, bad := range []string{
 		"getelementptr inbounds i8, ptr null, i64 4",
 		"load i32, ptr null",
+		"store ptr %value, ptr %_t",
 	} {
 		if strings.Contains(text, bad) {
 			t.Fatalf("unexpected %q in llvm output:\n%s", bad, text)
