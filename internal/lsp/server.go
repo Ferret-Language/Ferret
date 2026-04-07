@@ -717,7 +717,7 @@ func (s *Server) publishSemanticDiagnostics(uri, path string, seq uint64) {
 		TextStamp: stamp,
 		DepStamp:  depStamp,
 		DepFiles:  depFiles,
-		Index:     buildHoverIndexFromResult(result, parsedPath, path, text),
+		Index:     buildHoverIndexFromResult(result, parsedPath, path, text, false),
 	}
 	s.mu.Unlock()
 
@@ -1058,11 +1058,7 @@ func hoverFromIndex(index *hoverIndex, pos source.Position) *hoverResult {
 func buildHoverIndex(path, text string, hasText bool) *hoverIndex {
 	result, parsedPath, cleanup := parseForHover(path, text, hasText)
 	defer cleanup()
-	sourceText := text
-	if !hasText {
-		sourceText = ""
-	}
-	return buildHoverIndexFromResult(result, parsedPath, path, sourceText)
+	return buildHoverIndexFromResult(result, parsedPath, path, text, !hasText)
 }
 
 func buildHoverCacheEntry(path, text string, version int) hoverCacheEntry {
@@ -1075,7 +1071,7 @@ func buildHoverCacheEntry(path, text string, version int) hoverCacheEntry {
 		TextStamp: textStamp(text),
 		DepStamp:  depStamp,
 		DepFiles:  depFiles,
-		Index:     buildHoverIndexFromResult(result, parsedPath, path, text),
+		Index:     buildHoverIndexFromResult(result, parsedPath, path, text, false),
 	}
 }
 
@@ -1088,17 +1084,17 @@ func buildFileHoverCacheEntry(path string) hoverCacheEntry {
 		FileStamp: fileStamp(path),
 		DepStamp:  depStamp,
 		DepFiles:  depFiles,
-		Index:     buildHoverIndexFromResult(result, parsedPath, path, ""),
+		Index:     buildHoverIndexFromResult(result, parsedPath, path, "", true),
 	}
 }
 
-func buildHoverIndexFromResult(result compiler.Result, parsedPath, originalPath, sourceText string) *hoverIndex {
+func buildHoverIndexFromResult(result compiler.Result, parsedPath, originalPath, sourceText string, readSourceFromDisk bool) *hoverIndex {
 	mod := findModuleByPath(result, parsedPath)
 	if mod == nil {
 		return &hoverIndex{}
 	}
 	modules := indexModulesByKey(result)
-	if sourceText == "" {
+	if readSourceFromDisk {
 		if bytes, err := os.ReadFile(originalPath); err == nil {
 			sourceText = string(bytes)
 		}

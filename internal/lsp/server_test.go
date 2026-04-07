@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/analysis/semantics/binding"
+	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
@@ -822,6 +824,50 @@ func TestHoverSkipsIndexBuildWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
 	hover := decodeHoverResult(t, out.String())
 	if hover == nil || hover.Contents.Value != "cached hover" {
 		t.Fatalf("expected cached hover fallback on syntax-invalid open doc, got %#v", hover)
+	}
+}
+
+func TestBuildHoverIndexFromResultDoesNotReadDiskForEmptyOverlayText(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	if err := os.WriteFile(path, []byte("mod::Value"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	start := source.Position{Line: 1, Column: 1, Index: 0}
+	end := source.Position{Line: 1, Column: 11, Index: 10}
+	loc := source.NewLocation(path, start, end)
+	ident := &ast.Ident{Path: []string{"mod", "Value"}, Location: loc}
+	fnName := &ast.Ident{Path: []string{"Value"}, Location: loc}
+	fnDecl := &ast.FuncDecl{Name: fnName, Location: loc}
+	sym := symbols.New("Value", symbols.SymbolFunc, fnDecl)
+
+	typeInfo := typeinfo.NewModuleInfo()
+	bindings := binding.NewModuleInfo()
+	bindings.BindNode(ident, &binding.Resolution{
+		Kind:   binding.ResolutionSymbol,
+		Symbol: sym,
+	})
+	mod := &context.Module{
+		FilePath: path,
+		Types:    typeInfo,
+		Bindings: bindings,
+	}
+	result := compiler.Result{
+		Entry:   mod,
+		Modules: []*context.Module{mod},
+	}
+
+	index := buildHoverIndexFromResult(result, path, path, "", false)
+	hover := hoverFromIndex(index, source.Position{Line: 1, Column: 7})
+	if hover != nil {
+		t.Fatalf("expected no hover when overlay text is intentionally empty, got %#v", hover)
+	}
+
+	index = buildHoverIndexFromResult(result, path, path, "", true)
+	hover = hoverFromIndex(index, source.Position{Line: 1, Column: 7})
+	if hover == nil {
+		t.Fatal("expected disk-backed hover when readSourceFromDisk is true")
 	}
 }
 
