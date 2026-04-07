@@ -5,5 +5,5 @@ fn main() -> void {
     let file = fs::Open("io_file_write.txt")
     io::Write(file, "Hello")
     file.Close()
-    file.Close()
+    //file.Close()
 }
