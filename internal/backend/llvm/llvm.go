@@ -3037,15 +3037,23 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		if !ok {
 			continue
 		}
-		irType, err := llvmBaseType(field.Type)
-		if err != nil {
-			return "", err
-		}
 		addr := llvmLocalName(agg.PtrName)
 		if field.Offset != 0 {
 			tmp := freshTemp(state, "addr")
 			lines = append(lines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", tmp, llvmLocalName(agg.PtrName), field.Offset))
 			addr = tmp
+		}
+		if isAggregateType(state, field.Type) {
+			valueLines, err := lowerAggregateValueToAddr(state, addr, field.Type, val)
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, valueLines...)
+			continue
+		}
+		irType, err := llvmBaseType(field.Type)
+		if err != nil {
+			return "", err
 		}
 		lowered, err := lowerValue(state, val)
 		if err != nil {
@@ -3697,19 +3705,35 @@ func llvmInterfaceReceiverArg(state *moduleState, concrete, receiverType typeinf
 }
 
 func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
-	return backend.ResolveAggregateSource(
+	lines, src, err := backend.ResolveAggregateSource(
 		value,
-		func(v *mir.LocalValue) (string, error) { return lowerValue(state, v) },
-		func(v *mir.NameValue) (string, error) { return lowerValue(state, v) },
-		func(v mir.Value) (string, error) { return lowerValue(state, v) },
-		func(base mir.Value, fieldIndex int) (string, error) {
-			_, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
+		func(v *mir.LocalValue) ([]string, string, error) {
+			src, err := lowerValue(state, v)
+			return nil, src, err
+		},
+		func(v *mir.NameValue) ([]string, string, error) {
+			src, err := lowerValue(state, v)
+			return nil, src, err
+		},
+		func(v mir.Value) ([]string, string, error) {
+			src, err := lowerValue(state, v)
+			return nil, src, err
+		},
+		func(base mir.Value, fieldIndex int) ([]string, string, error) {
+			lines, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
 			if err != nil {
-				return "", err
+				return nil, "", err
 			}
-			return addr, nil
+			return lines, addr, nil
 		},
 	)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range lines {
+		state.pendingLines = append(state.pendingLines, line)
+	}
+	return src, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -4815,15 +4839,32 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *mir.Compo
 			parts = append(parts, fmt.Sprintf("[%d x i8] zeroinitializer", pad))
 			offset = field.Offset
 		}
-		irType, err := llvmBaseType(field.Type)
-		if err != nil {
-			return "", err
-		}
 		val, ok := items[field.Name]
 		if !ok {
+			irType, err := llvmBaseType(field.Type)
+			if err != nil {
+				return "", err
+			}
 			parts = append(parts, fmt.Sprintf("%s zeroinitializer", irType))
 			offset += field.Size
 			continue
+		}
+		if isAggregateType(state, field.Type) {
+			body, err := lowerGlobalComposite(state, field.Type, val.(*mir.CompositeValue))
+			if err != nil {
+				return "", err
+			}
+			typeName, err := llvmABITypeName(state, field.Type)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, fmt.Sprintf("%s { %s }", typeName, body))
+			offset += field.Size
+			continue
+		}
+		irType, err := llvmBaseType(field.Type)
+		if err != nil {
+			return "", err
 		}
 		lit, err := lowerGlobalValue(state, field.Type, val)
 		if err != nil {
