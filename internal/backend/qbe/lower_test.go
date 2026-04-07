@@ -748,6 +748,86 @@ fn main() -> void {
 	}
 }
 
+func TestLowerStructWithStringFieldToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Person struct {
+    id: i32
+    name: str
+}
+
+fn main() -> void {
+    let p: Person = .{ .id = 7, .name = "ok" }
+    print(p)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe struct string field: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"type :local__main__Person = { w, b 4, b 16 }",
+		"blit %_t1, %_addr2, 16",
+		"call $ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerTaggedOptionalToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let value: ?i32 = 10
+    if value != none {
+        print(value)
+    }
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe tagged optional: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"loaduw %value",
+		"cnew",
+		"add %value, 4",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+	for _, bad := range []string{
+		"add 0, 4",
+		"loaduw 0",
+		"copy %value",
+	} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("unexpected %q in qbe output:\n%s", bad, text)
+		}
+	}
+}
+
 func TestLowerUnionLocalAssignmentToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

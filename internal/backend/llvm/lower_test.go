@@ -464,6 +464,86 @@ fn main() -> void {
 	}
 }
 
+func TestLowerStructWithStringFieldToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Person struct {
+    id: i32
+    name: str
+}
+
+fn main() -> void {
+    let p: Person = .{ .id = 7, .name = "ok" }
+    print(p)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm struct string field: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"%local__main__Person = type { i32, [4 x i8], { ptr, i64 } }",
+		"call void @llvm.memcpy.p0.p0.i64(",
+		"call void @ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerTaggedOptionalToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let value: ?i32 = 10
+    if value != none {
+        print(value)
+    }
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm tagged optional: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"load i32, ptr %value",
+		"icmp ne i32",
+		"getelementptr inbounds i8, ptr %value, i64 4",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+	for _, bad := range []string{
+		"getelementptr inbounds i8, ptr null, i64 4",
+		"load i32, ptr null",
+		"store ptr %value, ptr %_t",
+	} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("unexpected %q in llvm output:\n%s", bad, text)
+		}
+	}
+}
+
 func TestLowerLocalArrayLiteralAndIndexToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

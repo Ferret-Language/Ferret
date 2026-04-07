@@ -12,11 +12,11 @@ import (
 // callbacks for each supported MIR value shape.
 func ResolveAggregateSource(
 	value mir.Value,
-	onLocal func(*mir.LocalValue) (string, error),
-	onName func(*mir.NameValue) (string, error),
-	onLoadPointer func(mir.Value) (string, error),
-	onFieldLoad func(base mir.Value, fieldIndex int) (string, error),
-) (string, error) {
+	onLocal func(*mir.LocalValue) ([]string, string, error),
+	onName func(*mir.NameValue) ([]string, string, error),
+	onLoadPointer func(mir.Value) ([]string, string, error),
+	onFieldLoad func(base mir.Value, fieldIndex int) ([]string, string, error),
+) ([]string, string, error) {
 	switch v := value.(type) {
 	case *mir.LocalValue:
 		if onLocal == nil {
@@ -39,7 +39,7 @@ func ResolveAggregateSource(
 		}
 		return onFieldLoad(v.Base, v.FieldIndex)
 	}
-	return "", fmt.Errorf("unsupported aggregate source %T", value)
+	return nil, "", fmt.Errorf("unsupported aggregate source %T", value)
 }
 
 func ResolveTaggedUnionComposite(target typeinfo.Type, value mir.Value) (mir.Value, mir.Value, bool) {

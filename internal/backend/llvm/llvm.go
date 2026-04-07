@@ -1881,6 +1881,28 @@ func lowerAggregateCompare(state *moduleState, targetName string, targetType typ
 	if err != nil {
 		return "", true, err
 	}
+	if optValue, _, ok := backend.TaggedOptionalAgainstNone(bin.Left, bin.Right); ok {
+		src, err := lowerAggregateSource(state, optValue)
+		if err != nil {
+			return "", true, err
+		}
+		tag := freshTemp(state, "opt_tag")
+		cmp := freshTemp(state, "opt_is_none")
+		op := "icmp eq"
+		if bin.Op == "!=" {
+			op = "icmp ne"
+		}
+		lines := []string{
+			fmt.Sprintf("%s = load i32, ptr %s", tag, src),
+			fmt.Sprintf("%s = %s i32 %s, 0", cmp, op, tag),
+		}
+		if targetIRType == "i1" || targetIRType == "" {
+			lines = append(lines, fmt.Sprintf("%s = or i1 0, %s", llvmLocalName(targetName), cmp))
+		} else {
+			lines = append(lines, fmt.Sprintf("%s = zext i1 %s to %s", llvmLocalName(targetName), cmp, targetIRType))
+		}
+		return strings.Join(lines, "\n"), true, nil
+	}
 	if _, ok := backend.UnwrapNamed(bin.Left.Type()).(*typeinfo.StringType); ok {
 		if _, ok := backend.UnwrapNamed(bin.Right.Type()).(*typeinfo.StringType); ok {
 			leftBase, err := lowerValue(state, bin.Left)
@@ -3037,15 +3059,23 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		if !ok {
 			continue
 		}
-		irType, err := llvmBaseType(field.Type)
-		if err != nil {
-			return "", err
-		}
 		addr := llvmLocalName(agg.PtrName)
 		if field.Offset != 0 {
 			tmp := freshTemp(state, "addr")
 			lines = append(lines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", tmp, llvmLocalName(agg.PtrName), field.Offset))
 			addr = tmp
+		}
+		if isAggregateType(state, field.Type) {
+			valueLines, err := lowerAggregateValueToAddr(state, addr, field.Type, val)
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, valueLines...)
+			continue
+		}
+		irType, err := llvmBaseType(field.Type)
+		if err != nil {
+			return "", err
 		}
 		lowered, err := lowerValue(state, val)
 		if err != nil {
@@ -3213,6 +3243,26 @@ func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Typ
 }
 
 func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concreteType typeinfo.Type) ([]string, string, error) {
+	storedType := becommon.StoredValueType(state.mod, state.fn, state.modules, value)
+	if opt, ok := backend.UnwrapNamed(storedType).(*typeinfo.OptionalType); ok &&
+		!backend.OptionalUsesNiche(opt.Inner) &&
+		typeinfo.Equal(concreteType, opt.Inner) {
+		basePtr, err := lowerStoredAggregatePointer(state, value)
+		if err != nil {
+			return nil, "", err
+		}
+		info, err := llvmUnionLayoutInfo(state, storedType)
+		if err != nil {
+			return nil, "", err
+		}
+		if info.PayloadOffset == 0 {
+			return nil, basePtr, nil
+		}
+		payloadPtr := freshTemp(state, "opt_payload")
+		return []string{
+			fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", payloadPtr, basePtr, info.PayloadOffset),
+		}, payloadPtr, nil
+	}
 	switch v := value.(type) {
 	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
@@ -3290,6 +3340,12 @@ func lowerNarrowedInterfaceConcrete(state *moduleState, value mir.Value) ([]stri
 		return nil, "", false, nil
 	}
 	storedType := becommon.StoredValueType(state.mod, state.fn, state.modules, value)
+	if opt, ok := backend.UnwrapNamed(storedType).(*typeinfo.OptionalType); ok &&
+		!backend.OptionalUsesNiche(opt.Inner) &&
+		typeinfo.Equal(value.Type(), opt.Inner) {
+		lines, payloadPtr, err := lowerInterfaceConcretePointer(state, value, value.Type())
+		return lines, payloadPtr, err == nil, err
+	}
 	if !isInterfaceAggregate(storedType) {
 		return nil, "", false, nil
 	}
@@ -3299,6 +3355,28 @@ func lowerNarrowedInterfaceConcrete(state *moduleState, value mir.Value) ([]stri
 	}
 	dataPtr := freshTemp(state, "iface_data")
 	return []string{fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, slotPtr)}, dataPtr, true, nil
+}
+
+func lowerStoredAggregatePointer(state *moduleState, value mir.Value) (string, error) {
+	switch v := value.(type) {
+	case *mir.LocalValue:
+		if agg, ok := state.aggLocals[v.LocalID]; ok {
+			return llvmLocalName(agg.PtrName), nil
+		}
+	case *mir.NameValue:
+		if len(v.Path) == 1 {
+			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
+				if agg, ok := state.aggLocals[local.ID]; ok {
+					return llvmLocalName(agg.PtrName), nil
+				}
+			}
+		}
+		if v.LinkName != "" {
+			return "@" + becommon.SanitizeIdent(v.LinkName), nil
+		}
+		return "@" + llvmSymbol(state, v.Path), nil
+	}
+	return "", fmt.Errorf("unsupported narrowed aggregate storage %T", value)
 }
 
 func lowerInterfaceDowncastPointer(state *moduleState, value mir.Value, target typeinfo.Type) ([]string, string, error) {
@@ -3559,6 +3637,16 @@ func ensureLLVMRuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, e
 			"@%s = private unnamed_addr constant { %s, ptr } { %s %d, %s }\n",
 			metaSym, llvmABIIntType(), llvmABIIntType(), len(desc.Fields), fieldsRef)
 		metaRef = "ptr @" + metaSym
+	case desc.Flags&backend.RuntimeTypeFlagOptional != 0 && desc.Elem != nil:
+		innerSym, err := ensureLLVMRuntimeTypeInfo(state, desc.Elem)
+		if err != nil {
+			return "", err
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB,
+			"@%s = private unnamed_addr constant { ptr, %s } { ptr @%s, %s %d }\n",
+			metaSym, llvmABIIntType(), innerSym, llvmABIIntType(), desc.PayloadOffset)
+		metaRef = "ptr @" + metaSym
 	}
 	fmt.Fprintf(state.deferredB,
 		"@%s = private unnamed_addr constant { i32, ptr, %s, %s, i32, ptr } { i32 %d, ptr @%s, %s %d, %s %d, i32 %d, %s }\n",
@@ -3697,19 +3785,35 @@ func llvmInterfaceReceiverArg(state *moduleState, concrete, receiverType typeinf
 }
 
 func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
-	return backend.ResolveAggregateSource(
+	lines, src, err := backend.ResolveAggregateSource(
 		value,
-		func(v *mir.LocalValue) (string, error) { return lowerValue(state, v) },
-		func(v *mir.NameValue) (string, error) { return lowerValue(state, v) },
-		func(v mir.Value) (string, error) { return lowerValue(state, v) },
-		func(base mir.Value, fieldIndex int) (string, error) {
-			_, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
+		func(v *mir.LocalValue) ([]string, string, error) {
+			src, err := lowerValue(state, v)
+			return nil, src, err
+		},
+		func(v *mir.NameValue) ([]string, string, error) {
+			src, err := lowerValue(state, v)
+			return nil, src, err
+		},
+		func(v mir.Value) ([]string, string, error) {
+			src, err := lowerValue(state, v)
+			return nil, src, err
+		},
+		func(base mir.Value, fieldIndex int) ([]string, string, error) {
+			lines, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
 			if err != nil {
-				return "", err
+				return nil, "", err
 			}
-			return addr, nil
+			return lines, addr, nil
 		},
 	)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range lines {
+		state.pendingLines = append(state.pendingLines, line)
+	}
+	return src, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -4815,15 +4919,32 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *mir.Compo
 			parts = append(parts, fmt.Sprintf("[%d x i8] zeroinitializer", pad))
 			offset = field.Offset
 		}
-		irType, err := llvmBaseType(field.Type)
-		if err != nil {
-			return "", err
-		}
 		val, ok := items[field.Name]
 		if !ok {
+			irType, err := llvmBaseType(field.Type)
+			if err != nil {
+				return "", err
+			}
 			parts = append(parts, fmt.Sprintf("%s zeroinitializer", irType))
 			offset += field.Size
 			continue
+		}
+		if isAggregateType(state, field.Type) {
+			body, err := lowerGlobalComposite(state, field.Type, val.(*mir.CompositeValue))
+			if err != nil {
+				return "", err
+			}
+			typeName, err := llvmABITypeName(state, field.Type)
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, fmt.Sprintf("%s { %s }", typeName, body))
+			offset += field.Size
+			continue
+		}
+		irType, err := llvmBaseType(field.Type)
+		if err != nil {
+			return "", err
 		}
 		lit, err := lowerGlobalValue(state, field.Type, val)
 		if err != nil {

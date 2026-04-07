@@ -630,6 +630,24 @@ func lowerAggregateCompare(state *moduleState, targetName string, targetType typ
 	if _, err := qbeBaseType(targetType); err != nil {
 		return "", true, err
 	}
+	if optValue, _, ok := backend.TaggedOptionalAgainstNone(bin.Left, bin.Right); ok {
+		src, err := lowerAggregateSource(state, optValue)
+		if err != nil {
+			return "", true, err
+		}
+		tag := freshTemp(state, "opt_tag")
+		cmp := freshTemp(state, "opt_is_none")
+		lines := []string{
+			fmt.Sprintf("%s =w loaduw %s", tag, src),
+		}
+		if bin.Op == "!=" {
+			lines = append(lines, fmt.Sprintf("%s =w cnew %s, 0", cmp, tag))
+		} else {
+			lines = append(lines, fmt.Sprintf("%s =w ceqw %s, 0", cmp, tag))
+		}
+		lines = append(lines, fmt.Sprintf("%s =w copy %s", qbeLocalName(targetName), cmp))
+		return strings.Join(lines, "\n\t"), true, nil
+	}
 	if _, ok := backend.UnwrapNamed(bin.Left.Type()).(*typeinfo.StringType); ok {
 		if _, ok := backend.UnwrapNamed(bin.Right.Type()).(*typeinfo.StringType); ok {
 			leftBase, err := lowerValue(state, bin.Left)
@@ -1589,6 +1607,26 @@ func lowerInterfaceAssign(state *moduleState, dstPtr string, target typeinfo.Typ
 }
 
 func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concreteType typeinfo.Type) ([]string, string, error) {
+	storedType := becommon.StoredValueType(state.mod, state.fn, state.modules, value)
+	if opt, ok := backend.UnwrapNamed(storedType).(*typeinfo.OptionalType); ok &&
+		!backend.OptionalUsesNiche(opt.Inner) &&
+		typeinfo.Equal(concreteType, opt.Inner) {
+		basePtr, err := lowerStoredAggregatePointer(state, value)
+		if err != nil {
+			return nil, "", err
+		}
+		info, err := unionLayoutInfo(state, storedType)
+		if err != nil {
+			return nil, "", err
+		}
+		if info.PayloadOffset == 0 {
+			return nil, basePtr, nil
+		}
+		payloadPtr := freshTemp(state, "opt_payload")
+		return []string{
+			fmt.Sprintf("%s =l add %s, %d", payloadPtr, basePtr, info.PayloadOffset),
+		}, payloadPtr, nil
+	}
 	switch v := value.(type) {
 	case *mir.UnaryValue:
 		if v.Op == "copy" || v.Op == "take" || v.Op == "comptime" {
@@ -1623,6 +1661,12 @@ func lowerNarrowedInterfaceConcrete(state *moduleState, value mir.Value) ([]stri
 		return nil, "", false, nil
 	}
 	storedType := becommon.StoredValueType(state.mod, state.fn, state.modules, value)
+	if opt, ok := backend.UnwrapNamed(storedType).(*typeinfo.OptionalType); ok &&
+		!backend.OptionalUsesNiche(opt.Inner) &&
+		typeinfo.Equal(value.Type(), opt.Inner) {
+		lines, payloadPtr, err := lowerInterfaceConcretePointer(state, value, value.Type())
+		return lines, payloadPtr, err == nil, err
+	}
 	if !isInterfaceAggregate(storedType) {
 		return nil, "", false, nil
 	}
@@ -1632,6 +1676,28 @@ func lowerNarrowedInterfaceConcrete(state *moduleState, value mir.Value) ([]stri
 	}
 	dataPtr := freshTemp(state, "iface_data")
 	return []string{fmt.Sprintf("%s =l loadl %s", dataPtr, slotPtr)}, dataPtr, true, nil
+}
+
+func lowerStoredAggregatePointer(state *moduleState, value mir.Value) (string, error) {
+	switch v := value.(type) {
+	case *mir.LocalValue:
+		if agg, ok := state.aggLocals[v.LocalID]; ok {
+			return qbeLocalName(agg.PtrName), nil
+		}
+	case *mir.NameValue:
+		if len(v.Path) == 1 {
+			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
+				if agg, ok := state.aggLocals[local.ID]; ok {
+					return qbeLocalName(agg.PtrName), nil
+				}
+			}
+		}
+		if v.LinkName != "" {
+			return "$" + becommon.SanitizeIdent(v.LinkName), nil
+		}
+		return "$" + qbeSymbol(state, v.Path), nil
+	}
+	return "", fmt.Errorf("unsupported narrowed aggregate storage %T", value)
 }
 
 func lowerInterfaceDowncastPointer(state *moduleState, value mir.Value, target typeinfo.Type) ([]string, string, error) {
@@ -1865,6 +1931,14 @@ func ensureQBERuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, er
 		}
 		metaSym := sym + "__meta"
 		fmt.Fprintf(state.deferredB, "data $%s = { l %d, l %s }\n", metaSym, len(desc.Fields), fieldsRef)
+		metaRef = "$" + metaSym
+	case desc.Flags&backend.RuntimeTypeFlagOptional != 0 && desc.Elem != nil:
+		innerSym, err := ensureQBERuntimeTypeInfo(state, desc.Elem)
+		if err != nil {
+			return "", err
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB, "data $%s = { l $%s, l %d }\n", metaSym, innerSym, desc.PayloadOffset)
 		metaRef = "$" + metaSym
 	}
 	fmt.Fprintf(state.deferredB, "data $%s = { w %d, z 4, l $%s, l %d, l %d, w %d, z 4, l %s }\n", sym, desc.ID, nameSym, size, align, desc.Flags, metaRef)
@@ -2256,15 +2330,23 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 		if !ok {
 			continue
 		}
-		op, err := qbeStoreOp(field.Type)
-		if err != nil {
-			return "", err
-		}
 		addr := qbeLocalName(agg.PtrName)
 		if field.Offset != 0 {
 			tmp := freshTemp(state, "addr")
 			lines = append(lines, fmt.Sprintf("%s =l add %s, %d", tmp, qbeLocalName(agg.PtrName), field.Offset))
 			addr = tmp
+		}
+		if isAggregateType(state, field.Type) {
+			valueLines, err := lowerAggregateValueToAddr(state, addr, field.Type, val)
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, valueLines...)
+			continue
+		}
+		op, err := qbeStoreOp(field.Type)
+		if err != nil {
+			return "", err
 		}
 		lowered, err := lowerValue(state, val)
 		if err != nil {
@@ -2407,19 +2489,35 @@ func lowerAggregateValueToAddr(state *moduleState, addr string, typ typeinfo.Typ
 }
 
 func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
-	return backend.ResolveAggregateSource(
+	lines, src, err := backend.ResolveAggregateSource(
 		value,
-		func(v *mir.LocalValue) (string, error) { return lowerValue(state, v) },
-		func(v *mir.NameValue) (string, error) { return lowerValue(state, v) },
-		func(v mir.Value) (string, error) { return lowerValue(state, v) },
-		func(base mir.Value, fieldIndex int) (string, error) {
-			_, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
+		func(v *mir.LocalValue) ([]string, string, error) {
+			src, err := lowerValue(state, v)
+			return nil, src, err
+		},
+		func(v *mir.NameValue) ([]string, string, error) {
+			src, err := lowerValue(state, v)
+			return nil, src, err
+		},
+		func(v mir.Value) ([]string, string, error) {
+			src, err := lowerValue(state, v)
+			return nil, src, err
+		},
+		func(base mir.Value, fieldIndex int) ([]string, string, error) {
+			lines, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
 			if err != nil {
-				return "", err
+				return nil, "", err
 			}
-			return addr, nil
+			return lines, addr, nil
 		},
 	)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range lines {
+		state.pendingLines = append(state.pendingLines, line)
+	}
+	return src, nil
 }
 
 func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *mir.CompositeValue) (string, error) {
@@ -2479,6 +2577,15 @@ func lowerGlobalComposite(state *moduleState, typ typeinfo.Type, comp *mir.Compo
 		val, ok := items[field.Name]
 		if !ok {
 			parts = append(parts, fmt.Sprintf("z %d", field.Size))
+			offset += field.Size
+			continue
+		}
+		if isAggregateType(state, field.Type) {
+			body, err := lowerGlobalComposite(state, field.Type, val.(*mir.CompositeValue))
+			if err != nil {
+				return "", err
+			}
+			parts = append(parts, body)
 			offset += field.Size
 			continue
 		}
@@ -3512,6 +3619,15 @@ func qbeAggregateSubType(state *moduleState, typ typeinfo.Type) (string, error) 
 		}
 	}
 	if _, ok := typ.(*typeinfo.ErrorUnionType); ok {
+		return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
+	}
+	if _, ok := typ.(*typeinfo.StringType); ok {
+		return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
+	}
+	if _, ok := typ.(*typeinfo.SliceType); ok {
+		return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
+	}
+	if _, ok := backend.UnwrapNamed(typ).(*typeinfo.TupleType); ok {
 		return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
 	}
 	return qbeExtType(typ)

@@ -176,4 +176,12 @@ func TestDescribeRuntimeTypeLayoutCapturesCompositePrintShape(t *testing.T) {
 	if tupleDesc.Fields[0].Offset != 0 || tupleDesc.Fields[1].Offset != 4 || tupleDesc.Fields[2].Offset != 8 {
 		t.Fatalf("unexpected tuple field offsets: %#v", tupleDesc.Fields)
 	}
+
+	optDesc, err := DescribeRuntimeTypeLayout(ctx, &typeinfo.OptionalType{Inner: &typeinfo.BuiltinType{Name: "i32"}})
+	if err != nil {
+		t.Fatalf("DescribeRuntimeTypeLayout(optional): %v", err)
+	}
+	if optDesc.Flags&RuntimeTypeFlagOptional == 0 || optDesc.Elem == nil || optDesc.PayloadOffset == 0 {
+		t.Fatalf("unexpected optional runtime descriptor: %#v", optDesc)
+	}
 }

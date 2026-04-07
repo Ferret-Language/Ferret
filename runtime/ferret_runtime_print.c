@@ -98,6 +98,54 @@ static void ferret__write_big_integer(const void *data, const FerretTypeInfo *in
 
 static void ferret__write_typed(const void *data, const FerretTypeInfo *info);
 
+static ferret_bool ferret__optional_is_none(const void *data, const FerretTypeInfo *inner) {
+    ferret_u32 enum_like_none = 0xFFFFFFFFu;
+
+    if (data == NULL || inner == NULL) {
+        return 1;
+    }
+    if ((inner->flags & FERRET_TYPE_FLAG_POINTER) != 0u) {
+        return *(void *const *)data == NULL;
+    }
+    switch (inner->id) {
+    case FERRET_TYPE_BOOL:
+        return *(const ferret_u8 *)data == FERRET_OPT_BOOL_NONE;
+    case FERRET_TYPE_CHAR:
+        return *(const ferret_char *)data == FERRET_OPT_CHAR_NONE;
+    default:
+        break;
+    }
+    if ((inner->flags & FERRET_TYPE_FLAG_VARIANTS) != 0u && inner->size == sizeof(ferret_u32)) {
+        return *(const ferret_u32 *)data == enum_like_none;
+    }
+    return 0;
+}
+
+static void ferret__write_optional(const void *data, const FerretTypeInfo *info) {
+    const FerretOptionalTypeInfo *meta = (const FerretOptionalTypeInfo *)info->meta;
+    const ferret_u8 *base = (const ferret_u8 *)data;
+    const void *payload;
+
+    if (meta == NULL || meta->inner == NULL || base == NULL) {
+        fputs("none", stdout);
+        return;
+    }
+    if (meta->payload_offset != 0u) {
+        if (*(const ferret_u32 *)base == FERRET_NONE) {
+            fputs("none", stdout);
+            return;
+        }
+        payload = (const void *)(base + meta->payload_offset);
+        ferret__write_typed(payload, meta->inner);
+        return;
+    }
+    if (ferret__optional_is_none(data, meta->inner)) {
+        fputs("none", stdout);
+        return;
+    }
+    ferret__write_typed(data, meta->inner);
+}
+
 static void ferret__write_dynamic(const FerretAny *value) {
     if (value == NULL || (value->data == NULL && value->vtable == NULL)) {
         fputs("<any:nil>", stdout);
@@ -269,6 +317,10 @@ static void ferret__write_typed(const void *data, const FerretTypeInfo *info) {
     }
     if ((info->flags & FERRET_TYPE_FLAG_TUPLE) != 0u) {
         ferret__write_tuple(data, info);
+        return;
+    }
+    if ((info->flags & FERRET_TYPE_FLAG_OPTIONAL) != 0u) {
+        ferret__write_optional(data, info);
         return;
     }
     if ((info->flags & FERRET_TYPE_FLAG_POINTER) != 0u) {
