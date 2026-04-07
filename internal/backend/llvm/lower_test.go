@@ -1403,6 +1403,103 @@ fn main() -> void {
 	}
 }
 
+func TestLowerStdFSWriteToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
+type Writer interface {
+    Write(&self, text: str) -> usize
+}
+
+fn Write(dst: Writer, text: str) -> usize {
+    return dst.Write(text)
+}
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
+#[extern]
+fn Expose<T>(owner: *T) -> ^T;
+
+#[extern]
+fn ExposeRef<T>(owner: &*T) -> ^T;
+
+#[extern]
+fn Adopt<T>(raw: ^T) -> *T;
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "fs.fer"), `
+import "std/mem"
+
+type fileInner struct {
+    handle: ^void
+}
+
+type File struct {
+    inner: *fileInner
+}
+
+#[extern("ferret_std_fs_open")]
+fn open_raw(path: &str) -> ^void;
+
+#[extern("ferret_std_fs_write")]
+fn write_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_fs_close")]
+fn close_raw(handle: ^void) -> void;
+
+fn Open(path: str) -> File {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(open_raw(&path) as ^fileInner)
+        }
+    }
+}
+
+fn File::Write(&self, text: str) -> usize {
+    unsafe {
+        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+    }
+}
+
+fn File::Close(self) -> void {
+    unsafe {
+        close_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/io"
+import "std/fs"
+
+fn main() -> void {
+    let file = fs::Open("out.txt")
+    _ = io::Write(file, "hello")
+    file.Close()
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"declare ptr @ferret_std_fs_open(",
+		"declare i64 @ferret_std_fs_write(",
+		"declare void @ferret_std_fs_close(",
+		"call void @std__io__Write(",
+		"call void @std__fs__File__Close(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerUnionExtractCastToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

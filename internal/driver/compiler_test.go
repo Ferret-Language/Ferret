@@ -293,6 +293,83 @@ fn main() -> void {
 	}
 }
 
+func TestParsePathTypechecksStdFSWrite(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
+type Writer interface {
+    Write(&self, text: str) -> usize
+}
+
+fn Write(dst: Writer, text: str) -> usize {
+    return dst.Write(text)
+}
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
+#[extern]
+fn Expose<T>(owner: *T) -> ^T;
+
+#[extern]
+fn ExposeRef<T>(owner: &*T) -> ^T;
+
+#[extern]
+fn Adopt<T>(raw: ^T) -> *T;
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "fs.fer"), `
+import "std/mem"
+
+type fileInner struct {
+    handle: ^void
+}
+
+type File struct {
+    inner: *fileInner
+}
+
+#[extern("ferret_std_fs_open")]
+fn open_raw(path: &str) -> ^void;
+
+#[extern("ferret_std_fs_write")]
+fn write_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_fs_close")]
+fn close_raw(handle: ^void) -> void;
+
+fn Open(path: str) -> File {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(open_raw(&path) as ^fileInner)
+        }
+    }
+}
+
+fn File::Write(&self, text: str) -> usize {
+    unsafe {
+        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+    }
+}
+
+fn File::Close(self) -> void {
+    unsafe {
+        close_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
+import "std/fs"
+
+fn main() -> void {
+    let file = fs::Open("out.txt")
+    _ = io::Write(file, "hello")
+    file.Close()
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
 func TestParsePathForIDEReportsUnusedLocalDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	setIDEExecutablePaths(t, root)

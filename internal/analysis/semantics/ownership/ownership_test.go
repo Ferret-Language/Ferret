@@ -882,6 +882,90 @@ fn main(n: Node) -> i32 {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
 }
 
+func TestOwnershipPhaseRejectsFileUseAfterConsumingClose(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "io.fer"), `
+type Writer interface {
+    Write(&self, text: str) -> usize
+}
+
+fn Write(dst: Writer, text: str) -> usize {
+    return dst.Write(text)
+}
+`)
+	mustWriteOwnership(t, filepath.Join(root, "mem.fer"), `
+#[extern]
+fn Expose<T>(owner: *T) -> ^T;
+
+#[extern]
+fn ExposeRef<T>(owner: &*T) -> ^T;
+
+#[extern]
+fn Adopt<T>(raw: ^T) -> *T;
+`)
+	mustWriteOwnership(t, filepath.Join(root, "fs.fer"), `
+import "mem"
+
+type fileInner struct {
+    handle: ^void
+}
+
+type File struct {
+    inner: *fileInner
+}
+
+#[extern("ferret_std_fs_open")]
+fn open_raw(path: &str) -> ^void;
+
+#[extern("ferret_std_fs_write")]
+fn write_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_fs_close")]
+fn close_raw(handle: ^void) -> void;
+
+fn Open(path: str) -> File {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(open_raw(&path) as ^fileInner)
+        }
+    }
+}
+
+fn File::Write(&self, text: str) -> usize {
+    unsafe {
+        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+    }
+}
+
+fn File::Close(self) -> void {
+    unsafe {
+        close_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+`)
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
+import "io"
+import "fs"
+
+fn main() -> void {
+    let file = fs::Open("out.txt")
+    file.Close()
+    _ = io::Write(file, "after-close")
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			return
+		}
+	}
+	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
+}
+
 func mustWriteOwnership(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
