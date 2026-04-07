@@ -26,7 +26,12 @@ type Any interface {}
 // Temporary generic print declaration.
 // Accepts any number of values and prints each with a best-effort textual form to stdout.
 #[extern]
-fn print(values: ...Any) -> void;
+fn print(values: ...Any);
+
+// fn Println(values: ...Any) {
+//     print(values...)
+//     print('\n')
+// }
 
 // Returns the element count of an array or slice.
 // This foreign declaration is polymorphic in semantic analysis and accepts any []T or [N]T.

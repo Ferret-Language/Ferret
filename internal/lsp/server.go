@@ -79,6 +79,9 @@ var (
 		// during interactive editing (especially generics-heavy code).
 		return compiler.ParsePathForIDE(path)
 	}
+	parseSemanticProject = func(path string) compiler.Result {
+		return compiler.ParsePath(path)
+	}
 )
 
 type rpcRequest struct {
@@ -453,7 +456,7 @@ func (s *Server) handleDidSave(raw json.RawMessage) {
 	}
 
 	s.cancelSemanticDiagnostics(uri)
-	result := compiler.ParsePathForIDE(path)
+	result := parseSemanticProject(path)
 	diagnostics := convertDiagnostics(result.Diagnostics.Diagnostics(), path)
 	s.publishDiagnostics(uri, nil, diagnostics)
 }
@@ -643,7 +646,7 @@ func (s *Server) publishSemanticDiagnostics(uri, path string, seq uint64) {
 	text := doc.Text
 	s.mu.Unlock()
 
-	result, parsedPath, cleanup := parseForHover(path, text, true)
+	result, parsedPath, cleanup := parseForSemanticDiagnostics(path, text, true)
 	defer cleanup()
 	diagnostics := convertDiagnostics(result.Diagnostics.Diagnostics(), path, parsedPath)
 
@@ -985,15 +988,23 @@ func indexModulesByKey(result compiler.Result) map[string]*context.Module {
 }
 
 func parseForHover(path, text string, hasText bool) (compiler.Result, string, func()) {
+	return parseForProject(path, text, hasText, parseProject)
+}
+
+func parseForSemanticDiagnostics(path, text string, hasText bool) (compiler.Result, string, func()) {
+	return parseForProject(path, text, hasText, parseSemanticProject)
+}
+
+func parseForProject(path, text string, hasText bool, parse func(path string) compiler.Result) (compiler.Result, string, func()) {
 	if !hasText {
-		return parseProject(path), path, func() {}
+		return parse(path), path, func() {}
 	}
 	tempPath, err := writeHoverOverlay(path, text)
 	if err != nil {
-		return parseProject(path), path, func() {}
+		return parse(path), path, func() {}
 	}
 	cleanup := func() { _ = os.Remove(tempPath) }
-	return parseProject(tempPath), tempPath, cleanup
+	return parse(tempPath), tempPath, cleanup
 }
 
 func writeHoverOverlay(originalPath, text string) (string, error) {

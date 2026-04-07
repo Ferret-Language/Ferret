@@ -826,11 +826,11 @@ func TestHoverSkipsIndexBuildWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
 }
 
 func TestPublishSemanticDiagnosticsContinuesWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
-	oldParseProject := parseProject
-	defer func() { parseProject = oldParseProject }()
+	oldParseSemanticProject := parseSemanticProject
+	defer func() { parseSemanticProject = oldParseSemanticProject }()
 
 	calls := 0
-	parseProject = func(path string) compiler.Result {
+	parseSemanticProject = func(path string) compiler.Result {
 		calls++
 		return compiler.Result{Diagnostics: diagnostics.NewDiagnosticBag(path)}
 	}
@@ -856,6 +856,133 @@ func TestPublishSemanticDiagnosticsContinuesWhenOpenDocumentHasSyntaxErrors(t *t
 
 	if calls != 1 {
 		t.Fatalf("expected semantic parse to continue on syntax-invalid open doc, got %d calls", calls)
+	}
+}
+
+func TestPublishSemanticDiagnosticsReportsUseAfterMove(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := `
+type Node struct {
+    Child: *Node
+    Value: i32 = 0
+}
+
+fn Node::Read(self) -> i32 {
+    return self.Value
+}
+
+fn main(n: Node) -> i32 {
+    return n.Read() + n.Read()
+}
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(1)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &out,
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 1, Text: src},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	parts := strings.SplitN(out.String(), "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		t.Fatalf("expected framed LSP message, got: %q", out.String())
+	}
+	var notif rpcNotification
+	if err := json.Unmarshal([]byte(parts[1]), &notif); err != nil {
+		t.Fatalf("failed to decode notification body: %v", err)
+	}
+	if notif.Method != "textDocument/publishDiagnostics" {
+		t.Fatalf("unexpected notification method: %q", notif.Method)
+	}
+	paramsRaw, err := json.Marshal(notif.Params)
+	if err != nil {
+		t.Fatalf("failed to re-marshal params: %v", err)
+	}
+	var params publishDiagnosticsParams
+	if err := json.Unmarshal(paramsRaw, &params); err != nil {
+		t.Fatalf("failed to decode diagnostics params: %v", err)
+	}
+	found := false
+	for _, diag := range params.Diagnostics {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, params.Diagnostics)
+	}
+}
+
+func TestHandleDidSaveReportsUseAfterMove(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := `
+type Node struct {
+    Child: *Node
+    Value: i32 = 0
+}
+
+fn Node::Read(self) -> i32 {
+    return self.Value
+}
+
+fn main(n: Node) -> i32 {
+    return n.Read() + n.Read()
+}
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+
+	s.handleDidSave(mustRawJSON(t, didSaveParams{
+		TextDocument: textDocumentIdentifier{URI: uri},
+	}))
+
+	parts := strings.SplitN(out.String(), "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		t.Fatalf("expected framed LSP message, got: %q", out.String())
+	}
+	var notif rpcNotification
+	if err := json.Unmarshal([]byte(parts[1]), &notif); err != nil {
+		t.Fatalf("failed to decode notification body: %v", err)
+	}
+	paramsRaw, err := json.Marshal(notif.Params)
+	if err != nil {
+		t.Fatalf("failed to re-marshal params: %v", err)
+	}
+	var params publishDiagnosticsParams
+	if err := json.Unmarshal(paramsRaw, &params); err != nil {
+		t.Fatalf("failed to decode diagnostics params: %v", err)
+	}
+	found := false
+	for _, diag := range params.Diagnostics {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, params.Diagnostics)
 	}
 }
 
