@@ -130,7 +130,7 @@ fn Arena(initial_capacity: usize) -> ArenaAllocator {
     return .{
         .base = malloc(initial_capacity),
         .cap = initial_capacity,
-        .used = 0,
+        .used = 0
     }
 }
 
