@@ -1,0 +1,29 @@
+// Standard IO surface.
+//
+// First step:
+// - shared Writer interface
+// - standard stream values
+// - text writes through the runtime C boundary
+
+type Writer interface {
+    Write(&self, text: str) -> usize
+}
+
+type Stream struct {
+    kind: i32
+}
+
+#[extern("ferret_std_io_write_stream")]
+fn write_stream(kind: i32, text: &str) -> usize;
+
+let Stdin: Stream = .{ .kind = 0 }
+let Stdout: Stream = .{ .kind = 1 }
+let Stderr: Stream = .{ .kind = 2 }
+
+fn Stream::Write(&self, text: str) -> usize {
+    return write_stream(self.kind, &text)
+}
+
+fn Write(dst: Writer, text: str) -> usize {
+    return dst.Write(text)
+}

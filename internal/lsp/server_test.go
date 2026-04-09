@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"compiler/internal/analysis/semantics/binding"
+	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
@@ -175,6 +177,87 @@ func TestInitializeAdvertisesHoverDefinitionAndCompletionProvider(t *testing.T) 
 
 	if _, ok := payload.Capabilities["documentSymbolProvider"]; ok {
 		t.Fatal("expected documentSymbolProvider to be omitted")
+	}
+}
+
+func TestInitializedRegistersWatchedFilesWhenClientSupportsDynamicRegistration(t *testing.T) {
+	var out bytes.Buffer
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "initialize",
+		Params: mustRawJSON(t, initializeParams{
+			Capabilities: initializeCapabilities{
+				Workspace: &workspaceClientCapabilities{
+					DidChangeWatchedFiles: &dynamicRegistrationClientCapabilities{DynamicRegistration: true},
+				},
+			},
+		}),
+	})
+	out.Reset()
+
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		Method:  "initialized",
+	})
+
+	bodies := decodeFramedBodies(t, out.String())
+	if len(bodies) != 1 {
+		t.Fatalf("expected 1 server request after initialized, got %d", len(bodies))
+	}
+	var req rpcRequest
+	if err := json.Unmarshal(bodies[0], &req); err != nil {
+		t.Fatalf("failed to decode registration request: %v", err)
+	}
+	if req.Method != "client/registerCapability" {
+		t.Fatalf("expected client/registerCapability request, got %q", req.Method)
+	}
+	var params struct {
+		Registrations []struct {
+			ID              string `json:"id"`
+			Method          string `json:"method"`
+			RegisterOptions struct {
+				Watchers []struct {
+					GlobPattern string `json:"globPattern"`
+				} `json:"watchers"`
+			} `json:"registerOptions"`
+		} `json:"registrations"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		t.Fatalf("failed to decode registerCapability params: %v", err)
+	}
+	if len(params.Registrations) != 1 {
+		t.Fatalf("expected 1 registration, got %#v", params.Registrations)
+	}
+	if params.Registrations[0].Method != "workspace/didChangeWatchedFiles" {
+		t.Fatalf("unexpected registration method: %#v", params.Registrations[0])
+	}
+	if len(params.Registrations[0].RegisterOptions.Watchers) != 1 || params.Registrations[0].RegisterOptions.Watchers[0].GlobPattern != "**/*.fer" {
+		t.Fatalf("unexpected watched-file registration options: %#v", params.Registrations[0].RegisterOptions)
+	}
+}
+
+func TestInitializedSkipsWatchedFileRegistrationWithoutClientSupport(t *testing.T) {
+	var out bytes.Buffer
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "initialize",
+		Params:  mustRawJSON(t, initializeParams{}),
+	})
+	out.Reset()
+
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		Method:  "initialized",
+	})
+
+	if strings.TrimSpace(out.String()) != "" {
+		t.Fatalf("expected no registration request without client support, got %q", out.String())
 	}
 }
 
@@ -825,12 +908,56 @@ func TestHoverSkipsIndexBuildWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
 	}
 }
 
+func TestBuildHoverIndexFromResultDoesNotReadDiskForEmptyOverlayText(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	if err := os.WriteFile(path, []byte("mod::Value"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	start := source.Position{Line: 1, Column: 1, Index: 0}
+	end := source.Position{Line: 1, Column: 11, Index: 10}
+	loc := source.NewLocation(path, start, end)
+	ident := &ast.Ident{Path: []string{"mod", "Value"}, Location: loc}
+	fnName := &ast.Ident{Path: []string{"Value"}, Location: loc}
+	fnDecl := &ast.FuncDecl{Name: fnName, Location: loc}
+	sym := symbols.New("Value", symbols.SymbolFunc, fnDecl)
+
+	typeInfo := typeinfo.NewModuleInfo()
+	bindings := binding.NewModuleInfo()
+	bindings.BindNode(ident, &binding.Resolution{
+		Kind:   binding.ResolutionSymbol,
+		Symbol: sym,
+	})
+	mod := &context.Module{
+		FilePath: path,
+		Types:    typeInfo,
+		Bindings: bindings,
+	}
+	result := compiler.Result{
+		Entry:   mod,
+		Modules: []*context.Module{mod},
+	}
+
+	index := buildHoverIndexFromResult(result, path, path, "", false)
+	hover := hoverFromIndex(index, source.Position{Line: 1, Column: 7})
+	if hover != nil {
+		t.Fatalf("expected no hover when overlay text is intentionally empty, got %#v", hover)
+	}
+
+	index = buildHoverIndexFromResult(result, path, path, "", true)
+	hover = hoverFromIndex(index, source.Position{Line: 1, Column: 7})
+	if hover == nil {
+		t.Fatal("expected disk-backed hover when readSourceFromDisk is true")
+	}
+}
+
 func TestPublishSemanticDiagnosticsContinuesWhenOpenDocumentHasSyntaxErrors(t *testing.T) {
-	oldParseProject := parseProject
-	defer func() { parseProject = oldParseProject }()
+	oldParseSemanticProject := parseSemanticProject
+	defer func() { parseSemanticProject = oldParseSemanticProject }()
 
 	calls := 0
-	parseProject = func(path string) compiler.Result {
+	parseSemanticProject = func(path string) compiler.Result {
 		calls++
 		return compiler.Result{Diagnostics: diagnostics.NewDiagnosticBag(path)}
 	}
@@ -857,6 +984,1081 @@ func TestPublishSemanticDiagnosticsContinuesWhenOpenDocumentHasSyntaxErrors(t *t
 	if calls != 1 {
 		t.Fatalf("expected semantic parse to continue on syntax-invalid open doc, got %d calls", calls)
 	}
+}
+
+func TestPublishSemanticDiagnosticsReusesCachedSnapshotForSameVersion(t *testing.T) {
+	oldParseSemanticProject := parseSemanticProject
+	defer func() { parseSemanticProject = oldParseSemanticProject }()
+
+	calls := 0
+	parseSemanticProject = func(path string) compiler.Result {
+		calls++
+		return compiler.Result{Diagnostics: diagnostics.NewDiagnosticBag(path)}
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(4)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &bytes.Buffer{},
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 3, Text: "fn main() {}"},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	if calls != 1 {
+		t.Fatalf("expected semantic diagnostics cache reuse, got %d parses", calls)
+	}
+}
+
+func TestPublishSemanticDiagnosticsReusesCachedSnapshotForSameTextNewVersion(t *testing.T) {
+	oldParseSemanticProject := parseSemanticProject
+	defer func() { parseSemanticProject = oldParseSemanticProject }()
+
+	calls := 0
+	parseSemanticProject = func(path string) compiler.Result {
+		calls++
+		return compiler.Result{Diagnostics: diagnostics.NewDiagnosticBag(path)}
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(44)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &bytes.Buffer{},
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 3, Text: "fn main() {}"},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+	s.documents[uri] = openDocument{Version: 4, Text: "fn main() {}"}
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	if calls != 1 {
+		t.Fatalf("expected semantic diagnostics cache reuse across version bump with same text, got %d parses", calls)
+	}
+}
+
+func TestPublishSemanticDiagnosticsReparsesAfterVersionChange(t *testing.T) {
+	oldParseSemanticProject := parseSemanticProject
+	defer func() { parseSemanticProject = oldParseSemanticProject }()
+
+	calls := 0
+	parseSemanticProject = func(path string) compiler.Result {
+		calls++
+		return compiler.Result{Diagnostics: diagnostics.NewDiagnosticBag(path)}
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(5)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &bytes.Buffer{},
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 3, Text: "fn main() {}"},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+	s.documents[uri] = openDocument{Version: 4, Text: "fn main() -> void {}"}
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	if calls != 2 {
+		t.Fatalf("expected semantic diagnostics cache invalidation after version change, got %d parses", calls)
+	}
+}
+
+func TestPublishSemanticDiagnosticsReparsesAfterDependencyChange(t *testing.T) {
+	oldParseSemanticProject := parseSemanticProject
+	defer func() { parseSemanticProject = oldParseSemanticProject }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	depPath := filepath.Join(dir, "dep.fer")
+	if err := os.WriteFile(depPath, []byte("v1"), 0o644); err != nil {
+		t.Fatalf("failed to write dependency source: %v", err)
+	}
+
+	calls := 0
+	parseSemanticProject = func(path string) compiler.Result {
+		calls++
+		result := compiler.Result{
+			Entry:       &context.Module{FilePath: path},
+			Modules:     []*context.Module{{FilePath: depPath}},
+			Diagnostics: diagnostics.NewDiagnosticBag(path),
+		}
+		return result
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(45)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &bytes.Buffer{},
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 3, Text: "fn main() {}"},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+	if err := os.WriteFile(depPath, []byte("dependency changed"), 0o644); err != nil {
+		t.Fatalf("failed to update dependency source: %v", err)
+	}
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	if calls != 2 {
+		t.Fatalf("expected semantic diagnostics reparse after dependency change, got %d parses", calls)
+	}
+}
+
+func TestHoverReusesIndexBuiltBySemanticDiagnostics(t *testing.T) {
+	oldParseProject := parseProject
+	oldParseSemanticProject := parseSemanticProject
+	defer func() {
+		parseProject = oldParseProject
+		parseSemanticProject = oldParseSemanticProject
+	}()
+
+	hoverParses := 0
+	parseProject = func(path string) compiler.Result {
+		hoverParses++
+		return fakeHoverResult(path, "never-used")
+	}
+	parseSemanticProject = func(path string) compiler.Result {
+		result := fakeHoverResult(path, "i32")
+		result.Diagnostics = diagnostics.NewDiagnosticBag(path)
+		return result
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(6)
+	src := "x"
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	var diagOut bytes.Buffer
+	s := &Server{
+		out:          &diagOut,
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 2, Text: src},
+		},
+		hoverCache: make(map[string]hoverCacheEntry),
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	var hoverOut bytes.Buffer
+	s.out = &hoverOut
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 0, Character: 0},
+		}),
+	}
+	s.handleRequest(req)
+
+	if hoverParses != 0 {
+		t.Fatalf("expected hover to reuse semantic-built hover cache, got %d hover parses", hoverParses)
+	}
+	hover := decodeHoverResult(t, hoverOut.String())
+	if hover == nil || hover.Contents.Value != "```ferret\ni32\n```" {
+		t.Fatalf("expected hover from semantic-built cache, got %#v", hover)
+	}
+}
+
+func TestHoverReusesIndexForSameTextNewVersion(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	calls := 0
+	parseProject = func(path string) compiler.Result {
+		calls++
+		return fakeHoverResult(path, "i32")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	if err := os.WriteFile(path, []byte("fn main() {}"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	var out bytes.Buffer
+	s := &Server{
+		out: &out,
+		documents: map[string]openDocument{
+			uri: {Version: 1, Text: "fn main() {}"},
+		},
+		hoverCache: make(map[string]hoverCacheEntry),
+	}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 0, Character: 0},
+		}),
+	}
+	s.handleRequest(req)
+	s.mu.Lock()
+	s.documents[uri] = openDocument{Version: 2, Text: "fn main() {}"}
+	s.mu.Unlock()
+	s.handleRequest(req)
+
+	if calls != 1 {
+		t.Fatalf("expected hover cache reuse across version bump with same text, got %d parses", calls)
+	}
+}
+
+func TestHoverReparsesAfterDependencyChange(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	depPath := filepath.Join(dir, "dep.fer")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+	if err := os.WriteFile(depPath, []byte("v1"), 0o644); err != nil {
+		t.Fatalf("failed to write dependency source: %v", err)
+	}
+
+	calls := 0
+	parseProject = func(path string) compiler.Result {
+		calls++
+		return fakeHoverResultWithDependency(path, "i32", depPath)
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	var out bytes.Buffer
+	s := &Server{
+		out: &out,
+		documents: map[string]openDocument{
+			uri: {Version: 1, Text: "x"},
+		},
+		hoverCache: make(map[string]hoverCacheEntry),
+	}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 0, Character: 0},
+		}),
+	}
+	s.handleRequest(req)
+	if err := os.WriteFile(depPath, []byte("dependency changed"), 0o644); err != nil {
+		t.Fatalf("failed to update dependency source: %v", err)
+	}
+	s.handleRequest(req)
+
+	if calls != 2 {
+		t.Fatalf("expected hover reparse after dependency change, got %d parses", calls)
+	}
+}
+
+func TestHoverFileCacheReparsesAfterDependencyChange(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	depPath := filepath.Join(dir, "dep.fer")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+	if err := os.WriteFile(depPath, []byte("v1"), 0o644); err != nil {
+		t.Fatalf("failed to write dependency source: %v", err)
+	}
+
+	calls := 0
+	parseProject = func(path string) compiler.Result {
+		calls++
+		return fakeHoverResultWithDependency(path, "i32", depPath)
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	var out bytes.Buffer
+	s := &Server{
+		out:        &out,
+		documents:  make(map[string]openDocument),
+		hoverCache: make(map[string]hoverCacheEntry),
+	}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 0, Character: 0},
+		}),
+	}
+	s.handleRequest(req)
+	if err := os.WriteFile(depPath, []byte("dependency changed"), 0o644); err != nil {
+		t.Fatalf("failed to update dependency source: %v", err)
+	}
+	s.handleRequest(req)
+
+	if calls != 2 {
+		t.Fatalf("expected file-backed hover cache to reparse after dependency change, got %d parses", calls)
+	}
+}
+
+func TestLSPKeepsProjectResolutionAndInvalidationProjectLocal(t *testing.T) {
+	restore := usePackagedLibsForTest(t)
+	defer restore()
+
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	parent := t.TempDir()
+	projA := filepath.Join(parent, "projA")
+	projB := filepath.Join(parent, "projB")
+	depA := filepath.Join(parent, "deps", "pkgA")
+	depB := filepath.Join(parent, "deps", "pkgB")
+
+	write(filepath.Join(projA, "fer.ret"), `[package]
+name = "projA"
+
+[dependencies]
+tool = "../deps/pkgA"
+`)
+	write(filepath.Join(projB, "fer.ret"), `[package]
+name = "projB"
+
+[dependencies]
+tool = "../deps/pkgB"
+`)
+	write(filepath.Join(depA, "fer.ret"), `[package]
+name = "pkgA"
+`)
+	write(filepath.Join(depB, "fer.ret"), `[package]
+name = "pkgB"
+`)
+	depAPath := filepath.Join(depA, "api.fer")
+	depBPath := filepath.Join(depB, "api.fer")
+	write(depAPath, "fn Value() -> i32 {\n    return 1\n}\n")
+	write(depBPath, "fn Value() -> bool {\n    return true\n}\n")
+
+	mainASrc := "import \"tool/api\"\n\nfn main() -> i32 {\n    return api::Value()\n}\n"
+	mainBSrc := "import \"tool/api\"\n\nfn main() -> bool {\n    return api::Value()\n}\n"
+	mainAPath := filepath.Join(projA, "main.fer")
+	mainBPath := filepath.Join(projB, "main.fer")
+	write(mainAPath, mainASrc)
+	write(mainBPath, mainBSrc)
+
+	uriA := "file://" + filepath.ToSlash(mainAPath)
+	uriB := "file://" + filepath.ToSlash(mainBPath)
+	lineA, charA, ok := findPosition(mainASrc, "    return api::Value()")
+	if !ok {
+		t.Fatal("failed to find project A hover position")
+	}
+	charA += len("    return api::")
+	lineB, charB, ok := findPosition(mainBSrc, "    return api::Value()")
+	if !ok {
+		t.Fatal("failed to find project B hover position")
+	}
+	charB += len("    return api::")
+
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &bytes.Buffer{},
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uriA: {Version: 1, Text: mainASrc},
+			uriB: {Version: 1, Text: mainBSrc},
+		},
+		hoverCache:   make(map[string]hoverCacheEntry),
+		semanticDeps: make(map[string][]string),
+		dependents:   make(map[string]map[string]struct{}),
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uriA: {seq: 1},
+			uriB: {seq: 1},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uriA, mainAPath, 1)
+	s.publishSemanticDiagnostics(uriB, mainBPath, 1)
+
+	if got := s.semanticDiagnostics[uriA].snapshot; got == nil || !strings.Contains(strings.Join(got.DepFiles, "\n"), depAPath) {
+		t.Fatalf("expected project A semantic snapshot to depend on %q, got %#v", depAPath, got)
+	}
+	if got := s.semanticDiagnostics[uriB].snapshot; got == nil || !strings.Contains(strings.Join(got.DepFiles, "\n"), depBPath) {
+		t.Fatalf("expected project B semantic snapshot to depend on %q, got %#v", depBPath, got)
+	}
+
+	var hoverOutA bytes.Buffer
+	s.out = &hoverOutA
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uriA},
+			Position:     lspPosition{Line: lineA, Character: charA},
+		}),
+	})
+	hoverA := decodeHoverResult(t, hoverOutA.String())
+	if hoverA == nil || !strings.Contains(hoverA.Contents.Value, "fn Value() -> i32") {
+		t.Fatalf("expected project A hover to resolve its own dependency, got %#v", hoverA)
+	}
+
+	var hoverOutB bytes.Buffer
+	s.out = &hoverOutB
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("2"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uriB},
+			Position:     lspPosition{Line: lineB, Character: charB},
+		}),
+	})
+	hoverB := decodeHoverResult(t, hoverOutB.String())
+	if hoverB == nil || !strings.Contains(hoverB.Contents.Value, "fn Value() -> bool") {
+		t.Fatalf("expected project B hover to resolve its own dependency, got %#v", hoverB)
+	}
+
+	depAURI := "file://" + filepath.ToSlash(depAPath)
+	updatedDepASrc := "fn Value() -> i32 {\n    return 2\n}\n"
+	s.handleDidChange(mustRawJSON(t, didChangeParams{
+		TextDocument: versionedTextDocumentIdentifier{URI: depAURI, Version: 2},
+		ContentChanges: []textDocumentContentChangeEvent{
+			{Text: updatedDepASrc},
+		},
+	}))
+
+	if entry := s.semanticDiagnostics[uriA]; entry == nil || entry.snapshot != nil || entry.seq != 2 || entry.timer == nil {
+		t.Fatalf("expected project A dependent cache to be invalidated and requeued, got %#v", entry)
+	}
+	if entry := s.semanticDiagnostics[uriB]; entry == nil || entry.snapshot == nil || entry.seq != 1 {
+		t.Fatalf("expected project B semantic snapshot to remain intact, got %#v", entry)
+	}
+	if _, ok := s.hoverCache[uriA]; ok {
+		t.Fatalf("expected project A hover cache to be invalidated after its dependency changed")
+	}
+	if _, ok := s.hoverCache[uriB]; !ok {
+		t.Fatalf("expected project B hover cache to remain after project A dependency changed")
+	}
+
+	s.semanticDiagnostics[uriA].timer.Stop()
+	if depEntry := s.semanticDiagnostics[depAURI]; depEntry != nil && depEntry.timer != nil {
+		depEntry.timer.Stop()
+	}
+}
+
+func TestHandleDidChangeWatchedFilesInvalidatesProjectLocalDependents(t *testing.T) {
+	restore := usePackagedLibsForTest(t)
+	defer restore()
+
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	parent := t.TempDir()
+	projA := filepath.Join(parent, "projA")
+	projB := filepath.Join(parent, "projB")
+	depA := filepath.Join(parent, "deps", "pkgA")
+	depB := filepath.Join(parent, "deps", "pkgB")
+
+	write(filepath.Join(projA, "fer.ret"), `[package]
+name = "projA"
+
+[dependencies]
+tool = "../deps/pkgA"
+`)
+	write(filepath.Join(projB, "fer.ret"), `[package]
+name = "projB"
+
+[dependencies]
+tool = "../deps/pkgB"
+`)
+	write(filepath.Join(depA, "fer.ret"), `[package]
+name = "pkgA"
+`)
+	write(filepath.Join(depB, "fer.ret"), `[package]
+name = "pkgB"
+`)
+	depAPath := filepath.Join(depA, "api.fer")
+	depBPath := filepath.Join(depB, "api.fer")
+	write(depAPath, "fn Value() -> i32 {\n    return 1\n}\n")
+	write(depBPath, "fn Value() -> bool {\n    return true\n}\n")
+
+	mainASrc := "import \"tool/api\"\n\nfn main() -> i32 {\n    return api::Value()\n}\n"
+	mainBSrc := "import \"tool/api\"\n\nfn main() -> bool {\n    return api::Value()\n}\n"
+	mainAPath := filepath.Join(projA, "main.fer")
+	mainBPath := filepath.Join(projB, "main.fer")
+	write(mainAPath, mainASrc)
+	write(mainBPath, mainBSrc)
+
+	uriA := "file://" + filepath.ToSlash(mainAPath)
+	uriB := "file://" + filepath.ToSlash(mainBPath)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &bytes.Buffer{},
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uriA: {Version: 1, Text: mainASrc},
+			uriB: {Version: 1, Text: mainBSrc},
+		},
+		hoverCache:   make(map[string]hoverCacheEntry),
+		semanticDeps: make(map[string][]string),
+		dependents:   make(map[string]map[string]struct{}),
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uriA: {seq: 1},
+			uriB: {seq: 1},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uriA, mainAPath, 1)
+	s.publishSemanticDiagnostics(uriB, mainBPath, 1)
+	s.hoverCache[uriA] = hoverCacheEntry{Mode: "doc", Version: 1}
+	s.hoverCache[uriB] = hoverCacheEntry{Mode: "doc", Version: 1}
+
+	s.handleDidChangeWatchedFiles(mustRawJSON(t, didChangeWatchedFilesParams{
+		Changes: []fileEvent{
+			{URI: "file://" + filepath.ToSlash(depAPath), Type: 2},
+		},
+	}))
+
+	if entry := s.semanticDiagnostics[uriA]; entry == nil || entry.snapshot != nil || entry.seq != 2 || entry.timer == nil {
+		t.Fatalf("expected project A dependent cache to be invalidated and requeued, got %#v", entry)
+	}
+	if entry := s.semanticDiagnostics[uriB]; entry == nil || entry.snapshot == nil || entry.seq != 1 {
+		t.Fatalf("expected project B semantic snapshot to remain intact, got %#v", entry)
+	}
+	if _, ok := s.hoverCache[uriA]; ok {
+		t.Fatalf("expected project A hover cache to be invalidated after watched dependency change")
+	}
+	if _, ok := s.hoverCache[uriB]; !ok {
+		t.Fatalf("expected project B hover cache to remain after watched dependency change")
+	}
+
+	s.semanticDiagnostics[uriA].timer.Stop()
+}
+
+func TestHandleDidChangeWatchedFilesInvalidatesFileBackedHoverCache(t *testing.T) {
+	s := &Server{
+		hoverCache: make(map[string]hoverCacheEntry),
+		hoverDeps:  make(map[string][]string),
+		hoverDependents: map[string]map[string]struct{}{
+			"/tmp/dep.fer": {
+				"file:///tmp/closed.fer": {},
+			},
+		},
+	}
+	s.hoverCache["file:///tmp/closed.fer"] = hoverCacheEntry{Mode: "file", FileStamp: "1:1"}
+	s.hoverDeps["file:///tmp/closed.fer"] = []string{"/tmp/dep.fer"}
+
+	s.handleDidChangeWatchedFiles(mustRawJSON(t, didChangeWatchedFilesParams{
+		Changes: []fileEvent{
+			{URI: "file:///tmp/dep.fer", Type: 2},
+		},
+	}))
+
+	if _, ok := s.hoverCache["file:///tmp/closed.fer"]; ok {
+		t.Fatalf("expected file-backed hover cache to be invalidated")
+	}
+	if deps := s.hoverDeps["file:///tmp/closed.fer"]; len(deps) != 0 {
+		t.Fatalf("expected file-backed hover dependency entry to be cleared, got %#v", deps)
+	}
+	if len(s.hoverDependents) != 0 {
+		t.Fatalf("expected file-backed reverse dependency index to be cleared, got %#v", s.hoverDependents)
+	}
+}
+
+func TestDefinitionReusesIndexBuiltBySemanticDiagnostics(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	hoverParses := 0
+	parseProject = func(path string) compiler.Result {
+		hoverParses++
+		return fakeHoverResult(path, "never-used")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "fn answer() -> i32 {\n    return 42\n}\n\nfn main() -> i32 {\n    return answer()\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+	line, char, ok := findPosition(src, "answer()")
+	if !ok {
+		t.Fatal("failed to find definition position")
+	}
+
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(7)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	var diagOut bytes.Buffer
+	s := &Server{
+		out:          &diagOut,
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 2, Text: src},
+		},
+		hoverCache: make(map[string]hoverCacheEntry),
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	var defOut bytes.Buffer
+	s.out = &defOut
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/definition",
+		Params: mustRawJSON(t, definitionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	if hoverParses != 0 {
+		t.Fatalf("expected definition to reuse semantic-built hover cache, got %d hover parses", hoverParses)
+	}
+	loc := decodeDefinitionResult(t, defOut.String())
+	if loc == nil || loc.Range.Start.Line != 0 {
+		t.Fatalf("expected definition from semantic-built cache, got %#v", loc)
+	}
+}
+
+func TestCompletionReusesIndexBuiltBySemanticDiagnostics(t *testing.T) {
+	oldParseProject := parseProject
+	defer func() { parseProject = oldParseProject }()
+
+	hoverParses := 0
+	parseProject = func(path string) compiler.Result {
+		hoverParses++
+		return fakeHoverResult(path, "never-used")
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "fn printVal() -> void {}\n\nfn main() -> void {\n    pri\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+	line, char, ok := findPosition(src, "    pri")
+	if !ok {
+		t.Fatal("failed to find completion position")
+	}
+	char += len("    pri")
+
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(8)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	var diagOut bytes.Buffer
+	s := &Server{
+		out:          &diagOut,
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 2, Text: src},
+		},
+		hoverCache: make(map[string]hoverCacheEntry),
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	var completionOut bytes.Buffer
+	s.out = &completionOut
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/completion",
+		Params: mustRawJSON(t, completionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	if hoverParses != 0 {
+		t.Fatalf("expected completion to reuse semantic-built hover cache, got %d hover parses", hoverParses)
+	}
+	items := decodeCompletionResult(t, completionOut.String())
+	found := false
+	for _, item := range items {
+		if item.Label == "printVal" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected completion from semantic-built cache, got %#v", items)
+	}
+}
+
+func TestPublishSemanticDiagnosticsReportsUseAfterMove(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := `
+type Node struct {
+    Child: *Node
+    Value: i32 = 0
+}
+
+fn Node::Read(self) -> i32 {
+    return self.Value
+}
+
+fn main(n: Node) -> i32 {
+    return n.Read() + n.Read()
+}
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	seq := uint64(1)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &out,
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 1, Text: src},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: seq},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uri, path, seq)
+
+	parts := strings.SplitN(out.String(), "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		t.Fatalf("expected framed LSP message, got: %q", out.String())
+	}
+	var notif rpcNotification
+	if err := json.Unmarshal([]byte(parts[1]), &notif); err != nil {
+		t.Fatalf("failed to decode notification body: %v", err)
+	}
+	if notif.Method != "textDocument/publishDiagnostics" {
+		t.Fatalf("unexpected notification method: %q", notif.Method)
+	}
+	paramsRaw, err := json.Marshal(notif.Params)
+	if err != nil {
+		t.Fatalf("failed to re-marshal params: %v", err)
+	}
+	var params publishDiagnosticsParams
+	if err := json.Unmarshal(paramsRaw, &params); err != nil {
+		t.Fatalf("failed to decode diagnostics params: %v", err)
+	}
+	found := false
+	for _, diag := range params.Diagnostics {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, params.Diagnostics)
+	}
+}
+
+func TestHandleDidSaveReportsUseAfterMove(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := `
+type Node struct {
+    Child: *Node
+    Value: i32 = 0
+}
+
+fn Node::Read(self) -> i32 {
+    return self.Value
+}
+
+fn main(n: Node) -> i32 {
+    return n.Read() + n.Read()
+}
+`
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+
+	s.handleDidSave(mustRawJSON(t, didSaveParams{
+		TextDocument: textDocumentIdentifier{URI: uri},
+	}))
+
+	parts := strings.SplitN(out.String(), "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		t.Fatalf("expected framed LSP message, got: %q", out.String())
+	}
+	var notif rpcNotification
+	if err := json.Unmarshal([]byte(parts[1]), &notif); err != nil {
+		t.Fatalf("failed to decode notification body: %v", err)
+	}
+	paramsRaw, err := json.Marshal(notif.Params)
+	if err != nil {
+		t.Fatalf("failed to re-marshal params: %v", err)
+	}
+	var params publishDiagnosticsParams
+	if err := json.Unmarshal(paramsRaw, &params); err != nil {
+		t.Fatalf("failed to decode diagnostics params: %v", err)
+	}
+	found := false
+	for _, diag := range params.Diagnostics {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, params.Diagnostics)
+	}
+}
+
+func TestHandleDidSaveReusesCachedSemanticSnapshot(t *testing.T) {
+	oldParseSemanticProject := parseSemanticProject
+	defer func() { parseSemanticProject = oldParseSemanticProject }()
+
+	calls := 0
+	parseSemanticProject = func(path string) compiler.Result {
+		calls++
+		return compiler.Result{Diagnostics: diagnostics.NewDiagnosticBag(path)}
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	if err := os.WriteFile(path, []byte("fn main() {}"), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{
+		out: &out,
+		documents: map[string]openDocument{
+			uri: {Version: 7, Text: "fn main() {}"},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {
+				seq: 1,
+				snapshot: &semanticSnapshot{
+					Version:   7,
+					TextStamp: textStamp("fn main() {}"),
+					Diagnostics: []lspDiagnostic{{
+						Range:    lspRange{Start: lspPosition{Line: 0, Character: 0}, End: lspPosition{Line: 0, Character: 1}},
+						Severity: 1,
+						Code:     diagnostics.ErrUseAfterMove,
+						Source:   "ferret",
+						Message:  "cached moved-value diagnostic",
+					}},
+				},
+			},
+		},
+	}
+
+	s.handleDidSave(mustRawJSON(t, didSaveParams{
+		TextDocument: textDocumentIdentifier{URI: uri},
+	}))
+
+	if calls != 0 {
+		t.Fatalf("expected didSave to reuse cached semantic snapshot, got %d parses", calls)
+	}
+
+	parts := strings.SplitN(out.String(), "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		t.Fatalf("expected framed LSP message, got: %q", out.String())
+	}
+	var notif rpcNotification
+	if err := json.Unmarshal([]byte(parts[1]), &notif); err != nil {
+		t.Fatalf("failed to decode notification body: %v", err)
+	}
+	paramsRaw, err := json.Marshal(notif.Params)
+	if err != nil {
+		t.Fatalf("failed to re-marshal params: %v", err)
+	}
+	var params publishDiagnosticsParams
+	if err := json.Unmarshal(paramsRaw, &params); err != nil {
+		t.Fatalf("failed to decode diagnostics params: %v", err)
+	}
+	if len(params.Diagnostics) != 1 || params.Diagnostics[0].Message != "cached moved-value diagnostic" {
+		t.Fatalf("expected cached didSave diagnostics, got %#v", params.Diagnostics)
+	}
+}
+
+func TestSemanticDependencyIndexTracksLatestSnapshotDependencies(t *testing.T) {
+	s := &Server{
+		semanticDeps: make(map[string][]string),
+		dependents:   make(map[string]map[string]struct{}),
+	}
+
+	s.updateSemanticDependenciesLocked("file:///main.fer", []string{"/tmp/dep1.fer", "/tmp/dep2.fer"})
+	s.updateSemanticDependenciesLocked("file:///main.fer", []string{"/tmp/dep2.fer", "/tmp/dep3.fer"})
+
+	deps := s.semanticDeps["file:///main.fer"]
+	if len(deps) != 2 || deps[0] != "/tmp/dep2.fer" || deps[1] != "/tmp/dep3.fer" {
+		t.Fatalf("unexpected stored semantic deps: %#v", deps)
+	}
+	if dependents := s.dependents["/tmp/dep1.fer"]; len(dependents) != 0 {
+		t.Fatalf("expected old dependency dependents to be cleared, got %#v", dependents)
+	}
+	if _, ok := s.dependents["/tmp/dep2.fer"]["file:///main.fer"]; !ok {
+		t.Fatalf("expected dep2 to track the document, got %#v", s.dependents["/tmp/dep2.fer"])
+	}
+	if _, ok := s.dependents["/tmp/dep3.fer"]["file:///main.fer"]; !ok {
+		t.Fatalf("expected dep3 to track the document, got %#v", s.dependents["/tmp/dep3.fer"])
+	}
+}
+
+func TestSemanticDependencyIndexClearsOnClose(t *testing.T) {
+	s := &Server{
+		semanticDeps: make(map[string][]string),
+		dependents:   make(map[string]map[string]struct{}),
+	}
+
+	s.updateSemanticDependenciesLocked("file:///main.fer", []string{"/tmp/dep1.fer", "/tmp/dep2.fer"})
+	s.clearSemanticDependenciesLocked("file:///main.fer")
+
+	if deps := s.semanticDeps["file:///main.fer"]; len(deps) != 0 {
+		t.Fatalf("expected document dependency entry to be cleared, got %#v", deps)
+	}
+	if len(s.dependents) != 0 {
+		t.Fatalf("expected reverse dependency index to be cleared, got %#v", s.dependents)
+	}
+}
+
+func TestInvalidateDependentsClearsDependentCaches(t *testing.T) {
+	s := &Server{
+		hoverCache: make(map[string]hoverCacheEntry),
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			"file:///main.fer":  {snapshot: &semanticSnapshot{Version: 1}},
+			"file:///other.fer": {snapshot: &semanticSnapshot{Version: 1}},
+		},
+		dependents: map[string]map[string]struct{}{
+			"/tmp/dep.fer": {
+				"file:///main.fer":  {},
+				"file:///other.fer": {},
+			},
+		},
+	}
+	s.hoverCache["file:///main.fer"] = hoverCacheEntry{Mode: "doc", Version: 1}
+	s.hoverCache["file:///other.fer"] = hoverCacheEntry{Mode: "doc", Version: 1}
+
+	uris := s.invalidateDependentsLocked("/tmp/dep.fer", "file:///other.fer")
+
+	if len(uris) != 1 || uris[0] != "file:///main.fer" {
+		t.Fatalf("expected only main.fer to be invalidated, got %#v", uris)
+	}
+	if _, ok := s.hoverCache["file:///main.fer"]; ok {
+		t.Fatalf("expected main.fer hover cache to be cleared")
+	}
+	if entry := s.semanticDiagnostics["file:///main.fer"]; entry == nil || entry.snapshot != nil {
+		t.Fatalf("expected main.fer semantic snapshot to be cleared, got %#v", entry)
+	}
+	if _, ok := s.hoverCache["file:///other.fer"]; !ok {
+		t.Fatalf("expected excluded dependent hover cache to remain")
+	}
+	if entry := s.semanticDiagnostics["file:///other.fer"]; entry == nil || entry.snapshot == nil {
+		t.Fatalf("expected excluded dependent semantic snapshot to remain, got %#v", entry)
+	}
+}
+
+func TestScheduleDependentSemanticDiagnosticsQueuesOpenDependents(t *testing.T) {
+	uri := "file:///tmp/main.fer"
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 1, Text: "fn main() {}"},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: 3},
+		},
+	}
+
+	s.scheduleDependentSemanticDiagnostics([]string{uri})
+
+	entry := s.semanticDiagnostics[uri]
+	if entry == nil {
+		t.Fatal("expected dependent semantic entry to remain")
+	}
+	if entry.seq != 4 {
+		t.Fatalf("expected dependent semantic seq to increment, got %d", entry.seq)
+	}
+	if entry.timer == nil {
+		t.Fatal("expected dependent semantic diagnostics to be queued")
+	}
+	entry.timer.Stop()
 }
 
 func TestHoverMethodDeclarationShowsFullSignature(t *testing.T) {
@@ -2400,6 +3602,12 @@ func fakeHoverResult(path string, typeName string) compiler.Result {
 	}
 }
 
+func fakeHoverResultWithDependency(path string, typeName string, depPath string) compiler.Result {
+	result := fakeHoverResult(path, typeName)
+	result.Modules = append(result.Modules, &context.Module{FilePath: depPath})
+	return result
+}
+
 func mustRawJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	raw, err := json.Marshal(v)
@@ -2477,6 +3685,34 @@ func decodeCompletionResult(t *testing.T, framed string) []completionItem {
 		t.Fatalf("failed to unmarshal completion result: %v", err)
 	}
 	return items
+}
+
+func decodeFramedBodies(t *testing.T, framed string) [][]byte {
+	t.Helper()
+	data := []byte(framed)
+	out := make([][]byte, 0)
+	for len(data) > 0 {
+		parts := bytes.SplitN(data, []byte("\r\n\r\n"), 2)
+		if len(parts) != 2 {
+			t.Fatalf("expected framed LSP message, got %q", string(data))
+		}
+		header := string(parts[0])
+		bodyAndRest := parts[1]
+		const prefix = "Content-Length: "
+		if !strings.HasPrefix(header, prefix) {
+			t.Fatalf("missing Content-Length header in %q", header)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(header, prefix)))
+		if err != nil {
+			t.Fatalf("invalid Content-Length %q: %v", header, err)
+		}
+		if len(bodyAndRest) < n {
+			t.Fatalf("framed body shorter than Content-Length: %d < %d", len(bodyAndRest), n)
+		}
+		out = append(out, append([]byte(nil), bodyAndRest[:n]...))
+		data = bodyAndRest[n:]
+	}
+	return out
 }
 
 func findPosition(text, needle string) (int, int, bool) {

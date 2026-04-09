@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/url"
 	"os"
@@ -79,6 +80,9 @@ var (
 		// during interactive editing (especially generics-heavy code).
 		return compiler.ParsePathForIDE(path)
 	}
+	parseSemanticProject = func(path string) compiler.Result {
+		return compiler.ParsePath(path)
+	}
 )
 
 type rpcRequest struct {
@@ -107,7 +111,20 @@ type rpcError struct {
 }
 
 type initializeParams struct {
-	RootURI string `json:"rootUri"`
+	RootURI      string                 `json:"rootUri"`
+	Capabilities initializeCapabilities `json:"capabilities"`
+}
+
+type initializeCapabilities struct {
+	Workspace *workspaceClientCapabilities `json:"workspace,omitempty"`
+}
+
+type workspaceClientCapabilities struct {
+	DidChangeWatchedFiles *dynamicRegistrationClientCapabilities `json:"didChangeWatchedFiles,omitempty"`
+}
+
+type dynamicRegistrationClientCapabilities struct {
+	DynamicRegistration bool `json:"dynamicRegistration"`
 }
 
 type didOpenParams struct {
@@ -125,6 +142,15 @@ type didSaveParams struct {
 
 type didCloseParams struct {
 	TextDocument textDocumentIdentifier `json:"textDocument"`
+}
+
+type didChangeWatchedFilesParams struct {
+	Changes []fileEvent `json:"changes"`
+}
+
+type fileEvent struct {
+	URI  string `json:"uri"`
+	Type int    `json:"type"`
 }
 
 type hoverParams struct {
@@ -227,25 +253,45 @@ type openDocument struct {
 type hoverCacheEntry struct {
 	Mode      string
 	Version   int
+	TextStamp uint64
+	DepStamp  string
+	DepFiles  []string
 	FileStamp string
 	Index     *hoverIndex
 }
 
+type semanticSnapshot struct {
+	Version     int
+	TextStamp   uint64
+	DepStamp    string
+	DepFiles    []string
+	ParsedPath  string
+	Diagnostics []lspDiagnostic
+}
+
 type semanticDiagnosticsEntry struct {
-	seq   uint64
-	timer *time.Timer
+	seq      uint64
+	timer    *time.Timer
+	snapshot *semanticSnapshot
 }
 
 type Server struct {
 	in  *bufio.Reader
 	out io.Writer
 
-	mu             sync.Mutex
-	rootURI        string
-	isShuttingDown bool
-	shouldExit     bool
-	documents      map[string]openDocument
-	hoverCache     map[string]hoverCacheEntry
+	mu                         sync.Mutex
+	rootURI                    string
+	isShuttingDown             bool
+	shouldExit                 bool
+	clientSupportsWatchedFiles bool
+	watchedFilesRegistered     bool
+	nextRequestID              int
+	documents                  map[string]openDocument
+	hoverCache                 map[string]hoverCacheEntry
+	semanticDeps               map[string][]string
+	dependents                 map[string]map[string]struct{}
+	hoverDeps                  map[string][]string
+	hoverDependents            map[string]map[string]struct{}
 
 	semanticGate        chan struct{}
 	semanticDiagnostics map[string]*semanticDiagnosticsEntry
@@ -259,6 +305,10 @@ func Run(stdin io.Reader, stdout io.Writer) error {
 		out:                 stdout,
 		documents:           make(map[string]openDocument),
 		hoverCache:          make(map[string]hoverCacheEntry),
+		semanticDeps:        make(map[string][]string),
+		dependents:          make(map[string]map[string]struct{}),
+		hoverDeps:           make(map[string][]string),
+		hoverDependents:     make(map[string]map[string]struct{}),
 		semanticGate:        semanticGate,
 		semanticDiagnostics: make(map[string]*semanticDiagnosticsEntry),
 	}
@@ -308,7 +358,7 @@ func (s *Server) handleRequest(req rpcRequest) {
 	case "initialize":
 		s.handleInitialize(req)
 	case "initialized":
-		// no-op
+		s.handleInitialized()
 	case "shutdown":
 		s.mu.Lock()
 		s.isShuttingDown = true
@@ -327,6 +377,8 @@ func (s *Server) handleRequest(req rpcRequest) {
 		s.handleDidSave(req.Params)
 	case "textDocument/didClose":
 		s.handleDidClose(req.Params)
+	case "workspace/didChangeWatchedFiles":
+		s.handleDidChangeWatchedFiles(req.Params)
 	case "textDocument/hover":
 		s.handleHover(req)
 	case "textDocument/definition":
@@ -346,6 +398,9 @@ func (s *Server) handleInitialize(req rpcRequest) {
 
 	s.mu.Lock()
 	s.rootURI = params.RootURI
+	s.clientSupportsWatchedFiles = params.Capabilities.Workspace != nil &&
+		params.Capabilities.Workspace.DidChangeWatchedFiles != nil &&
+		params.Capabilities.Workspace.DidChangeWatchedFiles.DynamicRegistration
 	s.mu.Unlock()
 
 	result := map[string]any{
@@ -371,6 +426,30 @@ func (s *Server) handleInitialize(req rpcRequest) {
 	s.writeResponse(req.ID, result)
 }
 
+func (s *Server) handleInitialized() {
+	s.mu.Lock()
+	if !s.clientSupportsWatchedFiles || s.watchedFilesRegistered {
+		s.mu.Unlock()
+		return
+	}
+	s.watchedFilesRegistered = true
+	s.mu.Unlock()
+
+	s.writeRequest("client/registerCapability", map[string]any{
+		"registrations": []map[string]any{
+			{
+				"id":     "ferret-watch-fer",
+				"method": "workspace/didChangeWatchedFiles",
+				"registerOptions": map[string]any{
+					"watchers": []map[string]any{
+						{"globPattern": "**/*.fer"},
+					},
+				},
+			},
+		},
+	})
+}
+
 func (s *Server) handleDidOpen(raw json.RawMessage) {
 	params := didOpenParams{}
 	if err := json.Unmarshal(raw, &params); err != nil {
@@ -391,6 +470,7 @@ func (s *Server) handleDidOpen(raw json.RawMessage) {
 		Text:            params.TextDocument.Text,
 		HasSyntaxErrors: !syntaxValid,
 	}
+	dependents := s.invalidateDependentsLocked(path, uri)
 	s.mu.Unlock()
 
 	if err != nil || !isFerretSourcePath(path) {
@@ -399,6 +479,7 @@ func (s *Server) handleDidOpen(raw json.RawMessage) {
 		return
 	}
 	s.scheduleSemanticDiagnostics(uri, path)
+	s.scheduleDependentSemanticDiagnostics(dependents)
 }
 
 func (s *Server) handleDidChange(raw json.RawMessage) {
@@ -426,6 +507,7 @@ func (s *Server) handleDidChange(raw json.RawMessage) {
 		Text:            text,
 		HasSyntaxErrors: !syntaxValid,
 	}
+	dependents := s.invalidateDependentsLocked(path, uri)
 	s.mu.Unlock()
 
 	if err != nil || !isFerretSourcePath(path) {
@@ -434,6 +516,7 @@ func (s *Server) handleDidChange(raw json.RawMessage) {
 		return
 	}
 	s.scheduleSemanticDiagnostics(uri, path)
+	s.scheduleDependentSemanticDiagnostics(dependents)
 }
 
 func (s *Server) handleDidSave(raw json.RawMessage) {
@@ -452,10 +535,29 @@ func (s *Server) handleDidSave(raw json.RawMessage) {
 		return
 	}
 
+	s.mu.Lock()
+	if s.semanticDiagnostics != nil {
+		if entry := s.semanticDiagnostics[uri]; entry != nil {
+			if entry.timer != nil {
+				entry.timer.Stop()
+				entry.timer = nil
+			}
+			if doc, ok := s.documents[uri]; ok && entry.snapshot != nil && entry.snapshot.TextStamp == textStamp(doc.Text) && dependencyStamp(entry.snapshot.DepFiles) == entry.snapshot.DepStamp {
+				diagnostics := append([]lspDiagnostic(nil), entry.snapshot.Diagnostics...)
+				s.mu.Unlock()
+				s.publishDiagnostics(uri, nil, diagnostics)
+				return
+			}
+		}
+	}
+	dependents := s.invalidateDependentsLocked(path, uri)
+	s.mu.Unlock()
+
 	s.cancelSemanticDiagnostics(uri)
-	result := compiler.ParsePathForIDE(path)
+	result := parseSemanticProject(path)
 	diagnostics := convertDiagnostics(result.Diagnostics.Diagnostics(), path)
 	s.publishDiagnostics(uri, nil, diagnostics)
+	s.scheduleDependentSemanticDiagnostics(dependents)
 }
 
 func (s *Server) handleDidClose(raw json.RawMessage) {
@@ -463,16 +565,54 @@ func (s *Server) handleDidClose(raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return
 	}
+	path, _ := uriToPath(params.TextDocument.URI)
 
 	s.mu.Lock()
 	delete(s.documents, params.TextDocument.URI)
 	if s.hoverCache != nil {
 		delete(s.hoverCache, params.TextDocument.URI)
 	}
+	dependents := s.invalidateDependentsLocked(path, params.TextDocument.URI)
+	s.clearSemanticDependenciesLocked(params.TextDocument.URI)
+	s.clearHoverDependenciesLocked(params.TextDocument.URI)
 	s.mu.Unlock()
 
 	s.cancelSemanticDiagnostics(params.TextDocument.URI)
 	s.publishDiagnostics(params.TextDocument.URI, nil, nil)
+	s.scheduleDependentSemanticDiagnostics(dependents)
+}
+
+func (s *Server) handleDidChangeWatchedFiles(raw json.RawMessage) {
+	params := didChangeWatchedFilesParams{}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return
+	}
+	if len(params.Changes) == 0 {
+		return
+	}
+
+	dependentSet := make(map[string]struct{})
+	s.mu.Lock()
+	for _, change := range params.Changes {
+		path, err := uriToPath(change.URI)
+		if err != nil || !isFerretSourcePath(path) {
+			continue
+		}
+		for _, uri := range s.invalidateDependentsLocked(path, "") {
+			dependentSet[uri] = struct{}{}
+		}
+	}
+	s.mu.Unlock()
+
+	if len(dependentSet) == 0 {
+		return
+	}
+	dependents := make([]string, 0, len(dependentSet))
+	for uri := range dependentSet {
+		dependents = append(dependents, uri)
+	}
+	sort.Strings(dependents)
+	s.scheduleDependentSemanticDiagnostics(dependents)
 }
 
 func (s *Server) handleHover(req rpcRequest) {
@@ -641,11 +781,20 @@ func (s *Server) publishSemanticDiagnostics(uri, path string, seq uint64) {
 	}
 	version := doc.Version
 	text := doc.Text
+	stamp := textStamp(text)
+	if entry.snapshot != nil && entry.snapshot.TextStamp == stamp && dependencyStamp(entry.snapshot.DepFiles) == entry.snapshot.DepStamp {
+		diagnostics := append([]lspDiagnostic(nil), entry.snapshot.Diagnostics...)
+		s.mu.Unlock()
+		v := version
+		s.publishDiagnostics(uri, &v, diagnostics)
+		return
+	}
 	s.mu.Unlock()
 
-	result, parsedPath, cleanup := parseForHover(path, text, true)
+	result, parsedPath, cleanup := parseForSemanticDiagnostics(path, text, true)
 	defer cleanup()
 	diagnostics := convertDiagnostics(result.Diagnostics.Diagnostics(), path, parsedPath)
+	depFiles, depStamp := dependencySnapshot(result, parsedPath, path)
 
 	s.mu.Lock()
 	entry = nil
@@ -657,6 +806,27 @@ func (s *Server) publishSemanticDiagnostics(uri, path string, seq uint64) {
 		s.mu.Unlock()
 		return
 	}
+	entry.snapshot = &semanticSnapshot{
+		Version:     version,
+		TextStamp:   stamp,
+		DepStamp:    depStamp,
+		DepFiles:    depFiles,
+		ParsedPath:  parsedPath,
+		Diagnostics: append([]lspDiagnostic(nil), diagnostics...),
+	}
+	s.updateSemanticDependenciesLocked(uri, depFiles)
+	if s.hoverCache == nil {
+		s.hoverCache = make(map[string]hoverCacheEntry)
+	}
+	s.hoverCache[uri] = hoverCacheEntry{
+		Mode:      "doc",
+		Version:   version,
+		TextStamp: stamp,
+		DepStamp:  depStamp,
+		DepFiles:  depFiles,
+		Index:     buildHoverIndexFromResult(result, parsedPath, path, text, false),
+	}
+	s.updateHoverDependenciesLocked(uri, depFiles)
 	s.mu.Unlock()
 
 	v := version
@@ -700,6 +870,157 @@ func (s *Server) publishDiagnostics(uri string, version *int, diagnostics []lspD
 		Version:     version,
 		Diagnostics: diagnostics,
 	})
+}
+
+func (s *Server) invalidateDependentsLocked(path, excludeURI string) []string {
+	if path == "" {
+		return nil
+	}
+	if current := s.hoverDependents[path]; len(current) > 0 {
+		for uri := range current {
+			if uri == "" || uri == excludeURI {
+				continue
+			}
+			if s.hoverCache != nil {
+				delete(s.hoverCache, uri)
+			}
+			s.clearHoverDependenciesLocked(uri)
+		}
+	}
+	if s.dependents == nil {
+		return nil
+	}
+	current := s.dependents[path]
+	if len(current) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(current))
+	for uri := range current {
+		if uri == "" || uri == excludeURI {
+			continue
+		}
+		if s.hoverCache != nil {
+			delete(s.hoverCache, uri)
+		}
+		s.clearHoverDependenciesLocked(uri)
+		if s.semanticDiagnostics != nil {
+			if entry := s.semanticDiagnostics[uri]; entry != nil {
+				entry.snapshot = nil
+			}
+		}
+		out = append(out, uri)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Server) scheduleDependentSemanticDiagnostics(uris []string) {
+	for _, uri := range uris {
+		if uri == "" {
+			continue
+		}
+		path, err := uriToPath(uri)
+		if err != nil || !isFerretSourcePath(path) {
+			continue
+		}
+		s.scheduleSemanticDiagnostics(uri, path)
+	}
+}
+
+func (s *Server) updateSemanticDependenciesLocked(uri string, depFiles []string) {
+	if uri == "" {
+		return
+	}
+	s.clearSemanticDependenciesLocked(uri)
+	if len(depFiles) == 0 {
+		return
+	}
+	if s.semanticDeps == nil {
+		s.semanticDeps = make(map[string][]string)
+	}
+	if s.dependents == nil {
+		s.dependents = make(map[string]map[string]struct{})
+	}
+	copied := append([]string(nil), depFiles...)
+	s.semanticDeps[uri] = copied
+	for _, dep := range copied {
+		if dep == "" {
+			continue
+		}
+		if s.dependents[dep] == nil {
+			s.dependents[dep] = make(map[string]struct{})
+		}
+		s.dependents[dep][uri] = struct{}{}
+	}
+}
+
+func (s *Server) clearSemanticDependenciesLocked(uri string) {
+	if uri == "" || s.semanticDeps == nil {
+		return
+	}
+	deps := s.semanticDeps[uri]
+	delete(s.semanticDeps, uri)
+	if s.dependents == nil {
+		return
+	}
+	for _, dep := range deps {
+		dependents := s.dependents[dep]
+		if dependents == nil {
+			continue
+		}
+		delete(dependents, uri)
+		if len(dependents) == 0 {
+			delete(s.dependents, dep)
+		}
+	}
+}
+
+func (s *Server) updateHoverDependenciesLocked(uri string, depFiles []string) {
+	if uri == "" {
+		return
+	}
+	s.clearHoverDependenciesLocked(uri)
+	if len(depFiles) == 0 {
+		return
+	}
+	if s.hoverDeps == nil {
+		s.hoverDeps = make(map[string][]string)
+	}
+	if s.hoverDependents == nil {
+		s.hoverDependents = make(map[string]map[string]struct{})
+	}
+	copied := append([]string(nil), depFiles...)
+	s.hoverDeps[uri] = copied
+	for _, dep := range copied {
+		if dep == "" {
+			continue
+		}
+		if s.hoverDependents[dep] == nil {
+			s.hoverDependents[dep] = make(map[string]struct{})
+		}
+		s.hoverDependents[dep][uri] = struct{}{}
+	}
+}
+
+func (s *Server) clearHoverDependenciesLocked(uri string) {
+	if uri == "" || s.hoverDeps == nil {
+		return
+	}
+	deps := s.hoverDeps[uri]
+	delete(s.hoverDeps, uri)
+	if s.hoverDependents == nil {
+		return
+	}
+	for _, dep := range deps {
+		dependents := s.hoverDependents[dep]
+		if dependents == nil {
+			continue
+		}
+		delete(dependents, uri)
+		if len(dependents) == 0 {
+			delete(s.hoverDependents, dep)
+		}
+	}
 }
 
 func convertDiagnostics(diags []*diagnostics.Diagnostic, targetPath string, extraTargets ...string) []lspDiagnostic {
@@ -863,30 +1184,28 @@ type hoverIndex struct {
 func (s *Server) getOrBuildHoverIndex(uri, path string, doc openDocument, hasDoc bool) *hoverIndex {
 	if hasDoc {
 		if !doc.HasSyntaxErrors {
+			stamp := textStamp(doc.Text)
 			s.mu.Lock()
 			if s.hoverCache == nil {
 				s.hoverCache = make(map[string]hoverCacheEntry)
 			}
-			if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "doc" && entry.Version == doc.Version && entry.Index != nil {
+			if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "doc" && entry.TextStamp == stamp && entry.DepStamp == dependencyStamp(entry.DepFiles) && entry.Index != nil {
 				index := entry.Index
 				s.mu.Unlock()
 				return index
 			}
 			s.mu.Unlock()
 
-			index := buildHoverIndex(path, doc.Text, true)
+			entry := buildHoverCacheEntry(path, doc.Text, doc.Version)
 
 			s.mu.Lock()
 			if s.hoverCache == nil {
 				s.hoverCache = make(map[string]hoverCacheEntry)
 			}
-			s.hoverCache[uri] = hoverCacheEntry{
-				Mode:    "doc",
-				Version: doc.Version,
-				Index:   index,
-			}
+			s.hoverCache[uri] = entry
+			s.updateHoverDependenciesLocked(uri, entry.DepFiles)
 			s.mu.Unlock()
-			return index
+			return entry.Index
 		}
 	}
 
@@ -896,26 +1215,23 @@ func (s *Server) getOrBuildHoverIndex(uri, path string, doc openDocument, hasDoc
 	if s.hoverCache == nil {
 		s.hoverCache = make(map[string]hoverCacheEntry)
 	}
-	if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "file" && entry.FileStamp == stamp && entry.Index != nil {
+	if entry, ok := s.hoverCache[uri]; ok && entry.Mode == "file" && entry.FileStamp == stamp && entry.DepStamp == dependencyStamp(entry.DepFiles) && entry.Index != nil {
 		index := entry.Index
 		s.mu.Unlock()
 		return index
 	}
 	s.mu.Unlock()
 
-	index := buildHoverIndex(path, "", false)
+	entry := buildFileHoverCacheEntry(path)
 
 	s.mu.Lock()
 	if s.hoverCache == nil {
 		s.hoverCache = make(map[string]hoverCacheEntry)
 	}
-	s.hoverCache[uri] = hoverCacheEntry{
-		Mode:      "file",
-		FileStamp: stamp,
-		Index:     index,
-	}
+	s.hoverCache[uri] = entry
+	s.updateHoverDependenciesLocked(uri, entry.DepFiles)
 	s.mu.Unlock()
-	return index
+	return entry.Index
 }
 
 func fileStamp(path string) string {
@@ -924,6 +1240,62 @@ func fileStamp(path string) string {
 		return ""
 	}
 	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
+}
+
+func textStamp(text string) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(text))
+	return h.Sum64()
+}
+
+func dependencySnapshot(result compiler.Result, parsedPath, originalPath string) ([]string, string) {
+	files := dependencyFiles(result, parsedPath, originalPath)
+	return files, dependencyStamp(files)
+}
+
+func dependencyFiles(result compiler.Result, parsedPath, originalPath string) []string {
+	seen := make(map[string]struct{})
+	files := make([]string, 0, len(result.Modules)+1)
+	add := func(path string) {
+		if path == "" || sameFilePath(path, parsedPath) || sameFilePath(path, originalPath) {
+			return
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			abs = path
+		}
+		clean := filepath.Clean(abs)
+		if _, ok := seen[clean]; ok {
+			return
+		}
+		seen[clean] = struct{}{}
+		files = append(files, clean)
+	}
+	if result.Entry != nil {
+		add(result.Entry.FilePath)
+	}
+	for _, mod := range result.Modules {
+		if mod == nil {
+			continue
+		}
+		add(mod.FilePath)
+	}
+	sort.Strings(files)
+	return files
+}
+
+func dependencyStamp(files []string) string {
+	if len(files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, path := range files {
+		b.WriteString(path)
+		b.WriteByte('=')
+		b.WriteString(fileStamp(path))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
 func hoverFromIndex(index *hoverIndex, pos source.Position) *hoverResult {
@@ -947,19 +1319,48 @@ func hoverFromIndex(index *hoverIndex, pos source.Position) *hoverResult {
 func buildHoverIndex(path, text string, hasText bool) *hoverIndex {
 	result, parsedPath, cleanup := parseForHover(path, text, hasText)
 	defer cleanup()
+	return buildHoverIndexFromResult(result, parsedPath, path, text, !hasText)
+}
 
+func buildHoverCacheEntry(path, text string, version int) hoverCacheEntry {
+	result, parsedPath, cleanup := parseForHover(path, text, true)
+	defer cleanup()
+	depFiles, depStamp := dependencySnapshot(result, parsedPath, path)
+	return hoverCacheEntry{
+		Mode:      "doc",
+		Version:   version,
+		TextStamp: textStamp(text),
+		DepStamp:  depStamp,
+		DepFiles:  depFiles,
+		Index:     buildHoverIndexFromResult(result, parsedPath, path, text, false),
+	}
+}
+
+func buildFileHoverCacheEntry(path string) hoverCacheEntry {
+	result, parsedPath, cleanup := parseForHover(path, "", false)
+	defer cleanup()
+	depFiles, depStamp := dependencySnapshot(result, parsedPath, path)
+	return hoverCacheEntry{
+		Mode:      "file",
+		FileStamp: fileStamp(path),
+		DepStamp:  depStamp,
+		DepFiles:  depFiles,
+		Index:     buildHoverIndexFromResult(result, parsedPath, path, "", true),
+	}
+}
+
+func buildHoverIndexFromResult(result compiler.Result, parsedPath, originalPath, sourceText string, readSourceFromDisk bool) *hoverIndex {
 	mod := findModuleByPath(result, parsedPath)
 	if mod == nil {
 		return &hoverIndex{}
 	}
 	modules := indexModulesByKey(result)
-	sourceText := text
-	if !hasText {
-		if bytes, err := os.ReadFile(path); err == nil {
+	if readSourceFromDisk {
+		if bytes, err := os.ReadFile(originalPath); err == nil {
 			sourceText = string(bytes)
 		}
 	}
-	hoverCandidates, defCandidates := collectHoverCandidates(mod, mod.Types, modules, sourceText, parsedPath, path)
+	hoverCandidates, defCandidates := collectHoverCandidates(mod, mod.Types, modules, sourceText, parsedPath, originalPath)
 	docSymbols := collectDocumentSymbols(mod, mod.Types)
 	completions := collectCompletionIndex(mod, mod.Types, modules)
 	return &hoverIndex{
@@ -985,15 +1386,23 @@ func indexModulesByKey(result compiler.Result) map[string]*context.Module {
 }
 
 func parseForHover(path, text string, hasText bool) (compiler.Result, string, func()) {
+	return parseForProject(path, text, hasText, parseProject)
+}
+
+func parseForSemanticDiagnostics(path, text string, hasText bool) (compiler.Result, string, func()) {
+	return parseForProject(path, text, hasText, parseSemanticProject)
+}
+
+func parseForProject(path, text string, hasText bool, parse func(path string) compiler.Result) (compiler.Result, string, func()) {
 	if !hasText {
-		return parseProject(path), path, func() {}
+		return parse(path), path, func() {}
 	}
 	tempPath, err := writeHoverOverlay(path, text)
 	if err != nil {
-		return parseProject(path), path, func() {}
+		return parse(path), path, func() {}
 	}
 	cleanup := func() { _ = os.Remove(tempPath) }
-	return parseProject(tempPath), tempPath, cleanup
+	return parse(tempPath), tempPath, cleanup
 }
 
 func writeHoverOverlay(originalPath, text string) (string, error) {
@@ -3150,6 +3559,21 @@ func (s *Server) writeError(id json.RawMessage, code int, message string) {
 func (s *Server) writeNotification(method string, params any) {
 	n := rpcNotification{JSONRPC: "2.0", Method: method, Params: params}
 	s.write(n)
+}
+
+func (s *Server) writeRequest(method string, params any) {
+	s.mu.Lock()
+	s.nextRequestID++
+	id := s.nextRequestID
+	s.mu.Unlock()
+
+	req := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"method":  method,
+		"params":  params,
+	}
+	s.write(req)
 }
 
 func (s *Server) write(v any) {

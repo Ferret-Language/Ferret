@@ -1,3 +1,13 @@
+
+fn myfunc1(values: ...i32) {
+    myfunc2(values...)
+}
+
+fn myfunc2(values: ...i32) {
+    print(values[0])
+}
+
 fn main() -> void {
+    myfunc1(1,2,3)
     print("ok", 42, true)
 }

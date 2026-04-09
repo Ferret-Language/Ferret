@@ -1,0 +1,16 @@
+import "std/io"
+import "std/fs"
+
+fn main() -> void {
+    let file = fs::Open("io_file_write.txt")
+    defer file.Close()
+
+    io::Write(file, "Hello")
+    io::Write(file, " World")
+    //file.Close()
+    
+    
+    let number : i16384 = 39999999999999999999999999999999
+    print(number)
+    
+}

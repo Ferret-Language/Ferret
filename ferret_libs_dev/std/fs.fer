@@ -1,0 +1,45 @@
+// Standard file IO surface.
+//
+// Current step:
+// - open a writable file
+// - write text through std/io.Writer
+// - close the file
+
+import "std/mem"
+
+type fileInner struct {
+    handle: ^void
+}
+
+type File struct {
+    inner: *fileInner
+}
+
+#[extern("ferret_std_fs_open")]
+fn open_raw(path: &str) -> ^void;
+
+#[extern("ferret_std_fs_write")]
+fn write_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_fs_close")]
+fn close_raw(handle: ^void) -> void;
+
+fn Open(path: str) -> File {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(open_raw(&path) as ^fileInner)
+        }
+    }
+}
+
+fn File::Write(&self, text: str) -> usize {
+    unsafe {
+        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+    }
+}
+
+fn File::Close(self) -> void {
+    unsafe {
+        close_raw(mem::Expose(self.inner) as ^void)
+    }
+}
