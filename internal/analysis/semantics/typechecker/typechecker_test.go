@@ -2619,6 +2619,50 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerAllowsIntegerLiteralForFloatGenericArgument(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn add<T>(a: T, b: T) -> T {
+    return a + b
+}
+
+fn main() -> void {
+    let result: f32 = add<f32>(1, 4.3)
+    result
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsImplicitFloatToIntConversion(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let num: i32 = 4.3
+    return num
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected implicit float-to-int diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && diag.Message == "numeric literal 4.3 does not fit in i32" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected float-to-int diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerResolvesMethodCalls(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

@@ -1083,7 +1083,7 @@ func (c *checker) numericLiteralFits(target typeinfo.Type, raw string) bool {
 		return numeric.FitsFloatLiteral(raw, bits)
 	}
 	if family == typeinfo.NumericFloat {
-		return false
+		return numeric.FitsIntegerLiteralInFloat(raw, bits)
 	}
 	return numeric.FitsIntegerLiteral(raw, bits, family == typeinfo.NumericSigned)
 }

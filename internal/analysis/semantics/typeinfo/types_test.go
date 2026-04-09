@@ -120,3 +120,18 @@ func TestAssignableAllowsMutableRawPointerToReadonlyRawPointer(t *testing.T) {
 		t.Fatal("expected ^const u8 to remain non-assignable to ^u8")
 	}
 }
+
+func TestAssignableAllowsImplicitNumericWideningAndIntToFloat(t *testing.T) {
+	if !Assignable(&BuiltinType{Name: "i32"}, &BuiltinType{Name: "i16"}) {
+		t.Fatal("expected i16 to be assignable to i32")
+	}
+	if Assignable(&BuiltinType{Name: "i16"}, &BuiltinType{Name: "i32"}) {
+		t.Fatal("expected i32 to remain non-assignable to i16")
+	}
+	if !Assignable(&BuiltinType{Name: "f32"}, &BuiltinType{Name: "i32"}) {
+		t.Fatal("expected i32 to be assignable to f32")
+	}
+	if Assignable(&BuiltinType{Name: "i32"}, &BuiltinType{Name: "f32"}) {
+		t.Fatal("expected f32 to remain non-assignable to i32")
+	}
+}

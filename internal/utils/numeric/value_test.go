@@ -32,6 +32,9 @@ func TestStringParsingAndFits(t *testing.T) {
 	if !FitsFloatLiteral("1.0", 32) || !FitsFloatLiteral("1.0", 64) || FitsFloatLiteral("1.0", 16) {
 		t.Fatalf("float fit mismatch")
 	}
+	if !FitsIntegerLiteralInFloat("1", 32) || !FitsIntegerLiteralInFloat("1", 64) || FitsIntegerLiteralInFloat("1", 16) {
+		t.Fatalf("integer-in-float fit mismatch")
+	}
 }
 
 func TestValidateLiteralAndCanonicalizeInteger(t *testing.T) {
