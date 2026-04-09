@@ -175,6 +175,22 @@ func TestInitializeAdvertisesHoverDefinitionAndCompletionProvider(t *testing.T) 
 		t.Fatal("expected completion trigger characters")
 	}
 
+	var workspaceCaps map[string]json.RawMessage
+	if err := json.Unmarshal(payload.Capabilities["workspace"], &workspaceCaps); err != nil {
+		t.Fatalf("failed to decode workspace capabilities: %v", err)
+	}
+	var watched map[string]json.RawMessage
+	if err := json.Unmarshal(workspaceCaps["didChangeWatchedFiles"], &watched); err != nil {
+		t.Fatalf("failed to decode didChangeWatchedFiles capability: %v", err)
+	}
+	var glob string
+	if err := json.Unmarshal(watched["globPattern"], &glob); err != nil {
+		t.Fatalf("failed to decode watched-file glob pattern: %v", err)
+	}
+	if glob != "**/*.fer" {
+		t.Fatalf("expected watched-file glob **/*.fer, got %q", glob)
+	}
+
 	if _, ok := payload.Capabilities["documentSymbolProvider"]; ok {
 		t.Fatal("expected documentSymbolProvider to be omitted")
 	}
@@ -1267,6 +1283,254 @@ func TestHoverFileCacheReparsesAfterDependencyChange(t *testing.T) {
 	}
 }
 
+func TestLSPKeepsProjectResolutionAndInvalidationProjectLocal(t *testing.T) {
+	restore := usePackagedLibsForTest(t)
+	defer restore()
+
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	parent := t.TempDir()
+	projA := filepath.Join(parent, "projA")
+	projB := filepath.Join(parent, "projB")
+	depA := filepath.Join(parent, "deps", "pkgA")
+	depB := filepath.Join(parent, "deps", "pkgB")
+
+	write(filepath.Join(projA, "fer.ret"), `[package]
+name = "projA"
+
+[dependencies]
+tool = "../deps/pkgA"
+`)
+	write(filepath.Join(projB, "fer.ret"), `[package]
+name = "projB"
+
+[dependencies]
+tool = "../deps/pkgB"
+`)
+	write(filepath.Join(depA, "fer.ret"), `[package]
+name = "pkgA"
+`)
+	write(filepath.Join(depB, "fer.ret"), `[package]
+name = "pkgB"
+`)
+	depAPath := filepath.Join(depA, "api.fer")
+	depBPath := filepath.Join(depB, "api.fer")
+	write(depAPath, "fn Value() -> i32 {\n    return 1\n}\n")
+	write(depBPath, "fn Value() -> bool {\n    return true\n}\n")
+
+	mainASrc := "import \"tool/api\"\n\nfn main() -> i32 {\n    return api::Value()\n}\n"
+	mainBSrc := "import \"tool/api\"\n\nfn main() -> bool {\n    return api::Value()\n}\n"
+	mainAPath := filepath.Join(projA, "main.fer")
+	mainBPath := filepath.Join(projB, "main.fer")
+	write(mainAPath, mainASrc)
+	write(mainBPath, mainBSrc)
+
+	uriA := "file://" + filepath.ToSlash(mainAPath)
+	uriB := "file://" + filepath.ToSlash(mainBPath)
+	lineA, charA, ok := findPosition(mainASrc, "    return api::Value()")
+	if !ok {
+		t.Fatal("failed to find project A hover position")
+	}
+	charA += len("    return api::")
+	lineB, charB, ok := findPosition(mainBSrc, "    return api::Value()")
+	if !ok {
+		t.Fatal("failed to find project B hover position")
+	}
+	charB += len("    return api::")
+
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &bytes.Buffer{},
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uriA: {Version: 1, Text: mainASrc},
+			uriB: {Version: 1, Text: mainBSrc},
+		},
+		hoverCache:   make(map[string]hoverCacheEntry),
+		semanticDeps: make(map[string][]string),
+		dependents:   make(map[string]map[string]struct{}),
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uriA: {seq: 1},
+			uriB: {seq: 1},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uriA, mainAPath, 1)
+	s.publishSemanticDiagnostics(uriB, mainBPath, 1)
+
+	if got := s.semanticDiagnostics[uriA].snapshot; got == nil || !strings.Contains(strings.Join(got.DepFiles, "\n"), depAPath) {
+		t.Fatalf("expected project A semantic snapshot to depend on %q, got %#v", depAPath, got)
+	}
+	if got := s.semanticDiagnostics[uriB].snapshot; got == nil || !strings.Contains(strings.Join(got.DepFiles, "\n"), depBPath) {
+		t.Fatalf("expected project B semantic snapshot to depend on %q, got %#v", depBPath, got)
+	}
+
+	var hoverOutA bytes.Buffer
+	s.out = &hoverOutA
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uriA},
+			Position:     lspPosition{Line: lineA, Character: charA},
+		}),
+	})
+	hoverA := decodeHoverResult(t, hoverOutA.String())
+	if hoverA == nil || !strings.Contains(hoverA.Contents.Value, "fn Value() -> i32") {
+		t.Fatalf("expected project A hover to resolve its own dependency, got %#v", hoverA)
+	}
+
+	var hoverOutB bytes.Buffer
+	s.out = &hoverOutB
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("2"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uriB},
+			Position:     lspPosition{Line: lineB, Character: charB},
+		}),
+	})
+	hoverB := decodeHoverResult(t, hoverOutB.String())
+	if hoverB == nil || !strings.Contains(hoverB.Contents.Value, "fn Value() -> bool") {
+		t.Fatalf("expected project B hover to resolve its own dependency, got %#v", hoverB)
+	}
+
+	depAURI := "file://" + filepath.ToSlash(depAPath)
+	updatedDepASrc := "fn Value() -> i32 {\n    return 2\n}\n"
+	s.handleDidChange(mustRawJSON(t, didChangeParams{
+		TextDocument: versionedTextDocumentIdentifier{URI: depAURI, Version: 2},
+		ContentChanges: []textDocumentContentChangeEvent{
+			{Text: updatedDepASrc},
+		},
+	}))
+
+	if entry := s.semanticDiagnostics[uriA]; entry == nil || entry.snapshot != nil || entry.seq != 2 || entry.timer == nil {
+		t.Fatalf("expected project A dependent cache to be invalidated and requeued, got %#v", entry)
+	}
+	if entry := s.semanticDiagnostics[uriB]; entry == nil || entry.snapshot == nil || entry.seq != 1 {
+		t.Fatalf("expected project B semantic snapshot to remain intact, got %#v", entry)
+	}
+	if _, ok := s.hoverCache[uriA]; ok {
+		t.Fatalf("expected project A hover cache to be invalidated after its dependency changed")
+	}
+	if _, ok := s.hoverCache[uriB]; !ok {
+		t.Fatalf("expected project B hover cache to remain after project A dependency changed")
+	}
+
+	s.semanticDiagnostics[uriA].timer.Stop()
+	if depEntry := s.semanticDiagnostics[depAURI]; depEntry != nil && depEntry.timer != nil {
+		depEntry.timer.Stop()
+	}
+}
+
+func TestHandleDidChangeWatchedFilesInvalidatesProjectLocalDependents(t *testing.T) {
+	restore := usePackagedLibsForTest(t)
+	defer restore()
+
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	parent := t.TempDir()
+	projA := filepath.Join(parent, "projA")
+	projB := filepath.Join(parent, "projB")
+	depA := filepath.Join(parent, "deps", "pkgA")
+	depB := filepath.Join(parent, "deps", "pkgB")
+
+	write(filepath.Join(projA, "fer.ret"), `[package]
+name = "projA"
+
+[dependencies]
+tool = "../deps/pkgA"
+`)
+	write(filepath.Join(projB, "fer.ret"), `[package]
+name = "projB"
+
+[dependencies]
+tool = "../deps/pkgB"
+`)
+	write(filepath.Join(depA, "fer.ret"), `[package]
+name = "pkgA"
+`)
+	write(filepath.Join(depB, "fer.ret"), `[package]
+name = "pkgB"
+`)
+	depAPath := filepath.Join(depA, "api.fer")
+	depBPath := filepath.Join(depB, "api.fer")
+	write(depAPath, "fn Value() -> i32 {\n    return 1\n}\n")
+	write(depBPath, "fn Value() -> bool {\n    return true\n}\n")
+
+	mainASrc := "import \"tool/api\"\n\nfn main() -> i32 {\n    return api::Value()\n}\n"
+	mainBSrc := "import \"tool/api\"\n\nfn main() -> bool {\n    return api::Value()\n}\n"
+	mainAPath := filepath.Join(projA, "main.fer")
+	mainBPath := filepath.Join(projB, "main.fer")
+	write(mainAPath, mainASrc)
+	write(mainBPath, mainBSrc)
+
+	uriA := "file://" + filepath.ToSlash(mainAPath)
+	uriB := "file://" + filepath.ToSlash(mainBPath)
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		out:          &bytes.Buffer{},
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uriA: {Version: 1, Text: mainASrc},
+			uriB: {Version: 1, Text: mainBSrc},
+		},
+		hoverCache:   make(map[string]hoverCacheEntry),
+		semanticDeps: make(map[string][]string),
+		dependents:   make(map[string]map[string]struct{}),
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uriA: {seq: 1},
+			uriB: {seq: 1},
+		},
+	}
+
+	s.publishSemanticDiagnostics(uriA, mainAPath, 1)
+	s.publishSemanticDiagnostics(uriB, mainBPath, 1)
+	s.hoverCache[uriA] = hoverCacheEntry{Mode: "doc", Version: 1}
+	s.hoverCache[uriB] = hoverCacheEntry{Mode: "doc", Version: 1}
+
+	s.handleDidChangeWatchedFiles(mustRawJSON(t, didChangeWatchedFilesParams{
+		Changes: []fileEvent{
+			{URI: "file://" + filepath.ToSlash(depAPath), Type: 2},
+		},
+	}))
+
+	if entry := s.semanticDiagnostics[uriA]; entry == nil || entry.snapshot != nil || entry.seq != 2 || entry.timer == nil {
+		t.Fatalf("expected project A dependent cache to be invalidated and requeued, got %#v", entry)
+	}
+	if entry := s.semanticDiagnostics[uriB]; entry == nil || entry.snapshot == nil || entry.seq != 1 {
+		t.Fatalf("expected project B semantic snapshot to remain intact, got %#v", entry)
+	}
+	if _, ok := s.hoverCache[uriA]; ok {
+		t.Fatalf("expected project A hover cache to be invalidated after watched dependency change")
+	}
+	if _, ok := s.hoverCache[uriB]; !ok {
+		t.Fatalf("expected project B hover cache to remain after watched dependency change")
+	}
+
+	s.semanticDiagnostics[uriA].timer.Stop()
+}
+
 func TestDefinitionReusesIndexBuiltBySemanticDiagnostics(t *testing.T) {
 	oldParseProject := parseProject
 	defer func() { parseProject = oldParseProject }()
@@ -1594,6 +1858,112 @@ func TestHandleDidSaveReusesCachedSemanticSnapshot(t *testing.T) {
 	if len(params.Diagnostics) != 1 || params.Diagnostics[0].Message != "cached moved-value diagnostic" {
 		t.Fatalf("expected cached didSave diagnostics, got %#v", params.Diagnostics)
 	}
+}
+
+func TestSemanticDependencyIndexTracksLatestSnapshotDependencies(t *testing.T) {
+	s := &Server{
+		semanticDeps: make(map[string][]string),
+		dependents:   make(map[string]map[string]struct{}),
+	}
+
+	s.updateSemanticDependenciesLocked("file:///main.fer", []string{"/tmp/dep1.fer", "/tmp/dep2.fer"})
+	s.updateSemanticDependenciesLocked("file:///main.fer", []string{"/tmp/dep2.fer", "/tmp/dep3.fer"})
+
+	deps := s.semanticDeps["file:///main.fer"]
+	if len(deps) != 2 || deps[0] != "/tmp/dep2.fer" || deps[1] != "/tmp/dep3.fer" {
+		t.Fatalf("unexpected stored semantic deps: %#v", deps)
+	}
+	if dependents := s.dependents["/tmp/dep1.fer"]; len(dependents) != 0 {
+		t.Fatalf("expected old dependency dependents to be cleared, got %#v", dependents)
+	}
+	if _, ok := s.dependents["/tmp/dep2.fer"]["file:///main.fer"]; !ok {
+		t.Fatalf("expected dep2 to track the document, got %#v", s.dependents["/tmp/dep2.fer"])
+	}
+	if _, ok := s.dependents["/tmp/dep3.fer"]["file:///main.fer"]; !ok {
+		t.Fatalf("expected dep3 to track the document, got %#v", s.dependents["/tmp/dep3.fer"])
+	}
+}
+
+func TestSemanticDependencyIndexClearsOnClose(t *testing.T) {
+	s := &Server{
+		semanticDeps: make(map[string][]string),
+		dependents:   make(map[string]map[string]struct{}),
+	}
+
+	s.updateSemanticDependenciesLocked("file:///main.fer", []string{"/tmp/dep1.fer", "/tmp/dep2.fer"})
+	s.clearSemanticDependenciesLocked("file:///main.fer")
+
+	if deps := s.semanticDeps["file:///main.fer"]; len(deps) != 0 {
+		t.Fatalf("expected document dependency entry to be cleared, got %#v", deps)
+	}
+	if len(s.dependents) != 0 {
+		t.Fatalf("expected reverse dependency index to be cleared, got %#v", s.dependents)
+	}
+}
+
+func TestInvalidateDependentsClearsDependentCaches(t *testing.T) {
+	s := &Server{
+		hoverCache: make(map[string]hoverCacheEntry),
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			"file:///main.fer":  {snapshot: &semanticSnapshot{Version: 1}},
+			"file:///other.fer": {snapshot: &semanticSnapshot{Version: 1}},
+		},
+		dependents: map[string]map[string]struct{}{
+			"/tmp/dep.fer": {
+				"file:///main.fer":  {},
+				"file:///other.fer": {},
+			},
+		},
+	}
+	s.hoverCache["file:///main.fer"] = hoverCacheEntry{Mode: "doc", Version: 1}
+	s.hoverCache["file:///other.fer"] = hoverCacheEntry{Mode: "doc", Version: 1}
+
+	uris := s.invalidateDependentsLocked("/tmp/dep.fer", "file:///other.fer")
+
+	if len(uris) != 1 || uris[0] != "file:///main.fer" {
+		t.Fatalf("expected only main.fer to be invalidated, got %#v", uris)
+	}
+	if _, ok := s.hoverCache["file:///main.fer"]; ok {
+		t.Fatalf("expected main.fer hover cache to be cleared")
+	}
+	if entry := s.semanticDiagnostics["file:///main.fer"]; entry == nil || entry.snapshot != nil {
+		t.Fatalf("expected main.fer semantic snapshot to be cleared, got %#v", entry)
+	}
+	if _, ok := s.hoverCache["file:///other.fer"]; !ok {
+		t.Fatalf("expected excluded dependent hover cache to remain")
+	}
+	if entry := s.semanticDiagnostics["file:///other.fer"]; entry == nil || entry.snapshot == nil {
+		t.Fatalf("expected excluded dependent semantic snapshot to remain, got %#v", entry)
+	}
+}
+
+func TestScheduleDependentSemanticDiagnosticsQueuesOpenDependents(t *testing.T) {
+	uri := "file:///tmp/main.fer"
+	semanticGate := make(chan struct{}, 1)
+	semanticGate <- struct{}{}
+	s := &Server{
+		semanticGate: semanticGate,
+		documents: map[string]openDocument{
+			uri: {Version: 1, Text: "fn main() {}"},
+		},
+		semanticDiagnostics: map[string]*semanticDiagnosticsEntry{
+			uri: {seq: 3},
+		},
+	}
+
+	s.scheduleDependentSemanticDiagnostics([]string{uri})
+
+	entry := s.semanticDiagnostics[uri]
+	if entry == nil {
+		t.Fatal("expected dependent semantic entry to remain")
+	}
+	if entry.seq != 4 {
+		t.Fatalf("expected dependent semantic seq to increment, got %d", entry.seq)
+	}
+	if entry.timer == nil {
+		t.Fatal("expected dependent semantic diagnostics to be queued")
+	}
+	entry.timer.Stop()
 }
 
 func TestHoverMethodDeclarationShowsFullSignature(t *testing.T) {

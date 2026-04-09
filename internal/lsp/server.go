@@ -131,6 +131,15 @@ type didCloseParams struct {
 	TextDocument textDocumentIdentifier `json:"textDocument"`
 }
 
+type didChangeWatchedFilesParams struct {
+	Changes []fileEvent `json:"changes"`
+}
+
+type fileEvent struct {
+	URI  string `json:"uri"`
+	Type int    `json:"type"`
+}
+
 type hoverParams struct {
 	TextDocument textDocumentIdentifier `json:"textDocument"`
 	Position     lspPosition            `json:"position"`
@@ -263,6 +272,8 @@ type Server struct {
 	shouldExit     bool
 	documents      map[string]openDocument
 	hoverCache     map[string]hoverCacheEntry
+	semanticDeps   map[string][]string
+	dependents     map[string]map[string]struct{}
 
 	semanticGate        chan struct{}
 	semanticDiagnostics map[string]*semanticDiagnosticsEntry
@@ -276,6 +287,8 @@ func Run(stdin io.Reader, stdout io.Writer) error {
 		out:                 stdout,
 		documents:           make(map[string]openDocument),
 		hoverCache:          make(map[string]hoverCacheEntry),
+		semanticDeps:        make(map[string][]string),
+		dependents:          make(map[string]map[string]struct{}),
 		semanticGate:        semanticGate,
 		semanticDiagnostics: make(map[string]*semanticDiagnosticsEntry),
 	}
@@ -344,6 +357,8 @@ func (s *Server) handleRequest(req rpcRequest) {
 		s.handleDidSave(req.Params)
 	case "textDocument/didClose":
 		s.handleDidClose(req.Params)
+	case "workspace/didChangeWatchedFiles":
+		s.handleDidChangeWatchedFiles(req.Params)
 	case "textDocument/hover":
 		s.handleHover(req)
 	case "textDocument/definition":
@@ -379,6 +394,11 @@ func (s *Server) handleInitialize(req rpcRequest) {
 			"completionProvider": map[string]any{
 				"triggerCharacters": []string{".", ":"},
 			},
+			"workspace": map[string]any{
+				"didChangeWatchedFiles": map[string]any{
+					"globPattern": "**/*.fer",
+				},
+			},
 		},
 		"serverInfo": map[string]any{
 			"name":    "ferretls",
@@ -408,6 +428,7 @@ func (s *Server) handleDidOpen(raw json.RawMessage) {
 		Text:            params.TextDocument.Text,
 		HasSyntaxErrors: !syntaxValid,
 	}
+	dependents := s.invalidateDependentsLocked(path, uri)
 	s.mu.Unlock()
 
 	if err != nil || !isFerretSourcePath(path) {
@@ -416,6 +437,7 @@ func (s *Server) handleDidOpen(raw json.RawMessage) {
 		return
 	}
 	s.scheduleSemanticDiagnostics(uri, path)
+	s.scheduleDependentSemanticDiagnostics(dependents)
 }
 
 func (s *Server) handleDidChange(raw json.RawMessage) {
@@ -443,6 +465,7 @@ func (s *Server) handleDidChange(raw json.RawMessage) {
 		Text:            text,
 		HasSyntaxErrors: !syntaxValid,
 	}
+	dependents := s.invalidateDependentsLocked(path, uri)
 	s.mu.Unlock()
 
 	if err != nil || !isFerretSourcePath(path) {
@@ -451,6 +474,7 @@ func (s *Server) handleDidChange(raw json.RawMessage) {
 		return
 	}
 	s.scheduleSemanticDiagnostics(uri, path)
+	s.scheduleDependentSemanticDiagnostics(dependents)
 }
 
 func (s *Server) handleDidSave(raw json.RawMessage) {
@@ -484,12 +508,14 @@ func (s *Server) handleDidSave(raw json.RawMessage) {
 			}
 		}
 	}
+	dependents := s.invalidateDependentsLocked(path, uri)
 	s.mu.Unlock()
 
 	s.cancelSemanticDiagnostics(uri)
 	result := parseSemanticProject(path)
 	diagnostics := convertDiagnostics(result.Diagnostics.Diagnostics(), path)
 	s.publishDiagnostics(uri, nil, diagnostics)
+	s.scheduleDependentSemanticDiagnostics(dependents)
 }
 
 func (s *Server) handleDidClose(raw json.RawMessage) {
@@ -497,16 +523,53 @@ func (s *Server) handleDidClose(raw json.RawMessage) {
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return
 	}
+	path, _ := uriToPath(params.TextDocument.URI)
 
 	s.mu.Lock()
 	delete(s.documents, params.TextDocument.URI)
 	if s.hoverCache != nil {
 		delete(s.hoverCache, params.TextDocument.URI)
 	}
+	dependents := s.invalidateDependentsLocked(path, params.TextDocument.URI)
+	s.clearSemanticDependenciesLocked(params.TextDocument.URI)
 	s.mu.Unlock()
 
 	s.cancelSemanticDiagnostics(params.TextDocument.URI)
 	s.publishDiagnostics(params.TextDocument.URI, nil, nil)
+	s.scheduleDependentSemanticDiagnostics(dependents)
+}
+
+func (s *Server) handleDidChangeWatchedFiles(raw json.RawMessage) {
+	params := didChangeWatchedFilesParams{}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return
+	}
+	if len(params.Changes) == 0 {
+		return
+	}
+
+	dependentSet := make(map[string]struct{})
+	s.mu.Lock()
+	for _, change := range params.Changes {
+		path, err := uriToPath(change.URI)
+		if err != nil || !isFerretSourcePath(path) {
+			continue
+		}
+		for _, uri := range s.invalidateDependentsLocked(path, "") {
+			dependentSet[uri] = struct{}{}
+		}
+	}
+	s.mu.Unlock()
+
+	if len(dependentSet) == 0 {
+		return
+	}
+	dependents := make([]string, 0, len(dependentSet))
+	for uri := range dependentSet {
+		dependents = append(dependents, uri)
+	}
+	sort.Strings(dependents)
+	s.scheduleDependentSemanticDiagnostics(dependents)
 }
 
 func (s *Server) handleHover(req rpcRequest) {
@@ -708,6 +771,7 @@ func (s *Server) publishSemanticDiagnostics(uri, path string, seq uint64) {
 		ParsedPath:  parsedPath,
 		Diagnostics: append([]lspDiagnostic(nil), diagnostics...),
 	}
+	s.updateSemanticDependenciesLocked(uri, depFiles)
 	if s.hoverCache == nil {
 		s.hoverCache = make(map[string]hoverCacheEntry)
 	}
@@ -762,6 +826,94 @@ func (s *Server) publishDiagnostics(uri string, version *int, diagnostics []lspD
 		Version:     version,
 		Diagnostics: diagnostics,
 	})
+}
+
+func (s *Server) invalidateDependentsLocked(path, excludeURI string) []string {
+	if path == "" || s.dependents == nil {
+		return nil
+	}
+	current := s.dependents[path]
+	if len(current) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(current))
+	for uri := range current {
+		if uri == "" || uri == excludeURI {
+			continue
+		}
+		if s.hoverCache != nil {
+			delete(s.hoverCache, uri)
+		}
+		if s.semanticDiagnostics != nil {
+			if entry := s.semanticDiagnostics[uri]; entry != nil {
+				entry.snapshot = nil
+			}
+		}
+		out = append(out, uri)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Server) scheduleDependentSemanticDiagnostics(uris []string) {
+	for _, uri := range uris {
+		if uri == "" {
+			continue
+		}
+		path, err := uriToPath(uri)
+		if err != nil || !isFerretSourcePath(path) {
+			continue
+		}
+		s.scheduleSemanticDiagnostics(uri, path)
+	}
+}
+
+func (s *Server) updateSemanticDependenciesLocked(uri string, depFiles []string) {
+	if uri == "" {
+		return
+	}
+	s.clearSemanticDependenciesLocked(uri)
+	if len(depFiles) == 0 {
+		return
+	}
+	if s.semanticDeps == nil {
+		s.semanticDeps = make(map[string][]string)
+	}
+	if s.dependents == nil {
+		s.dependents = make(map[string]map[string]struct{})
+	}
+	copied := append([]string(nil), depFiles...)
+	s.semanticDeps[uri] = copied
+	for _, dep := range copied {
+		if dep == "" {
+			continue
+		}
+		if s.dependents[dep] == nil {
+			s.dependents[dep] = make(map[string]struct{})
+		}
+		s.dependents[dep][uri] = struct{}{}
+	}
+}
+
+func (s *Server) clearSemanticDependenciesLocked(uri string) {
+	if uri == "" || s.semanticDeps == nil {
+		return
+	}
+	deps := s.semanticDeps[uri]
+	delete(s.semanticDeps, uri)
+	if s.dependents == nil {
+		return
+	}
+	for _, dep := range deps {
+		dependents := s.dependents[dep]
+		if dependents == nil {
+			continue
+		}
+		delete(dependents, uri)
+		if len(dependents) == 0 {
+			delete(s.dependents, dep)
+		}
+	}
 }
 
 func convertDiagnostics(diags []*diagnostics.Diagnostic, targetPath string, extraTargets ...string) []lspDiagnostic {
