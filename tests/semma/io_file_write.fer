@@ -6,4 +6,5 @@ fn main() -> void {
     io::Write(file, "Hello")
     file.Close()
     //file.Close()
+    let float : f32 = 3
 }
