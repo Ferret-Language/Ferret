@@ -175,24 +175,89 @@ func TestInitializeAdvertisesHoverDefinitionAndCompletionProvider(t *testing.T) 
 		t.Fatal("expected completion trigger characters")
 	}
 
-	var workspaceCaps map[string]json.RawMessage
-	if err := json.Unmarshal(payload.Capabilities["workspace"], &workspaceCaps); err != nil {
-		t.Fatalf("failed to decode workspace capabilities: %v", err)
-	}
-	var watched map[string]json.RawMessage
-	if err := json.Unmarshal(workspaceCaps["didChangeWatchedFiles"], &watched); err != nil {
-		t.Fatalf("failed to decode didChangeWatchedFiles capability: %v", err)
-	}
-	var glob string
-	if err := json.Unmarshal(watched["globPattern"], &glob); err != nil {
-		t.Fatalf("failed to decode watched-file glob pattern: %v", err)
-	}
-	if glob != "**/*.fer" {
-		t.Fatalf("expected watched-file glob **/*.fer, got %q", glob)
-	}
-
 	if _, ok := payload.Capabilities["documentSymbolProvider"]; ok {
 		t.Fatal("expected documentSymbolProvider to be omitted")
+	}
+}
+
+func TestInitializedRegistersWatchedFilesWhenClientSupportsDynamicRegistration(t *testing.T) {
+	var out bytes.Buffer
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "initialize",
+		Params: mustRawJSON(t, initializeParams{
+			Capabilities: initializeCapabilities{
+				Workspace: &workspaceClientCapabilities{
+					DidChangeWatchedFiles: &dynamicRegistrationClientCapabilities{DynamicRegistration: true},
+				},
+			},
+		}),
+	})
+	out.Reset()
+
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		Method:  "initialized",
+	})
+
+	bodies := decodeFramedBodies(t, out.String())
+	if len(bodies) != 1 {
+		t.Fatalf("expected 1 server request after initialized, got %d", len(bodies))
+	}
+	var req rpcRequest
+	if err := json.Unmarshal(bodies[0], &req); err != nil {
+		t.Fatalf("failed to decode registration request: %v", err)
+	}
+	if req.Method != "client/registerCapability" {
+		t.Fatalf("expected client/registerCapability request, got %q", req.Method)
+	}
+	var params struct {
+		Registrations []struct {
+			ID              string `json:"id"`
+			Method          string `json:"method"`
+			RegisterOptions struct {
+				Watchers []struct {
+					GlobPattern string `json:"globPattern"`
+				} `json:"watchers"`
+			} `json:"registerOptions"`
+		} `json:"registrations"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		t.Fatalf("failed to decode registerCapability params: %v", err)
+	}
+	if len(params.Registrations) != 1 {
+		t.Fatalf("expected 1 registration, got %#v", params.Registrations)
+	}
+	if params.Registrations[0].Method != "workspace/didChangeWatchedFiles" {
+		t.Fatalf("unexpected registration method: %#v", params.Registrations[0])
+	}
+	if len(params.Registrations[0].RegisterOptions.Watchers) != 1 || params.Registrations[0].RegisterOptions.Watchers[0].GlobPattern != "**/*.fer" {
+		t.Fatalf("unexpected watched-file registration options: %#v", params.Registrations[0].RegisterOptions)
+	}
+}
+
+func TestInitializedSkipsWatchedFileRegistrationWithoutClientSupport(t *testing.T) {
+	var out bytes.Buffer
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "initialize",
+		Params:  mustRawJSON(t, initializeParams{}),
+	})
+	out.Reset()
+
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		Method:  "initialized",
+	})
+
+	if strings.TrimSpace(out.String()) != "" {
+		t.Fatalf("expected no registration request without client support, got %q", out.String())
 	}
 }
 
@@ -1529,6 +1594,36 @@ name = "pkgB"
 	}
 
 	s.semanticDiagnostics[uriA].timer.Stop()
+}
+
+func TestHandleDidChangeWatchedFilesInvalidatesFileBackedHoverCache(t *testing.T) {
+	s := &Server{
+		hoverCache: make(map[string]hoverCacheEntry),
+		hoverDeps:  make(map[string][]string),
+		hoverDependents: map[string]map[string]struct{}{
+			"/tmp/dep.fer": {
+				"file:///tmp/closed.fer": {},
+			},
+		},
+	}
+	s.hoverCache["file:///tmp/closed.fer"] = hoverCacheEntry{Mode: "file", FileStamp: "1:1"}
+	s.hoverDeps["file:///tmp/closed.fer"] = []string{"/tmp/dep.fer"}
+
+	s.handleDidChangeWatchedFiles(mustRawJSON(t, didChangeWatchedFilesParams{
+		Changes: []fileEvent{
+			{URI: "file:///tmp/dep.fer", Type: 2},
+		},
+	}))
+
+	if _, ok := s.hoverCache["file:///tmp/closed.fer"]; ok {
+		t.Fatalf("expected file-backed hover cache to be invalidated")
+	}
+	if deps := s.hoverDeps["file:///tmp/closed.fer"]; len(deps) != 0 {
+		t.Fatalf("expected file-backed hover dependency entry to be cleared, got %#v", deps)
+	}
+	if len(s.hoverDependents) != 0 {
+		t.Fatalf("expected file-backed reverse dependency index to be cleared, got %#v", s.hoverDependents)
+	}
 }
 
 func TestDefinitionReusesIndexBuiltBySemanticDiagnostics(t *testing.T) {
@@ -3590,6 +3685,34 @@ func decodeCompletionResult(t *testing.T, framed string) []completionItem {
 		t.Fatalf("failed to unmarshal completion result: %v", err)
 	}
 	return items
+}
+
+func decodeFramedBodies(t *testing.T, framed string) [][]byte {
+	t.Helper()
+	data := []byte(framed)
+	out := make([][]byte, 0)
+	for len(data) > 0 {
+		parts := bytes.SplitN(data, []byte("\r\n\r\n"), 2)
+		if len(parts) != 2 {
+			t.Fatalf("expected framed LSP message, got %q", string(data))
+		}
+		header := string(parts[0])
+		bodyAndRest := parts[1]
+		const prefix = "Content-Length: "
+		if !strings.HasPrefix(header, prefix) {
+			t.Fatalf("missing Content-Length header in %q", header)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(header, prefix)))
+		if err != nil {
+			t.Fatalf("invalid Content-Length %q: %v", header, err)
+		}
+		if len(bodyAndRest) < n {
+			t.Fatalf("framed body shorter than Content-Length: %d < %d", len(bodyAndRest), n)
+		}
+		out = append(out, append([]byte(nil), bodyAndRest[:n]...))
+		data = bodyAndRest[n:]
+	}
+	return out
 }
 
 func findPosition(text, needle string) (int, int, bool) {
