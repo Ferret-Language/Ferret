@@ -132,3 +132,21 @@ func FitsFloatLiteral(raw string, bitSize int) bool {
 		return false
 	}
 }
+
+func FitsIntegerLiteralInFloat(raw string, bitSize int) bool {
+	value, err := StringToBigInt(raw)
+	if err != nil {
+		return false
+	}
+	floatValue := new(big.Float).SetInt(value)
+	switch bitSize {
+	case 32:
+		f32, _ := floatValue.Float32()
+		return !math.IsInf(float64(f32), 0) && !math.IsNaN(float64(f32))
+	case 64:
+		f64, _ := floatValue.Float64()
+		return !math.IsInf(f64, 0) && !math.IsNaN(f64)
+	default:
+		return false
+	}
+}

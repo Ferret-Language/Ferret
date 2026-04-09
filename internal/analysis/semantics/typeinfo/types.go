@@ -581,6 +581,9 @@ func IsImplicitNumericWidening(dst, src Type) bool {
 	if !okDst || !okSrc {
 		return false
 	}
+	if dstFamily == NumericFloat && (srcFamily == NumericSigned || srcFamily == NumericUnsigned) {
+		return dstBits >= srcBits
+	}
 	return dstFamily == srcFamily && dstBits >= srcBits
 }
 
