@@ -73,7 +73,7 @@ func (p *Parser) parseType() ast.TypeExpr {
 	default:
 		p.errorHere("expected type")
 		p.advance()
-		return &ast.NamedType{Path: []string{"<error>"}, Location: p.locFrom(start)}
+		return nil
 	}
 }
 

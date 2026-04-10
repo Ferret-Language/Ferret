@@ -135,6 +135,26 @@ fn print(value: i32) {}
 	}
 }
 
+func TestParseUnsupportedFunctionTypeParameterDoesNotLoop(t *testing.T) {
+	src := `
+fn takefn(fun: fn(i32, i32)) {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if mod == nil {
+		t.Fatal("expected module")
+	}
+	if len(mod.Decls) != 1 {
+		t.Fatalf("expected 1 decl, got %d", len(mod.Decls))
+	}
+	if !hasDiagnosticMessage(diag, "expected type") {
+		t.Fatalf("expected type diagnostic, got %v", diag.Diagnostics())
+	}
+	if !hasDiagnosticMessage(diag, "expected ',' or ')' after parameter") {
+		t.Fatalf("expected parameter recovery diagnostic, got %v", diag.Diagnostics())
+	}
+}
+
 func TestParseTestDecl(t *testing.T) {
 	src := `
 test "allocator grows" {

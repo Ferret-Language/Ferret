@@ -1376,6 +1376,33 @@ fn main() -> i32 {
 	}
 }
 
+func TestParsePathUnsupportedFunctionTypeParameterReturnsDiagnostics(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn takefn(fun: fn(i32, i32)) {}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected diagnostics for unsupported function type syntax")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if strings.Contains(diag.Message, "expected type") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected type diagnostic, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if strings.Contains(diag.Message, `undefined symbol "<error>"`) {
+			t.Fatalf("unexpected parser sentinel diagnostic, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+		}
+	}
+}
+
 func TestIfAttributeSupportsNegatedTargetSelection(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

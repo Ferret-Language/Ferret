@@ -553,3 +553,16 @@ func (p *Parser) startsType() bool {
 		return false
 	}
 }
+
+func (p *Parser) startsNamedParam() bool {
+	switch p.current().Kind {
+	case tokens.IDENT, tokens.MUT:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) startsInterfaceParam() bool {
+	return p.at(tokens.ELLIPSIS) || p.startsType()
+}

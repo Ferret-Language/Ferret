@@ -1,0 +1,5 @@
+
+
+fn takefn(fun: fn(i32, i32)) {
+    
+}
