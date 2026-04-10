@@ -824,6 +824,67 @@ fn main() -> void {
 	}
 }
 
+func TestLowerPreludePrintlnWrapperToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
+type Any interface {}
+
+#[extern]
+fn print(values: ...Any) -> void;
+
+fn println(values: ...Any) {
+    print(values...)
+    print("\n")
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    println("hello")
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	unit := testUnit(result)
+	var combined strings.Builder
+	seen := make(map[string]struct{})
+	for _, mod := range append(result.Modules, result.Entry) {
+		if mod == nil || mod.MIR == nil || mod.Layout == nil {
+			continue
+		}
+		if _, ok := seen[mod.Key]; ok {
+			continue
+		}
+		seen[mod.Key] = struct{}{}
+		artifact, err := lowerer.LowerModule(&backend.Unit{
+			Module:  mod.MIR,
+			Layout:  mod.Layout,
+			Layouts: unit.Layouts,
+			Modules: unit.Modules,
+		})
+		if err != nil {
+			t.Fatalf("lower qbe println wrapper %s: %v", mod.ImportPath, err)
+		}
+		combined.WriteString(artifact.Text)
+		combined.WriteByte('\n')
+	}
+	text := combined.String()
+	for _, want := range []string{
+		"function $global__println(",
+		"call $global__println(",
+		"call $ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerStructuredPrintTypeInfoToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

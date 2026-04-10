@@ -28,10 +28,10 @@ type Any interface {}
 #[extern]
 fn print(values: ...Any);
 
-// fn Println(values: ...Any) {
-//     print(values...)
-//     print('\n')
-// }
+fn println(values: ...Any) {
+    print(values...)
+    print("\n")
+}
 
 // Returns the element count of an array or slice.
 // This foreign declaration is polymorphic in semantic analysis and accepts any []T or [N]T.

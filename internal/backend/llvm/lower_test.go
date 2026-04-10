@@ -397,6 +397,43 @@ fn main() -> void {
 	}
 }
 
+func TestLowerPreludePrintlnWrapperToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
+type Any interface {}
+
+#[extern]
+fn print(values: ...Any) -> void;
+
+fn println(values: ...Any) {
+    print(values...)
+    print("\n")
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    println("hello")
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	text, err := llvmbackend.LowerProgram(testUnits(result), false)
+	if err != nil {
+		t.Fatalf("lower llvm println wrapper program: %v", err)
+	}
+	for _, want := range []string{
+		"define void @global__println(",
+		"call void @global__println(",
+		"call void @ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerStructuredPrintTypeInfoToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -1414,25 +1451,9 @@ fn Write(dst: Writer, text: str) -> usize {
     return dst.Write(text)
 }
 `)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
-#[extern]
-fn Expose<T>(owner: *T) -> ^T;
-
-#[extern]
-fn ExposeRef<T>(owner: &*T) -> ^T;
-
-#[extern]
-fn Adopt<T>(raw: ^T) -> *T;
-`)
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "fs.fer"), `
-import "std/mem"
-
-type fileInner struct {
-    handle: ^void
-}
-
 type File struct {
-    inner: *fileInner
+    handle: ^void
 }
 
 #[extern("ferret_std_fs_open")]
@@ -1445,23 +1466,17 @@ fn write_raw(handle: ^void, text: &str) -> usize;
 fn close_raw(handle: ^void) -> void;
 
 fn Open(path: str) -> File {
-    unsafe {
-        return .{
-            .inner = mem::Adopt(open_raw(&path) as ^fileInner)
-        }
+    return .{
+        .handle = open_raw(&path),
     }
 }
 
 fn File::Write(&self, text: str) -> usize {
-    unsafe {
-        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
-    }
+    return write_raw(self.handle, &text)
 }
 
-fn File::Close(self) -> void {
-    unsafe {
-        close_raw(mem::Expose(self.inner) as ^void)
-    }
+fn File::Close(&self) -> void {
+    close_raw(self.handle)
 }
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `

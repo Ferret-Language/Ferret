@@ -32,14 +32,14 @@ func Load(ctx *context.CompilerContext) error {
 	if err != nil {
 		return err
 	}
-	mod := &context.Module{
+	mod := ctx.UpsertModule(context.ResolvedImport{
 		Key:        globalModuleKey,
 		ImportPath: "global",
 		FilePath:   filepath.Clean(path),
-		Content:    string(content),
 		Origin:     context.ModuleOriginStdlib,
-		Phase:      phase.PhaseLoaded,
-	}
+	})
+	ctx.StoreModuleContent(mod, string(content))
+	mod.Phase = phase.PhaseLoaded
 	ctx.Diagnostics.AddSourceContent(mod.FilePath, mod.Content)
 	mod.Tokens = lexer.New(mod.FilePath, mod.Content, ctx.Diagnostics).Tokenize()
 	mod.Phase = phase.PhaseTokenized

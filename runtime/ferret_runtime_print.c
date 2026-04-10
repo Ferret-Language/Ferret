@@ -342,7 +342,6 @@ void ferret_global_print(const FerretSliceAny *values) {
     }
     for (i = 0; i < values->len; i++) {
         ferret__write_dynamic(&values->ptr[i]);
-        fputc('\n', stdout); // keep it for newline
     }
     fflush(stdout);
 }

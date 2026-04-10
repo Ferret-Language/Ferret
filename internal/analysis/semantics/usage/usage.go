@@ -517,6 +517,9 @@ func (a *analyzer) reportUnusedModuleSymbols() {
 	if a == nil || a.mod == nil || a.mod.ModuleScope == nil {
 		return
 	}
+	if a.ctx != nil && a.ctx.Prelude != nil && a.mod.Key == a.ctx.Prelude.Key {
+		return
+	}
 	for _, sym := range a.mod.ModuleScope.Symbols() {
 		if !shouldWarnOnUnusedModuleSymbol(a.mod, sym) {
 			continue

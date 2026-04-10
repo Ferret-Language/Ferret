@@ -476,7 +476,7 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 	// variadic declares: `declare rettype @sym(...)`. LLVM accepts calls
 	// to vararg functions with any argument types, while still resolving
 	// the symbol to the correct C library function at link time.
-	seenExterns := make(map[string]struct{})
+	seenExterns := seedExternDecls()
 	var declLines []string
 	for _, decl := range implicitExternDecls() {
 		sym := implicitExternSymbol(decl)
@@ -640,6 +640,23 @@ func runtimeDecls() []string {
 		fmt.Sprintf("declare %s @ferret_global_u64_str(i64)", sliceIR),
 		fmt.Sprintf("declare %s @ferret_global_f64_str(double)", sliceIR),
 	}
+}
+
+func seedExternDecls() map[string]struct{} {
+	seen := make(map[string]struct{})
+	for _, decl := range runtimeDecls() {
+		sym := implicitExternSymbol(decl)
+		if sym != "" {
+			seen[sym] = struct{}{}
+		}
+	}
+	for _, decl := range implicitExternDecls() {
+		sym := implicitExternSymbol(decl)
+		if sym != "" {
+			seen[sym] = struct{}{}
+		}
+	}
+	return seen
 }
 
 func implicitExternSymbol(decl string) string {
@@ -1008,7 +1025,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		b.WriteString(decl)
 		b.WriteByte('\n')
 	}
-	seenExterns := make(map[string]struct{})
+	seenExterns := seedExternDecls()
 	callDecls, err := collectExternCallDecls(state, unit.Module, seenExterns)
 	if err != nil {
 		return nil, err

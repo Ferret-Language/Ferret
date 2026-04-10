@@ -112,6 +112,33 @@ fn main() -> i32 {
 	}
 }
 
+func TestUsageDoesNotWarnOnPreludeBuiltinWrapper(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `type Any interface {}
+#[extern]
+fn print(values: ...Any) -> void;
+
+fn println(values: ...Any) {
+    print(values...)
+    print("\n")
+}
+`)
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn main() -> void {
+    println("ok")
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedPrivateFunction && diag.Message == `unused private function "println"` {
+			t.Fatalf("did not expect prelude wrapper unused warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
 func TestUsageWarnsUnusedLocalsAndParametersInUsedFunction(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn helper(x: i32, y: i32, z: i32) -> i32 {
