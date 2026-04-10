@@ -6,8 +6,12 @@ fn main() -> void {
     buf.Write("Hello")
     buf.Write(", world")
     println(buf.AsStr())
+
+    let mut newBuf = string::New()
     
-    io::Write(io::Stdout, buf.AsStr())
+    io::Write(newBuf, buf.AsStr())
+
+    println(newBuf.AsStr())
 
     buf.Release()
 }

@@ -2,7 +2,7 @@ import "std/io"
 import "std/fs"
 
 fn main() -> void {
-    let file = fs::Open("io_file_write.txt")
+    let mut file = fs::Open("io_file_write.txt")
     defer file.Close()
 
     io::Write(file, "Hello")
