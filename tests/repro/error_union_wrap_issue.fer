@@ -1,0 +1,33 @@
+type Error error { a }
+
+type RawResult struct {
+    ok: bool
+    err: Error
+    handle: ^void
+}
+
+type Conn struct {
+    handle: ^void
+}
+
+fn raw() -> RawResult {
+    unsafe {
+        return .{ .ok = true, .err = Error::a, .handle = 0 as ^void }
+    }
+}
+
+fn wrap() -> Error!Conn {
+    let result = raw()
+    if result.ok {
+        return .{ .handle = result.handle }
+    }
+    return result.err
+}
+
+fn main() -> void {
+    let result = wrap() catch |err| {
+        println(err)
+        return
+    }
+    println(result.handle)
+}
