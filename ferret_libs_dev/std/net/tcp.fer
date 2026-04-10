@@ -70,15 +70,15 @@ fn Listen(host: str, port: u16) -> io::Error!Listener {
     }
 }
 
-fn Conn::Write(&mut self, text: str) -> usize {
+fn Conn::Write(&mut self, text: str) -> io::Error!usize {
     unsafe {
-        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+        return io::WrapCount(write_raw(mem::ExposeRef(&self.inner) as ^void, &text))
     }
 }
 
-fn Conn::Read(&mut self, size: usize) -> []u8 {
+fn Conn::Read(&mut self, size: usize) -> io::Error![]u8 {
     unsafe {
-        return read_raw(mem::ExposeRef(&self.inner) as ^void, size)
+        return io::WrapBytes(read_raw(mem::ExposeRef(&self.inner) as ^void, size))
     }
 }
 

@@ -2,12 +2,27 @@ import "std/io"
 
 fn main() -> void {
     let mut buf = io::NewBuffer()
-    io::Write(buf, "Hello")
-    io::Write(buf, ", world")
+    _ = io::Write(buf, "Hello") catch |err| {
+        print(err)
+        return
+    }
+    _ = io::Write(buf, ", world") catch |err| {
+        print(err)
+        return
+    }
 
-    let first = io::Read(buf, 5)
-    let second = io::Read(buf, 7)
-    let last = io::Read(buf, 1)
+    let first = io::Read(buf, 5) catch |err| {
+        print(err)
+        return
+    }
+    let second = io::Read(buf, 7) catch |err| {
+        print(err)
+        return
+    }
+    let last = io::Read(buf, 1) catch |err| {
+        print(err)
+        return
+    }
 
     if len(first) == 5 &&
         len(second) == 7 &&

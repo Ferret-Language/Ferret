@@ -316,7 +316,12 @@ ferret_usize ferret_std_net_tcp_write(ferret_raw handle, const FerretStr *text) 
     FerretStdTcpConn *conn = (FerretStdTcpConn *)handle;
     ferret_usize total;
 
-    if (conn == NULL || conn->socket_fd == FERRET_INVALID_SOCKET || text == NULL || text->ptr == NULL || text->len == 0) {
+    if (conn == NULL || conn->socket_fd == FERRET_INVALID_SOCKET) {
+        ferret__io_error_set(FERRET_IO_ERR_CLOSED);
+        return 0;
+    }
+    if (text == NULL || text->ptr == NULL || text->len == 0) {
+        ferret__io_error_clear();
         return 0;
     }
 
@@ -324,9 +329,23 @@ ferret_usize ferret_std_net_tcp_write(ferret_raw handle, const FerretStr *text) 
     while (total < text->len) {
         int sent = send(conn->socket_fd, (const char *)(text->ptr + total), (int)(text->len - total), 0);
         if (sent <= 0) {
+            if (total == 0) {
+                ferret__io_error_set(ferret__net_map_error_code(
+#ifdef _WIN32
+                    WSAGetLastError(),
+#else
+                    errno,
+#endif
+                    0));
+            } else {
+                ferret__io_error_clear();
+            }
             break;
         }
         total += (ferret_usize)sent;
+    }
+    if (total == text->len) {
+        ferret__io_error_clear();
     }
     return total;
 }
@@ -336,20 +355,38 @@ FerretSliceU8 ferret_std_net_tcp_read(ferret_raw handle, ferret_usize size) {
     FerretSliceU8 out = {0};
     int received;
 
-    if (conn == NULL || conn->socket_fd == FERRET_INVALID_SOCKET || size == 0) {
+    if (conn == NULL || conn->socket_fd == FERRET_INVALID_SOCKET) {
+        ferret__io_error_set(FERRET_IO_ERR_CLOSED);
+        return out;
+    }
+    if (size == 0) {
+        ferret__io_error_clear();
         return out;
     }
     if (!ferret__net_buffer_reserve(conn, size)) {
+        ferret__io_error_set(FERRET_IO_ERR_UNKNOWN);
         return out;
     }
 
     received = recv(conn->socket_fd, (char *)conn->read_buf, (int)size, 0);
-    if (received <= 0) {
+    if (received == 0) {
+        ferret__io_error_clear();
+        return out;
+    }
+    if (received < 0) {
+        ferret__io_error_set(ferret__net_map_error_code(
+#ifdef _WIN32
+            WSAGetLastError(),
+#else
+            errno,
+#endif
+            0));
         return out;
     }
 
     out.ptr = conn->read_buf;
     out.len = (ferret_usize)received;
+    ferret__io_error_clear();
     return out;
 }
 

@@ -1426,7 +1426,7 @@ type Error error {
 }
 
 type Writer interface {
-    Write(&mut self, text: str) -> usize
+    Write(&mut self, text: str) -> Error!usize
 }
 
 type Stream struct {
@@ -1438,11 +1438,15 @@ fn write_stream(kind: i32, text: &str) -> usize;
 
 let mut Stdout: Stream = .{ .kind = 1 }
 
-fn Stream::Write(&mut self, text: str) -> usize {
-    return write_stream(self.kind, &text)
+fn WrapCount(value: usize) -> Error!usize {
+    return value
 }
 
-fn Write(mut dst: Writer, text: str) -> usize {
+fn Stream::Write(&mut self, text: str) -> Error!usize {
+    return WrapCount(write_stream(self.kind, &text))
+}
+
+fn Write(mut dst: Writer, text: str) -> Error!usize {
     return dst.Write(text)
 }
 `)
@@ -1450,7 +1454,10 @@ fn Write(mut dst: Writer, text: str) -> usize {
 import "std/io"
 
 fn main() -> void {
-    _ = io::Write(io::Stdout, "hello")
+    _ = io::Write(io::Stdout, "hello") catch |err| {
+        print(err)
+        return
+    }
 }
 `)
 	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
@@ -1468,7 +1475,7 @@ fn main() -> void {
 	text := artifact.Text
 	for _, want := range []string{
 		"declare i64 @ferret_std_io_write_stream",
-		"call void @std__io__Write(",
+		"@std__io__Write(",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
@@ -1484,14 +1491,20 @@ type Error error {
 }
 
 type Writer interface {
-    Write(&mut self, text: str) -> usize
+    Write(&mut self, text: str) -> Error!usize
 }
 
-fn Write(mut dst: Writer, text: str) -> usize {
+fn WrapCount(value: usize) -> Error!usize {
+    return value
+}
+
+fn Write(mut dst: Writer, text: str) -> Error!usize {
     return dst.Write(text)
 }
 `)
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "fs.fer"), `
+import "std/io"
+
 type File struct {
     handle: ^void
 }
@@ -1511,8 +1524,8 @@ fn Open(path: str) -> File {
     }
 }
 
-fn File::Write(&mut self, text: str) -> usize {
-    return write_raw(self.handle, &text)
+fn File::Write(&mut self, text: str) -> io::Error!usize {
+    return io::WrapCount(write_raw(self.handle, &text))
 }
 
 fn File::Close(&self) -> void {
@@ -1525,7 +1538,10 @@ import "std/fs"
 
 fn main() -> void {
     let mut file = fs::Open("out.txt")
-    _ = io::Write(file, "hello")
+    _ = io::Write(file, "hello") catch |err| {
+        print(err)
+        return
+    }
     file.Close()
 }
 `)
@@ -1546,7 +1562,7 @@ fn main() -> void {
 		"declare ptr @ferret_std_fs_open(",
 		"declare i64 @ferret_std_fs_write(",
 		"declare void @ferret_std_fs_close(",
-		"call void @std__io__Write(",
+		"@std__io__Write(",
 		"call void @std__fs__File__Close(",
 	} {
 		if !strings.Contains(text, want) {
@@ -1570,12 +1586,16 @@ fn Adopt<T>(raw: ^T) -> *T;
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
 import "std/mem"
 
+type Error error {
+    unknown
+}
+
 type Writer interface {
-    Write(&mut self, text: str) -> usize
+    Write(&mut self, text: str) -> Error!usize
 }
 
 type Reader interface {
-    Read(&mut self, size: usize) -> []u8
+    Read(&mut self, size: usize) -> Error![]u8
 }
 
 type bufferInner struct {
@@ -1604,6 +1624,14 @@ fn view_buffer_raw(handle: ^void) -> str;
 #[extern("ferret_std_io_buffer_close")]
 fn close_buffer_raw(handle: ^void) -> void;
 
+fn WrapCount(value: usize) -> Error!usize {
+    return value
+}
+
+fn WrapBytes(value: []u8) -> Error![]u8 {
+    return value
+}
+
 fn NewBuffer() -> Buffer {
     unsafe {
         return .{
@@ -1612,15 +1640,15 @@ fn NewBuffer() -> Buffer {
     }
 }
 
-fn Buffer::Write(&mut self, text: str) -> usize {
+fn Buffer::Write(&mut self, text: str) -> Error!usize {
     unsafe {
-        return write_buffer_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+        return WrapCount(write_buffer_raw(mem::ExposeRef(&self.inner) as ^void, &text))
     }
 }
 
-fn Buffer::Read(&mut self, size: usize) -> []u8 {
+fn Buffer::Read(&mut self, size: usize) -> Error![]u8 {
     unsafe {
-        return read_buffer_raw(mem::ExposeRef(&self.inner) as ^void, size)
+        return WrapBytes(read_buffer_raw(mem::ExposeRef(&self.inner) as ^void, size))
     }
 }
 
@@ -1636,11 +1664,11 @@ fn Buffer::Release(self) -> void {
     }
 }
 
-fn Write(mut dst: Writer, text: str) -> usize {
+fn Write(mut dst: Writer, text: str) -> Error!usize {
     return dst.Write(text)
 }
 
-fn Read(mut src: Reader, size: usize) -> []u8 {
+fn Read(mut src: Reader, size: usize) -> Error![]u8 {
     return src.Read(size)
 }
 `)
@@ -1649,8 +1677,14 @@ import "std/io"
 
 fn main() -> void {
     let mut buf = io::NewBuffer()
-    _ = io::Write(buf, "hello")
-    _ = io::Read(buf, 2)
+    _ = io::Write(buf, "hello") catch |err| {
+        print(err)
+        return
+    }
+    _ = io::Read(buf, 2) catch |err| {
+        print(err)
+        return
+    }
     _ = buf.AsStr()
     buf.Release()
 }
@@ -1674,7 +1708,7 @@ fn main() -> void {
 		"declare { ptr, i64 } @ferret_std_io_buffer_read(",
 		"declare { ptr, i64 } @ferret_std_io_buffer_view(",
 		"declare void @ferret_std_io_buffer_close(",
-		"call void @std__io__Write(",
+		"@std__io__Write(",
 		"@std__io__Read(",
 	} {
 		if !strings.Contains(text, want) {
@@ -1701,22 +1735,30 @@ type Error error {
 }
 
 type Writer interface {
-    Write(&mut self, text: str) -> usize
+    Write(&mut self, text: str) -> Error!usize
 }
 
 type Reader interface {
-    Read(&mut self, size: usize) -> []u8
+    Read(&mut self, size: usize) -> Error![]u8
 }
 
 fn LastError() -> Error {
     return Error::unknown
 }
 
-fn Write(mut dst: Writer, text: str) -> usize {
+fn WrapCount(value: usize) -> Error!usize {
+    return value
+}
+
+fn WrapBytes(value: []u8) -> Error![]u8 {
+    return value
+}
+
+fn Write(mut dst: Writer, text: str) -> Error!usize {
     return dst.Write(text)
 }
 
-fn Read(mut src: Reader, size: usize) -> []u8 {
+fn Read(mut src: Reader, size: usize) -> Error![]u8 {
     return src.Read(size)
 }
 `)
@@ -1760,15 +1802,15 @@ fn Dial(host: str, port: u16) -> io::Error!Conn {
     }
 }
 
-fn Conn::Write(&mut self, text: str) -> usize {
+fn Conn::Write(&mut self, text: str) -> io::Error!usize {
     unsafe {
-        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+        return io::WrapCount(write_raw(mem::ExposeRef(&self.inner) as ^void, &text))
     }
 }
 
-fn Conn::Read(&mut self, size: usize) -> []u8 {
+fn Conn::Read(&mut self, size: usize) -> io::Error![]u8 {
     unsafe {
-        return read_raw(mem::ExposeRef(&self.inner) as ^void, size)
+        return io::WrapBytes(read_raw(mem::ExposeRef(&self.inner) as ^void, size))
     }
 }
 
@@ -1787,8 +1829,14 @@ fn main() -> void {
         print(err)
         return
     }
-    _ = io::Write(conn, "ping")
-    _ = io::Read(conn, 4)
+    _ = io::Write(conn, "ping") catch |err| {
+        print(err)
+        return
+    }
+    _ = io::Read(conn, 4) catch |err| {
+        print(err)
+        return
+    }
     conn.Close()
 }
 `)
@@ -1810,7 +1858,7 @@ fn main() -> void {
 		"declare i64 @ferret_std_net_tcp_write(",
 		"declare { ptr, i64 } @ferret_std_net_tcp_read(",
 		"declare void @ferret_std_net_tcp_close(",
-		"call void @std__io__Write(",
+		"@std__io__Write(",
 		"@std__io__Read(",
 		"@std__net__tcp__Conn__Close(",
 	} {
@@ -1838,22 +1886,30 @@ type Error error {
 }
 
 type Writer interface {
-    Write(&mut self, text: str) -> usize
+    Write(&mut self, text: str) -> Error!usize
 }
 
 type Reader interface {
-    Read(&mut self, size: usize) -> []u8
+    Read(&mut self, size: usize) -> Error![]u8
 }
 
 fn LastError() -> Error {
     return Error::unknown
 }
 
-fn Write(mut dst: Writer, text: str) -> usize {
+fn WrapCount(value: usize) -> Error!usize {
+    return value
+}
+
+fn WrapBytes(value: []u8) -> Error![]u8 {
+    return value
+}
+
+fn Write(mut dst: Writer, text: str) -> Error!usize {
     return dst.Write(text)
 }
 
-fn Read(mut src: Reader, size: usize) -> []u8 {
+fn Read(mut src: Reader, size: usize) -> Error![]u8 {
     return src.Read(size)
 }
 `)
@@ -1933,15 +1989,15 @@ fn Listener::Close(self) -> void {
     }
 }
 
-fn Conn::Write(&mut self, text: str) -> usize {
+fn Conn::Write(&mut self, text: str) -> io::Error!usize {
     unsafe {
-        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+        return io::WrapCount(write_raw(mem::ExposeRef(&self.inner) as ^void, &text))
     }
 }
 
-fn Conn::Read(&mut self, size: usize) -> []u8 {
+fn Conn::Read(&mut self, size: usize) -> io::Error![]u8 {
     unsafe {
-        return read_raw(mem::ExposeRef(&self.inner) as ^void, size)
+        return io::WrapBytes(read_raw(mem::ExposeRef(&self.inner) as ^void, size))
     }
 }
 
@@ -1965,8 +2021,18 @@ fn main() -> void {
         listener.Close()
         return
     }
-    _ = io::Read(conn, 4)
-    _ = io::Write(conn, "pong")
+    _ = io::Read(conn, 4) catch |err| {
+        print(err)
+        conn.Close()
+        listener.Close()
+        return
+    }
+    _ = io::Write(conn, "pong") catch |err| {
+        print(err)
+        conn.Close()
+        listener.Close()
+        return
+    }
     conn.Close()
     listener.Close()
 }

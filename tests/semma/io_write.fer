@@ -1,5 +1,8 @@
 import "std/io"
 
 fn main() -> void {
-    io::Write(io::Stdout, "hi\n")
+    _ = io::Write(io::Stdout, "hi\n") catch |err| {
+        print(err)
+        return
+    }
 }

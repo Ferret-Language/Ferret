@@ -28,12 +28,23 @@ ferret_usize ferret_std_io_write_stream(ferret_i32 kind, const FerretStr *text) 
     FILE *file = ferret__io_stream_file(kind);
     size_t written;
 
-    if (file == NULL || text == NULL || text->ptr == NULL || text->len == 0) {
+    if (file == NULL) {
+        ferret__io_error_set(FERRET_IO_ERR_UNKNOWN);
+        return 0;
+    }
+    if (text == NULL || text->ptr == NULL || text->len == 0) {
+        ferret__io_error_clear();
         return 0;
     }
 
     written = fwrite((const void *)text->ptr, 1, (size_t)text->len, file);
     fflush(file);
+    if (written == 0 && ferror(file)) {
+        ferret__io_error_set(FERRET_IO_ERR_UNKNOWN);
+        clearerr(file);
+        return 0;
+    }
+    ferret__io_error_clear();
     return (ferret_usize)written;
 }
 
@@ -78,17 +89,24 @@ ferret_usize ferret_std_io_buffer_write(ferret_raw handle, const FerretStr *text
     FerretStdIoBuffer *buffer = (FerretStdIoBuffer *)handle;
     ferret_usize count;
 
-    if (buffer == NULL || text == NULL || text->ptr == NULL || text->len == 0) {
+    if (buffer == NULL) {
+        ferret__io_error_set(FERRET_IO_ERR_CLOSED);
+        return 0;
+    }
+    if (text == NULL || text->ptr == NULL || text->len == 0) {
+        ferret__io_error_clear();
         return 0;
     }
 
     count = text->len;
     if (!ferret__io_buffer_reserve(buffer, count)) {
+        ferret__io_error_set(FERRET_IO_ERR_UNKNOWN);
         return 0;
     }
 
     memcpy((void *)(buffer->data + buffer->len), (const void *)text->ptr, (size_t)count);
     buffer->len += count;
+    ferret__io_error_clear();
     return count;
 }
 
@@ -98,7 +116,12 @@ FerretSliceU8 ferret_std_io_buffer_read(ferret_raw handle, ferret_usize size) {
     ferret_usize available;
     ferret_usize count;
 
-    if (buffer == NULL || buffer->read_pos >= buffer->len) {
+    if (buffer == NULL) {
+        ferret__io_error_set(FERRET_IO_ERR_CLOSED);
+        return out;
+    }
+    if (size == 0 || buffer->read_pos >= buffer->len) {
+        ferret__io_error_clear();
         return out;
     }
 
@@ -111,6 +134,7 @@ FerretSliceU8 ferret_std_io_buffer_read(ferret_raw handle, ferret_usize size) {
     out.ptr = buffer->data + buffer->read_pos;
     out.len = count;
     buffer->read_pos += count;
+    ferret__io_error_clear();
     return out;
 }
 

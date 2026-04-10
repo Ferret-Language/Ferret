@@ -19,11 +19,11 @@ type Error error {
 }
 
 type Writer interface {
-    Write(&mut self, text: str) -> usize
+    Write(&mut self, text: str) -> Error!usize
 }
 
 type Reader interface {
-    Read(&mut self, size: usize) -> []u8
+    Read(&mut self, size: usize) -> Error![]u8
 }
 
 type Stream struct {
@@ -69,8 +69,50 @@ let mut Stdin: Stream = .{ .kind = 0 }
 let mut Stdout: Stream = .{ .kind = 1 }
 let mut Stderr: Stream = .{ .kind = 2 }
 
-fn Stream::Write(&mut self, text: str) -> usize {
-    return write_stream(self.kind, &text)
+fn ErrorFromCode(code: i32) -> Error {
+    if code == 2 {
+        return Error::permission_denied
+    }
+    if code == 3 {
+        return Error::not_found
+    }
+    if code == 4 {
+        return Error::connection_refused
+    }
+    if code == 5 {
+        return Error::timed_out
+    }
+    if code == 6 {
+        return Error::address_in_use
+    }
+    if code == 7 {
+        return Error::closed
+    }
+    return Error::unknown
+}
+
+fn WrapCount(value: usize) -> Error!usize {
+    let code = last_error_raw()
+    if code != 0 {
+        return ErrorFromCode(code)
+    }
+    return value
+}
+
+fn WrapBytes(value: []u8) -> Error![]u8 {
+    let code = last_error_raw()
+    if code != 0 {
+        return ErrorFromCode(code)
+    }
+    unsafe {
+        let ptr = value as ^const u8
+        let count = len(&value)
+        return (ptr, count) as []u8
+    }
+}
+
+fn Stream::Write(&mut self, text: str) -> Error!usize {
+    return WrapCount(write_stream(self.kind, &text))
 }
 
 fn NewBuffer() -> Buffer {
@@ -81,15 +123,15 @@ fn NewBuffer() -> Buffer {
     }
 }
 
-fn Buffer::Write(&mut self, text: str) -> usize {
+fn Buffer::Write(&mut self, text: str) -> Error!usize {
     unsafe {
-        return write_buffer_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+        return WrapCount(write_buffer_raw(mem::ExposeRef(&self.inner) as ^void, &text))
     }
 }
 
-fn Buffer::Read(&mut self, size: usize) -> []u8 {
+fn Buffer::Read(&mut self, size: usize) -> Error![]u8 {
     unsafe {
-        return read_buffer_raw(mem::ExposeRef(&self.inner) as ^void, size)
+        return WrapBytes(read_buffer_raw(mem::ExposeRef(&self.inner) as ^void, size))
     }
 }
 
@@ -112,32 +154,13 @@ fn Buffer::Release(self) -> void {
 }
 
 fn LastError() -> Error {
-    let code = last_error_raw()
-    if code == 2 {
-        return Error::permission_denied
-    }
-    if code == 3 {
-        return Error::not_found
-    }
-    if code == 4 {
-        return Error::connection_refused
-    }
-    if code == 5 {
-        return Error::timed_out
-    }
-    if code == 6 {
-        return Error::address_in_use
-    }
-    if code == 7 {
-        return Error::closed
-    }
-    return Error::unknown
+    return ErrorFromCode(last_error_raw())
 }
 
-fn Write(mut dst: Writer, text: str) -> usize {
+fn Write(mut dst: Writer, text: str) -> Error!usize {
     return dst.Write(text)
 }
 
-fn Read(mut src: Reader, size: usize) -> []u8 {
+fn Read(mut src: Reader, size: usize) -> Error![]u8 {
     return src.Read(size)
 }

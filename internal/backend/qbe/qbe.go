@@ -2130,11 +2130,22 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 			dst = tmp
 		}
 		if isAggregateType(state, payloadValue.Type()) {
-			payloadLines, err := lowerAggregateValueToAddr(state, dst, payloadValue.Type(), payloadValue)
+			payloadSize, payloadAlign, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), payloadValue.Type())
 			if err != nil {
 				return "", err
 			}
-			lines = append(lines, payloadLines...)
+			payloadLines, err := lowerAggregateAssign(state, &aggregateLocal{
+				Type:    payloadValue.Type(),
+				Size:    payloadSize,
+				Align:   payloadAlign,
+				PtrName: strings.TrimPrefix(dst, "%"),
+			}, payloadValue)
+			if err != nil {
+				return "", err
+			}
+			if payloadLines != "" {
+				lines = append(lines, strings.Split(payloadLines, "\n\t")...)
+			}
 			return strings.Join(lines, "\n"), nil
 		}
 		payload, err := lowerValue(state, payloadValue)
