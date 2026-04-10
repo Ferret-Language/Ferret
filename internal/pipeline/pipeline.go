@@ -91,7 +91,7 @@ func (p *Pipeline) ParseWorkspaceForIDE() ([]*context.Module, error) {
 		return nil, err
 	}
 	p.runIDEFinalPasses()
-	return p.ctx.Modules(), nil
+	return p.ctx.NonPreludeModules(), nil
 }
 
 // ParseEntry parses a single entry file and all its transitive imports.
@@ -134,7 +134,7 @@ func (p *Pipeline) ParseWorkspace() ([]*context.Module, error) {
 		return nil, err
 	}
 	p.finalizeFinalPasses()
-	return p.ctx.Modules(), nil
+	return p.ctx.NonPreludeModules(), nil
 }
 
 // scheduleParseFile enqueues a module for parallel lex+parse if not already

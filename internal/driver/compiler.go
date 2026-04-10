@@ -81,12 +81,12 @@ func parsePath(path string, mode parseMode) Result {
 		c := NewWithConfig(ws.Context, diag)
 		switch mode {
 		case parseModeIDE:
-			mods, err := c.pipeline.ParseWorkspaceForIDE()
+			_, err := c.pipeline.ParseWorkspaceForIDE()
 			if err != nil {
 				c.ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
 			}
 			return Result{
-				Modules:       mods,
+				Modules:       c.ctx.NonPreludeModules(),
 				Diagnostics:   c.ctx.Diagnostics,
 				CompilerState: c.ctx,
 			}
@@ -113,7 +113,7 @@ func parsePath(path string, mode parseMode) Result {
 		}
 		result := Result{
 			Entry:         entry,
-			Modules:       c.ctx.Modules(),
+			Modules:       c.ctx.NonPreludeModules(),
 			Diagnostics:   c.ctx.Diagnostics,
 			CompilerState: c.ctx,
 		}
@@ -146,7 +146,7 @@ func (c *Compiler) ParseEntry(entryFile string) Result {
 	}
 	result := Result{
 		Entry:         entry,
-		Modules:       c.ctx.Modules(),
+		Modules:       c.ctx.NonPreludeModules(),
 		Diagnostics:   c.ctx.Diagnostics,
 		CompilerState: c.ctx,
 	}
@@ -157,12 +157,12 @@ func (c *Compiler) ParseEntry(entryFile string) Result {
 }
 
 func (c *Compiler) ParseWorkspace() Result {
-	mods, err := c.pipeline.ParseWorkspace()
+	_, err := c.pipeline.ParseWorkspace()
 	if err != nil {
 		c.ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
 	}
 	return Result{
-		Modules:       mods,
+		Modules:       c.ctx.NonPreludeModules(),
 		Diagnostics:   c.ctx.Diagnostics,
 		CompilerState: c.ctx,
 	}

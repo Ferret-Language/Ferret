@@ -1818,6 +1818,15 @@ func testUnit(result compiler.Result) *backend.Unit {
 			modules[result.Entry.Key] = result.Entry.MIR
 		}
 	}
+	if result.CompilerState != nil && result.CompilerState.Prelude != nil {
+		mod := result.CompilerState.Prelude
+		if mod.Layout != nil {
+			layouts[mod.Key] = mod.Layout
+		}
+		if mod.MIR != nil {
+			modules[mod.Key] = mod.MIR
+		}
+	}
 	return &backend.Unit{
 		Module:  result.Entry.MIR,
 		Layout:  result.Entry.Layout,
@@ -1849,6 +1858,15 @@ func testUnits(result compiler.Result) []*backend.Unit {
 			modules[result.Entry.Key] = result.Entry.MIR
 		}
 	}
+	if result.CompilerState != nil && result.CompilerState.Prelude != nil {
+		mod := result.CompilerState.Prelude
+		if mod.Layout != nil {
+			layouts[mod.Key] = mod.Layout
+		}
+		if mod.MIR != nil {
+			modules[mod.Key] = mod.MIR
+		}
+	}
 	units := make([]*backend.Unit, 0, len(modules))
 	for _, mod := range result.Modules {
 		if mod == nil || mod.MIR == nil || mod.Layout == nil {
@@ -1864,6 +1882,20 @@ func testUnits(result compiler.Result) []*backend.Unit {
 			Layouts: layouts,
 			Modules: modules,
 		})
+	}
+	if result.CompilerState != nil && result.CompilerState.Prelude != nil {
+		mod := result.CompilerState.Prelude
+		if mod != nil && mod.MIR != nil && mod.Layout != nil {
+			if _, ok := seen[mod.Key]; !ok {
+				seen[mod.Key] = struct{}{}
+				units = append(units, &backend.Unit{
+					Module:  mod.MIR,
+					Layout:  mod.Layout,
+					Layouts: layouts,
+					Modules: modules,
+				})
+			}
+		}
 	}
 	if result.Entry != nil && result.Entry.MIR != nil && result.Entry.Layout != nil {
 		if _, ok := seen[result.Entry.Key]; ok {

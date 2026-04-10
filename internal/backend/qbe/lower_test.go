@@ -11,6 +11,7 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/backend"
 	"compiler/internal/backend/registry"
+	"compiler/internal/core/context"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
 	"compiler/internal/testutil"
@@ -853,7 +854,12 @@ fn main() -> void {
 	unit := testUnit(result)
 	var combined strings.Builder
 	seen := make(map[string]struct{})
-	for _, mod := range append(result.Modules, result.Entry) {
+	modList := append([]*context.Module{}, result.Modules...)
+	if result.CompilerState != nil && result.CompilerState.Prelude != nil {
+		modList = append(modList, result.CompilerState.Prelude)
+	}
+	modList = append(modList, result.Entry)
+	for _, mod := range modList {
 		if mod == nil || mod.MIR == nil || mod.Layout == nil {
 			continue
 		}
@@ -1296,6 +1302,15 @@ func testUnit(result compiler.Result) *backend.Unit {
 	}
 	if result.Entry != nil && result.Entry.MIR != nil {
 		modules[result.Entry.Key] = result.Entry.MIR
+	}
+	if result.CompilerState != nil && result.CompilerState.Prelude != nil {
+		mod := result.CompilerState.Prelude
+		if mod.Layout != nil {
+			layouts[mod.Key] = mod.Layout
+		}
+		if mod.MIR != nil {
+			modules[mod.Key] = mod.MIR
+		}
 	}
 	return &backend.Unit{
 		Module:  result.Entry.MIR,

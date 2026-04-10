@@ -302,6 +302,21 @@ func (ctx *CompilerContext) Modules() []*Module {
 	return mods
 }
 
+func (ctx *CompilerContext) NonPreludeModules() []*Module {
+	mods := ctx.Modules()
+	if ctx == nil || ctx.Prelude == nil {
+		return mods
+	}
+	out := make([]*Module, 0, len(mods))
+	for _, mod := range mods {
+		if mod == nil || mod.Key == ctx.Prelude.Key {
+			continue
+		}
+		out = append(out, mod)
+	}
+	return out
+}
+
 func (ctx *CompilerContext) DiscoverModules() ([]string, error) {
 	root := ctx.Config.RootDir
 	files := make([]string, 0)
