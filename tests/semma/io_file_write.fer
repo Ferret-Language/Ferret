@@ -6,7 +6,7 @@ fn main() -> void {
     defer file.Close()
 
     io::Write(file, "Hello")
-    io::Write(file, " World")
+    io::Write(file, " World\n")
     io::Write(file, 132245 as str)
     //file.Close()
     

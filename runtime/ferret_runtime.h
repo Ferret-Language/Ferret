@@ -97,6 +97,26 @@ typedef struct {
     ferret_usize          payload_offset;
 } FerretOptionalTypeInfo;
 
+#define FERRET_RUNTIME_TRAP_NONE      0u
+#define FERRET_RUNTIME_TRAP_PANIC     1u
+#define FERRET_RUNTIME_TRAP_BOUNDS    2u
+#define FERRET_RUNTIME_TRAP_INTERFACE 3u
+#define FERRET_RUNTIME_TRAP_INTERNAL  4u
+
+#define FERRET_IO_ERR_NONE                0u
+#define FERRET_IO_ERR_UNKNOWN             1u
+#define FERRET_IO_ERR_PERMISSION_DENIED   2u
+#define FERRET_IO_ERR_NOT_FOUND           3u
+#define FERRET_IO_ERR_CONNECTION_REFUSED  4u
+#define FERRET_IO_ERR_TIMED_OUT           5u
+#define FERRET_IO_ERR_ADDRESS_IN_USE      6u
+#define FERRET_IO_ERR_CLOSED              7u
+
+typedef struct {
+    ferret_u32 kind;
+    FerretStr  message;
+} FerretRuntimeTrap;
+
 /* `FerretAny` (declared in ferrettypes.h) is the stable ABI type for empty
  * interface values across C helpers and runtime-adjacent extern functions. */
 
@@ -128,6 +148,12 @@ void global__panic(const FerretStr *msg);
  */
 __attribute__((noreturn))
 void ferret__panic(const ferret_i8 *msg);
+
+const FerretRuntimeTrap *ferret__runtime_last_trap(void);
+void ferret__runtime_clear_trap(void);
+void ferret__io_error_set(ferret_i32 code);
+void ferret__io_error_clear(void);
+ferret_i32 ferret_std_io_last_error(void);
 
 /*
  * ferret__bounds_check — panic when index >= len for array/slice indexing.

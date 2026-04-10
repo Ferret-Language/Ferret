@@ -1,3 +1,4 @@
+import "std/io"
 import "std/mem"
 
 type connInner struct {
@@ -23,7 +24,7 @@ fn dial_raw(host: &str, port: u16) -> ^connInner;
 fn listen_raw(host: &str, port: u16) -> ^listenerInner;
 
 #[extern("ferret_std_net_tcp_accept")]
-fn accept_raw(handle: ^void) -> ^connInner;
+fn accept_raw(handle: ^listenerInner) -> ^connInner;
 
 #[extern("ferret_std_net_tcp_write")]
 fn write_raw(handle: ^void, text: &str) -> usize;
@@ -37,18 +38,34 @@ fn close_raw(handle: ^void) -> void;
 #[extern("ferret_std_net_tcp_close_listener")]
 fn close_listener_raw(handle: ^void) -> void;
 
-fn Dial(host: str, port: u16) -> Conn {
+fn Dial(host: str, port: u16) -> io::Error!Conn {
+    let raw = dial_raw(&host, port)
+    let mut failed = false
+    unsafe {
+        failed = raw == 0 as ^connInner
+    }
+    if failed {
+        return io::LastError()
+    }
     unsafe {
         return .{
-            .inner = mem::Adopt(dial_raw(&host, port))
+            .inner = mem::Adopt(raw)
         }
     }
 }
 
-fn Listen(host: str, port: u16) -> Listener {
+fn Listen(host: str, port: u16) -> io::Error!Listener {
+    let raw = listen_raw(&host, port)
+    let mut failed = false
+    unsafe {
+        failed = raw == 0 as ^listenerInner
+    }
+    if failed {
+        return io::LastError()
+    }
     unsafe {
         return .{
-            .inner = mem::Adopt(listen_raw(&host, port))
+            .inner = mem::Adopt(raw)
         }
     }
 }
@@ -71,10 +88,18 @@ fn Conn::Close(self) -> void {
     }
 }
 
-fn Listener::Accept(&mut self) -> Conn {
+fn Listener::Accept(&mut self) -> io::Error!Conn {
+    let raw = accept_raw(mem::ExposeRef(&self.inner))
+    let mut failed = false
+    unsafe {
+        failed = raw == 0 as ^connInner
+    }
+    if failed {
+        return io::LastError()
+    }
     unsafe {
         return .{
-            .inner = mem::Adopt(accept_raw(mem::ExposeRef(&self.inner) as ^void))
+            .inner = mem::Adopt(raw)
         }
     }
 }

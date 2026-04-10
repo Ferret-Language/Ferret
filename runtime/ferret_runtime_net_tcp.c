@@ -4,6 +4,7 @@
 
 #include "ferret_runtime_internal.h"
 
+#include <errno.h>
 #include <stdio.h>
 
 #ifdef _WIN32
@@ -92,10 +93,80 @@ static FerretStdTcpConn *ferret__net_new_conn(FerretSocket socket_fd) {
     conn = (FerretStdTcpConn *)calloc(1, sizeof(FerretStdTcpConn));
     if (conn == NULL) {
         ferret__net_close_socket(socket_fd);
+        ferret__io_error_set(FERRET_IO_ERR_UNKNOWN);
         return NULL;
     }
     conn->socket_fd = socket_fd;
     return conn;
+}
+
+static ferret_i32 ferret__net_map_error_code(int code, ferret_bool addrinfo_code) {
+#ifdef _WIN32
+    if (addrinfo_code) {
+        switch (code) {
+        case WSAHOST_NOT_FOUND:
+        case WSANO_DATA:
+            return FERRET_IO_ERR_NOT_FOUND;
+        case WSAEAI_AGAIN:
+            return FERRET_IO_ERR_TIMED_OUT;
+        default:
+            return FERRET_IO_ERR_UNKNOWN;
+        }
+    }
+    switch (code) {
+    case WSAEACCES:
+        return FERRET_IO_ERR_PERMISSION_DENIED;
+    case WSAECONNREFUSED:
+        return FERRET_IO_ERR_CONNECTION_REFUSED;
+    case WSAETIMEDOUT:
+        return FERRET_IO_ERR_TIMED_OUT;
+    case WSAEADDRINUSE:
+        return FERRET_IO_ERR_ADDRESS_IN_USE;
+    case WSAECONNRESET:
+    case WSAENOTCONN:
+    case WSAESHUTDOWN:
+        return FERRET_IO_ERR_CLOSED;
+    case WSAEHOSTUNREACH:
+    case WSAENETUNREACH:
+        return FERRET_IO_ERR_NOT_FOUND;
+    default:
+        return FERRET_IO_ERR_UNKNOWN;
+    }
+#else
+    if (addrinfo_code) {
+        switch (code) {
+        case EAI_NONAME:
+            return FERRET_IO_ERR_NOT_FOUND;
+#ifdef EAI_AGAIN
+        case EAI_AGAIN:
+            return FERRET_IO_ERR_TIMED_OUT;
+#endif
+        default:
+            return FERRET_IO_ERR_UNKNOWN;
+        }
+    }
+    switch (code) {
+    case EACCES:
+    case EPERM:
+        return FERRET_IO_ERR_PERMISSION_DENIED;
+    case ECONNREFUSED:
+        return FERRET_IO_ERR_CONNECTION_REFUSED;
+    case ETIMEDOUT:
+        return FERRET_IO_ERR_TIMED_OUT;
+    case EADDRINUSE:
+        return FERRET_IO_ERR_ADDRESS_IN_USE;
+    case ECONNRESET:
+    case ENOTCONN:
+    case EPIPE:
+        return FERRET_IO_ERR_CLOSED;
+    case ENOENT:
+    case EHOSTUNREACH:
+    case ENETUNREACH:
+        return FERRET_IO_ERR_NOT_FOUND;
+    default:
+        return FERRET_IO_ERR_UNKNOWN;
+    }
+#endif
 }
 
 static FerretSocket ferret__net_resolve_and_open(const char *host, const char *port_text, int passive, int do_listen) {
@@ -103,6 +174,7 @@ static FerretSocket ferret__net_resolve_and_open(const char *host, const char *p
     struct addrinfo *results;
     struct addrinfo *current;
     FerretSocket socket_fd;
+    int gai_status;
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
@@ -113,7 +185,9 @@ static FerretSocket ferret__net_resolve_and_open(const char *host, const char *p
     }
 
     results = NULL;
-    if (getaddrinfo(host, port_text, &hints, &results) != 0) {
+    gai_status = getaddrinfo(host, port_text, &hints, &results);
+    if (gai_status != 0) {
+        ferret__io_error_set(ferret__net_map_error_code(gai_status, 1));
         return FERRET_INVALID_SOCKET;
     }
 
@@ -141,6 +215,17 @@ static FerretSocket ferret__net_resolve_and_open(const char *host, const char *p
     }
 
     freeaddrinfo(results);
+    if (socket_fd == FERRET_INVALID_SOCKET) {
+        ferret__io_error_set(ferret__net_map_error_code(
+#ifdef _WIN32
+            WSAGetLastError(),
+#else
+            errno,
+#endif
+            0));
+    } else {
+        ferret__io_error_clear();
+    }
     return socket_fd;
 }
 
@@ -150,11 +235,13 @@ ferret_raw ferret_std_net_tcp_dial(const FerretStr *host, ferret_u16 port) {
     FerretSocket socket_fd;
 
     if (!ferret__net_init() || host == NULL) {
+        ferret__io_error_set(FERRET_IO_ERR_UNKNOWN);
         return NULL;
     }
 
     c_host = (char *)ferret_global_str_cstr(host);
     if (c_host == NULL) {
+        ferret__io_error_set(FERRET_IO_ERR_UNKNOWN);
         return NULL;
     }
 
@@ -175,10 +262,12 @@ ferret_raw ferret_std_net_tcp_listen(const FerretStr *host, ferret_u16 port) {
     FerretStdTcpListener *listener;
 
     if (!ferret__net_init() || host == NULL) {
+        ferret__io_error_set(FERRET_IO_ERR_UNKNOWN);
         return NULL;
     }
     c_host = (char *)ferret_global_str_cstr(host);
     if (c_host == NULL) {
+        ferret__io_error_set(FERRET_IO_ERR_UNKNOWN);
         return NULL;
     }
 
@@ -192,9 +281,11 @@ ferret_raw ferret_std_net_tcp_listen(const FerretStr *host, ferret_u16 port) {
     listener = (FerretStdTcpListener *)calloc(1, sizeof(FerretStdTcpListener));
     if (listener == NULL) {
         ferret__net_close_socket(socket_fd);
+        ferret__io_error_set(FERRET_IO_ERR_UNKNOWN);
         return NULL;
     }
     listener->socket_fd = socket_fd;
+    ferret__io_error_clear();
     return (ferret_raw)listener;
 }
 
@@ -203,12 +294,21 @@ ferret_raw ferret_std_net_tcp_accept(ferret_raw handle) {
     FerretSocket accepted;
 
     if (listener == NULL || listener->socket_fd == FERRET_INVALID_SOCKET) {
+        ferret__io_error_set(FERRET_IO_ERR_CLOSED);
         return NULL;
     }
     accepted = accept(listener->socket_fd, NULL, NULL);
     if (accepted == FERRET_INVALID_SOCKET) {
+        ferret__io_error_set(ferret__net_map_error_code(
+#ifdef _WIN32
+            WSAGetLastError(),
+#else
+            errno,
+#endif
+            0));
         return NULL;
     }
+    ferret__io_error_clear();
     return (ferret_raw)ferret__net_new_conn(accepted);
 }
 

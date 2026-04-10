@@ -2696,7 +2696,19 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 			return "", err
 		}
 		if isAggregateType(state, v.Type()) {
-			return llvmMemcpy(llvmLocalName(agg.PtrName), expr, agg.Size, agg.Align), nil
+			if isUnionAggregate(v.Left.Type()) || (isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type())) {
+				return llvmMemcpy(llvmLocalName(agg.PtrName), expr, agg.Size, agg.Align), nil
+			}
+			typeName, err := llvmABITypeName(state, agg.Type)
+			if err != nil {
+				return "", err
+			}
+			temp := freshTemp(state, "aggcast")
+			lines := []string{
+				fmt.Sprintf("%s = %s", temp, expr),
+				fmt.Sprintf("store %s %s, ptr %s", typeName, temp, llvmLocalName(agg.PtrName)),
+			}
+			return strings.Join(lines, "\n"), nil
 		}
 		typeName, err := llvmABITypeName(state, agg.Type)
 		if err != nil {

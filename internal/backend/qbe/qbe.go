@@ -1555,7 +1555,21 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 			return "", err
 		}
 		if isAggregateType(state, v.Type()) {
-			return fmt.Sprintf("blit %s, %s, %d", expr, qbeLocalName(agg.PtrName), agg.Size), nil
+			if isUnionAggregate(v.Left.Type()) || (isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type())) {
+				return fmt.Sprintf("blit %s, %s, %d", expr, qbeLocalName(agg.PtrName), agg.Size), nil
+			}
+			abiType, err := qbeABIType(state, agg.Type)
+			if err != nil {
+				return "", err
+			}
+			temp := freshTemp(state, "aggcast")
+			lines := []string{
+				fmt.Sprintf("%s =%s %s", temp, abiType, expr),
+			}
+			if temp != qbeLocalName(agg.PtrName) {
+				lines = append(lines, fmt.Sprintf("blit %s, %s, %d", temp, qbeLocalName(agg.PtrName), agg.Size))
+			}
+			return strings.Join(lines, "\n\t"), nil
 		}
 		abiType, err := qbeABIType(state, agg.Type)
 		if err != nil {

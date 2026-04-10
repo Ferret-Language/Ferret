@@ -8,6 +8,16 @@
 
 import "std/mem"
 
+type Error error {
+    unknown,
+    permission_denied,
+    not_found,
+    connection_refused,
+    timed_out,
+    address_in_use,
+    closed
+}
+
 type Writer interface {
     Write(&mut self, text: str) -> usize
 }
@@ -51,6 +61,9 @@ fn reset_buffer_raw(handle: ^void) -> void;
 
 #[extern("ferret_std_io_buffer_close")]
 fn close_buffer_raw(handle: ^void) -> void;
+
+#[extern("ferret_std_io_last_error")]
+fn last_error_raw() -> i32;
 
 let mut Stdin: Stream = .{ .kind = 0 }
 let mut Stdout: Stream = .{ .kind = 1 }
@@ -96,6 +109,29 @@ fn Buffer::Release(self) -> void {
     unsafe {
         close_buffer_raw(mem::Expose(self.inner) as ^void)
     }
+}
+
+fn LastError() -> Error {
+    let code = last_error_raw()
+    if code == 2 {
+        return Error::permission_denied
+    }
+    if code == 3 {
+        return Error::not_found
+    }
+    if code == 4 {
+        return Error::connection_refused
+    }
+    if code == 5 {
+        return Error::timed_out
+    }
+    if code == 6 {
+        return Error::address_in_use
+    }
+    if code == 7 {
+        return Error::closed
+    }
+    return Error::unknown
 }
 
 fn Write(mut dst: Writer, text: str) -> usize {
