@@ -5515,6 +5515,78 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerRejectsImmutableValuePassedToInterfaceMutReceiverCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Writer interface {
+    Write(&mut self, text: str) -> usize
+}
+
+type String struct {
+    len: usize = 0
+}
+
+fn String::Write(&mut self, text: str) -> usize {
+    let bytes = text as []u8
+    let count = len(&bytes)
+    self.len = self.len + count
+    return count
+}
+
+fn Write(mut dst: Writer, text: str) -> usize {
+    return dst.Write(text)
+}
+
+fn main() -> void {
+    let buf = String{}
+    _ = Write(buf, "hello")
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected immutable interface boxing diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "cannot use immutable String as Writer") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected immutable interface boxing diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsDirectInterfaceMutReceiverCallOnImmutableValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Writer interface {
+    Write(&mut self, text: str) -> usize
+}
+
+fn main(w: Writer) -> void {
+    w.Write("hello")
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected immutable interface receiver diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrMethodNotFound && strings.Contains(diag.Message, `cannot call method "Write" on immutable Writer`) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected immutable interface receiver diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerRejectsOwningPointerToReferenceContainingType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
