@@ -1537,6 +1537,11 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 			return lowerAggregateAssign(state, agg, v.Right)
 		}
 	case *mir.CastValue:
+		srcCast := backend.UnwrapNamed(v.Left.Type())
+		dstCast := backend.UnwrapNamed(v.Type())
+		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) && !isStringSliceCastPair(srcCast, dstCast) && !isInterfaceAggregate(v.Left.Type()) && !isUnionAggregate(v.Left.Type()) {
+			return lowerAggregateAssign(state, agg, v.Left)
+		}
 		if isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type()) && isAggregateType(state, v.Type()) {
 			lines, srcPtr, err := lowerInterfaceDowncastPointer(state, v.Left, v.Type())
 			if err != nil {
@@ -1548,6 +1553,9 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 		expr, err := lowerCast(state, v)
 		if err != nil {
 			return "", err
+		}
+		if isAggregateType(state, v.Type()) {
+			return fmt.Sprintf("blit %s, %s, %d", expr, qbeLocalName(agg.PtrName), agg.Size), nil
 		}
 		abiType, err := qbeABIType(state, agg.Type)
 		if err != nil {
@@ -3346,6 +3354,26 @@ func sliceElementBuiltin(sliceType *typeinfo.SliceType) (string, bool) {
 		return "", false
 	}
 	return builtin.Name, true
+}
+
+func isStringSliceCastPair(src, dst typeinfo.Type) bool {
+	if _, ok := src.(*typeinfo.StringType); ok {
+		sliceType, ok := dst.(*typeinfo.SliceType)
+		if !ok {
+			return false
+		}
+		elem, ok := sliceElementBuiltin(sliceType)
+		return ok && (elem == "u8" || elem == "char")
+	}
+	if _, ok := dst.(*typeinfo.StringType); ok {
+		sliceType, ok := src.(*typeinfo.SliceType)
+		if !ok {
+			return false
+		}
+		elem, ok := sliceElementBuiltin(sliceType)
+		return ok && (elem == "u8" || elem == "char")
+	}
+	return false
 }
 
 func lowerUnionSource(state *moduleState, value mir.Value) (string, error) {
