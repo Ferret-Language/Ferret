@@ -455,6 +455,8 @@ func (c *checker) typeOfExpr(scope *refineScope, expr ast.Expr, expected typeinf
 		return c.typeOfPostfix(scope, e)
 	case *ast.CallExpr:
 		return c.typeOfCall(scope, e, expected)
+	case *ast.LambdaExpr:
+		return c.typeOfLambda(scope, e, expected)
 	case *ast.SelectorExpr:
 		return c.typeOfSelector(scope, e)
 	case *ast.CastExpr:
@@ -481,6 +483,7 @@ func (c *checker) typeOfIdent(scope *refineScope, ident *ast.Ident, expected typ
 		return typeinfo.InvalidType{}
 	}
 	if res.Kind == binding.ResolutionSymbol && res.Symbol != nil {
+		c.reportLambdaCapture(ident, res.Symbol)
 		if scope != nil && len(ident.Path) == 1 {
 			if typ, ok := c.lookupRefinedType(scope, ident); ok && typ != nil {
 				c.info.BindNode(ident, typ)
@@ -1170,6 +1173,111 @@ func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr, expected ty
 	}
 	c.info.BindNode(expr, instantiated.Result)
 	return instantiated.Result
+}
+
+func (c *checker) typeOfLambda(scope *refineScope, expr *ast.LambdaExpr, expected typeinfo.Type) typeinfo.Type {
+	var expectedFn *typeinfo.FuncType
+	if fn, ok := c.underlying(expected).(*typeinfo.FuncType); ok {
+		expectedFn = fn
+	}
+
+	if expectedFn != nil && len(expectedFn.Params) != len(expr.Params) {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("expected %d lambda parameters, got %d", len(expectedFn.Params), len(expr.Params))).
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(&loc, "lambda parameter count does not match the expected function type"),
+		)
+	}
+
+	lambdaScope := newRefineScope(scope)
+	c.pushLambdaScope()
+	defer c.popLambdaScope()
+	params := make([]typeinfo.ParamSpec, 0, len(expr.Params))
+	for i, param := range expr.Params {
+		var paramType typeinfo.Type
+		if param.Type != nil {
+			paramType = c.syntaxType(c.mod, param.Type)
+			c.info.BindNode(param.Type, paramType)
+		} else if expectedFn != nil && i < len(expectedFn.Params) {
+			paramType = expectedFn.Params[i].Type
+		} else {
+			loc := param.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("lambda parameter type cannot be inferred here").
+					WithCode(diagnostics.ErrTypeMismatch).
+					WithPrimaryLabel(&loc, "add an explicit parameter type or use this lambda in a typed function context"),
+			)
+			paramType = typeinfo.UnknownType{}
+		}
+
+		if param.Name != nil {
+			c.bindDeclSymbol(param.Name, paramType)
+			if sym := c.declSymbol(param.Name); sym != nil {
+				if param.IsMut {
+					sym.Flags |= semmeta.FlagMutable
+				}
+				lambdaScope.Set(sym, paramType)
+			}
+		}
+
+		flags := paramFlags(param)
+		params = append(params, typeinfo.ParamSpec{
+			Name:  ast.ExprText(param.Name),
+			Type:  paramType,
+			Flags: flags,
+		})
+
+		if expectedFn != nil && i < len(expectedFn.Params) && !c.checkAssignable(param.Location, expectedFn.Params[i].Type, paramType) {
+			paramType = typeinfo.InvalidType{}
+		}
+	}
+
+	var resultType typeinfo.Type
+	expectedResult := typeinfo.Type(nil)
+	if expectedFn != nil {
+		expectedResult = expectedFn.Result
+	}
+	if expr.BodyExpr != nil {
+		resultType = c.typeOfExpr(lambdaScope, expr.BodyExpr, expectedResult)
+	} else if expr.BodyBlock != nil {
+		if expectedResult == nil {
+			if len(expr.BodyBlock.Stmts) == 0 {
+				resultType = &typeinfo.BuiltinType{Name: "void"}
+			} else if last, ok := expr.BodyBlock.Stmts[len(expr.BodyBlock.Stmts)-1].(*ast.ExprStmt); ok {
+				for i := 0; i < len(expr.BodyBlock.Stmts)-1; i++ {
+					c.checkStmt(lambdaScope, expr.BodyBlock.Stmts[i])
+				}
+				resultType = c.typeOfExpr(lambdaScope, last.Value, nil)
+			} else {
+				c.checkStmt(lambdaScope, expr.BodyBlock)
+				resultType = &typeinfo.BuiltinType{Name: "void"}
+			}
+		} else if typeinfo.IsBuiltinNamed(expectedResult, "void") {
+			c.checkStmt(lambdaScope, expr.BodyBlock)
+			resultType = expectedResult
+		} else {
+			resultType, _ = c.blockValueType(
+				lambdaScope,
+				expr.BodyBlock,
+				expectedResult,
+				"lambda body must yield a value or exit",
+				"add a final expression or terminate this lambda body",
+				"lambda body must end with a value expression or exit",
+				"this lambda body does not produce a value",
+			)
+		}
+	}
+	if resultType == nil {
+		resultType = &typeinfo.BuiltinType{Name: "void"}
+	}
+	if expectedResult != nil && !c.checkAssignable(expr.Location, expectedResult, resultType) {
+		resultType = typeinfo.InvalidType{}
+	}
+
+	fnType := &typeinfo.FuncType{Params: params, Result: resultType}
+	c.info.BindNode(expr, fnType)
+	return fnType
 }
 
 func (c *checker) typeOfBuiltinLen(scope *refineScope, expr *ast.CallExpr) typeinfo.Type {

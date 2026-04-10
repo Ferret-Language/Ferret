@@ -5,6 +5,7 @@ import (
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
+	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
 	"compiler/internal/frontend/ast"
 )
@@ -18,6 +19,11 @@ type refineScope struct {
 	parent *refineScope
 	types  map[symbols.SymbolID]typeinfo.Type
 	paths  map[string]typeinfo.Type
+}
+
+type lambdaScope struct {
+	owned    map[symbols.SymbolID]struct{}
+	reported map[symbols.SymbolID]struct{}
 }
 
 func newRefineScope(parent *refineScope) *refineScope {
@@ -77,6 +83,7 @@ type checker struct {
 	typeParamScopes            []map[string]*typeinfo.TypeParam
 	currentGenericFunc         *symbols.Symbol
 	currentGenericRequirements []*typeinfo.GenericRequirement
+	lambdaScopes               []*lambdaScope
 }
 
 func (c *checker) pushTypeParams(mod *context.Module, owner ast.Node, params []ast.TypeParam) []*typeinfo.TypeParam {
@@ -156,6 +163,7 @@ func (c *checker) bindDeclSymbol(node ast.Node, typ typeinfo.Type) {
 		return
 	}
 	c.info.BindSymbol(res.Symbol, typ)
+	c.ownCurrentLambdaSymbol(res.Symbol)
 }
 
 func (c *checker) declSymbol(node ast.Node) *symbols.Symbol {
@@ -167,6 +175,84 @@ func (c *checker) declSymbol(node ast.Node) *symbols.Symbol {
 		return nil
 	}
 	return res.Symbol
+}
+
+func (c *checker) pushLambdaScope() *lambdaScope {
+	if c == nil {
+		return nil
+	}
+	scope := &lambdaScope{
+		owned:    make(map[symbols.SymbolID]struct{}),
+		reported: make(map[symbols.SymbolID]struct{}),
+	}
+	c.lambdaScopes = append(c.lambdaScopes, scope)
+	return scope
+}
+
+func (c *checker) popLambdaScope() {
+	if c == nil || len(c.lambdaScopes) == 0 {
+		return
+	}
+	c.lambdaScopes = c.lambdaScopes[:len(c.lambdaScopes)-1]
+}
+
+func (c *checker) currentLambdaScope() *lambdaScope {
+	if c == nil || len(c.lambdaScopes) == 0 {
+		return nil
+	}
+	return c.lambdaScopes[len(c.lambdaScopes)-1]
+}
+
+func (c *checker) ownCurrentLambdaSymbol(sym *symbols.Symbol) {
+	scope := c.currentLambdaScope()
+	if scope == nil || sym == nil {
+		return
+	}
+	scope.owned[sym.ID] = struct{}{}
+}
+
+func (c *checker) reportLambdaCapture(ident *ast.Ident, sym *symbols.Symbol) {
+	scope := c.currentLambdaScope()
+	if c == nil || ident == nil || sym == nil || scope == nil {
+		return
+	}
+	if !c.isLambdaCaptureCandidate(sym) {
+		return
+	}
+	if _, ok := scope.owned[sym.ID]; ok {
+		return
+	}
+	if _, ok := scope.reported[sym.ID]; ok {
+		return
+	}
+	scope.reported[sym.ID] = struct{}{}
+	loc := ident.Location
+	c.ctx.Diagnostics.Add(
+		diagnostics.NewError("capturing lambdas are not supported yet").
+			WithCode(diagnostics.ErrInvalidOperation).
+			WithPrimaryLabel(&loc, "this lambda captures an outer local value"),
+	)
+}
+
+func (c *checker) isLambdaCaptureCandidate(sym *symbols.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	switch sym.Kind {
+	case symbols.SymbolParam:
+		return true
+	case symbols.SymbolVar, symbols.SymbolConst:
+		switch sym.Node.(type) {
+		case *ast.LetStmt, *ast.ConstStmt, *ast.LockStmt:
+			return true
+		case nil:
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
 }
 
 func (c *checker) bindNodeSymbolResolution(node ast.Node, sym *symbols.Symbol) {
