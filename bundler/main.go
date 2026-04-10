@@ -58,7 +58,7 @@ func run() error {
 		return err
 	}
 
-	fmt.Printf("packaged %s and %s\n", coreDir, toolchainDir)
+	fmt.Printf("packaged\n\t- %s\n\t- %s\n", coreDir, toolchainDir)
 	return nil
 }
 

@@ -1362,7 +1362,7 @@ func buildHoverIndexFromResult(result compiler.Result, parsedPath, originalPath,
 	}
 	hoverCandidates, defCandidates := collectHoverCandidates(mod, mod.Types, modules, sourceText, parsedPath, originalPath)
 	docSymbols := collectDocumentSymbols(mod, mod.Types)
-	completions := collectCompletionIndex(mod, mod.Types, modules)
+	completions := collectCompletionIndex(mod, mod.Types, modules, result.CompilerState)
 	return &hoverIndex{
 		candidates:           hoverCandidates,
 		definitionCandidates: defCandidates,
@@ -1862,7 +1862,7 @@ func completionFromIndex(index *hoverIndex, sourceText string, pos source.Positi
 	}
 	comp := index.completions
 	ctx := completionContextAt(sourceText, pos)
-	candidates := visibleCompletionCandidatesAt(comp.items, pos)
+	candidates := visibleCompletionCandidatesAt(comp.items, comp.mod.FilePath, pos)
 	items := make([]completionItem, 0)
 	if ctx.IsMember {
 		items = append(items, memberCompletionItemsForContext(comp, candidates, sourceText, pos)...)
@@ -1887,7 +1887,7 @@ func completionFromIndex(index *hoverIndex, sourceText string, pos source.Positi
 	return items
 }
 
-func collectCompletionIndex(mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module) *completionIndex {
+func collectCompletionIndex(mod *context.Module, info *typeinfo.ModuleInfo, modulesByKey map[string]*context.Module, state *context.CompilerContext) *completionIndex {
 	if mod == nil {
 		return &completionIndex{keywords: keywordCompletionItems()}
 	}
@@ -1897,11 +1897,11 @@ func collectCompletionIndex(mod *context.Module, info *typeinfo.ModuleInfo, modu
 		mod:      mod,
 		modules:  modulesByKey,
 	}
-	addSymbol := func(sym *symbols.Symbol, scope source.Location) {
+	addSymbol := func(sym *symbols.Symbol, owner *context.Module, ownerInfo *typeinfo.ModuleInfo, scope source.Location) {
 		if sym == nil || sym.Name == "" {
 			return
 		}
-		item := completionItemForSymbol(sym, info, mod)
+		item := completionItemForSymbol(sym, ownerInfo, owner)
 		if item.Label == "" {
 			return
 		}
@@ -1910,12 +1910,17 @@ func collectCompletionIndex(mod *context.Module, info *typeinfo.ModuleInfo, modu
 			location: sym.Location,
 			scope:    scope,
 			name:     sym.Name,
-			typ:      symbolTypeForCompletion(sym, info),
+			typ:      symbolTypeForCompletion(sym, ownerInfo),
 		})
 	}
 	if mod.ModuleScope != nil {
 		for _, sym := range mod.ModuleScope.Symbols() {
-			addSymbol(sym, source.Location{})
+			addSymbol(sym, mod, info, source.Location{})
+		}
+	}
+	if state != nil && state.Prelude != nil && state.Prelude.ModuleScope != nil {
+		for _, sym := range state.Prelude.ModuleScope.Symbols() {
+			addSymbol(sym, state.Prelude, state.Prelude.Types, source.Location{})
 		}
 	}
 	if mod.Bindings != nil {
@@ -1925,7 +1930,7 @@ func collectCompletionIndex(mod *context.Module, info *typeinfo.ModuleInfo, modu
 			}
 			scope := fn.Loc()
 			for _, sym := range locals {
-				addSymbol(sym, scope)
+				addSymbol(sym, mod, info, scope)
 			}
 			for _, typeParam := range fn.TypeParams {
 				if typeParam.Name == nil {
@@ -2034,13 +2039,13 @@ func keywordCompletionItems() []completionItem {
 	return items
 }
 
-func visibleCompletionCandidatesAt(items []completionCandidate, pos source.Position) []completionCandidate {
+func visibleCompletionCandidatesAt(items []completionCandidate, currentFile string, pos source.Position) []completionCandidate {
 	out := make([]completionCandidate, 0, len(items))
 	for _, item := range items {
 		if !locationIsVisibleAt(item.scope, pos) {
 			continue
 		}
-		if item.location.Start != nil && compareSourcePosition(*item.location.Start, pos) > 0 {
+		if item.location.Start != nil && (item.location.File == "" || item.location.File == currentFile) && compareSourcePosition(*item.location.Start, pos) > 0 {
 			continue
 		}
 		out = append(out, item)

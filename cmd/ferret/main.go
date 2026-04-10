@@ -1014,7 +1014,7 @@ func moduleArtifactPath(mod *context.Module, outDir, ext string) (string, error)
 
 func backendLayouts(result compiler.Result) map[string]*layout.Module {
 	layouts := make(map[string]*layout.Module)
-	for _, mod := range result.Modules {
+	for _, mod := range compilationModules(result) {
 		if mod != nil && mod.Layout != nil {
 			layouts[mod.Key] = mod.Layout
 		}
@@ -1027,7 +1027,7 @@ func backendLayouts(result compiler.Result) map[string]*layout.Module {
 
 func backendModules(result compiler.Result) map[string]*mir.Module {
 	modules := make(map[string]*mir.Module)
-	for _, mod := range result.Modules {
+	for _, mod := range compilationModules(result) {
 		if mod != nil && mod.MIR != nil {
 			modules[mod.Key] = mod.MIR
 		}
@@ -1133,8 +1133,9 @@ func buildExecutable(result compiler.Result, outputPath string, target backend.T
 // entry module. Avoids duplicates.
 func allModulesForBuild(result compiler.Result) []*context.Module {
 	seen := make(map[string]struct{})
-	all := make([]*context.Module, 0, len(result.Modules)+1)
-	for _, mod := range result.Modules {
+	modules := compilationModules(result)
+	all := make([]*context.Module, 0, len(modules)+1)
+	for _, mod := range modules {
 		if mod == nil {
 			continue
 		}
@@ -1151,6 +1152,13 @@ func allModulesForBuild(result compiler.Result) []*context.Module {
 		all = append(all, result.Entry)
 	}
 	return all
+}
+
+func compilationModules(result compiler.Result) []*context.Module {
+	if result.CompilerState != nil {
+		return result.CompilerState.Modules()
+	}
+	return result.Modules
 }
 
 func safeDebugModule(module *ast.Module) any {

@@ -32,6 +32,27 @@ func TestAllModulesForBuildOrdersAndDedupes(t *testing.T) {
 	}
 }
 
+func TestAllModulesForBuildUsesCompilerStateModules(t *testing.T) {
+	ctx := context.New("", ".fer", nil)
+	prelude := ctx.UpsertModule(context.ResolvedImport{Key: "builtin:global", ImportPath: "global"})
+	dep := ctx.UpsertModule(context.ResolvedImport{Key: "dep", ImportPath: "dep"})
+	entry := ctx.UpsertModule(context.ResolvedImport{Key: "main", ImportPath: "main"})
+	ctx.Prelude = prelude
+
+	result := compiler.Result{
+		Modules:       []*context.Module{dep, entry},
+		Entry:         entry,
+		CompilerState: ctx,
+	}
+	got := allModulesForBuild(result)
+	if len(got) != 3 {
+		t.Fatalf("unexpected module count: %d", len(got))
+	}
+	if got[0].Key != prelude.Key || got[1].Key != dep.Key || got[2].Key != entry.Key {
+		t.Fatalf("unexpected module order: %s, %s, %s", got[0].Key, got[1].Key, got[2].Key)
+	}
+}
+
 func TestModuleArtifactPath(t *testing.T) {
 	mod := &context.Module{ImportPath: "std/io"}
 	path, err := moduleArtifactPath(mod, "/tmp/out", ".mir")

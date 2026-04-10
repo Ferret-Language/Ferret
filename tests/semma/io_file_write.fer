@@ -7,10 +7,11 @@ fn main() -> void {
 
     io::Write(file, "Hello")
     io::Write(file, " World")
+    io::Write(file, 132245 as str)
     //file.Close()
     
     
     let number : i16384 = 39999999999999999999999999999999
-    print(number)
-    
+    println(number)
+    println("Hello")
 }

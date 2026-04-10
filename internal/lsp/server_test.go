@@ -3278,6 +3278,50 @@ func TestCompletionReturnsVisibleSymbols(t *testing.T) {
 	}
 }
 
+func TestCompletionIncludesPreludeGlobalsWithoutImport(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "fn main() {\n    pri\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    pri")
+	if !ok {
+		t.Fatal("failed to find completion position")
+	}
+	char += len("    pri")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/completion",
+		Params: mustRawJSON(t, completionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	items := decodeCompletionResult(t, out.String())
+	foundPrint := false
+	foundPrintln := false
+	for _, item := range items {
+		if item.Label == "print" {
+			foundPrint = true
+		}
+		if item.Label == "println" {
+			foundPrintln = true
+		}
+	}
+	if !foundPrint || !foundPrintln {
+		t.Fatalf("expected prelude completions for print/println, got %#v", items)
+	}
+}
+
 func TestCompletionMemberAndStaticMember(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
