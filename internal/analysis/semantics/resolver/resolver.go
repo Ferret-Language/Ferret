@@ -514,6 +514,27 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 		for _, typ := range e.TypeArgs {
 			r.resolveType(scope, typ)
 		}
+	case *ast.LambdaExpr:
+		lambdaScope := table.New(scope)
+		for _, param := range e.Params {
+			r.resolveType(scope, param.Type)
+			if param.Name == nil {
+				continue
+			}
+			sym := symbols.New(param.Name.Text(), symbols.SymbolParam, nil)
+			sym.Location = param.Name.Loc()
+			if param.IsMut {
+				sym.Flags |= semmeta.FlagMutable
+			}
+			declared := r.declareLocal(lambdaScope, sym)
+			r.addFunctionLocal(declared)
+			r.bindDeclIdent(param.Name, declared)
+		}
+		if e.BodyBlock != nil {
+			r.resolveStmt(lambdaScope, e.BodyBlock)
+		} else {
+			r.resolveExpr(lambdaScope, e.BodyExpr)
+		}
 	case *ast.SelectorExpr:
 		r.resolveExpr(scope, e.Left)
 	case *ast.CastExpr:

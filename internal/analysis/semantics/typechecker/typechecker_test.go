@@ -258,6 +258,114 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerHandlesFunctionTypeSyntax(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn takefn(fun: fn(i32, ...str) -> i32) -> void {}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	fn := findTypeFunc(t, result.Entry.AST, "takefn")
+	ft, ok := result.Entry.Types.Nodes[fn.Params[0].Type].(*typeinfo.FuncType)
+	if !ok {
+		t.Fatalf("expected semantic function type, got %T", result.Entry.Types.Nodes[fn.Params[0].Type])
+	}
+	if len(ft.Params) != 2 || ft.Params[1].Flags&typeinfo.FlagVariadic == 0 {
+		t.Fatalf("expected variadic function type param, got %#v", ft.Params)
+	}
+	if !typeinfo.IsBuiltinNamed(ft.Result, "i32") {
+		t.Fatalf("expected function type result i32, got %#v", ft.Result)
+	}
+}
+
+func TestTypecheckerInfersLambdaTypeAndCall(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let add = |a: i32, b: i32| a + b
+    return add(1, 2)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letAdd := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	lambda, ok := letAdd.Value.(*ast.LambdaExpr)
+	if !ok {
+		t.Fatalf("expected lambda expr, got %T", letAdd.Value)
+	}
+	lambdaType, ok := result.Entry.Types.Nodes[lambda].(*typeinfo.FuncType)
+	if !ok {
+		t.Fatalf("expected lambda func type, got %T", result.Entry.Types.Nodes[lambda])
+	}
+	if !typeinfo.IsBuiltinNamed(lambdaType.Result, "i32") {
+		t.Fatalf("expected lambda result i32, got %#v", lambdaType.Result)
+	}
+	ret := mainFn.Body.Stmts[1].(*ast.ReturnStmt)
+	call, ok := ret.Value.(*ast.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expr, got %T", ret.Value)
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[call], "i32") {
+		t.Fatalf("expected lambda call result i32, got %#v", result.Entry.Types.Nodes[call])
+	}
+}
+
+func TestTypecheckerRejectsLambdaWithoutContextualOrExplicitParamTypes(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let _ = |x| x
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected lambda inference diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if strings.Contains(diag.Message, "lambda parameter type cannot be inferred here") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected lambda parameter inference diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsCapturingLambda(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let x = 1
+    let _ = |y: i32| x + y
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected capturing lambda diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if strings.Contains(diag.Message, "capturing lambdas are not supported yet") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected capturing lambda diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerHandlesStaticMethodCallWithGenericOwnerTypeArgs(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

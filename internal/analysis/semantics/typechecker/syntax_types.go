@@ -108,6 +108,23 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		c.checkTypeParamDeclConstraintsAt(t.Loc(), owner, decl, args)
 		named.TypeArgs = args
 		return named
+	case *ast.FuncType:
+		params := make([]typeinfo.ParamSpec, 0, len(t.Params))
+		for _, param := range t.Params {
+			flags := typeinfo.ValueFlags(0)
+			if param.IsVariadic {
+				flags |= typeinfo.FlagVariadic
+			}
+			params = append(params, typeinfo.ParamSpec{
+				Type:  c.typeFromSyntax(mod, param.Type),
+				Flags: flags,
+			})
+		}
+		result := c.typeFromSyntax(mod, t.Result)
+		if result == nil {
+			result = &typeinfo.BuiltinType{Name: "void"}
+		}
+		return &typeinfo.FuncType{Params: params, Result: result}
 	case *ast.SelfType:
 		return &typeinfo.SelfType{}
 	case *ast.PointerType:
