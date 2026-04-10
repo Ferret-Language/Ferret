@@ -5533,13 +5533,41 @@ fn String::Write(&mut self, text: str) -> usize {
     return count
 }
 
-fn Write(dst: Writer, text: str) -> usize {
+fn Write(mut dst: Writer, text: str) -> usize {
     return dst.Write(text)
 }
 
 fn main() -> void {
     let buf = String{}
     _ = Write(buf, "hello")
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected immutable interface boxing diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "cannot use immutable String as Writer") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected immutable interface boxing diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsDirectInterfaceMutReceiverCallOnImmutableValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Writer interface {
+    Write(&mut self, text: str) -> usize
+}
+
+fn main(w: Writer) -> void {
+    w.Write("hello")
 }
 `)
 

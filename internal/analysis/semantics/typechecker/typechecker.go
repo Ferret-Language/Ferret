@@ -3306,6 +3306,30 @@ func (c *checker) reportTypeMismatch(loc source.Location, expected, got typeinfo
 }
 
 func (c *checker) checkExprAssignable(scope *refineScope, expr ast.Expr, expected, got typeinfo.Type) bool {
+	if expr != nil {
+		if iface, ok := c.underlying(expected).(*typeinfo.InterfaceType); ok && iface != nil && c.implementsInterface(got, iface) {
+			needsMutable := false
+			for _, method := range iface.OrderedMethods {
+				if method != nil && !method.Static && method.Receiver == typeinfo.ReceiverRefMut {
+					needsMutable = true
+					break
+				}
+			}
+			if needsMutable {
+				addressable, mutable := c.exprAccess(scope, expr)
+				if !addressable || !mutable {
+					loc := expr.Loc()
+					c.ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("cannot use immutable %s as %s", got.String(), expected.String())).
+							WithCode(diagnostics.ErrTypeMismatch).
+							WithPrimaryLabel(&loc, "this interface requires mutable receiver access").
+							WithNote("declare the value with `let mut` before passing it here"),
+					)
+					return false
+				}
+			}
+		}
+	}
 	if expr != nil && c.assignableFromExpr(scope, expr, expected, got) {
 		return true
 	}
