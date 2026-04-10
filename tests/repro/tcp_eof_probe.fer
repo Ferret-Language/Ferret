@@ -1,0 +1,21 @@
+import "std/io"
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut conn = tcp::Dial("127.0.0.1", 9102) catch |err| {
+        print(err)
+        return
+    }
+    let data = io::Read(conn, 4) catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    if len(data) == 0 {
+        print("tcp-eof-ok")
+        conn.Close()
+        return
+    }
+    print("tcp-eof-fail")
+    conn.Close()
+}

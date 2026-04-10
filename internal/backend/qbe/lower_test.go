@@ -994,6 +994,9 @@ fn write_raw(handle: ^void, text: &str) -> usize;
 #[extern("ferret_std_net_tcp_read")]
 fn read_raw(handle: ^void, size: usize) -> []u8;
 
+#[extern("ferret_std_net_tcp_set_read_timeout")]
+fn set_read_timeout_raw(handle: ^void, ms: i32) -> usize;
+
 #[extern("ferret_std_net_tcp_close")]
 fn close_raw(handle: ^void) -> void;
 
@@ -1025,6 +1028,12 @@ fn Conn::Read(&mut self, size: usize) -> io::Error![]u8 {
     }
 }
 
+fn Conn::SetReadTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_read_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
+    }
+}
+
 fn Conn::Close(self) -> void {
     unsafe {
         close_raw(mem::Expose(self.inner) as ^void)
@@ -1037,6 +1046,10 @@ import "std/net/tcp"
 
 fn main() -> void {
     let mut conn = tcp::Dial("127.0.0.1", 8080) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.SetReadTimeoutMs(100) catch |err| {
         print(err)
         return
     }
@@ -1068,6 +1081,7 @@ fn main() -> void {
 		"call $std__io__Write(",
 		"call $std__io__Read(",
 		"call $std__net__tcp__Dial(",
+		"call $std__net__tcp__Conn__SetReadTimeoutMs(",
 		"call $std__net__tcp__Conn__Close(",
 	} {
 		if !strings.Contains(text, want) {

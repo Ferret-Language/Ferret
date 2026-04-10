@@ -15,6 +15,7 @@ typedef SOCKET FerretSocket;
 #else
 #include <netdb.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 typedef int FerretSocket;
@@ -100,6 +101,25 @@ static FerretStdTcpConn *ferret__net_new_conn(FerretSocket socket_fd) {
     return conn;
 }
 
+static ferret_bool ferret__net_apply_timeout(FerretSocket socket_fd, int optname, ferret_i32 ms) {
+    if (socket_fd == FERRET_INVALID_SOCKET || ms < 0) {
+        return 0;
+    }
+#ifdef _WIN32
+    {
+        DWORD value = (DWORD)ms;
+        return setsockopt(socket_fd, SOL_SOCKET, optname, (const char *)&value, (int)sizeof(value)) == 0;
+    }
+#else
+    {
+        struct timeval value;
+        value.tv_sec = (time_t)(ms / 1000);
+        value.tv_usec = (suseconds_t)((ms % 1000) * 1000);
+        return setsockopt(socket_fd, SOL_SOCKET, optname, &value, (socklen_t)sizeof(value)) == 0;
+    }
+#endif
+}
+
 static ferret_i32 ferret__net_map_error_code(int code, ferret_bool addrinfo_code) {
 #ifdef _WIN32
     if (addrinfo_code) {
@@ -119,6 +139,7 @@ static ferret_i32 ferret__net_map_error_code(int code, ferret_bool addrinfo_code
     case WSAECONNREFUSED:
         return FERRET_IO_ERR_CONNECTION_REFUSED;
     case WSAETIMEDOUT:
+    case WSAEWOULDBLOCK:
         return FERRET_IO_ERR_TIMED_OUT;
     case WSAEADDRINUSE:
         return FERRET_IO_ERR_ADDRESS_IN_USE;
@@ -152,6 +173,12 @@ static ferret_i32 ferret__net_map_error_code(int code, ferret_bool addrinfo_code
     case ECONNREFUSED:
         return FERRET_IO_ERR_CONNECTION_REFUSED;
     case ETIMEDOUT:
+#ifdef EAGAIN
+    case EAGAIN:
+#endif
+#if defined(EWOULDBLOCK) && (!defined(EAGAIN) || EWOULDBLOCK != EAGAIN)
+    case EWOULDBLOCK:
+#endif
         return FERRET_IO_ERR_TIMED_OUT;
     case EADDRINUSE:
         return FERRET_IO_ERR_ADDRESS_IN_USE;
@@ -388,6 +415,48 @@ FerretSliceU8 ferret_std_net_tcp_read(ferret_raw handle, ferret_usize size) {
     out.len = (ferret_usize)received;
     ferret__io_error_clear();
     return out;
+}
+
+ferret_usize ferret_std_net_tcp_set_read_timeout(ferret_raw handle, ferret_i32 ms) {
+    FerretStdTcpConn *conn = (FerretStdTcpConn *)handle;
+
+    if (conn == NULL || conn->socket_fd == FERRET_INVALID_SOCKET) {
+        ferret__io_error_set(FERRET_IO_ERR_CLOSED);
+        return 0;
+    }
+    if (!ferret__net_apply_timeout(conn->socket_fd, SO_RCVTIMEO, ms)) {
+        ferret__io_error_set(ferret__net_map_error_code(
+#ifdef _WIN32
+            WSAGetLastError(),
+#else
+            errno,
+#endif
+            0));
+        return 0;
+    }
+    ferret__io_error_clear();
+    return 0;
+}
+
+ferret_usize ferret_std_net_tcp_set_write_timeout(ferret_raw handle, ferret_i32 ms) {
+    FerretStdTcpConn *conn = (FerretStdTcpConn *)handle;
+
+    if (conn == NULL || conn->socket_fd == FERRET_INVALID_SOCKET) {
+        ferret__io_error_set(FERRET_IO_ERR_CLOSED);
+        return 0;
+    }
+    if (!ferret__net_apply_timeout(conn->socket_fd, SO_SNDTIMEO, ms)) {
+        ferret__io_error_set(ferret__net_map_error_code(
+#ifdef _WIN32
+            WSAGetLastError(),
+#else
+            errno,
+#endif
+            0));
+        return 0;
+    }
+    ferret__io_error_clear();
+    return 0;
 }
 
 void ferret_std_net_tcp_close(ferret_raw handle) {

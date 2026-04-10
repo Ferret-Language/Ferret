@@ -32,6 +32,12 @@ fn write_raw(handle: ^void, text: &str) -> usize;
 #[extern("ferret_std_net_tcp_read")]
 fn read_raw(handle: ^void, size: usize) -> []u8;
 
+#[extern("ferret_std_net_tcp_set_read_timeout")]
+fn set_read_timeout_raw(handle: ^void, ms: i32) -> usize;
+
+#[extern("ferret_std_net_tcp_set_write_timeout")]
+fn set_write_timeout_raw(handle: ^void, ms: i32) -> usize;
+
 #[extern("ferret_std_net_tcp_close")]
 fn close_raw(handle: ^void) -> void;
 
@@ -79,6 +85,18 @@ fn Conn::Write(&mut self, text: str) -> io::Error!usize {
 fn Conn::Read(&mut self, size: usize) -> io::Error![]u8 {
     unsafe {
         return io::WrapBytes(read_raw(mem::ExposeRef(&self.inner) as ^void, size))
+    }
+}
+
+fn Conn::SetReadTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_read_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
+    }
+}
+
+fn Conn::SetWriteTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_write_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
     }
 }
 
