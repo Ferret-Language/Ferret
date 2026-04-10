@@ -1,0 +1,61 @@
+import "std/io"
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut conn = tcp::Dial("127.0.0.1", 9108) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.SetNoDelay(true) catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    _ = conn.SetKeepAlive(true) catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    let local = conn.LocalAddr() catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    let peer = conn.PeerAddr() catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    if len(local) == 0 || len(peer) == 0 {
+        print("tcp-conn-controls-fail")
+        conn.Close()
+        return
+    }
+    _ = io::Write(conn, "ping") catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    _ = conn.ShutdownWrite() catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    let data = io::Read(conn, 4) catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    _ = conn.ShutdownRead() catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    if len(data) == 4 && data as str == "pong" {
+        print("tcp-conn-controls-ok")
+        conn.Close()
+        return
+    }
+    print("tcp-conn-controls-fail")
+    conn.Close()
+}

@@ -232,6 +232,14 @@ ferret_usize ferret_std_net_tcp_write(ferret_raw handle, const FerretStr *text);
 FerretSliceU8 ferret_std_net_tcp_read(ferret_raw handle, ferret_usize size);
 ferret_usize ferret_std_net_tcp_set_read_timeout(ferret_raw handle, ferret_i32 ms);
 ferret_usize ferret_std_net_tcp_set_write_timeout(ferret_raw handle, ferret_i32 ms);
+ferret_usize ferret_std_net_tcp_set_accept_timeout(ferret_raw handle, ferret_i32 ms);
+ferret_usize ferret_std_net_tcp_set_nodelay(ferret_raw handle, ferret_bool enabled);
+ferret_usize ferret_std_net_tcp_set_keepalive(ferret_raw handle, ferret_bool enabled);
+ferret_usize ferret_std_net_tcp_shutdown_read(ferret_raw handle);
+ferret_usize ferret_std_net_tcp_shutdown_write(ferret_raw handle);
+FerretStr ferret_std_net_tcp_local_addr(ferret_raw handle);
+FerretStr ferret_std_net_tcp_listener_local_addr(ferret_raw handle);
+FerretStr ferret_std_net_tcp_peer_addr(ferret_raw handle);
 void ferret_std_net_tcp_close_listener(ferret_raw handle);
 void ferret_std_net_tcp_close(ferret_raw handle);
 

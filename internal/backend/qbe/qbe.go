@@ -3246,9 +3246,6 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if call, ok, err := lowerStringSliceCast(state, src, dst, v.Left); ok || err != nil {
 		return call, err
 	}
-	if _, ok := dst.(*typeinfo.StringType); ok {
-		return lowerStringCast(state, v.Left)
-	}
 	if isUnionAggregate(v.Left.Type()) {
 		srcPtr, err := lowerUnionSource(state, v.Left)
 		if err != nil {
@@ -3281,6 +3278,9 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 		tmp := freshTemp(state, "ifacecast")
 		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, srcPtr))
 		return "copy " + tmp, nil
+	}
+	if _, ok := dst.(*typeinfo.StringType); ok {
+		return lowerStringCast(state, v.Left)
 	}
 	if isAggregateType(state, v.Left.Type()) && isAggregateType(state, v.Type()) {
 		return lowerValue(state, v.Left)

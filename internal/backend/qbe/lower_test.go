@@ -799,7 +799,11 @@ fn WrapCount(value: usize) -> Error!usize {
 }
 
 fn WrapBytes(value: []u8) -> Error![]u8 {
-    return value
+	return value
+}
+
+fn WrapText(value: str) -> Error!str {
+	return value
 }
 
 fn NewBuffer() -> Buffer {
@@ -965,6 +969,10 @@ fn WrapBytes(value: []u8) -> Error![]u8 {
     return value
 }
 
+fn WrapText(value: str) -> Error!str {
+    return value
+}
+
 fn Write(mut dst: Writer, text: str) -> Error!usize {
     return dst.Write(text)
 }
@@ -996,6 +1004,27 @@ fn read_raw(handle: ^void, size: usize) -> []u8;
 
 #[extern("ferret_std_net_tcp_set_read_timeout")]
 fn set_read_timeout_raw(handle: ^void, ms: i32) -> usize;
+
+#[extern("ferret_std_net_tcp_set_write_timeout")]
+fn set_write_timeout_raw(handle: ^void, ms: i32) -> usize;
+
+#[extern("ferret_std_net_tcp_set_nodelay")]
+fn set_nodelay_raw(handle: ^void, enabled: bool) -> usize;
+
+#[extern("ferret_std_net_tcp_set_keepalive")]
+fn set_keepalive_raw(handle: ^void, enabled: bool) -> usize;
+
+#[extern("ferret_std_net_tcp_shutdown_read")]
+fn shutdown_read_raw(handle: ^void) -> usize;
+
+#[extern("ferret_std_net_tcp_shutdown_write")]
+fn shutdown_write_raw(handle: ^void) -> usize;
+
+#[extern("ferret_std_net_tcp_local_addr")]
+fn local_addr_raw(handle: ^void) -> str;
+
+#[extern("ferret_std_net_tcp_peer_addr")]
+fn peer_addr_raw(handle: ^void) -> str;
 
 #[extern("ferret_std_net_tcp_close")]
 fn close_raw(handle: ^void) -> void;
@@ -1034,6 +1063,48 @@ fn Conn::SetReadTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
     }
 }
 
+fn Conn::SetWriteTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_write_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
+    }
+}
+
+fn Conn::SetNoDelay(&mut self, enabled: bool) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_nodelay_raw(mem::ExposeRef(&self.inner) as ^void, enabled))
+    }
+}
+
+fn Conn::SetKeepAlive(&mut self, enabled: bool) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_keepalive_raw(mem::ExposeRef(&self.inner) as ^void, enabled))
+    }
+}
+
+fn Conn::ShutdownRead(&mut self) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(shutdown_read_raw(mem::ExposeRef(&self.inner) as ^void))
+    }
+}
+
+fn Conn::ShutdownWrite(&mut self) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(shutdown_write_raw(mem::ExposeRef(&self.inner) as ^void))
+    }
+}
+
+fn Conn::LocalAddr(&self) -> io::Error!str {
+    unsafe {
+        return io::WrapText(local_addr_raw(mem::ExposeRef(&self.inner) as ^void))
+    }
+}
+
+fn Conn::PeerAddr(&self) -> io::Error!str {
+    unsafe {
+        return io::WrapText(peer_addr_raw(mem::ExposeRef(&self.inner) as ^void))
+    }
+}
+
 fn Conn::Close(self) -> void {
     unsafe {
         close_raw(mem::Expose(self.inner) as ^void)
@@ -1053,11 +1124,39 @@ fn main() -> void {
         print(err)
         return
     }
+    _ = conn.SetWriteTimeoutMs(100) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.SetNoDelay(true) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.SetKeepAlive(true) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.LocalAddr() catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.PeerAddr() catch |err| {
+        print(err)
+        return
+    }
     _ = io::Write(conn, "ping") catch |err| {
         print(err)
         return
     }
+    _ = conn.ShutdownWrite() catch |err| {
+        print(err)
+        return
+    }
     _ = io::Read(conn, 4) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.ShutdownRead() catch |err| {
         print(err)
         return
     }
@@ -1082,6 +1181,13 @@ fn main() -> void {
 		"call $std__io__Read(",
 		"call $std__net__tcp__Dial(",
 		"call $std__net__tcp__Conn__SetReadTimeoutMs(",
+		"call $std__net__tcp__Conn__SetWriteTimeoutMs(",
+		"call $std__net__tcp__Conn__SetNoDelay(",
+		"call $std__net__tcp__Conn__SetKeepAlive(",
+		"call $std__net__tcp__Conn__ShutdownRead(",
+		"call $std__net__tcp__Conn__ShutdownWrite(",
+		"call $std__net__tcp__Conn__LocalAddr(",
+		"call $std__net__tcp__Conn__PeerAddr(",
 		"call $std__net__tcp__Conn__Close(",
 	} {
 		if !strings.Contains(text, want) {
@@ -1124,7 +1230,11 @@ fn WrapCount(value: usize) -> Error!usize {
 }
 
 fn WrapBytes(value: []u8) -> Error![]u8 {
-    return value
+	return value
+}
+
+fn WrapText(value: str) -> Error!str {
+	return value
 }
 
 fn Write(mut dst: Writer, text: str) -> Error!usize {
@@ -1173,6 +1283,12 @@ fn close_raw(handle: ^void) -> void;
 #[extern("ferret_std_net_tcp_close_listener")]
 fn close_listener_raw(handle: ^void) -> void;
 
+#[extern("ferret_std_net_tcp_set_accept_timeout")]
+fn set_accept_timeout_raw(handle: ^void, ms: i32) -> usize;
+
+#[extern("ferret_std_net_tcp_listener_local_addr")]
+fn listener_local_addr_raw(handle: ^void) -> str;
+
 fn Listen(host: str, port: u16) -> io::Error!Listener {
     let raw = listen_raw(&host, port)
     let mut failed = false
@@ -1202,6 +1318,18 @@ fn Listener::Accept(&mut self) -> io::Error!Conn {
         return .{
             .inner = mem::Adopt(raw)
         }
+    }
+}
+
+fn Listener::SetAcceptTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_accept_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
+    }
+}
+
+fn Listener::LocalAddr(&self) -> io::Error!str {
+    unsafe {
+        return io::WrapText(listener_local_addr_raw(mem::ExposeRef(&self.inner) as ^void))
     }
 }
 
@@ -1236,6 +1364,16 @@ import "std/net/tcp"
 fn main() -> void {
     let mut listener = tcp::Listen("127.0.0.1", 8080) catch |err| {
         print(err)
+        return
+    }
+    _ = listener.LocalAddr() catch |err| {
+        print(err)
+        listener.Close()
+        return
+    }
+    _ = listener.SetAcceptTimeoutMs(100) catch |err| {
+        print(err)
+        listener.Close()
         return
     }
     let mut conn = listener.Accept() catch |err| {
@@ -1274,6 +1412,8 @@ fn main() -> void {
 	text := artifact.Text
 	for _, want := range []string{
 		"call $std__net__tcp__Listen(",
+		"call $std__net__tcp__Listener__LocalAddr(",
+		"call $std__net__tcp__Listener__SetAcceptTimeoutMs(",
 		"call $std__net__tcp__Listener__Accept(",
 		"call $std__net__tcp__Listener__Close(",
 	} {

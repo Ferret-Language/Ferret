@@ -1,0 +1,168 @@
+import "std/io"
+import "std/net/tcp"
+
+type Response struct {
+    raw: io::Buffer
+    status: u16
+    body_offset: usize
+}
+
+fn find_text(text: str, needle: str) -> usize {
+    let hay = text as []u8
+    let pat = needle as []u8
+    let hay_len = len(hay)
+    let pat_len = len(pat)
+    if pat_len == 0 {
+        return 0
+    }
+    if pat_len > hay_len {
+        return hay_len + 1
+    }
+    let mut i: usize = 0
+    while i + pat_len <= hay_len {
+        let mut j: usize = 0
+        let mut matched = true
+        while j < pat_len {
+            if hay[i + j] != pat[j] {
+                matched = false
+                break
+            }
+            j += 1
+        }
+        if matched {
+            return i
+        }
+        i += 1
+    }
+    return hay_len + 1
+}
+
+fn slice_text(text: str, start: usize) -> str {
+    let bytes = text as []u8
+    let total = len(bytes)
+    if start >= total {
+        return ""
+    }
+    unsafe {
+        let ptr = bytes as ^const u8
+        let addr = (ptr as usize) + start
+        return (addr as ^const u8, total - start) as str
+    }
+}
+
+fn parse_status_code(text: str) -> u16 {
+    let bytes = text as []u8
+    let total = len(bytes)
+    let mut i: usize = 0
+    while i < total && bytes[i] != b' ' {
+        i += 1
+    }
+    if i + 3 >= total {
+        return 0
+    }
+    i += 1
+    if bytes[i] < b'0' || bytes[i] > b'9' {
+        return 0
+    }
+    if bytes[i + 1] < b'0' || bytes[i + 1] > b'9' {
+        return 0
+    }
+    if bytes[i + 2] < b'0' || bytes[i + 2] > b'9' {
+        return 0
+    }
+    let a = (bytes[i] - b'0') as u16
+    let b = (bytes[i + 1] - b'0') as u16
+    let c = (bytes[i + 2] - b'0') as u16
+    return a * 100 + b * 10 + c
+}
+
+fn read_response(conn: &mut tcp::Conn) -> io::Error!Response {
+    let mut raw = io::NewBuffer()
+    let mut keep_reading = true
+    while keep_reading {
+        let chunk = conn.Read(4096) catch |err| {
+            raw.Release()
+            return err
+        }
+        if len(chunk) == 0 {
+            keep_reading = false
+            continue
+        }
+        _ = io::Write(raw, chunk as str) catch |err| {
+            raw.Release()
+            return err
+        }
+    }
+
+    let text = raw.AsStr()
+    let marker = find_text(text, "\r\n\r\n")
+    let status = parse_status_code(text)
+    if marker <= len(text) && status != 0 {
+        return .{
+            .raw = raw,
+            .status = status,
+            .body_offset = marker + (4 as usize)
+        }
+    }
+    raw.Release()
+    return io::ErrorFromCode(0)
+}
+
+fn Get(host: str, port: u16, path: str) -> io::Error!Response {
+    let mut conn = tcp::Dial(host, port) catch |err| {
+        return err
+    }
+
+    let mut req = io::NewBuffer()
+
+    _ = io::Write(req, "GET ") catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    _ = io::Write(req, path) catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    _ = io::Write(req, " HTTP/1.1\r\nHost: ") catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    _ = io::Write(req, host) catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    _ = io::Write(req, "\r\nConnection: close\r\n\r\n") catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    _ = io::Write(conn, req.AsStr()) catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    let response = read_response(&mut conn)
+    conn.Close()
+    req.Release()
+    return response
+}
+
+fn Response::StatusCode(&self) -> u16 {
+    return self.status
+}
+
+fn Response::Body(&self) -> str {
+    return slice_text(self.raw.AsStr(), self.body_offset)
+}
+
+fn Response::Raw(&self) -> str {
+    return self.raw.AsStr()
+}
+
+fn Response::Release(self) -> void {
+    self.raw.Release()
+}

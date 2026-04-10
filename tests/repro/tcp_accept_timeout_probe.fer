@@ -1,0 +1,30 @@
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut listener = tcp::Listen("127.0.0.1", 9107) catch |err| {
+        print(err)
+        return
+    }
+    let addr = listener.LocalAddr() catch |err| {
+        print(err)
+        listener.Close()
+        return
+    }
+    if len(addr) == 0 {
+        print("tcp-accept-timeout-fail")
+        listener.Close()
+        return
+    }
+    _ = listener.SetAcceptTimeoutMs(150) catch |err| {
+        print(err)
+        listener.Close()
+        return
+    }
+    let _ = listener.Accept() catch |err| {
+        print(err)
+        listener.Close()
+        return
+    }
+    print("tcp-accept-timeout-fail")
+    listener.Close()
+}

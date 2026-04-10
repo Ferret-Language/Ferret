@@ -111,6 +111,14 @@ fn WrapBytes(value: []u8) -> Error![]u8 {
     }
 }
 
+fn WrapText(value: str) -> Error!str {
+    let code = last_error_raw()
+    if code != 0 {
+        return ErrorFromCode(code)
+    }
+    return value
+}
+
 fn Stream::Write(&mut self, text: str) -> Error!usize {
     return WrapCount(write_stream(self.kind, &text))
 }
