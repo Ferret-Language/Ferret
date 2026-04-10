@@ -8,6 +8,8 @@ import (
 func (p *Parser) parseType() ast.TypeExpr {
 	start := p.current().Start
 	switch p.current().Kind {
+	case tokens.FN:
+		return p.parseFuncType()
 	case tokens.QUESTION:
 		p.advance()
 		return &ast.OptionalType{Inner: p.parseType(), Location: p.locFrom(start)}
@@ -75,6 +77,34 @@ func (p *Parser) parseType() ast.TypeExpr {
 		p.advance()
 		return &ast.NamedType{Path: []string{"<error>"}, Location: p.locFrom(start)}
 	}
+}
+
+func (p *Parser) parseFuncType() ast.TypeExpr {
+	start := p.expect(tokens.FN, "expected 'fn'").Start
+	p.expect(tokens.LPAREN, "expected '(' after 'fn'")
+	params := make([]ast.FuncTypeParam, 0)
+	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
+		paramStart := p.current().Start
+		isVariadic := false
+		if p.match(tokens.ELLIPSIS) {
+			isVariadic = true
+		}
+		paramType := p.parseType()
+		params = append(params, ast.FuncTypeParam{
+			Type:       paramType,
+			IsVariadic: isVariadic,
+			Location:   p.locFrom(paramStart),
+		})
+		if !p.consumeListSeparator(tokens.RPAREN, "function type parameter", p.startsType()) {
+			break
+		}
+	}
+	p.expect(tokens.RPAREN, "expected ')'")
+	var result ast.TypeExpr
+	if p.match(tokens.ARROW) {
+		result = p.parseType()
+	}
+	return &ast.FuncType{Params: params, Result: result, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseTupleType() ast.TypeExpr {

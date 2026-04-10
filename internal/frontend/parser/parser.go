@@ -545,9 +545,18 @@ func (p *Parser) parseNamePath() []string {
 
 func (p *Parser) startsType() bool {
 	switch p.current().Kind {
-	case tokens.IDENT, tokens.QUESTION, tokens.AMP, tokens.CARET, tokens.ASTERISK, tokens.TILDE,
+	case tokens.IDENT, tokens.FN, tokens.QUESTION, tokens.AMP, tokens.CARET, tokens.ASTERISK, tokens.TILDE,
 		tokens.LBRACK, tokens.LPAREN, tokens.STRUCT, tokens.INTERFACE, tokens.ENUM,
 		tokens.UNION, tokens.ERROR:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) startsLambdaParam() bool {
+	switch p.current().Kind {
+	case tokens.IDENT, tokens.MUT:
 		return true
 	default:
 		return false

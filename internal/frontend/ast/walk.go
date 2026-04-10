@@ -14,6 +14,11 @@ func WalkType(typ TypeExpr, visit func(TypeExpr) bool) {
 		for _, arg := range t.TypeArgs {
 			WalkType(arg, visit)
 		}
+	case *FuncType:
+		for _, param := range t.Params {
+			WalkType(param.Type, visit)
+		}
+		WalkType(t.Result, visit)
 	case *PointerType:
 		WalkType(t.Inner, visit)
 	case *RefType:

@@ -135,6 +135,83 @@ fn print(value: i32) {}
 	}
 }
 
+func TestParseFunctionTypeSyntax(t *testing.T) {
+	src := `
+fn takefn(fun: fn(i32, ...str) -> i32) {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[0])
+	}
+	ft, ok := fn.Params[0].Type.(*ast.FuncType)
+	if !ok {
+		t.Fatalf("expected function type param, got %T", fn.Params[0].Type)
+	}
+	if len(ft.Params) != 2 {
+		t.Fatalf("expected 2 function type params, got %d", len(ft.Params))
+	}
+	if ft.Params[1].IsVariadic != true {
+		t.Fatalf("expected variadic function type param, got %#v", ft.Params[1])
+	}
+	if got := ast.TypeString(ft); got != "fn(i32, ...str) -> i32" {
+		t.Fatalf("unexpected function type text: %q", got)
+	}
+}
+
+func TestParseLambdaExprSyntax(t *testing.T) {
+	src := `
+fn main() -> void {
+    let add = |a: i32, b: i32| a + b
+    let log = |msg: str| {
+        println(msg)
+    }
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[0])
+	}
+	body := fn.Body
+	if body == nil || len(body.Stmts) != 2 {
+		t.Fatalf("expected two statements, got %#v", body)
+	}
+	letAdd, ok := body.Stmts[0].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", body.Stmts[0])
+	}
+	lambda, ok := letAdd.Value.(*ast.LambdaExpr)
+	if !ok {
+		t.Fatalf("expected lambda expr, got %T", letAdd.Value)
+	}
+	if len(lambda.Params) != 2 {
+		t.Fatalf("expected 2 lambda params, got %d", len(lambda.Params))
+	}
+	if lambda.BodyExpr == nil || lambda.BodyBlock != nil {
+		t.Fatalf("expected expression-bodied lambda, got %#v", lambda)
+	}
+	letLog, ok := body.Stmts[1].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", body.Stmts[1])
+	}
+	blockLambda, ok := letLog.Value.(*ast.LambdaExpr)
+	if !ok {
+		t.Fatalf("expected lambda expr, got %T", letLog.Value)
+	}
+	if blockLambda.BodyBlock == nil || blockLambda.BodyExpr != nil {
+		t.Fatalf("expected block-bodied lambda, got %#v", blockLambda)
+	}
+}
+
 func TestParseTestDecl(t *testing.T) {
 	src := `
 test "allocator grows" {

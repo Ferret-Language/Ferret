@@ -46,6 +46,20 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 				}
 			}
 			return out
+		case *FuncType:
+			out := &FuncType{Result: cloneType(t.Result), Location: t.Location}
+			mapping[t] = out
+			if len(t.Params) > 0 {
+				out.Params = make([]FuncTypeParam, 0, len(t.Params))
+				for _, param := range t.Params {
+					out.Params = append(out.Params, FuncTypeParam{
+						Type:       cloneType(param.Type),
+						IsVariadic: param.IsVariadic,
+						Location:   param.Location,
+					})
+				}
+			}
+			return out
 		case *PointerType:
 			out := &PointerType{Inner: cloneType(t.Inner), Location: t.Location}
 			mapping[t] = out
@@ -372,6 +386,23 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 				out.Args = make([]Expr, 0, len(e.Args))
 				for _, arg := range e.Args {
 					out.Args = append(out.Args, cloneExpr(arg))
+				}
+			}
+			return out
+		case *LambdaExpr:
+			out := &LambdaExpr{BodyExpr: cloneExpr(e.BodyExpr), BodyBlock: cloneBlock(e.BodyBlock), Location: e.Location}
+			mapping[e] = out
+			if len(e.Params) > 0 {
+				out.Params = make([]Param, 0, len(e.Params))
+				for _, param := range e.Params {
+					out.Params = append(out.Params, Param{
+						Name:       cloneIdent(param.Name),
+						IsMut:      param.IsMut,
+						IsVariadic: param.IsVariadic,
+						Type:       cloneType(param.Type),
+						Default:    cloneExpr(param.Default),
+						Location:   param.Location,
+					})
 				}
 			}
 			return out
