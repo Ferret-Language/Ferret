@@ -1760,6 +1760,151 @@ fn main() -> void {
 	}
 }
 
+func TestLowerStdNetTCPListenerToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
+#[extern]
+fn Expose<T>(owner: *T) -> ^T;
+
+#[extern]
+fn ExposeRef<T>(owner: &*T) -> ^T;
+
+#[extern]
+fn Adopt<T>(raw: ^T) -> *T;
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
+type Writer interface {
+    Write(&mut self, text: str) -> usize
+}
+
+type Reader interface {
+    Read(&mut self, size: usize) -> []u8
+}
+
+fn Write(mut dst: Writer, text: str) -> usize {
+    return dst.Write(text)
+}
+
+fn Read(mut src: Reader, size: usize) -> []u8 {
+    return src.Read(size)
+}
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "net", "tcp.fer"), `
+import "std/mem"
+
+type connInner struct {
+    handle: ^void
+}
+
+type Conn struct {
+    inner: *connInner
+}
+
+type listenerInner struct {
+    handle: ^void
+}
+
+type Listener struct {
+    inner: *listenerInner
+}
+
+#[extern("ferret_std_net_tcp_listen")]
+fn listen_raw(host: &str, port: u16) -> ^listenerInner;
+
+#[extern("ferret_std_net_tcp_accept")]
+fn accept_raw(handle: ^void) -> ^connInner;
+
+#[extern("ferret_std_net_tcp_write")]
+fn write_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_net_tcp_read")]
+fn read_raw(handle: ^void, size: usize) -> []u8;
+
+#[extern("ferret_std_net_tcp_close")]
+fn close_raw(handle: ^void) -> void;
+
+#[extern("ferret_std_net_tcp_close_listener")]
+fn close_listener_raw(handle: ^void) -> void;
+
+fn Listen(host: str, port: u16) -> Listener {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(listen_raw(&host, port))
+        }
+    }
+}
+
+fn Listener::Accept(&mut self) -> Conn {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(accept_raw(mem::ExposeRef(&self.inner) as ^void))
+        }
+    }
+}
+
+fn Listener::Close(self) -> void {
+    unsafe {
+        close_listener_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+
+fn Conn::Write(&mut self, text: str) -> usize {
+    unsafe {
+        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+    }
+}
+
+fn Conn::Read(&mut self, size: usize) -> []u8 {
+    unsafe {
+        return read_raw(mem::ExposeRef(&self.inner) as ^void, size)
+    }
+}
+
+fn Conn::Close(self) -> void {
+    unsafe {
+        close_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/io"
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut listener = tcp::Listen("127.0.0.1", 8080)
+    let mut conn = listener.Accept()
+    _ = io::Read(conn, 4)
+    _ = io::Write(conn, "pong")
+    conn.Close()
+    listener.Close()
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"declare ptr @ferret_std_net_tcp_listen(",
+		"declare ptr @ferret_std_net_tcp_accept(",
+		"declare void @ferret_std_net_tcp_close_listener(",
+		"@std__net__tcp__Listener__Accept(",
+		"@std__net__tcp__Listener__Close(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerUnionExtractCastToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

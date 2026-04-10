@@ -26,6 +26,10 @@ typedef struct {
     ferret_usize read_cap;
 } FerretStdTcpConn;
 
+typedef struct {
+    FerretSocket socket_fd;
+} FerretStdTcpListener;
+
 #ifdef _WIN32
 static ferret_bool ferret__net_init(void) {
     static int started = 0;
@@ -79,14 +83,71 @@ static ferret_bool ferret__net_buffer_reserve(FerretStdTcpConn *conn, ferret_usi
     return 1;
 }
 
-ferret_raw ferret_std_net_tcp_dial(const FerretStr *host, ferret_u16 port) {
-    char *c_host;
-    char port_text[6];
+static FerretStdTcpConn *ferret__net_new_conn(FerretSocket socket_fd) {
+    FerretStdTcpConn *conn;
+
+    if (socket_fd == FERRET_INVALID_SOCKET) {
+        return NULL;
+    }
+    conn = (FerretStdTcpConn *)calloc(1, sizeof(FerretStdTcpConn));
+    if (conn == NULL) {
+        ferret__net_close_socket(socket_fd);
+        return NULL;
+    }
+    conn->socket_fd = socket_fd;
+    return conn;
+}
+
+static FerretSocket ferret__net_resolve_and_open(const char *host, const char *port_text, int passive, int do_listen) {
     struct addrinfo hints;
     struct addrinfo *results;
     struct addrinfo *current;
     FerretSocket socket_fd;
-    FerretStdTcpConn *conn;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    if (passive) {
+        hints.ai_flags = AI_PASSIVE;
+    }
+
+    results = NULL;
+    if (getaddrinfo(host, port_text, &hints, &results) != 0) {
+        return FERRET_INVALID_SOCKET;
+    }
+
+    socket_fd = FERRET_INVALID_SOCKET;
+    for (current = results; current != NULL; current = current->ai_next) {
+        socket_fd = socket(current->ai_family, current->ai_socktype, current->ai_protocol);
+        if (socket_fd == FERRET_INVALID_SOCKET) {
+            continue;
+        }
+        if (do_listen) {
+            int enabled = 1;
+#ifdef _WIN32
+            setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&enabled, (int)sizeof(enabled));
+#else
+            setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &enabled, (socklen_t)sizeof(enabled));
+#endif
+            if (bind(socket_fd, current->ai_addr, (socklen_t)current->ai_addrlen) == 0 && listen(socket_fd, 16) == 0) {
+                break;
+            }
+        } else if (connect(socket_fd, current->ai_addr, (socklen_t)current->ai_addrlen) == 0) {
+            break;
+        }
+        ferret__net_close_socket(socket_fd);
+        socket_fd = FERRET_INVALID_SOCKET;
+    }
+
+    freeaddrinfo(results);
+    return socket_fd;
+}
+
+ferret_raw ferret_std_net_tcp_dial(const FerretStr *host, ferret_u16 port) {
+    char *c_host;
+    char port_text[6];
+    FerretSocket socket_fd;
 
     if (!ferret__net_init() || host == NULL) {
         return NULL;
@@ -98,43 +159,57 @@ ferret_raw ferret_std_net_tcp_dial(const FerretStr *host, ferret_u16 port) {
     }
 
     snprintf(port_text, sizeof(port_text), "%u", (unsigned int)port);
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
-
-    results = NULL;
-    if (getaddrinfo(c_host, port_text, &hints, &results) != 0) {
-        free(c_host);
-        return NULL;
-    }
+    socket_fd = ferret__net_resolve_and_open(c_host, port_text, 0, 0);
     free(c_host);
-
-    socket_fd = FERRET_INVALID_SOCKET;
-    for (current = results; current != NULL; current = current->ai_next) {
-        socket_fd = socket(current->ai_family, current->ai_socktype, current->ai_protocol);
-        if (socket_fd == FERRET_INVALID_SOCKET) {
-            continue;
-        }
-        if (connect(socket_fd, current->ai_addr, (socklen_t)current->ai_addrlen) == 0) {
-            break;
-        }
-        ferret__net_close_socket(socket_fd);
-        socket_fd = FERRET_INVALID_SOCKET;
-    }
-    freeaddrinfo(results);
 
     if (socket_fd == FERRET_INVALID_SOCKET) {
         return NULL;
     }
+    return (ferret_raw)ferret__net_new_conn(socket_fd);
+}
 
-    conn = (FerretStdTcpConn *)calloc(1, sizeof(FerretStdTcpConn));
-    if (conn == NULL) {
+ferret_raw ferret_std_net_tcp_listen(const FerretStr *host, ferret_u16 port) {
+    char *c_host;
+    char port_text[6];
+    FerretSocket socket_fd;
+    FerretStdTcpListener *listener;
+
+    if (!ferret__net_init() || host == NULL) {
+        return NULL;
+    }
+    c_host = (char *)ferret_global_str_cstr(host);
+    if (c_host == NULL) {
+        return NULL;
+    }
+
+    snprintf(port_text, sizeof(port_text), "%u", (unsigned int)port);
+    socket_fd = ferret__net_resolve_and_open(c_host, port_text, 1, 1);
+    free(c_host);
+
+    if (socket_fd == FERRET_INVALID_SOCKET) {
+        return NULL;
+    }
+    listener = (FerretStdTcpListener *)calloc(1, sizeof(FerretStdTcpListener));
+    if (listener == NULL) {
         ferret__net_close_socket(socket_fd);
         return NULL;
     }
-    conn->socket_fd = socket_fd;
-    return (ferret_raw)conn;
+    listener->socket_fd = socket_fd;
+    return (ferret_raw)listener;
+}
+
+ferret_raw ferret_std_net_tcp_accept(ferret_raw handle) {
+    FerretStdTcpListener *listener = (FerretStdTcpListener *)handle;
+    FerretSocket accepted;
+
+    if (listener == NULL || listener->socket_fd == FERRET_INVALID_SOCKET) {
+        return NULL;
+    }
+    accepted = accept(listener->socket_fd, NULL, NULL);
+    if (accepted == FERRET_INVALID_SOCKET) {
+        return NULL;
+    }
+    return (ferret_raw)ferret__net_new_conn(accepted);
 }
 
 ferret_usize ferret_std_net_tcp_write(ferret_raw handle, const FerretStr *text) {
@@ -189,5 +264,18 @@ void ferret_std_net_tcp_close(ferret_raw handle) {
     conn->socket_fd = FERRET_INVALID_SOCKET;
     free(conn->read_buf);
     free(conn);
+    ferret__net_close_socket(socket_fd);
+}
+
+void ferret_std_net_tcp_close_listener(ferret_raw handle) {
+    FerretStdTcpListener *listener = (FerretStdTcpListener *)handle;
+    FerretSocket socket_fd;
+
+    if (listener == NULL) {
+        return;
+    }
+    socket_fd = listener->socket_fd;
+    listener->socket_fd = FERRET_INVALID_SOCKET;
+    free(listener);
     ferret__net_close_socket(socket_fd);
 }
