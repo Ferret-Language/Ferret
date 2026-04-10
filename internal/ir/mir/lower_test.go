@@ -1289,8 +1289,45 @@ fn run() -> i32 {
 		t.Fatalf("expected return terminator in MIR, got %#v", fn.Blocks)
 	}
 	text := mir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "return 1 unwind") {
-		t.Fatalf("expected return unwind in MIR dump, got %q", text)
+	if !strings.Contains(text, "return %0 unwind") {
+		if !strings.Contains(text, "return 1 unwind") {
+			t.Fatalf("expected return unwind in MIR dump, got %q", text)
+		}
+	}
+	if !strings.Contains(text, "return __defer_ret0") && !strings.Contains(text, "return %0") {
+		t.Fatalf("expected cleanup-final-return to reuse deferred temp, got %q", text)
+	}
+}
+
+func TestPipelineLowersDeferredAggregateReturnOnceToMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+type Box struct {
+    value: i32
+}
+
+fn close() -> void {}
+
+fn build() -> Box {
+    return .{ .value = 7 }
+}
+
+fn run() -> Box {
+    defer close()
+    return build()
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if strings.Count(text, "= build()") != 1 {
+		t.Fatalf("expected deferred aggregate return call to be lowered once, got %q", text)
+	}
+	if !strings.Contains(text, "__defer_ret0 = build()") || !strings.Contains(text, "return __defer_ret0 unwind") || !strings.Contains(text, "return __defer_ret0") {
+		t.Fatalf("expected deferred aggregate return to reuse one temp, got %q", text)
 	}
 }
 

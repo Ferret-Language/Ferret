@@ -1,0 +1,23 @@
+import "std/io"
+
+type Response struct {
+    value: str
+}
+
+fn close() -> void {
+    _ = io::Write(io::Stdout, "closed\n")
+}
+
+fn build() -> Response {
+    return .{ .value = "ok" }
+}
+
+fn run() -> Response {
+    defer close()
+    return build()
+}
+
+fn main() -> void {
+    let value = run()
+    println(value.value)
+}

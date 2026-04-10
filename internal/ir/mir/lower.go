@@ -13,14 +13,16 @@ import (
 )
 
 type lowerContext struct {
-	locals       []*Local
-	bindings     *binding.ModuleInfo
-	globalConsts map[ast.Node]hir.Expr
-	localConsts  map[string]hir.Expr
-	importPath   string
-	lookupMethod hir.MethodLookup
-	resultType   typeinfo.Type
-	structTypes  map[string]*typeinfo.StructType
+	locals             []*Local
+	bindings           *binding.ModuleInfo
+	globalConsts       map[ast.Node]hir.Expr
+	localConsts        map[string]hir.Expr
+	importPath         string
+	lookupMethod       hir.MethodLookup
+	resultType         typeinfo.Type
+	structTypes        map[string]*typeinfo.StructType
+	deferReturnTemps   map[int]int
+	cleanupReturnTemps map[int]int
 }
 
 func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, lookupMethod hir.MethodLookup) *Module {
@@ -173,6 +175,7 @@ func lowerFunction(fn *cfg.Function, bindings *binding.ModuleInfo, globalConsts 
 		return nil
 	}
 	lowerCtx := newLowerContext(fn.Source, bindings, globalConsts, importPath, lookupMethod, structTypes)
+	registerDeferredReturnTemps(lowerCtx, fn)
 	out := &Function{
 		Name:       fn.Name,
 		LinkName:   lowerFunctionLinkName(importPath, fn.Source),
@@ -229,7 +232,36 @@ func lowerBlock(lowerCtx *lowerContext, block *cfg.Block) *Block {
 			out.Instructions = append(out.Instructions, instr)
 		}
 	}
-	out.Terminator = lowerTerminator(lowerCtx, block.Terminator, block.Location)
+	if tempID, ok := lowerCtx.deferReturnTemps[block.ID]; ok {
+		if term, ok := block.Terminator.(*cfg.ReturnTerm); ok && term.Value != nil {
+			out.Instructions = append(out.Instructions, &AssignInstr{
+				baseInstr: baseInstr{Location: block.Location},
+				TargetID:  tempID,
+				Value:     lowerCoercedValue(lowerCtx, term.Value, lowerCtx.fnResultType()),
+			})
+			cleanupID := -1
+			if term.Cleanup != nil {
+				cleanupID = blockID(term.Cleanup)
+			}
+			out.Terminator = &ReturnTerm{
+				baseTerm:  baseTerm{Location: block.Location},
+				Value:     &LocalValue{baseValue: baseValue{Location: block.Location, ExprType: lowerCtx.fnResultType()}, LocalID: tempID},
+				CleanupID: cleanupID,
+			}
+		}
+	}
+	if out.Terminator == nil {
+		if tempID, ok := lowerCtx.cleanupReturnTemps[block.ID]; ok && block.BranchKind == "cleanup-final-return" {
+			out.Terminator = &ReturnTerm{
+				baseTerm:  baseTerm{Location: block.Location},
+				Value:     &LocalValue{baseValue: baseValue{Location: block.Location, ExprType: lowerCtx.fnResultType()}, LocalID: tempID},
+				CleanupID: -1,
+			}
+		}
+	}
+	if out.Terminator == nil {
+		out.Terminator = lowerTerminator(lowerCtx, block.Terminator, block.Location)
+	}
 	if out.Terminator == nil && block.Terminator == nil {
 		out.Terminator = &ExitTerm{baseTerm: baseTerm{Location: block.Location}}
 	}
@@ -788,15 +820,75 @@ func lowerPlace(lowerCtx *lowerContext, expr hir.Expr) Place {
 func newLowerContext(fn *hir.Func, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup, structTypes map[string]*typeinfo.StructType) *lowerContext {
 	locals, consts := collectLocals(fn)
 	return &lowerContext{
-		locals:       locals,
-		bindings:     bindings,
-		globalConsts: globalConsts,
-		localConsts:  consts,
-		importPath:   importPath,
-		lookupMethod: lookupMethod,
-		resultType:   fn.Result,
-		structTypes:  structTypes,
+		locals:             locals,
+		bindings:           bindings,
+		globalConsts:       globalConsts,
+		localConsts:        consts,
+		importPath:         importPath,
+		lookupMethod:       lookupMethod,
+		resultType:         fn.Result,
+		structTypes:        structTypes,
+		deferReturnTemps:   map[int]int{},
+		cleanupReturnTemps: map[int]int{},
 	}
+}
+
+func (c *lowerContext) addTempLocal(prefix string, typ typeinfo.Type, loc source.Location) int {
+	if c == nil {
+		return -1
+	}
+	id := len(c.locals)
+	c.locals = append(c.locals, &Local{
+		ID:       id,
+		Name:     prefix + strconv.Itoa(id),
+		Type:     typ,
+		Mutable:  false,
+		Constant: false,
+		IsTemp:   true,
+		Location: loc,
+	})
+	return id
+}
+
+func registerDeferredReturnTemps(lowerCtx *lowerContext, fn *cfg.Function) {
+	if lowerCtx == nil || fn == nil {
+		return
+	}
+	for _, block := range fn.Blocks {
+		if block == nil {
+			continue
+		}
+		term, ok := block.Terminator.(*cfg.ReturnTerm)
+		if !ok || term == nil || term.Cleanup == nil || term.Value == nil {
+			continue
+		}
+		final := findCleanupFinalReturnBlock(term.Cleanup)
+		if final == nil {
+			continue
+		}
+		tempID := lowerCtx.addTempLocal("__defer_ret", lowerCtx.fnResultType(), block.Location)
+		lowerCtx.deferReturnTemps[block.ID] = tempID
+		lowerCtx.cleanupReturnTemps[final.ID] = tempID
+	}
+}
+
+func findCleanupFinalReturnBlock(block *cfg.Block) *cfg.Block {
+	seen := map[int]struct{}{}
+	for block != nil {
+		if _, ok := seen[block.ID]; ok {
+			return nil
+		}
+		seen[block.ID] = struct{}{}
+		if block.BranchKind == "cleanup-final-return" {
+			return block
+		}
+		jump, ok := block.Terminator.(*cfg.JumpTerm)
+		if !ok || jump == nil {
+			return nil
+		}
+		block = jump.Target
+	}
+	return nil
 }
 
 func (c *lowerContext) fnResultType() typeinfo.Type {
