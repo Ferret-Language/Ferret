@@ -20,6 +20,20 @@ func TypeString(typ TypeExpr) string {
 			args = append(args, TypeString(arg))
 		}
 		return name + "<" + strings.Join(args, ", ") + ">"
+	case *FuncType:
+		parts := make([]string, 0, len(t.Params))
+		for _, param := range t.Params {
+			text := TypeString(param.Type)
+			if param.IsVariadic {
+				text = "..." + text
+			}
+			parts = append(parts, text)
+		}
+		out := "fn(" + strings.Join(parts, ", ") + ")"
+		if t.Result != nil {
+			out += " -> " + TypeString(t.Result)
+		}
+		return out
 	case *PointerType:
 		return "*" + TypeString(t.Inner)
 	case *RefType:
@@ -155,6 +169,36 @@ func ExprString(expr Expr) string {
 			out += ":" + ExprString(e.Step)
 		}
 		return out
+	case *CallExpr:
+		args := make([]string, 0, len(e.Args))
+		for _, arg := range e.Args {
+			args = append(args, ExprString(arg))
+		}
+		return ExprString(e.Callee) + "(" + strings.Join(args, ", ") + ")"
+	case *LambdaExpr:
+		parts := make([]string, 0, len(e.Params))
+		for _, param := range e.Params {
+			text := "_"
+			if param.Name != nil && param.Name.Text() != "" {
+				text = param.Name.Text()
+			}
+			if param.IsMut {
+				text = "mut " + text
+			}
+			if param.Type != nil {
+				typeText := TypeString(param.Type)
+				if param.IsVariadic {
+					typeText = "..." + typeText
+				}
+				text += ": " + typeText
+			}
+			parts = append(parts, text)
+		}
+		head := "|" + strings.Join(parts, ", ") + "|"
+		if e.BodyExpr != nil {
+			return head + " " + ExprString(e.BodyExpr)
+		}
+		return head + " { ... }"
 	case *SelectorExpr:
 		return ExprString(e.Left) + "." + e.Name.Text()
 	case *IndexExpr:

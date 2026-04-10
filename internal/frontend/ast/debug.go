@@ -224,6 +224,12 @@ func debugExpr(expr Expr) any {
 			typeArgs = append(typeArgs, debugType(typ))
 		}
 		return map[string]any{"kind": "CallExpr", "callee": debugExpr(e.Callee), "type_args": typeArgs, "args": args, "loc": debugLoc(e.Location)}
+	case *LambdaExpr:
+		params := make([]any, 0, len(e.Params))
+		for _, param := range e.Params {
+			params = append(params, debugParam(param))
+		}
+		return map[string]any{"kind": "LambdaExpr", "params": params, "body_expr": debugExpr(e.BodyExpr), "body_block": debugStmt(e.BodyBlock), "loc": debugLoc(e.Location)}
 	case *SelectorExpr:
 		return map[string]any{"kind": "SelectorExpr", "left": debugExpr(e.Left), "name": debugExpr(e.Name), "loc": debugLoc(e.Location)}
 	case *CastExpr:
@@ -271,6 +277,12 @@ func debugType(typ TypeExpr) any {
 			typeArgs = append(typeArgs, debugType(arg))
 		}
 		return map[string]any{"kind": "NamedType", "path": t.Path, "type_args": typeArgs, "loc": debugLoc(t.Location)}
+	case *FuncType:
+		params := make([]any, 0, len(t.Params))
+		for _, param := range t.Params {
+			params = append(params, map[string]any{"type": debugType(param.Type), "is_variadic": param.IsVariadic, "loc": debugLoc(param.Location)})
+		}
+		return map[string]any{"kind": "FuncType", "params": params, "result": debugType(t.Result), "loc": debugLoc(t.Location)}
 	case *PointerType:
 		return map[string]any{"kind": "PointerType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *RefType:

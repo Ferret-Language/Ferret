@@ -93,6 +93,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case tokens.NONE:
 		p.advance()
 		return &ast.NoneLit{Location: p.locFrom(start)}
+	case tokens.BAR:
+		return p.parseLambdaExpr()
 	case tokens.LPAREN:
 		return p.parseParenExpr()
 	case tokens.DOT:
@@ -180,6 +182,38 @@ func (p *Parser) parseParenExpr() ast.Expr {
 	}
 	p.expect(tokens.RPAREN, "expected ')'")
 	return &ast.CompositeLit{Items: items, Tuple: true, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseLambdaExpr() ast.Expr {
+	start := p.expect(tokens.BAR, "expected '|'").Start
+	params := make([]ast.Param, 0)
+	for !p.at(tokens.BAR) && !p.at(tokens.EOF) {
+		paramStart := p.current().Start
+		isMut := p.match(tokens.MUT)
+		nameTok := p.expect(tokens.IDENT, "expected lambda parameter name")
+		var paramType ast.TypeExpr
+		isVariadic := false
+		if p.match(tokens.COLON) {
+			paramType, isVariadic = p.parseParamType()
+		}
+		params = append(params, ast.Param{
+			Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+			IsMut:      isMut,
+			IsVariadic: isVariadic,
+			Type:       paramType,
+			Location:   p.locFrom(paramStart),
+		})
+		if !p.consumeListSeparator(tokens.BAR, "lambda parameter", p.startsLambdaParam()) {
+			break
+		}
+	}
+	p.expect(tokens.BAR, "expected closing '|' after lambda parameters")
+	if p.at(tokens.LBRACE) {
+		body := p.parseBlock()
+		return &ast.LambdaExpr{Params: params, BodyBlock: body, Location: p.locFrom(start)}
+	}
+	bodyExpr := p.parseExprUntil(precLowest)
+	return &ast.LambdaExpr{Params: params, BodyExpr: bodyExpr, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseCompositeLit() ast.Expr {
@@ -483,7 +517,7 @@ func precedence(kind tokens.Kind) int {
 func (p *Parser) startsExpr() bool {
 	switch p.current().Kind {
 	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.CHAR, tokens.BYTE_CHAR, tokens.NONE,
-		tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
+		tokens.BAR, tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
 		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.COMPTIME, tokens.UNSAFE, tokens.MATCH:
 		return true
 	default:

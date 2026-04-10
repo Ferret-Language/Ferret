@@ -135,6 +135,16 @@ type CallExpr struct {
 func (*CallExpr) exprNode()              {}
 func (e *CallExpr) Loc() source.Location { return e.Location }
 
+type LambdaExpr struct {
+	Params    []Param
+	BodyExpr  Expr
+	BodyBlock *BlockStmt
+	Location  source.Location
+}
+
+func (*LambdaExpr) exprNode()              {}
+func (e *LambdaExpr) Loc() source.Location { return e.Location }
+
 type SelectorExpr struct {
 	Left     Expr
 	Name     *Ident

@@ -11,6 +11,23 @@ type NamedType struct {
 func (*NamedType) typeNode()              {}
 func (t *NamedType) Loc() source.Location { return t.Location }
 
+type FuncTypeParam struct {
+	Type       TypeExpr
+	IsVariadic bool
+	Location   source.Location
+}
+
+func (p *FuncTypeParam) Loc() source.Location { return p.Location }
+
+type FuncType struct {
+	Params   []FuncTypeParam
+	Result   TypeExpr
+	Location source.Location
+}
+
+func (*FuncType) typeNode()              {}
+func (t *FuncType) Loc() source.Location { return t.Location }
+
 type PointerType struct {
 	Inner    TypeExpr
 	Location source.Location
