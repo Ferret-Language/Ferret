@@ -180,6 +180,12 @@ void ferret_global_print(const FerretSliceAny *values);
  * -------------------------------------------------------------------------*/
 
 ferret_usize ferret_std_io_write_stream(ferret_i32 kind, const FerretStr *text);
+ferret_raw ferret_std_io_buffer_new(void);
+ferret_usize ferret_std_io_buffer_write(ferret_raw handle, const FerretStr *text);
+FerretSliceU8 ferret_std_io_buffer_read(ferret_raw handle, ferret_usize size);
+FerretStr ferret_std_io_buffer_view(ferret_raw handle);
+void ferret_std_io_buffer_reset(ferret_raw handle);
+void ferret_std_io_buffer_close(ferret_raw handle);
 
 /* -------------------------------------------------------------------------
  * std/fs surface.

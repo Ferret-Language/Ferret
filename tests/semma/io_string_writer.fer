@@ -1,0 +1,13 @@
+import "std/string"
+import "std/io"
+
+fn main() -> void {
+    let mut buf = string::New()
+    buf.Write("Hello")
+    buf.Write(", world")
+    println(buf.AsStr())
+    
+    io::Write(io::Stdout, buf.AsStr())
+
+    buf.Release()
+}

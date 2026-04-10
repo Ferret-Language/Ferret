@@ -1286,6 +1286,17 @@ func (c *checker) typeOfMethodCall(scope *refineScope, call *ast.CallExpr, selec
 			c.reportMethodNotFound(selector.Location, receiverType, selector.Name.Text())
 			return typeinfo.InvalidType{}, true
 		}
+		addressable, mutable := c.exprAccess(scope, selector.Left)
+		if iface.MethodReceivers[selector.Name.Text()] == typeinfo.ReceiverRefMut && addressable && !mutable {
+			loc := selector.Location
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError(fmt.Sprintf("cannot call method %q on immutable %s", selector.Name.Text(), receiverType.String())).
+					WithCode(diagnostics.ErrMethodNotFound).
+					WithPrimaryLabel(&loc, "this method requires mutable receiver access").
+					WithNote("declare the variable with `let mut` to allow mutable method calls"),
+			)
+			return typeinfo.InvalidType{}, true
+		}
 		if methodReceiver := typeinfo.ApplyReceiverShape(receiverType, iface.MethodReceivers[selector.Name.Text()]); methodReceiver != nil {
 			c.info.BindMethodReceiver(call, methodReceiver)
 			c.info.BindMethodReceiver(selector, methodReceiver)
@@ -2597,6 +2608,16 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 					WithPrimaryLabel(&loc, "provide values for all tuple elements"),
 			)
 		}
+		c.info.BindNode(expr, expected)
+		return expected
+	}
+	if _, ok := base.(*typeinfo.PointerType); ok {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("composite literal cannot initialize an owning pointer").
+				WithCode(diagnostics.ErrInvalidType).
+				WithPrimaryLabel(&loc, "composite literals produce values, not owned pointers"),
+		)
 		c.info.BindNode(expr, expected)
 		return expected
 	}

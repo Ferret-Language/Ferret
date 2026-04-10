@@ -101,6 +101,14 @@ fn String::PushStr(&mut self, text: str) -> void {
     self.len = base_len + count
 }
 
+// Write appends UTF-8 text and returns the written byte count.
+fn String::Write(&mut self, text: str) -> usize {
+    let bytes = text as []u8
+    let count = len(&bytes)
+    self.PushStr(text)
+    return count
+}
+
 // Bytes returns a readonly byte view over the owned UTF-8 buffer.
 fn String::Bytes(&self) -> []u8 {
     if self.len == 0 {

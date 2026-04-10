@@ -1,29 +1,107 @@
 // Standard IO surface.
 //
-// First step:
-// - shared Writer interface
+// Current step:
+// - shared Writer/Reader interfaces
 // - standard stream values
+// - runtime-backed in-memory Buffer implementing both Writer and Reader
 // - text writes through the runtime C boundary
 
+import "std/mem"
+
 type Writer interface {
-    Write(&self, text: str) -> usize
+    Write(&mut self, text: str) -> usize
+}
+
+type Reader interface {
+    Read(&mut self, size: usize) -> []u8
 }
 
 type Stream struct {
     kind: i32
 }
 
+type bufferInner struct {
+    data: ^u8
+    len: usize = 0
+    cap: usize = 0
+    read_pos: usize = 0
+}
+
+type Buffer struct {
+    inner: *bufferInner
+}
+
 #[extern("ferret_std_io_write_stream")]
 fn write_stream(kind: i32, text: &str) -> usize;
 
-let Stdin: Stream = .{ .kind = 0 }
-let Stdout: Stream = .{ .kind = 1 }
-let Stderr: Stream = .{ .kind = 2 }
+#[extern("ferret_std_io_buffer_new")]
+fn new_buffer_raw() -> ^bufferInner;
 
-fn Stream::Write(&self, text: str) -> usize {
+#[extern("ferret_std_io_buffer_write")]
+fn write_buffer_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_io_buffer_read")]
+fn read_buffer_raw(handle: ^void, size: usize) -> []u8;
+
+#[extern("ferret_std_io_buffer_view")]
+fn view_buffer_raw(handle: ^void) -> str;
+
+#[extern("ferret_std_io_buffer_reset")]
+fn reset_buffer_raw(handle: ^void) -> void;
+
+#[extern("ferret_std_io_buffer_close")]
+fn close_buffer_raw(handle: ^void) -> void;
+
+let mut Stdin: Stream = .{ .kind = 0 }
+let mut Stdout: Stream = .{ .kind = 1 }
+let mut Stderr: Stream = .{ .kind = 2 }
+
+fn Stream::Write(&mut self, text: str) -> usize {
     return write_stream(self.kind, &text)
 }
 
-fn Write(dst: Writer, text: str) -> usize {
+fn NewBuffer() -> Buffer {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(new_buffer_raw())
+        }
+    }
+}
+
+fn Buffer::Write(&mut self, text: str) -> usize {
+    unsafe {
+        return write_buffer_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+    }
+}
+
+fn Buffer::Read(&mut self, size: usize) -> []u8 {
+    unsafe {
+        return read_buffer_raw(mem::ExposeRef(&self.inner) as ^void, size)
+    }
+}
+
+fn Buffer::AsStr(&self) -> str {
+    unsafe {
+        return view_buffer_raw(mem::ExposeRef(&self.inner) as ^void)
+    }
+}
+
+fn Buffer::Reset(&mut self) -> void {
+    unsafe {
+        reset_buffer_raw(mem::ExposeRef(&self.inner) as ^void)
+    }
+}
+
+fn Buffer::Release(self) -> void {
+    unsafe {
+        close_buffer_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+
+fn Write(mut dst: Writer, text: str) -> usize {
     return dst.Write(text)
+}
+
+fn Read(mut src: Reader, size: usize) -> []u8 {
+    return src.Read(size)
 }

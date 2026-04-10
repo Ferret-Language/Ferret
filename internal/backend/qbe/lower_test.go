@@ -579,7 +579,7 @@ func TestLowerStdIOWriteToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
 type Writer interface {
-    Write(&self, text: str) -> usize
+    Write(&mut self, text: str) -> usize
 }
 
 type Stream struct {
@@ -589,13 +589,13 @@ type Stream struct {
 #[extern("ferret_std_io_write_stream")]
 fn write_stream(kind: i32, text: &str) -> usize;
 
-let Stdout: Stream = .{ .kind = 1 }
+let mut Stdout: Stream = .{ .kind = 1 }
 
-fn Stream::Write(&self, text: str) -> usize {
+fn Stream::Write(&mut self, text: str) -> usize {
     return write_stream(self.kind, &text)
 }
 
-fn Write(dst: Writer, text: str) -> usize {
+fn Write(mut dst: Writer, text: str) -> usize {
     return dst.Write(text)
 }
 `)
@@ -627,10 +627,10 @@ func TestLowerStdFSWriteToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
 type Writer interface {
-    Write(&self, text: str) -> usize
+    Write(&mut self, text: str) -> usize
 }
 
-fn Write(dst: Writer, text: str) -> usize {
+fn Write(mut dst: Writer, text: str) -> usize {
     return dst.Write(text)
 }
 `)
@@ -672,7 +672,7 @@ fn Open(path: str) -> File {
     }
 }
 
-fn File::Write(&self, text: str) -> usize {
+fn File::Write(&mut self, text: str) -> usize {
     unsafe {
         return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
     }
@@ -689,7 +689,7 @@ import "std/io"
 import "std/fs"
 
 fn main() -> void {
-    let file = fs::Open("out.txt")
+    let mut file = fs::Open("out.txt")
     _ = io::Write(file, "hello")
     file.Close()
 }
@@ -711,6 +711,131 @@ fn main() -> void {
 		"call $std__io__Write(",
 		"call $std__fs__File__Close(",
 		"call $std__fs__Open(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerStdIOBufferToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
+#[extern]
+fn Expose<T>(owner: *T) -> ^T;
+
+#[extern]
+fn ExposeRef<T>(owner: &*T) -> ^T;
+
+#[extern]
+fn Adopt<T>(raw: ^T) -> *T;
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
+import "std/mem"
+
+type Writer interface {
+    Write(&mut self, text: str) -> usize
+}
+
+type Reader interface {
+    Read(&mut self, size: usize) -> []u8
+}
+
+type bufferInner struct {
+    data: ^u8
+    len: usize = 0
+    cap: usize = 0
+    read_pos: usize = 0
+}
+
+type Buffer struct {
+    inner: *bufferInner
+}
+
+#[extern("ferret_std_io_buffer_new")]
+fn new_buffer_raw() -> ^bufferInner;
+
+#[extern("ferret_std_io_buffer_write")]
+fn write_buffer_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_io_buffer_read")]
+fn read_buffer_raw(handle: ^void, size: usize) -> []u8;
+
+#[extern("ferret_std_io_buffer_view")]
+fn view_buffer_raw(handle: ^void) -> str;
+
+#[extern("ferret_std_io_buffer_close")]
+fn close_buffer_raw(handle: ^void) -> void;
+
+fn NewBuffer() -> Buffer {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(new_buffer_raw())
+        }
+    }
+}
+
+fn Buffer::Write(&mut self, text: str) -> usize {
+    unsafe {
+        return write_buffer_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+    }
+}
+
+fn Buffer::Read(&mut self, size: usize) -> []u8 {
+    unsafe {
+        return read_buffer_raw(mem::ExposeRef(&self.inner) as ^void, size)
+    }
+}
+
+fn Buffer::AsStr(&self) -> str {
+    unsafe {
+        return view_buffer_raw(mem::ExposeRef(&self.inner) as ^void)
+    }
+}
+
+fn Buffer::Release(self) -> void {
+    unsafe {
+        close_buffer_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+
+fn Write(mut dst: Writer, text: str) -> usize {
+    return dst.Write(text)
+}
+
+fn Read(mut src: Reader, size: usize) -> []u8 {
+    return src.Read(size)
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/io"
+
+fn main() -> void {
+    let mut buf = io::NewBuffer()
+    _ = io::Write(buf, "hello")
+    _ = io::Read(buf, 2)
+    _ = buf.AsStr()
+    buf.Release()
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"call $std__io__Write(",
+		"call $std__io__Read(",
+		"call $std__io__NewBuffer(",
+		"call $std__io__Buffer__Release(",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)

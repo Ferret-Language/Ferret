@@ -1,0 +1,27 @@
+import "std/io"
+
+fn main() -> void {
+    let mut buf = io::NewBuffer()
+    io::Write(buf, "Hello")
+    io::Write(buf, ", world")
+
+    let first = io::Read(buf, 5)
+    let second = io::Read(buf, 7)
+    let last = io::Read(buf, 1)
+
+    if len(first) == 5 &&
+        len(second) == 7 &&
+        len(last) == 0 &&
+        first as str == "Hello" &&
+        second as str == ", world" &&
+        last as str == "" &&
+        buf.AsStr() == "Hello, world" {
+        print("io-buffer-ok")
+        buf.Release()
+        return
+    }
+
+    print("io-buffer-fail")
+    buf.Release()
+    exit(1)
+}
