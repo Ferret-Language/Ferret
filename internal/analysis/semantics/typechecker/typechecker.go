@@ -2527,6 +2527,9 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 		)
 		return typeinfo.InvalidType{}
 	}
+	if errUnion, ok := c.underlying(expected).(*typeinfo.ErrorUnionType); ok && errUnion != nil && errUnion.Value != nil {
+		expected = errUnion.Value
+	}
 	base := c.underlying(expected)
 	// Array literal: positional elements matching element type.
 	if arrType, ok := base.(*typeinfo.ArrayType); ok {

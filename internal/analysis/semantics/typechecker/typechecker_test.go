@@ -2446,6 +2446,63 @@ fn main(x: Io!i32) -> i32 {
 	}
 }
 
+func TestTypecheckerTypesCompositeLiteralAgainstErrorUnionSuccessValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Error error { a }
+
+type RawResult struct {
+    ok: bool
+    err: Error
+    handle: ^void
+}
+
+type Conn struct {
+    handle: ^void
+}
+
+fn raw() -> RawResult {
+    unsafe {
+        return .{ .ok = true, .err = Error::a, .handle = 0 as ^void }
+    }
+}
+
+fn wrap() -> Error!Conn {
+    let result = raw()
+    if result.ok {
+        return .{ .handle = result.handle }
+    }
+    return result.err
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "wrap")
+	ifStmt, ok := mainFn.Body.Stmts[1].(*ast.IfStmt)
+	if !ok {
+		t.Fatalf("expected if stmt, got %T", mainFn.Body.Stmts[1])
+	}
+	ret, ok := ifStmt.Then.Stmts[0].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return stmt, got %T", ifStmt.Then.Stmts[0])
+	}
+	comp, ok := ret.Value.(*ast.CompositeLit)
+	if !ok || len(comp.Items) == 0 {
+		t.Fatalf("expected composite return, got %T", ret.Value)
+	}
+	sel, ok := comp.Items[0].Value.(*ast.SelectorExpr)
+	if !ok {
+		t.Fatalf("expected selector field value, got %T", comp.Items[0].Value)
+	}
+	if got := result.Entry.Types.Nodes[sel]; got == nil || got.String() != "^void" {
+		t.Fatalf("expected selector to typecheck as ^void, got %#v", got)
+	}
+}
+
 func TestTypecheckerTreatsRecoverAsBuiltinFunction(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
