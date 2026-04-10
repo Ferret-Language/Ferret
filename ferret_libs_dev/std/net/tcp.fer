@@ -1,0 +1,47 @@
+import "std/mem"
+
+type connInner struct {
+    handle: ^void
+}
+
+type Conn struct {
+    inner: *connInner
+}
+
+#[extern("ferret_std_net_tcp_dial")]
+fn dial_raw(host: &str, port: u16) -> ^connInner;
+
+#[extern("ferret_std_net_tcp_write")]
+fn write_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_net_tcp_read")]
+fn read_raw(handle: ^void, size: usize) -> []u8;
+
+#[extern("ferret_std_net_tcp_close")]
+fn close_raw(handle: ^void) -> void;
+
+fn Dial(host: str, port: u16) -> Conn {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(dial_raw(&host, port))
+        }
+    }
+}
+
+fn Conn::Write(&mut self, text: str) -> usize {
+    unsafe {
+        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+    }
+}
+
+fn Conn::Read(&mut self, size: usize) -> []u8 {
+    unsafe {
+        return read_raw(mem::ExposeRef(&self.inner) as ^void, size)
+    }
+}
+
+fn Conn::Close(self) -> void {
+    unsafe {
+        close_raw(mem::Expose(self.inner) as ^void)
+    }
+}

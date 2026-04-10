@@ -1643,6 +1643,123 @@ fn main() -> void {
 	}
 }
 
+func TestLowerStdNetTCPToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
+#[extern]
+fn Expose<T>(owner: *T) -> ^T;
+
+#[extern]
+fn ExposeRef<T>(owner: &*T) -> ^T;
+
+#[extern]
+fn Adopt<T>(raw: ^T) -> *T;
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
+type Writer interface {
+    Write(&mut self, text: str) -> usize
+}
+
+type Reader interface {
+    Read(&mut self, size: usize) -> []u8
+}
+
+fn Write(mut dst: Writer, text: str) -> usize {
+    return dst.Write(text)
+}
+
+fn Read(mut src: Reader, size: usize) -> []u8 {
+    return src.Read(size)
+}
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "net", "tcp.fer"), `
+import "std/mem"
+
+type connInner struct {
+    handle: ^void
+}
+
+type Conn struct {
+    inner: *connInner
+}
+
+#[extern("ferret_std_net_tcp_dial")]
+fn dial_raw(host: &str, port: u16) -> ^connInner;
+
+#[extern("ferret_std_net_tcp_write")]
+fn write_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_net_tcp_read")]
+fn read_raw(handle: ^void, size: usize) -> []u8;
+
+#[extern("ferret_std_net_tcp_close")]
+fn close_raw(handle: ^void) -> void;
+
+fn Dial(host: str, port: u16) -> Conn {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(dial_raw(&host, port))
+        }
+    }
+}
+
+fn Conn::Write(&mut self, text: str) -> usize {
+    unsafe {
+        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+    }
+}
+
+fn Conn::Read(&mut self, size: usize) -> []u8 {
+    unsafe {
+        return read_raw(mem::ExposeRef(&self.inner) as ^void, size)
+    }
+}
+
+fn Conn::Close(self) -> void {
+    unsafe {
+        close_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/io"
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut conn = tcp::Dial("127.0.0.1", 8080)
+    _ = io::Write(conn, "ping")
+    _ = io::Read(conn, 4)
+    conn.Close()
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"declare ptr @ferret_std_net_tcp_dial(",
+		"declare i64 @ferret_std_net_tcp_write(",
+		"declare { ptr, i64 } @ferret_std_net_tcp_read(",
+		"declare void @ferret_std_net_tcp_close(",
+		"call void @std__io__Write(",
+		"@std__io__Read(",
+		"@std__net__tcp__Conn__Close(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerUnionExtractCastToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

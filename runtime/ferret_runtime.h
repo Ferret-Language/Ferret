@@ -196,6 +196,15 @@ ferret_usize ferret_std_fs_write(ferret_raw handle, const FerretStr *text);
 void ferret_std_fs_close(ferret_raw handle);
 
 /* -------------------------------------------------------------------------
+ * std/net/tcp surface.
+ * -------------------------------------------------------------------------*/
+
+ferret_raw ferret_std_net_tcp_dial(const FerretStr *host, ferret_u16 port);
+ferret_usize ferret_std_net_tcp_write(ferret_raw handle, const FerretStr *text);
+FerretSliceU8 ferret_std_net_tcp_read(ferret_raw handle, ferret_usize size);
+void ferret_std_net_tcp_close(ferret_raw handle);
+
+/* -------------------------------------------------------------------------
  * str_data / str_len  — extract fields from a str fat-pointer.
  *
  * These back the #[extern] fn str_data(s *str) *raw
