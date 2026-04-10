@@ -2680,7 +2680,7 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 	case *mir.CastValue:
 		srcCast := backend.UnwrapNamed(v.Left.Type())
 		dstCast := backend.UnwrapNamed(v.Type())
-		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) && !isStringSliceCastPair(srcCast, dstCast) && !isInterfaceAggregate(v.Left.Type()) {
+		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) && !isStringSliceCastPair(srcCast, dstCast) && !isInterfaceAggregate(v.Left.Type()) && !isUnionAggregate(v.Left.Type()) {
 			return lowerAggregateAssign(state, agg, v.Left)
 		}
 		if isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type()) && isAggregateType(state, v.Type()) {
@@ -2694,6 +2694,9 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 		expr, err := lowerCast(state, v)
 		if err != nil {
 			return "", err
+		}
+		if isAggregateType(state, v.Type()) {
+			return llvmMemcpy(llvmLocalName(agg.PtrName), expr, agg.Size, agg.Align), nil
 		}
 		typeName, err := llvmABITypeName(state, agg.Type)
 		if err != nil {

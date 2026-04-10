@@ -1914,6 +1914,64 @@ fn main() -> i32 {
 	}
 }
 
+func TestLowerErrorUnionSuccessCastUsesPayloadOffsetInLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Error error { a }
+
+type RawResult struct {
+    ok: bool
+    err: Error
+    handle: ^void
+}
+
+type Conn struct {
+    handle: ^void
+}
+
+fn raw() -> RawResult {
+    unsafe {
+        return .{ .ok = true, .err = Error::a, .handle = 0 as ^void }
+    }
+}
+
+fn wrap() -> Error!Conn {
+    let result = raw()
+    if result.ok {
+        return .{ .handle = result.handle }
+    }
+    return result.err
+}
+
+fn main() -> void {
+    let result = wrap() catch |err| {
+        print(err)
+        return
+    }
+    println(result.handle)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "getelementptr i8, ptr %__match1, i64 8") {
+		t.Fatalf("expected payload-offset cast in llvm output:\n%s", text)
+	}
+	if strings.Contains(text, "memcpy.p0.p0.i64(ptr align 8 %__match2, ptr align 8 %__match1, i64 8") {
+		t.Fatalf("unexpected direct union-header memcpy in llvm output:\n%s", text)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -1163,6 +1163,64 @@ fn main() -> void {
 	}
 }
 
+func TestLowerErrorUnionSuccessCastUsesPayloadOffsetInQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Error error { a }
+
+type RawResult struct {
+    ok: bool
+    err: Error
+    handle: ^void
+}
+
+type Conn struct {
+    handle: ^void
+}
+
+fn raw() -> RawResult {
+    unsafe {
+        return .{ .ok = true, .err = Error::a, .handle = 0 as ^void }
+    }
+}
+
+fn wrap() -> Error!Conn {
+    let result = raw()
+    if result.ok {
+        return .{ .handle = result.handle }
+    }
+    return result.err
+}
+
+fn main() -> void {
+    let result = wrap() catch |err| {
+        print(err)
+        return
+    }
+    println(result.handle)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "add %__match1, 8") {
+		t.Fatalf("expected payload-offset cast in qbe output:\n%s", text)
+	}
+	if strings.Contains(text, "blit %__match1, %__match2, 8") {
+		t.Fatalf("unexpected direct union-header blit in qbe output:\n%s", text)
+	}
+}
+
 func TestLowerUnionLocalAssignmentToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
