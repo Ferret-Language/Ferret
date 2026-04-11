@@ -10,6 +10,7 @@ typedef struct {
     ferret_usize len;
     ferret_usize cap;
     ferret_usize deleted;
+    ferret_usize hash_offset;
     ferret_usize key_offset;
     ferret_usize value_offset;
     ferret_usize slot_size;
@@ -233,7 +234,7 @@ static ferret_u8 *ferret__map_slot_state(FerretRuntimeMap *map, ferret_usize ind
 }
 
 static ferret_u64 *ferret__map_slot_hash(FerretRuntimeMap *map, ferret_usize index) {
-    return (ferret_u64 *)(map->slots + (index * map->slot_size) + sizeof(ferret_u8));
+    return (ferret_u64 *)(map->slots + (index * map->slot_size) + map->hash_offset);
 }
 
 static void *ferret__map_slot_key(FerretRuntimeMap *map, ferret_usize index) {
@@ -259,6 +260,7 @@ static ferret_usize ferret__next_pow2(ferret_usize value) {
 
 static FerretRuntimeMap *ferret__map_alloc(const FerretTypeInfo *key_type, const FerretTypeInfo *value_type, ferret_usize cap) {
     FerretRuntimeMap *map;
+    ferret_usize hash_align;
     ferret_usize key_align;
     ferret_usize value_align;
     ferret_usize slot_align;
@@ -279,9 +281,13 @@ static FerretRuntimeMap *ferret__map_alloc(const FerretTypeInfo *key_type, const
         return NULL;
     }
 
+    hash_align = sizeof(ferret_u64);
     key_align = key_type->align == 0u ? 1u : key_type->align;
     value_align = value_type->align == 0u ? 1u : value_type->align;
     slot_align = value_align > key_align ? value_align : key_align;
+    if (slot_align < hash_align) {
+        slot_align = hash_align;
+    }
     if (slot_align < sizeof(void *)) {
         slot_align = sizeof(void *);
     }
@@ -289,7 +295,8 @@ static FerretRuntimeMap *ferret__map_alloc(const FerretTypeInfo *key_type, const
     map->key_type = key_type;
     map->value_type = value_type;
     map->cap = cap;
-    map->key_offset = ferret__align_up(1u + sizeof(ferret_u64), key_align);
+    map->hash_offset = ferret__align_up(1u, hash_align);
+    map->key_offset = ferret__align_up(map->hash_offset + sizeof(ferret_u64), key_align);
     map->value_offset = ferret__align_up(map->key_offset + key_type->size, value_align);
     map->slot_size = ferret__align_up(map->value_offset + value_type->size, slot_align);
     map->slots = (ferret_u8 *)calloc((size_t)cap, (size_t)map->slot_size);
