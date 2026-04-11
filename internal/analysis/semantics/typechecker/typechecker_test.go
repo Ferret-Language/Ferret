@@ -567,6 +567,95 @@ fn main() -> void {
 	}
 }
 
+func TestTypecheckerAcceptsComparableConstraint(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Pair struct {
+    left: i32
+    right: str
+}
+
+fn Use<K: Comparable>(value: K) -> K {
+    return value
+}
+
+fn main() -> void {
+    Use(1)
+    Use("ok")
+    Use(.{ .left = 1, .right = "x" } as Pair)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNonComparableConstraintArgument(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Bad struct {
+    items: []i32
+}
+
+fn Use<K: Comparable>(value: K) -> void {
+    value
+}
+
+fn main() -> void {
+    Use(.{ .items = [_]i32{1, 2} } as Bad)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected Comparable constraint mismatch diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "expected Comparable") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Comparable constraint mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNonComparableTypeArgumentForGenericType(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Bad struct {
+    items: []i32
+}
+
+type Box<K: Comparable> struct {
+    key: K
+}
+
+fn main() -> void {
+    let _: Box<Bad> = .{ .key = .{ .items = [_]i32{1, 2} } as Bad }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected Comparable type-argument mismatch diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "expected Comparable") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Comparable type-argument mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsNamedConstraintTypeAsConcreteType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

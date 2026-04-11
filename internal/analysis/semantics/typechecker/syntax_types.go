@@ -52,6 +52,18 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 			return &typeinfo.BuiltinType{Name: t.Path[0]}
 		}
 		if len(t.Path) == 1 {
+			if t.Path[0] == "Comparable" {
+				if len(t.TypeArgs) > 0 {
+					loc := t.Loc()
+					c.ctx.Diagnostics.Add(
+						diagnostics.NewError(`type "Comparable" is not generic`).
+							WithCode(diagnostics.ErrTypeMismatch).
+							WithPrimaryLabel(&loc, "remove type arguments from this constraint"),
+					)
+					return typeinfo.InvalidType{}
+				}
+				return &typeinfo.ComparableConstraint{}
+			}
 			if typeParam, ok := c.lookupTypeParam(t.Path[0]); ok {
 				return typeParam
 			}

@@ -1005,7 +1005,7 @@ func (r *resolver) reportInvalidType(loc source.Location, name string) {
 }
 
 func isPredeclaredType(name string) bool {
-	return tokens.IsBuiltinType(name) || name == "Type"
+	return tokens.IsBuiltinType(name) || name == "Type" || name == "Comparable"
 }
 
 func (r *resolver) findModuleForSymbol(sym *symbols.Symbol) *context.Module {

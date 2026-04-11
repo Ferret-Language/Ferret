@@ -2086,6 +2086,13 @@ func (c *checker) checkTypeParamConstraintsAt(loc source.Location, params []*typ
 			continue
 		}
 		constraint := c.substituteTypeParams(param.Constraint, bindings)
+		if _, ok := constraint.(*typeinfo.ComparableConstraint); ok {
+			if c.isComparableType(actual) {
+				continue
+			}
+			c.reportTypeMismatch(loc, constraint, actual)
+			continue
+		}
 		if c.assignable(constraint, actual) {
 			continue
 		}

@@ -40,6 +40,10 @@ type SelfType struct{}
 
 func (*SelfType) String() string { return "Self" }
 
+type ComparableConstraint struct{}
+
+func (*ComparableConstraint) String() string { return "Comparable" }
+
 type TypeParam struct {
 	Name       string
 	Constraint Type
@@ -420,6 +424,9 @@ func Equal(a, b Type) bool {
 		return ok
 	case *SelfType:
 		_, ok := b.(*SelfType)
+		return ok
+	case *ComparableConstraint:
+		_, ok := b.(*ComparableConstraint)
 		return ok
 	case *TypeParam:
 		bt, ok := b.(*TypeParam)
