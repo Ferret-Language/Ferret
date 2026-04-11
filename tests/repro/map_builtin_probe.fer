@@ -1,0 +1,31 @@
+fn main() -> void {
+    let mut nums = map[str]i32{"one" => 1}
+    println(Size(&nums) as str)
+    println((Get(&nums, "one") ?? 0) as str)
+    println((Set(&mut nums, "one", 2) ?? 0) as str)
+    println((Get(&nums, "one") ?? 0) as str)
+    println("capacity: ", Cap(&nums))
+
+    let mut words = map[str]str{"a" => "alpha"}
+    println(Size(&words) as str)
+    if Get(&words, "a") is str {
+        println("true")
+    } else {
+        println("false")
+    }
+    if Set(&mut words, "a", "beta") is str {
+        println("true")
+    } else {
+        println("false")
+    }
+    if Get(&words, "a") is str {
+        println("true")
+    } else {
+        println("false")
+    }
+    if Get(&words, "missing") is str {
+        println("true")
+    } else {
+        println("false")
+    }
+}

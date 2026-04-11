@@ -987,6 +987,57 @@ fn main() -> str {
 	t.Fatalf("expected lowered string composite in MIR, got %#v", mainFn.Blocks)
 }
 
+func TestPipelinePreservesMapLiteralKeysInMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+fn main() -> usize {
+    let values: map[str]i32 = map[str]i32{"one" => 1}
+    return Size(&values)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			assign, ok := instr.(*mir.AssignInstr)
+			if !ok {
+				continue
+			}
+			comp, ok := assign.Value.(*mir.CompositeValue)
+			if !ok {
+				continue
+			}
+			if _, ok := comp.Type().(*typeinfo.MapType); !ok {
+				continue
+			}
+			if len(comp.Items) != 1 || comp.Items[0].Key == nil {
+				t.Fatalf("expected keyed map composite, got %#v", comp.Items)
+			}
+			if _, ok := comp.Items[0].Key.(*mir.CompositeValue); ok {
+				t.Fatalf("unexpected composite key lowering: %#v", comp.Items[0].Key)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected map literal assign in MIR, got %#v", mainFn.Blocks)
+}
+
 func TestPipelineLowersInferredStringLiteralAsByteArray(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.fer"), `

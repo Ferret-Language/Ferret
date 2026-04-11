@@ -171,6 +171,9 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 	case *typeinfo.SliceType:
 		ptrSize := abi.PointerBytes()
 		return ptrSize * 2, ptrSize, true, nil
+	case *typeinfo.MapType:
+		ptrSize := abi.PointerBytes()
+		return ptrSize, ptrSize, true, nil
 	case *typeinfo.ArrayType:
 		if t.Len < 0 {
 			return 0, 1, false, nil

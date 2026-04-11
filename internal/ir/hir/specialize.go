@@ -628,7 +628,7 @@ func (s *specializer) cloneExpr(expr Expr, bindings map[*typeinfo.TypeParam]type
 		out.ExprType = s.substituteType(ex.Type(), bindings)
 		out.Items = make([]CompositeItem, 0, len(ex.Items))
 		for _, item := range ex.Items {
-			out.Items = append(out.Items, CompositeItem{Name: item.Name, Value: s.cloneExpr(item.Value, bindings)})
+			out.Items = append(out.Items, CompositeItem{Name: item.Name, Key: s.cloneExpr(item.Key, bindings), Value: s.cloneExpr(item.Value, bindings)})
 		}
 		return &out
 	case *IndexExpr:

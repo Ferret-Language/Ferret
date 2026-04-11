@@ -91,11 +91,17 @@ typedef struct {
 #define FERRET_TYPE_FLAG_TUPLE     (1u << 7)
 #define FERRET_TYPE_FLAG_VARIANTS  (1u << 8)
 #define FERRET_TYPE_FLAG_OPTIONAL  (1u << 9)
+#define FERRET_TYPE_FLAG_STRUCT    (1u << 10)
 
 typedef struct {
     const FerretTypeInfo *inner;
     ferret_usize          payload_offset;
 } FerretOptionalTypeInfo;
+
+typedef struct {
+    ferret_usize                len;
+    const FerretTupleFieldInfo *fields;
+} FerretStructTypeInfo;
 
 #define FERRET_RUNTIME_TRAP_NONE      0u
 #define FERRET_RUNTIME_TRAP_PANIC     1u
@@ -270,6 +276,30 @@ ferret_usize ferret_global_slice_len(const FerretSlicePtr *s);
  * Currently this accepts the slice ABI and returns the element count.
  * Array len is folded to constants during MIR lowering. */
 ferret_usize ferret_global_len(const FerretSlicePtr *s);
+
+/* -------------------------------------------------------------------------
+ * Builtin map runtime helpers.
+ * Map storage is runtime-owned opaque state behind Ferret `map[K]V`.
+ * The compiler lowers Get/Set/Size/Cap to these hooks.
+ * -------------------------------------------------------------------------*/
+
+ferret_usize ferret_global_map_size(const ferret_raw *map);
+ferret_usize ferret_global_map_cap(const ferret_raw *map);
+ferret_bool ferret_global_map_get(
+    const ferret_raw *map,
+    const void *key,
+    const FerretTypeInfo *key_type,
+    const FerretTypeInfo *value_type,
+    void *out_value
+);
+ferret_bool ferret_global_map_set(
+    ferret_raw *map,
+    const void *key,
+    const void *value,
+    const FerretTypeInfo *key_type,
+    const FerretTypeInfo *value_type,
+    void *out_old_value
+);
 
 /* -------------------------------------------------------------------------
  * Explicit string conversion helpers.

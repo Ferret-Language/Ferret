@@ -165,6 +165,108 @@ func IndexElementType(base typeinfo.Type, index mir.Value) typeinfo.Type {
 	}
 }
 
+type BuiltinMapCallKind uint8
+
+const (
+	BuiltinMapCallNone BuiltinMapCallKind = iota
+	BuiltinMapCallSize
+	BuiltinMapCallCap
+	BuiltinMapCallGet
+	BuiltinMapCallSet
+)
+
+func BuiltinMapCall(call *mir.CallValue) (BuiltinMapCallKind, *typeinfo.MapType, bool) {
+	if call == nil {
+		return BuiltinMapCallNone, nil, false
+	}
+	callee, ok := call.Callee.(*mir.NameValue)
+	if !ok || callee == nil {
+		return BuiltinMapCallNone, nil, false
+	}
+	name := ""
+	if len(callee.Path) != 0 {
+		name = callee.Path[len(callee.Path)-1]
+	}
+	if callee.LinkName != "" {
+		switch callee.LinkName {
+		case "ferret_global_Size":
+			name = "Size"
+		case "ferret_global_Cap":
+			name = "Cap"
+		case "ferret_global_Get":
+			name = "Get"
+		case "ferret_global_Set":
+			name = "Set"
+		}
+	}
+	if name == "" {
+		return BuiltinMapCallNone, nil, false
+	}
+	mapArgIndex := 0
+	switch name {
+	case "Size":
+		mapArgIndex = 0
+	case "Cap":
+		mapArgIndex = 0
+	case "Get":
+		mapArgIndex = 0
+	case "Set":
+		mapArgIndex = 0
+	default:
+		return BuiltinMapCallNone, nil, false
+	}
+	if len(call.Args) <= mapArgIndex {
+		return BuiltinMapCallNone, nil, false
+	}
+	mapType, ok := MapArgType(call.Args[mapArgIndex].Type())
+	if !ok {
+		return BuiltinMapCallNone, nil, false
+	}
+	switch name {
+	case "Size":
+		return BuiltinMapCallSize, mapType, true
+	case "Cap":
+		return BuiltinMapCallCap, mapType, true
+	case "Get":
+		return BuiltinMapCallGet, mapType, true
+	case "Set":
+		return BuiltinMapCallSet, mapType, true
+	default:
+		return BuiltinMapCallNone, nil, false
+	}
+}
+
+func MapArgType(typ typeinfo.Type) (*typeinfo.MapType, bool) {
+	switch t := backend.UnwrapNamed(typ).(type) {
+	case *typeinfo.MapType:
+		return t, true
+	case *typeinfo.RefType:
+		if inner, ok := backend.UnwrapNamed(t.Inner).(*typeinfo.MapType); ok {
+			return inner, true
+		}
+	case *typeinfo.PointerType:
+		if inner, ok := backend.UnwrapNamed(t.Inner).(*typeinfo.MapType); ok {
+			return inner, true
+		}
+	}
+	return nil, false
+}
+
+func BuiltinMapRuntimeSymbol(kind BuiltinMapCallKind) string {
+	switch kind {
+	case BuiltinMapCallSize:
+		return "ferret_global_map_size"
+	case BuiltinMapCallCap:
+		return "ferret_global_map_cap"
+	case BuiltinMapCallGet:
+		return "ferret_global_map_get"
+	case BuiltinMapCallSet:
+		return "ferret_global_map_set"
+	default:
+		return ""
+	}
+}
+
 func SanitizePath(path string) string {
 	parts := strings.FieldsFunc(path, func(r rune) bool {
 		switch r {

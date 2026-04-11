@@ -126,7 +126,7 @@ func llvmBaseType(typ typeinfo.Type) (string, error) {
 		case "void":
 			return "void", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType, *typeinfo.MapType:
 		return "ptr", nil
 	case *typeinfo.OptionalType:
 		if backend.OptionalUsesNiche(base.Inner) {

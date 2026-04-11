@@ -437,8 +437,9 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 		dbg = newDebugState()
 	}
 	shared := &becommon.InterfaceHelperCache{
-		VTables:  make(map[becommon.InterfaceVTableKey]string),
-		Wrappers: make(map[becommon.InterfaceWrapperKey]struct{}),
+		VTables:      make(map[becommon.InterfaceVTableKey]string),
+		Wrappers:     make(map[becommon.InterfaceWrapperKey]struct{}),
+		RuntimeTypes: make(map[string]string),
 	}
 
 	// Pass 1: collect all type declarations in dependency order (units are
@@ -502,7 +503,7 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 		}
 		declLines = append(declLines, callDecls...)
 		for _, fn := range externFunctionsForUnit(unit) {
-			if fn == nil || !fn.IsExtern || fn.LinkName == "" {
+			if fn == nil || !fn.IsExtern || fn.LinkName == "" || isLoweredBuiltinExtern(fn) {
 				continue
 			}
 			sym := becommon.SanitizeIdent(fn.LinkName)
@@ -639,7 +640,22 @@ func runtimeDecls() []string {
 		fmt.Sprintf("declare %s @ferret_global_i64_str(i64)", sliceIR),
 		fmt.Sprintf("declare %s @ferret_global_u64_str(i64)", sliceIR),
 		fmt.Sprintf("declare %s @ferret_global_f64_str(double)", sliceIR),
+		fmt.Sprintf("declare %s @ferret_global_map_size(ptr)", abiIR),
+		fmt.Sprintf("declare %s @ferret_global_map_cap(ptr)", abiIR),
+		"declare i8 @ferret_global_map_get(ptr, ptr, ptr, ptr, ptr)",
+		"declare i8 @ferret_global_map_set(ptr, ptr, ptr, ptr, ptr, ptr)",
 	}
+}
+
+func isLoweredBuiltinExtern(fn *mir.Function) bool {
+	if fn == nil {
+		return false
+	}
+	switch fn.Name {
+	case "Size", "Cap", "Get", "Set":
+		return true
+	}
+	return false
 }
 
 func seedExternDecls() map[string]struct{} {
@@ -782,6 +798,17 @@ func collectExternCallDecls(state *moduleState, mod *mir.Module, seenExterns map
 		case *mir.LoadValue:
 			return walkValue(v.Pointer)
 		case *mir.CallValue:
+			if _, _, ok := becommon.BuiltinMapCall(v); ok {
+				if err := walkValue(v.Callee); err != nil {
+					return err
+				}
+				for _, arg := range v.Args {
+					if err := walkValue(arg); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
 			if callee, ok := v.Callee.(*mir.NameValue); ok && callee.LinkName != "" {
 				if err := addCall(becommon.SanitizeIdent(callee.LinkName), v); err != nil {
 					return err
@@ -1005,6 +1032,7 @@ func newProgramModuleState(unit *backend.Unit, allLayouts map[string]*layout.Mod
 	state.shared = shared
 	state.interfaceVTables = shared.VTables
 	state.interfaceWrappers = shared.Wrappers
+	state.runtimeTypes = shared.RuntimeTypes
 	return state
 }
 
@@ -1035,7 +1063,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		b.WriteByte('\n')
 	}
 	for _, fn := range externFunctionsForUnit(unit) {
-		if fn == nil || !fn.IsExtern || fn.LinkName == "" {
+		if fn == nil || !fn.IsExtern || fn.LinkName == "" || isLoweredBuiltinExtern(fn) {
 			continue
 		}
 		sym := becommon.SanitizeIdent(fn.LinkName)
@@ -2498,6 +2526,9 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if field, ok := call.Callee.(*mir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
 		return lowerInterfaceCall(state, targetName, targetType, call, field)
 	}
+	if kind, mapType, ok := becommon.BuiltinMapCall(call); ok {
+		return lowerBuiltinMapCall(state, targetName, targetType, call, kind, mapType)
+	}
 	callee, err := lowerCallee(state, call.Callee)
 	if err != nil {
 		return "", err
@@ -2597,6 +2628,249 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 		return callText, nil
 	}
 	return fmt.Sprintf("%s = %s", llvmLocalName(targetName), callText), nil
+}
+
+func lowerBuiltinMapCall(state *moduleState, targetName string, targetType typeinfo.Type, call *mir.CallValue, kind becommon.BuiltinMapCallKind, mapType *typeinfo.MapType) (string, error) {
+	mapPtr, err := lowerValue(state, call.Args[0])
+	if err != nil {
+		return "", err
+	}
+	switch kind {
+	case becommon.BuiltinMapCallSize, becommon.BuiltinMapCallCap:
+		callText := fmt.Sprintf("call %s @%s(ptr %s)", llvmABIIntType(), becommon.BuiltinMapRuntimeSymbol(kind), mapPtr)
+		if targetName == "" {
+			return callText, nil
+		}
+		return fmt.Sprintf("%s = %s", llvmLocalName(targetName), callText), nil
+	case becommon.BuiltinMapCallGet, becommon.BuiltinMapCallSet:
+	default:
+		return "", fmt.Errorf("unsupported builtin map call")
+	}
+
+	keyInfoSym, err := ensureLLVMRuntimeTypeInfo(state, mapType.Key)
+	if err != nil {
+		return "", err
+	}
+	valueInfoSym, err := ensureLLVMRuntimeTypeInfo(state, mapType.Value)
+	if err != nil {
+		return "", err
+	}
+	keyPrefix, keyPtr, err := lowerMapValuePointer(state, call.Args[1])
+	if err != nil {
+		return "", err
+	}
+	lines := append([]string(nil), keyPrefix...)
+	valuePtr := "null"
+	if kind == becommon.BuiltinMapCallSet {
+		valuePrefix, ptr, err := lowerMapValuePointer(state, call.Args[2])
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, valuePrefix...)
+		valuePtr = ptr
+	}
+	outPtr := "null"
+	if targetType != nil && !backend.IsVoidType(targetType) {
+		outLines, ptr, err := lowerMapTempStorage(state, mapType.Value, "map_out")
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, outLines...)
+		outPtr = ptr
+	}
+	found := freshTemp(state, "map_found")
+	if kind == becommon.BuiltinMapCallSet {
+		lines = append(lines, fmt.Sprintf("%s = call i8 @%s(ptr %s, ptr %s, ptr %s, ptr @%s, ptr @%s, ptr %s)",
+			found, becommon.BuiltinMapRuntimeSymbol(kind), mapPtr, keyPtr, valuePtr, keyInfoSym, valueInfoSym, outPtr))
+	} else {
+		lines = append(lines, fmt.Sprintf("%s = call i8 @%s(ptr %s, ptr %s, ptr @%s, ptr @%s, ptr %s)",
+			found, becommon.BuiltinMapRuntimeSymbol(kind), mapPtr, keyPtr, keyInfoSym, valueInfoSym, outPtr))
+	}
+	if targetName == "" || targetType == nil || backend.IsVoidType(targetType) {
+		return strings.Join(lines, "\n"), nil
+	}
+	if opt, ok := backend.UnwrapNamed(targetType).(*typeinfo.OptionalType); ok {
+		if backend.OptionalUsesNiche(opt.Inner) {
+			assign, err := lowerMapNicheOptionalAssign(state, targetName, opt.Inner, found, outPtr)
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, assign...)
+			return strings.Join(lines, "\n"), nil
+		}
+		assign, err := lowerMapAggregateOptionalAssign(state, targetName, targetType, opt.Inner, found, outPtr)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, assign...)
+		return strings.Join(lines, "\n"), nil
+	}
+	return "", fmt.Errorf("builtin map call expected optional result, got %s", typeinfo.FormatType(typeStringer{targetType}))
+}
+
+func lowerMapTempStorage(state *moduleState, typ typeinfo.Type, label string) ([]string, string, error) {
+	if isAggregateType(state, typ) {
+		typeName, err := llvmABITypeName(state, typ)
+		if err != nil {
+			return nil, "", err
+		}
+		_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
+		if err != nil {
+			return nil, "", err
+		}
+		tmp := freshTemp(state, label)
+		return []string{fmt.Sprintf("%s = alloca %s, align %d", tmp, typeName, align)}, tmp, nil
+	}
+	irType, err := llvmBaseType(typ)
+	if err != nil {
+		return nil, "", err
+	}
+	tmp := freshTemp(state, label)
+	return []string{fmt.Sprintf("%s = alloca %s, align %d", tmp, irType, irTypeAlign(irType))}, tmp, nil
+}
+
+func lowerMapValuePointer(state *moduleState, value mir.Value) ([]string, string, error) {
+	if value == nil {
+		return nil, "", fmt.Errorf("nil map runtime value")
+	}
+	if isAggregateType(state, value.Type()) {
+		switch v := value.(type) {
+		case *mir.LocalValue, *mir.NameValue:
+			ptr, err := lowerStoredAggregatePointer(state, v)
+			return nil, ptr, err
+		}
+		typeName, err := llvmABITypeName(state, value.Type())
+		if err != nil {
+			return nil, "", err
+		}
+		_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), value.Type())
+		if err != nil {
+			return nil, "", err
+		}
+		tmp := freshTemp(state, "map_arg")
+		agg := &aggregateLocal{PtrName: strings.TrimPrefix(tmp, "%"), Type: value.Type(), Align: align}
+		assign, err := lowerAggregateAssign(state, agg, value)
+		if err != nil {
+			return nil, "", err
+		}
+		lines := []string{fmt.Sprintf("%s = alloca %s, align %d", tmp, typeName, align)}
+		if assign != "" {
+			lines = append(lines, strings.Split(assign, "\n")...)
+		}
+		return lines, tmp, nil
+	}
+	switch v := value.(type) {
+	case *mir.LocalValue:
+		if sc, ok := state.scalarLocals[v.LocalID]; ok {
+			return nil, sc.AllocaName, nil
+		}
+	case *mir.NameValue:
+		if len(v.Path) == 1 {
+			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
+				if sc, ok := state.scalarLocals[local.ID]; ok {
+					return nil, sc.AllocaName, nil
+				}
+			}
+		}
+		if v.LinkName != "" {
+			return nil, "@" + becommon.SanitizeIdent(v.LinkName), nil
+		}
+		return nil, "@" + llvmSymbol(state, v.Path), nil
+	}
+	irType, err := llvmBaseType(value.Type())
+	if err != nil {
+		return nil, "", err
+	}
+	lowered, err := lowerValue(state, value)
+	if err != nil {
+		return nil, "", err
+	}
+	tmp := freshTemp(state, "map_arg")
+	return []string{
+		fmt.Sprintf("%s = alloca %s, align %d", tmp, irType, irTypeAlign(irType)),
+		fmt.Sprintf("store %s %s, ptr %s", irType, lowered, tmp),
+	}, tmp, nil
+}
+
+func lowerMapNicheOptionalAssign(state *moduleState, targetName string, inner typeinfo.Type, found, outPtr string) ([]string, error) {
+	irType, err := llvmBaseType(inner)
+	if err != nil {
+		return nil, err
+	}
+	noneValue, err := llvmOptionalNoneValue(inner)
+	if err != nil {
+		return nil, err
+	}
+	cond := freshTemp(state, "map_has")
+	value := freshTemp(state, "map_value")
+	result := freshTemp(state, "map_opt")
+	return []string{
+		fmt.Sprintf("%s = icmp ne i8 %s, 0", cond, found),
+		fmt.Sprintf("%s = load %s, ptr %s", value, irType, outPtr),
+		fmt.Sprintf("%s = select i1 %s, %s %s, %s %s", result, cond, irType, value, irType, noneValue),
+		fmt.Sprintf("%s = %s", llvmLocalName(targetName), result),
+	}, nil
+}
+
+func lowerMapAggregateOptionalAssign(state *moduleState, targetName string, targetType, inner typeinfo.Type, found, outPtr string) ([]string, error) {
+	local := becommon.FindLocalByName(state.fn, targetName)
+	if local == nil {
+		return nil, fmt.Errorf("aggregate optional target %q not found", targetName)
+	}
+	agg, ok := state.aggLocals[local.ID]
+	if !ok {
+		return nil, fmt.Errorf("aggregate optional target %q has no storage", targetName)
+	}
+	info, err := llvmUnionLayoutInfo(state, targetType)
+	if err != nil {
+		return nil, err
+	}
+	tag := freshTemp(state, "map_tag")
+	lines := []string{
+		fmt.Sprintf("%s = zext i8 %s to i32", tag, found),
+		fmt.Sprintf("store i32 %s, ptr %s", tag, llvmLocalName(agg.PtrName)),
+	}
+	payloadPtr := llvmLocalName(agg.PtrName)
+	if info.PayloadOffset != 0 {
+		tmp := freshTemp(state, "map_payload")
+		lines = append(lines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", tmp, llvmLocalName(agg.PtrName), info.PayloadOffset))
+		payloadPtr = tmp
+	}
+	if isAggregateType(state, inner) {
+		size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), inner)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, llvmMemcpy(payloadPtr, outPtr, size, align))
+		return lines, nil
+	}
+	irType, err := llvmBaseType(inner)
+	if err != nil {
+		return nil, err
+	}
+	value := freshTemp(state, "map_payload_value")
+	lines = append(lines,
+		fmt.Sprintf("%s = load %s, ptr %s", value, irType, outPtr),
+		fmt.Sprintf("store %s %s, ptr %s", irType, value, payloadPtr),
+	)
+	return lines, nil
+}
+
+func llvmOptionalNoneValue(inner typeinfo.Type) (string, error) {
+	switch t := backend.UnwrapNamed(inner).(type) {
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+		return "null", nil
+	case *typeinfo.BuiltinType:
+		switch t.Name {
+		case "bool":
+			return "2", nil
+		case "char":
+			return "4294967295", nil
+		}
+	case *typeinfo.EnumType, *typeinfo.ErrorSetType:
+		return "4294967295", nil
+	}
+	return "", fmt.Errorf("unsupported niche optional inner %s", typeinfo.FormatType(typeStringer{inner}))
 }
 
 func lowerAggregateCall(state *moduleState, agg *aggregateLocal, callee, argsStr string) (string, error) {
@@ -2956,6 +3230,9 @@ func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *mir.
 	}
 	if field, ok := call.Callee.(*mir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
 		return lowerInterfaceCall(state, agg.Name, agg.Type, call, field)
+	}
+	if kind, mapType, ok := becommon.BuiltinMapCall(call); ok {
+		return lowerBuiltinMapCall(state, agg.Name, agg.Type, call, kind, mapType)
 	}
 	callee, err := lowerCallee(state, call.Callee)
 	if err != nil {
@@ -3713,6 +3990,28 @@ func ensureLLVMRuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, e
 			"@%s = private unnamed_addr constant { %s, ptr } { %s %d, %s }\n",
 			metaSym, llvmABIIntType(), llvmABIIntType(), len(desc.Fields), fieldsRef)
 		metaRef = "ptr @" + metaSym
+	case desc.Flags&backend.RuntimeTypeFlagStruct != 0:
+		fieldsRef := "ptr null"
+		if len(desc.Fields) != 0 {
+			fieldSym := sym + "__fields"
+			entries := make([]string, 0, len(desc.Fields))
+			for _, field := range desc.Fields {
+				fieldTypeSym, err := ensureLLVMRuntimeTypeInfo(state, field.Type)
+				if err != nil {
+					return "", err
+				}
+				entries = append(entries, fmt.Sprintf("{ %s, ptr } { %s %d, ptr @%s }", llvmABIIntType(), llvmABIIntType(), field.Offset, fieldTypeSym))
+			}
+			fmt.Fprintf(state.deferredB,
+				"@%s = private unnamed_addr constant [%d x { %s, ptr }] [%s]\n",
+				fieldSym, len(entries), llvmABIIntType(), strings.Join(entries, ", "))
+			fieldsRef = fmt.Sprintf("ptr @%s", fieldSym)
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB,
+			"@%s = private unnamed_addr constant { %s, ptr } { %s %d, %s }\n",
+			metaSym, llvmABIIntType(), llvmABIIntType(), len(desc.Fields), fieldsRef)
+		metaRef = "ptr @" + metaSym
 	case desc.Flags&backend.RuntimeTypeFlagOptional != 0 && desc.Elem != nil:
 		innerSym, err := ensureLLVMRuntimeTypeInfo(state, desc.Elem)
 		if err != nil {
@@ -4185,6 +4484,11 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
 	case *mir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
+	case *mir.CompositeValue:
+		if _, ok := backend.UnwrapNamed(v.Type()).(*typeinfo.MapType); ok {
+			return lowerMapCompositeValue(state, v)
+		}
+		return "", fmt.Errorf("composite value must be lowered in assignment context")
 	case *mir.FieldValue:
 		fieldIndex, err := llvmResolveFieldIndex(state, llvmFieldBaseType(state, v.Base), v.FieldIndex, v.MemberName)
 		if err != nil {
@@ -4207,6 +4511,44 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
+}
+
+func lowerMapCompositeValue(state *moduleState, comp *mir.CompositeValue) (string, error) {
+	mapType, ok := backend.UnwrapNamed(comp.Type()).(*typeinfo.MapType)
+	if !ok {
+		return "", fmt.Errorf("map composite requires map type")
+	}
+	keyInfoSym, err := ensureLLVMRuntimeTypeInfo(state, mapType.Key)
+	if err != nil {
+		return "", err
+	}
+	valueInfoSym, err := ensureLLVMRuntimeTypeInfo(state, mapType.Value)
+	if err != nil {
+		return "", err
+	}
+	slot := freshTemp(state, "map_slot")
+	lines := []string{fmt.Sprintf("%s = alloca ptr, align %d", slot, abi.PointerBytes()), fmt.Sprintf("store ptr null, ptr %s", slot)}
+	for _, item := range comp.Items {
+		if item.Key == nil {
+			return "", fmt.Errorf("map composite item missing key")
+		}
+		keyPrefix, keyPtr, err := lowerMapValuePointer(state, item.Key)
+		if err != nil {
+			return "", err
+		}
+		valuePrefix, valuePtr, err := lowerMapValuePointer(state, item.Value)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, keyPrefix...)
+		lines = append(lines, valuePrefix...)
+		lines = append(lines, fmt.Sprintf("call i8 @ferret_global_map_set(ptr %s, ptr %s, ptr %s, ptr @%s, ptr @%s, ptr null)",
+			slot, keyPtr, valuePtr, keyInfoSym, valueInfoSym))
+	}
+	result := freshTemp(state, "map_value")
+	lines = append(lines, fmt.Sprintf("%s = load ptr, ptr %s", result, slot))
+	state.pendingLines = append(state.pendingLines, lines...)
+	return result, nil
 }
 
 func llvmFieldBaseType(state *moduleState, value mir.Value) typeinfo.Type {
@@ -5490,7 +5832,7 @@ func llvmValueNeedsCopy(v mir.Value) bool {
 	case *mir.LocalValue, *mir.NameValue,
 		*mir.NumberValue, *mir.BoolValue,
 		*mir.NoneValue, *mir.AddrOfValue,
-		*mir.TypeTestValue:
+		*mir.TypeTestValue, *mir.CompositeValue:
 		return true
 	}
 	return false

@@ -203,6 +203,9 @@ func childrenAreSimple(value Value) bool {
 		return isSimpleValue(v.Left)
 	case *CompositeValue:
 		for _, item := range v.Items {
+			if item.Key != nil && !isSimpleValue(item.Key) {
+				return false
+			}
 			if !isSimpleValue(item.Value) {
 				return false
 			}

@@ -89,6 +89,44 @@ fn main() -> i32 {
 	}
 }
 
+func TestLowerBuiltinMapOpsToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> usize {
+    let mut values = map[str]i32{"one" => 1}
+    Set(&mut values, "one", 2)
+    Get(&values, "one")
+    Cap(&values)
+    return Size(&values)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"$ferret_global_map_size",
+		"$ferret_global_map_cap",
+		"$ferret_global_map_get",
+		"$ferret_global_map_set",
+		"$typeinfo__str",
+		"$typeinfo__i32",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerLambdaCallToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

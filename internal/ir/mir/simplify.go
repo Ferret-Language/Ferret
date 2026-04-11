@@ -798,6 +798,7 @@ func remapValueLocals(value Value, idMap map[int]int) {
 		remapValueLocals(v.Left, idMap)
 	case *CompositeValue:
 		for _, item := range v.Items {
+			remapValueLocals(item.Key, idMap)
 			remapValueLocals(item.Value, idMap)
 		}
 	case *InterfaceValue:

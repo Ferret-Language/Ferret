@@ -592,7 +592,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	case *hir.CompositeLit:
 		out := &CompositeValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Items: make([]CompositeItem, 0, len(e.Items)), ConstructorPath: append([]string(nil), e.ConstructorPath...)}
 		for _, item := range e.Items {
-			out.Items = append(out.Items, CompositeItem{Name: item.Name, Value: lowerValue(lowerCtx, item.Value)})
+			out.Items = append(out.Items, CompositeItem{Name: item.Name, Key: lowerValue(lowerCtx, item.Key), Value: lowerValue(lowerCtx, item.Value)})
 		}
 		return out
 	default:
