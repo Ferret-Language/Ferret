@@ -2272,6 +2272,15 @@ func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	targetType := localTypeByPlaceID(state, instr.Target)
+	if isAggregateType(state, targetType) {
+		valueLines, err := lowerAggregateValueToAddr(state, addr, targetType, instr.Value)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, valueLines...)
+		return strings.Join(lines, "\n"), nil
+	}
 	val, err := lowerValue(state, instr.Value)
 	if err != nil {
 		return "", err
@@ -2999,8 +3008,12 @@ func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *mir.
 		return "", err
 	}
 	tmp := freshTemp(state, "aggret")
+	callTarget := callee
+	if !strings.HasPrefix(callTarget, "@") && !strings.HasPrefix(callTarget, "%") {
+		callTarget = "@" + callTarget
+	}
 	lines := []string{
-		fmt.Sprintf("%s = call %s @%s(%s)", tmp, typeName, callee, strings.Join(args, ", ")),
+		fmt.Sprintf("%s = call %s %s(%s)", tmp, typeName, callTarget, strings.Join(args, ", ")),
 		fmt.Sprintf("store %s %s, ptr %s", typeName, tmp, llvmLocalName(agg.PtrName)),
 	}
 	return strings.Join(lines, "\n"), nil
@@ -3020,22 +3033,30 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 			elemAlign = innerAl
 		}
 		stride := backend.AlignUpInt64(elemSize, elemAlign)
-		irType, err := llvmBaseType(arrType.Inner)
-		if err != nil {
-			return "", err
-		}
 		lines := make([]string, 0, len(comp.Items)*2)
 		for i, item := range comp.Items {
-			lowered, err := lowerValue(state, item.Value)
-			if err != nil {
-				return "", err
-			}
 			addr := llvmLocalName(agg.PtrName)
 			offset := int64(i) * stride
 			if offset != 0 {
 				tmp := freshTemp(state, "addr")
 				lines = append(lines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", tmp, llvmLocalName(agg.PtrName), offset))
 				addr = tmp
+			}
+			if isAggregateType(state, arrType.Inner) {
+				elemLines, err := lowerAggregateValueToAddr(state, addr, arrType.Inner, item.Value)
+				if err != nil {
+					return "", err
+				}
+				lines = append(lines, elemLines...)
+				continue
+			}
+			irType, err := llvmBaseType(arrType.Inner)
+			if err != nil {
+				return "", err
+			}
+			lowered, err := lowerValue(state, item.Value)
+			if err != nil {
+				return "", err
 			}
 			lines = append(lines, fmt.Sprintf("store %s %s, ptr %s", irType, lowered, addr))
 		}
@@ -5095,7 +5116,7 @@ func aggregateSizeAlignOfPrimitive(typ typeinfo.Type) (int64, int64, error) {
 		case "f64":
 			return 8, 8, nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType:
 		ptrSize := abi.PointerBytes()
 		return ptrSize, ptrSize, nil
 	}
@@ -5170,11 +5191,7 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 	if _, ok := typ.(*typeinfo.SliceType); ok {
 		return llvmSliceLikeType(), nil
 	}
-	if _, ok := backend.UnwrapNamed(typ).(*typeinfo.TupleType); ok {
-		size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
-		if err != nil {
-			return "", err
-		}
+	if size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ); err == nil {
 		return fmt.Sprintf("[%d x i8]", size), nil
 	}
 	return llvmBaseType(typ)

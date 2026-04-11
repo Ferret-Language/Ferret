@@ -1271,6 +1271,15 @@ func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	targetType := qbePlaceType(state, instr.Target)
+	if isAggregateType(state, targetType) {
+		valueLines, err := lowerAggregateValueToAddr(state, addr, targetType, instr.Value)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, valueLines...)
+		return strings.Join(lines, "\n\t"), nil
+	}
 	val, err := lowerValue(state, instr.Value)
 	if err != nil {
 		return "", err
@@ -1467,7 +1476,7 @@ func qbeScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
 		case "u64", "i64", "usize", "isize", "f64":
 			return 8, 8, nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType:
 		return 8, 8, nil
 	}
 	return 0, 0, fmt.Errorf("not a scalar type: %s", typ)
@@ -2273,22 +2282,30 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 			elemAlign = innerAl
 		}
 		stride := alignUpInt64(elemSize, elemAlign)
-		op, err := qbeStoreOp(arrType.Inner)
-		if err != nil {
-			return "", err
-		}
 		lines := make([]string, 0, len(comp.Items)*2)
 		for i, item := range comp.Items {
-			lowered, err := lowerValue(state, item.Value)
-			if err != nil {
-				return "", err
-			}
 			addr := qbeLocalName(agg.PtrName)
 			offset := int64(i) * stride
 			if offset != 0 {
 				tmp := freshTemp(state, "addr")
 				lines = append(lines, fmt.Sprintf("%s =l add %s, %d", tmp, qbeLocalName(agg.PtrName), offset))
 				addr = tmp
+			}
+			if isAggregateType(state, arrType.Inner) {
+				elemLines, err := lowerAggregateValueToAddr(state, addr, arrType.Inner, item.Value)
+				if err != nil {
+					return "", err
+				}
+				lines = append(lines, elemLines...)
+				continue
+			}
+			op, err := qbeStoreOp(arrType.Inner)
+			if err != nil {
+				return "", err
+			}
+			lowered, err := lowerValue(state, item.Value)
+			if err != nil {
+				return "", err
 			}
 			lines = append(lines, fmt.Sprintf("%s %s, %s", op, lowered, addr))
 		}
@@ -3688,7 +3705,7 @@ func qbeAggregateSubType(state *moduleState, typ typeinfo.Type) (string, error) 
 	if _, ok := typ.(*typeinfo.SliceType); ok {
 		return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
 	}
-	if _, ok := backend.UnwrapNamed(typ).(*typeinfo.TupleType); ok {
+	if _, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ); err == nil {
 		return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
 	}
 	return qbeExtType(typ)
@@ -3790,7 +3807,7 @@ func qbeLoadOp(typ typeinfo.Type) (string, string, error) {
 		case "f64":
 			return "loadd", "d", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType:
 		return "loadl", "l", nil
 	}
 	return "", "", fmt.Errorf("unsupported load type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3813,7 +3830,7 @@ func qbeStoreOp(typ typeinfo.Type) (string, error) {
 		case "f64":
 			return "stored", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType:
 		return "storel", nil
 	}
 	return "", fmt.Errorf("unsupported store type %s", typeinfo.FormatType(typeStringer{typ}))

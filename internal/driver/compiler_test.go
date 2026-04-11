@@ -1080,6 +1080,50 @@ fn main() -> void {
 	}
 }
 
+func TestParsePathTypechecksStdNetHTTPServerRoutes(t *testing.T) {
+	root := t.TempDir()
+	copyStd := func(rel string) {
+		t.Helper()
+		src := filepath.Join("..", "..", rel)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatalf("read %s: %v", src, err)
+		}
+		mustWrite(t, filepath.Join(root, rel), string(data))
+	}
+
+	copyStd(filepath.Join("ferret_libs_dev", "std", "mem.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "io.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "tcp.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "http.fer"))
+
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/io"
+import "std/net/http"
+import "std/net/tcp"
+
+fn hello(req: &http::Request, conn: &mut tcp::Conn) -> io::Error!usize {
+    req
+    return http::WriteTextResponse(conn, 200, "hello-route")
+}
+
+fn main() -> void {
+    let mut server = http::NewServer()
+    server.Listen(8080)
+    server.Get("/hello", hello)
+    _ = server.StartOnce() catch |err| {
+        print(err)
+        return
+    }
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
 func TestParsePathForIDEReportsUnusedLocalDiagnostics(t *testing.T) {
 	root := t.TempDir()
 	setIDEExecutablePaths(t, root)

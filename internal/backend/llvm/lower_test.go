@@ -2617,6 +2617,53 @@ fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
 	}
 }
 
+func TestLowerFunctionRouteTableStructToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Route struct {
+    handler: fn(i32) -> i32
+}
+
+type Server struct {
+    routes: [2]Route
+}
+
+fn inc(x: i32) -> i32 {
+    return x + 1
+}
+
+fn main() -> i32 {
+    let route: Route = .{ .handler = inc }
+    let server: Server = .{
+        .routes = .{ route, route }
+    }
+    if len(server.routes) == 2 {
+        return 0
+    }
+    return 1
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "%local__main__Route = type { ptr }") {
+		t.Fatalf("expected Route type in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "%local__main__Server = type { [16 x i8] }") {
+		t.Fatalf("expected Server route table type in llvm output:\n%s", text)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

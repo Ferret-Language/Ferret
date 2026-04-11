@@ -20,6 +20,14 @@ type ServerContext struct {
     Conn: tcp::Conn
 }
 
+type Server struct {
+    port: u16 = 8080
+    has_route: bool = false
+    path_ptr: ^const u8
+    path_len: usize = 0
+    handler: fn(&Request, &mut tcp::Conn) -> io::Error!usize = not_found_handler
+}
+
 fn find_text(text: str, needle: str) -> usize {
     let hay = text as []u8
     let pat = needle as []u8
@@ -209,6 +217,38 @@ fn status_text(status: u16) -> str {
     return "OK"
 }
 
+fn text_eq(left: str, right: str) -> bool {
+    let left_bytes = left as []u8
+    let right_bytes = right as []u8
+    let total = len(left_bytes)
+    if total != len(right_bytes) {
+        return false
+    }
+    let mut i: usize = 0
+    while i < total {
+        if left_bytes[i] != right_bytes[i] {
+            return false
+        }
+        i += 1
+    }
+    return true
+}
+
+fn not_found_handler(req: &Request, conn: &mut tcp::Conn) -> io::Error!usize {
+    req
+    return WriteTextResponse(conn, 404, "not found")
+}
+
+fn dispatch_request(server: &Server, req: &Request, conn: &mut tcp::Conn) -> io::Error!usize {
+    if !text_eq(req.Method(), "GET") {
+        return WriteTextResponse(conn, 404, "not found")
+    }
+    if server.has_route && text_eq(server_path(server), req.Path()) {
+        return server.handler(req, conn)
+    }
+    return not_found_handler(req, conn)
+}
+
 fn WriteTextResponse(conn: &mut tcp::Conn, status: u16, body: str) -> io::Error!usize {
     let mut total: usize = 0
     total = (total as i64 + (conn.Write("HTTP/1.1 ") catch |err| {
@@ -249,6 +289,74 @@ fn ServeOnce(listener: &mut tcp::Listener) -> io::Error!ServerContext {
     return .{
         .Request = req,
         .Conn = conn
+    }
+}
+
+fn NewServer() -> Server {
+    unsafe {
+        return .{
+            .port = 8080,
+            .has_route = false,
+            .path_ptr = 0 as ^const u8,
+            .path_len = 0,
+            .handler = not_found_handler
+        }
+    }
+}
+
+fn Server::Listen(&mut self, port: u16) -> void {
+    self.port = port
+}
+
+fn Server::Get(&mut self, path: str, handler: fn(&Request, &mut tcp::Conn) -> io::Error!usize) -> void {
+    unsafe {
+        let bytes = path as []u8
+        self.path_ptr = bytes as ^const u8
+        self.path_len = len(&bytes)
+    }
+    self.handler = handler
+    self.has_route = true
+}
+
+fn Server::ServeNext(&self, listener: &mut tcp::Listener) -> io::Error!usize {
+    let mut ctx = ServeOnce(listener) catch |err| {
+        return err
+    }
+    let result = dispatch_request(self, &ctx.Request, &mut ctx.Conn)
+    ctx.Release()
+    return result
+}
+
+fn Server::Start(&self) -> io::Error!usize {
+    let mut listener = tcp::Listen("127.0.0.1", self.port) catch |err| {
+        return err
+    }
+    let running = true
+    while running {
+        _ = self.ServeNext(&mut listener) catch |err| {
+            listener.Close()
+            return err
+        }
+    }
+    listener.Close()
+    return 0 as usize
+}
+
+fn Server::StartOnce(&self) -> io::Error!usize {
+    let mut listener = tcp::Listen("127.0.0.1", self.port) catch |err| {
+        return err
+    }
+    let result = self.ServeNext(&mut listener)
+    listener.Close()
+    return result
+}
+
+fn server_path(server: &Server) -> str {
+    if !server.has_route || server.path_len == 0 {
+        return ""
+    }
+    unsafe {
+        return (server.path_ptr, server.path_len) as str
     }
 }
 

@@ -150,6 +150,53 @@ fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
 	}
 }
 
+func TestLowerFunctionRouteTableStructToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Route struct {
+    handler: fn(i32) -> i32
+}
+
+type Server struct {
+    routes: [2]Route
+}
+
+fn inc(x: i32) -> i32 {
+    return x + 1
+}
+
+fn main() -> i32 {
+    let route: Route = .{ .handler = inc }
+    let server: Server = .{
+        .routes = .{ route, route }
+    }
+    if len(server.routes) == 2 {
+        return 0
+    }
+    return 1
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "type :local__main__Route = { l }") {
+		t.Fatalf("expected Route type in qbe output:\n%s", text)
+	}
+	if !strings.Contains(text, "type :local__main__Server = { b 16 }") {
+		t.Fatalf("expected Server route table type in qbe output:\n%s", text)
+	}
+}
+
 func TestLowerMatchToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

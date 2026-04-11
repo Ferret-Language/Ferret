@@ -1,5 +1,10 @@
 
 
-fn takefn(fun: fn(i32, i32)) {
-    
+fn takefn(val1: i32, val2: i32, fun: fn(i32, i32) -> i32) {
+    let res = fun(val1, val2)
+    println(res)
+}
+
+fn main() {
+    takefn(2, 3, (a: i32, b: i32) => a + b )
 }

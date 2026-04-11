@@ -175,7 +175,7 @@ func sharedScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
 		case "f64":
 			return 8, 8, nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType:
 		ptrSize := abi.PointerBytes()
 		return ptrSize, ptrSize, nil
 	}

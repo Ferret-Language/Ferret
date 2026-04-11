@@ -162,6 +162,9 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 	case *typeinfo.RawPtrType:
 		ptrSize := abi.PointerBytes()
 		return ptrSize, ptrSize, true, nil
+	case *typeinfo.FuncType:
+		ptrSize := abi.PointerBytes()
+		return ptrSize, ptrSize, true, nil
 	case *typeinfo.StringType:
 		ptrSize := abi.PointerBytes()
 		return ptrSize * 2, ptrSize, true, nil
