@@ -56,4 +56,38 @@ run_probe "http-get" "http-get-ok" \
     "$FERRET_BIN" run "$ROOT/tests/repro/http_get_probe.fer"
 wait "$server_pid" || true
 
+"$FERRET_BIN" run "$ROOT/tests/repro/http_server_once_probe.fer" >/tmp/ferret-http-server-probe.out &
+server_pid=$!
+sleep 1.0
+python - <<'PY'
+import socket
+
+with socket.create_connection(("127.0.0.1", 9111), timeout=2) as sock:
+    sock.sendall(b"GET /hello HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+
+    header, _, body = data.partition(b"\r\n\r\n")
+    content_length = 0
+    for line in header.split(b"\r\n"):
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+            break
+    while len(body) < content_length:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        body += chunk
+
+    text = header.decode("utf-8") + "\r\n\r\n" + body.decode("utf-8")
+    if "HTTP/1.1 200 OK\r\n" not in text or body.decode("utf-8") != "hello-server":
+        raise SystemExit(f"unexpected response: {text!r}")
+PY
+wait "$server_pid"
+run_probe "http-server-once" "http-server-once-ok" cat /tmp/ferret-http-server-probe.out
+
 echo "all http real probes ok"

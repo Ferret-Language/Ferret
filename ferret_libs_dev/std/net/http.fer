@@ -1,10 +1,23 @@
 import "std/io"
 import "std/net/tcp"
 
+type Request struct {
+    raw: io::Buffer
+    method_end: usize
+    path_start: usize
+    path_end: usize
+    body_offset: usize
+}
+
 type Response struct {
     raw: io::Buffer
     status: u16
     body_offset: usize
+}
+
+type ServerContext struct {
+    Request: Request
+    Conn: tcp::Conn
 }
 
 fn find_text(text: str, needle: str) -> usize {
@@ -50,6 +63,23 @@ fn slice_text(text: str, start: usize) -> str {
     }
 }
 
+fn slice_text_range(text: str, start: usize, end: usize) -> str {
+    let bytes = text as []u8
+    let total = len(bytes)
+    if start >= total || end <= start {
+        return ""
+    }
+    let mut limit = end
+    if limit > total {
+        limit = total
+    }
+    unsafe {
+        let ptr = bytes as ^const u8
+        let addr = (ptr as usize) + start
+        return (addr as ^const u8, limit - start) as str
+    }
+}
+
 fn parse_status_code(text: str) -> u16 {
     let bytes = text as []u8
     let total = len(bytes)
@@ -74,6 +104,61 @@ fn parse_status_code(text: str) -> u16 {
     let b = (bytes[i + 1] - b'0') as u16
     let c = (bytes[i + 2] - b'0') as u16
     return a * 100 + b * 10 + c
+}
+
+fn parse_request(text: str, raw: io::Buffer, body_offset: usize) -> io::Error!Request {
+    let bytes = text as []u8
+    let total = len(bytes)
+    let mut method_end: usize = 0
+    while method_end < total && bytes[method_end] != b' ' {
+        method_end += 1
+    }
+    if method_end == 0 || method_end >= total {
+        raw.Release()
+        return io::ErrorFromCode(0)
+    }
+
+    let path_start = method_end + (1 as usize)
+    let mut path_end = path_start
+    while path_end < total && bytes[path_end] != b' ' && bytes[path_end] != b'\r' && bytes[path_end] != b'\n' {
+        path_end += 1
+    }
+    if path_end <= path_start || path_end >= total || bytes[path_end] != b' ' {
+        raw.Release()
+        return io::ErrorFromCode(0)
+    }
+
+    return .{
+        .raw = raw,
+        .method_end = method_end,
+        .path_start = path_start,
+        .path_end = path_end,
+        .body_offset = body_offset
+    }
+}
+
+fn read_request(conn: &mut tcp::Conn) -> io::Error!Request {
+    let mut raw = io::NewBuffer()
+    let mut marker: usize = 0
+    let mut found = false
+    while !found {
+        let chunk = conn.Read(4096) catch |err| {
+            raw.Release()
+            return err
+        }
+        if len(chunk) == 0 {
+            raw.Release()
+            return io::ErrorFromCode(7)
+        }
+        _ = io::Write(raw, chunk as str) catch |err| {
+            raw.Release()
+            return err
+        }
+        let text = raw.AsStr()
+        marker = find_text(text, "\r\n\r\n")
+        found = marker <= len(text)
+    }
+    return parse_request(raw.AsStr(), raw, marker + (4 as usize))
 }
 
 fn read_response(conn: &mut tcp::Conn) -> io::Error!Response {
@@ -106,6 +191,65 @@ fn read_response(conn: &mut tcp::Conn) -> io::Error!Response {
     }
     raw.Release()
     return io::ErrorFromCode(0)
+}
+
+fn status_text(status: u16) -> str {
+    if status == 200 {
+        return "OK"
+    }
+    if status == 400 {
+        return "Bad Request"
+    }
+    if status == 404 {
+        return "Not Found"
+    }
+    if status == 500 {
+        return "Internal Server Error"
+    }
+    return "OK"
+}
+
+fn WriteTextResponse(conn: &mut tcp::Conn, status: u16, body: str) -> io::Error!usize {
+    let mut total: usize = 0
+    total = (total as i64 + (conn.Write("HTTP/1.1 ") catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(status as str) catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(" ") catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(status_text(status)) catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write("\r\nContent-Length: ") catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(len(body as []u8) as str) catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write("\r\nConnection: close\r\n\r\n") catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(body) catch |err| {
+        return err
+    }) as i64) as usize
+    return total
+}
+
+fn ServeOnce(listener: &mut tcp::Listener) -> io::Error!ServerContext {
+    let mut conn = listener.Accept() catch |err| {
+        return err
+    }
+    let req = read_request(&mut conn) catch |err| {
+        conn.Close()
+        return err
+    }
+    return .{
+        .Request = req,
+        .Conn = conn
+    }
 }
 
 fn Get(host: str, port: u16, path: str) -> io::Error!Response {
@@ -153,6 +297,31 @@ fn Get(host: str, port: u16, path: str) -> io::Error!Response {
 
 fn Response::StatusCode(&self) -> u16 {
     return self.status
+}
+
+fn Request::Method(&self) -> str {
+    return slice_text_range(self.raw.AsStr(), 0, self.method_end)
+}
+
+fn Request::Path(&self) -> str {
+    return slice_text_range(self.raw.AsStr(), self.path_start, self.path_end)
+}
+
+fn Request::Body(&self) -> str {
+    return slice_text(self.raw.AsStr(), self.body_offset)
+}
+
+fn Request::Raw(&self) -> str {
+    return self.raw.AsStr()
+}
+
+fn Request::Release(self) -> void {
+    self.raw.Release()
+}
+
+fn ServerContext::Release(self) -> void {
+    self.Request.Release()
+    self.Conn.Close()
 }
 
 fn Response::Body(&self) -> str {
