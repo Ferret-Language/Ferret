@@ -563,6 +563,27 @@ func (p *Parser) startsNamedParam() bool {
 	}
 }
 
+func (p *Parser) hasLambdaArrowAhead() bool {
+	if !p.at(tokens.LPAREN) {
+		return false
+	}
+	depth := 0
+	for i := p.pos; i < len(p.toks); i++ {
+		switch p.toks[i].Kind {
+		case tokens.LPAREN:
+			depth++
+		case tokens.RPAREN:
+			depth--
+			if depth == 0 {
+				return i+1 < len(p.toks) && p.toks[i+1].Kind == tokens.FATARROW
+			}
+		case tokens.EOF:
+			return false
+		}
+	}
+	return false
+}
+
 func (p *Parser) startsInterfaceParam() bool {
 	return p.at(tokens.ELLIPSIS) || p.startsType()
 }

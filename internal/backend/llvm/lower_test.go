@@ -2556,6 +2556,35 @@ fn main() -> void {
 	}
 }
 
+func TestLowerLambdaCallToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let add = (a: i32, b: i32) => a + b
+    return add(1, 2)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "define i32 @main____lambda") {
+		t.Fatalf("expected synthetic lambda function in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "call i32 @main____lambda") {
+		t.Fatalf("expected call to synthetic lambda in llvm output:\n%s", text)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -285,7 +285,7 @@ func TestTypecheckerInfersLambdaTypeAndCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> i32 {
-    let add = |a: i32, b: i32| a + b
+    let add = (a: i32, b: i32) => a + b
     return add(1, 2)
 }
 `)
@@ -321,7 +321,7 @@ func TestTypecheckerRejectsLambdaWithoutContextualOrExplicitParamTypes(t *testin
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
-    let _ = |x| x
+    let _ = (x) => x
 }
 `)
 
@@ -346,7 +346,7 @@ func TestTypecheckerRejectsCapturingLambda(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     let x = 1
-    let _ = |y: i32| x + y
+    let _ = (y: i32) => x + y
 }
 `)
 

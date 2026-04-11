@@ -186,8 +186,8 @@ fn takefn(fun: fn(i32, ...str) -> i32) {}
 func TestParseLambdaExprSyntax(t *testing.T) {
 	src := `
 fn main() -> void {
-    let add = |a: i32, b: i32| a + b
-    let log = |msg: str| {
+    let add = (a: i32, b: i32) => a + b
+    let log = (msg: str) => {
         println(msg)
     }
 }
