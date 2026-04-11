@@ -390,6 +390,7 @@ func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {
 			return
 		}
 		for _, item := range e.Items {
+			a.collectDeclNodesExpr(item.Key)
 			a.collectDeclNodesExpr(item.Value)
 		}
 	case *ast.IndexExpr:

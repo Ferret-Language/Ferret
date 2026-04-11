@@ -575,6 +575,7 @@ func (r *resolver) resolveExpr(scope *table.Scope, expr ast.Expr) {
 	case *ast.CompositeLit:
 		r.resolveType(scope, e.Type)
 		for _, item := range e.Items {
+			r.resolveExpr(scope, item.Key)
 			r.resolveExpr(scope, item.Value)
 		}
 	case *ast.IndexExpr:

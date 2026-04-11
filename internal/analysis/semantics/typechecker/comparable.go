@@ -16,6 +16,9 @@ func (c *checker) isComparableTypeSeen(typ typeinfo.Type, seen map[*ast.TypeDecl
 	switch t := c.underlyingSeen(typ, seen).(type) {
 	case *typeinfo.BuiltinType, *typeinfo.StringType, *typeinfo.EnumType, *typeinfo.ErrorSetType:
 		return true
+	case *typeinfo.TypeParam:
+		_, ok := c.underlyingSeen(t.Constraint, seen).(*typeinfo.ComparableConstraint)
+		return ok
 	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		return true
 	case *typeinfo.OptionalType:

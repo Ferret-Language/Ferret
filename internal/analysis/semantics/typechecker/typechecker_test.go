@@ -297,6 +297,64 @@ fn main(values: map[[]i32]i32) -> void {}
 	t.Fatalf("expected Comparable key diagnostic, got %#v", result.Diagnostics.Diagnostics())
 }
 
+func TestTypecheckerTypesBuiltinMapHelpersAndLiteral(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let mut values: map[str]i32 = map[str]i32{"a" => 1}
+    let got = Get(&values, "a")
+    let old = Set(&mut values, "a", 2)
+    let size = Size(&values)
+    let cap = Cap(&values)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	fn := findTypeFunc(t, result.Entry.AST, "main")
+	letGot := fn.Body.Stmts[1].(*ast.LetStmt)
+	letOld := fn.Body.Stmts[2].(*ast.LetStmt)
+	letSize := fn.Body.Stmts[3].(*ast.LetStmt)
+	letCap := fn.Body.Stmts[4].(*ast.LetStmt)
+	gotOpt, ok := result.Entry.Types.Nodes[letGot.Value].(*typeinfo.OptionalType)
+	if !ok || !typeinfo.IsBuiltinNamed(gotOpt.Inner, "i32") {
+		t.Fatalf("expected Get type ?i32, got %#v", result.Entry.Types.Nodes[letGot.Value])
+	}
+	oldOpt, ok := result.Entry.Types.Nodes[letOld.Value].(*typeinfo.OptionalType)
+	if !ok || !typeinfo.IsBuiltinNamed(oldOpt.Inner, "i32") {
+		t.Fatalf("expected Set type ?i32, got %#v", result.Entry.Types.Nodes[letOld.Value])
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[letSize.Value], "usize") {
+		t.Fatalf("expected Size type usize, got %#v", result.Entry.Types.Nodes[letSize.Value])
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[letCap.Value], "usize") {
+		t.Fatalf("expected Cap type usize, got %#v", result.Entry.Types.Nodes[letCap.Value])
+	}
+}
+
+func TestTypecheckerRejectsPositionalMapLiteralEntry(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let _: map[str]i32 = map[str]i32{1}
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected map literal entry diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "map literal requires `key => value` entries") {
+			return
+		}
+	}
+	t.Fatalf("expected map literal entry diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
 func TestTypecheckerHandlesFunctionTypeSyntax(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

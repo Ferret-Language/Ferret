@@ -444,6 +444,7 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 				for _, item := range e.Items {
 					out.Items = append(out.Items, CompositeItem{
 						Name:  cloneIdent(item.Name),
+						Key:   cloneExpr(item.Key),
 						Value: cloneExpr(item.Value),
 					})
 				}

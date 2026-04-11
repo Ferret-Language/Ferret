@@ -185,6 +185,31 @@ fn main(values: map[str]i32) {}
 	}
 }
 
+func TestParseMapLiteralSyntax(t *testing.T) {
+	src := `
+fn main() -> void {
+    let values = map[str]i32{"a" => 1, "b" => 2}
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	letStmt := fn.Body.Stmts[0].(*ast.LetStmt)
+	lit, ok := letStmt.Value.(*ast.CompositeLit)
+	if !ok {
+		t.Fatalf("expected composite literal, got %T", letStmt.Value)
+	}
+	if _, ok := lit.Type.(*ast.MapType); !ok {
+		t.Fatalf("expected map literal type, got %T", lit.Type)
+	}
+	if len(lit.Items) != 2 || lit.Items[0].Key == nil || lit.Items[1].Key == nil {
+		t.Fatalf("expected keyed map entries, got %#v", lit.Items)
+	}
+}
+
 func TestParseLambdaExprSyntax(t *testing.T) {
 	src := `
 fn main() -> void {

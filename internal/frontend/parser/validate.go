@@ -308,10 +308,16 @@ func (p *Parser) validateCompositeLit(lit *ast.CompositeLit) {
 		return
 	}
 	seenNamed := false
+	seenKeyed := false
 	seenPositional := false
 	seenFields := make(map[string]ast.CompositeItem)
 	for _, item := range lit.Items {
+		p.validateExpr(item.Key)
 		p.validateExpr(item.Value)
+		if item.Key != nil {
+			seenKeyed = true
+			continue
+		}
 		if item.Name == nil {
 			seenPositional = true
 			continue
@@ -333,6 +339,20 @@ func (p *Parser) validateCompositeLit(lit *ast.CompositeLit) {
 			diagnostics.NewError("cannot mix named and positional composite elements").
 				WithCode(diagnostics.ErrInvalidExpression).
 				WithPrimaryLabel(&lit.Location, "use either all named fields or all positional values"),
+		)
+	}
+	if seenKeyed && seenNamed {
+		p.diag.Add(
+			diagnostics.NewError("cannot mix keyed and named composite elements").
+				WithCode(diagnostics.ErrInvalidExpression).
+				WithPrimaryLabel(&lit.Location, "use either map entries or named fields"),
+		)
+	}
+	if seenKeyed && seenPositional {
+		p.diag.Add(
+			diagnostics.NewError("cannot mix keyed and positional composite elements").
+				WithCode(diagnostics.ErrInvalidExpression).
+				WithPrimaryLabel(&lit.Location, "use either map entries or positional values"),
 		)
 	}
 }

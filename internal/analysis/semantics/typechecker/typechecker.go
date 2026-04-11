@@ -1775,19 +1775,26 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 			value = spreadArg.Right
 			spread = true
 		}
-		argType := c.typeOfExpr(scope, value, nil)
-		argTypes = append(argTypes, argType)
-		if inferFromArgs {
-			var pattern typeinfo.Type
-			if variadic && i >= variadicIndex {
-				if spread {
-					pattern = fnType.Params[variadicIndex].Type
-				} else {
-					pattern = variadicElem
-				}
-			} else if i < len(fnType.Params) {
-				pattern = fnType.Params[i].Type
+		var pattern typeinfo.Type
+		if variadic && i >= variadicIndex {
+			if spread {
+				pattern = fnType.Params[variadicIndex].Type
+			} else {
+				pattern = variadicElem
 			}
+		} else if i < len(fnType.Params) {
+			pattern = fnType.Params[i].Type
+		}
+		expectedArg := typeinfo.Type(nil)
+		if inferFromArgs && pattern != nil {
+			expectedArg = c.substituteTypeParams(pattern, bindings)
+			if typeinfo.IsUnknown(expectedArg) || typeinfo.IsInvalid(expectedArg) || c.containsTypeParam(expectedArg) {
+				expectedArg = nil
+			}
+		}
+		argType := c.typeOfExpr(scope, value, expectedArg)
+		argTypes = append(argTypes, argType)
+		if inferFromArgs && pattern != nil {
 			if pattern != nil {
 				c.inferTypeParamBindings(pattern, argType, bindings)
 			}
@@ -2665,10 +2672,15 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			actual = &typeinfo.ArrayType{Inner: arrType.Inner, Len: int64(len(expr.Items))}
 		}
 		for i, item := range expr.Items {
-			if item.Name != nil {
-				loc := item.Name.Location
+			if item.Name != nil || item.Key != nil {
+				loc := item.Value.Loc()
+				if item.Name != nil {
+					loc = item.Name.Location
+				} else if item.Key != nil {
+					loc = item.Key.Loc()
+				}
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError("array literal does not support named elements").
+					diagnostics.NewError("array literal does not support keyed or named elements").
 						WithCode(diagnostics.ErrInvalidType).
 						WithPrimaryLabel(&loc, "use positional elements"),
 				)
@@ -2691,10 +2703,15 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 	}
 	if sliceType, ok := base.(*typeinfo.SliceType); ok {
 		for _, item := range expr.Items {
-			if item.Name != nil {
-				loc := item.Name.Location
+			if item.Name != nil || item.Key != nil {
+				loc := item.Value.Loc()
+				if item.Name != nil {
+					loc = item.Name.Location
+				} else if item.Key != nil {
+					loc = item.Key.Loc()
+				}
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError("slice literal does not support named elements").
+					diagnostics.NewError("slice literal does not support keyed or named elements").
 						WithCode(diagnostics.ErrInvalidType).
 						WithPrimaryLabel(&loc, "use positional elements"),
 				)
@@ -2707,12 +2724,44 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 		c.info.BindNode(expr, actual)
 		return actual
 	}
-	if tupleType, ok := base.(*typeinfo.TupleType); ok {
-		for i, item := range expr.Items {
-			if item.Name != nil {
+	if mapType, ok := base.(*typeinfo.MapType); ok {
+		for _, item := range expr.Items {
+			switch {
+			case item.Name != nil:
 				loc := item.Name.Location
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError("tuple literal does not support named elements").
+					diagnostics.NewError("map literal does not support named fields").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(&loc, "use `key => value` entries"),
+				)
+			case item.Key == nil:
+				loc := item.Value.Loc()
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("map literal requires `key => value` entries").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(&loc, "add a key before this value"),
+				)
+			default:
+				gotKey := c.typeOfExpr(scope, item.Key, mapType.Key)
+				c.checkExprAssignable(scope, item.Key, mapType.Key, gotKey)
+				gotValue := c.typeOfExpr(scope, item.Value, mapType.Value)
+				c.checkExprAssignable(scope, item.Value, mapType.Value, gotValue)
+			}
+		}
+		c.info.BindNode(expr, expected)
+		return expected
+	}
+	if tupleType, ok := base.(*typeinfo.TupleType); ok {
+		for i, item := range expr.Items {
+			if item.Name != nil || item.Key != nil {
+				loc := item.Value.Loc()
+				if item.Name != nil {
+					loc = item.Name.Location
+				} else if item.Key != nil {
+					loc = item.Key.Loc()
+				}
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("tuple literal does not support keyed or named elements").
 						WithCode(diagnostics.ErrInvalidType).
 						WithPrimaryLabel(&loc, "use positional tuple elements"),
 				)
@@ -2780,6 +2829,15 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			got := c.typeOfExpr(scope, item.Value, field.Type)
 			c.checkExprAssignable(scope, item.Value, field.Type, got)
 			provided[fieldName] = struct{}{}
+			continue
+		}
+		if item.Key != nil {
+			loc := item.Key.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("struct literal does not support keyed entries").
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(&loc, "use named fields or positional values"),
+			)
 			continue
 		}
 		fields := c.orderedStructFields(structType)

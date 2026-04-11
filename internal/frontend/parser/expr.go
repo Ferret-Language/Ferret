@@ -77,6 +77,12 @@ func (p *Parser) parsePrefix() ast.Expr {
 			p.advance()
 			return &ast.PrefixExpr{Op: "copy", Right: p.parseExprUntil(precPrefix), Location: p.locFrom(start)}
 		}
+		if p.current().Literal == "map" && p.hasTypeCompositeAhead() {
+			literalType := p.parseType()
+			p.expect(tokens.LBRACE, "expected '{' after map literal type")
+			items := p.parseCompositeItems(tokens.RBRACE)
+			return &ast.CompositeLit{Type: literalType, Items: items, Location: p.locFrom(start)}
+		}
 		return &ast.Ident{Path: p.parseNamePath(), Location: p.locFrom(start)}
 	case tokens.NUMBER:
 		tok := p.advance()
@@ -250,9 +256,16 @@ func (p *Parser) parseCompositeItems(end tokens.Kind) []ast.CompositeItem {
 			})
 		} else {
 			p.compositeValueDepth++
-			value := p.parseExprUntil(precLowest)
+			first := p.parseExprUntil(precLowest, tokens.FATARROW, tokens.COMMA, end)
+			item := ast.CompositeItem{Value: first}
+			if p.match(tokens.FATARROW) {
+				item = ast.CompositeItem{
+					Key:   first,
+					Value: p.parseExprUntil(precLowest, tokens.COMMA, end),
+				}
+			}
 			p.compositeValueDepth--
-			items = append(items, ast.CompositeItem{Value: value})
+			items = append(items, item)
 		}
 		if !p.consumeListSeparator(end, "composite literal element", p.startsExpr()) {
 			break

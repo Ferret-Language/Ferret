@@ -42,6 +42,22 @@ fn len(value: []u8) -> usize;
 #[extern]
 fn slice_len(value: ^void) -> usize;
 
+// Returns current entry count of a map.
+#[extern]
+fn Size<K: Comparable, V>(value: &map[K]V) -> usize;
+
+// Returns current slot capacity of a map.
+#[extern]
+fn Cap<K: Comparable, V>(value: &map[K]V) -> usize;
+
+// Looks up a key and returns `none` when key is absent.
+#[extern]
+fn Get<K: Comparable, V>(value: &map[K]V, key: K) -> ?V;
+
+// Inserts or overwrites a key and returns previous value when key existed.
+#[extern]
+fn Set<K: Comparable, V>(value: &mut map[K]V, key: K, item: V) -> ?V;
+
 // Reports a compile-time error with the provided message.
 // Valid only when evaluated in a comptime context.
 #[extern]
