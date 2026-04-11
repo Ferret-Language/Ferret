@@ -658,6 +658,9 @@ func shouldWarnOnUnusedModuleSymbol(mod *context.Module, sym *symbols.Symbol) bo
 	if mod == nil || sym == nil || sym.IsPub {
 		return false
 	}
+	if symbolDeclHasAttr(sym, "allow_unused") {
+		return false
+	}
 	if sym.Name == "_" {
 		return false
 	}
@@ -683,6 +686,9 @@ func shouldWarnOnUnusedFunctionSymbol(sym *symbols.Symbol) bool {
 	if sym == nil || sym.Name == "_" {
 		return false
 	}
+	if symbolDeclHasAttr(sym, "allow_unused") {
+		return false
+	}
 	if sym.Kind == symbols.SymbolParam && sym.Name == "self" {
 		return false
 	}
@@ -692,6 +698,31 @@ func shouldWarnOnUnusedFunctionSymbol(sym *symbols.Symbol) bool {
 	default:
 		return false
 	}
+}
+
+func symbolDeclHasAttr(sym *symbols.Symbol, attrName string) bool {
+	if sym == nil || attrName == "" {
+		return false
+	}
+	var attrs []ast.Attribute
+	switch node := sym.Node.(type) {
+	case *ast.FuncDecl:
+		attrs = node.Attrs
+	case *ast.TypeDecl:
+		attrs = node.Attrs
+	case *ast.LetDecl:
+		attrs = node.Attrs
+	case *ast.ConstDecl:
+		attrs = node.Attrs
+	default:
+		return false
+	}
+	for _, attr := range attrs {
+		if attr.Name == attrName {
+			return true
+		}
+	}
+	return false
 }
 
 func unusedSymbolDiagnostic(sym *symbols.Symbol) (msg, code, label string) {

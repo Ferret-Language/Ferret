@@ -379,6 +379,52 @@ func TestHoverUsesOpenDocumentOverlayText(t *testing.T) {
 	}
 }
 
+func TestHoverReturnsKeywordDocumentation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "fn main() {\n    if true {\n        return\n    }\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	var out bytes.Buffer
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+	uri := "file://" + filepath.ToSlash(path)
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: 1, Character: 4}, // "if"
+		}),
+	}
+	s.handleRequest(req)
+
+	resp := decodeSingleResponse(t, out.String())
+	if resp.Error != nil {
+		t.Fatalf("unexpected hover error: %#v", resp.Error)
+	}
+	if resp.Result == nil {
+		t.Fatal("expected hover result")
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal hover result: %v", err)
+	}
+	var hover hoverResult
+	if err := json.Unmarshal(raw, &hover); err != nil {
+		t.Fatalf("failed to unmarshal hover result: %v", err)
+	}
+	if !strings.Contains(hover.Contents.Value, "```ferret\nif\n```") {
+		t.Fatalf("expected keyword code block in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "conditional") {
+		t.Fatalf("expected keyword documentation text in hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverRangeExpressionShowsSourceSyntaxWithoutType(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
@@ -2178,6 +2224,43 @@ func TestHoverNamedTypeShowsFieldsAndMethods(t *testing.T) {
 	}
 	if !strings.Contains(hover.Contents.Value, "fn Point::Calc(&self) -> i32") {
 		t.Fatalf("expected type methods in hover, got %q", hover.Contents.Value)
+	}
+}
+
+func TestHoverNamedTypeQuotesStringDefaultField(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "type Profile struct {\n    name: str = \"Fuad Hasan\"\n}\n\nfn main() {\n    let p: Profile = .{}\n    p\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "Profile =")
+	if !ok {
+		t.Fatal("failed to find Profile usage position")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, `name: str = "Fuad Hasan"`) {
+		t.Fatalf("expected quoted string default in hover, got %q", hover.Contents.Value)
 	}
 }
 

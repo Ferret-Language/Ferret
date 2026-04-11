@@ -1,0 +1,15 @@
+
+
+type routes map[str]fn()
+
+fn main() {
+    
+    let mymap = routes{ 
+        "+" => () => println("add"),
+        "-" => () => println("mul")
+    }
+    //mymap is map[str]str
+    // let fun = mymap["+"]
+    // fun()
+    mymap["+"]()
+}

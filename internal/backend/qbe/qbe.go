@@ -1029,10 +1029,6 @@ func lowerMapValuePointer(state *moduleState, value mir.Value) ([]string, string
 				}
 			}
 		}
-		if v.LinkName != "" {
-			return nil, "$" + becommon.SanitizeIdent(v.LinkName), nil
-		}
-		return nil, "$" + qbeSymbol(state, v.Path), nil
 	}
 	size, align, err := qbeScalarSizeAlign(value.Type())
 	if err != nil {
@@ -1650,6 +1646,12 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 			return nil, "", err
 		}
 		baseType := qbePlaceType(state, p.Base)
+		if ref, ok := baseType.(*typeinfo.RefType); ok && ref != nil && ref.Inner != nil {
+			deref := freshTemp(state, "deref")
+			baseLines = append(baseLines, fmt.Sprintf("%s =l loadl %s", deref, basePtr))
+			basePtr = deref
+			baseType = ref.Inner
+		}
 		sl, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, baseType, "qbe")
 		if err != nil {
 			return nil, "", err
@@ -1670,6 +1672,12 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 			return nil, "", err
 		}
 		baseType := qbePlaceType(state, p.Base)
+		if ref, ok := baseType.(*typeinfo.RefType); ok && ref != nil && ref.Inner != nil {
+			deref := freshTemp(state, "deref")
+			baseLines = append(baseLines, fmt.Sprintf("%s =l loadl %s", deref, basePtr))
+			basePtr = deref
+			baseType = ref.Inner
+		}
 		// Compute address using a fake LocalValue that returns basePtr
 		var elemType typeinfo.Type
 		arrayLen := int64(-1)
@@ -2624,6 +2632,14 @@ func emitQBEStringConstant(state *moduleState, s string) string {
 }
 
 func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp *mir.CompositeValue) (string, error) {
+	if _, ok := backend.ResolveMapType(agg.Type); ok {
+		lowered, err := lowerMapCompositeValue(state, comp, agg.Type)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("storel %s, %s", lowered, qbeLocalName(agg.PtrName)), nil
+	}
+
 	// Array literal: positional items stored at successive element offsets.
 	if arrType, ok := agg.Type.(*typeinfo.ArrayType); ok {
 		elemSize, elemAlign, err := qbeScalarSizeAlign(arrType.Inner)
@@ -3432,8 +3448,8 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		}
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
 	case *mir.CompositeValue:
-		if _, ok := backend.UnwrapNamed(v.Type()).(*typeinfo.MapType); ok {
-			return lowerMapCompositeValue(state, v)
+		if _, ok := backend.ResolveMapType(v.Type()); ok {
+			return lowerMapCompositeValue(state, v, v.Type())
 		}
 		return "", fmt.Errorf("composite value must be lowered in assignment context")
 	case *mir.FieldLoadValue:
@@ -3462,8 +3478,11 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 	}
 }
 
-func lowerMapCompositeValue(state *moduleState, comp *mir.CompositeValue) (string, error) {
-	mapType, ok := backend.UnwrapNamed(comp.Type()).(*typeinfo.MapType)
+func lowerMapCompositeValue(state *moduleState, comp *mir.CompositeValue, targetType typeinfo.Type) (string, error) {
+	mapType, ok := backend.ResolveMapType(targetType)
+	if !ok {
+		mapType, ok = backend.ResolveMapType(comp.Type())
+	}
 	if !ok {
 		return "", fmt.Errorf("map composite requires map type")
 	}
@@ -3577,6 +3596,16 @@ func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 }
 
 func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
+	if place, ok := becommon.AddrSourceToPlace(state.fn, v.Source); ok {
+		lines, ptr, err := lowerQBEPlaceAddr(state, place)
+		if err != nil {
+			return "", err
+		}
+		if len(lines) != 0 {
+			state.pendingLines = append(state.pendingLines, lines...)
+		}
+		return ptr, nil
+	}
 	switch src := v.Source.(type) {
 	case *mir.LocalValue:
 		if agg, ok := state.aggLocals[src.LocalID]; ok {

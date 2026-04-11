@@ -17,6 +17,15 @@ func TestLookupIdentAndKeywordHelpers(t *testing.T) {
 	if !IsKeyword("while") || IsKeyword("custom") {
 		t.Fatalf("IsKeyword results unexpected")
 	}
+	if doc, ok := KeywordDoc("if"); !ok || !strings.Contains(doc, "conditional") {
+		t.Fatalf("expected keyword doc for if, got (%q, %v)", doc, ok)
+	}
+	if doc, ok := KeywordDocByKind(RETURN); !ok || !strings.Contains(doc, "Return") {
+		t.Fatalf("expected keyword doc for RETURN, got (%q, %v)", doc, ok)
+	}
+	if _, ok := KeywordDoc("custom"); ok {
+		t.Fatalf("did not expect keyword doc for non-keyword ident")
+	}
 }
 
 func TestBuiltinTypeAndStringer(t *testing.T) {

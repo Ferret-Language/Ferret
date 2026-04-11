@@ -1538,7 +1538,35 @@ func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modu
 		}
 	}
 	out = append(out, collectOwnershipCastSyntaxHoverCandidates(mod, info)...)
+	out = append(out, collectKeywordHoverCandidates(parsedPath, sourceText)...)
 	return out, defs
+}
+
+func collectKeywordHoverCandidates(path, sourceText string) []hoverCandidate {
+	if path == "" || sourceText == "" {
+		return nil
+	}
+	diag := diagnostics.NewDiagnosticBag("lsp_keyword_hover")
+	toks := lexSource(path, sourceText, diag)
+	if len(toks) == 0 {
+		return nil
+	}
+	out := make([]hoverCandidate, 0, len(toks)/4)
+	for _, tok := range toks {
+		doc, ok := tokens.KeywordDocByKind(tok.Kind)
+		if !ok {
+			continue
+		}
+		loc := source.NewLocation(path, tok.Start, tok.End)
+		markdown := appendHoverDoc(asFerretCodeBlock(tok.Literal), doc)
+		out = append(out, hoverCandidate{
+			markdown: markdown,
+			location: loc,
+			span:     locationSpan(loc),
+			priority: 3,
+		})
+	}
+	return out
 }
 
 func collectOwnershipCastSyntaxHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo) []hoverCandidate {

@@ -653,7 +653,7 @@ func isLoweredBuiltinExtern(fn *mir.Function) bool {
 		return false
 	}
 	switch fn.Name {
-	case "Size", "Cap", "Get", "Set":
+	case "size", "cap", "get", "set", "Size", "Cap", "Get", "Set":
 		return true
 	}
 	return false
@@ -2189,7 +2189,6 @@ func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typei
 	lenAddr := freshTemp(state, "slice_len_addr")
 	lenVal := freshTemp(state, "slice_len")
 	elemPtr := freshTemp(state, "elem")
-	loadElem := freshTemp(state, "idx")
 	abiIR := llvmABIIntType()
 	ptrSize := abi.PointerBytes()
 	lines := []string{
@@ -2198,8 +2197,7 @@ func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typei
 		fmt.Sprintf("%s = load %s, ptr %s", lenVal, abiIR, lenAddr),
 		fmt.Sprintf("call void @ferret__bounds_check(%s %s, %s %s)", abiIR, indexExpr, abiIR, lenVal),
 		fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, %s", elemPtr, elemIRType, dataPtr, llvmGEPIndex(indexExpr)),
-		fmt.Sprintf("%s = load %s, ptr %s", loadElem, elemIRType, elemPtr),
-		fmt.Sprintf("%s = or %s 0, %s", llvmLocalName(targetName), elemIRType, loadElem),
+		fmt.Sprintf("%s = load %s, ptr %s", llvmLocalName(targetName), elemIRType, elemPtr),
 	}
 	return strings.Join(lines, "\n"), nil
 }
@@ -2353,8 +2351,13 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 		if err != nil {
 			return nil, "", err
 		}
-		// get base type from the local
 		baseType := localTypeByPlaceID(state, p.Base)
+		if ref, ok := baseType.(*typeinfo.RefType); ok && ref != nil && ref.Inner != nil {
+			deref := freshTemp(state, "deref")
+			baseLines = append(baseLines, fmt.Sprintf("%s = load ptr, ptr %s", deref, basePtr))
+			basePtr = deref
+			baseType = ref.Inner
+		}
 		sl, err2 := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, baseType, "llvm")
 		if err2 != nil {
 			return nil, "", err2
@@ -2375,6 +2378,12 @@ func lowerPlaceAddr(state *moduleState, place mir.Place) ([]string, string, erro
 			return nil, "", err
 		}
 		baseType := localTypeByPlaceID(state, p.Base)
+		if ref, ok := baseType.(*typeinfo.RefType); ok && ref != nil && ref.Inner != nil {
+			deref := freshTemp(state, "deref")
+			baseLines = append(baseLines, fmt.Sprintf("%s = load ptr, ptr %s", deref, basePtr))
+			basePtr = deref
+			baseType = ref.Inner
+		}
 		var elemIRType string
 		arrayLen := int64(-1)
 		if arr, ok := baseType.(*typeinfo.ArrayType); ok {
@@ -2765,11 +2774,7 @@ func lowerMapIndexLoad(state *moduleState, targetName string, targetType typeinf
 	if err != nil {
 		return "", err
 	}
-	value := freshTemp(state, "map_index")
-	lines = append(lines,
-		fmt.Sprintf("%s = load %s, ptr %s", value, irType, outPtr),
-		fmt.Sprintf("%s = or %s 0, %s", llvmLocalName(targetName), irType, value),
-	)
+	lines = append(lines, fmt.Sprintf("%s = load %s, ptr %s", llvmLocalName(targetName), irType, outPtr))
 	return strings.Join(lines, "\n"), nil
 }
 
@@ -2865,10 +2870,6 @@ func lowerMapValuePointer(state *moduleState, value mir.Value) ([]string, string
 				}
 			}
 		}
-		if v.LinkName != "" {
-			return nil, "@" + becommon.SanitizeIdent(v.LinkName), nil
-		}
-		return nil, "@" + llvmSymbol(state, v.Path), nil
 	}
 	irType, err := llvmBaseType(value.Type())
 	if err != nil {
@@ -3397,6 +3398,14 @@ func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *mir.
 }
 
 func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp *mir.CompositeValue) (string, error) {
+	if _, ok := backend.ResolveMapType(agg.Type); ok {
+		lowered, err := lowerMapCompositeValue(state, comp, agg.Type)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("store ptr %s, ptr %s", lowered, llvmLocalName(agg.PtrName)), nil
+	}
+
 	// Array literal: positional items stored at successive element offsets.
 	if arrType, ok := agg.Type.(*typeinfo.ArrayType); ok {
 		elemSize, elemAlign, err := aggregateSizeAlignOfPrimitive(arrType.Inner)
@@ -4581,8 +4590,8 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 	case *mir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
 	case *mir.CompositeValue:
-		if _, ok := backend.UnwrapNamed(v.Type()).(*typeinfo.MapType); ok {
-			return lowerMapCompositeValue(state, v)
+		if _, ok := backend.ResolveMapType(v.Type()); ok {
+			return lowerMapCompositeValue(state, v, v.Type())
 		}
 		return "", fmt.Errorf("composite value must be lowered in assignment context")
 	case *mir.FieldValue:
@@ -4609,8 +4618,11 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 	}
 }
 
-func lowerMapCompositeValue(state *moduleState, comp *mir.CompositeValue) (string, error) {
-	mapType, ok := backend.UnwrapNamed(comp.Type()).(*typeinfo.MapType)
+func lowerMapCompositeValue(state *moduleState, comp *mir.CompositeValue, targetType typeinfo.Type) (string, error) {
+	mapType, ok := backend.ResolveMapType(targetType)
+	if !ok {
+		mapType, ok = backend.ResolveMapType(comp.Type())
+	}
 	if !ok {
 		return "", fmt.Errorf("map composite requires map type")
 	}
@@ -4726,6 +4738,16 @@ func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 }
 
 func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
+	if place, ok := becommon.AddrSourceToPlace(state.fn, v.Source); ok {
+		lines, ptr, err := lowerPlaceAddr(state, place)
+		if err != nil {
+			return "", err
+		}
+		if len(lines) != 0 {
+			state.pendingLines = append(state.pendingLines, lines...)
+		}
+		return ptr, nil
+	}
 	switch src := v.Source.(type) {
 	case *mir.LocalValue:
 		if agg, ok := state.aggLocals[src.LocalID]; ok {

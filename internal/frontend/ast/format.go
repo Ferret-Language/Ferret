@@ -144,7 +144,7 @@ func ExprString(expr Expr) string {
 	case *NumberLit:
 		return e.Value
 	case *StringLit:
-		return e.Value
+		return strconv.Quote(e.Value)
 	case *CharLit:
 		text := strconv.QuoteRuneToASCII([]rune(e.Value)[0])
 		if e.IsByte {

@@ -302,10 +302,10 @@ func TestTypecheckerTypesBuiltinMapHelpersAndLiteral(t *testing.T) {
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
     let mut values: map[str]i32 = map[str]i32{"a" => 1}
-    let got = Get(&values, "a")
-    let old = Set(&mut values, "a", 2)
-    let size = Size(&values)
-    let cap = Cap(&values)
+    let got = get(&values, "a")
+    let old = set(&mut values, "a", 2)
+    let count = size(&values)
+    let slots = cap(&values)
 }
 `)
 
@@ -321,17 +321,100 @@ fn main() -> void {
 	letCap := fn.Body.Stmts[4].(*ast.LetStmt)
 	gotOpt, ok := result.Entry.Types.Nodes[letGot.Value].(*typeinfo.OptionalType)
 	if !ok || !typeinfo.IsBuiltinNamed(gotOpt.Inner, "i32") {
-		t.Fatalf("expected Get type ?i32, got %#v", result.Entry.Types.Nodes[letGot.Value])
+		t.Fatalf("expected get type ?i32, got %#v", result.Entry.Types.Nodes[letGot.Value])
 	}
 	oldOpt, ok := result.Entry.Types.Nodes[letOld.Value].(*typeinfo.OptionalType)
 	if !ok || !typeinfo.IsBuiltinNamed(oldOpt.Inner, "i32") {
-		t.Fatalf("expected Set type ?i32, got %#v", result.Entry.Types.Nodes[letOld.Value])
+		t.Fatalf("expected set type ?i32, got %#v", result.Entry.Types.Nodes[letOld.Value])
 	}
 	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[letSize.Value], "usize") {
-		t.Fatalf("expected Size type usize, got %#v", result.Entry.Types.Nodes[letSize.Value])
+		t.Fatalf("expected size type usize, got %#v", result.Entry.Types.Nodes[letSize.Value])
 	}
 	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[letCap.Value], "usize") {
-		t.Fatalf("expected Cap type usize, got %#v", result.Entry.Types.Nodes[letCap.Value])
+		t.Fatalf("expected cap type usize, got %#v", result.Entry.Types.Nodes[letCap.Value])
+	}
+}
+
+func TestTypecheckerTypesContextualMapLiteral(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let values: map[str]i32 = {"a" => 1}
+    let got = get(&values, "a")
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	fn := findTypeFunc(t, result.Entry.AST, "main")
+	letGot := fn.Body.Stmts[1].(*ast.LetStmt)
+	gotOpt, ok := result.Entry.Types.Nodes[letGot.Value].(*typeinfo.OptionalType)
+	if !ok || !typeinfo.IsBuiltinNamed(gotOpt.Inner, "i32") {
+		t.Fatalf("expected get type ?i32, got %#v", result.Entry.Types.Nodes[letGot.Value])
+	}
+}
+
+func TestTypecheckerInfersGenericAliasCompositeLiteralTypes(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Vec<T> []T
+type Arr<T> [2]T
+type Pair<A, B> (A, B)
+type Table<K, V> map[K]V
+type Box<T> struct {
+    value: T
+}
+
+fn main() -> void {
+    let xs = Vec{1, 2, 3}
+    let arr = Arr{4, 5}
+    let pair = Pair{1, "two"}
+    let table = Table{"a" => "alpha", "b" => "beta"}
+    let box = Box{.value = 7}
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	fn := findTypeFunc(t, result.Entry.AST, "main")
+	letXs := fn.Body.Stmts[0].(*ast.LetStmt)
+	letArr := fn.Body.Stmts[1].(*ast.LetStmt)
+	letPair := fn.Body.Stmts[2].(*ast.LetStmt)
+	letTable := fn.Body.Stmts[3].(*ast.LetStmt)
+	letBox := fn.Body.Stmts[4].(*ast.LetStmt)
+
+	xsType, ok := result.Entry.Types.Nodes[letXs.Value].(*typeinfo.NamedType)
+	if !ok || len(xsType.TypeArgs) != 1 || !typeinfo.IsBuiltinNamed(xsType.TypeArgs[0], "i32") {
+		t.Fatalf("expected Vec[i32], got %#v", result.Entry.Types.Nodes[letXs.Value])
+	}
+	arrType, ok := result.Entry.Types.Nodes[letArr.Value].(*typeinfo.NamedType)
+	if !ok || len(arrType.TypeArgs) != 1 || !typeinfo.IsBuiltinNamed(arrType.TypeArgs[0], "i32") {
+		t.Fatalf("expected Arr[i32], got %#v", result.Entry.Types.Nodes[letArr.Value])
+	}
+	pairType, ok := result.Entry.Types.Nodes[letPair.Value].(*typeinfo.NamedType)
+	if !ok || len(pairType.TypeArgs) != 2 || !typeinfo.IsBuiltinNamed(pairType.TypeArgs[0], "i32") {
+		t.Fatalf("expected Pair[i32, str], got %#v", result.Entry.Types.Nodes[letPair.Value])
+	}
+	if _, ok := pairType.TypeArgs[1].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected Pair[i32, str], got %#v", result.Entry.Types.Nodes[letPair.Value])
+	}
+	tableType, ok := result.Entry.Types.Nodes[letTable.Value].(*typeinfo.NamedType)
+	if !ok || len(tableType.TypeArgs) != 2 {
+		t.Fatalf("expected Table[str, str], got %#v", result.Entry.Types.Nodes[letTable.Value])
+	}
+	if _, ok := tableType.TypeArgs[0].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected Table[str, str], got %#v", result.Entry.Types.Nodes[letTable.Value])
+	}
+	if _, ok := tableType.TypeArgs[1].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected Table[str, str], got %#v", result.Entry.Types.Nodes[letTable.Value])
+	}
+	boxType, ok := result.Entry.Types.Nodes[letBox.Value].(*typeinfo.NamedType)
+	if !ok || len(boxType.TypeArgs) != 1 || !typeinfo.IsBuiltinNamed(boxType.TypeArgs[0], "i32") {
+		t.Fatalf("expected Box[i32], got %#v", result.Entry.Types.Nodes[letBox.Value])
 	}
 }
 

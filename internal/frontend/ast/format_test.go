@@ -100,6 +100,26 @@ func TestTypeDeclTextStructIncludesFields(t *testing.T) {
 	}
 }
 
+func TestTypeDeclTextStructQuotesStringDefault(t *testing.T) {
+	decl := &TypeDecl{
+		Name: &Ident{Path: []string{"Profile"}},
+		Type: &StructType{
+			Fields: []*FieldDecl{
+				{
+					Name:    &Ident{Path: []string{"Name"}},
+					Type:    &NamedType{Path: []string{"str"}},
+					Default: &StringLit{Value: "Fuad Hasan"},
+				},
+			},
+		},
+	}
+
+	want := "type Profile struct {\n    Name: str = \"Fuad Hasan\"\n}"
+	if got := decl.Text(); got != want {
+		t.Fatalf("unexpected type text:\nwant:\n%s\n\ngot:\n%s", want, got)
+	}
+}
+
 func TestTypeDeclTextIncludesTypeParams(t *testing.T) {
 	decl := &TypeDecl{
 		Name: &Ident{Path: []string{"Box"}},

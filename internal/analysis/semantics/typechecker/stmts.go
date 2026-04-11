@@ -162,7 +162,9 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 			)
 			return
 		}
-		c.typeOfExpr(scope, s.Value, nil)
+		expected := &typeinfo.StringType{}
+		got := c.typeOfExpr(scope, s.Value, expected)
+		c.checkExprAssignable(scope, s.Value, expected, got)
 	case *ast.LockStmt:
 		valueType := c.typeOfExpr(scope, s.Value, nil)
 		if valueType == nil {

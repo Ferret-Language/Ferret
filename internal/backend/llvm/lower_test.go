@@ -127,10 +127,10 @@ func TestLowerBuiltinMapOpsToLLVM(t *testing.T) {
 fn main() -> i32 {
     let mut values = map[str]i32{"one" => 1}
     values["one"] = 3
-    Set(&mut values, "one", 2)
-    Get(&values, "one")
-    Cap(&values)
-    Size(&values)
+    set(&mut values, "one", 2)
+    get(&values, "one")
+    cap(&values)
+    size(&values)
     return values["one"]
 }
 `)

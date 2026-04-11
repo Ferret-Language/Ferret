@@ -16,9 +16,9 @@ fn main() -> void {
         res.Json(200, "{status: ok, value: hello}")
     })
     
-    _ = server.StartOnce() catch |err| {
-        print(err)
+    server.StartOnce() catch |err| {
+        println(err)
         return
     }
-    print("http-server-routes-ok")
+    println("http-server-routes-ok")
 }

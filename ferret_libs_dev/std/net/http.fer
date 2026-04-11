@@ -27,10 +27,7 @@ type ServerContext struct {
 
 type Server struct {
     port: u16 = 8080
-    has_route: bool = false
-    path_ptr: ^const u8
-    path_len: usize = 0
-    handler: fn(&Request, &mut ResponseWriter) -> io::Error!usize = not_found_handler
+    routes: map[str]fn(&Request, &mut ResponseWriter) -> io::Error!usize
 }
 
 fn find_text(text: str, needle: str) -> usize {
@@ -319,8 +316,9 @@ fn dispatch_request(server: &Server, req: &Request, res: &mut ResponseWriter) ->
     if !text_eq(req.Method(), "GET") {
         return res.Send(404, "not found")
     }
-    if server.has_route && text_eq(server_path(server), req.Path()) {
-        return server.handler(req, res)
+    let route = get(&server.routes, req.Path())
+    if route is fn(&Request, &mut ResponseWriter) -> io::Error!usize {
+        return route(req, res)
     }
     return not_found_handler(req, res)
 }
@@ -385,14 +383,9 @@ fn ServeOnce(listener: &mut tcp::Listener) -> io::Error!ServerContext {
 }
 
 fn NewServer() -> Server {
-    unsafe {
-        return .{
-            .port = 8080,
-            .has_route = false,
-            .path_ptr = 0 as ^const u8,
-            .path_len = 0,
-            .handler = not_found_handler
-        }
+    return .{
+        .port = 8080,
+        .routes = {}
     }
 }
 
@@ -401,13 +394,7 @@ fn Server::Listen(&mut self, port: u16) -> void {
 }
 
 fn Server::Get(&mut self, path: str, handler: fn(&Request, &mut ResponseWriter) -> io::Error!usize) -> void {
-    unsafe {
-        let bytes = path as []u8
-        self.path_ptr = bytes as ^const u8
-        self.path_len = len(&bytes)
-    }
-    self.handler = handler
-    self.has_route = true
+    set(&mut self.routes, path, handler)
 }
 
 fn Server::ServeNext(&self, listener: &mut tcp::Listener) -> io::Error!usize {
@@ -464,15 +451,6 @@ fn Server::StartOnce(&self) -> io::Error!usize {
     let result = self.ServeNext(&mut listener)
     listener.Close()
     return result
-}
-
-fn server_path(server: &Server) -> str {
-    if !server.has_route || server.path_len == 0 {
-        return ""
-    }
-    unsafe {
-        return (server.path_ptr, server.path_len) as str
-    }
 }
 
 fn Get(host: str, port: u16, path: str) -> io::Error!Response {

@@ -2703,6 +2703,10 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			got := c.typeOfExpr(scope, item.Value, actual.Inner)
 			c.checkExprAssignable(scope, item.Value, actual.Inner, got)
 		}
+		if _, ok := expected.(*typeinfo.NamedType); ok {
+			c.info.BindNode(expr, expected)
+			return expected
+		}
 		c.info.BindNode(expr, actual)
 		return actual
 	}
@@ -2726,6 +2730,10 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			c.checkExprAssignable(scope, item.Value, sliceType.Inner, got)
 		}
 		actual := &typeinfo.SliceType{Mutable: true, Inner: sliceType.Inner}
+		if _, ok := expected.(*typeinfo.NamedType); ok {
+			c.info.BindNode(expr, expected)
+			return expected
+		}
 		c.info.BindNode(expr, actual)
 		return actual
 	}
@@ -2935,44 +2943,14 @@ func (c *checker) inferCompositeNamedType(scope *refineScope, expr *ast.Composit
 	if len(typeParams) == 0 {
 		return nil, false
 	}
-	structType, ok := c.typeFromSyntax(owner, decl.Type).(*typeinfo.StructType)
-	if !ok || structType == nil {
-		return nil, false
-	}
+	targetType := c.typeFromSyntax(owner, decl.Type)
 	bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(typeParams))
 	if namedExpected, ok := c.underlying(fallback).(*typeinfo.NamedType); ok && namedExpected != nil && namedExpected.Name == decl.Name.Text() && len(namedExpected.TypeArgs) == len(typeParams) {
 		for i, param := range typeParams {
 			bindings[param] = namedExpected.TypeArgs[i]
 		}
 	}
-
-	fields := c.orderedStructFields(structType)
-	fieldIndex := 0
-	for _, item := range expr.Items {
-		if item.Value == nil {
-			continue
-		}
-		var fieldType typeinfo.Type
-		if item.Name != nil {
-			field := structType.Fields[item.Name.Text()]
-			if field == nil {
-				continue
-			}
-			fieldType = field.Type
-		} else {
-			if fieldIndex >= len(fields) {
-				continue
-			}
-			field := fields[fieldIndex]
-			fieldIndex++
-			if field == nil {
-				continue
-			}
-			fieldType = field.Type
-		}
-		valueType := c.typeOfExpr(scope, item.Value, nil)
-		c.inferTypeParamBindings(fieldType, valueType, bindings)
-	}
+	c.inferCompositeLiteralTypeParamBindings(scope, expr, targetType, bindings)
 
 	args := make([]typeinfo.Type, 0, len(typeParams))
 	for _, param := range typeParams {
@@ -2989,6 +2967,82 @@ func (c *checker) inferCompositeNamedType(scope *refineScope, expr *ast.Composit
 		Decl:      decl,
 		TypeArgs:  args,
 	}, true
+}
+
+func (c *checker) inferCompositeLiteralTypeParamBindings(scope *refineScope, expr *ast.CompositeLit, target typeinfo.Type, bindings map[*typeinfo.TypeParam]typeinfo.Type) {
+	if c == nil || expr == nil || target == nil {
+		return
+	}
+	switch t := c.underlying(target).(type) {
+	case *typeinfo.ArrayType:
+		for _, item := range expr.Items {
+			if item.Value == nil || item.Name != nil || item.Key != nil {
+				continue
+			}
+			c.inferTypeParamBindings(t.Inner, c.inferredCompositeItemType(scope, item.Value), bindings)
+		}
+	case *typeinfo.SliceType:
+		for _, item := range expr.Items {
+			if item.Value == nil || item.Name != nil || item.Key != nil {
+				continue
+			}
+			c.inferTypeParamBindings(t.Inner, c.inferredCompositeItemType(scope, item.Value), bindings)
+		}
+	case *typeinfo.MapType:
+		for _, item := range expr.Items {
+			if item.Key != nil {
+				c.inferTypeParamBindings(t.Key, c.inferredCompositeItemType(scope, item.Key), bindings)
+			}
+			if item.Value != nil {
+				c.inferTypeParamBindings(t.Value, c.inferredCompositeItemType(scope, item.Value), bindings)
+			}
+		}
+	case *typeinfo.TupleType:
+		for i, item := range expr.Items {
+			if item.Value == nil || item.Name != nil || item.Key != nil || i >= len(t.Elems) {
+				continue
+			}
+			c.inferTypeParamBindings(t.Elems[i], c.inferredCompositeItemType(scope, item.Value), bindings)
+		}
+	case *typeinfo.StructType:
+		fields := c.orderedStructFields(t)
+		fieldIndex := 0
+		for _, item := range expr.Items {
+			if item.Value == nil || item.Key != nil {
+				continue
+			}
+			var fieldType typeinfo.Type
+			if item.Name != nil {
+				field := t.Fields[item.Name.Text()]
+				if field == nil {
+					continue
+				}
+				fieldType = field.Type
+			} else {
+				if fieldIndex >= len(fields) {
+					continue
+				}
+				field := fields[fieldIndex]
+				fieldIndex++
+				if field == nil {
+					continue
+				}
+				fieldType = field.Type
+			}
+			c.inferTypeParamBindings(fieldType, c.inferredCompositeItemType(scope, item.Value), bindings)
+		}
+	}
+}
+
+func (c *checker) inferredCompositeItemType(scope *refineScope, expr ast.Expr) typeinfo.Type {
+	if expr == nil {
+		return nil
+	}
+	expected := typeinfo.Type(nil)
+	if _, ok := expr.(*ast.StringLit); ok {
+		expected = &typeinfo.StringType{}
+	}
+	return c.typeOfExpr(scope, expr, expected)
 }
 
 func (c *checker) isExplicitEnumCast(target, source typeinfo.Type) bool {

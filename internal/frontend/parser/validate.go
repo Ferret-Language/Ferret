@@ -22,15 +22,19 @@ func (p *Parser) validateModule(mod *ast.Module) {
 func (p *Parser) validateDecl(decl ast.Decl) {
 	switch d := decl.(type) {
 	case *ast.LetDecl:
+		p.validateDeclAttributes(d.Attrs, "let")
 		p.validateType(d.Type)
 		p.validateExpr(d.Value)
 	case *ast.ConstDecl:
+		p.validateDeclAttributes(d.Attrs, "const")
 		p.validateExpr(d.Value)
 		p.validateType(d.Type)
 	case *ast.TypeDecl:
+		p.validateDeclAttributes(d.Attrs, "type")
 		p.validateTypeParams(d.TypeParams)
 		p.validateType(d.Type)
 	case *ast.FuncDecl:
+		p.validateDeclAttributes(d.Attrs, "fn")
 		p.validateTypeParams(d.TypeParams)
 		p.validateType(d.Result)
 		for _, param := range d.Params {
@@ -49,6 +53,32 @@ func (p *Parser) validateDecl(decl ast.Decl) {
 			}
 		}
 		p.validateStmt(d.Body)
+	}
+}
+
+func (p *Parser) validateDeclAttributes(attrs []ast.Attribute, declKind string) {
+	if len(attrs) == 0 {
+		return
+	}
+	for _, attr := range attrs {
+		switch attr.Name {
+		case "extern", "builtin":
+			if declKind != "fn" {
+				p.errorAt(attr.Location, fmt.Sprintf("#[%s] is only valid on function declarations", attr.Name))
+				continue
+			}
+			if len(attr.Args) > 1 {
+				p.errorAt(attr.Location, fmt.Sprintf("#[%s] accepts at most one argument", attr.Name))
+			}
+		case "allow_unused":
+			if len(attr.Args) != 0 {
+				p.errorAt(attr.Location, "#[allow_unused] does not accept arguments")
+			}
+		case "if", "ifnot":
+			// Shape is validated during attribute filtering when target context is available.
+		default:
+			p.errorAt(attr.Location, fmt.Sprintf("unknown attribute %q", attr.Name))
+		}
 	}
 }
 

@@ -185,3 +185,52 @@ func TestDescribeRuntimeTypeLayoutCapturesCompositePrintShape(t *testing.T) {
 		t.Fatalf("unexpected optional runtime descriptor: %#v", optDesc)
 	}
 }
+
+func TestResolveMapTypeFromNamedAlias(t *testing.T) {
+	named := &typeinfo.NamedType{
+		Name: "mymap",
+		Decl: &ast.TypeDecl{
+			Type: &ast.MapType{
+				Key:   &ast.NamedType{Path: []string{"str"}},
+				Value: &ast.NamedType{Path: []string{"str"}},
+			},
+		},
+	}
+	mt, ok := ResolveMapType(named)
+	if !ok || mt == nil {
+		t.Fatalf("expected map type from alias")
+	}
+	if _, ok := mt.Key.(*typeinfo.StringType); !ok {
+		t.Fatalf("expected string key, got %T", mt.Key)
+	}
+	if _, ok := mt.Value.(*typeinfo.StringType); !ok {
+		t.Fatalf("expected string value, got %T", mt.Value)
+	}
+}
+
+func TestResolveMapTypeFromGenericAlias(t *testing.T) {
+	named := &typeinfo.NamedType{
+		Name:     "Table",
+		TypeArgs: []typeinfo.Type{&typeinfo.StringType{}, &typeinfo.BuiltinType{Name: "i64"}},
+		Decl: &ast.TypeDecl{
+			TypeParams: []ast.TypeParam{
+				{Name: &ast.Ident{Path: []string{"K"}}},
+				{Name: &ast.Ident{Path: []string{"V"}}},
+			},
+			Type: &ast.MapType{
+				Key:   &ast.NamedType{Path: []string{"K"}},
+				Value: &ast.NamedType{Path: []string{"V"}},
+			},
+		},
+	}
+	mt, ok := ResolveMapType(named)
+	if !ok || mt == nil {
+		t.Fatalf("expected map type from generic alias")
+	}
+	if _, ok := mt.Key.(*typeinfo.StringType); !ok {
+		t.Fatalf("expected bound string key, got %T", mt.Key)
+	}
+	if !typeinfo.IsBuiltinNamed(mt.Value, "i64") {
+		t.Fatalf("expected bound i64 value, got %v", mt.Value)
+	}
+}

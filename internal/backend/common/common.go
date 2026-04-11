@@ -189,14 +189,22 @@ func BuiltinMapCall(call *mir.CallValue) (BuiltinMapCallKind, *typeinfo.MapType,
 	}
 	if callee.LinkName != "" {
 		switch callee.LinkName {
+		case "ferret_global_size":
+			name = "size"
+		case "ferret_global_cap":
+			name = "cap"
+		case "ferret_global_get":
+			name = "get"
+		case "ferret_global_set":
+			name = "set"
 		case "ferret_global_Size":
-			name = "Size"
+			name = "size"
 		case "ferret_global_Cap":
-			name = "Cap"
+			name = "cap"
 		case "ferret_global_Get":
-			name = "Get"
+			name = "get"
 		case "ferret_global_Set":
-			name = "Set"
+			name = "set"
 		}
 	}
 	if name == "" {
@@ -204,13 +212,13 @@ func BuiltinMapCall(call *mir.CallValue) (BuiltinMapCallKind, *typeinfo.MapType,
 	}
 	mapArgIndex := 0
 	switch name {
-	case "Size":
+	case "size", "Size":
 		mapArgIndex = 0
-	case "Cap":
+	case "cap", "Cap":
 		mapArgIndex = 0
-	case "Get":
+	case "get", "Get":
 		mapArgIndex = 0
-	case "Set":
+	case "set", "Set":
 		mapArgIndex = 0
 	default:
 		return BuiltinMapCallNone, nil, false
@@ -223,13 +231,13 @@ func BuiltinMapCall(call *mir.CallValue) (BuiltinMapCallKind, *typeinfo.MapType,
 		return BuiltinMapCallNone, nil, false
 	}
 	switch name {
-	case "Size":
+	case "size", "Size":
 		return BuiltinMapCallSize, mapType, true
-	case "Cap":
+	case "cap", "Cap":
 		return BuiltinMapCallCap, mapType, true
-	case "Get":
+	case "get", "Get":
 		return BuiltinMapCallGet, mapType, true
-	case "Set":
+	case "set", "Set":
 		return BuiltinMapCallSet, mapType, true
 	default:
 		return BuiltinMapCallNone, nil, false
@@ -237,19 +245,7 @@ func BuiltinMapCall(call *mir.CallValue) (BuiltinMapCallKind, *typeinfo.MapType,
 }
 
 func MapArgType(typ typeinfo.Type) (*typeinfo.MapType, bool) {
-	switch t := backend.UnwrapNamed(typ).(type) {
-	case *typeinfo.MapType:
-		return t, true
-	case *typeinfo.RefType:
-		if inner, ok := backend.UnwrapNamed(t.Inner).(*typeinfo.MapType); ok {
-			return inner, true
-		}
-	case *typeinfo.PointerType:
-		if inner, ok := backend.UnwrapNamed(t.Inner).(*typeinfo.MapType); ok {
-			return inner, true
-		}
-	}
-	return nil, false
+	return backend.ResolveMapType(typ)
 }
 
 func BuiltinMapRuntimeSymbol(kind BuiltinMapCallKind) string {

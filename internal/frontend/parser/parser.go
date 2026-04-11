@@ -16,6 +16,7 @@ type Parser struct {
 	pos                 int
 	testDeclIndex       int
 	compositeValueDepth int
+	blockCondDepth      int
 	diag                *diagnostics.DiagnosticBag
 }
 

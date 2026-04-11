@@ -48,10 +48,12 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 		case tokens.LPAREN:
 			left = p.parseCall(left)
 		case tokens.LBRACK:
-			if p.hasGenericCallAhead() {
-				left = p.parseCallWithTypeArgs(left)
+			left = p.parseIndexExpr(left)
+		case tokens.LBRACE:
+			if literalType, ok := p.exprAsLiteralType(left); ok {
+				left = p.parseTypedCompositeLit(left, literalType)
 			} else {
-				left = p.parseIndexExpr(left)
+				return left
 			}
 		case tokens.DOT:
 			left = p.parseSelector(left)
@@ -104,6 +106,8 @@ func (p *Parser) parsePrefix() ast.Expr {
 			return p.parseLambdaExpr()
 		}
 		return p.parseParenExpr()
+	case tokens.LBRACE:
+		return p.parseBraceCompositeLit()
 	case tokens.DOT:
 		return p.parseCompositeLit()
 	case tokens.LBRACK:
@@ -239,6 +243,37 @@ func (p *Parser) parseCompositeLit() ast.Expr {
 	p.expect(tokens.LBRACE, "expected '{' after '.'")
 	items := p.parseCompositeItems(tokens.RBRACE)
 	return &ast.CompositeLit{Type: literalType, Items: items, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseBraceCompositeLit() ast.Expr {
+	start := p.expect(tokens.LBRACE, "expected '{'").Start
+	items := p.parseCompositeItems(tokens.RBRACE)
+	return &ast.CompositeLit{Items: items, Location: p.locFrom(start)}
+}
+
+func (p *Parser) parseTypedCompositeLit(left ast.Expr, literalType ast.TypeExpr) ast.Expr {
+	start := *left.Loc().Start
+	p.expect(tokens.LBRACE, "expected '{' after type")
+	items := p.parseCompositeItems(tokens.RBRACE)
+	return &ast.CompositeLit{
+		Type:     literalType,
+		Items:    items,
+		Location: source.NewLocation(p.file, start, p.previous().End),
+	}
+}
+
+func (p *Parser) exprAsLiteralType(expr ast.Expr) (ast.TypeExpr, bool) {
+	ident, ok := expr.(*ast.Ident)
+	if !ok || ident == nil || len(ident.Path) == 0 {
+		return nil, false
+	}
+	path := append([]string(nil), ident.Path...)
+	typeArgs := append([]ast.TypeExpr(nil), ident.TypeArgs...)
+	return &ast.NamedType{
+		Path:     path,
+		TypeArgs: typeArgs,
+		Location: ident.Location,
+	}, true
 }
 
 func (p *Parser) parseCompositeItems(end tokens.Kind) []ast.CompositeItem {
@@ -494,6 +529,14 @@ func (p *Parser) currentPrecedence() int {
 func (p *Parser) currentPrecedenceForExpr(left ast.Expr) int {
 	if p.at(tokens.LT) && p.hasGenericAngleCallAhead(left) {
 		return precPostfix
+	}
+	if p.at(tokens.LBRACE) {
+		if p.blockCondDepth > 0 && p.compositeValueDepth == 0 {
+			return precLowest
+		}
+		if _, ok := p.exprAsLiteralType(left); ok {
+			return precPostfix
+		}
 	}
 	return p.currentPrecedence()
 }

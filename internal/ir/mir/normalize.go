@@ -197,7 +197,7 @@ func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) 
 		copy.Right = right
 		return n.wrapComputed(fn, &copy, temps)
 	case *AddrOfValue:
-		temps, source := n.normalizeValue(fn, v.Source)
+		temps, source := n.normalizeValueInline(fn, v.Source)
 		copy := *v
 		copy.Source = source
 		return n.wrapComputed(fn, &copy, temps)
@@ -298,7 +298,7 @@ func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, V
 		copy.Right = right
 		return temps, &copy
 	case *AddrOfValue:
-		temps, source := n.normalizeValue(fn, v.Source)
+		temps, source := n.normalizeValueInline(fn, v.Source)
 		copy := *v
 		copy.Source = source
 		return temps, &copy

@@ -1,0 +1,8 @@
+
+
+
+fn main() {
+    let mut val : ?i32 = none
+    let res = val ?? 23
+    println(val ?? 23)
+}

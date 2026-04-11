@@ -169,6 +169,9 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case *ast.MapType:
 		key := c.typeFromSyntax(mod, t.Key)
 		value := c.typeFromSyntax(mod, t.Value)
+		if _, ok := key.(*typeinfo.TypeParam); ok {
+			return &typeinfo.MapType{Key: key, Value: value}
+		}
 		if !typeinfo.IsInvalid(key) && !typeinfo.IsUnknown(key) && !c.isComparableType(key) {
 			loc := t.Key.Loc()
 			c.ctx.Diagnostics.Add(
