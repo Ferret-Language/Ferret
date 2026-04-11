@@ -96,6 +96,10 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 			out := &SliceType{Inner: cloneType(t.Inner), Location: t.Location}
 			mapping[t] = out
 			return out
+		case *MapType:
+			out := &MapType{Key: cloneType(t.Key), Value: cloneType(t.Value), Location: t.Location}
+			mapping[t] = out
+			return out
 		case *TupleType:
 			out := &TupleType{Location: t.Location}
 			mapping[t] = out
@@ -440,6 +444,7 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 				for _, item := range e.Items {
 					out.Items = append(out.Items, CompositeItem{
 						Name:  cloneIdent(item.Name),
+						Key:   cloneExpr(item.Key),
 						Value: cloneExpr(item.Value),
 					})
 				}

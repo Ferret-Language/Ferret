@@ -65,6 +65,7 @@ A new helper is not allowed when:
 - Keep diffs minimal and task-focused.
 - Do not refactor unrelated areas in the same change.
 - Do not add temporary workaround code in multiple places; fix at the source layer when possible.
+- Do not use workaround logic to hide known compiler/runtime bugs. Fix the root cause first; use a workaround only when explicitly approved and tracked with a follow-up removal task.
 - Remove dead code immediately after migration.
 
 ## 5) Naming and structure

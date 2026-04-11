@@ -386,7 +386,7 @@ func (p *Parser) parseNamedParams() []ast.Param {
 		} else if seenDefault && !param.IsVariadic {
 			p.errorAt(param.Location, "parameter without default cannot follow parameter with default value")
 		}
-		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
+		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsNamedParam()) {
 			break
 		}
 	}
@@ -648,7 +648,7 @@ func (p *Parser) parseInterfaceMethodParams() (string, []ast.Param, bool) {
 		if isVariadic {
 			seenVariadic = true
 		}
-		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsExpr()) {
+		if !p.consumeListSeparator(tokens.RPAREN, "parameter", p.startsInterfaceParam()) {
 			break
 		}
 	}

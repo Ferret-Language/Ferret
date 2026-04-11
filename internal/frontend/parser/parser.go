@@ -16,6 +16,7 @@ type Parser struct {
 	pos                 int
 	testDeclIndex       int
 	compositeValueDepth int
+	blockCondDepth      int
 	diag                *diagnostics.DiagnosticBag
 }
 
@@ -353,6 +354,147 @@ func (p *Parser) hasGenericAngleTypeMemberAhead(left ast.Expr) bool {
 	return false
 }
 
+func (p *Parser) hasTypeCompositeAhead() bool {
+	end := p.typeEndIndex(p.pos)
+	return end >= 0 && end < len(p.toks) && p.toks[end].Kind == tokens.LBRACE
+}
+
+func (p *Parser) typeEndIndex(pos int) int {
+	if pos < 0 || pos >= len(p.toks) {
+		return -1
+	}
+	switch p.toks[pos].Kind {
+	case tokens.IDENT:
+		next := pos + 1
+		if p.toks[pos].Literal == "map" && next < len(p.toks) && p.toks[next].Kind == tokens.LBRACK {
+			depth := 1
+			next++
+			for next < len(p.toks) && depth > 0 {
+				switch p.toks[next].Kind {
+				case tokens.LBRACK:
+					depth++
+				case tokens.RBRACK:
+					depth--
+				case tokens.EOF:
+					return -1
+				}
+				next++
+			}
+			if depth != 0 {
+				return -1
+			}
+			return p.typeEndIndex(next)
+		}
+		for next+1 < len(p.toks) && p.toks[next].Kind == tokens.DCOLON && p.toks[next+1].Kind == tokens.IDENT {
+			next += 2
+		}
+		if next < len(p.toks) && p.toks[next].Kind == tokens.LT {
+			next = p.typeArgListEndIndex(next)
+			if next < 0 {
+				return -1
+			}
+		}
+		if next < len(p.toks) && p.toks[next].Kind == tokens.BANG {
+			return p.typeEndIndex(next + 1)
+		}
+		return next
+	case tokens.FN:
+		if pos+1 >= len(p.toks) || p.toks[pos+1].Kind != tokens.LPAREN {
+			return -1
+		}
+		next := pos + 2
+		for next < len(p.toks) && p.toks[next].Kind != tokens.RPAREN && p.toks[next].Kind != tokens.EOF {
+			if p.toks[next].Kind == tokens.ELLIPSIS {
+				next++
+			}
+			next = p.typeEndIndex(next)
+			if next < 0 {
+				return -1
+			}
+			if next < len(p.toks) && p.toks[next].Kind == tokens.COMMA {
+				next++
+			}
+		}
+		if next >= len(p.toks) || p.toks[next].Kind != tokens.RPAREN {
+			return -1
+		}
+		next++
+		if next < len(p.toks) && p.toks[next].Kind == tokens.ARROW {
+			return p.typeEndIndex(next + 1)
+		}
+		return next
+	case tokens.QUESTION, tokens.TILDE, tokens.ASTERISK:
+		return p.typeEndIndex(pos + 1)
+	case tokens.AMP:
+		next := pos + 1
+		if next < len(p.toks) && p.toks[next].Kind == tokens.MUT {
+			next++
+		}
+		return p.typeEndIndex(next)
+	case tokens.CARET:
+		next := pos + 1
+		if next < len(p.toks) && p.toks[next].Kind == tokens.CONST {
+			next++
+		}
+		return p.typeEndIndex(next)
+	case tokens.LBRACK:
+		depth := 1
+		next := pos + 1
+		for next < len(p.toks) && depth > 0 {
+			switch p.toks[next].Kind {
+			case tokens.LBRACK:
+				depth++
+			case tokens.RBRACK:
+				depth--
+			case tokens.EOF:
+				return -1
+			}
+			next++
+		}
+		if depth != 0 {
+			return -1
+		}
+		return p.typeEndIndex(next)
+	case tokens.LPAREN:
+		next := pos + 1
+		for next < len(p.toks) && p.toks[next].Kind != tokens.RPAREN && p.toks[next].Kind != tokens.EOF {
+			next = p.typeEndIndex(next)
+			if next < 0 {
+				return -1
+			}
+			if next < len(p.toks) && p.toks[next].Kind == tokens.COMMA {
+				next++
+			}
+		}
+		if next >= len(p.toks) || p.toks[next].Kind != tokens.RPAREN {
+			return -1
+		}
+		return next + 1
+	default:
+		return -1
+	}
+}
+
+func (p *Parser) typeArgListEndIndex(pos int) int {
+	if pos < 0 || pos >= len(p.toks) || p.toks[pos].Kind != tokens.LT {
+		return -1
+	}
+	next := pos + 1
+	for next < len(p.toks) && p.toks[next].Kind != tokens.GT && p.toks[next].Kind != tokens.EOF {
+		next = p.typeEndIndex(next)
+		if next < 0 {
+			return -1
+		}
+		if next < len(p.toks) && p.toks[next].Kind == tokens.COMMA {
+			next++
+		}
+	}
+	if next >= len(p.toks) || p.toks[next].Kind != tokens.GT {
+		return -1
+	}
+	return next + 1
+}
+
 func (p *Parser) match(kinds ...tokens.Kind) bool {
 	if slices.ContainsFunc(kinds, p.at) {
 		p.advance()
@@ -554,7 +696,7 @@ func (p *Parser) startsType() bool {
 	}
 }
 
-func (p *Parser) startsLambdaParam() bool {
+func (p *Parser) startsNamedParam() bool {
 	switch p.current().Kind {
 	case tokens.IDENT, tokens.MUT:
 		return true
@@ -582,4 +724,8 @@ func (p *Parser) hasLambdaArrowAhead() bool {
 		}
 	}
 	return false
+}
+
+func (p *Parser) startsInterfaceParam() bool {
+	return p.at(tokens.ELLIPSIS) || p.startsType()
 }

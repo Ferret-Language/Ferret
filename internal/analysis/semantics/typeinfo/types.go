@@ -40,6 +40,10 @@ type SelfType struct{}
 
 func (*SelfType) String() string { return "Self" }
 
+type ComparableConstraint struct{}
+
+func (*ComparableConstraint) String() string { return "Comparable" }
+
 type TypeParam struct {
 	Name       string
 	Constraint Type
@@ -178,6 +182,18 @@ func (t *SliceType) String() string {
 		return "[]<nil>"
 	}
 	return "[]" + typeString(t.Inner)
+}
+
+type MapType struct {
+	Key   Type
+	Value Type
+}
+
+func (t *MapType) String() string {
+	if t == nil {
+		return "map[<nil>]<nil>"
+	}
+	return "map[" + typeString(t.Key) + "]" + typeString(t.Value)
 }
 
 type RangeType struct {
@@ -421,6 +437,9 @@ func Equal(a, b Type) bool {
 	case *SelfType:
 		_, ok := b.(*SelfType)
 		return ok
+	case *ComparableConstraint:
+		_, ok := b.(*ComparableConstraint)
+		return ok
 	case *TypeParam:
 		bt, ok := b.(*TypeParam)
 		if !ok {
@@ -465,6 +484,9 @@ func Equal(a, b Type) bool {
 	case *SliceType:
 		bt, ok := b.(*SliceType)
 		return ok && at.Mutable == bt.Mutable && Equal(at.Inner, bt.Inner)
+	case *MapType:
+		bt, ok := b.(*MapType)
+		return ok && Equal(at.Key, bt.Key) && Equal(at.Value, bt.Value)
 	case *RangeType:
 		bt, ok := b.(*RangeType)
 		return ok && Equal(at.Elem, bt.Elem)
@@ -532,6 +554,11 @@ func Assignable(dst, src Type) bool {
 				return sliceSrc.Mutable && Equal(sliceDst.Inner, sliceSrc.Inner)
 			}
 			return Equal(sliceDst.Inner, sliceSrc.Inner)
+		}
+	}
+	if mapDst, ok := dst.(*MapType); ok {
+		if mapSrc, ok := src.(*MapType); ok {
+			return Equal(mapDst.Key, mapSrc.Key) && Equal(mapDst.Value, mapSrc.Value)
 		}
 	}
 	if rawDst, ok := dst.(*RawPtrType); ok {

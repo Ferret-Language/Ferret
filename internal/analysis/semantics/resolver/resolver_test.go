@@ -548,6 +548,65 @@ fn run() -> void {
 	}
 }
 
+func TestResolverRejectsLocalNameThatConflictsWithGlobal(t *testing.T) {
+	root := t.TempDir()
+	mustWriteResolver(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
+#[extern]
+fn len(value: []u8) -> usize;
+`)
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
+fn run() -> usize {
+    let len = 1
+    return len
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatalf("expected global collision diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrRedeclaredSymbol {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrRedeclaredSymbol, result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestResolverRejectsLabelNameThatConflictsWithGlobal(t *testing.T) {
+	root := t.TempDir()
+	mustWriteResolver(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
+#[extern]
+fn len(value: []u8) -> usize;
+`)
+	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
+fn run() -> void {
+    len: while true {
+        break
+    }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatalf("expected global collision diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrRedeclaredSymbol {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrRedeclaredSymbol, result.Diagnostics.Diagnostics())
+	}
+}
+
 func findFunc(t *testing.T, mod *ast.Module, name string) *ast.FuncDecl {
 	t.Helper()
 	for _, decl := range mod.Decls {

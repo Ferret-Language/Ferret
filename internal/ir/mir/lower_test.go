@@ -987,6 +987,149 @@ fn main() -> str {
 	t.Fatalf("expected lowered string composite in MIR, got %#v", mainFn.Blocks)
 }
 
+func TestPipelinePreservesMapLiteralKeysInMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+fn main() -> usize {
+    let values: map[str]i32 = map[str]i32{"one" => 1}
+    return size(&values)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var mainFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "main" {
+			mainFn = fn
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatalf("expected MIR function main, got %#v", result.Entry.MIR.Functions)
+	}
+	for _, block := range mainFn.Blocks {
+		for _, instr := range block.Instructions {
+			assign, ok := instr.(*mir.AssignInstr)
+			if !ok {
+				continue
+			}
+			comp, ok := assign.Value.(*mir.CompositeValue)
+			if !ok {
+				continue
+			}
+			if _, ok := comp.Type().(*typeinfo.MapType); !ok {
+				continue
+			}
+			if len(comp.Items) != 1 || comp.Items[0].Key == nil {
+				t.Fatalf("expected keyed map composite, got %#v", comp.Items)
+			}
+			if _, ok := comp.Items[0].Key.(*mir.CompositeValue); ok {
+				t.Fatalf("unexpected composite key lowering: %#v", comp.Items[0].Key)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected map literal assign in MIR, got %#v", mainFn.Blocks)
+}
+
+func TestPipelineKeepsFieldBorrowAsAddrOfFieldSource(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+type Holder struct {
+    routes: map[str]i32
+}
+
+fn Holder::Add(&mut self, key: str, value: i32) -> void {
+    set(&mut self.routes, key, value)
+}
+
+fn main() -> void {
+    let mut holder: Holder = .{ .routes = map[str]i32{} }
+    holder.Add("x", 1)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	var addFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn != nil && fn.Name == "Add" {
+			addFn = fn
+			break
+		}
+	}
+	if addFn == nil {
+		t.Fatalf("expected MIR function for Holder::Add, got %#v", result.Entry.MIR.Functions)
+	}
+
+	var mapArgLocalID = -1
+	for _, block := range addFn.Blocks {
+		for _, instr := range block.Instructions {
+			eval, ok := instr.(*mir.EvalInstr)
+			if !ok {
+				continue
+			}
+			call, ok := eval.Value.(*mir.CallValue)
+			if !ok || call == nil || len(call.Args) == 0 {
+				continue
+			}
+			argLocal, ok := call.Args[0].(*mir.LocalValue)
+			if ok {
+				mapArgLocalID = argLocal.LocalID
+			}
+		}
+	}
+	if mapArgLocalID < 0 {
+		t.Fatalf("expected set(&mut self.routes, ...) to pass a local addr temp; got %#v", addFn.Blocks)
+	}
+	for _, block := range addFn.Blocks {
+		for _, instr := range block.Instructions {
+			var (
+				targetID int
+				value    mir.Value
+				ok       bool
+			)
+			switch ins := instr.(type) {
+			case *mir.AssignInstr:
+				targetID = ins.TargetID
+				value = ins.Value
+				ok = true
+			case *mir.ComputeInstr:
+				targetID = ins.TargetID
+				value = ins.Value
+				ok = true
+			}
+			if !ok || targetID != mapArgLocalID {
+				continue
+			}
+			addr, ok := value.(*mir.AddrOfValue)
+			if !ok {
+				t.Fatalf("expected map arg temp to be addr_of, got %T %#v", value, value)
+			}
+			switch addr.Source.(type) {
+			case *mir.FieldLoadValue:
+				return
+			case *mir.LocalValue:
+				t.Fatalf("expected addr_of source to stay field-based, got temp local source %#v", addr.Source)
+			default:
+				t.Fatalf("expected addr_of field source, got %T %#v", addr.Source, addr.Source)
+			}
+		}
+	}
+	t.Fatalf("expected definition for map arg local %d in %#v", mapArgLocalID, addFn.Blocks)
+}
+
 func TestPipelineLowersInferredStringLiteralAsByteArray(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.fer"), `
@@ -1208,7 +1351,7 @@ fn fail() -> void {
 		t.Fatalf("expected MIR blocks, got %#v", fn)
 	}
 	text := mir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "panic ") || !strings.Contains(text, ".{ 98, 97, 100 }") {
+	if !strings.Contains(text, "panic ") || !strings.Contains(text, ".{ .ptr = \"bad\", .len = 3 }") {
 		t.Fatalf("expected lowered panic sequence in MIR dump, got %q", text)
 	}
 }

@@ -84,6 +84,12 @@ func rewriteType(typ Type, pre, post func(Type) Type, seen map[Type]Type) Type {
 			copy.Elems = append(copy.Elems, rewriteType(elem, pre, post, seen))
 		}
 		out = copy
+	case *MapType:
+		copy := &MapType{}
+		seen[typ] = copy
+		copy.Key = rewriteType(t.Key, pre, post, seen)
+		copy.Value = rewriteType(t.Value, pre, post, seen)
+		out = copy
 	case *NamedType:
 		copy := &NamedType{ModuleKey: t.ModuleKey, Name: t.Name, Decl: t.Decl}
 		seen[typ] = copy

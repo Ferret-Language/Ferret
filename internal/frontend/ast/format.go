@@ -58,6 +58,8 @@ func TypeString(typ TypeExpr) string {
 		return "[" + ExprString(t.Size) + "]" + TypeString(t.Inner)
 	case *SliceType:
 		return "[]" + TypeString(t.Inner)
+	case *MapType:
+		return "map[" + TypeString(t.Key) + "]" + TypeString(t.Value)
 	case *TupleType:
 		parts := make([]string, 0, len(t.Elems))
 		for _, elem := range t.Elems {
@@ -142,7 +144,7 @@ func ExprString(expr Expr) string {
 	case *NumberLit:
 		return e.Value
 	case *StringLit:
-		return e.Value
+		return strconv.Quote(e.Value)
 	case *CharLit:
 		text := strconv.QuoteRuneToASCII([]rune(e.Value)[0])
 		if e.IsByte {
@@ -203,6 +205,25 @@ func ExprString(expr Expr) string {
 		return ExprString(e.Left) + "." + e.Name.Text()
 	case *IndexExpr:
 		return ExprString(e.Left) + "[" + ExprString(e.Index) + "]"
+	case *CompositeLit:
+		parts := make([]string, 0, len(e.Items))
+		for _, item := range e.Items {
+			switch {
+			case item.Name != nil:
+				parts = append(parts, "."+item.Name.Text()+" = "+ExprString(item.Value))
+			case item.Key != nil:
+				parts = append(parts, ExprString(item.Key)+" => "+ExprString(item.Value))
+			default:
+				parts = append(parts, ExprString(item.Value))
+			}
+		}
+		if e.Tuple && e.Type == nil {
+			return "(" + strings.Join(parts, ", ") + ")"
+		}
+		if e.Type != nil {
+			return TypeString(e.Type) + "{" + strings.Join(parts, ", ") + "}"
+		}
+		return ".{" + strings.Join(parts, ", ") + "}"
 	default:
 		return "_"
 	}

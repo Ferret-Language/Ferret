@@ -163,6 +163,138 @@ fn takefn(fun: fn(i32, ...str) -> i32) {}
 	}
 }
 
+func TestParseMapTypeSyntax(t *testing.T) {
+	src := `
+fn main(values: map[str]i32) {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[0])
+	}
+	mt, ok := fn.Params[0].Type.(*ast.MapType)
+	if !ok {
+		t.Fatalf("expected map type param, got %T", fn.Params[0].Type)
+	}
+	if got := ast.TypeString(mt); got != "map[str]i32" {
+		t.Fatalf("unexpected map type text: %q", got)
+	}
+}
+
+func TestParseMapLiteralSyntax(t *testing.T) {
+	src := `
+fn main() -> void {
+    let values = map[str]i32{"a" => 1, "b" => 2}
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	letStmt := fn.Body.Stmts[0].(*ast.LetStmt)
+	lit, ok := letStmt.Value.(*ast.CompositeLit)
+	if !ok {
+		t.Fatalf("expected composite literal, got %T", letStmt.Value)
+	}
+	if _, ok := lit.Type.(*ast.MapType); !ok {
+		t.Fatalf("expected map literal type, got %T", lit.Type)
+	}
+	if len(lit.Items) != 2 || lit.Items[0].Key == nil || lit.Items[1].Key == nil {
+		t.Fatalf("expected keyed map entries, got %#v", lit.Items)
+	}
+}
+
+func TestParseMapLiteralFromContextSyntax(t *testing.T) {
+	src := `
+fn main() -> void {
+    let values: map[str]i32 = {"a" => 1, "b" => 2}
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	letStmt := fn.Body.Stmts[0].(*ast.LetStmt)
+	lit, ok := letStmt.Value.(*ast.CompositeLit)
+	if !ok {
+		t.Fatalf("expected composite literal, got %T", letStmt.Value)
+	}
+	if lit.Type != nil {
+		t.Fatalf("expected context map literal without explicit type, got %T", lit.Type)
+	}
+	if len(lit.Items) != 2 || lit.Items[0].Key == nil || lit.Items[1].Key == nil {
+		t.Fatalf("expected keyed map entries, got %#v", lit.Items)
+	}
+}
+
+func TestParseMapLiteralFromNamedAliasSyntax(t *testing.T) {
+	src := `
+type MyMap map[str]str
+fn main() -> void {
+    let values = MyMap{"name" => "fuad"}
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[1].(*ast.FuncDecl)
+	letStmt := fn.Body.Stmts[0].(*ast.LetStmt)
+	lit, ok := letStmt.Value.(*ast.CompositeLit)
+	if !ok {
+		t.Fatalf("expected composite literal, got %T", letStmt.Value)
+	}
+	named, ok := lit.Type.(*ast.NamedType)
+	if !ok || ast.TypeString(named) != "MyMap" {
+		t.Fatalf("expected named type MyMap, got %#v", lit.Type)
+	}
+	if len(lit.Items) != 1 || lit.Items[0].Key == nil {
+		t.Fatalf("expected keyed map entry, got %#v", lit.Items)
+	}
+}
+
+func TestParseGeneralAliasAndContextCompositeSyntax(t *testing.T) {
+	src := `
+type Vec []i32
+type Box struct { value: i32 = 0 }
+fn main() -> void {
+    let xs = Vec{1, 2, 3}
+    let ys: Vec = {4, 5, 6}
+    let box = Box{.value = 7}
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[2].(*ast.FuncDecl)
+	for i, stmt := range fn.Body.Stmts {
+		letStmt := stmt.(*ast.LetStmt)
+		lit, ok := letStmt.Value.(*ast.CompositeLit)
+		if !ok {
+			t.Fatalf("stmt %d: expected composite literal, got %T", i, letStmt.Value)
+		}
+		if i == 0 || i == 2 {
+			if lit.Type == nil {
+				t.Fatalf("stmt %d: expected explicit alias type", i)
+			}
+		}
+		if i == 1 && lit.Type != nil {
+			t.Fatalf("stmt %d: expected contextual literal without explicit type", i)
+		}
+	}
+}
+
 func TestParseLambdaExprSyntax(t *testing.T) {
 	src := `
 fn main() -> void {
@@ -438,7 +570,7 @@ fn greet(name: str = "world", repeat: i32 = 1) -> void {}
 	if len(fn.Params) != 2 {
 		t.Fatalf("expected 2 params, got %d", len(fn.Params))
 	}
-	if got := ast.ParamString(fn.Params[0]); got != "name: str = world" {
+	if got := ast.ParamString(fn.Params[0]); got != "name: str = \"world\"" {
 		t.Fatalf("unexpected defaulted param string %q", got)
 	}
 	if got := ast.ParamString(fn.Params[1]); got != "repeat: i32 = 1" {
@@ -1421,6 +1553,39 @@ fn Tick() -> void;
 	}
 }
 
+func TestParseUnknownAttributeReportsDiagnostic(t *testing.T) {
+	src := `
+#[unknown_attr]
+fn main() -> void {}
+`
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, `unknown attribute "unknown_attr"`) {
+		t.Fatalf("expected unknown attribute diagnostic, got %v", diag.Diagnostics())
+	}
+}
+
+func TestParseAllowUnusedAttributeRejectsArgs(t *testing.T) {
+	src := `
+#[allow_unused("x")]
+fn helper() -> void {}
+`
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "#[allow_unused] does not accept arguments") {
+		t.Fatalf("expected allow_unused arg diagnostic, got %v", diag.Diagnostics())
+	}
+}
+
+func TestParseExternAttributeOnlyValidOnFunctions(t *testing.T) {
+	src := `
+#[extern]
+type Nope struct {}
+`
+	_, diag := parseTestModule(t, src)
+	if !hasDiagnosticMessage(diag, "#[extern] is only valid on function declarations") {
+		t.Fatalf("expected extern-on-type diagnostic, got %v", diag.Diagnostics())
+	}
+}
+
 func TestParseCastExpression(t *testing.T) {
 	src := `
 fn CastIt(x: i32) -> i8 {
@@ -1495,6 +1660,39 @@ fn run() -> i32 {
 	}
 	if _, ok := loop.Body.Stmts[2].(*ast.ContinueStmt); !ok {
 		t.Fatalf("expected continue stmt, got %T", loop.Body.Stmts[2])
+	}
+}
+
+func TestParseWhileWithoutParensBeforeBlock(t *testing.T) {
+	src := `
+fn run() -> i32 {
+    let mut limit: i32 = 2
+    let mut count: i32 = 0
+    while count <= limit {
+        count = count + 1
+        break
+    }
+    return count
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected function decl, got %T", mod.Decls[0])
+	}
+	loop, ok := fn.Body.Stmts[2].(*ast.WhileStmt)
+	if !ok {
+		t.Fatalf("expected while stmt, got %T", fn.Body.Stmts[2])
+	}
+	if _, ok := loop.Cond.(*ast.BinaryExpr); !ok {
+		t.Fatalf("expected binary condition, got %T", loop.Cond)
+	}
+	if len(loop.Body.Stmts) != 2 {
+		t.Fatalf("expected 2 loop statements, got %d", len(loop.Body.Stmts))
 	}
 }
 
@@ -1979,6 +2177,36 @@ fn run(value: Token) -> i32 {
 	target, ok := arm.TypePattern.(*ast.NamedType)
 	if !ok || len(target.Path) != 1 || target.Path[0] != "i32" {
 		t.Fatalf("expected target type i32, got %#v", arm.TypePattern)
+	}
+}
+
+func TestParseMatchTypeArmWithBinaryReturnExpr(t *testing.T) {
+	src := `
+fn run(value: Token) -> i32 {
+    match value {
+        is i32 => {
+            let widened: i32 = value
+            return value + widened
+        }
+        _ => {
+            return 0
+        }
+    }
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	exprStmt := fn.Body.Stmts[0].(*ast.ExprStmt)
+	matchExpr := exprStmt.Value.(*ast.MatchExpr)
+	if len(matchExpr.Arms) != 2 {
+		t.Fatalf("expected 2 match arms, got %d", len(matchExpr.Arms))
+	}
+	if _, ok := matchExpr.Arms[0].Body.Stmts[1].(*ast.ReturnStmt); !ok {
+		t.Fatalf("expected return stmt in first arm, got %#v", matchExpr.Arms[0].Body.Stmts)
 	}
 }
 

@@ -1,0 +1,42 @@
+import "std/io"
+
+fn main() -> void {
+    let mut buf = io::NewBuffer()
+    _ = io::Write(buf, "Hello") catch |err| {
+        print(err)
+        return
+    }
+    _ = io::Write(buf, ", world") catch |err| {
+        print(err)
+        return
+    }
+
+    let first = io::Read(buf, 5) catch |err| {
+        print(err)
+        return
+    }
+    let second = io::Read(buf, 7) catch |err| {
+        print(err)
+        return
+    }
+    let last = io::Read(buf, 1) catch |err| {
+        print(err)
+        return
+    }
+
+    if len(first) == 5 &&
+        len(second) == 7 &&
+        len(last) == 0 &&
+        first as str == "Hello" &&
+        second as str == ", world" &&
+        last as str == "" &&
+        buf.AsStr() == "Hello, world" {
+        print("io-buffer-ok")
+        buf.Release()
+        return
+    }
+
+    print("io-buffer-fail")
+    buf.Release()
+    exit(1)
+}

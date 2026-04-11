@@ -258,6 +258,186 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerAcceptsBuiltinMapTypeWithComparableKey(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(values: map[str]i32) -> void {}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	fn := findTypeFunc(t, result.Entry.AST, "main")
+	mt, ok := result.Entry.Types.Nodes[fn.Params[0].Type].(*typeinfo.MapType)
+	if !ok {
+		t.Fatalf("expected map type, got %T", result.Entry.Types.Nodes[fn.Params[0].Type])
+	}
+	if _, ok := mt.Key.(*typeinfo.StringType); !ok || !typeinfo.IsBuiltinNamed(mt.Value, "i32") {
+		t.Fatalf("expected map[str]i32, got %#v", mt)
+	}
+}
+
+func TestTypecheckerRejectsBuiltinMapTypeWithNonComparableKey(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(values: map[[]i32]i32) -> void {}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected Comparable key diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "expected Comparable key type") {
+			return
+		}
+	}
+	t.Fatalf("expected Comparable key diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
+func TestTypecheckerTypesBuiltinMapHelpersAndLiteral(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let mut values: map[str]i32 = map[str]i32{"a" => 1}
+    let got = get(&values, "a")
+    let old = set(&mut values, "a", 2)
+    let count = size(&values)
+    let slots = cap(&values)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	fn := findTypeFunc(t, result.Entry.AST, "main")
+	letGot := fn.Body.Stmts[1].(*ast.LetStmt)
+	letOld := fn.Body.Stmts[2].(*ast.LetStmt)
+	letSize := fn.Body.Stmts[3].(*ast.LetStmt)
+	letCap := fn.Body.Stmts[4].(*ast.LetStmt)
+	gotOpt, ok := result.Entry.Types.Nodes[letGot.Value].(*typeinfo.OptionalType)
+	if !ok || !typeinfo.IsBuiltinNamed(gotOpt.Inner, "i32") {
+		t.Fatalf("expected get type ?i32, got %#v", result.Entry.Types.Nodes[letGot.Value])
+	}
+	oldOpt, ok := result.Entry.Types.Nodes[letOld.Value].(*typeinfo.OptionalType)
+	if !ok || !typeinfo.IsBuiltinNamed(oldOpt.Inner, "i32") {
+		t.Fatalf("expected set type ?i32, got %#v", result.Entry.Types.Nodes[letOld.Value])
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[letSize.Value], "usize") {
+		t.Fatalf("expected size type usize, got %#v", result.Entry.Types.Nodes[letSize.Value])
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[letCap.Value], "usize") {
+		t.Fatalf("expected cap type usize, got %#v", result.Entry.Types.Nodes[letCap.Value])
+	}
+}
+
+func TestTypecheckerTypesContextualMapLiteral(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let values: map[str]i32 = {"a" => 1}
+    let got = get(&values, "a")
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	fn := findTypeFunc(t, result.Entry.AST, "main")
+	letGot := fn.Body.Stmts[1].(*ast.LetStmt)
+	gotOpt, ok := result.Entry.Types.Nodes[letGot.Value].(*typeinfo.OptionalType)
+	if !ok || !typeinfo.IsBuiltinNamed(gotOpt.Inner, "i32") {
+		t.Fatalf("expected get type ?i32, got %#v", result.Entry.Types.Nodes[letGot.Value])
+	}
+}
+
+func TestTypecheckerInfersGenericAliasCompositeLiteralTypes(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Vec<T> []T
+type Arr<T> [2]T
+type Pair<A, B> (A, B)
+type Table<K, V> map[K]V
+type Box<T> struct {
+    value: T
+}
+
+fn main() -> void {
+    let xs = Vec{1, 2, 3}
+    let arr = Arr{4, 5}
+    let pair = Pair{1, "two"}
+    let table = Table{"a" => "alpha", "b" => "beta"}
+    let box = Box{.value = 7}
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	fn := findTypeFunc(t, result.Entry.AST, "main")
+	letXs := fn.Body.Stmts[0].(*ast.LetStmt)
+	letArr := fn.Body.Stmts[1].(*ast.LetStmt)
+	letPair := fn.Body.Stmts[2].(*ast.LetStmt)
+	letTable := fn.Body.Stmts[3].(*ast.LetStmt)
+	letBox := fn.Body.Stmts[4].(*ast.LetStmt)
+
+	xsType, ok := result.Entry.Types.Nodes[letXs.Value].(*typeinfo.NamedType)
+	if !ok || len(xsType.TypeArgs) != 1 || !typeinfo.IsBuiltinNamed(xsType.TypeArgs[0], "i32") {
+		t.Fatalf("expected Vec[i32], got %#v", result.Entry.Types.Nodes[letXs.Value])
+	}
+	arrType, ok := result.Entry.Types.Nodes[letArr.Value].(*typeinfo.NamedType)
+	if !ok || len(arrType.TypeArgs) != 1 || !typeinfo.IsBuiltinNamed(arrType.TypeArgs[0], "i32") {
+		t.Fatalf("expected Arr[i32], got %#v", result.Entry.Types.Nodes[letArr.Value])
+	}
+	pairType, ok := result.Entry.Types.Nodes[letPair.Value].(*typeinfo.NamedType)
+	if !ok || len(pairType.TypeArgs) != 2 || !typeinfo.IsBuiltinNamed(pairType.TypeArgs[0], "i32") {
+		t.Fatalf("expected Pair[i32, str], got %#v", result.Entry.Types.Nodes[letPair.Value])
+	}
+	if _, ok := pairType.TypeArgs[1].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected Pair[i32, str], got %#v", result.Entry.Types.Nodes[letPair.Value])
+	}
+	tableType, ok := result.Entry.Types.Nodes[letTable.Value].(*typeinfo.NamedType)
+	if !ok || len(tableType.TypeArgs) != 2 {
+		t.Fatalf("expected Table[str, str], got %#v", result.Entry.Types.Nodes[letTable.Value])
+	}
+	if _, ok := tableType.TypeArgs[0].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected Table[str, str], got %#v", result.Entry.Types.Nodes[letTable.Value])
+	}
+	if _, ok := tableType.TypeArgs[1].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected Table[str, str], got %#v", result.Entry.Types.Nodes[letTable.Value])
+	}
+	boxType, ok := result.Entry.Types.Nodes[letBox.Value].(*typeinfo.NamedType)
+	if !ok || len(boxType.TypeArgs) != 1 || !typeinfo.IsBuiltinNamed(boxType.TypeArgs[0], "i32") {
+		t.Fatalf("expected Box[i32], got %#v", result.Entry.Types.Nodes[letBox.Value])
+	}
+}
+
+func TestTypecheckerRejectsPositionalMapLiteralEntry(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let _: map[str]i32 = map[str]i32{1}
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected map literal entry diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "map literal requires `key => value` entries") {
+			return
+		}
+	}
+	t.Fatalf("expected map literal entry diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
 func TestTypecheckerHandlesFunctionTypeSyntax(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
@@ -564,6 +744,95 @@ fn main() -> void {
 	}
 	if !found {
 		t.Fatalf("expected constraint mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAcceptsComparableConstraint(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Pair struct {
+    left: i32
+    right: str
+}
+
+fn Use<K: Comparable>(value: K) -> K {
+    return value
+}
+
+fn main() -> void {
+    Use(1)
+    Use("ok")
+    Use(.{ .left = 1, .right = "x" } as Pair)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNonComparableConstraintArgument(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Bad struct {
+    items: []i32
+}
+
+fn Use<K: Comparable>(value: K) -> void {
+    value
+}
+
+fn main() -> void {
+    Use(.{ .items = [_]i32{1, 2} } as Bad)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected Comparable constraint mismatch diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "expected Comparable") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Comparable constraint mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNonComparableTypeArgumentForGenericType(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Bad struct {
+    items: []i32
+}
+
+type Box<K: Comparable> struct {
+    key: K
+}
+
+fn main() -> void {
+    let _: Box<Bad> = .{ .key = .{ .items = [_]i32{1, 2} } as Bad }
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected Comparable type-argument mismatch diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "expected Comparable") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Comparable type-argument mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -1224,6 +1493,58 @@ fn main(s: str) -> char {
 	}
 	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[idx], "char") {
 		t.Fatalf("expected str index type char, got %#v", result.Entry.Types.Nodes[idx])
+	}
+}
+
+func TestTypecheckerAllowsMapIndexing(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let values = map[str]i32{"one" => 1}
+    return values["one"]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	ret, ok := mainFn.Body.Stmts[1].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return stmt, got %T", mainFn.Body.Stmts[1])
+	}
+	idx, ok := ret.Value.(*ast.IndexExpr)
+	if !ok {
+		t.Fatalf("expected index expr, got %T", ret.Value)
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[idx], "i32") {
+		t.Fatalf("expected map index type i32, got %#v", result.Entry.Types.Nodes[idx])
+	}
+}
+
+func TestTypecheckerRejectsMapIndexWithWrongKeyType(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let values = map[str]i32{"one" => 1}
+    return values[true]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected map key type mismatch diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected map key type mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 
@@ -4941,8 +5262,8 @@ fn count() -> i32 {
 }
 
 fn main() -> i32 {
-    let size = comptime count()
-    let items: [size]i32 = [size]i32{1, 2, 3, 4, 5}
+    let N = comptime count()
+    let items: [N]i32 = [N]i32{1, 2, 3, 4, 5}
     return items[4]
 }
 `)
@@ -5777,6 +6098,35 @@ type Outer struct {
 	}
 	if !found {
 		t.Fatalf("expected heap reference containment diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsOwningPointerCompositeLiteral(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Inner struct {
+    Value: i32 = 0
+}
+
+fn main() -> void {
+    let p: *Inner = .{ .Value = 7 }
+    print(p)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected owning pointer composite literal diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidType && strings.Contains(diag.Message, "composite literal cannot initialize an owning pointer") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected owning pointer composite literal diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

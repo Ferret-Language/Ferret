@@ -171,7 +171,15 @@ func (p *Parser) parseReturnStmt() ast.Stmt {
 
 func (p *Parser) parseIfStmt() ast.Stmt {
 	start := p.advance().Start
-	cond := p.parseExprUntil(precLowest)
+	var cond ast.Expr
+	if p.match(tokens.LPAREN) {
+		cond = p.parseExprUntil(precLowest, tokens.RPAREN)
+		p.expect(tokens.RPAREN, "expected ')' after if condition")
+	} else {
+		p.blockCondDepth++
+		cond = p.parseExprUntil(precLowest, tokens.LBRACE)
+		p.blockCondDepth--
+	}
 	thenBlock := p.parseBlock()
 	var elseStmt ast.Stmt
 	if p.match(tokens.ELSE) {
@@ -186,7 +194,15 @@ func (p *Parser) parseIfStmt() ast.Stmt {
 
 func (p *Parser) parseWhileStmt() ast.Stmt {
 	start := p.advance().Start
-	cond := p.parseExprUntil(precLowest)
+	var cond ast.Expr
+	if p.match(tokens.LPAREN) {
+		cond = p.parseExprUntil(precLowest, tokens.RPAREN)
+		p.expect(tokens.RPAREN, "expected ')' after while condition")
+	} else {
+		p.blockCondDepth++
+		cond = p.parseExprUntil(precLowest, tokens.LBRACE)
+		p.blockCondDepth--
+	}
 	body := p.parseBlock()
 	return &ast.WhileStmt{Cond: cond, Body: body, Location: p.locFrom(start)}
 }

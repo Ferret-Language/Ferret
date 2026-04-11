@@ -59,5 +59,8 @@ func ClassifyABIType(typ typeinfo.Type, hasNamedLayout func(*typeinfo.NamedType)
 	if IsSliceLikeType(typ) {
 		return ABITypeSliceLike
 	}
+	if _, ok := UnwrapNamed(typ).(*typeinfo.MapType); ok {
+		return ABITypeScalar
+	}
 	return ABITypeScalar
 }

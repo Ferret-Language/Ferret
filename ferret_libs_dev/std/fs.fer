@@ -6,6 +6,7 @@
 // - close the file
 
 import "std/mem"
+import "std/io"
 
 type fileInner struct {
     handle: ^void
@@ -32,9 +33,9 @@ fn Open(path: str) -> File {
     }
 }
 
-fn File::Write(&self, text: str) -> usize {
+fn File::Write(&mut self, text: str) -> io::Error!usize {
     unsafe {
-        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+        return io::WrapCount(write_raw(mem::ExposeRef(&self.inner) as ^void, &text))
     }
 }
 

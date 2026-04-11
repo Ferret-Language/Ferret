@@ -77,6 +77,38 @@ fn main() -> i32 {
 	}
 }
 
+func TestLayoutComputesFunctionFieldLayout(t *testing.T) {
+	root := t.TempDir()
+	mustWriteLayout(t, filepath.Join(root, "main.fer"), `type Route struct {
+    handler: fn(i32) -> i32
+}
+
+fn main() -> i32 {
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	route, ok := result.Entry.Layout.Lookup("Route")
+	if !ok || route == nil || route.Struct == nil {
+		t.Fatalf("expected Route layout, got %#v", result.Entry.Layout)
+	}
+	ptrSize := abi.PointerBytes()
+	if route.Size != ptrSize || route.Align != ptrSize {
+		t.Fatalf("expected Route size=%d align=%d, got size=%d align=%d", ptrSize, ptrSize, route.Size, route.Align)
+	}
+	fields := route.Struct.Fields
+	if len(fields) != 1 {
+		t.Fatalf("expected 1 field, got %#v", fields)
+	}
+	if fields[0].Name != "handler" || fields[0].Size != ptrSize || fields[0].Align != ptrSize {
+		t.Fatalf("expected pointer-sized handler field, got %#v", fields[0])
+	}
+}
+
 func TestLayoutComputesTaggedUnionLayout(t *testing.T) {
 	root := t.TempDir()
 	mustWriteLayout(t, filepath.Join(root, "main.fer"), `type Token union {

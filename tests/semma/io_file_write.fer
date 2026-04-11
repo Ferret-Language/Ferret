@@ -2,12 +2,21 @@ import "std/io"
 import "std/fs"
 
 fn main() -> void {
-    let file = fs::Open("io_file_write.txt")
+    let mut file = fs::Open("io_file_write.txt")
     defer file.Close()
 
-    io::Write(file, "Hello")
-    io::Write(file, " World")
-    io::Write(file, 132245 as str)
+    _ = io::Write(file, "Hello") catch |err| {
+        print(err)
+        return
+    }
+    _ = io::Write(file, " World\n") catch |err| {
+        print(err)
+        return
+    }
+    _ = io::Write(file, 132245 as str) catch |err| {
+        print(err)
+        return
+    }
     //file.Close()
     
     

@@ -1,0 +1,9 @@
+import "std/net/tcp"
+
+fn main() -> void {
+    let _ = tcp::Dial("127.0.0.1", 6553) catch |err| {
+        print(err)
+        return
+    }
+    print("tcp-dial-fail-unexpected")
+}

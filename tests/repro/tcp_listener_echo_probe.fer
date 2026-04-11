@@ -1,0 +1,35 @@
+import "std/io"
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut listener = tcp::Listen("127.0.0.1", 9105) catch |err| {
+        print(err)
+        return
+    }
+    let mut conn = listener.Accept() catch |err| {
+        print(err)
+        listener.Close()
+        return
+    }
+    let data = io::Read(conn, 4) catch |err| {
+        print(err)
+        conn.Close()
+        listener.Close()
+        return
+    }
+    if len(data) == 4 && data as str == "ping" {
+        _ = io::Write(conn, "pong") catch |err| {
+            print(err)
+            conn.Close()
+            listener.Close()
+            return
+        }
+        print("tcp-listener-ok")
+        conn.Close()
+        listener.Close()
+        return
+    }
+    print("tcp-listener-fail")
+    conn.Close()
+    listener.Close()
+}

@@ -257,7 +257,7 @@ func debugExpr(expr Expr) any {
 	case *CompositeLit:
 		items := make([]any, 0, len(e.Items))
 		for _, item := range e.Items {
-			items = append(items, map[string]any{"name": debugExpr(item.Name), "value": debugExpr(item.Value)})
+			items = append(items, map[string]any{"name": debugExpr(item.Name), "key": debugExpr(item.Key), "value": debugExpr(item.Value)})
 		}
 		return map[string]any{"kind": "CompositeLit", "type": debugType(e.Type), "items": items, "loc": debugLoc(e.Location)}
 	case *IndexExpr:
@@ -299,6 +299,8 @@ func debugType(typ TypeExpr) any {
 		return map[string]any{"kind": "ErrorUnionType", "error": debugType(t.Error), "value": debugType(t.Value), "loc": debugLoc(t.Location)}
 	case *ArrayType:
 		return map[string]any{"kind": "ArrayType", "size": debugExpr(t.Size), "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
+	case *MapType:
+		return map[string]any{"kind": "MapType", "key": debugType(t.Key), "value": debugType(t.Value), "loc": debugLoc(t.Location)}
 	case *TupleType:
 		elems := make([]any, 0, len(t.Elems))
 		for _, elem := range t.Elems {

@@ -78,6 +78,29 @@ fn main() -> i32 {
 	}
 }
 
+func TestUsageAllowUnusedSuppressesUnusedFunctionWarning(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `#[allow_unused]
+fn helper() -> i32 {
+    return 42
+}
+
+fn main() -> i32 {
+    return 0
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnusedPrivateFunction && diag.Message == `unused private function "helper"` {
+			t.Fatalf("did not expect unused warning for #[allow_unused] function, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
 func TestUsageDoesNotWarnUsedOrExportedSymbols(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]

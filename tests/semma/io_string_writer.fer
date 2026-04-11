@@ -1,0 +1,16 @@
+import "std/string"
+
+fn main() -> void {
+    let mut buf = string::New()
+    buf.Write("Hello")
+    buf.Write(", world")
+    println(buf.AsStr())
+
+    let mut newBuf = string::New()
+    newBuf.Write(buf.AsStr())
+
+    println(newBuf.AsStr())
+
+    buf.Release()
+    newBuf.Release()
+}

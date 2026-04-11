@@ -5,7 +5,9 @@ import (
 	"reflect"
 	"testing"
 
+	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/typeinfo"
+	"compiler/internal/core/abi"
 	"compiler/internal/frontend/ast"
 )
 
@@ -183,5 +185,138 @@ func TestDescribeRuntimeTypeLayoutCapturesCompositePrintShape(t *testing.T) {
 	}
 	if optDesc.Flags&RuntimeTypeFlagOptional == 0 || optDesc.Elem == nil || optDesc.PayloadOffset == 0 {
 		t.Fatalf("unexpected optional runtime descriptor: %#v", optDesc)
+	}
+}
+
+func TestResolveMapTypeFromNamedAlias(t *testing.T) {
+	named := &typeinfo.NamedType{
+		Name: "mymap",
+		Decl: &ast.TypeDecl{
+			Type: &ast.MapType{
+				Key:   &ast.NamedType{Path: []string{"str"}},
+				Value: &ast.NamedType{Path: []string{"str"}},
+			},
+		},
+	}
+	mt, ok := ResolveMapType(named)
+	if !ok || mt == nil {
+		t.Fatalf("expected map type from alias")
+	}
+	if _, ok := mt.Key.(*typeinfo.StringType); !ok {
+		t.Fatalf("expected string key, got %T", mt.Key)
+	}
+	if _, ok := mt.Value.(*typeinfo.StringType); !ok {
+		t.Fatalf("expected string value, got %T", mt.Value)
+	}
+}
+
+func TestResolveMapTypeFromGenericAlias(t *testing.T) {
+	named := &typeinfo.NamedType{
+		Name:     "Table",
+		TypeArgs: []typeinfo.Type{&typeinfo.StringType{}, &typeinfo.BuiltinType{Name: "i64"}},
+		Decl: &ast.TypeDecl{
+			TypeParams: []ast.TypeParam{
+				{Name: &ast.Ident{Path: []string{"K"}}},
+				{Name: &ast.Ident{Path: []string{"V"}}},
+			},
+			Type: &ast.MapType{
+				Key:   &ast.NamedType{Path: []string{"K"}},
+				Value: &ast.NamedType{Path: []string{"V"}},
+			},
+		},
+	}
+	mt, ok := ResolveMapType(named)
+	if !ok || mt == nil {
+		t.Fatalf("expected map type from generic alias")
+	}
+	if _, ok := mt.Key.(*typeinfo.StringType); !ok {
+		t.Fatalf("expected bound string key, got %T", mt.Key)
+	}
+	if !typeinfo.IsBuiltinNamed(mt.Value, "i64") {
+		t.Fatalf("expected bound i64 value, got %v", mt.Value)
+	}
+}
+
+func TestDescribeRuntimeTypeLayoutCapturesNamedStructFields(t *testing.T) {
+	point := &typeinfo.NamedType{
+		Name: "Point",
+		Decl: &ast.TypeDecl{Type: &ast.StructType{}},
+	}
+	ctx := AggregateLayoutContext{
+		LookupNamed: func(named *typeinfo.NamedType) (*layout.TypeLayout, error) {
+			if named == nil || named.Name != "Point" {
+				return nil, errors.New("unexpected named type")
+			}
+			return &layout.TypeLayout{
+				Known: true,
+				Struct: &layout.StructLayout{
+					Fields: []*layout.FieldLayout{
+						{
+							Name:          "x",
+							Type:          &typeinfo.BuiltinType{Name: "i32"},
+							SemanticIndex: 0,
+							PhysicalIndex: 0,
+							Offset:        0,
+							Size:          4,
+							Align:         4,
+						},
+						{
+							Name:          "y",
+							Type:          &typeinfo.BuiltinType{Name: "i32"},
+							SemanticIndex: 1,
+							PhysicalIndex: 1,
+							Offset:        4,
+							Size:          4,
+							Align:         4,
+						},
+					},
+					PhysicalOrder: []int{0, 1},
+					Size:          8,
+					Align:         4,
+				},
+			}, nil
+		},
+	}
+
+	desc, err := DescribeRuntimeTypeLayout(ctx, point)
+	if err != nil {
+		t.Fatalf("DescribeRuntimeTypeLayout(named struct): %v", err)
+	}
+	if desc.Flags&RuntimeTypeFlagStruct == 0 {
+		t.Fatalf("expected struct runtime flag, got %#x", desc.Flags)
+	}
+	if len(desc.Fields) != 2 || desc.Fields[0].Offset != 0 || desc.Fields[1].Offset != 4 {
+		t.Fatalf("unexpected struct field descriptor list: %#v", desc.Fields)
+	}
+}
+
+func TestLookupStructLayoutAnonymousStructSupportsMapField(t *testing.T) {
+	st := &typeinfo.StructType{
+		OrderedFields: []*typeinfo.StructField{
+			{
+				Name: "items",
+				Type: &typeinfo.MapType{
+					Key:   &typeinfo.StringType{},
+					Value: &typeinfo.BuiltinType{Name: "i32"},
+				},
+			},
+		},
+	}
+
+	out, err := LookupStructLayout(func(*typeinfo.NamedType) (*layout.TypeLayout, error) {
+		return nil, errors.New("unexpected named lookup")
+	}, st)
+	if err != nil {
+		t.Fatalf("LookupStructLayout(anonymous struct): %v", err)
+	}
+	ptrSize := abi.PointerBytes()
+	if out == nil || len(out.Fields) != 1 {
+		t.Fatalf("unexpected anonymous struct layout: %#v", out)
+	}
+	if out.Fields[0].Offset != 0 || out.Fields[0].Size != ptrSize || out.Fields[0].Align != ptrSize {
+		t.Fatalf("unexpected map field layout: %#v", out.Fields[0])
+	}
+	if out.Size != ptrSize || out.Align != ptrSize {
+		t.Fatalf("unexpected struct size/align: size=%d align=%d", out.Size, out.Align)
 	}
 }

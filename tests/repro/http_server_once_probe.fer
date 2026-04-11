@@ -1,0 +1,33 @@
+import "std/net/http"
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut listener = tcp::Listen("127.0.0.1", 9111) catch |err| {
+        print(err)
+        return
+    }
+
+    let mut ctx = http::ServeOnce(&mut listener) catch |err| {
+        listener.Close()
+        print(err)
+        return
+    }
+
+    let mut status: u16 = 404
+    let mut body: str = ""
+    if ctx.Request.Method() == "GET" && ctx.Request.Path() == "/hello" {
+        status = 200
+        body = "hello-server"
+    }
+
+    _ = http::WriteTextResponse(&mut ctx.Conn, status, body) catch |err| {
+        ctx.Release()
+        listener.Close()
+        print(err)
+        return
+    }
+
+    ctx.Release()
+    listener.Close()
+    print("http-server-once-ok")
+}

@@ -259,8 +259,12 @@ fn main() -> void {
 func TestParsePathTypechecksStdIOWrite(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
+type Error error {
+    unknown
+}
+
 type Writer interface {
-    Write(&self, text: str) -> usize
+    Write(&mut self, text: str) -> Error!usize
 }
 
 type Stream struct {
@@ -270,20 +274,27 @@ type Stream struct {
 #[extern("ferret_std_io_write_stream")]
 fn write_stream(kind: i32, text: &str) -> usize;
 
-let Stdout: Stream = .{ .kind = 1 }
+let mut Stdout: Stream = .{ .kind = 1 }
 
-fn Stream::Write(&self, text: str) -> usize {
-    return write_stream(self.kind, &text)
+fn WrapCount(value: usize) -> Error!usize {
+    return value
 }
 
-fn Write(dst: Writer, text: str) -> usize {
+fn Stream::Write(&mut self, text: str) -> Error!usize {
+    return WrapCount(write_stream(self.kind, &text))
+}
+
+fn Write(mut dst: Writer, text: str) -> Error!usize {
     return dst.Write(text)
 }
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 
 fn main() -> void {
-    _ = io::Write(io::Stdout, "hello")
+    _ = io::Write(io::Stdout, "hello") catch |err| {
+        print(err)
+        return
+    }
 }
 `)
 
@@ -296,11 +307,19 @@ fn main() -> void {
 func TestParsePathTypechecksStdFSWrite(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
-type Writer interface {
-    Write(&self, text: str) -> usize
+type Error error {
+    unknown
 }
 
-fn Write(dst: Writer, text: str) -> usize {
+type Writer interface {
+    Write(&mut self, text: str) -> Error!usize
+}
+
+fn WrapCount(value: usize) -> Error!usize {
+    return value
+}
+
+fn Write(mut dst: Writer, text: str) -> Error!usize {
     return dst.Write(text)
 }
 `)
@@ -316,6 +335,7 @@ fn Adopt<T>(raw: ^T) -> *T;
 `)
 	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "fs.fer"), `
 import "std/mem"
+import "std/io"
 
 type fileInner struct {
     handle: ^void
@@ -342,9 +362,9 @@ fn Open(path: str) -> File {
     }
 }
 
-fn File::Write(&self, text: str) -> usize {
+fn File::Write(&mut self, text: str) -> io::Error!usize {
     unsafe {
-        return write_raw(mem::ExposeRef(&self.inner) as ^void, &text)
+        return io::WrapCount(write_raw(mem::ExposeRef(&self.inner) as ^void, &text))
     }
 }
 
@@ -358,9 +378,742 @@ fn File::Close(self) -> void {
 import "std/fs"
 
 fn main() -> void {
-    let file = fs::Open("out.txt")
-    _ = io::Write(file, "hello")
+    let mut file = fs::Open("out.txt")
+    _ = io::Write(file, "hello") catch |err| {
+        print(err)
+        return
+    }
     file.Close()
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
+func TestParsePathTypechecksStdStringWriteMethod(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "string.fer"), `
+type String struct {
+    len: usize = 0
+}
+
+fn New() -> String {
+    return .{}
+}
+
+fn String::Write(&mut self, text: str) -> usize {
+    let bytes = text as []u8
+    let count = len(&bytes)
+    self.len = self.len + count
+    return count
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/string"
+
+fn main() -> void {
+    let mut buf = string::New()
+    _ = buf.Write("hello")
+    _ = buf.Write(" world")
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
+func TestParsePathTypechecksStdIOBuffer(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
+#[extern]
+fn Expose<T>(owner: *T) -> ^T;
+
+#[extern]
+fn ExposeRef<T>(owner: &*T) -> ^T;
+
+#[extern]
+fn Adopt<T>(raw: ^T) -> *T;
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
+import "std/mem"
+
+type Error error {
+    unknown
+}
+
+type Writer interface {
+    Write(&mut self, text: str) -> Error!usize
+}
+
+type Reader interface {
+    Read(&mut self, size: usize) -> Error![]u8
+}
+
+type bufferInner struct {
+    data: ^u8
+    len: usize = 0
+    cap: usize = 0
+    read_pos: usize = 0
+}
+
+type Buffer struct {
+    inner: *bufferInner
+}
+
+#[extern("ferret_std_io_buffer_new")]
+fn new_buffer_raw() -> ^bufferInner;
+
+#[extern("ferret_std_io_buffer_write")]
+fn write_buffer_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_io_buffer_read")]
+fn read_buffer_raw(handle: ^void, size: usize) -> []u8;
+
+#[extern("ferret_std_io_buffer_view")]
+fn view_buffer_raw(handle: ^void) -> str;
+
+#[extern("ferret_std_io_buffer_close")]
+fn close_buffer_raw(handle: ^void) -> void;
+
+fn WrapCount(value: usize) -> Error!usize {
+    return value
+}
+
+fn WrapBytes(value: []u8) -> Error![]u8 {
+    return value
+}
+
+fn NewBuffer() -> Buffer {
+    unsafe {
+        return .{
+            .inner = mem::Adopt(new_buffer_raw())
+        }
+    }
+}
+
+fn Buffer::Write(&mut self, text: str) -> Error!usize {
+    unsafe {
+        return WrapCount(write_buffer_raw(mem::ExposeRef(&self.inner) as ^void, &text))
+    }
+}
+
+fn Buffer::Read(&mut self, size: usize) -> Error![]u8 {
+    unsafe {
+        return WrapBytes(read_buffer_raw(mem::ExposeRef(&self.inner) as ^void, size))
+    }
+}
+
+fn Buffer::AsStr(&self) -> str {
+    unsafe {
+        return view_buffer_raw(mem::ExposeRef(&self.inner) as ^void)
+    }
+}
+
+fn Buffer::Release(self) -> void {
+    unsafe {
+        close_buffer_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+
+fn Write(mut dst: Writer, text: str) -> Error!usize {
+    return dst.Write(text)
+}
+
+fn Read(mut src: Reader, size: usize) -> Error![]u8 {
+    return src.Read(size)
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
+
+fn main() -> void {
+    let mut buf = io::NewBuffer()
+    _ = io::Write(buf, "hello") catch |err| {
+        print(err)
+        return
+    }
+    let head = io::Read(buf, 2) catch |err| {
+        print(err)
+        return
+    }
+    _ = head
+    _ = buf.AsStr()
+    buf.Release()
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
+func TestParsePathTypechecksStdNetTCP(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
+#[extern]
+fn Expose<T>(owner: *T) -> ^T;
+
+#[extern]
+fn ExposeRef<T>(owner: &*T) -> ^T;
+
+#[extern]
+fn Adopt<T>(raw: ^T) -> *T;
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
+type Error error {
+    unknown
+}
+
+type Writer interface {
+    Write(&mut self, text: str) -> Error!usize
+}
+
+type Reader interface {
+    Read(&mut self, size: usize) -> Error![]u8
+}
+
+fn LastError() -> Error {
+    return Error::unknown
+}
+
+fn WrapCount(value: usize) -> Error!usize {
+    return value
+}
+
+fn WrapBytes(value: []u8) -> Error![]u8 {
+    return value
+}
+
+fn WrapText(value: str) -> Error!str {
+    return value
+}
+
+fn Write(mut dst: Writer, text: str) -> Error!usize {
+    return dst.Write(text)
+}
+
+fn Read(mut src: Reader, size: usize) -> Error![]u8 {
+    return src.Read(size)
+}
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "net", "tcp.fer"), `
+import "std/io"
+import "std/mem"
+
+type connInner struct {
+    handle: ^void
+}
+
+type Conn struct {
+    inner: *connInner
+}
+
+#[extern("ferret_std_net_tcp_dial")]
+fn dial_raw(host: &str, port: u16) -> ^connInner;
+
+#[extern("ferret_std_net_tcp_write")]
+fn write_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_net_tcp_read")]
+fn read_raw(handle: ^void, size: usize) -> []u8;
+
+#[extern("ferret_std_net_tcp_set_write_timeout")]
+fn set_write_timeout_raw(handle: ^void, ms: i32) -> usize;
+
+#[extern("ferret_std_net_tcp_set_nodelay")]
+fn set_nodelay_raw(handle: ^void, enabled: bool) -> usize;
+
+#[extern("ferret_std_net_tcp_set_keepalive")]
+fn set_keepalive_raw(handle: ^void, enabled: bool) -> usize;
+
+#[extern("ferret_std_net_tcp_shutdown_read")]
+fn shutdown_read_raw(handle: ^void) -> usize;
+
+#[extern("ferret_std_net_tcp_shutdown_write")]
+fn shutdown_write_raw(handle: ^void) -> usize;
+
+#[extern("ferret_std_net_tcp_local_addr")]
+fn local_addr_raw(handle: ^void) -> str;
+
+#[extern("ferret_std_net_tcp_peer_addr")]
+fn peer_addr_raw(handle: ^void) -> str;
+
+#[extern("ferret_std_net_tcp_set_read_timeout")]
+fn set_read_timeout_raw(handle: ^void, ms: i32) -> usize;
+
+#[extern("ferret_std_net_tcp_close")]
+fn close_raw(handle: ^void) -> void;
+
+fn Dial(host: str, port: u16) -> io::Error!Conn {
+    let raw = dial_raw(&host, port)
+    let mut failed = false
+    unsafe {
+        failed = raw == 0 as ^connInner
+    }
+    if failed {
+        return io::LastError()
+    }
+    unsafe {
+        return .{
+            .inner = mem::Adopt(raw)
+        }
+    }
+}
+
+fn Conn::Write(&mut self, text: str) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(write_raw(mem::ExposeRef(&self.inner) as ^void, &text))
+    }
+}
+
+fn Conn::Read(&mut self, size: usize) -> io::Error![]u8 {
+    unsafe {
+        return io::WrapBytes(read_raw(mem::ExposeRef(&self.inner) as ^void, size))
+    }
+}
+
+fn Conn::SetReadTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_read_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
+    }
+}
+
+fn Conn::SetWriteTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_write_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
+    }
+}
+
+fn Conn::SetNoDelay(&mut self, enabled: bool) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_nodelay_raw(mem::ExposeRef(&self.inner) as ^void, enabled))
+    }
+}
+
+fn Conn::SetKeepAlive(&mut self, enabled: bool) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_keepalive_raw(mem::ExposeRef(&self.inner) as ^void, enabled))
+    }
+}
+
+fn Conn::ShutdownRead(&mut self) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(shutdown_read_raw(mem::ExposeRef(&self.inner) as ^void))
+    }
+}
+
+fn Conn::ShutdownWrite(&mut self) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(shutdown_write_raw(mem::ExposeRef(&self.inner) as ^void))
+    }
+}
+
+fn Conn::LocalAddr(&self) -> io::Error!str {
+    unsafe {
+        return io::WrapText(local_addr_raw(mem::ExposeRef(&self.inner) as ^void))
+    }
+}
+
+fn Conn::PeerAddr(&self) -> io::Error!str {
+    unsafe {
+        return io::WrapText(peer_addr_raw(mem::ExposeRef(&self.inner) as ^void))
+    }
+}
+
+fn Conn::Close(self) -> void {
+    unsafe {
+        close_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut conn = tcp::Dial("127.0.0.1", 8080) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.SetReadTimeoutMs(100) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.SetWriteTimeoutMs(100) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.SetNoDelay(true) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.SetKeepAlive(true) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.LocalAddr() catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.PeerAddr() catch |err| {
+        print(err)
+        return
+    }
+    _ = io::Write(conn, "ping") catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.ShutdownWrite() catch |err| {
+        print(err)
+        return
+    }
+    _ = io::Read(conn, 4) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.ShutdownRead() catch |err| {
+        print(err)
+        return
+    }
+    conn.Close()
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
+func TestParsePathTypechecksStdNetTCPListener(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
+#[extern]
+fn Expose<T>(owner: *T) -> ^T;
+
+#[extern]
+fn ExposeRef<T>(owner: &*T) -> ^T;
+
+#[extern]
+fn Adopt<T>(raw: ^T) -> *T;
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
+type Error error {
+    unknown
+}
+
+type Writer interface {
+    Write(&mut self, text: str) -> Error!usize
+}
+
+type Reader interface {
+    Read(&mut self, size: usize) -> Error![]u8
+}
+
+fn LastError() -> Error {
+    return Error::unknown
+}
+
+fn WrapCount(value: usize) -> Error!usize {
+    return value
+}
+
+fn WrapBytes(value: []u8) -> Error![]u8 {
+    return value
+}
+
+fn WrapText(value: str) -> Error!str {
+    return value
+}
+
+fn Write(mut dst: Writer, text: str) -> Error!usize {
+    return dst.Write(text)
+}
+
+fn Read(mut src: Reader, size: usize) -> Error![]u8 {
+    return src.Read(size)
+}
+`)
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "net", "tcp.fer"), `
+import "std/io"
+import "std/mem"
+
+type connInner struct {
+    handle: ^void
+}
+
+type Conn struct {
+    inner: *connInner
+}
+
+type listenerInner struct {
+    handle: ^void
+}
+
+type Listener struct {
+    inner: *listenerInner
+}
+
+#[extern("ferret_std_net_tcp_listen")]
+fn listen_raw(host: &str, port: u16) -> ^listenerInner;
+
+#[extern("ferret_std_net_tcp_accept")]
+fn accept_raw(handle: ^listenerInner) -> ^connInner;
+
+#[extern("ferret_std_net_tcp_write")]
+fn write_raw(handle: ^void, text: &str) -> usize;
+
+#[extern("ferret_std_net_tcp_read")]
+fn read_raw(handle: ^void, size: usize) -> []u8;
+
+#[extern("ferret_std_net_tcp_close")]
+fn close_raw(handle: ^void) -> void;
+
+#[extern("ferret_std_net_tcp_close_listener")]
+fn close_listener_raw(handle: ^void) -> void;
+
+#[extern("ferret_std_net_tcp_set_accept_timeout")]
+fn set_accept_timeout_raw(handle: ^void, ms: i32) -> usize;
+
+#[extern("ferret_std_net_tcp_listener_local_addr")]
+fn listener_local_addr_raw(handle: ^void) -> str;
+
+fn Listen(host: str, port: u16) -> io::Error!Listener {
+    let raw = listen_raw(&host, port)
+    let mut failed = false
+    unsafe {
+        failed = raw == 0 as ^listenerInner
+    }
+    if failed {
+        return io::LastError()
+    }
+    unsafe {
+        return .{
+            .inner = mem::Adopt(raw)
+        }
+    }
+}
+
+fn Listener::Accept(&mut self) -> io::Error!Conn {
+    let raw = accept_raw(mem::ExposeRef(&self.inner))
+    let mut failed = false
+    unsafe {
+        failed = raw == 0 as ^connInner
+    }
+    if failed {
+        return io::LastError()
+    }
+    unsafe {
+        return .{
+            .inner = mem::Adopt(raw)
+        }
+    }
+}
+
+fn Listener::SetAcceptTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(set_accept_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
+    }
+}
+
+fn Listener::LocalAddr(&self) -> io::Error!str {
+    unsafe {
+        return io::WrapText(listener_local_addr_raw(mem::ExposeRef(&self.inner) as ^void))
+    }
+}
+
+fn Listener::Close(self) -> void {
+    unsafe {
+        close_listener_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+
+fn Conn::Write(&mut self, text: str) -> io::Error!usize {
+    unsafe {
+        return io::WrapCount(write_raw(mem::ExposeRef(&self.inner) as ^void, &text))
+    }
+}
+
+fn Conn::Read(&mut self, size: usize) -> io::Error![]u8 {
+    unsafe {
+        return io::WrapBytes(read_raw(mem::ExposeRef(&self.inner) as ^void, size))
+    }
+}
+
+fn Conn::Close(self) -> void {
+    unsafe {
+        close_raw(mem::Expose(self.inner) as ^void)
+    }
+}
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut listener = tcp::Listen("127.0.0.1", 8080) catch |err| {
+        print(err)
+        return
+    }
+    _ = listener.LocalAddr() catch |err| {
+        print(err)
+        listener.Close()
+        return
+    }
+    _ = listener.SetAcceptTimeoutMs(100) catch |err| {
+        print(err)
+        listener.Close()
+        return
+    }
+    let mut conn = listener.Accept() catch |err| {
+        print(err)
+        listener.Close()
+        return
+    }
+    _ = io::Read(conn, 4) catch |err| {
+        print(err)
+        conn.Close()
+        listener.Close()
+        return
+    }
+    _ = io::Write(conn, "pong") catch |err| {
+        print(err)
+        conn.Close()
+        listener.Close()
+        return
+    }
+    conn.Close()
+    listener.Close()
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
+func TestParsePathTypechecksStdNetHTTP(t *testing.T) {
+	root := t.TempDir()
+	copyStd := func(rel string) {
+		t.Helper()
+		src := filepath.Join("..", "..", rel)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatalf("read %s: %v", src, err)
+		}
+		mustWrite(t, filepath.Join(root, rel), string(data))
+	}
+
+	copyStd(filepath.Join("ferret_libs_dev", "std", "mem.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "io.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "tcp.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "http.fer"))
+
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/net/http"
+
+fn main() -> void {
+    let resp = http::Get("127.0.0.1", 8080, "/") catch |err| {
+        print(err)
+        return
+    }
+    print(resp.StatusCode())
+    print(resp.Body())
+    resp.Release()
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
+func TestParsePathTypechecksStdNetHTTPServer(t *testing.T) {
+	root := t.TempDir()
+	copyStd := func(rel string) {
+		t.Helper()
+		src := filepath.Join("..", "..", rel)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatalf("read %s: %v", src, err)
+		}
+		mustWrite(t, filepath.Join(root, rel), string(data))
+	}
+
+	copyStd(filepath.Join("ferret_libs_dev", "std", "mem.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "io.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "tcp.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "http.fer"))
+
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/io"
+import "std/net/http"
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut listener = tcp::Listen("127.0.0.1", 8080) catch |err| {
+        print(err)
+        return
+    }
+    defer listener.Close()
+
+    let mut ctx = http::ServeOnce(&mut listener) catch |err| {
+        print(err)
+        return
+    }
+    defer ctx.Release()
+
+    _ = http::WriteTextResponse(&mut ctx.Conn, 200, "hello-server") catch |err| {
+        print(err)
+        return
+    }
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
+func TestParsePathTypechecksStdNetHTTPServerRoutes(t *testing.T) {
+	root := t.TempDir()
+	copyStd := func(rel string) {
+		t.Helper()
+		src := filepath.Join("..", "..", rel)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatalf("read %s: %v", src, err)
+		}
+		mustWrite(t, filepath.Join(root, rel), string(data))
+	}
+
+	copyStd(filepath.Join("ferret_libs_dev", "std", "mem.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "io.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "tcp.fer"))
+	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "http.fer"))
+
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/io"
+import "std/net/http"
+
+fn hello(req: &http::Request, res: &mut http::ResponseWriter) -> io::Error!usize {
+    req
+    return res.Send(200, "hello-route")
+}
+
+fn main() -> void {
+    let mut server = http::NewServer()
+    server.Listen(8080)
+    server.Get("/hello", hello)
+    _ = server.StartOnce() catch |err| {
+        print(err)
+        return
+    }
 }
 `)
 
@@ -711,6 +1464,48 @@ fn main() -> i32 {
 	}
 	if len(result.Entry.AST.Decls) != 2 {
 		t.Fatalf("expected 2 active declarations after filtering, got %d", len(result.Entry.AST.Decls))
+	}
+}
+
+func TestParsePathParsesFunctionTypeParameterWithoutReturnAsVoid(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn noop(a: i32, b: i32) {}
+
+fn takefn(fun: fn(i32, i32)) -> void {
+    fun(1, 2)
+}
+
+fn main() -> void {
+    takefn(noop)
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
+func TestParsePathTypechecksFunctionValueParameterCall(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn inc(x: i32) -> i32 {
+    return x + 1
+}
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    return f(x)
+}
+
+fn main() -> i32 {
+    return apply(inc, 2)
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
 }
 

@@ -293,6 +293,7 @@ func (*TypeTestValue) valueNode() {}
 
 type CompositeItem struct {
 	Name  string
+	Key   Value
 	Value Value
 }
 

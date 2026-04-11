@@ -1,0 +1,24 @@
+import "std/io"
+import "std/net/http"
+
+fn main() -> void {
+    let mut server = http::NewServer()
+
+    server.Listen(9112)
+
+    server.Get("/", (_: &http::Request, res: &mut http::ResponseWriter) => {
+        res.Send(200, "Hello world")
+    })
+    server.Get("/hello", (_: &http::Request, res: &mut http::ResponseWriter) => {
+        res.Send(200, "hello-route")
+    })
+    server.Get("/json", (_: &http::Request, res: &mut http::ResponseWriter) => {
+        res.Json(200, "{status: ok, value: hello}")
+    })
+    
+    server.StartOnce() catch |err| {
+        println(err)
+        return
+    }
+    println("http-server-routes-ok")
+}

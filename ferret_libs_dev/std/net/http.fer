@@ -1,0 +1,554 @@
+import "std/io"
+import "std/net/tcp"
+
+type Request struct {
+    raw: io::Buffer
+    method_end: usize
+    path_start: usize
+    path_end: usize
+    body_offset: usize
+    close_after: bool = false
+}
+
+type Response struct {
+    raw: io::Buffer
+    status: u16
+    body_offset: usize
+}
+
+type ResponseWriter struct {
+    conn: ^tcp::Conn
+}
+
+type ServerContext struct {
+    Request: Request
+    Conn: tcp::Conn
+}
+
+type Server struct {
+    port: u16 = 8080
+    routes: map[str]fn(&Request, &mut ResponseWriter) -> io::Error!usize
+}
+
+fn find_text(text: str, needle: str) -> usize {
+    let hay = text as []u8
+    let pat = needle as []u8
+    let hay_len = len(hay)
+    let pat_len = len(pat)
+    if pat_len == 0 {
+        return 0
+    }
+    if pat_len > hay_len {
+        return hay_len + 1
+    }
+    let mut i: usize = 0
+    while i + pat_len <= hay_len {
+        let mut j: usize = 0
+        let mut matched = true
+        while j < pat_len {
+            if hay[i + j] != pat[j] {
+                matched = false
+                break
+            }
+            j += 1
+        }
+        if matched {
+            return i
+        }
+        i += 1
+    }
+    return hay_len + 1
+}
+
+fn slice_text(text: str, start: usize) -> str {
+    let bytes = text as []u8
+    let total = len(bytes)
+    if start >= total {
+        return ""
+    }
+    unsafe {
+        let ptr = bytes as ^const u8
+        let addr = (ptr as usize) + start
+        return (addr as ^const u8, total - start) as str
+    }
+}
+
+fn slice_text_range(text: str, start: usize, end: usize) -> str {
+    let bytes = text as []u8
+    let total = len(bytes)
+    if start >= total || end <= start {
+        return ""
+    }
+    let mut limit = end
+    if limit > total {
+        limit = total
+    }
+    unsafe {
+        let ptr = bytes as ^const u8
+        let addr = (ptr as usize) + start
+        return (addr as ^const u8, limit - start) as str
+    }
+}
+
+fn parse_status_code(text: str) -> u16 {
+    let bytes = text as []u8
+    let total = len(bytes)
+    let mut i: usize = 0
+    while i < total && bytes[i] != b' ' {
+        i += 1
+    }
+    if i + 3 >= total {
+        return 0
+    }
+    i += 1
+    if bytes[i] < b'0' || bytes[i] > b'9' {
+        return 0
+    }
+    if bytes[i + 1] < b'0' || bytes[i + 1] > b'9' {
+        return 0
+    }
+    if bytes[i + 2] < b'0' || bytes[i + 2] > b'9' {
+        return 0
+    }
+    let a = (bytes[i] - b'0') as u16
+    let b = (bytes[i + 1] - b'0') as u16
+    let c = (bytes[i + 2] - b'0') as u16
+    return a * 100 + b * 10 + c
+}
+
+fn parse_usize_decimal(text: str) -> i64 {
+    let bytes = text as []u8
+    if len(bytes) == 0 {
+        return -1
+    }
+    let mut value: i64 = 0
+    let mut i: usize = 0
+    while i < len(bytes) {
+        let ch = bytes[i]
+        if ch < b'0' || ch > b'9' {
+            return -1
+        }
+        value = value * 10 + ((ch - b'0') as i64)
+        i += 1
+    }
+    return value
+}
+
+fn parse_content_length(text: str) -> i64 {
+    let mut start = find_text(text, "\r\nContent-Length:")
+    if start > len(text) {
+        start = find_text(text, "\r\ncontent-length:")
+        if start > len(text) {
+            return -1
+        }
+    }
+    start += 17
+    let bytes = text as []u8
+    let mut i = start
+    while i < len(bytes) && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1
+    }
+    let value_start = i
+    while i < len(bytes) && bytes[i] >= b'0' && bytes[i] <= b'9' {
+        i += 1
+    }
+    if i <= value_start {
+        return -1
+    }
+    return parse_usize_decimal(slice_text_range(text, value_start, i))
+}
+
+fn request_connection_close(text: str) -> bool {
+    if find_text(text, "\r\nConnection: close\r\n") <= len(text) {
+        return true
+    }
+    if find_text(text, "\r\nconnection: close\r\n") <= len(text) {
+        return true
+    }
+    return false
+}
+
+fn parse_request(text: str, raw: io::Buffer, body_offset: usize) -> io::Error!Request {
+    let bytes = text as []u8
+    let total = len(bytes)
+    let mut method_end: usize = 0
+    while method_end < total && bytes[method_end] != b' ' {
+        method_end += 1
+    }
+    if method_end == 0 || method_end >= total {
+        raw.Release()
+        return io::ErrorFromCode(0)
+    }
+
+    let path_start = method_end + (1 as usize)
+    let mut path_end = path_start
+    while path_end < total && bytes[path_end] != b' ' && bytes[path_end] != b'\r' && bytes[path_end] != b'\n' {
+        path_end += 1
+    }
+    if path_end <= path_start || path_end >= total || bytes[path_end] != b' ' {
+        raw.Release()
+        return io::ErrorFromCode(0)
+    }
+
+    return .{
+        .raw = raw,
+        .method_end = method_end,
+        .path_start = path_start,
+        .path_end = path_end,
+        .body_offset = body_offset,
+        .close_after = request_connection_close(text)
+    }
+}
+
+fn read_request(conn: &mut tcp::Conn) -> io::Error!Request {
+    let mut raw = io::NewBuffer()
+    let mut marker: usize = 0
+    let mut found = false
+    while !found {
+        let chunk = conn.Read(4096) catch |err| {
+            raw.Release()
+            return err
+        }
+        if len(chunk) == 0 {
+            raw.Release()
+            return io::ErrorFromCode(7)
+        }
+        _ = io::Write(raw, chunk as str) catch |err| {
+            raw.Release()
+            return err
+        }
+        let text = raw.AsStr()
+        marker = find_text(text, "\r\n\r\n")
+        found = marker <= len(text)
+    }
+    return parse_request(raw.AsStr(), raw, marker + (4 as usize))
+}
+
+fn read_response(conn: &mut tcp::Conn) -> io::Error!Response {
+    let mut raw = io::NewBuffer()
+    let mut marker: usize = 0
+    let mut found = false
+    let mut content_len: i64 = -1
+    let mut want_total: usize = 0
+    let mut keep_reading = true
+    while keep_reading {
+        let chunk = conn.Read(4096) catch |err| {
+            raw.Release()
+            return err
+        }
+        if len(chunk) == 0 {
+            keep_reading = false
+            continue
+        }
+        _ = io::Write(raw, chunk as str) catch |err| {
+            raw.Release()
+            return err
+        }
+        if !found {
+            let text = raw.AsStr()
+            marker = find_text(text, "\r\n\r\n")
+            found = marker <= len(text)
+            if found {
+                content_len = parse_content_length(slice_text_range(text, 0, marker))
+                if content_len >= 0 {
+                    want_total = marker + (4 as usize) + (content_len as usize)
+                }
+            }
+        }
+        if found && content_len >= 0 && len(raw.AsStr() as []u8) >= want_total {
+            keep_reading = false
+        }
+    }
+
+    let text = raw.AsStr()
+    marker = find_text(text, "\r\n\r\n")
+    let status = parse_status_code(text)
+    if marker <= len(text) && status != 0 {
+        return .{
+            .raw = raw,
+            .status = status,
+            .body_offset = marker + (4 as usize)
+        }
+    }
+    raw.Release()
+    return io::ErrorFromCode(0)
+}
+
+fn status_text(status: u16) -> str {
+    if status == 200 {
+        return "OK"
+    }
+    if status == 400 {
+        return "Bad Request"
+    }
+    if status == 404 {
+        return "Not Found"
+    }
+    if status == 500 {
+        return "Internal Server Error"
+    }
+    return "OK"
+}
+
+fn text_eq(left: str, right: str) -> bool {
+    let left_bytes = left as []u8
+    let right_bytes = right as []u8
+    let total = len(left_bytes)
+    if total != len(right_bytes) {
+        return false
+    }
+    let mut i: usize = 0
+    while i < total {
+        if left_bytes[i] != right_bytes[i] {
+            return false
+        }
+        i += 1
+    }
+    return true
+}
+
+fn not_found_handler(req: &Request, res: &mut ResponseWriter) -> io::Error!usize {
+    req
+    return res.Send(404, "not found")
+}
+
+fn dispatch_request(server: &Server, req: &Request, res: &mut ResponseWriter) -> io::Error!usize {
+    if !text_eq(req.Method(), "GET") {
+        return res.Send(404, "not found")
+    }
+    let route = get(&server.routes, req.Path())
+    if route is fn(&Request, &mut ResponseWriter) -> io::Error!usize {
+        return route(req, res)
+    }
+    return not_found_handler(req, res)
+}
+
+fn write_response(conn: &mut tcp::Conn, status: u16, content_type: str, body: str) -> io::Error!usize {
+    let mut total: usize = 0
+    total = (total as i64 + (conn.Write("HTTP/1.1 ") catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(status as str) catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(" ") catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(status_text(status)) catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write("\r\nContent-Length: ") catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(len(body as []u8) as str) catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write("\r\nContent-Type: ") catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(content_type) catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write("\r\nConnection: keep-alive\r\n\r\n") catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(body) catch |err| {
+        return err
+    }) as i64) as usize
+    return total
+}
+
+fn WriteTextResponse(conn: &mut tcp::Conn, status: u16, body: str) -> io::Error!usize {
+    return write_response(conn, status, "text/plain; charset=utf-8", body)
+}
+
+fn response_writer_from_conn(conn: &mut tcp::Conn) -> ResponseWriter {
+    unsafe {
+        return .{ .conn = conn as ^tcp::Conn }
+    }
+}
+
+fn ServeOnce(listener: &mut tcp::Listener) -> io::Error!ServerContext {
+    let mut conn = listener.Accept() catch |err| {
+        return err
+    }
+    let req = read_request(&mut conn) catch |err| {
+        conn.Close()
+        return err
+    }
+    return .{
+        .Request = req,
+        .Conn = conn
+    }
+}
+
+fn NewServer() -> Server {
+    return .{
+        .port = 8080,
+        .routes = {}
+    }
+}
+
+fn Server::Listen(&mut self, port: u16) -> void {
+    self.port = port
+}
+
+fn Server::Get(&mut self, path: str, handler: fn(&Request, &mut ResponseWriter) -> io::Error!usize) -> void {
+    set(&mut self.routes, path, handler)
+}
+
+fn Server::ServeNext(&self, listener: &mut tcp::Listener) -> io::Error!usize {
+    let mut conn = listener.Accept() catch |err| {
+        return err
+    }
+    let mut total: usize = 0
+    let mut serving = true
+    while serving {
+        let req = read_request(&mut conn) catch |err| {
+            if err == io::ErrorFromCode(7) {
+                conn.Close()
+                return total
+            }
+            conn.Close()
+            return err
+        }
+        let mut res = response_writer_from_conn(&mut conn)
+        let written = dispatch_request(self, &req, &mut res) catch |err| {
+            req.Release()
+            conn.Close()
+            return err
+        }
+        total = (total as i64 + (written as i64)) as usize
+        let should_close = req.CloseAfter()
+        req.Release()
+        if should_close {
+            serving = false
+        }
+    }
+    conn.Close()
+    return total
+}
+
+fn Server::Start(&self) -> io::Error!usize {
+    let mut listener = tcp::Listen("127.0.0.1", self.port) catch |err| {
+        return err
+    }
+    let running = true
+    while running {
+        _ = self.ServeNext(&mut listener) catch |err| {
+            listener.Close()
+            return err
+        }
+    }
+    listener.Close()
+    return 0 as usize
+}
+
+fn Server::StartOnce(&self) -> io::Error!usize {
+    let mut listener = tcp::Listen("127.0.0.1", self.port) catch |err| {
+        return err
+    }
+    let result = self.ServeNext(&mut listener)
+    listener.Close()
+    return result
+}
+
+fn Get(host: str, port: u16, path: str) -> io::Error!Response {
+    let mut conn = tcp::Dial(host, port) catch |err| {
+        return err
+    }
+
+    let mut req = io::NewBuffer()
+
+    _ = io::Write(req, "GET ") catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    _ = io::Write(req, path) catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    _ = io::Write(req, " HTTP/1.1\r\nHost: ") catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    _ = io::Write(req, host) catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    _ = io::Write(req, "\r\nConnection: close\r\n\r\n") catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    _ = io::Write(conn, req.AsStr()) catch |err| {
+        conn.Close()
+        req.Release()
+        return err
+    }
+    let response = read_response(&mut conn)
+    conn.Close()
+    req.Release()
+    return response
+}
+
+fn Response::StatusCode(&self) -> u16 {
+    return self.status
+}
+
+fn Request::Method(&self) -> str {
+    return slice_text_range(self.raw.AsStr(), 0, self.method_end)
+}
+
+fn Request::Path(&self) -> str {
+    return slice_text_range(self.raw.AsStr(), self.path_start, self.path_end)
+}
+
+fn Request::Body(&self) -> str {
+    return slice_text(self.raw.AsStr(), self.body_offset)
+}
+
+fn Request::Raw(&self) -> str {
+    return self.raw.AsStr()
+}
+
+fn Request::CloseAfter(&self) -> bool {
+    return self.close_after
+}
+
+fn ResponseWriter::Send(&mut self, status: u16, body: str) -> io::Error!usize {
+    unsafe {
+        return WriteTextResponse(self.conn as &mut tcp::Conn, status, body)
+    }
+}
+
+fn ResponseWriter::Json(&mut self, status: u16, body: str) -> io::Error!usize {
+    unsafe {
+        return write_response(self.conn as &mut tcp::Conn, status, "application/json", body)
+    }
+}
+
+fn Request::Release(self) -> void {
+    self.raw.Release()
+}
+
+fn ServerContext::Release(self) -> void {
+    self.Request.Release()
+    self.Conn.Close()
+}
+
+fn Response::Body(&self) -> str {
+    return slice_text(self.raw.AsStr(), self.body_offset)
+}
+
+fn Response::Raw(&self) -> str {
+    return self.raw.AsStr()
+}
+
+fn Response::Release(self) -> void {
+    self.raw.Release()
+}

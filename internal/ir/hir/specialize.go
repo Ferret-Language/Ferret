@@ -628,7 +628,7 @@ func (s *specializer) cloneExpr(expr Expr, bindings map[*typeinfo.TypeParam]type
 		out.ExprType = s.substituteType(ex.Type(), bindings)
 		out.Items = make([]CompositeItem, 0, len(ex.Items))
 		for _, item := range ex.Items {
-			out.Items = append(out.Items, CompositeItem{Name: item.Name, Value: s.cloneExpr(item.Value, bindings)})
+			out.Items = append(out.Items, CompositeItem{Name: item.Name, Key: s.cloneExpr(item.Key, bindings), Value: s.cloneExpr(item.Value, bindings)})
 		}
 		return &out
 	case *IndexExpr:
@@ -872,6 +872,11 @@ func inferTypeBindings(pattern, actual typeinfo.Type, bindings map[*typeinfo.Typ
 			for i := range p.Elems {
 				inferTypeBindings(p.Elems[i], got.Elems[i], bindings)
 			}
+		}
+	case *typeinfo.MapType:
+		if got, ok := actual.(*typeinfo.MapType); ok {
+			inferTypeBindings(p.Key, got.Key, bindings)
+			inferTypeBindings(p.Value, got.Value, bindings)
 		}
 	case *typeinfo.NamedType:
 		got, ok := actual.(*typeinfo.NamedType)
@@ -1420,6 +1425,14 @@ func (s *specializer) specializeNamedTypeRefs(typ typeinfo.Type, seen map[typein
 			t.Elems[i] = s.specializeNamedTypeRefs(elem, seen)
 		}
 		return t
+	case *typeinfo.MapType:
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
+		t.Key = s.specializeNamedTypeRefs(t.Key, seen)
+		t.Value = s.specializeNamedTypeRefs(t.Value, seen)
+		return t
 	case *typeinfo.NamedType:
 		if _, ok := seen[t]; ok {
 			return t
@@ -1557,6 +1570,8 @@ func typeHasTypeParam(typ typeinfo.Type) bool {
 			}
 		}
 		return false
+	case *typeinfo.MapType:
+		return typeHasTypeParam(t.Key) || typeHasTypeParam(t.Value)
 	case *typeinfo.NamedType:
 		for _, arg := range t.TypeArgs {
 			if typeHasTypeParam(arg) {

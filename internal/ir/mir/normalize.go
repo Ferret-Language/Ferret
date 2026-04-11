@@ -64,6 +64,7 @@ func (n *normalizer) normalizeGlobalValue(value Value) Value {
 		return v
 	case *CompositeValue:
 		for i, item := range v.Items {
+			v.Items[i].Key = n.normalizeGlobalValue(item.Key)
 			v.Items[i].Value = n.normalizeGlobalValue(item.Value)
 		}
 		return v
@@ -196,7 +197,7 @@ func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) 
 		copy.Right = right
 		return n.wrapComputed(fn, &copy, temps)
 	case *AddrOfValue:
-		temps, source := n.normalizeValue(fn, v.Source)
+		temps, source := n.normalizeValueInline(fn, v.Source)
 		copy := *v
 		copy.Source = source
 		return n.wrapComputed(fn, &copy, temps)
@@ -261,9 +262,11 @@ func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) 
 		temps := make([]Instr, 0, len(v.Items))
 		items := make([]CompositeItem, 0, len(v.Items))
 		for _, item := range v.Items {
+			keyTemps, simpleKey := n.normalizeValue(fn, item.Key)
 			itemTemps, simpleValue := n.normalizeValue(fn, item.Value)
+			temps = append(temps, keyTemps...)
 			temps = append(temps, itemTemps...)
-			items = append(items, CompositeItem{Name: item.Name, Value: simpleValue})
+			items = append(items, CompositeItem{Name: item.Name, Key: simpleKey, Value: simpleValue})
 		}
 		copy := *v
 		copy.Items = items
@@ -295,7 +298,7 @@ func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, V
 		copy.Right = right
 		return temps, &copy
 	case *AddrOfValue:
-		temps, source := n.normalizeValue(fn, v.Source)
+		temps, source := n.normalizeValueInline(fn, v.Source)
 		copy := *v
 		copy.Source = source
 		return temps, &copy
@@ -360,9 +363,11 @@ func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, V
 		temps := make([]Instr, 0, len(v.Items))
 		items := make([]CompositeItem, 0, len(v.Items))
 		for _, item := range v.Items {
+			keyTemps, simpleKey := n.normalizeValue(fn, item.Key)
 			itemTemps, simpleValue := n.normalizeValue(fn, item.Value)
+			temps = append(temps, keyTemps...)
 			temps = append(temps, itemTemps...)
-			items = append(items, CompositeItem{Name: item.Name, Value: simpleValue})
+			items = append(items, CompositeItem{Name: item.Name, Key: simpleKey, Value: simpleValue})
 		}
 		copy := *v
 		copy.Items = items

@@ -775,6 +775,9 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if field, ok := call.Callee.(*mir.FieldValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
 		return lowerInterfaceCall(state, targetName, targetType, call, field)
 	}
+	if kind, mapType, ok := becommon.BuiltinMapCall(call); ok {
+		return lowerBuiltinMapCall(state, targetName, targetType, call, kind, mapType)
+	}
 	callee, err := lowerCallee(state, call.Callee)
 	if err != nil {
 		return "", err
@@ -825,6 +828,321 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 		return callText, nil
 	}
 	return fmt.Sprintf("%s =%s %s", qbeLocalName(targetName), qtype, callText), nil
+}
+
+func lowerBuiltinMapCall(state *moduleState, targetName string, targetType typeinfo.Type, call *mir.CallValue, kind becommon.BuiltinMapCallKind, mapType *typeinfo.MapType) (string, error) {
+	mapPtr, err := lowerValue(state, call.Args[0])
+	if err != nil {
+		return "", err
+	}
+	switch kind {
+	case becommon.BuiltinMapCallSize, becommon.BuiltinMapCallCap:
+		callText := fmt.Sprintf("call $%s(l %s)", becommon.BuiltinMapRuntimeSymbol(kind), mapPtr)
+		if targetName == "" {
+			return callText, nil
+		}
+		return fmt.Sprintf("%s =l %s", qbeLocalName(targetName), callText), nil
+	case becommon.BuiltinMapCallGet, becommon.BuiltinMapCallSet:
+	default:
+		return "", fmt.Errorf("unsupported builtin map call")
+	}
+
+	keyInfoSym, err := ensureQBERuntimeTypeInfo(state, mapType.Key)
+	if err != nil {
+		return "", err
+	}
+	valueInfoSym, err := ensureQBERuntimeTypeInfo(state, mapType.Value)
+	if err != nil {
+		return "", err
+	}
+	keyPrefix, keyPtr, err := lowerMapValuePointer(state, call.Args[1])
+	if err != nil {
+		return "", err
+	}
+	lines := append([]string(nil), keyPrefix...)
+	valuePtr := "0"
+	if kind == becommon.BuiltinMapCallSet {
+		valuePrefix, ptr, err := lowerMapValuePointer(state, call.Args[2])
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, valuePrefix...)
+		valuePtr = ptr
+	}
+	outPtr := "0"
+	if targetType != nil && !backend.IsVoidType(targetType) {
+		outLines, ptr, err := lowerMapTempStorage(state, mapType.Value, "map_out")
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, outLines...)
+		outPtr = ptr
+	}
+	found := freshTemp(state, "map_found")
+	if kind == becommon.BuiltinMapCallSet {
+		lines = append(lines, fmt.Sprintf("%s =w call $%s(l %s, l %s, l %s, l $%s, l $%s, l %s)",
+			found, becommon.BuiltinMapRuntimeSymbol(kind), mapPtr, keyPtr, valuePtr, keyInfoSym, valueInfoSym, outPtr))
+	} else {
+		lines = append(lines, fmt.Sprintf("%s =w call $%s(l %s, l %s, l $%s, l $%s, l %s)",
+			found, becommon.BuiltinMapRuntimeSymbol(kind), mapPtr, keyPtr, keyInfoSym, valueInfoSym, outPtr))
+	}
+	if targetName == "" || targetType == nil || backend.IsVoidType(targetType) {
+		return strings.Join(lines, "\n\t"), nil
+	}
+	if opt, ok := backend.UnwrapNamed(targetType).(*typeinfo.OptionalType); ok {
+		if backend.OptionalUsesNiche(opt.Inner) {
+			assign, err := lowerMapNicheOptionalAssign(state, targetName, opt.Inner, found, outPtr)
+			if err != nil {
+				return "", err
+			}
+			lines = append(lines, assign...)
+			return strings.Join(lines, "\n\t"), nil
+		}
+		assign, err := lowerMapAggregateOptionalAssign(state, targetName, targetType, opt.Inner, found, outPtr)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, assign...)
+		return strings.Join(lines, "\n\t"), nil
+	}
+	return "", fmt.Errorf("builtin map call expected optional result, got %s", typeinfo.FormatType(typeStringer{targetType}))
+}
+
+func lowerMapIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, base mir.Value, index mir.Value, mapType *typeinfo.MapType) (string, error) {
+	keyInfoSym, err := ensureQBERuntimeTypeInfo(state, mapType.Key)
+	if err != nil {
+		return "", err
+	}
+	valueInfoSym, err := ensureQBERuntimeTypeInfo(state, mapType.Value)
+	if err != nil {
+		return "", err
+	}
+	mapPrefix, mapSlotPtr, err := lowerMapValuePointer(state, base)
+	if err != nil {
+		return "", err
+	}
+	keyPrefix, keyPtr, err := lowerMapValuePointer(state, index)
+	if err != nil {
+		return "", err
+	}
+	outLines, outPtr, err := lowerMapTempStorage(state, mapType.Value, "map_out")
+	if err != nil {
+		return "", err
+	}
+	lines := append([]string(nil), mapPrefix...)
+	lines = append(lines, keyPrefix...)
+	lines = append(lines, outLines...)
+	lines = append(lines, fmt.Sprintf("call $ferret_global_map_get_or_panic(l %s, l %s, l $%s, l $%s, l %s)", mapSlotPtr, keyPtr, keyInfoSym, valueInfoSym, outPtr))
+	if targetName == "" || targetType == nil {
+		return strings.Join(lines, "\n\t"), nil
+	}
+	if isAggregateType(state, targetType) {
+		local := becommon.FindLocalByName(state.fn, targetName)
+		if local == nil {
+			return "", fmt.Errorf("aggregate map index target %q not found", targetName)
+		}
+		agg, ok := state.aggLocals[local.ID]
+		if !ok {
+			return "", fmt.Errorf("aggregate map index target %q has no storage", targetName)
+		}
+		size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), targetType)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, fmt.Sprintf("blit %s, %s, %d", outPtr, qbeLocalName(agg.PtrName), size))
+		return strings.Join(lines, "\n\t"), nil
+	}
+	op, resultType, err := qbeLoadOp(targetType)
+	if err != nil {
+		return "", err
+	}
+	tmp := freshTemp(state, "map_index")
+	lines = append(lines,
+		fmt.Sprintf("%s =%s %s %s", tmp, resultType, op, outPtr),
+		fmt.Sprintf("%s =%s copy %s", qbeLocalName(targetName), resultType, tmp),
+	)
+	return strings.Join(lines, "\n\t"), nil
+}
+
+func lowerMapIndexStore(state *moduleState, target *mir.IndexPlace, value mir.Value, mapType *typeinfo.MapType) (string, error) {
+	baseLines, mapSlotPtr, err := lowerQBEPlaceAddr(state, target.Base)
+	if err != nil {
+		return "", err
+	}
+	keyPrefix, keyPtr, err := lowerMapValuePointer(state, target.Index)
+	if err != nil {
+		return "", err
+	}
+	valuePrefix, valuePtr, err := lowerMapValuePointer(state, value)
+	if err != nil {
+		return "", err
+	}
+	keyInfoSym, err := ensureQBERuntimeTypeInfo(state, mapType.Key)
+	if err != nil {
+		return "", err
+	}
+	valueInfoSym, err := ensureQBERuntimeTypeInfo(state, mapType.Value)
+	if err != nil {
+		return "", err
+	}
+	lines := append([]string(nil), baseLines...)
+	lines = append(lines, keyPrefix...)
+	lines = append(lines, valuePrefix...)
+	lines = append(lines, fmt.Sprintf("call $ferret_global_map_set(l %s, l %s, l %s, l $%s, l $%s, l 0)", mapSlotPtr, keyPtr, valuePtr, keyInfoSym, valueInfoSym))
+	return strings.Join(lines, "\n\t"), nil
+}
+
+func lowerMapTempStorage(state *moduleState, typ typeinfo.Type, label string) ([]string, string, error) {
+	if isAggregateType(state, typ) {
+		size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
+		if err != nil {
+			return nil, "", err
+		}
+		tmp := freshTemp(state, label)
+		return []string{fmt.Sprintf("%s =l alloc%d %d", tmp, normalizeQBEAlign(align), size)}, tmp, nil
+	}
+	size, align, err := qbeScalarSizeAlign(typ)
+	if err != nil {
+		return nil, "", err
+	}
+	tmp := freshTemp(state, label)
+	return []string{fmt.Sprintf("%s =l alloc%d %d", tmp, normalizeQBEAlign(align), size)}, tmp, nil
+}
+
+func lowerMapValuePointer(state *moduleState, value mir.Value) ([]string, string, error) {
+	if value == nil {
+		return nil, "", fmt.Errorf("nil map runtime value")
+	}
+	if isAggregateType(state, value.Type()) {
+		return lowerAggregateValuePointer(state, value)
+	}
+	switch v := value.(type) {
+	case *mir.LocalValue:
+		if sc, ok := state.scalarLocals[v.LocalID]; ok {
+			return nil, qbeLocalName(sc.PtrName), nil
+		}
+	case *mir.NameValue:
+		if len(v.Path) == 1 {
+			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
+				if sc, ok := state.scalarLocals[local.ID]; ok {
+					return nil, qbeLocalName(sc.PtrName), nil
+				}
+			}
+		}
+	}
+	size, align, err := qbeScalarSizeAlign(value.Type())
+	if err != nil {
+		return nil, "", err
+	}
+	storeOp, err := qbeStoreOp(value.Type())
+	if err != nil {
+		return nil, "", err
+	}
+	lowered, err := lowerValue(state, value)
+	if err != nil {
+		return nil, "", err
+	}
+	tmp := freshTemp(state, "map_arg")
+	return []string{
+		fmt.Sprintf("%s =l alloc%d %d", tmp, normalizeQBEAlign(align), size),
+		fmt.Sprintf("%s %s, %s", storeOp, lowered, tmp),
+	}, tmp, nil
+}
+
+func lowerMapNicheOptionalAssign(state *moduleState, targetName string, inner typeinfo.Type, found, outPtr string) ([]string, error) {
+	loadOp, qtype, err := qbeLoadOp(inner)
+	if err != nil {
+		return nil, err
+	}
+	noneValue, err := qbeOptionalNoneValue(inner)
+	if err != nil {
+		return nil, err
+	}
+	cond := freshTemp(state, "map_has")
+	value := freshTemp(state, "map_value")
+	inv := freshTemp(state, "map_inv")
+	aMask := freshTemp(state, "map_a")
+	bMask := freshTemp(state, "map_b")
+	result := freshTemp(state, "map_opt")
+	return []string{
+		fmt.Sprintf("%s =w cnew %s, 0", cond, found),
+		fmt.Sprintf("%s =%s %s %s", value, qtype, loadOp, outPtr),
+		fmt.Sprintf("%s =w xor %s, 1", inv, cond),
+		fmt.Sprintf("%s =%s and %s, %s", aMask, qtype, value, cond),
+		fmt.Sprintf("%s =%s and %s, %s", bMask, qtype, noneValue, inv),
+		fmt.Sprintf("%s =%s or %s, %s", result, qtype, aMask, bMask),
+		fmt.Sprintf("%s =%s copy %s", qbeLocalName(targetName), qtype, result),
+	}, nil
+}
+
+func lowerMapAggregateOptionalAssign(state *moduleState, targetName string, targetType, inner typeinfo.Type, found, outPtr string) ([]string, error) {
+	local := becommon.FindLocalByName(state.fn, targetName)
+	if local == nil {
+		return nil, fmt.Errorf("aggregate optional target %q not found", targetName)
+	}
+	agg, ok := state.aggLocals[local.ID]
+	if !ok {
+		return nil, fmt.Errorf("aggregate optional target %q has no storage", targetName)
+	}
+	info, err := unionLayoutInfo(state, targetType)
+	if err != nil {
+		return nil, err
+	}
+	tag := freshTemp(state, "map_tag")
+	lines := []string{
+		fmt.Sprintf("%s =w copy %s", tag, found),
+		fmt.Sprintf("storew %s, %s", tag, qbeLocalName(agg.PtrName)),
+	}
+	payloadPtr := qbeLocalName(agg.PtrName)
+	if info.PayloadOffset != 0 {
+		tmp := freshTemp(state, "map_payload")
+		lines = append(lines, fmt.Sprintf("%s =l add %s, %d", tmp, qbeLocalName(agg.PtrName), info.PayloadOffset))
+		payloadPtr = tmp
+	}
+	if isAggregateType(state, inner) {
+		size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), inner)
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, fmt.Sprintf("blit %s, %s, %d", outPtr, payloadPtr, size))
+		return lines, nil
+	}
+	loadOp, _, err := qbeLoadOp(inner)
+	if err != nil {
+		return nil, err
+	}
+	storeOp, err := qbeStoreOp(inner)
+	if err != nil {
+		return nil, err
+	}
+	value := freshTemp(state, "map_payload_value")
+	lines = append(lines,
+		fmt.Sprintf("%s =%s %s %s", value, mustQBEBaseType(inner), loadOp, outPtr),
+		fmt.Sprintf("%s %s, %s", storeOp, value, payloadPtr),
+	)
+	return lines, nil
+}
+
+func qbeOptionalNoneValue(inner typeinfo.Type) (string, error) {
+	switch t := backend.UnwrapNamed(inner).(type) {
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+		return "0", nil
+	case *typeinfo.BuiltinType:
+		switch t.Name {
+		case "bool":
+			return "2", nil
+		case "char":
+			return "4294967295", nil
+		}
+	case *typeinfo.EnumType, *typeinfo.ErrorSetType:
+		return "4294967295", nil
+	}
+	return "", fmt.Errorf("unsupported niche optional inner %s", typeinfo.FormatType(typeStringer{inner}))
+}
+
+func mustQBEBaseType(typ typeinfo.Type) string {
+	base, _ := qbeBaseType(typ)
+	return base
 }
 
 func qbePointerInner(t typeinfo.Type) (typeinfo.Type, bool) {
@@ -1129,6 +1447,9 @@ func qbeResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldIndex
 
 // lowerIndexLoad lowers arr[index] as an rvalue via QBE load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
+	if mapType, ok := becommon.MapArgType(idx.Base.Type()); ok {
+		return lowerMapIndexLoad(state, targetName, targetType, idx.Base, idx.Index, mapType)
+	}
 	if _, ok := backend.UnwrapNamed(idx.Base.Type()).(*typeinfo.StringType); ok {
 		baseExpr, err := lowerValue(state, idx.Base)
 		if err != nil {
@@ -1262,6 +1583,11 @@ func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) 
 	if instr == nil {
 		return "", nil
 	}
+	if idxPlace, ok := instr.Target.(*mir.IndexPlace); ok {
+		if mapType, ok := becommon.MapArgType(qbePlaceType(state, idxPlace.Base)); ok {
+			return lowerMapIndexStore(state, idxPlace, instr.Value, mapType)
+		}
+	}
 	if localID, ok := becommon.LocalIDForPlace(state.fn, instr.Target); ok {
 		if agg, ok := state.aggLocals[localID]; ok {
 			return lowerAggregateAssign(state, agg, instr.Value)
@@ -1270,6 +1596,15 @@ func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) 
 	lines, addr, err := lowerQBEPlaceAddr(state, instr.Target)
 	if err != nil {
 		return "", err
+	}
+	targetType := qbePlaceType(state, instr.Target)
+	if isAggregateType(state, targetType) {
+		valueLines, err := lowerAggregateValueToAddr(state, addr, targetType, instr.Value)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, valueLines...)
+		return strings.Join(lines, "\n\t"), nil
 	}
 	val, err := lowerValue(state, instr.Value)
 	if err != nil {
@@ -1311,6 +1646,12 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 			return nil, "", err
 		}
 		baseType := qbePlaceType(state, p.Base)
+		if ref, ok := baseType.(*typeinfo.RefType); ok && ref != nil && ref.Inner != nil {
+			deref := freshTemp(state, "deref")
+			baseLines = append(baseLines, fmt.Sprintf("%s =l loadl %s", deref, basePtr))
+			basePtr = deref
+			baseType = ref.Inner
+		}
 		sl, err := becommon.LookupStructLayoutFromState(state.layouts, state.layout, state.mod, baseType, "qbe")
 		if err != nil {
 			return nil, "", err
@@ -1331,6 +1672,12 @@ func lowerQBEPlaceAddr(state *moduleState, place mir.Place) ([]string, string, e
 			return nil, "", err
 		}
 		baseType := qbePlaceType(state, p.Base)
+		if ref, ok := baseType.(*typeinfo.RefType); ok && ref != nil && ref.Inner != nil {
+			deref := freshTemp(state, "deref")
+			baseLines = append(baseLines, fmt.Sprintf("%s =l loadl %s", deref, basePtr))
+			basePtr = deref
+			baseType = ref.Inner
+		}
 		// Compute address using a fake LocalValue that returns basePtr
 		var elemType typeinfo.Type
 		arrayLen := int64(-1)
@@ -1432,7 +1779,11 @@ func qbePlaceType(state *moduleState, place mir.Place) typeinfo.Type {
 	case *mir.FieldPlace:
 		return qbePlaceType(state, p.Base)
 	case *mir.IndexPlace:
-		return qbePlaceType(state, p.Base)
+		baseType := qbePlaceType(state, p.Base)
+		if elemType := becommon.IndexElementType(baseType, p.Index); elemType != nil {
+			return elemType
+		}
+		return baseType
 	case *mir.DerefPlace:
 		if addr, ok := p.Pointer.(*mir.AddrOfValue); ok && addr.Source != nil {
 			if typ := addr.Source.Type(); typ != nil {
@@ -1467,7 +1818,7 @@ func qbeScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
 		case "u64", "i64", "usize", "isize", "f64":
 			return 8, 8, nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType, *typeinfo.MapType:
 		return 8, 8, nil
 	}
 	return 0, 0, fmt.Errorf("not a scalar type: %s", typ)
@@ -1555,7 +1906,21 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 			return "", err
 		}
 		if isAggregateType(state, v.Type()) {
-			return fmt.Sprintf("blit %s, %s, %d", expr, qbeLocalName(agg.PtrName), agg.Size), nil
+			if isUnionAggregate(v.Left.Type()) || (isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type())) {
+				return fmt.Sprintf("blit %s, %s, %d", expr, qbeLocalName(agg.PtrName), agg.Size), nil
+			}
+			abiType, err := qbeABIType(state, agg.Type)
+			if err != nil {
+				return "", err
+			}
+			temp := freshTemp(state, "aggcast")
+			lines := []string{
+				fmt.Sprintf("%s =%s %s", temp, abiType, expr),
+			}
+			if temp != qbeLocalName(agg.PtrName) {
+				lines = append(lines, fmt.Sprintf("blit %s, %s, %d", temp, qbeLocalName(agg.PtrName), agg.Size))
+			}
+			return strings.Join(lines, "\n\t"), nil
 		}
 		abiType, err := qbeABIType(state, agg.Type)
 		if err != nil {
@@ -1584,6 +1949,9 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 		}
 		return strings.Join(lines, "\n\t"), nil
 	case *mir.IndexValue:
+		if mapType, ok := becommon.MapArgType(v.Base.Type()); ok {
+			return lowerMapIndexLoad(state, agg.Name, agg.Type, v.Base, v.Index, mapType)
+		}
 		lines, src, err := lowerQBEIndexAddress(state, v.Base, v.Index, v.Base.Type())
 		if err != nil {
 			return "", err
@@ -1940,6 +2308,24 @@ func ensureQBERuntimeTypeInfo(state *moduleState, typ typeinfo.Type) (string, er
 		metaSym := sym + "__meta"
 		fmt.Fprintf(state.deferredB, "data $%s = { l %d, l %s }\n", metaSym, len(desc.Fields), fieldsRef)
 		metaRef = "$" + metaSym
+	case desc.Flags&backend.RuntimeTypeFlagStruct != 0:
+		fieldsRef := "0"
+		if len(desc.Fields) != 0 {
+			fieldSym := sym + "__fields"
+			parts := make([]string, 0, len(desc.Fields)*2)
+			for _, field := range desc.Fields {
+				fieldTypeSym, err := ensureQBERuntimeTypeInfo(state, field.Type)
+				if err != nil {
+					return "", err
+				}
+				parts = append(parts, fmt.Sprintf("l %d", field.Offset), fmt.Sprintf("l $%s", fieldTypeSym))
+			}
+			fmt.Fprintf(state.deferredB, "data $%s = { %s }\n", fieldSym, strings.Join(parts, ", "))
+			fieldsRef = "$" + fieldSym
+		}
+		metaSym := sym + "__meta"
+		fmt.Fprintf(state.deferredB, "data $%s = { l %d, l %s }\n", metaSym, len(desc.Fields), fieldsRef)
+		metaRef = "$" + metaSym
 	case desc.Flags&backend.RuntimeTypeFlagOptional != 0 && desc.Elem != nil:
 		innerSym, err := ensureQBERuntimeTypeInfo(state, desc.Elem)
 		if err != nil {
@@ -2116,11 +2502,22 @@ func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) 
 			dst = tmp
 		}
 		if isAggregateType(state, payloadValue.Type()) {
-			payloadLines, err := lowerAggregateValueToAddr(state, dst, payloadValue.Type(), payloadValue)
+			payloadSize, payloadAlign, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), payloadValue.Type())
 			if err != nil {
 				return "", err
 			}
-			lines = append(lines, payloadLines...)
+			payloadLines, err := lowerAggregateAssign(state, &aggregateLocal{
+				Type:    payloadValue.Type(),
+				Size:    payloadSize,
+				Align:   payloadAlign,
+				PtrName: strings.TrimPrefix(dst, "%"),
+			}, payloadValue)
+			if err != nil {
+				return "", err
+			}
+			if payloadLines != "" {
+				lines = append(lines, strings.Split(payloadLines, "\n\t")...)
+			}
 			return strings.Join(lines, "\n"), nil
 		}
 		payload, err := lowerValue(state, payloadValue)
@@ -2235,6 +2632,14 @@ func emitQBEStringConstant(state *moduleState, s string) string {
 }
 
 func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp *mir.CompositeValue) (string, error) {
+	if _, ok := backend.ResolveMapType(agg.Type); ok {
+		lowered, err := lowerMapCompositeValue(state, comp, agg.Type)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("storel %s, %s", lowered, qbeLocalName(agg.PtrName)), nil
+	}
+
 	// Array literal: positional items stored at successive element offsets.
 	if arrType, ok := agg.Type.(*typeinfo.ArrayType); ok {
 		elemSize, elemAlign, err := qbeScalarSizeAlign(arrType.Inner)
@@ -2248,22 +2653,30 @@ func lowerAggregateCompositeAssign(state *moduleState, agg *aggregateLocal, comp
 			elemAlign = innerAl
 		}
 		stride := alignUpInt64(elemSize, elemAlign)
-		op, err := qbeStoreOp(arrType.Inner)
-		if err != nil {
-			return "", err
-		}
 		lines := make([]string, 0, len(comp.Items)*2)
 		for i, item := range comp.Items {
-			lowered, err := lowerValue(state, item.Value)
-			if err != nil {
-				return "", err
-			}
 			addr := qbeLocalName(agg.PtrName)
 			offset := int64(i) * stride
 			if offset != 0 {
 				tmp := freshTemp(state, "addr")
 				lines = append(lines, fmt.Sprintf("%s =l add %s, %d", tmp, qbeLocalName(agg.PtrName), offset))
 				addr = tmp
+			}
+			if isAggregateType(state, arrType.Inner) {
+				elemLines, err := lowerAggregateValueToAddr(state, addr, arrType.Inner, item.Value)
+				if err != nil {
+					return "", err
+				}
+				lines = append(lines, elemLines...)
+				continue
+			}
+			op, err := qbeStoreOp(arrType.Inner)
+			if err != nil {
+				return "", err
+			}
+			lowered, err := lowerValue(state, item.Value)
+			if err != nil {
+				return "", err
 			}
 			lines = append(lines, fmt.Sprintf("%s %s, %s", op, lowered, addr))
 		}
@@ -3034,6 +3447,11 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 			return tmp, nil
 		}
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
+	case *mir.CompositeValue:
+		if _, ok := backend.ResolveMapType(v.Type()); ok {
+			return lowerMapCompositeValue(state, v, v.Type())
+		}
+		return "", fmt.Errorf("composite value must be lowered in assignment context")
 	case *mir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
 	case *mir.FieldValue:
@@ -3058,6 +3476,50 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
+}
+
+func lowerMapCompositeValue(state *moduleState, comp *mir.CompositeValue, targetType typeinfo.Type) (string, error) {
+	mapType, ok := backend.ResolveMapType(targetType)
+	if !ok {
+		mapType, ok = backend.ResolveMapType(comp.Type())
+	}
+	if !ok {
+		return "", fmt.Errorf("map composite requires map type")
+	}
+	keyInfoSym, err := ensureQBERuntimeTypeInfo(state, mapType.Key)
+	if err != nil {
+		return "", err
+	}
+	valueInfoSym, err := ensureQBERuntimeTypeInfo(state, mapType.Value)
+	if err != nil {
+		return "", err
+	}
+	slot := freshTemp(state, "map_slot")
+	lines := []string{
+		fmt.Sprintf("%s =l alloc%d %d", slot, normalizeQBEAlign(abi.PointerBytes()), abi.PointerBytes()),
+		fmt.Sprintf("storel 0, %s", slot),
+	}
+	for _, item := range comp.Items {
+		if item.Key == nil {
+			return "", fmt.Errorf("map composite item missing key")
+		}
+		keyPrefix, keyPtr, err := lowerMapValuePointer(state, item.Key)
+		if err != nil {
+			return "", err
+		}
+		valuePrefix, valuePtr, err := lowerMapValuePointer(state, item.Value)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, keyPrefix...)
+		lines = append(lines, valuePrefix...)
+		lines = append(lines, fmt.Sprintf("call $ferret_global_map_set(l %s, l %s, l %s, l $%s, l $%s, l 0)",
+			slot, keyPtr, valuePtr, keyInfoSym, valueInfoSym))
+	}
+	result := freshTemp(state, "map_value")
+	lines = append(lines, fmt.Sprintf("%s =l loadl %s", result, slot))
+	state.pendingLines = append(state.pendingLines, lines...)
+	return result, nil
 }
 
 func qbeFieldBaseType(state *moduleState, value mir.Value) typeinfo.Type {
@@ -3134,6 +3596,16 @@ func lowerTypeTest(state *moduleState, v *mir.TypeTestValue) (string, error) {
 }
 
 func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
+	if place, ok := becommon.AddrSourceToPlace(state.fn, v.Source); ok {
+		lines, ptr, err := lowerQBEPlaceAddr(state, place)
+		if err != nil {
+			return "", err
+		}
+		if len(lines) != 0 {
+			state.pendingLines = append(state.pendingLines, lines...)
+		}
+		return ptr, nil
+	}
 	switch src := v.Source.(type) {
 	case *mir.LocalValue:
 		if agg, ok := state.aggLocals[src.LocalID]; ok {
@@ -3221,9 +3693,6 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	if call, ok, err := lowerStringSliceCast(state, src, dst, v.Left); ok || err != nil {
 		return call, err
 	}
-	if _, ok := dst.(*typeinfo.StringType); ok {
-		return lowerStringCast(state, v.Left)
-	}
 	if isUnionAggregate(v.Left.Type()) {
 		srcPtr, err := lowerUnionSource(state, v.Left)
 		if err != nil {
@@ -3256,6 +3725,9 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 		tmp := freshTemp(state, "ifacecast")
 		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, srcPtr))
 		return "copy " + tmp, nil
+	}
+	if _, ok := dst.(*typeinfo.StringType); ok {
+		return lowerStringCast(state, v.Left)
 	}
 	if isAggregateType(state, v.Left.Type()) && isAggregateType(state, v.Type()) {
 		return lowerValue(state, v.Left)
@@ -3560,7 +4032,14 @@ func qbeOperandWithTemp(state *moduleState, qtype string, expr string) string {
 
 func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
+	case *mir.LocalValue:
+		if _, ok := v.Type().(*typeinfo.FuncType); ok {
+			return lowerValue(state, v)
+		}
 	case *mir.NameValue:
+		if _, ok := v.Type().(*typeinfo.FuncType); ok {
+			return lowerValue(state, v)
+		}
 		if v.LinkName != "" {
 			return "$" + becommon.SanitizeIdent(v.LinkName), nil
 		}
@@ -3568,6 +4047,7 @@ func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported call callee %T", value)
 	}
+	return "", fmt.Errorf("unsupported call callee %T", value)
 }
 
 func resolveQBETempValue(state *moduleState, value mir.Value) (mir.Value, bool) {
@@ -3655,7 +4135,7 @@ func qbeAggregateSubType(state *moduleState, typ typeinfo.Type) (string, error) 
 	if _, ok := typ.(*typeinfo.SliceType); ok {
 		return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
 	}
-	if _, ok := backend.UnwrapNamed(typ).(*typeinfo.TupleType); ok {
+	if _, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ); err == nil {
 		return fmt.Sprintf("b %d", mustAggregateSize(state, typ)), nil
 	}
 	return qbeExtType(typ)
@@ -3678,7 +4158,7 @@ func qbeExtType(typ typeinfo.Type) (string, error) {
 		case "f64":
 			return "d", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType, *typeinfo.MapType:
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported aggregate member type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3699,7 +4179,7 @@ func qbeBaseType(typ typeinfo.Type) (string, error) {
 		case "void":
 			return "", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType, *typeinfo.MapType:
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported qbe base type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3757,7 +4237,7 @@ func qbeLoadOp(typ typeinfo.Type) (string, string, error) {
 		case "f64":
 			return "loadd", "d", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType, *typeinfo.MapType:
 		return "loadl", "l", nil
 	}
 	return "", "", fmt.Errorf("unsupported load type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3780,7 +4260,7 @@ func qbeStoreOp(typ typeinfo.Type) (string, error) {
 		case "f64":
 			return "stored", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType, *typeinfo.MapType:
 		return "storel", nil
 	}
 	return "", fmt.Errorf("unsupported store type %s", typeinfo.FormatType(typeStringer{typ}))

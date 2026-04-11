@@ -1,0 +1,16 @@
+import "std/net/http"
+
+fn main() -> void {
+    let resp = http::Get("127.0.0.1", 9110, "/hello") catch |err| {
+        print(err)
+        return
+    }
+    defer resp.Release()
+
+    if resp.StatusCode() == 200 && resp.Body() == "hello-http" {
+        print("http-get-ok")
+        return
+    }
+
+    print("http-get-fail")
+}

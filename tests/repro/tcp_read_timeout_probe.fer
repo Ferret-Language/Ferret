@@ -1,0 +1,21 @@
+import "std/io"
+import "std/net/tcp"
+
+fn main() -> void {
+    let mut conn = tcp::Dial("127.0.0.1", 9106) catch |err| {
+        print(err)
+        return
+    }
+    _ = conn.SetReadTimeoutMs(150) catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    let _ = io::Read(conn, 4) catch |err| {
+        print(err)
+        conn.Close()
+        return
+    }
+    print("tcp-read-timeout-fail")
+    conn.Close()
+}

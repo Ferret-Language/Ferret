@@ -3,6 +3,7 @@ package collector
 import (
 	"fmt"
 
+	"compiler/internal/analysis/semantics/namerules"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -114,6 +115,12 @@ func collectTypeMembers(ctx *context.CompilerContext, typeMembers map[string]map
 }
 
 func declare(ctx *context.CompilerContext, scope *table.Scope, sym *symbols.Symbol) {
+	switch sym.Kind {
+	case symbols.SymbolVar, symbols.SymbolConst, symbols.SymbolFunc, symbols.SymbolMethod:
+		if !namerules.Validate(ctx, "symbol", sym.Name, sym.Location) {
+			return
+		}
+	}
 	if scope.Declare(sym) {
 		return
 	}

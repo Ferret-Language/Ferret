@@ -318,6 +318,8 @@ func formatValue(value Value) string {
 		for _, item := range v.Items {
 			if item.Name != "" {
 				parts = append(parts, fmt.Sprintf(".%s = %s", item.Name, formatValue(item.Value)))
+			} else if item.Key != nil {
+				parts = append(parts, fmt.Sprintf("%s => %s", formatValue(item.Key), formatValue(item.Value)))
 			} else {
 				parts = append(parts, formatValue(item.Value))
 			}

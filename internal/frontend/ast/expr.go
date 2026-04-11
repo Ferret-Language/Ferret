@@ -194,6 +194,7 @@ func (e *CatchExpr) Loc() source.Location { return e.Location }
 
 type CompositeItem struct {
 	Name  *Ident
+	Key   Expr
 	Value Expr
 }
 

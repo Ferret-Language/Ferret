@@ -1045,11 +1045,19 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		switch resolved := typ.(type) {
 		case *typeinfo.ArrayType:
 			for _, item := range e.Items {
-				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: g.generateExprForTarget(item.Value, resolved.Inner)})
+				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Key: g.generateExpr(item.Key), Value: g.generateExprForTarget(item.Value, resolved.Inner)})
 			}
 		case *typeinfo.SliceType:
 			for _, item := range e.Items {
-				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: g.generateExprForTarget(item.Value, resolved.Inner)})
+				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Key: g.generateExpr(item.Key), Value: g.generateExprForTarget(item.Value, resolved.Inner)})
+			}
+		case *typeinfo.MapType:
+			for _, item := range e.Items {
+				out.Items = append(out.Items, CompositeItem{
+					Name:  ast.ExprText(item.Name),
+					Key:   g.generateExprForTarget(item.Key, resolved.Key),
+					Value: g.generateExprForTarget(item.Value, resolved.Value),
+				})
 			}
 		case *typeinfo.TupleType:
 			for i, item := range e.Items {
@@ -1057,11 +1065,11 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 				if i >= 0 && i < len(resolved.Elems) {
 					target = resolved.Elems[i]
 				}
-				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: g.generateExprForTarget(item.Value, target)})
+				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Key: g.generateExpr(item.Key), Value: g.generateExprForTarget(item.Value, target)})
 			}
 		default:
 			for _, item := range e.Items {
-				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Value: g.generateExpr(item.Value)})
+				out.Items = append(out.Items, CompositeItem{Name: ast.ExprText(item.Name), Key: g.generateExpr(item.Key), Value: g.generateExpr(item.Value)})
 			}
 		}
 		return out

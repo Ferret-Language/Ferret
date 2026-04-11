@@ -156,7 +156,7 @@ func debugValue(value Value) any {
 	case *CompositeValue:
 		items := make([]any, 0, len(v.Items))
 		for _, item := range v.Items {
-			items = append(items, map[string]any{"name": item.Name, "value": debugValue(item.Value)})
+			items = append(items, map[string]any{"name": item.Name, "key": debugValue(item.Key), "value": debugValue(item.Value)})
 		}
 		return map[string]any{"kind": "composite", "items": items, "type": typeString(v.Type())}
 	case *InterfaceValue:

@@ -335,6 +335,8 @@ func formatExpr(expr Expr) string {
 		for _, item := range e.Items {
 			if item.Name != "" {
 				parts = append(parts, fmt.Sprintf(".%s = %s", item.Name, formatExpr(item.Value)))
+			} else if item.Key != nil {
+				parts = append(parts, fmt.Sprintf("%s => %s", formatExpr(item.Key), formatExpr(item.Value)))
 			} else {
 				parts = append(parts, formatExpr(item.Value))
 			}

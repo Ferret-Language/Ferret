@@ -36,6 +36,9 @@ func WalkType(typ TypeExpr, visit func(TypeExpr) bool) {
 		WalkType(t.Inner, visit)
 	case *SliceType:
 		WalkType(t.Inner, visit)
+	case *MapType:
+		WalkType(t.Key, visit)
+		WalkType(t.Value, visit)
 	case *TupleType:
 		for _, elem := range t.Elems {
 			WalkType(elem, visit)

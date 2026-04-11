@@ -174,7 +174,7 @@ func childrenAreSimple(value Value) bool {
 		}
 		return isSimpleValue(v.Right)
 	case *AddrOfValue:
-		return isSimpleValue(v.Source)
+		return isSimpleValue(v.Source) || childrenAreSimple(v.Source)
 	case *LoadValue:
 		return isSimpleValue(v.Pointer)
 	case *BinaryValue:
@@ -203,6 +203,9 @@ func childrenAreSimple(value Value) bool {
 		return isSimpleValue(v.Left)
 	case *CompositeValue:
 		for _, item := range v.Items {
+			if item.Key != nil && !isSimpleValue(item.Key) {
+				return false
+			}
 			if !isSimpleValue(item.Value) {
 				return false
 			}

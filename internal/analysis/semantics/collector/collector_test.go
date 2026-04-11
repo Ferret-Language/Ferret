@@ -129,6 +129,34 @@ fn Point::Len(*self) -> i32 {
 	}
 }
 
+func TestCollectorRejectsTopLevelNameThatConflictsWithGlobal(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
+#[extern]
+fn len(value: []u8) -> usize;
+`)
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn len() -> usize {
+    return 1
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected global-name collision diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrRedeclaredSymbol {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrRedeclaredSymbol, result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestCollectorKeepsReceiverFormMethodSetsSeparate(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

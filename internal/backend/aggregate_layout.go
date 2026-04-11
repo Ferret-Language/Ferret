@@ -71,6 +71,8 @@ func LookupStructLayout(
 			return nil, fmt.Errorf("type %s is not a struct layout", t.String())
 		}
 		return info.Struct, nil
+	case *typeinfo.StructType:
+		return anonymousStructLayout(lookupNamed, t)
 	case *typeinfo.PointerType:
 		return LookupStructLayout(lookupNamed, t.Inner)
 	case *typeinfo.RefType:
@@ -175,11 +177,64 @@ func sharedScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
 		case "f64":
 			return 8, 8, nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType, *typeinfo.MapType:
 		ptrSize := abi.PointerBytes()
 		return ptrSize, ptrSize, nil
 	}
 	return 0, 0, fmt.Errorf("not a primitive type")
+}
+
+func anonymousStructLayout(
+	lookupNamed func(*typeinfo.NamedType) (*layout.TypeLayout, error),
+	st *typeinfo.StructType,
+) (*layout.StructLayout, error) {
+	if st == nil {
+		return nil, fmt.Errorf("nil struct type")
+	}
+	fields := make([]*layout.FieldLayout, 0, len(st.OrderedFields))
+	size := int64(0)
+	align := int64(1)
+	for i, field := range st.OrderedFields {
+		if field == nil {
+			continue
+		}
+		fieldSize, fieldAlign, err := aggregateElementSizeAlign(AggregateLayoutContext{
+			BackendName:     "shared",
+			ScalarSizeAlign: sharedScalarSizeAlign,
+			LookupNamed:     lookupNamed,
+		}, field.Type)
+		if err != nil {
+			return nil, err
+		}
+		if fieldAlign <= 0 {
+			fieldAlign = 1
+		}
+		size = AlignUpInt64(size, fieldAlign)
+		fields = append(fields, &layout.FieldLayout{
+			Name:          field.Name,
+			Type:          field.Type,
+			SemanticIndex: i,
+			PhysicalIndex: len(fields),
+			Offset:        size,
+			Size:          fieldSize,
+			Align:         fieldAlign,
+		})
+		size += fieldSize
+		if fieldAlign > align {
+			align = fieldAlign
+		}
+	}
+	size = AlignUpInt64(size, align)
+	physical := make([]int, 0, len(fields))
+	for i := range fields {
+		physical = append(physical, i)
+	}
+	return &layout.StructLayout{
+		Fields:        fields,
+		PhysicalOrder: physical,
+		Size:          size,
+		Align:         align,
+	}, nil
 }
 
 func aggregateElementSizeAlign(ctx AggregateLayoutContext, typ typeinfo.Type) (int64, int64, error) {

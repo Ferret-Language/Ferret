@@ -1019,6 +1019,8 @@ func (c *checker) containsTypeParam(typ typeinfo.Type) bool {
 		return c.containsTypeParam(t.Inner)
 	case *typeinfo.TupleType:
 		return slices.ContainsFunc(t.Elems, c.containsTypeParam)
+	case *typeinfo.MapType:
+		return c.containsTypeParam(t.Key) || c.containsTypeParam(t.Value)
 	default:
 		return false
 	}
@@ -1773,19 +1775,26 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 			value = spreadArg.Right
 			spread = true
 		}
-		argType := c.typeOfExpr(scope, value, nil)
-		argTypes = append(argTypes, argType)
-		if inferFromArgs {
-			var pattern typeinfo.Type
-			if variadic && i >= variadicIndex {
-				if spread {
-					pattern = fnType.Params[variadicIndex].Type
-				} else {
-					pattern = variadicElem
-				}
-			} else if i < len(fnType.Params) {
-				pattern = fnType.Params[i].Type
+		var pattern typeinfo.Type
+		if variadic && i >= variadicIndex {
+			if spread {
+				pattern = fnType.Params[variadicIndex].Type
+			} else {
+				pattern = variadicElem
 			}
+		} else if i < len(fnType.Params) {
+			pattern = fnType.Params[i].Type
+		}
+		expectedArg := typeinfo.Type(nil)
+		if inferFromArgs && pattern != nil {
+			expectedArg = c.substituteTypeParams(pattern, bindings)
+			if typeinfo.IsUnknown(expectedArg) || typeinfo.IsInvalid(expectedArg) || c.containsTypeParam(expectedArg) {
+				expectedArg = nil
+			}
+		}
+		argType := c.typeOfExpr(scope, value, expectedArg)
+		argTypes = append(argTypes, argType)
+		if inferFromArgs && pattern != nil {
 			if pattern != nil {
 				c.inferTypeParamBindings(pattern, argType, bindings)
 			}
@@ -1916,6 +1925,9 @@ func (c *checker) collectTypeParams(typ typeinfo.Type, visit func(*typeinfo.Type
 		for _, elem := range t.Elems {
 			c.collectTypeParams(elem, visit)
 		}
+	case *typeinfo.MapType:
+		c.collectTypeParams(t.Key, visit)
+		c.collectTypeParams(t.Value, visit)
 	case *typeinfo.NamedType:
 		for _, arg := range t.TypeArgs {
 			c.collectTypeParams(arg, visit)
@@ -2029,6 +2041,13 @@ func (c *checker) inferTypeParamBindings(pattern, actual typeinfo.Type, bindings
 		for i := range p.Elems {
 			c.inferTypeParamBindings(p.Elems[i], got.Elems[i], bindings)
 		}
+	case *typeinfo.MapType:
+		got, ok := actual.(*typeinfo.MapType)
+		if !ok {
+			return
+		}
+		c.inferTypeParamBindings(p.Key, got.Key, bindings)
+		c.inferTypeParamBindings(p.Value, got.Value, bindings)
 	case *typeinfo.NamedType:
 		got, ok := actual.(*typeinfo.NamedType)
 		if !ok || p.Name != got.Name || p.ModuleKey != got.ModuleKey || len(p.TypeArgs) != len(got.TypeArgs) {
@@ -2086,6 +2105,13 @@ func (c *checker) checkTypeParamConstraintsAt(loc source.Location, params []*typ
 			continue
 		}
 		constraint := c.substituteTypeParams(param.Constraint, bindings)
+		if _, ok := constraint.(*typeinfo.ComparableConstraint); ok {
+			if c.isComparableType(actual) {
+				continue
+			}
+			c.reportTypeMismatch(loc, constraint, actual)
+			continue
+		}
 		if c.assignable(constraint, actual) {
 			continue
 		}
@@ -2516,12 +2542,13 @@ func (c *checker) classifyTypeTest(left, target typeinfo.Type) (bool, bool, bool
 
 func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.Type {
 	baseTyp := c.typeOfExpr(scope, expr.Left, nil)
-	// typecheck the index as usize
-	usize := &typeinfo.BuiltinType{Name: "usize"}
-	c.typeOfExpr(scope, expr.Index, usize)
 	base := c.underlying(baseTyp)
+	indexExpected := typeinfo.Type(&typeinfo.BuiltinType{Name: "usize"})
 	var elem typeinfo.Type
 	switch t := base.(type) {
+	case *typeinfo.MapType:
+		indexExpected = t.Key
+		elem = t.Value
 	case *typeinfo.ArrayType:
 		if idx, ok := c.constExpr(c.mod, expr.Index, nil); ok {
 			if index, ok := idx.NonNegativeInt64(); ok && t.Len >= 0 && index >= t.Len {
@@ -2596,9 +2623,13 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 		c.ctx.Diagnostics.Add(
 			diagnostics.NewError(fmt.Sprintf("cannot index into %s", baseTyp.String())).
 				WithCode(diagnostics.ErrInvalidOperation).
-				WithPrimaryLabel(&loc, "not an array, slice, or pointer type"),
+				WithPrimaryLabel(&loc, "not a map, array, slice, or pointer type"),
 		)
 		return typeinfo.InvalidType{}
+	}
+	indexType := c.typeOfExpr(scope, expr.Index, indexExpected)
+	if indexExpected != nil {
+		c.checkExprAssignable(scope, expr.Index, indexExpected, indexType)
 	}
 	if refined, ok := c.lookupRefinedType(scope, expr); ok && refined != nil {
 		elem = refined
@@ -2646,10 +2677,15 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			actual = &typeinfo.ArrayType{Inner: arrType.Inner, Len: int64(len(expr.Items))}
 		}
 		for i, item := range expr.Items {
-			if item.Name != nil {
-				loc := item.Name.Location
+			if item.Name != nil || item.Key != nil {
+				loc := item.Value.Loc()
+				if item.Name != nil {
+					loc = item.Name.Location
+				} else if item.Key != nil {
+					loc = item.Key.Loc()
+				}
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError("array literal does not support named elements").
+					diagnostics.NewError("array literal does not support keyed or named elements").
 						WithCode(diagnostics.ErrInvalidType).
 						WithPrimaryLabel(&loc, "use positional elements"),
 				)
@@ -2667,15 +2703,24 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			got := c.typeOfExpr(scope, item.Value, actual.Inner)
 			c.checkExprAssignable(scope, item.Value, actual.Inner, got)
 		}
+		if _, ok := expected.(*typeinfo.NamedType); ok {
+			c.info.BindNode(expr, expected)
+			return expected
+		}
 		c.info.BindNode(expr, actual)
 		return actual
 	}
 	if sliceType, ok := base.(*typeinfo.SliceType); ok {
 		for _, item := range expr.Items {
-			if item.Name != nil {
-				loc := item.Name.Location
+			if item.Name != nil || item.Key != nil {
+				loc := item.Value.Loc()
+				if item.Name != nil {
+					loc = item.Name.Location
+				} else if item.Key != nil {
+					loc = item.Key.Loc()
+				}
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError("slice literal does not support named elements").
+					diagnostics.NewError("slice literal does not support keyed or named elements").
 						WithCode(diagnostics.ErrInvalidType).
 						WithPrimaryLabel(&loc, "use positional elements"),
 				)
@@ -2685,15 +2730,51 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			c.checkExprAssignable(scope, item.Value, sliceType.Inner, got)
 		}
 		actual := &typeinfo.SliceType{Mutable: true, Inner: sliceType.Inner}
+		if _, ok := expected.(*typeinfo.NamedType); ok {
+			c.info.BindNode(expr, expected)
+			return expected
+		}
 		c.info.BindNode(expr, actual)
 		return actual
 	}
-	if tupleType, ok := base.(*typeinfo.TupleType); ok {
-		for i, item := range expr.Items {
-			if item.Name != nil {
+	if mapType, ok := base.(*typeinfo.MapType); ok {
+		for _, item := range expr.Items {
+			switch {
+			case item.Name != nil:
 				loc := item.Name.Location
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError("tuple literal does not support named elements").
+					diagnostics.NewError("map literal does not support named fields").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(&loc, "use `key => value` entries"),
+				)
+			case item.Key == nil:
+				loc := item.Value.Loc()
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("map literal requires `key => value` entries").
+						WithCode(diagnostics.ErrInvalidType).
+						WithPrimaryLabel(&loc, "add a key before this value"),
+				)
+			default:
+				gotKey := c.typeOfExpr(scope, item.Key, mapType.Key)
+				c.checkExprAssignable(scope, item.Key, mapType.Key, gotKey)
+				gotValue := c.typeOfExpr(scope, item.Value, mapType.Value)
+				c.checkExprAssignable(scope, item.Value, mapType.Value, gotValue)
+			}
+		}
+		c.info.BindNode(expr, expected)
+		return expected
+	}
+	if tupleType, ok := base.(*typeinfo.TupleType); ok {
+		for i, item := range expr.Items {
+			if item.Name != nil || item.Key != nil {
+				loc := item.Value.Loc()
+				if item.Name != nil {
+					loc = item.Name.Location
+				} else if item.Key != nil {
+					loc = item.Key.Loc()
+				}
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("tuple literal does not support keyed or named elements").
 						WithCode(diagnostics.ErrInvalidType).
 						WithPrimaryLabel(&loc, "use positional tuple elements"),
 				)
@@ -2719,6 +2800,16 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 					WithPrimaryLabel(&loc, "provide values for all tuple elements"),
 			)
 		}
+		c.info.BindNode(expr, expected)
+		return expected
+	}
+	if _, ok := base.(*typeinfo.PointerType); ok {
+		loc := expr.Location
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError("composite literal cannot initialize an owning pointer").
+				WithCode(diagnostics.ErrInvalidType).
+				WithPrimaryLabel(&loc, "composite literals produce values, not owned pointers"),
+		)
 		c.info.BindNode(expr, expected)
 		return expected
 	}
@@ -2751,6 +2842,15 @@ func (c *checker) typeOfComposite(scope *refineScope, expr *ast.CompositeLit, ex
 			got := c.typeOfExpr(scope, item.Value, field.Type)
 			c.checkExprAssignable(scope, item.Value, field.Type, got)
 			provided[fieldName] = struct{}{}
+			continue
+		}
+		if item.Key != nil {
+			loc := item.Key.Loc()
+			c.ctx.Diagnostics.Add(
+				diagnostics.NewError("struct literal does not support keyed entries").
+					WithCode(diagnostics.ErrInvalidType).
+					WithPrimaryLabel(&loc, "use named fields or positional values"),
+			)
 			continue
 		}
 		fields := c.orderedStructFields(structType)
@@ -2843,44 +2943,14 @@ func (c *checker) inferCompositeNamedType(scope *refineScope, expr *ast.Composit
 	if len(typeParams) == 0 {
 		return nil, false
 	}
-	structType, ok := c.typeFromSyntax(owner, decl.Type).(*typeinfo.StructType)
-	if !ok || structType == nil {
-		return nil, false
-	}
+	targetType := c.typeFromSyntax(owner, decl.Type)
 	bindings := make(map[*typeinfo.TypeParam]typeinfo.Type, len(typeParams))
 	if namedExpected, ok := c.underlying(fallback).(*typeinfo.NamedType); ok && namedExpected != nil && namedExpected.Name == decl.Name.Text() && len(namedExpected.TypeArgs) == len(typeParams) {
 		for i, param := range typeParams {
 			bindings[param] = namedExpected.TypeArgs[i]
 		}
 	}
-
-	fields := c.orderedStructFields(structType)
-	fieldIndex := 0
-	for _, item := range expr.Items {
-		if item.Value == nil {
-			continue
-		}
-		var fieldType typeinfo.Type
-		if item.Name != nil {
-			field := structType.Fields[item.Name.Text()]
-			if field == nil {
-				continue
-			}
-			fieldType = field.Type
-		} else {
-			if fieldIndex >= len(fields) {
-				continue
-			}
-			field := fields[fieldIndex]
-			fieldIndex++
-			if field == nil {
-				continue
-			}
-			fieldType = field.Type
-		}
-		valueType := c.typeOfExpr(scope, item.Value, nil)
-		c.inferTypeParamBindings(fieldType, valueType, bindings)
-	}
+	c.inferCompositeLiteralTypeParamBindings(scope, expr, targetType, bindings)
 
 	args := make([]typeinfo.Type, 0, len(typeParams))
 	for _, param := range typeParams {
@@ -2897,6 +2967,82 @@ func (c *checker) inferCompositeNamedType(scope *refineScope, expr *ast.Composit
 		Decl:      decl,
 		TypeArgs:  args,
 	}, true
+}
+
+func (c *checker) inferCompositeLiteralTypeParamBindings(scope *refineScope, expr *ast.CompositeLit, target typeinfo.Type, bindings map[*typeinfo.TypeParam]typeinfo.Type) {
+	if c == nil || expr == nil || target == nil {
+		return
+	}
+	switch t := c.underlying(target).(type) {
+	case *typeinfo.ArrayType:
+		for _, item := range expr.Items {
+			if item.Value == nil || item.Name != nil || item.Key != nil {
+				continue
+			}
+			c.inferTypeParamBindings(t.Inner, c.inferredCompositeItemType(scope, item.Value), bindings)
+		}
+	case *typeinfo.SliceType:
+		for _, item := range expr.Items {
+			if item.Value == nil || item.Name != nil || item.Key != nil {
+				continue
+			}
+			c.inferTypeParamBindings(t.Inner, c.inferredCompositeItemType(scope, item.Value), bindings)
+		}
+	case *typeinfo.MapType:
+		for _, item := range expr.Items {
+			if item.Key != nil {
+				c.inferTypeParamBindings(t.Key, c.inferredCompositeItemType(scope, item.Key), bindings)
+			}
+			if item.Value != nil {
+				c.inferTypeParamBindings(t.Value, c.inferredCompositeItemType(scope, item.Value), bindings)
+			}
+		}
+	case *typeinfo.TupleType:
+		for i, item := range expr.Items {
+			if item.Value == nil || item.Name != nil || item.Key != nil || i >= len(t.Elems) {
+				continue
+			}
+			c.inferTypeParamBindings(t.Elems[i], c.inferredCompositeItemType(scope, item.Value), bindings)
+		}
+	case *typeinfo.StructType:
+		fields := c.orderedStructFields(t)
+		fieldIndex := 0
+		for _, item := range expr.Items {
+			if item.Value == nil || item.Key != nil {
+				continue
+			}
+			var fieldType typeinfo.Type
+			if item.Name != nil {
+				field := t.Fields[item.Name.Text()]
+				if field == nil {
+					continue
+				}
+				fieldType = field.Type
+			} else {
+				if fieldIndex >= len(fields) {
+					continue
+				}
+				field := fields[fieldIndex]
+				fieldIndex++
+				if field == nil {
+					continue
+				}
+				fieldType = field.Type
+			}
+			c.inferTypeParamBindings(fieldType, c.inferredCompositeItemType(scope, item.Value), bindings)
+		}
+	}
+}
+
+func (c *checker) inferredCompositeItemType(scope *refineScope, expr ast.Expr) typeinfo.Type {
+	if expr == nil {
+		return nil
+	}
+	expected := typeinfo.Type(nil)
+	if _, ok := expr.(*ast.StringLit); ok {
+		expected = &typeinfo.StringType{}
+	}
+	return c.typeOfExpr(scope, expr, expected)
 }
 
 func (c *checker) isExplicitEnumCast(target, source typeinfo.Type) bool {

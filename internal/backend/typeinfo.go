@@ -36,6 +36,7 @@ const (
 	RuntimeTypeFlagTuple     = 1 << 7
 	RuntimeTypeFlagVariants  = 1 << 8
 	RuntimeTypeFlagOptional  = 1 << 9
+	RuntimeTypeFlagStruct    = 1 << 10
 )
 
 type RuntimeTypeDescriptor struct {
@@ -146,7 +147,27 @@ func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
 
 func DescribeRuntimeTypeLayout(ctx AggregateLayoutContext, typ typeinfo.Type) (RuntimeTypeDescriptor, error) {
 	desc := DescribeRuntimeType(typ)
-	switch t := typ.(type) {
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
+		if _, isStruct := named.Decl.Type.(*ast.StructType); isStruct {
+			layoutInfo, err := LookupStructLayout(ctx.LookupNamed, named)
+			if err != nil {
+				return desc, err
+			}
+			desc.Flags |= RuntimeTypeFlagStruct
+			desc.Fields = make([]RuntimeTypeFieldDescriptor, 0, len(layoutInfo.Fields))
+			for _, field := range layoutInfo.Fields {
+				if field == nil {
+					continue
+				}
+				desc.Fields = append(desc.Fields, RuntimeTypeFieldDescriptor{
+					Offset: field.Offset,
+					Type:   field.Type,
+				})
+			}
+			return desc, nil
+		}
+	}
+	switch t := UnwrapNamed(typ).(type) {
 	case *typeinfo.ArrayType:
 		elemSize, elemAlign, err := aggregateElementSizeAlign(ctx, t.Inner)
 		if err != nil {
@@ -174,6 +195,22 @@ func DescribeRuntimeTypeLayout(ctx AggregateLayoutContext, typ typeinfo.Type) (R
 			desc.Fields = append(desc.Fields, RuntimeTypeFieldDescriptor{
 				Offset: entry.Offset,
 				Type:   entry.Type,
+			})
+		}
+	case *typeinfo.StructType:
+		layoutInfo, err := LookupStructLayout(ctx.LookupNamed, t)
+		if err != nil {
+			return desc, err
+		}
+		desc.Flags |= RuntimeTypeFlagStruct
+		desc.Fields = make([]RuntimeTypeFieldDescriptor, 0, len(layoutInfo.Fields))
+		for _, field := range layoutInfo.Fields {
+			if field == nil {
+				continue
+			}
+			desc.Fields = append(desc.Fields, RuntimeTypeFieldDescriptor{
+				Offset: field.Offset,
+				Type:   field.Type,
 			})
 		}
 	case *typeinfo.OptionalType:

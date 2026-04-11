@@ -130,6 +130,7 @@ func (*CatchExpr) exprNode() {}
 
 type CompositeItem struct {
 	Name  string
+	Key   Expr
 	Value Expr
 }
 
