@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"compiler/internal/analysis/semantics/binding"
+	"compiler/internal/analysis/semantics/namerules"
 	"compiler/internal/analysis/semantics/semmeta"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
@@ -44,6 +45,15 @@ func (r *resolver) bindDeclIdent(ident *ast.Ident, sym *symbols.Symbol) {
 func (r *resolver) declareLocal(scope *table.Scope, sym *symbols.Symbol) *symbols.Symbol {
 	if scope == nil || sym == nil {
 		return sym
+	}
+	switch sym.Kind {
+	case symbols.SymbolVar, symbols.SymbolConst:
+		if !namerules.Validate(r.ctx, "symbol", sym.Name, sym.Location) {
+			if existing, ok := scope.LookupLocal(sym.Name); ok && existing != nil {
+				return existing
+			}
+			return sym
+		}
 	}
 	if scope.Declare(sym) {
 		return sym
@@ -324,6 +334,10 @@ func (r *resolver) resolveStmt(scope *table.Scope, stmt ast.Stmt) {
 		r.resolveStmt(loopScope, s.Body)
 		r.loopDepth--
 	case *ast.LabelStmt:
+		if s.Name != nil && !namerules.Validate(r.ctx, "label", s.Name.Text(), s.Name.Loc()) {
+			r.resolveStmt(scope, s.Stmt)
+			return
+		}
 		label := &binding.LabelBinding{Name: s.Name.Text(), Stmt: s.Stmt, Location: s.Name.Loc()}
 		r.info.BindLabel(s, label)
 		if s.Name != nil {

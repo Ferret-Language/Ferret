@@ -197,14 +197,6 @@ func BuiltinMapCall(call *mir.CallValue) (BuiltinMapCallKind, *typeinfo.MapType,
 			name = "get"
 		case "ferret_global_set":
 			name = "set"
-		case "ferret_global_Size":
-			name = "size"
-		case "ferret_global_Cap":
-			name = "cap"
-		case "ferret_global_Get":
-			name = "get"
-		case "ferret_global_Set":
-			name = "set"
 		}
 	}
 	if name == "" {
@@ -212,13 +204,13 @@ func BuiltinMapCall(call *mir.CallValue) (BuiltinMapCallKind, *typeinfo.MapType,
 	}
 	mapArgIndex := 0
 	switch name {
-	case "size", "Size":
+	case "size":
 		mapArgIndex = 0
-	case "cap", "Cap":
+	case "cap":
 		mapArgIndex = 0
-	case "get", "Get":
+	case "get":
 		mapArgIndex = 0
-	case "set", "Set":
+	case "set":
 		mapArgIndex = 0
 	default:
 		return BuiltinMapCallNone, nil, false
@@ -231,13 +223,13 @@ func BuiltinMapCall(call *mir.CallValue) (BuiltinMapCallKind, *typeinfo.MapType,
 		return BuiltinMapCallNone, nil, false
 	}
 	switch name {
-	case "size", "Size":
+	case "size":
 		return BuiltinMapCallSize, mapType, true
-	case "cap", "Cap":
+	case "cap":
 		return BuiltinMapCallCap, mapType, true
-	case "get", "Get":
+	case "get":
 		return BuiltinMapCallGet, mapType, true
-	case "set", "Set":
+	case "set":
 		return BuiltinMapCallSet, mapType, true
 	default:
 		return BuiltinMapCallNone, nil, false
