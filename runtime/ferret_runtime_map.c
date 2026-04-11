@@ -459,6 +459,19 @@ ferret_bool ferret_global_map_get(
     return 1;
 }
 
+void ferret_global_map_get_or_panic(
+    const ferret_raw *map,
+    const void *key,
+    const FerretTypeInfo *key_type,
+    const FerretTypeInfo *value_type,
+    void *out_value
+) {
+    if (ferret_global_map_get(map, key, key_type, value_type, out_value)) {
+        return;
+    }
+    ferret__panic((const ferret_i8 *)"map key not found");
+}
+
 ferret_bool ferret_global_map_set(
     ferret_raw *map,
     const void *key,

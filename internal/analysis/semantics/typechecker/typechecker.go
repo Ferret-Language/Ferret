@@ -2542,12 +2542,13 @@ func (c *checker) classifyTypeTest(left, target typeinfo.Type) (bool, bool, bool
 
 func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.Type {
 	baseTyp := c.typeOfExpr(scope, expr.Left, nil)
-	// typecheck the index as usize
-	usize := &typeinfo.BuiltinType{Name: "usize"}
-	c.typeOfExpr(scope, expr.Index, usize)
 	base := c.underlying(baseTyp)
+	indexExpected := typeinfo.Type(&typeinfo.BuiltinType{Name: "usize"})
 	var elem typeinfo.Type
 	switch t := base.(type) {
+	case *typeinfo.MapType:
+		indexExpected = t.Key
+		elem = t.Value
 	case *typeinfo.ArrayType:
 		if idx, ok := c.constExpr(c.mod, expr.Index, nil); ok {
 			if index, ok := idx.NonNegativeInt64(); ok && t.Len >= 0 && index >= t.Len {
@@ -2622,9 +2623,13 @@ func (c *checker) typeOfIndex(scope *refineScope, expr *ast.IndexExpr) typeinfo.
 		c.ctx.Diagnostics.Add(
 			diagnostics.NewError(fmt.Sprintf("cannot index into %s", baseTyp.String())).
 				WithCode(diagnostics.ErrInvalidOperation).
-				WithPrimaryLabel(&loc, "not an array, slice, or pointer type"),
+				WithPrimaryLabel(&loc, "not a map, array, slice, or pointer type"),
 		)
 		return typeinfo.InvalidType{}
+	}
+	indexType := c.typeOfExpr(scope, expr.Index, indexExpected)
+	if indexExpected != nil {
+		c.checkExprAssignable(scope, expr.Index, indexExpected, indexType)
 	}
 	if refined, ok := c.lookupRefinedType(scope, expr); ok && refined != nil {
 		elem = refined

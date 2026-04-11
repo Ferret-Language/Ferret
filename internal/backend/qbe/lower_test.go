@@ -92,12 +92,14 @@ fn main() -> i32 {
 func TestLowerBuiltinMapOpsToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
-fn main() -> usize {
+fn main() -> i32 {
     let mut values = map[str]i32{"one" => 1}
+    values["one"] = 3
     Set(&mut values, "one", 2)
     Get(&values, "one")
     Cap(&values)
-    return Size(&values)
+    Size(&values)
+    return values["one"]
 }
 `)
 	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
@@ -117,6 +119,7 @@ fn main() -> usize {
 		"$ferret_global_map_size",
 		"$ferret_global_map_cap",
 		"$ferret_global_map_get",
+		"$ferret_global_map_get_or_panic",
 		"$ferret_global_map_set",
 		"$typeinfo__str",
 		"$typeinfo__i32",

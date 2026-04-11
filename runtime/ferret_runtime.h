@@ -292,6 +292,13 @@ ferret_bool ferret_global_map_get(
     const FerretTypeInfo *value_type,
     void *out_value
 );
+void ferret_global_map_get_or_panic(
+    const ferret_raw *map,
+    const void *key,
+    const FerretTypeInfo *key_type,
+    const FerretTypeInfo *value_type,
+    void *out_value
+);
 ferret_bool ferret_global_map_set(
     ferret_raw *map,
     const void *key,

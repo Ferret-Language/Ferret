@@ -1413,6 +1413,58 @@ fn main(s: str) -> char {
 	}
 }
 
+func TestTypecheckerAllowsMapIndexing(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let values = map[str]i32{"one" => 1}
+    return values["one"]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	ret, ok := mainFn.Body.Stmts[1].(*ast.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return stmt, got %T", mainFn.Body.Stmts[1])
+	}
+	idx, ok := ret.Value.(*ast.IndexExpr)
+	if !ok {
+		t.Fatalf("expected index expr, got %T", ret.Value)
+	}
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[idx], "i32") {
+		t.Fatalf("expected map index type i32, got %#v", result.Entry.Types.Nodes[idx])
+	}
+}
+
+func TestTypecheckerRejectsMapIndexWithWrongKeyType(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let values = map[str]i32{"one" => 1}
+    return values[true]
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected map key type mismatch diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected map key type mismatch diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerTypesCharAndByteLiterals(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

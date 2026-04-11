@@ -643,6 +643,7 @@ func runtimeDecls() []string {
 		fmt.Sprintf("declare %s @ferret_global_map_size(ptr)", abiIR),
 		fmt.Sprintf("declare %s @ferret_global_map_cap(ptr)", abiIR),
 		"declare i8 @ferret_global_map_get(ptr, ptr, ptr, ptr, ptr)",
+		"declare void @ferret_global_map_get_or_panic(ptr, ptr, ptr, ptr, ptr)",
 		"declare i8 @ferret_global_map_set(ptr, ptr, ptr, ptr, ptr, ptr)",
 	}
 }
@@ -2142,6 +2143,9 @@ func llvmResolveFieldIndex(state *moduleState, baseType typeinfo.Type, fieldInde
 
 // lowerIndexLoad lowers arr[index] as an rvalue load.
 func lowerIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, idx *mir.IndexValue) (string, error) {
+	if mapType, ok := becommon.MapArgType(idx.Base.Type()); ok {
+		return lowerMapIndexLoad(state, targetName, targetType, idx.Base, idx.Index, mapType)
+	}
 	if _, ok := backend.UnwrapNamed(idx.Base.Type()).(*typeinfo.StringType); ok {
 		baseExpr, err := lowerValue(state, idx.Base)
 		if err != nil {
@@ -2290,6 +2294,11 @@ func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, base
 func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) {
 	if instr == nil {
 		return "", nil
+	}
+	if idxPlace, ok := instr.Target.(*mir.IndexPlace); ok {
+		if mapType, ok := becommon.MapArgType(localTypeByPlaceID(state, idxPlace.Base)); ok {
+			return lowerMapIndexStore(state, idxPlace, instr.Value, mapType)
+		}
 	}
 	if localID, ok := becommon.LocalIDForPlace(state.fn, instr.Target); ok {
 		if agg, ok := state.aggLocals[localID]; ok {
@@ -2708,6 +2717,90 @@ func lowerBuiltinMapCall(state *moduleState, targetName string, targetType typei
 	return "", fmt.Errorf("builtin map call expected optional result, got %s", typeinfo.FormatType(typeStringer{targetType}))
 }
 
+func lowerMapIndexLoad(state *moduleState, targetName string, targetType typeinfo.Type, base mir.Value, index mir.Value, mapType *typeinfo.MapType) (string, error) {
+	keyInfoSym, err := ensureLLVMRuntimeTypeInfo(state, mapType.Key)
+	if err != nil {
+		return "", err
+	}
+	valueInfoSym, err := ensureLLVMRuntimeTypeInfo(state, mapType.Value)
+	if err != nil {
+		return "", err
+	}
+	mapPrefix, mapSlotPtr, err := lowerMapValuePointer(state, base)
+	if err != nil {
+		return "", err
+	}
+	keyPrefix, keyPtr, err := lowerMapValuePointer(state, index)
+	if err != nil {
+		return "", err
+	}
+	outLines, outPtr, err := lowerMapTempStorage(state, mapType.Value, "map_out")
+	if err != nil {
+		return "", err
+	}
+	lines := append([]string(nil), mapPrefix...)
+	lines = append(lines, keyPrefix...)
+	lines = append(lines, outLines...)
+	lines = append(lines, fmt.Sprintf("call void @ferret_global_map_get_or_panic(ptr %s, ptr %s, ptr @%s, ptr @%s, ptr %s)", mapSlotPtr, keyPtr, keyInfoSym, valueInfoSym, outPtr))
+	if targetName == "" || targetType == nil {
+		return strings.Join(lines, "\n"), nil
+	}
+	if isAggregateType(state, targetType) {
+		local := becommon.FindLocalByName(state.fn, targetName)
+		if local == nil {
+			return "", fmt.Errorf("aggregate map index target %q not found", targetName)
+		}
+		agg, ok := state.aggLocals[local.ID]
+		if !ok {
+			return "", fmt.Errorf("aggregate map index target %q has no storage", targetName)
+		}
+		size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), targetType)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, llvmMemcpy(llvmLocalName(agg.PtrName), outPtr, size, align))
+		return strings.Join(lines, "\n"), nil
+	}
+	irType, err := llvmBaseType(targetType)
+	if err != nil {
+		return "", err
+	}
+	value := freshTemp(state, "map_index")
+	lines = append(lines,
+		fmt.Sprintf("%s = load %s, ptr %s", value, irType, outPtr),
+		fmt.Sprintf("%s = or %s 0, %s", llvmLocalName(targetName), irType, value),
+	)
+	return strings.Join(lines, "\n"), nil
+}
+
+func lowerMapIndexStore(state *moduleState, target *mir.IndexPlace, value mir.Value, mapType *typeinfo.MapType) (string, error) {
+	baseLines, mapSlotPtr, err := lowerPlaceAddr(state, target.Base)
+	if err != nil {
+		return "", err
+	}
+	keyPrefix, keyPtr, err := lowerMapValuePointer(state, target.Index)
+	if err != nil {
+		return "", err
+	}
+	valuePrefix, valuePtr, err := lowerMapValuePointer(state, value)
+	if err != nil {
+		return "", err
+	}
+	keyInfoSym, err := ensureLLVMRuntimeTypeInfo(state, mapType.Key)
+	if err != nil {
+		return "", err
+	}
+	valueInfoSym, err := ensureLLVMRuntimeTypeInfo(state, mapType.Value)
+	if err != nil {
+		return "", err
+	}
+	lines := append([]string(nil), baseLines...)
+	lines = append(lines, keyPrefix...)
+	lines = append(lines, valuePrefix...)
+	lines = append(lines, fmt.Sprintf("call i8 @ferret_global_map_set(ptr %s, ptr %s, ptr %s, ptr @%s, ptr @%s, ptr null)", mapSlotPtr, keyPtr, valuePtr, keyInfoSym, valueInfoSym))
+	return strings.Join(lines, "\n"), nil
+}
+
 func lowerMapTempStorage(state *moduleState, typ typeinfo.Type, label string) ([]string, string, error) {
 	if isAggregateType(state, typ) {
 		typeName, err := llvmABITypeName(state, typ)
@@ -3030,6 +3123,9 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 		}
 		return strings.Join(lines, "\n"), nil
 	case *mir.IndexValue:
+		if mapType, ok := becommon.MapArgType(v.Base.Type()); ok {
+			return lowerMapIndexLoad(state, agg.Name, agg.Type, v.Base, v.Index, mapType)
+		}
 		lines, src, err := lowerIndexAddress(state, v.Base, v.Index, v.Base.Type())
 		if err != nil {
 			return "", err
