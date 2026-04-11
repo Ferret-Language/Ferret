@@ -93,9 +93,10 @@ func (p *Parser) parsePrefix() ast.Expr {
 	case tokens.NONE:
 		p.advance()
 		return &ast.NoneLit{Location: p.locFrom(start)}
-	case tokens.BAR:
-		return p.parseLambdaExpr()
 	case tokens.LPAREN:
+		if p.hasLambdaArrowAhead() {
+			return p.parseLambdaExpr()
+		}
 		return p.parseParenExpr()
 	case tokens.DOT:
 		return p.parseCompositeLit()
@@ -185,9 +186,9 @@ func (p *Parser) parseParenExpr() ast.Expr {
 }
 
 func (p *Parser) parseLambdaExpr() ast.Expr {
-	start := p.expect(tokens.BAR, "expected '|'").Start
+	start := p.expect(tokens.LPAREN, "expected '('").Start
 	params := make([]ast.Param, 0)
-	for !p.at(tokens.BAR) && !p.at(tokens.EOF) {
+	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
 		paramStart := p.current().Start
 		isMut := p.match(tokens.MUT)
 		nameTok := p.expect(tokens.IDENT, "expected lambda parameter name")
@@ -203,11 +204,12 @@ func (p *Parser) parseLambdaExpr() ast.Expr {
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
 		})
-		if !p.consumeListSeparator(tokens.BAR, "lambda parameter", p.startsLambdaParam()) {
+		if !p.consumeListSeparator(tokens.RPAREN, "lambda parameter", p.startsLambdaParam()) {
 			break
 		}
 	}
-	p.expect(tokens.BAR, "expected closing '|' after lambda parameters")
+	p.expect(tokens.RPAREN, "expected ')' after lambda parameters")
+	p.expect(tokens.FATARROW, "expected '=>' after lambda parameters")
 	if p.at(tokens.LBRACE) {
 		body := p.parseBlock()
 		return &ast.LambdaExpr{Params: params, BodyBlock: body, Location: p.locFrom(start)}

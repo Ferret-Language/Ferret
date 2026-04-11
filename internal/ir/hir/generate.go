@@ -20,10 +20,15 @@ type generator struct {
 	bindings     *binding.ModuleInfo
 	lookupMethod MethodLookup
 
-	currentFn  *ast.FuncDecl
-	localNames map[symbols.SymbolID]string
-	localIDs   map[symbols.SymbolID]int
-	usedNames  map[string]struct{}
+	currentFn     *ast.FuncDecl
+	currentResult typeinfo.Type
+	inFunction    bool
+	nextLambda    int
+	lambdaNames   map[ast.Expr]string
+	localNames    map[symbols.SymbolID]string
+	localIDs      map[symbols.SymbolID]int
+	usedNames     map[string]struct{}
+	synthFuncs    []*Func
 }
 
 func Generate(key, importPath, filePath string, astMod *ast.Module, types *typeinfo.ModuleInfo, bindings *binding.ModuleInfo, lookupMethod MethodLookup) *Module {
@@ -37,6 +42,7 @@ func Generate(key, importPath, filePath string, astMod *ast.Module, types *typei
 		types:        types,
 		bindings:     bindings,
 		lookupMethod: lookupMethod,
+		lambdaNames:  make(map[ast.Expr]string),
 		localNames:   make(map[symbols.SymbolID]string),
 	}
 	out := &Module{
@@ -60,11 +66,12 @@ func Generate(key, importPath, filePath string, astMod *ast.Module, types *typei
 			out.Functions = append(out.Functions, g.generateFunc(d))
 		}
 	}
+	out.Functions = append(out.Functions, g.synthFuncs...)
 	return out
 }
 
 func (g *generator) isFunctionLocal(sym *symbols.Symbol) bool {
-	if g == nil || g.currentFn == nil || sym == nil {
+	if g == nil || !g.inFunction || sym == nil {
 		return false
 	}
 	switch sym.Kind {
@@ -87,6 +94,8 @@ func (g *generator) isFunctionLocal(sym *symbols.Symbol) bool {
 
 func (g *generator) beginFunction(fn *ast.FuncDecl) {
 	g.currentFn = fn
+	g.currentResult = nil
+	g.inFunction = true
 	g.usedNames = make(map[string]struct{})
 	g.localNames = make(map[symbols.SymbolID]string)
 	g.localIDs = make(map[symbols.SymbolID]int)
@@ -108,6 +117,36 @@ func (g *generator) beginFunction(fn *ast.FuncDecl) {
 		}
 		g.localIDs[sym.ID] = len(g.localIDs)
 	}
+}
+
+func (g *generator) beginSyntheticFunction(result typeinfo.Type) {
+	g.beginFunction(nil)
+	g.currentResult = result
+}
+
+func (g *generator) nextLambdaName() string {
+	g.nextLambda++
+	return fmt.Sprintf("__lambda%d", g.nextLambda)
+}
+
+func (g *generator) lambdaName(expr ast.Expr) (string, bool) {
+	if g == nil || expr == nil {
+		return "", false
+	}
+	name, ok := g.lambdaNames[expr]
+	return name, ok && name != ""
+}
+
+func (g *generator) ensureLocalID(sym *symbols.Symbol) (int, bool) {
+	if g == nil || sym == nil || !g.isFunctionLocal(sym) || sym.Kind == symbols.SymbolConst {
+		return -1, false
+	}
+	if id, ok := g.localIDs[sym.ID]; ok {
+		return id, true
+	}
+	id := len(g.localIDs)
+	g.localIDs[sym.ID] = id
+	return id, true
 }
 
 func (g *generator) mangleLocal(sym *symbols.Symbol) string {
@@ -162,25 +201,21 @@ func (g *generator) localIDFromIdent(ident *ast.Ident) (int, bool) {
 	if g == nil || ident == nil {
 		return -1, false
 	}
-	if g.currentFn == nil {
+	if !g.inFunction {
 		return -1, false
 	}
 	sym, ok := g.localSymbol(ident)
 	if !ok || !g.isFunctionLocal(sym) {
 		return -1, false
 	}
-	id, ok := g.localIDs[sym.ID]
-	if !ok {
-		return -1, false
-	}
-	return id, true
+	return g.ensureLocalID(sym)
 }
 
 func (g *generator) maybeMangledLocalName(id *ast.Ident) string {
 	if id == nil {
 		return ""
 	}
-	if g.currentFn == nil {
+	if !g.inFunction {
 		return id.Text()
 	}
 	sym, ok := g.localSymbol(id)
@@ -345,10 +380,20 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	if d == nil {
 		return nil
 	}
-	prevFn, prevUsed, prevNames, prevIDs := g.currentFn, g.usedNames, g.localNames, g.localIDs
+	var selfType typeinfo.Type
+	if d.OwnerType != nil {
+		selfType = syntaxType(g.types, d.OwnerType)
+	}
+	resultType := hirInstantiateSelfType(syntaxType(g.types, d.Result), selfType)
+	if resultType == nil {
+		resultType = &typeinfo.BuiltinType{Name: "void"}
+	}
+
+	prevFn, prevResult, prevActive, prevUsed, prevNames, prevIDs := g.currentFn, g.currentResult, g.inFunction, g.usedNames, g.localNames, g.localIDs
 	g.beginFunction(d)
+	g.currentResult = resultType
 	defer func() {
-		g.currentFn, g.usedNames, g.localNames, g.localIDs = prevFn, prevUsed, prevNames, prevIDs
+		g.currentFn, g.currentResult, g.inFunction, g.usedNames, g.localNames, g.localIDs = prevFn, prevResult, prevActive, prevUsed, prevNames, prevIDs
 	}()
 
 	fn := &Func{
@@ -357,7 +402,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 		IsUnsafe:   d.IsUnsafe,
 		IsExtern:   d.IsExtern,
 		ExternName: d.ExternName,
-		Result:     syntaxType(g.types, d.Result),
+		Result:     resultType,
 		Body:       g.generateBlock(d.Body),
 		LocalCount: len(g.localIDs),
 		Location:   d.Location,
@@ -365,14 +410,6 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	}
 	if d.OwnerType != nil && len(d.OwnerType.Path) > 0 {
 		fn.OwnerType = d.OwnerType.Path[len(d.OwnerType.Path)-1]
-	}
-	var selfType typeinfo.Type
-	if d.OwnerType != nil {
-		selfType = syntaxType(g.types, d.OwnerType)
-	}
-	fn.Result = hirInstantiateSelfType(fn.Result, selfType)
-	if fn.Result == nil {
-		fn.Result = &typeinfo.BuiltinType{Name: "void"}
 	}
 	if d.Receiver != nil {
 		fn.Receiver = &Param{
@@ -393,6 +430,125 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 		})
 	}
 	return fn
+}
+
+func (g *generator) generateLambdaFunc(expr *ast.LambdaExpr, fnType *typeinfo.FuncType) *Func {
+	if expr == nil || fnType == nil {
+		return nil
+	}
+	prevFn, prevResult, prevActive, prevUsed, prevNames, prevIDs := g.currentFn, g.currentResult, g.inFunction, g.usedNames, g.localNames, g.localIDs
+	g.beginSyntheticFunction(fnType.Result)
+	defer func() {
+		g.currentFn, g.currentResult, g.inFunction, g.usedNames, g.localNames, g.localIDs = prevFn, prevResult, prevActive, prevUsed, prevNames, prevIDs
+	}()
+
+	fn := &Func{
+		Name:       g.nextLambdaName(),
+		Result:     fnType.Result,
+		Body:       g.generateLambdaBody(expr, fnType.Result),
+		LocalCount: len(g.localIDs),
+		Location:   expr.Location,
+	}
+	g.lambdaNames[expr] = fn.Name
+	fn.Params = make([]*Param, 0, len(expr.Params))
+	for i, param := range expr.Params {
+		paramType := typeinfo.Type(typeinfo.UnknownType{})
+		if i < len(fnType.Params) && fnType.Params[i].Type != nil {
+			paramType = fnType.Params[i].Type
+		}
+		fn.Params = append(fn.Params, &Param{
+			Name:      g.maybeMangledLocalName(param.Name),
+			LocalID:   g.maybeLocalID(param.Name),
+			Type:      paramType,
+			IsMutable: param.IsMut,
+			Location:  param.Location,
+		})
+	}
+	fn.LocalCount = len(g.localIDs)
+	return fn
+}
+
+func (g *generator) functionAliasName(sym *symbols.Symbol) (string, bool) {
+	if g == nil || sym == nil {
+		return "", false
+	}
+	switch node := sym.Node.(type) {
+	case *ast.LetStmt:
+		if node == nil || node.IsMut {
+			return "", false
+		}
+		lambda, ok := node.Value.(*ast.LambdaExpr)
+		if !ok || lambda == nil {
+			return "", false
+		}
+		return g.lambdaName(lambda)
+	case *ast.ConstStmt:
+		lambda, ok := node.Value.(*ast.LambdaExpr)
+		if !ok || lambda == nil {
+			return "", false
+		}
+		return g.lambdaName(lambda)
+	case *ast.LetDecl:
+		if node == nil || node.IsMut {
+			return "", false
+		}
+		lambda, ok := node.Value.(*ast.LambdaExpr)
+		if !ok || lambda == nil {
+			return "", false
+		}
+		return g.lambdaName(lambda)
+	case *ast.ConstDecl:
+		lambda, ok := node.Value.(*ast.LambdaExpr)
+		if !ok || lambda == nil {
+			return "", false
+		}
+		return g.lambdaName(lambda)
+	default:
+		return "", false
+	}
+}
+
+func (g *generator) generateLambdaBody(expr *ast.LambdaExpr, result typeinfo.Type) *BlockStmt {
+	if expr == nil {
+		return nil
+	}
+	if expr.BodyExpr != nil {
+		out := &BlockStmt{Stmts: make([]Stmt, 0, 1)}
+		out.Location = expr.Location
+		if typeinfo.IsBuiltinNamed(result, "void") {
+			stmt := &ExprStmt{Value: g.generateExpr(expr.BodyExpr)}
+			stmt.Location = expr.BodyExpr.Loc()
+			out.Stmts = append(out.Stmts, stmt)
+		} else {
+			stmt := &ReturnStmt{Value: g.generateExprForTarget(expr.BodyExpr, result)}
+			stmt.Location = expr.BodyExpr.Loc()
+			out.Stmts = append(out.Stmts, stmt)
+		}
+		return out
+	}
+	if expr.BodyBlock == nil {
+		return nil
+	}
+	if typeinfo.IsBuiltinNamed(result, "void") {
+		return g.generateBlock(expr.BodyBlock)
+	}
+	out := &BlockStmt{Stmts: make([]Stmt, 0, len(expr.BodyBlock.Stmts))}
+	out.Location = expr.BodyBlock.Location
+	lastIndex := len(expr.BodyBlock.Stmts) - 1
+	for i, stmt := range expr.BodyBlock.Stmts {
+		if i == lastIndex {
+			if exprStmt, ok := stmt.(*ast.ExprStmt); ok && exprStmt != nil {
+				ret := &ReturnStmt{Value: g.generateExprForTarget(exprStmt.Value, result)}
+				ret.Location = exprStmt.Location
+				out.Stmts = append(out.Stmts, ret)
+				continue
+			}
+		}
+		if lowered := g.generateStmt(stmt); lowered != nil {
+			out.Stmts = append(out.Stmts, lowered)
+		}
+	}
+	return out
 }
 
 func hirInstantiateSelfType(typ, selfType typeinfo.Type) typeinfo.Type {
@@ -432,24 +588,30 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		return g.generateBlock(s)
 	case *ast.LetStmt:
 		targetType := effectiveType(g.types, s.Type, s.Value)
+		if _, ok := targetType.(*typeinfo.FuncType); ok && !s.IsMut {
+			if _, ok := s.Value.(*ast.LambdaExpr); ok {
+				_ = g.generateExpr(s.Value)
+				return nil
+			}
+		}
 		out := &LetStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Mutable: s.IsMut, Type: targetType, Value: g.generateExprForTarget(s.Value, targetType)}
 		out.Location = s.Location
 		return out
 	case *ast.ConstStmt:
+		if _, ok := effectiveType(g.types, s.Type, s.Value).(*typeinfo.FuncType); ok {
+			if _, ok := s.Value.(*ast.LambdaExpr); ok {
+				_ = g.generateExpr(s.Value)
+				return nil
+			}
+		}
 		out := &ConstStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Type: effectiveType(g.types, s.Type, s.Value), Value: g.generateConstValue(s.Value)}
 		out.Location = s.Location
 		return out
 	case *ast.ReturnStmt:
-		var targetType typeinfo.Type
-		if g.currentFn != nil && g.currentFn.Result != nil {
-			targetType = syntaxType(g.types, g.currentFn.Result)
-		}
-		value := g.generateExprForTarget(s.Value, targetType)
+		value := g.generateExprForTarget(s.Value, g.currentResult)
 		if comp, ok := value.(*CompositeLit); ok && (typeinfo.IsInvalid(comp.ExprType) || isUnknownType(comp.ExprType)) {
-			if g.currentFn != nil && g.currentFn.Result != nil {
-				if resultType := syntaxType(g.types, g.currentFn.Result); resultType != nil {
-					comp.ExprType = resultType
-				}
+			if g.currentResult != nil {
+				comp.ExprType = g.currentResult
 			}
 		}
 		out := &ReturnStmt{Value: value}
@@ -687,12 +849,19 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
 		return out
 	case *ast.Ident:
+		if sym, ok := g.localSymbol(e); ok {
+			if alias, ok := g.functionAliasName(sym); ok {
+				out := &Ident{Path: []string{alias}, LocalID: -1}
+				out.ExprType, out.Location, out.Source = typ, e.Location, nil
+				return out
+			}
+		}
 		path := append([]string{}, e.Path...)
 		localID := -1
-		if len(path) == 1 && g.currentFn != nil {
+		if len(path) == 1 && g.inFunction {
 			if sym, ok := g.localSymbol(e); ok && g.isFunctionLocal(sym) {
 				path[0] = g.mangleLocal(sym)
-				if id, ok := g.localIDs[sym.ID]; ok {
+				if id, ok := g.ensureLocalID(sym); ok {
 					localID = id
 				}
 			}
@@ -899,6 +1068,19 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 	case *ast.IndexExpr:
 		out := &IndexExpr{Left: g.generateExpr(e.Left), Index: g.generateExpr(e.Index)}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
+		return out
+	case *ast.LambdaExpr:
+		fnType, _ := typ.(*typeinfo.FuncType)
+		if fnType == nil {
+			return nil
+		}
+		fn := g.generateLambdaFunc(e, fnType)
+		if fn == nil {
+			return nil
+		}
+		g.synthFuncs = append(g.synthFuncs, fn)
+		out := &Ident{Path: []string{fn.Name}, LocalID: -1}
+		out.ExprType, out.Location, out.Source = typ, e.Location, nil
 		return out
 	default:
 		return nil

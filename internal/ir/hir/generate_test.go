@@ -86,7 +86,6 @@ func TestPipelineGeneratesDefaultCallArgsInHIR(t *testing.T) {
 fn add(base: i32, extra: i32 = 2) -> i32 {
     return base + extra
 }
-
 fn main() -> i32 {
     return add(5)
 }
@@ -120,6 +119,68 @@ fn main() -> i32 {
 	}
 	if lit, ok := call.Args[1].(*hir.NumberLit); !ok || lit.Value != "2" {
 		t.Fatalf("expected second arg to be default literal 2, got %#v", call.Args[1])
+	}
+}
+
+func TestPipelineGeneratesSyntheticLambdaFunctionInHIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let add = (a: i32, b: i32) => a + b
+    return add(1, 2)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.HIR == nil {
+		t.Fatal("expected HIR module")
+	}
+	if len(result.Entry.HIR.Functions) != 2 {
+		t.Fatalf("expected main plus synthetic lambda function, got %#v", result.Entry.HIR.Functions)
+	}
+	var lambdaFn *hir.Func
+	var mainFn *hir.Func
+	for _, fn := range result.Entry.HIR.Functions {
+		if fn == nil {
+			continue
+		}
+		if fn.Name == "main" {
+			mainFn = fn
+			continue
+		}
+		if strings.HasPrefix(fn.Name, "__lambda") {
+			lambdaFn = fn
+		}
+	}
+	if lambdaFn == nil {
+		t.Fatalf("expected synthetic lambda function, got %#v", result.Entry.HIR.Functions)
+	}
+	if lambdaFn.Source != nil {
+		t.Fatalf("expected synthetic lambda function without ast func source, got %#v", lambdaFn.Source)
+	}
+	if len(lambdaFn.Params) != 2 {
+		t.Fatalf("expected two lambda params, got %#v", lambdaFn.Params)
+	}
+	if mainFn == nil {
+		t.Fatal("expected main function")
+	}
+	ret, ok := mainFn.Body.Stmts[0].(*hir.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected main return stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	call, ok := ret.Value.(*hir.CallExpr)
+	if !ok {
+		t.Fatalf("expected lambda call, got %T", ret.Value)
+	}
+	callee, ok := call.Callee.(*hir.Ident)
+	if !ok {
+		t.Fatalf("expected lambda callee ident, got %T", call.Callee)
+	}
+	if callee.Path[0] != lambdaFn.Name {
+		t.Fatalf("expected lambda callee %q, got %#v", lambdaFn.Name, callee.Path)
 	}
 }
 

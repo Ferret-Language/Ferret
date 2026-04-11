@@ -89,6 +89,35 @@ fn main() -> i32 {
 	}
 }
 
+func TestLowerLambdaCallToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let add = (a: i32, b: i32) => a + b
+    return add(1, 2)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "function w $main____lambda") {
+		t.Fatalf("expected synthetic lambda function in qbe output:\n%s", text)
+	}
+	if !strings.Contains(text, "call $main____lambda") {
+		t.Fatalf("expected call to synthetic lambda in qbe output:\n%s", text)
+	}
+}
+
 func TestLowerMatchToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

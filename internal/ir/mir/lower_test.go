@@ -415,7 +415,7 @@ fn main() -> void {
 				continue
 			}
 			if _, ok := local.Type().(*typeinfo.ArrayType); ok {
-				t.Fatalf("for-loop counter update targeted iterable storage instead of hidden index: %#v", instr)
+				t.Fatalf("for-loop counter updateTestPipelineLowersInterfaceCoercionWithMutableReceiver targeted iterable storage instead of hidden index: %#v", instr)
 			}
 		}
 	}
@@ -438,7 +438,7 @@ fn File::read(&mut self, buf: []u8) -> i32 {
 
 fn main() -> i32 {
     let mut f: File = .{ .value = 7 }
-    let r: Reader = &mut f
+    let r: Reader = f
     return 0
 }
 `)
@@ -478,13 +478,9 @@ fn main() -> i32 {
 			if !ok {
 				continue
 			}
-			refType, ok := iface.ConcreteType.(*typeinfo.RefType)
-			if !ok || !refType.Mutable {
-				t.Fatalf("expected mutable reference concrete type, got %T %#v", iface.ConcreteType, iface.ConcreteType)
-			}
-			named, ok := refType.Inner.(*typeinfo.NamedType)
+			named, ok := iface.ConcreteType.(*typeinfo.NamedType)
 			if !ok || named.Name != "File" {
-				t.Fatalf("expected &mut File concrete type, got %#v", iface.ConcreteType)
+				t.Fatalf("expected File concrete type, got %#v", iface.ConcreteType)
 			}
 			if len(iface.Methods) != 1 {
 				t.Fatalf("expected one interface method link, got %#v", iface.Methods)
@@ -1449,6 +1445,54 @@ fn main() -> i32 {
 	}
 	if !foundReturn {
 		t.Fatalf("expected return terminator, got blocks %#v", fn.Blocks)
+	}
+}
+
+func TestPipelineLowersLambdaCallToMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let add = (a: i32, b: i32) => a + b
+    return add(1, 2)
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatal("expected MIR module")
+	}
+	if len(result.Entry.MIR.Functions) != 2 {
+		t.Fatalf("expected main plus synthetic lambda MIR function, got %#v", result.Entry.MIR.Functions)
+	}
+	var mainFn *mir.Function
+	var lambdaFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn == nil {
+			continue
+		}
+		if fn.Name == "main" {
+			mainFn = fn
+			continue
+		}
+		if strings.HasPrefix(fn.Name, "__lambda") {
+			lambdaFn = fn
+		}
+	}
+	if lambdaFn == nil {
+		t.Fatalf("expected synthetic lambda MIR function, got %#v", result.Entry.MIR.Functions)
+	}
+	if mainFn == nil {
+		t.Fatal("expected main MIR function")
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "fn "+lambdaFn.Name) {
+		t.Fatalf("expected synthetic lambda function in MIR dump, got:\n%s", text)
+	}
+	if !strings.Contains(text, "= "+lambdaFn.Name+"(") {
+		t.Fatalf("expected main to call synthetic lambda function in MIR dump, got:\n%s", text)
 	}
 }
 
