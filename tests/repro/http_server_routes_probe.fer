@@ -1,16 +1,21 @@
 import "std/io"
 import "std/net/http"
-import "std/net/tcp"
-
-fn hello(req: &http::Request, conn: &mut tcp::Conn) -> io::Error!usize {
-    req
-    return http::WriteTextResponse(conn, 200, "hello-route")
-}
 
 fn main() -> void {
     let mut server = http::NewServer()
+
     server.Listen(9112)
-    server.Get("/hello", hello)
+
+    server.Get("/", (_: &http::Request, res: &mut http::ResponseWriter) => {
+        res.Send(200, "Hello world")
+    })
+    server.Get("/hello", (_: &http::Request, res: &mut http::ResponseWriter) => {
+        res.Send(200, "hello-route")
+    })
+    server.Get("/json", (_: &http::Request, res: &mut http::ResponseWriter) => {
+        res.Json(200, "{status: ok, value: hello}")
+    })
+    
     _ = server.StartOnce() catch |err| {
         print(err)
         return

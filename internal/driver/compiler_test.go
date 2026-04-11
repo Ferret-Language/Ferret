@@ -1100,11 +1100,10 @@ func TestParsePathTypechecksStdNetHTTPServerRoutes(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 import "std/io"
 import "std/net/http"
-import "std/net/tcp"
 
-fn hello(req: &http::Request, conn: &mut tcp::Conn) -> io::Error!usize {
+fn hello(req: &http::Request, res: &mut http::ResponseWriter) -> io::Error!usize {
     req
-    return http::WriteTextResponse(conn, 200, "hello-route")
+    return res.Send(200, "hello-route")
 }
 
 fn main() -> void {

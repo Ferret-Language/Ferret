@@ -16,6 +16,10 @@ type Response struct {
     body_offset: usize
 }
 
+type ResponseWriter struct {
+    conn: ^tcp::Conn
+}
+
 type ServerContext struct {
     Request: Request
     Conn: tcp::Conn
@@ -26,7 +30,7 @@ type Server struct {
     has_route: bool = false
     path_ptr: ^const u8
     path_len: usize = 0
-    handler: fn(&Request, &mut tcp::Conn) -> io::Error!usize = not_found_handler
+    handler: fn(&Request, &mut ResponseWriter) -> io::Error!usize = not_found_handler
 }
 
 fn find_text(text: str, needle: str) -> usize {
@@ -306,22 +310,22 @@ fn text_eq(left: str, right: str) -> bool {
     return true
 }
 
-fn not_found_handler(req: &Request, conn: &mut tcp::Conn) -> io::Error!usize {
+fn not_found_handler(req: &Request, res: &mut ResponseWriter) -> io::Error!usize {
     req
-    return WriteTextResponse(conn, 404, "not found")
+    return res.Send(404, "not found")
 }
 
-fn dispatch_request(server: &Server, req: &Request, conn: &mut tcp::Conn) -> io::Error!usize {
+fn dispatch_request(server: &Server, req: &Request, res: &mut ResponseWriter) -> io::Error!usize {
     if !text_eq(req.Method(), "GET") {
-        return WriteTextResponse(conn, 404, "not found")
+        return res.Send(404, "not found")
     }
     if server.has_route && text_eq(server_path(server), req.Path()) {
-        return server.handler(req, conn)
+        return server.handler(req, res)
     }
-    return not_found_handler(req, conn)
+    return not_found_handler(req, res)
 }
 
-fn WriteTextResponse(conn: &mut tcp::Conn, status: u16, body: str) -> io::Error!usize {
+fn write_response(conn: &mut tcp::Conn, status: u16, content_type: str, body: str) -> io::Error!usize {
     let mut total: usize = 0
     total = (total as i64 + (conn.Write("HTTP/1.1 ") catch |err| {
         return err
@@ -341,6 +345,12 @@ fn WriteTextResponse(conn: &mut tcp::Conn, status: u16, body: str) -> io::Error!
     total = (total as i64 + (conn.Write(len(body as []u8) as str) catch |err| {
         return err
     }) as i64) as usize
+    total = (total as i64 + (conn.Write("\r\nContent-Type: ") catch |err| {
+        return err
+    }) as i64) as usize
+    total = (total as i64 + (conn.Write(content_type) catch |err| {
+        return err
+    }) as i64) as usize
     total = (total as i64 + (conn.Write("\r\nConnection: keep-alive\r\n\r\n") catch |err| {
         return err
     }) as i64) as usize
@@ -348,6 +358,16 @@ fn WriteTextResponse(conn: &mut tcp::Conn, status: u16, body: str) -> io::Error!
         return err
     }) as i64) as usize
     return total
+}
+
+fn WriteTextResponse(conn: &mut tcp::Conn, status: u16, body: str) -> io::Error!usize {
+    return write_response(conn, status, "text/plain; charset=utf-8", body)
+}
+
+fn response_writer_from_conn(conn: &mut tcp::Conn) -> ResponseWriter {
+    unsafe {
+        return .{ .conn = conn as ^tcp::Conn }
+    }
 }
 
 fn ServeOnce(listener: &mut tcp::Listener) -> io::Error!ServerContext {
@@ -380,7 +400,7 @@ fn Server::Listen(&mut self, port: u16) -> void {
     self.port = port
 }
 
-fn Server::Get(&mut self, path: str, handler: fn(&Request, &mut tcp::Conn) -> io::Error!usize) -> void {
+fn Server::Get(&mut self, path: str, handler: fn(&Request, &mut ResponseWriter) -> io::Error!usize) -> void {
     unsafe {
         let bytes = path as []u8
         self.path_ptr = bytes as ^const u8
@@ -405,7 +425,8 @@ fn Server::ServeNext(&self, listener: &mut tcp::Listener) -> io::Error!usize {
             conn.Close()
             return err
         }
-        let written = dispatch_request(self, &req, &mut conn) catch |err| {
+        let mut res = response_writer_from_conn(&mut conn)
+        let written = dispatch_request(self, &req, &mut res) catch |err| {
             req.Release()
             conn.Close()
             return err
@@ -519,6 +540,18 @@ fn Request::Raw(&self) -> str {
 
 fn Request::CloseAfter(&self) -> bool {
     return self.close_after
+}
+
+fn ResponseWriter::Send(&mut self, status: u16, body: str) -> io::Error!usize {
+    unsafe {
+        return WriteTextResponse(self.conn as &mut tcp::Conn, status, body)
+    }
+}
+
+fn ResponseWriter::Json(&mut self, status: u16, body: str) -> io::Error!usize {
+    unsafe {
+        return write_response(self.conn as &mut tcp::Conn, status, "application/json", body)
+    }
 }
 
 fn Request::Release(self) -> void {
