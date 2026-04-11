@@ -25,6 +25,7 @@ const (
 func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Expr {
 	left := p.parsePrefix()
 	for !p.at(tokens.SEMICOLON) && !p.at(tokens.RBRACE) && !p.at(tokens.EOF) && !slices.ContainsFunc(stopKinds, p.at) && precedence < p.currentPrecedenceForExpr(left) {
+		stepPos := p.pos
 		if p.compositeValueDepth > 0 && precedence == precLowest && p.atCompositeFieldBoundary() {
 			return left
 		}
@@ -65,6 +66,12 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 		case tokens.IS:
 			left = p.parseIs(left)
 		default:
+			return left
+		}
+		if p.pos == stepPos {
+			// Prevent malformed-token recovery paths from looping forever.
+			p.errorHere("expected expression")
+			p.advance()
 			return left
 		}
 	}
@@ -478,7 +485,7 @@ func (p *Parser) parseIs(left ast.Expr) ast.Expr {
 
 func (p *Parser) parseMatchExpr() ast.Expr {
 	start := p.advance().Start
-	value := p.parseExprUntil(precLowest)
+	value := p.parseExprUntil(precLowest, tokens.LBRACE)
 	arms := p.parseMatchArms()
 	return &ast.MatchExpr{Value: value, Arms: arms, Location: p.locFrom(start)}
 }
@@ -487,6 +494,7 @@ func (p *Parser) parseMatchArms() []*ast.MatchArm {
 	p.expect(tokens.LBRACE, "expected '{'")
 	arms := make([]*ast.MatchArm, 0)
 	for !p.at(tokens.RBRACE) && !p.at(tokens.EOF) {
+		armPos := p.pos
 		armStart := p.current().Start
 		var pattern ast.Expr
 		var typePattern ast.TypeExpr
@@ -517,6 +525,12 @@ func (p *Parser) parseMatchArms() []*ast.MatchArm {
 			Body:        body,
 			Location:    p.locFrom(armStart),
 		})
+		if p.pos == armPos {
+			p.synchronizeStmt()
+			if p.pos == armPos {
+				p.advance()
+			}
+		}
 	}
 	p.expect(tokens.RBRACE, "expected '}'")
 	return arms

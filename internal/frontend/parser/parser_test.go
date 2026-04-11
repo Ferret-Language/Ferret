@@ -570,7 +570,7 @@ fn greet(name: str = "world", repeat: i32 = 1) -> void {}
 	if len(fn.Params) != 2 {
 		t.Fatalf("expected 2 params, got %d", len(fn.Params))
 	}
-	if got := ast.ParamString(fn.Params[0]); got != "name: str = world" {
+	if got := ast.ParamString(fn.Params[0]); got != "name: str = \"world\"" {
 		t.Fatalf("unexpected defaulted param string %q", got)
 	}
 	if got := ast.ParamString(fn.Params[1]); got != "repeat: i32 = 1" {
@@ -2177,6 +2177,36 @@ fn run(value: Token) -> i32 {
 	target, ok := arm.TypePattern.(*ast.NamedType)
 	if !ok || len(target.Path) != 1 || target.Path[0] != "i32" {
 		t.Fatalf("expected target type i32, got %#v", arm.TypePattern)
+	}
+}
+
+func TestParseMatchTypeArmWithBinaryReturnExpr(t *testing.T) {
+	src := `
+fn run(value: Token) -> i32 {
+    match value {
+        is i32 => {
+            let widened: i32 = value
+            return value + widened
+        }
+        _ => {
+            return 0
+        }
+    }
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn := mod.Decls[0].(*ast.FuncDecl)
+	exprStmt := fn.Body.Stmts[0].(*ast.ExprStmt)
+	matchExpr := exprStmt.Value.(*ast.MatchExpr)
+	if len(matchExpr.Arms) != 2 {
+		t.Fatalf("expected 2 match arms, got %d", len(matchExpr.Arms))
+	}
+	if _, ok := matchExpr.Arms[0].Body.Stmts[1].(*ast.ReturnStmt); !ok {
+		t.Fatalf("expected return stmt in first arm, got %#v", matchExpr.Arms[0].Body.Stmts)
 	}
 }
 

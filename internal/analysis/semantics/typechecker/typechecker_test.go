@@ -5262,8 +5262,8 @@ fn count() -> i32 {
 }
 
 fn main() -> i32 {
-    let size = comptime count()
-    let items: [size]i32 = [size]i32{1, 2, 3, 4, 5}
+    let N = comptime count()
+    let items: [N]i32 = [N]i32{1, 2, 3, 4, 5}
     return items[4]
 }
 `)
