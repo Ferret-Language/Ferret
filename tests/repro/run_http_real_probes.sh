@@ -124,4 +124,44 @@ PY
 wait "$server_pid"
 run_probe "http-server-routes" "http-server-routes-ok" cat /tmp/ferret-http-server-routes-probe.out
 
+"$FERRET_BIN" run "$ROOT/tests/repro/http_server_keepalive_probe.fer" >/tmp/ferret-http-server-keepalive-probe.out &
+server_pid=$!
+sleep 1.0
+python - <<'PY'
+import socket
+
+def read_response(sock):
+    data = b""
+    while b"\r\n\r\n" not in data:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        data += chunk
+    header, _, body = data.partition(b"\r\n\r\n")
+    content_length = 0
+    for line in header.split(b"\r\n"):
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+            break
+    while len(body) < content_length:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        body += chunk
+    return header.decode("utf-8"), body.decode("utf-8")
+
+with socket.create_connection(("127.0.0.1", 9113), timeout=2) as sock:
+    sock.sendall(b"GET /hello HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n\r\n")
+    h1, b1 = read_response(sock)
+    if "HTTP/1.1 200 OK\r\n" not in h1 or b1 != "hello-keepalive":
+        raise SystemExit(f"unexpected first keepalive response: {h1!r} body={b1!r}")
+
+    sock.sendall(b"GET /hello HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+    h2, b2 = read_response(sock)
+    if "HTTP/1.1 200 OK\r\n" not in h2 or b2 != "hello-keepalive":
+        raise SystemExit(f"unexpected second keepalive response: {h2!r} body={b2!r}")
+PY
+wait "$server_pid"
+run_probe "http-server-keepalive" "http-server-keepalive-ok" cat /tmp/ferret-http-server-keepalive-probe.out
+
 echo "all http real probes ok"

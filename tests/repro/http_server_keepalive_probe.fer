@@ -1,0 +1,19 @@
+import "std/io"
+import "std/net/http"
+import "std/net/tcp"
+
+fn hello(req: &http::Request, conn: &mut tcp::Conn) -> io::Error!usize {
+    req
+    return http::WriteTextResponse(conn, 200, "hello-keepalive")
+}
+
+fn main() -> void {
+    let mut server = http::NewServer()
+    server.Listen(9113)
+    server.Get("/hello", hello)
+    _ = server.StartOnce() catch |err| {
+        print(err)
+        return
+    }
+    print("http-server-keepalive-ok")
+}
