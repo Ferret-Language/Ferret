@@ -147,6 +147,26 @@ func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
 
 func DescribeRuntimeTypeLayout(ctx AggregateLayoutContext, typ typeinfo.Type) (RuntimeTypeDescriptor, error) {
 	desc := DescribeRuntimeType(typ)
+	if named, ok := typ.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
+		if _, isStruct := named.Decl.Type.(*ast.StructType); isStruct {
+			layoutInfo, err := LookupStructLayout(ctx.LookupNamed, named)
+			if err != nil {
+				return desc, err
+			}
+			desc.Flags |= RuntimeTypeFlagStruct
+			desc.Fields = make([]RuntimeTypeFieldDescriptor, 0, len(layoutInfo.Fields))
+			for _, field := range layoutInfo.Fields {
+				if field == nil {
+					continue
+				}
+				desc.Fields = append(desc.Fields, RuntimeTypeFieldDescriptor{
+					Offset: field.Offset,
+					Type:   field.Type,
+				})
+			}
+			return desc, nil
+		}
+	}
 	switch t := UnwrapNamed(typ).(type) {
 	case *typeinfo.ArrayType:
 		elemSize, elemAlign, err := aggregateElementSizeAlign(ctx, t.Inner)
@@ -178,7 +198,7 @@ func DescribeRuntimeTypeLayout(ctx AggregateLayoutContext, typ typeinfo.Type) (R
 			})
 		}
 	case *typeinfo.StructType:
-		layoutInfo, err := LookupStructLayout(ctx.LookupNamed, typ)
+		layoutInfo, err := LookupStructLayout(ctx.LookupNamed, t)
 		if err != nil {
 			return desc, err
 		}

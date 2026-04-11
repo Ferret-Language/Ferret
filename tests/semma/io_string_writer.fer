@@ -1,5 +1,4 @@
 import "std/string"
-import "std/io"
 
 fn main() -> void {
     let mut buf = string::New()
@@ -8,10 +7,10 @@ fn main() -> void {
     println(buf.AsStr())
 
     let mut newBuf = string::New()
-    
-    io::Write(newBuf, buf.AsStr())
+    newBuf.Write(buf.AsStr())
 
     println(newBuf.AsStr())
 
     buf.Release()
+    newBuf.Release()
 }

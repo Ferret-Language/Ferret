@@ -244,6 +244,19 @@ static void *ferret__map_slot_value(FerretRuntimeMap *map, ferret_usize index) {
     return map->slots + (index * map->slot_size) + map->value_offset;
 }
 
+static ferret_usize ferret__next_pow2(ferret_usize value) {
+    ferret_usize shift;
+
+    if (value <= 1u) {
+        return 1u;
+    }
+    value--;
+    for (shift = 1u; shift < (ferret_usize)(sizeof(ferret_usize) * 8u); shift <<= 1u) {
+        value |= value >> shift;
+    }
+    return value + 1u;
+}
+
 static FerretRuntimeMap *ferret__map_alloc(const FerretTypeInfo *key_type, const FerretTypeInfo *value_type, ferret_usize cap) {
     FerretRuntimeMap *map;
     ferret_usize key_align;
@@ -256,8 +269,9 @@ static FerretRuntimeMap *ferret__map_alloc(const FerretTypeInfo *key_type, const
     if (cap < 8u) {
         cap = 8u;
     }
-    while ((cap & (cap - 1u)) != 0u) {
-        cap++;
+    cap = ferret__next_pow2(cap);
+    if (cap == 0u) {
+        return NULL;
     }
 
     map = (FerretRuntimeMap *)calloc(1u, sizeof(FerretRuntimeMap));
