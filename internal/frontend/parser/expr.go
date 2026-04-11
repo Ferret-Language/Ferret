@@ -204,7 +204,7 @@ func (p *Parser) parseLambdaExpr() ast.Expr {
 			Type:       paramType,
 			Location:   p.locFrom(paramStart),
 		})
-		if !p.consumeListSeparator(tokens.RPAREN, "lambda parameter", p.startsLambdaParam()) {
+		if !p.consumeListSeparator(tokens.RPAREN, "lambda parameter", p.startsNamedParam()) {
 			break
 		}
 	}
