@@ -592,6 +592,9 @@ func (r *resolver) resolveType(scope *table.Scope, typ ast.TypeExpr) {
 			if ident, ok := t.Size.(*ast.Ident); !ok || ident.Text() != "_" {
 				r.resolveExpr(scope, t.Size)
 			}
+		case *ast.MapType:
+			r.resolveType(scope, t.Key)
+			r.resolveType(scope, t.Value)
 		case *ast.StructType:
 			for _, field := range t.Fields {
 				if field != nil {

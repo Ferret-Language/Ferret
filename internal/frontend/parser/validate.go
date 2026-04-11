@@ -207,6 +207,9 @@ func (p *Parser) validateType(typ ast.TypeExpr) {
 			if ident, ok := t.Size.(*ast.Ident); !ok || ident.Text() != "_" {
 				p.validateExpr(t.Size)
 			}
+		case *ast.MapType:
+			p.validateType(t.Key)
+			p.validateType(t.Value)
 		case *ast.StructType:
 			seenFields := make(map[string]source.Location)
 			for _, field := range t.Fields {

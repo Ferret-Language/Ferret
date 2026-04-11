@@ -58,6 +58,8 @@ func TypeString(typ TypeExpr) string {
 		return "[" + ExprString(t.Size) + "]" + TypeString(t.Inner)
 	case *SliceType:
 		return "[]" + TypeString(t.Inner)
+	case *MapType:
+		return "map[" + TypeString(t.Key) + "]" + TypeString(t.Value)
 	case *TupleType:
 		parts := make([]string, 0, len(t.Elems))
 		for _, elem := range t.Elems {

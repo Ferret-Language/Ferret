@@ -258,6 +258,45 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerAcceptsBuiltinMapTypeWithComparableKey(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(values: map[str]i32) -> void {}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	fn := findTypeFunc(t, result.Entry.AST, "main")
+	mt, ok := result.Entry.Types.Nodes[fn.Params[0].Type].(*typeinfo.MapType)
+	if !ok {
+		t.Fatalf("expected map type, got %T", result.Entry.Types.Nodes[fn.Params[0].Type])
+	}
+	if _, ok := mt.Key.(*typeinfo.StringType); !ok || !typeinfo.IsBuiltinNamed(mt.Value, "i32") {
+		t.Fatalf("expected map[str]i32, got %#v", mt)
+	}
+}
+
+func TestTypecheckerRejectsBuiltinMapTypeWithNonComparableKey(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(values: map[[]i32]i32) -> void {}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected Comparable key diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "expected Comparable key type") {
+			return
+		}
+	}
+	t.Fatalf("expected Comparable key diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
 func TestTypecheckerHandlesFunctionTypeSyntax(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

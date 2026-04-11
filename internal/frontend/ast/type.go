@@ -103,6 +103,15 @@ type SliceType struct {
 func (*SliceType) typeNode()              {}
 func (t *SliceType) Loc() source.Location { return t.Location }
 
+type MapType struct {
+	Key      TypeExpr
+	Value    TypeExpr
+	Location source.Location
+}
+
+func (*MapType) typeNode()              {}
+func (t *MapType) Loc() source.Location { return t.Location }
+
 type TupleType struct {
 	Elems    []TypeExpr
 	Location source.Location

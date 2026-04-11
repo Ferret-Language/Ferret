@@ -873,6 +873,11 @@ func inferTypeBindings(pattern, actual typeinfo.Type, bindings map[*typeinfo.Typ
 				inferTypeBindings(p.Elems[i], got.Elems[i], bindings)
 			}
 		}
+	case *typeinfo.MapType:
+		if got, ok := actual.(*typeinfo.MapType); ok {
+			inferTypeBindings(p.Key, got.Key, bindings)
+			inferTypeBindings(p.Value, got.Value, bindings)
+		}
 	case *typeinfo.NamedType:
 		got, ok := actual.(*typeinfo.NamedType)
 		if !ok || p.ModuleKey != got.ModuleKey || len(p.TypeArgs) != len(got.TypeArgs) {
@@ -1420,6 +1425,14 @@ func (s *specializer) specializeNamedTypeRefs(typ typeinfo.Type, seen map[typein
 			t.Elems[i] = s.specializeNamedTypeRefs(elem, seen)
 		}
 		return t
+	case *typeinfo.MapType:
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
+		t.Key = s.specializeNamedTypeRefs(t.Key, seen)
+		t.Value = s.specializeNamedTypeRefs(t.Value, seen)
+		return t
 	case *typeinfo.NamedType:
 		if _, ok := seen[t]; ok {
 			return t
@@ -1557,6 +1570,8 @@ func typeHasTypeParam(typ typeinfo.Type) bool {
 			}
 		}
 		return false
+	case *typeinfo.MapType:
+		return typeHasTypeParam(t.Key) || typeHasTypeParam(t.Value)
 	case *typeinfo.NamedType:
 		for _, arg := range t.TypeArgs {
 			if typeHasTypeParam(arg) {

@@ -64,6 +64,14 @@ func (p *Parser) parseType() ast.TypeExpr {
 			p.advance()
 			return &ast.SelfType{Location: p.locFrom(start)}
 		}
+		if p.current().Literal == "map" && p.peekN(1).Kind == tokens.LBRACK {
+			p.advance()
+			p.expect(tokens.LBRACK, "expected '[' after 'map'")
+			key := p.parseType()
+			p.expect(tokens.RBRACK, "expected ']' after map key type")
+			value := p.parseType()
+			return &ast.MapType{Key: key, Value: value, Location: p.locFrom(start)}
+		}
 		base := &ast.NamedType{Path: p.parseNamePath(), Location: p.locFrom(start)}
 		if p.at(tokens.LT) {
 			base.TypeArgs = p.parseAngleTypeArgs("type argument")

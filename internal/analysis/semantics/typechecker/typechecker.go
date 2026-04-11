@@ -1019,6 +1019,8 @@ func (c *checker) containsTypeParam(typ typeinfo.Type) bool {
 		return c.containsTypeParam(t.Inner)
 	case *typeinfo.TupleType:
 		return slices.ContainsFunc(t.Elems, c.containsTypeParam)
+	case *typeinfo.MapType:
+		return c.containsTypeParam(t.Key) || c.containsTypeParam(t.Value)
 	default:
 		return false
 	}
@@ -1916,6 +1918,9 @@ func (c *checker) collectTypeParams(typ typeinfo.Type, visit func(*typeinfo.Type
 		for _, elem := range t.Elems {
 			c.collectTypeParams(elem, visit)
 		}
+	case *typeinfo.MapType:
+		c.collectTypeParams(t.Key, visit)
+		c.collectTypeParams(t.Value, visit)
 	case *typeinfo.NamedType:
 		for _, arg := range t.TypeArgs {
 			c.collectTypeParams(arg, visit)
@@ -2029,6 +2034,13 @@ func (c *checker) inferTypeParamBindings(pattern, actual typeinfo.Type, bindings
 		for i := range p.Elems {
 			c.inferTypeParamBindings(p.Elems[i], got.Elems[i], bindings)
 		}
+	case *typeinfo.MapType:
+		got, ok := actual.(*typeinfo.MapType)
+		if !ok {
+			return
+		}
+		c.inferTypeParamBindings(p.Key, got.Key, bindings)
+		c.inferTypeParamBindings(p.Value, got.Value, bindings)
 	case *typeinfo.NamedType:
 		got, ok := actual.(*typeinfo.NamedType)
 		if !ok || p.Name != got.Name || p.ModuleKey != got.ModuleKey || len(p.TypeArgs) != len(got.TypeArgs) {

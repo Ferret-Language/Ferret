@@ -163,6 +163,28 @@ fn takefn(fun: fn(i32, ...str) -> i32) {}
 	}
 }
 
+func TestParseMapTypeSyntax(t *testing.T) {
+	src := `
+fn main(values: map[str]i32) {}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[0])
+	}
+	mt, ok := fn.Params[0].Type.(*ast.MapType)
+	if !ok {
+		t.Fatalf("expected map type param, got %T", fn.Params[0].Type)
+	}
+	if got := ast.TypeString(mt); got != "map[str]i32" {
+		t.Fatalf("unexpected map type text: %q", got)
+	}
+}
+
 func TestParseLambdaExprSyntax(t *testing.T) {
 	src := `
 fn main() -> void {
