@@ -2575,7 +2575,11 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 		retStr = "void"
 	}
 
-	callText := fmt.Sprintf("call %s @%s(%s)", retStr, callee, argsStr)
+	callTarget := callee
+	if !strings.HasPrefix(callTarget, "@") && !strings.HasPrefix(callTarget, "%") {
+		callTarget = "@" + callTarget
+	}
+	callText := fmt.Sprintf("call %s %s(%s)", retStr, callTarget, argsStr)
 	if targetName == "" || retStr == "void" {
 		return callText, nil
 	}
@@ -2588,8 +2592,12 @@ func lowerAggregateCall(state *moduleState, agg *aggregateLocal, callee, argsStr
 		return "", err
 	}
 	tmp := freshTemp(state, "aggret")
+	callTarget := callee
+	if !strings.HasPrefix(callTarget, "@") && !strings.HasPrefix(callTarget, "%") {
+		callTarget = "@" + callTarget
+	}
 	lines := []string{
-		fmt.Sprintf("%s = call %s @%s(%s)", tmp, typeName, callee, argsStr),
+		fmt.Sprintf("%s = call %s %s(%s)", tmp, typeName, callTarget, argsStr),
 		fmt.Sprintf("store %s %s, ptr %s", typeName, tmp, llvmLocalName(agg.PtrName)),
 	}
 	return strings.Join(lines, "\n"), nil
@@ -4747,7 +4755,14 @@ func operandWithTemp(state *moduleState, irType, expr string) string {
 
 func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
+	case *mir.LocalValue:
+		if _, ok := v.Type().(*typeinfo.FuncType); ok {
+			return lowerValue(state, v)
+		}
 	case *mir.NameValue:
+		if _, ok := v.Type().(*typeinfo.FuncType); ok {
+			return lowerValue(state, v)
+		}
 		if v.LinkName != "" {
 			return becommon.SanitizeIdent(v.LinkName), nil
 		}
@@ -4755,6 +4770,7 @@ func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported call callee %T", value)
 	}
+	return "", fmt.Errorf("unsupported call callee %T", value)
 }
 
 // ---------------------------------------------------------------------------

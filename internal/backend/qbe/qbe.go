@@ -3585,7 +3585,14 @@ func qbeOperandWithTemp(state *moduleState, qtype string, expr string) string {
 
 func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 	switch v := value.(type) {
+	case *mir.LocalValue:
+		if _, ok := v.Type().(*typeinfo.FuncType); ok {
+			return lowerValue(state, v)
+		}
 	case *mir.NameValue:
+		if _, ok := v.Type().(*typeinfo.FuncType); ok {
+			return lowerValue(state, v)
+		}
 		if v.LinkName != "" {
 			return "$" + becommon.SanitizeIdent(v.LinkName), nil
 		}
@@ -3593,6 +3600,7 @@ func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported call callee %T", value)
 	}
+	return "", fmt.Errorf("unsupported call callee %T", value)
 }
 
 func resolveQBETempValue(state *moduleState, value mir.Value) (mir.Value, bool) {
@@ -3703,7 +3711,7 @@ func qbeExtType(typ typeinfo.Type) (string, error) {
 		case "f64":
 			return "d", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType:
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported aggregate member type %s", typeinfo.FormatType(typeStringer{typ}))
@@ -3724,7 +3732,7 @@ func qbeBaseType(typ typeinfo.Type) (string, error) {
 		case "void":
 			return "", nil
 		}
-	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
+	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType:
 		return "l", nil
 	}
 	return "", fmt.Errorf("unsupported qbe base type %s", typeinfo.FormatType(typeStringer{typ}))

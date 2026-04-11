@@ -1451,6 +1451,28 @@ fn takefn(fun: fn(i32, i32)) {}
 	}
 }
 
+func TestParsePathTypechecksFunctionValueParameterCall(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn inc(x: i32) -> i32 {
+    return x + 1
+}
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    return f(x)
+}
+
+fn main() -> i32 {
+    return apply(inc, 2)
+}
+`)
+
+	result := ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
+	}
+}
+
 func TestIfAttributeSupportsNegatedTargetSelection(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

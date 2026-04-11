@@ -2585,6 +2585,38 @@ fn main() -> i32 {
 	}
 }
 
+func TestLowerFunctionValueParameterCallToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn inc(x: i32) -> i32 {
+    return x + 1
+}
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    return f(x)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "define i32 @main__apply(ptr %f, i32 %x)") {
+		t.Fatalf("expected function-typed parameter in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "call i32 %_ld2(i32 %_ld3)") {
+		t.Fatalf("expected indirect function-value call in llvm output:\n%s", text)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

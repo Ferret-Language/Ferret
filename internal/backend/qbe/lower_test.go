@@ -118,6 +118,38 @@ fn main() -> i32 {
 	}
 }
 
+func TestLowerFunctionValueParameterCallToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn inc(x: i32) -> i32 {
+    return x + 1
+}
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    return f(x)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "function w $main__apply(l %f, w %x)") {
+		t.Fatalf("expected function-typed parameter in qbe output:\n%s", text)
+	}
+	if !strings.Contains(text, "call %f(w %x)") {
+		t.Fatalf("expected indirect function-value call in qbe output:\n%s", text)
+	}
+}
+
 func TestLowerMatchToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
