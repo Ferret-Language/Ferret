@@ -2422,7 +2422,11 @@ func localTypeByPlaceID(state *moduleState, place mir.Place) typeinfo.Type {
 	case *mir.FieldPlace:
 		return localTypeByPlaceID(state, p.Base)
 	case *mir.IndexPlace:
-		return localTypeByPlaceID(state, p.Base)
+		baseType := localTypeByPlaceID(state, p.Base)
+		if elemType := becommon.IndexElementType(baseType, p.Index); elemType != nil {
+			return elemType
+		}
+		return baseType
 	case *mir.DerefPlace:
 		if addr, ok := p.Pointer.(*mir.AddrOfValue); ok && addr.Source != nil {
 			if typ := addr.Source.Type(); typ != nil {

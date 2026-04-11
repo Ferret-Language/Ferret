@@ -1468,30 +1468,23 @@ fn main() -> i32 {
 	}
 }
 
-func TestParsePathUnsupportedFunctionTypeParameterReturnsDiagnostics(t *testing.T) {
+func TestParsePathParsesFunctionTypeParameterWithoutReturnAsVoid(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
-fn takefn(fun: fn(i32, i32)) {}
+fn noop(a: i32, b: i32) {}
+
+fn takefn(fun: fn(i32, i32)) -> void {
+    fun(1, 2)
+}
+
+fn main() -> void {
+    takefn(noop)
+}
 `)
 
 	result := ParsePath(filepath.Join(root, "main.fer"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected diagnostics for unsupported function type syntax")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if strings.Contains(diag.Message, "expected type") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected type diagnostic, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
-	}
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if strings.Contains(diag.Message, `undefined symbol "<error>"`) {
-			t.Fatalf("unexpected parser sentinel diagnostic, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
-		}
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
 }
 

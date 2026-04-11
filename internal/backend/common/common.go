@@ -143,6 +143,28 @@ func TupleIndexFromValue(value mir.Value) (int, bool) {
 	return int(n), true
 }
 
+// IndexElementType resolves the element type selected by an index operation
+// over aggregate/pointer-like containers. It returns nil when the element type
+// cannot be determined from the provided base/index pair.
+func IndexElementType(base typeinfo.Type, index mir.Value) typeinfo.Type {
+	switch t := backend.UnwrapNamed(base).(type) {
+	case *typeinfo.ArrayType:
+		return t.Inner
+	case *typeinfo.SliceType:
+		return t.Inner
+	case *typeinfo.RawPtrType:
+		return t.Inner
+	case *typeinfo.TupleType:
+		i, ok := TupleIndexFromValue(index)
+		if !ok || i < 0 || i >= len(t.Elems) {
+			return nil
+		}
+		return t.Elems[i]
+	default:
+		return nil
+	}
+}
+
 func SanitizePath(path string) string {
 	parts := strings.FieldsFunc(path, func(r rune) bool {
 		switch r {
