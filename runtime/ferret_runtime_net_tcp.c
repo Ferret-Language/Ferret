@@ -201,8 +201,14 @@ static ferret_i32 ferret__net_map_error_code(int code, ferret_bool addrinfo_code
         case WSAHOST_NOT_FOUND:
         case WSANO_DATA:
             return FERRET_IO_ERR_NOT_FOUND;
-        case WSAEAI_AGAIN:
-            return FERRET_IO_ERR_TIMED_OUT;
+            /* MinGW variants may not define WSAEAI_AGAIN; WSATRY_AGAIN is commonly available */
+    #if defined(WSAEAI_AGAIN)
+            case WSAEAI_AGAIN:
+                return FERRET_IO_ERR_TIMED_OUT;
+    #elif defined(WSATRY_AGAIN)
+            case WSATRY_AGAIN:
+                return FERRET_IO_ERR_TIMED_OUT;
+    #endif
         default:
             return FERRET_IO_ERR_UNKNOWN;
         }
