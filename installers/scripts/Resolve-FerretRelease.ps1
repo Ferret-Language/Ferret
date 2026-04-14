@@ -6,12 +6,52 @@ param(
     [Parameter(Mandatory = $false)]
     [string]$Repo = "Ferret-Language/Ferret",
 
+    [Parameter(Mandatory = $false)]
+    [ValidateRange(5, 300)]
+    [int]$RequestTimeoutSec = 15,
+
     [Parameter(Mandatory = $true)]
     [string]$OutputPath
 )
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+
+function Invoke-HttpRequest {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Method
+    )
+
+    return Invoke-WebRequest -Uri $Uri -Method $Method -UseBasicParsing -MaximumRedirection 5 -TimeoutSec $RequestTimeoutSec
+}
+
+function Convert-DisplaySizeToBytes {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DisplaySize
+    )
+
+    if ($DisplaySize -notmatch '^\s*(?<value>\d+(?:\.\d+)?)\s*(?<unit>bytes?|kb|mb|gb|tb)\s*$') {
+        throw "Unsupported display size format: $DisplaySize"
+    }
+
+    $value = [decimal]$Matches.value
+    switch ($Matches.unit.ToUpperInvariant()) {
+        "BYTE" { $multiplier = [decimal]1 }
+        "BYTES" { $multiplier = [decimal]1 }
+        "KB" { $multiplier = [decimal]1024 }
+        "MB" { $multiplier = [decimal]1048576 }
+        "GB" { $multiplier = [decimal]1073741824 }
+        "TB" { $multiplier = [decimal]1099511627776 }
+        default { throw "Unsupported display size unit: $($Matches.unit)" }
+    }
+
+    return [Int64][Math]::Round($value * $multiplier)
+}
 
 function Get-ReleaseTag {
     param(
@@ -26,7 +66,7 @@ function Get-ReleaseTag {
         return $RequestedVersion
     }
 
-    $response = Invoke-WebRequest -Uri "https://github.com/$Repository/releases/latest" -Method Head
+    $response = Invoke-HttpRequest -Uri "https://github.com/$Repository/releases/latest" -Method Head
     $resolvedUri = $response.BaseResponse.ResponseUri.AbsoluteUri
     if ($resolvedUri -notmatch "/releases/tag/(?<tag>[^/?#]+)$") {
         throw "Could not resolve the latest release tag from $resolvedUri"
@@ -87,7 +127,7 @@ function Get-ReleaseAssets {
     )
 
     $expandedAssetsUrl = "https://github.com/$Repository/releases/expanded_assets/$ReleaseTag"
-    $html = Invoke-WebRequest -Uri $expandedAssetsUrl -UseBasicParsing | Select-Object -ExpandProperty Content
+    $html = Invoke-HttpRequest -Uri $expandedAssetsUrl -Method Get | Select-Object -ExpandProperty Content
     $pattern = '<a href="(?<href>/[^"]+/releases/download/[^"]+/(?<name>[^"/]+))"(?s:.*?)<span[^>]*class="Truncate-text">(?<digest>sha256:[0-9a-fA-F]{64})</span>(?s:.*?)<span[^>]*class="color-fg-muted text-right[^"]*">(?<size>[^<]+)</span>'
 
     $assets = @()
@@ -105,21 +145,6 @@ function Get-ReleaseAssets {
     }
 
     return $assets
-}
-
-function Get-ContentLengthBytes {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Url
-    )
-
-    $response = Invoke-WebRequest -Uri $Url -Method Head
-    $contentLength = $response.Headers["Content-Length"]
-    if (-not $contentLength) {
-        throw "Content-Length header is missing for $Url"
-    }
-
-    return [Int64]$contentLength
 }
 
 function Write-IniFile {
@@ -188,8 +213,8 @@ if (-not $toolchainAsset) {
     throw "Could not find a supported Ferret Windows toolchain asset in release '$releaseTag'."
 }
 
-$compilerDownloadSize = Get-ContentLengthBytes -Url $compilerAsset.url
-$toolchainDownloadSize = Get-ContentLengthBytes -Url $toolchainAsset.url
+$compilerDownloadSize = Convert-DisplaySizeToBytes -DisplaySize $compilerAsset.display_size
+$toolchainDownloadSize = Convert-DisplaySizeToBytes -DisplaySize $toolchainAsset.display_size
 
 Write-IniFile -Path $OutputPath -Sections @{
     release = @{

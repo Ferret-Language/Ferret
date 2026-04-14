@@ -315,6 +315,7 @@ begin
   Params :=
     '-NoLogo -NoProfile -ExecutionPolicy Bypass -File ' + AddQuotesIfNeeded(HelperPath) +
     ' -Version ' + AddQuotesIfNeeded(RequestedVersion) +
+    ' -RequestTimeoutSec 10' +
     ' -Repo "Ferret-Language/Ferret" -OutputPath ' + AddQuotesIfNeeded(ManifestPath);
 
   Log('Resolving Ferret release manifest.');
@@ -430,6 +431,7 @@ begin
   Params :=
     '-NoLogo -NoProfile -ExecutionPolicy Bypass -File ' + AddQuotesIfNeeded(HelperPath) +
     ' -Version ' + AddQuotesIfNeeded(ResolveRequestedVersion) +
+    ' -RequestTimeoutSec 10' +
     ' -Repo "Ferret-Language/Ferret" -OutputPath ' + AddQuotesIfNeeded(ResolveManifestPath);
 
   if not Exec(

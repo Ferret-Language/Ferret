@@ -18,3 +18,4 @@ _tmp
 *.localplan.md
 *.html
 playground
+installers/dist
