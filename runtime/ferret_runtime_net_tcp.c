@@ -14,6 +14,7 @@ typedef SOCKET FerretSocket;
 #define FERRET_INVALID_SOCKET INVALID_SOCKET
 #define FERRET_SHUT_RD SD_RECEIVE
 #define FERRET_SHUT_WR SD_SEND
+typedef long suseconds_t;
 #else
 #include <netdb.h>
 #include <netinet/tcp.h>
