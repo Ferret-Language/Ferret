@@ -76,14 +76,6 @@ type CallExpr struct {
 
 func (*CallExpr) exprNode() {}
 
-type ConstructorCallExpr struct {
-	baseExpr
-	Path []string
-	Args []Expr
-}
-
-func (*ConstructorCallExpr) exprNode() {}
-
 type SelectorExpr struct {
 	baseExpr
 	Left Expr

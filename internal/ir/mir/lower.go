@@ -560,16 +560,6 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		out := &CallValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Callee: lowerValue(lowerCtx, e.Callee), Args: make([]Value, 0, len(e.Args))}
 		out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType, stringifyAnyArgs)...)
 		return out
-	case *hir.ConstructorCallExpr:
-		callee := &NameValue{
-			baseValue: baseValue{Location: e.Loc(), ExprType: &typeinfo.FuncType{Result: &typeinfo.BuiltinType{Name: "void"}}},
-			Path:      append([]string(nil), e.Path...),
-		}
-		out := &CallValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Callee: callee, Args: make([]Value, 0, len(e.Args)), IsConstructor: true}
-		for _, arg := range e.Args {
-			out.Args = append(out.Args, lowerValue(lowerCtx, arg))
-		}
-		return out
 	case *hir.SelectorExpr:
 		if resolved := lowerResolvedName(lowerCtx, e.SourceExpr(), e.Loc(), e.Type()); resolved != nil {
 			return resolved

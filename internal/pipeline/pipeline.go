@@ -421,12 +421,6 @@ func pipelineMethodCandidateKeys(baseName, methodName string) []typeinfo.Receive
 	if baseName == "" || methodName == "" {
 		return nil
 	}
-	if methodName == "~"+baseName {
-		return []typeinfo.ReceiverKey{{Kind: typeinfo.ReceiverPtr, TypeName: baseName}}
-	}
-	if methodName == baseName {
-		return []typeinfo.ReceiverKey{{Kind: typeinfo.ReceiverPtr, TypeName: baseName}}
-	}
 	return []typeinfo.ReceiverKey{
 		{TypeName: baseName},
 		{Kind: typeinfo.ReceiverRef, TypeName: baseName},

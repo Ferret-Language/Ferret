@@ -55,19 +55,3 @@ const (
 	LIGHT_GREEN  COLOR = "\033[38;5;120m"
 	LIGHT_YELLOW COLOR = "\033[38;5;229m"
 )
-
-// list all colors for debug purposes
-// var Colors = []COLOR{
-// 	BLACK, RED, GREEN, YELLOW, BLUE, PURPLE, CYAN, WHITE,
-// 	BRIGHT_RED, BRIGHT_GREEN, BRIGHT_YELLOW, BRIGHT_BLUE, BRIGHT_PURPLE, BRIGHT_CYAN, BRIGHT_WHITE,
-// 	BOLD, BOLD_RED, BOLD_GREEN, BOLD_YELLOW, BOLD_BLUE, BOLD_PURPLE, BOLD_CYAN, BOLD_WHITE,
-// 	ORANGE, BROWN, BRIGHT_BROWN, PINK, TEAL, AQUA, MAGENTA,
-// 	LIGHT_GREY, DARK_GREY, LIGHT_ORANGE, LIGHT_BLUE, LIGHT_GREEN, LIGHT_YELLOW,
-// }
-
-// func PrintAllColors() {
-
-// 	for _, color := range Colors {
-// 		fmt.Printf("%sThis is a sample text in color %s%s\n", color, color, RESET)
-// 	}
-// }

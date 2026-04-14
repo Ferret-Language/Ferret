@@ -782,7 +782,7 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if err != nil {
 		return "", err
 	}
-	if call.IsConstructor || isAggregateType(state, targetType) {
+	if isAggregateType(state, targetType) {
 		if targetName != "" {
 			return lowerOutParamCall(state, qbeLocalName(targetName), call, callee)
 		}

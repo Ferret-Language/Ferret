@@ -2414,34 +2414,6 @@ fn Point::Point(&mut self) {
 	}
 }
 
-func TestTypecheckerRejectsRemovedDestructorSyntax(t *testing.T) {
-	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "main.fer"), `
-type Point struct {
-    X: i32 = 0
-}
-
-fn Point::~Point(*self, x: i32) -> i32 {
-    return x
-}
-`)
-
-	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected removed destructor syntax diagnostic")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if strings.Contains(diag.Message, "special destructor syntax has been removed") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected removed destructor syntax diagnostic, got %#v", result.Diagnostics.Diagnostics())
-	}
-}
-
 func TestTypecheckerAllowsDirectMethodCallNamedLikeType(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

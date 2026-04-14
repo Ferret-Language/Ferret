@@ -576,14 +576,6 @@ func (s *specializer) cloneExpr(expr Expr, bindings map[*typeinfo.TypeParam]type
 		}
 		out.Callee = clonedCallee
 		return &out
-	case *ConstructorCallExpr:
-		out := *ex
-		out.ExprType = s.substituteType(ex.Type(), bindings)
-		out.Args = make([]Expr, 0, len(ex.Args))
-		for _, arg := range ex.Args {
-			out.Args = append(out.Args, s.cloneExpr(arg, bindings))
-		}
-		return &out
 	case *SelectorExpr:
 		out := *ex
 		out.Left = s.cloneExpr(ex.Left, bindings)

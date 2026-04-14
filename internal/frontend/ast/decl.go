@@ -74,25 +74,23 @@ type TypeParam struct {
 func (p *TypeParam) Loc() source.Location { return p.Location }
 
 type FuncDecl struct {
-	Receiver      *Receiver
-	OwnerType     *NamedType
-	IsStatic      bool
-	Name          *Ident
-	IsTest        bool
-	TestName      string
-	IsSynthetic   bool
-	TypeParams    []TypeParam
-	Doc           *CommentGroup
-	Attrs         []Attribute
-	IsUnsafe      bool
-	IsExtern      bool
-	ExternName    string
-	IsConstructor bool
-	IsDestructor  bool
-	Params        []Param
-	Result        TypeExpr
-	Body          *BlockStmt
-	Location      source.Location
+	Receiver    *Receiver
+	OwnerType   *NamedType
+	IsStatic    bool
+	Name        *Ident
+	IsTest      bool
+	TestName    string
+	IsSynthetic bool
+	TypeParams  []TypeParam
+	Doc         *CommentGroup
+	Attrs       []Attribute
+	IsUnsafe    bool
+	IsExtern    bool
+	ExternName  string
+	Params      []Param
+	Result      TypeExpr
+	Body        *BlockStmt
+	Location    source.Location
 }
 
 func (*FuncDecl) declNode()              {}

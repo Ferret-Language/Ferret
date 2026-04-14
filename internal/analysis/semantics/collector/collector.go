@@ -52,21 +52,13 @@ func CollectModule(ctx *context.CompilerContext, mod *context.Module) {
 				continue
 			}
 			if d.Receiver == nil {
-				name := d.Name.Text()
-				if d.IsDestructor {
-					name = "~" + name
-				}
-				sym := symbols.New(name, symbols.SymbolFunc, d)
+				sym := symbols.New(d.Name.Text(), symbols.SymbolFunc, d)
 				sym.Location = d.Name.Loc()
 				declare(ctx, scope, sym)
 				continue
 			}
 			recvKey := receiverKey(d.Receiver.Type)
-			name := d.Name.Text()
-			if d.IsDestructor {
-				name = "~" + name
-			}
-			sym := symbols.New(name, symbols.SymbolMethod, d)
+			sym := symbols.New(d.Name.Text(), symbols.SymbolMethod, d)
 			sym.Location = d.Name.Loc()
 			sym.Receiver = recvKey
 			declareMethod(ctx, methodSets, recvKey, sym)
