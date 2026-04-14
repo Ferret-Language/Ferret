@@ -765,9 +765,6 @@ func (a *analyzer) shouldWarnInsideFunction(fn *ast.FuncDecl) bool {
 	if sym.Kind == symbols.SymbolFunc && sym.Name == "main" && a.mod.IsEntry {
 		return true
 	}
-	if fn.IsConstructor || fn.IsDestructor {
-		return true
-	}
 	return a.usedSymbols[sym.ID] > 0
 }
 

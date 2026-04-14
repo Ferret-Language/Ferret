@@ -18,16 +18,7 @@ func DeclSummary(decl Decl) string {
 			return fmt.Sprintf("test %q", d.TestName)
 		}
 		if d.Receiver != nil {
-			if d.IsConstructor {
-				return fmt.Sprintf("ctor %s", d.Name.Text())
-			}
-			if d.IsDestructor {
-				return fmt.Sprintf("method ~%s", d.Name.Text())
-			}
 			return fmt.Sprintf("method %s", d.Name.Text())
-		}
-		if d.IsDestructor {
-			return fmt.Sprintf("fn ~%s", d.Name.Text())
 		}
 		return fmt.Sprintf("fn %s", d.Name.Text())
 	default:

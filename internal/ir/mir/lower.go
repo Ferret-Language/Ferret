@@ -383,6 +383,9 @@ func lowerCoercedValue(lowerCtx *lowerContext, expr hir.Expr, expected typeinfo.
 	if expr == nil {
 		return nil
 	}
+	if value, ok := lowerStringMethodCoercion(lowerCtx, expr, expected); ok {
+		return value
+	}
 	if methodLinks, concreteType, ok := lowerInterfaceCoercion(lowerCtx, expr.Type(), expected); ok {
 		return &InterfaceValue{
 			baseValue:    baseValue{Location: expr.Loc(), ExprType: expected},
@@ -515,6 +518,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		if builtinLen, ok := lowerBuiltinLenCallValue(lowerCtx, e); ok {
 			return builtinLen
 		}
+		stringifyAnyArgs := lowerIsPrintLikeAnyCall(lowerCtx, e.Callee)
 		// Normalize method calls (instance.Method(...)) to direct function calls
 		// by prepending the receiver as the first argument, e.g. p.Len2() → Len2(p).
 		if sel, ok := e.Callee.(*hir.SelectorExpr); ok {
@@ -526,14 +530,14 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 						Args:      make([]Value, 0, 1+len(e.Args)),
 					}
 					out.Args = append(out.Args, lowerValue(lowerCtx, sel.Left))
-					out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType)...)
+					out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType, stringifyAnyArgs)...)
 					return out
 				}
 				if named := lowerReceiverNamed(sel.Left.Type()); named != nil {
 					receiver := lowerMethodReceiverValue(lowerCtx, sel.Left, e.MethodReceiver)
 					path := lowerMethodSymbolPath(lowerCtx, named, sel.Name)
 					if lowerCtx.lookupMethod != nil {
-						if resolved, ok := lowerCtx.lookupMethod(sel.Left.Type(), sel.Name); ok && len(resolved) > 0 {
+						if resolved, _, ok := lowerCtx.lookupMethod(sel.Left.Type(), sel.Name); ok && len(resolved) > 0 {
 							path = resolved
 						}
 					}
@@ -548,23 +552,13 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 						ReceiverType: e.MethodReceiver,
 					}
 					out.Args = append(out.Args, receiver)
-					out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType)...)
+					out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType, stringifyAnyArgs)...)
 					return out
 				}
 			}
 		}
 		out := &CallValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Callee: lowerValue(lowerCtx, e.Callee), Args: make([]Value, 0, len(e.Args))}
-		out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType)...)
-		return out
-	case *hir.ConstructorCallExpr:
-		callee := &NameValue{
-			baseValue: baseValue{Location: e.Loc(), ExprType: &typeinfo.FuncType{Result: &typeinfo.BuiltinType{Name: "void"}}},
-			Path:      append([]string(nil), e.Path...),
-		}
-		out := &CallValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Callee: callee, Args: make([]Value, 0, len(e.Args)), IsConstructor: true}
-		for _, arg := range e.Args {
-			out.Args = append(out.Args, lowerValue(lowerCtx, arg))
-		}
+		out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType, stringifyAnyArgs)...)
 		return out
 	case *hir.SelectorExpr:
 		if resolved := lowerResolvedName(lowerCtx, e.SourceExpr(), e.Loc(), e.Type()); resolved != nil {
@@ -600,7 +594,7 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 	}
 }
 
-func lowerCallArgs(lowerCtx *lowerContext, loc source.Location, args []hir.Expr, fnType *typeinfo.FuncType) []Value {
+func lowerCallArgs(lowerCtx *lowerContext, loc source.Location, args []hir.Expr, fnType *typeinfo.FuncType, stringifyAnyArgs bool) []Value {
 	unwrapSpread := func(arg hir.Expr) (hir.Expr, bool) {
 		if pref, ok := arg.(*hir.PrefixExpr); ok && pref != nil && pref.Op == "..." {
 			return pref.Right, true
@@ -634,6 +628,12 @@ func lowerCallArgs(lowerCtx *lowerContext, loc source.Location, args []hir.Expr,
 		for i, arg := range args {
 			value, _ := unwrapSpread(arg)
 			if i < len(fnType.Params) {
+				if stringifyAnyArgs {
+					if stringified, ok := lowerStringifiedAnyValue(lowerCtx, value, fnType.Params[i].Type); ok {
+						out = append(out, stringified)
+						continue
+					}
+				}
 				out = append(out, lowerCoercedValue(lowerCtx, value, fnType.Params[i].Type))
 				continue
 			}
@@ -645,6 +645,12 @@ func lowerCallArgs(lowerCtx *lowerContext, loc source.Location, args []hir.Expr,
 	out := make([]Value, 0, len(fnType.Params))
 	for i := 0; i < last && i < len(args); i++ {
 		value, _ := unwrapSpread(args[i])
+		if stringifyAnyArgs {
+			if stringified, ok := lowerStringifiedAnyValue(lowerCtx, value, fnType.Params[i].Type); ok {
+				out = append(out, stringified)
+				continue
+			}
+		}
 		out = append(out, lowerCoercedValue(lowerCtx, value, fnType.Params[i].Type))
 	}
 
@@ -663,6 +669,12 @@ func lowerCallArgs(lowerCtx *lowerContext, loc source.Location, args []hir.Expr,
 	variadicItems := make([]CompositeItem, 0, max(0, len(args)-last))
 	for i := last; i < len(args); i++ {
 		value, _ := unwrapSpread(args[i])
+		if stringifyAnyArgs {
+			if stringified, ok := lowerStringifiedAnyValue(lowerCtx, value, variadicElem); ok {
+				variadicItems = append(variadicItems, CompositeItem{Value: stringified})
+				continue
+			}
+		}
 		variadicItems = append(variadicItems, CompositeItem{
 			Value: lowerCoercedValue(lowerCtx, value, variadicElem),
 		})
@@ -1014,10 +1026,59 @@ func lowerSpecialCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bool) {
 	if c == nil || cast == nil {
 		return nil, false
 	}
+	if value, ok := lowerStringMethodCoercion(c, cast.Left, cast.Type()); ok {
+		return value, true
+	}
 	if value, ok := lowerSliceToRawCastValue(c, cast); ok {
 		return value, true
 	}
 	return lowerRawPartsViewCastValue(c, cast)
+}
+
+func lowerStringMethodCoercion(c *lowerContext, expr hir.Expr, expected typeinfo.Type) (Value, bool) {
+	if expr == nil {
+		return nil, false
+	}
+	if _, ok := expected.(*typeinfo.StringType); !ok {
+		return nil, false
+	}
+	if _, ok := expr.Type().(*typeinfo.StringType); ok {
+		return nil, false
+	}
+
+	if lowerIsInterfaceType(expr.Type()) {
+		receiver := lowerValue(c, expr)
+		return &CallValue{
+			baseValue: baseValue{Location: expr.Loc(), ExprType: expected},
+			Callee: &FieldValue{
+				baseValue:  baseValue{Location: expr.Loc(), ExprType: &typeinfo.FuncType{Result: expected}},
+				Base:       receiver,
+				FieldIndex: -1,
+				MemberName: "String",
+			},
+			Args: []Value{receiver},
+		}, true
+	}
+
+	if lowerReceiverNamed(expr.Type()) == nil {
+		return nil, false
+	}
+	if c == nil || c.lookupMethod == nil {
+		return nil, false
+	}
+	resolved, receiverType, ok := c.lookupMethod(expr.Type(), "String")
+	if !ok || len(resolved) == 0 {
+		return nil, false
+	}
+	receiver := lowerMethodReceiverValue(c, expr, receiverType)
+	return &CallValue{
+		baseValue: baseValue{Location: expr.Loc(), ExprType: expected},
+		Callee: &NameValue{
+			baseValue: baseValue{Location: expr.Loc(), ExprType: &typeinfo.FuncType{Result: expected}},
+			Path:      resolved,
+		},
+		Args: []Value{receiver},
+	}, true
 }
 
 func lowerSliceToRawCastValue(c *lowerContext, cast *hir.CastExpr) (Value, bool) {
@@ -1113,6 +1174,33 @@ func lowerIsForeignLenCall(c *lowerContext, callee hir.Expr) bool {
 	return ok && fn != nil && fn.IsExtern
 }
 
+func lowerIsPrintLikeAnyCall(c *lowerContext, callee hir.Expr) bool {
+	if c == nil || callee == nil || callee.SourceExpr() == nil {
+		return false
+	}
+	resolution, ok := c.lookupResolution(callee.SourceExpr())
+	if !ok || resolution.Kind != binding.ResolutionSymbol || resolution.Symbol == nil {
+		return false
+	}
+	if resolution.Symbol.Name != "print" && resolution.Symbol.Name != "println" {
+		return false
+	}
+	fn, ok := resolution.Symbol.Node.(*ast.FuncDecl)
+	if !ok || fn == nil || len(fn.Params) != 1 || !fn.Params[0].IsVariadic {
+		return false
+	}
+	paramType := fn.Params[0].Type
+	slice, ok := paramType.(*ast.SliceType)
+	if !ok || slice == nil {
+		return false
+	}
+	named, ok := slice.Inner.(*ast.NamedType)
+	if !ok || named == nil || len(named.Path) != 1 {
+		return false
+	}
+	return named.Path[0] == "Any"
+}
+
 func lowerArrayLen(typ typeinfo.Type) (int64, bool) {
 	arrayType, ok := typ.(*typeinfo.ArrayType)
 	if !ok || arrayType == nil {
@@ -1142,6 +1230,36 @@ func lowerResolvedName(c *lowerContext, source ast.Expr, loc source.Location, ty
 		}
 	}
 	return out
+}
+
+func lowerStringifiedAnyValue(c *lowerContext, expr hir.Expr, expected typeinfo.Type) (Value, bool) {
+	if expr == nil || !lowerIsEmptyInterfaceType(expected) {
+		return nil, false
+	}
+	strValue, ok := lowerStringMethodCoercion(c, expr, &typeinfo.StringType{})
+	if !ok {
+		return nil, false
+	}
+	return &InterfaceValue{
+		baseValue:    baseValue{Location: expr.Loc(), ExprType: expected},
+		Value:        strValue,
+		ConcreteType: &typeinfo.StringType{},
+	}, true
+}
+
+func lowerIsEmptyInterfaceType(typ typeinfo.Type) bool {
+	switch t := typ.(type) {
+	case *typeinfo.InterfaceType:
+		return t != nil && len(t.OrderedMethods) == 0
+	case *typeinfo.NamedType:
+		if t == nil || t.Decl == nil {
+			return false
+		}
+		iface, ok := t.Decl.Type.(*ast.InterfaceType)
+		return ok && iface != nil && len(iface.Methods) == 0
+	default:
+		return false
+	}
 }
 
 func lowerResolvedScalarValue(resolution *binding.Resolution, loc source.Location, typ typeinfo.Type) Value {
@@ -1401,7 +1519,7 @@ func lowerInterfaceCoercion(lowerCtx *lowerContext, source, target typeinfo.Type
 			continue
 		}
 		name := method.Name.Text()
-		path, ok := lowerCtx.lookupMethod(source, name)
+		path, _, ok := lowerCtx.lookupMethod(source, name)
 		if !ok || len(path) == 0 {
 			return nil, nil, false
 		}

@@ -108,14 +108,8 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 	} else if p.hasAttachedOwnerAhead() {
 		owner = p.parseAttachedOwner()
 	}
-	if p.at(tokens.TILDE) {
-		loc := p.locOfToken(p.current())
-		p.advance()
-		p.errorAt(loc, "special destructor syntax has been removed; use an ordinary method name like `Drop`")
-	}
 	nameTok := p.expect(tokens.IDENT, "expected function or method name")
 	typeParams := p.parseTypeParams()
-	isConstructor := false
 	if owner != nil {
 		recv, params, isStaticMethod = p.parseAttachedMethodParams(owner)
 	} else {
@@ -139,22 +133,20 @@ func (p *Parser) parseFuncDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 		p.errorHere("expected function body")
 	}
 	return &ast.FuncDecl{
-		Receiver:      recv,
-		OwnerType:     owner,
-		IsStatic:      isStaticMethod,
-		Name:          &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
-		TypeParams:    typeParams,
-		Doc:           doc,
-		Attrs:         attrs,
-		IsUnsafe:      isUnsafe,
-		IsExtern:      isExtern,
-		ExternName:    externName,
-		IsConstructor: isConstructor,
-		IsDestructor:  false,
-		Params:        params,
-		Result:        result,
-		Body:          body,
-		Location:      p.locFrom(start),
+		Receiver:   recv,
+		OwnerType:  owner,
+		IsStatic:   isStaticMethod,
+		Name:       &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
+		TypeParams: typeParams,
+		Doc:        doc,
+		Attrs:      attrs,
+		IsUnsafe:   isUnsafe,
+		IsExtern:   isExtern,
+		ExternName: externName,
+		Params:     params,
+		Result:     result,
+		Body:       body,
+		Location:   p.locFrom(start),
 	}
 }
 

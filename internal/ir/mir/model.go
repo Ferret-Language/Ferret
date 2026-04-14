@@ -251,10 +251,9 @@ func (*PostfixValue) valueNode() {}
 
 type CallValue struct {
 	baseValue
-	Callee        Value
-	Args          []Value
-	ReceiverType  typeinfo.Type // non-nil when this is a normalized method call; Args[0] is the receiver
-	IsConstructor bool
+	Callee       Value
+	Args         []Value
+	ReceiverType typeinfo.Type // non-nil when this is a normalized method call; Args[0] is the receiver
 }
 
 func (*CallValue) valueNode() {}

@@ -1956,31 +1956,6 @@ fn run() -> i32 {
 	}
 }
 
-func TestParseImportAliasAndRejectRemovedDestructorSyntax(t *testing.T) {
-	src := `
-import "json/parser" as json
-
-type Conn struct {}
-
-fn Conn::Conn(*self, fd: i32) {
-}
-
-fn Conn::~Conn(*self) {
-}
-`
-
-	mod, diag := parseTestModule(t, src)
-	if len(mod.Imports) != 1 || mod.Imports[0].Alias.Text() != "json" {
-		t.Fatalf("expected aliased import, got %#v", mod.Imports)
-	}
-	if got := diag.Diagnostics(); len(got) == 0 {
-		t.Fatal("expected removed destructor syntax diagnostic")
-	}
-	if !hasDiagnosticMessage(diag, "special destructor syntax has been removed") {
-		t.Fatalf("expected removed destructor syntax diagnostic, got %v", diag.Diagnostics())
-	}
-}
-
 func TestParseElseIfDeferLockUnsafeAndBuiltins(t *testing.T) {
 	src := `
 fn run(m: Mutex, cond: bool) -> void {

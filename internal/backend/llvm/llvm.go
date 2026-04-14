@@ -2551,16 +2551,6 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if err != nil {
 		return "", err
 	}
-	if call.IsConstructor {
-		if targetName != "" {
-			if local := becommon.FindLocalByName(state.fn, targetName); local != nil {
-				if agg, ok := state.aggLocals[local.ID]; ok {
-					return lowerConstructorCall(state, llvmLocalName(agg.PtrName), call, callee)
-				}
-			}
-		}
-		return lowerConstructorCallDiscard(state, targetType, call, callee)
-	}
 
 	// Inline builtins: string_ptr and string_len have been removed.
 	// String literals are now *i8 — no special callee interception needed.
@@ -2984,64 +2974,11 @@ func lowerAggregateCall(state *moduleState, agg *aggregateLocal, callee, argsStr
 	return strings.Join(lines, "\n"), nil
 }
 
-func lowerConstructorCall(state *moduleState, dstPtr string, call *mir.CallValue, callee string) (string, error) {
-	args := make([]string, 0, len(call.Args)+1)
-	args = append(args, fmt.Sprintf("ptr %s", dstPtr))
-	for _, arg := range call.Args {
-		if isAggregateType(state, arg.Type()) {
-			typeName, err := llvmABITypeName(state, arg.Type())
-			if err != nil {
-				return "", err
-			}
-			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), arg.Type())
-			if err != nil {
-				return "", err
-			}
-			aval, err := lowerValue(state, arg)
-			if err != nil {
-				return "", err
-			}
-			args = append(args, fmt.Sprintf("ptr byval(%s) align %d %s", typeName, align, aval))
-		} else {
-			atype, err := llvmBaseType(arg.Type())
-			if err != nil {
-				return "", err
-			}
-			aval, err := lowerValue(state, arg)
-			if err != nil {
-				return "", err
-			}
-			args = append(args, fmt.Sprintf("%s %s", atype, aval))
-		}
-	}
-	return fmt.Sprintf("call void @%s(%s)", callee, strings.Join(args, ", ")), nil
-}
-
 func lowerImplicitConstructorCall(state *moduleState, dstPtr string, path []string) (string, error) {
 	if len(path) == 0 {
 		return "", nil
 	}
 	return fmt.Sprintf("call void @%s(ptr %s)", llvmSymbol(state, path), dstPtr), nil
-}
-
-func lowerConstructorCallDiscard(state *moduleState, targetType typeinfo.Type, call *mir.CallValue, callee string) (string, error) {
-	if targetType == nil || !isAggregateType(state, targetType) {
-		return "", fmt.Errorf("constructor call requires aggregate target")
-	}
-	typeName, err := llvmABITypeName(state, targetType)
-	if err != nil {
-		return "", err
-	}
-	_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), targetType)
-	if err != nil {
-		return "", err
-	}
-	tmp := freshTemp(state, "ctor_tmp")
-	callText, err := lowerConstructorCall(state, tmp, call, callee)
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%s = alloca %s, align %d\n%s", tmp, typeName, align, callText), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -3334,9 +3271,6 @@ func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *mir.
 	callee, err := lowerCallee(state, call.Callee)
 	if err != nil {
 		return "", err
-	}
-	if call.IsConstructor {
-		return lowerConstructorCall(state, llvmLocalName(agg.PtrName), call, callee)
 	}
 	args := make([]string, 0, len(call.Args))
 	externLinked := false
@@ -4355,27 +4289,6 @@ func lowerTerm(state *moduleState, term mir.Terminator) (string, error) {
 		}
 		if t.Value == nil {
 			return "ret void", nil
-		}
-		if call, ok := t.Value.(*mir.CallValue); ok && call.IsConstructor {
-			typeName, err := llvmABITypeName(state, call.Type())
-			if err != nil {
-				return "", err
-			}
-			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), call.Type())
-			if err != nil {
-				return "", err
-			}
-			callee, err := lowerCallee(state, call.Callee)
-			if err != nil {
-				return "", err
-			}
-			tmpPtr := freshTemp(state, "ctor_ret")
-			callText, err := lowerConstructorCall(state, tmpPtr, call, callee)
-			if err != nil {
-				return "", err
-			}
-			tmpVal := freshTemp(state, "retval")
-			return fmt.Sprintf("%s = alloca %s, align %d\n%s\n%s = load %s, ptr %s\nret %s %s", tmpPtr, typeName, align, callText, tmpVal, typeName, tmpPtr, typeName, tmpVal), nil
 		}
 		// Aggregate return: load struct value then return by value.
 		if isAggregateType(state, t.Value.Type()) {

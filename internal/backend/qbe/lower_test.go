@@ -1603,6 +1603,53 @@ fn main() -> void {
 	}
 }
 
+func TestLowerStringMethodCoercionToStringToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn takes(text: str) -> str {
+    return text
+}
+
+fn main() -> str {
+    let n: Name = .{ .value = 1 }
+    let assigned: str = n
+    let casted = n as str
+    _ = assigned
+    _ = casted
+    return takes(n)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"function $main__Name__String(",
+		"call $main__Name__String(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerVariadicPrintToQBE(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -1798,6 +1845,86 @@ fn main() -> void {
 		"type :local__main__Person = { w, b 4, b 16 }",
 		"blit %_t1, %_addr2, 16",
 		"call $ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerPrintUsesStringMethodToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return self.value as str
+}
+
+fn main() -> void {
+    let n: Name = .{ .value = 7 }
+    print(n)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe stringer print: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"function $main__Name__String(",
+		"call $main__Name__String(",
+		"call $ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerPrintlnUsesStringMethodToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Player struct {
+    name: str = "Fuad"
+}
+
+fn Player::String(self) -> str {
+    return "Player_Fuad{}"
+}
+
+fn main() -> void {
+    let p = .Player{}
+    println(p)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("unexpected qbe error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower qbe println stringer: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"function $main__Player__String(",
+		"call $main__Player__String(",
+		"call $global__println(",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)
