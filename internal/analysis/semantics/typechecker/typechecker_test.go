@@ -1697,6 +1697,78 @@ fn main() -> void {
 	}
 }
 
+func TestTypecheckerAllowsStringMethodForStrConsumers(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn takes(text: str) -> str {
+    return text
+}
+
+fn main() -> str {
+    let n: Name = .{ .value = 1 }
+    let assigned: str = n
+    let casted = n as str
+    _ = assigned
+    _ = casted
+    return takes(n)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsAttachedStringMethodForStrConsumers(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Player struct {
+    name: str = "Fuad"
+}
+
+fn Player::String() -> str {
+    return "Player_Fuad{}"
+}
+
+fn takes(text: str) -> str {
+    return text
+}
+
+fn main() -> str {
+    let p: Player = .{}
+    let assigned: str = p
+    let casted = p as str
+    _ = assigned
+    _ = casted
+    return takes(p)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected type mismatch diagnostics for attached String() coercion")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrTypeMismatch, result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsConcreteTypeAssignmentToInterface(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

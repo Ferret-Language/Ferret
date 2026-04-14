@@ -143,11 +143,9 @@ func (p *Pipeline) scheduleParseFile(resolved context.ResolvedImport, loc *sourc
 	if _, loaded := p.seen.LoadOrStore(resolved.Key, struct{}{}); loaded {
 		return
 	}
-	p.wg.Add(1)
-	go func() {
-		defer p.wg.Done()
+	p.wg.Go(func() {
 		p.parseFile(resolved, loc)
-	}()
+	})
 }
 
 // parseFile lexes, parses, and symbol-collects one module, then schedules its
@@ -313,17 +311,17 @@ func (p *Pipeline) runSemanticBackPasses(mod *context.Module) {
 }
 
 func (p *Pipeline) lookupMethodPath(currentImportPath string) hir.MethodLookup {
-	return func(receiver typeinfo.Type, methodName string) ([]string, bool) {
+	return func(receiver typeinfo.Type, methodName string) (path []string, receiverType typeinfo.Type, ok bool) {
 		if p == nil || p.ctx == nil || methodName == "" {
-			return nil, false
+			return nil, nil, false
 		}
 		named, ok := pipelineBaseNamed(receiver)
 		if !ok || named == nil {
-			return nil, false
+			return nil, nil, false
 		}
 		owner, ok := p.ctx.GetModule(named.ModuleKey)
 		if !ok || owner == nil || owner.MethodSets == nil {
-			return nil, false
+			return nil, nil, false
 		}
 		for _, key := range pipelineMethodCandidateKeys(named.Name, methodName) {
 			methods := owner.MethodSets[key]
@@ -335,28 +333,28 @@ func (p *Pipeline) lookupMethodPath(currentImportPath string) hir.MethodLookup {
 				continue
 			}
 			leaf := pipelineMethodLinkLeaf(sym)
-			return pipelineMethodPath(owner.ImportPath, currentImportPath, leaf), true
+			return pipelineMethodPath(owner.ImportPath, currentImportPath, leaf), typeinfo.ReceiverTypeFromKey(named, key), true
 		}
-		return nil, false
+		return nil, nil, false
 	}
 }
 
 func (p *Pipeline) lookupLoweredMethodPath(currentImportPath string) hir.MethodLookup {
-	return func(receiver typeinfo.Type, methodName string) ([]string, bool) {
+	return func(receiver typeinfo.Type, methodName string) (path []string, receiverType typeinfo.Type, ok bool) {
 		if p == nil || p.ctx == nil || methodName == "" {
-			return nil, false
+			return nil, nil, false
 		}
 		named, ok := pipelineBaseNamed(receiver)
 		if !ok || named == nil {
-			return nil, false
+			return nil, nil, false
 		}
 		owner, ok := p.ctx.GetModule(named.ModuleKey)
 		if !ok || owner == nil || owner.LoweredHIR == nil {
-			return nil, false
+			return nil, nil, false
 		}
 		var method *hir.Func
 		for _, fn := range owner.LoweredHIR.Functions {
-			if fn == nil || fn.OwnerType != named.Name {
+			if fn == nil || fn.OwnerType != named.Name || fn.IsStatic {
 				continue
 			}
 			if fn.Name == methodName {
@@ -368,13 +366,17 @@ func (p *Pipeline) lookupLoweredMethodPath(currentImportPath string) hir.MethodL
 			}
 		}
 		if method == nil {
-			return nil, false
+			return nil, nil, false
 		}
 		leaf := method.Name
 		if method.OwnerType != "" {
 			leaf = method.OwnerType + "__" + method.Name
 		}
-		return pipelineMethodPath(owner.ImportPath, currentImportPath, leaf), true
+		var recvType typeinfo.Type
+		if method.Receiver != nil && method.Receiver.Type != nil {
+			recvType = method.Receiver.Type
+		}
+		return pipelineMethodPath(owner.ImportPath, currentImportPath, leaf), recvType, true
 	}
 }
 

@@ -3070,8 +3070,32 @@ func (c *checker) isExplicitStringCast(target, source typeinfo.Type) bool {
 	if c.isStringType(target) && (c.isByteSliceType(source) || c.isCharSliceType(source) || typeinfo.IsNumeric(source)) {
 		return true
 	}
+	if c.isStringMethodCoercion(target, source) {
+		return true
+	}
 	if c.isStringType(source) && (c.isByteSliceType(target) || c.isCharSliceType(target)) {
 		return true
+	}
+	return false
+}
+
+func (c *checker) isStringMethodCoercion(target, source typeinfo.Type) bool {
+	if !c.isStringType(target) || source == nil {
+		return false
+	}
+	if c.isStringType(source) {
+		return false
+	}
+	if iface, ok := c.interfaceView(source); ok && iface != nil {
+		method := iface.Methods["String"]
+		if method == nil || iface.MethodStatic["String"] || iface.MethodReceivers["String"] != typeinfo.ReceiverValue {
+			return false
+		}
+		return !method.IsUnsafe && len(method.Params) == 0 && typeinfo.Equal(method.Result, &typeinfo.StringType{})
+	}
+	_, method := c.lookupMethodWithReceiver(source, typeinfo.ReceiverValue, "String")
+	if method != nil {
+		return !method.IsUnsafe && len(method.Params) == 0 && typeinfo.Equal(method.Result, &typeinfo.StringType{})
 	}
 	return false
 }
@@ -3651,6 +3675,9 @@ func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Ty
 
 func (c *checker) assignable(expected, got typeinfo.Type) bool {
 	if typeinfo.Assignable(expected, got) {
+		return true
+	}
+	if c.isStringMethodCoercion(expected, got) {
 		return true
 	}
 	if errUnion, ok := c.underlying(expected).(*typeinfo.ErrorUnionType); ok && errUnion != nil {

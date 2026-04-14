@@ -87,6 +87,7 @@ For behavior changes:
 - Add or update focused tests near the changed subsystem.
 - Add regression tests for bugs that previously failed.
 - Validate both relevant backends when backend behavior is affected.
+- run build.sh (or other platform specific script) to bundle all compiler libs and compiler. Compiler will be packed in `build/core/bin/`
 
 Minimum validation before commit:
 - `gofmt` on touched Go files

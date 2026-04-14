@@ -579,6 +579,86 @@ fn main() -> void {
 	}
 }
 
+func TestLowerPrintUsesStringMethodToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return self.value as str
+}
+
+fn main() -> void {
+    let n: Name = .{ .value = 7 }
+    print(n)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm stringer print: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"@main__Name__String(",
+		"call { ptr, i64 } @main__Name__String(",
+		"call void @ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerPrintlnUsesStringMethodToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Player struct {
+    name: str = "Fuad"
+}
+
+fn Player::String(self) -> str {
+    return "Player_Fuad{}"
+}
+
+fn main() -> void {
+    let p = .Player{}
+    println(p)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm println stringer: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"@main__Player__String(",
+		"call { ptr, i64 } @main__Player__String(",
+		"call void @global__println(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerTaggedOptionalToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -1250,6 +1330,53 @@ fn main() -> void {
 		"declare { ptr, i64 } @ferret_global_i64_str(i64)",
 		"call { ptr, i64 } @ferret_global_i64_str(",
 		"call void @ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerStringMethodCoercionToStringToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn takes(text: str) -> str {
+    return text
+}
+
+fn main() -> str {
+    let n: Name = .{ .value = 1 }
+    let assigned: str = n
+    let casted = n as str
+    _ = assigned
+    _ = casted
+    return takes(n)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"@main__Name__String(",
+		"call { ptr, i64 } @main__Name__String(",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)

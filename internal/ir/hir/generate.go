@@ -10,7 +10,7 @@ import (
 	"fmt"
 )
 
-type MethodLookup func(receiver typeinfo.Type, methodName string) ([]string, bool)
+type MethodLookup func(receiver typeinfo.Type, methodName string) (path []string, receiverType typeinfo.Type, ok bool)
 
 type generator struct {
 	key          string
