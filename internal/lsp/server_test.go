@@ -15,11 +15,9 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
-	projectpkg "compiler/internal/core/project"
 	"compiler/internal/core/source"
 	compiler "compiler/internal/driver"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/prelude"
 	"compiler/internal/tokens"
 )
 
@@ -617,8 +615,6 @@ func TestDefinitionCrossModuleFunction(t *testing.T) {
 }
 
 func TestHoverWorksInsideStdlibFile(t *testing.T) {
-	restore := usePackagedLibsForTest(t)
-	defer restore()
 
 	dir, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -661,8 +657,6 @@ func TestHoverWorksInsideStdlibFile(t *testing.T) {
 }
 
 func TestDefinitionWorksInsideStdlibFile(t *testing.T) {
-	restore := usePackagedLibsForTest(t)
-	defer restore()
 
 	dir, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -1395,8 +1389,6 @@ func TestHoverFileCacheReparsesAfterDependencyChange(t *testing.T) {
 }
 
 func TestLSPKeepsProjectResolutionAndInvalidationProjectLocal(t *testing.T) {
-	restore := usePackagedLibsForTest(t)
-	defer restore()
 
 	write := func(path, content string) {
 		t.Helper()
@@ -1546,8 +1538,6 @@ name = "pkgB"
 }
 
 func TestHandleDidChangeWatchedFilesInvalidatesProjectLocalDependents(t *testing.T) {
-	restore := usePackagedLibsForTest(t)
-	defer restore()
 
 	write := func(path, content string) {
 		t.Helper()
@@ -2352,8 +2342,6 @@ func TestHoverFunctionCallShowsNamedSignature(t *testing.T) {
 }
 
 func TestHoverBuiltinCallsShowFunctionSignatures(t *testing.T) {
-	restore := usePackagedLibsForTest(t)
-	defer restore()
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
@@ -3899,7 +3887,7 @@ func findPosition(text, needle string) (int, int, bool) {
 	return 0, 0, false
 }
 
-func usePackagedLibsForTest(t *testing.T) func() {
+func usePackagedLibsForTest(t *testing.T) {
 	t.Helper()
 
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
@@ -3917,15 +3905,6 @@ func usePackagedLibsForTest(t *testing.T) func() {
 	execPath := filepath.Join(bundleRoot, "bin", "ferret")
 	if err := os.MkdirAll(filepath.Dir(execPath), 0o755); err != nil {
 		t.Fatalf("mkdir bundle bin: %v", err)
-	}
-
-	oldProjectExecutablePath := projectpkg.ExecutablePath
-	oldPreludeExecutablePath := prelude.ExecutablePath
-	projectpkg.ExecutablePath = func() (string, error) { return execPath, nil }
-	prelude.ExecutablePath = func() (string, error) { return execPath, nil }
-	return func() {
-		projectpkg.ExecutablePath = oldProjectExecutablePath
-		prelude.ExecutablePath = oldPreludeExecutablePath
 	}
 }
 

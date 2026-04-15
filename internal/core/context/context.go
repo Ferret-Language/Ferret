@@ -13,8 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	cfg "compiler/internal/analysis/cfg/model"
-	layout "compiler/internal/analysis/layout/model"
+	"compiler/internal/analysis/cfg/model"
+	"compiler/internal/analysis/layout/model"
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/table"
@@ -27,7 +27,7 @@ import (
 	"compiler/internal/tokens"
 )
 
-const STD_LIB_DEV 	= "ferret_libs_dev"
+const STD_LIB_DEV = "ferret_libs_dev"
 
 type Config struct {
 	RootDir         string
@@ -96,7 +96,7 @@ type CompilerContext struct {
 }
 
 func New(rootDir, extension string, diag *diagnostics.DiagnosticBag) *CompilerContext {
-	stdlibPath := findStdlibRootIfTest()
+	stdlibPath := FindStdlibRoot()
 	return NewWithConfig(Config{
 		RootDir:         filepath.Clean(rootDir),
 		Extension:       extension,
@@ -105,18 +105,73 @@ func New(rootDir, extension string, diag *diagnostics.DiagnosticBag) *CompilerCo
 	}, diag)
 }
 
-func findStdlibRootIfTest() string {
-	if !testing.Testing() {
+func FindStdlibRoot() string {
+	compilerDir := ""
+	if testing.Testing() {
+		compilerDir = resolveCompilerRootFromContextFile()
+	}
+	return resolvePreferredPath(
+		compilerDir,
+		filepath.Join(STD_LIB_DEV, "std"),
+		filepath.Join("..", "libs", "std"),
+		true,
+	)
+}
+
+func ResolveGlobalPreludePath() string {
+	compilerDir := ""
+	if testing.Testing() {
+		compilerDir = resolveCompilerRootFromContextFile()
+	}
+	return resolvePreferredPath(
+		compilerDir,
+		filepath.Join(STD_LIB_DEV, "global.fer"),
+		filepath.Join("..", "libs", "global.fer"),
+		false,
+	)
+}
+
+func resolvePreferredPath(
+	compilerDir string,
+	devRelativePath string,
+	bundleRelativePath string,
+	wantDir bool,
+) string {
+	if compilerDir != "" {
+		candidate := filepath.Clean(filepath.Join(compilerDir, devRelativePath))
+		if pathExistsWithType(candidate, wantDir) {
+			return candidate
+		}
+	}
+
+	execPath, err := os.Executable()
+	if err != nil {
 		return ""
 	}
-	_, filename, _, _ := runtime.Caller(0)
-	// context.go -> context/ -> core/ -> internal/ -> compiler/
-	compilerDir := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filename))))
-	candidate := filepath.Clean(filepath.Join(compilerDir, STD_LIB_DEV, "std"))
-	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+	execDir := filepath.Dir(execPath)
+	candidate := filepath.Clean(filepath.Join(execDir, bundleRelativePath))
+	if pathExistsWithType(candidate, wantDir) {
 		return candidate
 	}
+
 	return ""
+}
+
+func pathExistsWithType(path string, wantDir bool) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir() == wantDir
+}
+
+func resolveCompilerRootFromContextFile() string {
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		return ""
+	}
+	// context.go -> context/ -> core/ -> internal/ -> compiler/
+	return filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filename))))
 }
 
 func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext {

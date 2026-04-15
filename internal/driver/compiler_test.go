@@ -10,9 +10,7 @@ import (
 
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
-	projectpkg "compiler/internal/core/project"
 	"compiler/internal/frontend/ast"
-	"compiler/internal/prelude"
 )
 
 func setIDEExecutablePaths(t *testing.T, root string) {
@@ -21,14 +19,6 @@ func setIDEExecutablePaths(t *testing.T, root string) {
 	mustWrite(t, execPath, "")
 	mustWrite(t, filepath.Join(root, "bundle", "libs", "global.fer"), ``)
 	mustWrite(t, filepath.Join(root, "bundle", "libs", "std", "io.fer"), ``)
-	oldProjectExecutablePath := projectpkg.ExecutablePath
-	oldPreludeExecutablePath := prelude.ExecutablePath
-	projectpkg.ExecutablePath = func() (string, error) { return execPath, nil }
-	prelude.ExecutablePath = func() (string, error) { return execPath, nil }
-	t.Cleanup(func() {
-		projectpkg.ExecutablePath = oldProjectExecutablePath
-		prelude.ExecutablePath = oldPreludeExecutablePath
-	})
 }
 
 func TestParsePathResolvesDependencyAliasFromManifest(t *testing.T) {
@@ -270,7 +260,7 @@ fn main() -> void {
 }
 
 func TestParsePathTypechecksStdStringWriteMethod(t *testing.T) {
-	root := t.TempDir()	
+	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/string"
 
 fn main() -> void {

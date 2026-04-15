@@ -26,12 +26,6 @@ name = "json"
 		t.Fatal(err)
 	}
 
-	oldExecutablePath := ExecutablePath
-	ExecutablePath = func() (string, error) {
-		return filepath.Join(pkgRoot, "bin", "ferret"), nil
-	}
-	defer func() { ExecutablePath = oldExecutablePath }()
-
 	ws, err := Load(root, ".fer")
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)

@@ -11,7 +11,7 @@ import (
 )
 
 func TestUsageWarnsUnusedImport(t *testing.T) {
-	root := t.TempDir()	
+	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "main.fer"), `import "std/io"
 
 fn main() -> i32 {

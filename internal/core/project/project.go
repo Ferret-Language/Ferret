@@ -4,14 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
-	"testing"
 
 	"compiler/internal/core/context"
 	"compiler/internal/core/manifest"
 )
-
-var ExecutablePath = os.Executable
 
 type Workspace struct {
 	RootDir   string
@@ -37,7 +33,7 @@ func Load(startPath string, extension string) (*Workspace, error) {
 		if filepath.Ext(absStart) != "" {
 			root = filepath.Dir(absStart)
 		}
-		
+
 		stdlibRoot, stdErr := resolveStdlibRoot(root)
 		if stdErr != nil {
 			return nil, stdErr
@@ -143,32 +139,8 @@ func resolveRemotePackage(cachePath string, lock *manifest.Lockfile, repoName, v
 
 // resolveStdlibRoot finds the packaged stdlib.
 //
-// In test mode, resolves to the compiler source tree's ferret_libs_dev/std.
-// Tests do not need to create mock stdlib fixtures.
-//
-// In production, resolves to the bundled stdlib beside the binary:
-// Layout: <bundle>/bin/ferret -> <bundle>/libs/std
-//
 // Returns empty string if stdlib cannot be found (not an error; some code paths don't need it).
 func resolveStdlibRoot(projectRoot string) (string, error) {
-	if testing.Testing() {
-		_, filename, _, _ := runtime.Caller(0)
-		// project.go -> project/ -> core/ -> internal/ -> compiler/
-		compilerDir := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filename))))
-		candidate := filepath.Clean(filepath.Join(compilerDir, context.STD_LIB_DEV, "std"))
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate, nil
-		}
-		return "", nil
-	}
-
-	if execPath, err := ExecutablePath(); err == nil {
-		execDir := filepath.Dir(execPath)
-		candidate := filepath.Clean(filepath.Join(execDir, "..", "libs", "std"))
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate, nil
-		}
-	}
 	_ = projectRoot
-	return "", nil
+	return context.FindStdlibRoot(), nil
 }

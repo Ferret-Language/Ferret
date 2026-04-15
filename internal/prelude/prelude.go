@@ -3,8 +3,6 @@ package prelude
 import (
 	"os"
 	"path/filepath"
-	"runtime"
-	"testing"
 
 	"compiler/internal/analysis/semantics/collector"
 	"compiler/internal/analysis/semantics/resolver"
@@ -16,8 +14,6 @@ import (
 )
 
 const globalModuleKey = "builtin:global"
-
-var ExecutablePath = os.Executable
 
 func Load(ctx *context.CompilerContext) error {
 	if ctx == nil || ctx.Prelude != nil {
@@ -65,22 +61,5 @@ func findGlobalPrelude(ctx *context.CompilerContext) (string, error) {
 		}
 	}
 
-	if testing.Testing() {
-		_, filename, _, _ := runtime.Caller(0)
-		// prelude.go -> prelude/ -> internal/ -> compiler/
-		compilerDir := filepath.Dir(filepath.Dir(filepath.Dir(filename)))
-		candidate := filepath.Clean(filepath.Join(compilerDir, context.STD_LIB_DEV, "global.fer"))
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-
-	if execPath, err := ExecutablePath(); err == nil {
-		execDir := filepath.Dir(execPath)
-		candidate := filepath.Clean(filepath.Join(execDir, "..", "libs", "global.fer"))
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-	return "", nil
+	return context.ResolveGlobalPreludePath(), nil
 }

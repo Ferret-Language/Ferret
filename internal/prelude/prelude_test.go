@@ -33,9 +33,6 @@ fn recover() -> str;
 	if err := os.WriteFile(global, []byte(preludeSrc), 0o644); err != nil {
 		t.Fatalf("write prelude file: %v", err)
 	}
-	oldExecutablePath := ExecutablePath
-	ExecutablePath = func() (string, error) { return execPath, nil }
-	defer func() { ExecutablePath = oldExecutablePath }()
 
 	ctx := context.New(root, ".fer", diagnostics.NewDiagnosticBag(""))
 	if err := Load(ctx); err != nil {
@@ -83,9 +80,6 @@ fn recover() -> str;
 	if err := os.WriteFile(global, []byte(preludeSrc), 0o644); err != nil {
 		t.Fatalf("write prelude file: %v", err)
 	}
-	oldExecutablePath := ExecutablePath
-	ExecutablePath = func() (string, error) { return execPath, nil }
-	defer func() { ExecutablePath = oldExecutablePath }()
 
 	ctx := context.New(root, ".fer", diagnostics.NewDiagnosticBag(""))
 	if err := Load(ctx); err != nil {
@@ -154,9 +148,6 @@ fn println(values: ...Any) {
 	if err := os.WriteFile(global, []byte(preludeSrc), 0o644); err != nil {
 		t.Fatalf("write prelude file: %v", err)
 	}
-	oldExecutablePath := ExecutablePath
-	ExecutablePath = func() (string, error) { return execPath, nil }
-	defer func() { ExecutablePath = oldExecutablePath }()
 
 	ctx := context.New(root, ".fer", diagnostics.NewDiagnosticBag(""))
 	if err := Load(ctx); err != nil {
