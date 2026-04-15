@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"testing"
 
 	cfg "compiler/internal/analysis/cfg/model"
 	layout "compiler/internal/analysis/layout/model"
@@ -25,6 +26,8 @@ import (
 	"compiler/internal/ir/mir"
 	"compiler/internal/tokens"
 )
+
+const STD_LIB_DEV 	= "ferret_libs_dev"
 
 type Config struct {
 	RootDir         string
@@ -93,11 +96,27 @@ type CompilerContext struct {
 }
 
 func New(rootDir, extension string, diag *diagnostics.DiagnosticBag) *CompilerContext {
+	stdlibPath := findStdlibRootIfTest()
 	return NewWithConfig(Config{
 		RootDir:         filepath.Clean(rootDir),
 		Extension:       extension,
 		DependencyRoots: make(map[string]string),
+		StdlibRoot:      stdlibPath,
 	}, diag)
+}
+
+func findStdlibRootIfTest() string {
+	if !testing.Testing() {
+		return ""
+	}
+	_, filename, _, _ := runtime.Caller(0)
+	// context.go -> context/ -> core/ -> internal/ -> compiler/
+	compilerDir := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filename))))
+	candidate := filepath.Clean(filepath.Join(compilerDir, STD_LIB_DEV, "std"))
+	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+		return candidate
+	}
+	return ""
 }
 
 func NewWithConfig(cfg Config, diag *diagnostics.DiagnosticBag) *CompilerContext {

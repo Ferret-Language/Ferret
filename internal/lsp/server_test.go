@@ -624,7 +624,7 @@ func TestHoverWorksInsideStdlibFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}
-	path := filepath.Join(dir, "ferret_libs_dev", "std", "mem.fer")
+	path := filepath.Join(dir, context.STD_LIB_DEV, "std", "mem.fer")
 	srcBytes, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read stdlib source: %v", err)
@@ -668,7 +668,7 @@ func TestDefinitionWorksInsideStdlibFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}
-	path := filepath.Join(dir, "ferret_libs_dev", "std", "mem.fer")
+	path := filepath.Join(dir, context.STD_LIB_DEV, "std", "mem.fer")
 	srcBytes, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("failed to read stdlib source: %v", err)
@@ -3906,7 +3906,7 @@ func usePackagedLibsForTest(t *testing.T) func() {
 	if err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}
-	srcRoot := filepath.Join(repoRoot, "ferret_libs_dev")
+	srcRoot := filepath.Join(repoRoot, context.STD_LIB_DEV)
 
 	bundleRoot := filepath.Join(t.TempDir(), "bundle")
 	libsRoot := filepath.Join(bundleRoot, "libs")

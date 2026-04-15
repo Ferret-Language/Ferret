@@ -13,6 +13,7 @@ import (
 	"compiler/internal/backend"
 	"compiler/internal/backend/qbe"
 	"compiler/internal/core/abi"
+	"compiler/internal/core/context"
 )
 
 func main() {
@@ -71,7 +72,7 @@ func bundleCore(root, bundleDir string, bundle32Bit bool) error {
 		}
 	}
 
-	if err := syncFerretLibs(filepath.Join(root, "ferret_libs_dev"), libsDir); err != nil {
+	if err := syncFerretLibs(filepath.Join(root, context.STD_LIB_DEV), libsDir); err != nil {
 		return err
 	}
 	if err := buildRuntimeLib(filepath.Join(root, "runtime"), libsDir, 0); err != nil {
@@ -403,7 +404,7 @@ func resetDir(path string) error {
 
 func syncFerretLibs(srcDir, dstDir string) error {
 	if !isDir(srcDir) {
-		return fmt.Errorf("ferret_libs_dev is not a directory: %s", srcDir)
+		return fmt.Errorf("%s is not a directory: %s", context.STD_LIB_DEV, srcDir)
 	}
 	if err := resetDir(dstDir); err != nil {
 		return fmt.Errorf("prepare libs dir: %w", err)

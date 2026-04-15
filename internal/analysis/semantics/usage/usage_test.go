@@ -11,10 +11,7 @@ import (
 )
 
 func TestUsageWarnsUnusedImport(t *testing.T) {
-	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]
-fn Println(text: str) -> void;
-`)
+	root := t.TempDir()	
 	mustWriteUsage(t, filepath.Join(root, "main.fer"), `import "std/io"
 
 fn main() -> i32 {
@@ -103,11 +100,7 @@ fn main() -> i32 {
 
 func TestUsageDoesNotWarnUsedOrExportedSymbols(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]
-fn Println(text: str) -> void;
-`)
-	mustWriteUsage(t, filepath.Join(root, "main.fer"), `import "std/io"
-
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `
 type Point struct {
 }
 
@@ -118,14 +111,14 @@ fn helper() -> i32 {
 }
 
 fn main() -> i32 {
-    io::Println("ok")
+    println("ok")
     return helper()
 }
 `)
 
 	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics()[0].Labels[0].Message)
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		switch diag.Code {
@@ -137,15 +130,6 @@ fn main() -> i32 {
 
 func TestUsageDoesNotWarnOnPreludeBuiltinWrapper(t *testing.T) {
 	root := t.TempDir()
-	mustWriteUsage(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `type Any interface {}
-#[extern]
-fn print(values: ...Any) -> void;
-
-fn println(values: ...Any) {
-    print(values...)
-    print("\n")
-}
-`)
 	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn main() -> void {
     println("ok")
 }

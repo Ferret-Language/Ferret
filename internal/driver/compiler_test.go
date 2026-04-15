@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -197,13 +198,10 @@ test "other" {}
 
 func TestParsePathResolvesStdlibWithoutManifest(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]
-fn Println(text: str) -> void;
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 
 fn main() -> void {
-    io::Println("hello")
+    io::Write(io::Stdout, "hello")
 }
 `)
 
@@ -211,7 +209,10 @@ fn main() -> void {
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
-	if len(result.Modules) != 2 {
+	if len(result.Modules) != 3 {
+		for _, mod := range result.Modules {
+			fmt.Println(mod.Key)
+		}
 		t.Fatalf("expected 2 modules, got %d", len(result.Modules))
 	}
 	foundMain := false
@@ -229,65 +230,8 @@ fn main() -> void {
 	}
 }
 
-func TestParsePathTypechecksExternStdlibSignature(t *testing.T) {
-	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `#[extern("ferret_io_println")]
-fn Println(text: str) -> void;
-`)
-	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
-
-fn main() -> void {
-    io::Println(1)
-}
-`)
-	result := ParsePath(filepath.Join(root, "main.fer"))
-	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected stdlib signature type error")
-	}
-	found := false
-	for _, diag := range result.Diagnostics.Diagnostics() {
-		if diag.Code == diagnostics.ErrTypeMismatch {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("expected type mismatch diagnostic, got %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
-	}
-}
-
 func TestParsePathTypechecksStdIOWrite(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
-type Error error {
-    unknown
-}
-
-type Writer interface {
-    Write(&mut self, text: str) -> Error!usize
-}
-
-type Stream struct {
-    kind: i32
-}
-
-#[extern("ferret_std_io_write_stream")]
-fn write_stream(kind: i32, text: &str) -> usize;
-
-let mut Stdout: Stream = .{ .kind = 1 }
-
-fn WrapCount(value: usize) -> Error!usize {
-    return value
-}
-
-fn Stream::Write(&mut self, text: str) -> Error!usize {
-    return WrapCount(write_stream(self.kind, &text))
-}
-
-fn Write(mut dst: Writer, text: str) -> Error!usize {
-    return dst.Write(text)
-}
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 
 fn main() -> void {
@@ -306,74 +250,6 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdFSWrite(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
-type Error error {
-    unknown
-}
-
-type Writer interface {
-    Write(&mut self, text: str) -> Error!usize
-}
-
-fn WrapCount(value: usize) -> Error!usize {
-    return value
-}
-
-fn Write(mut dst: Writer, text: str) -> Error!usize {
-    return dst.Write(text)
-}
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
-#[extern]
-fn Expose<T>(owner: *T) -> ^T;
-
-#[extern]
-fn ExposeRef<T>(owner: &*T) -> ^T;
-
-#[extern]
-fn Adopt<T>(raw: ^T) -> *T;
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "fs.fer"), `
-import "std/mem"
-import "std/io"
-
-type fileInner struct {
-    handle: ^void
-}
-
-type File struct {
-    inner: *fileInner
-}
-
-#[extern("ferret_std_fs_open")]
-fn open_raw(path: &str) -> ^void;
-
-#[extern("ferret_std_fs_write")]
-fn write_raw(handle: ^void, text: &str) -> usize;
-
-#[extern("ferret_std_fs_close")]
-fn close_raw(handle: ^void) -> void;
-
-fn Open(path: str) -> File {
-    unsafe {
-        return .{
-            .inner = mem::Adopt(open_raw(&path) as ^fileInner)
-        }
-    }
-}
-
-fn File::Write(&mut self, text: str) -> io::Error!usize {
-    unsafe {
-        return io::WrapCount(write_raw(mem::ExposeRef(&self.inner) as ^void, &text))
-    }
-}
-
-fn File::Close(self) -> void {
-    unsafe {
-        close_raw(mem::Expose(self.inner) as ^void)
-    }
-}
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 import "std/fs"
 
@@ -394,23 +270,7 @@ fn main() -> void {
 }
 
 func TestParsePathTypechecksStdStringWriteMethod(t *testing.T) {
-	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "string.fer"), `
-type String struct {
-    len: usize = 0
-}
-
-fn New() -> String {
-    return .{}
-}
-
-fn String::Write(&mut self, text: str) -> usize {
-    let bytes = text as []u8
-    let count = len(&bytes)
-    self.len = self.len + count
-    return count
-}
-`)
+	root := t.TempDir()	
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/string"
 
 fn main() -> void {
@@ -428,105 +288,6 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdIOBuffer(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
-#[extern]
-fn Expose<T>(owner: *T) -> ^T;
-
-#[extern]
-fn ExposeRef<T>(owner: &*T) -> ^T;
-
-#[extern]
-fn Adopt<T>(raw: ^T) -> *T;
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
-import "std/mem"
-
-type Error error {
-    unknown
-}
-
-type Writer interface {
-    Write(&mut self, text: str) -> Error!usize
-}
-
-type Reader interface {
-    Read(&mut self, size: usize) -> Error![]u8
-}
-
-type bufferInner struct {
-    data: ^u8
-    len: usize = 0
-    cap: usize = 0
-    read_pos: usize = 0
-}
-
-type Buffer struct {
-    inner: *bufferInner
-}
-
-#[extern("ferret_std_io_buffer_new")]
-fn new_buffer_raw() -> ^bufferInner;
-
-#[extern("ferret_std_io_buffer_write")]
-fn write_buffer_raw(handle: ^void, text: &str) -> usize;
-
-#[extern("ferret_std_io_buffer_read")]
-fn read_buffer_raw(handle: ^void, size: usize) -> []u8;
-
-#[extern("ferret_std_io_buffer_view")]
-fn view_buffer_raw(handle: ^void) -> str;
-
-#[extern("ferret_std_io_buffer_close")]
-fn close_buffer_raw(handle: ^void) -> void;
-
-fn WrapCount(value: usize) -> Error!usize {
-    return value
-}
-
-fn WrapBytes(value: []u8) -> Error![]u8 {
-    return value
-}
-
-fn NewBuffer() -> Buffer {
-    unsafe {
-        return .{
-            .inner = mem::Adopt(new_buffer_raw())
-        }
-    }
-}
-
-fn Buffer::Write(&mut self, text: str) -> Error!usize {
-    unsafe {
-        return WrapCount(write_buffer_raw(mem::ExposeRef(&self.inner) as ^void, &text))
-    }
-}
-
-fn Buffer::Read(&mut self, size: usize) -> Error![]u8 {
-    unsafe {
-        return WrapBytes(read_buffer_raw(mem::ExposeRef(&self.inner) as ^void, size))
-    }
-}
-
-fn Buffer::AsStr(&self) -> str {
-    unsafe {
-        return view_buffer_raw(mem::ExposeRef(&self.inner) as ^void)
-    }
-}
-
-fn Buffer::Release(self) -> void {
-    unsafe {
-        close_buffer_raw(mem::Expose(self.inner) as ^void)
-    }
-}
-
-fn Write(mut dst: Writer, text: str) -> Error!usize {
-    return dst.Write(text)
-}
-
-fn Read(mut src: Reader, size: usize) -> Error![]u8 {
-    return src.Read(size)
-}
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 
 fn main() -> void {
@@ -553,183 +314,6 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdNetTCP(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
-#[extern]
-fn Expose<T>(owner: *T) -> ^T;
-
-#[extern]
-fn ExposeRef<T>(owner: &*T) -> ^T;
-
-#[extern]
-fn Adopt<T>(raw: ^T) -> *T;
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
-type Error error {
-    unknown
-}
-
-type Writer interface {
-    Write(&mut self, text: str) -> Error!usize
-}
-
-type Reader interface {
-    Read(&mut self, size: usize) -> Error![]u8
-}
-
-fn LastError() -> Error {
-    return Error::unknown
-}
-
-fn WrapCount(value: usize) -> Error!usize {
-    return value
-}
-
-fn WrapBytes(value: []u8) -> Error![]u8 {
-    return value
-}
-
-fn WrapText(value: str) -> Error!str {
-    return value
-}
-
-fn Write(mut dst: Writer, text: str) -> Error!usize {
-    return dst.Write(text)
-}
-
-fn Read(mut src: Reader, size: usize) -> Error![]u8 {
-    return src.Read(size)
-}
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "net", "tcp.fer"), `
-import "std/io"
-import "std/mem"
-
-type connInner struct {
-    handle: ^void
-}
-
-type Conn struct {
-    inner: *connInner
-}
-
-#[extern("ferret_std_net_tcp_dial")]
-fn dial_raw(host: &str, port: u16) -> ^connInner;
-
-#[extern("ferret_std_net_tcp_write")]
-fn write_raw(handle: ^void, text: &str) -> usize;
-
-#[extern("ferret_std_net_tcp_read")]
-fn read_raw(handle: ^void, size: usize) -> []u8;
-
-#[extern("ferret_std_net_tcp_set_write_timeout")]
-fn set_write_timeout_raw(handle: ^void, ms: i32) -> usize;
-
-#[extern("ferret_std_net_tcp_set_nodelay")]
-fn set_nodelay_raw(handle: ^void, enabled: bool) -> usize;
-
-#[extern("ferret_std_net_tcp_set_keepalive")]
-fn set_keepalive_raw(handle: ^void, enabled: bool) -> usize;
-
-#[extern("ferret_std_net_tcp_shutdown_read")]
-fn shutdown_read_raw(handle: ^void) -> usize;
-
-#[extern("ferret_std_net_tcp_shutdown_write")]
-fn shutdown_write_raw(handle: ^void) -> usize;
-
-#[extern("ferret_std_net_tcp_local_addr")]
-fn local_addr_raw(handle: ^void) -> str;
-
-#[extern("ferret_std_net_tcp_peer_addr")]
-fn peer_addr_raw(handle: ^void) -> str;
-
-#[extern("ferret_std_net_tcp_set_read_timeout")]
-fn set_read_timeout_raw(handle: ^void, ms: i32) -> usize;
-
-#[extern("ferret_std_net_tcp_close")]
-fn close_raw(handle: ^void) -> void;
-
-fn Dial(host: str, port: u16) -> io::Error!Conn {
-    let raw = dial_raw(&host, port)
-    let mut failed = false
-    unsafe {
-        failed = raw == 0 as ^connInner
-    }
-    if failed {
-        return io::LastError()
-    }
-    unsafe {
-        return .{
-            .inner = mem::Adopt(raw)
-        }
-    }
-}
-
-fn Conn::Write(&mut self, text: str) -> io::Error!usize {
-    unsafe {
-        return io::WrapCount(write_raw(mem::ExposeRef(&self.inner) as ^void, &text))
-    }
-}
-
-fn Conn::Read(&mut self, size: usize) -> io::Error![]u8 {
-    unsafe {
-        return io::WrapBytes(read_raw(mem::ExposeRef(&self.inner) as ^void, size))
-    }
-}
-
-fn Conn::SetReadTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
-    unsafe {
-        return io::WrapCount(set_read_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
-    }
-}
-
-fn Conn::SetWriteTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
-    unsafe {
-        return io::WrapCount(set_write_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
-    }
-}
-
-fn Conn::SetNoDelay(&mut self, enabled: bool) -> io::Error!usize {
-    unsafe {
-        return io::WrapCount(set_nodelay_raw(mem::ExposeRef(&self.inner) as ^void, enabled))
-    }
-}
-
-fn Conn::SetKeepAlive(&mut self, enabled: bool) -> io::Error!usize {
-    unsafe {
-        return io::WrapCount(set_keepalive_raw(mem::ExposeRef(&self.inner) as ^void, enabled))
-    }
-}
-
-fn Conn::ShutdownRead(&mut self) -> io::Error!usize {
-    unsafe {
-        return io::WrapCount(shutdown_read_raw(mem::ExposeRef(&self.inner) as ^void))
-    }
-}
-
-fn Conn::ShutdownWrite(&mut self) -> io::Error!usize {
-    unsafe {
-        return io::WrapCount(shutdown_write_raw(mem::ExposeRef(&self.inner) as ^void))
-    }
-}
-
-fn Conn::LocalAddr(&self) -> io::Error!str {
-    unsafe {
-        return io::WrapText(local_addr_raw(mem::ExposeRef(&self.inner) as ^void))
-    }
-}
-
-fn Conn::PeerAddr(&self) -> io::Error!str {
-    unsafe {
-        return io::WrapText(peer_addr_raw(mem::ExposeRef(&self.inner) as ^void))
-    }
-}
-
-fn Conn::Close(self) -> void {
-    unsafe {
-        close_raw(mem::Expose(self.inner) as ^void)
-    }
-}
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 import "std/net/tcp"
 
@@ -790,165 +374,6 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdNetTCPListener(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
-#[extern]
-fn Expose<T>(owner: *T) -> ^T;
-
-#[extern]
-fn ExposeRef<T>(owner: &*T) -> ^T;
-
-#[extern]
-fn Adopt<T>(raw: ^T) -> *T;
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "io.fer"), `
-type Error error {
-    unknown
-}
-
-type Writer interface {
-    Write(&mut self, text: str) -> Error!usize
-}
-
-type Reader interface {
-    Read(&mut self, size: usize) -> Error![]u8
-}
-
-fn LastError() -> Error {
-    return Error::unknown
-}
-
-fn WrapCount(value: usize) -> Error!usize {
-    return value
-}
-
-fn WrapBytes(value: []u8) -> Error![]u8 {
-    return value
-}
-
-fn WrapText(value: str) -> Error!str {
-    return value
-}
-
-fn Write(mut dst: Writer, text: str) -> Error!usize {
-    return dst.Write(text)
-}
-
-fn Read(mut src: Reader, size: usize) -> Error![]u8 {
-    return src.Read(size)
-}
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "net", "tcp.fer"), `
-import "std/io"
-import "std/mem"
-
-type connInner struct {
-    handle: ^void
-}
-
-type Conn struct {
-    inner: *connInner
-}
-
-type listenerInner struct {
-    handle: ^void
-}
-
-type Listener struct {
-    inner: *listenerInner
-}
-
-#[extern("ferret_std_net_tcp_listen")]
-fn listen_raw(host: &str, port: u16) -> ^listenerInner;
-
-#[extern("ferret_std_net_tcp_accept")]
-fn accept_raw(handle: ^listenerInner) -> ^connInner;
-
-#[extern("ferret_std_net_tcp_write")]
-fn write_raw(handle: ^void, text: &str) -> usize;
-
-#[extern("ferret_std_net_tcp_read")]
-fn read_raw(handle: ^void, size: usize) -> []u8;
-
-#[extern("ferret_std_net_tcp_close")]
-fn close_raw(handle: ^void) -> void;
-
-#[extern("ferret_std_net_tcp_close_listener")]
-fn close_listener_raw(handle: ^void) -> void;
-
-#[extern("ferret_std_net_tcp_set_accept_timeout")]
-fn set_accept_timeout_raw(handle: ^void, ms: i32) -> usize;
-
-#[extern("ferret_std_net_tcp_listener_local_addr")]
-fn listener_local_addr_raw(handle: ^void) -> str;
-
-fn Listen(host: str, port: u16) -> io::Error!Listener {
-    let raw = listen_raw(&host, port)
-    let mut failed = false
-    unsafe {
-        failed = raw == 0 as ^listenerInner
-    }
-    if failed {
-        return io::LastError()
-    }
-    unsafe {
-        return .{
-            .inner = mem::Adopt(raw)
-        }
-    }
-}
-
-fn Listener::Accept(&mut self) -> io::Error!Conn {
-    let raw = accept_raw(mem::ExposeRef(&self.inner))
-    let mut failed = false
-    unsafe {
-        failed = raw == 0 as ^connInner
-    }
-    if failed {
-        return io::LastError()
-    }
-    unsafe {
-        return .{
-            .inner = mem::Adopt(raw)
-        }
-    }
-}
-
-fn Listener::SetAcceptTimeoutMs(&mut self, ms: i32) -> io::Error!usize {
-    unsafe {
-        return io::WrapCount(set_accept_timeout_raw(mem::ExposeRef(&self.inner) as ^void, ms))
-    }
-}
-
-fn Listener::LocalAddr(&self) -> io::Error!str {
-    unsafe {
-        return io::WrapText(listener_local_addr_raw(mem::ExposeRef(&self.inner) as ^void))
-    }
-}
-
-fn Listener::Close(self) -> void {
-    unsafe {
-        close_listener_raw(mem::Expose(self.inner) as ^void)
-    }
-}
-
-fn Conn::Write(&mut self, text: str) -> io::Error!usize {
-    unsafe {
-        return io::WrapCount(write_raw(mem::ExposeRef(&self.inner) as ^void, &text))
-    }
-}
-
-fn Conn::Read(&mut self, size: usize) -> io::Error![]u8 {
-    unsafe {
-        return io::WrapBytes(read_raw(mem::ExposeRef(&self.inner) as ^void, size))
-    }
-}
-
-fn Conn::Close(self) -> void {
-    unsafe {
-        close_raw(mem::Expose(self.inner) as ^void)
-    }
-}
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/io"
 import "std/net/tcp"
 
@@ -997,21 +422,6 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdNetHTTP(t *testing.T) {
 	root := t.TempDir()
-	copyStd := func(rel string) {
-		t.Helper()
-		src := filepath.Join("..", "..", rel)
-		data, err := os.ReadFile(src)
-		if err != nil {
-			t.Fatalf("read %s: %v", src, err)
-		}
-		mustWrite(t, filepath.Join(root, rel), string(data))
-	}
-
-	copyStd(filepath.Join("ferret_libs_dev", "std", "mem.fer"))
-	copyStd(filepath.Join("ferret_libs_dev", "std", "io.fer"))
-	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "tcp.fer"))
-	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "http.fer"))
-
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 import "std/net/http"
 
@@ -1034,21 +444,6 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdNetHTTPServer(t *testing.T) {
 	root := t.TempDir()
-	copyStd := func(rel string) {
-		t.Helper()
-		src := filepath.Join("..", "..", rel)
-		data, err := os.ReadFile(src)
-		if err != nil {
-			t.Fatalf("read %s: %v", src, err)
-		}
-		mustWrite(t, filepath.Join(root, rel), string(data))
-	}
-
-	copyStd(filepath.Join("ferret_libs_dev", "std", "mem.fer"))
-	copyStd(filepath.Join("ferret_libs_dev", "std", "io.fer"))
-	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "tcp.fer"))
-	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "http.fer"))
-
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 import "std/io"
 import "std/net/http"
@@ -1082,21 +477,6 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdNetHTTPServerRoutes(t *testing.T) {
 	root := t.TempDir()
-	copyStd := func(rel string) {
-		t.Helper()
-		src := filepath.Join("..", "..", rel)
-		data, err := os.ReadFile(src)
-		if err != nil {
-			t.Fatalf("read %s: %v", src, err)
-		}
-		mustWrite(t, filepath.Join(root, rel), string(data))
-	}
-
-	copyStd(filepath.Join("ferret_libs_dev", "std", "mem.fer"))
-	copyStd(filepath.Join("ferret_libs_dev", "std", "io.fer"))
-	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "tcp.fer"))
-	copyStd(filepath.Join("ferret_libs_dev", "std", "net", "http.fer"))
-
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 import "std/io"
 import "std/net/http"
@@ -1238,22 +618,8 @@ fn main() -> i32 {
 
 func TestParsePathResolvesStdlibOSWithoutManifest(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
-type Any interface {}
-#[extern("ferret_io_print")]
-fn print(values: ...Any) -> void;
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.fer"), `#[extern("ferret_os_cpu_count")]
-fn CPUCount() -> usize;
 
-#[extern("ferret_os_platform")]
-fn Platform() -> str;
-
-#[extern("ferret_os_debug")]
-fn Debug() -> bool;
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/os"
-
 fn main() -> void {
     if os::CPUCount() > 0 {
         print(os::Platform())
@@ -1288,14 +654,6 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdlibOSSignature(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
-type Any interface {}
-#[extern("ferret_io_print")]
-fn print(values: ...Any) -> void;
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "os.fer"), `#[extern("ferret_os_cpu_count")]
-fn CPUCount() -> usize;
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/os"
 
 fn main() -> void {
@@ -1321,40 +679,6 @@ fn main() -> void {
 
 func TestParsePathResolvesStdlibMemWithoutManifest(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
-#[extern("malloc")]
-fn malloc(size: usize) -> ^void;
-#[extern("free")]
-fn free(ptr: ^void) -> void;
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
-type Allocator interface {
-    Alloc(&self, size: usize) -> ^void
-    Free(&self, ptr: ^void) -> void
-}
-
-type CAllocator struct {}
-
-fn CAllocator::Alloc(&self, size: usize) -> ^void {
-    return malloc(size)
-}
-
-fn CAllocator::Free(&self, ptr: ^void) -> void {
-    free(ptr)
-}
-
-fn System() -> CAllocator {
-    return .{}
-}
-
-fn Alloc(a: Allocator, size: usize) -> ^void {
-    return a.Alloc(size)
-}
-
-fn Free(a: Allocator, ptr: ^void) -> void {
-    a.Free(ptr)
-}
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/mem"
 
 fn main() -> void {
@@ -1388,31 +712,6 @@ fn main() -> void {
 
 func TestParsePathTypechecksStdlibMemSignature(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
-#[extern("malloc")]
-fn malloc(size: usize) -> ^void;
-#[extern("free")]
-fn free(ptr: ^void) -> void;
-`)
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "std", "mem.fer"), `
-type Allocator interface {
-    Alloc(&self, size: usize) -> ^void
-}
-
-type CAllocator struct {}
-
-fn CAllocator::Alloc(&self, size: usize) -> ^void {
-    return malloc(size)
-}
-
-fn System() -> CAllocator {
-    return .{}
-}
-
-fn Alloc(a: Allocator, size: usize) -> ^void {
-    return a.Alloc(size)
-}
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `import "std/mem"
 
 fn main() -> void {

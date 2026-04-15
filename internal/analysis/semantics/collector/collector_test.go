@@ -131,10 +131,6 @@ fn Point::Len(*self) -> i32 {
 
 func TestCollectorRejectsTopLevelNameThatConflictsWithGlobal(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
-#[extern]
-fn len(value: []u8) -> usize;
-`)
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn len() -> usize {
     return 1

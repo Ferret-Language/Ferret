@@ -426,12 +426,6 @@ fn main() -> i32 {
     return math::ClampToZeros(-34)
 }
 `)
-	mustWriteResolver(t, filepath.Join(root, "ferret_libs_dev", "std", "math.fer"), `
-fn ClampToZero(value: i32) -> i32 {
-    return value
-}
-`)
-
 	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected module-member undefined diagnostic")
@@ -550,10 +544,6 @@ fn run() -> void {
 
 func TestResolverRejectsLocalNameThatConflictsWithGlobal(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
-#[extern]
-fn len(value: []u8) -> usize;
-`)
 	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 fn run() -> usize {
     let len = 1
@@ -579,10 +569,6 @@ fn run() -> usize {
 
 func TestResolverRejectsLabelNameThatConflictsWithGlobal(t *testing.T) {
 	root := t.TempDir()
-	mustWriteResolver(t, filepath.Join(root, "ferret_libs_dev", "global.fer"), `
-#[extern]
-fn len(value: []u8) -> usize;
-`)
 	mustWriteResolver(t, filepath.Join(root, "main.fer"), `
 fn run() -> void {
     len: while true {
