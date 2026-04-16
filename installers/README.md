@@ -17,9 +17,9 @@ The installer:
 ## Files
 
 - `ferret-installer.iss`: main Inno Setup script
-- `install-ferret.ps1`: release-downloading PowerShell installer
-- `install-ferret.cmd`: CMD entrypoint for the PowerShell installer
-- `install-ferret.sh`: Unix release installer kept in the same installer layout
+- `install.ps1`: release-downloading PowerShell installer
+- `install.cmd`: CMD entrypoint for the PowerShell installer
+- `install.sh`: Unix release installer kept in the same installer layout
 - `scripts/Resolve-FerretRelease.ps1`: helper script that resolves release metadata from GitHub
 
 ## Build
