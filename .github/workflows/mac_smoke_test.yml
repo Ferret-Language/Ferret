@@ -13,7 +13,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-13, macos-14]
+        include:
+          - runner: macos-15-intel
+            arch: amd64
+          - runner: macos-latest
+            arch: arm64
 
     steps:
       - name: Checkout
@@ -29,10 +33,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          brew install llvm
+          brew install llvm lld
           LLVM_BIN="$(brew --prefix llvm)/bin"
+          LLD_BIN="$(brew --prefix lld)/bin"
           echo "FERRET_LLVM_BIN=$LLVM_BIN" >> "$GITHUB_ENV"
-          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "FERRET_LLD_BIN=$LLD_BIN" >> "$GITHUB_ENV"
+          echo "$LLVM_BIN" >> "$GITHUB_PATH"
+          echo "$LLD_BIN" >> "$GITHUB_PATH"
 
       - name: Verify Go toolchain
         shell: bash
@@ -41,19 +48,20 @@ jobs:
           which go
           go version
           test -n "${FERRET_LLVM_BIN:-}"
+          test -n "${FERRET_LLD_BIN:-}"
 
       - name: Build Ferret bundle
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="$FERRET_LLVM_BIN:$PATH"
+          export PATH="$FERRET_LLVM_BIN:$FERRET_LLD_BIN:$PATH"
           ./build.sh
 
       - name: Verify bundled artifacts
         shell: bash
         run: |
           set -euo pipefail
-          export PATH="$FERRET_LLVM_BIN:$PATH"
+          export PATH="$FERRET_LLVM_BIN:$FERRET_LLD_BIN:$PATH"
           test -x build/core/bin/ferret
           test -f build/core/libs/ferret_runtime.a
           test -f build/toolchain/bin/clang
