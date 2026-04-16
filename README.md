@@ -1,4 +1,5 @@
 # Ferret Compiler
+[![release](https://github.com/Ferret-Language/Ferret/actions/workflows/release.yml/badge.svg)](https://github.com/Ferret-Language/Ferret/actions/workflows/release.yml)
 
 This folder contains the Ferret compiler, the bundled toolchain/build logic, and installer assets under `installers/`.
 
