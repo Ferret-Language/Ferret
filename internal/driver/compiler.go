@@ -30,11 +30,11 @@ type Compiler struct {
 }
 
 func New(rootDir, extension string, diag *diagnostics.DiagnosticBag) *Compiler {
-	ctx := context.New(rootDir, extension, diag)
-	if err := prelude.Load(ctx); err != nil {
-		ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
+	cfg := context.Config{
+		RootDir:   rootDir,
+		Extension: extension,
 	}
-	return &Compiler{ctx: ctx, pipeline: pipeline.New(ctx)}
+	return NewWithConfig(cfg, diag)
 }
 
 func NewWithConfig(cfg context.Config, diag *diagnostics.DiagnosticBag) *Compiler {

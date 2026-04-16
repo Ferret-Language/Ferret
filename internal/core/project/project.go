@@ -9,8 +9,6 @@ import (
 	"compiler/internal/core/manifest"
 )
 
-var ExecutablePath = os.Executable
-
 type Workspace struct {
 	RootDir   string
 	Manifest  *manifest.File
@@ -29,16 +27,15 @@ func Load(startPath string, extension string) (*Workspace, error) {
 		startDir = filepath.Dir(absStart)
 	}
 
+	stdlibRoot := context.FindStdlibRoot()
 	manifestPath, err := manifest.Find(startDir)
+
 	if err != nil {
 		root := startDir
 		if filepath.Ext(absStart) != "" {
 			root = filepath.Dir(absStart)
 		}
-		stdlibRoot, stdErr := resolveStdlibRoot(root)
-		if stdErr != nil {
-			return nil, stdErr
-		}
+
 		return &Workspace{
 			RootDir: root,
 			Context: context.Config{
@@ -64,12 +61,8 @@ func Load(startPath string, extension string) (*Workspace, error) {
 		RootDir:         root,
 		Extension:       extension,
 		DependencyRoots: map[string]string{},
+		StdlibRoot:      stdlibRoot,
 	}
-	stdlibRoot, err := resolveStdlibRoot(root)
-	if err != nil {
-		return nil, err
-	}
-	cfg.StdlibRoot = stdlibRoot
 
 	ws := &Workspace{
 		RootDir:   root,
@@ -136,24 +129,4 @@ func resolveRemotePackage(cachePath string, lock *manifest.Lockfile, repoName, v
 		return "", fmt.Errorf("cached remote package missing %s", manifestPath)
 	}
 	return modulePath, nil
-}
-
-// resolveStdlibRoot finds the packaged stdlib beside the compiler binary.
-//
-// Layout: <bundle>/bin/ferret -> <bundle>/libs/std
-func resolveStdlibRoot(projectRoot string) (string, error) {
-	if projectRoot != "" {
-		candidate := filepath.Clean(filepath.Join(projectRoot, "ferret_libs_dev", "std"))
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate, nil
-		}
-	}
-	if execPath, err := ExecutablePath(); err == nil {
-		execDir := filepath.Dir(execPath)
-		candidate := filepath.Clean(filepath.Join(execDir, "..", "libs", "std"))
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate, nil
-		}
-	}
-	return "", nil
 }

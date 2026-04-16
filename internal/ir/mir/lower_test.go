@@ -11,7 +11,6 @@ import (
 	"compiler/internal/core/phase"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
-	"compiler/internal/testutil"
 )
 
 func TestPipelineGeneratesMIR(t *testing.T) {
@@ -316,7 +315,6 @@ fn main(s: &str) -> usize {
 
 func TestPipelineLowersStdMemSliceRawBridgeWithoutRuntimeCalls(t *testing.T) {
 	root := t.TempDir()
-	testutil.WriteStdMemFixture(t, root)
 	mustWriteIR(t, filepath.Join(root, "main.fer"), `
 import "std/mem"
 

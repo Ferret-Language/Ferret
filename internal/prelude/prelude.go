@@ -15,8 +15,6 @@ import (
 
 const globalModuleKey = "builtin:global"
 
-var ExecutablePath = os.Executable
-
 func Load(ctx *context.CompilerContext) error {
 	if ctx == nil || ctx.Prelude != nil {
 		return nil
@@ -62,33 +60,6 @@ func findGlobalPrelude(ctx *context.CompilerContext) (string, error) {
 			return candidate, nil
 		}
 	}
-	if ctx != nil && ctx.Config.RootDir != "" {
-		candidate := filepath.Clean(filepath.Join(ctx.Config.RootDir, "ferret_libs_dev", "global.fer"))
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
 
-	if execPath, err := ExecutablePath(); err == nil {
-		execDir := filepath.Dir(execPath)
-		candidate := filepath.Clean(filepath.Join(execDir, "..", "libs", "global.fer"))
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-			return candidate, nil
-		}
-	}
-	if wd, err := os.Getwd(); err == nil && wd != "" {
-		dir := filepath.Clean(wd)
-		for {
-			candidate := filepath.Clean(filepath.Join(dir, "ferret_libs_dev", "global.fer"))
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				return candidate, nil
-			}
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
-		}
-	}
-	return "", nil
+	return context.ResolveGlobalPreludePath(), nil
 }

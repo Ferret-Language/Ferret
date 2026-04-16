@@ -3025,11 +3025,6 @@ fn main() -> string {
 
 func TestTypecheckerDoesNotCascadeNotCallableAfterMissingImportedSymbol(t *testing.T) {
 	root := t.TempDir()
-	mustWriteType(t, filepath.Join(root, "ferret_libs_dev", "std", "math.fer"), `
-fn ClampToZero(value: i32) -> i32 {
-    return value
-}
-`)
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 import "std/math"
 
