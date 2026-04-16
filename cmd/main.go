@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"compiler/cmd/ferret/cli"
+	"compiler/cmd/cli"
 	"compiler/colors"
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"

@@ -482,7 +482,7 @@ func buildRuntimeLib(runtimeDir, libsDir string, bits int) error {
 }
 
 func buildCompiler(root, outPath string) error {
-	return runCmd(root, "go", "build", "-o", outPath, "./cmd/ferret")
+	return runCmd(root, "go", "build", "-o", outPath, "./cmd")
 }
 
 func runCmd(dir, name string, args ...string) error {
