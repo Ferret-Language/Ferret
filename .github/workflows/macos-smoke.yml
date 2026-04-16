@@ -44,6 +44,9 @@ jobs:
           mkdir -p "$WORKDIR"
           cd "$WORKDIR"
 
-          printf '\n\n' | ferret init smokeproject
+          ferret init smokeproject <<'EOF'
+
+
+EOF
           test -f fer.ret
           ferret run
