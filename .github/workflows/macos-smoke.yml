@@ -39,6 +39,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export FERRET_INSTALL_DIR="$RUNNER_TEMP/ferret"
+          export PATH="$FERRET_INSTALL_DIR/toolchain/bin:$FERRET_INSTALL_DIR/core/bin:$PATH"
           WORKDIR="$RUNNER_TEMP/ferret-smoke"
           rm -rf "$WORKDIR"
           mkdir -p "$WORKDIR"
