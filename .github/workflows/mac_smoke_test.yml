@@ -1,8 +1,9 @@
 name: macos-smoke
 
 on:
-  push:
+  workflow_call:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   smoke:
