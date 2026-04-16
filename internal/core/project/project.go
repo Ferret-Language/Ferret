@@ -27,17 +27,15 @@ func Load(startPath string, extension string) (*Workspace, error) {
 		startDir = filepath.Dir(absStart)
 	}
 
+	stdlibRoot := context.FindStdlibRoot()
 	manifestPath, err := manifest.Find(startDir)
+
 	if err != nil {
 		root := startDir
 		if filepath.Ext(absStart) != "" {
 			root = filepath.Dir(absStart)
 		}
 
-		stdlibRoot, stdErr := resolveStdlibRoot(root)
-		if stdErr != nil {
-			return nil, stdErr
-		}
 		return &Workspace{
 			RootDir: root,
 			Context: context.Config{
@@ -63,12 +61,8 @@ func Load(startPath string, extension string) (*Workspace, error) {
 		RootDir:         root,
 		Extension:       extension,
 		DependencyRoots: map[string]string{},
+		StdlibRoot:      stdlibRoot,
 	}
-	stdlibRoot, err := resolveStdlibRoot(root)
-	if err != nil {
-		return nil, err
-	}
-	cfg.StdlibRoot = stdlibRoot
 
 	ws := &Workspace{
 		RootDir:   root,
@@ -135,12 +129,4 @@ func resolveRemotePackage(cachePath string, lock *manifest.Lockfile, repoName, v
 		return "", fmt.Errorf("cached remote package missing %s", manifestPath)
 	}
 	return modulePath, nil
-}
-
-// resolveStdlibRoot finds the packaged stdlib.
-//
-// Returns empty string if stdlib cannot be found (not an error; some code paths don't need it).
-func resolveStdlibRoot(projectRoot string) (string, error) {
-	_ = projectRoot
-	return context.FindStdlibRoot(), nil
 }

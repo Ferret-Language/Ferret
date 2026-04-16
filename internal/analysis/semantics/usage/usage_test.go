@@ -8,6 +8,7 @@ import (
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
 	compiler "compiler/internal/driver"
+	"compiler/internal/testutils"
 )
 
 func TestUsageWarnsUnusedImport(t *testing.T) {
@@ -118,7 +119,7 @@ fn main() -> i32 {
 
 	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics()[0].Labels[0].Message)
+		t.Fatalf("unexpected diagnostics: %#v", testutils.GetFirstError(result.Diagnostics))
 	}
 	for _, diag := range result.Diagnostics.Diagnostics() {
 		switch diag.Code {

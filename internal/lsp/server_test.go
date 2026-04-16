@@ -3887,27 +3887,6 @@ func findPosition(text, needle string) (int, int, bool) {
 	return 0, 0, false
 }
 
-func usePackagedLibsForTest(t *testing.T) {
-	t.Helper()
-
-	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-	srcRoot := filepath.Join(repoRoot, context.STD_LIB_DEV)
-
-	bundleRoot := filepath.Join(t.TempDir(), "bundle")
-	libsRoot := filepath.Join(bundleRoot, "libs")
-	if err := copyDir(srcRoot, libsRoot); err != nil {
-		t.Fatalf("copy packaged libs: %v", err)
-	}
-
-	execPath := filepath.Join(bundleRoot, "bin", "ferret")
-	if err := os.MkdirAll(filepath.Dir(execPath), 0o755); err != nil {
-		t.Fatalf("mkdir bundle bin: %v", err)
-	}
-}
-
 func copyDir(srcDir, dstDir string) error {
 	return filepath.WalkDir(srcDir, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {

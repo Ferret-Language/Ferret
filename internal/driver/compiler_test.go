@@ -1,7 +1,6 @@
 package compiler
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,14 +11,6 @@ import (
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/frontend/ast"
 )
-
-func setIDEExecutablePaths(t *testing.T, root string) {
-	t.Helper()
-	execPath := filepath.Join(root, "bundle", "bin", "ferret")
-	mustWrite(t, execPath, "")
-	mustWrite(t, filepath.Join(root, "bundle", "libs", "global.fer"), ``)
-	mustWrite(t, filepath.Join(root, "bundle", "libs", "std", "io.fer"), ``)
-}
 
 func TestParsePathResolvesDependencyAliasFromManifest(t *testing.T) {
 	root := t.TempDir()
@@ -200,22 +191,22 @@ fn main() -> void {
 		t.Fatalf("unexpected diagnostics: %v", diagnosticSummaries(result.Diagnostics.Diagnostics()))
 	}
 	if len(result.Modules) != 3 {
-		for _, mod := range result.Modules {
-			fmt.Println(mod.Key)
-		}
-		t.Fatalf("expected 2 modules, got %d", len(result.Modules))
+		t.Fatalf("expected 3 modules, got %d", len(result.Modules))
 	}
 	foundMain := false
 	foundStd := false
+	foundMem := false
 	for _, mod := range result.Modules {
 		switch mod.Key {
 		case "local:main":
 			foundMain = true
 		case "stdlib:std/io":
 			foundStd = true
+		case "stdlib:std/mem":
+			foundMem = true
 		}
 	}
-	if !foundMain || !foundStd {
+	if !foundMain || !foundStd || !foundMem {
 		t.Fatalf("expected main and std/io modules, got %#v", []string{result.Modules[0].Key, result.Modules[1].Key})
 	}
 }
@@ -495,7 +486,6 @@ fn main() -> void {
 
 func TestParsePathForIDEReportsUnusedLocalDiagnostics(t *testing.T) {
 	root := t.TempDir()
-	setIDEExecutablePaths(t, root)
 	mustWrite(t, filepath.Join(root, "main.fer"), `fn main() -> i32 {
     let dead = 1
     return 0
@@ -565,7 +555,6 @@ type Node<T> struct {
 
 func TestParsePathForIDERejectsRuntimeConstInitializer(t *testing.T) {
 	root := t.TempDir()
-	setIDEExecutablePaths(t, root)
 	mustWrite(t, filepath.Join(root, "main.fer"), `#[extern("clock")]
 fn clock() -> i32;
 
@@ -589,7 +578,6 @@ fn main() -> i32 {
 
 func TestParsePathForIDEAllowsPotentialCTFEConstCall(t *testing.T) {
 	root := t.TempDir()
-	setIDEExecutablePaths(t, root)
 	mustWrite(t, filepath.Join(root, "main.fer"), `fn add(a: i32, b: i32) -> i32 {
     return a + b
 }

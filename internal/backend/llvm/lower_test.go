@@ -17,6 +17,7 @@ import (
 	"compiler/internal/core/diagnostics"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
+	"compiler/internal/testutils"
 )
 
 func TestLowerInterfaceDispatchToLLVM(t *testing.T) {
@@ -701,9 +702,7 @@ fn main() -> i32 {
 `)
 	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
-		d := result.Diagnostics.Diagnostics()
-		msg := d[0].Message + d[0].Labels[0].Message
-		t.Fatalf("unexpected diagnostics: %#v", msg)
+		t.Fatalf("unexpected diagnostics: %#v", testutils.GetFirstError(result.Diagnostics))
 	}
 	lowerer, err := registry.New(backend.TargetLLVM)
 	if err != nil {
@@ -1550,7 +1549,7 @@ fn main() -> void {
 `)
 	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics()[0].Labels[0].Message)
+		t.Fatalf("unexpected diagnostics: %#v", testutils.GetFirstError(result.Diagnostics))
 	}
 	lowerer, err := registry.New(backend.TargetLLVM)
 	if err != nil {
@@ -1585,7 +1584,7 @@ fn main() -> void {
 `)
 	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics()[0].Labels[0].Message)
+		t.Fatalf("unexpected diagnostics: %#v", testutils.GetFirstError(result.Diagnostics))
 	}
 	lowerer, err := registry.New(backend.TargetLLVM)
 	if err != nil {
