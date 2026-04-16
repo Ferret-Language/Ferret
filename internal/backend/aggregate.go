@@ -16,6 +16,7 @@ func ResolveAggregateSource(
 	onName func(*mir.NameValue) ([]string, string, error),
 	onLoadPointer func(mir.Value) ([]string, string, error),
 	onFieldLoad func(base mir.Value, fieldIndex int) ([]string, string, error),
+	onIndexLoad func(base mir.Value, index mir.Value) ([]string, string, error),
 ) ([]string, string, error) {
 	switch v := value.(type) {
 	case *mir.LocalValue:
@@ -38,6 +39,11 @@ func ResolveAggregateSource(
 			break
 		}
 		return onFieldLoad(v.Base, v.FieldIndex)
+	case *mir.IndexValue:
+		if onIndexLoad == nil {
+			break
+		}
+		return onIndexLoad(v.Base, v.Index)
 	}
 	return nil, "", fmt.Errorf("unsupported aggregate source %T", value)
 }

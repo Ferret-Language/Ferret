@@ -1519,6 +1519,9 @@ func lowerSliceIndexLoad(state *moduleState, targetName string, targetType typei
 
 // lowerQBEIndexAddress computes ptr = base + index * elemSize.
 func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
+	if backend.IsSliceLikeType(backend.UnwrapNamed(baseType)) {
+		return lowerQBESliceIndexAddress(state, base, index, baseType)
+	}
 	var elemType typeinfo.Type
 	var tupleElem *backend.TupleElementLayout
 	arrayLen := int64(-1)
@@ -1575,6 +1578,46 @@ func lowerQBEIndexAddress(state *moduleState, base mir.Value, index mir.Value, b
 	}
 	addr := freshTemp(state, "elem")
 	lines = append(lines, fmt.Sprintf("%s =l add %s, %s", addr, baseExpr, scaled))
+	return lines, addr, nil
+}
+
+func lowerQBESliceIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
+	sliceType, ok := backend.UnwrapNamed(baseType).(*typeinfo.SliceType)
+	if !ok || sliceType == nil {
+		return nil, "", fmt.Errorf("cannot index slice address into %T", baseType)
+	}
+	baseExpr, err := lowerValue(state, base)
+	if err != nil {
+		return nil, "", err
+	}
+	indexExpr, err := lowerValue(state, index)
+	if err != nil {
+		return nil, "", err
+	}
+	elemSize, _, err := qbeScalarSizeAlign(sliceType.Inner)
+	if err != nil {
+		elemSize, _, err = backend.AggregateSizeAlign(aggregateLayoutContext(state), sliceType.Inner)
+		if err != nil {
+			return nil, "", fmt.Errorf("cannot compute size of indexed element type %s", sliceType.Inner)
+		}
+	}
+	dataPtr := freshTemp(state, "slice_data")
+	lenAddr := freshTemp(state, "slice_len_addr")
+	lenVal := freshTemp(state, "slice_len")
+	lines := []string{
+		fmt.Sprintf("%s =l loadl %s", dataPtr, baseExpr),
+		fmt.Sprintf("%s =l add %s, 8", lenAddr, baseExpr),
+		fmt.Sprintf("%s =l loadl %s", lenVal, lenAddr),
+		fmt.Sprintf("call $ferret__bounds_check(l %s, l %s)", indexExpr, lenVal),
+	}
+	scaled := indexExpr
+	if elemSize != 1 {
+		scl := freshTemp(state, "idx")
+		lines = append(lines, fmt.Sprintf("%s =l mul %s, %d", scl, indexExpr, elemSize))
+		scaled = scl
+	}
+	addr := freshTemp(state, "elem")
+	lines = append(lines, fmt.Sprintf("%s =l add %s, %s", addr, dataPtr, scaled))
 	return lines, addr, nil
 }
 
@@ -1876,6 +1919,13 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 	if isInterfaceAggregate(agg.Type) {
 		if iface, ok := value.(*mir.InterfaceValue); ok {
 			return lowerInterfaceAssign(state, qbeLocalName(agg.PtrName), agg.Type, iface)
+		}
+		if isInterfaceAggregate(value.Type()) {
+			src, err := lowerAggregateSource(state, value)
+			if err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("blit %s, %s, %d", src, qbeLocalName(agg.PtrName), agg.Size), nil
 		}
 		return "", fmt.Errorf("unsupported interface assignment %T", value)
 	}
@@ -2926,6 +2976,13 @@ func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
 		},
 		func(base mir.Value, fieldIndex int) ([]string, string, error) {
 			lines, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
+			if err != nil {
+				return nil, "", err
+			}
+			return lines, addr, nil
+		},
+		func(base mir.Value, index mir.Value) ([]string, string, error) {
+			lines, addr, err := lowerQBEIndexAddress(state, base, index, base.Type())
 			if err != nil {
 				return nil, "", err
 			}

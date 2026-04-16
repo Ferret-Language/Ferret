@@ -14,6 +14,7 @@ import (
 	"compiler/internal/core/context"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
+	"compiler/internal/testutils"
 )
 
 func TestLowerScalarFunctionToQBE(t *testing.T) {
@@ -122,6 +123,38 @@ fn main() -> i32 {
 		"$ferret_global_map_set",
 		"$typeinfo__str",
 		"$typeinfo__i32",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in qbe output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerVariadicInterfaceLoopToQBE(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), testutils.InterfaceVariadicProbeSource)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetQBE)
+	if err != nil {
+		t.Fatalf("lowerer: %v", err)
+	}
+	var combined strings.Builder
+	for _, unit := range testUnits(result) {
+		artifact, err := lowerer.LowerModule(unit)
+		if err != nil {
+			t.Fatalf("lower qbe variadic interface loop: %v", err)
+		}
+		combined.WriteString(artifact.Text)
+		combined.WriteByte('\n')
+	}
+	text := combined.String()
+	for _, want := range []string{
+		"function $main__printArea",
+		"call %_iface_fn",
+		"$vtable__local__main__Shape__Point",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in qbe output:\n%s", want, text)

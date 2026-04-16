@@ -19,6 +19,7 @@ func TestResolveAggregateSourceLocal(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -42,6 +43,7 @@ func TestResolveAggregateSourceName(t *testing.T) {
 			}
 			return nil, "@global", nil
 		},
+		nil,
 		nil,
 		nil,
 	)
@@ -70,6 +72,7 @@ func TestResolveAggregateSourceLoadPointer(t *testing.T) {
 			return nil, "%ptr", nil
 		},
 		nil,
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -96,6 +99,7 @@ func TestResolveAggregateSourceFieldLoad(t *testing.T) {
 			}
 			return []string{"%tmp = add"}, "%field_addr", nil
 		},
+		nil,
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -108,9 +112,37 @@ func TestResolveAggregateSourceFieldLoad(t *testing.T) {
 	}
 }
 
+func TestResolveAggregateSourceIndexLoad(t *testing.T) {
+	base := &mir.LocalValue{LocalID: 4}
+	index := &mir.NumberValue{Value: "1"}
+	value := &mir.IndexValue{Base: base, Index: index}
+	lines, got, err := ResolveAggregateSource(
+		value,
+		nil,
+		nil,
+		nil,
+		nil,
+		func(gotBase mir.Value, gotIndex mir.Value) ([]string, string, error) {
+			if gotBase != base || gotIndex != index {
+				t.Fatalf("unexpected index load inputs")
+			}
+			return []string{"%tmp = add"}, "%index_addr", nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(lines) != 1 || lines[0] != "%tmp = add" {
+		t.Fatalf("unexpected prep lines: %#v", lines)
+	}
+	if got != "%index_addr" {
+		t.Fatalf("expected %%index_addr, got %q", got)
+	}
+}
+
 func TestResolveAggregateSourceUnsupported(t *testing.T) {
 	value := &mir.NumberValue{Value: "1"}
-	if _, _, err := ResolveAggregateSource(value, nil, nil, nil, nil); err == nil {
+	if _, _, err := ResolveAggregateSource(value, nil, nil, nil, nil, nil); err == nil {
 		t.Fatalf("expected unsupported aggregate source error")
 	}
 }

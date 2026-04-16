@@ -2238,6 +2238,9 @@ func tupleElementLayoutForIndex(state *moduleState, tupleType *typeinfo.TupleTyp
 // lowerIndexAddress computes the pointer to arr[index].
 // baseType must be *typeinfo.ArrayType or a pointer-like type.
 func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
+	if backend.IsSliceLikeType(backend.UnwrapNamed(baseType)) {
+		return lowerSliceIndexAddress(state, base, index, baseType)
+	}
 	var elemType typeinfo.Type
 	var tupleElem *backend.TupleElementLayout
 	arrayLen := int64(-1)
@@ -2287,6 +2290,49 @@ func lowerIndexAddress(state *moduleState, base mir.Value, index mir.Value, base
 	line := fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, %s", addr, elemIRType, baseExpr, llvmGEPIndex(indexExpr))
 	lines = append(lines, line)
 	return lines, addr, nil
+}
+
+func lowerSliceIndexAddress(state *moduleState, base mir.Value, index mir.Value, baseType typeinfo.Type) ([]string, string, error) {
+	sliceType, ok := backend.UnwrapNamed(baseType).(*typeinfo.SliceType)
+	if !ok || sliceType == nil {
+		return nil, "", fmt.Errorf("cannot index slice address into %T", baseType)
+	}
+	baseExpr, err := lowerValue(state, base)
+	if err != nil {
+		return nil, "", err
+	}
+	indexExpr, err := lowerValue(state, index)
+	if err != nil {
+		return nil, "", err
+	}
+	dataPtr := freshTemp(state, "slice_data")
+	lenAddr := freshTemp(state, "slice_len_addr")
+	lenVal := freshTemp(state, "slice_len")
+	elemPtr := freshTemp(state, "elem")
+	abiIR := llvmABIIntType()
+	ptrSize := abi.PointerBytes()
+	lines := []string{
+		fmt.Sprintf("%s = load ptr, ptr %s", dataPtr, baseExpr),
+		fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, i64 %d", lenAddr, baseExpr, ptrSize),
+		fmt.Sprintf("%s = load %s, ptr %s", lenVal, abiIR, lenAddr),
+		fmt.Sprintf("call void @ferret__bounds_check(%s %s, %s %s)", abiIR, indexExpr, abiIR, lenVal),
+	}
+	if elemIRType, err := llvmBaseType(sliceType.Inner); err == nil {
+		lines = append(lines, fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, %s", elemPtr, elemIRType, dataPtr, llvmGEPIndex(indexExpr)))
+		return lines, elemPtr, nil
+	}
+	elemSize, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), sliceType.Inner)
+	if err != nil {
+		return nil, "", err
+	}
+	offset := indexExpr
+	if elemSize != 1 {
+		scaled := freshTemp(state, "idx")
+		lines = append(lines, fmt.Sprintf("%s = mul %s %s, %d", scaled, abiIR, indexExpr, elemSize))
+		offset = scaled
+	}
+	lines = append(lines, fmt.Sprintf("%s = getelementptr inbounds i8, ptr %s, %s %s", elemPtr, dataPtr, abiIR, offset))
+	return lines, elemPtr, nil
 }
 
 func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) {
@@ -2992,6 +3038,13 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 	if isInterfaceAggregate(agg.Type) {
 		if iface, ok := value.(*mir.InterfaceValue); ok {
 			return lowerInterfaceAssign(state, llvmLocalName(agg.PtrName), agg.Type, iface)
+		}
+		if isInterfaceAggregate(value.Type()) {
+			src, err := lowerAggregateSource(state, value)
+			if err != nil {
+				return "", err
+			}
+			return llvmMemcpy(llvmLocalName(agg.PtrName), src, agg.Size, agg.Align), nil
 		}
 		return "", fmt.Errorf("unsupported interface assignment %T", value)
 	}
@@ -4215,6 +4268,13 @@ func lowerAggregateSource(state *moduleState, value mir.Value) (string, error) {
 		},
 		func(base mir.Value, fieldIndex int) ([]string, string, error) {
 			lines, addr, _, err := lowerFieldAddress(state, base, fieldIndex)
+			if err != nil {
+				return nil, "", err
+			}
+			return lines, addr, nil
+		},
+		func(base mir.Value, index mir.Value) ([]string, string, error) {
+			lines, addr, err := lowerIndexAddress(state, base, index, base.Type())
 			if err != nil {
 				return nil, "", err
 			}

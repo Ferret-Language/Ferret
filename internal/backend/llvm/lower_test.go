@@ -121,6 +121,33 @@ fn main() -> str {
 	}
 }
 
+func TestLowerVariadicInterfaceLoopToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), testutils.InterfaceVariadicProbeSource)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	ir, err := llvmbackend.LowerProgram(testUnits(result), false)
+	if err != nil {
+		t.Fatalf("lower llvm variadic interface loop: %v", err)
+	}
+	wrapper, err := llvmbackend.MainWrapper(result.Entry.MIR)
+	if err != nil {
+		t.Fatalf("llvm main wrapper: %v", err)
+	}
+	ir += wrapper
+	for _, want := range []string{
+		"define void @main__printArea",
+		"call i32 %_iface_fn",
+		"@vtable__local__main__Shape__Point",
+	} {
+		if !strings.Contains(ir, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, ir)
+		}
+	}
+}
+
 func TestLowerBuiltinMapOpsToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
