@@ -57,6 +57,13 @@ func parseCommandArgs(name string, args []string) ([]string, error) {
 }
 
 func main() {
+
+	exe, _ := os.Executable()
+	if strings.Contains(exe, "go-build") {
+		fmt.Println("run compiled program instead of 'go run'")
+		os.Exit(1)
+	}
+
 	if len(os.Args) > 1 {
 		command := os.Args[1]
 		commandArgs := os.Args[2:]
