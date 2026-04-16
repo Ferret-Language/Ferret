@@ -81,6 +81,10 @@ jobs:
           test -f fer.ret
           test -f main.fer
 
-          OUTPUT="$(ferret run -logformat normal 2>&1)"
-          printf '%s\n' "$OUTPUT"
-          grep -F "Hello from Ferret!" <<<"$OUTPUT"
+          RUN_LOG="$RUNNER_TEMP/ferret-smoke-run.log"
+          if ! ferret run -logformat normal 2>&1 | tee "$RUN_LOG"; then
+            echo "ferret run failed; full output follows:"
+            cat "$RUN_LOG"
+            exit 1
+          fi
+          grep -F "Hello from Ferret!" "$RUN_LOG"
