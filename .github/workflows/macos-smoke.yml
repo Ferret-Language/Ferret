@@ -6,6 +6,8 @@ on:
 
 jobs:
   smoke:
+    permissions:
+      contents: read
     name: smoke-${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -43,4 +45,5 @@ jobs:
           cd "$WORKDIR"
 
           printf '\n\n' | ferret init smokeproject
+          test -f fer.ret
           ferret run
