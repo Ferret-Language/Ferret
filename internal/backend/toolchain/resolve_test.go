@@ -110,3 +110,51 @@ func TestBundledWindowsGCCRuntimeLibDirs(t *testing.T) {
 		t.Fatalf("bundledWindowsGCCRuntimeLibDirs[0] = %q, want %q", got[0], versionDir)
 	}
 }
+
+func TestDarwinSDKRootUsesEnvironment(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	const want = "/tmp/macos-sdk"
+	prev := os.Getenv("SDKROOT")
+	if err := os.Setenv("SDKROOT", want); err != nil {
+		t.Fatalf("set SDKROOT: %v", err)
+	}
+	defer func() {
+		if prev == "" {
+			_ = os.Unsetenv("SDKROOT")
+			return
+		}
+		_ = os.Setenv("SDKROOT", prev)
+	}()
+
+	if got := darwinSDKRoot(); got != want {
+		t.Fatalf("darwinSDKRoot() = %q, want %q", got, want)
+	}
+}
+
+func TestClangDriverArgsIncludeDarwinSDKRootFromEnvironment(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	const sdkRoot = "/tmp/macos-sdk"
+	prev := os.Getenv("SDKROOT")
+	if err := os.Setenv("SDKROOT", sdkRoot); err != nil {
+		t.Fatalf("set SDKROOT: %v", err)
+	}
+	defer func() {
+		if prev == "" {
+			_ = os.Unsetenv("SDKROOT")
+			return
+		}
+		_ = os.Setenv("SDKROOT", prev)
+	}()
+
+	got := ClangDriverArgs("/tmp/ferret/toolchain/bin/clang", 64)
+	for i := 0; i < len(got)-1; i++ {
+		if got[i] == "-isysroot" && got[i+1] == sdkRoot {
+			return
+		}
+	}
+	t.Fatalf("ClangDriverArgs missing darwin -isysroot %q: %#v", sdkRoot, got)
+}

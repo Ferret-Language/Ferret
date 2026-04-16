@@ -95,6 +95,11 @@ func ClangDriverArgs(clangPath string, bits int) []string {
 		"-L" + libDir,
 		"-isystem", includeDir,
 	}
+	if runtime.GOOS == "darwin" {
+		if sdkRoot := darwinSDKRoot(); sdkRoot != "" {
+			args = append(args, "-isysroot", sdkRoot)
+		}
+	}
 	if runtime.GOOS == "windows" {
 		for _, dir := range bundledWindowsGCCRuntimeLibDirs(libDir) {
 			args = append(args, "-L"+dir)
@@ -104,6 +109,20 @@ func ClangDriverArgs(clangPath string, bits int) []string {
 		args = append([]string{"--target=" + target}, args...)
 	}
 	return args
+}
+
+func darwinSDKRoot() string {
+	if runtime.GOOS != "darwin" {
+		return ""
+	}
+	if sdkRoot := strings.TrimSpace(os.Getenv("SDKROOT")); sdkRoot != "" {
+		return sdkRoot
+	}
+	out, err := exec.Command("xcrun", "--sdk", "macosx", "--show-sdk-path").CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func bundledWindowsGCCRuntimeLibDirs(libDir string) []string {
