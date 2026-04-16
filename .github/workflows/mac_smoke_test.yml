@@ -30,6 +30,8 @@ jobs:
         run: |
           set -euo pipefail
           brew install llvm
+          LLVM_BIN="$(brew --prefix llvm)/bin"
+          echo "FERRET_LLVM_BIN=$LLVM_BIN" >> "$GITHUB_ENV"
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
 
       - name: Verify Go toolchain
@@ -38,17 +40,20 @@ jobs:
           set -euo pipefail
           which go
           go version
+          test -n "${FERRET_LLVM_BIN:-}"
 
       - name: Build Ferret bundle
         shell: bash
         run: |
           set -euo pipefail
+          export PATH="$FERRET_LLVM_BIN:$PATH"
           ./build.sh
 
       - name: Verify bundled artifacts
         shell: bash
         run: |
           set -euo pipefail
+          export PATH="$FERRET_LLVM_BIN:$PATH"
           test -x build/core/bin/ferret
           test -f build/core/libs/ferret_runtime.a
           test -f build/toolchain/bin/clang

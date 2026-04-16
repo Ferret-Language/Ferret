@@ -50,11 +50,14 @@ jobs:
         if: matrix.os == 'macos'
         run: |
           brew install llvm
+          LLVM_BIN="$(brew --prefix llvm)/bin"
+          echo "FERRET_LLVM_BIN=$LLVM_BIN" >> "$GITHUB_ENV"
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
 
       - name: Verify macOS clang source
         if: matrix.os == 'macos'
         run: |
+          export PATH="$FERRET_LLVM_BIN:$PATH"
           which clang
           clang --version
           which ld64.lld
@@ -111,6 +114,9 @@ jobs:
       - name: Pack bundle (unix)
         if: matrix.os != 'windows'
         run: |
+          if [ "${{ matrix.os }}" = "macos" ]; then
+            export PATH="$FERRET_LLVM_BIN:$PATH"
+          fi
           rm -rf build dist
           go run ./bundler
 
@@ -137,6 +143,9 @@ jobs:
       - name: Verify toolchain bundle (unix)
         if: matrix.os != 'windows'
         run: |
+          if [ "${{ matrix.os }}" = "macos" ]; then
+            export PATH="$FERRET_LLVM_BIN:$PATH"
+          fi
           test -f build/toolchain/bin/clang
 
       - name: Verify macOS toolchain bundle
