@@ -1,0 +1,46 @@
+name: macos-smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    name: smoke-${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-13, macos-14]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Ferret
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x installers/install.sh
+          export FERRET_INSTALL_DIR="$RUNNER_TEMP/ferret"
+          installers/install.sh
+          echo "$FERRET_INSTALL_DIR/core/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Ferret on PATH
+        shell: bash
+        run: |
+          set -euo pipefail
+          which ferret
+          ferret --version
+
+      - name: Initialize and run sample project
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORKDIR="$RUNNER_TEMP/ferret-smoke"
+          rm -rf "$WORKDIR"
+          mkdir -p "$WORKDIR"
+          cd "$WORKDIR"
+
+          printf '\n\n' | ferret init smokeproject
+          ferret run
