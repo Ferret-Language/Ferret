@@ -191,7 +191,7 @@ func copyPlatformToolchainRuntime(bundleDir, libDir string, binaries []string, c
 	case "windows":
 		return copyWindowsToolchain(bundleDir, binaries, clangPath)
 	case "darwin":
-		return copyDarwinSharedLibraries(libDir, binaries)
+		return copyDarwinSharedLibraries(bundleDir, libDir, binaries)
 	default:
 		return copySharedLibraries(libDir, binaries, dependenciesFromLdd)
 	}
@@ -338,15 +338,116 @@ func copySharedLibraries(dstDir string, binaries []string, depsFn func(string) (
 	return nil
 }
 
-func copyDarwinSharedLibraries(dstDir string, binaries []string) error {
+func copyDarwinSharedLibraries(bundleDir, dstDir string, binaries []string) error {
 	paths, err := collectDarwinDependencies(binaries)
 	if err != nil {
 		return err
 	}
+	copied := make(map[string]string, len(paths))
 	for _, src := range paths {
-		if err := copyFile(src, filepath.Join(dstDir, filepath.Base(src))); err != nil {
+		dst := filepath.Join(dstDir, filepath.Base(src))
+		if err := copyFile(src, dst); err != nil {
 			return fmt.Errorf("copy toolchain shared lib %s: %w", src, err)
 		}
+		copied[src] = dst
+	}
+	if err := rewriteDarwinBundleLoadCommands(bundleDir, binaries, copied); err != nil {
+		return err
+	}
+	return nil
+}
+
+type darwinLoadCommandChange struct {
+	Old string
+	New string
+}
+
+func rewriteDarwinBundleLoadCommands(bundleDir string, binaries []string, copied map[string]string) error {
+	binDir := filepath.Join(bundleDir, "bin")
+
+	for _, src := range binaries {
+		dst := filepath.Join(binDir, filepath.Base(src))
+		args, err := darwinInstallNameChanges(src, src, copied, true)
+		if err != nil {
+			return err
+		}
+		if err := applyDarwinInstallNameChanges(dst, args); err != nil {
+			return err
+		}
+	}
+
+	for src, dst := range copied {
+		args, err := darwinInstallNameChanges(src, src, copied, false)
+		if err != nil {
+			return err
+		}
+		if err := applyDarwinInstallNameChanges(dst, args); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func darwinInstallNameChanges(loaderPath, execPath string, copied map[string]string, binary bool) ([]string, error) {
+	rawDeps, err := darwinDependencyRefs(loaderPath)
+	if err != nil {
+		return nil, err
+	}
+	rpaths, err := darwinRPaths(loaderPath)
+	if err != nil {
+		return nil, err
+	}
+	changes, err := darwinBundledDependencyChanges(loaderPath, execPath, rawDeps, rpaths, copied, binary)
+	if err != nil {
+		return nil, err
+	}
+
+	args := make([]string, 0, len(changes)*3+2)
+	if !binary {
+		args = append(args, "-id", "@rpath/"+filepath.Base(loaderPath))
+	}
+	for _, change := range changes {
+		args = append(args, "-change", change.Old, change.New)
+	}
+	return args, nil
+}
+
+func darwinBundledDependencyChanges(loaderPath, execPath string, rawDeps, rpaths []string, copied map[string]string, binary bool) ([]darwinLoadCommandChange, error) {
+	changes := make([]darwinLoadCommandChange, 0)
+	for _, raw := range rawDeps {
+		resolved, include, err := resolveDarwinDependencyPath(loaderPath, execPath, raw, rpaths)
+		if err != nil {
+			return nil, err
+		}
+		if !include {
+			continue
+		}
+		dst, ok := copied[resolved]
+		if !ok {
+			continue
+		}
+		rewrite := "@loader_path/" + filepath.Base(dst)
+		if binary {
+			rewrite = "@executable_path/../lib/" + filepath.Base(dst)
+		}
+		if raw == rewrite {
+			continue
+		}
+		changes = append(changes, darwinLoadCommandChange{
+			Old: raw,
+			New: rewrite,
+		})
+	}
+	return changes, nil
+}
+
+func applyDarwinInstallNameChanges(path string, args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	cmd := exec.Command("install_name_tool", append(args, path)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("rewrite darwin load commands for %s: %w\n%s", path, err, out)
 	}
 	return nil
 }

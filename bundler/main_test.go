@@ -290,3 +290,89 @@ func TestResolveDarwinDependencyPathLoaderPath(t *testing.T) {
 		t.Fatalf("resolveDarwinDependencyPath = %q, want %q", got, want)
 	}
 }
+
+func TestDarwinBundledDependencyChangesForLibrary(t *testing.T) {
+	root := t.TempDir()
+	loaderDir := filepath.Join(root, "llvm", "lib")
+	depDir := filepath.Join(root, "z3", "lib")
+	if err := os.MkdirAll(loaderDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(depDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := filepath.Join(loaderDir, "libLLVM.dylib")
+	dep := filepath.Join(depDir, "libz3.4.15.dylib")
+	if err := os.WriteFile(loader, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dep, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	copied := map[string]string{
+		dep: "/bundle/lib/libz3.4.15.dylib",
+	}
+	changes, err := darwinBundledDependencyChanges(
+		loader,
+		filepath.Join(root, "llvm", "bin", "clang"),
+		[]string{dep},
+		nil,
+		copied,
+		false,
+	)
+	if err != nil {
+		t.Fatalf("darwinBundledDependencyChanges returned error: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("darwinBundledDependencyChanges len = %d, want 1 (%#v)", len(changes), changes)
+	}
+	if changes[0].Old != dep {
+		t.Fatalf("change old = %q, want z3 dylib path", changes[0].Old)
+	}
+	if changes[0].New != "@loader_path/libz3.4.15.dylib" {
+		t.Fatalf("change new = %q, want @loader_path/libz3.4.15.dylib", changes[0].New)
+	}
+}
+
+func TestDarwinBundledDependencyChangesForBinary(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "llvm", "bin")
+	libDir := filepath.Join(root, "llvm", "lib")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	clangPath := filepath.Join(binDir, "clang")
+	libPath := filepath.Join(libDir, "libclang-cpp.dylib")
+	if err := os.WriteFile(clangPath, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(libPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	copied := map[string]string{
+		libPath: "/bundle/lib/libclang-cpp.dylib",
+	}
+	changes, err := darwinBundledDependencyChanges(
+		clangPath,
+		clangPath,
+		[]string{"@rpath/libclang-cpp.dylib"},
+		[]string{libDir},
+		copied,
+		true,
+	)
+	if err != nil {
+		t.Fatalf("darwinBundledDependencyChanges returned error: %v", err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("darwinBundledDependencyChanges len = %d, want 1 (%#v)", len(changes), changes)
+	}
+	if changes[0].Old != "@rpath/libclang-cpp.dylib" {
+		t.Fatalf("change old = %q, want @rpath/libclang-cpp.dylib", changes[0].Old)
+	}
+	if changes[0].New != "@executable_path/../lib/libclang-cpp.dylib" {
+		t.Fatalf("change new = %q, want @executable_path/../lib/libclang-cpp.dylib", changes[0].New)
+	}
+}
