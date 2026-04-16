@@ -187,3 +187,106 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestParseOtoolDependencies(t *testing.T) {
+	out := `/tmp/clang:
+	@rpath/libclang-cpp.dylib (compatibility version 1.0.0, current version 1.0.0)
+	/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)
+	/opt/homebrew/opt/llvm/lib/libunwind.1.dylib (compatibility version 1.0.0, current version 1.0.0)
+`
+	got := parseOtoolDependencies(out)
+	want := []string{
+		"@rpath/libclang-cpp.dylib",
+		"/usr/lib/libSystem.B.dylib",
+		"/opt/homebrew/opt/llvm/lib/libunwind.1.dylib",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("parseOtoolDependencies len = %d, want %d (%#v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("parseOtoolDependencies[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestParseDarwinRPaths(t *testing.T) {
+	out := `
+Load command 10
+          cmd LC_RPATH
+      cmdsize 32
+         path @executable_path/../lib (offset 12)
+Load command 11
+          cmd LC_RPATH
+      cmdsize 40
+         path /opt/homebrew/opt/llvm/lib (offset 12)
+`
+	got := parseDarwinRPaths(out)
+	want := []string{"@executable_path/../lib", "/opt/homebrew/opt/llvm/lib"}
+	if len(got) != len(want) {
+		t.Fatalf("parseDarwinRPaths len = %d, want %d (%#v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("parseDarwinRPaths[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestResolveDarwinDependencyPathRPath(t *testing.T) {
+	root := t.TempDir()
+	binDir := filepath.Join(root, "bin")
+	libDir := filepath.Join(root, "lib")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := filepath.Join(binDir, "clang")
+	if err := os.WriteFile(loader, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(libDir, "libclang-cpp.dylib")
+	if err := os.WriteFile(want, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, include, err := resolveDarwinDependencyPath(loader, loader, "@rpath/libclang-cpp.dylib", []string{"@executable_path/../lib"})
+	if err != nil {
+		t.Fatalf("resolveDarwinDependencyPath returned error: %v", err)
+	}
+	if !include {
+		t.Fatal("resolveDarwinDependencyPath should include resolved @rpath dep")
+	}
+	if got != want {
+		t.Fatalf("resolveDarwinDependencyPath = %q, want %q", got, want)
+	}
+}
+
+func TestResolveDarwinDependencyPathLoaderPath(t *testing.T) {
+	root := t.TempDir()
+	libDir := filepath.Join(root, "lib")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	loader := filepath.Join(libDir, "libclang-cpp.dylib")
+	if err := os.WriteFile(loader, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(libDir, "libLLVM.dylib")
+	if err := os.WriteFile(want, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, include, err := resolveDarwinDependencyPath(loader, filepath.Join(root, "bin", "clang"), "@loader_path/libLLVM.dylib", nil)
+	if err != nil {
+		t.Fatalf("resolveDarwinDependencyPath returned error: %v", err)
+	}
+	if !include {
+		t.Fatal("resolveDarwinDependencyPath should include resolved @loader_path dep")
+	}
+	if got != want {
+		t.Fatalf("resolveDarwinDependencyPath = %q, want %q", got, want)
+	}
+}

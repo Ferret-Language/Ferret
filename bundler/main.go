@@ -191,7 +191,7 @@ func copyPlatformToolchainRuntime(bundleDir, libDir string, binaries []string, c
 	case "windows":
 		return copyWindowsToolchain(bundleDir, binaries, clangPath)
 	case "darwin":
-		return copySharedLibraries(libDir, binaries, dependenciesFromOtool)
+		return copyDarwinSharedLibraries(libDir, binaries)
 	default:
 		return copySharedLibraries(libDir, binaries, dependenciesFromLdd)
 	}
@@ -331,6 +331,19 @@ func copySharedLibraries(dstDir string, binaries []string, depsFn func(string) (
 		if skipBundledSharedLibrary(src) {
 			continue
 		}
+		if err := copyFile(src, filepath.Join(dstDir, filepath.Base(src))); err != nil {
+			return fmt.Errorf("copy toolchain shared lib %s: %w", src, err)
+		}
+	}
+	return nil
+}
+
+func copyDarwinSharedLibraries(dstDir string, binaries []string) error {
+	paths, err := collectDarwinDependencies(binaries)
+	if err != nil {
+		return err
+	}
+	for _, src := range paths {
 		if err := copyFile(src, filepath.Join(dstDir, filepath.Base(src))); err != nil {
 			return fmt.Errorf("copy toolchain shared lib %s: %w", src, err)
 		}
@@ -595,14 +608,79 @@ func dependenciesFromLdd(binary string) ([]string, error) {
 	return deps, nil
 }
 
-func dependenciesFromOtool(binary string) ([]string, error) {
+func collectDarwinDependencies(binaries []string) ([]string, error) {
+	type darwinDepScan struct {
+		path     string
+		execPath string
+	}
+
+	queue := make([]darwinDepScan, 0, len(binaries))
+	for _, binary := range binaries {
+		queue = append(queue, darwinDepScan{path: binary, execPath: binary})
+	}
+
+	deps := make([]string, 0)
+	seenDeps := map[string]struct{}{}
+	scanned := map[string]struct{}{}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		scanKey := current.path + "|" + current.execPath
+		if _, ok := scanned[scanKey]; ok {
+			continue
+		}
+		scanned[scanKey] = struct{}{}
+
+		rawDeps, err := darwinDependencyRefs(current.path)
+		if err != nil {
+			return nil, err
+		}
+		rpaths, err := darwinRPaths(current.path)
+		if err != nil {
+			return nil, err
+		}
+
+		for _, raw := range rawDeps {
+			resolved, include, err := resolveDarwinDependencyPath(current.path, current.execPath, raw, rpaths)
+			if err != nil {
+				return nil, err
+			}
+			if !include || resolved == current.path {
+				continue
+			}
+			if _, ok := seenDeps[resolved]; ok {
+				continue
+			}
+			seenDeps[resolved] = struct{}{}
+			deps = append(deps, resolved)
+			queue = append(queue, darwinDepScan{path: resolved, execPath: current.execPath})
+		}
+	}
+
+	sort.Strings(deps)
+	return deps, nil
+}
+
+func darwinDependencyRefs(binary string) ([]string, error) {
 	out, err := exec.Command("otool", "-L", binary).CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("otool failed: %w\n%s", err, out)
 	}
+	return parseOtoolDependencies(string(out)), nil
+}
+
+func darwinRPaths(binary string) ([]string, error) {
+	out, err := exec.Command("otool", "-l", binary).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("otool -l failed: %w\n%s", err, out)
+	}
+	return parseDarwinRPaths(string(out)), nil
+}
+
+func parseOtoolDependencies(out string) []string {
 	deps := make([]string, 0)
-	seen := map[string]struct{}{}
-	for idx, line := range strings.Split(string(out), "\n") {
+	for idx, line := range strings.Split(out, "\n") {
 		if idx == 0 {
 			continue
 		}
@@ -610,17 +688,78 @@ func dependenciesFromOtool(binary string) ([]string, error) {
 		if len(fields) == 0 {
 			continue
 		}
-		candidate := fields[0]
-		if !strings.HasPrefix(candidate, "/") || strings.HasPrefix(candidate, "/usr/lib/") || strings.HasPrefix(candidate, "/System/Library/") {
-			continue
-		}
-		if _, ok := seen[candidate]; ok || !isFile(candidate) {
-			continue
-		}
-		seen[candidate] = struct{}{}
-		deps = append(deps, candidate)
+		deps = append(deps, fields[0])
 	}
-	return deps, nil
+	return deps
+}
+
+func parseDarwinRPaths(out string) []string {
+	rpaths := make([]string, 0)
+	inRPath := false
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case trimmed == "cmd LC_RPATH":
+			inRPath = true
+		case inRPath && strings.HasPrefix(trimmed, "path "):
+			pathText := strings.TrimPrefix(trimmed, "path ")
+			if before, _, ok := strings.Cut(pathText, " ("); ok {
+				pathText = before
+			}
+			if pathText != "" {
+				rpaths = append(rpaths, pathText)
+			}
+			inRPath = false
+		case strings.HasPrefix(trimmed, "cmd "):
+			inRPath = false
+		}
+	}
+	return rpaths
+}
+
+func resolveDarwinDependencyPath(loaderPath, execPath, dep string, rpaths []string) (string, bool, error) {
+	if dep == "" {
+		return "", false, nil
+	}
+	if strings.HasPrefix(dep, "/usr/lib/") || strings.HasPrefix(dep, "/System/Library/") {
+		return "", false, nil
+	}
+	if strings.HasPrefix(dep, "/") {
+		if !isFile(dep) {
+			return "", false, fmt.Errorf("missing runtime dependency: %s", dep)
+		}
+		return dep, true, nil
+	}
+
+	loaderDir := filepath.Dir(loaderPath)
+	execDir := filepath.Dir(execPath)
+	if strings.HasPrefix(dep, "@loader_path/") {
+		candidate := filepath.Clean(filepath.Join(loaderDir, strings.TrimPrefix(dep, "@loader_path/")))
+		if !isFile(candidate) {
+			return "", false, fmt.Errorf("missing runtime dependency: %s referenced by %s", dep, loaderPath)
+		}
+		return candidate, true, nil
+	}
+	if strings.HasPrefix(dep, "@executable_path/") {
+		candidate := filepath.Clean(filepath.Join(execDir, strings.TrimPrefix(dep, "@executable_path/")))
+		if !isFile(candidate) {
+			return "", false, fmt.Errorf("missing runtime dependency: %s referenced by %s", dep, loaderPath)
+		}
+		return candidate, true, nil
+	}
+	if strings.HasPrefix(dep, "@rpath/") {
+		rel := strings.TrimPrefix(dep, "@rpath/")
+		for _, rpath := range rpaths {
+			expanded := strings.ReplaceAll(rpath, "@loader_path", loaderDir)
+			expanded = strings.ReplaceAll(expanded, "@executable_path", execDir)
+			candidate := filepath.Clean(filepath.Join(expanded, rel))
+			if isFile(candidate) {
+				return candidate, true, nil
+			}
+		}
+		return "", false, fmt.Errorf("missing runtime dependency: %s referenced by %s", dep, loaderPath)
+	}
+	return "", false, nil
 }
 
 func copyFile(src, dst string) error {
