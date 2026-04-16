@@ -376,3 +376,33 @@ func TestDarwinBundledDependencyChangesForBinary(t *testing.T) {
 		t.Fatalf("change new = %q, want @executable_path/../lib/libclang-cpp.dylib", changes[0].New)
 	}
 }
+
+func TestDarwinBundleSignTargetsSignsLibrariesBeforeBinaries(t *testing.T) {
+	bundleDir := filepath.Join("/bundle", "toolchain")
+	copied := map[string]string{
+		"/opt/homebrew/opt/llvm/lib/libLLVM.dylib":      filepath.Join(bundleDir, "lib", "libLLVM.dylib"),
+		"/opt/homebrew/opt/z3/lib/libz3.4.15.dylib":     filepath.Join(bundleDir, "lib", "libz3.4.15.dylib"),
+		"/opt/homebrew/opt/llvm/lib/libclang-cpp.dylib": filepath.Join(bundleDir, "lib", "libclang-cpp.dylib"),
+	}
+	binaries := []string{
+		"/opt/homebrew/opt/llvm/bin/clang",
+		"/opt/homebrew/opt/llvm/bin/ld64.lld",
+	}
+
+	got := darwinBundleSignTargets(bundleDir, binaries, copied)
+	want := []string{
+		filepath.Join(bundleDir, "lib", "libLLVM.dylib"),
+		filepath.Join(bundleDir, "lib", "libclang-cpp.dylib"),
+		filepath.Join(bundleDir, "lib", "libz3.4.15.dylib"),
+		filepath.Join(bundleDir, "bin", "clang"),
+		filepath.Join(bundleDir, "bin", "ld64.lld"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("darwinBundleSignTargets len = %d, want %d (%#v)", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("darwinBundleSignTargets[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}

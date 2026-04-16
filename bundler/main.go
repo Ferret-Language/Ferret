@@ -385,6 +385,9 @@ func rewriteDarwinBundleLoadCommands(bundleDir string, binaries []string, copied
 			return err
 		}
 	}
+	if err := adHocSignDarwinBundle(bundleDir, binaries, copied); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -450,6 +453,28 @@ func applyDarwinInstallNameChanges(path string, args []string) error {
 		return fmt.Errorf("rewrite darwin load commands for %s: %w\n%s", path, err, out)
 	}
 	return nil
+}
+
+func adHocSignDarwinBundle(bundleDir string, binaries []string, copied map[string]string) error {
+	for _, path := range darwinBundleSignTargets(bundleDir, binaries, copied) {
+		cmd := exec.Command("codesign", "--force", "--sign", "-", path)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("codesign darwin artifact %s: %w\n%s", path, err, out)
+		}
+	}
+	return nil
+}
+
+func darwinBundleSignTargets(bundleDir string, binaries []string, copied map[string]string) []string {
+	targets := make([]string, 0, len(copied)+len(binaries))
+	for _, src := range sortedKeys(copied) {
+		targets = append(targets, copied[src])
+	}
+	binDir := filepath.Join(bundleDir, "bin")
+	for _, src := range binaries {
+		targets = append(targets, filepath.Join(binDir, filepath.Base(src)))
+	}
+	return targets
 }
 
 func copyWindowsToolchainDLLs(binDir string, binaries []string) error {
