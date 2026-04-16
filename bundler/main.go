@@ -136,15 +136,17 @@ func resolveToolBinaries() (map[string]string, error) {
 	}
 	tools[binaryName("qbe")] = qbePath
 
-	for _, name := range []string{"clang", "clang++", "ld.lld", "lld", "lld-link"} {
+	for _, name := range bundledToolNames(runtime.GOOS) {
 		path, err := exec.LookPath(name)
 		if err != nil {
 			continue
 		}
 		tools[filepath.Base(path)] = path
 	}
-	if _, ok := tools[binaryName("clang")]; !ok {
-		return nil, fmt.Errorf("bundle toolchain: clang is required in PATH for release packaging")
+	for _, name := range requiredBundledToolNames(runtime.GOOS) {
+		if _, ok := tools[binaryName(name)]; !ok {
+			return nil, fmt.Errorf("bundle toolchain: %s is required in PATH for %s release packaging", name, runtime.GOOS)
+		}
 	}
 	if runtime.GOOS == "windows" {
 		clangPath := tools[binaryName("clang")]
@@ -154,6 +156,22 @@ func resolveToolBinaries() (map[string]string, error) {
 		}
 	}
 	return tools, nil
+}
+
+func bundledToolNames(goos string) []string {
+	names := []string{"clang", "clang++", "ld.lld", "lld", "lld-link"}
+	if goos == "darwin" {
+		names = append(names, "ld64.lld")
+	}
+	return names
+}
+
+func requiredBundledToolNames(goos string) []string {
+	names := []string{"clang"}
+	if goos == "darwin" {
+		names = append(names, "ld64.lld")
+	}
+	return names
 }
 
 func copyClangResources(clangPath, libDir string) error {

@@ -19,36 +19,55 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Ferret
-        shell: bash
-        run: |
-          set -euo pipefail
-          chmod +x installers/install.sh
-          export FERRET_INSTALL_DIR="$RUNNER_TEMP/ferret"
-          installers/install.sh
-          echo "$FERRET_INSTALL_DIR/core/bin" >> "$GITHUB_PATH"
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+          check-latest: true
 
-      - name: Verify Ferret on PATH
+      - name: Install LLVM toolchain
         shell: bash
         run: |
           set -euo pipefail
-          which ferret
-          ferret --version
+          brew install llvm
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify Go toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          which go
+          go version
+
+      - name: Build Ferret bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./build.sh
+
+      - name: Verify bundled artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x build/core/bin/ferret
+          test -f build/core/libs/ferret_runtime.a
+          test -f build/toolchain/bin/clang
+          test -f build/toolchain/bin/ld64.lld
 
       - name: Initialize and run sample project
         shell: bash
         run: |
           set -euo pipefail
-          export FERRET_INSTALL_DIR="$RUNNER_TEMP/ferret"
-          export PATH="$FERRET_INSTALL_DIR/toolchain/bin:$FERRET_INSTALL_DIR/core/bin:$PATH"
+          export PATH="$GITHUB_WORKSPACE/build/toolchain/bin:$GITHUB_WORKSPACE/build/core/bin:$PATH"
           WORKDIR="$RUNNER_TEMP/ferret-smoke"
           rm -rf "$WORKDIR"
           mkdir -p "$WORKDIR"
           cd "$WORKDIR"
 
-          ferret init smokeproject <<'EOF'
-
-
-EOF
+          printf '\n\n' | ferret init smokeproject
           test -f fer.ret
-          ferret run
+          test -f main.fer
+
+          OUTPUT="$(ferret run -logformat normal 2>&1)"
+          printf '%s\n' "$OUTPUT"
+          grep -F "Hello from Ferret!" <<<"$OUTPUT"

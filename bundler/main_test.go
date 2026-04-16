@@ -147,3 +147,43 @@ func TestLinux32BitHostArchSupported(t *testing.T) {
 		}
 	}
 }
+
+func TestBundledToolNames(t *testing.T) {
+	linux := bundledToolNames("linux")
+	for _, want := range []string{"clang", "clang++", "ld.lld", "lld", "lld-link"} {
+		if !containsString(linux, want) {
+			t.Fatalf("bundledToolNames(linux) missing %q in %#v", want, linux)
+		}
+	}
+	if containsString(linux, "ld64.lld") {
+		t.Fatalf("bundledToolNames(linux) should not include ld64.lld: %#v", linux)
+	}
+
+	darwin := bundledToolNames("darwin")
+	if !containsString(darwin, "ld64.lld") {
+		t.Fatalf("bundledToolNames(darwin) missing ld64.lld in %#v", darwin)
+	}
+}
+
+func TestRequiredBundledToolNames(t *testing.T) {
+	linux := requiredBundledToolNames("linux")
+	if len(linux) != 1 || linux[0] != "clang" {
+		t.Fatalf("requiredBundledToolNames(linux) = %#v, want only clang", linux)
+	}
+
+	darwin := requiredBundledToolNames("darwin")
+	for _, want := range []string{"clang", "ld64.lld"} {
+		if !containsString(darwin, want) {
+			t.Fatalf("requiredBundledToolNames(darwin) missing %q in %#v", want, darwin)
+		}
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}

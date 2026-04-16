@@ -46,6 +46,20 @@ jobs:
           which go
           go version
 
+      - name: Install LLVM toolchain (macos)
+        if: matrix.os == 'macos'
+        run: |
+          brew install llvm
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify macOS clang source
+        if: matrix.os == 'macos'
+        run: |
+          which clang
+          clang --version
+          which ld64.lld
+          ld64.lld --version
+
       - name: Install LLVM toolchain (linux)
         if: matrix.os == 'linux'
         run: |
@@ -124,6 +138,11 @@ jobs:
         if: matrix.os != 'windows'
         run: |
           test -f build/toolchain/bin/clang
+
+      - name: Verify macOS toolchain bundle
+        if: matrix.os == 'macos'
+        run: |
+          test -f build/toolchain/bin/ld64.lld
 
       - name: Verify toolchain bundle (windows)
         if: matrix.os == 'windows'
