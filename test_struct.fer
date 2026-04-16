@@ -1,0 +1,43 @@
+
+
+fn add(a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+type Point struct {
+    x: i32,
+    y: i32
+}
+
+fn Point::Area(self) -> i32 {
+    return self.x + self.y
+}
+
+type Circle struct {
+    rad: i32
+}
+
+fn Circle::Area(self) -> i32 {
+    return self.rad
+}
+
+type Rectangle struct {
+    height: i32,
+    width: i32
+}
+
+fn Rectangle::Area(self) -> i32 {
+    return self.height + self.width
+}
+
+type Shape interface{
+    Area(self)
+}
+
+fn printArea(s: Shape) {
+    println(s.Area())
+}
+
+fn main() {
+	println("Hello from Ferret! ", add(1, 4))
+}

@@ -3674,6 +3674,9 @@ func (c *checker) checkAssignable(loc source.Location, expected, got typeinfo.Ty
 }
 
 func (c *checker) assignable(expected, got typeinfo.Type) bool {
+	if typeinfo.IsBuiltinNamed(got, "void") {
+		return typeinfo.IsBuiltinNamed(expected, "void")
+	}
 	if typeinfo.Assignable(expected, got) {
 		return true
 	}

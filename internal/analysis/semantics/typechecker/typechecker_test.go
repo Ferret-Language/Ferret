@@ -1323,6 +1323,39 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerRejectsVoidInterfaceMethodUsedAsValueArgument(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn print(values: ...Any) -> void;
+type Any interface {}
+
+type Shape interface {
+    Area(self)
+}
+
+fn printArea(s: Shape) -> void {
+    print(s.Area())
+}
+
+fn main() -> void {}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected void-as-value diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "expected Any, got void") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected void-as-value diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerRejectsAmbiguousUnionMemberAssignment(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
