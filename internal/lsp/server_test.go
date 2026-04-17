@@ -174,8 +174,162 @@ func TestInitializeAdvertisesHoverDefinitionAndCompletionProvider(t *testing.T) 
 		t.Fatal("expected completion trigger characters")
 	}
 
+	var renameProvider bool
+	if err := json.Unmarshal(payload.Capabilities["renameProvider"], &renameProvider); err != nil {
+		t.Fatalf("failed to decode renameProvider: %v", err)
+	}
+	if !renameProvider {
+		t.Fatal("expected renameProvider=true")
+	}
+
 	if _, ok := payload.Capabilities["documentSymbolProvider"]; ok {
 		t.Fatal("expected documentSymbolProvider to be omitted")
+	}
+}
+
+func TestRenameReturnsWorkspaceEditsAcrossLocalModules(t *testing.T) {
+	dir := t.TempDir()
+	mainPath := filepath.Join(dir, "main.fer")
+	utilPath := filepath.Join(dir, "util", "math.fer")
+	if err := os.MkdirAll(filepath.Dir(utilPath), 0o755); err != nil {
+		t.Fatalf("mkdir util dir: %v", err)
+	}
+	mainSrc := "import \"util/math\"\n\nfn main() -> i32 {\n    return math::Value(2)\n}\n"
+	utilSrc := "fn Value(v: i32) -> i32 {\n    return v\n}\n\nfn Use() -> i32 {\n    return Value(1)\n}\n"
+	if err := os.WriteFile(mainPath, []byte(mainSrc), 0o644); err != nil {
+		t.Fatalf("write main source: %v", err)
+	}
+	if err := os.WriteFile(utilPath, []byte(utilSrc), 0o644); err != nil {
+		t.Fatalf("write util source: %v", err)
+	}
+
+	line, char, ok := findPosition(mainSrc, "math::Value")
+	if !ok {
+		t.Fatal("failed to find Value call position")
+	}
+	char += len("math::")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(mainPath)
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/rename",
+		Params: mustRawJSON(t, renameParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+			NewName:      "RenamedValue",
+		}),
+	})
+
+	edit := decodeWorkspaceEditResult(t, out.String())
+	if edit == nil || len(edit.Changes) == 0 {
+		t.Fatalf("expected workspace rename edits, got %#v", edit)
+	}
+	mainURI := "file://" + filepath.ToSlash(mainPath)
+	utilURI := "file://" + filepath.ToSlash(utilPath)
+	if len(edit.Changes[mainURI]) != 1 {
+		t.Fatalf("expected 1 edit in main file, got %#v", edit.Changes[mainURI])
+	}
+	if len(edit.Changes[utilURI]) != 2 {
+		t.Fatalf("expected 2 edits in util file, got %#v", edit.Changes[utilURI])
+	}
+}
+
+func TestRenameRejectsInvalidNewName(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "fn run2() -> void {}\nfn main() { run2() }\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	line, char, ok := findPosition(src, "run2()")
+	if !ok {
+		t.Fatal("failed to find run2 call")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/rename",
+		Params: mustRawJSON(t, renameParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+			NewName:      "1bad",
+		}),
+	})
+	resp := decodeSingleResponse(t, out.String())
+	if resp.Error == nil {
+		t.Fatal("expected rename invalid-identifier error")
+	}
+	if resp.Error.Code != -32602 {
+		t.Fatalf("expected invalid params error, got %#v", resp.Error)
+	}
+}
+
+func TestRenameDoesNotRenameDependencyOwnedSymbol(t *testing.T) {
+	parent := t.TempDir()
+	appRoot := filepath.Join(parent, "app")
+	depRoot := filepath.Join(parent, "dep")
+	if err := os.MkdirAll(appRoot, 0o755); err != nil {
+		t.Fatalf("mkdir app root: %v", err)
+	}
+	if err := os.MkdirAll(depRoot, 0o755); err != nil {
+		t.Fatalf("mkdir dep root: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(depRoot, "fer.ret"), []byte("[package]\nname = \"dep\"\n"), 0o644); err != nil {
+		t.Fatalf("write dep manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(depRoot, "api.fer"), []byte("fn Value() -> i32 {\n    return 1\n}\n"), 0o644); err != nil {
+		t.Fatalf("write dep source: %v", err)
+	}
+	manifestSrc := "[package]\nname = \"app\"\n\n[dependencies]\ntool = \"../dep\"\n"
+	if err := os.WriteFile(filepath.Join(appRoot, "fer.ret"), []byte(manifestSrc), 0o644); err != nil {
+		t.Fatalf("write app manifest: %v", err)
+	}
+	mainSrc := "import \"tool/api\"\n\nfn main() -> i32 {\n    return api::Value()\n}\n"
+	mainPath := filepath.Join(appRoot, "main.fer")
+	if err := os.WriteFile(mainPath, []byte(mainSrc), 0o644); err != nil {
+		t.Fatalf("write app source: %v", err)
+	}
+	line, char, ok := findPosition(mainSrc, "api::Value")
+	if !ok {
+		t.Fatal("failed to find dependency call")
+	}
+	char += len("api::")
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	if err := os.Chdir(appRoot); err != nil {
+		t.Fatalf("chdir app root: %v", err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(mainPath)
+	s := &Server{out: &out, documents: make(map[string]openDocument)}
+	s.handleRequest(rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/rename",
+		Params: mustRawJSON(t, renameParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+			NewName:      "RenamedValue",
+		}),
+	})
+	resp := decodeSingleResponse(t, out.String())
+	if resp.Error != nil {
+		t.Fatalf("unexpected rename response error: %#v", resp.Error)
+	}
+	if resp.Result != nil {
+		t.Fatalf("expected nil workspace edit for dependency-owned symbol, got %#v", resp.Result)
 	}
 }
 
@@ -3870,6 +4024,26 @@ func decodeCompletionResult(t *testing.T, framed string) []completionItem {
 		t.Fatalf("failed to unmarshal completion result: %v", err)
 	}
 	return items
+}
+
+func decodeWorkspaceEditResult(t *testing.T, framed string) *workspaceEdit {
+	t.Helper()
+	resp := decodeSingleResponse(t, framed)
+	if resp.Error != nil {
+		t.Fatalf("unexpected rename error: %#v", resp.Error)
+	}
+	if resp.Result == nil {
+		return nil
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("failed to marshal workspace edit result: %v", err)
+	}
+	var edit workspaceEdit
+	if err := json.Unmarshal(raw, &edit); err != nil {
+		t.Fatalf("failed to unmarshal workspace edit result: %v", err)
+	}
+	return &edit
 }
 
 func decodeFramedBodies(t *testing.T, framed string) [][]byte {
