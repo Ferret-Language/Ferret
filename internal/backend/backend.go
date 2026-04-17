@@ -10,7 +10,6 @@ import (
 type Target string
 
 const (
-	TargetQBE  Target = "qbe"
 	TargetLLVM Target = "llvm"
 )
 

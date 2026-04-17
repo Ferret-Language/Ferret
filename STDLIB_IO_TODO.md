@@ -33,7 +33,7 @@ Current runtime is centralized in `runtime/ferret_runtime.c/h`.
   - `runtime/ferret_io_file.c`
   - `runtime/ferret_net.c` (optional/phase-2)
 - [ ] keep naming/mangling stable for Ferret stdlib extern linkage.
-- [ ] ensure build scripts include new runtime units for both LLVM and QBE flows.
+- [ ] ensure build scripts include new runtime units for the LLVM flow.
 
 ## 4) Compiler/Backend Checks (Only If Blocked)
 
@@ -48,7 +48,6 @@ Current runtime is centralized in `runtime/ferret_runtime.c/h`.
 - [ ] add smoke: `io_copy_smoke.fer` (copy stdin/file/network-like reader->writer)
 - [ ] run backends:
   - `ferret -backend llvm ...`
-  - `ferret -backend qbe ...`
 
 ## 6) Done Criteria
 

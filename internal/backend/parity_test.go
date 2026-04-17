@@ -74,42 +74,28 @@ fn main() -> i32 {
 		Modules: modules,
 	}
 
-	for _, target := range []backend.Target{backend.TargetLLVM, backend.TargetQBE} {
-		lowerer, err := registry.New(target)
-		if err != nil {
-			t.Fatalf("new lowerer %s: %v", target, err)
+	target := backend.TargetLLVM
+	lowerer, err := registry.New(target)
+	if err != nil {
+		t.Fatalf("new lowerer %s: %v", target, err)
+	}
+	artifact, err := lowerer.LowerModule(unit)
+	if err != nil {
+		t.Fatalf("lower %s: %v", target, err)
+	}
+	for _, want := range []string{"Box__Id_", "Box__ConstValue"} {
+		if !strings.Contains(artifact.Text, want) {
+			t.Fatalf("target %s expected %q in lowered output:\n%s", target, want, artifact.Text)
 		}
-		artifact, err := lowerer.LowerModule(unit)
-		if err != nil {
-			t.Fatalf("lower %s: %v", target, err)
-		}
-		for _, want := range []string{"Box__Id_", "Box__ConstValue"} {
-			if !strings.Contains(artifact.Text, want) {
-				t.Fatalf("target %s expected %q in lowered output:\n%s", target, want, artifact.Text)
-			}
-		}
-		if target == backend.TargetLLVM {
-			for _, want := range []string{
-				"define i32 @main__Box__Id_",
-				"define i64 @main__Box__Id_",
-				"call i32 @main__Box__Id_",
-				"call i64 @main__Box__Id_",
-			} {
-				if !strings.Contains(artifact.Text, want) {
-					t.Fatalf("target %s expected %q in lowered output:\n%s", target, want, artifact.Text)
-				}
-			}
-		}
-		if target == backend.TargetQBE {
-			for _, want := range []string{
-				"function w $main__Box__Id_",
-				"function l $main__Box__Id_",
-				"call $main__Box__Id_",
-			} {
-				if !strings.Contains(artifact.Text, want) {
-					t.Fatalf("target %s expected %q in lowered output:\n%s", target, want, artifact.Text)
-				}
-			}
+	}
+	for _, want := range []string{
+		"define i32 @main__Box__Id_",
+		"define i64 @main__Box__Id_",
+		"call i32 @main__Box__Id_",
+		"call i64 @main__Box__Id_",
+	} {
+		if !strings.Contains(artifact.Text, want) {
+			t.Fatalf("target %s expected %q in lowered output:\n%s", target, want, artifact.Text)
 		}
 	}
 }

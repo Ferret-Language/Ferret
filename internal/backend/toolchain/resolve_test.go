@@ -8,8 +8,8 @@ import (
 )
 
 func TestNormalizeNames(t *testing.T) {
-	got := normalizeNames([]string{" clang ", "clang.exe", "", "qbe"})
-	if len(got) != 2 || got[0] != "clang" || got[1] != "qbe" {
+	got := normalizeNames([]string{" clang ", "clang.exe", ""})
+	if len(got) != 1 || got[0] != "clang" {
 		t.Fatalf("normalizeNames mismatch: %#v", got)
 	}
 }

@@ -9,22 +9,15 @@ import (
 
 func TestTargets(t *testing.T) {
 	targets := registry.Targets()
-	if len(targets) != 2 {
-		t.Fatalf("expected 2 targets, got %d", len(targets))
+	if len(targets) != 1 {
+		t.Fatalf("expected 1 target, got %d", len(targets))
 	}
-	if targets[0] != backend.TargetLLVM || targets[1] != backend.TargetQBE {
+	if targets[0] != backend.TargetLLVM {
 		t.Fatalf("unexpected targets: %#v", targets)
 	}
 }
 
 func TestRegistry(t *testing.T) {
-	qbe, err := registry.New(backend.TargetQBE)
-	if err != nil {
-		t.Fatalf("unexpected qbe error: %v", err)
-	}
-	if qbe.Target() != backend.TargetQBE {
-		t.Fatalf("unexpected qbe target: %s", qbe.Target())
-	}
 	llvm, err := registry.New(backend.TargetLLVM)
 	if err != nil {
 		t.Fatalf("unexpected llvm error: %v", err)

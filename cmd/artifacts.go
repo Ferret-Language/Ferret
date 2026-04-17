@@ -10,7 +10,6 @@ import (
 	layout "compiler/internal/analysis/layout/model"
 	"compiler/internal/backend"
 	"compiler/internal/backend/llvm"
-	"compiler/internal/backend/qbe"
 	"compiler/internal/backend/registry"
 	"compiler/internal/core/context"
 	compiler "compiler/internal/driver"
@@ -203,62 +202,35 @@ func buildExecutable(result compiler.Result, outputPath string, target backend.T
 	}
 	debugBuild := result.CompilerState != nil && result.CompilerState.Config.BuildDebug
 
-	switch target {
-	case backend.TargetLLVM:
-		// Build units for all modules and lower them in one program-wide pass.
-		// LowerProgram emits all type declarations before any function bodies,
-		// producing a single self-contained LLVM IR file without the need for
-		// any post-processing.
-		var units []*backend.Unit
-		for _, mod := range allModulesForBuild(result) {
-			if mod == nil || mod.MIR == nil || mod.Layout == nil {
-				continue
-			}
-			units = append(units, &backend.Unit{
-				Module:  mod.MIR,
-				Layout:  mod.Layout,
-				Layouts: layouts,
-				Modules: backendModules(result),
-			})
-		}
-		ir, err := llvm.LowerProgram(units, debugBuild)
-		if err != nil {
-			return fmt.Errorf("build: %w", err)
-		}
-		wrapper, err := llvm.MainWrapper(result.Entry.MIR)
-		if err != nil {
-			return fmt.Errorf("build: %w", err)
-		}
-		return llvm.CompileIR(ir+wrapper, absOut, llvm.CompileOptions{Debug: debugBuild})
-	default:
-		lowerer, err := registry.New(target)
-		if err != nil {
-			return fmt.Errorf("build: %w", err)
-		}
-		var combined strings.Builder
-		for _, mod := range allModulesForBuild(result) {
-			if mod == nil || mod.MIR == nil || mod.Layout == nil {
-				continue
-			}
-			artifact, err := lowerer.LowerModule(&backend.Unit{
-				Module:  mod.MIR,
-				Layout:  mod.Layout,
-				Layouts: layouts,
-				Modules: backendModules(result),
-			})
-			if err != nil {
-				return fmt.Errorf("build: lower %s: %w", mod.ImportPath, err)
-			}
-			combined.WriteString(artifact.Text)
-			combined.WriteByte('\n')
-		}
-		wrapper, err := qbe.MainWrapper(result.Entry.MIR)
-		if err != nil {
-			return fmt.Errorf("build: %w", err)
-		}
-		combined.WriteString(wrapper)
-		return qbe.CompileIR(combined.String(), absOut)
+	if target != backend.TargetLLVM {
+		return fmt.Errorf("build: unsupported backend target %q (only llvm is supported)", target)
 	}
+
+	// Build units for all modules and lower them in one program-wide pass.
+	// LowerProgram emits all type declarations before any function bodies,
+	// producing a single self-contained LLVM IR file without the need for
+	// any post-processing.
+	var units []*backend.Unit
+	for _, mod := range allModulesForBuild(result) {
+		if mod == nil || mod.MIR == nil || mod.Layout == nil {
+			continue
+		}
+		units = append(units, &backend.Unit{
+			Module:  mod.MIR,
+			Layout:  mod.Layout,
+			Layouts: layouts,
+			Modules: backendModules(result),
+		})
+	}
+	ir, err := llvm.LowerProgram(units, debugBuild)
+	if err != nil {
+		return fmt.Errorf("build: %w", err)
+	}
+	wrapper, err := llvm.MainWrapper(result.Entry.MIR)
+	if err != nil {
+		return fmt.Errorf("build: %w", err)
+	}
+	return llvm.CompileIR(ir+wrapper, absOut, llvm.CompileOptions{Debug: debugBuild})
 }
 
 // allModulesForBuild returns all modules ordered so imports come before the

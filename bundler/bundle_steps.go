@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"compiler/internal/backend/qbe"
 	"compiler/internal/core/abi"
 	"compiler/internal/core/context"
 )
@@ -77,12 +76,6 @@ func bundleToolchain(bundleDir string, tools map[string]string, bundle32Bit bool
 
 func resolveToolBinaries() (map[string]string, error) {
 	tools := map[string]string{}
-
-	qbePath, err := qbe.QBEBinary()
-	if err != nil {
-		return nil, fmt.Errorf("bundle qbe: %w", err)
-	}
-	tools[binaryName("qbe")] = qbePath
 
 	for _, name := range bundledToolNames(runtime.GOOS) {
 		path, err := exec.LookPath(name)

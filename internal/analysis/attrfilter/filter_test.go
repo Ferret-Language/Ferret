@@ -60,7 +60,7 @@ func TestExplainConfig(t *testing.T) {
 	if ExplainConfig(nil) != "" {
 		t.Fatalf("expected empty config explanation for nil context")
 	}
-	ctx := context.NewWithConfig(context.Config{TargetOS: "linux", TargetArch: "amd64", TargetBackend: "qbe", BuildDebug: true}, diagnostics.NewDiagnosticBag(""))
+	ctx := context.NewWithConfig(context.Config{TargetOS: "linux", TargetArch: "amd64", TargetBackend: "llvm", BuildDebug: true}, diagnostics.NewDiagnosticBag(""))
 	text := ExplainConfig(ctx)
 	if text == "" || text == `target_os="", target_arch="", target_backend="", debug=false` {
 		t.Fatalf("unexpected explanation: %q", text)

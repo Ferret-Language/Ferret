@@ -112,7 +112,6 @@ Locations:
 - `internal/pipeline/pipeline_test.go`
 - `internal/analysis/semantics/collector/collector_test.go`
 - `internal/backend/llvm/lower_test.go`
-- `internal/backend/qbe/lower_test.go`
 
 TODO:
 - Consider moving a shared helper into `internal/testutils` (or similar) to reduce copy/paste.
