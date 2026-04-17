@@ -53,7 +53,7 @@ A new helper is not allowed when:
 ## 3) Reuse and centralization rules
 
 - Prefer existing shared modules before adding new code.
-- If LLVM and QBE (or multiple phases) share identical logic, move it to a common utility.
+- If multiple backends (or multiple phases) share identical logic, move it to a common utility.
 - Keep one canonical implementation for:
   - type text formatting
   - symbol/mangle decisions
