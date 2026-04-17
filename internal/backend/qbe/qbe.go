@@ -344,7 +344,7 @@ func lowerInterfaceGlobalData(state *moduleState, ownerName string, init *mir.In
 	switch v := init.Value.(type) {
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return becommon.SanitizeIdent(v.LinkName), "", nil
+			return becommon.SanitizeLinkName(v.LinkName), "", nil
 		}
 		return qbeSymbol(state, v.Path), "", nil
 	case *mir.NumberValue:
@@ -427,7 +427,7 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *mir.Function) erro
 	if name == "" {
 		name = qbeSymbol(state, []string{fn.Name})
 	} else {
-		name = becommon.SanitizeIdent(name)
+		name = becommon.SanitizeLinkName(name)
 	}
 	// Export the entry point so the C runtime linker can find $main.
 	if name == "main" {
@@ -1189,7 +1189,7 @@ func lowerAggregateValuePointer(state *moduleState, value mir.Value) ([]string, 
 		}
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return nil, "$" + becommon.SanitizeIdent(v.LinkName), nil
+			return nil, "$" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return nil, "$" + qbeSymbol(state, v.Path), nil
 	}
@@ -2119,7 +2119,7 @@ func lowerStoredAggregatePointer(state *moduleState, value mir.Value) (string, e
 			}
 		}
 		if v.LinkName != "" {
-			return "$" + becommon.SanitizeIdent(v.LinkName), nil
+			return "$" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return "$" + qbeSymbol(state, v.Path), nil
 	}
@@ -2239,7 +2239,7 @@ func lowerInterfaceSlotPointer(state *moduleState, value mir.Value) (string, err
 		}
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return "$" + becommon.SanitizeIdent(v.LinkName), nil
+			return "$" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return "$" + qbeSymbol(state, v.Path), nil
 	}
@@ -3107,7 +3107,7 @@ func qbeDataItem(state *moduleState, typ typeinfo.Type, value mir.Value) (string
 		return "b", "0", nil
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return "l", "$" + becommon.SanitizeIdent(v.LinkName), nil
+			return "l", "$" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return "l", "$" + qbeSymbol(state, v.Path), nil
 	default:
@@ -3428,7 +3428,7 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		}
 		if _, ok := v.Type().(*typeinfo.FuncType); ok {
 			if v.LinkName != "" {
-				return "$" + becommon.SanitizeIdent(v.LinkName), nil
+				return "$" + becommon.SanitizeLinkName(v.LinkName), nil
 			}
 			return "$" + qbeSymbol(state, v.Path), nil
 		}
@@ -3438,14 +3438,14 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				tmp := freshTemp(state, "ld")
 				sym := "$" + qbeSymbol(state, v.Path)
 				if v.LinkName != "" {
-					sym = "$" + becommon.SanitizeIdent(v.LinkName)
+					sym = "$" + becommon.SanitizeLinkName(v.LinkName)
 				}
 				state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s =%s %s %s", tmp, qtype, op, sym))
 				return tmp, nil
 			}
 		}
 		if v.LinkName != "" {
-			return "$" + becommon.SanitizeIdent(v.LinkName), nil
+			return "$" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return "$" + qbeSymbol(state, v.Path), nil
 	case *mir.NumberValue:
@@ -3685,7 +3685,7 @@ func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
 			}
 		}
 		if src.LinkName != "" {
-			return "$" + becommon.SanitizeIdent(src.LinkName), nil
+			return "$" + becommon.SanitizeLinkName(src.LinkName), nil
 		}
 		return "$" + qbeSymbol(state, src.Path), nil
 	default:
@@ -4098,7 +4098,7 @@ func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 			return lowerValue(state, v)
 		}
 		if v.LinkName != "" {
-			return "$" + becommon.SanitizeIdent(v.LinkName), nil
+			return "$" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return "$" + qbeSymbol(state, v.Path), nil
 	default:
@@ -4552,7 +4552,7 @@ func qbeSymbol(state *moduleState, path []string) string {
 		return ""
 	}
 	if len(path) == 1 {
-		name := becommon.SanitizeIdent(path[0])
+		name := becommon.SanitizePath(path[0])
 		if state != nil {
 			if _, ok := state.functions[path[0]]; ok {
 				// Entry module: emit $main directly so the C runtime can call it
@@ -4575,7 +4575,7 @@ func qbeSymbol(state *moduleState, path []string) string {
 	}
 	clean := make([]string, 0, len(path))
 	for _, part := range path {
-		clean = append(clean, becommon.SanitizeIdent(part))
+		clean = append(clean, becommon.SanitizePath(part))
 	}
 	return strings.Join(clean, "__")
 }

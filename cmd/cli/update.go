@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 
 	"compiler/internal/core/manifest"
-	"compiler/internal/packages"
 )
 
 func UpdateCommand(args []string) error {
@@ -46,71 +45,38 @@ func UpdateCommand(args []string) error {
 		devConfig.MockPath = filepath.Join(projectRoot, devConfig.MockPath)
 	}
 
-	allPackages := map[string]bool{}
-	for _, dep := range file.Dependencies {
-		if dep.Type == manifest.DependencyRemote {
-			allPackages[dep.Path] = true
-		}
-	}
-	for key, entry := range lockfile.Dependencies {
-		if !entry.Direct {
-			allPackages[key] = true
-		}
+	plans, checked, err := collectUpdatePlans(file, lockfile, &devConfig, filter)
+	if err != nil {
+		return err
 	}
 
 	updated := 0
-	checked := 0
-	for packagePath := range allPackages {
-		if len(filter) > 0 && !filter[packagePath] {
+	for _, plan := range plans {
+		printUpdate(fmt.Sprintf("%s: %s → %s", plan.RepoPath, plan.CurrentVersion, plan.TargetVersion))
+		constraints := map[string][]string{
+			plan.RepoPath: []string{">" + plan.CurrentVersion, "<=" + plan.TargetVersion},
+		}
+		if err := installPackageRecursive(cachePath, plan.RepoPath, "latest", &devConfig, lockfile, constraints, plan.Alias, "", map[string]bool{}); err != nil {
+			printError(fmt.Sprintf("Failed to update %s: %v", plan.RepoPath, err))
 			continue
 		}
-		entry, exists := lockfile.GetDependency(packagePath)
-		if !exists {
-			continue
+		if dep, ok := file.Dependencies[plan.Alias]; ok {
+			dep.Version = plan.TargetVersion
+			file.Dependencies[plan.Alias] = dep
 		}
-		checked++
-		currentVersion := entry.Version
-		constraint := currentVersion
-		if entry.Direct {
-			for _, dep := range file.Dependencies {
-				if dep.Type == manifest.DependencyRemote && dep.Path == packagePath {
-					constraint = dep.Version
-					break
-				}
-			}
-		}
-
-		available, err := packages.ListAvailableVersions(packagePath, &devConfig)
-		if err != nil {
-			printWarning(fmt.Sprintf("%s: %v", packagePath, err))
-			continue
-		}
-		latest, err := packages.FindBestMatch(available, constraint)
-		if err != nil {
-			continue
-		}
-		currentParsed, currentErr := packages.ParseVersion(currentVersion)
-		latestParsed, latestErr := packages.ParseVersion(latest)
-		if currentErr != nil || latestErr != nil || latestParsed.Compare(currentParsed) <= 0 {
-			continue
-		}
-
-		printUpdate(fmt.Sprintf("%s: %s → %s", packagePath, currentVersion, latest))
-		if !packages.IsModuleCached(cachePath, packagePath, latest) {
-			printDownload(fmt.Sprintf("Downloading %s@%s...", packagePath, latest))
-			if err := packages.DownloadRemotePackage(cachePath, packagePath, latest, &devConfig); err != nil {
-				printError(fmt.Sprintf("Failed to download %s: %v", packagePath, err))
-				continue
-			}
-			printCached()
-		}
-		entry.Version = latest
-		lockfile.SetDependency(packagePath, entry)
 		updated++
+	}
+	if updated > 0 {
+		pruneUnusedDependencies(lockfile, cachePath)
 	}
 
 	if err := manifest.SaveLockfile(projectRoot, lockfile); err != nil {
 		return err
+	}
+	if updated > 0 {
+		if err := manifest.Save(manifestPath, file); err != nil {
+			return err
+		}
 	}
 	if updated == 0 {
 		printSuccess(fmt.Sprintf("All %d packages are up to date", checked))

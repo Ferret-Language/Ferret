@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 
 	"compiler/internal/core/manifest"
-	"compiler/internal/packages"
 )
 
 func RemoveCommand(args []string) error {
@@ -36,22 +35,8 @@ func RemoveCommand(args []string) error {
 	}
 
 	if dep.Type == manifest.DependencyRemote {
-		entry, found := lockfile.GetDependency(dep.Path)
-		if found {
-			lockfile.RemoveDependency(dep.Path)
-			for _, transitive := range entry.Dependencies {
-				lockfile.RemoveUsedBy(transitive, dep.Path)
-			}
-			orphaned := lockfile.GetUnusedDependencies()
-			for _, orphan := range orphaned {
-				orphanEntry, ok := lockfile.GetDependency(orphan)
-				if ok {
-					_ = packages.DeleteModule(cachePath, orphan, orphanEntry.Version)
-					lockfile.RemoveDependency(orphan)
-				}
-			}
-			_ = packages.DeleteModule(cachePath, dep.Path, dep.Version)
-		}
+		lockfile.RemoveDirectDependency(packageName)
+		pruneUnusedDependencies(lockfile, cachePath)
 	}
 
 	delete(file.Dependencies, packageName)

@@ -16,6 +16,7 @@ func TestResolveImportClassifiesOrigins(t *testing.T) {
 	ctx := New(root, ".fer", nil)
 	ctx.Config.StdlibRoot = "/stdlib"
 	ctx.Config.DependencyRoots["json"] = "/deps/json"
+	ctx.Config.DependencyRoots["github.com/acme/json"] = "/deps/json"
 
 	local, err := ctx.ResolveImport(nil, "util/build")
 	if err != nil {
@@ -39,6 +40,14 @@ func TestResolveImportClassifiesOrigins(t *testing.T) {
 	}
 	if dep.Origin != ModuleOriginDependency || dep.DependencyAlias != "json" || dep.Key != "dependency:json/parser" || dep.FilePath != "/deps/json/parser.fer" {
 		t.Fatalf("unexpected dependency import: %#v", dep)
+	}
+
+	remoteDep, err := ctx.ResolveImport(nil, "github.com/acme/json/parser")
+	if err != nil {
+		t.Fatalf("resolve remote dependency import: %v", err)
+	}
+	if remoteDep.Origin != ModuleOriginDependency || remoteDep.DependencyAlias != "github.com/acme/json" || remoteDep.Key != "dependency:github.com/acme/json/parser" || remoteDep.FilePath != "/deps/json/parser.fer" {
+		t.Fatalf("unexpected remote dependency import: %#v", remoteDep)
 	}
 }
 

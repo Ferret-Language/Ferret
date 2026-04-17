@@ -64,7 +64,7 @@ json = "github.com/acme/json@v1.0.0"
 	mustWrite(t, filepath.Join(root, manifest.LockfileName), `{
   "version": "1.0",
   "dependencies": {
-    "github.com/acme/json@v1.0.0": {
+    "github.com/acme/json": {
       "version": "v1.0.0"
     }
   }
@@ -79,6 +79,43 @@ name = "json"
 	}
 	if got := ws.Context.DependencyRoots["json"]; got != moduleDir {
 		t.Fatalf("expected dependency root %q, got %q", moduleDir, got)
+	}
+	if got := ws.Context.DependencyRoots["github.com/acme/json"]; got != moduleDir {
+		t.Fatalf("expected remote dependency root %q, got %q", moduleDir, got)
+	}
+}
+
+func TestLoadResolvesLockedLatestRemoteDependency(t *testing.T) {
+	root := t.TempDir()
+	moduleDir := filepath.Join(root, ".ferret", "modules", "github.com", "acme", "json@v1.2.3")
+
+	mustWrite(t, filepath.Join(root, "fer.ret"), `[package]
+name = "app"
+
+[dependencies]
+json = "github.com/acme/json"
+`)
+	mustWrite(t, filepath.Join(root, manifest.LockfileName), `{
+  "version": "1.0",
+  "dependencies": {
+    "github.com/acme/json": {
+      "version": "v1.2.3"
+    }
+  }
+}`)
+	mustWrite(t, filepath.Join(moduleDir, "fer.ret"), `[package]
+name = "json"
+`)
+
+	ws, err := Load(root, ".fer")
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if got := ws.Context.DependencyRoots["json"]; got != moduleDir {
+		t.Fatalf("expected dependency root %q, got %q", moduleDir, got)
+	}
+	if got := ws.Context.DependencyRoots["github.com/acme/json"]; got != moduleDir {
+		t.Fatalf("expected remote dependency root %q, got %q", moduleDir, got)
 	}
 }
 

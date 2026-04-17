@@ -7,6 +7,7 @@ import (
 
 	"compiler/internal/core/context"
 	"compiler/internal/core/manifest"
+	"compiler/internal/packages"
 )
 
 type Workspace struct {
@@ -91,11 +92,12 @@ func (ws *Workspace) resolveDependencies() error {
 			}
 			ws.Context.DependencyRoots[alias] = path
 		case manifest.DependencyRemote:
-			path, err := resolveRemotePackage(ws.CachePath, ws.Lockfile, dep.Path, dep.Version)
+			path, err := resolveRemotePackage(ws.CachePath, ws.Lockfile, alias, dep.Path, dep.Version)
 			if err != nil {
 				return fmt.Errorf("resolve dependency %q: %w", alias, err)
 			}
 			ws.Context.DependencyRoots[alias] = path
+			ws.Context.DependencyRoots[dep.Path] = path
 		default:
 			return fmt.Errorf("resolve dependency %q: unknown dependency type", alias)
 		}
@@ -116,17 +118,67 @@ func resolveNeighborPackage(projectRoot, neighborPath string) (string, error) {
 	return filepath.Dir(manifestPath), nil
 }
 
-func resolveRemotePackage(cachePath string, lock *manifest.Lockfile, repoName, version string) (string, error) {
-	key := repoName + "@" + version
-	if lock != nil && len(lock.Dependencies) > 0 {
-		if _, ok := lock.Dependencies[key]; !ok {
-			return "", fmt.Errorf("remote dependency %q is not locked in %s", key, manifest.LockfileName)
+func resolveRemotePackage(cachePath string, lock *manifest.Lockfile, alias, repoName, versionConstraint string) (string, error) {
+	if lock == nil {
+		return "", fmt.Errorf("remote dependency %q is not locked in %s", repoName, manifest.LockfileName)
+	}
+	if packageID, ok := lock.GetDirectDependency(alias); ok {
+		entry, exists := lock.GetDependency(packageID)
+		if exists && entry.ResolvedURL == repoName {
+			modulePath := filepath.Join(cachePath, filepath.FromSlash(packageID))
+			manifestPath := filepath.Join(modulePath, manifest.FileName)
+			if _, err := os.Stat(manifestPath); err == nil {
+				return modulePath, nil
+			}
 		}
 	}
-	modulePath := filepath.Join(cachePath, filepath.FromSlash(key))
+	packageID, _, ok, err := selectLockedPackage(lock, repoName, versionConstraint)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("remote dependency %q is not locked in %s", repoName, manifest.LockfileName)
+	}
+	modulePath := filepath.Join(cachePath, filepath.FromSlash(packageID))
 	manifestPath := filepath.Join(modulePath, manifest.FileName)
 	if _, err := os.Stat(manifestPath); err != nil {
 		return "", fmt.Errorf("cached remote package missing %s", manifestPath)
 	}
 	return modulePath, nil
+}
+
+func selectLockedPackage(lock *manifest.Lockfile, repoName, versionConstraint string) (string, manifest.LockfileEntry, bool, error) {
+	ids := lock.FindPackageIDsByRepo(repoName)
+	if len(ids) == 0 {
+		return "", manifest.LockfileEntry{}, false, nil
+	}
+	bestID := ""
+	bestEntry := manifest.LockfileEntry{}
+	var bestVersion *packages.Version
+	for _, id := range ids {
+		entry, ok := lock.GetDependency(id)
+		if !ok || entry.Version == "" {
+			continue
+		}
+		matches, err := packages.MatchesConstraint(entry.Version, versionConstraint)
+		if err != nil {
+			return "", manifest.LockfileEntry{}, false, fmt.Errorf("check locked version for %q: %w", repoName, err)
+		}
+		if !matches {
+			continue
+		}
+		parsed, err := packages.ParseVersion(entry.Version)
+		if err != nil {
+			continue
+		}
+		if bestVersion == nil || parsed.Compare(bestVersion) > 0 {
+			bestID = id
+			bestEntry = entry
+			bestVersion = parsed
+		}
+	}
+	if bestID == "" {
+		return "", manifest.LockfileEntry{}, false, fmt.Errorf("remote dependency %q has no locked version satisfying %q", repoName, versionConstraint)
+	}
+	return bestID, bestEntry, true, nil
 }

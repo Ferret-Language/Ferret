@@ -272,6 +272,15 @@ func SanitizePath(path string) string {
 	return strings.Join(parts, "__")
 }
 
+func SanitizeLinkName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "_"
+	}
+	normalized := strings.ReplaceAll(name, "::", "/")
+	return SanitizePath(normalized)
+}
+
 // BuildModuleSymbolTables returns the backend-local symbol tables used for
 // fast function/global lookups and static owner method resolution.
 func BuildModuleSymbolTables(mod *mir.Module) (modulePrefix string, functions, globals map[string]struct{}) {

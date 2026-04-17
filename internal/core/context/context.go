@@ -482,6 +482,16 @@ func (ctx *CompilerContext) classifyImportPath(importPath string) (ModuleOrigin,
 		return ModuleOriginStdlib, "", nil
 	}
 
+	if depKey, root, ok := ctx.dependencyRootForImport(importPath); ok {
+		if root == "" {
+			return "", "", fmt.Errorf("dependency %q has no configured root", depKey)
+		}
+		if importPath == depKey {
+			return "", "", fmt.Errorf("dependency imports must include a module path after %q", depKey)
+		}
+		return ModuleOriginDependency, depKey, nil
+	}
+
 	first, _, _ := strings.Cut(importPath, "/")
 	if root, ok := ctx.Config.DependencyRoots[first]; ok {
 		if root == "" {
@@ -509,16 +519,36 @@ func (ctx *CompilerContext) filePathForResolvedImport(origin ModuleOrigin, depAl
 	case ModuleOriginDependency:
 		root := ctx.Config.DependencyRoots[depAlias]
 		if root == "" {
-			return "", fmt.Errorf("dependency alias %q has no configured root", depAlias)
+			return "", fmt.Errorf("dependency %q has no configured root", depAlias)
 		}
-		_, subpath, _ := strings.Cut(importPath, "/")
+		subpath := strings.TrimPrefix(importPath, depAlias)
+		subpath = strings.TrimPrefix(subpath, "/")
 		if subpath == "" {
-			return "", fmt.Errorf("dependency imports must include a module path after alias %q", depAlias)
+			return "", fmt.Errorf("dependency imports must include a module path after %q", depAlias)
 		}
 		return filepath.Join(root, filepath.FromSlash(subpath)+ctx.Config.Extension), nil
 	default:
 		return "", fmt.Errorf("unknown module origin %q", origin)
 	}
+}
+
+func (ctx *CompilerContext) dependencyRootForImport(importPath string) (string, string, bool) {
+	bestKey := ""
+	bestRoot := ""
+	for key, root := range ctx.Config.DependencyRoots {
+		if importPath != key && !strings.HasPrefix(importPath, key+"/") {
+			continue
+		}
+		if len(key) <= len(bestKey) {
+			continue
+		}
+		bestKey = key
+		bestRoot = root
+	}
+	if bestKey == "" {
+		return "", "", false
+	}
+	return bestKey, bestRoot, true
 }
 
 func moduleKey(origin ModuleOrigin, importPath string) string {

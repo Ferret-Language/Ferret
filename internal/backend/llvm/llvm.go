@@ -506,7 +506,7 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 			if fn == nil || !fn.IsExtern || fn.LinkName == "" || isLoweredBuiltinExtern(fn) {
 				continue
 			}
-			sym := becommon.SanitizeIdent(fn.LinkName)
+			sym := becommon.SanitizeLinkName(fn.LinkName)
 			if _, seen := seenExterns[sym]; seen {
 				continue
 			}
@@ -691,7 +691,7 @@ func implicitExternSymbol(decl string) string {
 
 // llvmExternDecl builds a "declare" line for an extern function.
 func llvmExternDecl(state *moduleState, fn *mir.Function) (string, error) {
-	sym := becommon.SanitizeIdent(fn.LinkName)
+	sym := becommon.SanitizeLinkName(fn.LinkName)
 
 	var retStr string
 	if fn.Result == nil || isVoidType(fn.Result) {
@@ -811,7 +811,7 @@ func collectExternCallDecls(state *moduleState, mod *mir.Module, seenExterns map
 				return nil
 			}
 			if callee, ok := v.Callee.(*mir.NameValue); ok && callee.LinkName != "" {
-				if err := addCall(becommon.SanitizeIdent(callee.LinkName), v); err != nil {
+				if err := addCall(becommon.SanitizeLinkName(callee.LinkName), v); err != nil {
 					return err
 				}
 			}
@@ -1067,7 +1067,7 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		if fn == nil || !fn.IsExtern || fn.LinkName == "" || isLoweredBuiltinExtern(fn) {
 			continue
 		}
-		sym := becommon.SanitizeIdent(fn.LinkName)
+		sym := becommon.SanitizeLinkName(fn.LinkName)
 		if _, ok := seenExterns[sym]; ok {
 			continue
 		}
@@ -1309,7 +1309,7 @@ func lowerGlobalInterfaceData(state *moduleState, ownerName string, init *mir.In
 	switch v := init.Value.(type) {
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return "@" + becommon.SanitizeIdent(v.LinkName), nil
+			return "@" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
 	case *mir.NumberValue:
@@ -1457,7 +1457,7 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *mir.Function) erro
 	if name == "" {
 		name = llvmSymbol(state, []string{fn.Name})
 	} else {
-		name = becommon.SanitizeIdent(name)
+		name = becommon.SanitizeLinkName(name)
 	}
 
 	// Build return type string.
@@ -3732,7 +3732,7 @@ func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concrete
 			}
 		}
 		if v.LinkName != "" {
-			return nil, "@" + becommon.SanitizeIdent(v.LinkName), nil
+			return nil, "@" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return nil, "@" + llvmSymbol(state, v.Path), nil
 	}
@@ -3817,7 +3817,7 @@ func lowerStoredAggregatePointer(state *moduleState, value mir.Value) (string, e
 			}
 		}
 		if v.LinkName != "" {
-			return "@" + becommon.SanitizeIdent(v.LinkName), nil
+			return "@" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
 	}
@@ -3950,7 +3950,7 @@ func lowerInterfaceSlotPointer(state *moduleState, value mir.Value) (string, err
 			}
 		}
 		if v.LinkName != "" {
-			return "@" + becommon.SanitizeIdent(v.LinkName), nil
+			return "@" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
 	}
@@ -4513,7 +4513,7 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		}
 		if _, ok := v.Type().(*typeinfo.FuncType); ok {
 			if v.LinkName != "" {
-				return "@" + becommon.SanitizeIdent(v.LinkName), nil
+				return "@" + becommon.SanitizeLinkName(v.LinkName), nil
 			}
 			return "@" + llvmSymbol(state, v.Path), nil
 		}
@@ -4523,14 +4523,14 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				tmp := freshTemp(state, "ld")
 				sym := "@" + llvmSymbol(state, v.Path)
 				if v.LinkName != "" {
-					sym = "@" + becommon.SanitizeIdent(v.LinkName)
+					sym = "@" + becommon.SanitizeLinkName(v.LinkName)
 				}
 				state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, sym))
 				return tmp, nil
 			}
 		}
 		if v.LinkName != "" {
-			return "@" + becommon.SanitizeIdent(v.LinkName), nil
+			return "@" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
 	case *mir.NumberValue:
@@ -4743,7 +4743,7 @@ func lowerAddrOf(state *moduleState, v *mir.AddrOfValue) (string, error) {
 			}
 		}
 		if src.LinkName != "" {
-			return "@" + becommon.SanitizeIdent(src.LinkName), nil
+			return "@" + becommon.SanitizeLinkName(src.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, src.Path), nil
 	default:
@@ -5222,7 +5222,7 @@ func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 			return lowerValue(state, v)
 		}
 		if v.LinkName != "" {
-			return becommon.SanitizeIdent(v.LinkName), nil
+			return becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return llvmSymbol(state, v.Path), nil
 	default:
@@ -5504,7 +5504,7 @@ func lowerGlobalValue(state *moduleState, typ typeinfo.Type, value mir.Value) (s
 		return "0", nil
 	case *mir.NameValue:
 		if v.LinkName != "" {
-			return "@" + becommon.SanitizeIdent(v.LinkName), nil
+			return "@" + becommon.SanitizeLinkName(v.LinkName), nil
 		}
 		return "@" + llvmSymbol(state, v.Path), nil
 	default:
@@ -5958,7 +5958,7 @@ func llvmSymbol(state *moduleState, path []string) string {
 		return "_"
 	}
 	if len(path) == 1 {
-		name := becommon.SanitizeIdent(path[0])
+		name := becommon.SanitizePath(path[0])
 		if state != nil {
 			// The entry point: main() in the main module is always @main
 			// so the C runtime can call it directly without a wrapper.
@@ -5983,7 +5983,7 @@ func llvmSymbol(state *moduleState, path []string) string {
 	}
 	clean := make([]string, 0, len(path))
 	for _, part := range path {
-		clean = append(clean, becommon.SanitizeIdent(part))
+		clean = append(clean, becommon.SanitizePath(part))
 	}
 	return strings.Join(clean, "__")
 }

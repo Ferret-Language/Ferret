@@ -53,17 +53,17 @@ func downloadFromGit(cachePath, repoName, version string) error {
 }
 
 func packageArchiveURL(repoName, version string) (string, error) {
-	if strings.HasPrefix(repoName, "github.com/") {
-		parts := strings.TrimPrefix(repoName, "github.com/")
+	if after, ok := strings.CutPrefix(repoName, "github.com/"); ok {
+		parts := after
 		return fmt.Sprintf("https://github.com/%s/archive/refs/tags/%s.tar.gz", parts, version), nil
 	}
-	if strings.HasPrefix(repoName, "gitlab.com/") {
-		parts := strings.TrimPrefix(repoName, "gitlab.com/")
+	if after, ok := strings.CutPrefix(repoName, "gitlab.com/"); ok {
+		parts := after
 		repoBase := filepath.Base(parts)
 		return fmt.Sprintf("https://gitlab.com/%s/-/archive/%s/%s-%s.tar.gz", parts, version, repoBase, version), nil
 	}
-	if strings.HasPrefix(repoName, "bitbucket.org/") {
-		parts := strings.TrimPrefix(repoName, "bitbucket.org/")
+	if after, ok := strings.CutPrefix(repoName, "bitbucket.org/"); ok {
+		parts := after
 		return fmt.Sprintf("https://bitbucket.org/%s/get/%s.tar.gz", parts, version), nil
 	}
 	return "", fmt.Errorf("unsupported remote host for %s", repoName)

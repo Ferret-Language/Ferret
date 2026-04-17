@@ -8,7 +8,7 @@ import (
 	"compiler/internal/core/manifest"
 )
 
-func CleanupCommand(args []string) error {
+func OrphansCommand(args []string) error {
 	manifestPath, err := manifest.Find(".")
 	if err != nil {
 		return err
@@ -29,27 +29,17 @@ func CleanupCommand(args []string) error {
 		return err
 	}
 	if len(candidates) == 0 {
-		printInfo("No unused dependencies to clean up")
+		printSuccess("No orphaned dependencies")
 		return nil
 	}
 
-	removed := map[string]struct{}{}
-	fmt.Printf("Found %d orphaned dependencies:\n", len(candidates))
+	fmt.Printf("Orphaned dependencies (%d):\n", len(candidates))
 	for _, candidate := range candidates {
-		fmt.Printf("  → Removing %s\n", candidate.PackageID)
-		_ = os.RemoveAll(candidate.Path)
-		removed[candidate.PackageID] = struct{}{}
+		reason := "stale cache"
 		if candidate.InLock {
-			lockfile.RemoveDependency(candidate.PackageID)
+			reason = "unused lockfile dependency"
 		}
+		fmt.Printf("  %s (%s)\n", candidate.PackageID, reason)
 	}
-	for _, packageID := range pruneUnusedDependencies(lockfile, cachePath) {
-		removed[packageID] = struct{}{}
-	}
-
-	if err := manifest.SaveLockfile(projectRoot, lockfile); err != nil {
-		return err
-	}
-	printSuccess(fmt.Sprintf("Cleaned up %d orphaned dependencies", len(removed)))
 	return nil
 }

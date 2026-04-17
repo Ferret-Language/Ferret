@@ -49,6 +49,7 @@ type File struct {
 var (
 	identifierPattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*$`)
 	versionPattern    = regexp.MustCompile(`^[A-Za-z0-9._+-]+$`)
+	constraintPattern = regexp.MustCompile(`^[A-Za-z0-9._+\-~^<>=*]+$`)
 )
 
 func Find(startDir string) (string, error) {
@@ -115,7 +116,7 @@ func Load(path string) (*File, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid dependency %q: %w", alias, err)
 			}
-			if dep.Type == DependencyRemote && dep.Version != "" && !versionPattern.MatchString(dep.Version) {
+			if dep.Type == DependencyRemote && dep.Version != "" && !constraintPattern.MatchString(dep.Version) {
 				return nil, fmt.Errorf("invalid dependency %q version %q", alias, dep.Version)
 			}
 			manifest.Dependencies[alias] = dep
@@ -155,8 +156,10 @@ func parseDependencyString(value string) (Dependency, error) {
 		return Dependency{Type: DependencyNeighbor, Path: filepath.Clean(value)}, nil
 	case isRemoteRepo(value):
 		dep := Dependency{Type: DependencyRemote, Path: value, Version: "latest"}
-		if before, after, ok := strings.Cut(value, "@"); ok {
-			if after == "" {
+		if idx := strings.LastIndex(value, "@"); idx >= 0 {
+			before := strings.TrimSpace(value[:idx])
+			after := strings.TrimSpace(value[idx+1:])
+			if before == "" || after == "" {
 				return Dependency{}, fmt.Errorf("missing version after '@'")
 			}
 			dep.Path = before
@@ -270,10 +273,11 @@ func renderDependency(dep Dependency) string {
 	case DependencyNeighbor:
 		return dep.Path
 	case DependencyRemote:
-		if dep.Version == "" || dep.Version == "latest" {
-			return dep.Path
+		version := dep.Version
+		if version == "" {
+			version = "latest"
 		}
-		return dep.Path + "@" + dep.Version
+		return dep.Path + "@" + version
 	default:
 		return dep.Path
 	}

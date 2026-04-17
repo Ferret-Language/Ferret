@@ -38,8 +38,10 @@ func ListCommand(args []string) error {
 			fmt.Printf("    URL: %s\n", dep.Path)
 			fmt.Printf("    Constraint: %s\n", dep.Version)
 			if hasLockfile {
-				if entry, ok := lockfile.GetDependency(dep.Path); ok {
-					fmt.Printf("    Locked: %s\n", entry.Version)
+				if packageID, ok := lockfile.GetDirectDependency(name); ok {
+					if entry, found := lockfile.GetDependency(packageID); found {
+						fmt.Printf("    Locked: %s (%s)\n", entry.Version, packageID)
+					}
 				}
 			}
 		}
@@ -47,14 +49,18 @@ func ListCommand(args []string) error {
 
 	if hasLockfile {
 		transitiveCount := 0
-		for _, entry := range lockfile.Dependencies {
+		entries := lockfile.Packages
+		if len(entries) == 0 {
+			entries = lockfile.Dependencies
+		}
+		for _, entry := range entries {
 			if !entry.Direct {
 				transitiveCount++
 			}
 		}
 		if transitiveCount > 0 {
 			fmt.Printf("\nTransitive dependencies (%d):\n", transitiveCount)
-			for depName, entry := range lockfile.Dependencies {
+			for depName, entry := range entries {
 				if !entry.Direct {
 					fmt.Printf("  %s @ %s\n", depName, entry.Version)
 					if len(entry.UsedBy) > 0 {
