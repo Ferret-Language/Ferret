@@ -125,7 +125,7 @@ func parseAndRunCommand(args []string) bool {
 }
 
 func parseCompilerFlags() compilerFlags {
-	backendTarget := flag.String("backend", "llvm", "backend target (llvm|qbe)")
+	backendTarget := flag.String("backend", "llvm", "backend target (llvm)")
 	logFormat := flag.String("logformat", string(colors.LogFormatANSI), "log output format (ansi|normal|html)")
 	m32 := flag.Bool("m32", false, "target 32-bit ABI")
 	outputPath := flag.String("o", "", "compile and link to executable")
@@ -154,8 +154,8 @@ func parseCompilerFlags() compilerFlags {
 		fmt.Fprintln(os.Stderr, "  orphans                 list orphaned cache/lock entries clean will remove")
 		fmt.Fprintln(os.Stderr, "  cleanup|clean           remove orphaned cached dependencies")
 		fmt.Fprintln(os.Stderr, "  check|lint [path]       typecheck file or recursively check folder (.fer only)")
-		fmt.Fprintln(os.Stderr, "  run[:llvm|:qbe] [path] [args]  build and run a program (default llvm)")
-		fmt.Fprintln(os.Stderr, "  test[:llvm|:qbe] [path] [args] build and run unit tests (default llvm)")
+		fmt.Fprintln(os.Stderr, "  run[:llvm] [path] [args]  build and run a program (default llvm)")
+		fmt.Fprintln(os.Stderr, "  test[:llvm] [path] [args] build and run unit tests (default llvm)")
 		colors.CYAN.Fprintln(os.Stderr, "\nExamples:")
 		colors.GREEN.Fprintf(os.Stderr, "  ferret -backend llvm main.fer\n")
 		colors.GREEN.Fprintf(os.Stderr, "  ferret -m32 -o app32 main.fer\n")
@@ -195,8 +195,8 @@ func parseCompilerFlags() compilerFlags {
 	if selectedBackend == "" {
 		selectedBackend = "llvm"
 	}
-	if selectedBackend != string(backend.TargetLLVM) && selectedBackend != string(backend.TargetQBE) {
-		colors.RED.Fprintf(os.Stderr, "Error: invalid backend %q (expected llvm or qbe)\n", selectedBackend)
+	if selectedBackend != string(backend.TargetLLVM) {
+		colors.RED.Fprintf(os.Stderr, "Error: invalid backend %q (expected llvm)\n", selectedBackend)
 		os.Exit(2)
 	}
 

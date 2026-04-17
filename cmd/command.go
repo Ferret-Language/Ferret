@@ -52,10 +52,10 @@ func parseCommandBackend(command string) (string, backend.Target, error) {
 		}
 		target := backend.Target(strings.ToLower(strings.TrimSpace(suffix)))
 		switch target {
-		case backend.TargetLLVM, backend.TargetQBE:
+		case backend.TargetLLVM:
 			return base, target, nil
 		default:
-			return "", "", fmt.Errorf("invalid %s backend %q (expected llvm or qbe)", base, suffix)
+			return "", "", fmt.Errorf("invalid %s backend %q (expected llvm)", base, suffix)
 		}
 	default:
 		return command, "", nil
