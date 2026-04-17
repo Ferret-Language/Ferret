@@ -1,6 +1,10 @@
 package context
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestResolveImportRejectsRelativePaths(t *testing.T) {
 	ctx := New(t.TempDir(), ".fer", nil)
@@ -69,5 +73,26 @@ func TestUniverseRegistersBuiltInConstants(t *testing.T) {
 		if !ok || sym == nil {
 			t.Fatalf("expected builtin constant %q to be registered", name)
 		}
+	}
+}
+
+func TestDiscoverModulesSkipsHiddenSourceFiles(t *testing.T) {
+	root := t.TempDir()
+	visible := filepath.Join(root, "main.fer")
+	hidden := filepath.Join(root, ".ferretls-hover-stale.fer")
+	if err := os.WriteFile(visible, []byte("fn main() {}"), 0o644); err != nil {
+		t.Fatalf("write visible source: %v", err)
+	}
+	if err := os.WriteFile(hidden, []byte("fn broken("), 0o644); err != nil {
+		t.Fatalf("write hidden source: %v", err)
+	}
+
+	ctx := New(root, ".fer", nil)
+	files, err := ctx.DiscoverModules()
+	if err != nil {
+		t.Fatalf("discover modules: %v", err)
+	}
+	if len(files) != 1 || files[0] != filepath.Clean(visible) {
+		t.Fatalf("expected only visible source file, got %#v", files)
 	}
 }

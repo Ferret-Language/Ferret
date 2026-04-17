@@ -408,6 +408,9 @@ func (ctx *CompilerContext) DiscoverModules() ([]string, error) {
 		if filepath.Ext(path) != ctx.Config.Extension {
 			return nil
 		}
+		if strings.HasPrefix(d.Name(), ".") {
+			return nil
+		}
 		files = append(files, filepath.Clean(path))
 		return nil
 	})

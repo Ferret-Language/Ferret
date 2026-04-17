@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
@@ -277,6 +278,29 @@ func TestFileURIPathPrefixesWindowsDrive(t *testing.T) {
 	}
 	if uri := (&url.URL{Scheme: "file", Path: got}).String(); uri != "file:///E:/Dev/Ferret/app/main.fer" {
 		t.Fatalf("expected canonical windows file URI, got %q", uri)
+	}
+}
+
+func TestWriteHoverOverlayPrunesStaleOverlays(t *testing.T) {
+	dir := t.TempDir()
+	sourcePath := filepath.Join(dir, "main.fer")
+	stalePath := filepath.Join(dir, ".ferretls-hover-stale.fer")
+	if err := os.WriteFile(stalePath, []byte("fn broken("), 0o644); err != nil {
+		t.Fatalf("write stale overlay: %v", err)
+	}
+	old := time.Now().Add(-20 * time.Minute)
+	if err := os.Chtimes(stalePath, old, old); err != nil {
+		t.Fatalf("set stale overlay mtime: %v", err)
+	}
+
+	tempPath, err := writeHoverOverlay(sourcePath, "fn main() {}")
+	if err != nil {
+		t.Fatalf("write overlay: %v", err)
+	}
+	defer func() { _ = os.Remove(tempPath) }()
+
+	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
+		t.Fatalf("expected stale overlay to be removed, stat err=%v", err)
 	}
 }
 

@@ -1407,6 +1407,20 @@ func parseForProject(path, text string, hasText bool, parse func(path string) co
 
 func writeHoverOverlay(originalPath, text string) (string, error) {
 	dir := filepath.Dir(originalPath)
+	const staleOverlayTTL = 10 * time.Minute
+	cutoff := time.Now().Add(-staleOverlayTTL)
+	if stale, err := filepath.Glob(filepath.Join(dir, ".ferretls-hover-*.fer")); err == nil {
+		for _, candidate := range stale {
+			info, statErr := os.Stat(candidate)
+			if statErr != nil || info.IsDir() {
+				continue
+			}
+			if info.ModTime().After(cutoff) {
+				continue
+			}
+			_ = os.Remove(candidate)
+		}
+	}
 	file, err := os.CreateTemp(dir, ".ferretls-hover-*.fer")
 	if err != nil {
 		return "", err
