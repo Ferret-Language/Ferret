@@ -239,7 +239,7 @@ func (g *generator) generateTypeDecl(d *ast.TypeDecl) *TypeDecl {
 	out := &TypeDecl{
 		Name:       d.Name.Text(),
 		Named:      &typeinfo.NamedType{ModuleKey: g.key, Name: d.Name.Text(), Decl: d},
-		Underlying: syntaxType(g.types, d.Type),
+		Underlying: typeFromTypeExpr(g.types, d.Type),
 		Location:   d.Location,
 		Source:     d,
 	}
@@ -271,7 +271,7 @@ func (g *generator) generateStructTypeDecl(t *ast.StructType) *StructTypeDecl {
 		}
 		out.Fields = append(out.Fields, &StructFieldDecl{
 			Name:     field.Name.Text(),
-			Type:     syntaxType(g.types, field.Type),
+			Type:     typeFromTypeExpr(g.types, field.Type),
 			Default:  g.generateExpr(field.Default),
 			Location: field.Location,
 		})
@@ -292,14 +292,14 @@ func generateInterfaceTypeDecl(types *typeinfo.ModuleInfo, t *ast.InterfaceType)
 			Receiver: method.Receiver,
 			Static:   method.Static,
 			Name:     method.Name.Text(),
-			Result:   syntaxType(types, method.Result),
+			Result:   typeFromTypeExpr(types, method.Result),
 			Location: method.Location,
 			Params:   make([]*Param, 0, len(method.Params)),
 		}
 		for _, param := range method.Params {
 			entry.Params = append(entry.Params, &Param{
 				Name:      param.Name.Text(),
-				Type:      syntaxType(types, param.Type),
+				Type:      typeFromTypeExpr(types, param.Type),
 				IsMutable: param.IsMut,
 				Location:  param.Location,
 			})
@@ -328,7 +328,7 @@ func generateUnionTypeDecl(types *typeinfo.ModuleInfo, t *ast.UnionType) *UnionT
 	}
 	out := &UnionTypeDecl{Members: make([]typeinfo.Type, 0, len(t.Members))}
 	for _, member := range t.Members {
-		out.Members = append(out.Members, syntaxType(types, member))
+		out.Members = append(out.Members, typeFromTypeExpr(types, member))
 	}
 	return out
 }
@@ -382,9 +382,9 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 	}
 	var selfType typeinfo.Type
 	if d.OwnerType != nil {
-		selfType = syntaxType(g.types, d.OwnerType)
+		selfType = typeFromTypeExpr(g.types, d.OwnerType)
 	}
-	resultType := hirInstantiateSelfType(syntaxType(g.types, d.Result), selfType)
+	resultType := hirInstantiateSelfType(typeFromTypeExpr(g.types, d.Result), selfType)
 	if resultType == nil {
 		resultType = &typeinfo.BuiltinType{Name: "void"}
 	}
@@ -415,7 +415,7 @@ func (g *generator) generateFunc(d *ast.FuncDecl) *Func {
 		fn.Receiver = &Param{
 			Name:     g.maybeMangledLocalName(d.Receiver.Name),
 			LocalID:  g.maybeLocalID(d.Receiver.Name),
-			Type:     hirInstantiateSelfType(syntaxType(g.types, d.Receiver.Type), selfType),
+			Type:     hirInstantiateSelfType(typeFromTypeExpr(g.types, d.Receiver.Type), selfType),
 			Location: d.Receiver.Location,
 		}
 	}
@@ -779,7 +779,7 @@ func (g *generator) constMaterializeType(typ typeinfo.Type) typeinfo.Type {
 	switch t := typ.(type) {
 	case *typeinfo.NamedType:
 		if t != nil && t.Decl != nil {
-			if resolved := syntaxType(g.types, t.Decl.Type); resolved != nil {
+			if resolved := typeFromTypeExpr(g.types, t.Decl.Type); resolved != nil {
 				return g.constMaterializeType(resolved)
 			}
 		}
@@ -1104,7 +1104,7 @@ func (g *generator) generateExprForTarget(expr ast.Expr, target typeinfo.Type) E
 	errUnion, ok := target.(*typeinfo.ErrorUnionType)
 	if !ok || errUnion == nil {
 		if named, ok := target.(*typeinfo.NamedType); ok && named != nil && named.Decl != nil {
-			if resolved, ok := syntaxType(g.types, named.Decl.Type).(*typeinfo.ErrorUnionType); ok && resolved != nil {
+			if resolved, ok := typeFromTypeExpr(g.types, named.Decl.Type).(*typeinfo.ErrorUnionType); ok && resolved != nil {
 				errUnion = resolved
 			}
 		}
@@ -1153,7 +1153,7 @@ func exprType(types *typeinfo.ModuleInfo, expr ast.Expr) typeinfo.Type {
 	return typeinfo.UnknownType{}
 }
 
-func syntaxType(types *typeinfo.ModuleInfo, expr ast.TypeExpr) typeinfo.Type {
+func typeFromTypeExpr(types *typeinfo.ModuleInfo, expr ast.TypeExpr) typeinfo.Type {
 	if types == nil || expr == nil {
 		return nil
 	}
@@ -1164,7 +1164,7 @@ func syntaxType(types *typeinfo.ModuleInfo, expr ast.TypeExpr) typeinfo.Type {
 }
 
 func (g *generator) resolveTypeExpr(expr ast.TypeExpr) typeinfo.Type {
-	if typ := syntaxType(g.types, expr); typ != nil {
+	if typ := typeFromTypeExpr(g.types, expr); typ != nil {
 		return typ
 	}
 	switch t := expr.(type) {
@@ -1191,12 +1191,12 @@ func (g *generator) resolveTypeExpr(expr ast.TypeExpr) typeinfo.Type {
 			Decl:      decl,
 		}
 	default:
-		return syntaxType(g.types, expr)
+		return typeFromTypeExpr(g.types, expr)
 	}
 }
 
 func effectiveType(types *typeinfo.ModuleInfo, syntax ast.TypeExpr, value ast.Expr) typeinfo.Type {
-	if typ := syntaxType(types, syntax); typ != nil {
+	if typ := typeFromTypeExpr(types, syntax); typ != nil {
 		return typ
 	}
 	if value != nil {
@@ -1220,7 +1220,7 @@ func (g *generator) structLiteralFields(typ typeinfo.Type) ([]structLiteralField
 	if !ok || structDecl == nil {
 		return nil, false
 	}
-	structType, _ := syntaxType(g.types, named.Decl.Type).(*typeinfo.StructType)
+	structType, _ := typeFromTypeExpr(g.types, named.Decl.Type).(*typeinfo.StructType)
 	fields := make([]structLiteralField, 0, len(structDecl.Fields))
 	for i, field := range structDecl.Fields {
 		if field == nil || field.Name == nil {

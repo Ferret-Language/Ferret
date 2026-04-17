@@ -928,7 +928,7 @@ func (c *lowerContext) structView(typ typeinfo.Type) (*typeinfo.StructType, bool
 	if ok {
 		return structType, true
 	}
-	named, ok := derefForSelector(typ).(*typeinfo.NamedType)
+	named, ok := typeinfo.DerefForSelector(typ).(*typeinfo.NamedType)
 	if !ok || named == nil || c == nil || c.structTypes == nil {
 		return nil, false
 	}

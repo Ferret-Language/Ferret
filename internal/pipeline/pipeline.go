@@ -256,7 +256,7 @@ func (p *Pipeline) runIDEFinalPasses() {
 	if p.ctx.Diagnostics.HasErrors() {
 		return
 	}
-	usage.AnalyzeModules(p.ctx, p.ctx.Modules())
+	usage.AnalyzeUsageModules(p.ctx, p.ctx.Modules())
 }
 
 func (p *Pipeline) runSemanticFrontPasses(mod *context.Module) {
@@ -299,11 +299,11 @@ func (p *Pipeline) runHIRLoweringAndSpecialization(sorted []*context.Module) {
 }
 
 func (p *Pipeline) runSemanticBackPasses(mod *context.Module) {
-	cfganalysis.AnalyzeModule(p.ctx, mod)
+	cfganalysis.AnalyzeCFGModule(p.ctx, mod)
 	mod.MIR = mir.LowerModule(mod.CFG, mod.LoweredHIR, mod.Bindings, p.buildGlobalConstMap(), p.lookupLoweredMethodPath(mod.ImportPath))
 	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
 	mod.Phase = phase.PhaseMIRGenerated
-	ownership.AnalyzeModule(p.ctx, mod)
+	ownership.AnalyzeOwnershipModule(p.ctx, mod)
 	mod.Phase = phase.PhaseOwnershipAnalyzed
 	mir.SimplifyModule(p.ctx.Diagnostics, mod.MIR)
 	mir.ValidateModule(p.ctx.Diagnostics, mod.MIR)
@@ -437,7 +437,7 @@ func (p *Pipeline) finalizeFinalPasses() {
 		return
 	}
 	mods := p.ctx.Modules()
-	usage.AnalyzeModules(p.ctx, mods)
+	usage.AnalyzeUsageModules(p.ctx, mods)
 	layoutanalysis.AnalyzeModules(p.ctx, mods)
 }
 

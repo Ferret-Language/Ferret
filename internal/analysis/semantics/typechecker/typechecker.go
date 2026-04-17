@@ -313,7 +313,7 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 	funcScope := newRefineScope(nil)
 	var ownerType typeinfo.Type
 	if d.Receiver != nil {
-		recvType := c.syntaxType(c.mod, d.Receiver.Type)
+		recvType := c.typeFromTypeExpr(c.mod, d.Receiver.Type)
 		if base, ok := typeinfo.ReceiverBaseNamedType(recvType); ok {
 			selfType = base
 		}
@@ -342,7 +342,7 @@ func (c *checker) checkFuncDecl(d *ast.FuncDecl) {
 		}
 	}
 	if d.Receiver == nil && d.OwnerType != nil {
-		ownerType = c.syntaxType(c.mod, d.OwnerType)
+		ownerType = c.typeFromTypeExpr(c.mod, d.OwnerType)
 		c.info.BindNode(d.OwnerType, ownerType)
 		selfType = ownerType
 	}
@@ -494,7 +494,7 @@ func (c *checker) getTypeOfIdent(scope *refineScope, ident *ast.Ident) typeinfo.
 		if fnType, ok := typ.(*typeinfo.FuncType); ok && len(ident.TypeArgs) > 0 {
 			fnDecl, _ := res.Symbol.Node.(*ast.FuncDecl)
 			if fnDecl != nil && fnDecl.OwnerType != nil {
-				symMod := c.findModuleForSymbol(res.Symbol)
+				symMod := c.findOwnerModuleForSymbol(res.Symbol)
 				if symMod == nil {
 					symMod = c.mod
 				}
@@ -1199,7 +1199,7 @@ func (c *checker) typeOfLambda(scope *refineScope, expr *ast.LambdaExpr, expecte
 	for i, param := range expr.Params {
 		var paramType typeinfo.Type
 		if param.Type != nil {
-			paramType = c.syntaxType(c.mod, param.Type)
+			paramType = c.typeFromTypeExpr(c.mod, param.Type)
 			c.info.BindNode(param.Type, paramType)
 		} else if expectedFn != nil && i < len(expectedFn.Params) {
 			paramType = expectedFn.Params[i].Type
@@ -1621,14 +1621,14 @@ func (c *checker) paramSpecFromSyntax(mod *context.Module, param ast.Param, self
 	}
 	return typeinfo.ParamSpec{
 		Name:       name,
-		Type:       c.instantiateSelfType(c.syntaxType(mod, param.Type), selfType),
+		Type:       c.instantiateSelfType(c.typeFromTypeExpr(mod, param.Type), selfType),
 		Flags:      paramFlags(param),
 		HasDefault: param.Default != nil,
 	}
 }
 
 func (c *checker) paramTypeForSyntax(scope *refineScope, mod *context.Module, param ast.Param, selfType typeinfo.Type) typeinfo.Type {
-	paramType := c.instantiateSelfType(c.syntaxType(mod, param.Type), selfType)
+	paramType := c.instantiateSelfType(c.typeFromTypeExpr(mod, param.Type), selfType)
 	if slice, ok := c.underlying(paramType).(*typeinfo.SliceType); ok && slice != nil && param.IsMut {
 		paramType = &typeinfo.SliceType{Mutable: true, Inner: slice.Inner}
 	}
@@ -1649,7 +1649,7 @@ func (c *checker) callTargetForSymbol(sym *symbols.Symbol) (*context.Module, *as
 	if fn == nil {
 		return nil, nil
 	}
-	mod := c.findModuleForSymbol(sym)
+	mod := c.findOwnerModuleForSymbol(sym)
 	if mod == nil {
 		mod = c.mod
 	}
@@ -2126,7 +2126,7 @@ func (c *checker) checkInstantiatedGenericRequirements(call *ast.CallExpr, calle
 	if sym == nil {
 		return false
 	}
-	owner := c.findModuleForSymbol(sym)
+	owner := c.findOwnerModuleForSymbol(sym)
 	info := c.info
 	if owner != nil && owner != c.mod {
 		info = owner.Types
@@ -2217,7 +2217,7 @@ func (c *checker) checkReferenceArg(scope *refineScope, arg ast.Expr, expected, 
 
 func (c *checker) typeOfSelector(scope *refineScope, expr *ast.SelectorExpr) typeinfo.Type {
 	left := c.typeOfExpr(scope, expr.Left, nil)
-	base := c.derefForSelector(left)
+	base := typeinfo.DerefForSelector(left)
 	if raw, ok := c.underlying(left).(*typeinfo.RawPtrType); ok {
 		if c.unsafeDepth == 0 {
 			loc := expr.Location
@@ -2913,7 +2913,7 @@ func (c *checker) resolveCompositeLiteralType(scope *refineScope, expr *ast.Comp
 		c.info.BindNode(expr.Type, explicit)
 		return explicit
 	}
-	owner := c.findModuleForSymbol(resolution.Symbol)
+	owner := c.findOwnerModuleForSymbol(resolution.Symbol)
 	if owner == nil {
 		owner = c.mod
 	}
@@ -3177,17 +3177,6 @@ func (c *checker) structView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 	return st, ok
 }
 
-func (c *checker) derefForSelector(typ typeinfo.Type) typeinfo.Type {
-	switch t := typ.(type) {
-	case *typeinfo.PointerType:
-		return t.Inner
-	case *typeinfo.RefType:
-		return t.Inner
-	default:
-		return typ
-	}
-}
-
 func (c *checker) orderedStructFields(st *typeinfo.StructType) []*typeinfo.StructField {
 	if st == nil {
 		return nil
@@ -3196,7 +3185,7 @@ func (c *checker) orderedStructFields(st *typeinfo.StructType) []*typeinfo.Struc
 }
 
 func (c *checker) lookupStructField(typ typeinfo.Type, name string) *typeinfo.StructField {
-	structType, ok := c.structView(c.derefForSelector(typ))
+	structType, ok := c.structView(typeinfo.DerefForSelector(typ))
 	if !ok || structType == nil {
 		return nil
 	}
@@ -3207,7 +3196,7 @@ func (c *checker) canAccessStructField(typ typeinfo.Type, field *typeinfo.Struct
 	if field == nil || field.IsPub {
 		return true
 	}
-	named, ok := typeinfo.ReceiverBaseNamedType(c.derefForSelector(typ))
+	named, ok := typeinfo.ReceiverBaseNamedType(typeinfo.DerefForSelector(typ))
 	if !ok || named == nil {
 		return true
 	}
@@ -3215,7 +3204,7 @@ func (c *checker) canAccessStructField(typ typeinfo.Type, field *typeinfo.Struct
 }
 
 func (c *checker) structFieldOwnerName(typ typeinfo.Type) string {
-	named, ok := typeinfo.ReceiverBaseNamedType(c.derefForSelector(typ))
+	named, ok := typeinfo.ReceiverBaseNamedType(typeinfo.DerefForSelector(typ))
 	if !ok || named == nil {
 		return ""
 	}
@@ -3302,7 +3291,7 @@ func (c *checker) exprAccess(scope *refineScope, expr ast.Expr) (addressable boo
 	}
 }
 
-func (c *checker) findModuleForSymbol(sym *symbols.Symbol) *context.Module {
+func (c *checker) findOwnerModuleForSymbol(sym *symbols.Symbol) *context.Module {
 	if sym == nil {
 		return nil
 	}
@@ -3536,7 +3525,7 @@ func (c *checker) isConstIdent(_ *refineScope, ident *ast.Ident) bool {
 	if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 		return false
 	}
-	owner := c.findModuleForSymbol(res.Symbol)
+	owner := c.findOwnerModuleForSymbol(res.Symbol)
 	if owner == nil {
 		owner = c.mod
 	}

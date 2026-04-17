@@ -13,7 +13,7 @@ import (
 	"compiler/internal/frontend/ast"
 )
 
-type analyzer struct {
+type usageAnalyzer struct {
 	ctx         *context.CompilerContext
 	mod         *context.Module
 	usedImports map[*binding.ImportBinding]bool
@@ -24,20 +24,20 @@ type analyzer struct {
 	readWrites  map[ast.Node]struct{}
 }
 
-func AnalyzeModules(ctx *context.CompilerContext, mods []*context.Module) {
+func AnalyzeUsageModules(ctx *context.CompilerContext, mods []*context.Module) {
 	if ctx == nil {
 		return
 	}
 	for _, mod := range mods {
-		AnalyzeModule(ctx, mod)
+		AnalyzeUsageModule(ctx, mod)
 	}
 }
 
-func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
+func AnalyzeUsageModule(ctx *context.CompilerContext, mod *context.Module) {
 	if ctx == nil || mod == nil || mod.AST == nil || mod.Bindings == nil || mod.ModuleScope == nil {
 		return
 	}
-	a := &analyzer{
+	a := &usageAnalyzer{
 		ctx:         ctx,
 		mod:         mod,
 		usedImports: make(map[*binding.ImportBinding]bool),
@@ -56,7 +56,7 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 	mod.Phase = phase.PhaseUsageAnalyzed
 }
 
-func (a *analyzer) collectDeclNodes() {
+func (a *usageAnalyzer) collectDeclNodes() {
 	if a == nil || a.mod == nil || a.mod.AST == nil {
 		return
 	}
@@ -65,14 +65,14 @@ func (a *analyzer) collectDeclNodes() {
 	}
 }
 
-func (a *analyzer) markDeclNode(node ast.Node) {
+func (a *usageAnalyzer) markDeclNode(node ast.Node) {
 	if a == nil || node == nil {
 		return
 	}
 	a.declNodes[node] = struct{}{}
 }
 
-func (a *analyzer) collectDeclNodesDecl(decl ast.Decl) {
+func (a *usageAnalyzer) collectDeclNodesDecl(decl ast.Decl) {
 	switch d := decl.(type) {
 	case *ast.LetDecl:
 		if d == nil {
@@ -106,7 +106,7 @@ func (a *analyzer) collectDeclNodesDecl(decl ast.Decl) {
 	}
 }
 
-func (a *analyzer) collectDeclNodesStmt(stmt ast.Stmt) {
+func (a *usageAnalyzer) collectDeclNodesStmt(stmt ast.Stmt) {
 	if stmt == nil {
 		return
 	}
@@ -235,15 +235,15 @@ func (a *analyzer) collectDeclNodesStmt(stmt ast.Stmt) {
 	}
 }
 
-func (a *analyzer) markWriteTarget(expr ast.Expr) {
+func (a *usageAnalyzer) markWriteTarget(expr ast.Expr) {
 	a.markTarget(expr, false)
 }
 
-func (a *analyzer) markReadWriteTarget(expr ast.Expr) {
+func (a *usageAnalyzer) markReadWriteTarget(expr ast.Expr) {
 	a.markTarget(expr, true)
 }
 
-func (a *analyzer) markTarget(expr ast.Expr, readWrite bool) {
+func (a *usageAnalyzer) markTarget(expr ast.Expr, readWrite bool) {
 	if a == nil || expr == nil {
 		return
 	}
@@ -271,7 +271,7 @@ func (a *analyzer) markTarget(expr ast.Expr, readWrite bool) {
 	}
 }
 
-func (a *analyzer) markBorrowSourceTarget(expr ast.Expr, readWrite bool) {
+func (a *usageAnalyzer) markBorrowSourceTarget(expr ast.Expr, readWrite bool) {
 	if a == nil || a.mod == nil || a.mod.Bindings == nil || expr == nil {
 		return
 	}
@@ -296,7 +296,7 @@ func (a *analyzer) markBorrowSourceTarget(expr ast.Expr, readWrite bool) {
 	}
 }
 
-func (a *analyzer) markMutBorrowInitTarget(expr ast.Expr, readWrite bool) {
+func (a *usageAnalyzer) markMutBorrowInitTarget(expr ast.Expr, readWrite bool) {
 	if a == nil || expr == nil {
 		return
 	}
@@ -307,7 +307,7 @@ func (a *analyzer) markMutBorrowInitTarget(expr ast.Expr, readWrite bool) {
 	a.markTarget(prefix.Right, readWrite)
 }
 
-func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {
+func (a *usageAnalyzer) collectDeclNodesExpr(expr ast.Expr) {
 	if expr == nil {
 		return
 	}
@@ -402,7 +402,7 @@ func (a *analyzer) collectDeclNodesExpr(expr ast.Expr) {
 	}
 }
 
-func (a *analyzer) markCallWrites(call *ast.CallExpr) {
+func (a *usageAnalyzer) markCallWrites(call *ast.CallExpr) {
 	if a == nil || call == nil || a.mod == nil || a.mod.Types == nil {
 		return
 	}
@@ -436,14 +436,14 @@ func (a *analyzer) markCallWrites(call *ast.CallExpr) {
 	}
 }
 
-func (a *analyzer) paramRequiresMutableAccess(param typeinfo.ParamSpec) bool {
+func (a *usageAnalyzer) paramRequiresMutableAccess(param typeinfo.ParamSpec) bool {
 	if param.Flags.Mutable() {
 		return true
 	}
 	return a.typeRequiresMutableAccess(param.Type)
 }
 
-func (a *analyzer) typeRequiresMutableAccess(typ typeinfo.Type) bool {
+func (a *usageAnalyzer) typeRequiresMutableAccess(typ typeinfo.Type) bool {
 	switch t := typ.(type) {
 	case *typeinfo.RefType:
 		return t.Mutable
@@ -465,7 +465,7 @@ func (a *analyzer) typeRequiresMutableAccess(typ typeinfo.Type) bool {
 	}
 }
 
-func (a *analyzer) collectUses() {
+func (a *usageAnalyzer) collectUses() {
 	if a == nil || a.mod == nil || a.mod.Bindings == nil {
 		return
 	}
@@ -497,7 +497,7 @@ func (a *analyzer) collectUses() {
 	}
 }
 
-func (a *analyzer) reportUnusedImports() {
+func (a *usageAnalyzer) reportUnusedImports() {
 	if a == nil || a.mod == nil || a.mod.Bindings == nil {
 		return
 	}
@@ -514,7 +514,7 @@ func (a *analyzer) reportUnusedImports() {
 	}
 }
 
-func (a *analyzer) reportUnusedModuleSymbols() {
+func (a *usageAnalyzer) reportUnusedModuleSymbols() {
 	if a == nil || a.mod == nil || a.mod.ModuleScope == nil {
 		return
 	}
@@ -537,7 +537,7 @@ func (a *analyzer) reportUnusedModuleSymbols() {
 	}
 }
 
-func (a *analyzer) reportUnusedFunctionSymbols() {
+func (a *usageAnalyzer) reportUnusedFunctionSymbols() {
 	if a == nil || a.mod == nil || a.mod.Bindings == nil {
 		return
 	}
@@ -562,7 +562,7 @@ func (a *analyzer) reportUnusedFunctionSymbols() {
 	}
 }
 
-func (a *analyzer) reportNeverModifiedMutableBindings() {
+func (a *usageAnalyzer) reportNeverModifiedMutableBindings() {
 	if a == nil || a.mod == nil {
 		return
 	}
@@ -582,7 +582,7 @@ func (a *analyzer) reportNeverModifiedMutableBindings() {
 	}
 }
 
-func (a *analyzer) reportNeverModifiedStmt(stmt ast.Stmt) {
+func (a *usageAnalyzer) reportNeverModifiedStmt(stmt ast.Stmt) {
 	if stmt == nil {
 		return
 	}
@@ -635,7 +635,7 @@ func (a *analyzer) reportNeverModifiedStmt(stmt ast.Stmt) {
 	}
 }
 
-func (a *analyzer) reportNeverModifiedDecl(node ast.Node) {
+func (a *usageAnalyzer) reportNeverModifiedDecl(node ast.Node) {
 	if a == nil || node == nil {
 		return
 	}
@@ -745,7 +745,7 @@ func unusedFunctionSymbolDiagnostic(sym *symbols.Symbol) (msg, code, label strin
 	}
 }
 
-func (a *analyzer) shouldWarnInsideFunction(fn *ast.FuncDecl) bool {
+func (a *usageAnalyzer) shouldWarnInsideFunction(fn *ast.FuncDecl) bool {
 	if a == nil || fn == nil {
 		return false
 	}

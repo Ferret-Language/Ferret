@@ -261,7 +261,7 @@ func (c *checker) bindNodeSymbolResolution(node ast.Node, sym *symbols.Symbol) {
 	}
 	moduleKey := c.mod.Key
 	importPath := c.mod.ImportPath
-	if owner := c.findModuleForSymbol(sym); owner != nil {
+	if owner := c.findOwnerModuleForSymbol(sym); owner != nil {
 		moduleKey = owner.Key
 		importPath = owner.ImportPath
 	}
@@ -289,13 +289,13 @@ func (c *checker) ownerTypeDeclForFunc(mod *context.Module, fn *ast.FuncDecl) (*
 	if decl == nil {
 		return nil, nil
 	}
-	if symOwner := c.findModuleForSymbol(resolution.Symbol); symOwner != nil {
+	if symOwner := c.findOwnerModuleForSymbol(resolution.Symbol); symOwner != nil {
 		ownerMod = symOwner
 	}
 	return ownerMod, decl
 }
 
-func (c *checker) syntaxType(mod *context.Module, expr ast.TypeExpr) typeinfo.Type {
+func (c *checker) typeFromTypeExpr(mod *context.Module, expr ast.TypeExpr) typeinfo.Type {
 	if c == nil || expr == nil {
 		return nil
 	}

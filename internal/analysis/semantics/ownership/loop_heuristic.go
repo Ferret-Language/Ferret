@@ -7,7 +7,7 @@ import (
 	"compiler/internal/ir/mir"
 )
 
-func (a *analyzer) shouldSkipBackedgeForSingleIterationLoop(cfgFn *cfg.Function, blocks map[int]*mir.Block, from, to *cfg.Block) bool {
+func (a *ownershipAnalyzer) shouldSkipBackedgeForSingleIterationLoop(cfgFn *cfg.Function, blocks map[int]*mir.Block, from, to *cfg.Block) bool {
 	if cfgFn == nil || from == nil || to == nil || blocks == nil {
 		return false
 	}
@@ -137,7 +137,7 @@ func reverseCompareOp(op string) string {
 	}
 }
 
-func loopStepInfo(body *mir.Block, a *analyzer, localID int) (int64, bool) {
+func loopStepInfo(body *mir.Block, a *ownershipAnalyzer, localID int) (int64, bool) {
 	if body == nil || a == nil || localID < 0 {
 		return 0, false
 	}
@@ -195,7 +195,7 @@ func localValueID(value mir.Value) (int, bool) {
 	return local.LocalID, true
 }
 
-func loopInitInfo(head, backedge *cfg.Block, blocks map[int]*mir.Block, a *analyzer, localID int) (int64, bool) {
+func loopInitInfo(head, backedge *cfg.Block, blocks map[int]*mir.Block, a *ownershipAnalyzer, localID int) (int64, bool) {
 	if head == nil || a == nil || localID < 0 {
 		return 0, false
 	}
@@ -214,7 +214,7 @@ func loopInitInfo(head, backedge *cfg.Block, blocks map[int]*mir.Block, a *analy
 	return 0, false
 }
 
-func lastAssignedLocalConst(block *mir.Block, a *analyzer, localID int) (int64, bool) {
+func lastAssignedLocalConst(block *mir.Block, a *ownershipAnalyzer, localID int) (int64, bool) {
 	if block == nil || a == nil || localID < 0 {
 		return 0, false
 	}

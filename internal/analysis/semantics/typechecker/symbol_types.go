@@ -14,13 +14,13 @@ func (c *checker) typeOfSymbol(sym *symbols.Symbol) typeinfo.Type {
 	if typ, ok := c.info.Symbols[sym.ID]; ok {
 		return typ
 	}
-	if owner := c.findModuleForSymbol(sym); owner != nil && owner != c.mod && owner.Types != nil {
+	if owner := c.findOwnerModuleForSymbol(sym); owner != nil && owner != c.mod && owner.Types != nil {
 		if typ, ok := owner.Types.Symbols[sym.ID]; ok {
 			return typ
 		}
 	}
 
-	owner := c.findModuleForSymbol(sym)
+	owner := c.findOwnerModuleForSymbol(sym)
 	if owner == nil {
 		owner = c.mod
 	}
@@ -108,12 +108,12 @@ func (c *checker) funcType(mod *context.Module, fn *ast.FuncDecl) *typeinfo.Func
 	defer c.popTypeParams()
 	var selfType typeinfo.Type
 	if fn.Receiver != nil {
-		recvType := c.syntaxType(mod, fn.Receiver.Type)
+		recvType := c.typeFromTypeExpr(mod, fn.Receiver.Type)
 		if base, ok := typeinfo.ReceiverBaseNamedType(recvType); ok {
 			selfType = base
 		}
 	} else if fn.OwnerType != nil {
-		selfType = c.syntaxType(mod, fn.OwnerType)
+		selfType = c.typeFromTypeExpr(mod, fn.OwnerType)
 	}
 	params := make([]typeinfo.ParamSpec, 0, len(fn.Params))
 	funcScope := newRefineScope(nil)
@@ -136,5 +136,5 @@ func (c *checker) funcResultType(mod *context.Module, fn *ast.FuncDecl) typeinfo
 	if fn == nil || fn.Result == nil {
 		return &typeinfo.BuiltinType{Name: "void"}
 	}
-	return c.syntaxType(mod, fn.Result)
+	return c.typeFromTypeExpr(mod, fn.Result)
 }

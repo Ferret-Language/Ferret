@@ -40,7 +40,7 @@ type tempInfo struct {
 	value  mir.Value
 }
 
-type analyzer struct {
+type ownershipAnalyzer struct {
 	ctx       *context.CompilerContext
 	mod       *context.Module
 	module    *mir.Module
@@ -50,11 +50,11 @@ type analyzer struct {
 	deferUses cfg.LocalSet
 }
 
-func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
+func AnalyzeOwnershipModule(ctx *context.CompilerContext, mod *context.Module) {
 	if ctx == nil || mod == nil || mod.MIR == nil || mod.CFG == nil {
 		return
 	}
-	a := &analyzer{
+	a := &ownershipAnalyzer{
 		ctx:      ctx,
 		mod:      mod,
 		module:   mod.MIR,
@@ -73,14 +73,14 @@ func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
 	mod.Phase = phase.PhaseOwnershipAnalyzed
 }
 
-func (a *analyzer) localName(id int) string {
+func (a *ownershipAnalyzer) localName(id int) string {
 	if a == nil || a.currentFn == nil {
 		return ""
 	}
 	return a.currentFn.LocalName(id)
 }
 
-func (a *analyzer) localIDByName(name string) int {
+func (a *ownershipAnalyzer) localIDByName(name string) int {
 	if a == nil || a.currentFn == nil || name == "" {
 		return -1
 	}
@@ -92,14 +92,14 @@ func (a *analyzer) localIDByName(name string) int {
 	return -1
 }
 
-func (a *analyzer) localType(id int) typeinfo.Type {
+func (a *ownershipAnalyzer) localType(id int) typeinfo.Type {
 	if a == nil || a.currentFn == nil {
 		return typeinfo.UnknownType{}
 	}
 	return a.currentFn.LocalType(id)
 }
 
-func (a *analyzer) checkGlobal(global *mir.Global) {
+func (a *ownershipAnalyzer) checkGlobal(global *mir.Global) {
 	if global == nil || global.Init == nil {
 		return
 	}
@@ -113,7 +113,7 @@ func (a *analyzer) checkGlobal(global *mir.Global) {
 	a.consumeMoveValue(scope, global.Init, global.Type)
 }
 
-func (a *analyzer) checkFunc(cfgFn *cfg.Function, mirFn *mir.Function) {
+func (a *ownershipAnalyzer) checkFunc(cfgFn *cfg.Function, mirFn *mir.Function) {
 	if cfgFn == nil || mirFn == nil || cfgFn.Entry == nil {
 		return
 	}
@@ -167,7 +167,7 @@ func (a *analyzer) checkFunc(cfgFn *cfg.Function, mirFn *mir.Function) {
 	_ = outStates
 }
 
-func (a *analyzer) seedFunctionState(fn *mir.Function) *valueScope {
+func (a *ownershipAnalyzer) seedFunctionState(fn *mir.Function) *valueScope {
 	scope := newValueScope()
 	if fn == nil {
 		return scope
@@ -215,7 +215,7 @@ func setConcreteValue(slot *valueInfo, value mir.Value) {
 	slot.concrete = nil
 }
 
-func (a *analyzer) transferBlock(in *valueScope, cfgBlock *cfg.Block, mirBlock *mir.Block) *valueScope {
+func (a *ownershipAnalyzer) transferBlock(in *valueScope, cfgBlock *cfg.Block, mirBlock *mir.Block) *valueScope {
 	state := in.Clone()
 	if state == nil {
 		state = newValueScope()
@@ -248,7 +248,7 @@ func (a *analyzer) transferBlock(in *valueScope, cfgBlock *cfg.Block, mirBlock *
 	return state
 }
 
-func (a *analyzer) blockLiveAfterInstrs(cfgBlock *cfg.Block, mirBlock *mir.Block) []cfg.LocalSet {
+func (a *ownershipAnalyzer) blockLiveAfterInstrs(cfgBlock *cfg.Block, mirBlock *mir.Block) []cfg.LocalSet {
 	if mirBlock == nil {
 		return nil
 	}
@@ -265,7 +265,7 @@ func (a *analyzer) blockLiveAfterInstrs(cfgBlock *cfg.Block, mirBlock *mir.Block
 	return out
 }
 
-func (a *analyzer) releaseDeadBorrows(scope *valueScope, keep cfg.LocalSet) {
+func (a *ownershipAnalyzer) releaseDeadBorrows(scope *valueScope, keep cfg.LocalSet) {
 	if scope == nil {
 		return
 	}
@@ -280,7 +280,7 @@ func (a *analyzer) releaseDeadBorrows(scope *valueScope, keep cfg.LocalSet) {
 	}
 }
 
-func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
+func (a *ownershipAnalyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
 	switch inst := instr.(type) {
 	case nil:
 		return
@@ -339,7 +339,7 @@ func (a *analyzer) checkMIRInstr(scope *valueScope, instr mir.Instr) {
 	}
 }
 
-func (a *analyzer) checkDeferredInstr(scope *valueScope, instr mir.Instr) {
+func (a *ownershipAnalyzer) checkDeferredInstr(scope *valueScope, instr mir.Instr) {
 	switch inst := instr.(type) {
 	case nil:
 		return
@@ -367,7 +367,7 @@ func (a *analyzer) checkDeferredInstr(scope *valueScope, instr mir.Instr) {
 	}
 }
 
-func (a *analyzer) collectDeferredLocalUses(fn *mir.Function) cfg.LocalSet {
+func (a *ownershipAnalyzer) collectDeferredLocalUses(fn *mir.Function) cfg.LocalSet {
 	used := cfg.NewLocalSet()
 	if fn == nil {
 		return used
@@ -385,7 +385,7 @@ func (a *analyzer) collectDeferredLocalUses(fn *mir.Function) cfg.LocalSet {
 	return used
 }
 
-func (a *analyzer) collectDeferredInstrLocalUses(used cfg.LocalSet, instr *mir.DeferInstr) {
+func (a *ownershipAnalyzer) collectDeferredInstrLocalUses(used cfg.LocalSet, instr *mir.DeferInstr) {
 	if used == nil || instr == nil {
 		return
 	}
@@ -417,7 +417,7 @@ func (a *analyzer) collectDeferredInstrLocalUses(used cfg.LocalSet, instr *mir.D
 	}
 }
 
-func (a *analyzer) checkMIRTerm(scope *valueScope, term mir.Terminator) {
+func (a *ownershipAnalyzer) checkMIRTerm(scope *valueScope, term mir.Terminator) {
 	switch t := term.(type) {
 	case nil, *mir.JumpTerm, *mir.ExitTerm:
 		return
@@ -441,7 +441,7 @@ func (a *analyzer) checkMIRTerm(scope *valueScope, term mir.Terminator) {
 	}
 }
 
-func (a *analyzer) collectInstrLocalUses(used cfg.LocalSet, instr mir.Instr) {
+func (a *ownershipAnalyzer) collectInstrLocalUses(used cfg.LocalSet, instr mir.Instr) {
 	if used == nil || instr == nil {
 		return
 	}
@@ -468,7 +468,7 @@ func (a *analyzer) collectInstrLocalUses(used cfg.LocalSet, instr mir.Instr) {
 	}
 }
 
-func (a *analyzer) collectTermLocalUses(used cfg.LocalSet, term mir.Terminator) {
+func (a *ownershipAnalyzer) collectTermLocalUses(used cfg.LocalSet, term mir.Terminator) {
 	if used == nil || term == nil {
 		return
 	}
@@ -487,7 +487,7 @@ func (a *analyzer) collectTermLocalUses(used cfg.LocalSet, term mir.Terminator) 
 	}
 }
 
-func (a *analyzer) collectPlaceLocalUses(used cfg.LocalSet, place mir.Place) {
+func (a *ownershipAnalyzer) collectPlaceLocalUses(used cfg.LocalSet, place mir.Place) {
 	if used == nil || place == nil {
 		return
 	}
@@ -504,7 +504,7 @@ func (a *analyzer) collectPlaceLocalUses(used cfg.LocalSet, place mir.Place) {
 	}
 }
 
-func (a *analyzer) collectValueLocalUses(used cfg.LocalSet, value mir.Value) {
+func (a *ownershipAnalyzer) collectValueLocalUses(used cfg.LocalSet, value mir.Value) {
 	if used == nil || value == nil {
 		return
 	}
@@ -547,7 +547,7 @@ func (a *analyzer) collectValueLocalUses(used cfg.LocalSet, value mir.Value) {
 	}
 }
 
-func (a *analyzer) checkComputedValue(scope *valueScope, instr *mir.ComputeInstr) {
+func (a *ownershipAnalyzer) checkComputedValue(scope *valueScope, instr *mir.ComputeInstr) {
 	if instr == nil {
 		return
 	}
@@ -557,7 +557,7 @@ func (a *analyzer) checkComputedValue(scope *valueScope, instr *mir.ComputeInstr
 	}
 }
 
-func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
+func (a *ownershipAnalyzer) checkValue(scope *valueScope, value mir.Value) {
 	switch v := value.(type) {
 	case nil, *mir.NumberValue, *mir.BoolValue, *mir.StringValue, *mir.NoneValue:
 		return
@@ -609,7 +609,7 @@ func (a *analyzer) checkValue(scope *valueScope, value mir.Value) {
 	}
 }
 
-func (a *analyzer) checkDirectValueBorrowConflict(scope *valueScope, value mir.Value) {
+func (a *ownershipAnalyzer) checkDirectValueBorrowConflict(scope *valueScope, value mir.Value) {
 	if scope == nil || value == nil {
 		return
 	}
@@ -622,7 +622,7 @@ func (a *analyzer) checkDirectValueBorrowConflict(scope *valueScope, value mir.V
 	}
 }
 
-func (a *analyzer) checkPlaceValue(scope *valueScope, place mir.Place) {
+func (a *ownershipAnalyzer) checkPlaceValue(scope *valueScope, place mir.Place) {
 	switch p := place.(type) {
 	case nil:
 		return
@@ -641,7 +641,7 @@ func (a *analyzer) checkPlaceValue(scope *valueScope, place mir.Place) {
 	}
 }
 
-func (a *analyzer) checkFieldValue(scope *valueScope, value *mir.FieldValue) {
+func (a *ownershipAnalyzer) checkFieldValue(scope *valueScope, value *mir.FieldValue) {
 	if value == nil {
 		return
 	}
@@ -658,7 +658,7 @@ func (a *analyzer) checkFieldValue(scope *valueScope, value *mir.FieldValue) {
 	a.checkValue(scope, value.Base)
 }
 
-func (a *analyzer) checkFieldLoadValue(scope *valueScope, value *mir.FieldLoadValue) {
+func (a *ownershipAnalyzer) checkFieldLoadValue(scope *valueScope, value *mir.FieldLoadValue) {
 	if value == nil {
 		return
 	}
@@ -669,7 +669,7 @@ func (a *analyzer) checkFieldLoadValue(scope *valueScope, value *mir.FieldLoadVa
 	a.checkValue(scope, value.Base)
 }
 
-func (a *analyzer) checkAddrOfValue(scope *valueScope, value *mir.AddrOfValue) {
+func (a *ownershipAnalyzer) checkAddrOfValue(scope *valueScope, value *mir.AddrOfValue) {
 	if value == nil {
 		return
 	}
@@ -696,14 +696,14 @@ func (a *analyzer) checkAddrOfValue(scope *valueScope, value *mir.AddrOfValue) {
 	}
 }
 
-func (a *analyzer) checkLoadValue(scope *valueScope, value *mir.LoadValue) {
+func (a *ownershipAnalyzer) checkLoadValue(scope *valueScope, value *mir.LoadValue) {
 	if value == nil {
 		return
 	}
 	a.checkValue(scope, value.Pointer)
 }
 
-func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
+func (a *ownershipAnalyzer) checkCall(scope *valueScope, call *mir.CallValue) {
 	if call == nil {
 		return
 	}
@@ -737,7 +737,7 @@ func (a *analyzer) checkCall(scope *valueScope, call *mir.CallValue) {
 
 // checkNormalizedMethodCall handles method calls that have been normalized in MIR so
 // that the receiver is Args[0] and ReceiverType is set on the CallValue.
-func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallValue) {
+func (a *ownershipAnalyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallValue) {
 	receiver := call.Args[0]
 	receiverType := call.ReceiverType
 	a.checkValue(scope, receiver)
@@ -771,7 +771,7 @@ func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallVa
 		if methodType != nil {
 			a.checkCallArgs(scope, call.Args[1:], methodType.Params)
 			if methodSym != nil {
-				if fn, ok := methodSym.Node.(*ast.FuncDecl); ok && a.receiverConsumes(a.findModuleForSymbol(methodSym), fn) {
+				if fn, ok := methodSym.Node.(*ast.FuncDecl); ok && a.receiverConsumes(a.findCandidateModuleForSymbol(methodSym), fn) {
 					a.consumeMoveValue(scope, receiver, receiverType)
 				}
 			}
@@ -782,7 +782,7 @@ func (a *analyzer) checkNormalizedMethodCall(scope *valueScope, call *mir.CallVa
 	a.checkCallArgs(scope, call.Args[1:], nil)
 }
 
-func (a *analyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field *mir.FieldValue) bool {
+func (a *ownershipAnalyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field *mir.FieldValue) bool {
 	a.checkValue(scope, field.Base)
 	receiverType := valueType(field.Base)
 	if typeinfo.IsInvalid(receiverType) || typeinfo.IsUnknown(receiverType) {
@@ -808,14 +808,14 @@ func (a *analyzer) checkMethodCall(scope *valueScope, call *mir.CallValue, field
 	}
 	a.checkCallArgs(scope, call.Args, methodType.Params)
 	if methodSym != nil {
-		if fn, ok := methodSym.Node.(*ast.FuncDecl); ok && a.receiverConsumes(a.findModuleForSymbol(methodSym), fn) {
+		if fn, ok := methodSym.Node.(*ast.FuncDecl); ok && a.receiverConsumes(a.findCandidateModuleForSymbol(methodSym), fn) {
 			a.consumeMoveValue(scope, field.Base, receiverType)
 		}
 	}
 	return true
 }
 
-func (a *analyzer) checkCallArgs(scope *valueScope, args []mir.Value, params []typeinfo.ParamSpec) {
+func (a *ownershipAnalyzer) checkCallArgs(scope *valueScope, args []mir.Value, params []typeinfo.ParamSpec) {
 	for i, arg := range args {
 		a.checkValue(scope, arg)
 		if i < len(params) {
@@ -824,13 +824,13 @@ func (a *analyzer) checkCallArgs(scope *valueScope, args []mir.Value, params []t
 	}
 }
 
-func (a *analyzer) requireActiveValue(scope *valueScope, value *mir.NameValue) {
+func (a *ownershipAnalyzer) requireActiveValue(scope *valueScope, value *mir.NameValue) {
 	// Globals and other non-local names are not tracked as movable slots.
 	_ = scope
 	_ = value
 }
 
-func (a *analyzer) requireActiveLocal(scope *valueScope, value *mir.LocalValue) {
+func (a *ownershipAnalyzer) requireActiveLocal(scope *valueScope, value *mir.LocalValue) {
 	if value == nil {
 		return
 	}
@@ -841,7 +841,7 @@ func (a *analyzer) requireActiveLocal(scope *valueScope, value *mir.LocalValue) 
 	a.requireActivePath(scope, value.LocalID, "", value.Loc())
 }
 
-func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ typeinfo.Type) {
+func (a *ownershipAnalyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ typeinfo.Type) {
 	if value == nil {
 		return
 	}
@@ -881,7 +881,7 @@ func (a *analyzer) consumeMoveValue(scope *valueScope, value mir.Value, typ type
 	a.consumeLocalPath(scope, root, path, value.Loc())
 }
 
-func (a *analyzer) consumeLocalPath(scope *valueScope, root int, path string, loc source.Location) {
+func (a *ownershipAnalyzer) consumeLocalPath(scope *valueScope, root int, path string, loc source.Location) {
 	if scope == nil || root < 0 {
 		return
 	}
@@ -914,7 +914,7 @@ func (a *analyzer) consumeLocalPath(scope *valueScope, root int, path string, lo
 	info.movedSubs = nil
 }
 
-func (a *analyzer) tempInfoForValue(value mir.Value) (tempInfo, bool) {
+func (a *ownershipAnalyzer) tempInfoForValue(value mir.Value) (tempInfo, bool) {
 	switch v := value.(type) {
 	case *mir.AddrOfValue:
 		root, path, ok := a.borrowSourcePath(v.Source)
@@ -950,7 +950,7 @@ func (a *analyzer) tempInfoForValue(value mir.Value) (tempInfo, bool) {
 	return tempInfo{}, false
 }
 
-func (a *analyzer) borrowSourcePath(value mir.Value) (ownerRef, string, bool) {
+func (a *ownershipAnalyzer) borrowSourcePath(value mir.Value) (ownerRef, string, bool) {
 	switch v := value.(type) {
 	case *mir.NameValue:
 		if len(v.Path) == 1 {
@@ -983,7 +983,7 @@ func (a *analyzer) borrowSourcePath(value mir.Value) (ownerRef, string, bool) {
 	return ownerRef{}, "", false
 }
 
-func (a *analyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, value mir.Value) {
+func (a *ownershipAnalyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, value mir.Value) {
 	if scope == nil || slot == nil {
 		return
 	}
@@ -1017,7 +1017,7 @@ func (a *analyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, value mir
 	}
 }
 
-func (a *analyzer) releaseBorrowValue(scope *valueScope, slot *valueInfo) {
+func (a *ownershipAnalyzer) releaseBorrowValue(scope *valueScope, slot *valueInfo) {
 	if scope == nil || slot == nil || slot.borrowOf < 0 {
 		return
 	}
@@ -1032,7 +1032,7 @@ func (a *analyzer) releaseBorrowValue(scope *valueScope, slot *valueInfo) {
 	slot.borrowLoc = source.Location{}
 }
 
-func (a *analyzer) rebindBorrowAssignment(scope *valueScope, left mir.Place, right mir.Value) {
+func (a *ownershipAnalyzer) rebindBorrowAssignment(scope *valueScope, left mir.Place, right mir.Value) {
 	if scope == nil {
 		return
 	}
@@ -1047,7 +1047,7 @@ func (a *analyzer) rebindBorrowAssignment(scope *valueScope, left mir.Place, rig
 	a.bindBorrowValue(scope, slot, right)
 }
 
-func (a *analyzer) checkAssignmentTarget(scope *valueScope, left mir.Place) {
+func (a *ownershipAnalyzer) checkAssignmentTarget(scope *valueScope, left mir.Place) {
 	root, path, ok := a.localPlacePath(left)
 	if !ok || scope == nil {
 		return
@@ -1070,7 +1070,7 @@ func (a *analyzer) checkAssignmentTarget(scope *valueScope, left mir.Place) {
 	clearMovedPath(info, path)
 }
 
-func (a *analyzer) localValuePath(value mir.Value) (root int, path string, ok bool) {
+func (a *ownershipAnalyzer) localValuePath(value mir.Value) (root int, path string, ok bool) {
 	switch v := value.(type) {
 	case *mir.LocalValue:
 		if info, ok := a.temps[v.LocalID]; ok && info.root.isLocal() {
@@ -1106,7 +1106,7 @@ func (a *analyzer) localValuePath(value mir.Value) (root int, path string, ok bo
 	return -1, "", false
 }
 
-func (a *analyzer) localPlacePath(place mir.Place) (root int, path string, ok bool) {
+func (a *ownershipAnalyzer) localPlacePath(place mir.Place) (root int, path string, ok bool) {
 	switch p := place.(type) {
 	case *mir.LocalPlace:
 		return p.LocalID, "", true
@@ -1197,7 +1197,7 @@ func parentPath(path string) string {
 	return ""
 }
 
-func (a *analyzer) requireActivePath(scope *valueScope, root int, path string, loc source.Location) {
+func (a *ownershipAnalyzer) requireActivePath(scope *valueScope, root int, path string, loc source.Location) {
 	if scope == nil || root < 0 {
 		return
 	}
@@ -1224,7 +1224,7 @@ func (a *analyzer) requireActivePath(scope *valueScope, root int, path string, l
 	}
 }
 
-func (a *analyzer) hasActiveMutableBorrowOf(scope *valueScope, root int) bool {
+func (a *ownershipAnalyzer) hasActiveMutableBorrowOf(scope *valueScope, root int) bool {
 	if scope == nil || root < 0 {
 		return false
 	}
@@ -1239,7 +1239,7 @@ func (a *analyzer) hasActiveMutableBorrowOf(scope *valueScope, root int) bool {
 	return false
 }
 
-func (a *analyzer) reportPartialMoveUse(root int, loc source.Location, info *valueInfo) {
+func (a *ownershipAnalyzer) reportPartialMoveUse(root int, loc source.Location, info *valueInfo) {
 	if info == nil || len(info.movedSubs) == 0 {
 		return
 	}
@@ -1262,7 +1262,7 @@ func (a *analyzer) reportPartialMoveUse(root int, loc source.Location, info *val
 	a.addDiagnostic(diag)
 }
 
-func (a *analyzer) reportMovedPathUse(root int, path string, loc source.Location, movedLoc source.Location, movedPath string) {
+func (a *ownershipAnalyzer) reportMovedPathUse(root int, path string, loc source.Location, movedLoc source.Location, movedPath string) {
 	display := a.localName(root)
 	if display == "" {
 		display = fmt.Sprintf("local#%d", root)
@@ -1283,11 +1283,11 @@ func (a *analyzer) reportMovedPathUse(root int, path string, loc source.Location
 	a.addDiagnostic(diag)
 }
 
-func (a *analyzer) isMoveType(typ typeinfo.Type) bool {
+func (a *ownershipAnalyzer) isMoveType(typ typeinfo.Type) bool {
 	return a.isMoveTypeSeen(typ, make(map[string]struct{}))
 }
 
-func (a *analyzer) isMoveTypeSeen(typ typeinfo.Type, seen map[string]struct{}) bool {
+func (a *ownershipAnalyzer) isMoveTypeSeen(typ typeinfo.Type, seen map[string]struct{}) bool {
 	if typ == nil || typeinfo.IsInvalid(typ) || typeinfo.IsUnknown(typ) {
 		return false
 	}
@@ -1337,7 +1337,7 @@ func (a *analyzer) isMoveTypeSeen(typ typeinfo.Type, seen map[string]struct{}) b
 	}
 }
 
-func (a *analyzer) consumeInterfaceReceiver(scope *valueScope, receiver mir.Value, receiverKind typeinfo.ReceiverKind, receiverType typeinfo.Type) {
+func (a *ownershipAnalyzer) consumeInterfaceReceiver(scope *valueScope, receiver mir.Value, receiverKind typeinfo.ReceiverKind, receiverType typeinfo.Type) {
 	if receiverKind == typeinfo.ReceiverPtr {
 		if root, path, ok := a.localValuePath(receiver); ok && path == "" {
 			a.consumeLocalPath(scope, root, "", receiver.Loc())
@@ -1364,7 +1364,7 @@ func (a *analyzer) consumeInterfaceReceiver(scope *valueScope, receiver mir.Valu
 	a.consumeMoveValue(scope, receiver, receiverType)
 }
 
-func (a *analyzer) reportBorrowEscapeIfNeeded(scope *valueScope, value mir.Value, message string) {
+func (a *ownershipAnalyzer) reportBorrowEscapeIfNeeded(scope *valueScope, value mir.Value, message string) {
 	if value == nil {
 		return
 	}
@@ -1382,7 +1382,7 @@ func (a *analyzer) reportBorrowEscapeIfNeeded(scope *valueScope, value mir.Value
 	a.addDiagnostic(diag)
 }
 
-func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowInfo, bool) {
+func (a *ownershipAnalyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowInfo, bool) {
 	if value == nil {
 		return borrowInfo{}, false
 	}
@@ -1419,7 +1419,7 @@ func (a *analyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowIn
 	return borrowInfo{}, false
 }
 
-func (a *analyzer) reportBorrowConflict(loc source.Location, localID int, message string) {
+func (a *ownershipAnalyzer) reportBorrowConflict(loc source.Location, localID int, message string) {
 	name := a.localName(localID)
 	if name == "" {
 		name = fmt.Sprintf("local#%d", localID)
@@ -1431,7 +1431,7 @@ func (a *analyzer) reportBorrowConflict(loc source.Location, localID int, messag
 	)
 }
 
-func (a *analyzer) fieldSelectorName(value *mir.FieldValue) string {
+func (a *ownershipAnalyzer) fieldSelectorName(value *mir.FieldValue) string {
 	if value == nil {
 		return ""
 	}
@@ -1441,14 +1441,14 @@ func (a *analyzer) fieldSelectorName(value *mir.FieldValue) string {
 	return mir.FieldName(valueType(value.Base), value.FieldIndex)
 }
 
-func (a *analyzer) fieldPathSegment(base mir.Value, index int) string {
+func (a *ownershipAnalyzer) fieldPathSegment(base mir.Value, index int) string {
 	if name := mir.FieldName(valueType(base), index); name != "" {
 		return name
 	}
 	return fmt.Sprintf("#%d", index)
 }
 
-func (a *analyzer) fieldPathSegmentFromPlace(base mir.Place, index int) string {
+func (a *ownershipAnalyzer) fieldPathSegmentFromPlace(base mir.Place, index int) string {
 	if local, ok := base.(*mir.LocalPlace); ok {
 		if name := mir.FieldName(a.localType(local.LocalID), index); name != "" {
 			return name
@@ -1457,7 +1457,7 @@ func (a *analyzer) fieldPathSegmentFromPlace(base mir.Place, index int) string {
 	return fmt.Sprintf("#%d", index)
 }
 
-func (a *analyzer) fieldStorePlace(inst *mir.StoreFieldInstr) mir.Place {
+func (a *ownershipAnalyzer) fieldStorePlace(inst *mir.StoreFieldInstr) mir.Place {
 	if inst == nil {
 		return nil
 	}
@@ -1467,7 +1467,7 @@ func (a *analyzer) fieldStorePlace(inst *mir.StoreFieldInstr) mir.Place {
 	}
 }
 
-func (a *analyzer) placeFromValue(value mir.Value) mir.Place {
+func (a *ownershipAnalyzer) placeFromValue(value mir.Value) mir.Place {
 	switch v := value.(type) {
 	case *mir.LocalValue:
 		return &mir.LocalPlace{LocalID: v.LocalID}
@@ -1478,7 +1478,7 @@ func (a *analyzer) placeFromValue(value mir.Value) mir.Place {
 	}
 }
 
-func (a *analyzer) addDiagnostic(diag *diagnostics.Diagnostic) {
+func (a *ownershipAnalyzer) addDiagnostic(diag *diagnostics.Diagnostic) {
 	if diag == nil {
 		return
 	}
@@ -1500,18 +1500,18 @@ func (a *analyzer) addDiagnostic(diag *diagnostics.Diagnostic) {
 	a.ctx.Diagnostics.Add(diag)
 }
 
-func (a *analyzer) underlying(typ typeinfo.Type) typeinfo.Type {
+func (a *ownershipAnalyzer) underlying(typ typeinfo.Type) typeinfo.Type {
 	if named, ok := typ.(*typeinfo.NamedType); ok && named.Decl != nil {
 		owner := a.findModuleForType(named)
 		if owner == nil {
 			owner = a.mod
 		}
-		return syntaxType(owner, named.Decl.Type)
+		return typeFromTypeExpr(owner, named.Decl.Type)
 	}
 	return typ
 }
 
-func (a *analyzer) pathType(root typeinfo.Type, path string) typeinfo.Type {
+func (a *ownershipAnalyzer) pathType(root typeinfo.Type, path string) typeinfo.Type {
 	if root == nil || path == "" {
 		return root
 	}
@@ -1529,7 +1529,7 @@ func (a *analyzer) pathType(root typeinfo.Type, path string) typeinfo.Type {
 	return typ
 }
 
-func (a *analyzer) findModuleForType(typ *typeinfo.NamedType) *context.Module {
+func (a *ownershipAnalyzer) findModuleForType(typ *typeinfo.NamedType) *context.Module {
 	if typ == nil {
 		return nil
 	}
@@ -1539,32 +1539,21 @@ func (a *analyzer) findModuleForType(typ *typeinfo.NamedType) *context.Module {
 	return nil
 }
 
-func (a *analyzer) structView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
+func (a *ownershipAnalyzer) structView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 	base := a.underlying(typ)
 	st, ok := base.(*typeinfo.StructType)
 	return st, ok
 }
 
-func (a *analyzer) derefForSelector(typ typeinfo.Type) typeinfo.Type {
-	switch t := typ.(type) {
-	case *typeinfo.PointerType:
-		return t.Inner
-	case *typeinfo.RefType:
-		return t.Inner
-	default:
-		return typ
-	}
-}
-
-func (a *analyzer) lookupStructField(typ typeinfo.Type, name string) *typeinfo.StructField {
-	structType, ok := a.structView(a.derefForSelector(typ))
+func (a *ownershipAnalyzer) lookupStructField(typ typeinfo.Type, name string) *typeinfo.StructField {
+	structType, ok := a.structView(typeinfo.DerefForSelector(typ))
 	if !ok || structType == nil {
 		return nil
 	}
 	return structType.Fields[name]
 }
 
-func (a *analyzer) canHaveMethods(typ typeinfo.Type) bool {
+func (a *ownershipAnalyzer) canHaveMethods(typ typeinfo.Type) bool {
 	if typ == nil {
 		return false
 	}
@@ -1575,7 +1564,7 @@ func (a *analyzer) canHaveMethods(typ typeinfo.Type) bool {
 	return ok
 }
 
-func (a *analyzer) interfaceView(typ typeinfo.Type) (*typeinfo.InterfaceType, bool) {
+func (a *ownershipAnalyzer) interfaceView(typ typeinfo.Type) (*typeinfo.InterfaceType, bool) {
 	if typ == nil {
 		return nil, false
 	}
@@ -1592,7 +1581,7 @@ func (a *analyzer) interfaceView(typ typeinfo.Type) (*typeinfo.InterfaceType, bo
 	return nil, false
 }
 
-func (a *analyzer) lookupMethod(receiverType typeinfo.Type, name string, addressable bool, mutable bool) (*symbols.Symbol, *typeinfo.FuncType) {
+func (a *ownershipAnalyzer) lookupMethod(receiverType typeinfo.Type, name string, addressable bool, mutable bool) (*symbols.Symbol, *typeinfo.FuncType) {
 	baseNamed, ok := typeinfo.ReceiverBaseNamedType(receiverType)
 	if !ok {
 		return nil, nil
@@ -1620,17 +1609,17 @@ func (a *analyzer) lookupMethod(receiverType typeinfo.Type, name string, address
 	return nil, nil
 }
 
-func (a *analyzer) receiverConsumes(mod *context.Module, fn *ast.FuncDecl) bool {
+func (a *ownershipAnalyzer) receiverConsumes(mod *context.Module, fn *ast.FuncDecl) bool {
 	if fn == nil || fn.Receiver == nil {
 		return false
 	}
 	if mod == nil {
 		mod = a.mod
 	}
-	return a.isMoveType(syntaxType(mod, fn.Receiver.Type))
+	return a.isMoveType(typeFromTypeExpr(mod, fn.Receiver.Type))
 }
 
-func (a *analyzer) methodCandidateKeys(receiverType typeinfo.Type, baseName string, addressable bool, mutable bool) []typeinfo.ReceiverKey {
+func (a *ownershipAnalyzer) methodCandidateKeys(receiverType typeinfo.Type, baseName string, addressable bool, mutable bool) []typeinfo.ReceiverKey {
 	keys := make([]typeinfo.ReceiverKey, 0, 4)
 	seen := make(map[typeinfo.ReceiverKey]struct{})
 	add := func(key typeinfo.ReceiverKey) {
@@ -1661,7 +1650,7 @@ func (a *analyzer) methodCandidateKeys(receiverType typeinfo.Type, baseName stri
 	return keys
 }
 
-func (a *analyzer) valueAccess(scope *valueScope, value mir.Value) (addressable bool, mutable bool) {
+func (a *ownershipAnalyzer) valueAccess(scope *valueScope, value mir.Value) (addressable bool, mutable bool) {
 	switch v := value.(type) {
 	case *mir.NameValue:
 		if len(v.Path) != 1 {
@@ -1708,7 +1697,7 @@ func (a *analyzer) valueAccess(scope *valueScope, value mir.Value) (addressable 
 	}
 }
 
-func (a *analyzer) findModuleForSymbol(sym *symbols.Symbol) *context.Module {
+func (a *ownershipAnalyzer) findCandidateModuleForSymbol(sym *symbols.Symbol) *context.Module {
 	if sym == nil {
 		return nil
 	}
@@ -1732,7 +1721,7 @@ func (a *analyzer) findModuleForSymbol(sym *symbols.Symbol) *context.Module {
 	return nil
 }
 
-func syntaxType(mod *context.Module, expr ast.TypeExpr) typeinfo.Type {
+func typeFromTypeExpr(mod *context.Module, expr ast.TypeExpr) typeinfo.Type {
 	if mod == nil || mod.Types == nil || expr == nil {
 		return nil
 	}
@@ -1749,7 +1738,7 @@ func valueType(value mir.Value) typeinfo.Type {
 	return typeinfo.UnknownType{}
 }
 
-func (a *analyzer) placeType(scope *valueScope, place mir.Place) typeinfo.Type {
+func (a *ownershipAnalyzer) placeType(scope *valueScope, place mir.Place) typeinfo.Type {
 	if place == nil {
 		return typeinfo.UnknownType{}
 	}

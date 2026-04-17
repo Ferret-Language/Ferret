@@ -32,7 +32,7 @@ func (fn *Function) LocalType(id int) typeinfo.Type {
 }
 
 func FieldByIndex(typ typeinfo.Type, index int) (*typeinfo.StructField, bool) {
-	structType, ok := structView(derefForSelector(typ))
+	structType, ok := structView(typeinfo.DerefForSelector(typ))
 	if !ok || index < 0 || index >= len(structType.OrderedFields) {
 		return nil, false
 	}
@@ -47,7 +47,7 @@ func FieldName(typ typeinfo.Type, index int) string {
 	if field, ok := FieldByIndex(typ, index); ok {
 		return field.Name
 	}
-	if named, ok := derefForSelector(typ).(*typeinfo.NamedType); ok && named.Decl != nil {
+	if named, ok := typeinfo.DerefForSelector(typ).(*typeinfo.NamedType); ok && named.Decl != nil {
 		if st, ok := named.Decl.Type.(*ast.StructType); ok && index >= 0 && index < len(st.Fields) {
 			field := st.Fields[index]
 			if field != nil {
@@ -68,15 +68,4 @@ func FieldType(typ typeinfo.Type, index int) typeinfo.Type {
 func structView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
 	st, ok := typ.(*typeinfo.StructType)
 	return st, ok
-}
-
-func derefForSelector(typ typeinfo.Type) typeinfo.Type {
-	switch t := typ.(type) {
-	case *typeinfo.PointerType:
-		return t.Inner
-	case *typeinfo.RefType:
-		return t.Inner
-	default:
-		return typ
-	}
 }

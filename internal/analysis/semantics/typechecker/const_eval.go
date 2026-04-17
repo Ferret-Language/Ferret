@@ -320,7 +320,7 @@ func (c *checker) constExprIn(mod *context.Module, expr ast.Expr, state *constEv
 		if res.Symbol.Node == nil {
 			return typeinfo.ConstValue{}, false
 		}
-		owner := c.findModuleForSymbol(res.Symbol)
+		owner := c.findOwnerModuleForSymbol(res.Symbol)
 		if owner == nil {
 			owner = mod
 		}
@@ -564,7 +564,7 @@ func (c *checker) constCall(mod *context.Module, call *ast.CallExpr, state *cons
 		state.setFailureReason("call to " + res.Symbol.Name + " cannot run at compile time")
 		return typeinfo.ConstValue{}, false
 	}
-	owner := c.findModuleForSymbol(res.Symbol)
+	owner := c.findOwnerModuleForSymbol(res.Symbol)
 	if owner == nil {
 		owner = mod
 	}

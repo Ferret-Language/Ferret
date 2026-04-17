@@ -629,7 +629,7 @@ func (r *resolver) resolveExprPath(scope *table.Scope, ident *ast.Ident) {
 		if sym, ok := scope.Lookup(ident.Path[0]); ok {
 			moduleKey := r.mod.Key
 			importPath := r.mod.ImportPath
-			if owner := r.findModuleForSymbol(sym); owner != nil {
+			if owner := r.findOwnerModuleForSymbol(sym); owner != nil {
 				moduleKey = owner.Key
 				importPath = owner.ImportPath
 			}
@@ -657,7 +657,7 @@ func (r *resolver) resolveTypePath(scope *table.Scope, typ *ast.NamedType) {
 		if sym, ok := scope.Lookup(typ.Path[0]); ok && sym.Kind == symbols.SymbolType {
 			moduleKey := r.mod.Key
 			importPath := r.mod.ImportPath
-			if owner := r.findModuleForSymbol(sym); owner != nil {
+			if owner := r.findOwnerModuleForSymbol(sym); owner != nil {
 				moduleKey = owner.Key
 				importPath = owner.ImportPath
 			}
@@ -763,7 +763,7 @@ func (r *resolver) lookupTypeSymbolPath(scope *table.Scope, path []string) (*sym
 		if !ok || sym.Kind != symbols.SymbolType {
 			return nil, nil, false
 		}
-		owner := r.findModuleForSymbol(sym)
+		owner := r.findOwnerModuleForSymbol(sym)
 		if owner == nil {
 			owner = r.mod
 		}
@@ -1026,7 +1026,7 @@ func isPredeclaredType(name string) bool {
 	return tokens.IsBuiltinType(name) || name == "Type" || name == "Comparable"
 }
 
-func (r *resolver) findModuleForSymbol(sym *symbols.Symbol) *context.Module {
+func (r *resolver) findOwnerModuleForSymbol(sym *symbols.Symbol) *context.Module {
 	if r == nil || r.ctx == nil || sym == nil {
 		return nil
 	}

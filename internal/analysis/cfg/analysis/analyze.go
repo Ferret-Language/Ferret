@@ -28,7 +28,7 @@ type builder struct {
 	deferStack []hir.Stmt
 }
 
-func AnalyzeModule(ctx *context.CompilerContext, mod *context.Module) {
+func AnalyzeCFGModule(ctx *context.CompilerContext, mod *context.Module) {
 	if ctx == nil || mod == nil || mod.LoweredHIR == nil {
 		return
 	}

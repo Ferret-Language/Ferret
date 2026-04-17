@@ -72,7 +72,7 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		if resolution == nil || resolution.Symbol == nil {
 			return typeinfo.InvalidType{}
 		}
-		owner := c.findModuleForSymbol(resolution.Symbol)
+		owner := c.findOwnerModuleForSymbol(resolution.Symbol)
 		if owner == nil {
 			owner = mod
 		}
@@ -275,7 +275,7 @@ func (c *checker) selectedUnionMemberTarget(mod *context.Module, expr ast.TypeEx
 	if !ok || unionDecl == nil {
 		return nil, nil, false
 	}
-	owner := c.findModuleForSymbol(resolution.Symbol)
+	owner := c.findOwnerModuleForSymbol(resolution.Symbol)
 	if owner == nil {
 		owner = mod
 	}
