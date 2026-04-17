@@ -398,14 +398,19 @@ func (c *checker) typeOfExpr(scope *refineScope, expr ast.Expr, expected typeinf
 		c.info.BindNode(e, typ)
 		return typ
 	case *ast.StringLit:
-		typ := typeinfo.Type(&typeinfo.ArrayType{
-			Inner: &typeinfo.BuiltinType{Name: "u8"},
-			Len:   int64(len(e.Value)),
-		})
+		typ := typeinfo.Type(&typeinfo.StringType{})
 		for current := expected; current != nil; {
 			switch t := c.underlying(current).(type) {
 			case *typeinfo.StringType, *typeinfo.InterfaceType:
 				typ = &typeinfo.StringType{}
+				current = nil
+			case *typeinfo.ArrayType:
+				if typeinfo.IsBuiltinNamed(t.Inner, "u8") {
+					typ = &typeinfo.ArrayType{
+						Inner: &typeinfo.BuiltinType{Name: "u8"},
+						Len:   int64(len(e.Value)),
+					}
+				}
 				current = nil
 			case *typeinfo.OptionalType:
 				current = t.Inner

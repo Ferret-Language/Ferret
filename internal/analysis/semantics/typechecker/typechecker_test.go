@@ -1638,11 +1638,35 @@ fn main(mut s: str) -> void {
 	}
 }
 
-func TestTypecheckerInfersStringLiteralAsByteArrayWithoutContext(t *testing.T) {
+func TestTypecheckerInfersStringLiteralAsStrWithoutContext(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> usize {
-    let bytes = "hi"
+    let text = "hi"
+    return len(text)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+
+	mainFn := findTypeFunc(t, result.Entry.AST, "main")
+	letText, ok := mainFn.Body.Stmts[0].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", mainFn.Body.Stmts[0])
+	}
+	if _, ok := result.Entry.Types.Nodes[letText.Value].(*typeinfo.StringType); !ok {
+		t.Fatalf("expected inferred string literal type str, got %#v", result.Entry.Types.Nodes[letText.Value])
+	}
+}
+
+func TestTypecheckerContextualizesStringLiteralAsByteArray(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> usize {
+    let bytes: [2]u8 = "hi"
     return len(bytes)
 }
 `)
@@ -1659,10 +1683,10 @@ fn main() -> usize {
 	}
 	arr, ok := result.Entry.Types.Nodes[letBytes.Value].(*typeinfo.ArrayType)
 	if !ok {
-		t.Fatalf("expected inferred string literal type [N]u8, got %#v", result.Entry.Types.Nodes[letBytes.Value])
+		t.Fatalf("expected contextual string literal type [N]u8, got %#v", result.Entry.Types.Nodes[letBytes.Value])
 	}
 	if arr.Len != 2 || !typeinfo.IsBuiltinNamed(arr.Inner, "u8") {
-		t.Fatalf("expected inferred string literal type [2]u8, got %#v", arr)
+		t.Fatalf("expected contextual string literal type [2]u8, got %#v", arr)
 	}
 }
 
