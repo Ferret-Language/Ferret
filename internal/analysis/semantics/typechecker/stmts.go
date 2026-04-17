@@ -211,7 +211,7 @@ func (c *checker) checkReturn(scope *refineScope, stmt *ast.ReturnStmt) {
 func (c *checker) typeOfAssignmentTargetExpr(scope *refineScope, expr ast.Expr) typeinfo.Type {
 	switch e := expr.(type) {
 	case *ast.Ident:
-		return c.typeOfIdent(scope, e, nil)
+		return c.getTypeOfIdent(scope, e)
 	default:
 		return c.typeOfExpr(scope, expr, nil)
 	}

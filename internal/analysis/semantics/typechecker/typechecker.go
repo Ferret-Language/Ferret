@@ -438,9 +438,9 @@ func (c *checker) typeOfExpr(scope *refineScope, expr ast.Expr, expected typeinf
 		)
 		return typeinfo.InvalidType{}
 	case *ast.Ident:
-		return c.typeOfIdent(scope, e, expected)
+		return c.getTypeOfIdent(scope, e)
 	case *ast.PrefixExpr:
-		return c.typeOfPrefix(scope, e, expected)
+		return c.getTypeOfPrefix(scope, e, expected)
 	case *ast.SpreadExpr:
 		typ := c.typeOfExpr(scope, e.Right, expected)
 		c.info.BindNode(e, typ)
@@ -474,7 +474,7 @@ func (c *checker) typeOfExpr(scope *refineScope, expr ast.Expr, expected typeinf
 	}
 }
 
-func (c *checker) typeOfIdent(scope *refineScope, ident *ast.Ident, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) getTypeOfIdent(scope *refineScope, ident *ast.Ident) typeinfo.Type {
 	if ident == nil {
 		return typeinfo.UnknownType{}
 	}
@@ -543,7 +543,7 @@ func (c *checker) typeOfIdent(scope *refineScope, ident *ast.Ident, expected typ
 	return typeinfo.InvalidType{}
 }
 
-func (c *checker) typeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expected typeinfo.Type) typeinfo.Type {
+func (c *checker) getTypeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expected typeinfo.Type) typeinfo.Type {
 	if expr != nil && expr.Op == "unsafe" {
 		c.unsafeDepth++
 		unsafeType := c.typeOfExpr(scope, expr.Right, expected)
@@ -1795,9 +1795,7 @@ func (c *checker) instantiateCallFuncType(scope *refineScope, call *ast.CallExpr
 		argType := c.typeOfExpr(scope, value, expectedArg)
 		argTypes = append(argTypes, argType)
 		if inferFromArgs && pattern != nil {
-			if pattern != nil {
-				c.inferTypeParamBindings(pattern, argType, bindings)
-			}
+			c.inferTypeParamBindings(pattern, argType, bindings)
 		}
 	}
 	if inferFromArgs && expected != nil {
