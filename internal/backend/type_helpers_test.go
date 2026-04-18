@@ -91,6 +91,14 @@ func TestDescribeRuntimeTypeMarksArbitraryWidthIntegers(t *testing.T) {
 	if desc.Flags&RuntimeTypeFlagSigned != 0 {
 		t.Fatalf("expected u1024 runtime flags to stay unsigned, got %#x", desc.Flags)
 	}
+
+	byteDesc := DescribeRuntimeType(&typeinfo.BuiltinType{Name: "byte"})
+	if byteDesc.ID != RuntimeTypeU8 {
+		t.Fatalf("expected byte runtime type id to map to u8 id, got %d", byteDesc.ID)
+	}
+	if byteDesc.Flags&RuntimeTypeFlagInteger == 0 || byteDesc.Flags&RuntimeTypeFlagSigned != 0 {
+		t.Fatalf("expected byte runtime flags to mark unsigned integer, got %#x", byteDesc.Flags)
+	}
 }
 
 func TestDescribeRuntimeTypeCapturesNamedVariantMetadata(t *testing.T) {

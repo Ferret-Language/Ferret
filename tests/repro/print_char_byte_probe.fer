@@ -1,0 +1,8 @@
+fn main() {
+    let text = "Ferret"
+    let c = text[0]
+    let b = b'B'
+    let n: u8 = 66
+
+    println("char=", c, ", byte=", b, ", u8=", n)
+}

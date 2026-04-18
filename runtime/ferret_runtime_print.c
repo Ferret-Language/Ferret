@@ -98,6 +98,35 @@ static void ferret__write_big_integer(const void *data, const FerretTypeInfo *in
 
 static void ferret__write_typed(const void *data, const FerretTypeInfo *info);
 
+static void ferret__write_utf8_scalar(ferret_char codepoint) {
+    ferret_u8 out[4];
+    ferret_usize written = 0;
+
+    if (codepoint > 0x10FFFFu || (codepoint >= 0xD800u && codepoint <= 0xDFFFu)) {
+        codepoint = 0xFFFDu;
+    }
+    if (codepoint <= 0x7Fu) {
+        out[0] = (ferret_u8)codepoint;
+        written = 1;
+    } else if (codepoint <= 0x7FFu) {
+        out[0] = (ferret_u8)(0xC0u | (codepoint >> 6));
+        out[1] = (ferret_u8)(0x80u | (codepoint & 0x3Fu));
+        written = 2;
+    } else if (codepoint <= 0xFFFFu) {
+        out[0] = (ferret_u8)(0xE0u | (codepoint >> 12));
+        out[1] = (ferret_u8)(0x80u | ((codepoint >> 6) & 0x3Fu));
+        out[2] = (ferret_u8)(0x80u | (codepoint & 0x3Fu));
+        written = 3;
+    } else {
+        out[0] = (ferret_u8)(0xF0u | (codepoint >> 18));
+        out[1] = (ferret_u8)(0x80u | ((codepoint >> 12) & 0x3Fu));
+        out[2] = (ferret_u8)(0x80u | ((codepoint >> 6) & 0x3Fu));
+        out[3] = (ferret_u8)(0x80u | (codepoint & 0x3Fu));
+        written = 4;
+    }
+    fwrite(out, 1u, (size_t)written, stdout);
+}
+
 static ferret_bool ferret__optional_is_none(const void *data, const FerretTypeInfo *inner) {
     ferret_u32 enum_like_none = 0xFFFFFFFFu;
 
@@ -270,6 +299,11 @@ static void ferret__write_typed(const void *data, const FerretTypeInfo *info) {
         fprintf(stdout, "%" PRIdPTR, data != NULL ? (intptr_t)*(const ferret_isize *)data : (intptr_t)0);
         return;
     case FERRET_TYPE_U8:
+        if (type_name != NULL && strcmp(type_name, "byte") == 0) {
+            ferret_u8 value = data != NULL ? *(const ferret_u8 *)data : 0u;
+            fputc((int)value, stdout);
+            return;
+        }
         fprintf(stdout, "%u", data != NULL ? (unsigned)*(const ferret_u8 *)data : 0u);
         return;
     case FERRET_TYPE_U16:
@@ -291,7 +325,7 @@ static void ferret__write_typed(const void *data, const FerretTypeInfo *info) {
         fprintf(stdout, "%.17g", data != NULL ? (double)*(const ferret_f64 *)data : 0.0);
         return;
     case FERRET_TYPE_CHAR:
-        fprintf(stdout, "%u", data != NULL ? (unsigned)*(const ferret_char *)data : 0u);
+        ferret__write_utf8_scalar(data != NULL ? *(const ferret_char *)data : 0u);
         return;
     case FERRET_TYPE_STR: {
         const FerretStr *s = (const FerretStr *)data;

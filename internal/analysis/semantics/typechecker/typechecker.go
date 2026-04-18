@@ -425,7 +425,7 @@ func (c *checker) typeOfExpr(scope *refineScope, expr ast.Expr, expected typeinf
 	case *ast.CharLit:
 		typ := typeinfo.Type(&typeinfo.BuiltinType{Name: "char"})
 		if e.IsByte {
-			typ = &typeinfo.BuiltinType{Name: "u8"}
+			typ = &typeinfo.BuiltinType{Name: "byte"}
 		}
 		c.info.BindNode(e, typ)
 		return typ

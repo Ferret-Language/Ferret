@@ -32,6 +32,9 @@ func TestBuiltinTypeAndStringer(t *testing.T) {
 	if !IsBuiltinType("i32") || IsBuiltinType("Point") {
 		t.Fatalf("IsBuiltinType results unexpected")
 	}
+	if !IsBuiltinType("byte") {
+		t.Fatalf("expected byte to be recognized as builtin type")
+	}
 	if !IsBuiltinType("i128") || !IsBuiltinType("u1024") {
 		t.Fatalf("expected arbitrary-width builtin integers to be recognized")
 	}
@@ -55,6 +58,7 @@ func TestParseIntegerBuiltin(t *testing.T) {
 		{name: "u1024", signed: false, bits: 1024, ok: true},
 		{name: "isize", signed: true, bits: abi.SizeBits(), ok: true},
 		{name: "usize", signed: false, bits: abi.SizeBits(), ok: true},
+		{name: "byte", signed: false, bits: 8, ok: true},
 		{name: "i24", ok: false},
 		{name: "u04", ok: false},
 		{name: "foo", ok: false},

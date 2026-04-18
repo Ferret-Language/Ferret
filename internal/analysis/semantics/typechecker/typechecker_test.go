@@ -1587,8 +1587,12 @@ func TestTypecheckerTypesCharAndByteLiterals(t *testing.T) {
 fn main() -> void {
     let c = 'é'
     let b = b'h'
+    let u: u8 = b
+    let bb: byte = u
     print(c)
     print(b)
+    print(u)
+    print(bb)
 }
 `)
 
@@ -1609,8 +1613,8 @@ fn main() -> void {
 	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[charLet.Value], "char") {
 		t.Fatalf("expected char literal type char, got %#v", result.Entry.Types.Nodes[charLet.Value])
 	}
-	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[byteLet.Value], "u8") {
-		t.Fatalf("expected byte literal type u8, got %#v", result.Entry.Types.Nodes[byteLet.Value])
+	if !typeinfo.IsBuiltinNamed(result.Entry.Types.Nodes[byteLet.Value], "byte") {
+		t.Fatalf("expected byte literal type byte, got %#v", result.Entry.Types.Nodes[byteLet.Value])
 	}
 }
 

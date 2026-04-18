@@ -212,6 +212,8 @@ func ParseIntegerBuiltin(name string) (signed bool, bits int, ok bool) {
 		return true, abi.SizeBits(), true
 	case "usize":
 		return false, abi.SizeBits(), true
+	case "byte":
+		return false, 8, true
 	}
 	if len(name) < 2 {
 		return false, 0, false

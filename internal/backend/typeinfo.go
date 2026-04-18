@@ -116,7 +116,7 @@ func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
 			desc.ID = RuntimeTypeI64
 		case "isize":
 			desc.ID = RuntimeTypeIsize
-		case "u8":
+		case "u8", "byte":
 			desc.ID = RuntimeTypeU8
 		case "u16":
 			desc.ID = RuntimeTypeU16
