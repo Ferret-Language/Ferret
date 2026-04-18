@@ -1406,6 +1406,9 @@ func requiresAggregateAssign(state *moduleState, typ typeinfo.Type) bool {
 	if typ == nil {
 		return false
 	}
+	if isSpecialAggregate(typ) {
+		return true
+	}
 	_, err := llvmBaseType(typ)
 	return err != nil
 }
@@ -1436,7 +1439,8 @@ func lowerGlobalConstant(state *moduleState, name string, g *mir.Global) (string
 	if g == nil || g.Init == nil {
 		return "", true, nil
 	}
-	if isInterfaceAggregate(g.Type) {
+	switch specialAggregateKindOf(g.Type) {
+	case specialAggregateInterface:
 		init, ok := g.Init.(*mir.InterfaceValue)
 		if !ok {
 			return "", false, nil
@@ -1451,8 +1455,7 @@ func lowerGlobalConstant(state *moduleState, name string, g *mir.Global) (string
 			return "", false, err
 		}
 		return line, true, nil
-	}
-	if isUnionAggregate(g.Type) {
+	case specialAggregateUnion:
 		switch g.Init.(type) {
 		case *mir.BoolValue, *mir.NumberValue:
 		default:
@@ -3265,7 +3268,7 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 	case *mir.CastValue:
 		srcCast := backend.UnwrapNamed(v.Left.Type())
 		dstCast := backend.UnwrapNamed(v.Type())
-		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) && !isStringSliceCastPair(srcCast, dstCast) && !isInterfaceAggregate(v.Left.Type()) && !isUnionAggregate(v.Left.Type()) {
+		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) && !isStringSliceCastPair(srcCast, dstCast) && !isSpecialAggregate(v.Left.Type()) {
 			return lowerAggregateAssign(state, agg, v.Left)
 		}
 		if isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type()) && isAggregateType(state, v.Type()) {
@@ -3335,30 +3338,47 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 	return "", fmt.Errorf("unsupported aggregate assignment %T", value)
 }
 
-func isUnionAggregate(typ typeinfo.Type) bool {
-	switch t := typ.(type) {
-	case *typeinfo.NamedType:
-		return backend.IsNamedUnion(t)
-	case *typeinfo.UnionType:
-		return true
-	case *typeinfo.OptionalType:
-		return !backend.OptionalUsesNiche(t.Inner)
-	case *typeinfo.ErrorUnionType:
-		return true
-	default:
-		return false
+type specialAggregateKind uint8
+
+const (
+	specialAggregateNone specialAggregateKind = iota
+	specialAggregateInterface
+	specialAggregateUnion
+)
+
+func specialAggregateKindOf(typ typeinfo.Type) specialAggregateKind {
+	base := backend.UnwrapNamed(typ)
+	if named, ok := base.(*typeinfo.NamedType); ok && named != nil {
+		if backend.IsNamedInterface(named) {
+			return specialAggregateInterface
+		}
+		if backend.IsNamedUnion(named) {
+			return specialAggregateUnion
+		}
 	}
+	switch t := base.(type) {
+	case *typeinfo.InterfaceType:
+		return specialAggregateInterface
+	case *typeinfo.UnionType, *typeinfo.ErrorUnionType:
+		return specialAggregateUnion
+	case *typeinfo.OptionalType:
+		if !backend.OptionalUsesNiche(t.Inner) {
+			return specialAggregateUnion
+		}
+	}
+	return specialAggregateNone
+}
+
+func isSpecialAggregate(typ typeinfo.Type) bool {
+	return specialAggregateKindOf(typ) != specialAggregateNone
+}
+
+func isUnionAggregate(typ typeinfo.Type) bool {
+	return specialAggregateKindOf(typ) == specialAggregateUnion
 }
 
 func isInterfaceAggregate(typ typeinfo.Type) bool {
-	switch t := typ.(type) {
-	case *typeinfo.NamedType:
-		return backend.IsNamedInterface(t)
-	case *typeinfo.InterfaceType:
-		return true
-	default:
-		return false
-	}
+	return specialAggregateKindOf(typ) == specialAggregateInterface
 }
 
 func lowerUnionAssign(state *moduleState, agg *aggregateLocal, value mir.Value) (string, error) {

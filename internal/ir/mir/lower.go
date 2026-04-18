@@ -29,6 +29,7 @@ func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.Modul
 	if cfgMod == nil || hirMod == nil {
 		return nil
 	}
+	structTypes := collectNamedStructTypes(hirMod)
 	out := &Module{
 		Key:        hirMod.Key,
 		ImportPath: hirMod.ImportPath,
@@ -41,9 +42,8 @@ func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.Modul
 		out.Types = append(out.Types, lowerTypeDecl(decl))
 	}
 	for _, global := range hirMod.Globals {
-		out.Globals = append(out.Globals, lowerGlobal(global, bindings, globalConsts, hirMod.ImportPath, lookupMethod))
+		out.Globals = append(out.Globals, lowerGlobal(global, bindings, globalConsts, hirMod.ImportPath, lookupMethod, structTypes))
 	}
-	structTypes := collectNamedStructTypes(hirMod)
 	for _, fn := range cfgMod.Functions {
 		out.Functions = append(out.Functions, lowerFunction(fn, bindings, globalConsts, hirMod.ImportPath, lookupMethod, structTypes))
 	}
@@ -131,11 +131,11 @@ func lowerInterfaceTypeDecl(decl *hir.InterfaceTypeDecl) *InterfaceTypeDecl {
 	return out
 }
 
-func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup) *Global {
+func lowerGlobal(global *hir.Global, bindings *binding.ModuleInfo, globalConsts map[ast.Node]hir.Expr, importPath string, lookupMethod hir.MethodLookup, structTypes map[string]*typeinfo.StructType) *Global {
 	if global == nil {
 		return nil
 	}
-	lowerCtx := &lowerContext{bindings: bindings, globalConsts: globalConsts, importPath: importPath, lookupMethod: lookupMethod}
+	lowerCtx := &lowerContext{bindings: bindings, globalConsts: globalConsts, importPath: importPath, lookupMethod: lookupMethod, structTypes: structTypes}
 	return &Global{
 		Name:     global.Name,
 		Mutable:  global.Mutable,
@@ -585,8 +585,27 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		return &IndexValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Base: base, Index: index}
 	case *hir.CompositeLit:
 		out := &CompositeValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Items: make([]CompositeItem, 0, len(e.Items)), ConstructorPath: append([]string(nil), e.ConstructorPath...)}
+		structType, hasStructType := lowerCtx.structView(e.Type())
+		fieldIndex := 0
 		for _, item := range e.Items {
-			out.Items = append(out.Items, CompositeItem{Name: item.Name, Key: lowerValue(lowerCtx, item.Key), Value: lowerValue(lowerCtx, item.Value)})
+			value := lowerValue(lowerCtx, item.Value)
+			if hasStructType && item.Value != nil && item.Key == nil {
+				expected := typeinfo.Type(nil)
+				if item.Name != "" {
+					if field := structType.Fields[item.Name]; field != nil {
+						expected = field.Type
+					}
+				} else {
+					if fieldIndex < len(structType.OrderedFields) {
+						if field := structType.OrderedFields[fieldIndex]; field != nil {
+							expected = field.Type
+						}
+					}
+					fieldIndex++
+				}
+				value = lowerCoercedValue(lowerCtx, item.Value, expected)
+			}
+			out.Items = append(out.Items, CompositeItem{Name: item.Name, Key: lowerValue(lowerCtx, item.Key), Value: value})
 		}
 		return out
 	default:
@@ -924,16 +943,12 @@ func (c *lowerContext) fieldIndex(typ typeinfo.Type, name string) int {
 }
 
 func (c *lowerContext) structView(typ typeinfo.Type) (*typeinfo.StructType, bool) {
-	structType, ok := lowerStructView(typ)
-	if ok {
-		return structType, true
+	if named, ok := typeinfo.DerefForSelector(typ).(*typeinfo.NamedType); ok && named != nil && c != nil && c.structTypes != nil {
+		if structType, ok := c.structTypes[named.Name]; ok {
+			return structType, true
+		}
 	}
-	named, ok := typeinfo.DerefForSelector(typ).(*typeinfo.NamedType)
-	if !ok || named == nil || c == nil || c.structTypes == nil {
-		return nil, false
-	}
-	structType, ok = c.structTypes[named.Name]
-	return structType, ok
+	return lowerStructView(typ)
 }
 
 func (c *lowerContext) lookupConstExpr(name string, source ast.Expr) (hir.Expr, bool) {

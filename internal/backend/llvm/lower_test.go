@@ -17,6 +17,7 @@ import (
 	"compiler/internal/core/diagnostics"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
+	"compiler/internal/testutils"
 )
 
 func TestLowerInterfaceDispatchToLLVM(t *testing.T) {
@@ -239,6 +240,174 @@ fn main() -> str {
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerModuleEmitsCtorForRuntimeInitializedGlobal(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+let Values: map[str]i32 = map[str]i32{"one" => 1}
+
+fn main() -> i32 {
+    return Values["one"]
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"@main__Values = global ptr zeroinitializer",
+		"define void @main__global_init()",
+		"call i8 @ferret_global_map_set(",
+		"@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }]",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerProgramSupportsRuntimeInitializedGlobalsToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Any interface {}
+
+type Token union {
+    str
+    i32
+}
+
+type Box struct {
+    text: str
+    items: []i32
+    arr: [2]i32
+    pair: (i32, bool)
+    values: map[str]i32
+    payload: Token
+    iface: Any
+    maybe: ?str
+}
+
+let A: i32 = 1
+let B: i32 = A
+let GlobalText: str = "hello"
+let GlobalItems: []i32 = []i32{1, 2}
+let GlobalArr: [2]i32 = [2]i32{3, 4}
+let GlobalPair: (i32, bool) = (5, true)
+let GlobalMaybe: ?str = "maybe"
+let GlobalValues: map[str]i32 = map[str]i32{"one" => 1}
+let GlobalIface: Any = "iface"
+let GlobalToken: Token = "token"
+let GlobalBox: Box = .{
+    .text = "box",
+    .items = []i32{7, 8},
+    .arr = [2]i32{9, 10},
+    .pair = (11, true),
+    .values = map[str]i32{"two" => 2},
+    .payload = "payload",
+    .iface = "field-iface",
+    .maybe = "field-maybe",
+}
+
+fn main() -> i32 {
+    return B
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	text, err := llvmbackend.LowerProgram(testUnits(result), false)
+	if err != nil {
+		t.Fatalf("lower llvm program: %v", err)
+	}
+	for _, want := range []string{
+		"@main__B = global i32 zeroinitializer",
+		"@main__GlobalValues = global ptr zeroinitializer",
+		"@main__GlobalPair = global [8 x i8] zeroinitializer",
+		"@main__GlobalIface = global %local__main__Any zeroinitializer",
+		"@main__GlobalToken = global %local__main__Token zeroinitializer",
+		"@main__GlobalBox = global %local__main__Box zeroinitializer",
+		"define void @main__global_init()",
+		"call i8 @ferret_global_map_set(",
+		"@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }]",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerProgramUsesStableBackingStorageForRuntimeInitializedGlobals(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Any interface {}
+
+type Stringer interface {
+    String(self) -> str
+}
+
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+type Box struct {
+    value: Any
+    items: []i32
+}
+
+let GlobalStringer: Stringer = .Name{ .value = 7 }
+let GlobalBox: Box = .{
+    .value = "hello",
+    .items = []i32{1, 2},
+}
+
+fn main() -> i32 {
+    return 0
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	text, err := llvmbackend.LowerProgram(testUnits(result), false)
+	if err != nil {
+		t.Fatalf("lower llvm program: %v", err)
+	}
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`@__slice_lit_buf[0-9]+_main = private global \[8 x i8\] zeroinitializer, align 4`),
+		regexp.MustCompile(`@__iface_data[0-9]+_main = private global `),
+	} {
+		if !pattern.MatchString(text) {
+			t.Fatalf("expected %q in llvm output:\n%s", pattern.String(), text)
+		}
+	}
+	initMatch := regexp.MustCompile(`(?s)define void @main__global_init\(\) \{\nentry:\n(.*?)\n\}`).FindStringSubmatch(text)
+	if len(initMatch) != 2 {
+		t.Fatalf("expected global init function body in llvm output:\n%s", text)
+	}
+	initBody := initMatch[1]
+	for _, pattern := range []*regexp.Regexp{
+		regexp.MustCompile(`%_slice_lit_buf[0-9]+ = alloca`),
+		regexp.MustCompile(`%_iface_data[0-9]+ = alloca`),
+	} {
+		if pattern.MatchString(initBody) {
+			t.Fatalf("did not expect %q in global init body:\n%s", pattern.String(), initBody)
 		}
 	}
 }
@@ -1033,7 +1202,7 @@ fn main(items: []i32) -> usize {
 `)
 	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
-		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("unexpected diagnostics: %#v", testutils.GetFirstError(result.Diagnostics))
 	}
 	lowerer, err := registry.New(backend.TargetLLVM)
 	if err != nil {
@@ -1044,10 +1213,11 @@ fn main(items: []i32) -> usize {
 		t.Fatalf("lower llvm: %v", err)
 	}
 	text := artifact.Text
-	for _, want := range []string{
+	wants := []string{
 		"declare i64 @ferret_global_slice_len(ptr)",
 		"call i64 @ferret_global_slice_len(ptr %items)",
-	} {
+	}
+	for _, want := range wants {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
 		}

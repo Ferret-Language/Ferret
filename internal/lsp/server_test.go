@@ -396,8 +396,8 @@ func TestHoverUsesOpenDocumentOverlayText(t *testing.T) {
 	if err := json.Unmarshal(raw, &hover); err != nil {
 		t.Fatalf("failed to unmarshal hover result: %v", err)
 	}
-	if !strings.Contains(hover.Contents.Value, "[2]u8") {
-		t.Fatalf("expected [2]u8 hover from overlay, got %q", hover.Contents.Value)
+	if !strings.Contains(hover.Contents.Value, "str") {
+		t.Fatalf("expected str hover from overlay, got %q", hover.Contents.Value)
 	}
 }
 

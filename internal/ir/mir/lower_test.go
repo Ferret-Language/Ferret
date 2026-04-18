@@ -602,6 +602,72 @@ fn main() -> void {
 	t.Fatalf("expected specialized interface coercion for Point<i32>::Draw, got %#v", mainFn.Blocks)
 }
 
+func TestPipelineCoercesStructLiteralInterfaceField(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+type Stringer interface {
+    String(self) -> str
+}
+
+type Name struct {
+    value: i32 = 0
+}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+type Box struct {
+    value: Stringer
+}
+
+let GlobalBox: Box = .{
+    .value = .Name{ .value = 7 },
+}
+
+fn main() -> void {
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatalf("expected MIR module, got %#v", result.Entry)
+	}
+	for _, global := range result.Entry.MIR.Globals {
+		if global == nil || global.Name != "GlobalBox" {
+			continue
+		}
+		comp, ok := global.Init.(*mir.CompositeValue)
+		if !ok || len(comp.Items) != 1 {
+			t.Fatalf("expected composite global init, got %#v", global.Init)
+		}
+		iface, ok := comp.Items[0].Value.(*mir.InterfaceValue)
+		if !ok {
+			t.Fatalf("expected interface-coerced struct field, got %#v", comp.Items[0].Value)
+		}
+		named, ok := iface.ConcreteType.(*typeinfo.NamedType)
+		if !ok || named.Name != "Name" {
+			t.Fatalf("expected Name concrete type, got %#v", iface.ConcreteType)
+		}
+		if len(iface.Methods) != 1 {
+			t.Fatalf("expected one interface method link, got %#v", iface.Methods)
+		}
+		path := iface.Methods[0].Path
+		if len(path) == 0 {
+			t.Fatalf("expected method link path, got %#v", iface.Methods[0])
+		}
+		last := path[len(path)-1]
+		if last != "Name__String" && !strings.HasSuffix(last, "__Name__String") {
+			t.Fatalf("expected Name__String method link, got %#v", iface.Methods[0])
+		}
+		return
+	}
+	t.Fatalf("expected GlobalBox in MIR globals, got %#v", result.Entry.MIR.Globals)
+}
+
 func TestPipelineLowersVariadicSpreadCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.fer"), `
@@ -1131,7 +1197,7 @@ fn main() -> void {
 func TestPipelineLowersInferredStringLiteralAsByteArray(t *testing.T) {
 	root := t.TempDir()
 	mustWriteIR(t, filepath.Join(root, "main.fer"), `
-fn main() -> u8 {
+fn main() -> char {
     let bytes = "hi"
     return bytes[1]
 }
@@ -1164,12 +1230,9 @@ fn main() -> u8 {
 	if bytesLocal == nil {
 		t.Fatalf("expected MIR local bytes, got %#v", mainFn.Locals)
 	}
-	arr, ok := bytesLocal.Type.(*typeinfo.ArrayType)
+	_, ok := bytesLocal.Type.(*typeinfo.StringType)
 	if !ok {
-		t.Fatalf("expected inferred local type [N]u8, got %#v", bytesLocal.Type)
-	}
-	if arr.Len != 2 || !typeinfo.IsBuiltinNamed(arr.Inner, "u8") {
-		t.Fatalf("expected inferred local type [2]u8, got %#v", arr)
+		t.Fatalf("expected inferred local type str, got %#v", bytesLocal.Type)
 	}
 }
 
