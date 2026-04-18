@@ -197,6 +197,9 @@ func ExprString(expr Expr) string {
 			parts = append(parts, text)
 		}
 		head := "(" + strings.Join(parts, ", ") + ") =>"
+		if e.IsMove {
+			head = "move " + head
+		}
 		if e.BodyExpr != nil {
 			return head + " " + ExprString(e.BodyExpr)
 		}

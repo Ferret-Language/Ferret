@@ -139,6 +139,7 @@ type LambdaExpr struct {
 	Params    []Param
 	BodyExpr  Expr
 	BodyBlock *BlockStmt
+	IsMove    bool
 	Location  source.Location
 }
 

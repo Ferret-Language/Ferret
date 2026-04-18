@@ -706,11 +706,15 @@ func (p *Parser) startsNamedParam() bool {
 }
 
 func (p *Parser) hasLambdaArrowAhead() bool {
-	if !p.at(tokens.LPAREN) {
+	return p.hasLambdaArrowAheadFrom(p.pos)
+}
+
+func (p *Parser) hasLambdaArrowAheadFrom(start int) bool {
+	if start < 0 || start >= len(p.toks) || p.toks[start].Kind != tokens.LPAREN {
 		return false
 	}
 	depth := 0
-	for i := p.pos; i < len(p.toks); i++ {
+	for i := start; i < len(p.toks); i++ {
 		switch p.toks[i].Kind {
 		case tokens.LPAREN:
 			depth++

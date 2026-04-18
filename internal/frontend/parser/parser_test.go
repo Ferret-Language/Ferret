@@ -302,6 +302,7 @@ fn main() -> void {
     let log = (msg: str) => {
         println(msg)
     }
+    let moved = move (x: i32) => x
 }
 `
 
@@ -314,8 +315,8 @@ fn main() -> void {
 		t.Fatalf("expected func decl, got %T", mod.Decls[0])
 	}
 	body := fn.Body
-	if body == nil || len(body.Stmts) != 2 {
-		t.Fatalf("expected two statements, got %#v", body)
+	if body == nil || len(body.Stmts) != 3 {
+		t.Fatalf("expected three statements, got %#v", body)
 	}
 	letAdd, ok := body.Stmts[0].(*ast.LetStmt)
 	if !ok {
@@ -341,6 +342,17 @@ fn main() -> void {
 	}
 	if blockLambda.BodyBlock == nil || blockLambda.BodyExpr != nil {
 		t.Fatalf("expected block-bodied lambda, got %#v", blockLambda)
+	}
+	letMoved, ok := body.Stmts[2].(*ast.LetStmt)
+	if !ok {
+		t.Fatalf("expected let stmt, got %T", body.Stmts[2])
+	}
+	moveLambda, ok := letMoved.Value.(*ast.LambdaExpr)
+	if !ok {
+		t.Fatalf("expected lambda expr, got %T", letMoved.Value)
+	}
+	if !moveLambda.IsMove {
+		t.Fatalf("expected move lambda, got %#v", moveLambda)
 	}
 }
 

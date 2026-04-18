@@ -1198,7 +1198,7 @@ func (c *checker) typeOfLambda(scope *refineScope, expr *ast.LambdaExpr, expecte
 	}
 
 	lambdaScope := newRefineScope(scope)
-	c.pushLambdaScope()
+	c.pushLambdaScope(expr.IsMove)
 	defer c.popLambdaScope()
 	params := make([]typeinfo.ParamSpec, 0, len(expr.Params))
 	for i, param := range expr.Params {

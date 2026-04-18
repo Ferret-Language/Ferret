@@ -1,6 +1,7 @@
 package typechecker_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,7 +47,7 @@ fn Origin() -> vec2::Vec2 {
 }
 `)
 
-	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -73,7 +74,7 @@ fn bad() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected invalid return diagnostic")
 	}
@@ -101,7 +102,7 @@ fn main() -> i32 {
 }
 `)
 
-	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
 		t.Fatal("expected type mismatch diagnostic")
 	}
@@ -128,7 +129,7 @@ fn main() -> i64 {
 }
 `)
 
-	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
 	}
@@ -521,7 +522,7 @@ fn main() -> void {
 	}
 }
 
-func TestTypecheckerRejectsCapturingLambda(t *testing.T) {
+func TestTypecheckerAllowsReadonlyCaptureLambda(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
@@ -531,18 +532,58 @@ fn main() -> void {
 `)
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsReadonlyCaptureMutation(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let mut x = 1
+    let apply = () => {
+        x = 2
+    }
+    apply()
+}
+`)
+
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected capturing lambda diagnostic")
+		t.Fatal("expected readonly capture mutation diagnostic")
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if strings.Contains(diag.Message, "capturing lambdas are not supported yet") {
+		if diag.Code == diagnostics.ErrConstantReassignment && strings.Contains(diag.Message, "cannot assign to immutable symbol") {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected capturing lambda diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected readonly capture mutation diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsMoveCaptureMutation(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let mut x = 1
+    let apply = move () => {
+        x = 2
+    }
+    apply()
+}
+`)
+
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		msgs := make([]string, 0, len(result.Diagnostics.Diagnostics()))
+		for _, diag := range result.Diagnostics.Diagnostics() {
+			msgs = append(msgs, fmt.Sprintf("%s: %s", diag.Code, diag.Message))
+		}
+		t.Fatalf("unexpected diagnostics: %v", msgs)
 	}
 }
 

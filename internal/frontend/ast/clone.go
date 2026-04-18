@@ -394,7 +394,7 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 			}
 			return out
 		case *LambdaExpr:
-			out := &LambdaExpr{BodyExpr: cloneExpr(e.BodyExpr), BodyBlock: cloneBlock(e.BodyBlock), Location: e.Location}
+			out := &LambdaExpr{BodyExpr: cloneExpr(e.BodyExpr), BodyBlock: cloneBlock(e.BodyBlock), IsMove: e.IsMove, Location: e.Location}
 			mapping[e] = out
 			if len(e.Params) > 0 {
 				out.Params = make([]Param, 0, len(e.Params))

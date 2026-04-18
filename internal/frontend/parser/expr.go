@@ -110,9 +110,18 @@ func (p *Parser) parsePrefix() ast.Expr {
 		return &ast.NoneLit{Location: p.locFrom(start)}
 	case tokens.LPAREN:
 		if p.hasLambdaArrowAhead() {
-			return p.parseLambdaExpr()
+			return p.parseLambdaExpr(false)
 		}
 		return p.parseParenExpr()
+	case tokens.MOVE:
+		if p.pos+1 < len(p.toks) && p.toks[p.pos+1].Kind == tokens.LPAREN && p.hasLambdaArrowAheadFrom(p.pos+1) {
+			p.advance()
+			return p.parseLambdaExpr(true)
+		}
+		loc := p.locFrom(start)
+		p.errorAt(loc, "`move` is only valid before lambda expressions")
+		p.advance()
+		return &ast.BadExpr{Location: loc}
 	case tokens.LBRACE:
 		return p.parseBraceCompositeLit()
 	case tokens.DOT:
@@ -202,7 +211,7 @@ func (p *Parser) parseParenExpr() ast.Expr {
 	return &ast.CompositeLit{Items: items, Tuple: true, Location: p.locFrom(start)}
 }
 
-func (p *Parser) parseLambdaExpr() ast.Expr {
+func (p *Parser) parseLambdaExpr(isMove bool) ast.Expr {
 	start := p.expect(tokens.LPAREN, "expected '('").Start
 	params := make([]ast.Param, 0)
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
@@ -229,10 +238,10 @@ func (p *Parser) parseLambdaExpr() ast.Expr {
 	p.expect(tokens.FATARROW, "expected '=>' after lambda parameters")
 	if p.at(tokens.LBRACE) {
 		body := p.parseBlock()
-		return &ast.LambdaExpr{Params: params, BodyBlock: body, Location: p.locFrom(start)}
+		return &ast.LambdaExpr{Params: params, BodyBlock: body, IsMove: isMove, Location: p.locFrom(start)}
 	}
 	bodyExpr := p.parseExprUntil(precLowest)
-	return &ast.LambdaExpr{Params: params, BodyExpr: bodyExpr, Location: p.locFrom(start)}
+	return &ast.LambdaExpr{Params: params, BodyExpr: bodyExpr, IsMove: isMove, Location: p.locFrom(start)}
 }
 
 func (p *Parser) parseCompositeLit() ast.Expr {

@@ -227,7 +227,7 @@ func debugExpr(expr Expr) any {
 		for _, param := range e.Params {
 			params = append(params, debugParam(param))
 		}
-		return map[string]any{"kind": "LambdaExpr", "params": params, "body_expr": debugExpr(e.BodyExpr), "body_block": debugStmt(e.BodyBlock), "loc": debugLoc(e.Location)}
+		return map[string]any{"kind": "LambdaExpr", "move": e.IsMove, "params": params, "body_expr": debugExpr(e.BodyExpr), "body_block": debugStmt(e.BodyBlock), "loc": debugLoc(e.Location)}
 	case *SelectorExpr:
 		return map[string]any{"kind": "SelectorExpr", "left": debugExpr(e.Left), "name": debugExpr(e.Name), "loc": debugLoc(e.Location)}
 	case *CastExpr:

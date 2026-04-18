@@ -95,6 +95,7 @@ const (
 	AS        Kind = "AS"
 	IS        Kind = "IS"
 	MUT       Kind = "MUT"
+	MOVE      Kind = "MOVE"
 	COMPTIME  Kind = "COMPTIME"
 	LOCK      Kind = "LOCK"
 	DEFER     Kind = "DEFER"
@@ -128,6 +129,7 @@ var keywords = map[string]Kind{
 	"as":        AS,
 	"is":        IS,
 	"mut":       MUT,
+	"move":      MOVE,
 	"comptime":  COMPTIME,
 	"lock":      LOCK,
 	"defer":     DEFER,
@@ -161,6 +163,7 @@ var keywordDocs = map[Kind]string{
 	AS:        "Cast an expression to a target type.",
 	IS:        "Check whether a value conforms to a target type.",
 	MUT:       "Mark a binding or reference as mutable.",
+	MOVE:      "Capture lambda environment by move.",
 	COMPTIME:  "Force compile-time evaluation.",
 	LOCK:      "Acquire a lock guard for the block scope.",
 	DEFER:     "Run a statement when the current scope exits.",

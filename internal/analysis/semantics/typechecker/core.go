@@ -5,7 +5,6 @@ import (
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
-	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
 	"compiler/internal/frontend/ast"
 )
@@ -23,7 +22,8 @@ type refineScope struct {
 
 type lambdaScope struct {
 	owned    map[symbols.SymbolID]struct{}
-	reported map[symbols.SymbolID]struct{}
+	captures map[symbols.SymbolID]*symbols.Symbol
+	move     bool
 }
 
 func newRefineScope(parent *refineScope) *refineScope {
@@ -139,6 +139,12 @@ func (c *checker) symbolMutable(sym *symbols.Symbol) bool {
 	if sym == nil {
 		return false
 	}
+	scope := c.currentLambdaScope()
+	if scope != nil && !scope.move {
+		if _, captured := scope.captures[sym.ID]; captured {
+			return false
+		}
+	}
 	if sym.Kind == symbols.SymbolConst {
 		return false
 	}
@@ -177,13 +183,14 @@ func (c *checker) declSymbol(node ast.Node) *symbols.Symbol {
 	return res.Symbol
 }
 
-func (c *checker) pushLambdaScope() *lambdaScope {
+func (c *checker) pushLambdaScope(move bool) *lambdaScope {
 	if c == nil {
 		return nil
 	}
 	scope := &lambdaScope{
 		owned:    make(map[symbols.SymbolID]struct{}),
-		reported: make(map[symbols.SymbolID]struct{}),
+		captures: make(map[symbols.SymbolID]*symbols.Symbol),
+		move:     move,
 	}
 	c.lambdaScopes = append(c.lambdaScopes, scope)
 	return scope
@@ -222,16 +229,7 @@ func (c *checker) reportLambdaCapture(ident *ast.Ident, sym *symbols.Symbol) {
 	if _, ok := scope.owned[sym.ID]; ok {
 		return
 	}
-	if _, ok := scope.reported[sym.ID]; ok {
-		return
-	}
-	scope.reported[sym.ID] = struct{}{}
-	loc := ident.Location
-	c.ctx.Diagnostics.Add(
-		diagnostics.NewError("capturing lambdas are not supported yet").
-			WithCode(diagnostics.ErrInvalidOperation).
-			WithPrimaryLabel(&loc, "this lambda captures an outer local value"),
-	)
+	scope.captures[sym.ID] = sym
 }
 
 func (c *checker) isLambdaCaptureCandidate(sym *symbols.Symbol) bool {
