@@ -587,6 +587,62 @@ fn main() -> void {
 	}
 }
 
+func TestTypecheckerRejectsPassingCapturedLambdaAsFunctionValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    return f(x)
+}
+
+fn main() -> i32 {
+    let k = 10
+    let addk = (y: i32) => k + y
+    return apply(addk, 2)
+}
+`)
+
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected captured-lambda function-value diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "captured lambda cannot be used as a function value yet") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected captured-lambda function-value diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsReturningCapturedLambdaAsFunctionValue(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn makeAdder() -> fn(i32) -> i32 {
+    let k = 10
+    let addk = (y: i32) => k + y
+    return addk
+}
+`)
+
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected captured-lambda return diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrInvalidOperation && strings.Contains(diag.Message, "captured lambda cannot be used as a function value yet") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected captured-lambda return diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerHandlesStaticMethodCallWithGenericOwnerTypeArgs(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

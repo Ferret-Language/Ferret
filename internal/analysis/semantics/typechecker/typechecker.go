@@ -490,6 +490,18 @@ func (c *checker) getTypeOfIdent(scope *refineScope, ident *ast.Ident) typeinfo.
 	}
 	if res.Kind == binding.ResolutionSymbol && res.Symbol != nil {
 		c.reportLambdaCapture(ident, res.Symbol)
+		if c.allowCapturedLambdaValue == 0 {
+			if lambda, captures, ok := c.capturedLambdaForSymbol(res.Symbol); ok && lambda != nil && len(captures) > 0 {
+				loc := ident.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError("captured lambda cannot be used as a function value yet").
+						WithCode(diagnostics.ErrInvalidOperation).
+						WithPrimaryLabel(&loc, "this lambda requires hidden captured arguments and is only supported in direct calls").
+						WithNote("call this lambda directly where it is referenced"),
+				)
+				return typeinfo.InvalidType{}
+			}
+		}
 		if scope != nil && len(ident.Path) == 1 {
 			if typ, ok := c.lookupRefinedType(scope, ident); ok && typ != nil {
 				c.info.BindNode(ident, typ)
@@ -925,6 +937,28 @@ func (c *checker) typeOfRange(scope *refineScope, expr *ast.RangeExpr) typeinfo.
 	return typ
 }
 
+func (c *checker) capturedLambdaForSymbol(sym *symbols.Symbol) (*ast.LambdaExpr, []*symbols.Symbol, bool) {
+	if c == nil || c.info == nil || sym == nil {
+		return nil, nil, false
+	}
+	var lambda *ast.LambdaExpr
+	switch node := sym.Node.(type) {
+	case *ast.LetDecl:
+		lambda, _ = node.Value.(*ast.LambdaExpr)
+	case *ast.ConstDecl:
+		lambda, _ = node.Value.(*ast.LambdaExpr)
+	case *ast.LetStmt:
+		lambda, _ = node.Value.(*ast.LambdaExpr)
+	case *ast.ConstStmt:
+		lambda, _ = node.Value.(*ast.LambdaExpr)
+	}
+	if lambda == nil {
+		return nil, nil, false
+	}
+	captures, ok := c.info.LookupLambdaCaptures(lambda)
+	return lambda, captures, ok
+}
+
 func (c *checker) checkRangePatternAgainstMatchValue(scope *refineScope, valueType typeinfo.Type, pattern *ast.RangeExpr) {
 	if pattern == nil {
 		return
@@ -1135,7 +1169,9 @@ func (c *checker) typeOfCall(scope *refineScope, expr *ast.CallExpr, expected ty
 		}
 	}
 
+	c.allowCapturedLambdaValue++
 	calleeType := c.typeOfExpr(scope, expr.Callee, nil)
+	c.allowCapturedLambdaValue--
 	if typeinfo.IsInvalid(calleeType) || typeinfo.IsUnknown(calleeType) {
 		return typeinfo.InvalidType{}
 	}
