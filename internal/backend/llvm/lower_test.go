@@ -2390,6 +2390,36 @@ fn main() -> i32 {
 	}
 }
 
+func TestLowerCapturedLambdaCallToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let x = 5
+    let addx = (y: i32) => x + y
+    return addx(2)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "define i32 @main____lambda") {
+		t.Fatalf("expected synthetic lambda function in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "call i32 @main____lambda1(i32 5, i32 2)") {
+		t.Fatalf("expected captured value passed into lambda call in llvm output:\n%s", text)
+	}
+}
+
 func TestLowerFunctionValueParameterCallToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

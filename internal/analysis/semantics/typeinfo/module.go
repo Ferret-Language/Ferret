@@ -24,6 +24,7 @@ type ModuleInfo struct {
 	Nodes               map[ast.Node]Type
 	Symbols             map[symbols.SymbolID]Type
 	SymbolIndex         map[symbols.SymbolID]*symbols.Symbol
+	LambdaCaptures      map[*ast.LambdaExpr][]*symbols.Symbol
 	Bools               map[ast.Node]bool
 	ConstValues         map[ast.Node]ConstValue
 	MethodReceivers     map[ast.Node]Type
@@ -36,6 +37,7 @@ func NewModuleInfo() *ModuleInfo {
 		Nodes:               make(map[ast.Node]Type),
 		Symbols:             make(map[symbols.SymbolID]Type),
 		SymbolIndex:         make(map[symbols.SymbolID]*symbols.Symbol),
+		LambdaCaptures:      make(map[*ast.LambdaExpr][]*symbols.Symbol),
 		Bools:               make(map[ast.Node]bool),
 		ConstValues:         make(map[ast.Node]ConstValue),
 		MethodReceivers:     make(map[ast.Node]Type),
@@ -117,6 +119,36 @@ func (m *ModuleInfo) LookupCallArgs(call *ast.CallExpr) ([]ast.Expr, bool) {
 	}
 	args, ok := m.CallArgs[call]
 	return args, ok
+}
+
+func (m *ModuleInfo) BindLambdaCaptures(expr *ast.LambdaExpr, captures []*symbols.Symbol) {
+	if m == nil || expr == nil {
+		return
+	}
+	if len(captures) == 0 {
+		delete(m.LambdaCaptures, expr)
+		return
+	}
+	out := make([]*symbols.Symbol, 0, len(captures))
+	for _, sym := range captures {
+		if sym == nil {
+			continue
+		}
+		out = append(out, sym)
+	}
+	if len(out) == 0 {
+		delete(m.LambdaCaptures, expr)
+		return
+	}
+	m.LambdaCaptures[expr] = out
+}
+
+func (m *ModuleInfo) LookupLambdaCaptures(expr *ast.LambdaExpr) ([]*symbols.Symbol, bool) {
+	if m == nil || expr == nil {
+		return nil, false
+	}
+	captures, ok := m.LambdaCaptures[expr]
+	return captures, ok
 }
 
 func (m *ModuleInfo) BindGenericRequirements(sym *symbols.Symbol, requirements []*GenericRequirement) {

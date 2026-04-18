@@ -3,6 +3,7 @@ package typechecker
 import (
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 
 	"compiler/internal/analysis/semantics/binding"
@@ -1283,6 +1284,22 @@ func (c *checker) typeOfLambda(scope *refineScope, expr *ast.LambdaExpr, expecte
 	}
 
 	fnType := &typeinfo.FuncType{Params: params, Result: resultType}
+	if lambdaCaptureScope := c.currentLambdaScope(); lambdaCaptureScope != nil {
+		orderedCaptures := make([]*symbols.Symbol, 0, len(lambdaCaptureScope.captures))
+		for _, sym := range lambdaCaptureScope.captures {
+			if sym == nil {
+				continue
+			}
+			orderedCaptures = append(orderedCaptures, sym)
+		}
+		sort.Slice(orderedCaptures, func(i, j int) bool {
+			if orderedCaptures[i].ID == orderedCaptures[j].ID {
+				return orderedCaptures[i].Name < orderedCaptures[j].Name
+			}
+			return orderedCaptures[i].ID < orderedCaptures[j].ID
+		})
+		c.info.BindLambdaCaptures(expr, orderedCaptures)
+	}
 	c.info.BindNode(expr, fnType)
 	return fnType
 }

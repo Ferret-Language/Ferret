@@ -184,6 +184,59 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineGeneratesCapturedLambdaCallInHIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteHIR(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let x = 5
+    let addx = (y: i32) => x + y
+    return addx(2)
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.HIR == nil {
+		t.Fatal("expected HIR module")
+	}
+	var lambdaFn *hir.Func
+	var mainFn *hir.Func
+	for _, fn := range result.Entry.HIR.Functions {
+		if fn == nil {
+			continue
+		}
+		if fn.Name == "main" {
+			mainFn = fn
+			continue
+		}
+		if strings.HasPrefix(fn.Name, "__lambda") {
+			lambdaFn = fn
+		}
+	}
+	if lambdaFn == nil {
+		t.Fatalf("expected synthetic lambda function, got %#v", result.Entry.HIR.Functions)
+	}
+	if len(lambdaFn.Params) != 2 {
+		t.Fatalf("expected capture + explicit lambda params, got %#v", lambdaFn.Params)
+	}
+	if mainFn == nil {
+		t.Fatal("expected main function")
+	}
+	ret, ok := mainFn.Body.Stmts[len(mainFn.Body.Stmts)-1].(*hir.ReturnStmt)
+	if !ok {
+		t.Fatalf("expected return stmt, got %T", mainFn.Body.Stmts[len(mainFn.Body.Stmts)-1])
+	}
+	call, ok := ret.Value.(*hir.CallExpr)
+	if !ok {
+		t.Fatalf("expected call expr, got %T", ret.Value)
+	}
+	if len(call.Args) != 2 {
+		t.Fatalf("expected hidden capture + explicit argument in call, got %#v", call.Args)
+	}
+}
+
 func TestPipelineFoldsEarlyConstInitializersInHIR(t *testing.T) {
 	root := t.TempDir()
 	mustWriteHIR(t, filepath.Join(root, "main.fer"), `

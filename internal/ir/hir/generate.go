@@ -450,7 +450,31 @@ func (g *generator) generateLambdaFunc(expr *ast.LambdaExpr, fnType *typeinfo.Fu
 		Location:   expr.Location,
 	}
 	g.lambdaNames[expr] = fn.Name
-	fn.Params = make([]*Param, 0, len(expr.Params))
+	captures := g.lambdaCaptureSymbols(expr)
+	fn.Params = make([]*Param, 0, len(captures)+len(expr.Params))
+	for _, captured := range captures {
+		captureType := typeinfo.Type(typeinfo.UnknownType{})
+		if g.types != nil && captured != nil {
+			if typ := g.types.Symbols[captured.ID]; typ != nil {
+				captureType = typ
+			}
+		}
+		name := ""
+		localID := -1
+		if captured != nil {
+			name = g.mangleLocal(captured)
+			if id, ok := g.ensureLocalID(captured); ok {
+				localID = id
+			}
+		}
+		fn.Params = append(fn.Params, &Param{
+			Name:      name,
+			LocalID:   localID,
+			Type:      captureType,
+			IsMutable: expr.IsMove && captured != nil && g.symbolMutableForLambdaCapture(captured),
+			Location:  expr.Location,
+		})
+	}
 	for i, param := range expr.Params {
 		paramType := typeinfo.Type(typeinfo.UnknownType{})
 		if i < len(fnType.Params) && fnType.Params[i].Type != nil {
@@ -468,44 +492,109 @@ func (g *generator) generateLambdaFunc(expr *ast.LambdaExpr, fnType *typeinfo.Fu
 	return fn
 }
 
-func (g *generator) functionAliasName(sym *symbols.Symbol) (string, bool) {
+func (g *generator) functionAlias(sym *symbols.Symbol) (string, *ast.LambdaExpr, bool) {
 	if g == nil || sym == nil {
-		return "", false
+		return "", nil, false
 	}
 	switch node := sym.Node.(type) {
 	case *ast.LetStmt:
 		if node == nil || node.IsMut {
-			return "", false
+			return "", nil, false
 		}
 		lambda, ok := node.Value.(*ast.LambdaExpr)
 		if !ok || lambda == nil {
-			return "", false
+			return "", nil, false
 		}
-		return g.lambdaName(lambda)
+		name, ok := g.lambdaName(lambda)
+		return name, lambda, ok
 	case *ast.ConstStmt:
 		lambda, ok := node.Value.(*ast.LambdaExpr)
 		if !ok || lambda == nil {
-			return "", false
+			return "", nil, false
 		}
-		return g.lambdaName(lambda)
+		name, ok := g.lambdaName(lambda)
+		return name, lambda, ok
 	case *ast.LetDecl:
 		if node == nil || node.IsMut {
-			return "", false
+			return "", nil, false
 		}
 		lambda, ok := node.Value.(*ast.LambdaExpr)
 		if !ok || lambda == nil {
-			return "", false
+			return "", nil, false
 		}
-		return g.lambdaName(lambda)
+		name, ok := g.lambdaName(lambda)
+		return name, lambda, ok
 	case *ast.ConstDecl:
 		lambda, ok := node.Value.(*ast.LambdaExpr)
 		if !ok || lambda == nil {
-			return "", false
+			return "", nil, false
 		}
-		return g.lambdaName(lambda)
+		name, ok := g.lambdaName(lambda)
+		return name, lambda, ok
 	default:
-		return "", false
+		return "", nil, false
 	}
+}
+
+func (g *generator) symbolMutableForLambdaCapture(sym *symbols.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	if sym.Kind == symbols.SymbolConst {
+		return false
+	}
+	switch node := sym.Node.(type) {
+	case *ast.LetDecl:
+		return node != nil && node.IsMut
+	case *ast.LetStmt:
+		return node != nil && node.IsMut
+	case *ast.ConstDecl, *ast.ConstStmt:
+		return false
+	default:
+		return sym.Flags.Mutable()
+	}
+}
+
+func (g *generator) lambdaCaptureSymbols(expr *ast.LambdaExpr) []*symbols.Symbol {
+	if g == nil || g.types == nil || expr == nil {
+		return nil
+	}
+	captures, ok := g.types.LookupLambdaCaptures(expr)
+	if !ok || len(captures) == 0 {
+		return nil
+	}
+	return captures
+}
+
+func (g *generator) capturedArgsForLambda(expr *ast.LambdaExpr) []Expr {
+	captures := g.lambdaCaptureSymbols(expr)
+	if len(captures) == 0 {
+		return nil
+	}
+	args := make([]Expr, 0, len(captures))
+	for _, sym := range captures {
+		if sym == nil {
+			continue
+		}
+		path := []string{sym.Name}
+		localID := -1
+		if g.inFunction && g.isFunctionLocal(sym) {
+			path[0] = g.mangleLocal(sym)
+			if id, ok := g.ensureLocalID(sym); ok {
+				localID = id
+			}
+		}
+		typ := typeinfo.Type(typeinfo.UnknownType{})
+		if g.types != nil {
+			if symType := g.types.Symbols[sym.ID]; symType != nil {
+				typ = symType
+			}
+		}
+		arg := &Ident{Path: path, LocalID: localID}
+		arg.ExprType, arg.Location, arg.Source = typ, sym.Location, nil
+		args = append(args, arg)
+	}
+	return args
 }
 
 func (g *generator) generateLambdaBody(expr *ast.LambdaExpr, result typeinfo.Type) *BlockStmt {
@@ -850,7 +939,7 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		return out
 	case *ast.Ident:
 		if sym, ok := g.localSymbol(e); ok {
-			if alias, ok := g.functionAliasName(sym); ok {
+			if alias, _, ok := g.functionAlias(sym); ok {
 				out := &Ident{Path: []string{alias}, LocalID: -1}
 				out.ExprType, out.Location, out.Source = typ, e.Location, nil
 				return out
@@ -927,11 +1016,20 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 			args = expanded
 		}
 		calleeType, _ := exprType(g.types, e.Callee).(*typeinfo.FuncType)
-		out := &CallExpr{Callee: g.generateExpr(e.Callee), Args: make([]Expr, 0, len(args))}
+		captureArgs := make([]Expr, 0)
+		if ident, ok := e.Callee.(*ast.Ident); ok && ident != nil {
+			if sym, ok := g.localSymbol(ident); ok && sym != nil {
+				if _, lambdaExpr, ok := g.functionAlias(sym); ok && lambdaExpr != nil {
+					captureArgs = g.capturedArgsForLambda(lambdaExpr)
+				}
+			}
+		}
+		out := &CallExpr{Callee: g.generateExpr(e.Callee), Args: make([]Expr, 0, len(captureArgs)+len(args))}
 		if recv, ok := g.types.LookupMethodReceiver(e); ok {
 			out.MethodReceiver = recv
 		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
+		out.Args = append(out.Args, captureArgs...)
 		for i, arg := range args {
 			target := typeinfo.Type(nil)
 			if calleeType != nil && len(calleeType.Params) != 0 {

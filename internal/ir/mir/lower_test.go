@@ -1700,6 +1700,45 @@ fn main() -> i32 {
 	}
 }
 
+func TestPipelineLowersCapturedLambdaCallToMIR(t *testing.T) {
+	root := t.TempDir()
+	mustWriteIR(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let x = 5
+    let addx = (y: i32) => x + y
+    return addx(2)
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.MIR == nil {
+		t.Fatal("expected MIR module")
+	}
+	var lambdaFn *mir.Function
+	for _, fn := range result.Entry.MIR.Functions {
+		if fn == nil {
+			continue
+		}
+		if strings.HasPrefix(fn.Name, "__lambda") {
+			lambdaFn = fn
+			break
+		}
+	}
+	if lambdaFn == nil {
+		t.Fatalf("expected synthetic lambda MIR function, got %#v", result.Entry.MIR.Functions)
+	}
+	text := mir.FormatModule(result.Entry.MIR)
+	if !strings.Contains(text, "= "+lambdaFn.Name+"(") {
+		t.Fatalf("expected call to synthetic captured lambda in MIR dump, got:\n%s", text)
+	}
+	if !strings.Contains(text, "= "+lambdaFn.Name+"(5, 2") {
+		t.Fatalf("expected captured arg to be threaded into lambda call, got:\n%s", text)
+	}
+}
+
 func hasCallNamed(call *mir.CallValue, name string) bool {
 	if call == nil {
 		return false
