@@ -3583,6 +3583,9 @@ func (s *Server) writeResponse(id json.RawMessage, result any) {
 	if len(id) == 0 {
 		return
 	}
+	if result == nil {
+		result = json.RawMessage("null")
+	}
 	resp := rpcResponse{
 		JSONRPC: "2.0",
 		ID:      decodeID(id),

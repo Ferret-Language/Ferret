@@ -638,6 +638,51 @@ func TestDefinitionCrossModuleFunction(t *testing.T) {
 	}
 }
 
+func TestDefinitionMissReturnsExplicitNullResult(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "fn main() {\n    let value = 1\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "    let value = 1")
+	if !ok {
+		t.Fatal("failed to find definition-miss position")
+	}
+	char += len("    let value = ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/definition",
+		Params: mustRawJSON(t, definitionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	bodies := decodeFramedBodies(t, out.String())
+	if len(bodies) != 1 {
+		t.Fatalf("expected one response body, got %d", len(bodies))
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(bodies[0], &payload); err != nil {
+		t.Fatalf("failed to decode response payload: %v", err)
+	}
+	raw, ok := payload["result"]
+	if !ok {
+		t.Fatalf("expected explicit result field in response payload: %s", string(bodies[0]))
+	}
+	if strings.TrimSpace(string(raw)) != "null" {
+		t.Fatalf("expected explicit null result, got %s", string(raw))
+	}
+}
+
 func TestHoverWorksInsideStdlibFile(t *testing.T) {
 
 	dir, err := filepath.Abs(filepath.Join("..", ".."))
