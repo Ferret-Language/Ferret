@@ -29,6 +29,7 @@ type generator struct {
 	localIDs      map[symbols.SymbolID]int
 	usedNames     map[string]struct{}
 	synthFuncs    []*Func
+	synthClosures []*Closure
 }
 
 func Generate(key, importPath, filePath string, astMod *ast.Module, types *typeinfo.ModuleInfo, bindings *binding.ModuleInfo, lookupMethod MethodLookup) *Module {
@@ -52,6 +53,7 @@ func Generate(key, importPath, filePath string, astMod *ast.Module, types *typei
 		Source:     astMod,
 		Types:      make([]*TypeDecl, 0),
 		Globals:    make([]*Global, 0),
+		Closures:   make([]*Closure, 0),
 		Functions:  make([]*Func, 0),
 	}
 	for _, decl := range astMod.Decls {
@@ -66,6 +68,7 @@ func Generate(key, importPath, filePath string, astMod *ast.Module, types *typei
 			out.Functions = append(out.Functions, g.generateFunc(d))
 		}
 	}
+	out.Closures = append(out.Closures, g.synthClosures...)
 	out.Functions = append(out.Functions, g.synthFuncs...)
 	return out
 }
@@ -451,6 +454,38 @@ func (g *generator) generateLambdaFunc(expr *ast.LambdaExpr, fnType *typeinfo.Fu
 	}
 	g.lambdaNames[expr] = fn.Name
 	captures := g.lambdaCaptureSymbols(expr)
+	if len(captures) > 0 {
+		closure := &Closure{
+			Name:       fn.Name + "__closure",
+			FuncName:   fn.Name,
+			Captures:   make([]*Param, 0, len(captures)),
+			Location:   expr.Location,
+			LambdaExpr: expr,
+		}
+		for _, captured := range captures {
+			if captured == nil {
+				continue
+			}
+			captureType := typeinfo.Type(typeinfo.UnknownType{})
+			if g.types != nil {
+				if typ := g.types.Symbols[captured.ID]; typ != nil {
+					captureType = typ
+				}
+			}
+			localID := -1
+			if id, ok := g.ensureLocalID(captured); ok {
+				localID = id
+			}
+			closure.Captures = append(closure.Captures, &Param{
+				Name:      g.mangleLocal(captured),
+				LocalID:   localID,
+				Type:      captureType,
+				IsMutable: expr.IsMove && g.symbolMutableForLambdaCapture(captured),
+				Location:  captured.Location,
+			})
+		}
+		g.synthClosures = append(g.synthClosures, closure)
+	}
 	fn.Params = make([]*Param, 0, len(captures)+len(expr.Params))
 	for _, captured := range captures {
 		captureType := typeinfo.Type(typeinfo.UnknownType{})

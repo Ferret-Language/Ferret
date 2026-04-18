@@ -235,6 +235,16 @@ fn main() -> i32 {
 	if len(call.Args) != 2 {
 		t.Fatalf("expected hidden capture + explicit argument in call, got %#v", call.Args)
 	}
+	if len(result.Entry.HIR.Closures) != 1 {
+		t.Fatalf("expected one closure env descriptor, got %#v", result.Entry.HIR.Closures)
+	}
+	closure := result.Entry.HIR.Closures[0]
+	if closure == nil || closure.FuncName != lambdaFn.Name {
+		t.Fatalf("expected closure metadata for %q, got %#v", lambdaFn.Name, closure)
+	}
+	if len(closure.Captures) != 1 || closure.Captures[0] == nil || closure.Captures[0].Name != "x" {
+		t.Fatalf("expected single capture x in closure metadata, got %#v", closure)
+	}
 }
 
 func TestPipelineFoldsEarlyConstInitializersInHIR(t *testing.T) {

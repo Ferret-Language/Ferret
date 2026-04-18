@@ -13,7 +13,16 @@ type Module struct {
 	Source     *ast.Module
 	Types      []*TypeDecl
 	Globals    []*Global
+	Closures   []*Closure
 	Functions  []*Func
+}
+
+type Closure struct {
+	Name       string
+	FuncName   string
+	Captures   []*Param
+	Location   source.Location
+	LambdaExpr *ast.LambdaExpr
 }
 
 type TypeDecl struct {
