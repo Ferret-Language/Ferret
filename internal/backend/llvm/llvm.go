@@ -41,6 +41,7 @@ type moduleState struct {
 	interfaceVTables  map[becommon.InterfaceVTableKey]string
 	interfaceWrappers map[becommon.InterfaceWrapperKey]struct{}
 	runtimeTypes      map[string]string
+	functionClosures  map[string]string
 	tempValues        map[int]mir.Value
 	debug             *debugState // nil if debug info is disabled
 	fnScopeID         int         // DISubprogram metadata ID for the current function
@@ -1018,6 +1019,7 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 			interfaceVTables:  shared.VTables,
 			interfaceWrappers: shared.Wrappers,
 			runtimeTypes:      shared.RuntimeTypes,
+			functionClosures:  make(map[string]string),
 			tempValues:        make(map[int]mir.Value),
 		}
 	}
@@ -1039,6 +1041,7 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		interfaceVTables:  shared.VTables,
 		interfaceWrappers: shared.Wrappers,
 		runtimeTypes:      shared.RuntimeTypes,
+		functionClosures:  make(map[string]string),
 		tempValues:        make(map[int]mir.Value),
 	}
 	return state
@@ -2802,56 +2805,22 @@ func lowerCall(state *moduleState, targetName string, targetType typeinfo.Type, 
 	if kind, mapType, ok := becommon.BuiltinMapCall(call); ok {
 		return lowerBuiltinMapCall(state, targetName, targetType, call, kind, mapType)
 	}
-	callee, err := lowerCallee(state, call.Callee)
+	args, err := lowerCallArgs(state, call)
 	if err != nil {
 		return "", err
 	}
-
-	// Inline builtins: string_ptr and string_len have been removed.
-	// String literals are now *i8 — no special callee interception needed.
-
-	args := make([]string, 0, len(call.Args))
-	externLinked := false
-	if callee, ok := call.Callee.(*mir.NameValue); ok && callee != nil && callee.LinkName != "" {
-		externLinked = true
-	}
-	for _, arg := range call.Args {
-		if isAggregateType(state, arg.Type()) {
-			if externLinked {
-				prefix, ptr, terr := lowerInterfaceConcretePointer(state, arg, arg.Type())
-				if terr != nil {
-					return "", terr
-				}
-				if len(prefix) != 0 {
-					state.pendingLines = append(state.pendingLines, prefix...)
-				}
-				args = append(args, fmt.Sprintf("ptr %s", ptr))
-				continue
+	if _, ok := call.Callee.Type().(*typeinfo.FuncType); ok {
+		if _, direct := lowerDirectCallee(state, call.Callee); !direct {
+			closurePtr, err := lowerValue(state, call.Callee)
+			if err != nil {
+				return "", err
 			}
-			typeName, terr := llvmABITypeName(state, arg.Type())
-			if terr != nil {
-				return "", terr
-			}
-			_, align, terr := backend.AggregateSizeAlign(aggregateLayoutContext(state), arg.Type())
-			if terr != nil {
-				return "", terr
-			}
-			aval, terr := lowerValue(state, arg)
-			if terr != nil {
-				return "", terr
-			}
-			args = append(args, fmt.Sprintf("ptr byval(%s) align %d %s", typeName, align, aval))
-		} else {
-			atype, terr := llvmBaseType(arg.Type())
-			if terr != nil {
-				return "", terr
-			}
-			aval, terr := lowerValue(state, arg)
-			if terr != nil {
-				return "", terr
-			}
-			args = append(args, fmt.Sprintf("%s %s", atype, aval))
+			return lowerFunctionValueCall(state, targetName, targetType, closurePtr, args)
 		}
+	}
+	callee, err := lowerCallee(state, call.Callee)
+	if err != nil {
+		return "", err
 	}
 	argsStr := strings.Join(args, ", ")
 
@@ -3540,6 +3509,121 @@ func emitStringConstant(state *moduleState, s string) string {
 	return sym
 }
 
+func llvmFunctionClosureType() string {
+	return "{ ptr, ptr }"
+}
+
+func ensureFunctionClosureGlobal(state *moduleState, target string) string {
+	if state == nil || target == "" {
+		return ""
+	}
+	if sym, ok := state.functionClosures[target]; ok {
+		return sym
+	}
+	sym := nextPrivateGlobalSymbol(state, "fnval")
+	fmt.Fprintf(state.deferredB, "@%s = private unnamed_addr constant %s { ptr @%s, ptr null }\n",
+		sym, llvmFunctionClosureType(), target)
+	state.functionClosures[target] = sym
+	return sym
+}
+
+func lowerCallArgs(state *moduleState, call *mir.CallValue) ([]string, error) {
+	args := make([]string, 0, len(call.Args))
+	externLinked := false
+	if callee, ok := call.Callee.(*mir.NameValue); ok && callee != nil && callee.LinkName != "" {
+		externLinked = true
+	}
+	for _, arg := range call.Args {
+		if isAggregateType(state, arg.Type()) {
+			if externLinked {
+				prefix, ptr, err := lowerInterfaceConcretePointer(state, arg, arg.Type())
+				if err != nil {
+					return nil, err
+				}
+				if len(prefix) != 0 {
+					state.pendingLines = append(state.pendingLines, prefix...)
+				}
+				args = append(args, fmt.Sprintf("ptr %s", ptr))
+				continue
+			}
+			typeName, err := llvmABITypeName(state, arg.Type())
+			if err != nil {
+				return nil, err
+			}
+			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), arg.Type())
+			if err != nil {
+				return nil, err
+			}
+			aval, err := lowerValue(state, arg)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, fmt.Sprintf("ptr byval(%s) align %d %s", typeName, align, aval))
+			continue
+		}
+		atype, err := llvmBaseType(arg.Type())
+		if err != nil {
+			return nil, err
+		}
+		aval, err := lowerValue(state, arg)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, fmt.Sprintf("%s %s", atype, aval))
+	}
+	return args, nil
+}
+
+func lowerDirectCallee(state *moduleState, value mir.Value) (string, bool) {
+	named, ok := value.(*mir.NameValue)
+	if !ok || named == nil {
+		return "", false
+	}
+	if _, ok := named.Type().(*typeinfo.FuncType); !ok {
+		return "", false
+	}
+	if len(named.Path) == 1 && becommon.FindLocalByName(state.fn, named.Path[0]) != nil {
+		return "", false
+	}
+	if named.LinkName != "" {
+		return becommon.SanitizeLinkName(named.LinkName), true
+	}
+	return llvmSymbol(state, named.Path), true
+}
+
+func lowerFunctionValueCall(state *moduleState, targetName string, targetType typeinfo.Type, closurePtr string, args []string) (string, error) {
+	codeAddr := freshTemp(state, "fn_code_addr")
+	code := freshTemp(state, "fn_code")
+	lines := []string{
+		fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i32 0, i32 0", codeAddr, llvmFunctionClosureType(), closurePtr),
+		fmt.Sprintf("%s = load ptr, ptr %s", code, codeAddr),
+	}
+
+	var retStr string
+	if targetType != nil && isAggregateType(state, targetType) {
+		tn, err := llvmABITypeName(state, targetType)
+		if err != nil {
+			return "", err
+		}
+		retStr = tn
+	} else if targetType != nil && !isVoidType(targetType) {
+		rt, err := llvmBaseType(targetType)
+		if err != nil {
+			return "", err
+		}
+		retStr = rt
+	} else {
+		retStr = "void"
+	}
+	callText := fmt.Sprintf("call %s %s(%s)", retStr, code, strings.Join(args, ", "))
+	if targetName == "" || retStr == "void" {
+		lines = append(lines, callText)
+		return strings.Join(lines, "\n"), nil
+	}
+	lines = append(lines, fmt.Sprintf("%s = %s", llvmLocalName(targetName), callText))
+	return strings.Join(lines, "\n"), nil
+}
+
 func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *mir.CallValue) (string, error) {
 	if local, ok := call.Callee.(*mir.LocalValue); ok && len(call.Args) > 0 && isInterfaceAggregate(call.Args[0].Type()) {
 		if field, ok := state.tempValues[local.LocalID].(*mir.FieldValue); ok {
@@ -3552,52 +3636,32 @@ func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *mir.
 	if kind, mapType, ok := becommon.BuiltinMapCall(call); ok {
 		return lowerBuiltinMapCall(state, agg.Name, agg.Type, call, kind, mapType)
 	}
-	callee, err := lowerCallee(state, call.Callee)
+	args, err := lowerCallArgs(state, call)
 	if err != nil {
 		return "", err
 	}
-	args := make([]string, 0, len(call.Args))
-	externLinked := false
-	if callee, ok := call.Callee.(*mir.NameValue); ok && callee != nil && callee.LinkName != "" {
-		externLinked = true
-	}
-	for _, arg := range call.Args {
-		if isAggregateType(state, arg.Type()) {
-			if externLinked {
-				prefix, ptr, terr := lowerInterfaceConcretePointer(state, arg, arg.Type())
-				if terr != nil {
-					return "", terr
-				}
-				if len(prefix) != 0 {
-					state.pendingLines = append(state.pendingLines, prefix...)
-				}
-				args = append(args, fmt.Sprintf("ptr %s", ptr))
-				continue
+	if _, ok := call.Callee.Type().(*typeinfo.FuncType); ok {
+		if _, direct := lowerDirectCallee(state, call.Callee); !direct {
+			closurePtr, err := lowerValue(state, call.Callee)
+			if err != nil {
+				return "", err
 			}
-			typeName, terr := llvmABITypeName(state, arg.Type())
-			if terr != nil {
-				return "", terr
+			callTemp := "aggret"
+			lowered, err := lowerFunctionValueCall(state, callTemp, agg.Type, closurePtr, args)
+			if err != nil {
+				return "", err
 			}
-			_, align, terr := backend.AggregateSizeAlign(aggregateLayoutContext(state), arg.Type())
-			if terr != nil {
-				return "", terr
+			typeName, err := llvmABITypeName(state, agg.Type)
+			if err != nil {
+				return "", err
 			}
-			aval, terr := lowerValue(state, arg)
-			if terr != nil {
-				return "", terr
-			}
-			args = append(args, fmt.Sprintf("ptr byval(%s) align %d %s", typeName, align, aval))
-		} else {
-			atype, terr := llvmBaseType(arg.Type())
-			if terr != nil {
-				return "", terr
-			}
-			aval, terr := lowerValue(state, arg)
-			if terr != nil {
-				return "", terr
-			}
-			args = append(args, fmt.Sprintf("%s %s", atype, aval))
+			lines := []string{lowered, fmt.Sprintf("store %s %s, ptr %s", typeName, llvmLocalName(callTemp), llvmLocalName(agg.PtrName))}
+			return strings.Join(lines, "\n"), nil
 		}
+	}
+	callee, err := lowerCallee(state, call.Callee)
+	if err != nil {
+		return "", err
 	}
 	typeName, err := llvmABITypeName(state, agg.Type)
 	if err != nil {
@@ -4764,10 +4828,11 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 			}
 		}
 		if _, ok := v.Type().(*typeinfo.FuncType); ok {
+			target := llvmSymbol(state, v.Path)
 			if v.LinkName != "" {
-				return "@" + becommon.SanitizeLinkName(v.LinkName), nil
+				target = becommon.SanitizeLinkName(v.LinkName)
 			}
-			return "@" + llvmSymbol(state, v.Path), nil
+			return "@" + ensureFunctionClosureGlobal(state, target), nil
 		}
 		if !isAggregateType(state, v.Type()) {
 			irType, err := llvmBaseType(v.Type())
@@ -5474,6 +5539,9 @@ func lowerCallee(state *moduleState, value mir.Value) (string, error) {
 		}
 	case *mir.NameValue:
 		if _, ok := v.Type().(*typeinfo.FuncType); ok {
+			if direct, ok := lowerDirectCallee(state, v); ok {
+				return direct, nil
+			}
 			return lowerValue(state, v)
 		}
 		if v.LinkName != "" {

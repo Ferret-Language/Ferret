@@ -2447,8 +2447,11 @@ fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
 	if !strings.Contains(text, "define i32 @main__apply(ptr %f, i32 %x)") {
 		t.Fatalf("expected function-typed parameter in llvm output:\n%s", text)
 	}
-	if !strings.Contains(text, "call i32 %_ld2(i32 %_ld3)") {
-		t.Fatalf("expected indirect function-value call in llvm output:\n%s", text)
+	if !strings.Contains(text, "getelementptr inbounds { ptr, ptr }, ptr %_ld3, i32 0, i32 0") {
+		t.Fatalf("expected closure code load for function-value call in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "call i32 %_fn_code") {
+		t.Fatalf("expected indirect closure call in llvm output:\n%s", text)
 	}
 }
 
@@ -2496,6 +2499,9 @@ fn main() -> i32 {
 	}
 	if !strings.Contains(text, "%local__main__Server = type { [16 x i8] }") {
 		t.Fatalf("expected Server route table type in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "private unnamed_addr constant { ptr, ptr } { ptr @main__inc, ptr null }") {
+		t.Fatalf("expected static function closure object in llvm output:\n%s", text)
 	}
 }
 
