@@ -173,6 +173,19 @@ func TestInitializeAdvertisesHoverDefinitionAndCompletionProvider(t *testing.T) 
 	if len(triggerChars) == 0 {
 		t.Fatal("expected completion trigger characters")
 	}
+	hasHashTrigger := false
+	hasBracketTrigger := false
+	for _, trigger := range triggerChars {
+		if trigger == "#" {
+			hasHashTrigger = true
+		}
+		if trigger == "[" {
+			hasBracketTrigger = true
+		}
+	}
+	if !hasHashTrigger || !hasBracketTrigger {
+		t.Fatalf("expected completion triggers to include '#' and '[', got %#v", triggerChars)
+	}
 
 	if _, ok := payload.Capabilities["documentSymbolProvider"]; ok {
 		t.Fatal("expected documentSymbolProvider to be omitted")
@@ -3415,6 +3428,62 @@ func TestCompletionReturnsVisibleSymbols(t *testing.T) {
 	}
 	if !foundValue {
 		t.Fatalf("expected local variable completion, got %#v", items)
+	}
+}
+
+func TestCompletionSuggestsFerretAttributesInAttributeContext(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "#[\nfn main() {\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "#[")
+	if !ok {
+		t.Fatal("failed to find attribute completion position")
+	}
+	char += len("#[")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/completion",
+		Params: mustRawJSON(t, completionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	items := decodeCompletionResult(t, out.String())
+	foundAllowUnused := false
+	foundBuiltin := false
+	foundExtern := false
+	foundIf := false
+	foundIfNot := false
+	for _, item := range items {
+		if item.Label == "allow_unused" {
+			foundAllowUnused = true
+		}
+		if item.Label == "builtin" {
+			foundBuiltin = true
+		}
+		if item.Label == "extern" {
+			foundExtern = true
+		}
+		if item.Label == "if" {
+			foundIf = true
+		}
+		if item.Label == "ifnot" {
+			foundIfNot = true
+		}
+	}
+	if !foundAllowUnused || !foundBuiltin || !foundExtern || !foundIf || !foundIfNot {
+		t.Fatalf("expected ferret attribute completions, got %#v", items)
 	}
 }
 

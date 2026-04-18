@@ -61,23 +61,21 @@ func (p *Parser) validateDeclAttributes(attrs []ast.Attribute, declKind string) 
 		return
 	}
 	for _, attr := range attrs {
-		switch attr.Name {
-		case "extern", "builtin":
-			if declKind != "fn" {
-				p.errorAt(attr.Location, fmt.Sprintf("#[%s] is only valid on function declarations", attr.Name))
+		spec, ok := LookupDeclAttributeSpec(attr.Name)
+		if !ok {
+			p.errorAt(attr.Location, fmt.Sprintf("unknown attribute %q", attr.Name))
+			continue
+		}
+		if spec.FunctionOnly && declKind != "fn" {
+			p.errorAt(attr.Location, fmt.Sprintf("#[%s] is only valid on function declarations", attr.Name))
+			continue
+		}
+		if spec.MaxArgs >= 0 && len(attr.Args) > spec.MaxArgs {
+			if spec.NoArgsMessage != "" {
+				p.errorAt(attr.Location, spec.NoArgsMessage)
 				continue
 			}
-			if len(attr.Args) > 1 {
-				p.errorAt(attr.Location, fmt.Sprintf("#[%s] accepts at most one argument", attr.Name))
-			}
-		case "allow_unused":
-			if len(attr.Args) != 0 {
-				p.errorAt(attr.Location, "#[allow_unused] does not accept arguments")
-			}
-		case "if", "ifnot":
-			// Shape is validated during attribute filtering when target context is available.
-		default:
-			p.errorAt(attr.Location, fmt.Sprintf("unknown attribute %q", attr.Name))
+			p.errorAt(attr.Location, fmt.Sprintf("#[%s] accepts at most one argument", attr.Name))
 		}
 	}
 }

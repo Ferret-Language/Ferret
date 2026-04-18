@@ -68,6 +68,18 @@ var (
 	identPattern        = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*$`)
 	memberPattern       = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)?$`)
 	staticMemberPattern = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*(?:<[^>\n]*>)?)::([A-Za-z_][A-Za-z0-9_]*)?$`)
+	attributePattern    = regexp.MustCompile(`#\[\s*([A-Za-z_][A-Za-z0-9_]*)?$`)
+	attributeItems      = func() []completionItem {
+		names := parser.DeclAttributeNames()
+		items := make([]completionItem, 0, len(names))
+		for _, name := range names {
+			if name == "" {
+				continue
+			}
+			items = append(items, completionItem{Label: name, Kind: completionKindProperty})
+		}
+		return items
+	}()
 
 	lexSource = func(path, text string, diag *diagnostics.DiagnosticBag) []tokens.Token {
 		return lexer.New(path, text, diag).Tokenize()
@@ -415,7 +427,7 @@ func (s *Server) handleInitialize(req rpcRequest) {
 			"hoverProvider":      true,
 			"definitionProvider": true,
 			"completionProvider": map[string]any{
-				"triggerCharacters": []string{".", ":"},
+				"triggerCharacters": []string{".", ":", "#", "["},
 			},
 		},
 		"serverInfo": map[string]any{
@@ -1906,7 +1918,9 @@ func completionFromIndex(index *hoverIndex, sourceText string, pos source.Positi
 	ctx := completionContextAt(sourceText, pos)
 	candidates := visibleCompletionCandidatesAt(comp.items, comp.mod.FilePath, pos)
 	items := make([]completionItem, 0)
-	if ctx.IsMember {
+	if ctx.IsAttribute {
+		items = append(items, attributeItems...)
+	} else if ctx.IsMember {
 		items = append(items, memberCompletionItemsForContext(comp, candidates, sourceText, pos)...)
 	} else {
 		items = make([]completionItem, 0, len(comp.keywords)+len(candidates))
@@ -2103,10 +2117,11 @@ func locationIsVisibleAt(scope source.Location, pos source.Position) bool {
 }
 
 type completionContext struct {
-	Base     string
-	Prefix   string
-	IsMember bool
-	IsStatic bool
+	Base        string
+	Prefix      string
+	IsMember    bool
+	IsStatic    bool
+	IsAttribute bool
 }
 
 func completionContextAt(sourceText string, pos source.Position) completionContext {
@@ -2121,6 +2136,12 @@ func completionContextAt(sourceText string, pos source.Position) completionConte
 		lineStart++
 	}
 	prefixText := sourceText[lineStart:offset]
+	if match := attributePattern.FindStringSubmatch(prefixText); len(match) == 2 {
+		return completionContext{
+			Prefix:      match[1],
+			IsAttribute: true,
+		}
+	}
 	if match := staticMemberPattern.FindStringSubmatch(prefixText); len(match) == 3 {
 		return completionContext{
 			Base:     strings.TrimSpace(match[1]),
