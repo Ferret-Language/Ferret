@@ -588,9 +588,8 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		structType, hasStructType := lowerCtx.structView(e.Type())
 		fieldIndex := 0
 		for _, item := range e.Items {
-			value := lowerValue(lowerCtx, item.Value)
+			expected := typeinfo.Type(nil)
 			if hasStructType && item.Value != nil && item.Key == nil {
-				expected := typeinfo.Type(nil)
 				if item.Name != "" {
 					if field := structType.Fields[item.Name]; field != nil {
 						expected = field.Type
@@ -603,6 +602,9 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 					}
 					fieldIndex++
 				}
+			}
+			value := lowerValue(lowerCtx, item.Value)
+			if expected != nil {
 				value = lowerCoercedValue(lowerCtx, item.Value, expected)
 			}
 			out.Items = append(out.Items, CompositeItem{Name: item.Name, Key: lowerValue(lowerCtx, item.Key), Value: value})
