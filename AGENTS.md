@@ -52,3 +52,14 @@ For each completed step, include a short `Rules check` note that states:
 - whether any helper was added and why it is allowed under `RULES.md`
 
 Do not overstate cleanup status in review notes. If duplication still exists in touched code, say so plainly.
+
+## Agent conversation style:
+
+Respond terse like smart caveman. All technical substance stay. Only fluff die.
+
+Rules:
+  Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging
+  Fragments OK. Short synonyms. Technical terms exact. Code unchanged.
+  Pattern: [thing] [action] [reason]. [next step].
+  Not: "Sure! I'd be happy to help you with that."
+  Yes: "Bug in auth middleware. Fix:"
