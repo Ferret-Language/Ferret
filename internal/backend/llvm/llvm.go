@@ -3593,18 +3593,44 @@ func ensureNamedFunctionThunk(state *moduleState, target string, fnType *typeinf
 	callArgs := make([]string, 0, len(fnType.Params))
 	params = append(params, "ptr %env")
 	for i, param := range fnType.Params {
-		irType, err := llvmBaseType(param.Type)
-		if err != nil {
-			irType = "ptr"
-		}
 		name := fmt.Sprintf("%%arg%d", i)
-		params = append(params, fmt.Sprintf("%s %s", irType, name))
-		callArgs = append(callArgs, fmt.Sprintf("%s %s", irType, name))
+		decl, callArg, err := lowerThunkParam(state, param.Type, name)
+		if err != nil {
+			return ""
+		}
+		params = append(params, decl)
+		callArgs = append(callArgs, callArg)
 	}
 	thunk := llvmClosureThunkName(target)
 	emitClosureThunk(state, thunk, target, retType, params, callArgs)
 	state.functionThunks[target] = thunk
 	return thunk
+}
+
+func lowerThunkParam(state *moduleState, paramType typeinfo.Type, name string) (string, string, error) {
+	if paramType == nil {
+		arg := fmt.Sprintf("ptr %s", name)
+		return arg, arg, nil
+	}
+	if isAggregateType(state, paramType) {
+		typeName, err := llvmABITypeName(state, paramType)
+		if err != nil {
+			return "", "", err
+		}
+		_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), paramType)
+		if err != nil {
+			return "", "", err
+		}
+		arg := fmt.Sprintf("ptr byval(%s) align %d %s", typeName, align, name)
+		return arg, arg, nil
+	}
+	irType, err := llvmBaseType(paramType)
+	if err != nil {
+		arg := fmt.Sprintf("ptr %s", name)
+		return arg, arg, nil
+	}
+	arg := fmt.Sprintf("%s %s", irType, name)
+	return arg, arg, nil
 }
 
 func ensureFunctionClosureGlobal(state *moduleState, target string, fnType *typeinfo.FuncType) string {
@@ -3721,21 +3747,21 @@ func closureCaptureFields(state *moduleState, captures []mir.Value) ([]closureCa
 	return fields, "{ " + strings.Join(typeParts, ", ") + " }", nil
 }
 
-func ensureClosureThunk(state *moduleState, closureName string, funcName string, captures []mir.Value, fnType *typeinfo.FuncType) string {
+func ensureClosureThunk(state *moduleState, closureName string, funcName string, captures []mir.Value, fnType *typeinfo.FuncType) (string, error) {
 	if state == nil || closureName == "" || funcName == "" || fnType == nil {
-		return ""
+		return "", fmt.Errorf("invalid closure thunk input")
 	}
 	if sym, ok := state.closureThunks[closureName]; ok {
-		return sym
+		return sym, nil
 	}
 	targetFn := findMIRFunction(state, funcName)
 	if targetFn == nil {
-		return ""
+		return "", fmt.Errorf("missing closure target function %q", funcName)
 	}
 	thunk := llvmClosureThunkName(closureName)
 	captureFields, envType, err := closureCaptureFields(state, captures)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	retType := callableReturnIRType(state, fnType)
 	params := make([]string, 0, 1+len(fnType.Params))
@@ -3757,13 +3783,18 @@ func ensureClosureThunk(state *moduleState, closureName string, funcName string,
 	}
 	userArgNames := make([]string, 0, len(fnType.Params))
 	for i, param := range fnType.Params {
-		irType, err := llvmBaseType(param.Type)
-		if err != nil {
-			irType = "ptr"
-		}
 		name := fmt.Sprintf("%%arg%d", i)
-		params = append(params, fmt.Sprintf("%s %s", irType, name))
-		userArgNames = append(userArgNames, fmt.Sprintf("%s %s", irType, name))
+		paramType := param.Type
+		targetParamIndex := len(captureFields) + i
+		if targetParamIndex >= 0 && targetParamIndex < len(targetFn.Params) && targetFn.Params[targetParamIndex] != nil {
+			paramType = targetFn.Params[targetParamIndex].Type
+		}
+		decl, callArg, err := lowerThunkParam(state, paramType, name)
+		if err != nil {
+			return "", fmt.Errorf("closure thunk param %d: %w", i, err)
+		}
+		params = append(params, decl)
+		userArgNames = append(userArgNames, callArg)
 	}
 	body := &strings.Builder{}
 	fmt.Fprintf(body, "define %s @%s(%s) {\nentry:\n", retType, thunk, strings.Join(params, ", "))
@@ -3787,7 +3818,7 @@ func ensureClosureThunk(state *moduleState, closureName string, funcName string,
 	fmt.Fprintf(body, "}\n")
 	state.deferredB.WriteString(body.String())
 	state.closureThunks[closureName] = thunk
-	return thunk
+	return thunk, nil
 }
 
 func lowerDirectCallee(state *moduleState, value mir.Value) (string, bool) {
@@ -3867,7 +3898,7 @@ func lowerAggregateCallValue(state *moduleState, agg *aggregateLocal, call *mir.
 			if err != nil {
 				return "", err
 			}
-			callTemp := "aggret"
+			callTemp := freshTemp(state, "aggret")
 			lowered, err := lowerFunctionValueCall(state, callTemp, agg.Type, closurePtr, args)
 			if err != nil {
 				return "", err
@@ -5107,7 +5138,10 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		if fnType == nil {
 			return "", fmt.Errorf("unknown closure value %q", v.Name)
 		}
-		thunk := ensureClosureThunk(state, v.Name, v.FuncName, v.Captures, fnType)
+		thunk, err := ensureClosureThunk(state, v.Name, v.FuncName, v.Captures, fnType)
+		if err != nil {
+			return "", err
+		}
 		if thunk == "" {
 			return "", fmt.Errorf("missing closure thunk for %q", v.Name)
 		}
@@ -5118,11 +5152,8 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				return "", err
 			}
 			envSlot := freshTemp(state, "closure_env_heap")
-			envBytes := abi.PointerBytes() * int64(len(captureFields))
-			if envBytes <= 0 {
-				envBytes = abi.PointerBytes()
-			}
-			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = call ptr @malloc(%s %d)", envSlot, llvmABIIntType(), envBytes))
+			envBytesExpr := fmt.Sprintf("ptrtoint (ptr getelementptr (%s, ptr null, i32 1) to %s)", envType, llvmABIIntType())
+			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = call ptr @malloc(%s %s)", envSlot, llvmABIIntType(), envBytesExpr))
 			for i, field := range captureFields {
 				valueExpr, err := lowerValue(state, field.Value)
 				if err != nil {

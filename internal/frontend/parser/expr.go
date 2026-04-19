@@ -599,7 +599,7 @@ func (p *Parser) startsExpr() bool {
 	switch p.current().Kind {
 	case tokens.IDENT, tokens.NUMBER, tokens.STRING, tokens.CHAR, tokens.BYTE_CHAR, tokens.NONE,
 		tokens.BAR, tokens.LPAREN, tokens.DOT, tokens.AMP, tokens.ASTERISK,
-		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.COMPTIME, tokens.UNSAFE, tokens.MATCH:
+		tokens.MINUS, tokens.BANG, tokens.QUESTION, tokens.COMPTIME, tokens.UNSAFE, tokens.MATCH, tokens.MOVE:
 		return true
 	default:
 		return false
