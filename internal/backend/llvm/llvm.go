@@ -3594,12 +3594,12 @@ func ensureNamedFunctionThunk(state *moduleState, target string, fnType *typeinf
 	params = append(params, "ptr %env")
 	for i, param := range fnType.Params {
 		name := fmt.Sprintf("%%arg%d", i)
-		decl, callArg, err := lowerThunkParam(state, param.Type, name)
+		arg, err := lowerThunkParam(state, param.Type, name)
 		if err != nil {
 			return ""
 		}
-		params = append(params, decl)
-		callArgs = append(callArgs, callArg)
+		params = append(params, arg)
+		callArgs = append(callArgs, arg)
 	}
 	thunk := llvmClosureThunkName(target)
 	emitClosureThunk(state, thunk, target, retType, params, callArgs)
@@ -3607,30 +3607,30 @@ func ensureNamedFunctionThunk(state *moduleState, target string, fnType *typeinf
 	return thunk
 }
 
-func lowerThunkParam(state *moduleState, paramType typeinfo.Type, name string) (string, string, error) {
+func lowerThunkParam(state *moduleState, paramType typeinfo.Type, name string) (string, error) {
 	if paramType == nil {
 		arg := fmt.Sprintf("ptr %s", name)
-		return arg, arg, nil
+		return arg, nil
 	}
 	if isAggregateType(state, paramType) {
 		typeName, err := llvmABITypeName(state, paramType)
 		if err != nil {
-			return "", "", err
+			return "", err
 		}
 		_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), paramType)
 		if err != nil {
-			return "", "", err
+			return "", err
 		}
 		arg := fmt.Sprintf("ptr byval(%s) align %d %s", typeName, align, name)
-		return arg, arg, nil
+		return arg, nil
 	}
 	irType, err := llvmBaseType(paramType)
 	if err != nil {
 		arg := fmt.Sprintf("ptr %s", name)
-		return arg, arg, nil
+		return arg, nil
 	}
 	arg := fmt.Sprintf("%s %s", irType, name)
-	return arg, arg, nil
+	return arg, nil
 }
 
 func ensureFunctionClosureGlobal(state *moduleState, target string, fnType *typeinfo.FuncType) string {
@@ -3786,15 +3786,15 @@ func ensureClosureThunk(state *moduleState, closureName string, funcName string,
 		name := fmt.Sprintf("%%arg%d", i)
 		paramType := param.Type
 		targetParamIndex := len(captureFields) + i
-		if targetParamIndex >= 0 && targetParamIndex < len(targetFn.Params) && targetFn.Params[targetParamIndex] != nil {
+		if targetParamIndex < len(targetFn.Params) && targetFn.Params[targetParamIndex] != nil {
 			paramType = targetFn.Params[targetParamIndex].Type
 		}
-		decl, callArg, err := lowerThunkParam(state, paramType, name)
+		arg, err := lowerThunkParam(state, paramType, name)
 		if err != nil {
 			return "", fmt.Errorf("closure thunk param %d: %w", i, err)
 		}
-		params = append(params, decl)
-		userArgNames = append(userArgNames, callArg)
+		params = append(params, arg)
+		userArgNames = append(userArgNames, arg)
 	}
 	body := &strings.Builder{}
 	fmt.Fprintf(body, "define %s @%s(%s) {\nentry:\n", retType, thunk, strings.Join(params, ", "))
