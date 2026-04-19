@@ -7,7 +7,7 @@ import (
 )
 
 func sourceSpan(left, right source.Location) source.Location {
-	return source.NewLocation(left.File, *left.Start, *right.End)
+	return source.NewLocation(*left.Filename, *left.Start, *right.End)
 }
 
 func (p *Parser) parseBlock() *ast.BlockStmt {

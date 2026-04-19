@@ -985,8 +985,8 @@ func modulePathForNode(node ast.Node, mod *context.Module) string {
 	if node != nil {
 		loc = node.Loc()
 	}
-	if loc.File != "" {
-		return loc.File
+	if *loc.Filename != "" {
+		return *loc.Filename
 	}
 	if loc.Filename != nil && *loc.Filename != "" {
 		return *loc.Filename
@@ -1039,9 +1039,7 @@ func locationWithFile(loc source.Location, file string) source.Location {
 	if file == "" {
 		return loc
 	}
-	loc.File = file
-	filename := loc.File
-	loc.Filename = &filename
+	*loc.Filename = file
 	return loc
 }
 
@@ -2442,7 +2440,7 @@ func visibleCompletionCandidatesAt(items []completionCandidate, currentFile stri
 		if !locationIsVisibleAt(item.scope, pos) {
 			continue
 		}
-		if item.location.Start != nil && (item.location.File == "" || item.location.File == currentFile) && compareSourcePosition(*item.location.Start, pos) > 0 {
+		if item.location.Start != nil && (*item.location.Filename == "" || *item.location.Filename == currentFile) && compareSourcePosition(*item.location.Start, pos) > 0 {
 			continue
 		}
 		out = append(out, item)
@@ -3077,15 +3075,14 @@ func normalizeLocationFile(loc source.Location, parsedPath, originalPath string)
 	candidate := ""
 	if loc.Filename != nil {
 		candidate = *loc.Filename
-	} else if loc.File != "" {
-		candidate = loc.File
+	} else if *loc.Filename != "" {
+		candidate = *loc.Filename
 	}
 	if candidate == "" || !sameFilePath(candidate, parsedPath) {
 		return loc
 	}
 	normalized := loc
-	normalized.File = originalPath
-	normalized.Filename = &normalized.File
+	*normalized.Filename = originalPath
 	return normalized
 }
 
@@ -3391,7 +3388,7 @@ func sameLocation(a, b source.Location) bool {
 	if a.Start == nil || b.Start == nil {
 		return false
 	}
-	if a.File != "" && b.File != "" && a.File != b.File {
+	if *a.Filename != "" && *b.Filename != "" && a.Filename != b.Filename {
 		return false
 	}
 	return a.Start.Index == b.Start.Index

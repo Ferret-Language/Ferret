@@ -1712,8 +1712,8 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *mir.Function) erro
 
 	// Attach DWARF subprogram metadata if debug state is active.
 	dbgSuffix := ""
-	if state.debug != nil && fn.Location.File != "" {
-		fileID := state.debug.getFile(fn.Location.File)
+	if state.debug != nil && *fn.Location.Filename != "" {
+		fileID := state.debug.getFile(*fn.Location.Filename)
 		// Re-use the last added CU or add one for this file.
 		cuID := -1
 		if len(state.debug.cuIDs) > 0 {
@@ -1847,9 +1847,9 @@ func entryDebugDecls(state *moduleState) []string {
 			continue
 		}
 		paramIDs[param.LocalID] = struct{}{}
-		filePath := param.Location.File
-		if filePath == "" {
-			filePath = state.fn.Location.File
+		filePath := param.Location.Filename
+		if *filePath == "" {
+			filePath = state.fn.Location.Filename
 		}
 		line := 1
 		if param.Location.Start != nil {
@@ -1858,12 +1858,12 @@ func entryDebugDecls(state *moduleState) []string {
 			line = state.fn.Location.Start.Line
 		}
 		if _, ok := state.aggParams[param.LocalID]; ok {
-			emitDecl(param.LocalID, param.Name, param.Type, llvmLocalName(param.Name), filePath, line, argIndex)
+			emitDecl(param.LocalID, param.Name, param.Type, llvmLocalName(param.Name), *filePath, line, argIndex)
 			argIndex++
 			continue
 		}
 		if sc, ok := state.scalarLocals[param.LocalID]; ok {
-			emitDecl(param.LocalID, param.Name, param.Type, sc.AllocaName, filePath, line, argIndex)
+			emitDecl(param.LocalID, param.Name, param.Type, sc.AllocaName, *filePath, line, argIndex)
 			argIndex++
 		}
 	}
@@ -1875,9 +1875,9 @@ func entryDebugDecls(state *moduleState) []string {
 		if _, isParam := paramIDs[local.ID]; isParam {
 			continue
 		}
-		filePath := local.Location.File
-		if filePath == "" {
-			filePath = state.fn.Location.File
+		filePath := local.Location.Filename
+		if *filePath == "" {
+			filePath = state.fn.Location.Filename
 		}
 		line := 1
 		if local.Location.Start != nil {
@@ -1886,14 +1886,14 @@ func entryDebugDecls(state *moduleState) []string {
 			line = state.fn.Location.Start.Line
 		}
 		if sc, ok := state.scalarLocals[local.ID]; ok {
-			emitDecl(local.ID, local.Name, local.Type, sc.AllocaName, filePath, line, 0)
+			emitDecl(local.ID, local.Name, local.Type, sc.AllocaName, *filePath, line, 0)
 			continue
 		}
 		if agg, ok := state.aggLocals[local.ID]; ok {
 			if _, isParam := state.aggParams[local.ID]; isParam {
 				continue
 			}
-			emitDecl(local.ID, local.Name, local.Type, llvmLocalName(agg.PtrName), filePath, line, 0)
+			emitDecl(local.ID, local.Name, local.Type, llvmLocalName(agg.PtrName), *filePath, line, 0)
 		}
 	}
 

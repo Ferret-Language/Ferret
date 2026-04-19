@@ -8,7 +8,6 @@ import (
 )
 
 type Location struct {
-	File     string
 	Filename *string
 	Start    *Position
 	End      *Position
@@ -19,7 +18,6 @@ func NewLocation(file string, start, end Position) Location {
 	endCopy := end
 	filename := file
 	return Location{
-		File:     file,
 		Filename: &filename,
 		Start:    &startCopy,
 		End:      &endCopy,
@@ -30,10 +28,10 @@ func (l Location) String() string {
 	if l.Start == nil || l.End == nil {
 		return "location(unknown)"
 	}
-	if l.File == "" {
+	if *l.Filename == "" {
 		return fmt.Sprintf("%s-%s", l.Start, l.End)
 	}
-	return fmt.Sprintf("%s:%s-%s", l.File, l.Start, l.End)
+	return fmt.Sprintf("%s:%s-%s", *l.Filename, l.Start, l.End)
 }
 
 type SourceCache interface {
