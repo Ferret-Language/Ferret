@@ -927,15 +927,15 @@ func collectWorkspaceRenameEdits(result compiler.Result, parsedPath, originalPat
 			a := changes[uri][i].Range
 			b := changes[uri][j].Range
 			if a.Start.Line != b.Start.Line {
-				return a.Start.Line < b.Start.Line
+				return a.Start.Line > b.Start.Line
 			}
 			if a.Start.Character != b.Start.Character {
-				return a.Start.Character < b.Start.Character
+				return a.Start.Character > b.Start.Character
 			}
 			if a.End.Line != b.End.Line {
-				return a.End.Line < b.End.Line
+				return a.End.Line > b.End.Line
 			}
-			return a.End.Character < b.End.Character
+			return a.End.Character > b.End.Character
 		})
 	}
 	if len(changes) == 0 {
@@ -1028,7 +1028,8 @@ func locationWithFile(loc source.Location, file string) source.Location {
 		return loc
 	}
 	loc.File = file
-	loc.Filename = &loc.File
+	filename := loc.File
+	loc.Filename = &filename
 	return loc
 }
 

@@ -210,7 +210,7 @@ func TestRenameReturnsWorkspaceEditsAcrossLocalModules(t *testing.T) {
 	char += len("math::")
 
 	var out bytes.Buffer
-	uri := "file://" + filepath.ToSlash(mainPath)
+	uri := mustPathToURI(t, mainPath)
 	s := &Server{out: &out, documents: make(map[string]openDocument)}
 	s.handleRequest(rpcRequest{
 		JSONRPC: "2.0",
@@ -227,8 +227,8 @@ func TestRenameReturnsWorkspaceEditsAcrossLocalModules(t *testing.T) {
 	if edit == nil || len(edit.Changes) == 0 {
 		t.Fatalf("expected workspace rename edits, got %#v", edit)
 	}
-	mainURI := "file://" + filepath.ToSlash(mainPath)
-	utilURI := "file://" + filepath.ToSlash(utilPath)
+	mainURI := mustPathToURI(t, mainPath)
+	utilURI := mustPathToURI(t, utilPath)
 	if len(edit.Changes[mainURI]) != 1 {
 		t.Fatalf("expected 1 edit in main file, got %#v", edit.Changes[mainURI])
 	}
@@ -250,7 +250,7 @@ func TestRenameRejectsInvalidNewName(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	uri := "file://" + filepath.ToSlash(path)
+	uri := mustPathToURI(t, path)
 	s := &Server{out: &out, documents: make(map[string]openDocument)}
 	s.handleRequest(rpcRequest{
 		JSONRPC: "2.0",
@@ -312,7 +312,7 @@ func TestRenameDoesNotRenameDependencyOwnedSymbol(t *testing.T) {
 	defer func() { _ = os.Chdir(cwd) }()
 
 	var out bytes.Buffer
-	uri := "file://" + filepath.ToSlash(mainPath)
+	uri := mustPathToURI(t, mainPath)
 	s := &Server{out: &out, documents: make(map[string]openDocument)}
 	s.handleRequest(rpcRequest{
 		JSONRPC: "2.0",
@@ -4044,6 +4044,15 @@ func decodeWorkspaceEditResult(t *testing.T, framed string) *workspaceEdit {
 		t.Fatalf("failed to unmarshal workspace edit result: %v", err)
 	}
 	return &edit
+}
+
+func mustPathToURI(t *testing.T, path string) string {
+	t.Helper()
+	uri, err := pathToURI(path)
+	if err != nil {
+		t.Fatalf("pathToURI(%q): %v", path, err)
+	}
+	return uri
 }
 
 func decodeFramedBodies(t *testing.T, framed string) [][]byte {
