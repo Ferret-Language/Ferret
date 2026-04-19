@@ -66,6 +66,7 @@ const (
 
 var (
 	identPattern        = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*$`)
+	identExactPattern   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	memberPattern       = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)?$`)
 	staticMemberPattern = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*(?:<[^>\n]*>)?)::([A-Za-z_][A-Za-z0-9_]*)?$`)
 
@@ -168,6 +169,12 @@ type completionParams struct {
 	Position     lspPosition            `json:"position"`
 }
 
+type renameParams struct {
+	TextDocument textDocumentIdentifier `json:"textDocument"`
+	Position     lspPosition            `json:"position"`
+	NewName      string                 `json:"newName"`
+}
+
 type textDocumentIdentifier struct {
 	URI string `json:"uri"`
 }
@@ -227,6 +234,15 @@ type completionItem struct {
 	Kind          int    `json:"kind,omitempty"`
 	Detail        string `json:"detail,omitempty"`
 	Documentation string `json:"documentation,omitempty"`
+}
+
+type textEdit struct {
+	Range   lspRange `json:"range"`
+	NewText string   `json:"newText"`
+}
+
+type workspaceEdit struct {
+	Changes map[string][]textEdit `json:"changes,omitempty"`
 }
 
 type lspPosition struct {
@@ -385,6 +401,8 @@ func (s *Server) handleRequest(req rpcRequest) {
 		s.handleDefinition(req)
 	case "textDocument/completion":
 		s.handleCompletion(req)
+	case "textDocument/rename":
+		s.handleRename(req)
 	default:
 		if len(req.ID) > 0 {
 			s.writeError(req.ID, -32601, "method not found")
@@ -417,6 +435,7 @@ func (s *Server) handleInitialize(req rpcRequest) {
 			"completionProvider": map[string]any{
 				"triggerCharacters": []string{".", ":"},
 			},
+			"renameProvider": true,
 		},
 		"serverInfo": map[string]any{
 			"name":    "ferretls",
@@ -708,6 +727,328 @@ func (s *Server) handleCompletion(req rpcRequest) {
 	}
 	items := completionFromIndex(index, sourceText, pos)
 	s.writeResponse(req.ID, items)
+}
+
+func (s *Server) handleRename(req rpcRequest) {
+	if len(req.ID) == 0 {
+		return
+	}
+	params := renameParams{}
+	if err := json.Unmarshal(req.Params, &params); err != nil {
+		s.writeError(req.ID, -32602, "invalid params")
+		return
+	}
+	if !isValidRenameIdentifier(params.NewName) {
+		s.writeError(req.ID, -32602, "newName must be a valid non-keyword identifier")
+		return
+	}
+	path, err := uriToPath(params.TextDocument.URI)
+	if err != nil || !isFerretSourcePath(path) {
+		s.writeResponse(req.ID, nil)
+		return
+	}
+
+	doc, hasDoc := s.documentState(params.TextDocument.URI)
+	sourceText := ""
+	hasOverlay := hasDoc && !doc.HasSyntaxErrors
+	if hasOverlay {
+		sourceText = doc.Text
+	}
+	result, parsedPath, cleanup := parseForProject(path, sourceText, hasOverlay, parseProject)
+	defer cleanup()
+
+	targetModule := findModuleByPath(result, parsedPath)
+	if targetModule == nil || targetModule.Bindings == nil {
+		s.writeResponse(req.ID, nil)
+		return
+	}
+	targetText := moduleSourceTextForRename(targetModule, parsedPath, path, sourceText, hasOverlay)
+	pos := source.Position{
+		Line:   params.Position.Line + 1,
+		Column: params.Position.Character + 1,
+	}
+	targetSymbol, owner := findRenameTargetSymbol(result, targetModule, targetText, pos)
+	if targetSymbol == nil || owner == nil || owner.Origin != context.ModuleOriginLocal {
+		s.writeResponse(req.ID, nil)
+		return
+	}
+
+	changes := collectWorkspaceRenameEdits(result, parsedPath, path, sourceText, hasOverlay, targetSymbol, params.NewName)
+	if len(changes) == 0 {
+		s.writeResponse(req.ID, nil)
+		return
+	}
+	s.writeResponse(req.ID, workspaceEdit{Changes: changes})
+}
+
+func isValidRenameIdentifier(name string) bool {
+	if !identExactPattern.MatchString(name) {
+		return false
+	}
+	return !tokens.IsKeyword(name)
+}
+
+func moduleSourceTextForRename(mod *context.Module, parsedPath, originalPath, overlayText string, hasOverlay bool) string {
+	if mod == nil {
+		return ""
+	}
+	if hasOverlay && sameFilePath(mod.FilePath, parsedPath) {
+		return overlayText
+	}
+	if mod.Content != "" {
+		return mod.Content
+	}
+	path := mod.FilePath
+	if sameFilePath(path, parsedPath) {
+		path = originalPath
+	}
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(bytes)
+}
+
+func findRenameTargetSymbol(result compiler.Result, mod *context.Module, sourceText string, pos source.Position) (*symbols.Symbol, *context.Module) {
+	if mod == nil || mod.Bindings == nil || len(mod.Bindings.Nodes) == 0 {
+		return nil, nil
+	}
+	modulesByKey := indexModulesByKey(result)
+	type candidate struct {
+		symbol *symbols.Symbol
+		owner  *context.Module
+		loc    source.Location
+	}
+	best := candidate{}
+	bestSpan := int(^uint(0) >> 1)
+	found := false
+	for node, res := range mod.Bindings.Nodes {
+		if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
+			continue
+		}
+		locations := renameNodeLocations(node, res.Symbol.Name, sourceText, modulePathForNode(node, mod))
+		for _, loc := range locations {
+			if !locationContainsPosition(loc, pos) {
+				continue
+			}
+			span := locationSpan(loc)
+			if !found || span < bestSpan {
+				owner := modulesByKey[res.ModuleKey]
+				if owner == nil {
+					owner = findOwnerModuleForSymbol(result, res.Symbol)
+				}
+				if owner == nil {
+					owner = mod
+				}
+				best = candidate{symbol: res.Symbol, owner: owner, loc: loc}
+				bestSpan = span
+				found = true
+			}
+		}
+	}
+	if !found {
+		return nil, nil
+	}
+	return best.symbol, best.owner
+}
+
+func findOwnerModuleForSymbol(result compiler.Result, sym *symbols.Symbol) *context.Module {
+	if sym == nil {
+		return nil
+	}
+	candidates := make([]*context.Module, 0, len(result.Modules)+1)
+	if result.Entry != nil {
+		candidates = append(candidates, result.Entry)
+	}
+	candidates = append(candidates, result.Modules...)
+	for _, mod := range candidates {
+		if mod == nil || mod.ModuleScope == nil {
+			continue
+		}
+		for _, candidate := range mod.ModuleScope.Symbols() {
+			if candidate != nil && candidate.ID == sym.ID {
+				return mod
+			}
+		}
+	}
+	return nil
+}
+
+func collectWorkspaceRenameEdits(result compiler.Result, parsedPath, originalPath, overlayText string, hasOverlay bool, target *symbols.Symbol, newName string) map[string][]textEdit {
+	if target == nil || newName == "" {
+		return nil
+	}
+	modules := collectUniqueModules(result)
+	changes := make(map[string][]textEdit)
+	seenByURI := make(map[string]map[string]struct{})
+	for _, mod := range modules {
+		if mod == nil || mod.Origin != context.ModuleOriginLocal || mod.Bindings == nil {
+			continue
+		}
+		filePath := mod.FilePath
+		if sameFilePath(filePath, parsedPath) {
+			filePath = originalPath
+		}
+		uri, err := pathToURI(filePath)
+		if err != nil {
+			continue
+		}
+		sourceText := moduleSourceTextForRename(mod, parsedPath, originalPath, overlayText, hasOverlay)
+		if sourceText == "" {
+			continue
+		}
+		for node, res := range mod.Bindings.Nodes {
+			if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil || res.Symbol.ID != target.ID {
+				continue
+			}
+			locations := renameNodeLocations(node, target.Name, sourceText, filePath)
+			for _, loc := range locations {
+				if loc.Start == nil {
+					continue
+				}
+				rng := locationToLSPRange(loc)
+				key := renameEditKey(rng)
+				if seenByURI[uri] == nil {
+					seenByURI[uri] = make(map[string]struct{})
+				}
+				if _, exists := seenByURI[uri][key]; exists {
+					continue
+				}
+				seenByURI[uri][key] = struct{}{}
+				changes[uri] = append(changes[uri], textEdit{
+					Range:   rng,
+					NewText: newName,
+				})
+			}
+		}
+	}
+	for uri := range changes {
+		sort.Slice(changes[uri], func(i, j int) bool {
+			a := changes[uri][i].Range
+			b := changes[uri][j].Range
+			if a.Start.Line != b.Start.Line {
+				return a.Start.Line > b.Start.Line
+			}
+			if a.Start.Character != b.Start.Character {
+				return a.Start.Character > b.Start.Character
+			}
+			if a.End.Line != b.End.Line {
+				return a.End.Line > b.End.Line
+			}
+			return a.End.Character > b.End.Character
+		})
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	return changes
+}
+
+func collectUniqueModules(result compiler.Result) []*context.Module {
+	seen := make(map[string]struct{})
+	out := make([]*context.Module, 0, len(result.Modules)+1)
+	add := func(mod *context.Module) {
+		if mod == nil {
+			return
+		}
+		key := mod.Key
+		if key == "" {
+			key = filepath.Clean(mod.FilePath)
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, mod)
+	}
+	add(result.Entry)
+	for _, mod := range result.Modules {
+		add(mod)
+	}
+	return out
+}
+
+func modulePathForNode(node ast.Node, mod *context.Module) string {
+	loc := source.Location{}
+	if node != nil {
+		loc = node.Loc()
+	}
+	if loc.File != "" {
+		return loc.File
+	}
+	if loc.Filename != nil && *loc.Filename != "" {
+		return *loc.Filename
+	}
+	if mod != nil {
+		return mod.FilePath
+	}
+	return ""
+}
+
+func renameEditKey(rng lspRange) string {
+	return fmt.Sprintf("%d:%d-%d:%d", rng.Start.Line, rng.Start.Character, rng.End.Line, rng.End.Character)
+}
+
+func renameNodeLocations(node ast.Node, symbolName, sourceText, file string) []source.Location {
+	if node == nil || symbolName == "" {
+		return nil
+	}
+	switch n := node.(type) {
+	case *ast.Ident:
+		if n == nil || len(n.Path) == 0 {
+			return nil
+		}
+		if len(n.Path) == 1 {
+			if n.Path[0] != symbolName {
+				return nil
+			}
+			return []source.Location{locationWithFile(n.Loc(), file)}
+		}
+		segments := identifierPathSegmentLocations(n, sourceText, file)
+		return matchingPathSegmentLocations(segments, n.Path, symbolName)
+	case *ast.NamedType:
+		if n == nil || len(n.Path) == 0 {
+			return nil
+		}
+		if len(n.Path) == 1 {
+			if n.Path[0] != symbolName {
+				return nil
+			}
+			return []source.Location{locationWithFile(n.Loc(), file)}
+		}
+		segments := namedTypePathSegmentLocations(n, sourceText, file)
+		return matchingPathSegmentLocations(segments, n.Path, symbolName)
+	default:
+		return nil
+	}
+}
+
+func locationWithFile(loc source.Location, file string) source.Location {
+	if file == "" {
+		return loc
+	}
+	loc.File = file
+	filename := loc.File
+	loc.Filename = &filename
+	return loc
+}
+
+func matchingPathSegmentLocations(segments []source.Location, path []string, symbolName string) []source.Location {
+	if len(segments) == 0 || len(segments) != len(path) {
+		return nil
+	}
+	matches := make([]source.Location, 0, len(path))
+	for i := range path {
+		if path[i] == symbolName {
+			matches = append(matches, segments[i])
+		}
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	// For qualified paths, resolver resolutions target one segment. Prefer the
+	// rightmost name match to avoid editing aliases/import qualifiers.
+	return []source.Location{matches[len(matches)-1]}
 }
 
 func (s *Server) documentState(uri string) (openDocument, bool) {
@@ -2658,10 +2999,23 @@ func concreteOwnerTypeForPath(ident *ast.Ident, ownerSym *symbols.Symbol, ownerM
 }
 
 func identifierPathSegmentLocations(ident *ast.Ident, text, file string) []source.Location {
-	if ident == nil || len(ident.Path) == 0 || text == "" {
+	if ident == nil {
 		return nil
 	}
-	loc := ident.Loc()
+	return pathSegmentLocations(ident.Path, ident.Loc(), text, file)
+}
+
+func namedTypePathSegmentLocations(named *ast.NamedType, text, file string) []source.Location {
+	if named == nil {
+		return nil
+	}
+	return pathSegmentLocations(named.Path, named.Loc(), text, file)
+}
+
+func pathSegmentLocations(path []string, loc source.Location, text, file string) []source.Location {
+	if len(path) == 0 || text == "" {
+		return nil
+	}
 	if loc.Start == nil || loc.End == nil {
 		return nil
 	}
@@ -2673,8 +3027,8 @@ func identifierPathSegmentLocations(ident *ast.Ident, text, file string) []sourc
 	snippet := text[start:end]
 	pos := *loc.Start
 	cursor := 0
-	out := make([]source.Location, 0, len(ident.Path))
-	for _, segment := range ident.Path {
+	out := make([]source.Location, 0, len(path))
+	for _, segment := range path {
 		if segment == "" {
 			return nil
 		}
