@@ -3581,12 +3581,12 @@ func callableReturnIRType(state *moduleState, fnType *typeinfo.FuncType) string 
 	return "void"
 }
 
-func ensureNamedFunctionThunk(state *moduleState, target string, fnType *typeinfo.FuncType) string {
+func ensureNamedFunctionThunk(state *moduleState, target string, fnType *typeinfo.FuncType) (string, error) {
 	if state == nil || target == "" || fnType == nil {
-		return ""
+		return "", fmt.Errorf("invalid named thunk input")
 	}
 	if sym, ok := state.functionThunks[target]; ok {
-		return sym
+		return sym, nil
 	}
 	retType := callableReturnIRType(state, fnType)
 	params := make([]string, 0, 1+len(fnType.Params))
@@ -3596,7 +3596,7 @@ func ensureNamedFunctionThunk(state *moduleState, target string, fnType *typeinf
 		name := fmt.Sprintf("%%arg%d", i)
 		arg, err := lowerThunkParam(state, param.Type, name)
 		if err != nil {
-			return ""
+			return "", fmt.Errorf("named thunk param %d: %w", i, err)
 		}
 		params = append(params, arg)
 		callArgs = append(callArgs, arg)
@@ -3604,7 +3604,7 @@ func ensureNamedFunctionThunk(state *moduleState, target string, fnType *typeinf
 	thunk := llvmClosureThunkName(target)
 	emitClosureThunk(state, thunk, target, retType, params, callArgs)
 	state.functionThunks[target] = thunk
-	return thunk
+	return thunk, nil
 }
 
 func lowerThunkParam(state *moduleState, paramType typeinfo.Type, name string) (string, error) {
@@ -3626,27 +3626,29 @@ func lowerThunkParam(state *moduleState, paramType typeinfo.Type, name string) (
 	}
 	irType, err := llvmBaseType(paramType)
 	if err != nil {
-		arg := fmt.Sprintf("ptr %s", name)
-		return arg, nil
+		return "", err
 	}
 	arg := fmt.Sprintf("%s %s", irType, name)
 	return arg, nil
 }
 
-func ensureFunctionClosureGlobal(state *moduleState, target string, fnType *typeinfo.FuncType) string {
+func ensureFunctionClosureGlobal(state *moduleState, target string, fnType *typeinfo.FuncType) (string, error) {
 	if state == nil || target == "" || fnType == nil {
-		return ""
+		return "", fmt.Errorf("invalid function closure input")
 	}
 	key := target + "|" + fnType.String()
 	if sym, ok := state.functionClosures[key]; ok {
-		return sym
+		return sym, nil
 	}
-	thunk := ensureNamedFunctionThunk(state, target, fnType)
+	thunk, err := ensureNamedFunctionThunk(state, target, fnType)
+	if err != nil {
+		return "", err
+	}
 	sym := nextPrivateGlobalSymbol(state, "fnval")
 	fmt.Fprintf(state.deferredB, "@%s = private unnamed_addr constant %s { ptr @%s, ptr null }\n",
 		sym, llvmFunctionClosureType(), thunk)
 	state.functionClosures[key] = sym
-	return sym
+	return sym, nil
 }
 
 func lowerCallArgs(state *moduleState, call *mir.CallValue) ([]string, error) {
@@ -3786,6 +3788,7 @@ func ensureClosureThunk(state *moduleState, closureName string, funcName string,
 		name := fmt.Sprintf("%%arg%d", i)
 		paramType := param.Type
 		targetParamIndex := len(captureFields) + i
+		// Prefer MIR target parameter types when available because they encode final ABI shaping.
 		if targetParamIndex < len(targetFn.Params) && targetFn.Params[targetParamIndex] != nil {
 			paramType = targetFn.Params[targetParamIndex].Type
 		}
@@ -5085,7 +5088,11 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				target = becommon.SanitizeLinkName(v.LinkName)
 			}
 			fnType, _ := v.Type().(*typeinfo.FuncType)
-			return "@" + ensureFunctionClosureGlobal(state, target, fnType), nil
+			closureGlobal, err := ensureFunctionClosureGlobal(state, target, fnType)
+			if err != nil {
+				return "", err
+			}
+			return "@" + closureGlobal, nil
 		}
 		if !isAggregateType(state, v.Type()) {
 			irType, err := llvmBaseType(v.Type())
