@@ -3672,6 +3672,8 @@ type closureCaptureField struct {
 	IRType     string
 	ByvalType  string
 	ByvalAlign int64
+	CopyBytes  int64
+	CopyAlign  int64
 }
 
 func closureCaptureFields(state *moduleState, captures []mir.Value) ([]closureCaptureField, string, error) {
@@ -3690,13 +3692,15 @@ func closureCaptureFields(state *moduleState, captures []mir.Value) ([]closureCa
 			if err != nil {
 				return nil, "", err
 			}
-			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), capture.Type())
+			size, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), capture.Type())
 			if err != nil {
 				return nil, "", err
 			}
 			field.IRType = "ptr"
 			field.ByvalType = typeName
 			field.ByvalAlign = align
+			field.CopyBytes = size
+			field.CopyAlign = align
 			typeParts = append(typeParts, "ptr")
 		} else {
 			irType, err := llvmBaseType(capture.Type())
@@ -5120,6 +5124,14 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				valueExpr, err := lowerValue(state, field.Value)
 				if err != nil {
 					return "", err
+				}
+				if field.ByvalType != "" {
+					captureHeap := freshTemp(state, "closure_cap_heap")
+					state.pendingLines = append(state.pendingLines,
+						fmt.Sprintf("%s = call ptr @malloc(%s %d)", captureHeap, llvmABIIntType(), field.CopyBytes),
+						llvmMemcpy(captureHeap, valueExpr, field.CopyBytes, field.CopyAlign),
+					)
+					valueExpr = captureHeap
 				}
 				fieldPtr := freshTemp(state, "closure_cap")
 				state.pendingLines = append(state.pendingLines,

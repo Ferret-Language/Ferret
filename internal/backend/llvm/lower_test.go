@@ -2580,6 +2580,46 @@ fn main() -> i32 {
 	}
 }
 
+func TestLowerCapturedAggregateLambdaCopiesCaptureToHeapEnv(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Pair struct {
+    x: i32
+    y: i32
+}
+
+fn makeFn() -> fn(i32) -> i32 {
+    let p: Pair = .{ .x = 10, .y = 20 }
+    let addx = (n: i32) => p.x + n
+    return addx
+}
+
+fn main() -> i32 {
+    let f = makeFn()
+    return f(1)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "closure_cap_heap") {
+		t.Fatalf("expected aggregate capture heap copy slot in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "call void @llvm.memcpy.p0.p0.") {
+		t.Fatalf("expected aggregate capture memcpy into closure env in llvm output:\n%s", text)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
