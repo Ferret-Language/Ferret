@@ -36,6 +36,7 @@ func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.Modul
 		FilePath:   hirMod.FilePath,
 		Types:      make([]*TypeDecl, 0, len(hirMod.Types)),
 		Globals:    make([]*Global, 0, len(hirMod.Globals)),
+		Closures:   make([]*Closure, 0, len(hirMod.Closures)),
 		Functions:  make([]*Function, 0, len(cfgMod.Functions)),
 	}
 	for _, decl := range hirMod.Types {
@@ -43,6 +44,30 @@ func LowerModule(cfgMod *cfg.Module, hirMod *hir.Module, bindings *binding.Modul
 	}
 	for _, global := range hirMod.Globals {
 		out.Globals = append(out.Globals, lowerGlobal(global, bindings, globalConsts, hirMod.ImportPath, lookupMethod, structTypes))
+	}
+	for _, closure := range hirMod.Closures {
+		if closure == nil {
+			continue
+		}
+		entry := &Closure{
+			Name:     closure.Name,
+			FuncName: closure.FuncName,
+			Location: closure.Location,
+			Captures: make([]*Param, 0, len(closure.Captures)),
+		}
+		for _, capture := range closure.Captures {
+			if capture == nil {
+				continue
+			}
+			entry.Captures = append(entry.Captures, &Param{
+				Name:      capture.Name,
+				LocalID:   capture.LocalID,
+				Type:      capture.Type,
+				IsMutable: capture.IsMutable,
+				Location:  capture.Location,
+			})
+		}
+		out.Closures = append(out.Closures, entry)
 	}
 	for _, fn := range cfgMod.Functions {
 		out.Functions = append(out.Functions, lowerFunction(fn, bindings, globalConsts, hirMod.ImportPath, lookupMethod, structTypes))
@@ -559,6 +584,17 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		}
 		out := &CallValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Callee: lowerValue(lowerCtx, e.Callee), Args: make([]Value, 0, len(e.Args))}
 		out.Args = append(out.Args, lowerCallArgs(lowerCtx, e.Loc(), e.Args, fnType, stringifyAnyArgs)...)
+		return out
+	case *hir.ClosureLit:
+		out := &ClosureValue{
+			baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()},
+			Name:      e.Name,
+			FuncName:  e.FuncName,
+			Captures:  make([]Value, 0, len(e.Captures)),
+		}
+		for _, capture := range e.Captures {
+			out.Captures = append(out.Captures, lowerValue(lowerCtx, capture))
+		}
 		return out
 	case *hir.SelectorExpr:
 		if resolved := lowerResolvedName(lowerCtx, e.SourceExpr(), e.Loc(), e.Type()); resolved != nil {

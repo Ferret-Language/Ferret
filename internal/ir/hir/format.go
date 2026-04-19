@@ -289,6 +289,12 @@ func formatExpr(expr Expr) string {
 			parts = append(parts, formatExpr(arg))
 		}
 		return fmt.Sprintf("%s(%s)", wrapExpr(e.Callee), strings.Join(parts, ", "))
+	case *ClosureLit:
+		parts := make([]string, 0, len(e.Captures))
+		for _, capture := range e.Captures {
+			parts = append(parts, formatExpr(capture))
+		}
+		return fmt.Sprintf("closure %s[%s]", e.FuncName, strings.Join(parts, ", "))
 	case *SelectorExpr:
 		return fmt.Sprintf("%s.%s", wrapExpr(e.Left), e.Name)
 	case *CastExpr:
@@ -436,7 +442,7 @@ func formatInterfaceParams(receiver string, params []*Param) string {
 
 func wrapExpr(expr Expr) string {
 	switch expr.(type) {
-	case *Ident, *NumberLit, *StringLit, *NoneLit, *SelectorExpr, *CallExpr, *CompositeLit:
+	case *Ident, *NumberLit, *StringLit, *NoneLit, *SelectorExpr, *CallExpr, *CompositeLit, *ClosureLit:
 		return formatExpr(expr)
 	default:
 		return "(" + formatExpr(expr) + ")"

@@ -22,7 +22,7 @@ func FormatModule(mod *Module) string {
 		b.WriteString(formatTypeDecl(decl))
 		b.WriteByte('\n')
 	}
-	if len(mod.Types) > 0 && (len(mod.Globals) > 0 || len(mod.Functions) > 0) {
+	if len(mod.Types) > 0 && (len(mod.Globals) > 0 || len(mod.Closures) > 0 || len(mod.Functions) > 0) {
 		b.WriteByte('\n')
 	}
 	if len(mod.Globals) > 0 {
@@ -34,7 +34,26 @@ func FormatModule(mod *Module) string {
 			fmt.Fprintf(&b, "    %s %s: %s = %s\n", globalKeyword(global), global.Name, renderType(global.Type), formatValue(global.Init))
 		}
 	}
-	if len(mod.Globals) > 0 && len(mod.Functions) > 0 {
+	if len(mod.Globals) > 0 && (len(mod.Closures) > 0 || len(mod.Functions) > 0) {
+		b.WriteByte('\n')
+	}
+	if len(mod.Closures) > 0 {
+		b.WriteString("closures:\n")
+		for _, closure := range mod.Closures {
+			if closure == nil {
+				continue
+			}
+			fmt.Fprintf(&b, "    %s -> %s(", closure.Name, closure.FuncName)
+			for i, capture := range closure.Captures {
+				if i > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(formatParam(capture))
+			}
+			b.WriteString(")\n")
+		}
+	}
+	if len(mod.Closures) > 0 && len(mod.Functions) > 0 {
 		b.WriteByte('\n')
 	}
 	for i, fn := range mod.Functions {
@@ -302,6 +321,12 @@ func formatValue(value Value) string {
 			args = append(args, formatValue(arg))
 		}
 		return fmt.Sprintf("%s(%s)", wrapValue(v.Callee), strings.Join(args, ", "))
+	case *ClosureValue:
+		captures := make([]string, 0, len(v.Captures))
+		for _, capture := range v.Captures {
+			captures = append(captures, formatValue(capture))
+		}
+		return fmt.Sprintf("closure %s[%s]", v.FuncName, strings.Join(captures, ", "))
 	case *FieldLoadValue:
 		return fmt.Sprintf("field %s %d", wrapValue(v.Base), v.FieldIndex)
 	case *FieldValue:
@@ -441,7 +466,7 @@ func formatLocalRef(fn *Function, id int) string {
 
 func wrapValue(value Value) string {
 	switch value.(type) {
-	case *NameValue, *LocalValue, *NumberValue, *BoolValue, *StringValue, *NoneValue, *FieldLoadValue, *FieldValue, *CallValue, *CompositeValue:
+	case *NameValue, *LocalValue, *NumberValue, *BoolValue, *StringValue, *NoneValue, *FieldLoadValue, *FieldValue, *CallValue, *CompositeValue, *ClosureValue:
 		return formatValue(value)
 	default:
 		return "(" + formatValue(value) + ")"

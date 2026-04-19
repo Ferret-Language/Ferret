@@ -11,7 +11,15 @@ type Module struct {
 	FilePath   string
 	Types      []*TypeDecl
 	Globals    []*Global
+	Closures   []*Closure
 	Functions  []*Function
+}
+
+type Closure struct {
+	Name     string
+	FuncName string
+	Captures []*Param
+	Location source.Location
 }
 
 type TypeDecl struct {
@@ -257,6 +265,15 @@ type CallValue struct {
 }
 
 func (*CallValue) valueNode() {}
+
+type ClosureValue struct {
+	baseValue
+	Name     string
+	FuncName string
+	Captures []Value
+}
+
+func (*ClosureValue) valueNode() {}
 
 type FieldLoadValue struct {
 	baseValue

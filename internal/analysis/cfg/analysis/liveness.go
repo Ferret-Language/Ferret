@@ -210,6 +210,10 @@ func accumulateExprUses(use, def, locals cfg.LocalSet, expr hir.Expr) {
 		for _, arg := range e.Args {
 			accumulateExprUses(use, def, locals, arg)
 		}
+	case *hir.ClosureLit:
+		for _, capture := range e.Captures {
+			accumulateExprUses(use, def, locals, capture)
+		}
 	case *hir.SelectorExpr:
 		accumulateExprUses(use, def, locals, e.Left)
 	case *hir.CastExpr:

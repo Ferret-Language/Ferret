@@ -76,6 +76,15 @@ type CallExpr struct {
 
 func (*CallExpr) exprNode() {}
 
+type ClosureLit struct {
+	baseExpr
+	Name     string
+	FuncName string
+	Captures []Expr
+}
+
+func (*ClosureLit) exprNode() {}
+
 type SelectorExpr struct {
 	baseExpr
 	Left Expr

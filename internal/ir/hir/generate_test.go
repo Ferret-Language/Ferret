@@ -175,12 +175,12 @@ fn main() -> i32 {
 	if !ok {
 		t.Fatalf("expected lambda call, got %T", ret.Value)
 	}
-	callee, ok := call.Callee.(*hir.Ident)
+	callee, ok := call.Callee.(*hir.ClosureLit)
 	if !ok {
-		t.Fatalf("expected lambda callee ident, got %T", call.Callee)
+		t.Fatalf("expected lambda callee closure, got %T", call.Callee)
 	}
-	if callee.Path[0] != lambdaFn.Name {
-		t.Fatalf("expected lambda callee %q, got %#v", lambdaFn.Name, callee.Path)
+	if callee.FuncName != lambdaFn.Name || len(callee.Captures) != 0 {
+		t.Fatalf("expected non-capturing closure for %q, got %#v", lambdaFn.Name, callee)
 	}
 }
 
@@ -232,8 +232,15 @@ fn main() -> i32 {
 	if !ok {
 		t.Fatalf("expected call expr, got %T", ret.Value)
 	}
-	if len(call.Args) != 2 {
-		t.Fatalf("expected hidden capture + explicit argument in call, got %#v", call.Args)
+	if len(call.Args) != 1 {
+		t.Fatalf("expected only explicit argument in call, got %#v", call.Args)
+	}
+	callee, ok := call.Callee.(*hir.ClosureLit)
+	if !ok {
+		t.Fatalf("expected closure callee, got %T", call.Callee)
+	}
+	if callee.FuncName != lambdaFn.Name || len(callee.Captures) != 1 {
+		t.Fatalf("expected single-capture closure for %q, got %#v", lambdaFn.Name, callee)
 	}
 	if len(result.Entry.HIR.Closures) != 1 {
 		t.Fatalf("expected one closure env descriptor, got %#v", result.Entry.HIR.Closures)

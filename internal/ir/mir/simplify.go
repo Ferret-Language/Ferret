@@ -312,6 +312,11 @@ func simplifyValue(value Value, consts map[int]Value) Value {
 			v.Args[i] = simplifyValue(arg, consts)
 		}
 		return v
+	case *ClosureValue:
+		for i, capture := range v.Captures {
+			v.Captures[i] = simplifyValue(capture, consts)
+		}
+		return v
 	case *FieldLoadValue:
 		v.Base = simplifyValue(v.Base, consts)
 		return v
@@ -373,6 +378,8 @@ func valueMayMutateMemory(value Value) bool {
 		return valueMayMutateMemory(v.Pointer)
 	case *CallValue:
 		return true
+	case *ClosureValue:
+		return slices.ContainsFunc(v.Captures, valueMayMutateMemory)
 	case *FieldLoadValue:
 		return valueMayMutateMemory(v.Base)
 	case *FieldValue:
@@ -788,6 +795,10 @@ func remapValueLocals(value Value, idMap map[int]int) {
 		for _, arg := range v.Args {
 			remapValueLocals(arg, idMap)
 		}
+	case *ClosureValue:
+		for _, capture := range v.Captures {
+			remapValueLocals(capture, idMap)
+		}
 	case *FieldLoadValue:
 		remapValueLocals(v.Base, idMap)
 	case *FieldValue:
@@ -961,6 +972,10 @@ func addUsedLocalsFromValue(dst map[int]bool, value Value) {
 		for _, arg := range v.Args {
 			addUsedLocalsFromValue(dst, arg)
 		}
+	case *ClosureValue:
+		for _, capture := range v.Captures {
+			addUsedLocalsFromValue(dst, capture)
+		}
 	case *FieldLoadValue:
 		addUsedLocalsFromValue(dst, v.Base)
 	case *FieldValue:
@@ -1000,6 +1015,10 @@ func countUsedLocalsInValue(dst map[int]int, value Value) {
 		countUsedLocalsInValue(dst, v.Callee)
 		for _, arg := range v.Args {
 			countUsedLocalsInValue(dst, arg)
+		}
+	case *ClosureValue:
+		for _, capture := range v.Captures {
+			countUsedLocalsInValue(dst, capture)
 		}
 	case *FieldLoadValue:
 		countUsedLocalsInValue(dst, v.Base)
@@ -1113,6 +1132,11 @@ func replaceLocalInValue(value Value, localID int, replacement Value) Value {
 		v.Callee = replaceLocalInValue(v.Callee, localID, replacement)
 		for i, arg := range v.Args {
 			v.Args[i] = replaceLocalInValue(arg, localID, replacement)
+		}
+		return v
+	case *ClosureValue:
+		for i, capture := range v.Captures {
+			v.Captures[i] = replaceLocalInValue(capture, localID, replacement)
 		}
 		return v
 	case *FieldLoadValue:

@@ -57,8 +57,36 @@ func DebugModule(mod *Module) any {
 		"key":         mod.Key,
 		"import_path": mod.ImportPath,
 		"globals":     globals,
+		"closures":    debugClosures(mod.Closures),
 		"functions":   funcs,
 	}
+}
+
+func debugClosures(closures []*Closure) []any {
+	out := make([]any, 0, len(closures))
+	for _, closure := range closures {
+		if closure == nil {
+			continue
+		}
+		captures := make([]any, 0, len(closure.Captures))
+		for _, capture := range closure.Captures {
+			if capture == nil {
+				continue
+			}
+			captures = append(captures, map[string]any{
+				"name":     capture.Name,
+				"local_id": capture.LocalID,
+				"type":     typeString(capture.Type),
+				"mutable":  capture.IsMutable,
+			})
+		}
+		out = append(out, map[string]any{
+			"name":     closure.Name,
+			"func":     closure.FuncName,
+			"captures": captures,
+		})
+	}
+	return out
 }
 
 func debugInstr(instr Instr) any {
@@ -145,6 +173,12 @@ func debugValue(value Value) any {
 			args = append(args, debugValue(arg))
 		}
 		return map[string]any{"kind": "call", "callee": debugValue(v.Callee), "args": args, "type": typeString(v.Type())}
+	case *ClosureValue:
+		captures := make([]any, 0, len(v.Captures))
+		for _, capture := range v.Captures {
+			captures = append(captures, debugValue(capture))
+		}
+		return map[string]any{"kind": "closure", "name": v.Name, "func": v.FuncName, "captures": captures, "type": typeString(v.Type())}
 	case *FieldLoadValue:
 		return map[string]any{"kind": "field_load", "base": debugValue(v.Base), "field_index": v.FieldIndex, "type": typeString(v.Type())}
 	case *FieldValue:

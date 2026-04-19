@@ -191,6 +191,13 @@ func childrenAreSimple(value Value) bool {
 			}
 		}
 		return true
+	case *ClosureValue:
+		for _, capture := range v.Captures {
+			if !isSimpleValue(capture) {
+				return false
+			}
+		}
+		return true
 	case *FieldLoadValue:
 		return isSimpleValue(v.Base)
 	case *FieldValue:

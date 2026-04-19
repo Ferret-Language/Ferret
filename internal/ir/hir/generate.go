@@ -632,6 +632,23 @@ func (g *generator) capturedArgsForLambda(expr *ast.LambdaExpr) []Expr {
 	return args
 }
 
+func (g *generator) closureLitForLambda(expr *ast.LambdaExpr, typ typeinfo.Type, loc source.Location) Expr {
+	if expr == nil {
+		return nil
+	}
+	name, ok := g.lambdaName(expr)
+	if !ok || name == "" {
+		return nil
+	}
+	out := &ClosureLit{
+		Name:     name + "__closure",
+		FuncName: name,
+		Captures: g.capturedArgsForLambda(expr),
+	}
+	out.ExprType, out.Location, out.Source = typ, loc, nil
+	return out
+}
+
 func (g *generator) generateLambdaBody(expr *ast.LambdaExpr, result typeinfo.Type) *BlockStmt {
 	if expr == nil {
 		return nil
@@ -974,10 +991,10 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 		return out
 	case *ast.Ident:
 		if sym, ok := g.localSymbol(e); ok {
-			if alias, _, ok := g.functionAlias(sym); ok {
-				out := &Ident{Path: []string{alias}, LocalID: -1}
-				out.ExprType, out.Location, out.Source = typ, e.Location, nil
-				return out
+			if _, lambda, ok := g.functionAlias(sym); ok && lambda != nil {
+				if out := g.closureLitForLambda(lambda, typ, e.Location); out != nil {
+					return out
+				}
 			}
 		}
 		path := append([]string{}, e.Path...)
@@ -1051,20 +1068,11 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 			args = expanded
 		}
 		calleeType, _ := exprType(g.types, e.Callee).(*typeinfo.FuncType)
-		captureArgs := make([]Expr, 0)
-		if ident, ok := e.Callee.(*ast.Ident); ok && ident != nil {
-			if sym, ok := g.localSymbol(ident); ok && sym != nil {
-				if _, lambdaExpr, ok := g.functionAlias(sym); ok && lambdaExpr != nil {
-					captureArgs = g.capturedArgsForLambda(lambdaExpr)
-				}
-			}
-		}
-		out := &CallExpr{Callee: g.generateExpr(e.Callee), Args: make([]Expr, 0, len(captureArgs)+len(args))}
+		out := &CallExpr{Callee: g.generateExpr(e.Callee), Args: make([]Expr, 0, len(args))}
 		if recv, ok := g.types.LookupMethodReceiver(e); ok {
 			out.MethodReceiver = recv
 		}
 		out.ExprType, out.Location, out.Source = typ, e.Location, e
-		out.Args = append(out.Args, captureArgs...)
 		for i, arg := range args {
 			target := typeinfo.Type(nil)
 			if calleeType != nil && len(calleeType.Params) != 0 {
@@ -1220,9 +1228,7 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 			return nil
 		}
 		g.synthFuncs = append(g.synthFuncs, fn)
-		out := &Ident{Path: []string{fn.Name}, LocalID: -1}
-		out.ExprType, out.Location, out.Source = typ, e.Location, nil
-		return out
+		return g.closureLitForLambda(e, typ, e.Location)
 	default:
 		return nil
 	}

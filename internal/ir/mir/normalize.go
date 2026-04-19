@@ -53,6 +53,11 @@ func (n *normalizer) normalizeGlobalValue(value Value) Value {
 			v.Args[i] = n.normalizeGlobalValue(arg)
 		}
 		return v
+	case *ClosureValue:
+		for i, capture := range v.Captures {
+			v.Captures[i] = n.normalizeGlobalValue(capture)
+		}
+		return v
 	case *FieldValue:
 		v.Base = n.normalizeGlobalValue(v.Base)
 		return v
@@ -231,6 +236,17 @@ func (n *normalizer) normalizeValue(fn *Function, value Value) ([]Instr, Value) 
 		copy.Callee = callee
 		copy.Args = args
 		return n.wrapComputed(fn, &copy, temps)
+	case *ClosureValue:
+		temps := make([]Instr, 0, len(v.Captures))
+		captures := make([]Value, 0, len(v.Captures))
+		for _, capture := range v.Captures {
+			captureTemps, simpleCapture := n.normalizeValue(fn, capture)
+			temps = append(temps, captureTemps...)
+			captures = append(captures, simpleCapture)
+		}
+		copy := *v
+		copy.Captures = captures
+		return n.wrapComputed(fn, &copy, temps)
 	case *FieldLoadValue:
 		temps, base := n.normalizeValue(fn, v.Base)
 		copy := *v
@@ -331,6 +347,17 @@ func (n *normalizer) normalizeValueInline(fn *Function, value Value) ([]Instr, V
 		copy := *v
 		copy.Callee = callee
 		copy.Args = args
+		return temps, &copy
+	case *ClosureValue:
+		temps := make([]Instr, 0, len(v.Captures))
+		captures := make([]Value, 0, len(v.Captures))
+		for _, capture := range v.Captures {
+			captureTemps, simpleCapture := n.normalizeValue(fn, capture)
+			temps = append(temps, captureTemps...)
+			captures = append(captures, simpleCapture)
+		}
+		copy := *v
+		copy.Captures = captures
 		return temps, &copy
 	case *FieldLoadValue:
 		temps, base := n.normalizeValue(fn, v.Base)

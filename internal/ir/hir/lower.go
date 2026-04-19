@@ -539,6 +539,16 @@ func (l *lowerer) lowerExpr(expr Expr) ([]Stmt, Expr) {
 			out.Args[i] = lowered
 		}
 		return prelude, &out
+	case *ClosureLit:
+		out := *e
+		out.Captures = append([]Expr(nil), e.Captures...)
+		var prelude []Stmt
+		for i, capture := range out.Captures {
+			capturePrelude, lowered := l.lowerExpr(capture)
+			prelude = append(prelude, capturePrelude...)
+			out.Captures[i] = lowered
+		}
+		return prelude, &out
 	case *SelectorExpr:
 		prelude, left := l.lowerExpr(e.Left)
 		out := *e
@@ -1054,6 +1064,13 @@ func (l *lowerer) rewriteExprIdents(expr Expr, fromName string, fromID int, toNa
 		out.Args = append([]Expr(nil), e.Args...)
 		for i, arg := range out.Args {
 			out.Args[i] = l.rewriteExprIdents(arg, fromName, fromID, toName, toID)
+		}
+		return &out
+	case *ClosureLit:
+		out := *e
+		out.Captures = append([]Expr(nil), e.Captures...)
+		for i, capture := range out.Captures {
+			out.Captures[i] = l.rewriteExprIdents(capture, fromName, fromID, toName, toID)
 		}
 		return &out
 	case *SelectorExpr:

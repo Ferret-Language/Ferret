@@ -1695,8 +1695,11 @@ fn main() -> i32 {
 	if !strings.Contains(text, "fn "+lambdaFn.Name) {
 		t.Fatalf("expected synthetic lambda function in MIR dump, got:\n%s", text)
 	}
-	if !strings.Contains(text, "= "+lambdaFn.Name+"(") {
-		t.Fatalf("expected main to call synthetic lambda function in MIR dump, got:\n%s", text)
+	if !strings.Contains(text, "closure "+lambdaFn.Name+"[") {
+		t.Fatalf("expected main to materialize lambda closure in MIR dump, got:\n%s", text)
+	}
+	if !strings.Contains(text, "(1, 2)") {
+		t.Fatalf("expected main to call lambda closure in MIR dump, got:\n%s", text)
 	}
 }
 
@@ -1731,11 +1734,11 @@ fn main() -> i32 {
 		t.Fatalf("expected synthetic lambda MIR function, got %#v", result.Entry.MIR.Functions)
 	}
 	text := mir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "= "+lambdaFn.Name+"(") {
-		t.Fatalf("expected call to synthetic captured lambda in MIR dump, got:\n%s", text)
+	if !strings.Contains(text, "closure "+lambdaFn.Name+"[5]") {
+		t.Fatalf("expected captured closure value in MIR dump, got:\n%s", text)
 	}
-	if !strings.Contains(text, "= "+lambdaFn.Name+"(5, 2") {
-		t.Fatalf("expected captured arg to be threaded into lambda call, got:\n%s", text)
+	if !strings.Contains(text, "(2)") {
+		t.Fatalf("expected call through captured closure in MIR dump, got:\n%s", text)
 	}
 }
 

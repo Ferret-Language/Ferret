@@ -2415,8 +2415,14 @@ fn main() -> i32 {
 	if !strings.Contains(text, "define i32 @main____lambda") {
 		t.Fatalf("expected synthetic lambda function in llvm output:\n%s", text)
 	}
-	if !strings.Contains(text, "call i32 @main____lambda1(i32 5, i32 2)") {
-		t.Fatalf("expected captured value passed into lambda call in llvm output:\n%s", text)
+	if !strings.Contains(text, "define i32 @__lambda1__closure__thunk(ptr %env, i32 %arg0)") {
+		t.Fatalf("expected captured closure thunk in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "call i32 @main____lambda1(i32 %cap0, i32 %arg0)") {
+		t.Fatalf("expected thunk to forward captured value into lambda call in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "call i32 %_fn_code") || !strings.Contains(text, "ptr %_fn_env") {
+		t.Fatalf("expected indirect closure call with env pointer in llvm output:\n%s", text)
 	}
 }
 
@@ -2500,7 +2506,7 @@ fn main() -> i32 {
 	if !strings.Contains(text, "%local__main__Server = type { [16 x i8] }") {
 		t.Fatalf("expected Server route table type in llvm output:\n%s", text)
 	}
-	if !strings.Contains(text, "private unnamed_addr constant { ptr, ptr } { ptr @main__inc, ptr null }") {
+	if !strings.Contains(text, "private unnamed_addr constant { ptr, ptr } { ptr @main__inc__thunk, ptr null }") {
 		t.Fatalf("expected static function closure object in llvm output:\n%s", text)
 	}
 }

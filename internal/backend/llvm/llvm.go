@@ -41,7 +41,10 @@ type moduleState struct {
 	interfaceVTables  map[becommon.InterfaceVTableKey]string
 	interfaceWrappers map[becommon.InterfaceWrapperKey]struct{}
 	runtimeTypes      map[string]string
+	closureDefs       map[string]*mir.Closure
+	closureThunks     map[string]string
 	functionClosures  map[string]string
+	functionThunks    map[string]string
 	tempValues        map[int]mir.Value
 	debug             *debugState // nil if debug info is disabled
 	fnScopeID         int         // DISubprogram metadata ID for the current function
@@ -1019,7 +1022,10 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 			interfaceVTables:  shared.VTables,
 			interfaceWrappers: shared.Wrappers,
 			runtimeTypes:      shared.RuntimeTypes,
+			closureDefs:       make(map[string]*mir.Closure),
+			closureThunks:     make(map[string]string),
 			functionClosures:  make(map[string]string),
+			functionThunks:    make(map[string]string),
 			tempValues:        make(map[int]mir.Value),
 		}
 	}
@@ -1041,8 +1047,16 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		interfaceVTables:  shared.VTables,
 		interfaceWrappers: shared.Wrappers,
 		runtimeTypes:      shared.RuntimeTypes,
+		closureDefs:       make(map[string]*mir.Closure, len(unit.Module.Closures)),
+		closureThunks:     make(map[string]string),
 		functionClosures:  make(map[string]string),
+		functionThunks:    make(map[string]string),
 		tempValues:        make(map[int]mir.Value),
+	}
+	for _, closure := range unit.Module.Closures {
+		if closure != nil {
+			state.closureDefs[closure.Name] = closure
+		}
 	}
 	return state
 }
@@ -3513,17 +3527,97 @@ func llvmFunctionClosureType() string {
 	return "{ ptr, ptr }"
 }
 
-func ensureFunctionClosureGlobal(state *moduleState, target string) string {
-	if state == nil || target == "" {
+func llvmClosureThunkName(name string) string {
+	return becommon.SanitizeLinkName(name + "__thunk")
+}
+
+func findMIRFunction(state *moduleState, name string) *mir.Function {
+	if state == nil || name == "" {
+		return nil
+	}
+	if state.mod != nil {
+		for _, fn := range state.mod.Functions {
+			if fn != nil && fn.Name == name {
+				return fn
+			}
+		}
+	}
+	for _, mod := range state.modules {
+		if mod == nil {
+			continue
+		}
+		for _, fn := range mod.Functions {
+			if fn != nil && fn.Name == name {
+				return fn
+			}
+		}
+	}
+	return nil
+}
+
+func emitClosureThunk(state *moduleState, thunkName string, target string, retType string, params []string, callArgs []string) {
+	if state == nil || thunkName == "" || target == "" {
+		return
+	}
+	fmt.Fprintf(state.deferredB, "define %s @%s(%s) {\nentry:\n", retType, thunkName, strings.Join(params, ", "))
+	if retType == "void" {
+		fmt.Fprintf(state.deferredB, "  call void @%s(%s)\n", target, strings.Join(callArgs, ", "))
+		fmt.Fprintf(state.deferredB, "  ret void\n")
+	} else {
+		fmt.Fprintf(state.deferredB, "  %%ret = call %s @%s(%s)\n", retType, target, strings.Join(callArgs, ", "))
+		fmt.Fprintf(state.deferredB, "  ret %s %%ret\n", retType)
+	}
+	fmt.Fprintf(state.deferredB, "}\n")
+}
+
+func ensureNamedFunctionThunk(state *moduleState, target string, fnType *typeinfo.FuncType) string {
+	if state == nil || target == "" || fnType == nil {
 		return ""
 	}
-	if sym, ok := state.functionClosures[target]; ok {
+	if sym, ok := state.functionThunks[target]; ok {
 		return sym
 	}
+	retType := "void"
+	if fnType.Result != nil && !isVoidType(fnType.Result) {
+		if isAggregateType(state, fnType.Result) {
+			if tn, err := llvmABITypeName(state, fnType.Result); err == nil {
+				retType = tn
+			}
+		} else if tn, err := llvmBaseType(fnType.Result); err == nil {
+			retType = tn
+		}
+	}
+	params := make([]string, 0, 1+len(fnType.Params))
+	callArgs := make([]string, 0, len(fnType.Params))
+	params = append(params, "ptr %env")
+	for i, param := range fnType.Params {
+		irType, err := llvmBaseType(param.Type)
+		if err != nil {
+			irType = "ptr"
+		}
+		name := fmt.Sprintf("%%arg%d", i)
+		params = append(params, fmt.Sprintf("%s %s", irType, name))
+		callArgs = append(callArgs, fmt.Sprintf("%s %s", irType, name))
+	}
+	thunk := llvmClosureThunkName(target)
+	emitClosureThunk(state, thunk, target, retType, params, callArgs)
+	state.functionThunks[target] = thunk
+	return thunk
+}
+
+func ensureFunctionClosureGlobal(state *moduleState, target string, fnType *typeinfo.FuncType) string {
+	if state == nil || target == "" || fnType == nil {
+		return ""
+	}
+	key := target + "|" + fnType.String()
+	if sym, ok := state.functionClosures[key]; ok {
+		return sym
+	}
+	thunk := ensureNamedFunctionThunk(state, target, fnType)
 	sym := nextPrivateGlobalSymbol(state, "fnval")
 	fmt.Fprintf(state.deferredB, "@%s = private unnamed_addr constant %s { ptr @%s, ptr null }\n",
-		sym, llvmFunctionClosureType(), target)
-	state.functionClosures[target] = sym
+		sym, llvmFunctionClosureType(), thunk)
+	state.functionClosures[key] = sym
 	return sym
 }
 
@@ -3574,6 +3668,109 @@ func lowerCallArgs(state *moduleState, call *mir.CallValue) ([]string, error) {
 	return args, nil
 }
 
+func llvmClosureEnvType(state *moduleState, captures []mir.Value) string {
+	if state == nil || len(captures) == 0 {
+		return llvmFunctionClosureType()
+	}
+	fields := make([]string, 0, len(captures))
+	for _, capture := range captures {
+		if capture == nil || capture.Type() == nil {
+			continue
+		}
+		irType := "ptr"
+		if isAggregateType(state, capture.Type()) {
+			if tn, err := llvmABITypeName(state, capture.Type()); err == nil {
+				irType = tn
+			}
+		} else if tn, err := llvmBaseType(capture.Type()); err == nil {
+			irType = tn
+		}
+		fields = append(fields, irType)
+	}
+	if len(fields) == 0 {
+		return "{}"
+	}
+	return "{ " + strings.Join(fields, ", ") + " }"
+}
+
+func ensureClosureThunk(state *moduleState, closureName string, funcName string, captures []mir.Value, fnType *typeinfo.FuncType) string {
+	if state == nil || closureName == "" || funcName == "" || fnType == nil {
+		return ""
+	}
+	if sym, ok := state.closureThunks[closureName]; ok {
+		return sym
+	}
+	targetFn := findMIRFunction(state, funcName)
+	if targetFn == nil {
+		return ""
+	}
+	thunk := llvmClosureThunkName(closureName)
+	envType := llvmClosureEnvType(state, captures)
+	retType := "void"
+	if fnType.Result != nil && !isVoidType(fnType.Result) {
+		if isAggregateType(state, fnType.Result) {
+			if tn, err := llvmABITypeName(state, fnType.Result); err == nil {
+				retType = tn
+			}
+		} else if tn, err := llvmBaseType(fnType.Result); err == nil {
+			retType = tn
+		}
+	}
+	params := make([]string, 0, 1+len(fnType.Params))
+	params = append(params, "ptr %env")
+	loadLines := make([]string, 0, len(captures)*2)
+	callParts := make([]string, 0, len(targetFn.Params))
+	for i, capture := range captures {
+		if capture == nil || capture.Type() == nil {
+			continue
+		}
+		irType, err := llvmBaseType(capture.Type())
+		if err != nil {
+			return ""
+		}
+		slot := fmt.Sprintf("%%cap_ptr%d", i)
+		load := fmt.Sprintf("%%cap%d", i)
+		loadLines = append(loadLines,
+			fmt.Sprintf("%s = getelementptr inbounds %s, ptr %%env, i32 0, i32 %d", slot, envType, i),
+			fmt.Sprintf("%s = load %s, ptr %s", load, irType, slot),
+		)
+		callParts = append(callParts, fmt.Sprintf("%s %s", irType, load))
+	}
+	userArgNames := make([]string, 0, len(fnType.Params))
+	for i, param := range fnType.Params {
+		irType, err := llvmBaseType(param.Type)
+		if err != nil {
+			irType = "ptr"
+		}
+		name := fmt.Sprintf("%%arg%d", i)
+		params = append(params, fmt.Sprintf("%s %s", irType, name))
+		userArgNames = append(userArgNames, fmt.Sprintf("%s %s", irType, name))
+	}
+	body := &strings.Builder{}
+	fmt.Fprintf(body, "define %s @%s(%s) {\nentry:\n", retType, thunk, strings.Join(params, ", "))
+	for _, line := range loadLines {
+		fmt.Fprintf(body, "  %s\n", line)
+	}
+	callParts = append(callParts, userArgNames...)
+	target := targetFn.Name
+	if targetFn.LinkName != "" {
+		target = becommon.SanitizeLinkName(targetFn.LinkName)
+	} else {
+		target = llvmSymbol(state, []string{targetFn.Name})
+	}
+	if retType == "void" {
+		fmt.Fprintf(body, "  call void @%s(%s)\n", target, strings.Join(callParts, ", "))
+		fmt.Fprintf(body, "  ret void\n")
+	} else {
+		fmt.Fprintf(body, "  %%ret = call %s @%s(%s)\n", retType, target, strings.Join(callParts, ", "))
+		fmt.Fprintf(body, "  ret %s %%ret\n", retType)
+	}
+	fmt.Fprintf(body, "}\n")
+	state.deferredB.WriteString(body.String())
+	state.closureThunks[closureName] = thunk
+	return thunk
+}
+
 func lowerDirectCallee(state *moduleState, value mir.Value) (string, bool) {
 	named, ok := value.(*mir.NameValue)
 	if !ok || named == nil {
@@ -3594,9 +3791,13 @@ func lowerDirectCallee(state *moduleState, value mir.Value) (string, bool) {
 func lowerFunctionValueCall(state *moduleState, targetName string, targetType typeinfo.Type, closurePtr string, args []string) (string, error) {
 	codeAddr := freshTemp(state, "fn_code_addr")
 	code := freshTemp(state, "fn_code")
+	envAddr := freshTemp(state, "fn_env_addr")
+	env := freshTemp(state, "fn_env")
 	lines := []string{
 		fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i32 0, i32 0", codeAddr, llvmFunctionClosureType(), closurePtr),
 		fmt.Sprintf("%s = load ptr, ptr %s", code, codeAddr),
+		fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i32 0, i32 1", envAddr, llvmFunctionClosureType(), closurePtr),
+		fmt.Sprintf("%s = load ptr, ptr %s", env, envAddr),
 	}
 
 	var retStr string
@@ -3615,7 +3816,8 @@ func lowerFunctionValueCall(state *moduleState, targetName string, targetType ty
 	} else {
 		retStr = "void"
 	}
-	callText := fmt.Sprintf("call %s %s(%s)", retStr, code, strings.Join(args, ", "))
+	callArgs := append([]string{fmt.Sprintf("ptr %s", env)}, args...)
+	callText := fmt.Sprintf("call %s %s(%s)", retStr, code, strings.Join(callArgs, ", "))
 	if targetName == "" || retStr == "void" {
 		lines = append(lines, callText)
 		return strings.Join(lines, "\n"), nil
@@ -4832,7 +5034,8 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 			if v.LinkName != "" {
 				target = becommon.SanitizeLinkName(v.LinkName)
 			}
-			return "@" + ensureFunctionClosureGlobal(state, target), nil
+			fnType, _ := v.Type().(*typeinfo.FuncType)
+			return "@" + ensureFunctionClosureGlobal(state, target, fnType), nil
 		}
 		if !isAggregateType(state, v.Type()) {
 			irType, err := llvmBaseType(v.Type())
@@ -4880,6 +5083,48 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		return lowerTypeTest(state, v)
 	case *mir.CallValue:
 		return "", fmt.Errorf("call value must be lowered in assignment/eval context")
+	case *mir.ClosureValue:
+		fnType, _ := v.Type().(*typeinfo.FuncType)
+		if fnType == nil {
+			return "", fmt.Errorf("unknown closure value %q", v.Name)
+		}
+		thunk := ensureClosureThunk(state, v.Name, v.FuncName, v.Captures, fnType)
+		if thunk == "" {
+			return "", fmt.Errorf("missing closure thunk for %q", v.Name)
+		}
+		envPtr := "null"
+		if len(v.Captures) > 0 {
+			envType := llvmClosureEnvType(state, v.Captures)
+			envSlot := freshTemp(state, "closure_env")
+			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = alloca %s, align %d", envSlot, envType, abi.PointerBytes()))
+			for i, capture := range v.Captures {
+				irType, err := llvmBaseType(capture.Type())
+				if err != nil {
+					return "", err
+				}
+				valueExpr, err := lowerValue(state, capture)
+				if err != nil {
+					return "", err
+				}
+				fieldPtr := freshTemp(state, "closure_cap")
+				state.pendingLines = append(state.pendingLines,
+					fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d", fieldPtr, envType, envSlot, i),
+					fmt.Sprintf("store %s %s, ptr %s", irType, valueExpr, fieldPtr),
+				)
+			}
+			envPtr = envSlot
+		}
+		closureSlot := freshTemp(state, "closure")
+		codePtr := freshTemp(state, "closure_code")
+		envField := freshTemp(state, "closure_env_ptr")
+		state.pendingLines = append(state.pendingLines,
+			fmt.Sprintf("%s = alloca %s, align %d", closureSlot, llvmFunctionClosureType(), abi.PointerBytes()),
+			fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i32 0, i32 0", codePtr, llvmFunctionClosureType(), closureSlot),
+			fmt.Sprintf("store ptr @%s, ptr %s", thunk, codePtr),
+			fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i32 0, i32 1", envField, llvmFunctionClosureType(), closureSlot),
+			fmt.Sprintf("store ptr %s, ptr %s", envPtr, envField),
+		)
+		return closureSlot, nil
 	case *mir.FieldLoadValue:
 		return "", fmt.Errorf("field load must be lowered in assignment context")
 	case *mir.CompositeValue:
