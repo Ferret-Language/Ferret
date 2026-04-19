@@ -2511,6 +2511,75 @@ fn main() -> i32 {
 	}
 }
 
+func TestLowerPassingCapturedLambdaAsFunctionValueToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+    return f(x)
+}
+
+fn main() -> i32 {
+    let k = 10
+    let addk = (y: i32) => k + y
+    return apply(addk, 2)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "__closure__thunk") {
+		t.Fatalf("expected captured closure thunk in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "call i32 @main__apply(ptr ") {
+		t.Fatalf("expected closure value to be passed into apply in llvm output:\n%s", text)
+	}
+}
+
+func TestLowerReturningCapturedLambdaAsFunctionValueToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn makeAdder() -> fn(i32) -> i32 {
+    let k = 10
+    let addk = (y: i32) => k + y
+    return addk
+}
+
+fn main() -> i32 {
+    let add2 = makeAdder()
+    return add2(3)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "define ptr @main__makeAdder()") {
+		t.Fatalf("expected makeAdder to return function value pointer in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "call i32 %_fn_code") || !strings.Contains(text, "ptr %_fn_env") {
+		t.Fatalf("expected indirect closure call with env from returned value in llvm output:\n%s", text)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

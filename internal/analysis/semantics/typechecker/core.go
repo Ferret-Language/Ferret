@@ -84,7 +84,6 @@ type checker struct {
 	currentGenericFunc         *symbols.Symbol
 	currentGenericRequirements []*typeinfo.GenericRequirement
 	lambdaScopes               []*lambdaScope
-	allowCapturedLambdaValue   int
 }
 
 func (c *checker) pushTypeParams(mod *context.Module, owner ast.Node, params []ast.TypeParam) []*typeinfo.TypeParam {

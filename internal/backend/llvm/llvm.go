@@ -41,7 +41,6 @@ type moduleState struct {
 	interfaceVTables  map[becommon.InterfaceVTableKey]string
 	interfaceWrappers map[becommon.InterfaceWrapperKey]struct{}
 	runtimeTypes      map[string]string
-	closureDefs       map[string]*mir.Closure
 	closureThunks     map[string]string
 	functionClosures  map[string]string
 	functionThunks    map[string]string
@@ -1022,7 +1021,6 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 			interfaceVTables:  shared.VTables,
 			interfaceWrappers: shared.Wrappers,
 			runtimeTypes:      shared.RuntimeTypes,
-			closureDefs:       make(map[string]*mir.Closure),
 			closureThunks:     make(map[string]string),
 			functionClosures:  make(map[string]string),
 			functionThunks:    make(map[string]string),
@@ -1047,16 +1045,10 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		interfaceVTables:  shared.VTables,
 		interfaceWrappers: shared.Wrappers,
 		runtimeTypes:      shared.RuntimeTypes,
-		closureDefs:       make(map[string]*mir.Closure, len(unit.Module.Closures)),
 		closureThunks:     make(map[string]string),
 		functionClosures:  make(map[string]string),
 		functionThunks:    make(map[string]string),
 		tempValues:        make(map[int]mir.Value),
-	}
-	for _, closure := range unit.Module.Closures {
-		if closure != nil {
-			state.closureDefs[closure.Name] = closure
-		}
 	}
 	return state
 }
@@ -3668,29 +3660,51 @@ func lowerCallArgs(state *moduleState, call *mir.CallValue) ([]string, error) {
 	return args, nil
 }
 
-func llvmClosureEnvType(state *moduleState, captures []mir.Value) string {
+type closureCaptureField struct {
+	Value      mir.Value
+	IRType     string
+	ByvalType  string
+	ByvalAlign int64
+}
+
+func closureCaptureFields(state *moduleState, captures []mir.Value) ([]closureCaptureField, string, error) {
 	if state == nil || len(captures) == 0 {
-		return llvmFunctionClosureType()
+		return nil, "{}", nil
 	}
-	fields := make([]string, 0, len(captures))
+	fields := make([]closureCaptureField, 0, len(captures))
+	typeParts := make([]string, 0, len(captures))
 	for _, capture := range captures {
 		if capture == nil || capture.Type() == nil {
 			continue
 		}
-		irType := "ptr"
+		field := closureCaptureField{Value: capture}
 		if isAggregateType(state, capture.Type()) {
-			if tn, err := llvmABITypeName(state, capture.Type()); err == nil {
-				irType = tn
+			typeName, err := llvmABITypeName(state, capture.Type())
+			if err != nil {
+				return nil, "", err
 			}
-		} else if tn, err := llvmBaseType(capture.Type()); err == nil {
-			irType = tn
+			_, align, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), capture.Type())
+			if err != nil {
+				return nil, "", err
+			}
+			field.IRType = "ptr"
+			field.ByvalType = typeName
+			field.ByvalAlign = align
+			typeParts = append(typeParts, "ptr")
+		} else {
+			irType, err := llvmBaseType(capture.Type())
+			if err != nil {
+				return nil, "", err
+			}
+			field.IRType = irType
+			typeParts = append(typeParts, irType)
 		}
-		fields = append(fields, irType)
+		fields = append(fields, field)
 	}
-	if len(fields) == 0 {
-		return "{}"
+	if len(typeParts) == 0 {
+		return nil, "{}", nil
 	}
-	return "{ " + strings.Join(fields, ", ") + " }"
+	return fields, "{ " + strings.Join(typeParts, ", ") + " }", nil
 }
 
 func ensureClosureThunk(state *moduleState, closureName string, funcName string, captures []mir.Value, fnType *typeinfo.FuncType) string {
@@ -3705,7 +3719,10 @@ func ensureClosureThunk(state *moduleState, closureName string, funcName string,
 		return ""
 	}
 	thunk := llvmClosureThunkName(closureName)
-	envType := llvmClosureEnvType(state, captures)
+	captureFields, envType, err := closureCaptureFields(state, captures)
+	if err != nil {
+		return ""
+	}
 	retType := "void"
 	if fnType.Result != nil && !isVoidType(fnType.Result) {
 		if isAggregateType(state, fnType.Result) {
@@ -3718,23 +3735,20 @@ func ensureClosureThunk(state *moduleState, closureName string, funcName string,
 	}
 	params := make([]string, 0, 1+len(fnType.Params))
 	params = append(params, "ptr %env")
-	loadLines := make([]string, 0, len(captures)*2)
+	loadLines := make([]string, 0, len(captureFields)*2)
 	callParts := make([]string, 0, len(targetFn.Params))
-	for i, capture := range captures {
-		if capture == nil || capture.Type() == nil {
-			continue
-		}
-		irType, err := llvmBaseType(capture.Type())
-		if err != nil {
-			return ""
-		}
+	for i, field := range captureFields {
 		slot := fmt.Sprintf("%%cap_ptr%d", i)
 		load := fmt.Sprintf("%%cap%d", i)
 		loadLines = append(loadLines,
 			fmt.Sprintf("%s = getelementptr inbounds %s, ptr %%env, i32 0, i32 %d", slot, envType, i),
-			fmt.Sprintf("%s = load %s, ptr %s", load, irType, slot),
+			fmt.Sprintf("%s = load %s, ptr %s", load, field.IRType, slot),
 		)
-		callParts = append(callParts, fmt.Sprintf("%s %s", irType, load))
+		if field.ByvalType != "" {
+			callParts = append(callParts, fmt.Sprintf("ptr byval(%s) align %d %s", field.ByvalType, field.ByvalAlign, load))
+		} else {
+			callParts = append(callParts, fmt.Sprintf("%s %s", field.IRType, load))
+		}
 	}
 	userArgNames := make([]string, 0, len(fnType.Params))
 	for i, param := range fnType.Params {
@@ -5094,31 +5108,35 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		}
 		envPtr := "null"
 		if len(v.Captures) > 0 {
-			envType := llvmClosureEnvType(state, v.Captures)
-			envSlot := freshTemp(state, "closure_env")
-			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = alloca %s, align %d", envSlot, envType, abi.PointerBytes()))
-			for i, capture := range v.Captures {
-				irType, err := llvmBaseType(capture.Type())
-				if err != nil {
-					return "", err
-				}
-				valueExpr, err := lowerValue(state, capture)
+			captureFields, envType, err := closureCaptureFields(state, v.Captures)
+			if err != nil {
+				return "", err
+			}
+			envSlot := freshTemp(state, "closure_env_heap")
+			envBytes := abi.PointerBytes() * int64(len(captureFields))
+			if envBytes <= 0 {
+				envBytes = abi.PointerBytes()
+			}
+			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = call ptr @malloc(%s %d)", envSlot, llvmABIIntType(), envBytes))
+			for i, field := range captureFields {
+				valueExpr, err := lowerValue(state, field.Value)
 				if err != nil {
 					return "", err
 				}
 				fieldPtr := freshTemp(state, "closure_cap")
 				state.pendingLines = append(state.pendingLines,
 					fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d", fieldPtr, envType, envSlot, i),
-					fmt.Sprintf("store %s %s, ptr %s", irType, valueExpr, fieldPtr),
+					fmt.Sprintf("store %s %s, ptr %s", field.IRType, valueExpr, fieldPtr),
 				)
 			}
 			envPtr = envSlot
 		}
-		closureSlot := freshTemp(state, "closure")
+		closureSlot := freshTemp(state, "closure_heap")
 		codePtr := freshTemp(state, "closure_code")
 		envField := freshTemp(state, "closure_env_ptr")
+		closureBytes := abi.PointerBytes() * 2
 		state.pendingLines = append(state.pendingLines,
-			fmt.Sprintf("%s = alloca %s, align %d", closureSlot, llvmFunctionClosureType(), abi.PointerBytes()),
+			fmt.Sprintf("%s = call ptr @malloc(%s %d)", closureSlot, llvmABIIntType(), closureBytes),
 			fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i32 0, i32 0", codePtr, llvmFunctionClosureType(), closureSlot),
 			fmt.Sprintf("store ptr @%s, ptr %s", thunk, codePtr),
 			fmt.Sprintf("%s = getelementptr inbounds %s, ptr %s, i32 0, i32 1", envField, llvmFunctionClosureType(), closureSlot),
