@@ -6,6 +6,7 @@ import (
 	"compiler/internal/analysis/semantics/typeinfo"
 	"compiler/internal/core/context"
 	"compiler/internal/core/phase"
+	"compiler/internal/core/source"
 	"compiler/internal/frontend/ast"
 )
 
@@ -84,6 +85,7 @@ type checker struct {
 	currentGenericFunc         *symbols.Symbol
 	currentGenericRequirements []*typeinfo.GenericRequirement
 	lambdaScopes               []*lambdaScope
+	movedSymbols               map[symbols.SymbolID]source.Location
 }
 
 func (c *checker) pushTypeParams(mod *context.Module, owner ast.Node, params []ast.TypeParam) []*typeinfo.TypeParam {
@@ -271,6 +273,42 @@ func (c *checker) bindNodeSymbolResolution(node ast.Node, sym *symbols.Symbol) {
 	})
 }
 
+func (c *checker) markMovedSymbol(sym *symbols.Symbol, loc source.Location) {
+	if c == nil || sym == nil {
+		return
+	}
+	if !c.symbolMovesOwnership(sym) {
+		return
+	}
+	if c.movedSymbols == nil {
+		c.movedSymbols = make(map[symbols.SymbolID]source.Location)
+	}
+	if _, exists := c.movedSymbols[sym.ID]; exists {
+		return
+	}
+	c.movedSymbols[sym.ID] = loc
+}
+
+func (c *checker) movedSymbolLocation(sym *symbols.Symbol) (source.Location, bool) {
+	if c == nil || sym == nil || len(c.movedSymbols) == 0 {
+		return source.Location{}, false
+	}
+	loc, ok := c.movedSymbols[sym.ID]
+	return loc, ok
+}
+
+func (c *checker) symbolMovesOwnership(sym *symbols.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	switch sym.Kind {
+	case symbols.SymbolParam, symbols.SymbolVar:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *checker) ownerTypeDeclForFunc(mod *context.Module, fn *ast.FuncDecl) (*context.Module, *ast.TypeDecl) {
 	if c == nil || fn == nil || fn.OwnerType == nil {
 		return nil, nil
@@ -314,9 +352,10 @@ func CheckModule(ctx *context.CompilerContext, mod *context.Module) {
 		return
 	}
 	c := &checker{
-		ctx:  ctx,
-		mod:  mod,
-		info: typeinfo.NewModuleInfo(),
+		ctx:          ctx,
+		mod:          mod,
+		info:         typeinfo.NewModuleInfo(),
+		movedSymbols: make(map[symbols.SymbolID]source.Location),
 	}
 
 	seenSymbols := make(map[symbols.SymbolID]struct{})

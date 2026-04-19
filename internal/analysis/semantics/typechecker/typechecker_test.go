@@ -587,6 +587,50 @@ fn main() -> void {
 	}
 }
 
+func TestTypecheckerRejectsUseAfterMoveCapture(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let x = 1
+    let f = move () => x
+    let _ = f()
+    return x
+}
+`)
+
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected use-after-move diagnostic")
+	}
+	found := false
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove && strings.Contains(diag.Message, "use of moved value") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected use-after-move diagnostic, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsUseAfterReadonlyCapture(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> i32 {
+    let x = 1
+    let f = () => x
+    let _ = f()
+    return x
+}
+`)
+
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerAllowsPassingCapturedLambdaAsFunctionValue(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

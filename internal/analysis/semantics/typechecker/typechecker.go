@@ -489,6 +489,19 @@ func (c *checker) getTypeOfIdent(scope *refineScope, ident *ast.Ident) typeinfo.
 		return typeinfo.InvalidType{}
 	}
 	if res.Kind == binding.ResolutionSymbol && res.Symbol != nil {
+		if movedAt, moved := c.movedSymbolLocation(res.Symbol); moved {
+			loc := ident.Location
+			diag := diagnostics.NewError(fmt.Sprintf("use of moved value %q", res.Symbol.Name)).
+				WithCode(diagnostics.ErrUseAfterMove).
+				WithPrimaryLabel(&loc, "value used after move capture")
+			if movedAt.Start != nil {
+				diag = diag.WithSecondaryLabel(&movedAt, "value moved into closure here")
+			}
+			c.ctx.Diagnostics.Add(diag)
+			typ := typeinfo.InvalidType{}
+			c.info.BindNode(ident, typ)
+			return typ
+		}
 		c.reportLambdaCapture(ident, res.Symbol)
 		if scope != nil && len(ident.Path) == 1 {
 			if typ, ok := c.lookupRefinedType(scope, ident); ok && typ != nil {
@@ -1299,6 +1312,11 @@ func (c *checker) typeOfLambda(scope *refineScope, expr *ast.LambdaExpr, expecte
 			return orderedCaptures[i].ID < orderedCaptures[j].ID
 		})
 		c.info.BindLambdaCaptures(expr, orderedCaptures)
+		if expr.IsMove {
+			for _, sym := range orderedCaptures {
+				c.markMovedSymbol(sym, expr.Location)
+			}
+		}
 	}
 	c.info.BindNode(expr, fnType)
 	return fnType
