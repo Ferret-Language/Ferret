@@ -270,7 +270,7 @@ func (a *ownershipAnalyzer) releaseDeadBorrows(scope *valueScope, keep cfg.Local
 		return
 	}
 	for id, slot := range scope.values {
-		if slot == nil || slot.borrowOf < 0 {
+		if slot == nil || len(slot.borrows) == 0 {
 			continue
 		}
 		if keep.Has(id) || a.deferUses.Has(id) {
@@ -691,7 +691,7 @@ func (a *ownershipAnalyzer) checkAddrOfValue(scope *valueScope, value *mir.AddrO
 		}
 		return
 	}
-	if owner.mutBorrow {
+	if owner.mutFrozen > 0 {
 		a.reportBorrowConflict(value.Loc(), root.localID, "cannot create immutable borrow while a mutable borrow is live")
 	}
 }
@@ -991,45 +991,84 @@ func (a *ownershipAnalyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, 
 	if value == nil {
 		return
 	}
-	info, ok := a.borrowValueInfo(scope, value)
-	if !ok || !info.owner.isLocal() {
+	borrows, ok := a.borrowValueInfos(scope, value)
+	if !ok || len(borrows) == 0 {
 		return
 	}
-	owner, _ := scope.Lookup(info.owner.localID)
-	if owner == nil {
-		return
-	}
-	if info.mutable {
-		if owner.frozen > 0 {
-			a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create mutable borrow while another borrow is live")
+	// Validate first to avoid partial freeze updates.
+	for _, info := range borrows {
+		if !info.owner.isLocal() {
+			continue
+		}
+		owner, _ := scope.Lookup(info.owner.localID)
+		if owner == nil {
+			continue
+		}
+		if info.mutable {
+			if owner.frozen > 0 {
+				a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create mutable borrow while another borrow is live")
+				return
+			}
+		} else if owner.mutFrozen > 0 {
+			a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create immutable borrow while a mutable borrow is live")
 			return
 		}
-	} else if owner.mutBorrow {
-		a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create immutable borrow while a mutable borrow is live")
-		return
 	}
-	slot.borrowOf = info.owner.localID
-	slot.borrowMut = info.mutable
-	slot.borrowLoc = info.loc
-	owner.frozen++
-	if info.mutable {
-		owner.mutBorrow = true
+
+	// Stable ordering + de-dupe for deterministic state merges.
+	slices.SortFunc(borrows, func(a, b borrowInfo) int {
+		if a.owner.localID < b.owner.localID {
+			return -1
+		}
+		if a.owner.localID > b.owner.localID {
+			return 1
+		}
+		if !a.mutable && b.mutable {
+			return -1
+		}
+		if a.mutable && !b.mutable {
+			return 1
+		}
+		return 0
+	})
+	uniq := borrows[:0]
+	var lastOwner int = -1
+	var lastMut bool
+	for _, info := range borrows {
+		if !info.owner.isLocal() {
+			continue
+		}
+		if info.owner.localID == lastOwner && info.mutable == lastMut {
+			continue
+		}
+		lastOwner = info.owner.localID
+		lastMut = info.mutable
+		uniq = append(uniq, info)
+	}
+	borrows = uniq
+
+	slot.borrows = make([]borrowSlot, 0, len(borrows))
+	for _, info := range borrows {
+		if !info.owner.isLocal() {
+			continue
+		}
+		owner, _ := scope.Lookup(info.owner.localID)
+		if owner == nil {
+			continue
+		}
+		owner.frozen++
+		if info.mutable {
+			owner.mutFrozen++
+		}
+		slot.borrows = append(slot.borrows, borrowSlot{owner: info.owner.localID, mutable: info.mutable, loc: info.loc})
 	}
 }
 
 func (a *ownershipAnalyzer) releaseBorrowValue(scope *valueScope, slot *valueInfo) {
-	if scope == nil || slot == nil || slot.borrowOf < 0 {
+	if scope == nil || slot == nil || len(slot.borrows) == 0 {
 		return
 	}
-	if owner, ok := scope.Lookup(slot.borrowOf); ok && owner != nil && owner.frozen > 0 {
-		owner.frozen--
-		if slot.borrowMut && owner.frozen == 0 {
-			owner.mutBorrow = false
-		}
-	}
-	slot.borrowOf = -1
-	slot.borrowMut = false
-	slot.borrowLoc = source.Location{}
+	releaseBorrows(scope, slot)
 }
 
 func (a *ownershipAnalyzer) rebindBorrowAssignment(scope *valueScope, left mir.Place, right mir.Value) {
@@ -1209,7 +1248,7 @@ func (a *ownershipAnalyzer) requireActivePath(scope *valueScope, root int, path 
 		a.reportMovedPathUse(root, path, loc, info.moveLoc, info.movedPath)
 		return
 	}
-	if info.mutBorrow || a.hasActiveMutableBorrowOf(scope, root) {
+	if a.hasActiveMutableBorrowOf(scope, root) {
 		a.reportBorrowConflict(loc, root, "cannot use value while a mutable borrow is live")
 		return
 	}
@@ -1228,15 +1267,8 @@ func (a *ownershipAnalyzer) hasActiveMutableBorrowOf(scope *valueScope, root int
 	if scope == nil || root < 0 {
 		return false
 	}
-	for _, slot := range scope.values {
-		if slot == nil {
-			continue
-		}
-		if slot.borrowOf == root && slot.borrowMut {
-			return true
-		}
-	}
-	return false
+	slot, _ := scope.Lookup(root)
+	return slot != nil && slot.mutFrozen > 0
 }
 
 func (a *ownershipAnalyzer) reportPartialMoveUse(root int, loc source.Location, info *valueInfo) {
@@ -1383,40 +1415,81 @@ func (a *ownershipAnalyzer) reportBorrowEscapeIfNeeded(scope *valueScope, value 
 }
 
 func (a *ownershipAnalyzer) borrowValueInfo(scope *valueScope, value mir.Value) (borrowInfo, bool) {
-	if value == nil {
+	infos, ok := a.borrowValueInfos(scope, value)
+	if !ok || len(infos) == 0 {
 		return borrowInfo{}, false
+	}
+	return infos[0], true
+}
+
+func (a *ownershipAnalyzer) borrowValueInfos(scope *valueScope, value mir.Value) ([]borrowInfo, bool) {
+	if value == nil {
+		return nil, false
 	}
 	switch v := value.(type) {
 	case *mir.LocalValue:
 		if info, ok := a.temps[v.LocalID]; ok && info.borrow != nil {
-			return *info.borrow, true
+			return []borrowInfo{*info.borrow}, true
 		}
 		if scope != nil {
-			if slot, _ := scope.Lookup(v.LocalID); slot != nil && slot.borrowOf >= 0 {
-				return borrowInfo{owner: ownerLocal(slot.borrowOf), loc: slot.borrowLoc, mutable: slot.borrowMut}, true
+			if slot, _ := scope.Lookup(v.LocalID); slot != nil && len(slot.borrows) > 0 {
+				out := make([]borrowInfo, 0, len(slot.borrows))
+				for _, b := range slot.borrows {
+					if b.owner < 0 {
+						continue
+					}
+					out = append(out, borrowInfo{owner: ownerLocal(b.owner), loc: b.loc, mutable: b.mutable})
+				}
+				if len(out) > 0 {
+					return out, true
+				}
 			}
 		}
 	case *mir.AddrOfValue:
 		if v.Raw {
-			return borrowInfo{}, false
+			return nil, false
 		}
 		root, _, ok := a.borrowSourcePath(v.Source)
 		if !ok {
-			return borrowInfo{}, false
+			return nil, false
 		}
-		return borrowInfo{owner: root, loc: v.Loc(), mutable: v.Mutable}, true
+		return []borrowInfo{{owner: root, loc: v.Loc(), mutable: v.Mutable}}, true
 	case *mir.UnaryValue:
 		if v.Op == "&" || v.Op == "&mut" {
 			root, _, ok := a.borrowSourcePath(v.Right)
 			if !ok {
-				return borrowInfo{}, false
+				return nil, false
 			}
-			return borrowInfo{owner: root, loc: v.Loc(), mutable: v.Op == "&mut"}, true
+			return []borrowInfo{{owner: root, loc: v.Loc(), mutable: v.Op == "&mut"}}, true
+		}
+	case *mir.ClosureValue:
+		var out []borrowInfo
+		for _, cap := range v.Captures {
+			infos, ok := a.borrowValueInfos(scope, cap)
+			if !ok || len(infos) == 0 {
+				continue
+			}
+			out = append(out, infos...)
+		}
+		if len(out) > 0 {
+			return out, true
+		}
+	case *mir.CompositeValue:
+		var out []borrowInfo
+		for _, item := range v.Items {
+			infos, ok := a.borrowValueInfos(scope, item.Value)
+			if !ok || len(infos) == 0 {
+				continue
+			}
+			out = append(out, infos...)
+		}
+		if len(out) > 0 {
+			return out, true
 		}
 	case *mir.InterfaceValue:
-		return a.borrowValueInfo(scope, v.Value)
+		return a.borrowValueInfos(scope, v.Value)
 	}
-	return borrowInfo{}, false
+	return nil, false
 }
 
 func (a *ownershipAnalyzer) reportBorrowConflict(loc source.Location, localID int, message string) {

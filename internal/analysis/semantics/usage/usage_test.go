@@ -390,6 +390,27 @@ func TestUsageDoesNotWarnWhenMutableBindingIsModifiedThroughMutRef(t *testing.T)
 	}
 }
 
+func TestUsageDoesNotWarnWhenMutableBindingIsModifiedThroughLambdaCapture(t *testing.T) {
+	root := t.TempDir()
+	mustWriteUsage(t, filepath.Join(root, "main.fer"), `fn main() -> void {
+    let mut x = 1
+    let apply = () => { x = 2 }
+    apply()
+    _ = x
+}
+`)
+
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.WarnUnmodifiedMutable && diag.Message == `"x" is never modified` {
+			t.Fatalf("did not expect never-modified mutable warning, got %#v", result.Diagnostics.Diagnostics())
+		}
+	}
+}
+
 func TestUsageDoesNotWarnOnMutableSliceElementMutation(t *testing.T) {
 	root := t.TempDir()
 	mustWriteUsage(t, filepath.Join(root, "main.fer"), `

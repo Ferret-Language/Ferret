@@ -17,14 +17,18 @@ type valueInfo struct {
 	movedPath string
 	movedSubs map[string]source.Location
 	frozen    int
-	mutBorrow bool
-	borrowOf  int
-	borrowMut bool
-	borrowLoc source.Location
+	mutFrozen int
+	borrows   []borrowSlot
 }
 
 type valueScope struct {
 	values map[int]*valueInfo
+}
+
+type borrowSlot struct {
+	owner   int
+	mutable bool
+	loc     source.Location
 }
 
 func newValueScope() *valueScope {
@@ -40,7 +44,6 @@ func (s *valueScope) Declare(id int, info valueInfo) *valueInfo {
 		concrete: info.concrete,
 		mutable:  info.mutable,
 		constant: info.constant,
-		borrowOf: -1,
 	}
 	if len(info.movedSubs) > 0 {
 		slot.movedSubs = cloneMovedSubs(info.movedSubs)
@@ -83,20 +86,14 @@ func (s *valueScope) TrimToLiveOut(live cfg.LocalSet) {
 		if info == nil || live.Has(id) {
 			continue
 		}
-		if info.borrowOf >= 0 {
-			if owner, ok := s.values[info.borrowOf]; ok && owner != nil && owner.frozen > 0 {
-				owner.frozen--
-			}
-		}
+		releaseBorrows(s, info)
 		info.moved = false
 		info.moveLoc = source.Location{}
 		info.movedPath = ""
 		info.movedSubs = nil
 		info.frozen = 0
-		info.mutBorrow = false
-		info.borrowOf = -1
-		info.borrowMut = false
-		info.borrowLoc = source.Location{}
+		info.mutFrozen = 0
+		info.borrows = nil
 	}
 }
 
@@ -138,10 +135,8 @@ func equalValueInfo(a, b *valueInfo) bool {
 		a.movedPath == b.movedPath &&
 		equalMovedSubs(a.movedSubs, b.movedSubs) &&
 		a.frozen == b.frozen &&
-		a.mutBorrow == b.mutBorrow &&
-		a.borrowOf == b.borrowOf &&
-		a.borrowMut == b.borrowMut &&
-		a.borrowLoc == b.borrowLoc
+		a.mutFrozen == b.mutFrozen &&
+		equalBorrowSlots(a.borrows, b.borrows)
 }
 
 func mergeValueInfo(a, b *valueInfo) *valueInfo {
@@ -178,19 +173,13 @@ func mergeValueInfo(a, b *valueInfo) *valueInfo {
 	if b.frozen > out.frozen {
 		out.frozen = b.frozen
 	}
-	out.mutBorrow = a.mutBorrow || b.mutBorrow
-	if a.borrowOf == b.borrowOf {
-		out.borrowOf = a.borrowOf
-		out.borrowMut = a.borrowMut || b.borrowMut
-		if a.borrowLoc.Start != nil {
-			out.borrowLoc = a.borrowLoc
-		} else {
-			out.borrowLoc = b.borrowLoc
-		}
+	if b.mutFrozen > out.mutFrozen {
+		out.mutFrozen = b.mutFrozen
+	}
+	if equalBorrowSlots(a.borrows, b.borrows) {
+		out.borrows = cloneBorrowSlots(a.borrows)
 	} else {
-		out.borrowOf = -1
-		out.borrowMut = false
-		out.borrowLoc = source.Location{}
+		out.borrows = nil
 	}
 	return &out
 }
@@ -216,6 +205,49 @@ func equalMovedSubs(a, b map[string]source.Location) bool {
 		}
 	}
 	return true
+}
+
+func equalBorrowSlots(a, b []borrowSlot) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].owner != b[i].owner || a[i].mutable != b[i].mutable || a[i].loc != b[i].loc {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneBorrowSlots(in []borrowSlot) []borrowSlot {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]borrowSlot, len(in))
+	copy(out, in)
+	return out
+}
+
+func releaseBorrows(scope *valueScope, info *valueInfo) {
+	if scope == nil || info == nil || len(info.borrows) == 0 {
+		return
+	}
+	for _, b := range info.borrows {
+		if b.owner < 0 {
+			continue
+		}
+		owner, ok := scope.values[b.owner]
+		if !ok || owner == nil {
+			continue
+		}
+		if owner.frozen > 0 {
+			owner.frozen--
+		}
+		if b.mutable && owner.mutFrozen > 0 {
+			owner.mutFrozen--
+		}
+	}
+	info.borrows = nil
 }
 
 func mergeMovedSubs(a, b map[string]source.Location) map[string]source.Location {

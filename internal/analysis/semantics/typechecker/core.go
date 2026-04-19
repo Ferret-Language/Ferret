@@ -22,9 +22,10 @@ type refineScope struct {
 }
 
 type lambdaScope struct {
-	owned    map[symbols.SymbolID]struct{}
-	captures map[symbols.SymbolID]*symbols.Symbol
-	move     bool
+	owned      map[symbols.SymbolID]struct{}
+	captures   map[symbols.SymbolID]*symbols.Symbol
+	captureMut map[symbols.SymbolID]struct{}
+	move       bool
 }
 
 func newRefineScope(parent *refineScope) *refineScope {
@@ -137,15 +138,9 @@ func (c *checker) lookupTypeParam(name string) (*typeinfo.TypeParam, bool) {
 	return nil, false
 }
 
-func (c *checker) symbolMutable(sym *symbols.Symbol) bool {
+func (c *checker) symbolDeclaredMutable(sym *symbols.Symbol) bool {
 	if sym == nil {
 		return false
-	}
-	scope := c.currentLambdaScope()
-	if scope != nil && !scope.move {
-		if _, captured := scope.captures[sym.ID]; captured {
-			return false
-		}
 	}
 	if sym.Kind == symbols.SymbolConst {
 		return false
@@ -160,6 +155,23 @@ func (c *checker) symbolMutable(sym *symbols.Symbol) bool {
 	default:
 		return sym.Flags.Mutable()
 	}
+}
+
+func (c *checker) symbolMutable(sym *symbols.Symbol) bool {
+	if sym == nil {
+		return false
+	}
+	scope := c.currentLambdaScope()
+	if scope != nil && !scope.move {
+		if _, captured := scope.captures[sym.ID]; captured {
+			_, wantsMut := scope.captureMut[sym.ID]
+			if wantsMut {
+				return c.symbolDeclaredMutable(sym)
+			}
+			return false
+		}
+	}
+	return c.symbolDeclaredMutable(sym)
 }
 
 func (c *checker) bindDeclSymbol(node ast.Node, typ typeinfo.Type) {
@@ -190,9 +202,10 @@ func (c *checker) pushLambdaScope(move bool) *lambdaScope {
 		return nil
 	}
 	scope := &lambdaScope{
-		owned:    make(map[symbols.SymbolID]struct{}),
-		captures: make(map[symbols.SymbolID]*symbols.Symbol),
-		move:     move,
+		owned:      make(map[symbols.SymbolID]struct{}),
+		captures:   make(map[symbols.SymbolID]*symbols.Symbol),
+		captureMut: make(map[symbols.SymbolID]struct{}),
+		move:       move,
 	}
 	c.lambdaScopes = append(c.lambdaScopes, scope)
 	return scope

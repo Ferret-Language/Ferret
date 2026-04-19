@@ -2087,6 +2087,9 @@ func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mi
 		}
 		return fmt.Sprintf("%s = %s", llvmLocalName(name), copyExpr), nil
 	}
+	if llvmExprIsAtom(expr) {
+		return fmt.Sprintf("%s = %s", llvmLocalName(name), llvmCopyExprUnchecked(irType, expr)), nil
+	}
 	return fmt.Sprintf("%s = %s", llvmLocalName(name), expr), nil
 }
 
@@ -2588,7 +2591,7 @@ func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	if !llvmValueNeedsCopy(instr.Value) {
+	if !llvmValueNeedsCopy(instr.Value) && !llvmExprIsAtom(val) {
 		tmp := freshTemp(state, "store")
 		lines = append(lines, fmt.Sprintf("%s = %s", tmp, val))
 		val = tmp
@@ -6505,6 +6508,22 @@ func llvmCopyExprUnchecked(irType, valExpr string) string {
 	default:
 		return fmt.Sprintf("or %s 0, %s", irType, valExpr)
 	}
+}
+
+func llvmExprIsAtom(expr string) bool {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return false
+	}
+	if strings.HasPrefix(expr, "%") || strings.HasPrefix(expr, "@") {
+		return true
+	}
+	switch expr {
+	case "null", "undef":
+		return true
+	}
+	first := expr[0]
+	return first == '-' || (first >= '0' && first <= '9')
 }
 
 func llvmValueNeedsCopy(v mir.Value) bool {

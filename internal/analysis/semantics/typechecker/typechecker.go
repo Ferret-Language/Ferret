@@ -1311,10 +1311,23 @@ func (c *checker) typeOfLambda(scope *refineScope, expr *ast.LambdaExpr, expecte
 			}
 			return orderedCaptures[i].ID < orderedCaptures[j].ID
 		})
-		c.info.BindLambdaCaptures(expr, orderedCaptures)
+		captures := make([]typeinfo.LambdaCapture, 0, len(orderedCaptures))
+		for _, sym := range orderedCaptures {
+			if sym == nil {
+				continue
+			}
+			_, wantsMut := lambdaCaptureScope.captureMut[sym.ID]
+			byRef := !expr.IsMove && sym.Kind != symbols.SymbolConst
+			captures = append(captures, typeinfo.LambdaCapture{
+				Symbol:  sym,
+				ByRef:   byRef,
+				Mutable: byRef && wantsMut,
+			})
+		}
+		c.info.BindLambdaCaptures(expr, captures)
 		if expr.IsMove {
-			for _, sym := range orderedCaptures {
-				c.markMovedSymbol(sym, expr.Location)
+			for _, capture := range captures {
+				c.markMovedSymbol(capture.Symbol, expr.Location)
 			}
 		}
 	}

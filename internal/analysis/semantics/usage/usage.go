@@ -356,6 +356,29 @@ func (a *usageAnalyzer) collectDeclNodesExpr(expr ast.Expr) {
 			return
 		}
 		a.collectDeclNodesExpr(e.Left)
+	case *ast.LambdaExpr:
+		if e == nil {
+			return
+		}
+		for _, p := range e.Params {
+			a.markDeclNode(p.Name)
+			a.collectDeclNodesExpr(p.Default)
+		}
+		// Writes inside lambdas affect unused-mut and borrow semantics for captured
+		// locals. We avoid a full scope-aware write pass by using capture metadata,
+		// but still traverse the body to catch writes to lambda locals.
+		if a.mod != nil && a.mod.Types != nil {
+			if captures, ok := a.mod.Types.LookupLambdaCaptures(e); ok {
+				for _, capture := range captures {
+					if capture.Symbol == nil || !capture.Mutable {
+						continue
+					}
+					a.written[capture.Symbol.ID]++
+				}
+			}
+		}
+		a.collectDeclNodesExpr(e.BodyExpr)
+		a.collectDeclNodesStmt(e.BodyBlock)
 	case *ast.IsExpr:
 		if e == nil {
 			return

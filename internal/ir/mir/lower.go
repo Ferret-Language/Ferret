@@ -342,6 +342,19 @@ func lowerAssignableTarget(lowerCtx *lowerContext, expr hir.Expr) Place {
 	if expr == nil {
 		return nil
 	}
+	ident, ok := expr.(*hir.Ident)
+	if !ok {
+		return nil
+	}
+	if ident.LocalID >= 0 {
+		return &DerefPlace{
+			basePlace: basePlace{Location: expr.Loc()},
+			Pointer: &AddrOfValue{
+				baseValue: baseValue{Location: expr.Loc(), ExprType: &typeinfo.PointerType{Inner: expr.Type()}},
+				Source:    lowerAddrSource(lowerCtx, ident),
+			},
+		}
+	}
 	if resolved := lowerResolvedName(lowerCtx, expr.SourceExpr(), expr.Loc(), expr.Type()); resolved != nil {
 		return &DerefPlace{
 			basePlace: basePlace{Location: expr.Loc()},

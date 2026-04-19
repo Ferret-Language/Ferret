@@ -537,7 +537,7 @@ fn main() -> void {
 	}
 }
 
-func TestTypecheckerRejectsReadonlyCaptureMutation(t *testing.T) {
+func TestTypecheckerAllowsMutableBorrowCaptureMutation(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
@@ -550,8 +550,26 @@ fn main() -> void {
 `)
 
 	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsImmutableBorrowCaptureMutation(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let x = 1
+    let apply = () => {
+        x = 2
+    }
+    apply()
+}
+`)
+
+	result := compiler.ParsePathForIDE(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected readonly capture mutation diagnostic")
+		t.Fatal("expected capture mutation diagnostic")
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
@@ -561,7 +579,7 @@ fn main() -> void {
 		}
 	}
 	if !found {
-		t.Fatalf("expected readonly capture mutation diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected capture mutation diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

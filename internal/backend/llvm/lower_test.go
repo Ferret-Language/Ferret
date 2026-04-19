@@ -2135,8 +2135,8 @@ fn main() -> i32 {
 		"store i32 0, ptr %value",
 		"%_br3 = icmp ne i8",
 		"br i1 %_br3, label %bb1, label %bb2",
-		"store i32 %_asgn9, ptr %__match1_alloca",
-		"ret i32 %_ld12",
+		"store i32 %_ld7, ptr %__match1_alloca",
+		"ret i32 %_ld10",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
@@ -2418,7 +2418,7 @@ fn main() -> i32 {
 	if !strings.Contains(text, "define i32 @__lambda1__closure__thunk(ptr %env, i32 %arg0)") {
 		t.Fatalf("expected captured closure thunk in llvm output:\n%s", text)
 	}
-	if !strings.Contains(text, "call i32 @main____lambda1(i32 %cap0, i32 %arg0)") {
+	if !strings.Contains(text, "call i32 @main____lambda1(ptr %cap0, i32 %arg0)") {
 		t.Fatalf("expected thunk to forward captured value into lambda call in llvm output:\n%s", text)
 	}
 	if !strings.Contains(text, "call i32 %_fn_code") || !strings.Contains(text, "ptr %_fn_env") {
@@ -2590,7 +2590,7 @@ type Pair struct {
 
 fn makeFn() -> fn(i32) -> i32 {
     let p: Pair = .{ .x = 10, .y = 20 }
-    let addx = (n: i32) => p.x + n
+    let addx = move (n: i32) => p.x + n
     return addx
 }
 

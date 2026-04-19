@@ -224,6 +224,23 @@ func (c *checker) checkAssignmentTarget(scope *refineScope, left ast.Expr) {
 		if res == nil || res.Kind != binding.ResolutionSymbol || res.Symbol == nil {
 			return
 		}
+		lambdaScope := c.currentLambdaScope()
+		capturedByLambda := false
+		if lambdaScope != nil && !lambdaScope.move {
+			_, capturedByLambda = lambdaScope.captures[res.Symbol.ID]
+		}
+		if capturedByLambda {
+			lambdaScope.captureMut[res.Symbol.ID] = struct{}{}
+			if !c.symbolMutable(res.Symbol) {
+				loc := e.Location
+				c.ctx.Diagnostics.Add(
+					diagnostics.NewError(fmt.Sprintf("cannot assign to immutable symbol %q", res.Symbol.Name)).
+						WithCode(diagnostics.ErrConstantReassignment).
+						WithPrimaryLabel(&loc, "symbol must be mutable"),
+				)
+			}
+			return
+		}
 		if res.Symbol.Kind == symbols.SymbolConst {
 			loc := e.Location
 			c.ctx.Diagnostics.Add(

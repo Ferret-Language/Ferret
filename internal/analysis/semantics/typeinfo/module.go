@@ -24,7 +24,7 @@ type ModuleInfo struct {
 	Nodes               map[ast.Node]Type
 	Symbols             map[symbols.SymbolID]Type
 	SymbolIndex         map[symbols.SymbolID]*symbols.Symbol
-	LambdaCaptures      map[*ast.LambdaExpr][]*symbols.Symbol
+	LambdaCaptures      map[*ast.LambdaExpr][]LambdaCapture
 	Bools               map[ast.Node]bool
 	ConstValues         map[ast.Node]ConstValue
 	MethodReceivers     map[ast.Node]Type
@@ -32,12 +32,18 @@ type ModuleInfo struct {
 	GenericRequirements map[symbols.SymbolID][]*GenericRequirement
 }
 
+type LambdaCapture struct {
+	Symbol  *symbols.Symbol
+	ByRef   bool
+	Mutable bool
+}
+
 func NewModuleInfo() *ModuleInfo {
 	return &ModuleInfo{
 		Nodes:               make(map[ast.Node]Type),
 		Symbols:             make(map[symbols.SymbolID]Type),
 		SymbolIndex:         make(map[symbols.SymbolID]*symbols.Symbol),
-		LambdaCaptures:      make(map[*ast.LambdaExpr][]*symbols.Symbol),
+		LambdaCaptures:      make(map[*ast.LambdaExpr][]LambdaCapture),
 		Bools:               make(map[ast.Node]bool),
 		ConstValues:         make(map[ast.Node]ConstValue),
 		MethodReceivers:     make(map[ast.Node]Type),
@@ -121,7 +127,7 @@ func (m *ModuleInfo) LookupCallArgs(call *ast.CallExpr) ([]ast.Expr, bool) {
 	return args, ok
 }
 
-func (m *ModuleInfo) BindLambdaCaptures(expr *ast.LambdaExpr, captures []*symbols.Symbol) {
+func (m *ModuleInfo) BindLambdaCaptures(expr *ast.LambdaExpr, captures []LambdaCapture) {
 	if m == nil || expr == nil {
 		return
 	}
@@ -129,12 +135,12 @@ func (m *ModuleInfo) BindLambdaCaptures(expr *ast.LambdaExpr, captures []*symbol
 		delete(m.LambdaCaptures, expr)
 		return
 	}
-	out := make([]*symbols.Symbol, 0, len(captures))
-	for _, sym := range captures {
-		if sym == nil {
+	out := make([]LambdaCapture, 0, len(captures))
+	for _, capture := range captures {
+		if capture.Symbol == nil {
 			continue
 		}
-		out = append(out, sym)
+		out = append(out, capture)
 	}
 	if len(out) == 0 {
 		delete(m.LambdaCaptures, expr)
@@ -143,7 +149,7 @@ func (m *ModuleInfo) BindLambdaCaptures(expr *ast.LambdaExpr, captures []*symbol
 	m.LambdaCaptures[expr] = out
 }
 
-func (m *ModuleInfo) LookupLambdaCaptures(expr *ast.LambdaExpr) ([]*symbols.Symbol, bool) {
+func (m *ModuleInfo) LookupLambdaCaptures(expr *ast.LambdaExpr) ([]LambdaCapture, bool) {
 	if m == nil || expr == nil {
 		return nil, false
 	}

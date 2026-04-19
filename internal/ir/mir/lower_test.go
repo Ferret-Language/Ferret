@@ -1734,7 +1734,7 @@ fn main() -> i32 {
 		t.Fatalf("expected synthetic lambda MIR function, got %#v", result.Entry.MIR.Functions)
 	}
 	text := mir.FormatModule(result.Entry.MIR)
-	if !strings.Contains(text, "closure "+lambdaFn.Name+"[5]") {
+	if !strings.Contains(text, "addr_of x") || !strings.Contains(text, "closure "+lambdaFn.Name+"[_t") {
 		t.Fatalf("expected captured closure value in MIR dump, got:\n%s", text)
 	}
 	if !strings.Contains(text, "(2)") {

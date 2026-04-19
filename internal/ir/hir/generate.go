@@ -20,16 +20,18 @@ type generator struct {
 	bindings     *binding.ModuleInfo
 	lookupMethod MethodLookup
 
-	currentFn     *ast.FuncDecl
-	currentResult typeinfo.Type
-	inFunction    bool
-	nextLambda    int
-	lambdaNames   map[ast.Expr]string
-	localNames    map[symbols.SymbolID]string
-	localIDs      map[symbols.SymbolID]int
-	usedNames     map[string]struct{}
-	synthFuncs    []*Func
-	synthClosures []*Closure
+	currentFn          *ast.FuncDecl
+	currentResult      typeinfo.Type
+	inFunction         bool
+	activeLambda       map[symbols.SymbolID]typeinfo.LambdaCapture
+	activeLambdaLocals map[int]typeinfo.LambdaCapture
+	nextLambda         int
+	lambdaNames        map[ast.Expr]string
+	localNames         map[symbols.SymbolID]string
+	localIDs           map[symbols.SymbolID]int
+	usedNames          map[string]struct{}
+	synthFuncs         []*Func
+	synthClosures      []*Closure
 }
 
 func Generate(key, importPath, filePath string, astMod *ast.Module, types *typeinfo.ModuleInfo, bindings *binding.ModuleInfo, lookupMethod MethodLookup) *Module {
@@ -439,11 +441,26 @@ func (g *generator) generateLambdaFunc(expr *ast.LambdaExpr, fnType *typeinfo.Fu
 	if expr == nil || fnType == nil {
 		return nil
 	}
-	prevFn, prevResult, prevActive, prevUsed, prevNames, prevIDs := g.currentFn, g.currentResult, g.inFunction, g.usedNames, g.localNames, g.localIDs
+	prevFn, prevResult, prevActive, prevUsed, prevNames, prevIDs, prevLambda, prevLambdaLocals := g.currentFn, g.currentResult, g.inFunction, g.usedNames, g.localNames, g.localIDs, g.activeLambda, g.activeLambdaLocals
 	g.beginSyntheticFunction(fnType.Result)
 	defer func() {
-		g.currentFn, g.currentResult, g.inFunction, g.usedNames, g.localNames, g.localIDs = prevFn, prevResult, prevActive, prevUsed, prevNames, prevIDs
+		g.currentFn, g.currentResult, g.inFunction, g.usedNames, g.localNames, g.localIDs, g.activeLambda, g.activeLambdaLocals = prevFn, prevResult, prevActive, prevUsed, prevNames, prevIDs, prevLambda, prevLambdaLocals
 	}()
+
+	captures := g.lambdaCaptureInfos(expr)
+	if len(captures) > 0 {
+		g.activeLambda = make(map[symbols.SymbolID]typeinfo.LambdaCapture, len(captures))
+		g.activeLambdaLocals = make(map[int]typeinfo.LambdaCapture, len(captures))
+		for _, capture := range captures {
+			if capture.Symbol == nil {
+				continue
+			}
+			g.activeLambda[capture.Symbol.ID] = capture
+			if id, ok := g.ensureLocalID(capture.Symbol); ok {
+				g.activeLambdaLocals[id] = capture
+			}
+		}
+	}
 
 	fn := &Func{
 		Name:       g.nextLambdaName(),
@@ -453,7 +470,6 @@ func (g *generator) generateLambdaFunc(expr *ast.LambdaExpr, fnType *typeinfo.Fu
 		Location:   expr.Location,
 	}
 	g.lambdaNames[expr] = fn.Name
-	captures := g.lambdaCaptureSymbols(expr)
 	if len(captures) > 0 {
 		closure := &Closure{
 			Name:       fn.Name + "__closure",
@@ -463,50 +479,70 @@ func (g *generator) generateLambdaFunc(expr *ast.LambdaExpr, fnType *typeinfo.Fu
 			LambdaExpr: expr,
 		}
 		for _, captured := range captures {
-			if captured == nil {
+			sym := captured.Symbol
+			if sym == nil {
 				continue
 			}
 			captureType := typeinfo.Type(typeinfo.UnknownType{})
 			if g.types != nil {
-				if typ := g.types.Symbols[captured.ID]; typ != nil {
+				if typ := g.types.Symbols[sym.ID]; typ != nil {
 					captureType = typ
 				}
 			}
+			if captured.ByRef {
+				captureType = &typeinfo.RefType{Mutable: captured.Mutable, Inner: captureType}
+			}
 			localID := -1
-			if id, ok := g.ensureLocalID(captured); ok {
+			if id, ok := g.ensureLocalID(sym); ok {
 				localID = id
 			}
+			isMutable := false
+			if captured.ByRef {
+				isMutable = captured.Mutable
+			} else {
+				isMutable = expr.IsMove && g.symbolMutableForLambdaCapture(sym)
+			}
 			closure.Captures = append(closure.Captures, &Param{
-				Name:      g.mangleLocal(captured),
+				Name:      g.mangleLocal(sym),
 				LocalID:   localID,
 				Type:      captureType,
-				IsMutable: expr.IsMove && g.symbolMutableForLambdaCapture(captured),
-				Location:  captured.Location,
+				IsMutable: isMutable,
+				Location:  sym.Location,
 			})
 		}
 		g.synthClosures = append(g.synthClosures, closure)
 	}
 	fn.Params = make([]*Param, 0, len(captures)+len(expr.Params))
 	for _, captured := range captures {
+		sym := captured.Symbol
 		captureType := typeinfo.Type(typeinfo.UnknownType{})
-		if g.types != nil && captured != nil {
-			if typ := g.types.Symbols[captured.ID]; typ != nil {
+		if g.types != nil && sym != nil {
+			if typ := g.types.Symbols[sym.ID]; typ != nil {
 				captureType = typ
 			}
 		}
+		if captured.ByRef {
+			captureType = &typeinfo.RefType{Mutable: captured.Mutable, Inner: captureType}
+		}
 		name := ""
 		localID := -1
-		if captured != nil {
-			name = g.mangleLocal(captured)
-			if id, ok := g.ensureLocalID(captured); ok {
+		if sym != nil {
+			name = g.mangleLocal(sym)
+			if id, ok := g.ensureLocalID(sym); ok {
 				localID = id
 			}
+		}
+		isMutable := false
+		if captured.ByRef {
+			isMutable = captured.Mutable
+		} else {
+			isMutable = expr.IsMove && sym != nil && g.symbolMutableForLambdaCapture(sym)
 		}
 		fn.Params = append(fn.Params, &Param{
 			Name:      name,
 			LocalID:   localID,
 			Type:      captureType,
-			IsMutable: expr.IsMove && captured != nil && g.symbolMutableForLambdaCapture(captured),
+			IsMutable: isMutable,
 			Location:  expr.Location,
 		})
 	}
@@ -590,7 +626,7 @@ func (g *generator) symbolMutableForLambdaCapture(sym *symbols.Symbol) bool {
 	}
 }
 
-func (g *generator) lambdaCaptureSymbols(expr *ast.LambdaExpr) []*symbols.Symbol {
+func (g *generator) lambdaCaptureInfos(expr *ast.LambdaExpr) []typeinfo.LambdaCapture {
 	if g == nil || g.types == nil || expr == nil {
 		return nil
 	}
@@ -602,12 +638,13 @@ func (g *generator) lambdaCaptureSymbols(expr *ast.LambdaExpr) []*symbols.Symbol
 }
 
 func (g *generator) capturedArgsForLambda(expr *ast.LambdaExpr) []Expr {
-	captures := g.lambdaCaptureSymbols(expr)
+	captures := g.lambdaCaptureInfos(expr)
 	if len(captures) == 0 {
 		return nil
 	}
 	args := make([]Expr, 0, len(captures))
-	for _, sym := range captures {
+	for _, capture := range captures {
+		sym := capture.Symbol
 		if sym == nil {
 			continue
 		}
@@ -625,8 +662,19 @@ func (g *generator) capturedArgsForLambda(expr *ast.LambdaExpr) []Expr {
 				typ = symType
 			}
 		}
-		arg := &Ident{Path: path, LocalID: localID}
-		arg.ExprType, arg.Location, arg.Source = typ, sym.Location, nil
+		base := &Ident{Path: path, LocalID: localID}
+		base.ExprType, base.Location, base.Source = typ, sym.Location, nil
+		if !capture.ByRef {
+			args = append(args, base)
+			continue
+		}
+		refType := &typeinfo.RefType{Mutable: capture.Mutable, Inner: typ}
+		op := "&"
+		if capture.Mutable {
+			op = "&mut"
+		}
+		arg := &PrefixExpr{Op: op, Right: base}
+		arg.ExprType, arg.Location, arg.Source = refType, sym.Location, nil
 		args = append(args, arg)
 	}
 	return args
@@ -1004,6 +1052,25 @@ func (g *generator) generateExpr(expr ast.Expr) Expr {
 				path[0] = g.mangleLocal(sym)
 				if id, ok := g.ensureLocalID(sym); ok {
 					localID = id
+				}
+				if g.activeLambdaLocals != nil {
+					if capture, ok := g.activeLambdaLocals[localID]; ok && capture.ByRef {
+						refType := &typeinfo.RefType{Mutable: capture.Mutable, Inner: typ}
+						inner := &Ident{Path: path, LocalID: localID}
+						inner.ExprType, inner.Location, inner.Source = refType, e.Location, nil
+						out := &PrefixExpr{Op: "*", Right: inner}
+						out.ExprType, out.Location, out.Source = typ, e.Location, e
+						return out
+					}
+				} else if g.activeLambda != nil {
+					if capture, ok := g.activeLambda[sym.ID]; ok && capture.ByRef {
+						refType := &typeinfo.RefType{Mutable: capture.Mutable, Inner: typ}
+						inner := &Ident{Path: path, LocalID: localID}
+						inner.ExprType, inner.Location, inner.Source = refType, e.Location, nil
+						out := &PrefixExpr{Op: "*", Right: inner}
+						out.ExprType, out.Location, out.Source = typ, e.Location, e
+						return out
+					}
 				}
 			}
 		}
