@@ -996,6 +996,8 @@ func (a *ownershipAnalyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, 
 		return
 	}
 	// Validate first to avoid partial freeze updates.
+	plannedImm := make(map[int]source.Location, len(borrows))
+	plannedMut := make(map[int]source.Location, len(borrows))
 	for _, info := range borrows {
 		if !info.owner.isLocal() {
 			continue
@@ -1009,9 +1011,24 @@ func (a *ownershipAnalyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, 
 				a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create mutable borrow while another borrow is live")
 				return
 			}
+			if _, ok := plannedImm[info.owner.localID]; ok {
+				a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create mutable borrow while another borrow is planned")
+				return
+			}
+			if _, ok := plannedMut[info.owner.localID]; ok {
+				a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create mutable borrow while another borrow is planned")
+				return
+			}
+			plannedMut[info.owner.localID] = info.loc
 		} else if owner.mutFrozen > 0 {
 			a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create immutable borrow while a mutable borrow is live")
 			return
+		} else {
+			if _, ok := plannedMut[info.owner.localID]; ok {
+				a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create immutable borrow while a mutable borrow is planned")
+				return
+			}
+			plannedImm[info.owner.localID] = info.loc
 		}
 	}
 

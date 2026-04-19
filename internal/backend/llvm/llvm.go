@@ -5118,11 +5118,13 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				return "", err
 			}
 			envSlot := freshTemp(state, "closure_env_heap")
-			envBytes := abi.PointerBytes() * int64(len(captureFields))
-			if envBytes <= 0 {
-				envBytes = abi.PointerBytes()
-			}
-			state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = call ptr @malloc(%s %d)", envSlot, llvmABIIntType(), envBytes))
+			envSizePtr := freshTemp(state, "closure_env_size_ptr")
+			envBytes := freshTemp(state, "closure_env_size")
+			state.pendingLines = append(state.pendingLines,
+				fmt.Sprintf("%s = getelementptr inbounds %s, ptr null, i32 1", envSizePtr, envType),
+				fmt.Sprintf("%s = ptrtoint ptr %s to %s", envBytes, envSizePtr, llvmABIIntType()),
+				fmt.Sprintf("%s = call ptr @malloc(%s %s)", envSlot, llvmABIIntType(), envBytes),
+			)
 			for i, field := range captureFields {
 				valueExpr, err := lowerValue(state, field.Value)
 				if err != nil {

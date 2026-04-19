@@ -2620,6 +2620,42 @@ fn main() -> i32 {
 	}
 }
 
+func TestLowerClosureEnvAllocationUsesComputedStructSize(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn make() -> fn() -> i64 {
+    let a: i64 = 10
+    let b: i32 = 20
+    let f = move () => a + (b as i64)
+    return f
+}
+
+fn main() -> i64 {
+    let f = make()
+    return f()
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	if !strings.Contains(text, "getelementptr inbounds { i64, i32 }, ptr null, i32 1") {
+		t.Fatalf("expected closure env size to be computed from struct layout in llvm output:\n%s", text)
+	}
+	if !strings.Contains(text, "ptrtoint ptr %_closure_env_size_ptr") {
+		t.Fatalf("expected computed closure env byte size in llvm output:\n%s", text)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
