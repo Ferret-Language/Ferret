@@ -3562,6 +3562,22 @@ func emitClosureThunk(state *moduleState, thunkName string, target string, retTy
 	fmt.Fprintf(state.deferredB, "}\n")
 }
 
+func callableReturnIRType(state *moduleState, fnType *typeinfo.FuncType) string {
+	if fnType == nil || fnType.Result == nil || isVoidType(fnType.Result) {
+		return "void"
+	}
+	if isAggregateType(state, fnType.Result) {
+		if tn, err := llvmABITypeName(state, fnType.Result); err == nil {
+			return tn
+		}
+		return "void"
+	}
+	if tn, err := llvmBaseType(fnType.Result); err == nil {
+		return tn
+	}
+	return "void"
+}
+
 func ensureNamedFunctionThunk(state *moduleState, target string, fnType *typeinfo.FuncType) string {
 	if state == nil || target == "" || fnType == nil {
 		return ""
@@ -3569,16 +3585,7 @@ func ensureNamedFunctionThunk(state *moduleState, target string, fnType *typeinf
 	if sym, ok := state.functionThunks[target]; ok {
 		return sym
 	}
-	retType := "void"
-	if fnType.Result != nil && !isVoidType(fnType.Result) {
-		if isAggregateType(state, fnType.Result) {
-			if tn, err := llvmABITypeName(state, fnType.Result); err == nil {
-				retType = tn
-			}
-		} else if tn, err := llvmBaseType(fnType.Result); err == nil {
-			retType = tn
-		}
-	}
+	retType := callableReturnIRType(state, fnType)
 	params := make([]string, 0, 1+len(fnType.Params))
 	callArgs := make([]string, 0, len(fnType.Params))
 	params = append(params, "ptr %env")
@@ -3723,16 +3730,7 @@ func ensureClosureThunk(state *moduleState, closureName string, funcName string,
 	if err != nil {
 		return ""
 	}
-	retType := "void"
-	if fnType.Result != nil && !isVoidType(fnType.Result) {
-		if isAggregateType(state, fnType.Result) {
-			if tn, err := llvmABITypeName(state, fnType.Result); err == nil {
-				retType = tn
-			}
-		} else if tn, err := llvmBaseType(fnType.Result); err == nil {
-			retType = tn
-		}
-	}
+	retType := callableReturnIRType(state, fnType)
 	params := make([]string, 0, 1+len(fnType.Params))
 	params = append(params, "ptr %env")
 	loadLines := make([]string, 0, len(captureFields)*2)
