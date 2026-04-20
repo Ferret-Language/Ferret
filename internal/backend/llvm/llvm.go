@@ -1663,22 +1663,17 @@ func entryDebugDecls(state *moduleState) []string {
 		locID := state.debug.addLocation(line, 1, state.fnScopeID)
 		lines = append(lines, fmt.Sprintf("call void @llvm.dbg.declare(metadata ptr %s, metadata !%d, metadata !%d), !dbg !%d", ptrName, varID, exprID, locID))
 	}
-	resolveDebugFilePath := func(filename *string) string {
-		if filename != nil && *filename != "" {
-			return *filename
-		}
-		if state.fn.Location.Filename != nil {
-			return *state.fn.Location.Filename
-		}
-		return ""
-	}
-
 	for _, param := range state.fn.Params {
 		if param == nil {
 			continue
 		}
 		paramIDs[param.LocalID] = struct{}{}
-		filePath := resolveDebugFilePath(param.Location.Filename)
+		filePath := ""
+		if param.Location.Filename != nil && *param.Location.Filename != "" {
+			filePath = *param.Location.Filename
+		} else if state.fn.Location.Filename != nil {
+			filePath = *state.fn.Location.Filename
+		}
 		line := 1
 		if param.Location.Start != nil {
 			line = param.Location.Start.Line
@@ -1703,7 +1698,12 @@ func entryDebugDecls(state *moduleState) []string {
 		if _, isParam := paramIDs[local.ID]; isParam {
 			continue
 		}
-		filePath := resolveDebugFilePath(local.Location.Filename)
+		filePath := ""
+		if local.Location.Filename != nil && *local.Location.Filename != "" {
+			filePath = *local.Location.Filename
+		} else if state.fn.Location.Filename != nil {
+			filePath = *state.fn.Location.Filename
+		}
 		line := 1
 		if local.Location.Start != nil {
 			line = local.Location.Start.Line
