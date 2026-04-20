@@ -1533,7 +1533,8 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *mir.Function) erro
 
 	// Attach DWARF subprogram metadata if debug state is active.
 	dbgSuffix := ""
-	if state.debug != nil && fn.Location.Filename != nil && *fn.Location.Filename != "" {
+	filename := fn.Location.Filename
+	if state.debug != nil && filename != nil && *filename != "" {
 		fileID := state.debug.getFile(*fn.Location.Filename)
 		// Re-use the last added CU or add one for this file.
 		cuID := -1
