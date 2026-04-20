@@ -532,17 +532,17 @@ fn main() -> void {
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if !result.Diagnostics.HasErrors() {
-		t.Fatal("expected capturing lambda diagnostic")
+		t.Fatal("expected lambda scope diagnostic")
 	}
 	found := false
 	for _, diag := range result.Diagnostics.Diagnostics() {
-		if strings.Contains(diag.Message, "capturing lambdas are not supported yet") {
+		if strings.Contains(diag.Message, `use of symbol "x" outside lambda scope`) {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected capturing lambda diagnostic, got %#v", result.Diagnostics.Diagnostics())
+		t.Fatalf("expected lambda scope diagnostic, got %#v", result.Diagnostics.Diagnostics())
 	}
 }
 

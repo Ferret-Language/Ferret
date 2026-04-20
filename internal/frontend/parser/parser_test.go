@@ -344,6 +344,53 @@ fn main() -> void {
 	}
 }
 
+func TestParseBlockLambdaAsCallArgumentAndIIFE(t *testing.T) {
+	src := `
+fn main() -> void {
+    usefn(24, (v: i32) => {
+        println(v)
+    })
+    (v: str) => {
+        println(v)
+    }("hi")
+}
+`
+
+	mod, diag := parseTestModule(t, src)
+	if got := diag.Diagnostics(); len(got) != 0 {
+		t.Fatalf("unexpected diagnostics: %v", got)
+	}
+	fn, ok := mod.Decls[0].(*ast.FuncDecl)
+	if !ok {
+		t.Fatalf("expected func decl, got %T", mod.Decls[0])
+	}
+	if fn.Body == nil || len(fn.Body.Stmts) != 2 {
+		t.Fatalf("expected two statements, got %#v", fn.Body)
+	}
+	callStmt, ok := fn.Body.Stmts[0].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected call expression statement, got %T", fn.Body.Stmts[0])
+	}
+	call, ok := callStmt.Value.(*ast.CallExpr)
+	if !ok || len(call.Args) != 2 {
+		t.Fatalf("expected usefn call with two args, got %#v", callStmt.Value)
+	}
+	if _, ok := call.Args[1].(*ast.LambdaExpr); !ok {
+		t.Fatalf("expected lambda as second call argument, got %T", call.Args[1])
+	}
+	iifeStmt, ok := fn.Body.Stmts[1].(*ast.ExprStmt)
+	if !ok {
+		t.Fatalf("expected IIFE expression statement, got %T", fn.Body.Stmts[1])
+	}
+	iife, ok := iifeStmt.Value.(*ast.CallExpr)
+	if !ok || len(iife.Args) != 1 {
+		t.Fatalf("expected IIFE call expression, got %#v", iifeStmt.Value)
+	}
+	if _, ok := iife.Callee.(*ast.LambdaExpr); !ok {
+		t.Fatalf("expected lambda callee for IIFE, got %T", iife.Callee)
+	}
+}
+
 func TestParseTestDecl(t *testing.T) {
 	src := `
 test "allocator grows" {

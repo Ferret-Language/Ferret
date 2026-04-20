@@ -29,6 +29,9 @@ func (p *Parser) parseExprUntil(precedence int, stopKinds ...tokens.Kind) ast.Ex
 		if p.compositeValueDepth > 0 && precedence == precLowest && p.atCompositeFieldBoundary() {
 			return left
 		}
+		if p.at(tokens.LPAREN) && p.previous().End.Line < p.current().Start.Line {
+			return left
+		}
 		switch p.current().Kind {
 		case tokens.LT:
 			if p.hasGenericAngleTypeMemberAhead(left) {
@@ -432,7 +435,7 @@ func (p *Parser) parseArgList() []ast.Expr {
 	args := make([]ast.Expr, 0)
 	seenSpread := false
 	for !p.at(tokens.RPAREN) && !p.at(tokens.EOF) {
-		arg := p.parseExprUntil(precLowest)
+		arg := p.parseExprUntil(precLowest, tokens.COMMA, tokens.RPAREN)
 		if p.match(tokens.ELLIPSIS) {
 			arg = &ast.SpreadExpr{
 				Right:    arg,

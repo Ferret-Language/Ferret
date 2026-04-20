@@ -1,6 +1,8 @@
 package typechecker
 
 import (
+	"fmt"
+
 	"compiler/internal/analysis/semantics/binding"
 	"compiler/internal/analysis/semantics/symbols"
 	"compiler/internal/analysis/semantics/typeinfo"
@@ -228,9 +230,9 @@ func (c *checker) reportLambdaCapture(ident *ast.Ident, sym *symbols.Symbol) {
 	scope.reported[sym.ID] = struct{}{}
 	loc := ident.Location
 	c.ctx.Diagnostics.Add(
-		diagnostics.NewError("capturing lambdas are not supported yet").
+		diagnostics.NewError(fmt.Sprintf("use of symbol %q outside lambda scope", sym.Name)).
 			WithCode(diagnostics.ErrInvalidOperation).
-			WithPrimaryLabel(&loc, "this lambda captures an outer local value"),
+			WithPrimaryLabel(&loc, "pass this value as a lambda parameter instead"),
 	)
 }
 
