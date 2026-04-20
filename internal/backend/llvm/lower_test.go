@@ -15,10 +15,60 @@ import (
 	"compiler/internal/core/abi"
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
+	"compiler/internal/core/source"
 	compiler "compiler/internal/driver"
 	"compiler/internal/ir/mir"
 	"compiler/internal/testutils"
 )
+
+func TestLowerProgramDebugScopeDoesNotLeakToFunctionWithoutLocation(t *testing.T) {
+	loc := source.NewLocation("/tmp/ferret-debug-test.fer", source.Position{Line: 1, Column: 1}, source.Position{Line: 1, Column: 1})
+	emptyFile := ""
+	voidType := &typeinfo.BuiltinType{Name: "void"}
+	mod := &mir.Module{
+		Key:        "main",
+		ImportPath: "main",
+		FilePath:   "/tmp/ferret-debug-test.fer",
+		Functions: []*mir.Function{
+			{
+				Name:     "first",
+				Result:   voidType,
+				EntryID:  0,
+				Blocks:   []*mir.Block{{ID: 0, Terminator: &mir.ReturnTerm{}}},
+				Location: loc,
+			},
+			{
+				Name:     "second",
+				Result:   voidType,
+				EntryID:  0,
+				Blocks:   []*mir.Block{{ID: 0, Terminator: &mir.ReturnTerm{}}},
+				Location: source.Location{Filename: &emptyFile},
+			},
+		},
+	}
+	layoutMod := &layout.Module{Key: "main"}
+	unit := &backend.Unit{
+		Module:  mod,
+		Layout:  layoutMod,
+		Layouts: map[string]*layout.Module{"main": layoutMod},
+	}
+	text, err := llvmbackend.LowerProgram([]*backend.Unit{unit}, true)
+	if err != nil {
+		t.Fatalf("LowerProgram: %v", err)
+	}
+	secondStart := strings.Index(text, "define void @main__second()")
+	if secondStart < 0 {
+		t.Fatalf("missing second function:\n%s", text)
+	}
+	secondEnd := strings.Index(text[secondStart:], "\n}")
+	if secondEnd < 0 {
+		t.Fatalf("malformed second function:\n%s", text[secondStart:])
+	}
+	secondBody := text[secondStart : secondStart+secondEnd]
+	if strings.Contains(secondBody, "!dbg") {
+		t.Fatalf("debug metadata leaked into function without location:\n%s", secondBody)
+	}
+}
 
 func TestLowerInterfaceDispatchToLLVM(t *testing.T) {
 	root := t.TempDir()
