@@ -3739,6 +3739,57 @@ func TestCompletionSuggestsStructLiteralFields(t *testing.T) {
 	}
 }
 
+func TestCompletionSuggestsStructLiteralFieldsAfterDot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "type User struct {\n    name: str\n    age: i32\n}\n\nfn main() {\n    let user = User{\n        .\n    }\n    user\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "        .")
+	if !ok {
+		t.Fatal("failed to find struct literal field completion position")
+	}
+	char += len("        .")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/completion",
+		Params: mustRawJSON(t, completionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	items := decodeCompletionResult(t, out.String())
+	foundName := false
+	foundAge := false
+	foundIf := false
+	for _, item := range items {
+		if item.Label == "name" && item.Kind == completionKindField {
+			foundName = true
+		}
+		if item.Label == "age" && item.Kind == completionKindField {
+			foundAge = true
+		}
+		if item.Label == "if" {
+			foundIf = true
+		}
+	}
+	if !foundName || !foundAge {
+		t.Fatalf("expected struct field completions after dot, got %#v", items)
+	}
+	if foundIf {
+		t.Fatalf("did not expect keyword completion in struct literal field context, got %#v", items)
+	}
+}
+
 func TestCompletionIncludesPreludeGlobalsWithoutImport(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")

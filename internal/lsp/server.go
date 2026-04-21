@@ -2304,7 +2304,9 @@ func completionFromIndex(index *hoverIndex, sourceText string, pos source.Positi
 	ctx := completionContextAt(sourceText, pos)
 	candidates := visibleCompletionCandidatesAt(comp.items, comp.mod.FilePath, pos)
 	items := make([]completionItem, 0)
-	if ctx.IsAttribute {
+	if literalItems, ok := structLiteralCompletionItemsForContext(comp, sourceText, pos); ok {
+		items = literalItems
+	} else if ctx.IsAttribute {
 		items = append(items, attributeItems...)
 	} else if ctx.IsMember {
 		items = append(items, memberCompletionItemsForContext(comp, candidates, sourceText, pos)...)
@@ -2549,6 +2551,111 @@ func completionContextAt(sourceText string, pos source.Position) completionConte
 	return completionContext{}
 }
 
+func structLiteralCompletionItemsForContext(index *completionIndex, sourceText string, pos source.Position) ([]completionItem, bool) {
+	if index == nil || index.mod == nil || index.mod.Types == nil {
+		return nil, false
+	}
+	var best *typeinfo.NamedType
+	bestSpan := int(^uint(0) >> 1)
+	for node, typ := range index.mod.Types.Nodes {
+		lit, ok := node.(*ast.CompositeLit)
+		if !ok || lit == nil || lit.Type == nil {
+			continue
+		}
+		if !locationContainsPosition(lit.Location, pos) {
+			continue
+		}
+		if _, ok := structLiteralFieldPrefix(sourceText, lit, pos); !ok {
+			continue
+		}
+		named := underlyingNamedType(typ)
+		if named == nil {
+			continue
+		}
+		span := locationSpan(lit.Location)
+		if span < bestSpan {
+			best = named
+			bestSpan = span
+		}
+	}
+	if best == nil {
+		return nil, false
+	}
+	return structFieldCompletionItemsForNamed(index.mod, index.modules, best), true
+}
+
+func structLiteralFieldPrefix(sourceText string, lit *ast.CompositeLit, pos source.Position) (string, bool) {
+	offset := sourceOffsetAtPosition(sourceText, pos)
+	if offset < 0 || offset > len(sourceText) || lit == nil || lit.Location.Start == nil {
+		return "", false
+	}
+	start := lit.Location.Start.Index
+	if start < 0 || start > offset || start >= len(sourceText) {
+		return "", false
+	}
+	bodyStart := strings.IndexByte(sourceText[start:offset], '{')
+	if bodyStart < 0 {
+		return "", false
+	}
+	body := sourceText[start+bodyStart+1 : offset]
+	itemStart := 0
+	assigned := false
+	depth := 0
+	var quote byte
+	escaped := false
+	for i := 0; i < len(body); i++ {
+		ch := body[i]
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if ch == '\\' {
+				escaped = true
+				continue
+			}
+			if ch == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch ch {
+		case '"', '\'':
+			quote = ch
+		case '(', '[', '{':
+			depth++
+		case ')', ']', '}':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				itemStart = i + 1
+				assigned = false
+			}
+		case '=':
+			if depth == 0 {
+				assigned = true
+			}
+		}
+	}
+	if assigned {
+		return "", false
+	}
+	item := strings.TrimSpace(body[itemStart:])
+	if item == "" {
+		return "", true
+	}
+	if !strings.HasPrefix(item, ".") {
+		return "", false
+	}
+	prefix := strings.TrimSpace(strings.TrimPrefix(item, "."))
+	if prefix == "" || identExactPattern.MatchString(prefix) {
+		return prefix, true
+	}
+	return "", false
+}
+
 func sourceOffsetAtPosition(sourceText string, pos source.Position) int {
 	if sourceText == "" {
 		return 0
@@ -2699,32 +2806,7 @@ func instanceMemberCompletionItems(mod *context.Module, modulesByKey map[string]
 	}
 	resolved := declTypeForNamed(owner, named, decl)
 	if structType, ok := resolved.(*typeinfo.StructType); ok && structType != nil {
-		if decl != nil {
-			if declStruct, ok := decl.Type.(*ast.StructType); ok && declStruct != nil {
-				for _, field := range declStruct.Fields {
-					if field == nil || field.Name == nil {
-						continue
-					}
-					fieldType := structFieldTypeByName(structType, field.Name.Text())
-					items = append(items, completionItem{
-						Label:  field.Name.Text(),
-						Kind:   completionKindField,
-						Detail: typeinfo.DefaultPrinter.Type(fieldType),
-					})
-				}
-			}
-		} else {
-			for _, field := range structType.OrderedFields {
-				if field == nil || field.Name == "" {
-					continue
-				}
-				items = append(items, completionItem{
-					Label:  field.Name,
-					Kind:   completionKindField,
-					Detail: typeinfo.DefaultPrinter.Type(field.Type),
-				})
-			}
-		}
+		items = append(items, structFieldCompletionItems(decl, structType)...)
 	}
 	if owner.MethodSets != nil {
 		for receiver, methods := range owner.MethodSets {
@@ -2743,6 +2825,61 @@ func instanceMemberCompletionItems(mod *context.Module, modulesByKey map[string]
 				})
 			}
 		}
+	}
+	return items
+}
+
+func structFieldCompletionItemsForNamed(mod *context.Module, modulesByKey map[string]*context.Module, named *typeinfo.NamedType) []completionItem {
+	if named == nil {
+		return nil
+	}
+	owner := moduleForNamedType(named, mod, modulesByKey)
+	if owner == nil {
+		return nil
+	}
+	decl := named.Decl
+	if decl == nil {
+		decl = findTypeDecl(owner, named.Name)
+	}
+	resolved := declTypeForNamed(owner, named, decl)
+	structType, ok := resolved.(*typeinfo.StructType)
+	if !ok || structType == nil {
+		return nil
+	}
+	return structFieldCompletionItems(decl, structType)
+}
+
+func structFieldCompletionItems(decl *ast.TypeDecl, structType *typeinfo.StructType) []completionItem {
+	if structType == nil {
+		return nil
+	}
+	if decl != nil {
+		if declStruct, ok := decl.Type.(*ast.StructType); ok && declStruct != nil {
+			items := make([]completionItem, 0, len(declStruct.Fields))
+			for _, field := range declStruct.Fields {
+				if field == nil || field.Name == nil {
+					continue
+				}
+				fieldType := structFieldTypeByName(structType, field.Name.Text())
+				items = append(items, completionItem{
+					Label:  field.Name.Text(),
+					Kind:   completionKindField,
+					Detail: typeinfo.DefaultPrinter.Type(fieldType),
+				})
+			}
+			return items
+		}
+	}
+	items := make([]completionItem, 0, len(structType.OrderedFields))
+	for _, field := range structType.OrderedFields {
+		if field == nil || field.Name == "" {
+			continue
+		}
+		items = append(items, completionItem{
+			Label:  field.Name,
+			Kind:   completionKindField,
+			Detail: typeinfo.DefaultPrinter.Type(field.Type),
+		})
 	}
 	return items
 }
