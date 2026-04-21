@@ -679,22 +679,9 @@ func implicitExternSymbol(decl string) string {
 // llvmExternDecl builds a "declare" line for an extern function.
 func llvmExternDecl(state *moduleState, fn *mir.Function) (string, error) {
 	sym := becommon.SanitizeLinkName(fn.LinkName)
-
-	var retStr string
-	if fn.Result == nil || isVoidType(fn.Result) {
-		retStr = "void"
-	} else if isAggregateType(state, fn.Result) {
-		t, err := llvmABITypeName(state, fn.Result)
-		if err != nil {
-			return "", err
-		}
-		retStr = t
-	} else {
-		t, err := llvmBaseType(fn.Result)
-		if err != nil {
-			return "", err
-		}
-		retStr = t
+	retStr, err := llvmExternReturnType(state, fn.Result)
+	if err != nil {
+		return "", err
 	}
 
 	// Extern signatures may be unavailable or incomplete in some standalone
