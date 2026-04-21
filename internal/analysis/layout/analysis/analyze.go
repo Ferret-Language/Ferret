@@ -180,10 +180,10 @@ func (a *analyzer) layoutUnderlying(syntax any, typ typeinfo.Type) (int64, int64
 		}
 		elemSize, elemAlign, known, _ := a.layoutUnderlying(nil, t.Inner)
 		if !known {
-			return 0, maxInt64(1, elemAlign), false, nil
+			return 0, max(1, elemAlign), false, nil
 		}
 		stride := alignUp(elemSize, elemAlign)
-		return stride * t.Len, maxInt64(1, elemAlign), true, nil
+		return stride * t.Len, max(1, elemAlign), true, nil
 	case *typeinfo.TupleType:
 		return a.layoutSequential(t.Elems)
 	case *typeinfo.StructType:
@@ -246,7 +246,7 @@ func (a *analyzer) layoutSequential(elems []typeinfo.Type) (int64, int64, bool, 
 		}
 		offset = alignUp(offset, align)
 		offset += size
-		maxAlign = maxInt64(maxAlign, align)
+		maxAlign = max(maxAlign, align)
 		known = known && elemKnown
 	}
 	return alignUp(offset, maxAlign), maxAlign, known, nil
@@ -281,7 +281,7 @@ func (a *analyzer) layoutStruct(st *typeinfo.StructType) (int64, int64, bool, *l
 		})
 		order = append(order, i)
 		offset += size
-		maxAlign = maxInt64(maxAlign, align)
+		maxAlign = max(maxAlign, align)
 		known = known && fieldKnown
 	}
 	total := alignUp(offset, maxAlign)
@@ -305,8 +305,8 @@ func (a *analyzer) layoutTaggedUnionDetail(members []typeinfo.Type) (int64, int6
 	memberLayouts := make([]*layout.UnionMemberLayout, 0, len(members))
 	for _, member := range members {
 		size, align, memberKnown, _ := a.layoutUnderlying(nil, member)
-		payloadSize = maxInt64(payloadSize, size)
-		payloadAlign = maxInt64(payloadAlign, align)
+		payloadSize = max(payloadSize, size)
+		payloadAlign = max(payloadAlign, align)
 		known = known && memberKnown
 		memberLayouts = append(memberLayouts, &layout.UnionMemberLayout{
 			Index: len(memberLayouts),
@@ -315,7 +315,7 @@ func (a *analyzer) layoutTaggedUnionDetail(members []typeinfo.Type) (int64, int6
 			Align: align,
 		})
 	}
-	align := maxInt64(tagAlign, payloadAlign)
+	align := max(tagAlign, payloadAlign)
 	payloadOffset := alignUp(tagSize, payloadAlign)
 	size := alignUp(payloadOffset+payloadSize, align)
 	for _, member := range memberLayouts {
@@ -368,13 +368,6 @@ func alignUp(value, align int64) int64 {
 		return value
 	}
 	return value + (align - rem)
-}
-
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 func unionStructLayout(u *layout.UnionLayout) *layout.StructLayout {

@@ -1524,10 +1524,14 @@ type completionCandidate struct {
 }
 
 type completionIndex struct {
-	keywords []completionItem
-	items    []completionCandidate
-	mod      *context.Module
-	modules  map[string]*context.Module
+	keywords       []completionItem
+	items          []completionCandidate
+	structLiterals []struct {
+		location source.Location
+		items    []completionItem
+	}
+	mod     *context.Module
+	modules map[string]*context.Module
 }
 
 type hoverIndex struct {
@@ -2403,6 +2407,7 @@ func collectCompletionIndex(mod *context.Module, info *typeinfo.ModuleInfo, modu
 			}
 		}
 	}
+	collectStructLiteralCompletionCandidates(index, info)
 	return index
 }
 
@@ -2552,44 +2557,63 @@ func completionContextAt(sourceText string, pos source.Position) completionConte
 }
 
 func structLiteralCompletionItemsForContext(index *completionIndex, sourceText string, pos source.Position) ([]completionItem, bool) {
-	if index == nil || index.mod == nil || index.mod.Types == nil {
+	if index == nil || len(index.structLiterals) == 0 {
 		return nil, false
 	}
-	var best *typeinfo.NamedType
+	var best []completionItem
 	bestSpan := int(^uint(0) >> 1)
-	for node, typ := range index.mod.Types.Nodes {
-		lit, ok := node.(*ast.CompositeLit)
-		if !ok || lit == nil || lit.Type == nil {
+	for _, candidate := range index.structLiterals {
+		if !locationContainsPosition(candidate.location, pos) {
 			continue
 		}
-		if !locationContainsPosition(lit.Location, pos) {
+		if _, ok := structLiteralFieldPrefix(sourceText, candidate.location, pos); !ok {
 			continue
 		}
-		if _, ok := structLiteralFieldPrefix(sourceText, lit, pos); !ok {
-			continue
-		}
-		named := underlyingNamedType(typ)
-		if named == nil {
-			continue
-		}
-		span := locationSpan(lit.Location)
+		span := locationSpan(candidate.location)
 		if span < bestSpan {
-			best = named
+			best = candidate.items
 			bestSpan = span
 		}
 	}
 	if best == nil {
 		return nil, false
 	}
-	return structFieldCompletionItemsForNamed(index.mod, index.modules, best), true
+	return best, true
 }
 
-func structLiteralFieldPrefix(sourceText string, lit *ast.CompositeLit, pos source.Position) (string, bool) {
+func collectStructLiteralCompletionCandidates(index *completionIndex, info *typeinfo.ModuleInfo) {
+	if index == nil || info == nil {
+		return
+	}
+	for node, typ := range info.Nodes {
+		lit, ok := node.(*ast.CompositeLit)
+		if !ok || lit == nil || lit.Type == nil {
+			continue
+		}
+		named := underlyingNamedType(typ)
+		if named == nil {
+			continue
+		}
+		items := structFieldCompletionItemsForNamed(index.mod, index.modules, named)
+		if len(items) == 0 {
+			continue
+		}
+		index.structLiterals = append(index.structLiterals, struct {
+			location source.Location
+			items    []completionItem
+		}{
+			location: lit.Location,
+			items:    items,
+		})
+	}
+}
+
+func structLiteralFieldPrefix(sourceText string, loc source.Location, pos source.Position) (string, bool) {
 	offset := sourceOffsetAtPosition(sourceText, pos)
-	if offset < 0 || offset > len(sourceText) || lit == nil || lit.Location.Start == nil {
+	if offset < 0 || offset > len(sourceText) || loc.Start == nil {
 		return "", false
 	}
-	start := lit.Location.Start.Index
+	start := loc.Start.Index
 	if start < 0 || start > offset || start >= len(sourceText) {
 		return "", false
 	}
