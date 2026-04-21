@@ -70,6 +70,52 @@ func TestLowerProgramDebugScopeDoesNotLeakToFunctionWithoutLocation(t *testing.T
 	}
 }
 
+func TestLowerProgramDebugDeclsUseFunctionFileForMissingLocalLocations(t *testing.T) {
+	loc := source.NewLocation("/tmp/ferret-debug-local.fer", source.Position{Line: 7, Column: 1}, source.Position{Line: 7, Column: 1})
+	voidType := &typeinfo.BuiltinType{Name: "void"}
+	i32Type := &typeinfo.BuiltinType{Name: "i32"}
+	mod := &mir.Module{
+		Key:        "main",
+		ImportPath: "main",
+		FilePath:   "/tmp/ferret-debug-local.fer",
+		Functions: []*mir.Function{
+			{
+				Name:   "debug_locals",
+				Result: voidType,
+				Params: []*mir.Param{
+					{Name: "value", LocalID: 1, Type: i32Type, Location: source.Location{}},
+				},
+				Locals: []*mir.Local{
+					{ID: 1, Name: "value", Type: i32Type, Mutable: true, Location: source.Location{}},
+					{ID: 2, Name: "scratch", Type: i32Type, Mutable: true, Location: source.Location{}},
+				},
+				EntryID:  0,
+				Blocks:   []*mir.Block{{ID: 0, Terminator: &mir.ReturnTerm{}}},
+				Location: loc,
+			},
+		},
+	}
+	layoutMod := &layout.Module{Key: "main"}
+	unit := &backend.Unit{
+		Module:  mod,
+		Layout:  layoutMod,
+		Layouts: map[string]*layout.Module{"main": layoutMod},
+	}
+	text, err := llvmbackend.LowerProgram([]*backend.Unit{unit}, true)
+	if err != nil {
+		t.Fatalf("LowerProgram: %v", err)
+	}
+	for _, want := range []string{
+		"call void @llvm.dbg.declare(metadata ptr %value_alloca",
+		"call void @llvm.dbg.declare(metadata ptr %scratch_alloca",
+		`!DIFile(filename: "ferret-debug-local.fer", directory: "/tmp")`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerInterfaceDispatchToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
