@@ -5,14 +5,15 @@ type DeclAttributeSpec struct {
 	FunctionOnly  bool
 	MaxArgs       int
 	NoArgsMessage string
+	Doc           string
 }
 
 var declAttributeSpecs = []DeclAttributeSpec{
-	{Name: "extern", FunctionOnly: true, MaxArgs: 1},
-	{Name: "builtin", FunctionOnly: true, MaxArgs: 1},
-	{Name: "allow_unused", MaxArgs: 0, NoArgsMessage: "#[allow_unused] does not accept arguments"},
-	{Name: "if", MaxArgs: -1},
-	{Name: "ifnot", MaxArgs: -1},
+	{Name: "extern", FunctionOnly: true, MaxArgs: 1, Doc: "Marks a function as externally linked. Optional argument overrides the linked symbol name."},
+	{Name: "builtin", FunctionOnly: true, MaxArgs: 1, Doc: "Marks a function as compiler/runtime-provided. Optional argument overrides the linked symbol name."},
+	{Name: "allow_unused", MaxArgs: 0, NoArgsMessage: "#[allow_unused] does not accept arguments", Doc: "Suppresses unused diagnostics for the annotated declaration."},
+	{Name: "if", MaxArgs: -1, Doc: "Includes the annotated declaration only when the compile-time condition matches."},
+	{Name: "ifnot", MaxArgs: -1, Doc: "Includes the annotated declaration only when the compile-time condition does not match."},
 }
 
 var declAttributeSpecByName = buildDeclAttributeSpecByName(declAttributeSpecs)

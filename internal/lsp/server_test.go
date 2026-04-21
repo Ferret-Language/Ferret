@@ -614,6 +614,45 @@ func TestHoverReturnsKeywordDocumentation(t *testing.T) {
 	}
 }
 
+func TestHoverReturnsAttributeDocumentation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "#[allow_unused]\nfn helper() {\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, char, ok := findPosition(src, "allow_unused")
+	if !ok {
+		t.Fatal("failed to find attribute name")
+	}
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/hover",
+		Params: mustRawJSON(t, hoverParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	hover := decodeHoverResult(t, out.String())
+	if hover == nil {
+		t.Fatal("expected hover result")
+	}
+	if !strings.Contains(hover.Contents.Value, "```ferret\n#[allow_unused]\n```") {
+		t.Fatalf("expected attribute code block in hover, got %q", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "Suppresses unused diagnostics") {
+		t.Fatalf("expected attribute documentation in hover, got %q", hover.Contents.Value)
+	}
+}
+
 func TestHoverRangeExpressionShowsSourceSyntaxWithoutType(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
@@ -3638,6 +3677,65 @@ func TestCompletionSuggestsFerretAttributesInAttributeContext(t *testing.T) {
 	}
 	if !foundAllowUnused || !foundBuiltin || !foundExtern || !foundIf || !foundIfNot {
 		t.Fatalf("expected ferret attribute completions, got %#v", items)
+	}
+}
+
+func TestCompletionSuggestsStructLiteralFields(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.fer")
+	src := "type User struct {\n    name: str\n    age: i32\n}\n\nfn (self: User) label() -> str {\n    return self.name\n}\n\nfn main() {\n    let user = User{\n        \n    }\n    user\n}\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatalf("failed to write source: %v", err)
+	}
+
+	line, _, ok := findPosition(src, "    let user = User{")
+	if !ok {
+		t.Fatal("failed to find struct literal completion position")
+	}
+	line++
+	char := len("        ")
+
+	var out bytes.Buffer
+	uri := "file://" + filepath.ToSlash(path)
+	s := &Server{out: &out, documents: make(map[string]openDocument), hoverCache: make(map[string]hoverCacheEntry)}
+	req := rpcRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "textDocument/completion",
+		Params: mustRawJSON(t, completionParams{
+			TextDocument: textDocumentIdentifier{URI: uri},
+			Position:     lspPosition{Line: line, Character: char},
+		}),
+	}
+	s.handleRequest(req)
+
+	items := decodeCompletionResult(t, out.String())
+	foundName := false
+	foundAge := false
+	foundIf := false
+	foundMethod := false
+	for _, item := range items {
+		if item.Label == "name" && item.Kind == completionKindField {
+			foundName = true
+		}
+		if item.Label == "age" && item.Kind == completionKindField {
+			foundAge = true
+		}
+		if item.Label == "if" {
+			foundIf = true
+		}
+		if item.Label == "label" {
+			foundMethod = true
+		}
+	}
+	if !foundName || !foundAge {
+		t.Fatalf("expected struct field completions, got %#v", items)
+	}
+	if foundIf {
+		t.Fatalf("did not expect keyword completion in struct literal field context, got %#v", items)
+	}
+	if foundMethod {
+		t.Fatalf("did not expect method completion in struct literal field context, got %#v", items)
 	}
 }
 

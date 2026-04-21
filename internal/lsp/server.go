@@ -77,7 +77,12 @@ var (
 			if name == "" {
 				continue
 			}
-			items = append(items, completionItem{Label: name, Kind: completionKindProperty})
+			item := completionItem{Label: name, Kind: completionKindProperty}
+			if spec, ok := parser.LookupDeclAttributeSpec(name); ok {
+				item.Detail = attributeSignature(spec)
+				item.Documentation = spec.Doc
+			}
+			items = append(items, item)
 		}
 		return items
 	}()
@@ -1904,7 +1909,49 @@ func collectHoverCandidates(mod *context.Module, info *typeinfo.ModuleInfo, modu
 	}
 	out = append(out, collectOwnershipCastSyntaxHoverCandidates(mod, info)...)
 	out = append(out, collectKeywordHoverCandidates(parsedPath, sourceText)...)
+	out = append(out, collectAttributeHoverCandidates(parsedPath, sourceText)...)
 	return out, defs
+}
+
+func collectAttributeHoverCandidates(path, sourceText string) []hoverCandidate {
+	if path == "" || sourceText == "" {
+		return nil
+	}
+	diag := diagnostics.NewDiagnosticBag("lsp_attribute_hover")
+	toks := lexSource(path, sourceText, diag)
+	if len(toks) == 0 {
+		return nil
+	}
+	out := make([]hoverCandidate, 0)
+	for i := 0; i+2 < len(toks); i++ {
+		if toks[i].Kind != tokens.HASH || toks[i+1].Kind != tokens.LBRACK || toks[i+2].Kind != tokens.IDENT {
+			continue
+		}
+		name := toks[i+2].Literal
+		spec, ok := parser.LookupDeclAttributeSpec(name)
+		if !ok || spec.Doc == "" {
+			continue
+		}
+		loc := source.NewLocation(path, toks[i+2].Start, toks[i+2].End)
+		out = append(out, hoverCandidate{
+			markdown: appendHoverDoc(asFerretCodeBlock(attributeSignature(spec)), spec.Doc),
+			location: loc,
+			span:     locationSpan(loc),
+			priority: 3,
+		})
+	}
+	return out
+}
+
+func attributeSignature(spec parser.DeclAttributeSpec) string {
+	switch spec.MaxArgs {
+	case 0:
+		return "#[" + spec.Name + "]"
+	case 1:
+		return "#[" + spec.Name + "(...)]"
+	default:
+		return "#[" + spec.Name + "(...)]"
+	}
 }
 
 func collectKeywordHoverCandidates(path, sourceText string) []hoverCandidate {
@@ -3074,8 +3121,6 @@ func normalizeLocationFile(loc source.Location, parsedPath, originalPath string)
 	}
 	candidate := ""
 	if loc.Filename != nil {
-		candidate = *loc.Filename
-	} else if *loc.Filename != "" {
 		candidate = *loc.Filename
 	}
 	if candidate == "" || !sameFilePath(candidate, parsedPath) {
