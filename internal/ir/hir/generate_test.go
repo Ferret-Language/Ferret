@@ -9,7 +9,7 @@ import (
 	"compiler/internal/core/context"
 	"compiler/internal/core/diagnostics"
 	"compiler/internal/core/phase"
-	"compiler/internal/driver"
+	compiler "compiler/internal/driver"
 	"compiler/internal/ir/hir"
 )
 

@@ -1780,20 +1780,10 @@ func functionPointer(fn any) uintptr {
 func writeHoverOverlay(_ string, text string) (string, error) {
 	dir, err := hoverOverlayDir()
 	if err != nil {
-		return "", err
+		dir = ""
 	}
-	cutoff := time.Now().Add(-hoverOverlayStaleThreshold)
-	if stale, err := filepath.Glob(filepath.Join(dir, hoverOverlayGlob)); err == nil {
-		for _, candidate := range stale {
-			info, statErr := os.Stat(candidate)
-			if statErr != nil || info.IsDir() {
-				continue
-			}
-			if info.ModTime().After(cutoff) {
-				continue
-			}
-			_ = os.Remove(candidate)
-		}
+	if dir != "" {
+		pruneStaleHoverOverlays(dir)
 	}
 	file, err := os.CreateTemp(dir, hoverOverlayTempPattern)
 	if err != nil {
@@ -1810,6 +1800,21 @@ func writeHoverOverlay(_ string, text string) (string, error) {
 		return "", err
 	}
 	return tempPath, nil
+}
+
+func pruneStaleHoverOverlays(dir string) {
+	cutoff := time.Now().Add(-hoverOverlayStaleThreshold)
+	stale, err := filepath.Glob(filepath.Join(dir, hoverOverlayGlob))
+	if err != nil {
+		return
+	}
+	for _, candidate := range stale {
+		info, statErr := os.Stat(candidate)
+		if statErr != nil || info.IsDir() || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(candidate)
+	}
 }
 
 func hoverOverlayDir() (string, error) {

@@ -483,6 +483,24 @@ func TestWriteHoverOverlayPrunesStaleOverlays(t *testing.T) {
 	}
 }
 
+func TestWriteHoverOverlayFallsBackWhenCacheDisabled(t *testing.T) {
+	t.Setenv(ferretCacheEnv, "off")
+
+	tempPath, err := writeHoverOverlay("main.fer", "fn main() {}")
+	if err != nil {
+		t.Fatalf("write overlay: %v", err)
+	}
+	defer func() { _ = os.Remove(tempPath) }()
+
+	got, err := os.ReadFile(tempPath)
+	if err != nil {
+		t.Fatalf("read overlay: %v", err)
+	}
+	if string(got) != "fn main() {}" {
+		t.Fatalf("expected fallback overlay text, got %q", string(got))
+	}
+}
+
 func TestHoverReturnsTypeFromSavedFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
