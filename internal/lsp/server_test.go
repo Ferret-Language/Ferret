@@ -450,8 +450,14 @@ func TestFileURIPathPrefixesWindowsDrive(t *testing.T) {
 
 func TestWriteHoverOverlayPrunesStaleOverlays(t *testing.T) {
 	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "ferret-cache")
+	t.Setenv(ferretCacheEnv, cacheDir)
 	sourcePath := filepath.Join(dir, "main.fer")
-	stalePath := filepath.Join(dir, ".ferretls-hover-stale.fer")
+	staleName := strings.Replace(hoverOverlayGlob, "*", "stale"+compiler.FerretSourceExt, 1)
+	stalePath := filepath.Join(cacheDir, hoverOverlayDirName, staleName)
+	if err := os.MkdirAll(filepath.Dir(stalePath), 0o700); err != nil {
+		t.Fatalf("create overlay cache dir: %v", err)
+	}
 	if err := os.WriteFile(stalePath, []byte("fn broken("), 0o644); err != nil {
 		t.Fatalf("write stale overlay: %v", err)
 	}
@@ -465,6 +471,12 @@ func TestWriteHoverOverlayPrunesStaleOverlays(t *testing.T) {
 		t.Fatalf("write overlay: %v", err)
 	}
 	defer func() { _ = os.Remove(tempPath) }()
+	if filepath.Ext(tempPath) == compiler.FerretSourceExt {
+		t.Fatalf("expected non-source overlay extension, got %q", tempPath)
+	}
+	if !strings.HasPrefix(filepath.Clean(tempPath), filepath.Clean(cacheDir)) {
+		t.Fatalf("expected overlay in cache dir %q, got %q", cacheDir, tempPath)
+	}
 
 	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
 		t.Fatalf("expected stale overlay to be removed, stat err=%v", err)

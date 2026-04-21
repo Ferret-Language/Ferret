@@ -523,6 +523,32 @@ func TestParsePathForIDEReportsUnusedLocalDiagnostics(t *testing.T) {
 	}
 }
 
+func TestParsePathWithOverlayForIDEAcceptsNonSourceExtension(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "main.fer")
+	overlayPath := filepath.Join(root, "overlay.tmp")
+	mustWrite(t, sourcePath, `fn main() -> void {
+}
+`)
+	mustWrite(t, overlayPath, `fn main() -> void {
+    let overlay_value = 1
+}
+`)
+
+	rejected := ParsePathForIDE(overlayPath)
+	if !rejected.Diagnostics.HasErrors() {
+		t.Fatalf("expected normal IDE parse to reject non-source extension")
+	}
+
+	result := ParsePathWithOverlay(sourcePath, overlayPath, true)
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected overlay diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	if result.Entry == nil || result.Entry.FilePath != filepath.Clean(sourcePath) {
+		t.Fatalf("expected source entry %q, got %#v", filepath.Clean(sourcePath), result.Entry)
+	}
+}
+
 func TestParsePathRejectsNonCanonicalRecursiveGenericSelfUseBeforeLowering(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
