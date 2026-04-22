@@ -549,6 +549,26 @@ func TestParsePathWithOverlayForIDEAcceptsNonSourceExtension(t *testing.T) {
 	}
 }
 
+func TestParsePathWithOverlayReportsOverlayReadPath(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "main.fer")
+	overlayPath := filepath.Join(root, "missing-overlay.tmp")
+	mustWrite(t, sourcePath, `fn main() -> void {
+}
+`)
+
+	result := ParsePathWithOverlay(sourcePath, overlayPath, true)
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected missing overlay diagnostic")
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag != nil && strings.Contains(diag.Message, "cannot read overlay file "+overlayPath) {
+			return
+		}
+	}
+	t.Fatalf("expected overlay path diagnostic, got %#v", result.Diagnostics.Diagnostics())
+}
+
 func TestParsePathRejectsNonCanonicalRecursiveGenericSelfUseBeforeLowering(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `

@@ -192,7 +192,7 @@ func (p *Pipeline) parseOverlayFile(resolved context.ResolvedImport, overlayFile
 	content, err := os.ReadFile(overlayFile)
 	if err != nil {
 		p.ctx.Diagnostics.Add(
-			diagnostics.NewError(fmt.Sprintf("cannot read module %s", mod.ImportPath)).
+			diagnostics.NewError(fmt.Sprintf("cannot read overlay file %s for module %s", overlayFile, mod.ImportPath)).
 				WithCode(diagnostics.ErrModuleNotFound).
 				WithPrimaryLabel(loc, err.Error()),
 		)

@@ -2717,7 +2717,7 @@ func structLiteralFieldPrefix(sourceText string, loc source.Location, pos source
 	}
 	item := strings.TrimSpace(body[itemStart:])
 	if item == "" {
-		return "", true
+		return "", false
 	}
 	if !strings.HasPrefix(item, ".") {
 		return "", false

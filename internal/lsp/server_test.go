@@ -3710,7 +3710,7 @@ func TestCompletionSuggestsFerretAttributesInAttributeContext(t *testing.T) {
 	}
 }
 
-func TestCompletionSuggestsStructLiteralFields(t *testing.T) {
+func TestCompletionDoesNotSuggestStructLiteralFieldsBeforeDot(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
 	src := "type User struct {\n    name: str\n    age: i32\n}\n\nfn (self: User) label() -> str {\n    return self.name\n}\n\nfn main() {\n    let user = User{\n        \n    }\n    user\n}\n"
@@ -3742,8 +3742,6 @@ func TestCompletionSuggestsStructLiteralFields(t *testing.T) {
 	items := decodeCompletionResult(t, out.String())
 	foundName := false
 	foundAge := false
-	foundIf := false
-	foundMethod := false
 	for _, item := range items {
 		if item.Label == "name" && item.Kind == completionKindField {
 			foundName = true
@@ -3751,21 +3749,9 @@ func TestCompletionSuggestsStructLiteralFields(t *testing.T) {
 		if item.Label == "age" && item.Kind == completionKindField {
 			foundAge = true
 		}
-		if item.Label == "if" {
-			foundIf = true
-		}
-		if item.Label == "label" {
-			foundMethod = true
-		}
 	}
-	if !foundName || !foundAge {
-		t.Fatalf("expected struct field completions, got %#v", items)
-	}
-	if foundIf {
-		t.Fatalf("did not expect keyword completion in struct literal field context, got %#v", items)
-	}
-	if foundMethod {
-		t.Fatalf("did not expect method completion in struct literal field context, got %#v", items)
+	if foundName || foundAge {
+		t.Fatalf("did not expect struct field completions before dot, got %#v", items)
 	}
 }
 
