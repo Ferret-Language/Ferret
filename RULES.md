@@ -100,7 +100,11 @@ Minimum validation before commit:
 - Do not commit generated binaries or temporary repro executables.
 - Keep commit message specific to real behavior change.
 
-## 9) Agent-specific requirements
+## 9) Branch protection
+- Do  not put new feature implementations on main / master.
+- Create new feature branch for new feature or fix branch for any bugfix.
+
+## 10) Agent-specific requirements
 
 Agents must:
 - Search for existing implementations before writing new logic.
@@ -108,7 +112,7 @@ Agents must:
 - Justify any new helper in code review notes/commit rationale.
 - Avoid creating compatibility wrappers unless explicitly requested.
 
-## 10) Human review checklist
+## 11) Human review checklist
 
 Before merge, verify:
 - No pass-through wrappers were introduced.
