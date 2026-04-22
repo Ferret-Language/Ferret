@@ -565,11 +565,11 @@ Current status:
 - `len(str)` is supported
 - `str` currently behaves as an immutable view-like text type
 - `str as []u8` produces a readonly byte view with the same `{ptr, len}` backing storage
-- `[]u8 as str` produces a trusted text view with the same `{ptr, len}` backing storage
+- `[]u8 as str` produces a trusted text view with the same `{ptr, len}` backing storage and does not validate UTF-8; downstream `str` operations assume the bytes are valid UTF-8
 - explicit copy/view materialization helpers (`str_bytes`, `bytes_str`, `str_chars`) remain available
 - direct allocating casts such as `str as []char` and `[]char as str` are rejected
 - numeric formatting and `[]char` encoding use `to_str<T: Stringable>(value)`, not `as str`
-- types that provide `String() -> str` can use `value as str`
+- types that provide `fn Name::String(self) -> str` can use `value as str`
 - casts from `str` to mutable `[]mut u8` / `[]mut char` are rejected
 - the final owned mutable text type is not part of the current core language surface
 

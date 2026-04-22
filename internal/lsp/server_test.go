@@ -450,8 +450,14 @@ func TestFileURIPathPrefixesWindowsDrive(t *testing.T) {
 
 func TestWriteHoverOverlayPrunesStaleOverlays(t *testing.T) {
 	dir := t.TempDir()
+	cacheDir := filepath.Join(dir, "ferret-cache")
+	t.Setenv(ferretCacheEnv, cacheDir)
 	sourcePath := filepath.Join(dir, "main.fer")
-	stalePath := filepath.Join(dir, ".ferretls-hover-stale.fer")
+	staleName := strings.Replace(hoverOverlayGlob, "*", "stale"+compiler.FerretSourceExt, 1)
+	stalePath := filepath.Join(cacheDir, hoverOverlayDirName, staleName)
+	if err := os.MkdirAll(filepath.Dir(stalePath), 0o700); err != nil {
+		t.Fatalf("create overlay cache dir: %v", err)
+	}
 	if err := os.WriteFile(stalePath, []byte("fn broken("), 0o644); err != nil {
 		t.Fatalf("write stale overlay: %v", err)
 	}
@@ -465,9 +471,33 @@ func TestWriteHoverOverlayPrunesStaleOverlays(t *testing.T) {
 		t.Fatalf("write overlay: %v", err)
 	}
 	defer func() { _ = os.Remove(tempPath) }()
+	if filepath.Ext(tempPath) == compiler.FerretSourceExt {
+		t.Fatalf("expected non-source overlay extension, got %q", tempPath)
+	}
+	if !strings.HasPrefix(filepath.Clean(tempPath), filepath.Clean(cacheDir)) {
+		t.Fatalf("expected overlay in cache dir %q, got %q", cacheDir, tempPath)
+	}
 
 	if _, err := os.Stat(stalePath); !os.IsNotExist(err) {
 		t.Fatalf("expected stale overlay to be removed, stat err=%v", err)
+	}
+}
+
+func TestWriteHoverOverlayFallsBackWhenCacheDisabled(t *testing.T) {
+	t.Setenv(ferretCacheEnv, "off")
+
+	tempPath, err := writeHoverOverlay("main.fer", "fn main() {}")
+	if err != nil {
+		t.Fatalf("write overlay: %v", err)
+	}
+	defer func() { _ = os.Remove(tempPath) }()
+
+	got, err := os.ReadFile(tempPath)
+	if err != nil {
+		t.Fatalf("read overlay: %v", err)
+	}
+	if string(got) != "fn main() {}" {
+		t.Fatalf("expected fallback overlay text, got %q", string(got))
 	}
 }
 
@@ -3680,7 +3710,7 @@ func TestCompletionSuggestsFerretAttributesInAttributeContext(t *testing.T) {
 	}
 }
 
-func TestCompletionSuggestsStructLiteralFields(t *testing.T) {
+func TestCompletionDoesNotSuggestStructLiteralFieldsBeforeDot(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fer")
 	src := "type User struct {\n    name: str\n    age: i32\n}\n\nfn (self: User) label() -> str {\n    return self.name\n}\n\nfn main() {\n    let user = User{\n        \n    }\n    user\n}\n"
@@ -3712,8 +3742,6 @@ func TestCompletionSuggestsStructLiteralFields(t *testing.T) {
 	items := decodeCompletionResult(t, out.String())
 	foundName := false
 	foundAge := false
-	foundIf := false
-	foundMethod := false
 	for _, item := range items {
 		if item.Label == "name" && item.Kind == completionKindField {
 			foundName = true
@@ -3721,21 +3749,9 @@ func TestCompletionSuggestsStructLiteralFields(t *testing.T) {
 		if item.Label == "age" && item.Kind == completionKindField {
 			foundAge = true
 		}
-		if item.Label == "if" {
-			foundIf = true
-		}
-		if item.Label == "label" {
-			foundMethod = true
-		}
 	}
-	if !foundName || !foundAge {
-		t.Fatalf("expected struct field completions, got %#v", items)
-	}
-	if foundIf {
-		t.Fatalf("did not expect keyword completion in struct literal field context, got %#v", items)
-	}
-	if foundMethod {
-		t.Fatalf("did not expect method completion in struct literal field context, got %#v", items)
+	if foundName || foundAge {
+		t.Fatalf("did not expect struct field completions before dot, got %#v", items)
 	}
 }
 

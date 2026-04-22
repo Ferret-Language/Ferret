@@ -1078,10 +1078,7 @@ func lowerBuiltinToStrCallValue(c *lowerContext, call *hir.CallExpr) (Value, boo
 				Path:      []string{"global", "to_str"},
 				LinkName:  "ferret_global_chars_str",
 			},
-			Args: []Value{&AddrOfValue{
-				baseValue: baseValue{Location: arg.Loc(), ExprType: &typeinfo.RefType{Inner: argType}},
-				Source:    lowerAddrSource(c, arg),
-			}},
+			Args: []Value{lowerValue(c, arg)},
 		}, true
 	}
 	if value, ok := lowerStringMethodCoercion(c, arg, result); ok {

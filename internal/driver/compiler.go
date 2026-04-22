@@ -139,6 +139,56 @@ func ParsePathForIDE(path string) Result {
 	return parsePath(path, parseModeIDE)
 }
 
+// ParsePathWithOverlay parses originalPath using overlayPath content while
+// keeping project roots, import paths, and diagnostic paths tied to originalPath.
+func ParsePathWithOverlay(originalPath, overlayPath string, ide bool) Result {
+	mode := parseModeFull
+	if ide {
+		mode = parseModeIDE
+	}
+	absPath, err := filepath.Abs(originalPath)
+	diag := diagnostics.NewDiagnosticBag(absPath)
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return Result{Diagnostics: diag}
+	}
+	absOverlay, err := filepath.Abs(overlayPath)
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return Result{Diagnostics: diag}
+	}
+	if ext := strings.ToLower(filepath.Ext(absPath)); ext != FerretSourceExt {
+		diag.Add(diagnostics.NewError("unsupported source file extension"))
+		return Result{Diagnostics: diag}
+	}
+	ws, err := project.Load(absPath, FerretSourceExt)
+	if err != nil {
+		diag.Add(diagnostics.NewError(err.Error()))
+		return Result{Diagnostics: diag}
+	}
+	c := NewWithConfig(ws.Context, diag)
+	var entry *context.Module
+	switch mode {
+	case parseModeIDE:
+		entry, err = c.pipeline.ParseEntryOverlayForIDE(absPath, absOverlay)
+	default:
+		entry, err = c.pipeline.ParseEntryOverlay(absPath, absOverlay)
+	}
+	if err != nil {
+		c.ctx.Diagnostics.Add(diagnostics.NewError(err.Error()))
+	}
+	result := Result{
+		Entry:         entry,
+		Modules:       c.ctx.NonPreludeModules(),
+		Diagnostics:   c.ctx.Diagnostics,
+		CompilerState: c.ctx,
+	}
+	if entry != nil {
+		result.Module = entry.AST
+	}
+	return result
+}
+
 func (c *Compiler) ParseEntry(entryFile string) Result {
 	entry, err := c.pipeline.ParseEntry(entryFile)
 	if err != nil {
