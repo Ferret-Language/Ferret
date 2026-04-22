@@ -27,25 +27,29 @@ type moduleState struct {
 	layout            *layout.Module
 	layouts           map[string]*layout.Module
 	modules           map[string]*mir.Module
-	fn                *mir.Function
 	functions         map[string]struct{}
 	globals           map[string]struct{}
 	modulePrefix      string
-	aggLocals         map[int]*aggregateLocal
-	aggParams         map[int]struct{}
-	scalarLocals      map[int]*scalarAllocaLocal // mutable scalar locals mapped to alloca ptrs
-	nextTemp          int
 	nextPrivateGlobal int              // counter for compiler-emitted private globals
 	deferredB         *strings.Builder // deferred global definitions (e.g. string literals used in functions)
-	pendingLines      []string         // extra load instructions to flush before each emitted line
 	interfaceVTables  map[becommon.InterfaceVTableKey]string
 	interfaceWrappers map[becommon.InterfaceWrapperKey]struct{}
 	runtimeTypes      map[string]string
-	tempValues        map[int]mir.Value
 	debug             *debugState // nil if debug info is disabled
-	fnScopeID         int         // DISubprogram metadata ID for the current function
-	debugLocalVarIDs  map[int]int // local ID -> DILocalVariable metadata ID (for dbg.value updates)
 	inGlobalInit      bool
+	functionState
+}
+
+type functionState struct {
+	fn               *mir.Function
+	aggLocals        map[int]*aggregateLocal
+	aggParams        map[int]struct{}           // aggParams are params that are aggregate types. For example, structs or arrays.
+	scalarLocals     map[int]*scalarAllocaLocal // mutable scalar locals mapped to alloca ptrs
+	nextTemp         int
+	pendingLines     []string // extra load instructions to flush before each emitted line
+	tempValues       map[int]mir.Value
+	fnScopeID        int         // DISubprogram metadata ID for the current function
+	debugLocalVarIDs map[int]int // local ID -> DILocalVariable metadata ID (for dbg.value updates)
 }
 
 // debugState accumulates LLVM debug-info metadata nodes (DWARF) while
@@ -509,38 +513,11 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 		}
 		// We need a temporary state only to resolve return types.
 		tmpState := newProgramModuleState(unit, allLayouts, dbg, shared)
-		callDecls, err := collectExternCallDecls(tmpState, unit.Module, seenExterns)
+		externDecls, err := collectModuleExternDecls(tmpState, unit, seenExterns)
 		if err != nil {
 			return "", fmt.Errorf("collect extern call declarations [%s]: %w", unit.Module.ImportPath, err)
 		}
-		declLines = append(declLines, callDecls...)
-		for _, fn := range externFunctionsForUnit(unit) {
-			if fn == nil || !fn.IsExtern || fn.LinkName == "" || isLoweredBuiltinExtern(fn) {
-				continue
-			}
-			sym := becommon.SanitizeLinkName(fn.LinkName)
-			if _, seen := seenExterns[sym]; seen {
-				continue
-			}
-			seenExterns[sym] = struct{}{}
-			// Determine return type string.
-			var retStr string
-			if isAggregateType(tmpState, fn.Result) {
-				if tn, err := llvmABITypeName(tmpState, fn.Result); err == nil {
-					retStr = tn
-				} else {
-					retStr = "ptr"
-				}
-			} else {
-				if rt, err := llvmBaseType(fn.Result); err == nil {
-					retStr = rt
-				} else {
-					retStr = "ptr"
-				}
-			}
-			// Use variadic signature so we don't need param type info.
-			declLines = append(declLines, fmt.Sprintf("declare %s @%s(...)", retStr, sym))
-		}
+		declLines = append(declLines, externDecls...)
 	}
 
 	// Always declare Ferret runtime functions used by compiler-emitted code.
@@ -585,20 +562,9 @@ func LowerProgram(units []*backend.Unit, includeDebug bool) (string, error) {
 			if fn == nil || fn.IsExtern {
 				continue
 			}
-			// Capture function IR into a temp buffer so that any string constants
-			// accumulated in deferredB during lowering can be emitted BEFORE the
-			// function body (LLVM IR requires globals to be defined before use).
-			var fnB strings.Builder
-			if err := emitFunction(&fnB, state, fn); err != nil {
+			if err := emitFunctionWithDeferred(&b, state, fn, true); err != nil {
 				return "", fmt.Errorf("lower program function %s [%s]: %w", fn.Name, unit.Module.ImportPath, err)
 			}
-			b.WriteByte('\n')
-			if state.deferredB.Len() > 0 {
-				b.WriteString(state.deferredB.String())
-				state.deferredB.Reset()
-				b.WriteByte('\n')
-			}
-			b.WriteString(fnB.String())
 		}
 	}
 	if len(ctorEntries) > 0 {
@@ -713,22 +679,9 @@ func implicitExternSymbol(decl string) string {
 // llvmExternDecl builds a "declare" line for an extern function.
 func llvmExternDecl(state *moduleState, fn *mir.Function) (string, error) {
 	sym := becommon.SanitizeLinkName(fn.LinkName)
-
-	var retStr string
-	if fn.Result == nil || isVoidType(fn.Result) {
-		retStr = "void"
-	} else if isAggregateType(state, fn.Result) {
-		t, err := llvmABITypeName(state, fn.Result)
-		if err != nil {
-			return "", err
-		}
-		retStr = t
-	} else {
-		t, err := llvmBaseType(fn.Result)
-		if err != nil {
-			return "", err
-		}
-		retStr = t
+	retStr, err := llvmExternReturnType(state, fn.Result)
+	if err != nil {
+		return "", err
 	}
 
 	// Extern signatures may be unavailable or incomplete in some standalone
@@ -798,180 +751,47 @@ func collectExternCallDecls(state *moduleState, mod *mir.Module, seenExterns map
 		decls = append(decls, fmt.Sprintf("declare %s @%s(%s)", ret, sym, strings.Join(params, ", ")))
 		return nil
 	}
-	var walkValue func(value mir.Value) error
-	var walkPlace func(place mir.Place) error
-	var walkInstr func(instr mir.Instr) error
-	var walkTerm func(term mir.Terminator) error
-	walkValue = func(value mir.Value) error {
-		switch v := value.(type) {
-		case nil, *mir.NameValue, *mir.LocalValue, *mir.NumberValue, *mir.BoolValue, *mir.StringValue, *mir.NoneValue:
-			return nil
-		case *mir.UnaryValue:
-			return walkValue(v.Right)
-		case *mir.BinaryValue:
-			if err := walkValue(v.Left); err != nil {
-				return err
-			}
-			return walkValue(v.Right)
-		case *mir.PostfixValue:
-			return walkValue(v.Left)
-		case *mir.AddrOfValue:
-			return walkValue(v.Source)
-		case *mir.LoadValue:
-			return walkValue(v.Pointer)
-		case *mir.CallValue:
-			if _, _, ok := becommon.BuiltinMapCall(v); ok {
-				if err := walkValue(v.Callee); err != nil {
-					return err
-				}
-				for _, arg := range v.Args {
-					if err := walkValue(arg); err != nil {
-						return err
-					}
-				}
-				return nil
-			}
-			if callee, ok := v.Callee.(*mir.NameValue); ok && callee.LinkName != "" {
-				if err := addCall(becommon.SanitizeLinkName(callee.LinkName), v); err != nil {
-					return err
-				}
-			}
-			if err := walkValue(v.Callee); err != nil {
-				return err
-			}
-			for _, arg := range v.Args {
-				if err := walkValue(arg); err != nil {
-					return err
-				}
-			}
-			return nil
-		case *mir.FieldLoadValue:
-			return walkValue(v.Base)
-		case *mir.FieldValue:
-			return walkValue(v.Base)
-		case *mir.CastValue:
-			return walkValue(v.Left)
-		case *mir.TypeTestValue:
-			return walkValue(v.Left)
-		case *mir.CompositeValue:
-			for _, item := range v.Items {
-				if err := walkValue(item.Value); err != nil {
-					return err
-				}
-			}
-			return nil
-		case *mir.InterfaceValue:
-			return walkValue(v.Value)
-		case *mir.IndexValue:
-			if err := walkValue(v.Base); err != nil {
-				return err
-			}
-			return walkValue(v.Index)
-		default:
+	if err := mir.WalkModuleValues(mod, func(value mir.Value) error {
+		call, ok := value.(*mir.CallValue)
+		if !ok {
 			return nil
 		}
-	}
-	walkPlace = func(place mir.Place) error {
-		switch p := place.(type) {
-		case nil, *mir.LocalPlace:
-			return nil
-		case *mir.FieldPlace:
-			return walkPlace(p.Base)
-		case *mir.IndexPlace:
-			if err := walkPlace(p.Base); err != nil {
-				return err
-			}
-			return walkValue(p.Index)
-		case *mir.DerefPlace:
-			return walkValue(p.Pointer)
-		default:
+		if _, _, ok := becommon.BuiltinMapCall(call); ok {
 			return nil
 		}
-	}
-	walkInstr = func(instr mir.Instr) error {
-		switch i := instr.(type) {
-		case nil:
-			return nil
-		case *mir.AssignInstr:
-			return walkValue(i.Value)
-		case *mir.ComputeInstr:
-			return walkValue(i.Value)
-		case *mir.StoreInstr:
-			if err := walkPlace(i.Target); err != nil {
-				return err
-			}
-			return walkValue(i.Value)
-		case *mir.StoreFieldInstr:
-			if err := walkValue(i.Base); err != nil {
-				return err
-			}
-			return walkValue(i.Value)
-		case *mir.EvalInstr:
-			return walkValue(i.Value)
-		case *mir.BindInstr:
-			return walkValue(i.Value)
-		case *mir.LockInstr:
-			return walkValue(i.Value)
-		case *mir.DeferInstr:
-			for _, child := range i.Body {
-				if err := walkInstr(child); err != nil {
-					return err
-				}
-			}
-			return nil
-		default:
+		callee, ok := call.Callee.(*mir.NameValue)
+		if !ok || callee.LinkName == "" {
 			return nil
 		}
+		return addCall(becommon.SanitizeLinkName(callee.LinkName), call)
+	}); err != nil {
+		return nil, err
 	}
-	walkTerm = func(term mir.Terminator) error {
-		switch t := term.(type) {
-		case nil:
-			return nil
-		case *mir.BranchTerm:
-			return walkValue(t.Cond)
-		case *mir.SwitchTerm:
-			if err := walkValue(t.Value); err != nil {
-				return err
-			}
-			for _, kase := range t.Cases {
-				if err := walkValue(kase.Expr); err != nil {
-					return err
-				}
-			}
-			return nil
-		case *mir.ReturnTerm:
-			return walkValue(t.Value)
-		case *mir.PanicTerm:
-			return walkValue(t.Value)
-		default:
-			return nil
-		}
+	return decls, nil
+}
+
+func collectModuleExternDecls(state *moduleState, unit *backend.Unit, seenExterns map[string]struct{}) ([]string, error) {
+	if state == nil || unit == nil || unit.Module == nil {
+		return nil, nil
 	}
-	for _, global := range mod.Globals {
-		if global == nil {
+	decls, err := collectExternCallDecls(state, unit.Module, seenExterns)
+	if err != nil {
+		return nil, err
+	}
+	for _, fn := range externFunctionsForUnit(unit) {
+		if fn == nil || !fn.IsExtern || fn.LinkName == "" || isLoweredBuiltinExtern(fn) {
 			continue
 		}
-		if err := walkValue(global.Init); err != nil {
+		sym := becommon.SanitizeLinkName(fn.LinkName)
+		if _, seen := seenExterns[sym]; seen {
+			continue
+		}
+		decl, err := llvmExternDecl(state, fn)
+		if err != nil {
 			return nil, err
 		}
-	}
-	for _, fn := range mod.Functions {
-		if fn == nil {
-			continue
-		}
-		for _, block := range fn.Blocks {
-			if block == nil {
-				continue
-			}
-			for _, instr := range block.Instructions {
-				if err := walkInstr(instr); err != nil {
-					return nil, err
-				}
-			}
-			if err := walkTerm(block.Terminator); err != nil {
-				return nil, err
-			}
-		}
+		seenExterns[sym] = struct{}{}
+		decls = append(decls, decl)
 	}
 	return decls, nil
 }
@@ -1018,7 +838,6 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 			interfaceVTables:  shared.VTables,
 			interfaceWrappers: shared.Wrappers,
 			runtimeTypes:      shared.RuntimeTypes,
-			tempValues:        make(map[int]mir.Value),
 		}
 	}
 	modulePrefix, functions, globals := becommon.BuildModuleSymbolTables(unit.Module)
@@ -1039,7 +858,6 @@ func newModuleState(unit *backend.Unit, allLayouts map[string]*layout.Module) *m
 		interfaceVTables:  shared.VTables,
 		interfaceWrappers: shared.Wrappers,
 		runtimeTypes:      shared.RuntimeTypes,
-		tempValues:        make(map[int]mir.Value),
 	}
 	return state
 }
@@ -1073,27 +891,11 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		b.WriteByte('\n')
 	}
 	seenExterns := seedExternDecls()
-	callDecls, err := collectExternCallDecls(state, unit.Module, seenExterns)
+	externDecls, err := collectModuleExternDecls(state, unit, seenExterns)
 	if err != nil {
 		return nil, err
 	}
-	for _, decl := range callDecls {
-		b.WriteString(decl)
-		b.WriteByte('\n')
-	}
-	for _, fn := range externFunctionsForUnit(unit) {
-		if fn == nil || !fn.IsExtern || fn.LinkName == "" || isLoweredBuiltinExtern(fn) {
-			continue
-		}
-		sym := becommon.SanitizeLinkName(fn.LinkName)
-		if _, ok := seenExterns[sym]; ok {
-			continue
-		}
-		decl, err := llvmExternDecl(state, fn)
-		if err != nil {
-			return nil, err
-		}
-		seenExterns[sym] = struct{}{}
+	for _, decl := range externDecls {
 		b.WriteString(decl)
 		b.WriteByte('\n')
 	}
@@ -1117,22 +919,9 @@ func (*lowerer) LowerModule(unit *backend.Unit) (*backend.Artifact, error) {
 		if fn == nil || fn.IsExtern {
 			continue
 		}
-		if written > 0 {
-			b.WriteByte('\n')
-		}
-		// Capture function IR into a temp buffer so that any string constants
-		// accumulated in deferredB during lowering can be emitted BEFORE the
-		// function body (LLVM IR requires globals to be defined before use).
-		var fnB strings.Builder
-		if err := emitFunction(&fnB, state, fn); err != nil {
+		if err := emitFunctionWithDeferred(&b, state, fn, written > 0); err != nil {
 			return nil, err
 		}
-		if state.deferredB.Len() > 0 {
-			b.WriteString(state.deferredB.String())
-			state.deferredB.Reset()
-			b.WriteByte('\n')
-		}
-		b.WriteString(fnB.String())
 		written++
 	}
 	if initName != "" {
@@ -1162,6 +951,25 @@ func emitGlobalCtorTable(b *strings.Builder, entries []globalCtorEntry) {
 		return
 	}
 	fmt.Fprintf(b, "@llvm.global_ctors = appending global [%d x { i32, ptr, ptr }] [%s]\n", len(parts), strings.Join(parts, ", "))
+}
+
+func emitFunctionWithDeferred(b *strings.Builder, state *moduleState, fn *mir.Function, leadingBlank bool) error {
+	// Capture function IR first so compiler-emitted globals collected in
+	// deferredB can be emitted before the function body, as LLVM requires.
+	var fnB strings.Builder
+	if err := emitFunction(&fnB, state, fn); err != nil {
+		return err
+	}
+	if leadingBlank {
+		b.WriteByte('\n')
+	}
+	if state.deferredB.Len() > 0 {
+		b.WriteString(state.deferredB.String())
+		state.deferredB.Reset()
+		b.WriteByte('\n')
+	}
+	b.WriteString(fnB.String())
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1712,7 +1520,8 @@ func emitFunction(b *strings.Builder, state *moduleState, fn *mir.Function) erro
 
 	// Attach DWARF subprogram metadata if debug state is active.
 	dbgSuffix := ""
-	if state.debug != nil && *fn.Location.Filename != "" {
+	filename := fn.Location.Filename
+	if state.debug != nil && filename != nil && *filename != "" {
 		fileID := state.debug.getFile(*fn.Location.Filename)
 		// Re-use the last added CU or add one for this file.
 		cuID := -1
@@ -1841,16 +1650,22 @@ func entryDebugDecls(state *moduleState) []string {
 		locID := state.debug.addLocation(line, 1, state.fnScopeID)
 		lines = append(lines, fmt.Sprintf("call void @llvm.dbg.declare(metadata ptr %s, metadata !%d, metadata !%d), !dbg !%d", ptrName, varID, exprID, locID))
 	}
+	localFilePath := func(filename *string) string {
+		if filename != nil && *filename != "" {
+			return *filename
+		}
+		if state.fn.Location.Filename != nil {
+			return *state.fn.Location.Filename
+		}
+		return ""
+	}
 
 	for _, param := range state.fn.Params {
 		if param == nil {
 			continue
 		}
 		paramIDs[param.LocalID] = struct{}{}
-		filePath := param.Location.Filename
-		if *filePath == "" {
-			filePath = state.fn.Location.Filename
-		}
+		filePath := localFilePath(param.Location.Filename)
 		line := 1
 		if param.Location.Start != nil {
 			line = param.Location.Start.Line
@@ -1858,12 +1673,12 @@ func entryDebugDecls(state *moduleState) []string {
 			line = state.fn.Location.Start.Line
 		}
 		if _, ok := state.aggParams[param.LocalID]; ok {
-			emitDecl(param.LocalID, param.Name, param.Type, llvmLocalName(param.Name), *filePath, line, argIndex)
+			emitDecl(param.LocalID, param.Name, param.Type, llvmLocalName(param.Name), filePath, line, argIndex)
 			argIndex++
 			continue
 		}
 		if sc, ok := state.scalarLocals[param.LocalID]; ok {
-			emitDecl(param.LocalID, param.Name, param.Type, sc.AllocaName, *filePath, line, argIndex)
+			emitDecl(param.LocalID, param.Name, param.Type, sc.AllocaName, filePath, line, argIndex)
 			argIndex++
 		}
 	}
@@ -1875,10 +1690,7 @@ func entryDebugDecls(state *moduleState) []string {
 		if _, isParam := paramIDs[local.ID]; isParam {
 			continue
 		}
-		filePath := local.Location.Filename
-		if *filePath == "" {
-			filePath = state.fn.Location.Filename
-		}
+		filePath := localFilePath(local.Location.Filename)
 		line := 1
 		if local.Location.Start != nil {
 			line = local.Location.Start.Line
@@ -1886,14 +1698,14 @@ func entryDebugDecls(state *moduleState) []string {
 			line = state.fn.Location.Start.Line
 		}
 		if sc, ok := state.scalarLocals[local.ID]; ok {
-			emitDecl(local.ID, local.Name, local.Type, sc.AllocaName, *filePath, line, 0)
+			emitDecl(local.ID, local.Name, local.Type, sc.AllocaName, filePath, line, 0)
 			continue
 		}
 		if agg, ok := state.aggLocals[local.ID]; ok {
 			if _, isParam := state.aggParams[local.ID]; isParam {
 				continue
 			}
-			emitDecl(local.ID, local.Name, local.Type, llvmLocalName(agg.PtrName), *filePath, line, 0)
+			emitDecl(local.ID, local.Name, local.Type, llvmLocalName(agg.PtrName), filePath, line, 0)
 		}
 	}
 
@@ -5499,6 +5311,7 @@ func prepareFunctionState(state *moduleState, fn *mir.Function) error {
 	state.debugLocalVarIDs = make(map[int]int)
 	state.pendingLines = nil
 	state.nextTemp = 0
+	state.fnScopeID = -1
 
 	for _, param := range fn.Params {
 		if param == nil {
