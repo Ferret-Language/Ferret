@@ -1046,7 +1046,11 @@ func lowerBuiltinToStrCallValue(c *lowerContext, call *hir.CallExpr) (Value, boo
 		return lowerValue(c, arg), true
 	}
 	if c != nil {
-		if family, _, ok := typeinfo.NumericInfo(argType); ok {
+		numericType := argType
+		if approx, ok := numericType.(*typeinfo.ApproxType); ok && approx != nil {
+			numericType = approx.Inner
+		}
+		if family, _, ok := typeinfo.NumericInfo(numericType); ok {
 			targetType := typeinfo.Type(&typeinfo.BuiltinType{Name: "i64"})
 			linkName := "ferret_global_i64_str"
 			if family == typeinfo.NumericUnsigned {

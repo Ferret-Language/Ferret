@@ -2134,8 +2134,12 @@ func (c *checker) checkTypeParamConstraintsAt(loc source.Location, params []*typ
 }
 
 func (c *checker) isStringableType(typ typeinfo.Type) bool {
+	base := c.underlying(typ)
+	if approx, ok := base.(*typeinfo.ApproxType); ok && approx != nil {
+		return c.isStringableType(approx.Inner)
+	}
 	return c.isStringType(typ) ||
-		typeinfo.IsNumeric(c.underlying(typ)) ||
+		typeinfo.IsNumeric(base) ||
 		c.isCharSliceType(typ) ||
 		c.isStringMethodCoercion(&typeinfo.StringType{}, typ)
 }

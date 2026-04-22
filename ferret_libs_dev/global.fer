@@ -68,6 +68,8 @@ fn compile_error(message: str) -> void;
 // Converts Stringable values to text when formatting or encoding is required.
 // Numeric types, str, []char, and types with String(self) -> str satisfy Stringable.
 // Use `as` for zero-copy reshapes.
+// Warning: `[]u8 as str` creates a trusted view and does not validate UTF-8.
+// Cast arbitrary bytes only when they are already known to be valid UTF-8.
 #[extern]
 fn to_str<T: Stringable>(value: T) -> str;
 
