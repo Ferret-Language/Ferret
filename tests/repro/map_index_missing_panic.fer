@@ -1,4 +1,4 @@
 fn main() -> void {
     let values = map[str]i32{"one" => 1}
-    println(values["missing"] as str)
+    println(to_str(values["missing"]))
 }

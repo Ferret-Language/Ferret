@@ -1,8 +1,8 @@
 fn main() -> void {
     let mut values = map[str]i32{"one" => 1}
-    println(values["one"] as str)
+    println(to_str(values["one"]))
     values["one"] = 2
-    println(values["one"] as str)
+    println(to_str(values["one"]))
 
     let mut words = map[str]str{"a" => "alpha"}
     println(words["a"])

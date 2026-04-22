@@ -51,7 +51,7 @@ fn main() -> void {
         conn.Close()
         return
     }
-    if len(data) == 4 && data as str == "pong" {
+    if len(data) == 4 && (data as str) == "pong" {
         print("tcp-conn-controls-ok")
         conn.Close()
         return

@@ -16,7 +16,7 @@ fn main() -> void {
         conn.Close()
         return
     }
-    if len(data) == 4 && data as str == "ping" {
+    if len(data) == 4 && (data as str) == "ping" {
         print("tcp-client-ok")
         conn.Close()
         return

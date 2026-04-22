@@ -17,9 +17,9 @@ fn Point::Incr(&mut self) {
 
 fn Point::String(self) -> str {
     let mut buff = string::FromStr("Point{ ")
-    buff.PushStr(self.x as str)
+    buff.PushStr(to_str(self.x))
     buff.PushStr(", ")
-    buff.PushStr(self.y as str)
+    buff.PushStr(to_str(self.y))
     buff.PushStr(" }")
 
     return buff.AsStr()

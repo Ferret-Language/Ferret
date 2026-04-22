@@ -20,7 +20,7 @@ fn main() -> void {
 
     let roundtrip = normalize(greeting)
     let bytes = roundtrip as []u8
-    let chars = roundtrip as []char
+    let chars = str_chars(&roundtrip)
     let expected: [3]char = [3]char{'h', 'é', '🙂'}
     let raw: [2]u8 = [2]u8{b'h', b'i'}
 

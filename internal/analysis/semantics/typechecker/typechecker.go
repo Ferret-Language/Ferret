@@ -2115,6 +2115,13 @@ func (c *checker) checkTypeParamConstraintsAt(loc source.Location, params []*typ
 			c.reportTypeMismatch(loc, constraint, actual)
 			continue
 		}
+		if _, ok := constraint.(*typeinfo.StringableConstraint); ok {
+			if c.isStringableType(actual) {
+				continue
+			}
+			c.reportTypeMismatch(loc, constraint, actual)
+			continue
+		}
 		if c.assignable(constraint, actual) {
 			continue
 		}
@@ -2124,6 +2131,13 @@ func (c *checker) checkTypeParamConstraintsAt(loc source.Location, params []*typ
 		}
 		c.reportTypeMismatch(loc, constraint, actual)
 	}
+}
+
+func (c *checker) isStringableType(typ typeinfo.Type) bool {
+	return c.isStringType(typ) ||
+		typeinfo.IsNumeric(c.underlying(typ)) ||
+		c.isCharSliceType(typ) ||
+		c.isStringMethodCoercion(&typeinfo.StringType{}, typ)
 }
 
 func (c *checker) checkInstantiatedGenericRequirements(call *ast.CallExpr, callee ast.Node, bindings map[*typeinfo.TypeParam]typeinfo.Type) bool {
@@ -3070,14 +3084,16 @@ func (c *checker) isExplicitEnumCast(target, source typeinfo.Type) bool {
 }
 
 func (c *checker) isExplicitStringCast(target, source typeinfo.Type) bool {
-	if c.isStringType(target) && (c.isByteSliceType(source) || c.isCharSliceType(source) || typeinfo.IsNumeric(source)) {
-		return true
-	}
 	if c.isStringMethodCoercion(target, source) {
 		return true
 	}
-	if c.isStringType(source) && (c.isByteSliceType(target) || c.isCharSliceType(target)) {
-		return true
+	if c.isStringType(source) {
+		targetSlice, ok := c.underlying(target).(*typeinfo.SliceType)
+		return ok && targetSlice != nil && !targetSlice.Mutable && typeinfo.IsBuiltinNamed(targetSlice.Inner, "u8")
+	}
+	if c.isStringType(target) {
+		sourceSlice, ok := c.underlying(source).(*typeinfo.SliceType)
+		return ok && sourceSlice != nil && !sourceSlice.Mutable && typeinfo.IsBuiltinNamed(sourceSlice.Inner, "u8")
 	}
 	return false
 }

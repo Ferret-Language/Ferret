@@ -197,7 +197,7 @@ type Name struct {
 }
 
 fn Name::String(self) -> str {
-    return 1 as str
+    return to_str(1)
 }
 
 fn main() -> i32 {

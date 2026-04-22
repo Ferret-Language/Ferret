@@ -328,7 +328,7 @@ fn write_response(conn: &mut tcp::Conn, status: u16, content_type: str, body: st
     total = (total as i64 + (conn.Write("HTTP/1.1 ") catch |err| {
         return err
     }) as i64) as usize
-    total = (total as i64 + (conn.Write(status as str) catch |err| {
+    total = (total as i64 + (conn.Write(to_str(status)) catch |err| {
         return err
     }) as i64) as usize
     total = (total as i64 + (conn.Write(" ") catch |err| {
@@ -340,7 +340,7 @@ fn write_response(conn: &mut tcp::Conn, status: u16, content_type: str, body: st
     total = (total as i64 + (conn.Write("\r\nContent-Length: ") catch |err| {
         return err
     }) as i64) as usize
-    total = (total as i64 + (conn.Write(len(body as []u8) as str) catch |err| {
+    total = (total as i64 + (conn.Write(to_str(len(body as []u8))) catch |err| {
         return err
     }) as i64) as usize
     total = (total as i64 + (conn.Write("\r\nContent-Type: ") catch |err| {

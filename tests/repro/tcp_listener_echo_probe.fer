@@ -17,7 +17,7 @@ fn main() -> void {
         listener.Close()
         return
     }
-    if len(data) == 4 && data as str == "ping" {
+    if len(data) == 4 && (data as str) == "ping" {
         _ = io::Write(conn, "pong") catch |err| {
             print(err)
             conn.Close()

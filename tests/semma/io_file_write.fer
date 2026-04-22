@@ -13,7 +13,7 @@ fn main() -> void {
         print(err)
         return
     }
-    _ = io::Write(file, 132245 as str) catch |err| {
+    _ = io::Write(file, to_str(132245)) catch |err| {
         print(err)
         return
     }

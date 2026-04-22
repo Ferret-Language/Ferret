@@ -9,7 +9,7 @@ fn Holder::Add(&mut self, key: str, value: i32) -> void {
 fn main() -> void {
     let mut holder: Holder = .{ .routes = {} }
     holder.Add("x", 1)
-    println("size=", size(&holder.routes) as str)
+    println("size=", to_str(size(&holder.routes)))
     if get(&holder.routes, "x") is i32 {
         println("found")
     } else {
