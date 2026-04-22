@@ -57,19 +57,17 @@ func (p *Pipeline) ParseEntryForIDE(entryFile string) (*context.Module, error) {
 		return nil, err
 	}
 	p.scheduleParseFile(resolved, nil)
-	p.wg.Wait()
-	if mod, ok := p.ctx.GetModule(resolved.Key); ok && mod != nil {
-		mod.IsEntry = true
-		if synthesizeTestHarness(mod.AST, p.ctx.Config.TestMode, p.ctx.Config.TestName) {
-			collector.CollectModule(p.ctx, mod)
-		}
-	}
-	if err := p.runIDEPasses(); err != nil {
+	return p.finishEntryParse(resolved, p.runIDEPasses, p.runIDEFinalPasses)
+}
+
+// ParseEntryOverlayForIDE parses entryFile with content read from overlayFile.
+func (p *Pipeline) ParseEntryOverlayForIDE(entryFile, overlayFile string) (*context.Module, error) {
+	resolved, err := p.ctx.ResolveLocalModule(entryFile)
+	if err != nil {
 		return nil, err
 	}
-	p.runIDEFinalPasses()
-	mod, _ := p.ctx.GetModule(resolved.Key)
-	return mod, nil
+	p.scheduleParseOverlayFile(resolved, overlayFile, nil)
+	return p.finishEntryParse(resolved, p.runIDEPasses, p.runIDEFinalPasses)
 }
 
 // ParseWorkspaceForIDE parses all source files in the workspace root then runs
@@ -101,6 +99,20 @@ func (p *Pipeline) ParseEntry(entryFile string) (*context.Module, error) {
 		return nil, err
 	}
 	p.scheduleParseFile(resolved, nil)
+	return p.finishEntryParse(resolved, p.runAllSemanticPasses, p.finalizeFinalPasses)
+}
+
+// ParseEntryOverlay parses entryFile with content read from overlayFile.
+func (p *Pipeline) ParseEntryOverlay(entryFile, overlayFile string) (*context.Module, error) {
+	resolved, err := p.ctx.ResolveLocalModule(entryFile)
+	if err != nil {
+		return nil, err
+	}
+	p.scheduleParseOverlayFile(resolved, overlayFile, nil)
+	return p.finishEntryParse(resolved, p.runAllSemanticPasses, p.finalizeFinalPasses)
+}
+
+func (p *Pipeline) finishEntryParse(resolved context.ResolvedImport, runPasses func() error, finalize func()) (*context.Module, error) {
 	p.wg.Wait()
 	if mod, ok := p.ctx.GetModule(resolved.Key); ok && mod != nil {
 		mod.IsEntry = true
@@ -108,10 +120,12 @@ func (p *Pipeline) ParseEntry(entryFile string) (*context.Module, error) {
 			collector.CollectModule(p.ctx, mod)
 		}
 	}
-	if err := p.runAllSemanticPasses(); err != nil {
+	if err := runPasses(); err != nil {
 		return nil, err
 	}
-	p.finalizeFinalPasses()
+	if finalize != nil {
+		finalize()
+	}
 	mod, _ := p.ctx.GetModule(resolved.Key)
 	return mod, nil
 }
@@ -148,6 +162,15 @@ func (p *Pipeline) scheduleParseFile(resolved context.ResolvedImport, loc *sourc
 	})
 }
 
+func (p *Pipeline) scheduleParseOverlayFile(resolved context.ResolvedImport, overlayFile string, loc *source.Location) {
+	if _, loaded := p.seen.LoadOrStore(resolved.Key, struct{}{}); loaded {
+		return
+	}
+	p.wg.Go(func() {
+		p.parseOverlayFile(resolved, overlayFile, loc)
+	})
+}
+
 // parseFile lexes, parses, and symbol-collects one module, then schedules its
 // imports as additional goroutines.  Runs concurrently for every reachable module.
 func (p *Pipeline) parseFile(resolved context.ResolvedImport, loc *source.Location) {
@@ -161,8 +184,25 @@ func (p *Pipeline) parseFile(resolved context.ResolvedImport, loc *source.Locati
 		)
 		return
 	}
+	p.parseModuleContent(mod, string(content))
+}
 
-	changed := p.ctx.StoreModuleContent(mod, string(content))
+func (p *Pipeline) parseOverlayFile(resolved context.ResolvedImport, overlayFile string, loc *source.Location) {
+	mod := p.ctx.UpsertModule(resolved)
+	content, err := os.ReadFile(overlayFile)
+	if err != nil {
+		p.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("cannot read overlay file %s for module %s", overlayFile, mod.ImportPath)).
+				WithCode(diagnostics.ErrModuleNotFound).
+				WithPrimaryLabel(loc, err.Error()),
+		)
+		return
+	}
+	p.parseModuleContent(mod, string(content))
+}
+
+func (p *Pipeline) parseModuleContent(mod *context.Module, content string) {
+	changed := p.ctx.StoreModuleContent(mod, content)
 	p.ctx.Diagnostics.AddSourceContent(mod.FilePath, mod.Content)
 
 	if mod.Phase >= phase.PhaseLayoutComputed && !changed {

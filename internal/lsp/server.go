@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strconv"
@@ -62,6 +63,13 @@ const (
 	completionKindConstant      = 21
 	completionKindStruct        = 22
 	completionKindTypeParameter = 25
+
+	ferretCacheEnv             = "FERRET_CACHE"
+	ferretCacheDirName         = "ferret-build"
+	hoverOverlayDirName        = "lsp-overlays"
+	hoverOverlayGlob           = ".ferretls-hover-*"
+	hoverOverlayTempPattern    = hoverOverlayGlob + ".tmp"
+	hoverOverlayStaleThreshold = 10 * time.Minute
 )
 
 var (
@@ -93,14 +101,8 @@ var (
 	parseSource = func(path string, toks []tokens.Token, diag *diagnostics.DiagnosticBag) {
 		_ = parser.Parse(path, toks, diag)
 	}
-	parseProject = func(path string) compiler.Result {
-		// LSP needs resolver + typechecker data. Backend passes are too expensive
-		// during interactive editing (especially generics-heavy code).
-		return compiler.ParsePathForIDE(path)
-	}
-	parseSemanticProject = func(path string) compiler.Result {
-		return compiler.ParsePath(path)
-	}
+	parseProject         = compiler.ParsePathForIDE
+	parseSemanticProject = compiler.ParsePath
 )
 
 type rpcRequest struct {
@@ -771,7 +773,7 @@ func (s *Server) handleRename(req rpcRequest) {
 	if hasOverlay {
 		sourceText = doc.Text
 	}
-	result, parsedPath, cleanup := parseForProject(path, sourceText, hasOverlay, parseProject)
+	result, parsedPath, cleanup := parseForProject(path, sourceText, hasOverlay, parseProject, compiler.ParsePathForIDE, true)
 	defer cleanup()
 
 	targetModule := findModuleByPath(result, parsedPath)
@@ -1746,14 +1748,14 @@ func indexModulesByKey(result compiler.Result) map[string]*context.Module {
 }
 
 func parseForHover(path, text string, hasText bool) (compiler.Result, string, func()) {
-	return parseForProject(path, text, hasText, parseProject)
+	return parseForProject(path, text, hasText, parseProject, compiler.ParsePathForIDE, true)
 }
 
 func parseForSemanticDiagnostics(path, text string, hasText bool) (compiler.Result, string, func()) {
-	return parseForProject(path, text, hasText, parseSemanticProject)
+	return parseForProject(path, text, hasText, parseSemanticProject, compiler.ParsePath, false)
 }
 
-func parseForProject(path, text string, hasText bool, parse func(path string) compiler.Result) (compiler.Result, string, func()) {
+func parseForProject(path, text string, hasText bool, parse, defaultParse func(path string) compiler.Result, ide bool) (compiler.Result, string, func()) {
 	if !hasText {
 		return parse(path), path, func() {}
 	}
@@ -1762,26 +1764,28 @@ func parseForProject(path, text string, hasText bool, parse func(path string) co
 		return parse(path), path, func() {}
 	}
 	cleanup := func() { _ = os.Remove(tempPath) }
-	return parse(tempPath), tempPath, cleanup
+	if functionPointer(parse) != functionPointer(defaultParse) {
+		return parse(path), path, cleanup
+	}
+	return compiler.ParsePathWithOverlay(path, tempPath, ide), path, cleanup
 }
 
-func writeHoverOverlay(originalPath, text string) (string, error) {
-	dir := filepath.Dir(originalPath)
-	const staleOverlayTTL = 10 * time.Minute
-	cutoff := time.Now().Add(-staleOverlayTTL)
-	if stale, err := filepath.Glob(filepath.Join(dir, ".ferretls-hover-*.fer")); err == nil {
-		for _, candidate := range stale {
-			info, statErr := os.Stat(candidate)
-			if statErr != nil || info.IsDir() {
-				continue
-			}
-			if info.ModTime().After(cutoff) {
-				continue
-			}
-			_ = os.Remove(candidate)
-		}
+func functionPointer(fn any) uintptr {
+	if fn == nil {
+		return 0
 	}
-	file, err := os.CreateTemp(dir, ".ferretls-hover-*.fer")
+	return reflect.ValueOf(fn).Pointer()
+}
+
+func writeHoverOverlay(_ string, text string) (string, error) {
+	dir, err := hoverOverlayDir()
+	if err != nil {
+		dir = ""
+	}
+	if dir != "" {
+		pruneStaleHoverOverlays(dir)
+	}
+	file, err := os.CreateTemp(dir, hoverOverlayTempPattern)
 	if err != nil {
 		return "", err
 	}
@@ -1796,6 +1800,51 @@ func writeHoverOverlay(originalPath, text string) (string, error) {
 		return "", err
 	}
 	return tempPath, nil
+}
+
+func pruneStaleHoverOverlays(dir string) {
+	cutoff := time.Now().Add(-hoverOverlayStaleThreshold)
+	stale, err := filepath.Glob(filepath.Join(dir, hoverOverlayGlob))
+	if err != nil {
+		return
+	}
+	for _, candidate := range stale {
+		info, statErr := os.Stat(candidate)
+		if statErr != nil || info.IsDir() || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.Remove(candidate)
+	}
+}
+
+func hoverOverlayDir() (string, error) {
+	root, err := ferretCacheDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, hoverOverlayDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func ferretCacheDir() (string, error) {
+	root := os.Getenv(ferretCacheEnv)
+	if root == "" {
+		cache, err := os.UserCacheDir()
+		if err != nil {
+			return "", fmt.Errorf("%s is not defined and %w", ferretCacheEnv, err)
+		}
+		root = filepath.Join(cache, ferretCacheDirName)
+	}
+	if root == "off" {
+		return "", fmt.Errorf("%s=off", ferretCacheEnv)
+	}
+	if !filepath.IsAbs(root) {
+		return "", fmt.Errorf("%s is not an absolute path", ferretCacheEnv)
+	}
+	return root, nil
 }
 
 func findModuleByPath(result compiler.Result, parsedPath string) *context.Module {
@@ -2668,7 +2717,7 @@ func structLiteralFieldPrefix(sourceText string, loc source.Location, pos source
 	}
 	item := strings.TrimSpace(body[itemStart:])
 	if item == "" {
-		return "", true
+		return "", false
 	}
 	if !strings.HasPrefix(item, ".") {
 		return "", false
