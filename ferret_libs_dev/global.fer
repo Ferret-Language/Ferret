@@ -3,7 +3,8 @@
 // `str` is the built-in immutable text view type: an opaque fat pointer
 // `{ data *u8, len usize }`.
 // Assigning or passing `str` copies only this small view, not the backing bytes.
-// The helper declarations below use `*str` as their current FFI ABI shape.
+// The helper declarations below use references to pass view descriptors across
+// the runtime FFI boundary.
 // String literals have type `str`. Use str_data(s) and str_len(s) to extract
 // the raw fields at C FFI boundaries.
 //
@@ -64,6 +65,14 @@ fn set<K: Comparable, V>(value: &mut map[K]V, key: K, item: V) -> ?V;
 #[extern]
 fn compile_error(message: str) -> void;
 
+// Converts Stringable values to text when formatting or encoding is required.
+// Numeric types, str, []char, and types with String(self) -> str satisfy Stringable.
+// Use `as` for zero-copy reshapes.
+// Warning: `[]u8 as str` creates a trusted view and does not validate UTF-8.
+// Cast arbitrary bytes only when they are already known to be valid UTF-8.
+#[extern]
+fn to_str<T: Stringable>(value: T) -> str;
+
 // ---------------------------------------------------------------------------
 // str field accessors
 //
@@ -74,34 +83,36 @@ fn compile_error(message: str) -> void;
 // Returns the raw byte pointer that backs s.
 // Valid only as long as s is live. Do not store without care.
 #[extern]
-fn str_data(s: *str) -> ^void;
+fn str_data(s: &str) -> ^void;
 
 // Returns the byte length of s (number of UTF-8 code units / bytes).
 #[extern]
-fn str_len(s: *str) -> usize;
+fn str_len(s: &str) -> usize;
 
 // Copies the UTF-8 bytes of s into a fresh []u8 slice.
+// Use `s as []u8` when a readonly byte view is enough.
 #[extern]
-fn str_bytes(s: *str) -> []u8;
+fn str_bytes(s: &str) -> []u8;
 
 // Copies the bytes of a []u8 slice into a fresh str value.
+// This is explicit because the operation allocates and trusts caller UTF-8.
 #[extern]
-fn bytes_str(bytes: *[]u8) -> str;
+fn bytes_str(bytes: &[]u8) -> str;
 
 // Decodes the UTF-8 bytes of s into a fresh []char slice.
 #[extern]
-fn str_chars(s: *str) -> []char;
+fn str_chars(s: &str) -> []char;
 
-// Encodes a []char slice into a fresh UTF-8 str value.
+// Runtime target used by to_str([]char).
 #[extern]
-fn chars_str(chars: *[]char) -> str;
+fn chars_str(chars: &[]char) -> str;
 
 // Copies s into a newly allocated NUL-terminated C string.
 // The returned pointer can be passed to C APIs and freed with free().
 #[extern]
-fn str_cstr(s: *str) -> ^void;
+fn str_cstr(s: &str) -> ^void;
 
-// Internal helpers used by numeric-to-string cast lowering.
+// Runtime targets used by to_str(numeric).
 #[extern]
 fn i64_str(value: i64) -> str;
 

@@ -44,6 +44,10 @@ type ComparableConstraint struct{}
 
 func (*ComparableConstraint) String() string { return "Comparable" }
 
+type StringableConstraint struct{}
+
+func (*StringableConstraint) String() string { return "Stringable" }
+
 type TypeParam struct {
 	Name       string
 	Constraint Type
@@ -439,6 +443,9 @@ func Equal(a, b Type) bool {
 		return ok
 	case *ComparableConstraint:
 		_, ok := b.(*ComparableConstraint)
+		return ok
+	case *StringableConstraint:
+		_, ok := b.(*StringableConstraint)
 		return ok
 	case *TypeParam:
 		bt, ok := b.(*TypeParam)

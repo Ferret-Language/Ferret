@@ -1461,7 +1461,7 @@ fn main() -> i32 {
 	}
 }
 
-func TestTypecheckerAllowsNumericToStringCast(t *testing.T) {
+func TestTypecheckerRejectsNumericToStringCast(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
@@ -1473,8 +1473,102 @@ fn main() -> void {
 `)
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected numeric-to-string cast diagnostics")
+	}
+}
+
+func TestTypecheckerAllowsStringByteSliceViewCasts(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(s: str) -> usize {
+    let bytes = s as []u8
+    return len(bytes)
+}
+
+fn from_bytes(bytes: []u8) -> str {
+    return bytes as str
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Diagnostics.HasErrors() {
 		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsAllocatingStringCasts(t *testing.T) {
+	cases := []string{
+		`
+fn main(chars: []char) -> str {
+    return chars as str
+}
+`,
+		`
+fn main(s: str) -> []char {
+    return s as []char
+}
+`,
+	}
+	for _, src := range cases {
+		root := t.TempDir()
+		mustWriteType(t, filepath.Join(root, "main.fer"), src)
+		result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+		if !result.Diagnostics.HasErrors() {
+			t.Fatalf("expected allocating string cast diagnostic for source:\n%s", src)
+		}
+	}
+}
+
+func TestTypecheckerAllowsToStrStringableConversions(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Name struct {}
+
+fn Name::String(self) -> str {
+    return "name"
+}
+
+fn main(chars: []char, n: Name) -> str {
+    let a = to_str(42)
+    let b = to_str(1.5)
+    let c = to_str(chars)
+    let d = to_str(n)
+    return a
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerAllowsApproxNumericToStr(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> str {
+    return to_str<~i32>(1)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsToStrForByteSliceReshape(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main(bytes: []u8) -> str {
+    return to_str(bytes)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected to_str diagnostic for byte slice")
 	}
 }
 
@@ -1842,7 +1936,7 @@ type Name struct {
 }
 
 fn Name::String(self) -> str {
-    return 1 as str
+    return to_str(1)
 }
 
 fn main() -> str {
@@ -1902,7 +1996,7 @@ type Name struct {
 }
 
 fn Name::String(self) -> str {
-    return 1 as str
+    return to_str(1)
 }
 
 fn main() -> i32 {

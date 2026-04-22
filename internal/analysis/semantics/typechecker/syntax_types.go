@@ -16,46 +16,44 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	case nil:
 		return nil
 	case *ast.NamedType:
-		if len(t.TypeArgs) > 0 && len(t.Path) == 1 {
-			if tokens.IsBuiltinType(t.Path[0]) {
+		if name, ok := unqualifiedTypeName(t); ok {
+			if len(t.TypeArgs) > 0 && tokens.IsBuiltinType(name) {
 				loc := t.Loc()
 				c.ctx.Diagnostics.Add(
-					diagnostics.NewError(fmt.Sprintf("type %q is not generic", t.Path[0])).
+					diagnostics.NewError(fmt.Sprintf("type %q is not generic", name)).
 						WithCode(diagnostics.ErrTypeMismatch).
 						WithPrimaryLabel(&loc, "remove type arguments from this non-generic type"),
 				)
 				return typeinfo.InvalidType{}
 			}
-			if _, ok := c.lookupTypeParam(t.Path[0]); ok {
-				loc := t.Loc()
-				c.ctx.Diagnostics.Add(
-					diagnostics.NewError(fmt.Sprintf("type parameter %q cannot take type arguments", t.Path[0])).
-						WithCode(diagnostics.ErrTypeMismatch).
-						WithPrimaryLabel(&loc, "remove type arguments from this type parameter"),
-				)
-				return typeinfo.InvalidType{}
+			if tokens.IsBuiltinType(name) {
+				if name == "str" {
+					return &typeinfo.StringType{}
+				}
+				return &typeinfo.BuiltinType{Name: name}
 			}
-		}
-		if len(t.Path) == 1 && tokens.IsBuiltinType(t.Path[0]) {
-			if t.Path[0] == "str" {
-				return &typeinfo.StringType{}
-			}
-			return &typeinfo.BuiltinType{Name: t.Path[0]}
-		}
-		if len(t.Path) == 1 {
-			if t.Path[0] == "Comparable" {
+			if constraint := predeclaredConstraintType(name); constraint != nil {
 				if len(t.TypeArgs) > 0 {
 					loc := t.Loc()
 					c.ctx.Diagnostics.Add(
-						diagnostics.NewError(`type "Comparable" is not generic`).
+						diagnostics.NewError(fmt.Sprintf("type %q is not generic", name)).
 							WithCode(diagnostics.ErrTypeMismatch).
 							WithPrimaryLabel(&loc, "remove type arguments from this constraint"),
 					)
 					return typeinfo.InvalidType{}
 				}
-				return &typeinfo.ComparableConstraint{}
+				return constraint
 			}
-			if typeParam, ok := c.lookupTypeParam(t.Path[0]); ok {
+			if typeParam, ok := c.lookupTypeParam(name); ok {
+				if len(t.TypeArgs) > 0 {
+					loc := t.Loc()
+					c.ctx.Diagnostics.Add(
+						diagnostics.NewError(fmt.Sprintf("type parameter %q cannot take type arguments", name)).
+							WithCode(diagnostics.ErrTypeMismatch).
+							WithPrimaryLabel(&loc, "remove type arguments from this type parameter"),
+					)
+					return typeinfo.InvalidType{}
+				}
 				return typeParam
 			}
 		}
@@ -249,6 +247,24 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 	}
 }
 
+func unqualifiedTypeName(t *ast.NamedType) (string, bool) {
+	if t == nil || len(t.Path) != 1 {
+		return "", false
+	}
+	return t.Path[0], true
+}
+
+func predeclaredConstraintType(name string) typeinfo.Type {
+	switch name {
+	case "Comparable":
+		return &typeinfo.ComparableConstraint{}
+	case "Stringable":
+		return &typeinfo.StringableConstraint{}
+	default:
+		return nil
+	}
+}
+
 func (c *checker) selectedUnionMemberTarget(mod *context.Module, expr ast.TypeExpr) (typeinfo.Type, typeinfo.Type, bool) {
 	named, ok := expr.(*ast.NamedType)
 	if !ok || named == nil {
@@ -284,10 +300,10 @@ func (c *checker) lookupNamedUnionMemberType(mod *context.Module, unionDecl *ast
 	}
 	for _, member := range unionDecl.Members {
 		named, ok := member.(*ast.NamedType)
-		if !ok || named == nil || len(named.Path) != 1 {
+		if !ok {
 			continue
 		}
-		if named.Path[0] == name {
+		if memberName, ok := unqualifiedTypeName(named); ok && memberName == name {
 			return c.typeFromSyntax(mod, member), true
 		}
 	}

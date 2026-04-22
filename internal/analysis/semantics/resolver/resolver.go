@@ -1023,7 +1023,7 @@ func (r *resolver) reportInvalidType(loc source.Location, name string) {
 }
 
 func isPredeclaredType(name string) bool {
-	return tokens.IsBuiltinType(name) || name == "Type" || name == "Comparable"
+	return tokens.IsBuiltinType(name) || name == "Type" || name == "Comparable" || name == "Stringable"
 }
 
 func (r *resolver) findOwnerModuleForSymbol(sym *symbols.Symbol) *context.Module {

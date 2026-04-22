@@ -518,6 +518,9 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		if builtinLen, ok := lowerBuiltinLenCallValue(lowerCtx, e); ok {
 			return builtinLen
 		}
+		if builtinToStr, ok := lowerBuiltinToStrCallValue(lowerCtx, e); ok {
+			return builtinToStr
+		}
 		stringifyAnyArgs := lowerIsPrintLikeAnyCall(lowerCtx, e.Callee)
 		// Normalize method calls (instance.Method(...)) to direct function calls
 		// by prepending the receiver as the first argument, e.g. p.Len2() → Len2(p).
@@ -1032,6 +1035,62 @@ func lowerBuiltinLenCallValue(c *lowerContext, call *hir.CallExpr) (Value, bool)
 	}
 }
 
+func lowerBuiltinToStrCallValue(c *lowerContext, call *hir.CallExpr) (Value, bool) {
+	if call == nil || len(call.Args) != 1 || !lowerIsForeignToStrCall(c, call.Callee) {
+		return nil, false
+	}
+	arg := call.Args[0]
+	argType := arg.Type()
+	result := &typeinfo.StringType{}
+	if _, ok := argType.(*typeinfo.StringType); ok {
+		return lowerValue(c, arg), true
+	}
+	if c != nil {
+		numericType := argType
+		if approx, ok := numericType.(*typeinfo.ApproxType); ok && approx != nil {
+			numericType = approx.Inner
+		}
+		if family, _, ok := typeinfo.NumericInfo(numericType); ok {
+			targetType := typeinfo.Type(&typeinfo.BuiltinType{Name: "i64"})
+			linkName := "ferret_global_i64_str"
+			if family == typeinfo.NumericUnsigned {
+				targetType = &typeinfo.BuiltinType{Name: "u64"}
+				linkName = "ferret_global_u64_str"
+			} else if family == typeinfo.NumericFloat {
+				targetType = &typeinfo.BuiltinType{Name: "f64"}
+				linkName = "ferret_global_f64_str"
+			}
+			return &CallValue{
+				baseValue: baseValue{Location: call.Loc(), ExprType: result},
+				Callee: &NameValue{
+					baseValue: baseValue{Location: call.Callee.Loc(), ExprType: &typeinfo.FuncType{Result: result}},
+					Path:      []string{"global", "to_str"},
+					LinkName:  linkName,
+				},
+				Args: []Value{&CastValue{
+					baseValue: baseValue{Location: arg.Loc(), ExprType: targetType},
+					Left:      lowerValue(c, arg),
+				}},
+			}, true
+		}
+	}
+	if slice, ok := argType.(*typeinfo.SliceType); ok && slice != nil && typeinfo.IsBuiltinNamed(slice.Inner, "char") {
+		return &CallValue{
+			baseValue: baseValue{Location: call.Loc(), ExprType: result},
+			Callee: &NameValue{
+				baseValue: baseValue{Location: call.Callee.Loc(), ExprType: &typeinfo.FuncType{Result: result}},
+				Path:      []string{"global", "to_str"},
+				LinkName:  "ferret_global_chars_str",
+			},
+			Args: []Value{lowerValue(c, arg)},
+		}, true
+	}
+	if value, ok := lowerStringMethodCoercion(c, arg, result); ok {
+		return value, true
+	}
+	return nil, false
+}
+
 func lowerCallFuncType(callee hir.Expr) *typeinfo.FuncType {
 	if typed, ok := callee.Type().(*typeinfo.FuncType); ok {
 		return typed
@@ -1185,6 +1244,21 @@ func lowerIsForeignLenCall(c *lowerContext, callee hir.Expr) bool {
 		return false
 	}
 	if resolution.Symbol.Name != "len" {
+		return false
+	}
+	fn, ok := resolution.Symbol.Node.(*ast.FuncDecl)
+	return ok && fn != nil && fn.IsExtern
+}
+
+func lowerIsForeignToStrCall(c *lowerContext, callee hir.Expr) bool {
+	if c == nil || callee == nil || callee.SourceExpr() == nil {
+		return false
+	}
+	resolution, ok := c.lookupResolution(callee.SourceExpr())
+	if !ok || resolution.Kind != binding.ResolutionSymbol || resolution.Symbol == nil {
+		return false
+	}
+	if resolution.Symbol.Name != "to_str" {
 		return false
 	}
 	fn, ok := resolution.Symbol.Node.(*ast.FuncDecl)

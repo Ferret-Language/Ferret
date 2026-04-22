@@ -3078,9 +3078,7 @@ func lowerAggregateAssign(state *moduleState, agg *aggregateLocal, value mir.Val
 			return lowerAggregateAssign(state, agg, v.Right)
 		}
 	case *mir.CastValue:
-		srcCast := backend.UnwrapNamed(v.Left.Type())
-		dstCast := backend.UnwrapNamed(v.Type())
-		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) && !isStringSliceCastPair(srcCast, dstCast) && !isSpecialAggregate(v.Left.Type()) {
+		if isAggregateType(state, v.Type()) && isAggregateType(state, v.Left.Type()) && !isSpecialAggregate(v.Left.Type()) {
 			return lowerAggregateAssign(state, agg, v.Left)
 		}
 		if isInterfaceAggregate(v.Left.Type()) && !isInterfaceAggregate(v.Type()) && isAggregateType(state, v.Type()) {
@@ -4953,9 +4951,6 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 	}
 	src := backend.UnwrapNamed(v.Left.Type())
 	dst := backend.UnwrapNamed(v.Type())
-	if call, ok, err := lowerStringSliceCast(state, src, dst, v.Left); ok || err != nil {
-		return call, err
-	}
 	if isUnionAggregate(v.Left.Type()) {
 		srcPtr, err := lowerUnionSource(state, v.Left)
 		if err != nil {
@@ -4988,9 +4983,6 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 		tmp := freshTemp(state, "ifacecast")
 		state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, srcPtr))
 		return llvmCopyExpr(irType, tmp)
-	}
-	if _, ok := dst.(*typeinfo.StringType); ok {
-		return lowerStringCast(state, v.Left)
 	}
 	if isAggregateType(state, v.Left.Type()) && isAggregateType(state, v.Type()) {
 		return lowerValue(state, v.Left)
@@ -5037,70 +5029,6 @@ func lowerCast(state *moduleState, v *mir.CastValue) (string, error) {
 		return llvmCopyExpr("ptr", srcVal)
 	}
 	return "", fmt.Errorf("unsupported cast from %s to %s", src, dst)
-}
-
-func lowerStringSliceCast(state *moduleState, src, dst typeinfo.Type, value mir.Value) (string, bool, error) {
-	if _, ok := src.(*typeinfo.StringType); ok {
-		elem, ok := sliceElementBuiltin(dst)
-		if !ok {
-			return "", false, nil
-		}
-		srcPtr, err := lowerAggregateSource(state, value)
-		if err != nil {
-			return "", true, err
-		}
-		switch elem {
-		case "u8":
-			return fmt.Sprintf("call %s @ferret_global_str_bytes(ptr %s)", llvmSliceLikeType(), srcPtr), true, nil
-		case "char":
-			return fmt.Sprintf("call %s @ferret_global_str_chars(ptr %s)", llvmSliceLikeType(), srcPtr), true, nil
-		default:
-			return "", false, nil
-		}
-	}
-	if _, ok := dst.(*typeinfo.StringType); ok {
-		elem, ok := sliceElementBuiltin(src)
-		if !ok {
-			return "", false, nil
-		}
-		srcPtr, err := lowerAggregateSource(state, value)
-		if err != nil {
-			return "", true, err
-		}
-		switch elem {
-		case "u8":
-			return fmt.Sprintf("call %s @ferret_global_bytes_str(ptr %s)", llvmSliceLikeType(), srcPtr), true, nil
-		case "char":
-			return fmt.Sprintf("call %s @ferret_global_chars_str(ptr %s)", llvmSliceLikeType(), srcPtr), true, nil
-		default:
-			return "", false, nil
-		}
-	}
-	return "", false, nil
-}
-
-func isStringSliceCastPair(src, dst typeinfo.Type) bool {
-	if _, ok := src.(*typeinfo.StringType); ok {
-		elem, ok := sliceElementBuiltin(dst)
-		return ok && (elem == "u8" || elem == "char")
-	}
-	if _, ok := dst.(*typeinfo.StringType); ok {
-		elem, ok := sliceElementBuiltin(src)
-		return ok && (elem == "u8" || elem == "char")
-	}
-	return false
-}
-
-func sliceElementBuiltin(typ typeinfo.Type) (string, bool) {
-	sliceType, ok := typ.(*typeinfo.SliceType)
-	if !ok || sliceType == nil {
-		return "", false
-	}
-	builtin, ok := backend.UnwrapNamed(sliceType.Inner).(*typeinfo.BuiltinType)
-	if !ok || builtin == nil {
-		return "", false
-	}
-	return builtin.Name, true
 }
 
 func lowerUnionSource(state *moduleState, value mir.Value) (string, error) {
@@ -5228,45 +5156,6 @@ func llvmUnionMemberTypes(info *layout.UnionLayout) []typeinfo.Type {
 		}
 	}
 	return out
-}
-
-func lowerStringCast(state *moduleState, value mir.Value) (string, error) {
-	srcVal, err := lowerValue(state, value)
-	if err != nil {
-		return "", err
-	}
-	src := backend.UnwrapNamed(value.Type())
-	srcBuiltin, ok := src.(*typeinfo.BuiltinType)
-	if !ok {
-		return "", fmt.Errorf("unsupported string cast source %s", src)
-	}
-	switch srcBuiltin.Name {
-	case "i8", "i16", "i32":
-		castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "i64", srcVal)
-		return fmt.Sprintf("call %s @ferret_global_i64_str(%s)", llvmSliceLikeType(), operandWithTemp(state, "i64", castExpr)), nil
-	case "i64", "isize":
-		if srcBuiltin.Name == "isize" {
-			castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "i64", srcVal)
-			return fmt.Sprintf("call %s @ferret_global_i64_str(%s)", llvmSliceLikeType(), operandWithTemp(state, "i64", castExpr)), nil
-		}
-		return fmt.Sprintf("call %s @ferret_global_i64_str(i64 %s)", llvmSliceLikeType(), srcVal), nil
-	case "u8", "u16", "u32", "bool", "char":
-		castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "u64", srcVal)
-		return fmt.Sprintf("call %s @ferret_global_u64_str(%s)", llvmSliceLikeType(), operandWithTemp(state, "i64", castExpr)), nil
-	case "u64", "usize":
-		if srcBuiltin.Name == "usize" {
-			castExpr, _ := llvmIntCastOp(nil, srcBuiltin.Name, "u64", srcVal)
-			return fmt.Sprintf("call %s @ferret_global_u64_str(%s)", llvmSliceLikeType(), operandWithTemp(state, "i64", castExpr)), nil
-		}
-		return fmt.Sprintf("call %s @ferret_global_u64_str(i64 %s)", llvmSliceLikeType(), srcVal), nil
-	case "f32":
-		castExpr, _ := llvmFloatCastOp("f32", "f64", srcVal)
-		return fmt.Sprintf("call %s @ferret_global_f64_str(%s)", llvmSliceLikeType(), operandWithTemp(state, "double", castExpr)), nil
-	case "f64":
-		return fmt.Sprintf("call %s @ferret_global_f64_str(double %s)", llvmSliceLikeType(), srcVal), nil
-	default:
-		return "", fmt.Errorf("unsupported string cast source %s", srcBuiltin.Name)
-	}
 }
 
 func operandWithTemp(state *moduleState, irType, expr string) string {

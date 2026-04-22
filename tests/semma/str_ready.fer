@@ -1,9 +1,9 @@
 fn main() -> void {
     let s: str = "ok"
     let bytes = s as []u8
-    let chars = s as []char
+    let chars = str_chars(&s)
     let roundtrip_bytes = bytes as str
-    let roundtrip_chars = chars as str
+    let roundtrip_chars = to_str(chars)
     if len(s) == len(bytes) && len(roundtrip_bytes) == len(s) && roundtrip_chars == s {
         print("str-ready-ok")
         return

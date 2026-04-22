@@ -128,7 +128,7 @@ type Name struct {
 }
 
 fn Name::String(self) -> str {
-    return 1 as str
+    return to_str(1)
 }
 
 fn main() -> str {
@@ -177,7 +177,7 @@ fn Origin() -> Name {
 }
 
 fn Name::String(self) -> str {
-    return 1 as str
+    return to_str(1)
 }
 `)
 	mustWrite(t, filepath.Join(root, "main.fer"), `
@@ -305,7 +305,7 @@ type Name struct {
 }
 
 fn Name::String(self) -> str {
-    return 1 as str
+    return to_str(1)
 }
 
 let GlobalName: Name = .{ .value = 1 }
@@ -840,7 +840,7 @@ type Name struct {
 }
 
 fn Name::String(self) -> str {
-    return self.value as str
+    return to_str(self.value)
 }
 
 fn main() -> void {
@@ -1491,13 +1491,14 @@ fn main() -> i32 {
 	}
 }
 
-func TestLowerStringSliceCastsToLLVM(t *testing.T) {
+func TestLowerStringByteSliceViewCastToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
-fn main(s: str) -> str {
+fn main(s: str) -> usize {
     let bytes = s as []u8
     let text = bytes as str
-    return text
+    let again = text as []u8
+    return len(again)
 }
 `)
 	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
@@ -1513,24 +1514,21 @@ fn main(s: str) -> str {
 		t.Fatalf("lower llvm: %v", err)
 	}
 	text := artifact.Text
-	for _, want := range []string{
-		"declare { ptr, i64 } @ferret_global_str_bytes(ptr)",
-		"declare { ptr, i64 } @ferret_global_bytes_str(ptr)",
+	for _, unwanted := range []string{
 		"call { ptr, i64 } @ferret_global_str_bytes(",
 		"call { ptr, i64 } @ferret_global_bytes_str(",
 	} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("did not expect allocating string conversion %q in llvm output:\n%s", unwanted, text)
 		}
 	}
 }
 
-func TestLowerStringCharSliceCastsToLLVM(t *testing.T) {
+func TestLowerExplicitStringCharSliceConversionsToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main(s: str) -> str {
-    let chars = s as []char
-    let text = chars as str
+    let text = to_str(str_chars(&s))
     return text
 }
 `)
@@ -1559,11 +1557,11 @@ fn main(s: str) -> str {
 	}
 }
 
-func TestLowerNumericToStringCastToLLVM(t *testing.T) {
+func TestLowerExplicitNumericStringConversionToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
 fn main() -> void {
-    let text = 42 as str
+    let text = to_str(42)
     print(text)
 }
 `)
@@ -1584,6 +1582,37 @@ fn main() -> void {
 		"declare { ptr, i64 } @ferret_global_i64_str(i64)",
 		"call { ptr, i64 } @ferret_global_i64_str(",
 		"call void @ferret_global_print(",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %q in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerApproxNumericStringConversionToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let text = to_str<~i32>(42)
+    print(text)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"declare { ptr, i64 } @ferret_global_i64_str(i64)",
+		"call { ptr, i64 } @ferret_global_i64_str(",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected %q in llvm output:\n%s", want, text)
