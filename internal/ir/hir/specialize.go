@@ -836,6 +836,10 @@ func inferTypeBindings(pattern, actual typeinfo.Type, bindings map[*typeinfo.Typ
 		if got, ok := actual.(*typeinfo.RefType); ok {
 			inferTypeBindings(p.Inner, got.Inner, bindings)
 		}
+	case *typeinfo.AtomicType:
+		if got, ok := actual.(*typeinfo.AtomicType); ok {
+			inferTypeBindings(p.Inner, got.Inner, bindings)
+		}
 	case *typeinfo.RawPtrType:
 		if got, ok := actual.(*typeinfo.RawPtrType); ok {
 			inferTypeBindings(p.Inner, got.Inner, bindings)
@@ -1372,6 +1376,13 @@ func (s *specializer) specializeNamedTypeRefs(typ typeinfo.Type, seen map[typein
 		seen[t] = struct{}{}
 		t.Inner = s.specializeNamedTypeRefs(t.Inner, seen)
 		return t
+	case *typeinfo.AtomicType:
+		if _, ok := seen[t]; ok {
+			return t
+		}
+		seen[t] = struct{}{}
+		t.Inner = s.specializeNamedTypeRefs(t.Inner, seen)
+		return t
 	case *typeinfo.RawPtrType:
 		if _, ok := seen[t]; ok {
 			return t
@@ -1544,6 +1555,8 @@ func typeHasTypeParam(typ typeinfo.Type) bool {
 	case *typeinfo.PointerType:
 		return typeHasTypeParam(t.Inner)
 	case *typeinfo.RefType:
+		return typeHasTypeParam(t.Inner)
+	case *typeinfo.AtomicType:
 		return typeHasTypeParam(t.Inner)
 	case *typeinfo.RawPtrType:
 		return typeHasTypeParam(t.Inner)

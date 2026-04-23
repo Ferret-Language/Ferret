@@ -32,7 +32,10 @@ func (c *checker) checkDecl(decl ast.Decl) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if d.Type != nil && declared != nil && !typeinfo.Equal(declared, finalType) {
+		if d.IsAtomic {
+			finalType = c.atomicStorageType(d.Loc(), finalType)
+		}
+		if !d.IsAtomic && d.Type != nil && declared != nil && !typeinfo.Equal(declared, finalType) {
 			c.info.BindNode(d.Type, finalType)
 		}
 		if declared != nil && d.Value != nil {
@@ -170,6 +173,35 @@ func (c *checker) resolveBindingValueType(scope *refineScope, declared, value ty
 		return &typeinfo.SliceType{Mutable: bindingMutable && inferredSlice.Mutable, Inner: inferredSlice.Inner}
 	}
 	return value
+}
+
+func (c *checker) atomicStorageType(loc source.Location, typ typeinfo.Type) typeinfo.Type {
+	if typ == nil {
+		return nil
+	}
+	if _, ok := typ.(*typeinfo.AtomicType); ok {
+		return typ
+	}
+	if typeinfo.IsInvalid(typ) || typeinfo.IsUnknown(typ) {
+		return &typeinfo.AtomicType{Inner: typ}
+	}
+	if !typeinfo.IsAtomicStorageAllowed(typ) {
+		c.ctx.Diagnostics.Add(
+			diagnostics.NewError(fmt.Sprintf("atomic storage requires bool, integer, raw pointer, or enum type, got %s", typ.String())).
+				WithCode(diagnostics.ErrTypeMismatch).
+				WithPrimaryLabel(&loc, "unsupported atomic type").
+				WithHelp("use mutex-protected shared state for non-atomic types"),
+		)
+		return typeinfo.InvalidType{}
+	}
+	return &typeinfo.AtomicType{Inner: typ}
+}
+
+func atomicValueType(typ typeinfo.Type) typeinfo.Type {
+	if atomic, ok := typ.(*typeinfo.AtomicType); ok && atomic != nil {
+		return atomic.Inner
+	}
+	return typ
 }
 
 func (c *checker) checkModuleBindingType(loc source.Location, typ typeinfo.Type) {
@@ -623,6 +655,10 @@ func (c *checker) getTypeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expe
 	case "*":
 		switch ptr := right.(type) {
 		case *typeinfo.RefType:
+			if atomic, ok := ptr.Inner.(*typeinfo.AtomicType); ok && atomic != nil {
+				c.info.BindNode(expr, atomic.Inner)
+				return atomic.Inner
+			}
 			c.info.BindNode(expr, ptr.Inner)
 			return ptr.Inner
 		case *typeinfo.RawPtrType:
@@ -643,9 +679,17 @@ func (c *checker) getTypeOfPrefix(scope *refineScope, expr *ast.PrefixExpr, expe
 				)
 				return typeinfo.InvalidType{}
 			}
+			if atomic, ok := ptr.Inner.(*typeinfo.AtomicType); ok && atomic != nil {
+				c.info.BindNode(expr, atomic.Inner)
+				return atomic.Inner
+			}
 			c.info.BindNode(expr, ptr.Inner)
 			return ptr.Inner
 		case *typeinfo.PointerType:
+			if atomic, ok := ptr.Inner.(*typeinfo.AtomicType); ok && atomic != nil {
+				c.info.BindNode(expr, atomic.Inner)
+				return atomic.Inner
+			}
 			c.info.BindNode(expr, ptr.Inner)
 			return ptr.Inner
 		}
@@ -954,17 +998,17 @@ func (c *checker) checkRangePatternAgainstMatchValue(scope *refineScope, valueTy
 func (c *checker) binaryResult(op string, left, right typeinfo.Type) (typeinfo.Type, bool) {
 	switch op {
 	case "+", "-", "*", "/", "%":
-		if result := typeinfo.CommonNumericType(left, right); result != nil {
+		if result := typeinfo.CommonNumericType(atomicValueType(left), atomicValueType(right)); result != nil {
 			return result, true
 		}
 		return nil, true
 	case "==", "!=":
-		if typeinfo.Assignable(left, right) || typeinfo.Assignable(right, left) || typeinfo.CommonNumericType(left, right) != nil {
+		if typeinfo.Assignable(left, right) || typeinfo.Assignable(right, left) || typeinfo.CommonNumericType(atomicValueType(left), atomicValueType(right)) != nil {
 			return &typeinfo.BuiltinType{Name: "bool"}, true
 		}
 		return nil, true
 	case "<", "<=", ">", ">=":
-		if typeinfo.CommonNumericType(left, right) != nil {
+		if typeinfo.CommonNumericType(atomicValueType(left), atomicValueType(right)) != nil {
 			return &typeinfo.BuiltinType{Name: "bool"}, true
 		}
 		return nil, true
@@ -1911,6 +1955,8 @@ func (c *checker) collectTypeParams(typ typeinfo.Type, visit func(*typeinfo.Type
 		c.collectTypeParams(t.Inner, visit)
 	case *typeinfo.RefType:
 		c.collectTypeParams(t.Inner, visit)
+	case *typeinfo.AtomicType:
+		c.collectTypeParams(t.Inner, visit)
 	case *typeinfo.RawPtrType:
 		c.collectTypeParams(t.Inner, visit)
 	case *typeinfo.OptionalType:
@@ -2009,6 +2055,10 @@ func (c *checker) inferTypeParamBindings(pattern, actual typeinfo.Type, bindings
 		}
 	case *typeinfo.RefType:
 		if got, ok := actual.(*typeinfo.RefType); ok && got.Mutable == p.Mutable {
+			c.inferTypeParamBindings(p.Inner, got.Inner, bindings)
+		}
+	case *typeinfo.AtomicType:
+		if got, ok := actual.(*typeinfo.AtomicType); ok {
 			c.inferTypeParamBindings(p.Inner, got.Inner, bindings)
 		}
 	case *typeinfo.RawPtrType:
@@ -3295,6 +3345,9 @@ func (c *checker) exprAccess(scope *refineScope, expr ast.Expr) (addressable boo
 		rightType := c.typeOfExpr(scope, e.Right, nil)
 		switch t := c.underlying(rightType).(type) {
 		case *typeinfo.RefType:
+			if _, ok := t.Inner.(*typeinfo.AtomicType); ok {
+				return true, true
+			}
 			return true, t.Mutable
 		case *typeinfo.PointerType:
 			_, rightMutable := c.exprAccess(scope, e.Right)

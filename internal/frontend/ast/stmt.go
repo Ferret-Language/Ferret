@@ -15,6 +15,7 @@ type LetStmt struct {
 	Name     *Ident
 	Doc      *CommentGroup
 	IsMut    bool
+	IsAtomic bool
 	Type     TypeExpr
 	Value    Expr
 	Location source.Location

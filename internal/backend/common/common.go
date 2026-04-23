@@ -353,6 +353,8 @@ func RuntimeTypeKey(typ typeinfo.Type) string {
 			return "ref_mut__" + RuntimeTypeKey(t.Inner)
 		}
 		return "ref__" + RuntimeTypeKey(t.Inner)
+	case *typeinfo.AtomicType:
+		return "atomic__" + RuntimeTypeKey(t.Inner)
 	case *typeinfo.RawPtrType:
 		return "rawptr__" + RuntimeTypeKey(t.Inner)
 	case *typeinfo.SliceType:

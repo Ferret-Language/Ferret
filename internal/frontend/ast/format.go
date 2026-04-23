@@ -41,6 +41,8 @@ func TypeString(typ TypeExpr) string {
 			return "&mut " + TypeString(t.Inner)
 		}
 		return "&" + TypeString(t.Inner)
+	case *AtomicType:
+		return "atomic " + TypeString(t.Inner)
 	case *RawPtrType:
 		if t.Const {
 			return "^const " + TypeString(t.Inner)

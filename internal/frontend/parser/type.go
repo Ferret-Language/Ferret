@@ -24,6 +24,9 @@ func (p *Parser) parseType() ast.TypeExpr {
 		}
 		ref.Inner = p.parseType()
 		return ref
+	case tokens.ATOMIC:
+		p.advance()
+		return &ast.AtomicType{Inner: p.parseType(), Location: p.locFrom(start)}
 	case tokens.CARET:
 		p.advance()
 		raw := &ast.RawPtrType{Location: p.locFrom(start)}

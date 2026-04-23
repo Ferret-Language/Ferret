@@ -93,6 +93,9 @@ func buildRuntimeLib(runtimeDir, libsDir string, bits int) error {
 	for _, src := range entries {
 		obj := filepath.Join(objDir, strings.TrimSuffix(filepath.Base(src), ".c")+".o")
 		args := []string{"-std=c11", "-O2", "-Wall", "-Wextra", "-I", runtimeDir, "-c", src, "-o", obj}
+		if runtime.GOOS != "windows" {
+			args = append(args, "-pthread")
+		}
 		if bits == abi.Bits32 {
 			args = append(args[:1], append([]string{"-m32"}, args[1:]...)...)
 		}

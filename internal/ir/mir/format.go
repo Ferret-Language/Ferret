@@ -175,6 +175,8 @@ func formatInstr(instr Instr) string {
 		return fmt.Sprintf("%s = %s", formatLocalRef(currentFnForFormat, i.TargetID), formatValue(i.Value))
 	case *StoreInstr:
 		return fmt.Sprintf("store %s = %s", formatPlace(i.Target), formatValue(i.Value))
+	case *AtomicAddInstr:
+		return fmt.Sprintf("atomic_add %s, %s", formatValue(i.Pointer), formatValue(i.Delta))
 	case *StoreFieldInstr:
 		return fmt.Sprintf("store_field %s %d %s", wrapValue(i.Base), i.FieldIndex, formatValue(i.Value))
 	case *EvalInstr:
@@ -292,6 +294,8 @@ func formatValue(value Value) string {
 		return fmt.Sprintf("%s %s", kw, wrapValue(v.Source))
 	case *LoadValue:
 		return fmt.Sprintf("load %s", wrapValue(v.Pointer))
+	case *AtomicLoadValue:
+		return fmt.Sprintf("atomic_load %s", wrapValue(v.Pointer))
 	case *BinaryValue:
 		return fmt.Sprintf("%s %s %s", binaryOpcode(v.Op), wrapValue(v.Left), wrapValue(v.Right))
 	case *PostfixValue:

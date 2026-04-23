@@ -19,9 +19,9 @@ func allowsConstValueCache(node ast.Node) bool {
 	case *ast.ConstDecl, *ast.ConstStmt:
 		return true
 	case *ast.LetDecl:
-		return n != nil && !n.IsMut
+		return n != nil && !n.IsMut && !n.IsAtomic
 	case *ast.LetStmt:
-		return n != nil && !n.IsMut
+		return n != nil && !n.IsMut && !n.IsAtomic
 	default:
 		return false
 	}

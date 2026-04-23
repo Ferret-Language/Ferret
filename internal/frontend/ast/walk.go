@@ -23,6 +23,8 @@ func WalkType(typ TypeExpr, visit func(TypeExpr) bool) {
 		WalkType(t.Inner, visit)
 	case *RefType:
 		WalkType(t.Inner, visit)
+	case *AtomicType:
+		WalkType(t.Inner, visit)
 	case *RawPtrType:
 		WalkType(t.Inner, visit)
 	case *OptionalType:

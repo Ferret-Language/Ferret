@@ -48,10 +48,18 @@ func (c *checker) synthesizeSymbolType(mod *context.Module, sym *symbols.Symbol)
 		switch n := sym.Node.(type) {
 		case *ast.LetDecl:
 			if n.Type != nil {
-				return c.typeFromSyntax(mod, n.Type)
+				typ := c.typeFromSyntax(mod, n.Type)
+				if n.IsAtomic {
+					return c.atomicStorageType(n.Loc(), typ)
+				}
+				return typ
 			}
 			if n.Value != nil {
-				return c.typeOfExpr(nil, n.Value, nil)
+				typ := c.typeOfExpr(nil, n.Value, nil)
+				if n.IsAtomic {
+					return c.atomicStorageType(n.Loc(), typ)
+				}
+				return typ
 			}
 		case *ast.ConstDecl:
 			if n.Type != nil {
@@ -69,10 +77,18 @@ func (c *checker) synthesizeSymbolType(mod *context.Module, sym *symbols.Symbol)
 			}
 		case *ast.LetStmt:
 			if n.Type != nil {
-				return c.typeFromSyntax(mod, n.Type)
+				typ := c.typeFromSyntax(mod, n.Type)
+				if n.IsAtomic {
+					return c.atomicStorageType(n.Loc(), typ)
+				}
+				return typ
 			}
 			if n.Value != nil {
-				return c.typeOfExpr(nil, n.Value, nil)
+				typ := c.typeOfExpr(nil, n.Value, nil)
+				if n.IsAtomic {
+					return c.atomicStorageType(n.Loc(), typ)
+				}
+				return typ
 			}
 		}
 		if sym.Node == nil {

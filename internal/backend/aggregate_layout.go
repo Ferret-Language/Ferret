@@ -180,6 +180,8 @@ func sharedScalarSizeAlign(typ typeinfo.Type) (int64, int64, error) {
 	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType, *typeinfo.MapType:
 		ptrSize := abi.PointerBytes()
 		return ptrSize, ptrSize, nil
+	case *typeinfo.AtomicType:
+		return sharedScalarSizeAlign(t.Inner)
 	}
 	return 0, 0, fmt.Errorf("not a primitive type")
 }

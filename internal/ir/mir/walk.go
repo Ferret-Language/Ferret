@@ -56,6 +56,11 @@ func WalkInstrValues(instr Instr, visit func(Value) error) error {
 			return err
 		}
 		return WalkValue(i.Value, visit)
+	case *AtomicAddInstr:
+		if err := WalkValue(i.Pointer, visit); err != nil {
+			return err
+		}
+		return WalkValue(i.Delta, visit)
 	case *StoreFieldInstr:
 		if err := WalkValue(i.Base, visit); err != nil {
 			return err
@@ -132,6 +137,8 @@ func WalkValue(value Value, visit func(Value) error) error {
 	case *AddrOfValue:
 		return WalkValue(v.Source, visit)
 	case *LoadValue:
+		return WalkValue(v.Pointer, visit)
+	case *AtomicLoadValue:
 		return WalkValue(v.Pointer, visit)
 	case *BinaryValue:
 		if err := WalkValue(v.Left, visit); err != nil {

@@ -133,6 +133,8 @@ func (c *checker) typeFromSyntax(mod *context.Module, expr ast.TypeExpr) typeinf
 		return &typeinfo.PointerType{Inner: inner}
 	case *ast.RefType:
 		return &typeinfo.RefType{Mutable: t.Mutable, Inner: c.typeFromSyntax(mod, t.Inner)}
+	case *ast.AtomicType:
+		return c.atomicStorageType(t.Loc(), c.typeFromSyntax(mod, t.Inner))
 	case *ast.RawPtrType:
 		inner := c.typeFromSyntax(mod, t.Inner)
 		if t.Inner == nil || typeinfo.IsBuiltinNamed(inner, "void") {

@@ -232,6 +232,13 @@ type LoadValue struct {
 
 func (*LoadValue) valueNode() {}
 
+type AtomicLoadValue struct {
+	baseValue
+	Pointer Value
+}
+
+func (*AtomicLoadValue) valueNode() {}
+
 type BinaryValue struct {
 	baseValue
 	Left  Value
@@ -394,6 +401,15 @@ type StoreInstr struct {
 }
 
 func (*StoreInstr) instrNode() {}
+
+type AtomicAddInstr struct {
+	baseInstr
+	Pointer Value
+	Delta   Value
+	Type    typeinfo.Type
+}
+
+func (*AtomicAddInstr) instrNode() {}
 
 type StoreFieldInstr struct {
 	baseInstr

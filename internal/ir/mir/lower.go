@@ -285,6 +285,9 @@ func lowerInstr(lowerCtx *lowerContext, stmt hir.Stmt) Instr {
 		if ident, ok := s.Left.(*hir.Ident); ok && len(ident.Path) == 1 && ident.Path[0] == "_" {
 			return &EvalInstr{baseInstr: baseInstr{Location: s.Loc()}, Value: lowerValue(lowerCtx, s.Right)}
 		}
+		if atomicAdd := lowerAtomicAddInstr(lowerCtx, s); atomicAdd != nil {
+			return atomicAdd
+		}
 		if target := lowerAssignableTarget(lowerCtx, s.Left); target != nil {
 			return &StoreInstr{baseInstr: baseInstr{Location: s.Loc()}, Target: target, Value: lowerCoercedValue(lowerCtx, s.Right, s.Left.Type())}
 		}
@@ -505,6 +508,9 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 			_, isRaw := e.Type().(*typeinfo.RawPtrType)
 			return &AddrOfValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Source: lowerAddrSource(lowerCtx, e.Right), Mutable: true, Raw: isRaw}
 		case "*":
+			if atomic, ok := derefAtomicInnerType(e.Right.Type()); ok {
+				return &AtomicLoadValue{baseValue: baseValue{Location: e.Loc(), ExprType: atomic}, Pointer: lowerValue(lowerCtx, e.Right)}
+			}
 			return &LoadValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Pointer: lowerValue(lowerCtx, e.Right)}
 		default:
 			return &UnaryValue{baseValue: baseValue{Location: e.Loc(), ExprType: e.Type()}, Op: e.Op, Right: lowerValue(lowerCtx, e.Right)}
@@ -615,6 +621,111 @@ func lowerValue(lowerCtx *lowerContext, expr hir.Expr) Value {
 		return out
 	default:
 		return nil
+	}
+}
+
+func lowerAtomicAddInstr(lowerCtx *lowerContext, stmt *hir.AssignStmt) Instr {
+	if stmt == nil {
+		return nil
+	}
+	atomic, ok := atomicAssignTargetType(stmt.Left)
+	if !ok || atomic == nil {
+		return nil
+	}
+	if !typeinfo.SupportsAtomicAdd(atomic.Inner) {
+		return nil
+	}
+	bin, ok := stmt.Right.(*hir.BinaryExpr)
+	if !ok || bin == nil {
+		return nil
+	}
+	var delta Value
+	switch bin.Op {
+	case "+":
+		if sameHIRExpr(stmt.Left, bin.Left) {
+			delta = lowerValue(lowerCtx, bin.Right)
+		} else if sameHIRExpr(stmt.Left, bin.Right) {
+			delta = lowerValue(lowerCtx, bin.Left)
+		}
+	}
+	if delta == nil {
+		return nil
+	}
+	return &AtomicAddInstr{
+		baseInstr: baseInstr{Location: stmt.Loc()},
+		Pointer:   lowerAtomicPointer(lowerCtx, stmt.Left),
+		Delta:     delta,
+		Type:      atomic.Inner,
+	}
+}
+
+func lowerAtomicPointer(lowerCtx *lowerContext, expr hir.Expr) Value {
+	if pref, ok := expr.(*hir.PrefixExpr); ok && pref != nil && pref.Op == "*" {
+		return lowerValue(lowerCtx, pref.Right)
+	}
+	return &AddrOfValue{
+		baseValue: baseValue{Location: expr.Loc(), ExprType: &typeinfo.RefType{Inner: expr.Type()}},
+		Source:    lowerAddrSource(lowerCtx, expr),
+	}
+}
+
+func atomicAssignTargetType(expr hir.Expr) (*typeinfo.AtomicType, bool) {
+	if expr == nil {
+		return nil, false
+	}
+	if atomic, ok := expr.Type().(*typeinfo.AtomicType); ok && atomic != nil {
+		return atomic, true
+	}
+	if pref, ok := expr.(*hir.PrefixExpr); ok && pref != nil && pref.Op == "*" {
+		switch t := pref.Right.Type().(type) {
+		case *typeinfo.RefType:
+			atomic, ok := t.Inner.(*typeinfo.AtomicType)
+			return atomic, ok && atomic != nil
+		case *typeinfo.PointerType:
+			atomic, ok := t.Inner.(*typeinfo.AtomicType)
+			return atomic, ok && atomic != nil
+		case *typeinfo.RawPtrType:
+			atomic, ok := t.Inner.(*typeinfo.AtomicType)
+			return atomic, ok && atomic != nil
+		}
+	}
+	return nil, false
+}
+
+func derefAtomicInnerType(typ typeinfo.Type) (typeinfo.Type, bool) {
+	switch t := typ.(type) {
+	case *typeinfo.RefType:
+		if atomic, ok := t.Inner.(*typeinfo.AtomicType); ok && atomic != nil {
+			return atomic.Inner, true
+		}
+	case *typeinfo.PointerType:
+		if atomic, ok := t.Inner.(*typeinfo.AtomicType); ok && atomic != nil {
+			return atomic.Inner, true
+		}
+	case *typeinfo.RawPtrType:
+		if atomic, ok := t.Inner.(*typeinfo.AtomicType); ok && atomic != nil {
+			return atomic.Inner, true
+		}
+	}
+	return nil, false
+}
+
+func sameHIRExpr(left, right hir.Expr) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	if left.SourceExpr() != nil && left.SourceExpr() == right.SourceExpr() {
+		return true
+	}
+	switch l := left.(type) {
+	case *hir.PrefixExpr:
+		r, ok := right.(*hir.PrefixExpr)
+		return ok && l.Op == r.Op && sameHIRExpr(l.Right, r.Right)
+	case *hir.Ident:
+		r, ok := right.(*hir.Ident)
+		return ok && l.LocalID == r.LocalID && strings.Join(l.Path, "::") == strings.Join(r.Path, "::")
+	default:
+		return false
 	}
 }
 
@@ -1600,6 +1711,12 @@ func lowerInterfaceCoercion(lowerCtx *lowerContext, source, target typeinfo.Type
 	}
 	if source == nil || typeinfo.Equal(source, target) || lowerIsInterfaceType(source) {
 		return nil, nil, false
+	}
+	if len(targetIface) == 0 {
+		if atomic, ok := source.(*typeinfo.AtomicType); ok && atomic != nil {
+			return nil, atomic.Inner, true
+		}
+		return nil, source, true
 	}
 	if lowerCtx == nil || lowerCtx.lookupMethod == nil {
 		return nil, nil, false

@@ -56,6 +56,8 @@ func ResolveMapType(typ typeinfo.Type) (*typeinfo.MapType, bool) {
 		return ResolveMapType(t.Inner)
 	case *typeinfo.RefType:
 		return ResolveMapType(t.Inner)
+	case *typeinfo.AtomicType:
+		return ResolveMapType(t.Inner)
 	case *typeinfo.NamedType:
 		if mt, ok := namedMapAliasType(t); ok {
 			return mt, true
@@ -144,6 +146,8 @@ func aliasSyntaxType(expr ast.TypeExpr, bindings map[string]typeinfo.Type) typei
 		return &typeinfo.PointerType{Inner: aliasSyntaxType(t.Inner, bindings)}
 	case *ast.RefType:
 		return &typeinfo.RefType{Mutable: t.Mutable, Inner: aliasSyntaxType(t.Inner, bindings)}
+	case *ast.AtomicType:
+		return &typeinfo.AtomicType{Inner: aliasSyntaxType(t.Inner, bindings)}
 	case *ast.RawPtrType:
 		return &typeinfo.RawPtrType{Const: t.Const, Inner: aliasSyntaxType(t.Inner, bindings)}
 	case *ast.OptionalType:
