@@ -537,6 +537,7 @@ func (a *ownershipAnalyzer) collectValueLocalUses(used cfg.LocalSet, value mir.V
 		a.collectValueLocalUses(used, v.Left)
 	case *mir.CompositeValue:
 		for _, item := range v.Items {
+			a.collectValueLocalUses(used, item.Key)
 			a.collectValueLocalUses(used, item.Value)
 		}
 	case *mir.InterfaceValue:
@@ -554,7 +555,9 @@ func (a *ownershipAnalyzer) checkComputedValue(scope *valueScope, instr *mir.Com
 	a.checkValue(scope, instr.Value)
 	if info, ok := a.tempInfoForValue(instr.Value); ok {
 		a.temps[instr.TargetID] = info
+		return
 	}
+	a.consumeMoveValue(scope, instr.Value, a.localType(instr.TargetID))
 }
 
 func (a *ownershipAnalyzer) checkValue(scope *valueScope, value mir.Value) {
@@ -602,6 +605,7 @@ func (a *ownershipAnalyzer) checkValue(scope *valueScope, value mir.Value) {
 		a.checkValue(scope, v.Left)
 	case *mir.CompositeValue:
 		for _, item := range v.Items {
+			a.checkValue(scope, item.Key)
 			a.checkValue(scope, item.Value)
 		}
 	case *mir.InterfaceValue:
@@ -845,8 +849,15 @@ func (a *ownershipAnalyzer) consumeMoveValue(scope *valueScope, value mir.Value,
 	if value == nil {
 		return
 	}
+	if unary, ok := value.(*mir.UnaryValue); ok && unary.Op == "copy" {
+		return
+	}
 	if ifaceValue, ok := value.(*mir.InterfaceValue); ok {
 		a.consumeMoveValue(scope, ifaceValue.Value, ifaceValue.ConcreteType)
+		return
+	}
+	if composite, ok := value.(*mir.CompositeValue); ok {
+		a.consumeCompositeMoveValue(scope, composite, typ)
 		return
 	}
 	if local, ok := value.(*mir.LocalValue); ok && scope != nil {
@@ -859,10 +870,6 @@ func (a *ownershipAnalyzer) consumeMoveValue(scope *valueScope, value mir.Value,
 		return
 	}
 	switch v := value.(type) {
-	case *mir.UnaryValue:
-		if v.Op == "copy" {
-			return
-		}
 	case *mir.LocalValue:
 		if info, ok := a.temps[v.LocalID]; ok {
 			if !info.root.isLocal() {
@@ -879,6 +886,62 @@ func (a *ownershipAnalyzer) consumeMoveValue(scope *valueScope, value mir.Value,
 		return
 	}
 	a.consumeLocalPath(scope, root, path, value.Loc())
+}
+
+func (a *ownershipAnalyzer) consumeCompositeMoveValue(scope *valueScope, value *mir.CompositeValue, typ typeinfo.Type) {
+	if value == nil {
+		return
+	}
+	for i, item := range value.Items {
+		keyType, valueType := a.compositeItemTypes(typ, item, i)
+		a.consumeMoveValue(scope, item.Key, keyType)
+		a.consumeMoveValue(scope, item.Value, valueType)
+	}
+}
+
+func (a *ownershipAnalyzer) compositeItemTypes(typ typeinfo.Type, item mir.CompositeItem, index int) (typeinfo.Type, typeinfo.Type) {
+	base := a.compositePayloadType(typ)
+	if base == nil || typeinfo.IsInvalid(base) || typeinfo.IsUnknown(base) {
+		return valueType(item.Key), valueType(item.Value)
+	}
+	switch t := base.(type) {
+	case *typeinfo.StructType:
+		if item.Name != "" {
+			if field := t.Fields[item.Name]; field != nil {
+				return nil, field.Type
+			}
+		}
+		if index >= 0 && index < len(t.OrderedFields) && t.OrderedFields[index] != nil {
+			return nil, t.OrderedFields[index].Type
+		}
+	case *typeinfo.TupleType:
+		if index >= 0 && index < len(t.Elems) {
+			return nil, t.Elems[index]
+		}
+	case *typeinfo.ArrayType:
+		return nil, t.Inner
+	case *typeinfo.SliceType:
+		return nil, t.Inner
+	case *typeinfo.MapType:
+		return t.Key, t.Value
+	}
+	return valueType(item.Key), valueType(item.Value)
+}
+
+func (a *ownershipAnalyzer) compositePayloadType(typ typeinfo.Type) typeinfo.Type {
+	for typ != nil && !typeinfo.IsInvalid(typ) && !typeinfo.IsUnknown(typ) {
+		switch t := a.underlying(typ).(type) {
+		case *typeinfo.ApproxType:
+			typ = t.Inner
+		case *typeinfo.OptionalType:
+			typ = t.Inner
+		case *typeinfo.ErrorUnionType:
+			typ = t.Value
+		default:
+			return t
+		}
+	}
+	return typ
 }
 
 func (a *ownershipAnalyzer) consumeLocalPath(scope *valueScope, root int, path string, loc source.Location) {

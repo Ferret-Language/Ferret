@@ -765,6 +765,70 @@ fn main(n: Node) -> i32 {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
 }
 
+func TestOwnershipPhaseRejectsMoveAfterStructLiteralFieldMove(t *testing.T) {
+	assertOwnershipUseAfterMove(t, `
+type Node struct {}
+
+type Box struct {
+    Item: *Node
+}
+
+fn take(box: Box) -> void {
+    box
+}
+
+fn main(node: *Node) -> *Node {
+    take(.{ .Item = node })
+    return node
+}
+`)
+}
+
+func TestOwnershipPhaseRejectsMoveAfterTupleLiteralElementMove(t *testing.T) {
+	assertOwnershipUseAfterMove(t, `
+type Node struct {}
+
+fn take(pair: (*Node, i32)) -> void {
+    pair
+}
+
+fn main(node: *Node) -> *Node {
+    take((node, 1))
+    return node
+}
+`)
+}
+
+func TestOwnershipPhaseRejectsMoveAfterSliceLiteralElementMove(t *testing.T) {
+	assertOwnershipUseAfterMove(t, `
+type Node struct {}
+
+fn take(nodes: []*Node) -> void {
+    nodes
+}
+
+fn main(node: *Node) -> *Node {
+    take([]*Node{node})
+    return node
+}
+`)
+}
+
+func TestOwnershipPhaseRejectsMoveAfterVariadicArgumentMove(t *testing.T) {
+	assertOwnershipUseAfterMove(t, `
+type Node struct {}
+
+fn take(nodes: ...*Node) -> void {
+    nodes
+}
+
+fn main(node: *Node) -> *Node {
+    take(node)
+    return node
+}
+`)
+}
+
 func TestOwnershipPhaseAllowsPlainValueReceiverMethodReuse(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
@@ -1036,6 +1100,23 @@ fn main() -> void {
     _ = io::Write(file, "after-close")
 }
 `)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrUseAfterMove {
+			return
+		}
+	}
+	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrUseAfterMove, result.Diagnostics.Diagnostics())
+}
+
+func assertOwnershipUseAfterMove(t *testing.T, source string) {
+	t.Helper()
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), source)
 
 	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
 	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
