@@ -8,19 +8,20 @@ import (
 )
 
 type valueInfo struct {
-	typ       typeinfo.Type
-	concrete  typeinfo.Type
-	mutable   bool
-	constant  bool
-	moved     bool
-	moveLoc   source.Location
-	movedPath string
-	movedSubs map[string]source.Location
-	frozen    int
-	mutBorrow bool
-	borrowOf  int
-	borrowMut bool
-	borrowLoc source.Location
+	typ             typeinfo.Type
+	concrete        typeinfo.Type
+	mutable         bool
+	constant        bool
+	moved           bool
+	moveLoc         source.Location
+	movedPath       string
+	movedSubs       map[string]source.Location
+	frozen          int
+	mutBorrow       bool
+	activeBorrowLoc source.Location
+	borrowOf        int
+	borrowMut       bool
+	borrowLoc       source.Location
 }
 
 type valueScope struct {
@@ -94,6 +95,7 @@ func (s *valueScope) TrimToLiveOut(live cfg.LocalSet) {
 		info.movedSubs = nil
 		info.frozen = 0
 		info.mutBorrow = false
+		info.activeBorrowLoc = source.Location{}
 		info.borrowOf = -1
 		info.borrowMut = false
 		info.borrowLoc = source.Location{}
@@ -139,6 +141,7 @@ func equalValueInfo(a, b *valueInfo) bool {
 		equalMovedSubs(a.movedSubs, b.movedSubs) &&
 		a.frozen == b.frozen &&
 		a.mutBorrow == b.mutBorrow &&
+		a.activeBorrowLoc == b.activeBorrowLoc &&
 		a.borrowOf == b.borrowOf &&
 		a.borrowMut == b.borrowMut &&
 		a.borrowLoc == b.borrowLoc
@@ -179,6 +182,15 @@ func mergeValueInfo(a, b *valueInfo) *valueInfo {
 		out.frozen = b.frozen
 	}
 	out.mutBorrow = a.mutBorrow || b.mutBorrow
+	if out.frozen > 0 {
+		if a.activeBorrowLoc.Start != nil {
+			out.activeBorrowLoc = a.activeBorrowLoc
+		} else {
+			out.activeBorrowLoc = b.activeBorrowLoc
+		}
+	} else {
+		out.activeBorrowLoc = source.Location{}
+	}
 	if a.borrowOf == b.borrowOf {
 		out.borrowOf = a.borrowOf
 		out.borrowMut = a.borrowMut || b.borrowMut
