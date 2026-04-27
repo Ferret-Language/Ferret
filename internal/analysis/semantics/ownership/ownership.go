@@ -618,7 +618,7 @@ func (a *ownershipAnalyzer) checkDirectValueBorrowConflict(scope *valueScope, va
 		return
 	}
 	if a.hasActiveMutableBorrowOf(scope, root) {
-		a.reportBorrowConflict(value.Loc(), root, "cannot use value while a mutable borrow is live")
+		a.reportBorrowConflict(scope, value.Loc(), root, "cannot use value while a mutable borrow is live")
 	}
 }
 
@@ -687,12 +687,12 @@ func (a *ownershipAnalyzer) checkAddrOfValue(scope *valueScope, value *mir.AddrO
 	}
 	if value.Mutable {
 		if owner.frozen > 0 {
-			a.reportBorrowConflict(value.Loc(), root.localID, "cannot create mutable borrow while another borrow is live")
+			a.reportBorrowConflict(scope, value.Loc(), root.localID, "cannot create mutable borrow while another borrow is live")
 		}
 		return
 	}
 	if owner.mutBorrow {
-		a.reportBorrowConflict(value.Loc(), root.localID, "cannot create immutable borrow while a mutable borrow is live")
+		a.reportBorrowConflict(scope, value.Loc(), root.localID, "cannot create immutable borrow while a mutable borrow is live")
 	}
 }
 
@@ -890,7 +890,7 @@ func (a *ownershipAnalyzer) consumeLocalPath(scope *valueScope, root int, path s
 		return
 	}
 	if info.frozen > 0 {
-		a.reportBorrowConflict(loc, root, "cannot move a value while a borrow is live")
+		a.reportBorrowConflict(scope, loc, root, "cannot move a value while a borrow is live")
 		return
 	}
 	if path == "" && len(info.movedSubs) > 0 {
@@ -1001,17 +1001,22 @@ func (a *ownershipAnalyzer) bindBorrowValue(scope *valueScope, slot *valueInfo, 
 	}
 	if info.mutable {
 		if owner.frozen > 0 {
-			a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create mutable borrow while another borrow is live")
+			a.reportBorrowConflict(scope, info.loc, info.owner.localID, "cannot create mutable borrow while another borrow is live")
 			return
 		}
 	} else if owner.mutBorrow {
-		a.reportBorrowConflict(info.loc, info.owner.localID, "cannot create immutable borrow while a mutable borrow is live")
+		a.reportBorrowConflict(scope, info.loc, info.owner.localID, "cannot create immutable borrow while a mutable borrow is live")
 		return
 	}
 	slot.borrowOf = info.owner.localID
 	slot.borrowMut = info.mutable
 	slot.borrowLoc = info.loc
 	owner.frozen++
+	if owner.activeBorrowLoc.Start == nil {
+		if loc, ok := normalizeBorrowLabelLocation(info.loc, value.Loc()); ok {
+			owner.activeBorrowLoc = loc
+		}
+	}
 	if info.mutable {
 		owner.mutBorrow = true
 	}
@@ -1023,13 +1028,33 @@ func (a *ownershipAnalyzer) releaseBorrowValue(scope *valueScope, slot *valueInf
 	}
 	if owner, ok := scope.Lookup(slot.borrowOf); ok && owner != nil && owner.frozen > 0 {
 		owner.frozen--
-		if slot.borrowMut && owner.frozen == 0 {
+		if owner.frozen == 0 {
 			owner.mutBorrow = false
+			owner.activeBorrowLoc = source.Location{}
+		} else if owner.activeBorrowLoc == slot.borrowLoc {
+			refreshOwnerActiveBorrowLoc(scope, slot.borrowOf, owner)
 		}
 	}
 	slot.borrowOf = -1
 	slot.borrowMut = false
 	slot.borrowLoc = source.Location{}
+}
+
+func refreshOwnerActiveBorrowLoc(scope *valueScope, ownerID int, owner *valueInfo) {
+	if scope == nil || owner == nil {
+		return
+	}
+	fallback := owner.activeBorrowLoc
+	owner.activeBorrowLoc = source.Location{}
+	for _, candidate := range scope.values {
+		if candidate == nil || candidate.borrowOf != ownerID {
+			continue
+		}
+		if loc, ok := normalizeBorrowLabelLocation(candidate.borrowLoc, fallback); ok {
+			owner.activeBorrowLoc = loc
+			return
+		}
+	}
 }
 
 func (a *ownershipAnalyzer) rebindBorrowAssignment(scope *valueScope, left mir.Place, right mir.Value) {
@@ -1057,7 +1082,7 @@ func (a *ownershipAnalyzer) checkAssignmentTarget(scope *valueScope, left mir.Pl
 		return
 	}
 	if info.frozen > 0 {
-		a.reportBorrowConflict(left.Loc(), root, "this value is currently borrowed")
+		a.reportBorrowConflict(scope, left.Loc(), root, "this value is currently borrowed")
 	}
 	if path == "" {
 		a.releaseBorrowValue(scope, info)
@@ -1210,7 +1235,7 @@ func (a *ownershipAnalyzer) requireActivePath(scope *valueScope, root int, path 
 		return
 	}
 	if info.mutBorrow || a.hasActiveMutableBorrowOf(scope, root) {
-		a.reportBorrowConflict(loc, root, "cannot use value while a mutable borrow is live")
+		a.reportBorrowConflict(scope, loc, root, "cannot use value while a mutable borrow is live")
 		return
 	}
 	if path == "" {
@@ -1376,8 +1401,8 @@ func (a *ownershipAnalyzer) reportBorrowEscapeIfNeeded(scope *valueScope, value 
 	diag := diagnostics.NewError(message).
 		WithCode(diagnostics.ErrBorrowEscape).
 		WithPrimaryLabel(&loc, "this borrow escapes its allowed scope")
-	if info.loc.Start != nil {
-		diag.WithSecondaryLabel(&info.loc, "borrow created here")
+	if borrowLoc, ok := normalizeBorrowLabelLocation(info.loc, loc); ok {
+		diag.WithSecondaryLabel(&borrowLoc, "borrow created here")
 	}
 	a.addDiagnostic(diag)
 }
@@ -1419,16 +1444,38 @@ func (a *ownershipAnalyzer) borrowValueInfo(scope *valueScope, value mir.Value) 
 	return borrowInfo{}, false
 }
 
-func (a *ownershipAnalyzer) reportBorrowConflict(loc source.Location, localID int, message string) {
+func (a *ownershipAnalyzer) reportBorrowConflict(scope *valueScope, loc source.Location, localID int, message string) {
 	name := a.localName(localID)
 	if name == "" {
 		name = fmt.Sprintf("local#%d", localID)
 	}
-	a.addDiagnostic(
-		diagnostics.NewError(fmt.Sprintf("cannot use %q here", name)).
-			WithCode(diagnostics.ErrBorrowConflict).
-			WithPrimaryLabel(&loc, message),
-	)
+	diag := diagnostics.NewError(fmt.Sprintf("cannot use %q here", name)).
+		WithCode(diagnostics.ErrBorrowConflict).
+		WithPrimaryLabel(&loc, message)
+	if scope != nil {
+		if owner, ok := scope.Lookup(localID); ok && owner != nil {
+			if borrowLoc, ok := normalizeBorrowLabelLocation(owner.activeBorrowLoc, loc); ok {
+				diag.WithSecondaryLabel(&borrowLoc, "borrow created here")
+			}
+		}
+	}
+	a.addDiagnostic(diag)
+}
+
+func normalizeBorrowLabelLocation(origin, fallback source.Location) (source.Location, bool) {
+	if origin.Start == nil {
+		return source.Location{}, false
+	}
+	normalized := origin
+	if normalized.Filename == nil || (normalized.Filename != nil && *normalized.Filename == "") {
+		if fallback.Filename != nil && *fallback.Filename != "" {
+			normalized.Filename = fallback.Filename
+		}
+	}
+	if normalized.Filename == nil || *normalized.Filename == "" {
+		return source.Location{}, false
+	}
+	return normalized, true
 }
 
 func (a *ownershipAnalyzer) fieldSelectorName(value *mir.FieldValue) string {

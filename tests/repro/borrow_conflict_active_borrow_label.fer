@@ -1,0 +1,10 @@
+fn run() -> void {
+    let mut x = 10
+    let y = &mut x
+    print(x)
+    print(*y)
+}
+
+fn main() -> void {
+    run()
+}

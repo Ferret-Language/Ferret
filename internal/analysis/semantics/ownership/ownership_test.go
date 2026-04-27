@@ -458,6 +458,43 @@ fn run() -> void {
 	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrBorrowConflict, result.Diagnostics.Diagnostics())
 }
 
+func TestOwnershipPhaseBorrowConflictShowsBorrowOriginLabel(t *testing.T) {
+	root := t.TempDir()
+	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
+fn run() -> void {
+    let mut x = 10
+    let y = &mut x
+    print(x)
+    print(*y)
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Entry == nil || result.Entry.Phase < phase.PhaseOwnershipAnalyzed {
+		t.Fatalf("expected ownership analyzed phase, got %#v", result.Entry)
+	}
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code != diagnostics.ErrBorrowConflict {
+			continue
+		}
+		if len(diag.Labels) < 2 {
+			t.Fatalf("expected borrow conflict to include secondary borrow-origin label, got %#v", diag)
+		}
+		found := false
+		for _, label := range diag.Labels {
+			if label.Message == "borrow created here" && label.Location != nil && label.Location.Filename != nil {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected borrow-origin secondary label with file location, got %#v", diag)
+		}
+		return
+	}
+	t.Fatalf("expected %s diagnostic, got %#v", diagnostics.ErrBorrowConflict, result.Diagnostics.Diagnostics())
+}
+
 func TestOwnershipPhaseAllowsMultipleImmutableBorrows(t *testing.T) {
 	root := t.TempDir()
 	mustWriteOwnership(t, filepath.Join(root, "main.fer"), `
