@@ -110,6 +110,8 @@ func FunctionReturnIsScalar(fn *mir.Function) bool {
 // Returns an error for aggregate (named struct) types.
 func llvmBaseType(typ typeinfo.Type) (string, error) {
 	switch base := backend.UnwrapNamed(typ).(type) {
+	case *typeinfo.ApproxType:
+		return llvmBaseType(base.Inner)
 	case *typeinfo.BuiltinType:
 		if _, bits, ok := tokens.ParseIntegerBuiltin(base.Name); ok {
 			return fmt.Sprintf("i%d", bits), nil

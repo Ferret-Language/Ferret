@@ -5590,7 +5590,10 @@ func llvmFieldType(state *moduleState, typ typeinfo.Type) (string, error) {
 
 // llvmABITypeName returns the LLVM type name for function signatures, calls, globals.
 func llvmABITypeName(state *moduleState, typ typeinfo.Type) (string, error) {
-	if _, ok := backend.UnwrapNamed(typ).(*typeinfo.TupleType); ok {
+	switch t := backend.UnwrapNamed(typ).(type) {
+	case *typeinfo.ApproxType:
+		return llvmABITypeName(state, t.Inner)
+	case *typeinfo.TupleType, *typeinfo.ArrayType:
 		size, _, err := backend.AggregateSizeAlign(aggregateLayoutContext(state), typ)
 		if err != nil {
 			return "", err

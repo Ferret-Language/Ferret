@@ -1362,6 +1362,30 @@ fn main(items: []i32) -> usize {
 	}
 }
 
+func TestLowerProgramFunctionArrayParamUsesByValAggregate(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+fn add(values: [2]i32) -> i32 {
+    return values[0] + values[1]
+}
+
+fn main() -> i32 {
+    return add([2]i32{1, 2})
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	text, err := llvmbackend.LowerProgram(testUnits(result), false)
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	if !strings.Contains(text, "define i32 @main__add(ptr byval([8 x i8]) align 4 %values)") {
+		t.Fatalf("expected array parameter lowered as byval aggregate:\n%s", text)
+	}
+}
+
 func TestLowerBuiltinLenStringToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
