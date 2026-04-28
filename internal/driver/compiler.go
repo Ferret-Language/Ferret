@@ -13,7 +13,7 @@ import (
 	"compiler/internal/prelude"
 )
 
-const CompilerVersion = "0.0.11"
+const CompilerVersion = "0.0.12"
 const FerretSourceExt = ".fer"
 
 type Result struct {
