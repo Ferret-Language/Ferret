@@ -92,6 +92,9 @@ func validateInstrValueShape(bag *diagnostics.DiagnosticBag, instr Instr) bool {
 		return requireNormalizedCompute(bag, i.Loc(), i.Value)
 	case *StoreInstr:
 		return requireNormalizedAssignable(bag, i.Loc(), i.Value, "store")
+	case *AtomicAddInstr:
+		ok := requireSimpleValue(bag, i.Loc(), i.Pointer, "atomic_add pointer")
+		return requireSimpleValue(bag, i.Loc(), i.Delta, "atomic_add delta") && ok
 	case *StoreFieldInstr:
 		ok := requireSimpleValue(bag, i.Loc(), i.Base, "store_field base")
 		return requireSimpleValue(bag, i.Loc(), i.Value, "store_field") && ok
@@ -176,6 +179,8 @@ func childrenAreSimple(value Value) bool {
 	case *AddrOfValue:
 		return isSimpleValue(v.Source) || childrenAreSimple(v.Source)
 	case *LoadValue:
+		return isSimpleValue(v.Pointer)
+	case *AtomicLoadValue:
 		return isSimpleValue(v.Pointer)
 	case *BinaryValue:
 		return isSimpleValue(v.Left) && isSimpleValue(v.Right)

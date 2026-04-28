@@ -112,6 +112,17 @@ func (t *RefType) String() string {
 	return prefix + typeString(t.Inner)
 }
 
+type AtomicType struct {
+	Inner Type
+}
+
+func (t *AtomicType) String() string {
+	if t == nil {
+		return "<nil>"
+	}
+	return "atomic " + typeString(t.Inner)
+}
+
 type RawPtrType struct {
 	Const bool
 	Inner Type
@@ -397,6 +408,51 @@ func IsUnknown(t Type) bool {
 	return ok
 }
 
+func IsAtomicStorageAllowed(typ Type) bool {
+	switch base := atomicStorageBaseType(typ).(type) {
+	case *BuiltinType:
+		if base.Name == "bool" {
+			return true
+		}
+		family, _, ok := NumericInfo(base)
+		return ok && family != NumericFloat
+	case *RawPtrType:
+		return true
+	case *EnumType:
+		return true
+	default:
+		return false
+	}
+}
+
+func SupportsAtomicAdd(typ Type) bool {
+	base := atomicStorageBaseType(typ)
+	family, _, ok := NumericInfo(base)
+	return ok && family != NumericFloat
+}
+
+func atomicStorageBaseType(typ Type) Type {
+	for typ != nil {
+		switch t := typ.(type) {
+		case *AtomicType:
+			typ = t.Inner
+		case *ApproxType:
+			typ = t.Inner
+		case *NamedType:
+			if t != nil && t.Decl != nil {
+				switch t.Decl.Type.(type) {
+				case *ast.EnumType:
+					return &EnumType{}
+				}
+			}
+			return typ
+		default:
+			return typ
+		}
+	}
+	return nil
+}
+
 func IsBuiltinNamed(t Type, name string) bool {
 	if name == "str" {
 		_, ok := t.(*StringType)
@@ -473,6 +529,9 @@ func Equal(a, b Type) bool {
 	case *RefType:
 		bt, ok := b.(*RefType)
 		return ok && at.Mutable == bt.Mutable && Equal(at.Inner, bt.Inner)
+	case *AtomicType:
+		bt, ok := b.(*AtomicType)
+		return ok && Equal(at.Inner, bt.Inner)
 	case *RawPtrType:
 		bt, ok := b.(*RawPtrType)
 		return ok && at.Const == bt.Const && Equal(at.Inner, bt.Inner)
@@ -541,6 +600,9 @@ func Assignable(dst, src Type) bool {
 	}
 	if IsImplicitNumericWidening(dst, src) {
 		return true
+	}
+	if atomic, ok := dst.(*AtomicType); ok && src != nil {
+		return Assignable(atomic.Inner, src)
 	}
 	if opt, ok := dst.(*OptionalType); ok && src != nil {
 		return Assignable(opt.Inner, src)

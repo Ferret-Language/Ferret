@@ -43,7 +43,10 @@ func (c *checker) checkStmt(scope *refineScope, stmt ast.Stmt) {
 		if finalType == nil {
 			finalType = typeinfo.UnknownType{}
 		}
-		if s.Type != nil && declared != nil && !typeinfo.Equal(declared, finalType) {
+		if s.IsAtomic {
+			finalType = c.atomicStorageType(s.Loc(), finalType)
+		}
+		if !s.IsAtomic && s.Type != nil && declared != nil && !typeinfo.Equal(declared, finalType) {
 			c.info.BindNode(s.Type, finalType)
 		}
 		if declared != nil && s.Value != nil && !c.checkExprAssignable(scope, s.Value, declared, value) {

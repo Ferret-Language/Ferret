@@ -45,6 +45,14 @@ type RefType struct {
 func (*RefType) typeNode()              {}
 func (t *RefType) Loc() source.Location { return t.Location }
 
+type AtomicType struct {
+	Inner    TypeExpr
+	Location source.Location
+}
+
+func (*AtomicType) typeNode()              {}
+func (t *AtomicType) Loc() source.Location { return t.Location }
+
 type RawPtrType struct {
 	Const    bool
 	Inner    TypeExpr

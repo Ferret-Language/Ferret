@@ -1,0 +1,35 @@
+// std/task - explicit task/thread runtime surface.
+//
+// Current implementation is backed by OS threads.
+
+import "std/mem"
+
+type taskInner struct {}
+
+type Handle struct {
+    raw: *taskInner
+}
+
+#[extern("ferret_task_run_raw")]
+fn run_ref<T>(entry: fn(T) -> void, arg: T) -> ^taskInner;
+
+#[extern("ferret_task_wait")]
+fn wait_raw(handle: ^void) -> void;
+
+fn Run<T>(callback: fn(T) -> void, arg: T) -> Handle {
+    unsafe {
+        return .{ .raw = mem::Adopt(run_ref(callback, arg)) }
+    }
+}
+
+fn Handle::Wait(self) -> void {
+    unsafe {
+        wait_raw(mem::Expose(self.raw) as ^void)
+    }
+}
+
+fn WaitAll(handles: ...Handle) -> void {
+    for handles | handle | {
+        handle.Wait()
+    }
+}

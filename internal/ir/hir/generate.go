@@ -350,11 +350,15 @@ func (g *generator) generateLetDecl(d *ast.LetDecl) *Global {
 	if d == nil {
 		return nil
 	}
+	typ := effectiveType(g.types, d.Type, d.Value)
+	if d.IsAtomic {
+		typ = atomicBindingHIRType(typ)
+	}
 	return &Global{
 		Name:     d.Name.Text(),
-		Mutable:  d.IsMut,
+		Mutable:  d.IsMut || d.IsAtomic,
 		Constant: false,
-		Type:     effectiveType(g.types, d.Type, d.Value),
+		Type:     typ,
 		Value:    g.generateExpr(d.Value),
 		Location: d.Location,
 		Source:   d,
@@ -588,13 +592,16 @@ func (g *generator) generateStmt(stmt ast.Stmt) Stmt {
 		return g.generateBlock(s)
 	case *ast.LetStmt:
 		targetType := effectiveType(g.types, s.Type, s.Value)
+		if s.IsAtomic {
+			targetType = atomicBindingHIRType(targetType)
+		}
 		if _, ok := targetType.(*typeinfo.FuncType); ok && !s.IsMut {
 			if _, ok := s.Value.(*ast.LambdaExpr); ok {
 				_ = g.generateExpr(s.Value)
 				return nil
 			}
 		}
-		out := &LetStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Mutable: s.IsMut, Type: targetType, Value: g.generateExprForTarget(s.Value, targetType)}
+		out := &LetStmt{Name: g.maybeMangledLocalName(s.Name), LocalID: g.maybeLocalID(s.Name), Mutable: s.IsMut || s.IsAtomic, Type: targetType, Value: g.generateExprForTarget(s.Value, targetType)}
 		out.Location = s.Location
 		return out
 	case *ast.ConstStmt:
@@ -1203,6 +1210,16 @@ func effectiveType(types *typeinfo.ModuleInfo, syntax ast.TypeExpr, value ast.Ex
 		return exprType(types, value)
 	}
 	return typeinfo.UnknownType{}
+}
+
+func atomicBindingHIRType(typ typeinfo.Type) typeinfo.Type {
+	if typ == nil {
+		return nil
+	}
+	if _, ok := typ.(*typeinfo.AtomicType); ok {
+		return typ
+	}
+	return &typeinfo.AtomicType{Inner: typ}
 }
 
 type structLiteralField struct {

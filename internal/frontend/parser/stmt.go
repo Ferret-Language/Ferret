@@ -120,7 +120,11 @@ func (p *Parser) parseStmt() ast.Stmt {
 
 func (p *Parser) parseLetStmt(doc *ast.CommentGroup) ast.Stmt {
 	start := p.advance().Start
+	isAtomic := p.match(tokens.ATOMIC)
 	isMut := p.match(tokens.MUT)
+	if isAtomic && isMut {
+		p.errorAt(p.locOfToken(p.previous()), "atomic bindings do not use 'mut'")
+	}
 	nameTok := p.expect(tokens.IDENT, "expected variable name")
 	var typ ast.TypeExpr
 	if p.match(tokens.COLON) {
@@ -134,6 +138,7 @@ func (p *Parser) parseLetStmt(doc *ast.CommentGroup) ast.Stmt {
 		Name:     &ast.Ident{Path: []string{nameTok.Literal}, Location: p.locOfToken(nameTok)},
 		Doc:      doc,
 		IsMut:    isMut,
+		IsAtomic: isAtomic,
 		Type:     typ,
 		Value:    value,
 		Location: p.locFrom(start),

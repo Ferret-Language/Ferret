@@ -28,6 +28,7 @@ type LetDecl struct {
 	Doc      *CommentGroup
 	Attrs    []Attribute
 	IsMut    bool
+	IsAtomic bool
 	Type     TypeExpr
 	Value    Expr
 	Location source.Location

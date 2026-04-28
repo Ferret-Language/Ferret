@@ -1,0 +1,21 @@
+import "std/task"
+
+fn worker(value: &mut i32) -> void {
+    let mut counter = 0
+    while counter < 200000 {
+        (*value)++
+        counter += 1
+    }
+}
+
+fn main() -> void {
+    let mut res = 0
+    let t1 = task::Run(worker, &mut res)
+    let t2 = task::Run(worker, &mut res)
+    let t3 = task::Run(worker, &mut res)
+    let t4 = task::Run(worker, &mut res)
+
+    task::WaitAll(t1, t2, t3, t4)
+    //t1.Wait()
+    println(res)
+}

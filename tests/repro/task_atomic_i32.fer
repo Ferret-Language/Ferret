@@ -1,0 +1,23 @@
+import "std/task"
+
+fn worker(value: &atomic i32) -> void {
+    let mut i = 0
+    while i < 200000 {
+        (*value)++
+        i += 1
+    }
+}
+
+fn main() -> void {
+    let atomic counter = 0
+    let a = task::Run(worker, &counter)
+    let b = task::Run(worker, &counter)
+    let c = task::Run(worker, &counter)
+    let d = task::Run(worker, &counter)
+
+    task::WaitAll(a, b, c, d)
+    //b.Wait()
+    println(counter)
+
+    //let atomic val: struct{ x: i32 } = .{ .x = 2 }
+}

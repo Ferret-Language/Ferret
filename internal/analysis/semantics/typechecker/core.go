@@ -146,9 +146,9 @@ func (c *checker) symbolMutable(sym *symbols.Symbol) bool {
 	}
 	switch node := sym.Node.(type) {
 	case *ast.LetDecl:
-		return node != nil && node.IsMut
+		return node != nil && (node.IsMut || node.IsAtomic)
 	case *ast.LetStmt:
-		return node != nil && node.IsMut
+		return node != nil && (node.IsMut || node.IsAtomic)
 	case *ast.ConstDecl, *ast.ConstStmt:
 		return false
 	default:

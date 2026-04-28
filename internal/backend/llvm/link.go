@@ -64,6 +64,9 @@ func CompileIR(llvmIR, outputPath string, opts CompileOptions) error {
 		}
 		args = append(args, "-O0", "-fno-omit-frame-pointer")
 	}
+	if runtime.GOOS != "windows" {
+		args = append(args, "-pthread")
+	}
 	args = append(args, irFile)
 	args = append(args, runtimeLib)
 	args = append(args, "-o", outputPath)
@@ -130,6 +133,10 @@ func llvmBaseType(typ typeinfo.Type) (string, error) {
 		}
 	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType, *typeinfo.MapType:
 		return "ptr", nil
+	case *typeinfo.EnumType, *typeinfo.ErrorSetType:
+		return "i32", nil
+	case *typeinfo.AtomicType:
+		return llvmBaseType(base.Inner)
 	case *typeinfo.OptionalType:
 		if backend.OptionalUsesNiche(base.Inner) {
 			return llvmBaseType(base.Inner)

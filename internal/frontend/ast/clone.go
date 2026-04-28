@@ -68,6 +68,10 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 			out := &RefType{Mutable: t.Mutable, Inner: cloneType(t.Inner), Location: t.Location}
 			mapping[t] = out
 			return out
+		case *AtomicType:
+			out := &AtomicType{Inner: cloneType(t.Inner), Location: t.Location}
+			mapping[t] = out
+			return out
 		case *RawPtrType:
 			out := &RawPtrType{Const: t.Const, Inner: cloneType(t.Inner), Location: t.Location}
 			mapping[t] = out
@@ -248,7 +252,7 @@ func CloneExprWithNodeMapAndSubstitute(expr Expr, substitute func(Node) Expr) (E
 		case *BlockStmt:
 			return cloneBlock(s)
 		case *LetStmt:
-			out := &LetStmt{Name: cloneIdent(s.Name), IsMut: s.IsMut, Type: cloneType(s.Type), Value: cloneExpr(s.Value), Location: s.Location}
+			out := &LetStmt{Name: cloneIdent(s.Name), IsMut: s.IsMut, IsAtomic: s.IsAtomic, Type: cloneType(s.Type), Value: cloneExpr(s.Value), Location: s.Location}
 			mapping[s] = out
 			return out
 		case *ConstStmt:

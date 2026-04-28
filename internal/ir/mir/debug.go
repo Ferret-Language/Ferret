@@ -135,6 +135,8 @@ func debugValue(value Value) any {
 		return map[string]any{"kind": "addr_of", "mutable": v.Mutable, "raw": v.Raw, "source": debugValue(v.Source), "type": typeString(v.Type())}
 	case *LoadValue:
 		return map[string]any{"kind": "load", "pointer": debugValue(v.Pointer), "type": typeString(v.Type())}
+	case *AtomicLoadValue:
+		return map[string]any{"kind": "atomic_load", "pointer": debugValue(v.Pointer), "type": typeString(v.Type())}
 	case *BinaryValue:
 		return map[string]any{"kind": "binary", "op": v.Op, "left": debugValue(v.Left), "right": debugValue(v.Right), "type": typeString(v.Type())}
 	case *PostfixValue:

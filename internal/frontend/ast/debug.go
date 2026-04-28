@@ -38,7 +38,7 @@ func DebugModule(mod *Module) map[string]any {
 func debugDecl(decl Decl) any {
 	switch d := decl.(type) {
 	case *LetDecl:
-		return map[string]any{"kind": "LetDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "is_mut": d.IsMut, "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
+		return map[string]any{"kind": "LetDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "is_mut": d.IsMut, "is_atomic": d.IsAtomic, "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
 	case *ConstDecl:
 		return map[string]any{"kind": "ConstDecl", "name": debugExpr(d.Name), "attrs": debugAttrs(d.Attrs), "type": debugType(d.Type), "value": debugExpr(d.Value), "loc": debugLoc(d.Location)}
 	case *TypeDecl:
@@ -130,7 +130,7 @@ func debugStmt(stmt Stmt) any {
 		}
 		return map[string]any{"kind": "BlockStmt", "stmts": stmts, "comptime": s.Comptime, "loc": debugLoc(s.Location)}
 	case *LetStmt:
-		return map[string]any{"kind": "LetStmt", "name": debugExpr(s.Name), "is_mut": s.IsMut, "type": debugType(s.Type), "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
+		return map[string]any{"kind": "LetStmt", "name": debugExpr(s.Name), "is_mut": s.IsMut, "is_atomic": s.IsAtomic, "type": debugType(s.Type), "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
 	case *ConstStmt:
 		return map[string]any{"kind": "ConstStmt", "name": debugExpr(s.Name), "type": debugType(s.Type), "value": debugExpr(s.Value), "loc": debugLoc(s.Location)}
 	case *ReturnStmt:
@@ -285,6 +285,8 @@ func debugType(typ TypeExpr) any {
 		return map[string]any{"kind": "PointerType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *RefType:
 		return map[string]any{"kind": "RefType", "mutable": t.Mutable, "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
+	case *AtomicType:
+		return map[string]any{"kind": "AtomicType", "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *RawPtrType:
 		return map[string]any{"kind": "RawPtrType", "const": t.Const, "inner": debugType(t.Inner), "loc": debugLoc(t.Location)}
 	case *SelfType:

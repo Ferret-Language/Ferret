@@ -371,6 +371,8 @@ func (d *debugState) getType(state *moduleState, typ typeinfo.Type) int {
 	case *typeinfo.RefType:
 		innerID := d.getType(state, t.Inner)
 		return d.getPointerType(innerID)
+	case *typeinfo.AtomicType:
+		return d.getType(state, t.Inner)
 	case *typeinfo.RawPtrType:
 		innerID := d.getType(state, t.Inner)
 		return d.getPointerType(innerID)
@@ -1744,6 +1746,8 @@ func lowerInstr(state *moduleState, instr mir.Instr) (string, error) {
 		return lowerStoreField(state, i)
 	case *mir.StoreInstr:
 		return lowerStorePlace(state, i)
+	case *mir.AtomicAddInstr:
+		return lowerAtomicAdd(state, i)
 	case *mir.EvalInstr:
 		if call, ok := i.Value.(*mir.CallValue); ok {
 			return lowerCall(state, "", nil, call)
@@ -1854,6 +1858,9 @@ func lowerSSAAssign(state *moduleState, name string, typ typeinfo.Type, value mi
 	}
 	if load, ok := value.(*mir.LoadValue); ok {
 		return lowerLoadValue(state, name, typ, load)
+	}
+	if load, ok := value.(*mir.AtomicLoadValue); ok {
+		return lowerAtomicLoadValue(state, name, typ, load)
 	}
 	if bin, ok := value.(*mir.BinaryValue); ok {
 		if line, handled, err := lowerAggregateCompare(state, name, typ, bin); handled || err != nil {
@@ -2102,11 +2109,51 @@ func lowerLoadValue(state *moduleState, targetName string, targetType typeinfo.T
 	if err != nil {
 		return "", err
 	}
+	if _, ok := targetType.(*typeinfo.AtomicType); ok {
+		return lowerAtomicLoadFromPointer(state, targetName, targetType, ptr)
+	}
 	irType, err := llvmBaseType(targetType)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%s = load %s, ptr %s", llvmLocalName(targetName), irType, ptr), nil
+}
+
+func lowerAtomicLoadValue(state *moduleState, targetName string, targetType typeinfo.Type, load *mir.AtomicLoadValue) (string, error) {
+	ptr, err := lowerValue(state, load.Pointer)
+	if err != nil {
+		return "", err
+	}
+	return lowerAtomicLoadFromPointer(state, targetName, targetType, ptr)
+}
+
+func lowerAtomicLoadFromPointer(state *moduleState, targetName string, targetType typeinfo.Type, ptr string) (string, error) {
+	typ := atomicInnerType(targetType)
+	irType, err := llvmBaseType(typ)
+	if err != nil {
+		return "", err
+	}
+	return llvmLoadLine(llvmLocalName(targetName), irType, ptr, true), nil
+}
+
+func lowerAtomicAdd(state *moduleState, instr *mir.AtomicAddInstr) (string, error) {
+	if instr == nil {
+		return "", nil
+	}
+	ptr, err := lowerValue(state, instr.Pointer)
+	if err != nil {
+		return "", err
+	}
+	delta, err := lowerValue(state, instr.Delta)
+	if err != nil {
+		return "", err
+	}
+	irType, err := llvmBaseType(instr.Type)
+	if err != nil {
+		return "", err
+	}
+	tmp := freshTemp(state, "atomic_add")
+	return fmt.Sprintf("%s = atomicrmw add ptr %s, %s %s seq_cst", tmp, ptr, irType, delta), nil
 }
 
 func lowerFieldLoad(state *moduleState, targetName string, targetType typeinfo.Type, field *mir.FieldLoadValue) (string, error) {
@@ -2386,6 +2433,14 @@ func lowerStorePlace(state *moduleState, instr *mir.StoreInstr) (string, error) 
 	val, err := lowerValue(state, instr.Value)
 	if err != nil {
 		return "", err
+	}
+	if atomic, ok := targetType.(*typeinfo.AtomicType); ok && atomic != nil {
+		irType, err := llvmBaseType(atomic.Inner)
+		if err != nil {
+			return "", err
+		}
+		lines = append(lines, fmt.Sprintf("store atomic %s %s, ptr %s seq_cst, align %d", irType, val, addr, irTypeAlign(irType)))
+		return strings.Join(lines, "\n"), nil
 	}
 	irType, err := llvmBaseType(instr.Value.Type())
 	if err != nil {
@@ -3778,20 +3833,24 @@ func lowerInterfaceConcretePointer(state *moduleState, value mir.Value, concrete
 			return lowerInterfaceConcretePointer(state, v.Right, concreteType)
 		}
 	case *mir.LocalValue:
-		if agg, ok := state.aggLocals[v.LocalID]; ok {
-			return nil, llvmLocalName(agg.PtrName), nil
-		}
-		if sc, ok := state.scalarLocals[v.LocalID]; ok {
-			return nil, sc.AllocaName, nil
+		if typeinfo.Equal(concreteType, v.Type()) {
+			if agg, ok := state.aggLocals[v.LocalID]; ok {
+				return nil, llvmLocalName(agg.PtrName), nil
+			}
+			if sc, ok := state.scalarLocals[v.LocalID]; ok {
+				return nil, sc.AllocaName, nil
+			}
 		}
 	case *mir.NameValue:
 		if len(v.Path) == 1 {
 			if local := becommon.FindLocalByName(state.fn, v.Path[0]); local != nil {
-				if agg, ok := state.aggLocals[local.ID]; ok {
-					return nil, llvmLocalName(agg.PtrName), nil
-				}
-				if sc, ok := state.scalarLocals[local.ID]; ok {
-					return nil, sc.AllocaName, nil
+				if typeinfo.Equal(concreteType, v.Type()) {
+					if agg, ok := state.aggLocals[local.ID]; ok {
+						return nil, llvmLocalName(agg.PtrName), nil
+					}
+					if sc, ok := state.scalarLocals[local.ID]; ok {
+						return nil, sc.AllocaName, nil
+					}
 				}
 			}
 		}
@@ -4538,8 +4597,8 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 		}
 		if sc, ok := state.scalarLocals[v.LocalID]; ok {
 			tmp := freshTemp(state, "ld")
-			state.pendingLines = append(state.pendingLines,
-				fmt.Sprintf("%s = load %s, ptr %s", tmp, sc.IRType, sc.AllocaName))
+			_, isAtomic := v.Type().(*typeinfo.AtomicType)
+			state.pendingLines = append(state.pendingLines, llvmLoadLine(tmp, sc.IRType, sc.AllocaName, isAtomic))
 			return tmp, nil
 		}
 		return llvmLocalName(becommon.LocalNameByID(state.fn, v.LocalID)), nil
@@ -4566,8 +4625,8 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				}
 				if sc, ok := state.scalarLocals[local.ID]; ok {
 					tmp := freshTemp(state, "ld")
-					state.pendingLines = append(state.pendingLines,
-						fmt.Sprintf("%s = load %s, ptr %s", tmp, sc.IRType, sc.AllocaName))
+					_, isAtomic := v.Type().(*typeinfo.AtomicType)
+					state.pendingLines = append(state.pendingLines, llvmLoadLine(tmp, sc.IRType, sc.AllocaName, isAtomic))
 					return tmp, nil
 				}
 				return llvmLocalName(local.Name), nil
@@ -4587,7 +4646,8 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 				if v.LinkName != "" {
 					sym = "@" + becommon.SanitizeLinkName(v.LinkName)
 				}
-				state.pendingLines = append(state.pendingLines, fmt.Sprintf("%s = load %s, ptr %s", tmp, irType, sym))
+				_, isAtomic := v.Type().(*typeinfo.AtomicType)
+				state.pendingLines = append(state.pendingLines, llvmLoadLine(tmp, irType, sym, isAtomic))
 				return tmp, nil
 			}
 		}
@@ -4654,6 +4714,20 @@ func lowerValue(state *moduleState, value mir.Value) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported MIR value %T", value)
 	}
+}
+
+func atomicInnerType(typ typeinfo.Type) typeinfo.Type {
+	if atomic, ok := typ.(*typeinfo.AtomicType); ok && atomic != nil {
+		return atomic.Inner
+	}
+	return typ
+}
+
+func llvmLoadLine(target, irType, ptr string, atomic bool) string {
+	if atomic {
+		return fmt.Sprintf("%s = load atomic %s, ptr %s seq_cst, align %d", target, irType, ptr, irTypeAlign(irType))
+	}
+	return fmt.Sprintf("%s = load %s, ptr %s", target, irType, ptr)
 }
 
 func lowerMapCompositeValue(state *moduleState, comp *mir.CompositeValue, targetType typeinfo.Type) (string, error) {
@@ -5503,9 +5577,13 @@ func aggregateSizeAlignOfPrimitive(typ typeinfo.Type) (int64, int64, error) {
 		case "f64":
 			return 8, 8, nil
 		}
+	case *typeinfo.EnumType, *typeinfo.ErrorSetType:
+		return 4, 4, nil
 	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType, *typeinfo.FuncType, *typeinfo.MapType:
 		ptrSize := abi.PointerBytes()
 		return ptrSize, ptrSize, nil
+	case *typeinfo.AtomicType:
+		return aggregateSizeAlignOfPrimitive(t.Inner)
 	}
 	return 0, 0, fmt.Errorf("not a primitive type")
 }

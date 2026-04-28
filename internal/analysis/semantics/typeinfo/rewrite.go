@@ -41,6 +41,11 @@ func rewriteType(typ Type, pre, post func(Type) Type, seen map[Type]Type) Type {
 		seen[typ] = copy
 		copy.Inner = rewriteType(t.Inner, pre, post, seen)
 		out = copy
+	case *AtomicType:
+		copy := &AtomicType{}
+		seen[typ] = copy
+		copy.Inner = rewriteType(t.Inner, pre, post, seen)
+		out = copy
 	case *RawPtrType:
 		copy := &RawPtrType{Const: t.Const}
 		seen[typ] = copy

@@ -1,6 +1,10 @@
 package typeinfo
 
-import "testing"
+import (
+	"testing"
+
+	"compiler/internal/frontend/ast"
+)
 
 func TestRefAndRawTypeString(t *testing.T) {
 	immutable := &RefType{Inner: &BuiltinType{Name: "i32"}}
@@ -133,5 +137,45 @@ func TestAssignableAllowsImplicitNumericWideningAndIntToFloat(t *testing.T) {
 	}
 	if Assignable(&BuiltinType{Name: "i32"}, &BuiltinType{Name: "f32"}) {
 		t.Fatal("expected f32 to remain non-assignable to i32")
+	}
+}
+
+func TestIsAtomicStorageAllowed(t *testing.T) {
+	mode := &NamedType{
+		Name: "Mode",
+		Decl: &ast.TypeDecl{Type: &ast.EnumType{}},
+	}
+	cases := []struct {
+		name string
+		typ  Type
+		want bool
+	}{
+		{name: "bool", typ: &BuiltinType{Name: "bool"}, want: true},
+		{name: "int", typ: &BuiltinType{Name: "i32"}, want: true},
+		{name: "float", typ: &BuiltinType{Name: "f32"}, want: false},
+		{name: "rawptr", typ: &RawPtrType{Inner: &BuiltinType{Name: "u8"}}, want: true},
+		{name: "enum", typ: mode, want: true},
+		{name: "str", typ: &StringType{}, want: false},
+		{name: "slice", typ: &SliceType{Inner: &BuiltinType{Name: "u8"}}, want: false},
+	}
+	for _, tc := range cases {
+		if got := IsAtomicStorageAllowed(tc.typ); got != tc.want {
+			t.Fatalf("%s: expected %v, got %v", tc.name, tc.want, got)
+		}
+	}
+}
+
+func TestSupportsAtomicAdd(t *testing.T) {
+	if !SupportsAtomicAdd(&BuiltinType{Name: "i32"}) {
+		t.Fatal("expected i32 atomic add support")
+	}
+	if SupportsAtomicAdd(&BuiltinType{Name: "f32"}) {
+		t.Fatal("expected f32 atomic add to remain unsupported")
+	}
+	if SupportsAtomicAdd(&BuiltinType{Name: "bool"}) {
+		t.Fatal("expected bool atomic add to remain unsupported")
+	}
+	if SupportsAtomicAdd(&RawPtrType{Inner: &BuiltinType{Name: "u8"}}) {
+		t.Fatal("expected raw pointer atomic add to remain unsupported")
 	}
 }

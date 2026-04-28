@@ -6195,6 +6195,80 @@ fn main() -> i32 {
 	}
 }
 
+func TestTypecheckerAllowsBoolRawPointerAndEnumAtomicStorage(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+type Mode enum {
+    off,
+    on
+}
+
+fn readFlag(value: &atomic bool) -> bool {
+    let current = *value
+    return current
+}
+
+fn readPtr(value: &atomic ^void) -> ^void {
+    let current = *value
+    return current
+}
+
+fn readMode(value: &atomic Mode) -> Mode {
+    let current = *value
+    return current
+}
+
+fn main(raw: ^void) -> void {
+    let atomic flag = true
+    flag = false
+    let flagValue: bool = readFlag(&flag)
+
+    let atomic ptr = raw
+    ptr = raw
+    let ptrValue: ^void = readPtr(&ptr)
+
+    let atomic mode = Mode::off
+    mode = Mode::on
+    let modeValue: Mode = readMode(&mode)
+
+    _ = flagValue
+    _ = ptrValue
+    _ = modeValue
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
+func TestTypecheckerRejectsNonAtomicStorageTypes(t *testing.T) {
+	root := t.TempDir()
+	mustWriteType(t, filepath.Join(root, "main.fer"), `
+fn main() -> void {
+    let atomic text = "hi"
+    let atomic items = []i32{1, 2, 3}
+    _ = text
+    _ = items
+}
+`)
+
+	result := compiler.New(root, ".fer", diagnostics.NewDiagnosticBag("")).ParseEntry(filepath.Join(root, "main.fer"))
+	if !result.Diagnostics.HasErrors() {
+		t.Fatal("expected atomic storage diagnostics")
+	}
+	found := 0
+	for _, diag := range result.Diagnostics.Diagnostics() {
+		if diag.Code == diagnostics.ErrTypeMismatch && strings.Contains(diag.Message, "atomic storage requires bool, integer, raw pointer, or enum type") {
+			found++
+		}
+	}
+	if found < 2 {
+		t.Fatalf("expected atomic storage type mismatch diagnostics, got %#v", result.Diagnostics.Diagnostics())
+	}
+}
+
 func TestTypecheckerRejectsImmutableValuePassedToInterfaceMutReceiverCall(t *testing.T) {
 	root := t.TempDir()
 	mustWriteType(t, filepath.Join(root, "main.fer"), `

@@ -208,6 +208,15 @@ FerretStr ferret_global_recover(void);
 void ferret_global_print(const FerretSliceAny *values);
 
 /* -------------------------------------------------------------------------
+ * std/task surface.
+ * -------------------------------------------------------------------------*/
+
+typedef void (*FerretTaskEntryRaw)(ferret_raw);
+
+ferret_raw ferret_task_run_raw(FerretTaskEntryRaw entry, ferret_raw arg);
+void ferret_task_wait(ferret_raw handle);
+
+/* -------------------------------------------------------------------------
  * std/io surface.
  * -------------------------------------------------------------------------*/
 

@@ -135,6 +135,8 @@ func DescribeRuntimeType(typ typeinfo.Type) RuntimeTypeDescriptor {
 		}
 	case *typeinfo.PointerType, *typeinfo.RefType, *typeinfo.RawPtrType:
 		desc.Flags |= RuntimeTypeFlagPointer
+	case *typeinfo.AtomicType:
+		return DescribeRuntimeType(t.Inner)
 	case *typeinfo.InterfaceType:
 		desc.Flags |= RuntimeTypeFlagInterface
 	case *typeinfo.SliceType:

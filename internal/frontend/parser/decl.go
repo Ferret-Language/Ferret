@@ -47,7 +47,11 @@ func (p *Parser) parseTypeDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast
 
 func (p *Parser) parseLetDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.Decl {
 	start := p.expect(tokens.LET, "expected 'let'").Start
+	isAtomic := p.match(tokens.ATOMIC)
 	isMut := p.match(tokens.MUT)
+	if isAtomic && isMut {
+		p.errorAt(p.locOfToken(p.previous()), "atomic bindings do not use 'mut'")
+	}
 	nameTok := p.expect(tokens.IDENT, "expected variable name")
 	name := nameTok.Literal
 	var typ ast.TypeExpr
@@ -64,6 +68,7 @@ func (p *Parser) parseLetDecl(doc *ast.CommentGroup, attrs []ast.Attribute) ast.
 		Doc:      doc,
 		Attrs:    attrs,
 		IsMut:    isMut,
+		IsAtomic: isAtomic,
 		Type:     typ,
 		Value:    value,
 		Location: p.locFrom(start),

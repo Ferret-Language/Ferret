@@ -414,6 +414,8 @@ func renderType(typ ast.TypeExpr) string {
 			prefix = "&mut "
 		}
 		return prefix + renderType(t.Inner)
+	case *ast.AtomicType:
+		return "atomic " + renderType(t.Inner)
 	case *ast.RawPtrType:
 		if t.Const {
 			return "^const " + renderType(t.Inner)

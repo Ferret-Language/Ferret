@@ -9,6 +9,9 @@ func DeclSummary(decl Decl) string {
 	case *ConstDecl:
 		return fmt.Sprintf("const %s", d.Name.Text())
 	case *LetDecl:
+		if d.IsAtomic {
+			return fmt.Sprintf("let atomic %s", d.Name.Text())
+		}
 		if d.IsMut {
 			return fmt.Sprintf("let mut %s", d.Name.Text())
 		}

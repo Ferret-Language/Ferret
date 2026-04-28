@@ -2571,6 +2571,115 @@ fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
 	}
 }
 
+func TestLowerTaskRunAndAtomicToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+import "std/task"
+
+fn worker(value: &atomic i32) -> void {
+    (*value)++
+}
+
+fn main() -> void {
+    let atomic value = 0
+    let handle = task::Run(worker, &value)
+    handle.Wait()
+    println(value)
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"@ferret_task_run_raw",
+		"@ferret_task_wait",
+		"atomicrmw add",
+		"load atomic i32",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %s in llvm output:\n%s", want, text)
+		}
+	}
+}
+
+func TestLowerAtomicBoolRawPtrAndEnumToLLVM(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "main.fer"), `
+type Mode enum {
+    off,
+    on
+}
+
+fn readFlag(value: &atomic bool) -> bool {
+    let current = *value
+    return current
+}
+
+fn readPtr(value: &atomic ^void) -> ^void {
+    let current = *value
+    return current
+}
+
+fn readMode(value: &atomic Mode) -> Mode {
+    let current = *value
+    return current
+}
+
+fn main(raw: ^void) -> void {
+    let atomic flag = true
+    flag = false
+    let flagValue: bool = readFlag(&flag)
+
+    let atomic ptr = raw
+    ptr = raw
+    let ptrValue: ^void = readPtr(&ptr)
+
+    let atomic mode = Mode::off
+    mode = Mode::on
+    let modeValue: Mode = readMode(&mode)
+
+    _ = flagValue
+    _ = ptrValue
+    _ = modeValue
+}
+`)
+	result := compiler.ParsePath(filepath.Join(root, "main.fer"))
+	if result.Diagnostics.HasErrors() {
+		t.Fatalf("unexpected diagnostics: %#v", result.Diagnostics.Diagnostics())
+	}
+	lowerer, err := registry.New(backend.TargetLLVM)
+	if err != nil {
+		t.Fatalf("unexpected llvm error: %v", err)
+	}
+	artifact, err := lowerer.LowerModule(testUnit(result))
+	if err != nil {
+		t.Fatalf("lower llvm: %v", err)
+	}
+	text := artifact.Text
+	for _, want := range []string{
+		"store atomic i8",
+		"load atomic i8",
+		"store atomic ptr",
+		"load atomic ptr",
+		"store atomic i32",
+		"load atomic i32",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected %s in llvm output:\n%s", want, text)
+		}
+	}
+}
+
 func TestLowerFunctionRouteTableStructToLLVM(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "main.fer"), `
